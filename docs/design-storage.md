@@ -1193,47 +1193,51 @@ once ([Performance](#performance)).
 ### Read-write storage
 
 Read-write storage is F2FS, implemented by erXos in Erlang from its
-on-disk format. littlefs is the current implementation behind the same
-file interface, a stopgap whose limits on large media (files of at most
-2 GiB, a design for microcontrollers) are accepted for it. erXos's F2FS:
+on-disk format, Linux's, with full Linux compatibility: Linux mounts and
+checks what erXos writes and replays the roll-forward records of the
+files erXos synced, and erXos mounts what Linux writes and replays
+Linux's. littlefs is the current implementation behind the same file
+interface, a stopgap whose limits on large media (files of at most
+2 GiB, a design for microcontrollers) are accepted for it. erXos's F2FS
+has a design of its own, [design-f2fs.md](design-f2fs.md); in brief:
 
 * **Structure.** An Erlang application in the storage domain: a callback
   module of `erx_fs`, so every grant and every open file is a process of
-  its own ([design-files.md](design-files.md#serving-the-erx_fs-behaviour));
-  a volume process that owns the checkpoint, the node address table, the
-  segment information and the current segments, and orders every update
-  to them; a cleaner process; and the block client, `erx_block_client`,
-  which sends to the volume's window pid and receives completions as
-  messages. The
-  format's decisions (where a block goes, what a checkpoint holds, which
-  segment the cleaner takes) are pure functions over the volume's state,
-  and the volume process applies their results as block writes and
-  flushes, so the core is tested on the host without a medium. Checkpoints
-  and other checksummed structures use F2FS's CRC-32, which ERTS's own
-  `erlang:crc32/2` computes once its seed and result are inverted, since
-  zlib's convention inverts both and Linux's does not.
+  its own ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)),
+  and one volume process, the data window's only client, that owns the
+  volume's state and runs every request, every checkpoint and the
+  cleaner as steps of pure functions that plan their block writes and
+  flushes whole, so the core is tested on the host without a medium.
+  Checkpoints and other checksummed structures use F2FS's CRC-32, which
+  ERTS's own `erlang:crc32/2` computes once its seed and result are
+  inverted, since zlib's convention inverts both and Linux's does not.
 * **Clean room.** Linux's F2FS is GPL-2.0, and none of its code enters the
-  tree. One author writes a specification of the format and of the
-  cleaner's policies, in erXos's words, from Linux's documentation and
-  sources, and implements none of it; the implementers work from that
-  specification and the ABI file alone. Implementers that are models
-  trained on public code, Linux's included, weaken the separation. A legal
-  review of the clean room weighs this, and the user requires that review
-  before any distribution includes erXos's F2FS.
+  tree. Separate facts writers read Linux's and f2fs-tools' sources and
+  record the format and the behaviour as interface facts in their own
+  words; the design and the implementation work from those records, from
+  Fuchsia's BSD-licensed `f2fs_reader` and from black-box runs of Linux
+  and f2fs-tools in the oracle guest, never from Fuchsia's read-write
+  F2FS or fstool. Implementers that are models trained on public code,
+  Linux's included, weaken the separation. A legal review of the clean
+  room weighs this, and the user requires that review before any
+  distribution includes erXos's F2FS.
 * **Linux as the oracle.** Linux's F2FS driver and `fsck.f2fs`, run in a
   Linux guest under QEMU on the host, check every image erXos's F2FS writes
-  and every state the power-cut harness produces, and the guest mounts
-  erXos's images for differential tests of file semantics.
-* **Explicit features.** It mounts only images whose superblock feature
-  bits it implements, and refuses the rest with a diagnostic naming them.
-  The design refuses `ENCRYPT`, `COMPRESSION` and `ATOMIC_WRITE` among
-  them: an image that carries any of the three is not mounted, read-only
-  or otherwise, and erXos's F2FS never sets them.
+  and every state the power-cut harness produces, and the guest writes
+  images, clean and with roll-forward records, that erXos must read back
+  as Linux does.
+* **Explicit features.** It mounts read-write only images whose
+  superblock feature bits it maintains, read-only those whose bits it can
+  read, and refuses the rest with a diagnostic naming them. The design
+  refuses `ENCRYPT`, `COMPRESSION` and `ATOMIC_WRITE` among them: an image
+  that carries any of the three is not mounted, read-only or otherwise,
+  and erXos's F2FS never sets them.
 * **Power cuts, proven.** A host harness runs the file system's core on
   the host's stock OTP over a simulated medium that records every write,
-  cuts power after every write and reorders the writes between flushes;
-  every resulting state must mount at the last completed checkpoint, with
-  every acknowledged `fsync` recovered, and pass `fsck.f2fs`.
+  cuts power after every write and reorders and tears the writes between
+  flushes; every resulting state must mount at the last completed
+  checkpoint, with every acknowledged `fsync` recovered, and pass
+  `fsck.f2fs`.
 * **Hostile media.** An image is untrusted input: every structure is
   decoded by binary matching with checked bounds and has a fuzz target,
   run on the host's stock OTP. F2FS checksums its checkpoints and, with
@@ -1243,8 +1247,9 @@ file interface, a stopgap whose limits on large media (files of at most
   partition can make its file system's process fail, which its supervisor
   restarts, serve wrong data from that partition or damage it, and nothing
   more: Erlang code cannot write outside its own heap.
-* **The cleaner**, which reclaims segments, is the hard part; the
-  specification describes the policies it implements.
+* **The cleaner**, which reclaims segments, runs as steps of the volume
+  process, greedy in its choice of victim
+  ([design-f2fs.md](design-f2fs.md#the-cleaner)).
 * **Parity.** It replaces littlefs only at parity over the file-semantics
   test corpus, as every stopgap's replacement does.
 
@@ -1476,10 +1481,10 @@ writes with its verify (`fsimg W`).
 **A trial writes nothing but the record and the reset count.** On a
 trial boot the block driver's write path refuses every write except to
 the record's window and the reset count's, and every file system mounts
-read-only without recovery: F2FS without
-roll-forward, as Linux's `norecovery` mounts it
-([research](research-boards-storage.md#file-systems)), littlefs and FAT
-without writes. Writers get `{error, erofs}`, which a release's health
+read-only and writes nothing: F2FS replaying its roll-forward records in
+memory alone ([design-f2fs.md](design-f2fs.md#read-only-mounts)), which
+after the freezing checkpoint find none, littlefs and FAT without
+writes. Writers get `{error, erofs}`, which a release's health
 checks tolerate. The block driver reads the boot value from the machine
 page through its runtime, so the rule holds whatever the storage services
 and the system domain do. A failed trial therefore leaves the data
@@ -2057,8 +2062,9 @@ Plane with and without simple uppercase forms and Deseret letters in both
 cases.
 
 erXos's F2FS is checked by Linux's F2FS driver and `fsck.f2fs` in a Linux
-guest and by the power-cut harness ([Read-write
-storage](#read-write-storage)). The EROFS images are written and checked
+guest, with images made both ways, and by the power-cut harness against
+the crash states of its design
+([design-f2fs.md](design-f2fs.md#verification)). The EROFS images are written and checked
 by fsimg: its verification runs on every image the packer writes, and
 `test/host/release_medium_test.rb` reads the release image back out of
 the medium with fsimg (`fsimg xf --offset=`). The EROFS reader is checked
@@ -2259,6 +2265,9 @@ outside this design are decided
 
 ## References
 
+* [design-f2fs.md](design-f2fs.md): erXos's F2FS, its features,
+  durability, recovery, cleaner and oracles, and the F2FS facts records
+  it rests on.
 * [research-boards-storage.md](research-boards-storage.md): file systems
   (the EROFS format's documentation and licenses, erofs-utils' licenses
   file by file, F2FS's feature bits and mount options, dm-verity's

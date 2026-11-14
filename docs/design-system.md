@@ -1996,7 +1996,7 @@ races the freeze is not a durability acknowledgement, and a write-back
 after the barrier is refused, so those stores are lost at the end. A
 forced end after unsuccessful preparation makes no such claim: a normal
 boot uses the file system's ordinary recovery, and completed durability
-operations keep their own guarantees. A trial's mount without recovery is
+operations keep their own guarantees. A trial's read-only mount is
 reached only after successful preparation. The pure end decision takes the
 requested end, the boot value and the complete set of preparation
 outcomes; an outcome still pending is a failure at the deadline.

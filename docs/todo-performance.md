@@ -319,6 +319,37 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   parent, which answered littlefs's sync at once, reporting operations a
   second. No fix may drop a flush littlefs asks for; if the cost shows, the
   fix on the table is fewer commits per operation in `erx_lfs`.
+* **[Medium] storage, F2FS's two flushes per `fsync` record**
+  ([design-f2fs.md](design-f2fs.md#fsync)): a record flushes before its
+  marked inode block and after it, where Linux writes that block with one
+  preflush and FUA, which the block service does not offer. Settled by
+  `tools/erx bench fs`'s `fsync` latency on QEMU under HVF and on the
+  Pi 4's SD card, against littlefs and against Linux's F2FS in the oracle
+  guest on the same host; the fixes on the table are group commit across
+  more waiting `fsync`s and a forced-unit-access write in the block
+  service.
+* **[Medium] storage, F2FS writes without a buffer**
+  ([design-f2fs.md](design-f2fs.md#operations)): a write shorter than a
+  block rewrites the whole block at a new address, so a stream of short
+  appends rewrites its last block each time, and every block request and
+  answer passes the one volume process. Settled by `tools/erx bench fs`
+  appends of 100 bytes and of 64 KiB, and sequential reads, in blocks a
+  second against littlefs; the fixes on the table are a write buffer per
+  file held by the volume and drained by every checkpoint and `fsync`,
+  and window requests larger than one block.
+* **[Low] storage, F2FS checkpoints without journals, and mount time**
+  ([design-f2fs.md](design-f2fs.md#checkpoints)): every checkpoint writes
+  whole NAT and SIT blocks for each changed entry, and a mount reads the
+  whole SIT, the current node segments' footers when the pack has no node
+  summaries, and the chain. Settled by blocks written per checkpoint over
+  the file-semantics corpus and by mount time of an 8 GiB volume, empty
+  and full; the fixes on the table are the NAT and SIT journals and node
+  summaries in every pack.
+* **[Low] storage, F2FS's greedy cleaner and 2 % overprovisioning**
+  ([design-f2fs.md](design-f2fs.md#the-cleaner)): background cleaning
+  takes the emptiest segment, not the oldest. Settled by G13's churn to
+  90 % utilisation, blocks moved per block written; the fix on the table
+  is cost-benefit choice in the background.
 * **[Low] files, reading an EROFS image without a cache** (`erx_erofs` and
   `erx_verity`, [design-storage.md](design-storage.md#reading-erofs-images)):
   every operation reads its names' inode and directory blocks through the
