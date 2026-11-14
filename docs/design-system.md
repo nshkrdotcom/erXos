@@ -3085,8 +3085,16 @@ library's lock to read the device's resource before the kernel call and
 to mark a bridge `firmware_lost` after an `ERX_ETIMEDOUT`
 ([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), never
 across the wait, so no other entry, and no other service, waits on the
-mailbox. Each caller waits for its answer before it asks again, so the
-queue holds at most one request per caller. The worker's end ends the
+mailbox. The queue holds at most one request per caller: the PCIe
+domain asks through its `pci_bus` facet, whose grant takes one request
+in flight and refuses another with `{error, busy}`, and the system
+domain's own callers, the sensor driver and the line service, each ask
+the next only after the last one's answer. The worker reads its
+reductions around each call and returns them with the answer, and the
+runtime charges a dirty I/O call its elapsed time, so a facet's
+account holds each request at the time the mailbox took
+([design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)).
+The worker's end ends the
 device service by their link, and its supervisor restarts both; a call
 the old worker left in the kernel finishes within its deadline, and a
 request of the new worker that meets it answers `ERX_EBUSY`, which

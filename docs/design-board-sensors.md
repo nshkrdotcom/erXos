@@ -190,6 +190,9 @@ first, as the one place firmware requests are made from.
 6. Keep the firmware notifications working beside the readings.
 7. Keep the device service answering the watchdog's liveness call
    while the firmware is asked, however long the mailbox takes.
+8. Hold what another domain's firmware requests make the system domain
+   spend to that domain's facet: one request in flight, and the time
+   the mailbox takes charged to its share.
 
 Non-goals: a thermal policy in erXos, since the firmware throttles by
 itself and no consumer needs another; setting clocks or voltages; the Pi
@@ -228,6 +231,13 @@ row and the call:
   and answers every other call
   ([design-system.md](design-system.md#devices), "Firmware requests");
   the sensor driver asks it for each machine row in turn.
+* **A request costs what it took.** The runtime charges a dirty NIF its
+  elapsed time on either pool of dirty schedulers, as ERTS already
+  charges one on a dirty CPU scheduler, so the worker's kernel call
+  shows in its reductions like any other work. The worker returns the
+  reductions its call took with the answer, and the device service's
+  serving path counts them in the reply's cost, which is what a facet's
+  admission accounts ([design-scheduler.md](design-scheduler.md#service-work)).
 
 Each requirement then follows:
 
@@ -257,6 +267,14 @@ Each requirement then follows:
   call, so the watchdog's liveness call
   ([design-system.md](design-system.md#boot), "The watchdog") is
   answered while a reading or a notification is in flight.
+* **Another domain pays for what it asks.** The PCIe domain, the one
+  caller outside the system domain, asks through its `pci_bus` facet,
+  whose grant takes one request in flight and refuses a second with the
+  facet's `{error, busy}`, and whose share is charged each request's
+  measured time. So its requests cannot queue up at the worker, and
+  however often they succeed, what they spend of the system domain is
+  held to the share the grant declares, by the admission every facet
+  already runs ([Concurrency and failure](#concurrency-and-failure)).
 * **Never fabricating** is shared. The kernel tells an ignored tag
   (`ERX_ENOTSUP`) from a malformed answer (`ERX_EPROTO`); the decoder,
   in Erlang, over a few words the kernel already bounded, checks that
@@ -570,12 +588,59 @@ already show.
   request, readings and notifications, from its one firmware worker,
   which starts the next only after the last one's answer, so two never
   meet in the kernel ([design-system.md](design-system.md#devices),
-  "Firmware requests"). Each of the worker's callers, the sensor
-  driver, the line service and the PCIe domain's bridge, waits for its
-  answer before it asks again, so the queue holds at most one request
-  of each, and a request waits behind at most one of each other caller's,
-  each at most 1 s: a notification behind at most one reading, a reading
-  behind at most a power-cycle step and the VL805's notification.
+  "Firmware requests"). The queue holds at most one request of each
+  caller. For the PCIe domain's bridge that is admission's: the
+  `pci_bus` grant's `in_flight` is 1, so its facet forwards a second
+  request only after the first one's reply, and refuses one sent
+  meanwhile with `{error, busy}`
+  ([design-domains.md](design-domains.md#facets)), however many of the
+  domain's processes ask at once. The sensor driver and the line
+  service are the system domain's own code, inside the trusted base
+  and behind no facet; each holds one request at a time because each
+  asks the next only after the last one's answer. So a request waits
+  behind at most one of each other caller's, each at most 1 s: a
+  notification behind at most one reading, a reading behind at most a
+  power-cycle step and the VL805's notification. A request a PCIe
+  incarnation's facet forwarded before the incarnation ended is still
+  served, beside the next incarnation's, so the domain's restart
+  intensity, not the facet, bounds those.
+* **What a request costs, and who pays.** Every request holds the
+  worker, one of the system runtime's dirty I/O schedulers, two by default
+  ([design-runtime.md](design-runtime.md#configuration), `+SDio`), and,
+  while the kernel or the stopgap's root backend polls the mailbox, a
+  CPU of the system group. The runtime charges that kernel call its
+  elapsed time, at ERTS's rate of four reductions a microsecond
+  (`erl_process.h:2975-2984`, with `CONTEXT_REDS` 4000 at
+  `erl_vm.h:53`; the comment there says two, the code gives four), the
+  rule ERTS already applies on a dirty CPU scheduler
+  (`beam_common.c:160-171`) and here applied on both pools
+  ([Open decision 2](#open-decisions)). The worker reads its own
+  reductions around the call and returns the difference with the
+  answer, and the device service adds it to the cost its serving path
+  returns with the reply. The PCIe domain's facet therefore accounts
+  each `firmware` request at the time the mailbox took, up to 4,000,000
+  reductions at the 1 s deadline. The `pci_bus` grant's share is
+  `reductions 5000000` per `period_ns 10000000000`: one request at its
+  deadline and the start's `targets` and `report` fit in one period,
+  and over any run of periods the domain's requests hold the worker for
+  at most about 1.25 s in 10 s, plus the one request in flight when the
+  share ran out, which the facet carries as a debt. Repeated requests
+  that each succeed just inside the deadline cost the domain nearly the same
+  share as requests that time out. The system domain's own callers are
+  charged to no facet: their rate is the poll's nine readings every 5 s
+  and the line service's power cycles, and the system group's grant
+  pays for them as for every other system service
+  ([design-scheduler.md](design-scheduler.md#service-work), S6).
+  The charge, the in-flight limit and the share are the target design,
+  runtime and manifest code that is the same in both phases. On the
+  stopgap the facet behaviour checks the limit in flight but admits by
+  no measured share (`TODO.md`, the facets item), so the one request in
+  flight holds there and the share does not: a PCIe domain that asks
+  without pause keeps the worker and a system CPU busy, the sensor
+  readings and the line's power cycles still each waiting behind at most
+  one of its requests. That is the facets item's residual of progress
+  against load, which a development build's trusted PCIe domain does
+  not exercise, and this design adds nothing to work around it.
 * **The device service stays live.** The worker alone waits on the
   kernel; the device service's own process only queues requests and
   hands out answers, so it answers the watchdog's liveness call within
@@ -627,6 +692,7 @@ already show.
 | | `ERX_EBUSY` | another request in flight: a trial request, or a call a restarted device service's old worker left in the kernel |
 | | `ERX_EWOULDBLOCK` | a call from an executor |
 | `erx_devices:firmware_read(Reading)` | `{ok, Answer}` or `{error, Status}` | the kernel call's result; a `Reading` that is not a machine row of the platform is `{error, enotsup}` |
+| `pci_bus:firmware(Bridge)` | `{error, busy}` | the facet's refusal of a request past the grant's one in flight, which the caller may retry after the first one's reply; a request sent while the share is spent waits in the facet's queue and then the domain's lane, as every facet's does |
 | `[sensors]` | `{error, unsupported}` | no sensor driver in this runtime |
 | | `{error, failed}` | a sensor driver that does not answer |
 | `/proc/sensors/status` | `enoent` | outside the reader's inspect scope, as any path |
@@ -708,6 +774,26 @@ is answered within 100 ms each time (seeded fault: the device service's
 own process making the call, under which a liveness answer waits up to
 1 s).
 
+**Repeated requests near the deadline**, in the same hosted setup with
+the model call answering `ERX_OK` after 950 ms, just inside the
+deadline. A test domain holds a `pci_bus` facet with the grant of the
+Pi 4's manifest row, and four of its processes each call
+`pci_bus:firmware(Bridge)` in a loop for six whole periods, which the
+test counts by the account's period number, while the sensor driver
+polls:
+
+| Case | Seeded fault |
+| --- | --- |
+| the model never holds two of the test domain's requests, queued or in the call, at once; the processes that ask meanwhile get `{error, busy}`; each sensor reading is answered within 2 s, its own 950 ms and at most one PCIe request's | the grant's `in_flight` set to 2: the model sees two of the domain's requests, and a reading waits behind both |
+| each successful request is charged at least 3,800,000 reductions in the facet's account, and the domain's successful requests over the six periods number at least 6 and at most 8, (6 x 5,000,000 + 4,000,000) / 3,800,000 | the worker answering without its reductions, and, separately, the dirty I/O pool charged one reduction a call: under each, the account charges each request under 10,000 reductions and the domain gets more than 20 requests through |
+| a liveness call every 100 ms is answered within 100 ms throughout | as above: the device service's own process making the call |
+
+**The dirty I/O charge**, an ERTS test beside OTP's `dirty_nif_SUITE`
+(which asserts no reduction count): a test NIF on a dirty I/O scheduler
+that sleeps 100 ms raises its caller's `reductions` by at least
+400,000. Seeded fault: the one reduction a call of the dirty I/O branch
+(`beam_common.c:152-159`) restored, under which the rise is under 100.
+
 **The QEMU `virt` suite** (HVF): the shell cell reads
 `/proc/sensors/status` and finds every attribute `[unsupported]` with
 reporter `service`. Seeded fault: a sensor driver that leaves its
@@ -774,14 +860,18 @@ change to the sensors or the mailbox core:
 
 A poll is nine requests every 5 s on the Pi 4, each holding the device
 service's firmware worker and one of the system runtime's dirty I/O
-schedulers while the kernel busy-polls the mailbox for its answer. A
+schedulers while the kernel busy-polls the mailbox for its answer, a
+CPU of the system group spent for as long as the answer takes. A
 request's latency is unmeasured: no source read gives it, and FreeBSD's
 10 s wait (`bcm2835_mbox.c:244-247`) bounds it only loosely.
 `poll_duration` reports it on every board, and the watch list carries
 the measurement ([todo-performance.md](todo-performance.md)). If a poll
 turns out to cost too much, the fixes are a longer period, or one buffer
 of several tags per poll, which the interface allows (wiki, lines 22-34)
-at the cost of a multi-tag layout in the core. The snapshot is a map of a
+at the cost of a multi-tag layout in the core. A third is a kernel call
+that sleeps until the mailbox's interrupt instead of polling: it gives
+the CPU back, changes nothing above the call, and leaves the charge as
+it is, since the worker is held as long either way. The snapshot is a map of a
 dozen small terms; `/proc` reads copy it and send no request.
 
 ## Changes to other designs
@@ -798,6 +888,9 @@ This design lands only with these edits to the documents that own them:
 | [design-abi.md](design-abi.md), `abi/erx_abi.txt`, `abi/manifest.txt` | the status `proto`, `ERX_EPROTO`; the firmware request record in the system manifest; `abi/formats/vc_property.txt` with `fw_reading` and `fw_throttle`'s span; the `sensors` kind, its units and `@fw_throttle` in the inspection schema |
 | [design-stopgap.md](design-stopgap.md) | the backend's implementation of the call in the root, with the answer window |
 | [design-live.md](design-live.md), "The /proc tree" | `/proc/sensors/status` among the paths |
+| [design-runtime.md](design-runtime.md), its ERTS changes and "NIFs and blocking" | `beam/beam_common.c`: a dirty NIF is charged its elapsed time on either pool, the dirty I/O branch's one reduction a call removed ([Open decision 2](#open-decisions)) |
+| [design-scheduler.md](design-scheduler.md#service-work) and [design-domains.md](design-domains.md#facets), "Admission by measured reductions" | a call a service's process makes on a dirty I/O scheduler counts at its elapsed time, and a request one of the service's processes hands to another is charged that process's reductions too, returned with its answer |
+| [design-pcie.md](design-pcie.md#facets) | the `pci_bus` grant's `in_flight 1` and its share, from [Concurrency and failure](#concurrency-and-failure) |
 
 ## Alternatives considered
 
@@ -829,6 +922,22 @@ This design lands only with these edits to the documents that own them:
   I/O scheduler. A process running a dirty NIF cannot run its receive
   loop, so the device service would not answer the watchdog's liveness
   call for up to 1 s per request, and longer behind a queue.
+* **The firmware entries on a dirty CPU scheduler**, where ERTS already
+  charges by time. Dirty CPU schedulers are executors, and the call
+  refuses an executor with `ERX_EWOULDBLOCK`
+  ([design-runtime.md](design-runtime.md#nifs-and-blocking)).
+* **Charging each request its deadline** instead of its measured time.
+  The device service would need ERTS's rate of reductions to time as a
+  constant of its own, a second copy of a fact ERTS owns, and a request
+  of a few milliseconds would cost the PCIe domain a second's share.
+* **A rate per row**, declared in the platform record. It is a second
+  account beside the facet's share, and its premise fails for the
+  VL805's row, which each bring-up sends again and each PCIe domain
+  restart repeats; the sensor rows are the system domain's own poll,
+  whose period already bounds them.
+* **Refusing a second request in the device service** for each caller.
+  The facet's in-flight limit already refuses it, for the one caller
+  outside the system domain, before the request reaches the service.
 * **A deadline for readings shorter than the watchdog's period.**
   Requests queued behind one another still add up past the period, and
   the notifications keep their 1 s; only a process that never waits on
@@ -863,6 +972,22 @@ This design lands only with these edits to the documents that own them:
    record, a closed tag set and a closed set of readings. Without it,
    the readings cannot exist, and this design waits; nothing else in the
    tree depends on it.
+2. **Dirty I/O calls charged their elapsed time.** OTP charges a call on
+   a dirty I/O scheduler one reduction however long it runs
+   (`beam_common.c:152-159`), so a service's work in such a call is
+   invisible to every facet's account, the firmware worker's here and,
+   by the same rule, the stopgap's littlefs worker and `prim_file`'s
+   calls. Charging both pools by elapsed time, as ERTS charges the dirty
+   CPU pool, deletes that branch and makes every such call show in the
+   admission the scheduler design already relies on. It differs from
+   stock OTP in the reductions `process_info/2` and `statistics/1`
+   report after a dirty I/O call, and it counts a call that sleeps in
+   the kernel as spent, which is the cost to a service whose dirty I/O
+   pool holds two schedulers. It constrains every runtime and service,
+   so it is recorded in `design.md` once taken. Recommendation: accept.
+   Without it, the worker measures its call with `erlang:monotonic_time/0`
+   and converts at a copy of ERTS's rate, a second source of that fact,
+   and every other dirty I/O call stays uncharged.
 
 ## References
 

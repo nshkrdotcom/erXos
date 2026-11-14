@@ -1060,6 +1060,10 @@ device record holds for its give, which marks the bridge `firmware_lost`
 at `ERX_ETIMEDOUT` ([Records](#records)), and answers `ok` for `ERX_OK`
 and `{error, Status}` naming any other status, as
 [design-usb.md](design-usb.md#the-vl805s-firmware) defines the call.
+The `pci_bus` grant takes one request in flight, which the enumerator,
+one process, never exceeds, and its share is sized for one firmware
+request at its 1 s deadline per 10 s period
+([design-board-sensors.md](design-board-sensors.md#concurrency-and-failure)).
 
 The directions follow from when each party can hold its facet. A facet
 of a system-domain service reaches a grantee with its ready answer, before
