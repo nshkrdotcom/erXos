@@ -6,7 +6,8 @@
 require 'minitest/autorun'
 require_relative '../fixtures/crypto_fixture'
 
-# Judges the kernel's entropy generator, kernel/core/rng.c, against
+# Judges the kernel's entropy generator, kernel/core/rng.c, and its boot seed,
+# kernel/core/rng_seed.c, against
 # CryptoFixture::Generator, a model written from the design's statements
 # on OpenSSL's ChaCha20 and b3sum's BLAKE3. Seeded random sequences of
 # inits, reads, mixes and clears must agree with the model in every output,
@@ -227,13 +228,42 @@ class RngTest < Minitest::Test
     end
   end
 
-  def test_core_builds_freestanding_for_the_target
-    @driver.compile_for_target(File.join(F::ROOT, 'kernel/core/rng.c'))
+  # kernel/core/rng_seed.c, the boot seed's one sequence: the counter's eight
+  # bytes, little-endian, key the generator, then /chosen's rng-seed and
+  # kaslr-seed are mixed in that order, each that is present, up to one
+  # digest's input; with no seed set, the counter alone.
+  def test_the_boot_seed_keys_from_the_counter_then_mixes_each_present_seed
+    random = Random.new(SEED)
+    cases = [[0, nil], [2**64 - 1, nil], [7, [nil, nil]], [7, [random.bytes(32), nil]],
+             [7, [nil, random.bytes(8)]], [random.rand(2**64), [random.bytes(32), random.bytes(8)]],
+             [1, [random.bytes(F::DIGEST_INPUT_MAX), random.bytes(1)]]]
+    answers = @driver.ask(cases.map { |counter, seeds| seed_request(counter, seeds) })
+    messages = cases.flat_map { |counter, seeds| [[counter].pack('Q<'), *seeds.to_a.compact] }
+    digests = @driver.blake3_table(messages)
+    cases.zip(answers).each do |(counter, seeds), answer|
+      model = F::Generator.new(digests: digests)
+      model.init([counter].pack('Q<'))
+      seeds.to_a.compact.each { |seed| assert model.mix(seed) }
+      mixed = (seeds || [nil, nil]).map { |seed| seed.to_s.bytesize }
+      assert_equal "rng-seed #{F.hex(model.key)}:1 #{mixed.join(' ')}", answer, "counter #{counter}, seeds #{mixed}"
+    end
+  end
+
+  def test_cores_build_freestanding_for_the_target
+    %w[kernel/core/rng.c kernel/core/rng_seed.c].each do |source|
+      @driver.compile_for_target(File.join(F::ROOT, source))
+    end
   end
 
   private
 
   def sanitized? = !ENV.fetch('ERX_SANITIZERS', '').empty?
+
+  # seeds is nil for no seed set, or rng-seed's and kaslr-seed's bytes, nil for one the tree lacks.
+  def seed_request(counter, seeds)
+    words = seeds.nil? ? ['none'] : seeds.map { |seed| seed.nil? ? '-' : F.hex(seed) }
+    "rng-seed #{counter} #{words.join(' ')}"
+  end
 
   def digest_request(messages) = "rng #{messages.map { |bytes| "d:#{bytes.empty? ? '' : F.hex(bytes)}" }.join(' ')}"
 

@@ -21,7 +21,7 @@ module CryptoFixture
   # The most bytes one of the generator's digests takes (ERX_RNG_DIGEST_INPUT_MAX).
   DIGEST_INPUT_MAX = Integer(File.read(File.join(ROOT, 'include/erx/core/rng.h'))[/ERX_RNG_DIGEST_INPUT_MAX\s+(\d+)/, 1])
   SOURCES = %w[kernel/crypto/sha2/sha256c.c kernel/crypto/chacha20/chacha.c kernel/crypto/blake3/blake3.c
-               kernel/crypto/blake3/blake3_portable.c kernel/core/rng.c].freeze
+               kernel/crypto/blake3/blake3_portable.c kernel/core/rng.c kernel/core/rng_seed.c].freeze
   KEY_BYTES = 32
   NONCE_BYTES = 12
   BLOCK_BYTES = 64

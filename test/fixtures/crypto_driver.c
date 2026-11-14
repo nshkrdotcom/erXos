@@ -28,6 +28,11 @@
  *        or 0. A spent or refused digest that is not all zeroes, or that
  *        still counts as hashed, stops the driver; "m" and "i" pass a refused
  *        digest on.
+ *   rng-seed COUNTER none | rng-seed COUNTER RNG KASLR
+ *               seeds a generator with erx_rng_seed from COUNTER and no
+ *               seed set, or one holding /chosen's rng-seed and kaslr-seed
+ *               as hex, "-" for a seed the tree lacks
+ *     -> rng-seed KEY:READY RNGMIXED KASLRMIXED   (the bytes each mixed)
  *   rng-residue KIND HEX HEX   KIND "hash", of two messages of one length,
  *               or "read" or "mix", under two 32-byte keys
  *     -> rng-residue DIFFERING TOUCHED
@@ -52,6 +57,7 @@
 #include <string.h>
 
 #include "erx/core/rng.h"
+#include "erx/core/rng_seed.h"
 
 #include "chacha20/chacha.h"
 #include "sha2/sha256.h"
@@ -77,6 +83,7 @@ static void driver_answer_chacha20(char *);
 static void driver_answer_chacha20_bound(char *);
 static void driver_answer_rng(char *);
 static void driver_answer_rng_residue(char *);
+static void driver_answer_rng_seed(char *);
 static void driver_answer_sha256(char *);
 static void driver_answer_sha256_repeat(char *);
 static void driver_residue_run(driver_residue_t, erx_rng_t *,
@@ -367,6 +374,40 @@ driver_answer_rng(char *cursor)
 	fputs("\n", stdout);
 }
 
+static void
+driver_answer_rng_seed(char *cursor)
+{
+	const uint64_t counter = driver_number(driver_token(&cursor));
+	const char *first = driver_token(&cursor);
+	erx_dt_seeds_t seeds;
+	erx_rng_seeded_t seeded;
+	erx_rng_t rng;
+
+	memset(&rng, 0, sizeof(rng));
+	if (strcmp(first, "none") == 0) {
+		seeded = erx_rng_seed(&rng, counter, NULL);
+	} else {
+		memset(&seeds, 0, sizeof(seeds));
+		for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++) {
+			driver_bytes_t bytes = driver_hex(seed == 0 ? first : driver_token(&cursor));
+
+			if (bytes.length > ERX_DT_SEED_MAX)
+				driver_usage("seed past ERX_DT_SEED_MAX");
+			if (bytes.length != 0)
+				memcpy(seeds.bytes[seed], bytes.bytes, bytes.length);
+			seeds.length[seed] = bytes.length;
+			free(bytes.bytes);
+		}
+		seeded = erx_rng_seed(&rng, counter, &seeds);
+	}
+	fputs("rng-seed ", stdout);
+	driver_print_hex(rng.key, sizeof(rng.key));
+	printf(":%d", rng.ready ? 1 : 0);
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++)
+		printf(" %zu", seeded.length[seed]);
+	fputs("\n", stdout);
+}
+
 /*
  * This function's saved frame record, which lies just below its caller's
  * frame, where the frame of the caller's next callee starts too. Only that
@@ -495,6 +536,8 @@ main(int argc, char **argv)
 			driver_answer_chacha20_bound(cursor);
 		else if (strcmp(command, "rng") == 0)
 			driver_answer_rng(cursor);
+		else if (strcmp(command, "rng-seed") == 0)
+			driver_answer_rng_seed(cursor);
 		else if (strcmp(command, "rng-residue") == 0)
 			driver_answer_rng_residue(cursor);
 		else
