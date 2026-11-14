@@ -52,10 +52,9 @@ static const char	*library_up(const erx_boot_handoff_view_t *);
 static const char	*console_refusal(const erx_boot_manifest_t *, const erx_boot_handoff_view_t *);
 static size_t		 line_append(char *, size_t, erx_boot_words_t);
 static const char	*device_give(const erx_boot_device_t *, const erx_dom_device_entry_t *, char *, size_t, size_t *);
-static const char	*tree_accept(void);
-static const char	*tree_facts(void);
+static const char	*tree_facts(const erx_dt_t *);
 static const char	*device_memory(const erx_dom_device_entry_t *, uint64_t *, const char **);
-static const char	*framebuffer_facts(erx_dom_device_entry_t *);
+static const char	*framebuffer_facts(erx_dom_device_entry_t *, const erx_dt_t *);
 static const char	*framebuffer_give(const erx_dom_device_entry_t *, char *, size_t, size_t *);
 
 /* The system domain's one domain library and the tables its view lies in (library_view). */
@@ -72,12 +71,7 @@ static erx_boot_words_t arg_words[4 + ERX_BOOT_DEVICES_MAX + ERX_BOOT_STRINGS_MA
 static char console_words[ERX_BOOT_CONSOLE_WORDS_MAX];
 /* Each device record's words: the given form's, or the host link's physical one, which is shorter. */
 static char device_words[ERX_BOOT_DEVICES_MAX][ERX_BOOT_GIVEN_WORDS_MAX];
-/*
- * The firmware's device tree, accepted once before the first device asks it
- * (docs/design-device-tree.md, "Facts into records"), a device's path as the reader takes
- * it, ended by NUL, and the line the root prints for each device that asked.
- */
-static erx_dt_t boot_tree;
+/* A device's path as the device-tree reader takes it, ended by NUL, and the line the root prints for each device that asked. */
 static char tree_path[ERX_PATH_MAX];
 static char tree_line[ERX_BOOT_TREE_LINE_MAX];
 _Static_assert(ERX_BOOT_GIVEN_WORDS_MAX >= ERX_BOOT_DEVICE_WORDS_MAX, "a device record's room holds either form");
@@ -133,7 +127,7 @@ library_up(const erx_boot_handoff_view_t *handoff)
 
 const char *
 erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, const erx_manifest_view_t *view,
-    const erx_pack_view_t *pack, const erx_boot_args_t *boot_args)
+    const erx_pack_view_t *pack, const erx_dt_t *tree, const erx_boot_args_t *boot_args)
 {
 	erx_boot_inputs_t inputs = { 0 };
 	erx_cpu_features_t features;
@@ -153,7 +147,7 @@ erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, const erx_manif
 	reason = library_view(view, pack);
 	if (reason != NULL)
 		return (reason);
-	reason = tree_facts();
+	reason = tree_facts(tree);
 	if (reason != NULL)
 		return (reason);
 	reason = gather_args(handoff, &manifest, &nargs);
@@ -327,13 +321,9 @@ gather_args(const erx_boot_handoff_view_t *handoff, const erx_boot_manifest_t *m
 	return (NULL);
 }
 
-/*
- * Accepts the firmware's device tree into boot_tree, once, before any device asks it
- * (docs/design-device-tree.md, "Facts into records"). Returns NULL, or why the root cannot
- * boot: the handoff carries no tree, or the reader refused it, naming its fixed reason.
- */
-static const char *
-tree_accept(void)
+/* Accepts the tree and reads its seeds (runtime_entry.h); a refusal names the reader's fixed reason. */
+const char *
+erx_fiasco_program_tree(erx_dt_t *tree, erx_dt_seeds_t *seeds)
 {
 	static const char refused[] = "the device tree: ";
 	static char line[sizeof(refused) + ERX_BOOT_STDOUT_PATH_MAX];
@@ -343,8 +333,10 @@ tree_accept(void)
 
 	if (erx_boot_tree(&bytes, &size) != ERX_OK)
 		return ("the device tree: the handoff carries none");
-	if ((reason = erx_dt_accept(bytes, size, &boot_tree)) == NULL)
+	if ((reason = erx_dt_accept(bytes, size, tree)) == NULL) {
+		erx_dt_seeds(tree, seeds);
 		return (NULL);
+	}
 	while (reason[length] != '\0')
 		length++;
 	used = line_append(line, 0, (erx_boot_words_t){ refused, sizeof(refused) - 1 });
@@ -354,25 +346,22 @@ tree_accept(void)
 }
 
 /*
- * Accepts the firmware's device tree (tree_accept) and joins its facts to the catalogue's
- * entries once, before any device is given (docs/design-device-tree.md, "Facts into
- * records"). A row of a kind a runtime drives (its role_word is set) that asks
- * (erx_boot_row_asks) has its facts read from boot_tree at its node path, and every entry's
- * DMA memory becomes what its facts admit (erx_boot_dma_memory), so a row that asked nothing
- * gets none. The root prints the line of each asking row a holder holds; the line of a row
+ * Joins the accepted tree's facts to the catalogue's entries once, before any device is
+ * given (docs/design-device-tree.md, "Facts into records"). A row of a kind a runtime
+ * drives (its role_word is set) that asks (erx_boot_row_asks) has its facts read from
+ * tree at its node path, and every entry's DMA memory becomes what its facts admit
+ * (erx_boot_dma_memory), so a row that asked nothing gets none. The root prints the line of each asking row a holder holds; the line of a row
  * the system domain holds waits for the root's own give, which makes its memory first
  * (device_give). A framebuffer row always asks, and its facts and line are
- * framebuffer_facts'. Returns NULL, or why the root cannot boot: the tree is refused, or a
- * row that asks names a path that is not a node path.
+ * framebuffer_facts'. Returns NULL, or why the root cannot boot: a row that asks names a
+ * path that is not a node path.
  */
 static const char *
-tree_facts(void)
+tree_facts(const erx_dt_t *tree)
 {
 	const char *reason;
 	size_t length;
 
-	if ((reason = tree_accept()) != NULL)
-		return (reason);
 	for (uint32_t index = 0; index < library.view.ndevices; index++) {
 		erx_dom_device_entry_t *const entry = &library_tables.devices[index];
 		const bool network = entry->role == ERX_MF_DEVICE_ROLE_NETWORK;
@@ -380,7 +369,7 @@ tree_facts(void)
 		const erx_boot_words_t path = { entry->path, entry->path_len };
 
 		if (entry->role == ERX_MF_DEVICE_ROLE_FRAMEBUFFER) {
-			if ((reason = framebuffer_facts(entry)) != NULL)
+			if ((reason = framebuffer_facts(entry, tree)) != NULL)
 				return (reason);
 			continue;
 		}
@@ -392,7 +381,7 @@ tree_facts(void)
 			for (size_t at = 0; at < path.length; at++)
 				tree_path[at] = path.bytes[at];
 			tree_path[path.length] = '\0';
-			erx_dt_device(&boot_tree, tree_path, ERX_DT_ROW_NODE, &entry->facts);
+			erx_dt_device(tree, tree_path, ERX_DT_ROW_NODE, &entry->facts);
 		}
 		entry->memory = erx_boot_dma_memory(entry->asked ? &entry->facts : NULL, row_memory);
 		if (entry->asked && entry->row != ERX_MF_NONE && (length = erx_boot_tree_line(path, row_memory, network,
@@ -412,7 +401,7 @@ tree_facts(void)
  * why the root cannot boot: the row's path is not a node path.
  */
 static const char *
-framebuffer_facts(erx_dom_device_entry_t *entry)
+framebuffer_facts(erx_dom_device_entry_t *entry, const erx_dt_t *tree)
 {
 	const erx_boot_words_t path = { entry->path, entry->path_len };
 	const erx_dt_window_t window = { entry->window.base, entry->window.size };
@@ -425,7 +414,7 @@ framebuffer_facts(erx_dom_device_entry_t *entry)
 	for (size_t at = 0; at < path.length; at++)
 		tree_path[at] = path.bytes[at];
 	tree_path[path.length] = '\0';
-	erx_dt_framebuffer(&boot_tree, tree_path, ERX_FRAMEBUFFER_COMPATIBLE, window, &fb);
+	erx_dt_framebuffer(tree, tree_path, ERX_FRAMEBUFFER_COMPATIBLE, window, &fb);
 	(void)erx_dom_view_framebuffer(entry, &fb, fb.status == ERX_DT_FB_OK ? erx_dt_fb_format_name(fb.format) : NULL);
 	if ((length = erx_boot_framebuffer_line(path, &entry->framebuffer, entry->format, tree_line,
 	    sizeof(tree_line))) != 0)

@@ -5,7 +5,8 @@
 
 /*
  * A root built with nothing to run, as the boot suite's is: it has checked the handoff and
- * the archive, says so, and ends the machine.
+ * the archive, says so, and ends the machine. It links no device-tree reader, so its
+ * generator starts from the counter alone.
  */
 
 #include "erx/abi.h"
@@ -16,12 +17,22 @@
 static const char line[] = "erx: root task: this image holds no program\n";
 
 const char *
+erx_fiasco_program_tree(erx_dt_t *tree, erx_dt_seeds_t *seeds)
+{
+	(void)tree;
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++)
+		seeds->length[seed] = 0;
+	return (NULL);
+}
+
+const char *
 erx_fiasco_program_start(const erx_boot_handoff_view_t *handoff, const erx_manifest_view_t *manifest,
-    const erx_pack_view_t *pack, const erx_boot_args_t *boot_args)
+    const erx_pack_view_t *pack, const erx_dt_t *tree, const erx_boot_args_t *boot_args)
 {
 	(void)handoff;
 	(void)manifest;
 	(void)pack;
+	(void)tree;
 	(void)boot_args;
 	erx_fiasco_console_write(line, sizeof(line) - 1);
 	(void)erx_machine_end(0, ERX_END_OFF);

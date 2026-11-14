@@ -6,9 +6,9 @@
 /*
  * The native root task on Fiasco: it finds bootstrap's handoff record through
  * the kernel information page, accepts it, opens the archive the record names,
- * checks the archive's last entry, reads the system manifest, takes the machine's
- * memory from sigma0 into the pool and refuses the boot if that falls short of the
- * manifest's root_memory, starts the root service, reports what it saw on the
+ * checks the archive's last entry, reads the system manifest, accepts the firmware's
+ * device tree, takes the machine's memory from sigma0 into the pool and refuses the boot if that falls short of the
+ * manifest's root_memory, seeds the generator, starts the root service, reports what it saw on the
  * console, and runs its program, ERTS, through musl's start path
  * (docs/design-stopgap.md, "Boot handoff").
  *
@@ -26,6 +26,8 @@
 #include "erx/abi.h"
 #include "erx/abi_reader.h"
 #include "erx/core/boot_handoff.h"
+#include "erx/core/dt.h"
+#include "erx/explicit_bzero.h"
 #include "erx/pack.h"
 #include "liberx/backend/core/manifest_dma.h"
 #include "liberx/backend/fiasco/console.h"
@@ -59,6 +61,8 @@ ERX_DECLARE_ABI_NOTE(erx_fiasco_root_abi_note);
  * for the root's life.
  */
 static erx_pack_view_t root_pack;
+/* The firmware's device tree, accepted once, whose devices' facts the program's start reads. */
+static erx_dt_t root_tree;
 
 void erx_fiasco_root_main(void);
 
@@ -83,13 +87,14 @@ erx_fiasco_root_main(void)
 
 	reason = root_boot(&handoff, &manifest, &boot_args);
 	if (reason == NULL)
-		reason = erx_fiasco_program_start(&handoff, &manifest, &root_pack, &boot_args);
+		reason = erx_fiasco_program_start(&handoff, &manifest, &root_pack, &root_tree, &boot_args);
 	root_refuse(reason);
 }
 
 static const char *
 root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_boot_args_t *boot_args)
 {
+	erx_dt_seeds_t seeds;
 	const char *reason;
 	uint64_t dma_bytes;
 
@@ -105,8 +110,15 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 		return ("the kernel command line: a word of erx. that this build refuses");
 	if (!erx_boot_manifest_dma_total(manifest, &dma_bytes))
 		return ("manifest: the devices' memory cannot be counted");
-	reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff->image.start,
-	    (size_t)handoff->image.size, dma_bytes);
+	/*
+	 * The tree comes first, so the generator mixes /chosen's seeds in before anything
+	 * draws from it; the seeds' bytes are erased once the generator holds them.
+	 */
+	reason = erx_fiasco_program_tree(&root_tree, &seeds);
+	if (reason == NULL)
+		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff->image.start,
+		    (size_t)handoff->image.size, dma_bytes, &seeds);
+	erx_explicit_bzero(&seeds, sizeof(seeds));
 	if (reason != NULL)
 		return (reason);
 	const uint64_t free_pages = erx_fiasco_vm_free_pages();

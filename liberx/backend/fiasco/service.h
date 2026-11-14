@@ -14,6 +14,7 @@
 #include "erx/cdefs.h"
 #include "erx/core/boot_handoff.h"
 #include "erx/core/crash.h"
+#include "erx/core/dt.h"
 #include "erx/release.h"
 #include "erx/watchdog.h"
 
@@ -29,10 +30,13 @@
  * the service and makes it this thread's pager. From its return every fault of a
  * root thread ends the machine. dma_bytes is the devices' memory the root will
  * make, which sizes the contiguous pool (erx_fiasco_vm_init): the manifest's total
- * for the program root, a test's own figure for a native test root. Returns NULL,
- * or why the boot cannot go on.
+ * for the program root, a test's own figure for a native test root. seeds are
+ * /chosen's (erx_fiasco_program_tree), which the generator mixes in, or NULL for a
+ * root that reads no tree; they stay the caller's to erase. Returns NULL, or why the
+ * boot cannot go on.
  */
-const char	*erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes);
+const char	*erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes,
+	    const erx_dt_seeds_t *seeds);
 /*
  * Keeps what bootstrap's handoff said of the machine, its build identifier and boot
  * value, for erx_object_info's machine report. It runs once, before

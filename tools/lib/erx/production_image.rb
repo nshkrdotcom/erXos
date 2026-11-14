@@ -635,6 +635,13 @@ module Erx
       SMOKE_CELLS = %w[tcg-1cpu tcg-deterministic].freeze
       # One more word on the deterministic boot's line, which the page must carry too.
       DETERMINISTIC_LINE = 'erx.det=1 erx.arg=-deterministic'
+      # The root's entropy line (liberx/backend/fiasco/entropy.c), by what its generator
+      # mixed: QEMU virt's tree carries /chosen's rng-seed and kaslr-seed, unless deterministic
+      # mode's dtb-randomness=off leaves them out (Qemu::MACHINES), and a boot without them
+      # starts from the counter alone. A boot that pins neither takes any seeded line or that one.
+      ENTROPY_SEEDED = %r{\Aerx: entropy: from /chosen/rng-seed \([1-9][0-9]* bytes\), /chosen/kaslr-seed \([1-9][0-9]* bytes\) and the counter\r?\n\z}n
+      ENTROPY_COUNTER = /\Aerx: entropy: quality: low, from the counter alone\r?\n\z/n
+      ENTROPY = { seeded: ENTROPY_SEEDED, counter: ENTROPY_COUNTER, either: Regexp.union(%r{\Aerx: entropy: from /chosen/[ -~]* and the counter\r?\n\z}n, ENTROPY_COUNTER) }.freeze
       # The watchdog's numbers for the proof boot under each accelerator of the whole matrix,
       # which TCG never runs: a boot deadline it beats, and a pet deadline.
       PET_PROOF = { 'hvf' => { period: 1, pet: 5, boot: 60 } }.freeze
@@ -854,9 +861,10 @@ module Erx
       # release, `kernel` starts, and erx_console's slogan and its command shell's banner,
       # written through erx_pl011, prove the release ran that far. The command shell's
       # prompt ends no line, so no point names it. A test image (ProductionImage#build_test_image)
-      # is booted only when test_image says so, and adds its banner line.
+      # is booted only when test_image says so, and adds its banner line. entropy names the
+      # ENTROPY line the root prints first.
       def self.checkpoints(built, root:, watchdog:, cpus:, extra_arguments: 0, manifest_source:,
-                           memory_mib:, hostlink: nil, test_image: false)
+                           memory_mib:, hostlink: nil, test_image: false, entropy: :either)
         source = manifest_source
         memory, baseline = %w[root_memory system_baseline].map { |key| source[/^\s*#{key} (\d+)$/, 1] }
         units = source.scan(/^unit /).size
@@ -871,6 +879,7 @@ module Erx
         manifest = /\Aerx: root task: manifest root_memory #{memory} baseline #{baseline} units #{units} pool pages [0-9]+ image [0-9]+\r?\n\z/n
         [*Qemu.boot_transcript(memory_mib: memory_mib, test_image: test_image),
          point('image-identity', /\Aerx: boot image build/n, image, speaker: 'the kernel reports'),
+         point('entropy', /\Aerx: entropy: /n, ENTROPY.fetch(entropy)),
          point('root-identity', /\Aerx: root task: build/n, identity),
          point('root-manifest', /\Aerx: root task: manifest/n, manifest),
          point('root-watchdog', /\Aerx: root task: watchdog/n, /\Aerx: root task: watchdog #{watchdog}\r?\n\z/n),
@@ -1210,7 +1219,7 @@ module Erx
 
       def smoke_boot(built)
         hostlink = QemuPlan::NO_HOSTLINK
-        points = production_checkpoints(built, watchdog: watchdog_pattern('tcg'), cpus: 1, hostlink: hostlink)
+        points = production_checkpoints(built, watchdog: watchdog_pattern('tcg'), cpus: 1, hostlink: hostlink, entropy: :seeded)
         full = boot('tcg', 1, built, memory_mib: @machine.memory_mib, points: points, machine_end: false, command_line: COMMAND_LINES['tcg'],
                                        hostlink: hostlink)
         { serial: full.fetch('serial_log'), seconds: full.fetch('elapsed_seconds') }.freeze
@@ -1222,7 +1231,7 @@ module Erx
 
       def full_matrix(accels, cpus, built, narrow)
         accels.product(cpus).to_h do |accel, count|
-          points = production_checkpoints(built, watchdog: watchdog_pattern(accel), cpus: count)
+          points = production_checkpoints(built, watchdog: watchdog_pattern(accel), cpus: count, entropy: :seeded)
           full = boot(accel, count, built, memory_mib: @machine.memory_mib, points: points, machine_end: false, command_line: COMMAND_LINES[accel])
           if count == cpus.first
             boot(accel, count, built, memory_mib: @machine.memory_mib, machine_end: true, command_line: UNKNOWN_WORD_LINE,
@@ -1249,7 +1258,8 @@ module Erx
       # byte for byte (DeterministicTranscript); the recipe is one CPU under TCG. The cell
       # carries how many lines the two agreed on.
       def deterministic(built)
-        points = production_checkpoints(built, watchdog: 'off', cpus: 1, extra_arguments: DETERMINISTIC_LINE.scan('erx.arg=').size)
+        points = production_checkpoints(built, watchdog: 'off', cpus: 1, extra_arguments: DETERMINISTIC_LINE.scan('erx.arg=').size,
+                                                entropy: :counter)
         first, second = Array.new(2) do
           report = boot('tcg', 1, built, memory_mib: @machine.memory_mib, machine_end: false, command_line: DETERMINISTIC_LINE, points: points)
           File.binread(report.fetch('serial_log'))
