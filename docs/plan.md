@@ -3211,9 +3211,10 @@ installation brings erXos's F2FS to the Pi 4, whose files survive power
 cuts and a later update's failed trial.
 
 **Scope, on QEMU (1b-H).** The clean-room specification of the format, of
-the cleaner's policies and of a read-only mount without recovery, as
-Linux's `norecovery` mounts for a trial boot, written by one author from
-Linux's documentation and sources who implements none of it, and the
+the cleaner's policies and of a trial boot's read-only mount, which
+replays the roll-forward records in memory and writes nothing, written
+by one author from Linux's documentation and sources who implements
+none of it, and the
 implementation, in Erlang, from it alone; the feature bits it implements,
 refusing the rest; the cleaner; the Linux oracle guest with `fsck.f2fs`;
 the power-cut harness; the fuzz target; legal review of the clean room
@@ -3228,8 +3229,9 @@ update whose storage formats differ from the running system's
 **Exit criteria, on QEMU (1b-H).** Every image erXos's F2FS writes, and
 every state of the power-cut harness, passes `fsck.f2fs` and mounts in the
 Linux guest at the last completed checkpoint with every acknowledged
-`fsync`; a read-only mount without recovery writes nothing, on erXos's
-F2FS and on Linux's mounted with `norecovery`; the file-semantics corpus
+`fsync`; a read-only mount writes nothing, over a window that fails every
+write, and Linux's `ro,norecovery` mount of each erXos image shows its
+last checkpoint without the records; the file-semantics corpus
 agrees with littlefs and with Linux's F2FS, every difference a bug fixed,
 a documented improvement with a test, or a bug in littlefs recorded as
 such; the fuzz target runs its budget clean.

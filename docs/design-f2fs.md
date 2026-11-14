@@ -82,7 +82,6 @@ Decisions every reader of this document needs:
 * [Performance](#performance)
 * [Alternatives considered](#alternatives-considered)
 * [Stages](#stages)
-* [Open decisions](#open-decisions)
 * [Risks](#risks)
 * [References](#references)
 
@@ -184,7 +183,10 @@ entries and dentry slots ([F 1]).
   promised: the last completed checkpoint with every acknowledged `fsync`.
 * **F2-R2.** erXos mounts read-write any image Linux v7.3.4 or
   `mkfs.f2fs` 1.16.0 writes with features and checkpoint flags erXos
-  maintains, and replays Linux's roll-forward records as Linux would.
+  maintains, a main area of more than 16 segments and room for its mount
+  checkpoint, and replays Linux's roll-forward records as Linux would.
+  Any other image whose features and flags it can read it mounts
+  read-only.
 * **F2-R3.** An acknowledged `fsync` survives a power cut at any later
   point, including a cut while a mount recovers it.
 * **F2-R4.** No state erXos's own writes can leave shows a file bytes
@@ -254,7 +256,10 @@ mount accepts, every other flag refused with a diagnostic naming it.
 | any other bit | refused | unknown |
 
 Beyond the feature word and the flags, a mount refuses a block size
-other than 4096 bytes and a segment other than 512 blocks ([F 3]). A
+other than 4096 bytes and a segment other than 512 blocks ([F 3]), and
+mounts read-only a volume whose main area of 16 segments or fewer leaves
+erXos's cleaner no room
+([The space a volume offers](#the-space-a-volume-offers)). A
 volume marked as needing a check (`FSCK` or `QUOTA_NEED_FSCK`, or a
 non-zero `s_errors` or stop-reason count in the superblock, [F 12])
 mounts as Linux mounts it ([F 56]), with the mark kept and shown: erXos
@@ -324,7 +329,9 @@ the allocator's only rule, and holds it in three more places:
   the records traced in Linux ([R 25]; whether Linux has another is their
   open question 6);
 * summaries are part of the durable view, and an SSA block is written
-  only for a segment whose summary the durable view does not read
+  only for a segment whose summary the durable view does not read; every
+  summary the state changed reaches its SSA block at the next
+  checkpoint, unless that checkpoint's pack or footers carry it
   ([Segment summaries](#segment-summaries)).
 
 Four orderings complete the construction, each the plan's to keep, not
@@ -496,12 +503,21 @@ The state is one record that `erx_f2fs_core` alone constructs:
   knows its next block after every allocation, moving to a free segment
   when its segment fills, because each node footer names that next block
   ([R 35]);
+* **the unpublished summaries**: the whole summary block of each
+  segment whose SSA block does not hold its summary. Those are the
+  committed checkpoint's six logs, whose summaries come from its pack or
+  are rebuilt from their footers at mount, and every segment in which a
+  block has become live since the checkpoint, whose entries `set_slot`
+  and `set_node` record ([Segment summaries](#segment-summaries));
 * **the touched and claimed sets**, **the free nid pool** (nids whose
   committed NAT entry is empty and that no step has taken since the
   checkpoint, [R 25]), and **the freed generations**: for each nid whose
   inode was freed since the mount and that no inode has taken since, that
   inode's `i_generation` ([Inodes](#inodes));
-* **the orphans**: inodes with no link that a hold keeps;
+* **the orphans**: inodes with no link whose freeing has not ended,
+  because a hold keeps them or because their nodes are being freed in
+  steps, so a checkpoint between those steps lists the inode and a mount
+  after a cut frees the rest ([R 75]);
 * **the epoch's facts**: per inode, what happened to it since the
   checkpoint (created, recorded, renamed or linked, a node freed), which
   decide whether an `fsync` can be a record;
@@ -531,7 +547,8 @@ Every change of a block reference goes through one function,
 inode's address array and the address one of `NULL_ADDR`, `NEW_ADDR` or
 a real address ([F 4]). It clears the old address's valid bit, sets the
 new one's, moves the new block from claimed to live, records the new
-block's summary entry ([F 46]), adjusts `valid_block_count` by the
+block's summary entry ([F 46]) in its segment's unpublished summary,
+adjusts `valid_block_count` by the
 slots' weights (a real address or `NEW_ADDR` counts one, `NULL_ADDR`
 none; [T 61], [T 75]) and adjusts the inode's `i_blocks`. A real address
 that another slot holds, as the block's summary names it and that slot
@@ -540,8 +557,9 @@ owners; only replaying a Linux chain meets that case ([R 57]). Writes,
 truncates, the cleaner's moves and replay all call it, so the invariants
 it keeps are kept everywhere. Node addresses change only
 through `set_node(State, Nid, Ino, Address)`, which keeps the NAT entry,
-bumps its version when a node is freed ([F 33]) and adjusts the node and
-inode counts.
+bumps its version when a node is freed ([F 33]), records a new node
+block's summary entry, its nid, in its segment's unpublished summary
+([F 46]), and adjusts the node and inode counts.
 
 ### Inodes
 
@@ -573,13 +591,20 @@ them.
 **A new inode's `i_generation`** is one more, modulo 2^32, than the
 generation of the last inode freed at its nid since the mount, which the
 state's freed generations keep; at a nid that has held no inode since
-the mount it is the low 32 bits of the epoch's checkpoint version. So
-while the storage domain lives, which is as long as a qid path must name
-one file ([design-storage.md](design-storage.md#read-write-storage)), no
-two inodes at one nid share a generation, whichever writer made the
-first: a repeat would take 2^32 inodes at one nid, each a checkpoint
-apart by the nid rule. The freed generations hold one entry per free nid
-that held an inode in this mount, dropped when an inode takes the nid.
+the mount it is the low 32 bits of the epoch's checkpoint version. A qid
+path must name one file while the storage domain lives
+([design-storage.md](design-storage.md#read-write-storage)), which is
+one mount. A nid takes at most one new inode an epoch, since a freed nid
+returns to the pool only at the next commit, so its generations could
+repeat only after 2^32 epochs, and **a mount admits requests for fewer
+than 2^32 epochs**: the checkpoint whose version is 2^32 above the
+mounted one ends the volume after its commit, as a failed write does,
+and the storage domain's restart begins a new life. Within a life no two
+inodes at one nid share a generation, whichever writer made the first.
+The bound is 49 days at a checkpoint every millisecond, and thousands of
+years at the 30-second timer. The freed generations hold one entry per
+free nid that held an inode in this mount, dropped when an inode takes
+the nid.
 
 File blocks map through the address array, two direct nodes, two
 indirect and one double indirect node, with the node offsets of [F 53].
@@ -641,19 +666,34 @@ pairs, each taking at most one, so no step takes more.
 size inside a block it keeps rewrites that block out of place, as a
 write does, with zeros from the new size to the block's end, and frees
 the slots and nodes past it through the same functions; a truncate to a
-block boundary needs no write. So on every image erXos writes, a file's
-bytes at or past its size are zero, which Linux may rely on when it
-extends a file (unverified; an oracle test of
-[Verification](#the-linux-oracle-guest) checks it). erXos in turn never
-relies on it for an image Linux wrote: a write merges zeros, not the old
-block's bytes, wherever its block lies at or past the old size, and a
-size raise by `setattr` rewrites the block holding the old end with zeros
-after it in the same way. So an extension shows zeros, as POSIX and the
-shared mappings of [design-files.md](design-files.md#shared-mappings)
-require. A truncate that frees many nodes sets the size in its first step
-and frees at most 64 nodes a step; a checkpoint between its steps sees
-blocks past the size still mapped, which no read reaches and
-`fsck.f2fs` does not check ([T 61]).
+block boundary needs no write. A truncate that frees many nodes sets the
+size and rewrites that block in its first step, frees at most 64 nodes
+in each step after it, and answers after its last, so the file's owner
+sends nothing else for the file meanwhile
+([Processes and ownership](#processes-and-ownership)). A checkpoint
+between its steps commits nodes past the size still mapped, which no
+read reaches and `fsck.f2fs` does not check ([T 61]), and a cut there
+leaves them mapped.
+
+So erXos relies on nothing past a size, whoever left it there, a cut
+truncate of its own or Linux: **a step that raises a file's size over
+bytes it does not write first truncates the file to its old size**,
+through the same truncate. Such a step is a size raise by `setattr`, or
+a write that starts past the block holding the old size; a write that
+starts in that block or below it merges zeros, not the old block's
+bytes, wherever its block lies at or past the old size. The file's owner
+orders its writes and size changes, so nothing maps a slot of the file
+between the truncate and the raise. Normally nothing lies past the old
+size, and the truncate reads only the path to it, which the raise needs
+anyway. So an extension shows zeros, after a restart as before one, as
+POSIX and the shared mappings of
+[design-files.md](design-files.md#shared-mappings) require.
+
+On every image erXos writes, then, the block holding a file's size has
+zeros past the size, and no slot past it is mapped unless a cut fell
+between a truncate's steps. Whether Linux relies on either when it
+extends a file is unverified; the oracle guest checks both
+([The Linux oracle guest](#the-linux-oracle-guest)).
 
 **A read** is a lookup step that answers the block addresses of the range
 (holes and `NEW_ADDR` read as zeros, [C 12]) and the volume reads them;
@@ -673,24 +713,33 @@ check ([R 57]), the cleaner ([R 80]) and `fsck.f2fs` ([T 68]). None of
 them decides by the summary of a block that was invalid at the
 checkpoint: replay consults a block's summary only while the block is
 valid in the replayed state, and a block invalid at the checkpoint
-becomes valid only through `set_slot`, which records its summary in the
-state. So the durable view reads a segment's SSA block only when the
-segment held a valid block at the committed checkpoint and was not one
-of its logs, and the summary rule follows:
+becomes valid only through `set_slot` or `set_node`, which record its
+summary in the state. So the durable view reads a segment's SSA block
+only when the segment held a valid block at the committed checkpoint and
+was not one of its logs, and the summary rule follows:
 
 **An SSA block is written only for a segment that held no valid block at
-the committed checkpoint, or was one of its six logs.** For a running
-volume this costs nothing: its logs enter only free segments, so every
-segment a log leaves during an epoch is one of the two kinds, and the
-checkpoint after a log leaves a segment writes that segment's SSA block;
-a current data log's summary goes into each checkpoint pack; a current
-node log's summary goes into the pack only at an unmount checkpoint, as
-Linux's rule is, and otherwise a mount rebuilds it from the footers. A
-mount meets the other case: a Linux chain can place a replayed data block
-in a segment that held valid blocks at the checkpoint, a threaded log's
-([R 33]), or move a block valid at the checkpoint to another slot
-([R 57]). The mount checkpoint copies such a block into the cold data log
-instead of adopting it where it lies ([Replay](#replay)), so the old
+the committed checkpoint, or was one of its six logs.** Every summary
+the state changes lies in such a segment, so the rule costs nothing: a
+block becomes live only at an address the allocator gave, in a committed
+log's segment or in a free segment a log entered, or at an address
+replay adopts, which [Replay](#replay) allows only in the same two
+kinds. **Each checkpoint writes the SSA block of every unpublished
+summary whose segment is not one of its own logs.** A current data log's
+summary goes into the pack instead, and a current node log's into the
+pack at an unmount checkpoint, as Linux's rule is; otherwise a mount
+rebuilds it from the footers. So after every commit each valid block's
+summary is where the new durable view reads it, whether a log left its
+segment or replay adopted it in a segment no log enters again
+(`fsck.f2fs` checks every one, [T 68]), and only the new checkpoint's
+logs keep unpublished summaries.
+
+A mount meets one case the rule refuses: a Linux chain can place a
+replayed data block in a segment that held valid blocks at the
+checkpoint, a threaded log's ([R 33]), or move a block valid at the
+checkpoint to another slot ([R 57]). The mount checkpoint copies such a
+block into the cold data log instead of adopting it where it lies
+([Replay](#replay)), so the old
 segment's SSA block keeps every entry the old checkpoint needs, and the
 stale entry it keeps for the block, now invalid, is read by no one.
 
@@ -726,9 +775,11 @@ whole from the state at its start:
 2. **Write the NAT blocks** holding a changed entry, each whole, into the
    copy the committed version bitmap does not select, flipping its bit
    ([F 34], [R 3]); **the SIT blocks** the same way ([F 38], [R 4]); and
-   the SSA blocks of segments the logs left, which the summary rule
-   allows. The journals are empty, and entries the mounted checkpoint kept
-   in its journals are written to their blocks here ([F 47]).
+   **the SSA block of every unpublished summary** whose segment is not
+   one of this checkpoint's logs, which the summary rule allows
+   ([Segment summaries](#segment-summaries)). The journals are empty, and
+   entries the mounted checkpoint kept in its journals are written to
+   their blocks here ([F 47]).
 3. **Write the pack body** into the pack the committed checkpoint is not
    in: the header block, the payload blocks that continue the SIT version
    bitmap ([F 23]), the orphan blocks when orphans exist ([F 26]), the
@@ -738,8 +789,9 @@ whole from the state at its start:
    **flush** again. The checkpoint is committed when that flush is
    answered, and this is the one place anything is released: the touched
    set becomes the live set, prefree segments become free, freed nids
-   join the pool, the epoch's facts and charge clear, the epoch ends, and
-   the checkpoint is reported.
+   join the pool, the unpublished summaries become the new logs' alone,
+   the epoch's facts and charge clear, the epoch ends, and the checkpoint
+   is reported.
 
 The header carries the new version, one above the committed one, the
 counts, the six logs' positions, all `alloc_type` LFS, and the flags:
@@ -903,6 +955,19 @@ structure and the rule, after writing nothing:
 A read-write mount then writes the mount checkpoint; a read-only mount
 serves the state as it is.
 
+**The mount's allowance.** What a mount holds in memory is admitted
+against one allowance, a fixed share of the storage domain's memory
+grant, counted in bytes. The SIT, whose size the superblock's count of
+main segments gives at about 150 bytes a segment, is admitted before
+step 4 reads it; the walk admits each block it adds to the footprint,
+and replay each block it makes dirty, against what remains. A mount that
+would pass the allowance stops there and fails with `enomem`, writing
+nothing, with a log line naming the allowance and what passed it. The
+storage domain's grant is sized to cover the SIT of each partition it
+mounts and a chain erXos writes, whose footprint and replayed nodes the
+epoch's charge bounds ([The room rule](#the-room-rule)), so only a Linux
+chain, or a medium larger than the grant was sized for, meets the bound.
+
 ### The walk
 
 The walk starts at the warm node log's next block of the chosen
@@ -930,7 +995,8 @@ blocks not valid at the checkpoint, since every chain block was written
 after it, and a chain block valid at the checkpoint, or a walk past the
 bound, which a loop makes, fails the mount, as `fsck.f2fs` treats both
 ([T 57]). A read error fails the mount with `eio`. Every block the walk
-read, its end included, is the walk's **footprint**.
+read, its end included, is the walk's **footprint**, which the mount's
+allowance admits as the walk grows it ([Mount](#mount)).
 
 ### Orphan cleanup
 
@@ -982,25 +1048,29 @@ differently:
 * **Data blocks are adopted where the summary rule allows.** A data
   block a replayed slot names is live where it lies when its segment
   held no valid block at the committed checkpoint or was one of its
-  logs, as [R 58] adopts it. Otherwise, which only a Linux chain can
-  make, the mount checkpoint copies it: the block is read, written to a
-  free block of the cold data log, and installed with `set_slot` once
-  its write is answered, before the checkpoint's first phase. Its old
-  address is then invalid, and the old segment's SSA block is not
-  written.
+  logs, as [R 58] adopts it; `set_slot` records its summary, and the
+  mount checkpoint writes that segment's SSA block unless the segment is
+  one of its own logs, whether or not a log ever enters it again
+  ([Segment summaries](#segment-summaries)). Otherwise, which only a
+  Linux chain can make, the mount checkpoint copies it: the block is
+  read, written to a free block of the cold data log, and installed with
+  `set_slot` once its write is answered, before the checkpoint's first
+  phase. Its old address is then invalid, and the old segment's SSA block
+  is not written.
 
 erXos's own chains need no copy: their data lies in segments its logs
-entered free during the epoch, or in the committed warm data log's.
+entered free during the epoch, or in the committed warm data log's, and
+the mount checkpoint publishes those segments' summaries, which the
+checkpoint the cut prevented would have written.
 Replay sees Linux's chains, which may hold inline data, `NEW_ADDR` slots,
 several marked blocks per inode and addresses moved between slots, and
 erXos's, which hold none of those but the marks; the same functions take
 both.
 
-Replay's state is bounded by the mount's allowance: dirty blocks up to a
-fixed share of the storage domain's memory grant, never less than the
-charge bound, so every chain erXos writes fits. A Linux chain whose
-replay would pass it fails the mount, writing nothing, with a log line
-naming the allowance.
+Replay's dirty blocks are admitted against the mount's allowance
+([Mount](#mount)), which every chain erXos writes fits; a Linux chain
+whose replay would pass it fails the mount with `enomem`, writing
+nothing.
 
 **A failed recovery fails the mount.** Linux instead mounts again without
 roll-forward, at the checkpoint, and marks the volume for `fsck.f2fs`
@@ -1013,17 +1083,24 @@ for every program that trusted those `fsync`s.
 
 ### Read-only mounts
 
-A read-only mount, a trial's or any mount whose features are in R but
-not in W, runs every step above in memory and writes nothing: the volume
-answers every mutation `erofs`, runs no cleaner and no timer, and its
-checkpoint and freeze requests answer at once with nothing to do. It
+A read-only mount, a trial's or one that a volume's features, size or
+room require, runs every step above in memory and writes nothing: the
+volume answers every mutation `erofs`, runs no cleaner and no timer, and
+its checkpoint and freeze requests answer at once with nothing to do. It
 serves the replayed state, so it shows every acknowledged `fsync`
 without writing it. Linux, by contrast, replays and writes even on a
 plain `ro` mount of a writable device, and refuses the mount on a
-read-only device that has something to replay ([R 69-70]). That a
-trial's mount replays in memory, rather than mounting without recovery
-as M13's scope states, is pending [Open decisions](#open-decisions), 1;
-the rest of this design assumes the recommendation there.
+read-only device that has something to replay ([R 69-70]).
+
+**A trial's mount replays in memory**, rather than mounting without
+recovery as Linux's `norecovery` does: F2FS has one read-only mount, and
+no second mount mode exists to build and test. After the freezing
+checkpoint that precedes a trial the chain is empty, so the trial sees
+the files a mount without recovery would; after an unordered end it
+also shows the acknowledged `fsync`s. It writes nothing, so F2-R5 and
+the trial's guarantee hold. Linux's `ro,norecovery` mount ([R 67]) stays
+the oracle's check of erXos's checkpoints without their chains
+([The Linux oracle guest](#the-linux-oracle-guest)).
 
 ### Read-write mounts: the mount checkpoint
 
@@ -1059,13 +1136,20 @@ read-only instead, with a log line naming the shortfall.
 The volume's space is the checkpoint's `user_block_count` ([F 21]) or
 less: erXos counts at most (M - 16) x 512 blocks, where M is the main
 area's segments and 16 the overprovisioning the cleaner's argument below
-needs. erXos's format overprovisions more than that
+needs. **A volume whose main area has 16 segments or fewer therefore
+offers erXos no space and mounts read-only**, with a log line naming M,
+as a volume with a feature outside W does
+([Scope](#scope-features-and-forms)). `mkfs.f2fs` makes such a volume on
+a device of 44 MiB, its smallest, with 14 main segments ([T 17]), up to
+just under 50 MiB, by the arithmetic of [T 11-12]. erXos's format
+overprovisions at least 16 segments
 ([Formatting a volume](#formatting-a-volume)), so on its own volumes the
-checkpoint's count is the smaller; on a small volume `mkfs.f2fs` made,
-whose overprovisioning can be 10 segments ([T 18]), erXos answers
-`enospc` up to six segments earlier than Linux would. A step that would take
-`valid_block_count` past the space answers `enospc` before it changes
-anything, as does one that needs more nodes than the NAT has free nids.
+checkpoint's count is never the larger; on a writable volume `mkfs.f2fs` made,
+whose overprovisioning can be as little as 10 segments ([T 15],
+[T 18]), erXos answers `enospc` up to six segments earlier than Linux
+would. A step that would take `valid_block_count` past the space answers
+`enospc` before it changes anything, as does one that needs more nodes
+than the NAT has free nids.
 
 ### The room rule
 
@@ -1188,9 +1272,11 @@ nothing above the callback module changes.
   ([design-files.md](design-files.md#identity-and-version)).
 * **Holds.** `walk` holds the node it answers for the calling grant, in
   the same step, and `forget` and a grant's end release it; an open holds
-  its file. An inode that loses its last link while held becomes an
-  orphan, and is freed when its last hold goes, so an unlinked open file
-  stays readable and a power cut leaves it to orphan cleanup ([R 72]).
+  its file. An inode that loses its last link becomes an orphan and stays
+  one until its freeing ends, which starts when its last hold goes, at
+  once if none holds it, so an unlinked open file stays readable and a
+  power cut, before the freeing or between its steps, leaves it to
+  orphan cleanup ([R 72]).
 * **`statfs`** answers the ABI's F2FS type, F2FS's magic `0xF2F52010`
   ([F 9]), block size 4096, the volume's space and its free blocks, and
   the nids free in the NAT.
@@ -1334,13 +1420,18 @@ clean room's facts too.
   odd 31-bit number the caller passes, random for an installation and
   fixed for a test; the UUID and the times likewise.
 * **Order.** Phase 1 writes zeros over blocks 0 and 1, so no superblock
-  an earlier volume left on the medium survives; phase 2 writes every
+  an earlier volume left on the medium survives it; phase 2 writes every
   other block above; phase 3 writes the superblock's second copy and then
   its first. Each phase ends in a flush, so a superblock reaches the
-  medium only after everything it describes. A cut in phase 1 or 2
-  leaves no valid superblock, so the volume does not mount; a cut in
-  phase 3 leaves a complete volume behind one or two valid copies, which
-  mounts. An installation cut short runs again in either case. Stale
+  medium only after everything it describes, and a phase starts only
+  when the flush before it is answered. A cut in phase 1 finds nothing
+  written but blocks 0 and 1, so an earlier volume mounts as it was if
+  the cut left one of its superblock copies whole, and otherwise nothing
+  mounts. A cut in phase 2 finds blocks 0 and 1 zeros, so nothing
+  mounts. A cut in phase 3 finds the volume complete, and each new copy
+  the cut kept whole valid, while a torn or lost copy fails its checksum
+  ([F 13]), so nothing mounts or the new volume mounts behind one or two
+  copies. An installation cut short runs again in every case. Stale
   blocks of an earlier volume elsewhere on the medium are reached by
   nothing: the second NAT and SIT copies are unselected, both packs are
   written, and the walk ends at the zeroed warm node block.
@@ -1374,11 +1465,13 @@ it fails any partition that holds no volume.
 | a block write or flush fails | the window's answer | the durable view; claims and dirty state die with the process | the volume ends, the storage domain with it; the domain service restarts it and the mount recovers | `eio` on pending requests; the domain's death record |
 | a block read fails | the window's answer | everything | none | `eio` for the operation; a log line |
 | a structure fails its checks while serving | the codec | the volume; the operation changed nothing | none; `FSCK` is set in later checkpoints | `eio` for the operation; a log line naming the block |
-| the mount's checks or replay fail, or replay passes its allowance | `erx_f2fs_mount` | the medium as it was; nothing written | none on erXos; the partition is repaired with `fsck.f2fs`, or mounted once by Linux, elsewhere | `eintegrity`; the storage domain stays ended after its restarts, never formatted |
-| another writer's volume leaves its mount checkpoint no room | the mount's room check | the medium as it was | none | a read-only mount and a log line naming the shortfall |
+| the mount's checks or replay fail | `erx_f2fs_mount` | the medium as it was; nothing written | none on erXos; the partition is repaired with `fsck.f2fs`, or mounted once by Linux, elsewhere | `eintegrity`; the storage domain stays ended after its restarts, never formatted |
+| the SIT, the footprint or replay passes the mount's allowance | the mount's admission | the medium as it was; nothing written | none on erXos; the chain is replayed by Linux elsewhere, or the grant is resized | `enomem` and a log line naming the allowance; the storage domain stays ended after its restarts, never formatted |
+| another writer's volume leaves its mount checkpoint no room, or has a main area of 16 segments or fewer | the mount's room check; the space a volume offers | the medium as it was | none | a read-only mount and a log line naming the shortfall |
 | the volume is full | the space check | everything | the cleaner, when invalid blocks can be reclaimed | `enospc` |
 | the room rule holds a request back | the step's room check | everything | the cleaner and checkpoints | the request waits; `enospc` only when the space check fails or no victim gains |
 | the volume process crashes | its supervisor | the durable view | as for a failed write | as for a failed write |
+| a mount reaches 2^32 epochs, the qid paths' bound ([Inodes](#inodes)) | the checkpoint planner | the durable view, just committed | the volume ends after the commit, the storage domain with it, and the restart mounts afresh | as for a failed write |
 
 ## Security
 
@@ -1394,15 +1487,17 @@ more: Erlang code writes nowhere but its own heap, and the volume reaches
 nothing but its own window.
 
 **Resource bounds.** What a mount and a running volume hold is bounded by
-the partition, never by the image's claims: the superblock's geometry
+the partition, never by the image's claims, and admitted against the
+storage domain's memory before it is held: the superblock's geometry
 must lie within the window, so the SIT, loaded whole at about 150 bytes a
-segment, holds at most one entry per 2 MiB of the window; the node,
+segment, holds at most one entry per 2 MiB of the window, and the
+mount's allowance admits the SIT before it is read, and the footprint
+and replay's dirty blocks as they grow ([Mount](#mount)); the node,
 dentry and NAT caches are bounded and evict clean blocks no step pins; a
-pin lives for one step; every step needs a bounded number of blocks
-([One process owns a volume](#one-process-owns-a-volume)); the footprint
-is bounded by the walk's own bound; and replay's dirty state by the
-mount's allowance ([Replay](#replay)). An image that passes a bound
-fails the mount, as a failed check does.
+pin lives for one step; and every step needs a bounded number of blocks
+([One process owns a volume](#one-process-owns-a-volume)). An image that
+fails a check fails the mount with `eintegrity`, and one that passes the
+allowance with `enomem`; neither writes anything.
 
 No stale block reaches a client from any state erXos's writes leave
 (F2-R4): a data block is read only at an address the state holds, which
@@ -1446,22 +1541,23 @@ committed checkpoint; "its chain" is the records written since.
 | [C 15] | orphans listed in CP N | freed at mount, before replay | the same | [R 75] |
 | [C 16] | an orphan's freeing before the next checkpoint | freed again from CP N's state, whose blocks and nid stayed touched | the same | the touched and nid rules |
 | [C 17] | an unlink not yet checkpointed | the file back, with its records | the same | the touched and nid rules |
-| [C 18] | a superblock write | cannot arise after the format; a cut format leaves no valid copy or a complete volume | an image whose superblock Linux rewrote keeps one copy whole ([R 13]); erXos takes the first valid one | the format's order |
+| [C 18] | a superblock write | cannot arise after the format; a cut format leaves the earlier volume as it was, no valid copy, or the complete new volume | an image whose superblock Linux rewrote keeps one copy whole ([R 13]); erXos takes the first valid one | the format's order |
 | [C 19] | both packs damaged | the mount refused, nothing written | refused | [R 16] |
-| [C 20] | a mount with records present and roll-forward disabled | no such mount: a read-only mount replays in memory and writes nothing, so it shows the records (pending [Open decisions](#open-decisions), 1) | Linux refuses `norecovery` read-write and mounts CP N alone with `ro,norecovery` ([R 67]), which the oracle uses to check erXos's checkpoints without their chains | - |
+| [C 20] | a mount with records present and roll-forward disabled | no such mount: a read-only mount replays in memory and writes nothing, so it shows the records ([Read-only mounts](#read-only-mounts)) | Linux refuses `norecovery` read-write and mounts CP N alone with `ro,norecovery` ([R 67]), which the oracle uses to check erXos's checkpoints without their chains | - |
 
 Two cut points of erXos's own complete the rows:
 
 | Cut during or after | erXos's mount | Linux's mount of the same image |
 | --- | --- | --- |
 | the cleaner's moves before a checkpoint | CP N with its chain; the victim's old copies intact, prefree until a checkpoint commits | the same |
-| the format | no valid superblock, so no mount; or, once phase 3 has begun, a complete empty volume | the same |
+| the format | in phase 1, the earlier volume as it was or no valid superblock; in phase 2, no valid superblock; in phase 3, no valid superblock or the complete empty volume | the same |
 
 Walked against the construction, every row holds: C1-C9 and C13-C19 hold
 in erXos's mount and in Linux's of the same image; C10-C12 cannot arise
 from erXos's writes and are Linux's own results for images Linux wrote;
 C14 is stronger than Linux's own recovery, which a cut may cost records
-([R 65]); and C20 is the mount-policy difference of Open decision 1.
+([R 65]); and C20 is the mount-policy difference of
+[Read-only mounts](#read-only-mounts).
 
 ### The power-cut harness
 
@@ -1481,7 +1577,10 @@ could leave; the counters equal a recount; a second mount after the
 read-write mount's checkpoint gives the same tree; and a cut during that
 mount checkpoint gives the same tree again (C14). Workloads cover
 creates, writes of every size and alignment, truncates to and from
-partial blocks, renames, links, unlinks of open files, `fsync` of new and
+partial blocks, large truncates and unlinks of large files with
+checkpoints between their steps, each file extended after the restart
+by `setattr` and by a write past a gap, renames, links, unlinks of open
+files, `fsync` of new and
 old files, concurrent `fsync`s, overwrites of checkpointed files beside
 `fsync`s of others, directory growth past several levels, a volume filled
 until the cleaner runs, and mounts of Linux-made images with chains,
@@ -1495,6 +1594,7 @@ those whose replay copies blocks included.
 | a record releases nothing | freed blocks and nids returned to the pool at a record's second flush |
 | a cut during the mount checkpoint loses nothing | the warm node log resumed at the chain's start |
 | a cut during the mount checkpoint replays the same again | a replayed block in a segment valid at the checkpoint adopted, and its SSA block rewritten |
+| a cut after a large truncate's checkpointed step, then an extension, reads zeros | the size raise without its truncate |
 | no stale block after a cut | an address installed before its write is answered |
 | freed blocks stay until the commit is durable | prefree segments freed at the last block's write, before its flush |
 | no stale chain after a crash and a mount | the mount checkpoint skipped when nothing was replayed |
@@ -1534,7 +1634,8 @@ and must read as zeros past the first byte.
 **Linux to erXos.** The guest formats scratch disks with `mkfs.f2fs`
 (default options, which set no feature at all [T 6], `-O
 extra_attr,inode_checksum,sb_checksum`, and each read-only feature alone
-and with the others), copies in a tree the host declares (inline and
+and with the others; 50 MiB and more, and one disk of 44 MiB, which
+erXos must mount read-only), copies in a tree the host declares (inline and
 block files and directories, sparse files reaching the double indirect
 node, hard links, symlinks of both forms, device nodes and FIFOs,
 directories several hash levels deep, files with inline xattrs beside
@@ -1563,7 +1664,12 @@ kernel, and fails the suite when the fact changes:
   on the host to `i_dir_level` 2, which erXos converts by a create and
   which `fsck.f2fs` then passes, bucket positions included ([T 65]);
 * **a stale tail**: a Linux image whose file holds non-zero bytes past
-  its size in its last block, which erXos extends and reads as zeros;
+  its size in its last block, which erXos extends, by `setattr` and by a
+  write past a gap, and reads as zeros;
+* **nodes past a size**: an erXos image cut after a checkpoint between a
+  large truncate's steps, whose file Linux then extends past the nodes
+  still mapped, recording whether Linux reads zeros there
+  ([Operations](#operations), [Risks](#risks));
 * **feature dependencies**: a superblock with `INODE_CHKSUM` and without
   `EXTRA_ATTR`, which erXos refuses.
 
@@ -1596,9 +1702,15 @@ Each pairs a passing case with a seeded fault that must fail it:
 | replay leaves every node it touched dirty and no chain node block live | a replayed dnode adopted at its chain address |
 | an inline directory with `i_dir_level` 2 converts with every entry in its hash's bucket | the level kept at conversion |
 | truncating to one byte and extending reads zeros | the kept block's tail left as it was |
+| a `setattr` raise and a write past a gap, over a Linux-made file with a stale tail and a file whose truncate left nodes past its size, read zeros | the truncate to the old size skipped for writes past a gap |
+| a large file unlinked and checkpointed between its freeing steps is an orphan in that checkpoint, and a mount frees the rest | the inode dropped from the orphans when its last hold goes |
 | a new inode at a reused nid gets a new qid path, the freed inode Linux-made with the generation the epoch would give | the generation taken from the epoch alone |
+| a volume one checkpoint below its bound of 2^32 epochs ends after that commit, before admitting a request | the bound removed |
 | the mount refuses each refused checkpoint flag and each missing dependency | `DISABLED` accepted |
-| the format plan passes the mount checks at sizes from 56 MiB to 64 GiB, and a cut at each of its flushes leaves no superblock or a complete volume | the superblocks written in the second phase |
+| the format plan passes the mount checks at sizes from 56 MiB to 64 GiB, and every cut the harness makes of it leaves the earlier volume, no valid superblock or the complete volume | the superblocks written in the second phase |
+| `mkfs.f2fs`'s geometries of 44 MiB and 49 MiB mount read-only and of 50 MiB read-write | the main-area bound removed |
+| after every commit, the mount checkpoint's included, each valid block's summary, where the new durable view reads it, names its owner, replay's adopted blocks in segments no log enters included | SSA blocks written only for the segments a log left |
+| a SIT, a footprint or a replay past the mount's allowance fails the mount with `enomem`, writing nothing | the footprint left out of the allowance |
 | a read-only mount writes nothing, over a window that fails every write | a read-only mount that writes its mount checkpoint |
 | the walk on a looped chain fails within its bound | the bound removed |
 | at every format size, filling to the space and churning keeps `need` covered and the cleaner freeing segments, the fragmented pattern measured | victims restricted to full segments |
@@ -1659,8 +1771,8 @@ watch list ([todo-performance.md](todo-performance.md)):
   take the free segments the cleaner and later checkpoints need.
 * **A mount mode without roll-forward**, as `norecovery`. Rejected: a
   read-only mount that replays in memory writes nothing either, and shows
-  the acknowledged `fsync`s; one mount path serves both
-  ([Open decisions](#open-decisions), 1).
+  the acknowledged `fsync`s; one mount path serves both, a trial's
+  included ([Read-only mounts](#read-only-mounts)).
 * **Redistributing a converted inline directory's entries over the
   buckets its `i_dir_level` gives.** Rejected for setting the level to 0:
   entries keep their slots, so `readdir` offsets survive the conversion.
@@ -1708,34 +1820,13 @@ in stages that each end in tests of their own:
 The estimate is about 8,000 lines of Erlang, 1,500 of Ruby and 3,500 of
 tests.
 
-## Open decisions
-
-1. **The trial's mount.** M13's accepted scope specifies "a read-only
-   mount without recovery, as Linux's `norecovery` mounts for a trial
-   boot", its exit criteria check that "a read-only mount without
-   recovery writes nothing, on erXos's F2FS and on Linux's mounted with
-   `norecovery`", and M12's scope mounts a trial's file systems
-   "read-only without recovery". This design gives F2FS one mount path
-   instead: every read-only mount, a trial's included, replays the chain
-   in memory and writes nothing. After the freezing checkpoint that
-   precedes a trial the chain is empty, so the trial sees the same files
-   either way; the difference is that a read-only mount after an
-   unordered end shows the acknowledged `fsync`s, and that no second
-   mount mode exists to build and test. Both write nothing, so F2-R5 and
-   the trial's guarantee hold either way. Recommendation: accept the one
-   path, and read M13's criterion as "a read-only mount writes nothing,
-   over a window that fails every write", with Linux's `ro,norecovery`
-   mount kept as the oracle's check of erXos's checkpoints without their
-   chains. Until it is decided, the plan keeps its accepted wording, and
-   this design's read-only mount, and design-storage's description of the
-   trial's mount, assume the recommendation.
-
 ## Risks
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
 | A fact in the records is wrong, or differs on the guest's kernel | medium | an image Linux rejects or misreads | every image both ways through the oracle; probes for each open question of the records the design rests on |
 | A Linux chain shape the records do not describe | low | a replay that fails the mount | the mount fails safely; the oracle's dirty Linux images exercise replay |
+| Linux, extending a file, reads the nodes a cut left mapped past its size | low | after a cut between a large truncate's steps, the file's old bytes in Linux's extension of it | the nodes-past-a-size probe settles it; if Linux reads them, a large truncate frees from the file's end and lowers the size at each step, so no checkpoint commits a slot past a size |
 | A medium that tears within a sector | low | a torn commit block or superblock | the storage design's sector assumption; recorded with the block driver's residual |
 | SD cards that ignore flushes | medium | any ordering lost on the Pi | recorded with the block driver's residual; the Pi's half of G13 measures it |
 | Two flushes and a pre-image per `fsync` too slow | medium | commit latency at G13 | the measurement decides; group commit across waiting `fsync`s and a forced-unit-access write are the fixes on the table |

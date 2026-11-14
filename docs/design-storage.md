@@ -1484,11 +1484,7 @@ the record's window and the reset count's, and every file system mounts
 read-only and writes nothing: F2FS replaying its roll-forward records in
 memory alone ([design-f2fs.md](design-f2fs.md#read-only-mounts)), which
 after the freezing checkpoint find none, littlefs and FAT without
-writes. That F2FS's trial mount replays in memory, where M13's accepted
-scope mounts it without recovery, as Linux's `norecovery` does, is
-pending the first of
-[design-f2fs.md's open decisions](design-f2fs.md#open-decisions); both
-write nothing. Writers get `{error, erofs}`, which a release's health
+writes. Writers get `{error, erofs}`, which a release's health
 checks tolerate. The block driver reads the boot value from the machine
 page through its runtime, so the rule holds whatever the storage services
 and the system domain do. A failed trial therefore leaves the data
