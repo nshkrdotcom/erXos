@@ -142,7 +142,7 @@ names; the table's order is the order.
 | 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and acme and sam editing a file | estimated per part before it starts | 1b-C's part 3; part 8 also 1b-D | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
-| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 1,500 of Ruby, 3,500 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
+| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on the stopgap | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
 | **Phase 2** | | | | |
 | Track K erXos's kernel | the pilot, then the kernel, booting Phase 1 and 1b's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
@@ -3223,6 +3223,10 @@ by one author from Linux's documentation and sources who implements
 none of it, and the
 implementation, in Erlang, from it alone; the feature bits it implements,
 refusing the rest; the cleaner; the Linux oracle guest with `fsck.f2fs`;
+the host tests, a reference model and workloads over every geometry
+from the smallest volume to a multi-TiB sparse one, and the corpora; the
+distribution guest, Linux's F2FS and f2fs-tools at scale
+([design-f2fs.md](design-f2fs.md#testing-on-the-host));
 the power-cut harness; the fuzz target; legal review of the clean room
 before a product ships it.
 
@@ -3240,7 +3244,10 @@ write, and Linux's `ro,norecovery` mount of each erXos image shows its
 last checkpoint without the records; the file-semantics corpus
 agrees with littlefs and with Linux's F2FS, every difference a bug fixed,
 a documented improvement with a test, or a bug in littlefs recorded as
-such; the fuzz target runs its budget clean.
+such; the fuzz target runs its budget clean; the host runs and the
+distribution guest's batch run their milestone budgets clean, every
+corpus image meets its verdict, and every difference between kernels is
+reported with both named.
 
 **Exit criteria, with M12.** The partition after a failed trial is byte
 for byte the partition before it; the installation and the update

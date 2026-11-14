@@ -4138,8 +4138,22 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `extended.img` varies the owner (uid and gid 70000), so no case checks the mode-bit and mtime offsets
   with other values; fsimg's manifests can write them.
 * [Medium] test, F2FS oracle: erXos's F2FS is checked against Linux's, which needs a Linux guest under QEMU
-  with a pinned kernel that has F2FS (Debian's generic arm64 kernel is the candidate to check) and
-  f2fs-tools. Neither the guest nor its pins exist.
+  with a pinned v7.3.4 kernel that has F2FS (Debian's generic arm64 kernel is the candidate to check;
+  Ubuntu 26.04's is 7.0.0) and f2fs-tools 1.16.0. Neither the guest nor its pins exist.
+* [Medium] test, F2FS distribution guest
+  ([design-f2fs.md](docs/design-f2fs.md#the-distribution-guest)): the probe booted Ubuntu 26.04's arm64
+  cloud image under Lima, not under the oracle guest's QEMU runner. Settle by probe before building on
+  them: that image boots under QEMU with UEFI and a cloud-init seed fsimg makes; `flakey` drops writes
+  after a chosen point as the Linux cut needs; which other distributions package f2fs-tools with an F2FS
+  kernel; and syzbot's F2FS images, by URL and SHA-256, for the fetch manifest.
+* [Medium] storage, F2FS sections: `mkfs.f2fs -s` makes volumes of more than one segment per section,
+  which F2-R2 admits read-write, but the cleaner, the room rule and the logs treat segments as sections
+  ([design-f2fs.md](docs/design-f2fs.md#open-decisions), open decision 1). Until decided, a mount must not
+  write such a volume.
+* [Low] test, pjdfstest over erXos's file systems: pjdfstest (FreeBSD `contrib/pjdfstest`, BSD-2-Clause)
+  built for erXos's POSIX layer and run under QEMU over `/data` on F2FS and littlefs
+  ([design-f2fs.md](docs/design-f2fs.md#posix-suites)); whether the POSIX layer offers every call it
+  makes is unverified.
 * [Medium] runtime, `otp/erts/preloaded/src/erx_file_remote.erl`: `file:ipread_s32bu_p32bu/3` on an open
   file of a grant has no implementation, so it raises `undef`.
 * [Medium] runtime, `otp/lib/kernel/src/file.erl`: `file`'s name calls (`copy`, `delete`,
