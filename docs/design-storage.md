@@ -562,8 +562,11 @@ public key that the running boot image carries:
 
 * in a release build, the release key, whose custody belongs to the
   release process ([plan.md](plan.md#beyond-the-plan));
-* in a development build, a development key that the build tree generates
-  and keeps outside the repository. The host tool signs every update it
+* in a development build, a development key that each clone generates
+  and keeps outside the repository, under git's common directory beside
+  the development login key and apart from it
+  ([design-ssh.md](design-ssh.md#login-keys)), so every worktree of the
+  clone signs alike. The host tool signs every update it
   sends through the host link with that key, so a spare is checked one
   way in every build, and the Raspberry Pi 5, which has no host link,
   updates over the network, signed with the same key.

@@ -177,12 +177,15 @@ What the sources say, read at the pins of [Sources](#sources):
 
 ## What the code does today
 
-Nothing of SSH exists: `crypto`, `public_key`, `asn1` and `ssh` are
-outside the imported OTP ([design-crypto.md](design-crypto.md#what-the-code-does-today)),
-no SSH domain is in any manifest, and `abi/services/` declares no login
-service for it. TCP through a domain's `net` grant works on QEMU for
-connections the domain opens; root's session holds such a grant in
-development builds (`README.md`, the network paragraph).
+Stage 1 of [Stages](#stages) is built. `crypto`, `public_key`, `asn1`
+and `ssh` are imported into `otp/`, and every domain's runtime image
+carries them (`tools/lib/erx/domain_image_apps.rb`). In a development
+build, `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in
+root's session starts OTP's daemon there with the development login key
+and root's host key, and the network domain's QEMU case
+(`tools/lib/erx/network_domain.rb`) logs in through a host forward with
+the host's `ssh`. No SSH domain is in any manifest, and `abi/services/`
+declares no login service for one.
 
 ## Overview
 
@@ -498,13 +501,24 @@ anyone who writes the data partition, or anything running in the
 session, add a login. `~/.ssh/known_hosts` and `~/.ssh/config` stay
 ordinary files of the principal, used by clients as on FreeBSD.
 
-**Before the vault** (stages 2 and 3, development builds only), `root`
-has one login key: the public half of a development key that `make setup`
-makes in the build tree, which the boot image carries as the development
-signing key is carried. `tools/erx ssh` runs the host's `ssh` with that
-key and the guest's forwarded port. The facet accepts it for `root`
-alone. It issues cookies and derives each login's session identifier as
-at stage 4, but until the system domain has its Ed25519 verifier and the
+**Before the vault** (stages 1 to 3, development builds only), `root`
+has one login key: the public half of the clone's development login key,
+an Ed25519 pair that `tools/erx setup`, or the first image build that
+needs it, makes with the host's `ssh-keygen` in `erxos/dev-key` under
+git's common directory, so every worktree of a clone shares it and no
+commit holds it (`tools/lib/erx/dev_key.rb`). The image build writes the
+public line, without its comment, into the system release and every
+domain release at `abi/erx_abi.txt`'s `ssh_authorized_keys_path`, and the
+packer refuses that file in any build but a development one. Only the
+QEMU harnesses that log in pass the key to the image build, which a
+chokepoint check holds (`Checks::LOGIN_KEY_BUILDERS`), so the images the
+website offers carry none. The private half stays on the host.
+`tools/erx ssh` runs the host's `ssh` with that key, the guest's
+forwarded port and a known-hosts file of the clone's beside the pair,
+which pins the guest's host key under one alias. At stage 1
+`erx_ssh_dev`'s key callback reads exactly that release file and admits
+its key for `root` alone; from stage 2 the facet does. The facet issues
+cookies and derives each login's session identifier as at stage 4, but until the system domain has its Ed25519 verifier and the
 vault the host key, it compares no host key and accepts `login_key` on
 the SSH domain's own signature check, a development-build residual
 recorded in `TODO.md`. `login_passphrase` answers `unavailable`, since no
@@ -679,11 +693,15 @@ identifier.
    whole; `ssh` imported with its edits; in a development build,
    `erx_ssh_dev:start(Port)` run in root's session starts `ssh:daemon` in
    that session, through root's own `net` grant, with OTP's Erlang shell
-   (`shell` set to start `shell:start/0`), the host key in root's
-   directory and the development key as root's only key, through OTP's
-   `ssh_file`. `ssh -p 2222 root@localhost` from the host through QEMU's
-   forwarded port reaches it. This is any principal running a daemon in
-   its own session with its own authority; it needs no new facet.
+   (`shell` set to start `shell:start/0`) and OTP's `erlang_eval` exec,
+   which evaluates a command's expression and prints its value. Its host
+   key is root's, Ed25519, at `/data/ssh/ssh_host_ed25519_key`, read
+   through OTP's `ssh_file`, made when missing and refused when it does
+   not decode. Its only login is the development key for `root`
+   ([Login keys](#login-keys)), offered by public key alone.
+   `tools/erx ssh`, which runs the host's `ssh` to the forwarded loopback
+   port 2222, reaches it. This is any principal running a daemon in its
+   own session with its own authority; it needs no new facet.
 2. **The SSH domain and `rc`** (1b-G, M14). The SSH domain, the login
    facet with its cookies and derived session identifiers, `erx_ssh_line`
    with its ttys and jobs, the channel and algorithm policies and the
@@ -816,7 +834,11 @@ the facet answers `no_match`.
 * **Key theft.** The host key and every private key are the vault's
   (stage 4), and the login keys are public. Before the vault the host key
   is a file of the SSH domain's directory, readable by whoever reads the
-  data partition, in development builds only.
+  data partition, in development builds only. The development login
+  key's private half is held only by the host that built the image, in
+  its clone's owner-only key directory: no image, receipt or log carries
+  it, so whoever holds that clone's key directory logs in as `root` to
+  every development image the clone builds, and to nothing else.
 * **Downgrade.** The lists are fixed and no SHA-1 signature, CBC cipher or
   finite-field group is offered. The strict key exchange holds for every
   client that offers it; a client that does not is exposed to the prefix

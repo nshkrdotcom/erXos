@@ -3264,7 +3264,9 @@ image carries are public ones, such as the release key's public half,
 which checks update manifests
 ([design-storage.md](design-storage.md#system-updates)), in files of the
 system release
-([design-domains.md](design-domains.md#principals-sessions-and-quotas)).
+([design-domains.md](design-domains.md#principals-sessions-and-quotas)),
+and, in a development image only, the development login key's public
+half, in each release ([design-ssh.md](design-ssh.md#login-keys)).
 
 ### Checking a file
 

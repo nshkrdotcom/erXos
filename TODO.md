@@ -7332,6 +7332,23 @@ document's "residual risks accepted" paragraph.
   principal's master key ([design-system.md](docs/design-system.md)). A
   recovery slot needs its own policy, since its protection can become the
   easiest route to the master key.
+* [Medium] SSH from `tools/erx boot`
+  ([design-ssh.md](docs/design-ssh.md#stages),
+  `tools/lib/erx/interactive_boot.rb`): the interactive boot gives the
+  guest no network device and its image no login key, so `tools/erx ssh`
+  reaches nothing there; only the network domain's QEMU case logs in. It
+  needs a network device with a host forward from loopback port
+  `DevKey::PORT` to the guest's daemon, the key in its image, and with
+  them a refusal by construction of the key in the images the website
+  offers, beside the chokepoint check `Checks::LOGIN_KEY_BUILDERS`:
+  `ProductionImage` refusing `login_key` together with
+  `ProductionImage::Machine.site`.
+* [Low] SSH stage 1, the port (`tools/lib/erx/dev_key.rb`,
+  `erlang/apps/erx_session/src/erx_ssh_dev.erl`): `DevKey::PORT` is a
+  Ruby constant while the guest's port is the argument root types to
+  `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
+  it. A constant of `abi/erx_abi.txt` that both read would make them one
+  fact.
 * [Medium] SSH, SFTP and forwarding
   ([design-ssh.md](docs/design-ssh.md#channel-policy)): the daemon refuses
   the `sftp` subsystem and every forwarding request, since OTP's
