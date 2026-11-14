@@ -14,6 +14,8 @@
  *     -> device DMA coherent C range CPU BUS LAST mac M
  *   fb PATH COMPATIBLE WINDOW_BASE WINDOW_SIZE
  *     -> fb STATUS BASE LENGTH WIDTHxHEIGHT STRIDE FORMAT
+ *   seeds
+ *     -> seeds rng-seed LENGTH HEX kaslr-seed LENGTH HEX, HEX - for an absent seed
  */
 
 #include <inttypes.h>
@@ -54,6 +56,24 @@ fb_print(const erx_dt_t *tree, const char *path, const char *compatible, const c
 	    fb.width, fb.height, fb.stride, format, fb.bits_per_pixel);
 }
 
+static void
+seeds_print(const erx_dt_t *tree)
+{
+	static const char *const names[ERX_DT_SEEDS] = ERX_DT_SEED_NAMES;
+	erx_dt_seeds_t seeds;
+
+	erx_dt_seeds(tree, &seeds);
+	printf("seeds");
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++) {
+		printf(" %s %zu ", names[seed], seeds.length[seed]);
+		if (seeds.length[seed] == 0)
+			printf("-");
+		for (size_t at = 0; at < seeds.length[seed]; at++)
+			printf("%02x", seeds.bytes[seed][at]);
+	}
+	printf("\n");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -85,6 +105,8 @@ main(int argc, char **argv)
 			device_print(&tree, words[1], words[2]);
 		else if (count == 5 && strcmp(words[0], "fb") == 0)
 			fb_print(&tree, words[1], words[2], words[3], words[4]);
+		else if (count == 1 && strcmp(words[0], "seeds") == 0)
+			seeds_print(&tree);
 		else
 			return (2);
 	}

@@ -569,3 +569,41 @@ erx_dt_fb_format_name(uint32_t format)
 {
 	return (format < DT_FORMATS ? dt_formats[format].name : NULL);
 }
+
+/* Whether any of length bytes at bytes is not zero. */
+static bool
+any_set(const uint8_t *bytes, size_t length)
+{
+	for (size_t at = 0; at < length; at++)
+		if (bytes[at] != 0)
+			return (true);
+	return (false);
+}
+
+void
+erx_dt_seeds(const erx_dt_t *tree, erx_dt_seeds_t *seeds)
+{
+	static const char *const names[ERX_DT_SEEDS] = ERX_DT_SEED_NAMES;
+	const void *value;
+	size_t length;
+	int chosen, len;
+
+	_Static_assert(sizeof(names) / sizeof(names[0]) == ERX_DT_SEEDS, "every seed has its name");
+	memset(seeds, 0, sizeof(*seeds));
+	chosen = node_find(tree, "/chosen");
+	if (chosen < 0)
+		return;
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++) {
+		value = fdt_getprop(tree->bytes, chosen, names[seed], &len);
+		if (value == NULL)
+			continue;
+		if (len <= 0)
+			continue;
+		/* Only the bytes the reader gives count: a zero prefix of a longer seed is absent. */
+		length = (size_t)len < ERX_DT_SEED_MAX ? (size_t)len : ERX_DT_SEED_MAX;
+		if (!any_set((const uint8_t *)value, length))
+			continue;
+		seeds->length[seed] = length;
+		memcpy(seeds->bytes[seed], value, length);
+	}
+}

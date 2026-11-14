@@ -62,6 +62,25 @@ framebuffer_check(const erx_dt_t *tree, uint64_t base, uint64_t size)
 		abort();
 }
 
+/* A seed is either absent or at most ERX_DT_SEED_MAX bytes, not all of them zero. */
+static void
+seeds_check(const erx_dt_t *tree)
+{
+	erx_dt_seeds_t seeds;
+	bool set;
+
+	erx_dt_seeds(tree, &seeds);
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++) {
+		if (seeds.length[seed] > ERX_DT_SEED_MAX)
+			abort();
+		set = seeds.length[seed] == 0;
+		for (size_t at = 0; at < seeds.length[seed]; at++)
+			set = set || seeds.bytes[seed][at] != 0;
+		if (!set)
+			abort();
+	}
+}
+
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -86,6 +105,7 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		}
 		framebuffer_check(&tree, 0x7e000000, 0x400000);
 		framebuffer_check(&tree, 0, UINT64_MAX);
+		seeds_check(&tree);
 	} else if (tree.bytes != NULL || tree.memory_count != 0) {
 		abort();
 	}

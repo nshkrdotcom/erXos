@@ -27,6 +27,9 @@ class DtTest < Minitest::Test
   # The fuzz target's sources and macros, so this harness links what it links.
   TARGET = Erx::PackFuzz.targets.find { |target| target.kind == 'dt' }
   IDENTITY = 'range 0x0 0x0 0xffffffffffffffff'
+  # The most bytes of one seed the reader gives (include/erx/core/dt.h).
+  SEED_MAX = Integer(File.read(File.join(ROOT, 'include/erx/core/dt.h'))[/ERX_DT_SEED_MAX\s+(\d+)/, 1])
+  SEED_32 = (1..32).map { |i| format('%02x', i * 7) }.join(' ')
 
   # A fixture tree: the root's cells (two address, one size), one GiB of RAM at
   # 0, and body inside the root.
@@ -74,6 +77,14 @@ class DtTest < Minitest::Test
     'deep-17' => tree(nested(17)),
     'memory-17' => tree('', memory: "memory@0 { device_type = \"memory\"; reg = <#{(1..17).map { |i| "0x#{i} 0x0 0x1000" }.join(' ')}>; };"),
     'memory-overflow' => tree('', memory: 'memory@0 { device_type = "memory"; reg = <0xffffffff 0xffffff00 0x1000>; };'),
+    # QEMU virt's /chosen seeds: 32 bytes of rng-seed and a 64-bit kaslr-seed.
+    'seed-32' => tree("chosen { rng-seed = [#{SEED_32}]; kaslr-seed = <0x01234567 0x89abcdef>; };"),
+    # An rng-seed longer than the reader gives, whose bytes past ERX_DT_SEED_MAX differ.
+    'seed-long' => tree("chosen { rng-seed = [#{Array.new(SEED_MAX + 8) { |i| format('%02x', (i % 255) + 1) }.join(' ')}]; };"),
+    # An rng-seed whose only non-zero byte lies past the bytes the reader gives.
+    'seed-zero-prefix' => tree("chosen { rng-seed = [#{(['00'] * SEED_MAX + ['01']).join(' ')}]; };"),
+    # Seeds a kernel has used and zeroed.
+    'seed-zero' => tree('chosen { rng-seed = [00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00]; kaslr-seed = <0x0 0x0>; };'),
     'fb-ok' => tree("chosen { #address-cells = <2>; #size-cells = <1>; #{FRAMEBUFFER.call} };"),
     'fb-crossing' => tree("chosen { #address-cells = <2>; #size-cells = <1>; #{FRAMEBUFFER.call(reg: '0x0 0x7e000000 0x3ff801')} };"),
     'fb-in-ram' => tree("chosen { #address-cells = <2>; #size-cells = <1>; #{FRAMEBUFFER.call(reg: '0x0 0x3ff00000 0x400000')} };"),
@@ -98,6 +109,12 @@ class DtTest < Minitest::Test
 
   # name => [original, replacement, fixture, query, the line the unseeded reader gives].
   MUTANTS = {
+    'the all-zero test turned round' =>
+      ["\t\tif (bytes[at] != 0)\n", "\t\tif (bytes[at] == 0)\n", 'seed-zero', 'seeds',
+       'seeds rng-seed 0 - kaslr-seed 0 -'],
+    'the zero test over the whole property' =>
+      ['if (!any_set((const uint8_t *)value, length))', 'if (!any_set((const uint8_t *)value, (size_t)len))',
+       'seed-zero-prefix', 'seeds', 'seeds rng-seed 0 - kaslr-seed 0 -'],
     'the header read before fdt_check_full' =>
       ['if (bytes == NULL || size < FDT_V17_SIZE || fdt_check_full(bytes, size) != 0)',
        'if (bytes == NULL || fdt_check_header(bytes) != 0 || fdt_check_full(bytes, size) != 0)', 'own-mark@8', nil,
@@ -194,7 +211,7 @@ class DtTest < Minitest::Test
     assert status.success?, log
     lines = answers(tree, ['device /virtio_mmio@a003e00 node', 'device /virtio_mmio@a002e00 node',
                            'device /pl011@9000000 node', 'device /pcie@10000000 pcie', 'device /nowhere node',
-                           "fb /chosen simple-framebuffer #{WINDOW}"])
+                           "fb /chosen simple-framebuffer #{WINDOW}", 'seeds'])
     assert_equal ['accept ok memory 1',
                   "device ok coherent 1 #{IDENTITY} mac none",
                   "device ok coherent 1 #{IDENTITY} mac none",
@@ -202,7 +219,9 @@ class DtTest < Minitest::Test
                   'device coherence coherent 0 range 0x0 0x0 0x0 mac none',
                   "device ok coherent 1 #{IDENTITY} mac none",
                   'device no_node coherent 0 range 0x0 0x0 0x0 mac none',
-                  'fb none 0x0 0x0 0x0 0 - 0'], lines
+                  'fb none 0x0 0x0 0x0 0 - 0'], lines[0..-2]
+    # QEMU virt's seeds are random, so only their lengths are known.
+    assert_match(/\Aseeds rng-seed 32 \h{64} kaslr-seed 8 \h{16}\z/, lines.last)
   end
 
   def test_raspberry_pi_4_trees
@@ -261,20 +280,31 @@ class DtTest < Minitest::Test
     assert_equal 'device no_node coherent 0 range 0x0 0x0 0x0 mac none', fixture_answers('own-mark@40', ['device /dev node'])[1]
   end
 
-# A version 2 header is 32 bytes, yet libfdt's fdt_check_header reads the strings
-# block's size at offset 32 whatever the version (fdt.c:139-142), so a 32-byte tree
-# claiming version 2 read past its buffer under ASan until the reader refused any
-# buffer shorter than the version 17 header first.
-def test_a_short_old_header_is_refused_before_libfdt_reads_it
-  bytes = File.binread(fixture("own-mark"))
-  bytes[20, 8] = [2, 2].pack("N2")
-  path = File.join(@directory, "version-2.dtb")
-  File.binwrite(path, bytes)
-  lines, status = ask(path, [], program: build(name: "asan", flags: %w[-fsanitize=address,undefined -fno-sanitize-recover=all]), prefix: 32)
-  assert status.success?, lines.join("
-")
-  assert_equal "accept structure memory 0", lines.first
-end
+  # A version 2 header is 32 bytes, yet libfdt's fdt_check_header reads the strings
+  # block's size at offset 32 whatever the version (fdt.c:139-142), so a 32-byte tree
+  # claiming version 2 read past its buffer under ASan until the reader refused any
+  # buffer shorter than the version 17 header first.
+  def test_a_short_old_header_is_refused_before_libfdt_reads_it
+    bytes = File.binread(fixture('own-mark'))
+    bytes[20, 8] = [2, 2].pack('N2')
+    path = File.join(@directory, 'version-2.dtb')
+    File.binwrite(path, bytes)
+    lines, status = ask(path, [], program: build(name: 'asan', flags: %w[-fsanitize=address,undefined -fno-sanitize-recover=all]), prefix: 32)
+    assert status.success?, lines.join("\n")
+    assert_equal 'accept structure memory 0', lines.first
+  end
+
+  def test_seeds
+    seed_32 = SEED_32.delete(' ')
+    long = Array.new(SEED_MAX) { |i| format('%02x', (i % 255) + 1) }.join
+    {
+      'seed-32' => "seeds rng-seed 32 #{seed_32} kaslr-seed 8 0123456789abcdef",
+      'seed-long' => "seeds rng-seed #{SEED_MAX} #{long} kaslr-seed 0 -",
+      'seed-zero' => 'seeds rng-seed 0 - kaslr-seed 0 -',
+      'seed-zero-prefix' => 'seeds rng-seed 0 - kaslr-seed 0 -',
+      'own-mark' => 'seeds rng-seed 0 - kaslr-seed 0 -'
+    }.each { |name, expected| assert_equal expected, fixture_answers(name, ['seeds'])[1], name }
+  end
 
   def test_framebuffer
     query = ["fb /chosen simple-framebuffer #{WINDOW}"]

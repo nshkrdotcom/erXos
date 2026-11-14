@@ -36,6 +36,7 @@ typedef struct erx_dt erx_dt_t;
 typedef struct erx_dt_device erx_dt_device_t;
 typedef struct erx_dt_window erx_dt_window_t;
 typedef struct erx_dt_framebuffer erx_dt_framebuffer_t;
+typedef struct erx_dt_seeds erx_dt_seeds_t;
 
 /* One range of RAM: first and last address, so no range overflows. */
 struct erx_dt_memory {
@@ -123,6 +124,33 @@ struct erx_dt_framebuffer {
 };
 
 /*
+ * The seeds /chosen may carry for a generator (docs/design-kernel.md,
+ * "Entropy"), in the order one mixes them, and their property names in the
+ * same order, for whoever names a seed.
+ */
+typedef enum erx_dt_seed {
+	ERX_DT_SEED_RNG,
+	ERX_DT_SEED_KASLR,
+	ERX_DT_SEEDS
+} erx_dt_seed_t;
+#define ERX_DT_SEED_NAMES	{ "rng-seed", "kaslr-seed" }
+/*
+ * The most bytes of one seed the reader gives: one digest's input
+ * (ERX_RNG_DIGEST_INPUT_MAX, which the seed core holds it to), so each seed
+ * mixes as one part. A longer seed gives its first ERX_DT_SEED_MAX bytes.
+ */
+#define ERX_DT_SEED_MAX		1024
+
+/*
+ * /chosen's seeds: length[s] bytes of seed s in bytes[s], 0 for a seed the
+ * tree does not carry. The bytes are secret; whoever holds them erases them.
+ */
+struct erx_dt_seeds {
+	size_t		 length[ERX_DT_SEEDS];
+	uint8_t		 bytes[ERX_DT_SEEDS][ERX_DT_SEED_MAX];
+};
+
+/*
  * Accepts size bytes at bytes as a tree, filling *tree. Returns NULL, or
  * the fixed reason "structure", "depth" or "memory".
  */
@@ -136,6 +164,13 @@ void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, e
  * compatible, checked against window and the tree's RAM. */
 void		 erx_dt_framebuffer(const erx_dt_t *tree, const char *path, const char *compatible,
 		    erx_dt_window_t window, erx_dt_framebuffer_t *fb);
+
+/*
+ * Fills *seeds from /chosen. A seed is absent when /chosen or its property
+ * is missing or empty, or when every byte it would give is zero, as
+ * erXos's kernel leaves it once it has used it.
+ */
+void		 erx_dt_seeds(const erx_dt_t *tree, erx_dt_seeds_t *seeds);
 
 /* The name of a framebuffer format index, or NULL past the table. */
 const char	*erx_dt_fb_format_name(uint32_t format);
