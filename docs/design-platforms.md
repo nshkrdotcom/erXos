@@ -1323,9 +1323,14 @@ firmware, but emulates the mailbox property interface (QEMU's
 (MBOX)", "VideoCore firmware (property)"), so the `raspi4b` suite's
 shell cell plays the firmware's part with a stand-in that is test
 harness alone (`Raspi4bFirmwareFb`, `test/raspi4b/firmware_fb.c`).
-erXos's own code never talks to the mailbox
-([design-device-tree.md](design-device-tree.md#alternatives-considered)),
-nothing of erXos links or packs the stand-in, and no card holds it.
+erXos's own code never asks the mailbox for the framebuffer
+([design-device-tree.md](design-device-tree.md#alternatives-considered));
+the kernel's trial request and boot-time key read
+([Trial requests](#trial-requests), [Device secrets](#device-secrets))
+and its firmware requests, each a fixed row of the platform record
+([design-usb.md](design-usb.md#the-vl805s-firmware)), are its only
+mailbox requests. Nothing of
+erXos links or packs the stand-in, and no card holds it.
 
 * On the host, the harness copies the model's tree, adds the node with
   placeholder cells for its base, size, width, height and stride, and

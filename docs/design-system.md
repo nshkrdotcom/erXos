@@ -967,7 +967,9 @@ reaches when the boot information page carries `ERX_BOOT_ROOT`
    native worker. The fault thread serves records and the ending record's
    deadline and nothing else; the module enters the library from dirty CPU
    schedulers under the library's lock, since no entry of the library
-   waits.
+   waits but the firmware request, which runs on a dirty I/O scheduler
+   and holds the lock only before and after its wait
+   ([Devices](#devices), "Firmware requests").
 4. **Derives the sealing secret** when the device-secret page's status is
    present, with HMAC-SHA-256 keyed by the device secret, over the ABI file's
    `sealing_secret_label`, the 20 public bytes of the ASCII text
@@ -1259,7 +1261,9 @@ count; no recursion; and the chokepoints of A5 and A7. It builds for the
 host, where its plans and its state machines run exhaustively and its
 fuzz target runs over creation specifications. Its entry points, called
 by the domain service through the NIF module `erx_domain_lib`, dirty CPU
-NIFs, since none of them waits:
+NIFs, since none of them waits; the device service's firmware request,
+the one entry that waits, is a dirty I/O NIF
+([Devices](#devices), "Firmware requests"):
 
 | Entry | What it does | Result |
 | --- | --- | --- |
@@ -3056,6 +3060,37 @@ paths. The
 check proves the host link's path differs from the console's (property
 8), so a host link the boot accepts is never the console's UART, whatever
 the device tree's `serialN` aliases say.
+
+**Firmware requests.** The device service is the one sender of the
+firmware's mailbox requests after boot, `erx_firmware_request`
+([design-usb.md](design-usb.md#the-vl805s-firmware)): the VL805's
+notification for the PCIe domain's bridge
+([design-pcie.md](design-pcie.md#facets)) and the Bluetooth line's
+power for the line service
+([design-bluetooth.md](design-bluetooth.md#the-power-line)). A request
+may wait in the kernel up to its 1 s deadline, and a process running a
+dirty NIF cannot run its receive loop, so the work is split as the
+stopgap's littlefs glue splits it
+([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)).
+The device service's process takes every request into a queue and
+never waits on the kernel. Its **firmware worker**, a process linked to
+it, alone calls the domain library's firmware entries,
+`erx_domain_lib:pci_firmware/1` and `device_notify/2`, and is handed
+the next request only after the last one's answer. Those entries are
+dirty I/O NIFs, since the kernel call waits and an executor's would
+answer `ERX_EWOULDBLOCK`. So two requests never meet in the kernel,
+and the device service answers the watchdog's liveness call ([Boot](#boot)) and every
+other call while a request waits. Each entry takes the
+library's lock to read the device's resource before the kernel call and
+to mark a bridge `firmware_lost` after an `ERX_ETIMEDOUT`
+([design-pcie.md](design-pcie.md#the-catalogue-and-gives)), never
+across the wait, so no other entry, and no other service, waits on the
+mailbox. Each caller waits for its answer before it asks again, so the
+queue holds at most one request per caller. The worker's end ends the
+device service by their link, and its supervisor restarts both; a call
+the old worker left in the kernel finishes within its deadline, and a
+request of the new worker that meets it answers `ERX_EBUSY`, which
+fails that request alone.
 
 **Which domain holds a device is the manifest's**, and nothing else: a
 device goes where its capabilities are installed, and devices are given by

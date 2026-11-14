@@ -175,7 +175,7 @@ PL011's register description already has the flow-control enables, `CR`'s
 ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)),
 and the system domain's services each start the owner of their own UART's
 line. The vault's machine file holds machine keys; no facet stores a
-grantee's state. The firmware notification, `erx_firmware_notify`, is
+grantee's state. The firmware notification, `erx_firmware_request`, is
 the USB design's narrow kernel call, which the device service makes
 through the domain library for the VL805 alone
 ([design-usb.md](design-usb.md#the-vl805s-firmware),
@@ -570,7 +570,7 @@ host link's ([design-shared-devices.md](design-shared-devices.md#open-decisions)
 
 Power is the device service's, through the one kernel call that the USB
 and PCIe designs define for the firmware's notifications,
-`erx_firmware_notify` ([design-usb.md](design-usb.md#the-vl805s-firmware)),
+`erx_firmware_request` ([design-usb.md](design-usb.md#the-vl805s-firmware)),
 under its contract unchanged but for one argument: the index of one of
 the notifications the platform record lists for the resource's device,
 the VL805's one being index 0. The Pi 4's record lists two for UART0's
@@ -594,12 +594,21 @@ device has a power line.
   notification, no device outside the system domain asks for one, and no
   domain but the system domain holds a resource that names the entry.
 * **Deadline and answer.** The call's: a poll of at most 1 s, the answer
-  matched by its buffer, `ERX_OK` only for a success with the tag's
-  response bit set, and `ERX_ENOTSUP` for any other answer, for a
-  resource without notifications and for an index past its device's
-  list. The device service answers `ok` for `ERX_OK` and `{error,
-  Status}` otherwise, and the line service answers `reset` with `eio`
-  for any error, before its next step.
+  matched by its buffer, `ERX_OK` for a success whose tag's response
+  word has bit 31 set or is 0, and an error status for any other
+  answer, for a resource without notifications and for an index past
+  its device's list. The word of 0 is a fact of `0x00038041`: FreeBSD
+  records that the firmware does not set the set-GPIO-state tag's
+  response word, and takes a word of 0 as its answer
+  (`bcm2835_mbox.c:362-370`), so that tag's declaration takes it as
+  performed, once, for every caller
+  ([design-board-sensors.md](design-board-sensors.md#the-requests)).
+  On this tag an ignored request cannot be told from a performed one;
+  the controller's bring-up after the cycle is what shows a power line
+  that did nothing, and probe B-P2 records the raw word. The device
+  service answers `ok` for `ERX_OK` and `{error, Status}` otherwise,
+  and the line service answers `reset` with `eio` for any error,
+  before its next step.
 * **After a timeout.** The call's rule holds for the whole boot and every
   device: after one `ERX_ETIMEDOUT`, every later notification of the
   boot answers `ERX_ETIMEDOUT` at once without touching the mailbox. So a
@@ -611,11 +620,15 @@ device has a power line.
   answers `eio` until the next boot. A mailbox that does not answer in
   1 s is broken for every caller, and neither consumer works around it.
 * **Concurrency.** The device service makes every notification from its
-  one process, so two requests never meet in the kernel and `ERX_EBUSY`
-  still arises only beside a trial request. The device service waits on
-  the kernel call alone; the off and on times are the line service's
-  timers, so a power cycle holds the device service for two calls, at
-  most 1 s each.
+  one firmware worker
+  ([design-system.md](design-system.md#devices), "Firmware requests"),
+  so two requests never meet in the kernel and `ERX_EBUSY` arises only
+  beside a trial request or a call a restarted device service's old
+  worker left in the kernel. The worker waits on the kernel call alone,
+  and the device service's own process on nothing, so it answers the
+  watchdog's liveness call throughout; the off and on times are the
+  line service's timers, so a power cycle holds the worker for two
+  calls, at most 1 s each.
 
 **In hosted mode** the line's driver is `erx_stdio` over a descriptor the
 harness opens to a Bumble controller's TCP transport and passes to the
@@ -1368,8 +1381,9 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   Bluetooth domain has one of each. A `reset` holds both until it
   answers; a read waiting at a `reset` answers `eio`.
 * **The device service** makes every firmware notification from its one
-  process, so a power cycle and the VL805's notification never meet in
-  the kernel ([The power line](#the-power-line)).
+  firmware worker, so a power cycle and the VL805's notification never
+  meet in the kernel, and its own process stays free to answer
+  ([The power line](#the-power-line)).
 
 The supervision tree of `erx_bt`:
 
@@ -1564,11 +1578,11 @@ list ([todo-performance.md](todo-performance.md)):
   entry lists the controller's two power notifications; the firmware's
   power control is used for that one device, through the firmware
   notification; the overview's Bluetooth row.
-* **[design-usb.md](design-usb.md)**: `erx_firmware_notify` takes the
+* **[design-usb.md](design-usb.md)**: `erx_firmware_request` takes the
   index of one of the notifications the platform record lists for the
   resource's device, the VL805's one being index 0, and answers
   `ERX_ENOTSUP` for an index past the list; the device service makes the
-  Bluetooth line's notifications too, from the same process, through
+  Bluetooth line's notifications too, from the same firmware worker, through
   `erx_domain_lib:device_notify/2`
   ([design-usb.md](design-usb.md#the-vl805s-firmware)); `erx_hid_desc`
   and `erx_hid_core` in an application of their own, `erx_hid`, which the
@@ -1692,7 +1706,9 @@ it, and its readings go into a research record.
   passes, find the controller's enable line, its pin and polarity, and
   check that a cycle with 300 ms off and 500 ms on brings the controller
   back at 115200; record whether the controller sends any byte between
-  power-on and `HCI_Reset`.
+  power-on and `HCI_Reset`, and the raw response word the firmware
+  leaves in each power notification's answer, which the tag's
+  declaration takes as performed when it is 0.
 * **B-P3** Read Local Version and Read BD_ADDR before and after the patch:
   the manufacturer the patch row names, the ROM's and the patch's versions.
 * **B-P4** Advertise and accept a connection on the ROM firmware, without

@@ -1099,9 +1099,11 @@ controller a DMA device of
   changes property 8's UART clause, more accepted rules than the
   placement of [Decisions](#decisions), for no gain over it.
 * **The PWM clock set by the kernel through the firmware's mailbox**
-  (the firmware's clock id for PWM). It widens the mailbox chokepoint
-  beyond its two calls, as the core clock's alternative below would,
-  and whether the firmware honours a PWM rate there is unverified.
+  (the firmware's clock id for PWM). It adds a request that sets a
+  clock to the firmware requests the platform record lists
+  ([design-usb.md](design-usb.md#the-vl805s-firmware)), a power no
+  row has, and whether the firmware honours a PWM
+  rate there is unverified.
 * **Interrupt-driven I2C and SPI.** Line 149 is shared by every I2C
   master, the HDMI masters included, and the register that
   says which one raised it is in the SPI unit's page. Each driver would
@@ -1130,10 +1132,10 @@ controller a DMA device of
 * **A header map per build kind**, serving GPIO 22 to 27 on release
   cards. No consumer needs six more pins, and two maps of one board
   would have to change together.
-* **The core clock from the firmware's mailbox**, read at boot. It widens
-  the mailbox chokepoint the design keeps to two functions; fixing the
-  clock in `config.txt` from the record gives the same number with no
-  run-time authority over the firmware.
+* **The core clock from the firmware's mailbox**, read at boot. It adds
+  a mailbox request whose answer every I2C and SPI driver would divide
+  by; fixing the clock in `config.txt` from the record gives the same
+  number with no request to the firmware at run time.
 * **FreeBSD's ioctl interfaces** (`/dev/iic0`'s `I2CRDWR`,
   `/dev/spigen0.0`'s `SPIGENIOC_TRANSFER`). They are what a ported
   FreeBSD program would call; the trees are what `cat`, `echo` and `od`

@@ -20,19 +20,22 @@ Decisions every reader needs:
   machine. A notification (the VL805's, the Bluetooth controller's
   power) is a row whose answer is empty; a sensor reading is a row whose
   answer is two words, or a short text. One kernel call,
-  `erx_firmware_request(resource (CARVE), index)`, the existing
-  `erx_firmware_notify` under a name that fits both, sends a row and
-  returns its answer; the caller chooses only the row.
-* **The tags are a closed set the ABI declares**, each with the size of
-  its request and of its answer window, so the kernel never takes a
-  length or an offset from the firmware's reply, and a tag that reads the
-  board's key, runs code on the VideoCore or sets a clock or a voltage
-  cannot be written in a row.
+  `erx_firmware_request(resource (CARVE), index)`, the call the USB
+  design defines for the VL805's notification, sends a row and returns
+  its answer; the caller chooses only the row.
+* **The tags and the readings are closed sets the ABI declares.** Each
+  tag has the size of its request and of its answer window, so the
+  kernel never takes a length or an offset from the firmware's reply,
+  and a tag that reads the board's key, runs code on the VideoCore or
+  sets a clock or a voltage cannot be written in a row. Each reading
+  names its tag and argument, so a machine row is a reading's name and
+  nothing else.
 * **One poll, one sender.** `erx_board_sensors`, a supervised process of
   the system domain, asks the device service for every machine row once
-  every 5 s, and the device service makes the kernel calls from its one
-  process, as it makes every notification. Readers of `/proc/sensors`
-  read the latest poll and never cause a request.
+  every 5 s. The device service makes every firmware request from its
+  one firmware worker, so its own process never waits on the mailbox
+  and answers the watchdog's liveness call throughout. Readers of
+  `/proc/sensors` read the latest poll and never cause a request.
 * **Values the firmware does not give are shown as such.** A tag the
   firmware ignores reads `[unsupported]`, a mailbox that stops answering
   `[timeout 1000]`, a malformed answer `[error]`, and a platform with no
@@ -76,9 +79,14 @@ whose response is the id and a value:
 The voltage's unit is in dispute between the sources. The wiki gives
 "absolute voltage in microvolts" (line 473), and its set-voltage rule
 treats any value of 500000 or more as absolute microvolts (line 487);
-`vcmailbox.7:946` and FreeBSD (`bcm2835_cpufreq.c:444, 459, 1282-1311`)
-give an "offset from 1.2V in units of 0.025V". Probe S1 settles which
-the board's firmware answers ([Verification](#verification)).
+`vcmailbox.7:946` gives an "offset from 1.2V in units of 0.025V". In
+FreeBSD the comments and sysctl descriptions say the same offset
+(`bcm2835_cpufreq.c:444, 459, 1282-1311`), but its code treats the
+value as microvolts: `OFFSET2MVOLT` divides it by 1000 (`:64`), and the
+boot message prints the four voltages through it in millivolts
+(`:1112-1117`). So the documents disagree, and FreeBSD's arithmetic
+sides with the wiki. Probe S1 settles which the board's firmware
+answers ([Verification](#verification)).
 
 The configured clock rate, tag `0x00030002`, is in every source (wiki
 298-310; `bcm2835_mbox_prop.h:131`), but it is "the last requested
@@ -99,7 +107,9 @@ NUL-terminated, which the firmware overwrites with its reply text
 (`vcgencmd.c:115, 126`), and `vcgencmd` prints the reply text as the
 firmware wrote it (`vcgencmd.c:113, 162`). The reply's text for
 `get_throttled` is stated by no source read: its form is unverified and
-probe S1 records it.
+probe S1 records it. Nor does any source say over what span an occurred
+bit reports, since boot or since the state was last read; probe S1
+records that too.
 
 **What the firmware does by itself.** It throttles the ARM cores between
 80 and 85 degrees Celsius and the ARM cores and the GPU above 85
@@ -153,12 +163,14 @@ on the stopgap ([design-stopgap.md](design-stopgap.md)); and the only
 mailbox user in the tree is the QEMU suite's framebuffer stand-in,
 `test/raspi4b/firmware_fb.c`, which runs before BL31 and is never packed.
 
-The device service's one process, which the notification's designs make
-the sender of every firmware request, is not built either: `erx_devices`
-is a module that hands on the domain library's catalogue and keeps no
-state (`erlang/apps/erx_domain/src/erx_devices.erl:5-13`), and
+The device service's process and its firmware worker, which make every
+firmware request
+([design-system.md](design-system.md#devices), "Firmware requests"),
+are not built either: `erx_devices` is a module that hands on the
+domain library's catalogue and keeps no state
+(`erlang/apps/erx_domain/src/erx_devices.erl:5-13`), and
 `erx_domain_sup` supervises the domain service and `erx_devfs` alone
-(`erx_domain_sup.erl:25-33`). That process comes with whichever of the
+(`erx_domain_sup.erl:25-33`). Both processes come with whichever of the
 VL805's notification, the Bluetooth power line and this design lands
 first, as the one place firmware requests are made from.
 
@@ -176,6 +188,8 @@ first, as the one place firmware requests are made from.
 5. Never show a value the firmware did not give: an absent, ignored,
    late or malformed answer is shown as its status.
 6. Keep the firmware notifications working beside the readings.
+7. Keep the device service answering the watchdog's liveness call
+   while the firmware is asked, however long the mailbox takes.
 
 Non-goals: a thermal policy in erXos, since the firmware throttles by
 itself and no consumer needs another; setting clocks or voltages; the Pi
@@ -186,7 +200,7 @@ commands this design does not send.
 ## The construction: the firmware's requests are rows of the platform record
 
 The platform record already lists, for a device entry, the notifications
-that `erx_firmware_notify` sends
+that `erx_firmware_request` sends
 ([design-bluetooth.md](design-bluetooth.md#the-power-line)), and that
 call already serves one request at a time, against one buffer, with one
 deadline and one rule after a timeout
@@ -198,16 +212,22 @@ row and the call:
 * **A row** is a name, what it belongs to (a device entry's path, or
   `machine`), a tag from the ABI's closed set, and the tag's argument
   words. The tag's declaration fixes the size of the request and of the
-  answer window; the row cannot.
+  answer window; the row cannot. A machine row is written as a reading's
+  name alone, a member of the closed set `fw_reading`, whose declaration
+  gives the tag and the argument; the generator derives the row's other
+  fields from it.
 * **The call**, `erx_firmware_request(resource (CARVE), index)`, sends
   row `index` among the rows of what the resource names, a device's
   resource naming that device's rows and the root resource naming the
   machine's, and returns a status and, on success, the answer: at most
   the tag's window, never more than the firmware wrote. A notification's
-  window is empty, so for the VL805 and the Bluetooth line the call is
-  `erx_firmware_notify` as designed.
-* **One process sends.** The device service makes every call from its
-  one process; the sensor driver asks it for each machine row in turn.
+  window is empty, so for the VL805 and the Bluetooth line the call
+  returns a status alone, as the USB design defines it.
+* **One worker sends.** The device service makes every call from its
+  firmware worker, one at a time, while its own process takes requests
+  and answers every other call
+  ([design-system.md](design-system.md#devices), "Firmware requests");
+  the sensor driver asks it for each machine row in turn.
 
 Each requirement then follows:
 
@@ -218,32 +238,45 @@ Each requirement then follows:
   code, can choose only which row; and the key read's tag, the
   code-execution and memory tags and the tags that set a clock or a
   voltage are not in the closed set, so no row can name them.
+* **A row and its attribute cannot disagree.** A machine row names a
+  reading, and the reading's declaration alone gives the tag, the
+  argument and the attribute it fills, so a `soc_temperature` row cannot
+  send `get_voltage`, and no record can pair them.
 * **Bounds by construction.** The kernel lays out the buffer from the
   tag's declaration, reads the response code, the tag word and the
   response word at offsets that declaration fixes, and copies at most the
   declared window. No length, offset or tag count from the reply moves a
   read, unlike FreeBSD's walk by the value-buffer size read back
   (`bcm2835_mbox.c:358-386`).
-* **Notifications keep working**, because the device service
+* **Notifications keep working**, because the firmware worker
   serializes every request, readings included, and a row that times out
   leaves the mailbox in the state the notification's design already
   defines for every caller.
-* **Never fabricating** is the decoder's job, in Erlang, over a few
-  words the kernel already bounded: each answer's id must echo the
-  request's, each value must lie in its type's range, and the firmware's
-  "not valid" values are shown as unsupported.
+* **The device service stays live.** A request waits up to 1 s in the
+  kernel, in the worker; the device service's process never makes the
+  call, so the watchdog's liveness call
+  ([design-system.md](design-system.md#boot), "The watchdog") is
+  answered while a reading or a notification is in flight.
+* **Never fabricating** is shared. The kernel tells an ignored tag
+  (`ERX_ENOTSUP`) from a malformed answer (`ERX_EPROTO`); the decoder,
+  in Erlang, over a few words the kernel already bounded, checks that
+  each answer's id echoes the request's and each value lies in its
+  type's range, and shows the firmware's "not valid" value as
+  unsupported.
 * **Readers cost nothing.** The poll is the only sender, so how often
   `/proc/sensors` is read changes nothing the firmware sees.
 
 ## The requests
 
 `abi/formats/vc_property.txt` declares the property buffer's layout (its
-header, a tag's header and the end tag), its codes and response bit, and
+header, a tag's header and the end tag), its codes and response bit,
 the closed set of tags erXos sends, each with what it may belong to, the
-size of its request and of its answer window, and the least answer it
-accepts, and whether the firmware is known to leave its response word
-0. The generator computes every buffer size and offset from these
-facts and validates every row of every platform record against them.
+size of its request and of its answer window, the least answer it
+accepts and whether the firmware is known to leave its response word 0,
+and the closed set of readings below. The generator computes every
+buffer size and offset from these facts, derives every machine row from
+its reading, and validates every row of every platform record against
+them.
 
 | Tag name | Tag | Belongs to | Request | Window | Least answer | Decoded as |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -254,46 +287,66 @@ facts and validates every row of every platform record against them.
 | `gencmd` | `0x00030080` | machine | 64 bytes: an error word of 0 and a command of the closed set, NUL-terminated and zero-padded | 64 | 4 | `gencmd` |
 | the notification tags | as [design-usb.md](design-usb.md#the-vl805s-firmware) and [design-bluetooth.md](design-bluetooth.md#the-power-line) give them | device | as they give them | 0 | 0 | none |
 
-Every tag but one requires the response word's bit 31. The exception is
-the Bluetooth line's `0x00038041`, set GPIO state, whose response word
-FreeBSD records the firmware leaving 0 (`bcm2835_mbox.c:362-370`): its
-declaration accepts a response word of 0, as an answer of no bytes, and
-still refuses a nonzero word without bit 31. That is a fact about the
-tag, so it is written once, in the tag's declaration, and no caller
-handles it.
+Every tag but one takes a response word with bit 31 set as performed,
+and one without it as ignored, as the interface defines (wiki, line 5).
+The exception is the Bluetooth line's `0x00038041`, set GPIO state,
+whose response word FreeBSD records the firmware not setting, and whose
+word of 0 FreeBSD takes as an answer (`bcm2835_mbox.c:362-370`): its
+declaration takes a response word of 0 as performed, an answer of no
+bytes, and a nonzero word without bit 31 as ignored. That is a fact
+about the tag, so it is written once, in the tag's declaration, and no
+caller handles it. On this tag a firmware that ignored the request
+cannot be told from one that performed it; the controller's bring-up
+after the power cycle is what shows a power line that did nothing, and
+probe B-P2 records the raw word the board's firmware leaves
+([design-bluetooth.md](design-bluetooth.md#board-probes)).
 
-The gencmd command is itself a closed set, `fw_gencmd`, of one member,
-`get_throttled`, so the text a row sends is chosen from a list in the
-ABI, not written in the record. The 64-byte window is erXos's choice:
-`vcgencmd` uses 4100 bytes (`vcgencmd.c:45, 101`), and whether the
-firmware answers `get_throttled` into a smaller buffer is for probe S1.
+**The readings** are the closed set `fw_reading`, declared in the same
+file. Each reading names its tag, its argument and the attributes it
+fills, and the inspection schema's `sensors` kind is generated from the
+same declarations:
 
-The Raspberry Pi 4's record, `config/platforms/raspi4b.json`, gains a
-list `firmware_requests` whose machine rows are:
-
-| Row | Tag | Argument | Attribute |
+| Reading | Tag | Argument | Fills |
 | --- | --- | --- | --- |
-| 0 | `get_temperature` | 0 | `soc_temperature` |
-| 1 | `get_max_temperature` | 0 | `soc_temperature_max` |
-| 2 | `get_voltage` | 1 | `core_voltage` |
-| 3 | `get_voltage` | 2 | `sdram_c_voltage` |
-| 4 | `get_voltage` | 3 | `sdram_p_voltage` |
-| 5 | `get_voltage` | 4 | `sdram_i_voltage` |
-| 6 | `get_clock_rate_measured` | 3 | `arm_clock` |
-| 7 | `get_clock_rate_measured` | 4 | `core_clock` |
-| 8 | `gencmd` | `get_throttled` | `throttle` |
+| `soc_temperature` | `get_temperature` | 0 | `soc_temperature` |
+| `soc_temperature_max` | `get_max_temperature` | 0 | `soc_temperature_max` |
+| `core_voltage` | `get_voltage` | 1 | `core_voltage` |
+| `sdram_c_voltage` | `get_voltage` | 2 | `sdram_c_voltage` |
+| `sdram_p_voltage` | `get_voltage` | 3 | `sdram_p_voltage` |
+| `sdram_i_voltage` | `get_voltage` | 4 | `sdram_i_voltage` |
+| `arm_clock` | `get_clock_rate_measured` | 3 | `arm_clock` |
+| `core_clock` | `get_clock_rate_measured` | 4 | `core_clock` |
+| `throttle` | `gencmd` | `get_throttled` | `throttle`, `throttle_other` |
 
-A row's name is the attribute it fills, a member of the closed set
-`fw_reading` that the inspection schema's `sensors` kind is generated
-from, so a row and its attribute cannot disagree; the `throttle` row
-also fills `throttle_other`. The device rows, the VL805's
-and UART0's, move into the same list. The rows reach the system domain
-in the system manifest, beside the device records
+A platform record's machine rows are readings' names, in the order the
+platform polls them, and nothing else. The Raspberry Pi 4's record,
+`config/platforms/raspi4b.json`, gains a list `firmware_requests` whose
+machine part is the nine readings in the table's order, rows 0 to 8; its
+device rows, the VL805's and UART0's notifications, move into the same
+list with their tags and arguments. The generator derives a machine
+row's tag and argument from its reading and validates every device row
+against its tag's declaration, so a row cannot send one reading's tag
+under another's name. The rows reach the system domain in the system
+manifest, beside the device records
 ([design-abi.md](design-abi.md#devices-and-partition-windows)), as a
-record of name, belonging, tag and argument, and reach the kernel by the path
-the notifications take; that path is part of the kernel section
+record of name, belonging, tag and argument, and reach the kernel by the
+path the notifications take; that path is part of the kernel section
 [design-usb.md](design-usb.md#changes-to-other-designs) already lists
 for `design-kernel.md`, and this design adds nothing to it.
+
+**The throttle word comes through gencmd.** The one route to it that a
+source read for this design states is `vcgencmd`'s: tag `0x00030080`
+with the command `get_throttled`. The command is itself a closed set,
+`fw_gencmd`, of one member, `get_throttled`, so the text a row sends is
+chosen from a list in the ABI, not written in the record. The 64-byte
+window is erXos's choice: `vcgencmd` uses 4100 bytes
+(`vcgencmd.c:45, 101`). The reading rests on three facts probe S1
+confirms before its row and its decoder are built: that the firmware
+answers `get_throttled` into a 64-byte value buffer, the exact grammar
+of its reply, and the span its occurred bits report. A finding against
+any of them comes back to this design before either is built; a
+platform record without the `throttle` row shows `throttle` and
+`throttle_other` as `[unsupported]`, and its console gets no warnings.
 
 QEMU `virt`'s record has no rows. The Pi 5's has none until its port
 checks the same tags on its firmware.
@@ -301,15 +354,16 @@ checks the same tags on its firmware.
 ## The kernel call
 
 `erx_firmware_request(resource (CARVE), index)` keeps every clause of
-`erx_firmware_notify`'s contract
-([design-usb.md](design-usb.md#the-vl805s-firmware)): its authority (a
-resource carries no right to pass, so only the root task holds one, and
-the device service calls through the domain library), its poll of at
-most 1 s with preemption points between reads, its executor refusal, its
-match of the answer to its buffer, its one buffer page kept for the boot,
-its rule that after one `ERX_ETIMEDOUT` every later call of the boot
-answers `ERX_ETIMEDOUT` at once, and its `ERX_EBUSY` beside a request in
-flight. It changes what a request is and what it returns:
+the contract [design-usb.md](design-usb.md#the-vl805s-firmware) gives
+it: its authority (a resource carries no right to pass, so only the root
+task holds one, and the device service calls through the domain
+library), its poll of at most 1 s with preemption points between reads,
+its executor refusal, its match of the answer to its buffer, its one
+buffer page kept for the boot, its rule that after one `ERX_ETIMEDOUT`
+every later call of the boot answers `ERX_ETIMEDOUT` at once, and its
+`ERX_EBUSY` beside a request in flight. The 1 s runs from the call's
+start and covers the wait for room to post the request as well as the
+wait for its answer. It changes what a request is and what it returns:
 
 1. **The rows.** A resource carved from a device entry names that
    device's rows; the root resource names the machine's. An index past
@@ -321,12 +375,18 @@ flight. It changes what a request is and what it returns:
    a request word of 0, the row's argument bytes, zeroes to the end of
    the value buffer, and the end tag.
 3. **The answer's checks**, after the answer word names the buffer, each
-   field read once: the response code is `0x80000000`; the first tag's
-   identifier is still the row's tag, so a response that put an
-   unsolicited tag first is refused rather than searched; the response
-   word has bit 31 set, or is 0 for a tag declared so; and its length, bits 30-0, is at least the tag's
-   least answer. Any failed check answers `ERX_ENOTSUP`, as any answer
-   other than success does today.
+   field read once, in this order. The response code must be
+   `0x80000000`; `0x80000001`, the firmware's error parsing the buffer
+   (wiki, lines 29-30), and any other code answer `ERX_EPROTO`. The
+   first tag's identifier must still be the row's tag, so a response
+   that put an unsolicited tag first is refused as `ERX_EPROTO` rather
+   than searched. A response word without bit 31 is the firmware
+   ignoring the tag (wiki, line 5) and answers `ERX_ENOTSUP`, except a
+   word of 0 on a tag declared to take it as performed. A length, bits
+   30-0, below the tag's least answer answers `ERX_EPROTO`. So
+   `ERX_ENOTSUP` says the firmware does not perform this request, and
+   `ERX_EPROTO`, a status this design adds to the ABI's list, says its
+   answer broke the interface.
 4. **The copy.** The call returns `ERX_OK` with `n`, the smaller of the
    response length and the tag's window, and the first `n` bytes of the
    value buffer in the caller's UTCB, the bytes after `n` in its last
@@ -335,8 +395,11 @@ flight. It changes what a request is and what it returns:
    well inside the UTCB's 504.
 
 The answer is device-written memory, so the core reads it through the
-same once-per-field accessors and after the same cache maintenance the
-notification's response word needs. Nothing past the tag's window is
+same once-per-field accessors the notification's response word needs.
+Before posting, the core cleans the whole buffer from the data cache,
+from its size word to its end tag; after the answer, it invalidates the
+same span, the response code, the tag's header and the whole window
+included, before reading any of it. Nothing past the tag's window is
 read, and the window lies inside the core's own buffer page.
 
 The core is the mailbox core of
@@ -356,39 +419,51 @@ Erlang process over a thin shim, here the kernel's request routine,
 reached through the device service. Its decisions are in the pure core `erx_board_sensors_core`.
 
 **The poll.** At its start the process asks the device service for the
-machine's rows, `erx_devices:firmware_rows(machine)`, which the domain
-library's boot view reads from the system manifest, as it reads the
-placed devices. An empty list, as on QEMU
-`virt`, means the process never polls and
-every attribute reads `unsupported`. Otherwise it polls at once and then
-5 s after each poll ends, `board_sensor_period` in
-`abi/formats/vc_property.txt`, so polls never overlap and a slow one
-delays the next instead of piling up. A poll asks for each row in record
-order with `gen_server:send_request/2` on
-`erx_devices:firmware_read(Name)`, one row at a time, the next after the
-last one's answer, so the process stays free to answer the inspector
-while a request is in the kernel. The device service makes the kernel
-call through `erx_domain_lib:firmware(machine, Index)` and answers
-`{ok, Answer}`, the answer bytes, or `{error, Status}`. A device service
-that ends during a request answers that request `{error, failed}`
-through `send_request`'s monitor, and the poll goes on with the next row.
+machine's rows, `erx_devices:firmware_rows(machine)`, the readings'
+names in row order, which the domain library's boot view reads from the
+system manifest, as it reads the placed devices. An empty list, as on
+QEMU `virt`, means the process never polls and every attribute reads
+`unsupported`. Otherwise it polls at once and then 5 s after each poll
+ends, `board_sensor_period` in `abi/formats/vc_property.txt`, so polls
+never overlap and a slow one delays the next instead of piling up. A
+poll asks for each row in record order with `gen_server:send_request/2`
+on `erx_devices:firmware_read(Reading)`, one row at a time, the next
+after the last one's answer, so the process stays free to answer the
+inspector while a request is in the kernel, and the device service
+holds at most one of its requests at a time. The device service's
+firmware worker makes the kernel call through
+`erx_domain_lib:firmware(machine, Index)`, and the device service
+answers `{ok, Answer}`, the answer bytes, or `{error, Status}`. A device
+service that ends during a request answers that request `{error,
+failed}` through `send_request`'s monitor, and the poll goes on with the
+next row.
 
-**Decoding.** `erx_board_sensors_core:decode(Tag, Argument, Reply)` maps
-one row's reply to an inspection value
-([design-live.md](design-live.md#inspection-records)):
+**Decoding.** `erx_board_sensors_core:decode(Reading, Reply)` maps one
+row's reply to an inspection value
+([design-live.md](design-live.md#inspection-records)). The reading's
+declaration gives its tag, its argument and its attributes' range, so
+the decoder is handed nothing a row could get wrong:
 
 | Reply | Value |
 | --- | --- |
-| `{ok, <<Id:32/little, V:32/little>>}` for an `id_value` tag, `Id` the row's argument, `V` within the attribute's range | `{ok, V}` |
-| the same with `V` `0x80000000` for `get_voltage` (wiki 476), or `V` 0 for a clock, the configured-rate tag's answer for a clock that does not exist (wiki 310), which the wiki does not state for the measured tag | `unsupported` |
-| the same with `V` outside the range: below 500000 for a voltage, which is what an offset in 25 mV steps would be; 2^31 or more for a temperature | `{error, out_of_range}` |
-| an `id_value` answer of other than 8 bytes, or whose `Id` is not the row's argument | `{error, malformed}` |
+| `{ok, <<Id:32/little, V:32/little>>}` for an `id_value` tag, `Id` the reading's argument, `V` within the attribute's range | `{ok, V}` |
+| the same with `V` `0x80000000` for `get_voltage` (wiki 476) | `unsupported` |
+| the same with `V` outside the range: below 500000 for a voltage, which is what an offset in 25 mV steps would be; 2^31 or more for a temperature; 0 for a clock | `{error, out_of_range}` |
+| an `id_value` answer of other than 8 bytes, or whose `Id` is not the reading's argument | `{error, malformed}` |
 | `{ok, <<0:32, Text/binary>>}` for `gencmd`, `Text` holding a NUL, the bytes before it in the reply's grammar, its number at most `0xffffffff` | `{ok, Flags}` for `throttle`, and the bits outside the eight named ones as `{ok, Other}` for `throttle_other` |
 | a `gencmd` answer with a nonzero error word, without a NUL, or not in the grammar | `{error, malformed}` |
-| `{error, enotsup}` | `unsupported`: the firmware ignored the tag or refused the buffer |
+| `{error, enotsup}` | `unsupported`: the firmware ignored the tag |
+| `{error, eproto}` | `{error, malformed}`: the firmware's answer broke the interface |
 | `{error, etimedout}` | `{timeout, 1000}` |
-| `{error, ebusy}` | `{error, busy}`: a trial request was in flight |
+| `{error, ebusy}` | `{error, busy}`: another request was in flight |
 | `{error, failed}` | `{error, failed}` |
+
+What the measured-rate tag answers for a clock it does not measure is
+unverified: the configured-rate tag answers 0 for a clock that does not
+exist (wiki 310), the measured tag's description says nothing of it
+(wiki 363-375), and probe S1 records the raw words. A clock of 0 Hz lies
+outside a clock's range, so it reads `[error]`, never a rate and never
+a claim that the firmware lacks the clock.
 
 The reply grammar of `get_throttled` is unverified. It is written
 `NAME=0xHEX` here, a name, `=`, `0x` and one to eight hexadecimal digits,
@@ -409,31 +484,45 @@ long it took. Before the first poll ends every attribute and `sampled`
 are `unknown`. `erx_board_sensors:snapshot/0` returns the snapshot at
 once; it never waits on a poll.
 
-**Console warnings.** `erx_board_sensors_core:changes(Previous,
-Current)` compares the throttle flags of two polls and returns the lines
-to log with `logger`, which reach the console and the store through the
-system log ([design-log.md](design-log.md#consumers-and-backlogs)):
+**Console warnings.** `erx_board_sensors_core:changes(Reference,
+Current)` compares a throttle reading with the **reference**, the flags
+the firmware holds just after the last good reading, and returns the
+lines to log with `logger`, which reach the console and the store
+through the system log
+([design-log.md](design-log.md#consumers-and-backlogs)). What the
+firmware holds after a read depends on the span its occurred bits
+report, which `fw_throttle`'s declaration in
+`abi/formats/vc_property.txt` states from probe S1's record: `sticky`,
+since boot, or `cleared_by_read`, since the last read. So
+`erx_board_sensors_core:after_read(Flags)` gives the next reference: the
+reading itself where the bits are sticky, and the reading with bits 16
+to 19 cleared where a read clears them, as the read did in the firmware.
 
-| Change | Level | Line |
+| Change against the reference | Level | Line |
 | --- | --- | --- |
 | bit 0 sets | warning | `erx_board_sensors: under-voltage detected` |
 | bit 0 clears | notice | `erx_board_sensors: under-voltage cleared` |
 | bit 1, 2 or 3 sets | warning | `erx_board_sensors: ARM frequency capped`, `throttled`, `soft temperature limit active` |
 | bit 1, 2 or 3 clears | notice | the same with `cleared` |
-| bit 16 to 19 sets while its bit 0 to 3 was clear at this poll and the last | warning | `erx_board_sensors: under-voltage occurred between readings`, and likewise for the other three |
+| bit 16 to 19 sets while its bit 0 to 3 is clear in the reading and in the reference | warning | `erx_board_sensors: under-voltage occurred between readings`, and likewise for the other three |
 | at the first throttle reading of the process, bit 16 to 19 set with its bit 0 to 3 clear | warning | `erx_board_sensors: under-voltage occurred before the first reading`, and likewise |
 | the first `{timeout, 1000}` of the process | error | `erx_board_sensors: the firmware's mailbox does not answer; no further readings this boot` |
 
-A throttle reading that is not `{ok, _}` changes nothing: the previous
-good flags stay the reference, so a malformed reply between two equal
-readings logs no clear and set. The lines are fixed text, so nothing the
-firmware wrote is printed. A poll logs at most five lines, and a
-restarted process may repeat the first-reading lines once per restart,
-within its supervisor's intensity. Whether reading the state clears the
-occurred bits is unverified: if it does, each transient between polls
-logs once; if it does not, an occurrence after the first between two
-polls is not seen, which the board's own behaviour allows no poll to
-change. Probe S1 records which.
+The one rule then fits both spans. Where a read clears the bits, every
+interval between two readings that held a transient sets them against a
+reference in which they are clear, so two such intervals in a row log
+twice. Where the bits are sticky, the first transient logs and later ones
+find the bit already set; a sticky word shows no more than that, and no
+poll can change it.
+
+A throttle reading that is not `{ok, _}` changes nothing: the reference
+stays, so a malformed reply between two equal readings logs no clear and
+set. Where a read clears the bits, a failed reading that cleared them in
+the firmware may lose its interval's occurrence; it never invents one.
+The lines are fixed text, so nothing the firmware wrote is printed. A
+poll logs at most five lines, and a restarted process may repeat the
+first-reading lines once per restart, within its supervisor's
+intensity.
 
 No other consumer acts on the readings. A thermal policy, a fan driver or
 an under-voltage action would read the same snapshot, through the
@@ -478,14 +567,23 @@ already show.
 ## Concurrency and failure
 
 * **One request at a time.** The device service makes every firmware
-  request, readings and notifications, from its one process, so two
-  never meet in the kernel and `ERX_EBUSY` arises only beside a trial
-  request, as the notification's design says. A notification waits
-  behind at most one reading, and a reading behind at most one
-  notification or power cycle step, each at most 1 s.
-* **The device service's occupancy.** Each reading holds the device
-  service for one kernel call. Its usual length is unmeasured
-  ([Performance](#performance)); its bound is the call's 1 s.
+  request, readings and notifications, from its one firmware worker,
+  which starts the next only after the last one's answer, so two never
+  meet in the kernel ([design-system.md](design-system.md#devices),
+  "Firmware requests"). Each of the worker's callers, the sensor
+  driver, the line service and the PCIe domain's bridge, waits for its
+  answer before it asks again, so the queue holds at most one request
+  of each, and a request waits behind at most one of each other caller's,
+  each at most 1 s: a notification behind at most one reading, a reading
+  behind at most a power-cycle step and the VL805's notification.
+* **The device service stays live.** The worker alone waits on the
+  kernel; the device service's own process only queues requests and
+  hands out answers, so it answers the watchdog's liveness call within
+  the period ([design-system.md](design-system.md#boot), "The
+  watchdog") whatever the mailbox does. A request holds the worker and
+  one of the system runtime's dirty I/O schedulers for one kernel call;
+  its usual length is unmeasured ([Performance](#performance)), and its
+  bound is the call's 1 s.
 * **A mailbox that stops answering.** The first reading to meet it
   waits its 1 s and answers `ERX_ETIMEDOUT`; from then on every request
   of the boot answers `ERX_ETIMEDOUT` at once without touching the
@@ -499,7 +597,9 @@ already show.
   not cause it, they find it sooner.
 * **A firmware that ignores a tag** answers without the response bit,
   so that attribute is `[unsupported]` at every poll and the others are
-  unaffected.
+  unaffected. **A firmware that answers outside the interface**, with a
+  parse error, an unsolicited tag first or a short answer, gives
+  `ERX_EPROTO`, and that attribute is `[error]`.
 * **A trial request** waits out a reading in flight, at most its
   deadline, as it waits out a notification; a reading that finds the
   trial request in flight is `{error, busy}`, and the machine resets
@@ -509,6 +609,9 @@ already show.
   the device service is untouched.
 * **The device service's restart** fails the reading in flight with
   `{error, failed}`; the sensor driver asks the new one at the next row.
+  A call the old worker left in the kernel finishes within its 1 s, and
+  a request of the new worker that meets it answers `ERX_EBUSY`, a
+  failure of that one request.
 * **The firmware writes late.** A late answer after a timeout writes the
   core's own page, which nothing reads again in that boot.
 
@@ -517,12 +620,13 @@ already show.
 | Call | Result | When |
 | --- | --- | --- |
 | `erx_firmware_request` | `ERX_OK` with `n` and the answer | the answer passed every check |
-| | `ERX_ENOTSUP` | a resource that names no rows, an index past its list, a platform with no rows; a response code other than success, a first tag other than the row's, a response word without bit 31 (other than 0 for a tag declared so), a response length below the tag's least answer |
+| | `ERX_ENOTSUP` | a resource that names no rows, an index past its list, a platform with no rows; a response word without bit 31, other than 0 on a tag declared to take it as performed: the firmware ignored the tag |
+| | `ERX_EPROTO` | a response code other than success, `0x80000001` included; a first tag other than the row's; a response length below the tag's least answer |
 | | `ERX_ERIGHTS` | a resource without `CARVE` |
-| | `ERX_ETIMEDOUT` | no answer within 1 s, and every call after one in the boot |
-| | `ERX_EBUSY` | another request in flight: only a trial request |
+| | `ERX_ETIMEDOUT` | no answer within 1 s of the call's start, and every call after one in the boot |
+| | `ERX_EBUSY` | another request in flight: a trial request, or a call a restarted device service's old worker left in the kernel |
 | | `ERX_EWOULDBLOCK` | a call from an executor |
-| `erx_devices:firmware_read(Name)` | `{ok, Answer}` or `{error, Status}` | the kernel call's result; a `Name` that is not a machine row of the platform is `{error, enotsup}` |
+| `erx_devices:firmware_read(Reading)` | `{ok, Answer}` or `{error, Status}` | the kernel call's result; a `Reading` that is not a machine row of the platform is `{error, enotsup}` |
 | `[sensors]` | `{error, unsupported}` | no sensor driver in this runtime |
 | | `{error, failed}` | a sensor driver that does not answer |
 | `/proc/sensors/status` | `enoent` | outside the reader's inspect scope, as any path |
@@ -554,45 +658,55 @@ the chokepoint check's list does not grow. Changing the row is
 
 **Host tests of the mailbox core**, extending the model mailbox of
 [design-usb.md](design-usb.md#verification) (one that answers at once,
-late or never, and can answer another buffer). Each passing case is
-paired with a seeded fault that makes it fail:
+late or never, and can answer another buffer), with a write side that
+can stay full and a record of the cache maintenance the core asks for.
+Each passing case is paired with a seeded fault that makes it fail:
 
 | Case | Seeded fault |
 | --- | --- |
 | a `get_temperature` row's buffer is the declared layout, word for word | the value buffer's size written as the request's alone, not the larger of request and window |
 | a success answer of 8 bytes returns `n` = 8 and the two words | the copy taken from offset 0 of the value buffer's header instead of its value |
 | a response length of 200 for a 64-byte window returns `n` = 64 and touches nothing past the window | `n` taken from the response length unclamped: the test's guard page faults |
-| a response length below the least answer, a cleared response bit, a code of `0x80000001`, a first tag other than the row's: each `ERX_ENOTSUP` | each check removed in turn |
-| a notification row (window 0) returns `ERX_OK` with `n` = 0, as `erx_firmware_notify` did | the least answer applied to a notification as 8 |
+| a code of `0x80000001`, a code of `0x80000002`, a first tag other than the row's and a response length below the least answer each answer `ERX_EPROTO`; a response word without bit 31 answers `ERX_ENOTSUP` | each check removed in turn; the two statuses swapped, under which the ignored tag reads `ERX_EPROTO` |
+| a notification row (window 0) returns `ERX_OK` with `n` = 0, as the USB design's call does | the least answer applied to a notification as 8 |
 | a set-GPIO-state row answered with a response word of 0 returns `ERX_OK`; a `get_voltage` row answered so is `ERX_ENOTSUP` | the zero-word exception applied to every tag, or to none |
 | an index past the machine's rows, and a device resource asking for a machine row, are `ERX_ENOTSUP` | the root resource's list used for every resource |
+| a write side that stays full gives `ERX_ETIMEDOUT` 1 s after the call's start | the deadline started at the post, so the call waits past 1 s |
+| the clean before the post and the invalidate before the first read each span the buffer from its size word to its end tag | the invalidate spanning the response word alone |
 | after a timeout every call answers `ERX_ETIMEDOUT` without posting | the poisoned flag cleared by a later success |
 
 **Fuzz targets**, landing with the code: the core's answer check over
 arbitrary buffer bytes and response words, which must never read outside
 its page or return `n` above the window (seeded fault: the unclamped
-`n`, which ASan reports); and `erx_board_sensors_core:decode/3` over
-arbitrary replies, which must return a value of the attribute's type or a
-status and never crash (seeded fault: the hexadecimal parse without its
-eight-digit bound, which yields a value past 32 bits that
-`erx_schema:validate_record/1` refuses).
+`n`, which ASan reports); and `erx_board_sensors_core:decode/2` over
+every reading and arbitrary replies, which must return a value of the
+attribute's type or a status and never crash (seeded fault: the
+hexadecimal parse without its eight-digit bound, which yields a value
+past 32 bits that `erx_schema:validate_record/1` refuses).
 
-**Host tests of the Erlang cores:**
+**Host tests of the generator and the Erlang cores:**
 
 | Case | Seeded fault |
 | --- | --- |
+| a platform record whose machine row carries a tag or an argument of its own, or names a reading `fw_reading` does not declare, fails the build | the record reader ignoring a machine row's other keys: a `soc_temperature` row with `get_voltage` builds |
 | each row of the decoding table, one reply each | the id echo check removed: the mismatched-id case reads a value |
-| `0x80000000` for a voltage is `unsupported`; 12 for a voltage is `{error, out_of_range}` | the voltage range's lower bound dropped |
-| `changes/2` over every pair of throttle words drawn from the eight named bits, exhaustively (256 by 256), against the table above | the clear lines dropped; the "between readings" condition reading only this poll |
+| `0x80000000` for a voltage is `unsupported`; 12 for a voltage is `{error, out_of_range}`; 0 for a clock is `{error, out_of_range}` | the voltage range's lower bound dropped; a clock's 0 taken as `unsupported` |
+| `{error, enotsup}` renders `[unsupported]` and `{error, eproto}` renders `[error]` | the two statuses decoded alike |
+| `changes/2` with `after_read/1`, for each span, `sticky` and `cleared_by_read`, over every pair of throttle words drawn from the eight named bits, exhaustively (256 by 256), against the table above | the clear lines dropped; the "between readings" condition reading only this poll |
+| two intervals in a row each holding a transient, read as `occurred=1, current=0` twice: two lines where a read clears the bits, one where they are sticky | `after_read/1` keeping the occurred bits where a read clears them: the second interval logs nothing |
 | a non-`ok` throttle reading between two equal readings logs nothing | the reference replaced by every reading |
 | `erx_sensor_records` renders each status, `unknown`, `unsupported`, `{timeout, 1000}`, `{error, _}`, as V2 requires | a status rendered as 0 |
 
-**The device service's serialization**, in hosted mode with a model of
-the domain library's firmware call that records overlapping entries: a
-sensor poll running while the Bluetooth line power-cycles and the bridge
-asks for its notification never overlaps two calls (seeded fault: the
-sensor driver calling `erx_domain_lib:firmware/2` itself, which the
-model sees overlap).
+**The device service's firmware worker**, in hosted mode with a model
+of the domain library's firmware call that takes its full 1 s and
+records overlapping entries. A sensor poll running while the Bluetooth
+line power-cycles and the bridge asks for its notification never
+overlaps two calls (seeded fault: the sensor driver calling
+`erx_domain_lib:firmware/2` itself, which the model sees overlap), and a
+liveness call made to the device service every 100 ms through all of it
+is answered within 100 ms each time (seeded fault: the device service's
+own process making the call, under which a liveness answer waits up to
+1 s).
 
 **The QEMU `virt` suite** (HVF): the shell cell reads
 `/proc/sensors/status` and finds every attribute `[unsupported]` with
@@ -615,13 +729,22 @@ is the `virt` check's, and the values are checked on the board alone.
 precedes the VL805's notification
 ([design-usb.md](design-usb.md#the-vl805s-firmware)): on the same Pi 4,
 Raspberry Pi OS's `vcmailbox` (`vcmailbox.c:80-107`, which prints every
-word of the buffer) and `vcgencmd` record, for each row, the raw answer
-words, the text of `get_throttled`, whether it answers into a 64-byte
-value buffer, whether `0x00030047` is answered, and whether a second
-`get_throttled` clears the occurred bits; and `vcgencmd measure_volts`,
-which prints volts, settles the voltage word's unit. The probe's record
-fixes the decoder's grammar and voltage form, and this design is edited
-to match.
+word of the buffer) and `vcgencmd` record:
+
+* for each reading, the raw answer words, or that the firmware ignored
+  the tag, `0x00030047` for both clock ids among them;
+* the text of `get_throttled`, sent with a 64-byte value buffer as the
+  row sends it, and whether the firmware answers it there;
+* the occurred bits' span: with a bench supply, a dip to the setting
+  below and back, then `get_throttled` twice; a second reading with bit
+  16 still set is `sticky`, one with it clear `cleared_by_read`;
+* the supply setting at which `get_throttled` reports bit 0 set at idle,
+  for the board pass below;
+* `vcgencmd measure_volts`, which prints volts, against the voltage
+  words, which settles their unit.
+
+The probe's record fixes the decoder's grammar, its voltage form and
+`fw_throttle`'s span, and this design is edited to match.
 
 **The board pass**, one more step in [design-platforms.md, "Trying a
 card on a board"](design-platforms.md#trying-a-card-on-a-board), once per
@@ -633,20 +756,27 @@ change to the sensors or the mailbox core:
 2. Run a CPU-bound loop on every core for 60 s, then read it again:
    `soc_temperature` is higher than at idle, and `sampled` has moved on.
    A sensor driver that kept its first snapshot would fail this step.
-3. With a bench supply at hand, power the board at 4.5 V, below the
-   documented 4.63 V threshold (`overclocking.adoc:380`): within 5 s the
-   console prints `under-voltage detected` and `throttle` shows
-   `under_voltage`; back at 5.1 V, `under-voltage cleared`, with
-   `under_voltage_occurred` still shown. On the board's proper supply
-   neither line appears. The low supply is the step's seeded fault: a
-   board pass that saw no warning under it has not tested the warning.
+3. With the bench supply, set the board's supply to the setting probe S1
+   found Raspberry Pi OS reporting under-voltage at, and hold it. The
+   documented threshold is 4.63 V plus or minus 5 percent
+   (`overclocking.adoc:380`), down to about 4.40 V, so no setting is
+   taken as below it unless the board's own detector showed it so. With
+   no other firmware request during the step, within 15 s, the request
+   in flight, the 5 s period and the next poll's nine requests each at
+   its 1 s bound, the console prints `under-voltage detected` and
+   `throttle` shows `under_voltage`. Back at 5.1 V, within the same 15 s,
+   `under-voltage cleared`, and `under_voltage_occurred` shown where S1
+   found the bits sticky. On the board's proper supply neither line
+   appears. The low supply is the step's seeded fault: a board pass that
+   saw no warning under it has not tested the warning.
 
 ## Performance
 
 A poll is nine requests every 5 s on the Pi 4, each holding the device
-service and busy-polling the mailbox in the calling thread for its
-answer. A request's latency is unmeasured: no source read gives it, and
-FreeBSD's 10 s wait (`bcm2835_mbox.c:244-247`) bounds it only loosely.
+service's firmware worker and one of the system runtime's dirty I/O
+schedulers while the kernel busy-polls the mailbox for its answer. A
+request's latency is unmeasured: no source read gives it, and FreeBSD's
+10 s wait (`bcm2835_mbox.c:244-247`) bounds it only loosely.
 `poll_duration` reports it on every board, and the watch list carries
 the measurement ([todo-performance.md](todo-performance.md)). If a poll
 turns out to cost too much, the fixes are a longer period, or one buffer
@@ -661,12 +791,11 @@ This design lands only with these edits to the documents that own them:
 | Document | Change |
 | --- | --- |
 | [design.md](design.md) | the mailbox chokepoint row: every request after boot is a row of the checked record whose tag is in the closed set, reading back at most that tag's window ([Open decision 1](#open-decisions)) |
-| [design-usb.md](design-usb.md), [design-bluetooth.md](design-bluetooth.md), [design-pcie.md](design-pcie.md) | `erx_firmware_notify` named `erx_firmware_request`, unchanged for a row with an empty window; `erx_domain_lib:pci_firmware/1` and `device_notify/2` as uses of `erx_domain_lib:firmware/2`; the kernel section design-usb lists for design-kernel with the answer window, the root resource's machine rows and the answer's checks above |
+| [design-usb.md](design-usb.md), [design-bluetooth.md](design-bluetooth.md), [design-pcie.md](design-pcie.md) | `erx_domain_lib:pci_firmware/1` and `device_notify/2` as uses of `erx_domain_lib:firmware/2`; in design-usb's contract, the answer window, the deadline from the call's start, `ERX_ENOTSUP` for an ignored tag and `ERX_EPROTO` for an answer outside the interface; the kernel section design-usb lists for design-kernel with the answer window, the root resource's machine rows and the answer's checks above |
 | [design-kernel.md](design-kernel.md) | that section, when design-usb's row lands |
-| [design-bluetooth.md](design-bluetooth.md), "The power line" | the power notification's answer: a response word of 0 for `0x00038041` is success (FreeBSD `bcm2835_mbox.c:362-370`), where that design takes only a set response bit; probe B-P2 confirms it on the board |
-| [design-platforms.md](design-platforms.md) | the Pi 4's firmware requests; the board pass's sensors step; the sentence under "The firmware's framebuffer under QEMU" that says erXos's code never talks to the mailbox, which holds for the framebuffer alone |
-| [design-system.md](design-system.md), "Devices" | the device service's `firmware_rows/1` and `firmware_read/1`, made from its one process |
-| [design-abi.md](design-abi.md), `abi/manifest.txt` | the firmware request record in the system manifest; `abi/formats/vc_property.txt`; the `sensors` kind, its units and `@fw_throttle` in the inspection schema |
+| [design-platforms.md](design-platforms.md) | the Pi 4's firmware requests; the board pass's sensors step |
+| [design-system.md](design-system.md), "Devices" | the device service's `firmware_rows/1` and `firmware_read/1`, served through its firmware worker, and the sensor driver among the worker's callers |
+| [design-abi.md](design-abi.md), `abi/erx_abi.txt`, `abi/manifest.txt` | the status `proto`, `ERX_EPROTO`; the firmware request record in the system manifest; `abi/formats/vc_property.txt` with `fw_reading` and `fw_throttle`'s span; the `sensors` kind, its units and `@fw_throttle` in the inspection schema |
 | [design-stopgap.md](design-stopgap.md) | the backend's implementation of the call in the root, with the answer window |
 | [design-live.md](design-live.md), "The /proc tree" | `/proc/sensors/status` among the paths |
 
@@ -690,14 +819,30 @@ This design lands only with these edits to the documents that own them:
   design may read describes it (FreeBSD's `sys/arm/broadcom/bcm2835` at
   the pinned release has no thermal driver), and it gives the
   temperature alone, not the voltages, clocks or throttle state.
-* **A firmware process in the system domain beside the device service.**
-  A second process that serializes requests would need its own order
-  with the device service's notifications; the device service already is
-  the one sender.
-* **A second kernel call for reads beside `erx_firmware_notify`.** The
+* **A firmware service of its own beside the device service.** A second
+  service that serializes requests would need its own order with the
+  device service's notifications and its own place in the watchdog's
+  liveness list. The device service already is the one sender, and its
+  firmware worker is part of it, not a service: it keeps no state, and
+  it lives and dies with the device service by their link.
+* **The device service's process making the call itself**, on a dirty
+  I/O scheduler. A process running a dirty NIF cannot run its receive
+  loop, so the device service would not answer the watchdog's liveness
+  call for up to 1 s per request, and longer behind a queue.
+* **A deadline for readings shorter than the watchdog's period.**
+  Requests queued behind one another still add up past the period, and
+  the notifications keep their 1 s; only a process that never waits on
+  the kernel answers within the period whatever is queued.
+* **A second kernel call for reads beside the notification's.** The
   two would share the routine, the authority, the buffer, the deadline,
   the timeout rule and the results; one call with an answer window is
   the same mechanism without the copy.
+* **A direct property tag for the throttle word.** No permissively
+  licensed source or Raspberry Pi documentation read for this design
+  names one; if a source is found, a reading with that tag replaces the
+  gencmd row and its decoder, and nothing else changes.
+* **Leaving `throttle` unsupported.** It drops the console's
+  under-voltage warning, the one reading a user acts on.
 * **The configured clock rate, tag `0x00030002`**, in every source. It
   shows the rate last asked for, not the one running while throttled
   (wiki 375); a firmware without the measured tag shows
@@ -715,23 +860,9 @@ This design lands only with these edits to the documents that own them:
    answer window. Recommendation: accept the row as given under
    [Security](#security); the functions that touch the mailbox stay
    three, and what the firmware is asked stays fixed by the checked
-   record and a closed tag set. Without it, the readings cannot exist,
-   and this design waits; nothing else in the tree depends on it.
-2. **The throttle state through gencmd.** The only route to the throttle
-   word that any source read for this design states is `vcgencmd`'s text
-   command, through tag `0x00030080` with the fixed command
-   `get_throttled`, which brings a short text reply and a decoder whose
-   grammar probe S1 fixes. The alternatives are a direct property tag,
-   which no permissively licensed source or Raspberry Pi documentation
-   read here names, and leaving `throttle` unsupported, which drops the
-   console's under-voltage warning. Recommendation: gencmd, with the
-   command a closed set of one; a direct tag replaces the row and the
-   decoder if a source for it is found. Only the throttle attribute and
-   the warnings wait on this; the other readings do not.
-3. **The call's name.** Renaming the accepted `erx_firmware_notify` to
-   `erx_firmware_request` touches three accepted designs, by name only.
-   Recommendation: rename, so the call says what it does for both kinds
-   of row; keeping the old name for both costs nothing but clarity.
+   record, a closed tag set and a closed set of readings. Without it,
+   the readings cannot exist, and this design waits; nothing else in the
+   tree depends on it.
 
 ## References
 

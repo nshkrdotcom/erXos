@@ -1054,7 +1054,7 @@ Each answer of an error is `{error, Reason}`
 manifest row and its given record name it; the device service matches
 it against the rows the facet's grantee holds and never trusts it
 otherwise. `firmware(Bridge)` names a bridge the PCIe domain holds; the
-device service makes `erx_firmware_notify` through
+device service makes `erx_firmware_request` through
 `erx_domain_lib:pci_firmware(Bridge)`, with the resource the bridge's
 device record holds for its give, which marks the bridge `firmware_lost`
 at `ERX_ETIMEDOUT` ([Records](#records)), and answers `ok` for `ERX_OK`
