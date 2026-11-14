@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 -module(erx_session_app).
--moduledoc "The session application: the session's /data and /apps and its supervisor (erx_session_sup).".
+-moduledoc "The session application: the session's /data, /apps and /machine and its supervisor (erx_session_sup).".
 -behaviour(application).
 
 -export([start/2, stop/1]).
@@ -20,10 +20,16 @@
 start(_Type, _Args) ->
     ok = erx_ns:mount_facets(erx:granted()),
     ok = mount_apps(erx:cap(apps)),
+    ok = mount_machine(erx:cap(machine)),
     erx_session_sup:start_link().
 
 mount_apps(undefined) -> ok;
 mount_apps(_Grant) -> erx_ns:mount({facet, apps}, <<"/apps">>, [{tree, <<"apps">>}, rw]).
+
+%% /machine, the domain service's machine tree (docs/design-system.md, "A session's
+%% request"), as /apps: only a session whose template holds the machine grant has it.
+mount_machine(undefined) -> ok;
+mount_machine(_Grant) -> erx_ns:mount({facet, machine}, <<"/machine">>, [{tree, <<"machine">>}, rw]).
 
 stop(_State) ->
     ok.

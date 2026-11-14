@@ -9,7 +9,7 @@
 
 -module(erx_inspector).
 
--export([inspect/1, inspect/2, entries/1, overview/0, proc_id/1]).
+-export([inspect/1, inspect/2, entries/1, overview/0, proc_id/1, is_system_runtime/0]).
 
 inspect(Path) -> inspect(Path, #{}).
 
@@ -22,3 +22,6 @@ overview() -> [{[], inspect([])}, {[processes], entries([processes])}].
 proc_id(Pid) ->
     [_Node, Number, Serial] = string:lexemes(pid_to_list(Pid), "<.>"),
     {pid, 4, list_to_integer(Number), list_to_integer(Serial)}.
+
+%% Outside the system domain, as the domain this stand-in is.
+is_system_runtime() -> false.

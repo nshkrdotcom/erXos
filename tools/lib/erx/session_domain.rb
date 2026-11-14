@@ -277,12 +277,12 @@ module Erx
     # the kind of end asked for, a reset or a power-off, after the one log line that names
     # the end and the principal, root (docs/design-system.md, "A session's request").
     # `reboot` runs in root_1's own session, which holds the machine grant: a malformed
-    # line written to /machine/ctl is refused first, and then `reboot` ends the machine
-    # through the tree. `halt` runs in the system's command shell, whose machine entry is
-    # local. points must end at the command shell.
+    # line written to /machine/ctl is refused first, with einval, whose text is echo's status,
+    # and then `reboot` ends the machine through the tree. `halt` runs in the system's command
+    # shell, whose machine entry is local. points must end at the command shell.
     MACHINE_ENDS = { 'reboot' => 'reset', 'halt' => 'off' }.freeze
     MACHINE_END_LOG = { 'reboot' => /rebooted by root/n, 'halt' => /powered off by root/n }.freeze
-    MACHINE_CTL_REFUSED = "echo trial > /machine/ctl || echo machine-ctl-refused\r"
+    MACHINE_CTL_REFUSED = "echo trial > /machine/ctl || echo machine-ctl-refused-$status\r"
 
     def machine_end_checkpoints(points, command:)
       [*points, *machine_end_route(command),
@@ -294,7 +294,8 @@ module Erx
       case command
       in 'reboot'
         [session_shell('end-session-shell', MACHINE_CTL_REFUSED),
-         { name: 'end-ctl-refused', pattern: line('machine-ctl-refused'), seconds: 60, type: "reboot\r" }.freeze]
+         { name: 'end-ctl-refused', pattern: line('machine-ctl-refused-invalid argument'), seconds: 60,
+           type: "reboot\r" }.freeze]
       in 'halt'
         [session_shell('end-session-shell', CTRL_G),
          { name: 'end-menu', pattern: CTRL_G_MENU, seconds: 30, type: 's' }.freeze,

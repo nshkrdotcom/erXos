@@ -25,9 +25,12 @@ class ErxShellCommandsTest < Minitest::Test
   INCLUDE = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
   CORPUS = File.join(ROOT, 'test/shell/rc/commands')
   APPLICATION = File.join(ROOT, 'erlang/apps/erx_shell/src')
-  # erx_cmd first, so that the commands find their behaviour.
+  # erx_cmd first, so that the commands find their behaviour. The runner reads a session's
+  # facets through erx_facet and erx_inspector, whose stand-in is a domain outside the
+  # system domain's, holding none.
   SOURCES = [File.join(ROOT, 'build/gen/erlang/apps/erx/src/erx_text_tables.erl'), File.join(ROOT, 'erlang/apps/erx/src/erx_text.erl'),
-             File.join(ROOT, 'erlang/apps/erx/src/erx.erl'),
+             File.join(ROOT, 'erlang/apps/erx/src/erx.erl'), File.join(ROOT, 'erlang/apps/erx/src/erx_facet.erl'),
+             File.join(ROOT, 'test/erlang/stand_in/erx_inspector.erl'),
              File.join(APPLICATION, 'erx_cmd.erl'),
              *Dir[File.join(APPLICATION, '*.erl')].sort].uniq.freeze
 

@@ -675,7 +675,10 @@ installed and removed, and what that does to its data, is
 
 **Commands**, Erlang commands of the command shell
 ([design-shell.md](design-shell.md#commands)), each declaring
-`-erx_needs([start])`:
+`-erx_needs([start])`. In the system domain's command shell the entry
+is `local` ([design-shell.md](design-shell.md#interfaces)), which mounts
+no tree, and a line the table below writes to `ctl` goes instead to the
+start service's own answer to it, the one a write of it gives:
 
 | Command | Does |
 | --- | --- |

@@ -9,7 +9,7 @@ require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_cmd_reboot_tests.erl, the EUnit cases of the command
 # shell's `reboot` and `halt` (erx_cmd_reboot): the parser, the usage lines and
-# the authority rule, against the erx and erx_shell applications compiled from
+# how each machine entry asks, against the erx and erx_shell applications compiled from
 # source with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC,
 # which make check supplies). No case ends the emulator.
 class ErxCmdRebootTest < Minitest::Test

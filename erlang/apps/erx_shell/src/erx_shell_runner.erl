@@ -54,7 +54,7 @@ does; a pattern character never matches a leading `.`, and a pattern
 that matches nothing stays as written.
 """.
 
--export([new/1, state/1, runner/0, glob/2]).
+-export([new/1, state/1, runner/0, glob/2, facets/0, facets/3]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -82,19 +82,38 @@ standard input at its end and standard output and error the terminal,
 whose write function takes a command's bytes unchanged and whose
 run_shell its commands get in their context, the command
 namespace of the shell's release and the session's facets, read for
-each command (erx:caps/0).
+each command (facets/0).
 """.
 -spec new(erx_shell:terminal()) -> {erx_shell_eval:runner(), state()}.
 new(Terminal = #{write := Write}) ->
     {Table, _Problems} = erx_shell_namespace:from_applications([erx_shell]),
     S = state(#{cwd => <<"/">>, fds => #{0 => null, 1 => {tty, Write}, 2 => {tty, Write}},
-                table => Table, facets => fun erx:caps/0}),
+                table => Table, facets => fun facets/0}),
     JobControl = case Terminal of
                      #{job_control := Shell} -> {Shell, line};
                      _ -> none
                  end,
     WithShell = maps:merge(S, maps:with([run_shell], Terminal)),
     {runner(), WithShell#{job_control => JobControl}}.
+
+-doc """
+The facets a session's commands get: the domain's own (erx:caps/0), and in the
+system domain the value `local` for each service of the system domain that runs
+there (erx_facet:served/0), which is the domain's own (docs/design-shell.md,
+"Interfaces").
+""".
+-spec facets() -> #{atom() => term()}.
+facets() ->
+    facets(erx_inspector:is_system_runtime(), erx_facet:served(), erx:caps()).
+
+-doc """
+The decision of facets/0: in the system domain (System true) the value `local`
+for each service the domain serves, Served, beside the facets it holds, Caps,
+and anywhere else Caps alone.
+""".
+-spec facets(boolean(), [atom()], #{atom() => term()}) -> #{atom() => term()}.
+facets(true, Served, Caps) -> maps:merge(maps:from_keys(Served, local), Caps);
+facets(false, _Served, Caps) -> Caps.
 
 -doc "A runner state from a working directory, descriptors, table and the reader of its facets.".
 -spec state(#{cwd := binary(), fds := #{fd() => erx_cmd:stream()},

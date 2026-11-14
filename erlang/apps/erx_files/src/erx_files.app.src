@@ -2,13 +2,15 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% Erlang file servers (docs/design-files.md, "Serving the erx_fs behaviour"): the
-%% erx_fs behaviour and its grant's pure core, the version counter, and the RAM file
-%% system's core (docs/design-tmp.md), and /proc, the inspector's tree
-%% (docs/design-live.md, "The /proc tree").
+%% erx_fs behaviour and its grant's pure core, what every made tree shares
+%% (erx_fs_node), the version counter, the RAM file system's core
+%% (docs/design-tmp.md), and /proc, the inspector's tree (docs/design-live.md,
+%% "The /proc tree").
 {application, erx_files,
  [{description, "erXos file servers"},
   {vsn, "1"},
   {modules, [erx_fs,
+             erx_fs_node,
              erx_fs_grants,
              erx_fs_grant,
              erx_fs_version,

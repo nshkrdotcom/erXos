@@ -13,11 +13,11 @@ require_relative '../session_domain'
 # then opens the web facet and a browser's open of the machine's path is answered with
 # its record through root's line (HostlinkGuest.machine), and again through
 # tools/erx web as a browser opens it (WebGuest). At one CPU two more boots end the
-# machine: in each, root_1's shell refuses `reboot`, and the system shell's `reboot`
-# resets the machine and its `halt` powers it off, as the end's console line says. Run
-# raises on the
-# first disagreement, which the gate reports as this suite failing. check_qemu builds the
-# kernel before any suite runs, so this suite does not.
+# machine: root_1's session refuses a malformed write to /machine/ctl and its `reboot`
+# resets the machine through the machine tree, and the system shell's `halt` powers it
+# off, as the end's console line says. Run raises on the first disagreement, which the
+# gate reports as this suite failing. check_qemu builds the kernel before any suite
+# runs, so this suite does not.
 # Every cell boots with a disk, which a remote boot does not take (Qemu#run), so its
 # multi-CPU cells stay here and it declares no offload (QemuGate::Suite).
 cpus = [1, 4]

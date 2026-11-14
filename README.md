@@ -228,8 +228,9 @@ Eshell V17.1.1 (type help(). for help)
   output, and pipes carry text.
 * The start table runs services; `service` enables and stops them as
   FreeBSD's does.
-* `reboot` and `halt` end the machine from the system domain's shell:
-  `reboot` resets it and `halt` powers it off.
+* Root's session can end the machine: `reboot` resets it and `halt`
+  powers it off, at root's console session and at the system domain's
+  shell.
 * Programs have pipes and a session process can start one. The shell does
   not start programs yet.
 

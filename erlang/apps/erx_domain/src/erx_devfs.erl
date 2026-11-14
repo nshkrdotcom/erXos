@@ -46,12 +46,6 @@ shell's. Nothing mounts the read-only tree yet.
 %% The tree's name, which a mount's {tree, Name} and attach's Aname name.
 -define(TREE, <<"dev">>).
 -define(POINT, <<"/dev">>).
--define(GETATTR_VALID, (?ERX_P9_GETATTR_MASK_MODE bor ?ERX_P9_GETATTR_MASK_NLINK
-                        bor ?ERX_P9_GETATTR_MASK_UID bor ?ERX_P9_GETATTR_MASK_GID
-                        bor ?ERX_P9_GETATTR_MASK_RDEV bor ?ERX_P9_GETATTR_MASK_ATIME
-                        bor ?ERX_P9_GETATTR_MASK_MTIME bor ?ERX_P9_GETATTR_MASK_CTIME
-                        bor ?ERX_P9_GETATTR_MASK_INO bor ?ERX_P9_GETATTR_MASK_SIZE
-                        bor ?ERX_P9_GETATTR_MASK_BLOCKS)).
 
 %% The root, a device's directory, its status file and its ctl file, each device by its
 %% catalogue index.
@@ -119,19 +113,10 @@ found(Node) ->
     {ok, Node, qid(Node)}.
 
 -doc false.
-getattr(Node, _Fs) ->
-    {Type, Mode, Nlink} = case Node of
-                              root -> {?ERX_P9_S_IFDIR, 8#555, 2};
-                              {device, _} -> {?ERX_P9_S_IFDIR, 8#555, 2};
-                              {status, _} -> {?ERX_P9_S_IFREG, 8#444, 1};
-                              {ctl, _} -> {?ERX_P9_S_IFREG, 8#200, 1}
-                          end,
-    {ok, #{valid => ?GETATTR_VALID, qid => qid(Node), mode => Type bor Mode,
-           uid => 0, gid => 0, nlink => Nlink, rdev => 0, size => 0,
-           blksize => ?ERX_PAGE_SIZE, blocks => 0,
-           atime_sec => 0, atime_nsec => 0, mtime_sec => 0, mtime_nsec => 0,
-           ctime_sec => 0, ctime_nsec => 0, btime_sec => 0, btime_nsec => 0,
-           gen => 0, data_version => 0}}.
+getattr(root, _Fs) -> erx_fs_node:attr(qid(root), dir, 8#555);
+getattr({device, _} = Node, _Fs) -> erx_fs_node:attr(qid(Node), dir, 8#555);
+getattr({status, _} = Node, _Fs) -> erx_fs_node:attr(qid(Node), file, 8#444);
+getattr({ctl, _} = Node, _Fs) -> erx_fs_node:attr(qid(Node), file, 8#200).
 
 %% A directory or status opens for reading only, and ctl, in the control tree, for
 %% writing only.
@@ -191,20 +176,12 @@ write({ctl, _Index}, _Offset, _Bytes, _Fs) ->
 write(_Handle, _Offset, _Bytes, _Fs) ->
     {error, ebadf}.
 
-%% prim_file opens every file it writes through a create, so a create of ctl in the
-%% control tree opens the existing one for writing, as open/3 does, unless it must make
-%% a new file (O_EXCL). The tree makes nothing else.
+%% A create of ctl in the control tree opens it (erx_fs_node:open_by_create/4); the
+%% tree makes nothing else.
 -doc false.
 make({device, Index}, <<"ctl">>, {file, _Mode, Flags}, #{rights := rw} = Fs) ->
-    case Flags band ?ERX_P9_O_EXCL of
-        0 ->
-            case open({ctl, Index}, Flags, Fs) of
-                {ok, Handle} -> {ok, {ctl, Index}, qid({ctl, Index}), Handle};
-                {error, _} = Error -> Error
-            end;
-        _ ->
-            {error, eexist}
-    end;
+    Ctl = {ctl, Index},
+    erx_fs_node:open_by_create(Ctl, qid(Ctl), Flags, fun(F) -> open(Ctl, F, Fs) end);
 make(_Dir, _Name, _What, #{rights := rw}) ->
     {error, eacces};
 make(_Dir, _Name, _What, _Fs) ->
@@ -240,18 +217,13 @@ call(Operation, Facet, Unit) ->
     catch exit:Reason -> {exit, Reason}
     end.
 
-%% An entry's offset is its place in the listing, so a read from Offset
-%% continues after the entry that carried it.
 -doc false.
-readdir({entries, Entries}, Offset, Max, _Fs) ->
-    {ok, lists:sublist(Entries, Offset + 1, Max)};
-readdir(_Handle, _Offset, _Max, _Fs) ->
-    {error, enotdir}.
+readdir(Handle, Offset, Max, _Fs) ->
+    erx_fs_node:readdir(Handle, Offset, Max).
 
 -doc false.
 statfs(_Fs) ->
-    {ok, #{type => ?ERX_P9_MAGIC_DEVFS, bsize => ?ERX_PAGE_SIZE, blocks => 0, bfree => 0, bavail => 0,
-           files => 0, ffree => 0, fsid => 0, namelen => 255}}.
+    erx_fs_node:statfs(?ERX_P9_MAGIC_DEVFS).
 
 -doc false.
 clunk(_Handle, _Fs) ->

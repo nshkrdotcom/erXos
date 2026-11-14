@@ -11,6 +11,7 @@ one name from each module, so the second name is this module.
 
 -erx_command(halt).
 -erx_usage("halt [-lpq]").
+-erx_needs([machine]).
 
 -export([run/2]).
 

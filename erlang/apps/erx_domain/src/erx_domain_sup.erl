@@ -26,8 +26,18 @@ init([]) ->
     Service = #{id => erx_domain_srv, start => {erx_domain_srv, start_link, []},
                 restart => temporary, significant => true, shutdown => 5000, type => worker,
                 modules => [erx_domain_srv]},
+    %% The coordinator of the machine's end, a process of the domain service whose end,
+    %% like the service's, shuts the supervisor down; and the machine tree's grants,
+    %% named the machine service's process before the service mints any session's grant
+    %% (docs/design-system.md, "A session's request").
+    Coordinator = #{id => erx_machine, start => {erx_machine, start_link, []},
+                    restart => temporary, significant => true, shutdown => 5000, type => worker,
+                    modules => [erx_machine]},
+    Machine = #{id => erx_machine_fs, start => {erx_machine_fs, start_link, []},
+                restart => permanent, shutdown => infinity, type => supervisor,
+                modules => [erx_fs_grants]},
     Dev = #{id => erx_devfs, start => {erx_devfs, start_link, []},
             restart => permanent, shutdown => brutal_kill, type => worker,
             modules => [erx_devfs]},
     {ok, {#{strategy => one_for_one, auto_shutdown => any_significant},
-          [Service, Dev]}}.
+          [Coordinator, Machine, Service, Dev]}}.

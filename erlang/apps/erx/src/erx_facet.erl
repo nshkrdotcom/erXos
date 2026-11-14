@@ -66,7 +66,7 @@ the grantee's share of reductions; the funnel's check of max_request
 before a message is queued, and the facet's queue quota and heap limit.
 """.
 
--export([start/3, info/1, provide/2, minted/2, serve/2]).
+-export([start/3, info/1, provide/2, minted/2, serve/2, served/0]).
 
 -callback init(Grant :: grant()) -> {ok, State :: term()}.
 -callback admit(Request :: term(), From :: pid(), State :: term()) ->
@@ -161,6 +161,14 @@ serve(Name, Pid) when is_atom(Name), is_pid(Pid), node(Pid) =:= node() ->
     persistent_term:put({erx, serves}, (persistent_term:get({erx, serves}, #{}))#{Name => Pid});
 serve(_Name, _Pid) ->
     {error, badarg}.
+
+-doc """
+The names of the services this domain serves, each named by serve/2, sorted:
+in the system domain, the services of the system domain that run there.
+""".
+-spec served() -> [atom()].
+served() ->
+    lists:sort(maps:keys(persistent_term:get({erx, serves}, #{}))).
 
 -doc """
 A mint's reply to the request tagged Tag (provide/2): {ok, Facet} names the

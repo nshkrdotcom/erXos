@@ -4,21 +4,24 @@
 -module(erx_cmd_reboot_tests).
 -moduledoc """
 EUnit cases of the command shell's `reboot` and `halt` (erx_cmd_reboot):
-the request each name and flag set parses to, the usage errors FreeBSD's
-command gives, each under its own name's usage line, and the authority
-rule, which refuses every runtime but the system domain's. No case ends
-anything: a development host's runtime stands for the system domain, so
-only lines that fail before the end are run through the shell.
+the request each name and flag set parses to, how each machine entry asks
+for it, the usage errors FreeBSD's command gives, each under its own
+name's usage line, the shell's no_facet for a session without the
+machine grant, and a refused write's diagnostic. No case ends anything:
+the host has no /machine, so a grant's write is refused.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
 
 run_line(Source) ->
+    run_line(Source, #{machine => grant}).
+
+run_line(Source, Facets) ->
     {Table, []} = erx_shell_namespace:build(
                     [{Module, Module:module_info(attributes), Module:module_info(exports)}
                      || Module <- [erx_cmd_reboot, erx_cmd_halt]]),
     State = erx_shell_runner:state(#{cwd => <<"/">>, fds => #{0 => null, 1 => sink(out), 2 => sink(err)},
-                                     table => Table, facets => fun() -> #{} end}),
+                                     table => Table, facets => fun() -> Facets end}),
     Shell = erx_shell_eval:new(#{}, erx_shell_runner:runner(), State),
     {ok, Done} = erx_shell_eval:run_source(Source, Shell),
     {erx_shell_eval:status(Done), shown(out), shown(err)}.
@@ -51,9 +54,20 @@ parse_test_() ->
      ?_assertEqual({error, usage}, erx_cmd_reboot:parse(<<"halt">>, [<<"now">>])),
      ?_assertEqual({error, usage}, erx_cmd_reboot:parse(<<"reboot">>, [<<"-q">>, <<"now">>]))].
 
-authority_test_() ->
-    [?_assert(erx_cmd_reboot:may_end(system)),
-     ?_assertNot(erx_cmd_reboot:may_end(domain))].
+route_test_() ->
+    [?_assertEqual({write, <<"/machine/ctl">>, <<"reset\n">>}, erx_cmd_reboot:route(grant, reset)),
+     ?_assertEqual({write, <<"/machine/ctl">>, <<"off\n">>}, erx_cmd_reboot:route(grant, off)),
+     ?_assertEqual({local, reset}, erx_cmd_reboot:route(local, reset)),
+     ?_assertEqual({local, off}, erx_cmd_reboot:route(local, off))].
+
+%% A session without the grant: the shell refuses before the command starts.
+no_facet_test_() ->
+    [?_assertEqual({<<"no_facet">>, <<>>, <<"reboot: no_facet\n">>}, run_line(<<"reboot">>, #{})),
+     ?_assertEqual({<<"no_facet">>, <<>>, <<"halt: no_facet\n">>}, run_line(<<"halt -p">>, #{}))].
+
+%% A refused write prints the errno's text under the command's name and exits 1.
+refused_test() ->
+    ?assertMatch({<<"1">>, <<>>, <<"halt: ", _/binary>>}, run_line(<<"halt">>)).
 
 usage_test_() ->
     [?_assertEqual({<<"usage">>, <<>>, <<"usage: reboot [-lpq]\n">>}, run_line(<<"reboot -c">>)),

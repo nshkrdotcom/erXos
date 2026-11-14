@@ -50,12 +50,6 @@ go through that domain's inspect facet.
 %% The most bytes of one file (design-live.md, Snapshots): once the entries
 %% asked for hold that many, the file is cut there anyway.
 -define(MAX_FILE, 65536).
--define(GETATTR_VALID, (?ERX_P9_GETATTR_MASK_MODE bor ?ERX_P9_GETATTR_MASK_NLINK
-                        bor ?ERX_P9_GETATTR_MASK_UID bor ?ERX_P9_GETATTR_MASK_GID
-                        bor ?ERX_P9_GETATTR_MASK_RDEV bor ?ERX_P9_GETATTR_MASK_ATIME
-                        bor ?ERX_P9_GETATTR_MASK_MTIME bor ?ERX_P9_GETATTR_MASK_CTIME
-                        bor ?ERX_P9_GETATTR_MASK_INO bor ?ERX_P9_GETATTR_MASK_SIZE
-                        bor ?ERX_P9_GETATTR_MASK_BLOCKS)).
 
 -doc """
 Starts this domain's tree, a grant over erx_inspector:inspect/2, and mounts
@@ -98,17 +92,8 @@ walk(_Node, _Name, _Fs) ->
     {error, enotdir}.
 
 -doc false.
-getattr(Node, _Fs) ->
-    {Type, Mode, Nlink} = case Node of
-                              {dir, _} -> {?ERX_P9_S_IFDIR, 8#555, 2};
-                              _ -> {?ERX_P9_S_IFREG, 8#444, 1}
-                          end,
-    {ok, #{valid => ?GETATTR_VALID, qid => qid(Node), mode => Type bor Mode,
-           uid => 0, gid => 0, nlink => Nlink, rdev => 0, size => 0,
-           blksize => ?ERX_PAGE_SIZE, blocks => 0,
-           atime_sec => 0, atime_nsec => 0, mtime_sec => 0, mtime_nsec => 0,
-           ctime_sec => 0, ctime_nsec => 0, btime_sec => 0, btime_nsec => 0,
-           gen => 0, data_version => 0}}.
+getattr({dir, _} = Node, _Fs) -> erx_fs_node:attr(qid(Node), dir, 8#555);
+getattr(Node, _Fs) -> erx_fs_node:attr(qid(Node), file, 8#444).
 
 -doc false.
 open(Node, Flags, #{inspect := Inspect, snapshots := Snapshots}) ->
@@ -196,18 +181,13 @@ read({bytes, Bytes}, Offset, Count, _Fs) ->
 read({entries, _}, _Offset, _Count, _Fs) ->
     {error, eisdir}.
 
-%% An entry's offset is its place in the listing, so a read from Offset
-%% continues after the entry that carried it.
 -doc false.
-readdir({entries, Entries}, Offset, Max, _Fs) ->
-    {ok, lists:sublist(Entries, Offset + 1, Max)};
-readdir({bytes, _}, _Offset, _Max, _Fs) ->
-    {error, enotdir}.
+readdir(Handle, Offset, Max, _Fs) ->
+    erx_fs_node:readdir(Handle, Offset, Max).
 
 -doc false.
 statfs(_Fs) ->
-    {ok, #{type => ?ERX_P9_MAGIC_PROCFS, bsize => ?ERX_PAGE_SIZE, blocks => 0, bfree => 0, bavail => 0,
-           files => 0, ffree => 0, fsid => 0, namelen => 255}}.
+    erx_fs_node:statfs(?ERX_P9_MAGIC_PROCFS).
 
 -doc false.
 clunk(_Handle, #{snapshots := Snapshots}) ->

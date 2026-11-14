@@ -33,7 +33,7 @@ which a test stands in for, and the log line of a refused write.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/0, start_link/1, errno/1]).
+-export([start_link/0, start_link/1, control/1, errno/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
          statfs/1, clunk/2, read_mode/0]).
 
@@ -41,12 +41,6 @@ which a test stands in for, and the log line of a refused write.
 %% {tree, Name} and attach's Aname name.
 -define(SERVICE, apps).
 -define(TREE, <<"apps">>).
--define(GETATTR_VALID, (?ERX_P9_GETATTR_MASK_MODE bor ?ERX_P9_GETATTR_MASK_NLINK
-                        bor ?ERX_P9_GETATTR_MASK_UID bor ?ERX_P9_GETATTR_MASK_GID
-                        bor ?ERX_P9_GETATTR_MASK_RDEV bor ?ERX_P9_GETATTR_MASK_ATIME
-                        bor ?ERX_P9_GETATTR_MASK_MTIME bor ?ERX_P9_GETATTR_MASK_CTIME
-                        bor ?ERX_P9_GETATTR_MASK_INO bor ?ERX_P9_GETATTR_MASK_SIZE
-                        bor ?ERX_P9_GETATTR_MASK_BLOCKS)).
 
 -type node_() :: root | ctl | rc_conf.
 -type errno() :: einval | ebusy | eperm | eagain | eio.
@@ -70,6 +64,17 @@ start_link(Args) when is_map(Args) ->
     {ok, Grants}.
 
 -doc """
+The answer to the command line Bytes, as a write of it to ctl gives it: `ok`
+once the start service carried it out, or the errno of its refusal (errno/1),
+whose reason goes to the log. The system domain's `service` command calls it
+for its `local` entry (docs/design-shell.md, "Interfaces"), where it has no
+tree mounted to write.
+""".
+-spec control(binary()) -> ok | {error, errno()}.
+control(Bytes) when is_binary(Bytes) ->
+    errno(command(Bytes, defaults())).
+
+-doc """
 The errno a ctl write answers for the start service's Answer
 (docs/design-apps.md, "Interfaces"): `einval` for a line that does not
 parse, `eagain` while rc.conf is unread, `eio` for a command the start
@@ -90,8 +95,11 @@ errno({error, Refused}) -> {error, erx_start_table:ctl_errno(Refused)}.
 
 -doc false.
 init(Args) ->
-    {ok, maps:merge(#{rc_conf => fun erx_starter:rc_conf/0, command => fun erx_starter:command/1},
-                    maps:with([rc_conf, command], Args))}.
+    {ok, maps:merge(defaults(), maps:with([rc_conf, command], Args))}.
+
+%% The start service's two calls the tree makes, which a test's Args stand in for.
+defaults() ->
+    #{rc_conf => fun erx_starter:rc_conf/0, command => fun erx_starter:command/1}.
 
 -doc false.
 root(_Fs) ->
@@ -107,18 +115,9 @@ found(Node) ->
     {ok, Node, qid(Node)}.
 
 -doc false.
-getattr(Node, _Fs) ->
-    {Type, Mode, Nlink} = case Node of
-                              root -> {?ERX_P9_S_IFDIR, 8#555, 2};
-                              ctl -> {?ERX_P9_S_IFREG, 8#200, 1};
-                              rc_conf -> {?ERX_P9_S_IFREG, 8#444, 1}
-                          end,
-    {ok, #{valid => ?GETATTR_VALID, qid => qid(Node), mode => Type bor Mode,
-           uid => 0, gid => 0, nlink => Nlink, rdev => 0, size => 0,
-           blksize => ?ERX_PAGE_SIZE, blocks => 0,
-           atime_sec => 0, atime_nsec => 0, mtime_sec => 0, mtime_nsec => 0,
-           ctime_sec => 0, ctime_nsec => 0, btime_sec => 0, btime_nsec => 0,
-           gen => 0, data_version => 0}}.
+getattr(root, _Fs) -> erx_fs_node:attr(qid(root), dir, 8#555);
+getattr(ctl, _Fs) -> erx_fs_node:attr(qid(ctl), file, 8#200);
+getattr(rc_conf, _Fs) -> erx_fs_node:attr(qid(rc_conf), file, 8#444).
 
 %% ctl opens for writing only; the root and rc.conf for reading only.
 -doc false.
@@ -184,37 +183,23 @@ call(Command, Parsed) ->
     catch exit:Reason -> {error, {failed, {exit, Reason}}}
     end.
 
-%% prim_file opens every file it writes through a create, so a create of ctl opens the
-%% existing one for writing, as open/3 does, unless it must make a new file (O_EXCL).
-%% rc.conf is read-only, and the tree makes nothing else.
+%% A create of ctl opens it (erx_fs_node:open_by_create/4); rc.conf is read-only, and
+%% the tree makes nothing else.
 -doc false.
 make(root, <<"ctl">>, {file, _Mode, Flags}, Fs) ->
-    case Flags band ?ERX_P9_O_EXCL of
-        0 ->
-            case open(ctl, Flags, Fs) of
-                {ok, Handle} -> {ok, ctl, qid(ctl), Handle};
-                {error, _} = Error -> Error
-            end;
-        _ ->
-            {error, eexist}
-    end;
+    erx_fs_node:open_by_create(ctl, qid(ctl), Flags, fun(F) -> open(ctl, F, Fs) end);
 make(root, <<"rc.conf">>, _What, _Fs) ->
     {error, erofs};
 make(_Dir, _Name, _What, _Fs) ->
     {error, eacces}.
 
-%% An entry's offset is its place in the listing, so a read from Offset continues after
-%% the entry that carried it.
 -doc false.
-readdir({entries, Entries}, Offset, Max, _Fs) ->
-    {ok, lists:sublist(Entries, Offset + 1, Max)};
-readdir(_Handle, _Offset, _Max, _Fs) ->
-    {error, enotdir}.
+readdir(Handle, Offset, Max, _Fs) ->
+    erx_fs_node:readdir(Handle, Offset, Max).
 
 -doc false.
 statfs(_Fs) ->
-    {ok, #{type => ?ERX_P9_MAGIC_RAMFS, bsize => ?ERX_PAGE_SIZE, blocks => 0, bfree => 0, bavail => 0,
-           files => 0, ffree => 0, fsid => 0, namelen => 255}}.
+    erx_fs_node:statfs(?ERX_P9_MAGIC_RAMFS).
 
 -doc false.
 clunk(_Handle, _Fs) ->

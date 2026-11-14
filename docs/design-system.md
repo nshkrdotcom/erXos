@@ -2153,7 +2153,10 @@ command's `machine` entry:
   errno's text, as reboot(8)'s `err(1, NULL)` does, and exits 1;
 * in the system domain's command shell the entry is `local`
   ([design-shell.md](design-shell.md#interfaces)), and the command calls
-  the coordinator's entry with the system principal.
+  the coordinator's entry with the system principal. The end ends that
+  shell too, so once the entry accepts the end the command waits for it,
+  as FreeBSD's reboot waits for init, and the shell prints no prompt
+  over the end's last line; a `busy` answer is refused as `ebusy`.
 
 A session without the grant refuses either command with the shell's
 standard `no_facet` before it starts, as for any command whose facet is
@@ -2250,9 +2253,12 @@ grant travels on the session's system connection, so `max_connections`
 does not change. No `abi/services` file is added: `abi/services/files.txt`
 declares the interface, and the facet table check (FacetNames) takes the
 row from these two manifest records, whose comment cites this section. The
-name `machine` appears in code in three places, each a name the table
-then holds: the commands' `-erx_needs`, the session's mount of `{facet,
-machine}`, and the tree's `erx_facet:serve(machine, Pid)`.
+name `machine` appears in code in five places, each a name the table
+then holds: the commands' `-erx_needs`, `reboot`'s lookup of its entry
+(`erx_cmd:facet(Ctx, machine)`), the session's mount of its
+`erx:cap(machine)` grant, the mint's clause in `erx_domain_srv` that
+gives the grant its principal, and the tree's `erx_facet:serve(machine,
+Pid)`.
 
 **Verification.** Host tests, and one case of a native guest, each with
 its seeded fault:

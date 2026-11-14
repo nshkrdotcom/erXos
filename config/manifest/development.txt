@@ -341,4 +341,24 @@ facet apps
   reductions 100000
   period_ns 1000000000
   max_heap_size 131072
+# machine: the domain service's tree, /machine/ctl, through which a session asks for the
+# machine's end (docs/design-system.md, "A session's request"), for each session made
+# from root's template alone: one erx_fs grant served by the system domain, bound to the
+# session, ending with it and started with its principal, so it travels on the session's
+# system connection and takes none of max_connections. Holding the grant is the right to
+# end the machine. Its max_request is files_max_frame_min (property 16); a ctl write is
+# one word, so one write is in flight; max_heap_size, in words (512 KiB), bounds the
+# grant's process, which holds only its fids.
+service machine
+  server system
+  interface files
+facet machine
+  grantee @session.system
+  service @service.machine
+  operations none
+  max_request 131072
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 65536
 shell_principal @principal.system

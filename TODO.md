@@ -3183,22 +3183,53 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   diagnostic on a take refused for any reason but a message that is not a record, after which
   no domain's end is handled; report that to the registered process or the log.
 * [Medium] ordered end, `liberx/system/dom_apply.c` (`erx_dom_lib_end_commit`),
-  `otp/erts/preloaded/src/init.erl` (edit 68) and `erlang/apps/erx_shell/src/erx_cmd_reboot.erl`:
+  `otp/erts/preloaded/src/init.erl` (edit 68) and `erlang/apps/erx_domain/src/erx_machine.erl`:
   the machine's end is only its last step. design-system.md "Shutting down" also has
   `erx_dom_end_begin` with its ending record and absolute deadline, which the fault thread
   enforces; no domain created or restarted once the end has begun; the vault's quiesce and
-  the storage freeze, with the end chosen from their outcomes; and the coordinator's one
-  entry, which takes every request with its principal, answers a second one `busy` and
-  writes the one log line. Until then `init:reboot/0` and `init:stop/0` run stock OTP's
-  application stop before `erx_dom_lib_end_commit`, `reboot` and `halt` write the log line
-  themselves with the principal fixed as `root`, where the coordinator will name the grant's
-  principal, and a session's `reboot` is refused by `may_end/1` until the session's request
-  of design-system.md "A session's request" is built. Meanwhile `erx_domain_lib:end_commit/1`
-  commits with no begin for any process of the system domain; once the record exists the
-  library refuses a commit without one. The command's log line goes to `erx_syslog` as an
-  ordinary record, which the application stop may outrun, so it can be lost before the end;
-  `reboot` then `halt` from two lines log two lines and init keeps the first end; and
-  `erlang:halt/0,1` in the system domain does not ask for the ordered `off`.
+  the storage freeze, with the end chosen from their outcomes. The coordinator's one entry,
+  `erx_machine:request/2`, takes `reboot` and `halt` from the system shell and from a
+  session's `/machine/ctl`, writes the one log line and answers a second request `busy`, but
+  it keeps the accepted request in its own state in place of the ending record and then asks
+  `init:reboot/0` or `init:stop/0`, which run stock OTP's application stop before
+  `erx_dom_lib_end_commit`. `init:stop/0`, `init:reboot/0`, a numeric `erlang:halt/0,1` and
+  the update service's `trial` do not go through the entry: they log no line, a request after
+  them is not answered `busy`, and the entry takes no `trial`. Meanwhile
+  `erx_domain_lib:end_commit/1` commits with no begin for any process of the system domain;
+  once the record exists the library refuses a commit without one. The coordinator's log line
+  goes to `erx_syslog` as an ordinary record, which the application stop may outrun, so it can
+  be lost before the end.
+* [Medium] tests, `test/erlang/erx_domain_tests.erl` and the QEMU suites: design-system.md "A
+  session's request" verifies the `machine` mint over `erx_domain_fake_lib` (a template the
+  row grants gets one grant started with its principal's name, root's does not) and has a
+  `machine_end` suite whose principal `clock` holds no grant. Neither is built: the
+  session_domain suite's reboot boot covers root's session, whose grant names root, and a
+  session without the grant is covered only by the shell's `no_facet` case in
+  `erx_cmd_reboot_tests`.
+* [Low] session start, `erlang/apps/erx_session/src/erx_session_app.erl` (`mount_machine/1`):
+  a `/machine` mount that fails, a grant that ended before the session started included,
+  fails the `ok =` match and ends the session's start, where the session could start without
+  `/machine` and refuse `reboot` and `halt` with `enoent`. `/apps`'s mount has the same shape.
+* [Low] the machine grant's principal, `erlang/apps/erx_domain/src/erx_domain_srv.erl`
+  (`machine_principal/3`): the configured domains `storage` and `display` run under the
+  system principal, as root's sessions do, so a `machine` row granted to one of them would
+  log its end as `by root`. Only root's template holds the row, so no such grant exists; a
+  row that names one needs a principal of its own for the domain first.
+* [Medium] the system shell's `local` entries, `erlang/apps/erx_shell/src/erx_shell_runner.erl`
+  (`facets/3`), `erx_cmd_reboot` and `erx_cmd_service`: each command of a files service carries
+  two routes, the grant's path and a direct call for `local`, and a new one that forgets the
+  second fails in the system shell with `enoent`. By construction the system shell would mount
+  each tree its domain serves, through a grant of `erx_fs_grants` to the system domain itself,
+  and every command would have one path; that changes design-shell.md "Interfaces" and goes
+  to the design first.
+* [Medium] SH1 check, `tools/lib/erx/command_needs.rb` (`SERVICES`): the hand-kept table lists
+  only `net`, so a shell module that is no command and names `erx_machine_fs` or
+  `erx_starter_fs` passes, though design-shell.md says the check proves SH1 for every service.
+  Derive the table from the manifest's `service` rows and the applications that serve them.
+* [Low] made trees, `erlang/apps/erx_display/src/erx_winfs.erl`: the window tree keeps its own
+  attributes and statfs (a valid mask of mode, nlink and size, directories with one link,
+  `blksize` 4096 and statfs type 0) rather than `erx_fs_node`'s; moving it changes what a
+  client sees of the window tree, so it wants its own change and test.
 * [Medium] domain library NIFs, `erlang/apps/erx` and `test/guest/native_domain`: no test
   reaches the module's paths with a library present: a real create's decoding refusals (an
   unknown key, a u32 overflow, strings beyond the boot page), the lock, the fault thread's

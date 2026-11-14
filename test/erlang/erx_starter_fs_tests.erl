@@ -151,3 +151,10 @@ errno_test() ->
                             {{error, bad_setting}, {error, einval}},
                             {{error, {failed, enospc}}, {error, eio}},
                             {{error, {failed, {exit, noproc}}}, {error, eio}}]].
+
+%% The system shell's `service`, whose apps entry is local, gets the answer a ctl write
+%% gives: a bad line is einval before the start service is asked, and a start service
+%% that is not running answers eio.
+control_answers_as_a_ctl_write_test() ->
+    ?assertEqual({error, einval}, erx_starter_fs:control(<<"bogus\n">>)),
+    ?assertEqual({error, eio}, erx_starter_fs:control(<<"stop kiosk\n">>)).
