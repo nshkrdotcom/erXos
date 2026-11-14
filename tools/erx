@@ -923,8 +923,8 @@ module Erx
     # The host's ssh as root into a development guest whose daemon root's session
     # started with erx_ssh_dev:start/1, through the host loopback port --port (by
     # default the one `tools/erx boot` forwards), with the clone's development login
-    # key (DevKey); any further arguments are the command ssh runs there. ssh replaces
-    # this process, so the terminal is the guest's.
+    # key (DevKey) and its known-hosts file; any further arguments are the command ssh
+    # runs there. ssh replaces this process, so the terminal is the guest's.
     def self.ssh(input_arguments)
       arguments = input_arguments.dup
       port = DevKey::PORT

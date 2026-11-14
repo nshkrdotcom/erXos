@@ -44,7 +44,17 @@ module Erx
     # carries it, `ssh-ed25519 BASE64`.
     Pair = Data.define(:directory, :public_line) do
       def private_path = File.join(directory, PRIVATE)
+      def known_hosts_path = File.join(directory, KNOWN_HOSTS)
     end
+    # The clone's own known-hosts file beside the pair, which pins the guest's host key
+    # under HOST_KEY_ALIAS, so no entry of the user's known_hosts for the forwarded
+    # loopback port, another clone's guest or another program's, trips or is tripped by it.
+    KNOWN_HOSTS = 'known_hosts'
+    HOST_KEY_ALIAS = 'erxos-development'
+    # ssh reads a known-hosts path as a list split at whitespace and expands ~, %
+    # tokens and ${} in it (ssh_config(5), UserKnownHostsFile), so a path is passed
+    # only when it is absolute and holds none of those.
+    PLAIN_PATH = %r{\A/[[:graph:]&&[^%$~"'\\]]*\z}
 
     # The port a development guest's daemon listens on, erx_ssh_dev:start(PORT), and the
     # host loopback port the interactive boot forwards to it (docs/design-ssh.md, "Stages").
@@ -56,14 +66,17 @@ module Erx
     module_function
 
     # The host's ssh to user at the guest whose daemon the host's loopback port port
-    # reaches, logging in with pair's key: options go before the destination, command,
-    # if any, after it.
-    def ssh_argv(pair:, port:, user: 'root', options: [], command: [])
+    # reaches, logging in with pair's key and checking the guest's host key against
+    # known_hosts under HOST_KEY_ALIAS: options go before the destination, command, if
+    # any, after it.
+    def ssh_argv(pair:, port:, user: 'root', known_hosts: pair.known_hosts_path, options: [], command: [])
       raise Error, 'an ssh port is a port number' unless port.is_a?(Integer) && port.between?(1, 65_535)
       # A name that began with '-' would be read as one of ssh's options.
       raise Error, "#{user.inspect} is not a user name" unless user.is_a?(String) && /\A[a-z_][a-z0-9_-]{0,31}\z/.match?(user)
+      raise Error, "ssh cannot name the known-hosts file #{known_hosts.dump} plainly" unless PLAIN_PATH.match?(known_hosts)
 
-      ['ssh', *SSH_OPTIONS, '-i', pair.private_path, '-p', port.to_s, *options, '--', "#{user}@127.0.0.1", *command]
+      ['ssh', *SSH_OPTIONS, '-o', "UserKnownHostsFile=#{known_hosts}", '-o', "HostKeyAlias=#{HOST_KEY_ALIAS}",
+       '-i', pair.private_path, '-p', port.to_s, *options, '--', "#{user}@127.0.0.1", *command]
     end
 
     # The clone's key directory for the tree at root.

@@ -14,8 +14,9 @@ require_relative '../../tools/lib/erx/runner'
 # The development login key (docs/design-ssh.md, "Login keys"), made with the host's
 # ssh-keygen: DevKey.ensure makes a pair once and keeps it, refuses a damaged pair or one
 # whose halves disagree, and leaves no half-made directory; the public line carries no
-# comment; ssh_argv keeps the key out of the user's agent; and Pack refuses the key's
-# file in any build but a development one.
+# comment; ssh_argv keeps the key out of the user's agent and the guest's host key out of
+# the user's known_hosts, and passes no known-hosts path ssh would rewrite; and Pack
+# refuses the key's file in any build but a development one.
 class DevKeyTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
 
@@ -83,10 +84,19 @@ class DevKeyTest < Minitest::Test
 
   def test_the_ssh_argument_vector_keeps_the_key_out_of_the_agent
     pair = Erx::DevKey::Pair.new(directory: '/k', public_line: 'unused')
-    assert_equal ['ssh', '-o', 'AddKeysToAgent=no', '-o', 'IdentitiesOnly=yes', '-a', '-i', '/k/id_ed25519', '-p', '2222', '--',
+    assert_equal ['ssh', '-o', 'AddKeysToAgent=no', '-o', 'IdentitiesOnly=yes', '-a', '-o', 'UserKnownHostsFile=/k/known_hosts',
+                  '-o', 'HostKeyAlias=erxos-development', '-i', '/k/id_ed25519', '-p', '2222', '--',
                   'root@127.0.0.1', 'node().'], Erx::DevKey.ssh_argv(pair: pair, port: 2222, command: ['node().'])
     ['-oProxyCommand=x', 'root@elsewhere', ''].each do |user|
       assert_raises(Erx::Error) { Erx::DevKey.ssh_argv(pair: pair, port: 2222, user: user) }
+    end
+  end
+
+  # ssh splits a known-hosts path at whitespace and expands ~, % and ${} in it.
+  def test_a_known_hosts_path_ssh_would_rewrite_is_refused
+    pair = Erx::DevKey::Pair.new(directory: '/k', public_line: 'unused')
+    ['/a b/known_hosts', '/a/%d', '/a/${HOME}', '~/known_hosts', 'relative', "/a/\"b"].each do |path|
+      assert_raises(Erx::Error) { Erx::DevKey.ssh_argv(pair: pair, port: 2222, known_hosts: path) }
     end
   end
 
