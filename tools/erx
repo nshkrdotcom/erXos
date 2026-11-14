@@ -478,6 +478,11 @@ module Erx
                       '--seed', options.fetch(:seed).to_s],
                      name: "fuzz-erx-net-admit-#{target}", deadline: 900, chdir: ROOT, env: environment)
         end
+        %w[decode core].each do |target|
+          runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_net_packet.rb'), '--target', target,
+                      '--seed', options.fetch(:seed).to_s],
+                     name: "fuzz-erx-net-packet-#{target}", deadline: 900, chdir: ROOT, env: environment)
+        end
         runner.run([RbConfig.ruby, File.join(ROOT, 'test/host/erx_tcp_explore_test.rb')],
                    name: 'explore-erx-tcp', deadline: 900, chdir: ROOT,
                    env: environment.merge('ERX_TCP_EXPLORE' => 'full'))

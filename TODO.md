@@ -1968,8 +1968,10 @@ it; git history is the record of completed work.
 * [High] network, `erx_net_client` (`erx_gen_tcp`; design-network-stack, "The socket
   process"): the TCP socket process lacks parts of the design.
   Still missing:
-  the packet modes and the `buffer`, `exit_on_close` and `show_econnreset`
-  options, the schema-generated request validators, the session template's `grant` key
+  the packet modes `http`, `http_bin`, `httph`, `httph_bin`, `asn1`, `cdr`, `sunrm`, `fcgi` and
+  `tpkt` (erx_net_packet frames 1, 2, 4 and `line`; the http modes need the core to keep
+  whether the request line was read, as gen_tcp_socket's `recv_httph`), `line_delimiter`, and the
+  `exit_on_close` and `show_econnreset` options, the schema-generated request validators, the session template's `grant` key
   naming its `grant/0` once the grant is in another domain, and the connection's link to
   its socket process (erx_tcp_conn monitors its owner instead, so only a listen and an
   accept expose their socket processes to the network domain with `send` and `link`;
@@ -1988,7 +1990,9 @@ it; git history is the record of completed work.
   and for an `ip`, `ifaddr` or `port` value inet's parser takes and inet_tcp then refuses
   (`{ip, foo}`, `{port, 70000}`), where stock raises `badarg`; stock's `connect/4` also turns
   every `einval` of its backend into `badarg` (gen_tcp.erl:595), so erx_gen_tcp's connect
-  should raise `badarg` for each.
+  should raise `badarg` for each. A `setopts` that names one option twice keeps the last
+  value, where stock's inet driver keeps the first for `mode` (`[binary, list]` leaves a socket
+  binary on stock); `listen/2` and `connect/4` keep the last on both.
   The listening socket (`erx_gen_tcp`, `erx_gen_tcp_core`): it is a `listening` state of the
   connection's `#core{}`, so a listener core can hold connection fields and its protocol is
   spread over the connection's helpers; give it its own record and step sharing only the

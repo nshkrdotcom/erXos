@@ -19,9 +19,14 @@ to no request aborts the socket.
 -define(SOCK, {'$inet', erx_gen_tcp, self()}).
 
 new(Own) ->
-    {Core, Actions} = erx_gen_tcp_core:new(?SOCK, maps:merge(#{mode => binary, active => false}, Own)),
+    {Core, Actions} = erx_gen_tcp_core:new(?SOCK, maps:merge(own(), Own)),
     ?assertEqual([{credit, 65536}], Actions),
     Core.
+
+%% A passive binary socket's options, the rest stock's defaults.
+own() ->
+    {ok, Own, []} = erx_gen_tcp_core:options([binary, {active, false}]),
+    Own.
 
 step(Event, Core) -> erx_gen_tcp_core:step(Event, Core).
 
@@ -364,12 +369,12 @@ options_forwarded_once_test() ->
     ?assertEqual({ok, Own, [{nodelay, false}]}, erx_gen_tcp_core:options([{nodelay, true}, {nodelay, false}], Own)).
 
 listen_options_test() ->
-    ?assertEqual({ok, #{mode => binary, active => true}, [{backlog, 8}, {reuseaddr, true}, {nodelay, true}]},
+    ?assertEqual({ok, (own())#{active => true}, [{backlog, 8}, {reuseaddr, true}, {nodelay, true}]},
                  erx_gen_tcp_core:listen_options([{backlog, 8}, binary, {nodelay, true}, {reuseaddr, true}])),
     ?assertEqual({error, einval}, erx_gen_tcp_core:listen_options([{keepalive, true}])).
 
 listener(Own) ->
-    erx_gen_tcp_core:listener(?SOCK, maps:merge(#{mode => binary, active => false}, Own),
+    erx_gen_tcp_core:listener(?SOCK, maps:merge(own(), Own),
                               #{nodelay => false, node => node()}).
 
 listener_test_() ->
@@ -385,7 +390,7 @@ accept_hands_over() ->
     {C1, A1} = call(f1, {accept, sp1, infinity}, listener(#{active => once})),
     ?assertEqual([{request, 0, {accept, sp1, infinity}}], A1),
     {_, A2} = reply(0, {ok, self()}, C1),
-    ?assertEqual([{hand_over, f1, sp1, self(), #{mode => binary, active => once}}], A2).
+    ?assertEqual([{hand_over, f1, sp1, self(), (own())#{active => once}}], A2).
 
 accept_error_discards() ->
     {C1, _} = call(f1, {accept, sp1, 10}, listener(#{})),
@@ -416,7 +421,7 @@ listener_options() ->
     {C1, A1} = call(f1, {setopts, [{active, true}, {nodelay, true}]}, listener(#{})),
     ?assertEqual([{request, 0, {setopts, [{nodelay, true}]}}], A1),
     ?assertEqual([{reply, f1, ok}], element(2, reply(0, ok, C1))),
-    ?assertEqual([{reply, f2, {ok, [{active, true}, {nodelay, true}, {mode, binary}]}}],
+    ?assertEqual([{reply, f2, {ok, [{active, true}, {nodelay, true}, {mode, binary}, {packet, 0}]}}],
                  element(2, call(f2, {getopts, [active, nodelay, mode, packet]}, C1))),
     ?assertEqual([{reply, f3, {error, einval}}], element(2, call(f3, {setopts, [{backlog, 5}]}, C1))),
     ?assertEqual([{request, 1, sockname}], element(2, call(f4, sockname, C1))).
@@ -427,6 +432,184 @@ accept_result() ->
     ?assertEqual({refused, socket}, erx_sock_admit:result({accept, node()}, {ok, erx_net_grant})),
     ?assertEqual({ok, {error, econnaborted}}, erx_sock_admit:result({accept, node()}, {error, econnaborted})),
     ?assertEqual({refused, reason}, erx_sock_admit:result({accept, node()}, {error, eperm})).
+
+%% --- Packet modes -----------------------------------------------------------------------
+
+packet_test_() ->
+    [{"ssh's hello: getopts buffer, line mode for the banner, raw for the rest", fun ssh_hello/0},
+     {"getopts answers buffer, packet_size and packet as stock's defaults", fun packet_defaults/0},
+     {"a line split across pushes is one packet", fun line_across_pushes/0},
+     {"a line over packet_size in active mode is emsgsize and closes", fun line_over_size_active/0},
+     {"a line over packet_size in passive mode is emsgsize, then enotconn", fun line_over_size_passive/0},
+     {"a line longer than the buffer is cut at the buffer", fun line_cut_at_buffer/0},
+     {"a partial line waiting for its end gets credit at once", fun partial_line_credit/0},
+     {"a packet's header raises the target to the whole packet", fun header_raises_target/0},
+     {"active once presents one packet and holds the rest", fun once_one_packet/0},
+     {"a recv of a length in a packet mode is einval", fun packet_recv_length/0},
+     {"a send in a length mode gets its header", fun packet_send_header/0},
+     {"buffer and packet_size take stock's values and refuse others", fun packet_option_values/0},
+     {"a listener hands its packet options to the sockets it accepts", fun listener_packet_options/0},
+     {"a push of 65536 empty packets is presented in linear time", {timeout, 2, fun many_packets/0}},
+     {"a line split into one-byte pushes is framed once it ends", fun line_byte_by_byte/0},
+     {"a partial line pushed a byte at a time is granted what it needs", fun line_byte_by_byte_credit/0},
+     {"a closed socket's recv of a length in a packet mode is einval", fun closed_packet_recv_length/0}].
+
+%% One message per packet; the actions built newest first, so a peer's burst of tiny
+%% packets costs time in their number, not its square.
+many_packets() ->
+    {C1, _} = setopts(f0, [{packet, 1}, {active, true}], new(#{})),
+    {_, A} = push(binary:copy(<<0>>, 65536), C1),
+    ?assertEqual(65536, length(tells(A))).
+
+line_byte_by_byte() ->
+    {C1, _} = setopts(f0, [{packet, line}], new(#{})),
+    {C2, _} = call(f1, {recv, 0, infinity}, C1),
+    {C3, A3} = lists:foldl(fun(Byte, {C, _}) -> push(<<Byte>>, C) end, {C2, []}, binary_to_list(<<"abc">>)),
+    ?assertEqual([], [R || {reply, _, _} = R <- A3]),
+    {_, A4} = push(<<"\n">>, C3),
+    ?assertEqual([{reply, f1, {ok, <<"abc\n">>}}], [R || {reply, _, _} = R <- A4]).
+
+%% With a buffer of 10 and its whole credit pushed a byte at a time, a partial line of 8
+%% bytes after a whole one must be granted the rest at once: the line waits for a byte
+%% the connection may not push otherwise.
+line_byte_by_byte_credit() ->
+    {ok, Own, []} = erx_gen_tcp_core:options([binary, {packet, line}, {buffer, 10}, {active, true}]),
+    {C0, [{credit, 10}]} = erx_gen_tcp_core:new(?SOCK, Own),
+    {C1, _} = lists:foldl(fun(Byte, {C, _}) -> push(<<Byte>>, C) end, {C0, []}, binary_to_list(<<"x\nabcdefg">>)),
+    {_, A} = push(<<"h">>, C1),
+    ?assertEqual([{credit, 2}], [X || {credit, _} = X <- A]).
+
+closed_packet_recv_length() ->
+    {C1, _} = setopts(f0, [{packet, 2}], new(#{})),
+    {C2, _} = push(<<0, 3, "abc">>, C1),
+    {C3, _} = step({push, {ok, {error, econnreset}}}, C2),
+    ?assertEqual([{reply, f1, {error, einval}}], element(2, call(f1, {recv, 7, infinity}, C3))),
+    ?assertEqual(<<"abc">>, element(1, recv(f2, 0, C3))).
+
+push(Bin, Core) -> pieces([Bin], Core).
+
+%% OTP's ssh, after its banner (ssh_connection_handler.erl:617-638 and 655-666): it reads
+%% the buffer size, reads the peer's banner as one line, then reads the rest raw with the
+%% buffer it read; bytes after the banner that came with it are presented raw.
+ssh_hello() ->
+    C0 = new(#{active => false}),
+    {C1, A1} = call(f1, {getopts, [buffer]}, C0),
+    ?assertEqual([{reply, f1, {ok, [{buffer, 65536}]}}], A1),
+    {C2, A2} = setopts(f2, [{packet, line}, {active, once}, {buffer, 255}, {packet_size, 255}, {nodelay, true}], C1),
+    ?assertEqual([{0, {setopts, [{nodelay, true}]}}], requests(A2)),
+    {C3, A3} = reply(0, ok, C2),
+    ?assertEqual([{reply, f2, ok}], A3),
+    {C4, A4} = push(<<"SSH-2.0-peer\r\n", "kexinit">>, C3),
+    ?assertEqual([{tcp, ?SOCK, <<"SSH-2.0-peer\r\n">>}], tells(A4)),
+    {_, A5} = setopts(f3, [{packet, 0}, {mode, binary}, {active, once}, {buffer, 65536}, {packet_size, 0}], C4),
+    ?assertEqual([{tcp, ?SOCK, <<"kexinit">>}], tells(A5)).
+
+packet_defaults() ->
+    ?assertEqual([{reply, f1, {ok, [{buffer, 65536}, {packet_size, 0}, {packet, 0}]}}],
+                 element(2, call(f1, {getopts, [buffer, packet_size, packet]}, new(#{})))),
+    {C1, _} = setopts(f1, [{packet, line}, {packet_size, 100}, {buffer, 300}], new(#{})),
+    ?assertEqual([{reply, f2, {ok, [{packet, line}, {packet_size, 100}, {buffer, 300}]}}],
+                 element(2, call(f2, {getopts, [packet, packet_size, buffer]}, C1))).
+
+line_across_pushes() ->
+    {C1, _} = setopts(f0, [{packet, line}], new(#{})),
+    {C2, A2} = call(f1, {recv, 0, infinity}, C1),
+    ?assertEqual([], [R || {reply, _, _} = R <- A2]),
+    {C3, A3} = push(<<"ab">>, C2),
+    ?assertEqual([], [R || {reply, _, _} = R <- A3]),
+    {C4, A4} = push(<<"c\nde">>, C3),
+    ?assertEqual([{reply, f1, {ok, <<"abc\n">>}}], [R || {reply, _, _} = R <- A4]),
+    {C5, _} = push(<<"f\n">>, C4),
+    ?assertEqual(<<"def\n">>, element(1, recv(f2, 0, C5))),
+    {L1, _} = setopts(f0, [{packet, line}, list], new(#{})),
+    {L2, _} = push(<<"ab\ncd\n">>, L1),
+    {Line, L3} = recv(f1, 0, L2),
+    ?assertEqual(["ab\n", "cd\n"], [Line, element(1, recv(f2, 0, L3))]).
+
+line_over_size_active() ->
+    {C1, _} = setopts(f0, [{packet, line}, {packet_size, 4}], new(#{active => true})),
+    {C2, A2} = push(<<"abc\nabcdef\n">>, C1),
+    ?assertEqual([{tcp, ?SOCK, <<"abc\n">>}, {tcp_error, ?SOCK, emsgsize}, {tcp_closed, ?SOCK}], tells(A2)),
+    ?assertMatch([{_, close}], requests(A2)),
+    ?assertEqual({error, closed}, element(3, hd(element(2, call(f1, {send, <<"x">>}, C2))))).
+
+line_over_size_passive() ->
+    {C1, _} = setopts(f0, [{packet, line}, {packet_size, 4}], new(#{})),
+    {C2, _} = push(<<"abcd\n">>, C1),
+    {C3, A3} = call(f1, {recv, 0, infinity}, C2),
+    ?assertMatch([{reply, f1, {error, emsgsize}} | _], A3),
+    ?assertMatch([{_, close}], requests(A3)),
+    ?assertEqual({error, enotconn}, element(3, hd(element(2, call(f2, {recv, 0, 0}, C3))))),
+    %% No newline yet, but more than packet_size held: the line can only be too long.
+    {N1, _} = setopts(f0, [{packet, line}, {packet_size, 4}], new(#{})),
+    {N2, _} = push(<<"abcde">>, N1),
+    ?assertMatch([{reply, f1, {error, emsgsize}} | _], element(2, call(f1, {recv, 0, infinity}, N2))).
+
+line_cut_at_buffer() ->
+    {C1, _} = setopts(f0, [{packet, line}, {buffer, 8}, {packet_size, 20}], new(#{})),
+    {C2, _} = push(<<"abcdefghijklmn\nxy\n">>, C1),
+    {First, C3} = recv(f1, 0, C2),
+    {Second, C4} = recv(f2, 0, C3),
+    ?assertEqual([<<"abcdefgh">>, <<"ijklmn\n">>, <<"xy\n">>], [First, Second, element(1, recv(f3, 0, C4))]).
+
+%% A line of 30000 bytes taken from a push of the whole target leaves a partial line of
+%% 35536 bytes and nothing outstanding: below half the target, the shortfall is granted
+%% at once, since the line cannot end without more bytes.
+partial_line_credit() ->
+    {C1, _} = setopts(f0, [{packet, line}], new(#{})),
+    {C2, _} = push(<<(binary:copy(<<"a">>, 29999))/binary, $\n, (binary:copy(<<"b">>, 35536))/binary>>, C1),
+    {Line, C3} = recv(f1, 0, C2),
+    ?assertEqual(30000, byte_size(Line)),
+    {_, A4} = call(f2, {recv, 0, infinity}, C3),
+    ?assertEqual([{credit, 30000}], [A || {credit, _} = A <- A4]).
+
+header_raises_target() ->
+    {C1, _} = setopts(f0, [{packet, 4}], new(#{})),
+    {C2, A2} = call(f1, {recv, 0, infinity}, C1),
+    ?assertEqual([], [A || {credit, _} = A <- A2]),
+    {C3, A3} = push(<<100000:32, 0:8>>, C2),
+    ?assertEqual([{credit, 100004 - 65536}], [A || {credit, _} = A <- A3]),
+    {C4, _} = push(binary:copy(<<"p">>, 65531), C3),
+    {_, A5} = push(binary:copy(<<"p">>, 34468), C4),
+    ?assertMatch([{reply, f1, {ok, <<0, _:99999/binary>>}} | _], A5).
+
+once_one_packet() ->
+    {C1, _} = setopts(f0, [{packet, 2}, {active, once}], new(#{})),
+    {C2, A2} = push(<<0, 3, "abc", 0, 0, 0, 1, "x">>, C1),
+    ?assertEqual([{tcp, ?SOCK, <<"abc">>}], tells(A2)),
+    {C3, A3} = setopts(f1, [{active, 2}], C2),
+    ?assertEqual([{tcp, ?SOCK, <<>>}, {tcp, ?SOCK, <<"x">>}, {tcp_passive, ?SOCK}], tells(A3)),
+    {_, A4} = push(<<0, 4, "ab">>, C3),
+    ?assertEqual([], tells(A4)).
+
+packet_recv_length() ->
+    {C1, _} = setopts(f0, [{packet, line}], new(#{})),
+    ?assertEqual([{reply, f1, {error, einval}}], element(2, call(f1, {recv, 3, infinity}, C1))).
+
+packet_send_header() ->
+    {C1, _} = setopts(f0, [{packet, 2}], new(#{})),
+    ?assertEqual([{0, {send, <<0, 3, "hey">>}}], requests(element(2, call(f1, {send, <<"hey">>}, C1)))),
+    {C2, _} = setopts(f0, [{packet, 1}], new(#{})),
+    %% stock writes the length's low bits, whatever the length (gen_tcp_socket's ?header).
+    ?assertMatch([{0, {send, <<44, _:300/binary>>}}],
+                 requests(element(2, call(f1, {send, binary:copy(<<"x">>, 300)}, C2)))),
+    {C3, _} = setopts(f0, [{packet, line}], new(#{})),
+    ?assertEqual([{0, {send, <<"hey">>}}], requests(element(2, call(f1, {send, <<"hey">>}, C3)))).
+
+packet_option_values() ->
+    Own = fun(Opts) -> {ok, O, []} = erx_gen_tcp_core:options(Opts), maps:with([buffer, packet_size, packet], O) end,
+    ?assertEqual(#{buffer => 1, packet_size => 0, packet => raw}, Own([{buffer, 0}])),
+    ?assertEqual(#{buffer => 67108864, packet_size => 16#ffffffff, packet => 4},
+                 Own([{buffer, 1 bsl 40}, {packet_size, 16#ffffffff}, {packet, 4}])),
+    ?assertEqual(#{buffer => 65536, packet_size => 0, packet => raw}, Own([{packet, 0}])),
+    [?assertEqual({error, einval}, erx_gen_tcp_core:options([Bad]))
+     || Bad <- [{buffer, x}, {packet_size, -1}, {packet_size, 1 bsl 32}, {packet, 3}, {packet, http}]].
+
+listener_packet_options() ->
+    {C1, _} = call(f1, {setopts, [{packet, line}, {packet_size, 255}]}, listener(#{})),
+    {C2, _} = call(f2, {accept, sp1, infinity}, C1),
+    {_, [{hand_over, f2, sp1, _, Own}]} = reply(0, {ok, self()}, C2),
+    ?assertMatch(#{packet := line, packet_size := 255, buffer := 65536}, Own).
 
 hold_test_() ->
     [{"a held socket presents nothing until its release", fun hold_then_release/0},

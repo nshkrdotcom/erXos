@@ -6,16 +6,23 @@ require 'minitest/autorun'
 require_relative 'erx_net_eunit'
 
 # Runs the EUnit cases of the socket protocol's pure parts,
-# test/erlang/erx_gen_tcp_core_tests.erl, and two seeded failures: of the credit rule,
+# test/erlang/erx_gen_tcp_core_tests.erl, and three seeded failures: of the credit rule,
 # a socket process that grants again only once all it granted is pushed, so the
 # connection idles while each grant travels; and of the end in passive mode, a socket
 # process that drops what it holds and the error once the connection is gone, so an
-# owner whose `{active, once}` ran out never sees them when it re-arms.
+# owner whose `{active, once}` ran out never sees them when it re-arms; and of the
+# credit for a packet, a socket process that grants at once only for a recv of a
+# length, so a passive line mode waits forever on a partial line it holds; and of a
+# partial line not framed again, one that keeps the need it had when last framed.
 class ErxGenTcpCoreTest < Minitest::Test
   include ErxNetEunit
 
   HALF_TARGET = 'Short >= Target div 2 orelse Waits'
   WHOLE_TARGET = 'Short >= Target orelse Waits'
+  PACKET_WAITS = 'Waits = Need > Held + Out orelse (Recv =/= none andalso Held + Out =:= 0),'
+  RECV_WAITS = 'Waits = Recv =/= none andalso (RecvLength > Held + Out orelse Held + Out =:= 0),'
+  LINE_NEED = 'true -> {short, C#core{need = C#core.held_bytes + 1}};'
+  LINE_NEED_KEPT = 'true -> {short, C};'
   END_WAITS = "%% Passive after an error: the connection is gone, and the end waits for the owner.\n    close_out(C, Acts)."
   END_DROPPED = "%% Passive after an error: the connection is gone, and the end waits for the owner.\n    close_out(discard(C#core{ended = none}), Acts)."
 
@@ -31,5 +38,15 @@ class ErxGenTcpCoreTest < Minitest::Test
   def test_a_grant_only_at_the_whole_target_is_caught
     output = refute_erx_net_eunit(:erx_gen_tcp_core_tests, fault: { 'erx_gen_tcp_core' => [HALF_TARGET, WHOLE_TARGET] })
     assert_match(/credit_at_half_target/, output)
+  end
+
+  def test_credit_only_for_a_recv_of_a_length_is_caught
+    output = refute_erx_net_eunit(:erx_gen_tcp_core_tests, fault: { 'erx_gen_tcp_core' => [PACKET_WAITS, RECV_WAITS] })
+    assert_match(/partial_line_credit/, output)
+  end
+
+  def test_a_partial_line_keeping_its_old_need_is_caught
+    output = refute_erx_net_eunit(:erx_gen_tcp_core_tests, fault: { 'erx_gen_tcp_core' => [LINE_NEED, LINE_NEED_KEPT] })
+    assert_match(/line_byte_by_byte_credit/, output)
   end
 end

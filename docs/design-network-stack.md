@@ -4393,7 +4393,8 @@ socket process is `erx_gen_udp`'s, started for the kind `icmp`, so one
 `gen_statem` and one core serve every socket that carries whole
 datagrams;
 `erx_gen_tcp_core` and `erx_gen_udp_core`, the pure presentation step
-each socket process runs; `erx_sock_admit`, the check of every message
+each socket process runs, and `erx_net_packet`, the TCP core's packet
+framing; `erx_sock_admit`, the check of every message
 the client side takes from the network domain, a socket's push or the
 grant's answer; `erx_sock_out`, the socket process's one way to send to
 its socket ([The socket process](#the-socket-process)); and `erx_inet`,
@@ -4899,7 +4900,20 @@ The packet modes (`{packet, 1|2|4}`, `line`, `http`, `http_bin` and the
 rest) frame the stream in the socket process with
 `erlang:decode_packet/3`, where stock frames it in its inet driver, so an
 owner receives whole packets, and a send in a packet mode gets its
-header there. Framing sits where the unpresented bytes are, so a change
+header there, the length's low bits as stock writes them. The framing
+is one pure function, `erx_net_packet:decode/3`, from the bytes held to
+the next packet, with the socket's `packet_size` and `buffer`, as stock's
+driver frames them: a line is looked for in the first `buffer` bytes and
+cut there, a packet over `packet_size` (a line's newline included) ends
+the stream with `{error, emsgsize}` where the packet would be, and a
+partial packet at the end is dropped. With `packet_size` 0 a length
+mode's packet is bounded at 64 MiB, the bound stock's socket backend
+sets (`gen_tcp_socket`'s default `packet_size`), where stock's inet
+driver sets none: a documented difference, since the socket process
+holds at most 64 MiB. A passive `recv(S, Length)` in a packet mode with
+`Length` other than 0 is `{error, einval}`, as on stock. `buffer`
+defaults to the socket's receive buffer, 64 KiB, and is kept between 1
+byte and 64 MiB; `packet_size` takes 0 to 2^32 - 1. Framing sits where the unpresented bytes are, so a change
 of packet mode between two packets applies to every byte not yet
 presented, as on stock: an HTTP server that reads its headers in
 `http_bin` and its body in `raw` gets the body's first bytes in `raw`,
@@ -5405,7 +5419,8 @@ its `buffer` option, the user-level buffer of stock's `inet`, whose
 default is the socket's receive buffer, and for a datagram socket never
 less than 128 KiB. A waiting `recv(S, Length)`, or a packet whose header
 announces more, raises the target to what it needs, up to 64 MiB or
-`packet_size`. The shortfall is the target less what it holds and the
+`packet_size`; a partial line needs one byte more than is held, up to
+the buffer. The shortfall is the target less what it holds and the
 credit outstanding, and the socket process grants it when it reaches
 half the target, so credit costs one message per half target received,
 and at once when a waiting `recv` or a packet in progress needs more
@@ -6454,10 +6469,12 @@ One fuzz target per decoder, in `erx_net`'s `test/*_fuzz.erl`, run by
 headers, ICMP, ICMPv6 with neighbour-discovery options, UDP, TCP with
 options, DHCP, epmd's requests, and the socket protocol's requests
 through the generated validators. `erx_net_client`'s `test/` holds two
-more: the packet-mode framing of `erx_gen_tcp_core` over random streams
-cut at random points (`decode_packet` over every mode the options offer),
-whose packets must equal those stock's inet driver frames from the same
-stream on the host; and `erx_sock_admit` over random terms and over
+more: the packet-mode framing, `erx_net_packet:decode/3` and
+`erx_gen_tcp_core` over random streams pushed in random pieces within
+its credit, over every mode the options offer, whose packets must equal
+a reading of stock's framing written from ERTS's `packet_get_length`;
+`erx_net_packet_tests` checks the same streams against stock's inet
+driver on the host's loopback; and `erx_sock_admit` over random terms and over
 well-formed pushes and grant answers of every operation with one field
 changed, which must accept exactly the messages a reference judge
 written from the protocol's types accepts, and

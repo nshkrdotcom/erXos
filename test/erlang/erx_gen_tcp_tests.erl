@@ -25,15 +25,15 @@ unsupported_test_() ->
       ?_assertEqual({error, enotsup},
                     erx_gen_tcp:connect(#{family => inet, addr => {10, 0, 2, 2}, port => 80}, [], 1000))}].
 
-%% An option stock takes but the backend does not, `{packet, 4}`, is refused before any
+%% An option stock takes but the backend does not, `{packet, http}`, is refused before any
 %% socket process starts: the caller, traced for its spawns, spawns nothing. The tracer is
 %% a process of its own, since a process is sent no trace of itself.
 bad_option_starts_nothing_test() ->
     Tracer = spawn_link(fun() -> receive {traced, From} -> From ! {traces, traces([])} end end),
     1 = erlang:trace(self(), true, [procs, {tracer, Tracer}]),
     try
-        ?assertEqual({error, einval}, erx_gen_tcp:connect({127, 0, 0, 1}, 1, [{packet, 4}], 1000)),
-        ?assertEqual({error, einval}, erx_gen_tcp:listen(0, [{packet, 4}]))
+        ?assertEqual({error, einval}, erx_gen_tcp:connect({127, 0, 0, 1}, 1, [{packet, http}], 1000)),
+        ?assertEqual({error, einval}, erx_gen_tcp:listen(0, [{packet, http}]))
     after
         erlang:trace(self(), false, [procs])
     end,

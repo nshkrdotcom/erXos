@@ -63,8 +63,9 @@ badarg}`, and a socket that has shown its owner its end `{error, closed}`, as on
 Only IPv4 is taken: a host name given to `connect/4` resolves through inet's own path
 (inet_db's lookup methods, the hosts file and then DNS) to its IPv4 addresses, which are
 tried in order within the one timeout, each by a socket process of its own. The options
-taken are the socket process's own (`binary`, `list`, `mode`, `active`, `{packet, raw}`)
-and the connection's `nodelay`; `listen/2` also takes the local address (`ip` or
+taken are the socket process's own (`binary`, `list`, `mode`, `active`, `packet` raw, 0,
+1, 2, 4 or `line`, `packet_size` and `buffer`, framed by erx_gen_tcp_core) and the
+connection's `nodelay`; `listen/2` also takes the local address (`ip` or
 `ifaddr`) and the listener's `backlog`, `reuseaddr` and `reuseport`. `listen/2` and
 `connect/4` first check the options as stock's gen_tcp does, with inet's own parser, so an
 option stock does not know, or a value it does not take, raises `badarg` as on stock; one
@@ -119,7 +120,7 @@ connect_each([], _Port, _Opts, _Timer, Last) ->
 connect_one(Address, Port, Opts, Timeout) ->
     ok = stock_takes(connect, Opts),
     maybe
-        {ok, Own, Fwd} ?= erx_gen_tcp_core:options(Opts, #{mode => list, active => true}),
+        {ok, Own, Fwd} ?= erx_gen_tcp_core:options(Opts),
         open({tcp_connect, inet, Address, Port, Fwd, Timeout}, Own)
     end.
 

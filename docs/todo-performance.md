@@ -706,6 +706,16 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   bulk send of 64 KiB iolists of 1 KiB binaries against the same bytes as
   one binary, throughput and bytes copied; the fix on the table is the
   socket process cutting pieces from the iodata's binaries.
+* **[Low] network, packet-mode copies in the socket process**
+  ([design-network-stack.md](design-network-stack.md#the-socket-process)).
+  `erx_gen_tcp_core` joins what it holds into one binary to frame the next
+  packet, once a length mode's packet can be whole and once a push brings a
+  partial line its newline; a delivered packet is a sub-binary of that join,
+  so it keeps up to `buffer` bytes alive; and a send in a length mode copies
+  its data behind its header (`erx_net_packet:encode/2`). Settled by
+  a `{packet, 4}` bulk transfer of 1 MiB packets and a `{packet, line}`
+  one of 60 KiB lines, against `raw` on the same bytes, throughput and
+  bytes copied.
 * **[Low] network, the receive join on erXos**
   ([design-network-fastpath.md](design-network-fastpath.md#copies)). The merge leaves a merged segment's payload
   as its frames' sub-binaries, so the socket process joins a delivery of

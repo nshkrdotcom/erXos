@@ -19,10 +19,11 @@ answered after the last piece's reply, or with the first error. A `send` waits f
 once, is answered `ok`, and ends the socket process.
 
 **Credit.** The connection pushes only within the bytes the core has granted. The core
-keeps what it holds plus the credit outstanding at its target: the receive buffer's
-64 KiB, raised to a waiting `recv(S, Length)`'s `Length`, up to stock's 64 MiB. It grants
-the shortfall once it reaches half the target, so credit costs one message per half
-target received, and at once when a waiting recv needs more than it holds and has
+keeps what it holds plus the credit outstanding at its target: the `buffer` option, the
+receive buffer's 64 KiB unless set, raised to a waiting `recv(S, Length)`'s `Length`, up
+to stock's 64 MiB, or to what the packet in progress needs. It grants the shortfall once
+it reaches half the target, so credit costs one message per half target received, and
+at once when a waiting recv or the packet in progress needs more than it holds and has
 outstanding. So the socket process holds at most its target, and the connection pushes
 nothing the core has not asked for. A push past the credit outstanding, a reply to a
 request not in flight, or a reply that fails its reply type breaks the protocol: the
@@ -35,6 +36,14 @@ sends `{tcp_passive, S}` at zero, as stock's inet does. A passive
 `recv(S, 0)` takes all that is held, `recv(S, Length)` exactly `Length` bytes; a recv
 that times out leaves what is held for the next one. Recvs that wait when the socket
 turns active are answered `{error, einval}`, as a recv of an active socket is.
+
+**Packets.** In a packet mode (`{packet, 1 | 2 | 4 | line}`) a delivery is one packet,
+framed by erx_net_packet from the bytes held when it is presented, so a change of packet
+mode applies to every byte not yet presented, as on stock: each `{tcp, S, Packet}` in
+active mode is one delivery, and a passive recv takes one packet, its `Length` 0 (another
+is `{error, einval}`, as on stock). A packet over `packet_size` ends the stream with
+`{error, emsgsize}` where the packet would be, as stock's driver ends it; a partial packet
+at the end is dropped, as stock drops it. A send in a length mode gets its header.
 
 **The end.** `eof` comes after every byte, and `{error, Reason}` is the socket's last
 push; the socket's exit without one is `{error, econnaborted}`. The owner is shown the
@@ -73,7 +82,7 @@ the core present nothing: what arrives is held and the end waits, as in passive 
 within the credit it granted; release/1 presents what was held to the new owner.
 """.
 
--export([new/2, listener/3, step/2, hold/1, release/1, options/2, listen_options/1, local/1]).
+-export([new/2, listener/3, step/2, hold/1, release/1, options/1, options/2, listen_options/1, local/1]).
 
 -export_type([core/0, event/0, action/0, request/0, own/0]).
 
@@ -81,17 +90,22 @@ within the credit it granted; release/1 presents what was held to the new owner.
 %% "Message sizes").
 -define(PIECE, 65536).
 -define(MAX_IN_FLIGHT, 64).
-%% The default target: the connection's receive buffer (erx_tcp_conn's RCVBUF).
+%% The default `buffer`, the target: the connection's receive buffer (erx_tcp_conn's RCVBUF).
 -define(TARGET, 65536).
-%% stock's TCP_MAX_PACKET_SIZE, the longest recv (inet_drv.c).
+%% stock's TCP_MAX_PACKET_SIZE, the longest recv (inet_drv.c), and the largest `buffer`.
 -define(MAX_RECV, 67108864).
+%% The largest `packet_size` stock keeps.
+-define(MAX_PACKET_SIZE, 16#ffffffff).
 -define(IS_TIMEOUT(T), (T =:= infinity orelse (is_integer(T) andalso T >= 0 andalso T =< ?MAX_TIMEOUT))).
 -define(IS_RECV(L, T), (is_integer(L) andalso L >= 0 andalso ?IS_TIMEOUT(T))).
 %% The longest timer the runtime arms, so a recv's timeout never crashes the socket process.
 -define(MAX_TIMEOUT, 4294967295).
 
 -doc "The options the socket process keeps: how it presents data to its owner.".
--type own() :: #{mode := binary | list, active := active()}.
+-type own() :: #{mode := binary | list, active := active(), packet := packet(),
+                 packet_size := non_neg_integer(), buffer := pos_integer()}.
+
+-type packet() :: raw | erx_net_packet:type().
 
 -type active() :: boolean() | once | integer().
 
@@ -139,9 +153,13 @@ socket process.
                state = open :: open | listening | closed,
                mode :: binary | list,
                active :: active(),
+               packet :: packet(),
+               packet_size :: non_neg_integer(),
+               buffer :: pos_integer(),
                held = [] :: [[binary()]],            % pushes' pieces and a take's leftover:
                                                      % lists newest first, each oldest first
                held_bytes = 0 :: non_neg_integer(),
+               need = 0 :: non_neg_integer(),        % the bytes the packet in progress needs
                outstanding = 0 :: non_neg_integer(), % credit granted, not yet pushed
                next = 0 :: non_neg_integer(),        % the next request's N
                in_flight = #{} :: #{non_neg_integer() => tag()},
@@ -163,9 +181,8 @@ A core for an open connection presented as `Sock`, with the owner's options `Own
 first action grants the connection its target.
 """.
 -spec new(erx_gen_tcp:socket(), own()) -> {core(), [action()]}.
-new(Sock, #{mode := Mode, active := Active}) ->
-    settle(#core{sock = Sock, mode = Mode, active = Active, waiting = queue:new(),
-                 sends = queue:new(), recvs = queue:new()}, []).
+new(Sock, Own) ->
+    settle(set_own(Own, #core{sock = Sock, waiting = queue:new(), sends = queue:new(), recvs = queue:new()}), []).
 
 -doc """
 A core for a listener on the node `Node`, presented as `Sock`, whose accepted sockets
@@ -173,9 +190,9 @@ start with `Own` and whose connections with `Nodelay`. It sends nothing until it
 `accept`.
 """.
 -spec listener(erx_gen_tcp:socket(), own(), #{nodelay := boolean(), node := node()}) -> core().
-listener(Sock, #{mode := Mode, active := Active}, #{nodelay := Nodelay, node := Node}) ->
-    #core{sock = Sock, state = listening, mode = Mode, active = Active, nodelay = Nodelay,
-          listener_node = Node, waiting = queue:new(), sends = queue:new(), recvs = queue:new()}.
+listener(Sock, Own, #{nodelay := Nodelay, node := Node}) ->
+    set_own(Own, #core{sock = Sock, state = listening, nodelay = Nodelay, listener_node = Node,
+                       waiting = queue:new(), sends = queue:new(), recvs = queue:new()}).
 
 -doc """
 Holds what the core presents while its socket moves to a new owner; `{error, closed}`
@@ -194,6 +211,11 @@ release(#core{state = listening} = C) ->
     {C#core{holding = false}, []};
 release(C) ->
     settle(C#core{holding = false}, []).
+
+-doc "As options/2 over stock's defaults: a list, active socket with no packet framing.".
+-spec options([term()]) -> {ok, own(), [{nodelay, boolean()}]} | {error, einval}.
+options(Opts) ->
+    options(Opts, #{mode => list, active => true, packet => raw, packet_size => 0, buffer => ?TARGET}).
 
 -doc """
 Splits `gen_tcp`'s options `Opts` into the socket process's own, applied over `Own`,
@@ -225,7 +247,11 @@ option({active, N}, #{active := Current} = Own) when is_integer(N), N >= -32768,
         Sum when Sum =< 32767 -> {own, Own#{active := Sum}};
         _ -> error
     end;
-option({packet, P}, Own) when P =:= raw; P =:= 0 -> {own, Own};
+option({packet, P}, Own) when P =:= raw; P =:= 0 -> {own, Own#{packet := raw}};
+option({packet, P}, Own) when P =:= 1; P =:= 2; P =:= 4; P =:= line -> {own, Own#{packet := P}};
+option({packet_size, N}, Own) when is_integer(N), N >= 0, N =< ?MAX_PACKET_SIZE -> {own, Own#{packet_size := N}};
+%% stock keeps a buffer of at least one byte; the socket process holds at most 64 MiB.
+option({buffer, N}, Own) when is_integer(N) -> {own, Own#{buffer := min(max(N, 1), ?MAX_RECV)}};
 option(inet, Own) -> {own, Own};
 option({nodelay, B}, _Own) when is_boolean(B) -> {fwd, {nodelay, B}};
 option(_, _) -> error.
@@ -242,7 +268,7 @@ sockets start with, applied over stock's defaults, and the listener's: `backlog`
 -spec listen_options([term()]) -> {ok, own(), [{atom(), term()}]} | {error, einval}.
 listen_options(Opts) ->
     {Listener, Rest} = lists:partition(fun listener_option/1, Opts),
-    case options(Rest, #{mode => list, active => true}) of
+    case options(Rest) of
         {ok, Own, Fwd} -> {ok, Own, Listener ++ Fwd};
         {error, _} = Error -> Error
     end.
@@ -309,10 +335,12 @@ step(owner_down, C) ->
 %% --- Calls of an open socket ------------------------------------------------------------
 
 call({send, Data}, From, #core{sending = none} = C) when is_binary(Data) ->
-    start_send(From, Data, C, []);
+    start_send(From, framed(Data, C), C, []);
 call({send, Data}, From, #core{sends = Q} = C) when is_binary(Data) ->
-    {C#core{sends = queue:in({From, Data}, Q)}, []};
+    {C#core{sends = queue:in({From, framed(Data, C)}, Q)}, []};
 call({recv, _, _}, From, #core{active = Active} = C) when Active =/= false ->
+    {C, [{reply, From, {error, einval}}]};
+call({recv, Length, _}, From, #core{packet = Packet} = C) when Packet =/= raw, Length =/= 0 ->
     {C, [{reply, From, {error, einval}}]};
 call({recv, Length, _}, From, C) when is_integer(Length), Length > ?MAX_RECV ->
     {C, [{reply, From, {error, enomem}}]};
@@ -337,7 +365,7 @@ call({setopts, Opts}, From, C) ->
             {C, [{reply, From, Error}]}
     end;
 call({getopts, Names}, From, C) when is_list(Names) ->
-    Local = local_opts(Names, C),
+    Local = values(Names, own(C)),
     case [Name || Name <- lists:uniq(Names), lists:member(Name, ?SOCKET_NAMES)] of
         [] -> {C, [{reply, From, {ok, Local}}]};
         Asked -> issue({getopts, Asked}, {getopts, From, Local}, C, [])
@@ -349,21 +377,33 @@ call(peername, From, C) ->
 call(_Call, From, C) ->
     {C, [{reply, From, {error, einval}}]}.
 
-own(#core{mode = Mode, active = Active}) ->
-    #{mode => Mode, active => Active}.
+own(#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer}) ->
+    #{mode => Mode, active => Active, packet => Packet, packet_size => Size, buffer => Buffer}.
 
-local_opts(Names, C) ->
-    Own = own(C),
-    [{Name, Value} || Name <- Names, {ok, Value} <- [maps:find(Name, Own)]].
+set_own(#{mode := Mode, active := Active, packet := Packet, packet_size := Size, buffer := Buffer}, C) ->
+    %% What the packet in progress needs is found again by the next delivery.
+    C#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer, need = 0}.
+
+%% The values of the named options Known holds, in the order asked, as stock shows them:
+%% no packet framing is `{packet, 0}`.
+values(Names, Known) ->
+    [{Name, shown(Name, Value)} || Name <- Names, {ok, Value} <- [maps:find(Name, Known)]].
+
+shown(packet, raw) -> 0;
+shown(_Name, Value) -> Value.
+
+%% A send's bytes as they go on the stream: in a length mode after their header.
+framed(Data, #core{packet = raw}) -> Data;
+framed(Data, #core{packet = Packet}) -> erx_net_packet:encode(Packet, Data).
 
 %% The owner's options applied. A socket turning active answers the recvs that wait,
 %% `{error, einval}`, as a recv of an active socket is answered.
-apply_own(#{mode := Mode, active := false}, C) ->
-    {C#core{mode = Mode, active = false}, []};
-apply_own(#{mode := Mode, active := Active}, #core{recv = Recv, recvs = Recvs} = C) ->
+apply_own(#{active := false} = Own, C) ->
+    {set_own(Own, C), []};
+apply_own(Own, #core{recv = Recv, recvs = Recvs} = C) ->
     Current = [[{reply, From, {error, einval}}, {recv_timer, cancel}] || {From, _} <- [Recv]],
     Queued = [{reply, From, {error, einval}} || {From, _, _} <- queue:to_list(Recvs)],
-    {C#core{mode = Mode, active = Active, recv = none, recvs = queue:new()}, lists:append(Current) ++ Queued}.
+    {set_own(Own, C#core{recv = none, recvs = queue:new()}), lists:append(Current) ++ Queued}.
 
 %% --- Calls of a listening socket --------------------------------------------------------
 
@@ -376,8 +416,8 @@ listening_call({accept, SockProc, _}, From, C) ->
     {C, refuse_accept(From, SockProc, einval)};
 listening_call({setopts, Opts}, From, #core{nodelay = Nodelay} = C) ->
     case options(Opts, own(C)) of
-        {ok, #{mode := Mode, active := Active}, Fwd} ->
-            C1 = C#core{mode = Mode, active = Active, nodelay = proplists:get_value(nodelay, Fwd, Nodelay)},
+        {ok, Own, Fwd} ->
+            C1 = set_own(Own, C#core{nodelay = proplists:get_value(nodelay, Fwd, Nodelay)}),
             case Fwd of
                 [] -> {C1, [{reply, From, ok}]};
                 _ -> issue({setopts, Fwd}, {setopts, From}, C1, [])
@@ -386,8 +426,7 @@ listening_call({setopts, Opts}, From, #core{nodelay = Nodelay} = C) ->
             {C, [{reply, From, Error}]}
     end;
 listening_call({getopts, Names}, From, #core{nodelay = Nodelay} = C) when is_list(Names) ->
-    Known = (own(C))#{nodelay => Nodelay},
-    {C, [{reply, From, {ok, [{Name, Value} || Name <- Names, {ok, Value} <- [maps:find(Name, Known)]]}}]};
+    {C, [{reply, From, {ok, values(Names, (own(C))#{nodelay => Nodelay})}}]};
 listening_call(sockname, From, C) ->
     issue(sockname, {sockname, From}, C, []);
 listening_call(peername, From, C) ->
@@ -409,10 +448,13 @@ refuse_accept(From, SockProc, Reason) ->
 %% else is closed.
 closed_call({accept, SockProc, _}, From, C) ->
     {C, refuse_accept(From, SockProc, closed)};
+closed_call({recv, Length, _}, From, #core{packet = Packet} = C) when Packet =/= raw, Length =/= 0 ->
+    {C, [{reply, From, {error, einval}}]};
 closed_call({recv, Length, _}, From, C) when is_integer(Length), Length >= 0 ->
-    case take(wanted(Length), C) of
+    case deliver(Length, C) of
         {ok, Data, C1} -> {C1, [{reply, From, {ok, data(C#core.mode, Data)}}]};
-        short -> recv_meets_end(From, C)
+        {short, C1} -> recv_meets_end(From, C1);
+        {error, Reason, C1} -> recv_meets_end(From, framing_end(Reason, C1))
     end;
 closed_call({setopts, Opts}, From, #core{ended = Ended} = C) when Ended =/= none ->
     case options(Opts, own(C)) of
@@ -546,20 +588,47 @@ settle(C, Acts) ->
     {C2, Acts2} = finish(C1, Acts1),
     grant(C2, Acts2).
 
-present(#core{active = Active, holding = false, held_bytes = Bytes, sock = Sock, mode = Mode} = C, Acts)
-  when Active =/= false, Bytes > 0 ->
-    {ok, Data, C1} = take(all, C),
-    passive_notice(C1#core{active = spend(Active)}, Acts ++ [{tell, {tcp, Sock, data(Mode, Data)}}]);
+%% In active mode each delivery is one message, until the count runs out or nothing more
+%% can be delivered; in passive mode the waiting recv takes one. A packet over its bound
+%% ends the stream there, for finish/2 to show.
+present(#core{active = Active, holding = false} = C, Acts) when Active =/= false ->
+    {C1, Told} = deliveries(C, []),
+    {C1, Acts ++ Told};
 present(#core{active = false, recv = {From, Length}} = C, Acts) ->
-    case take(wanted(Length), C) of
+    case deliver(Length, C) of
         {ok, Data, C1} ->
             next_recv(C1#core{recv = none}, Acts ++ [{reply, From, {ok, data(C#core.mode, Data)}},
                                                     {recv_timer, cancel}]);
-        short ->
-            {C, Acts}
+        {short, C1} ->
+            {C1, Acts};
+        {error, Reason, C1} ->
+            {framing_end(Reason, C1), Acts}
     end;
 present(C, Acts) ->
     {C, Acts}.
+
+%% The active deliveries and the passive notice a count ends in, Told newest first, so a
+%% push of many small packets costs one message each.
+deliveries(#core{active = false} = C, Told) ->
+    {C, lists:reverse(Told)};
+deliveries(#core{active = Active, sock = Sock, mode = Mode} = C, Told) ->
+    case deliver(0, C) of
+        {ok, Data, C1} ->
+            Delivered = [{tell, {tcp, Sock, data(Mode, Data)}} | Told],
+            case spend(Active) of
+                N when is_integer(N), N =< 0 -> deliveries(C1#core{active = false}, [{tell, {tcp_passive, Sock}} | Delivered]);
+                Left -> deliveries(C1#core{active = Left}, Delivered)
+            end;
+        {short, C1} ->
+            {C1, lists:reverse(Told)};
+        {error, Reason, C1} ->
+            {framing_end(Reason, C1), lists:reverse(Told)}
+    end.
+
+%% A packet over its bound ends the stream where it would be: it and every byte after it
+%% are discarded, and the end is the error, as stock's driver ends it.
+framing_end(Reason, C) ->
+    discard(C#core{ended = {error, Reason}, need = 0}).
 
 %% `{active, N}` counts deliveries down to passive; `once` is one.
 spend(once) -> false;
@@ -582,6 +651,51 @@ next_recv(#core{recvs = Q} = C, Acts) ->
     case queue:out(Q) of
         {{value, {From, Length, Timeout}}, Rest} -> start_recv(From, Length, Timeout, C#core{recvs = Rest}, Acts);
         {empty, _} -> {C, Acts}
+    end.
+
+%% The next delivery from what is held: in raw mode a recv of Length's bytes, all of them
+%% for 0; in a packet mode the next packet, whatever Length. `{short, C}` when none can be
+%% made yet, C knowing what the packet in progress needs; `{error, emsgsize, C}` for a
+%% packet over packet_size, for the caller to end the stream with (framing_end/2).
+%%
+%% What is held is joined to be framed, and after a packet in progress stays one binary
+%% (`need` > 0) with the pushes since in front of it. A length mode's packet is framed
+%% again only once it can be whole, and a partial line only once a push brings a newline
+%% or the bytes that make the line cut or too long, so each byte is joined about once.
+deliver(Length, #core{packet = raw} = C) ->
+    case take(wanted(Length), C) of
+        {ok, _, _} = Ok -> Ok;
+        short -> {short, C}
+    end;
+deliver(_Length, #core{held_bytes = Bytes, need = Need} = C) when Bytes =:= 0; Need > Bytes ->
+    {short, C};
+deliver(_Length, #core{packet = line, need = Need} = C) when Need > 0 ->
+    case line_waits(C) of
+        true -> {short, C#core{need = C#core.held_bytes + 1}};
+        false -> frame(C)
+    end;
+deliver(_Length, C) ->
+    frame(C).
+
+%% A partial line framed before still waits while no push since brings a newline and what
+%% is held cannot yet be cut at the buffer or be over packet_size.
+line_waits(#core{held = Held, held_bytes = Bytes, packet_size = Size, buffer = Buffer}) ->
+    Decides = case Size of
+                  0 -> Buffer;
+                  _ -> min(Buffer, Size + 1)
+              end,
+    Bytes < Decides andalso not lists:any(fun(Piece) -> binary:match(Piece, <<"\n">>) =/= nomatch end,
+                                          lists:append(lists:droplast(Held))).
+
+frame(#core{packet = Packet, packet_size = Size, buffer = Buffer, held = Held, held_bytes = Bytes} = C) ->
+    Joined = join(lists:append(lists:reverse(Held))),
+    case erx_net_packet:decode(Packet, Joined, #{packet_size => Size, buffer => Buffer}) of
+        {ok, Data, Rest} ->
+            {ok, Data, C#core{held = [[Rest] || Rest =/= <<>>], held_bytes = byte_size(Rest), need = 0}};
+        {more, Need} ->
+            {short, C#core{held = [[Joined]], held_bytes = Bytes, need = Need}};
+        {error, Reason} ->
+            {error, Reason, C}
     end.
 
 %% What a recv of Length takes: `all` that is held for 0, as gen_tcp:recv/2 does.
@@ -607,10 +721,12 @@ take(Length, #core{held = Held, held_bytes = Bytes} = C) ->
 %% "Copies"), so it references only its own bytes and no byte is joined twice. The
 %% binaries left stay the pieces or a sub-binary of one.
 split(Length, Pieces) ->
-    case cut(Length, Pieces, []) of
-        {[One], Left} -> {One, Left};
-        {Head, Left} -> {iolist_to_binary(Head), Left}
-    end.
+    {Head, Left} = cut(Length, Pieces, []),
+    {join(Head), Left}.
+
+%% Binaries as one: a single one itself, several joined.
+join([One]) -> One;
+join(Pieces) -> iolist_to_binary(Pieces).
 
 %% The pieces holding the first Length bytes, the last one cut at them, oldest first,
 %% and the pieces after them. Head collects the whole pieces taken, newest first.
@@ -680,15 +796,19 @@ close_out(#core{in_flight = InFlight, waiting = Waiting, sending = Sending, send
      Acts ++ [{request, N, close} | Closed] ++ Discards ++ Timer}.
 
 %% The credit rule: the shortfall below the target, granted once it reaches half the
-%% target, or at once when a waiting recv needs more than is held and outstanding.
-grant(#core{state = open, ended = none, held_bytes = Held, outstanding = Out, recv = Recv} = C, Acts) ->
-    Need = case Recv of
-               {_, Length} -> Length;
-               none -> 0
-           end,
-    Target = max(?TARGET, Need),
-    Short = Target - Held - Out,
-    Waits = Recv =/= none andalso (Need > Held + Out orelse Held + Out =:= 0),
+%% target, or at once when a waiting recv or the packet in progress needs more than is
+%% held and outstanding. The credit outstanding never passes 64 MiB, the most the
+%% connection keeps (erx_tcp_conn's MAX_PUSH_CREDIT), whatever a recv or a packet asks for.
+grant(#core{state = open, ended = none, held_bytes = Held, outstanding = Out, recv = Recv, buffer = Buffer,
+            need = PacketNeed} = C, Acts) ->
+    RecvLength = case Recv of
+                     {_, Length} -> Length;
+                     none -> 0
+                 end,
+    Need = max(RecvLength, PacketNeed),
+    Target = max(Buffer, Need),
+    Short = min(Target - Held - Out, ?MAX_RECV - Out),
+    Waits = Need > Held + Out orelse (Recv =/= none andalso Held + Out =:= 0),
     case Short > 0 andalso (Short >= Target div 2 orelse Waits) of
         true -> {C#core{outstanding = Out + Short}, Acts ++ [{credit, Short}]};
         false -> {C, Acts}

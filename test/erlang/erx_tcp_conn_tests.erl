@@ -502,7 +502,7 @@ refused_connect() ->
 %% The socket process's open call for a connect to the peer with gen_tcp's options Opts,
 %% as erx_gen_tcp:connect/4 makes it.
 connect_request(Opts) ->
-    {ok, Own, Fwd} = erx_gen_tcp_core:options(Opts, #{mode => list, active => true}),
+    {ok, Own, Fwd} = erx_gen_tcp_core:options(Opts),
     {open, {tcp_connect, inet, {10, 0, 2, 2}, ?PEER_PORT, Fwd, 10000}, Own}.
 
 %% A connection that dies before it answers still leaves no connect caller waiting: its

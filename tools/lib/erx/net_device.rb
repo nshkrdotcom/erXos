@@ -57,11 +57,15 @@ module Erx
   #
   # The reverse case follows: the Erlang shell listens with gen_tcp, whose backend on
   # erXos is erx_gen_tcp by default, on QemuPlan::NIC_LISTEN_PORT and spawns an acceptor
-  # that echoes what it reads until the peer's end, then closes and tells the shell how
-  # many bytes it echoed. The harness connects to slirp's host forward to that port
-  # (listener_exchange), sends LISTEN_BYTES random bytes and shuts its sending side; the
-  # same bytes must come back, then the guest's FIN, and the shell must show the
-  # acceptor's count and its close's `ok`.
+  # that reads the peer's first line and echoes what follows it until the peer's end,
+  # then closes and tells the shell how many bytes it echoed. It reads the line as OTP's
+  # ssh reads a banner: the accepted socket's `buffer` and `packet_size` through
+  # inet:getopts/2, which must be erXos's defaults, then `{packet, line}` with both set
+  # to 255, then back to `{packet, 0}`. The harness connects to slirp's host forward to
+  # that port (listener_exchange), sends HELLO and LISTEN_BYTES random bytes in one write
+  # and shuts its sending side; the line must be HELLO, the random bytes must come back,
+  # then the guest's FIN, and the shell must show the acceptor's count, its close's `ok`,
+  # the options it read and that the line was HELLO.
   #
   # Every request above that needs the network (ifconfig's interfaces, ping's echo
   # socket, the resolver's and the TCP connect) reaches the stack only as a call of the
@@ -150,22 +154,32 @@ module Erx
     CLOSE_LINE = "erx_gen_tcp:close(S).\r"
     # The listener lines, whose shell bindings are L, the listening socket, and Shell, the
     # shell's pid. ACCEPT_LINE spawns the acceptor, which owns the connection it accepts,
-    # echoes each recv's bytes back until the peer's end, closes, and sends the shell
-    # {echoed, Bytes, Close}; ECHOED_LINE takes that message. Its accept and send matches
+    # reads its first line, echoes each recv's bytes after it back until the peer's end,
+    # closes, and sends the shell {echoed, Bytes, Close, Opts, IsHello}; ECHOED_LINE takes
+    # that message. The line is compared with HELLO built of its text and CR LF, so no
+    # escape is typed at the shell. Its accept and send matches
     # are tagged, so the crash report of an acceptor that fails names the call. LISTEN_BYTES
     # fits the loopback socket's and slirp's buffers, so the harness sends it whole before
     # it reads.
     LISTEN_BYTES = 16_384
+    # The peer's first line, a banner as an SSH peer sends it.
+    HELLO_TEXT = 'SSH-2.0-erxos-check'
+    HELLO = "#{HELLO_TEXT}\r\n".freeze
     LISTEN_LINE = "{ok, L} = gen_tcp:listen(#{QemuPlan::NIC_LISTEN_PORT}, [binary, {active, false}]), ok.\r".freeze
     ACCEPT_LINE = 'Shell = self(), _ = spawn(fun() -> ' \
                   "{accept, {ok, A}} = {accept, gen_tcp:accept(L, #{TCP_RECV_MS})}, " \
+                  '{ok, Opts} = inet:getopts(A, [buffer, packet_size]), ' \
+                  'ok = inet:setopts(A, [{packet, line}, {buffer, 255}, {packet_size, 255}]), ' \
+                  "{line, {ok, Hello}} = {line, gen_tcp:recv(A, 0, #{TCP_RECV_MS})}, " \
+                  'ok = inet:setopts(A, [{packet, 0}, {buffer, 65536}, {packet_size, 0}]), ' \
                   "Echo = fun Loop(N) -> case gen_tcp:recv(A, 0, #{TCP_RECV_MS}) of " \
                   '{ok, B} -> {send, ok} = {send, gen_tcp:send(A, B)}, Loop(N + byte_size(B)); ' \
                   '{error, closed} -> N end end, ' \
-                  "Echoed = Echo(0), Shell ! {echoed, Echoed, gen_tcp:close(A)} end), ok.\r".freeze
-    ECHOED_LINE = "receive {echoed, _, _} = Msg -> Msg after #{TCP_RECV_MS} -> timeout end.\r".freeze
+                  "Echoed = Echo(0), Shell ! {echoed, Echoed, gen_tcp:close(A), Opts, " \
+                  "Hello =:= list_to_binary([\"#{HELLO_TEXT}\", 13, 10])} end), ok.\r".freeze
+    ECHOED_LINE = "receive {echoed, _, _, _, _} = Msg -> Msg after #{TCP_RECV_MS} -> timeout end.\r".freeze
     # The acceptor's answer when the exchange passed.
-    ACCEPTED = "{echoed,#{LISTEN_BYTES},ok}".freeze
+    ACCEPTED = "{echoed,#{LISTEN_BYTES},ok,[{buffer,65536},{packet_size,0}],true}".freeze
     # The longest listener_exchange takes: its connect, and its write and read.
     HOST_FORWARD_SECONDS = REPLY_SECONDS + 2 * TCP_SECONDS
     # A call of the session's grant, its `net` facet, that is no operation of it.
@@ -304,14 +318,14 @@ module Erx
     end
 
     # The host's end of the listener case: connects to slirp's host forward at the
-    # loopback port port, sends LISTEN_BYTES random bytes and shuts its sending side, then
+    # loopback port port, sends HELLO and LISTEN_BYTES random bytes and shuts its sending side, then
     # reads the echo until the guest's FIN (read_echo). What came back must be the bytes
     # sent. Each write and read waits at most TCP_SECONDS, and the whole read as long.
     def listener_exchange(port)
       sent = Random.bytes(LISTEN_BYTES)
       echoed = Socket.tcp('127.0.0.1', port, connect_timeout: REPLY_SECONDS) do |socket|
         socket.timeout = TCP_SECONDS
-        socket.write(sent)
+        socket.write(HELLO + sent)
         socket.close_write
         read_echo(socket)
       end
