@@ -102,28 +102,36 @@ mutate(Bytes) ->
 %% --- The reading of stock's framing ----------------------------------------------------
 
 %% stock's framing of the first packet of Bytes: packet_get_length over the bytes its
-%% driver holds, a line's at most `buffer`.
-reference(line, Bytes, #{packet_size := Size, buffer := Buffer}) ->
+%% driver holds, a line's at most `buffer`, the longest packet the socket's packet_size,
+%% bounded at 64 MiB; and what a packet in progress waits for.
+reference(line, Bytes, #{buffer := Buffer} = Limits) ->
+    Longest = longest(Limits),
     Window = binary:part(Bytes, 0, min(byte_size(Bytes), Buffer)),
     case binary:match(Window, <<"\n">>) of
-        {At, 1} when Size > 0, At + 1 > Size -> {error, emsgsize};
+        {At, 1} when At + 1 > Longest -> {error, emsgsize};
         {At, 1} -> split(At + 1, Bytes);
-        nomatch when Size > 0, byte_size(Window) > Size -> {error, emsgsize};
+        nomatch when byte_size(Window) > Longest -> {error, emsgsize};
         nomatch when byte_size(Window) >= Buffer -> split(Buffer, Bytes);
-        nomatch -> {more, byte_size(Bytes) + 1}
+        nomatch -> {more, {line, min(Buffer, Longest + 1)}}
     end;
-reference(Header, Bytes, #{packet_size := Size}) ->
-    Bound = case Size of
-                0 -> ?MAX_PACKET;
-                _ -> min(Size, ?MAX_PACKET)
-            end,
+reference(Header, Bytes, Limits) ->
     Bits = Header * 8,
     case Bytes of
-        <<Length:Bits, _/binary>> when Length > Bound -> {error, emsgsize};
-        <<Length:Bits, Body:Length/binary, Rest/binary>> -> {ok, Body, Rest};
-        <<Length:Bits, _/binary>> -> {more, Header + Length};
-        _ -> {more, byte_size(Bytes) + 1}
+        <<Length:Bits, _/binary>> ->
+            case longest(Limits) of
+                Longest when Length > Longest -> {error, emsgsize};
+                _ when byte_size(Bytes) >= Header + Length -> split(Header, Length, Bytes);
+                _ -> {more, {length, Header + Length}}
+            end;
+        _ -> {more, {length, byte_size(Bytes) + 1}}
     end.
+
+longest(#{packet_size := 0}) -> ?MAX_PACKET;
+longest(#{packet_size := Size}) -> min(Size, ?MAX_PACKET).
+
+split(Header, Length, Bytes) ->
+    <<_:Header/binary, Body:Length/binary, Rest/binary>> = Bytes,
+    {ok, Body, Rest}.
 
 split(Length, Bytes) ->
     <<Packet:Length/binary, Rest/binary>> = Bytes,
@@ -143,7 +151,8 @@ decode() ->
     Type = type(),
     Bytes = stream(Type),
     Limits = limits(Bytes),
-    judge(decode_differs, fun() -> erx_net_packet:decode(Type, Bytes, Limits) end,
+    Decoded = #{longest => longest(Limits), buffer => maps:get(buffer, Limits)},
+    judge(decode_differs, fun() -> erx_net_packet:decode(Type, Bytes, Decoded) end,
           reference(Type, Bytes, Limits), {Type, Bytes, Limits}).
 
 %% --- core ------------------------------------------------------------------------------

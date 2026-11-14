@@ -28,11 +28,11 @@ module ErxNetPacketFuzz
 
   FAULTS = {
     'decode' => Fault.new(what: 'a line framing without packet_size', source: PACKET,
-                          anchor: '[{packet_size, Size}, {line_length, Buffer}]',
+                          anchor: '[{packet_size, Longest}, {line_length, Buffer}]',
                           replacement: '[{line_length, Buffer}]', marker: 'decode_differs'),
     'core' => Fault.new(what: 'a core that drops what follows a packet', source: CORE,
-                        anchor: '{ok, Data, C#core{held = [[Rest] || Rest =/= <<>>], held_bytes = byte_size(Rest), need = 0}};',
-                        replacement: '{ok, Data, C#core{held = [], held_bytes = 0, need = 0}};', marker: 'core_')
+                        anchor: '{ok, Data, C#core{held = [Left || Left =/= []], held_bytes = Bytes - (byte_size(First) - byte_size(Rest)),',
+                        replacement: '{ok, Data, C#core{held = [], held_bytes = 0,', marker: 'core_')
   }.freeze
 
   module_function

@@ -92,7 +92,8 @@ within the credit it granted; release/1 presents what was held to the new owner.
 -define(MAX_IN_FLIGHT, 64).
 %% The default `buffer`, the target: the connection's receive buffer (erx_tcp_conn's RCVBUF).
 -define(TARGET, 65536).
-%% stock's TCP_MAX_PACKET_SIZE, the longest recv (inet_drv.c), and the largest `buffer`.
+%% stock's TCP_MAX_PACKET_SIZE (inet_drv.c): the longest recv, the largest `buffer`, the
+%% longest packet, and the most credit outstanding.
 -define(MAX_RECV, 67108864).
 %% The largest `packet_size` stock keeps.
 -define(MAX_PACKET_SIZE, 16#ffffffff).
@@ -159,7 +160,8 @@ socket process.
                held = [] :: [[binary()]],            % pushes' pieces and a take's leftover:
                                                      % lists newest first, each oldest first
                held_bytes = 0 :: non_neg_integer(),
-               need = 0 :: non_neg_integer(),        % the bytes the packet in progress needs
+               wait = none :: none | erx_net_packet:wait(), % what the packet in progress waits
+                                                     % for; none: frame at the next delivery
                outstanding = 0 :: non_neg_integer(), % credit granted, not yet pushed
                next = 0 :: non_neg_integer(),        % the next request's N
                in_flight = #{} :: #{non_neg_integer() => tag()},
@@ -237,24 +239,30 @@ options([Opt | Rest], Own, Fwd) ->
 options(_Opts, _Own, _Fwd) ->
     {error, einval}.
 
-option(binary, Own) -> {own, Own#{mode := binary}};
-option(list, Own) -> {own, Own#{mode := list}};
-option({mode, M}, Own) when M =:= binary; M =:= list -> {own, Own#{mode := M}};
-option({active, A}, Own) when is_boolean(A); A =:= once -> {own, Own#{active := A}};
+option(binary, Own) -> keep(mode, binary, Own);
+option(list, Own) -> keep(mode, list, Own);
+option({mode, M}, Own) when M =:= binary; M =:= list -> keep(mode, M, Own);
+option({active, A}, Own) when is_boolean(A); A =:= once -> keep(active, A, Own);
 option({active, N}, #{active := Current} = Own) when is_integer(N), N >= -32768, N =< 32767 ->
     %% `{active, N}` adds to a count already running, as inet:setopts/2 does.
     case running(Current) + N of
-        Sum when Sum =< 32767 -> {own, Own#{active := Sum}};
+        Sum when Sum =< 32767 -> keep(active, Sum, Own);
         _ -> error
     end;
-option({packet, P}, Own) when P =:= raw; P =:= 0 -> {own, Own#{packet := raw}};
-option({packet, P}, Own) when P =:= 1; P =:= 2; P =:= 4; P =:= line -> {own, Own#{packet := P}};
-option({packet_size, N}, Own) when is_integer(N), N >= 0, N =< ?MAX_PACKET_SIZE -> {own, Own#{packet_size := N}};
+option({packet, P}, Own) when P =:= raw; P =:= 0 -> keep(packet, raw, Own);
+option({packet, P}, Own) when P =:= 1; P =:= 2; P =:= 4; P =:= line -> keep(packet, P, Own);
+option({packet_size, N}, Own) when is_integer(N), N >= 0, N =< ?MAX_PACKET_SIZE -> keep(packet_size, N, Own);
 %% stock keeps a buffer of at least one byte; the socket process holds at most 64 MiB.
-option({buffer, N}, Own) when is_integer(N) -> {own, Own#{buffer := min(max(N, 1), ?MAX_RECV)}};
+option({buffer, N}, Own) when is_integer(N) -> keep(buffer, min(max(N, 1), ?MAX_RECV), Own);
 option(inet, Own) -> {own, Own};
 option({nodelay, B}, _Own) when is_boolean(B) -> {fwd, {nodelay, B}};
 option(_, _) -> error.
+
+%% An option of the socket's own sets its key in Own, and only a key Own holds: each kind
+%% of socket passes the options it keeps, so one it does not keep (a datagram socket's
+%% `buffer` or `packet`) is refused, never added.
+keep(Key, Value, Own) when is_map_key(Key, Own) -> {own, Own#{Key := Value}};
+keep(_Key, _Value, _Own) -> error.
 
 running(Count) when is_integer(Count) -> Count;
 running(_) -> 0.
@@ -381,8 +389,12 @@ own(#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buf
     #{mode => Mode, active => Active, packet => Packet, packet_size => Size, buffer => Buffer}.
 
 set_own(#{mode := Mode, active := Active, packet := Packet, packet_size := Size, buffer := Buffer}, C) ->
-    %% What the packet in progress needs is found again by the next delivery.
-    C#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer, need = 0}.
+    %% A packet in progress is framed again only under new framing options.
+    Wait = case C of
+               #core{packet = Packet, packet_size = Size, buffer = Buffer, wait = Kept} -> Kept;
+               _ -> none
+           end,
+    C#core{mode = Mode, active = Active, packet = Packet, packet_size = Size, buffer = Buffer, wait = Wait}.
 
 %% The values of the named options Known holds, in the order asked, as stock shows them:
 %% no packet framing is `{packet, 0}`.
@@ -448,7 +460,10 @@ refuse_accept(From, SockProc, Reason) ->
 %% else is closed.
 closed_call({accept, SockProc, _}, From, C) ->
     {C, refuse_accept(From, SockProc, closed)};
-closed_call({recv, Length, _}, From, #core{packet = Packet} = C) when Packet =/= raw, Length =/= 0 ->
+closed_call({recv, Length, _}, From, #core{packet = Packet, ended = Ended} = C)
+  when Packet =/= raw, Length =/= 0, Ended =/= none ->
+    %% While the end waits for the owner, stock's driver is still connected and checks the
+    %% packet mode; once a recv met the end or it was shown, it finds the socket closed.
     {C, [{reply, From, {error, einval}}]};
 closed_call({recv, Length, _}, From, C) when is_integer(Length), Length >= 0 ->
     case deliver(Length, C) of
@@ -551,10 +566,11 @@ push({reply, N, Result}, C) ->
     replied(N, Result, C);
 push({data, _}, #core{ended = Ended} = C) when Ended =/= none ->
     abort(order, C);
-push({data, Pieces}, #core{outstanding = Out, held = Held, held_bytes = Bytes} = C) ->
+push({data, Pieces}, #core{outstanding = Out, held = Held, held_bytes = Bytes, wait = Wait} = C) ->
     case iolist_size(Pieces) of
         Size when Size =< Out ->
-            settle(C#core{outstanding = Out - Size, held = [Pieces | Held], held_bytes = Bytes + Size}, []);
+            settle(C#core{outstanding = Out - Size, held = [Pieces | Held], held_bytes = Bytes + Size,
+                          wait = arrived(Wait, Pieces)}, []);
         _ ->
             abort(credit, C)
     end;
@@ -628,7 +644,7 @@ deliveries(#core{active = Active, sock = Sock, mode = Mode} = C, Told) ->
 %% A packet over its bound ends the stream where it would be: it and every byte after it
 %% are discarded, and the end is the error, as stock's driver ends it.
 framing_end(Reason, C) ->
-    discard(C#core{ended = {error, Reason}, need = 0}).
+    discard(C#core{ended = {error, Reason}}).
 
 %% `{active, N}` counts deliveries down to passive; `once` is one.
 spend(once) -> false;
@@ -655,48 +671,74 @@ next_recv(#core{recvs = Q} = C, Acts) ->
 
 %% The next delivery from what is held: in raw mode a recv of Length's bytes, all of them
 %% for 0; in a packet mode the next packet, whatever Length. `{short, C}` when none can be
-%% made yet, C knowing what the packet in progress needs; `{error, emsgsize, C}` for a
+%% made yet, C knowing what the packet in progress waits for; `{error, emsgsize, C}` for a
 %% packet over packet_size, for the caller to end the stream with (framing_end/2).
 %%
-%% What is held is joined to be framed, and after a packet in progress stays one binary
-%% (`need` > 0) with the pushes since in front of it. A length mode's packet is framed
-%% again only once it can be whole, and a partial line only once a push brings a newline
-%% or the bytes that make the line cut or too long, so each byte is joined about once.
+%% A packet in progress waits until what it waits for has arrived (erx_net_packet:arrived/2
+%% looks at each push once), then is framed again.
 deliver(Length, #core{packet = raw} = C) ->
     case take(wanted(Length), C) of
         {ok, _, _} = Ok -> Ok;
         short -> {short, C}
     end;
-deliver(_Length, #core{held_bytes = Bytes, need = Need} = C) when Bytes =:= 0; Need > Bytes ->
+deliver(_Length, #core{held_bytes = 0} = C) ->
     {short, C};
-deliver(_Length, #core{packet = line, need = Need} = C) when Need > 0 ->
-    case line_waits(C) of
-        true -> {short, C#core{need = C#core.held_bytes + 1}};
-        false -> frame(C)
-    end;
+deliver(_Length, #core{held_bytes = Bytes, wait = {_, Upto}} = C) when Bytes < Upto ->
+    {short, C};
 deliver(_Length, C) ->
     frame(C).
 
-%% A partial line framed before still waits while no push since brings a newline and what
-%% is held cannot yet be cut at the buffer or be over packet_size.
-line_waits(#core{held = Held, held_bytes = Bytes, packet_size = Size, buffer = Buffer}) ->
-    Decides = case Size of
-                  0 -> Buffer;
-                  _ -> min(Buffer, Size + 1)
-              end,
-    Bytes < Decides andalso not lists:any(fun(Piece) -> binary:match(Piece, <<"\n">>) =/= nomatch end,
-                                          lists:append(lists:droplast(Held))).
-
-frame(#core{packet = Packet, packet_size = Size, buffer = Buffer, held = Held, held_bytes = Bytes} = C) ->
-    Joined = join(lists:append(lists:reverse(Held))),
-    case erx_net_packet:decode(Packet, Joined, #{packet_size => Size, buffer => Buffer}) of
-        {ok, Data, Rest} ->
-            {ok, Data, C#core{held = [[Rest] || Rest =/= <<>>], held_bytes = byte_size(Rest), need = 0}};
-        {more, Need} ->
-            {short, C#core{held = [[Joined]], held_bytes = Bytes, need = Need}};
-        {error, Reason} ->
-            {error, Reason, C}
+%% The next packet of what is held. The oldest piece is framed alone first: framing reads
+%% from the front, so a packet, a cut line or an error within it is what the whole would
+%% give. Only a packet that runs past it joins what is held, which then stays one binary
+%% while the packet waits, so a packet costs a copy of the bytes it spans and each byte
+%% is joined about once.
+frame(#core{held = Held} = C) ->
+    case lists:append(lists:reverse(Held)) of
+        [Oldest | [_ | _] = Newer] = Pieces ->
+            case decode(Oldest, C) of
+                {more, _} -> whole(join(Pieces), C);
+                Answer -> framed(Answer, Oldest, Newer, C)
+            end;
+        [One] ->
+            whole(One, C)
     end.
+
+whole(Bytes, C) ->
+    framed(decode(Bytes, C), Bytes, [], C).
+
+decode(Bytes, #core{packet = Packet} = C) ->
+    erx_net_packet:decode(Packet, Bytes, limits(C)).
+
+%% The answer of framing First, the oldest bytes held, with the pieces Newer after it.
+framed({ok, Data, Rest}, First, Newer, #core{held_bytes = Bytes} = C) ->
+    Left = [Rest || Rest =/= <<>>] ++ Newer,
+    {ok, Data, C#core{held = [Left || Left =/= []], held_bytes = Bytes - (byte_size(First) - byte_size(Rest)),
+                      wait = none}};
+framed({more, Wait}, First, [], C) ->
+    {short, C#core{held = [[First]], wait = Wait}};
+framed({error, Reason}, _First, _Newer, C) ->
+    {error, Reason, C}.
+
+%% The framing's limits. The longest packet is packet_size, 0 for none, bounded by the
+%% most the socket process holds, so a packet never needs more credit than it may grant:
+%% a documented difference from stock's driver, which frames up to any packet_size.
+limits(#core{packet_size = Size, buffer = Buffer}) ->
+    Longest = case Size of
+                  0 -> ?MAX_RECV;
+                  _ -> min(Size, ?MAX_RECV)
+              end,
+    #{longest => Longest, buffer => Buffer}.
+
+%% What a push brings the packet in progress.
+arrived(none, _Pieces) -> none;
+arrived(Wait, Pieces) -> erx_net_packet:arrived(Wait, Pieces).
+
+%% The bytes the packet in progress needs held: a length mode's whole packet; one more
+%% than is held for a partial line, up to the bytes that decide it.
+packet_need(#core{wait = none}) -> 0;
+packet_need(#core{wait = {length, Needed}}) -> Needed;
+packet_need(#core{wait = {line, Upto}, held_bytes = Held}) -> min(Held + 1, Upto).
 
 %% What a recv of Length takes: `all` that is held for 0, as gen_tcp:recv/2 does.
 wanted(0) -> all;
@@ -740,7 +782,7 @@ data(binary, Data) -> Data;
 data(list, Data) -> binary_to_list(Data).
 
 discard(C) ->
-    C#core{held = [], held_bytes = 0}.
+    C#core{held = [], held_bytes = 0, wait = none}.
 
 %% A recv that what is held cannot complete. The first one is answered the end, the held
 %% bytes discarded; every one after it `{error, enotconn}`, as stock's driver answers
@@ -799,13 +841,13 @@ close_out(#core{in_flight = InFlight, waiting = Waiting, sending = Sending, send
 %% target, or at once when a waiting recv or the packet in progress needs more than is
 %% held and outstanding. The credit outstanding never passes 64 MiB, the most the
 %% connection keeps (erx_tcp_conn's MAX_PUSH_CREDIT), whatever a recv or a packet asks for.
-grant(#core{state = open, ended = none, held_bytes = Held, outstanding = Out, recv = Recv, buffer = Buffer,
-            need = PacketNeed} = C, Acts) ->
+grant(#core{state = open, ended = none, held_bytes = Held, outstanding = Out, recv = Recv, buffer = Buffer} = C,
+      Acts) ->
     RecvLength = case Recv of
                      {_, Length} -> Length;
                      none -> 0
                  end,
-    Need = max(RecvLength, PacketNeed),
+    Need = max(RecvLength, packet_need(C)),
     Target = max(Buffer, Need),
     Short = min(Target - Held - Out, ?MAX_RECV - Out),
     Waits = Need > Held + Out orelse (Recv =/= none andalso Held + Out =:= 0),

@@ -11,51 +11,62 @@ erlang:decode_packet/3 with the socket's limits, and its one error, a packet ove
 `packet_size`, is `emsgsize`, as stock's is.
 
 A line is looked for in the first `buffer` bytes only, since stock's driver reads a line
-into a buffer of that size: one that does not end there is cut at it, and one over
-`packet_size`, its newline included, is `emsgsize`. A length mode's packet may be up to
-`packet_size` bytes; with `packet_size` 0 the bound is 64 MiB, as stock's socket backend
-sets it (gen_tcp_socket's default `packet_size`), so a packet never needs more than the
-socket process may be granted.
+into a buffer of that size: one that does not end there is cut at it, and one longer
+than `longest`, its newline included, is `emsgsize`. A length mode's packet may be up to
+`longest` bytes. `longest` is the socket's `packet_size` as erx_gen_tcp_core bounds it,
+never 0.
+
+A packet that needs more bytes is `{more, Wait}`, `Wait` what can change the answer, so
+the caller frames again only then: a length mode's `{length, N}`, nothing until `N` bytes
+are held; a line's `{line, N}`, nothing until a newline arrives or `N` bytes are held,
+enough to cut the line at the buffer or find it too long.
 """.
 
--export([decode/3, encode/2]).
+-export([decode/3, arrived/2, encode/2]).
 
--export_type([type/0, limits/0]).
+-export_type([type/0, limits/0, wait/0]).
 
 -doc "A framed packet mode: a length header of 1, 2 or 4 bytes, or a line.".
 -type type() :: 1 | 2 | 4 | line.
 
--doc "The socket's `packet_size` (0 for none) and `buffer`.".
--type limits() :: #{packet_size := non_neg_integer(), buffer := pos_integer()}.
+-doc "The longest packet the socket takes and its `buffer`.".
+-type limits() :: #{longest := pos_integer(), buffer := pos_integer()}.
 
-%% The longest packet a length mode takes when `packet_size` is 0, and the most a socket
-%% process holds (erx_gen_tcp_core's ?MAX_RECV).
--define(MAX_PACKET, 67108864).
+-doc "What a packet in progress waits for: see the module's documentation.".
+-type wait() :: {length | line, pos_integer()}.
 
 -doc """
-The first packet of `Bytes` and the bytes after it; or `{more, Needed}`, `Needed` the
-bytes the packet needs at least, all of it once a length header is whole; or `{error,
-emsgsize}` for a packet over `packet_size`.
+The first packet of `Bytes` and the bytes after it; or `{more, Wait}` while it needs more
+bytes; or `{error, emsgsize}` for a packet longer than `longest`.
 """.
--spec decode(type(), binary(), limits()) -> {ok, binary(), binary()} | {more, pos_integer()} | {error, emsgsize}.
-decode(line, Bytes, #{packet_size := Size, buffer := Buffer}) ->
+-spec decode(type(), binary(), limits()) -> {ok, binary(), binary()} | {more, wait()} | {error, emsgsize}.
+decode(line, Bytes, #{longest := Longest, buffer := Buffer}) ->
     Window = binary:part(Bytes, 0, min(byte_size(Bytes), Buffer)),
-    case erlang:decode_packet(line, Window, [{packet_size, Size}, {line_length, Buffer}]) of
+    case erlang:decode_packet(line, Window, [{packet_size, Longest}, {line_length, Buffer}]) of
         {ok, Line, _} -> {ok, Line, binary:part(Bytes, byte_size(Line), byte_size(Bytes) - byte_size(Line))};
-        {more, _} -> {more, byte_size(Bytes) + 1};
+        {more, _} -> {more, {line, min(Buffer, Longest + 1)}};
         {error, _} -> {error, emsgsize}
     end;
-decode(Header, Bytes, #{packet_size := Size}) ->
-    Limit = case Size of
-                0 -> ?MAX_PACKET;
-                _ -> min(Size, ?MAX_PACKET)
-            end,
-    case erlang:decode_packet(Header, Bytes, [{packet_size, Limit}]) of
+decode(Header, Bytes, #{longest := Longest}) ->
+    case erlang:decode_packet(Header, Bytes, [{packet_size, Longest}]) of
         {ok, Packet, Rest} -> {ok, Packet, Rest};
-        {more, undefined} -> {more, byte_size(Bytes) + 1};
-        {more, Needed} -> {more, Needed};
+        {more, undefined} -> {more, {length, byte_size(Bytes) + 1}};
+        {more, Needed} -> {more, {length, Needed}};
         {error, _} -> {error, emsgsize}
     end.
+
+-doc """
+`Wait` once `Pieces` arrive: `none` when a waiting line's newline is among them, since the
+line can be framed then; `Wait` otherwise. So each piece is looked at once, as it arrives.
+""".
+-spec arrived(wait(), [binary()]) -> wait() | none.
+arrived({line, _} = Wait, Pieces) ->
+    case lists:any(fun(Piece) -> binary:match(Piece, <<"\n">>) =/= nomatch end, Pieces) of
+        true -> none;
+        false -> Wait
+    end;
+arrived({length, _} = Wait, _Pieces) ->
+    Wait.
 
 -doc """
 `Data` as a send in `Type` puts it on the stream: after a header of its length in a

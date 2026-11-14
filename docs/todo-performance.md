@@ -708,10 +708,15 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   socket process cutting pieces from the iodata's binaries.
 * **[Low] network, packet-mode copies in the socket process**
   ([design-network-stack.md](design-network-stack.md#the-socket-process)).
-  `erx_gen_tcp_core` joins what it holds into one binary to frame the next
-  packet, once a length mode's packet can be whole and once a push brings a
-  partial line its newline; a delivered packet is a sub-binary of that join,
-  so it keeps up to `buffer` bytes alive; and a send in a length mode copies
+  `erx_gen_tcp_core` frames a packet within the oldest piece it holds from
+  that piece, and joins what it holds into one binary for a packet that
+  spans pieces, once a length mode's packet can be whole and once a push
+  brings a partial line its newline. A delivered packet is a sub-binary of
+  its piece or of that join, so it keeps the whole of either alive: a piece
+  up to 64 KiB, a join up to the target of the credit rule,
+  `max(buffer, recv Length, the packet's need)`, about 64 MiB in a length
+  mode with a large `packet_size`, a line's at most `buffer` bytes; and a
+  send in a length mode copies
   its data behind its header (`erx_net_packet:encode/2`). Settled by
   a `{packet, 4}` bulk transfer of 1 MiB packets and a `{packet, line}`
   one of 60 KiB lines, against `raw` on the same bytes, throughput and

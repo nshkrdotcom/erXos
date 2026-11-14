@@ -6873,6 +6873,17 @@ document's "residual risks accepted" paragraph.
   of them, so `inet:setopts(S, [{active, once}])` on an `erx` socket raises `undef` in the caller, and
   `send/3` with a sockaddr map raises `function_clause`. Answer `{error, enotsup}` as
   `controlling_process/2` does, and `einval` for `send/3`'s other shapes, with a case each.
+* [Low] network, `erx_gen_udp` (`erlang/apps/erx_net_client/src/erx_gen_udp.erl`, `erx_gen_udp_core`): a
+  datagram socket keeps only `mode` and `active`, so `gen_udp:open(0, [{buffer, N}])`, `setopts` and `getopts` of
+  `buffer` answer `{error, einval}`, where stock OTP 29.1.2 takes it (its default 9216, shown by `getopts`) and its
+  `setopts` also takes `packet` and `packet_size`. Keep `buffer` with the meaning stock's driver gives it for a
+  datagram, with a case against stock's answers.
+* [Low] network, `erx_net` and `erx_net_client` (the socket protocol; design-network-stack, "Message sizes"): the
+  protocol's bounds are written in each module that uses them: the 64 MiB credit bound in `erx_net_admit`,
+  `erx_tcp_conn`, `erx_udp_sock`, `erx_icmp_sock` and `erx_gen_tcp_core`, the 64 KiB piece and the pieces of a push
+  in `erx_net_admit`, `erx_sock_admit`, `erx_tcp_conn`, `erx_tcp_reass` and `erx_gen_tcp_core`. Give them one source: state them in
+  `abi/services/net.txt` and generate a header both applications include, as the build's include flags already
+  let one application include another's headers.
 * [Low] network, edit 63 (`otp/lib/kernel/src/inet_db.erl`, `erx_rand_range/1`): `error:undef` stands for
   "stock OTP", so an erXos node whose `erx_bytes` failed its `on_load` would go back to the counter's
   guessable query IDs silently. Decide erXos by `os:type() =:= {unix, erxos}`, as `inet_config.erl` does,

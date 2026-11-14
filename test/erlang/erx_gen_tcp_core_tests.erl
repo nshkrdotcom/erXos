@@ -451,8 +451,11 @@ packet_test_() ->
      {"a listener hands its packet options to the sockets it accepts", fun listener_packet_options/0},
      {"a push of 65536 empty packets is presented in linear time", {timeout, 2, fun many_packets/0}},
      {"a line split into one-byte pushes is framed once it ends", fun line_byte_by_byte/0},
+     {"a line of 16384 one-byte pushes is framed in linear time", {timeout, 2, fun line_many_pushes/0}},
+     {"a packet within the oldest piece held is framed without a join", fun packet_in_oldest_piece/0},
      {"a partial line pushed a byte at a time is granted what it needs", fun line_byte_by_byte_credit/0},
-     {"a closed socket's recv of a length in a packet mode is einval", fun closed_packet_recv_length/0}].
+     {"a closed socket's recv of a length in a packet mode is einval until the end is met", fun closed_packet_recv_length/0},
+     {"the longest packet is packet_size, 64 MiB for 0 or more", fun longest_packet/0}].
 
 %% One message per packet; the actions built newest first, so a peer's burst of tiny
 %% packets costs time in their number, not its square.
@@ -469,6 +472,29 @@ line_byte_by_byte() ->
     {_, A4} = push(<<"\n">>, C3),
     ?assertEqual([{reply, f1, {ok, <<"abc\n">>}}], [R || {reply, _, _} = R <- A4]).
 
+%% A peer that trickles a line a byte per segment: each push is looked at once, so the
+%% line costs time in its pushes, not their square.
+line_many_pushes() ->
+    {C1, _} = setopts(f0, [{packet, line}, {active, true}], new(#{})),
+    Line = binary:copy(<<"a">>, 16384),
+    C2 = lists:foldl(fun(Byte, C) -> element(1, push(<<Byte>>, C)) end, C1, binary_to_list(Line)),
+    {_, A} = push(<<"\n">>, C2),
+    ?assertEqual([{tcp, ?SOCK, <<Line/binary, $\n>>}], tells(A)).
+
+%% A megabyte of short lines held, and a push between two recvs: each line is framed from
+%% the piece it arrived in, so it references that piece, not a join of all that is held,
+%% and the push costs no copy of the megabyte.
+packet_in_oldest_piece() ->
+    {C1, _} = setopts(f0, [{packet, line}, {buffer, 1048576}], new(#{})),
+    Piece = binary:copy(<<(binary:copy(<<"a">>, 99))/binary, $\n>>, 655),
+    C2 = lists:foldl(fun(_, C) -> element(1, push(Piece, C)) end, C1, lists:seq(1, 16)),
+    {First, C3} = recv(f1, 0, C2),
+    {C4, _} = push(<<"x">>, C3),
+    {Second, _} = recv(f2, 0, C4),
+    ?assertEqual([100, 100], [byte_size(First), byte_size(Second)]),
+    ?assertEqual([byte_size(Piece), byte_size(Piece)],
+                 [binary:referenced_byte_size(First), binary:referenced_byte_size(Second)]).
+
 %% With a buffer of 10 and its whole credit pushed a byte at a time, a partial line of 8
 %% bytes after a whole one must be granted the rest at once: the line waits for a byte
 %% the connection may not push otherwise.
@@ -484,7 +510,28 @@ closed_packet_recv_length() ->
     {C2, _} = push(<<0, 3, "abc">>, C1),
     {C3, _} = step({push, {ok, {error, econnreset}}}, C2),
     ?assertEqual([{reply, f1, {error, einval}}], element(2, call(f1, {recv, 7, infinity}, C3))),
-    ?assertEqual(<<"abc">>, element(1, recv(f2, 0, C3))).
+    {Packet, C4} = recv(f2, 0, C3),
+    ?assertEqual(<<"abc">>, Packet),
+    %% As the stock oracle answers: the end met in passive mode, then enotconn whatever the
+    %% length; the end shown in active mode, then closed.
+    {C5, _} = call(f3, {recv, 0, infinity}, C4),
+    ?assertEqual([{reply, f4, {error, enotconn}}], element(2, call(f4, {recv, 7, infinity}, C5))),
+    {A1, _} = setopts(f0, [{packet, line}, {active, true}], new(#{})),
+    {A2, _} = push(<<"ab\n">>, A1),
+    {A3, _} = step({push, {ok, eof}}, A2),
+    ?assertEqual([{reply, f1, {error, closed}}], element(2, call(f1, {recv, 7, infinity}, A3))).
+
+%% stock's driver frames up to any packet_size; the socket process holds at most 64 MiB, so
+%% a length past that is emsgsize, whatever packet_size, 0 included.
+longest_packet() ->
+    [begin
+         {C1, _} = setopts(f0, [{packet, 4}, {packet_size, Size}], new(#{})),
+         {C2, _} = push(<<Length:32>>, C1),
+         {_, A3} = call(f1, {recv, 0, infinity}, C2),
+         ?assertEqual(Replies, [R || {reply, _, _} = R <- A3])
+     end || {Size, Length, Replies} <- [{0, 67108864, []}, {16#ffffffff, 67108864, []},
+                                        {0, 67108865, [{reply, f1, {error, emsgsize}}]},
+                                        {16#ffffffff, 67108865, [{reply, f1, {error, emsgsize}}]}]].
 
 push(Bin, Core) -> pieces([Bin], Core).
 

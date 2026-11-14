@@ -4909,8 +4909,15 @@ the stream with `{error, emsgsize}` where the packet would be, and a
 partial packet at the end is dropped. With `packet_size` 0 a length
 mode's packet is bounded at 64 MiB, the bound stock's socket backend
 sets (`gen_tcp_socket`'s default `packet_size`), where stock's inet
-driver sets none: a documented difference, since the socket process
-holds at most 64 MiB. A passive `recv(S, Length)` in a packet mode with
+driver sets none, and a `packet_size` over 64 MiB is bounded at 64 MiB
+too, where stock's driver frames a packet up to it: documented
+differences, since the socket process holds at most 64 MiB, so a longer
+packet is `{error, emsgsize}`. Framing a packet in progress waits for
+what can change its answer (a length mode's whole packet; a line's
+newline, or the bytes that cut it at `buffer` or make it too long), and
+each push is looked at once for a waiting line's newline, so a peer
+that sends a line a byte per segment costs time in its bytes, not their
+square. A passive `recv(S, Length)` in a packet mode with
 `Length` other than 0 is `{error, einval}`, as on stock. `buffer`
 defaults to the socket's receive buffer, 64 KiB, and is kept between 1
 byte and 64 MiB; `packet_size` takes 0 to 2^32 - 1. Framing sits where the unpresented bytes are, so a change

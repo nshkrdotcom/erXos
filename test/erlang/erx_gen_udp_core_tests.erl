@@ -42,6 +42,7 @@ core_test_() ->
      {"recvs wait in order and time out", fun recvs_in_order/0},
      {"active modes present, count down and turn passive", fun active_modes/0},
      {"list mode presents a string", fun list_mode/0},
+     {"only a TCP socket's options are refused einval", fun tcp_options_refused/0},
      {"credit is granted again at half the target", fun credit_at_half_target/0},
      {"an empty datagram costs a byte of credit", fun empty_costs_a_byte/0},
      {"a datagram past the credit closes the socket", fun past_credit/0},
@@ -86,6 +87,16 @@ active_modes() ->
     ?assertEqual({C4, [{reply, r, ok}, {tell, {udp_passive, ?SOCK}}]}, call(r, {setopts, [{active, 0}]}, C4)),
     {_, Zero} = erx_gen_udp_core:new(?SOCK, udp, #{mode => binary, active => 0}),
     ?assertEqual([{tell, {udp_passive, ?SOCK}}, {credit, ?TARGET}], Zero).
+
+%% A datagram socket keeps its mode and active mode only; what only a TCP socket process
+%% keeps is refused, at open and at setopts, where stock gen_udp takes `buffer` (a
+%% difference in TODO.md) and refuses `{packet, 2}` at open.
+tcp_options_refused() ->
+    [?assertEqual({error, einval}, erx_gen_udp:open(0, [Opt])) || Opt <- [{buffer, 1000}, {packet, 2}, {packet_size, 10}]],
+    Core = new(#{}),
+    [?assertEqual({Core, [{reply, r, {error, einval}}]}, call(r, {setopts, [Opt]}, Core))
+     || Opt <- [{buffer, 1000}, {packet, line}, {packet_size, 10}]],
+    ?assertEqual({Core, [{reply, r, {error, einval}}]}, call(r, {getopts, [buffer]}, Core)).
 
 list_mode() ->
     {_, Acts} = datagram(<<"ab">>, new(#{active => true, mode => list})),
