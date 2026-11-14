@@ -229,6 +229,8 @@ Third-party components are allowed when they pay for themselves.
     because the browser runs only JavaScript. Its own tests and fuzz
     harness run under Node and Playwright. TypeScript never runs on the
     target or in host tooling.
+  * Python only for the Bumble Bluetooth test peer; never on the target
+    or in build tooling.
   * `make`, minimal POSIX shell and linker scripts for build glue.
   * Inherited code keeps its languages and may be edited: OTP's BeamAsm JIT
     and asmjit (C++) with OTP's Perl generators and autoconf machinery, and
