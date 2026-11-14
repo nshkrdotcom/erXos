@@ -7349,6 +7349,28 @@ document's "residual risks accepted" paragraph.
   `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
   it. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
+* [Low] SSH stage 1, the host key file
+  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `make_host_key/2`): the
+  key is written in place with `[exclusive]` and default modes, so a
+  crash mid-write leaves a partial file that later starts refuse (safe,
+  and the refusal names the file), a second start racing the first fails
+  with `eexist` instead of using the winner's key, and in hosted mode on
+  macOS the private key is readable by other users. Write to a temporary
+  name and rename it into place, and make the directory 0700 and the
+  file 0600 where the file server honours modes.
+* [Low] SSH stage 1, the chokepoint on login keys
+  (`tools/lib/erx/checks.rb`, `LOGIN_KEY_ENTRY`): the check matches the
+  keyword `login_key:` only, so `:login_key => key` or a splatted hash
+  passes it. Match any use of the identifier outside the definer and the
+  listed builders, with a test of the hash-rocket form, until
+  `ProductionImage` refuses the key by construction (the item above on
+  SSH from `tools/erx boot`).
+* [Low] OTP's `ssh`, ECDSA private keys in `openssh_key_v1`
+  (`otp/lib/ssh/src/ssh_message.erl`, `ssh2_privkey_encode/1`): the
+  ECDSA clause, unchanged from stock, may not write the layout OpenSSH
+  reads (unverified: read OpenSSH's `sshkey.c` private key serialization
+  at a pinned release and compare, with a round trip through
+  `ssh-keygen -y` as the test).
 * [Medium] SSH, SFTP and forwarding
   ([design-ssh.md](docs/design-ssh.md#channel-policy)): the daemon refuses
   the `sftp` subsystem and every forwarding request, since OTP's

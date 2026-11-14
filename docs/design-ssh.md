@@ -184,8 +184,9 @@ build, `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in
 root's session starts OTP's daemon there with the development login key
 and root's host key, and the network domain's QEMU case
 (`tools/lib/erx/network_domain.rb`) logs in through a host forward with
-the host's `ssh`. `tools/erx boot` gives its guest no network device, so
-that case is the one boot `tools/erx ssh` can reach. No SSH domain is in
+the host's `ssh`. `tools/erx boot` gives its guest no network device, and
+the QEMU case's forward is a free port it does not print, so `tools/erx
+ssh` reaches no guest yet. No SSH domain is in
 any manifest, and `abi/services/` declares no login service for one.
 
 ## Overview
@@ -727,6 +728,7 @@ identifier.
 | `lib/ssh/src/ssh_auth.erl` | `verify_sig/7` calls the key callback's `verify_user/6` (`User`, `Alg`, `KeyBlob`, `kex_input`, `AlgSig`, options) after its own checks when the module exports it, and fails the attempt unless it answers `true`, as it does when `kex_input` is not a binary; `AlgSig` is the 83-byte signature blob, the algorithm name and the signature as strings, not the bare 64-byte `Sig` inside it | modules that do not export it |
 | `lib/ssh/src/ssh_auth.erl`, `ssh_options.erl`, `ssh.hrl` | a daemon option `max_auth_tries`, default `infinity`, counted as FreeBSD's `MaxAuthTries` is ([Context](#context)), with counts of requests and failures in `#ssh{}`: every server result of user authentication passes one function, which counts each `SSH_MSG_USERAUTH_FAILURE` except the answer to a `none` request that is the connection's first request, and answers the failure that brings the count to `max_auth_tries` with a disconnect, `SSH_DISCONNECT_NO_MORE_AUTH_METHODS_AVAILABLE`, instead; a request for a method the daemon does not offer reaches it as `none`, since OTP's user authentication answers such a request as `none`, so it counts unless it is the first | the default |
 | `lib/ssh/src/ssh_server_key_api.erl`, `ssh_transport.erl` | `host_key/2` may return `{ok, {ssh2_pubkey, Blob}}` and an optional `sign(Blob, Hash, Options)`, the shape of the client key API's `sign/3`, signs the exchange hash ([design-system.md](design-system.md#the-vault)); such a key is usable only when the module exports `sign/3` and `Blob` is the one encoding of a key of the negotiated algorithm | a callback that returns a private key |
+| `lib/ssh/src/ssh_message.erl` | `ssh2_privkey_encode/1` writes an Ed25519 or Ed448 private key as OpenSSH's private key format holds it, the private key followed by the public key, which is what `ssh2_privkey_decode2/1` reads back; stock writes the private key alone, so stock `ssh_file` cannot read an Ed25519 key it wrote in `openssh_key_v1`, an upstream bug | every other key type's encoding, and the decoder |
 
 `kex_input` holds the first exchange's shared secret, from which that
 exchange's traffic keys follow, so it lives only in the connection's
