@@ -2,10 +2,10 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% erx_ssh_dev's daemon on stock OTP (docs/design-ssh.md, "Stages", stage 1):
-%% root logs in with the login key in the keys directory and runs an Erlang
+%% root logs in with the login key in the keys file and runs an Erlang
 %% expression, another user name with that key and root with another key are
-%% refused, and the host key is made once, kept, and a damaged one refuses the
-%% start.
+%% refused, a key in authorized_keys2 beside the file included, and the host
+%% key is made once, kept, and a damaged one refuses the start.
 -module(erx_ssh_dev_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -25,12 +25,15 @@ start() ->
     [Keys, Host, Client, Wrong] = [filename:join(Work, Name) || Name <- ["keys", "host", "client", "wrong"]],
     ok = lists:foreach(fun(Dir) -> ok = file:make_dir(Dir) end, [Keys, Client, Wrong]),
     Public = client_key(Client),
-    _ = client_key(Wrong),
-    ok = file:write_file(filename:join(Keys, "authorized_keys"), Public),
-    {ok, Daemon} = erx_ssh_dev:daemon(0, #{keys => Keys, host => Host}),
+    Login = filename:join(Keys, "authorized_keys"),
+    ok = file:write_file(Login, Public),
+    %% The wrong key sits beside the login key under the second name OpenSSH
+    %% reads; the daemon reads exactly the file it was given.
+    ok = file:write_file(filename:join(Keys, "authorized_keys2"), client_key(Wrong)),
+    {ok, Daemon} = erx_ssh_dev:daemon(0, #{keys => Login, host => Host}),
     {ok, Info} = ssh:daemon_info(Daemon),
     #{work => Work, daemon => Daemon, port => proplists:get_value(port, Info),
-      keys => Keys, host => Host, client => Client, wrong => Wrong}.
+      login => Login, host => Host, client => Client, wrong => Wrong}.
 
 stop(#{work := Work, daemon := Daemon}) ->
     ok = ssh:stop_daemon(Daemon),
@@ -74,12 +77,12 @@ another_user_is_refused(#{client := Client} = Context) ->
 another_key_is_refused(#{wrong := Wrong} = Context) ->
     ?assertMatch({error, _}, connect(Context, "root", Wrong)).
 
-the_host_key_is_kept(#{host := Host, keys := Keys}) ->
+the_host_key_is_kept(#{host := Host, login := Login}) ->
     Path = filename:join(Host, "ssh_host_ed25519_key"),
     {ok, Made} = file:read_file(Path),
-    {ok, Again} = erx_ssh_dev:daemon(0, #{keys => Keys, host => Host}),
+    {ok, Again} = erx_ssh_dev:daemon(0, #{keys => Login, host => Host}),
     ok = ssh:stop_daemon(Again),
     ?assertEqual({ok, Made}, file:read_file(Path)),
     ok = file:write_file(Path, <<"not a key">>),
-    ?assertMatch({error, {host_key, Path, _}}, erx_ssh_dev:daemon(0, #{keys => Keys, host => Host})),
+    ?assertMatch({error, {host_key, Path, _}}, erx_ssh_dev:daemon(0, #{keys => Login, host => Host})),
     ok = file:write_file(Path, Made).

@@ -15,9 +15,9 @@ abi/erx_abi.txt's `ssh_authorized_keys_path` under the release's root, and
 the packer refuses that file in any other build (docs/design-ssh.md, "Login
 keys"). The release is read-only, so nothing the session runs can add a
 key. This module is the daemon's key callback: it admits that key for the
-user `root` and no other name, since OTP's `ssh_file` alone would read the
-same directory for every user name, and it offers public keys as the only
-method.
+user `root` and no other name, reading that one file, where OTP's `ssh_file`
+would read a second file beside it for every user name, and it offers public
+keys as the only method.
 
 The host key, Ed25519, is root's own, in HOST_DIR on root's data volume,
 in OpenSSH's private key format. start/1 makes it when the file is missing
@@ -42,13 +42,13 @@ key, as daemon/2 does.
 """.
 -spec start(inet:port_number()) -> {ok, ssh:daemon_ref()} | {error, term()}.
 start(Port) ->
-    Keys = filename:join(code:root_dir(), binary_to_list(filename:dirname(?ERX_SSH_AUTHORIZED_KEYS_PATH_BYTES))),
+    Keys = filename:join(code:root_dir(), binary_to_list(?ERX_SSH_AUTHORIZED_KEYS_PATH_BYTES)),
     daemon(Port, #{keys => Keys, host => ?HOST_DIR}).
 
 -doc """
-Starts the daemon on Port: keys is the directory whose `authorized_keys`
-holds root's login keys, host the directory of the host key, which is made
-there when missing. Its own function so that a host test can name both.
+Starts the daemon on Port: keys is the file of root's login keys, one
+`authorized_keys` line each, and host the directory of the host key, which
+is made there when missing. Its own function so that a host test can name both.
 """.
 -spec daemon(inet:port_number(), #{keys := file:filename(), host := file:filename()}) ->
           {ok, ssh:daemon_ref()} | {error, term()}.
@@ -57,8 +57,7 @@ daemon(Port, #{keys := Keys, host := Host}) ->
         ok ?= host_key_file(Host),
         {ok, _} ?= application:ensure_all_started(ssh),
         ssh:daemon(Port, [{system_dir, Host},
-                          {user_dir, Keys},
-                          {key_cb, {?MODULE, []}},
+                          {key_cb, {?MODULE, [{keys, Keys}]}},
                           {auth_methods, "publickey"},
                           {shell, {shell, start, []}},
                           {exec, erlang_eval}])
@@ -70,10 +69,16 @@ host_key(Algorithm, Options) ->
 
 -doc """
 Whether Key is one of root's login keys and User is `root`: any other user
-name has none.
+name has none. The keys are the lines of exactly the file daemon/2 was
+given, compared whole, so no second file beside it adds one and nothing
+here touches the read-only release.
 """.
 is_auth_key(Key, ?USER, Options) ->
-    ssh_file:is_auth_key(Key, ?USER, Options);
+    [{keys, File}] = proplists:get_value(key_cb_private, Options),
+    case file:read_file(File) of
+        {ok, Bytes} -> lists:keymember(Key, 1, ssh_file:decode(Bytes, auth_keys));
+        {error, _} -> false
+    end;
 is_auth_key(_Key, _User, _Options) ->
     false.
 
