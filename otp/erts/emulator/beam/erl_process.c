@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: a process's exit closes its export holders (edit 13) and a spawn from another domain gives the spawner its rights on the child (erx_exports.c); schedulers are executors, created by erts_start_schedulers, that sleep in erx_park, wake with erx_executor_wake and dispatch the event table; there are no poll threads; the spawn option {erx_untraced, true} sets F_ERX_UNTRACED before any trace session's flags are copied in.
+ * Modified by erXos: a process's exit closes its export holders (edit 13) and a spawn from another domain gives the spawner its rights on the child (erx_exports.c); schedulers are executors, created by erts_start_schedulers, that sleep in erx_park, wake with erx_executor_wake and dispatch the event table; there are no poll threads; the spawn option {erx_untraced, true} sets F_ERX_UNTRACED before any trace session's flags are copied in.; the wakeup-other checks are erl_wakeup_other.h's, which no charge overflows (edit 70).
  *
  * %CopyrightEnd%
  */
@@ -59,6 +59,7 @@
 #include "erl_proc_sig_queue.h"
 #include "beam_common.h"
 #include "erx_exports.h"
+#include "erl_wakeup_other.h"
 
 #define ERTS_CHECK_TIME_REDS CONTEXT_REDS
 #define ERTS_DELAYED_WAKEUP_INFINITY (~(Uint64) 0)
@@ -5496,7 +5497,6 @@ typedef struct {
     ErtsSchedWakeupOtherType type;
     int limit;
     int dec_shift;
-    int dec_mask;
     void (*check)(ErtsRunQueue *rq, Uint32 flags);
 } ErtsWakeupOtherParams;
 
@@ -5513,32 +5513,23 @@ static void
 wakeup_other_check(ErtsRunQueue *rq, Uint32 flags)
 {
     ErtsWakeupOtherParams *wo_params = runq_get_wakeup_other_params(rq);
-    int wo_reds = rq->wakeup_other_reds;
+    Sint64 wo_reds = rq->wakeup_other_reds;
 
     if (wo_reds) {
-	int left_len = erts_atomic32_read_dirty(&rq->len) - 1;
-	if (left_len < 1) {
-	    int wo_reduce = wo_reds << wo_params->dec_shift;
-	    wo_reduce &= wo_params->dec_mask;
-	    rq->wakeup_other -= wo_reduce;
-	    if (rq->wakeup_other < 0)
-		rq->wakeup_other = 0;
-	}
-	else {
-	    rq->wakeup_other += (left_len*wo_reds
-				 + ERTS_WAKEUP_OTHER_FIXED_INC);
-	    if (rq->wakeup_other > wo_params->limit) {
-		if (ERTS_RUNQ_IX_IS_DIRTY(rq->ix)) {
-		    if (rq->waiting) {
-			wake_dirty_scheduler(rq);
-		    }
-		}
-                else {
-		    if (erts_atomic32_read_nob(&no_waiting_scheds))
-			wake_scheduler_on_empty_runq(rq);
-		    rq->wakeup_other = 0;
-		}
+	int dirty = ERTS_RUNQ_IX_IS_DIRTY(rq->ix);
+	ErtsWakeupOtherStep step =
+	    erts_wakeup_other_step(rq->wakeup_other, wo_reds,
+				   erts_atomic32_read_dirty(&rq->len),
+				   wo_params->limit, ERTS_WAKEUP_OTHER_FIXED_INC,
+				   wo_params->dec_shift, dirty);
+	rq->wakeup_other = step.count;
+	if (step.over) {
+	    if (dirty) {
+		if (rq->waiting)
+		    wake_dirty_scheduler(rq);
 	    }
+	    else if (erts_atomic32_read_nob(&no_waiting_scheds))
+		wake_scheduler_on_empty_runq(rq);
 	}
 	rq->wakeup_other_reds = 0;
     }
@@ -5569,37 +5560,23 @@ wakeup_other_set_limit(ErtsWakeupOtherParams *params)
 	params->dec_shift = ERTS_WAKEUP_OTHER_DEC_SHIFT_VERY_LOW;
 	break;
     }
-
-    if (params->dec_shift < 0)
-	params->dec_mask = (1 << (sizeof(params->dec_mask)*8
-				  + params->dec_shift)) - 1;
-    else {
-	params->dec_mask = 0;
-	params->dec_mask = ~params->dec_mask;
-    }
 }
 
 static void
 wakeup_other_check_legacy(ErtsRunQueue *rq, Uint32 flags)
 {
     ErtsWakeupOtherParams *wo_params = runq_get_wakeup_other_params(rq);
-    int wo_reds = rq->wakeup_other_reds;
+    Sint64 wo_reds = rq->wakeup_other_reds;
     if (wo_reds) {
-	erts_aint32_t len = erts_atomic32_read_dirty(&rq->len);
-	if (len < 2) {
-	    rq->wakeup_other -= ERTS_WAKEUP_OTHER_DEC_LEGACY*wo_reds;
-	    if (rq->wakeup_other < 0)
-		rq->wakeup_other = 0;
-	}
-	else if (rq->wakeup_other < wo_params->limit)
-	    rq->wakeup_other += len*wo_reds + ERTS_WAKEUP_OTHER_FIXED_INC_LEGACY;
-	else {
-	    if (erts_atomic32_read_acqb(&no_empty_run_queues) != 0) {
-		wake_scheduler_on_empty_runq(rq);
-		rq->wakeup_other = 0;
-	    }
-	    rq->wakeup_other = 0;
-	}
+	ErtsWakeupOtherStep step =
+	    erts_wakeup_other_step_legacy(rq->wakeup_other, wo_reds,
+					  erts_atomic32_read_dirty(&rq->len),
+					  wo_params->limit,
+					  ERTS_WAKEUP_OTHER_FIXED_INC_LEGACY,
+					  ERTS_WAKEUP_OTHER_DEC_LEGACY);
+	rq->wakeup_other = step.count;
+	if (step.over && erts_atomic32_read_acqb(&no_empty_run_queues) != 0)
+	    wake_scheduler_on_empty_runq(rq);
     }
     rq->wakeup_other_reds = 0;
 }

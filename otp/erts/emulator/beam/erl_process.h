@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: a scheduler that holds an executor slot sleeps in erx_park, which ERTS_SSI_FLG_PARK_SLEEPING and its park_slot say; polling is removed; F_ERX_UNTRACED and SPO_ERX_UNTRACED carry the spawn option {erx_untraced, true}; a process carries its export holders (edit 13); erts_time2reds charges a backwards interval its minimum (edit 68). A scheduler keeps no reference counter: its thread id picks its reference source (edit 17 of docs/design-runtime.md).
+ * Modified by erXos: a scheduler that holds an executor slot sleeps in erx_park, which ERTS_SSI_FLG_PARK_SLEEPING and its park_slot say; polling is removed; F_ERX_UNTRACED and SPO_ERX_UNTRACED carry the spawn option {erx_untraced, true}; a process carries its export holders (edit 13); erts_time2reds charges a backwards interval its minimum (edit 68); a dirty queue keeps no balance counters and wakeup_other_reds is 64 bits wide (edit 70). A scheduler keeps no reference counter: its thread id picks its reference source (edit 17 of docs/design-runtime.md).
  *
  * %CopyrightEnd%
  */
@@ -500,7 +500,7 @@ struct ErtsRunQueue_ {
     int full_reds_history[ERTS_FULL_REDS_HISTORY_SIZE];
     int out_of_work_count;
     int wakeup_other;
-    int wakeup_other_reds;
+    Sint64 wakeup_other_reds;	/* every charge since the last look, summed over the schedulers sharing the queue */
 
     struct {
 	ErtsMiscOpList *start;
@@ -527,11 +527,21 @@ typedef union {
 
 extern ErtsAlignedRunQueue * ERTS_WRITE_UNLIKELY(erts_aligned_run_queues);
 
+/*
+ * A charge to a scheduler and its own run queue. The balance counters,
+ * prio_info[].reds and check_balance_reds, exist for check_balance, which
+ * reads and resets them on the normal run queues only, so a dirty queue's are
+ * left alone and a dirty call's charge, up to INT_MAX, never accumulates in
+ * them. wakeup_other_reds, 64 bits wide, sums the charges of every scheduler
+ * sharing the queue until one of them next looks for work.
+ */
 #define ERTS_PROC_REDUCTIONS_EXECUTED(SD, RQ, PRIO, REDS, AREDS)\
 do {								\
     (RQ)->procs.reductions += (AREDS);				\
-    (RQ)->procs.prio_info[(PRIO)].reds += (REDS);		\
-    (RQ)->check_balance_reds -= (REDS);				\
+    if (!ERTS_RUNQ_IX_IS_DIRTY((RQ)->ix)) {			\
+	(RQ)->procs.prio_info[(PRIO)].reds += (REDS);		\
+	(RQ)->check_balance_reds -= (REDS);			\
+    }								\
     (RQ)->wakeup_other_reds += (AREDS);				\
     (SD)->check_time_reds += (AREDS);				\
 } while (0)

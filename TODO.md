@@ -1864,26 +1864,16 @@ it; git history is the record of completed work.
 * [Low] ERTS start-up (`otp/erts/emulator/beam/erl_process.c`, the "hold executor slots" line): the scheduler
   count follows the manifest's CPU set, not the CPUs present. The system domain and the storage domain report
   4 schedulers on the website's 1-core v64 machine. Size them from the CPUs the kernel reports present.
-* [Medium] ERTS, the dirty run queues' `int` reduction counters (`otp/erts/emulator/beam/erl_process.h`,
-  `ERTS_PROC_REDUCTIONS_EXECUTED` and `ErtsRunQueue`; `erl_process.c`, `erts_schedule` and `wakeup_other_check`):
-  each dirty call's charge, its elapsed time on both pools and up to `INT_MAX` for one call (edit 68 of
-  [design-runtime.md](docs/design-runtime.md#the-edits-outside-syserxos)), is added to the dirty run queue's
-  `procs.prio_info[prio].reds` and subtracted from its `check_balance_reds`, and nothing resets either on a dirty
-  queue: the resets are in `check_balance` and `resume_run_queue`, which only normal run queues reach, and the one
-  reader of `check_balance_reds` (`check_activities_to_run`, the `rq->check_balance_reds <= 0` test) runs only on
-  a normal scheduler. Each overflows `int` once a pool's calls have been charged 2^31 reductions in all, about
-  nine minutes of dirty call time at four a microsecond, and at once on a second call over about 537 s; since
-  `erts_schedule` raises every charge to `ERTS_PROC_MIN_CONTEXT_SWITCH_REDS_COST` (400) first, stock OTP's dirty
-  I/O queues wrap too, after about 5.4 million calls, and the elapsed-time charge only brings the wrap sooner.
-  `wakeup_other_check` also runs on a dirty queue: it computes `left_len*wo_reds` and `wo_reds << dec_shift` in
-  `int` from the last call's charge, and on a dirty queue it never resets the accumulated `wakeup_other` when it
-  passes the limit, only when the queue runs empty, so under a sustained backlog `wakeup_other` overflows within
-  minutes and, once wrapped negative, the backlog wake path stops until the queue is down to one entry (the
-  `left_len < 1` branch clamps it); a dirty sleeper is still woken on each enqueue from another scheduler
-  (`smp_notify_inc_runq`). Signed overflow is undefined behaviour in C17 and OTP builds without `-fwrapv`;
-  whether `make check-ubsan`'s runtime reports it is unverified. Fix in the macro and the
-  check: keep the balance counters off the dirty queues, and saturate or reset `wakeup_other` on a dirty queue
-  as on a normal one.
+* [Low] upstream, the run queues' wakeup-other check (`otp/erts/emulator/beam/erl_process.c`,
+  `wakeup_other_check`): stock OTP 29.1.2 lets a dirty queue's `int` counters grow until they wrap (its dirty
+  CPU calls are charged their elapsed time, and every dirty call at least 400 reductions), and for `+swt low`
+  and `very_low` shifts left by a negative count. erXos's copy fixes both (edit 70 of
+  [design-runtime.md](docs/design-runtime.md#the-edits-outside-syserxos)). Report it upstream.
+* [Low] ERTS, a lone normal run queue's balance counters (`otp/erts/emulator/beam/erl_process.c`,
+  `check_balance`): with one run queue in use (`+S 1` or `schedulers_online` 1), `check_balance` returns early
+  without resetting queue 0's `int` `procs.prio_info[].reds` and `ports.info.reds`, so they grow until they wrap,
+  after about 2^31 reductions; raising `schedulers_online` then feeds the wrapped value to one balance round. Stock
+  OTP does the same. Reset them in that early return, or widen them.
 * [Low] upstream, BeamAsm (`otp/erts/emulator/beam/jit/arm/ops.tab`, `jit/x86/ops.tab`): stock OTP 29.1.2's JIT
   turns the small-integer half of a `select_val` that also matches a bignum into a jump table whose gaps branch to
   the NIL immediate, so a small integer in a gap kills the emulator (SIGBUS on AArch64). erXos's copy gives such a
