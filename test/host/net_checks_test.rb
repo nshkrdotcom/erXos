@@ -162,7 +162,7 @@ class NetChecksTest < Minitest::Test
   def test_payload_copies_pass_at_their_sites_in_comments_and_other_modules
     assert_empty source_rules("#{SRC}/erx_tcp_conn.erl", "compact(B) ->\n  binary:copy(B).")
     assert_empty source_rules("#{SRC}/erx_tcp_reass.erl", 'hold(D) -> binary:copy(D).')
-    assert_empty source_rules("#{CLIENT}/erx_gen_tcp_core.erl", 'split(L, P) -> iolist_to_binary(P).')
+    assert_empty source_rules("#{CLIENT}/erx_gen_tcp_core.erl", 'join(P) -> iolist_to_binary(P).')
     assert_empty source_rules("#{CLIENT}/erx_gen_tcp.erl", 'send(S, D) -> iolist_to_binary(D).')
     assert_empty source_rules("#{SRC}/erx_tcp_output.erl", "%% iolist_to_binary(P)\nout(P) -> my_iolist_to_binary(P).")
     assert_empty source_rules("#{SRC}/erx_udp.erl", 'out(P) -> iolist_to_binary(P).')

@@ -198,7 +198,10 @@ the general stages run. Output then answers about every second segment
 with an ACK, and a batch stepped together with one, encoded as any
 segment is. The socket process answers a `recv` from its held pieces
 (`erx_gen_tcp_core:split/2`): a delivery within one piece is a
-sub-binary of it, and one that spans pieces is joined from its own bytes.
+sub-binary of it, and one that spans pieces is joined from its own bytes;
+in a packet mode, a packet that runs past the oldest piece joins what is
+held once, and that join is held while the packet waits
+(`erx_gen_tcp_core:join/1` is the one copy).
 
 ## The construction: runs
 

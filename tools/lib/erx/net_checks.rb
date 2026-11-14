@@ -125,12 +125,13 @@ module Erx
     # frame layer's finishing of a checksum for a transport that does not finish,
     # the virtio and GENET transports' join of a frame of more binaries than a
     # request posts, the owner's iodata made into the one binary a send carries, the
-    # socket process's join of a delivery that spans pieces, and the loop transport's
-    # copy of each packet it returns, the one copy a device makes elsewhere.
+    # socket process's join of held pieces for a delivery or a packet that spans
+    # them, and the loop transport's copy of each packet it returns, the one copy
+    # a device makes elsewhere.
     COPY_SITES = {
       'erx_tcp_conn' => %w[compact], 'erx_tcp_reass' => %w[hold], 'erx_net_pipe' => %w[send],
       'erx_net_frame' => %w[finish], 'erx_virtio_net' => %w[segments], 'erx_genet_core' => %w[pieces],
-      'erx_gen_tcp' => %w[send], 'erx_gen_tcp_core' => %w[split], 'erx_net_loop' => %w[transmit]
+      'erx_gen_tcp' => %w[send], 'erx_gen_tcp_core' => %w[join], 'erx_net_loop' => %w[transmit]
     }.freeze
     # The head of a function clause, which starts its line.
     CLAUSE_HEAD = /\A([a-z][A-Za-z0-9_@]*)\(/
