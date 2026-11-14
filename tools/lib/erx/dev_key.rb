@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-require 'base64'
 require 'fileutils'
 require 'securerandom'
 require_relative 'error'
@@ -143,10 +142,10 @@ module Erx
     # key in its wire form (BLOB_BYTES); its comment, if any, is dropped.
     def public_line(text, source:)
       type, encoded = text.split(/[ \t]+/, 3)
-      blob = Base64.strict_decode64(encoded.to_s.chomp)
+      blob = encoded.to_s.chomp.unpack1('m0')
       raise Error, "#{source} is not one Ed25519 public key" unless
         type == TYPE && blob.bytesize == BLOB_BYTES && blob.byteslice(0, 4 + TYPE.bytesize) == [TYPE.bytesize].pack('N') + TYPE
-      "#{TYPE} #{Base64.strict_encode64(blob)}"
+      "#{TYPE} #{[blob].pack('m0')}"
     rescue ArgumentError
       raise Error, "#{source} is not one Ed25519 public key"
     end
