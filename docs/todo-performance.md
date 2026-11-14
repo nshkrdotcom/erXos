@@ -319,15 +319,15 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   parent, which answered littlefs's sync at once, reporting operations a
   second. No fix may drop a flush littlefs asks for; if the cost shows, the
   fix on the table is fewer commits per operation in `erx_lfs`.
-* **[Medium] storage, F2FS's two flushes per `fsync` record**
+* **[Medium] storage, F2FS's two flushes and pre-image per `fsync` record**
   ([design-f2fs.md](design-f2fs.md#fsync)): a record flushes before its
-  marked inode block and after it, where Linux writes that block with one
-  preflush and FUA, which the block service does not offer. Settled by
-  `tools/erx bench fs`'s `fsync` latency on QEMU under HVF and on the
-  Pi 4's SD card, against littlefs and against Linux's F2FS in the oracle
-  guest on the same host; the fixes on the table are group commit across
-  more waiting `fsync`s and a forced-unit-access write in the block
-  service.
+  commit block and after it, and writes that block twice, first as its
+  pre-image, where Linux writes it once with one preflush and FUA, which
+  the block service does not offer. Settled by `tools/erx bench fs`'s
+  `fsync` latency on QEMU under HVF and on the Pi 4's SD card, against
+  littlefs and against Linux's F2FS in the oracle guest on the same host;
+  the fixes on the table are group commit across more waiting `fsync`s
+  and a forced-unit-access write in the block service.
 * **[Medium] storage, F2FS writes without a buffer**
   ([design-f2fs.md](design-f2fs.md#operations)): a write shorter than a
   block rewrites the whole block at a new address, so a stream of short
@@ -337,19 +337,25 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   second against littlefs; the fixes on the table are a write buffer per
   file held by the volume and drained by every checkpoint and `fsync`,
   and window requests larger than one block.
-* **[Low] storage, F2FS checkpoints without journals, and mount time**
-  ([design-f2fs.md](design-f2fs.md#checkpoints)): every checkpoint writes
-  whole NAT and SIT blocks for each changed entry, and a mount reads the
-  whole SIT, the current node segments' footers when the pack has no node
-  summaries, and the chain. Settled by blocks written per checkpoint over
-  the file-semantics corpus and by mount time of an 8 GiB volume, empty
-  and full; the fixes on the table are the NAT and SIT journals and node
-  summaries in every pack.
-* **[Low] storage, F2FS's greedy cleaner and 2 % overprovisioning**
+* **[Low] storage, F2FS checkpoints without journals, the 512-block
+  charge, and mount time** ([design-f2fs.md](design-f2fs.md#checkpoints)):
+  every checkpoint writes whole NAT and SIT blocks for each changed entry,
+  a checkpoint runs whenever the epoch's charge reaches 512 blocks of
+  dirty metadata and replay cost, and a mount reads the whole SIT, the
+  current node segments' footers when the pack has no node summaries, and
+  the chain, and rewrites every replayed node. Settled by blocks written
+  and checkpoints per second over the file-semantics corpus and an untar
+  of many small files, and by mount time of an 8 GiB volume, empty, full
+  and with a long chain; the fixes on the table are the NAT and SIT
+  journals, node summaries in every pack, and a charge bound and room
+  reserve that grow with the volume.
+* **[Low] storage, F2FS's greedy cleaner and its overprovisioning**
   ([design-f2fs.md](design-f2fs.md#the-cleaner)): background cleaning
-  takes the emptiest segment, not the oldest. Settled by G13's churn to
-  90 % utilisation, blocks moved per block written; the fix on the table
-  is cost-benefit choice in the background.
+  takes the emptiest segment, not the oldest, and a fragmented volume
+  dirties a dnode per moved block. Settled by G13's churn to 90 %
+  utilisation, blocks moved per block written, at every format size; the
+  fixes on the table are cost-benefit choice in the background and a
+  larger overprovisioning.
 * **[Low] files, reading an EROFS image without a cache** (`erx_erofs` and
   `erx_verity`, [design-storage.md](design-storage.md#reading-erofs-images)):
   every operation reads its names' inode and directory blocks through the

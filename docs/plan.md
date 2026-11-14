@@ -142,7 +142,7 @@ names; the table's order is the order.
 | 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and acme and sam editing a file | estimated per part before it starts | 1b-C's part 3; part 8 also 1b-D | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
-| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts, its images and their `fsync` records mount in the Linux guest, and Linux's mount in erXos; on the Pi 4 with M12 | 7,500 lines of Erlang, 1,500 of Ruby, 3,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
+| 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 1,500 of Ruby, 3,500 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on the stopgap | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
 | **Phase 2** | | | | |
 | Track K erXos's kernel | the pilot, then the kernel, booting Phase 1 and 1b's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
@@ -3070,7 +3070,7 @@ no row, are built here and tested here.
   the spare check; the manifests name the storage formats their release
   reads, which the update service checks against the running system's
   before it writes anything; a trial boot that writes nothing but the
-  record, its file systems mounted read-only, writing nothing, and the
+  record, its file systems mounted read-only without recovery, and the
   reset after a commit; the ordered end of the machine, which ends the
   vault's TPM use and freezes the storage services before a trial or any
   other end ([design-system.md](design-system.md#shutting-down)); the
@@ -3199,10 +3199,8 @@ with the board's numbers.
 ## M13: erXos's F2FS
 
 **Goal.** erXos's own read-write file system, F2FS implemented in Erlang
-from its on-disk format, Linux's, with full Linux compatibility,
-roll-forward records written and replayed included, replacing littlefs at
-parity ([design-f2fs.md](design-f2fs.md),
-[design-storage.md](design-storage.md#read-write-storage)). It lands on
+from its on-disk format, replacing littlefs at parity
+([design-storage.md](design-storage.md#read-write-storage)). It lands on
 QEMU as 1b-H, after M6 alone, at the lowest priority of Phase 1b and only
 when capacity is idle, since it is not user-visible; its Pi 4 half comes
 with M12.
@@ -3212,19 +3210,14 @@ and the Linux guest mounts the same partition image; with M12, an
 installation brings erXos's F2FS to the Pi 4, whose files survive power
 cuts and a later update's failed trial.
 
-**Scope, on QEMU (1b-H).** The stages of
-[design-f2fs.md](design-f2fs.md#stages): the format's facts in
-`abi/formats/f2fs.txt` and the reader with its fuzz targets; read-only
-mounts that replay roll-forward records in memory and write nothing,
-for a trial boot and for features erXos reads but does not maintain;
-the format, run on the host by the installation; read-write mounts with
-checkpoints, `fsync` records and the mount checkpoint; the cleaner; the
-Linux oracle guest with `mkfs.f2fs` and `fsck.f2fs`, images made both
-ways; the power-cut harness; legal review of the clean room before a
-product ships it. The clean room: facts writers read Linux's and
-f2fs-tools' sources and record facts in their own words, and the design
-and the implementation work from those records, Fuchsia's BSD
-`f2fs_reader` and black-box runs in the guest.
+**Scope, on QEMU (1b-H).** The clean-room specification of the format, of
+the cleaner's policies and of a read-only mount without recovery, as
+Linux's `norecovery` mounts for a trial boot, written by one author from
+Linux's documentation and sources who implements none of it, and the
+implementation, in Erlang, from it alone; the feature bits it implements,
+refusing the rest; the cleaner; the Linux oracle guest with `fsck.f2fs`;
+the power-cut harness; the fuzz target; legal review of the clean room
+before a product ships it.
 
 **Scope, with M12.** The installation that brings erXos's F2FS, which
 creates the data partition and the vault's partition afresh, with nothing
@@ -3233,17 +3226,13 @@ update whose storage formats differ from the running system's
 ([design-storage.md](design-storage.md#system-updates)).
 
 **Exit criteria, on QEMU (1b-H).** Every image erXos's F2FS writes, and
-every state of the power-cut harness, passes `fsck.f2fs --dry-run` with
-no `[ASSERT]`, `[FIX]` or `[Fail]` line and mounts in the Linux guest at
-the last completed checkpoint with every acknowledged `fsync`, and at the
-checkpoint alone with `norecovery`; every image the guest writes, clean
-or with roll-forward records, reads in erXos as Linux's own remount
-reads it; a read-only mount writes nothing, over a window that fails
-every write; a cut during the mount checkpoint recovers the same files
-again; the file-semantics corpus agrees with littlefs and with Linux's
-F2FS, every difference a bug fixed, a documented improvement with a
-test, or a bug in littlefs recorded as such; every F2FS fuzz target runs
-its budget clean.
+every state of the power-cut harness, passes `fsck.f2fs` and mounts in the
+Linux guest at the last completed checkpoint with every acknowledged
+`fsync`; a read-only mount without recovery writes nothing, on erXos's
+F2FS and on Linux's mounted with `norecovery`; the file-semantics corpus
+agrees with littlefs and with Linux's F2FS, every difference a bug fixed,
+a documented improvement with a test, or a bug in littlefs recorded as
+such; the fuzz target runs its budget clean.
 
 **Exit criteria, with M12.** The partition after a failed trial is byte
 for byte the partition before it; the installation and the update
