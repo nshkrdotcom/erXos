@@ -17,7 +17,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
- * Modified by erXos: a scheduler that holds an executor slot sleeps in erx_park, which ERTS_SSI_FLG_PARK_SLEEPING and its park_slot say; polling is removed; F_ERX_UNTRACED and SPO_ERX_UNTRACED carry the spawn option {erx_untraced, true}; a process carries its export holders (edit 13). A scheduler keeps no reference counter: its thread id picks its reference source (edit 17 of docs/design-runtime.md).
+ * Modified by erXos: a scheduler that holds an executor slot sleeps in erx_park, which ERTS_SSI_FLG_PARK_SLEEPING and its park_slot say; polling is removed; F_ERX_UNTRACED and SPO_ERX_UNTRACED carry the spawn option {erx_untraced, true}; a process carries its export holders (edit 13); erts_time2reds charges a backwards interval its minimum (edit 68). A scheduler keeps no reference counter: its thread id picks its reference source (edit 17 of docs/design-runtime.md).
  *
  * %CopyrightEnd%
  */
@@ -2977,9 +2977,9 @@ ERTS_TIME2REDS_IMPL__(ErtsMonotonicTime start, ErtsMonotonicTime end)
     ErtsMonotonicTime time = end - start;
     ASSERT(time >= 0);
     time = ERTS_MONOTONIC_TO_USEC(time);
-    if (time == 0)
-	return (Sint64) 1; /* At least one reduction */
-    /* Currently two reductions per micro second */
+    if (time <= 0)
+	return (Sint64) 1; /* At least one reduction, never a negative one */
+    /* CONTEXT_REDS/1000 rounded up a microsecond: four for 4000 */
     time *= (CONTEXT_REDS-1)/1000 + 1;
     return (Sint64) time;
 }

@@ -19,7 +19,8 @@
  *
  * Modified by erXos: sleeps through erts_milli_sleep, and the dirty test BIFs'
  * make_ref checks that a scheduler's references decipher to its own thread id
- * (edit 17 of docs/design-runtime.md).
+ * (edit 17 of docs/design-runtime.md); their busy_wait polls on either kind of
+ * dirty scheduler (edit 69).
  *
  * %CopyrightEnd%
  */
@@ -1302,6 +1303,12 @@ dirty_test(Process *c_p, Eterm type, Eterm arg1, Eterm arg2, ErtsCodePtr I)
     }
     else if (ERTS_IS_ATOM_STR("wait", arg1)) {
 	if (!ms_wait(c_p, arg2, type == am_dirty_cpu))
+	    goto badarg;
+	ERTS_BIF_PREP_RET(ret, am_ok);
+    }
+    else if (ERTS_IS_ATOM_STR("busy_wait", arg1)) {
+	/* wait's busy loop on either kind, so a test can charge a busy dirty I/O call */
+	if (!ms_wait(c_p, arg2, 1))
 	    goto badarg;
 	ERTS_BIF_PREP_RET(ret, am_ok);
     }

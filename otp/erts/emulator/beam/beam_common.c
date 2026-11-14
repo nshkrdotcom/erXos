@@ -17,6 +17,10 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  *
+ * Modified by erXos: a dirty scheduler charges every call its elapsed time in
+ * reductions, on the dirty I/O pool as on the dirty CPU pool (edit 68 of
+ * docs/design-runtime.md).
+ *
  * %CopyrightEnd%
  */
 
@@ -90,18 +94,12 @@ void erts_dirty_process_main(ErtsSchedulerData *esdp)
     ERTS_MSACC_DECLARE_CACHE_X() /* a cached value of the tsd pointer for msacc */
 
     /*
-     * start_time always positive for dirty CPU schedulers,
-     * and negative for dirty I/O schedulers.
+     * A call is charged the time from the moment erts_schedule() hands
+     * this scheduler its process to the moment this loop hands it back,
+     * on either dirty pool: a call asleep in the kernel counts as spent,
+     * and the time the scheduler sat idle in erts_schedule() does not.
      */
-
-    if (ERTS_SCHEDULER_IS_DIRTY_CPU(esdp)) {
-	start_time = erts_get_monotonic_time(NULL);
-	ASSERT(start_time >= 0);
-    }
-    else {
-	start_time = ERTS_SINT64_MIN;
-	ASSERT(start_time < 0);
-    }
+    start_time = erts_get_monotonic_time(NULL);
 
     goto do_dirty_schedule;
 
@@ -149,20 +147,7 @@ void erts_dirty_process_main(ErtsSchedulerData *esdp)
 
     do_dirty_schedule:
 
-	if (start_time < 0) {
-	    /*
-	     * Dirty I/O scheduler:
-	     *   One reduction consumed regardless of
-	     *   time spent in the dirty NIF.
-	     */
-	    reds_used = esdp->virtual_reds + 1;
-	}
-	else {
-	    /*
-	     * Dirty CPU scheduler:
-	     *   Reductions based on time consumed by
-	     *   the dirty NIF.
-	     */
+	{
 	    Sint64 treds;
 	    treds = erts_time2reds(start_time,
 				   erts_get_monotonic_time(esdp));
@@ -178,10 +163,7 @@ void erts_dirty_process_main(ErtsSchedulerData *esdp)
 	ERTS_VERIFY_UNUSED_TEMP_ALLOC(c_p);
 	c_p = erts_schedule(esdp, c_p, reds_used);
 
-	if (start_time >= 0) {
-	    start_time = erts_get_monotonic_time(esdp);
-	    ASSERT(start_time >= 0);
-	}
+	start_time = erts_get_monotonic_time(esdp);
     }
 
     ERTS_VERIFY_UNUSED_TEMP_ALLOC(c_p);
