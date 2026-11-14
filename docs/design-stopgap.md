@@ -1970,7 +1970,7 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   turn it off, so an end by `ERX_END_OFF`, a missed pet's included, lasts until its power is cycled by hand.
 * **Entropy.** When `/chosen` holds neither `rng-seed` nor `kaslr-seed`, the root reads 32 bytes from the board's RNG200
   random generator and seeds its generator from them, as the kernel's platform layer does on erXos's kernel
-  ([Entropy sources](design-platforms.md#entropy-sources)). The banner names the source. The RNG200's registers and read sequence come from a clean-room facts record of the RNG200, still to be made.
+  ([Entropy sources](design-platforms.md#entropy-sources)). The banner names the source. The RNG200's registers and read sequence come from a clean-room facts record of the RNG200.
 * **The card.** `sdcard.img` is the medium of `abi/medium.txt`, as QEMU `virt`'s medium is, laid out as
   [Slots and the boot-selection record](design-platforms.md#slots-and-the-boot-selection-record) describes: the
   record's partition, an 8 MiB FAT16 whose data area begins with `autoboot.txt`, one cluster at
