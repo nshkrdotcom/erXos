@@ -2790,6 +2790,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] `tools/fuzz/lane_writer_fuzz.c`: the lane writer's fuzz target never puts an item marked
   `whole`; the channel's host test (`test/host/prog_channel_test.rb`) covers the all-or-nothing
   put, the whole-record need and the refusal of a record larger than the area.
+* [Low] `test/host/prog_channel_test.rb` (`test_seeded_faults_are_caught`): the planted fault
+  "the lock is let go of inside a frame" (`.whole = false`) is caught by case `two` only when its
+  threads interleave inside a frame, so under a loaded full `make check` the case can pass on
+  the mutant and the test fails. Make case `two` force the interleaving (a barrier between the
+  frame's parts) instead of relying on timing.
 * [Low] `abi/erx_abi.txt` (`program_arg`): the generator marks no value as an object, so
   `ERX_PROGRAM_INSTALL_DATA` (`erx_program_core.h`) assumes the objects end at `doorbell`; its static
   assertion catches an object put between `doorbell` and `hwcap`, not one appended after `hwcap2`.
