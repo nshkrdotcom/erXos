@@ -756,6 +756,15 @@ stale entry it keeps for the block, now invalid, is read by no one.
 | any other `fsync` | a checkpoint it waits for | [Checkpoints](#checkpoints) |
 | a checkpoint on the durability facet, frozen or not | its commit | [The interface](#the-interface) |
 
+An answered `fsync` of a regular file makes durable everything about the
+file: its bytes, its size and attributes, and each name it has. A record
+carries all of that only when the file's one name is the one a replay
+gives it ([fsync](#fsync)); an `fsync` after the file was renamed or
+linked, or of a file created in a directory itself new since the
+checkpoint, waits for a checkpoint instead, which makes the whole tree
+durable as it stands. So `sync; rename(a, b); fsync(b)` leaves `b`, and
+no `a`, after any later cut.
+
 A checkpoint runs at least every 30 s while anything is dirty, when the
 epoch's charge reaches its bound, when the cleaner needs prefree segments
 freed, at an `fsync` that a record cannot express, and on the durability
@@ -1516,9 +1525,11 @@ count without bounding it (open question Q7 of part 3), so it only ever
 runs there, on images attached read-only, as snapshots, or behind a
 device-mapper snapshot. Everything a guest prints is untrusted: the host
 parses it with bounded matching and prints it only through the host
-terminal's escaping function. Hostile corpora run only in a guest booted
-for their batch and discarded after it
-([The distribution guest](#the-distribution-guest)).
+terminal's escaping function. Every corpus image is hostile, whatever
+its source, and `fsck.f2fs` and Linux see one only in a guest booted for
+its batch and discarded after it, never in a guest that checks an
+image erXos made ([Hostile images](#hostile-images)); erXos's own
+bounded readers take them on the host.
 
 ## Verification
 
@@ -1535,7 +1546,9 @@ erXos's own block path, in the QEMU suites.
 ### Testing on the host
 
 **One workload, one listing, every reader.** Every host test is made of
-the same three parts, and every check is the same comparison.
+the same three parts, and checks one or more of four expectations,
+each stated on its own below: the replies, the listings, the crash rows
+and the verdicts.
 
 * A **workload** is a list of operations: the `erx_fs` requests
   ([erx_fs.erl](../erlang/apps/erx_files/src/erx_fs.erl)) that make,
@@ -1549,10 +1562,10 @@ the same three parts, and every check is the same comparison.
   one of three backends: the reference model; erXos's F2FS, through the
   `erx_f2fs` callbacks over the test window; and OTP's `file` module
   over a mounted directory, which reaches Linux's F2FS and `tmpfs` in
-  the distribution guest. Concurrent clients run in separate processes on
-  disjoint subtrees, so no result depends on how their requests
-  interleave; races inside one directory are the harness's fixed
-  workloads.
+  the distribution guest. Each client of a workload is a process of its
+  own, which reports each request it sends and each reply it gets to the
+  run's recorder, and a workload with concurrent clients is checked by
+  the rule for concurrent clients below.
 * A **listing**, made by `erx_f2fs_listing`, is the canonical, sorted
   description of a tree, built the same way from every reader: the
   model, erXos's mount read-only or read-write, and Linux's mount with
@@ -1565,21 +1578,36 @@ the same three parts, and every check is the same comparison.
   erXos rewrote keeps the inline xattr area and the xattr node of the
   image it read.
 
-An image under test comes from one of five **sources**, and each source
-names its **expectation**: a listing (the model's, or another reader's of
-the same image), the listings a crash row allows, or a **verdict**:
-mounted read-write, mounted read-only, or refused with the rule named.
-"erXos to Linux", "Linux to erXos", the crash states, the corpora and
-differential fuzzing are then one comparison over different sources, and
-a new reader or source is a row of this table, not a new kind of check:
+The four **expectations** are kept apart, and a test states which it
+checks:
 
-| Source | Expectation | Readers |
+* **Replies.** Every operation's reply, its error included, is in the
+  set the model answers for it, and the bytes every read returns, through
+  a handle held open across an unlink or a rename included, are the
+  model's. A refused operation leaves the model unchanged, so every later
+  reply and listing checks that it changed nothing in the file system
+  either.
+* **Listings.** The persistent tree, compared as listings, at every
+  `sync`, every `remount` and at the end.
+* **Crash rows.** The trees a cut may leave, from the model's durable
+  state, below, and the rows of
+  [The crash states as the oracle](#the-crash-states-as-the-oracle).
+* **Verdicts.** How a reader admits an image, mounted read-write,
+  mounted read-only or refused with the rule named, and `fsck.f2fs`'s
+  result; each reader's verdict is its own observation, and one never
+  stands in for another ([Corpora](#corpora)).
+
+An image under test comes from one of five **sources**, and each source
+names the expectations it is checked against and the readers that check
+it; a new reader or source is a row of this table:
+
+| Source | Expectations | Readers |
 | --- | --- | --- |
-| a workload run on erXos | the model's listing at every `sync`, `remount` and at the end | erXos read-only and read-write; Linux with recovery and `ro,norecovery`; `fsck.f2fs` |
-| a cut of such a run | its crash row ([The crash states as the oracle](#the-crash-states-as-the-oracle)) | the same |
-| a workload run on Linux | the model's listing, and Linux's own listing of the image | erXos read-only, then read-write, then Linux again |
-| a corpus image | its verdict, and Linux's listing where `fsck.f2fs` passes it ([Corpora](#corpora)) | erXos; `fsck.f2fs`; Linux where it is safe |
-| a mutation of any of them | a verdict, never a crash ([Reading the medium](#reading-the-medium)) | erXos; a sample to `fsck.f2fs` and Linux |
+| a workload run on erXos | the replies; the model's listing at every `sync`, `remount` and at the end; `fsck.f2fs`'s pass rule | erXos read-only and read-write; Linux with recovery and `ro,norecovery`; `fsck.f2fs` |
+| a cut of such a run | its crash row; `fsck.f2fs`'s pass rule | the same |
+| a workload run on Linux | the replies; the model's listing, and Linux's own listing of the image | erXos read-only, then read-write, then Linux again |
+| a corpus image | the verdicts and listings of [Corpora](#corpora) | erXos on the host; `fsck.f2fs` and Linux in a hostile-image guest ([Hostile images](#hostile-images)) |
+| a mutation of any of them | erXos's verdict, never a crash ([Reading the medium](#reading-the-medium)) | erXos on the host; a sample to `fsck.f2fs` and Linux in a hostile-image guest |
 
 **The test window.** `erx_f2fs_test_window` answers the window's three
 requests, `{read, Sector, Count}`, `{write, Sector, Bytes}` and `flush`,
@@ -1595,42 +1623,102 @@ file semantics and nothing of F2FS: inodes with their bytes as a sparse
 map, their modes and links, and directories as maps from names to
 inodes. Each operation answers its result and the next model; where
 POSIX allows more than one error, the model answers the set. For
-durability it keeps the tree at the last `sync` and each file's bytes at
-each `fsync` that returned, which are what the crash rows read. For space
-it keeps a lower bound on the blocks its tree occupies: the data blocks,
-one inode block for each of its inodes, and the direct nodes each file's
-mapped ranges need.
-`enospc` is a pass only when that bound is within the profile's stated
+durability it keeps three things, which are what the crash rows read:
+
+* **the durable tree** D: the tree at the last checkpoint erXos
+  committed. A `sync` is one checkpoint, but the volume runs others on
+  its own: at an `fsync` a record cannot express, at the epoch's bound,
+  for the cleaner and on its timer
+  ([What is durable when](#what-is-durable-when)). The erXos backend reads the committed version the volume publishes
+  ([The interface](#the-interface)) after every reply, and when it has
+  risen, D becomes the model's tree at that point. A checkpoint starts
+  with no mutation in flight and holds those that arrive until it
+  commits ([Checkpoints](#checkpoints)), so that tree is exactly the
+  checkpoint's;
+* **the current tree** T, every answered operation applied;
+* **the `fsync` states**: for each `fsync` of a file since D, requested
+  or answered, the file as it was then, its bytes, size, mode and each
+  of its names, and whether it was answered.
+
+A state after a cut must equal a **base**, D or T, with each file that
+has `fsync` states since D either as D holds it or as one of those
+states, and with the latest answered one or a later one for every file
+whose `fsync` was answered. The base is chosen by the checkpoint erXos's
+mount of the state reports: D's version means D, the next version means
+T, the checkpoint the cut caught after its last block (C5, C6), whose
+tree is T because it held every mutation that arrived while it ran; any
+other version fails. On base T no `fsync` state applies, since an
+`fsync` that arrives during a checkpoint is planned after it. The
+`fsync` states carry names, so `sync; rename(a, b); fsync(b); cut` must
+leave `b`: a volume that wrote that `fsync` as a record would replay the
+file under `a`, which no allowed state holds.
+
+For space it keeps a lower bound on the blocks its tree occupies: the
+data blocks, one inode block for each of its inodes, and the direct
+nodes each file's mapped ranges need. `enospc` is a pass only when that bound is within the profile's stated
 margin of the volume's space
 ([The space a volume offers](#the-space-a-volume-offers)); earlier, it
 fails the test, and after an `enospc` the model is unchanged. The model
 is checked as any oracle is: the distribution guest runs every profile
-over Linux's F2FS and over `tmpfs`, and their listings must equal the
-model's; a difference is a model bug, a documented Linux difference with
-a test, or a Linux bug.
+over Linux's F2FS and over `tmpfs`, at the small volumes' byte budgets,
+and their replies and listings must equal the model's; a difference is
+a model bug, a documented Linux difference with a test, or a Linux bug.
 
-**Geometries.** Each profile runs over a list of geometries: erXos's own
-format at 56 MiB, the smallest it takes; at 128 MiB, the data
-partition's least; at 64 GiB; at the smallest size whose SIT version
-bitmap passes the checkpoint header's 3836 bytes and moves to payload
-blocks ([F 23]), and one segment below it; and at the largest size the
-format plan admits. The format plan computes each exact size, so the
-list states sizes by what they reach, not by number. The payload size is
-a few TiB: one bit per SIT block of a copy ([F 23]) and 55 entries a SIT
-block ([F 55]) give a little over 3 TiB, where [T 13] says about twice
-that, 6.4 TiB; the plan's computation, checked by the mount and by
-Linux, settles it. A
-volume of several TiB costs the host only the blocks written and the SIT
-the mount holds, about 150 bytes a segment, and the test sets the mount's
-allowance to admit it; one geometry beyond the allowance checks the
-`enomem` refusal. Linux-made volumes come from `mkfs.f2fs`: at 44 and
-49 MiB, which erXos mounts read-only, and at 50 MiB and the sizes above,
-at its defaults and with each option that changes what the volume holds,
-as part 3 of the facts records lists them: features, segments per section
-([Open decisions](#open-decisions)), heap allocation, the cold-file
-extension list, the volume name and the overprovisioning. On the host,
-the Linux-made volumes are the corpora's ([Corpora](#corpora)); the
-distribution guest makes the rest.
+**Geometries.** A geometry is chosen for what it reaches, and there are
+two kinds:
+
+* **small volumes**, which a profile may fill: erXos's own format at
+  56 MiB, the smallest it takes, and at 128 MiB, the data partition's
+  least;
+* **large sparse volumes**, which reach the format's address and
+  metadata boundaries and are never filled: 64 GiB; the smallest size
+  whose SIT version bitmap passes the checkpoint header's 3836 bytes and
+  moves to payload blocks ([F 23]), and one segment below it; the
+  largest size the format plan admits; and one beyond the mount's
+  allowance, which checks the `enomem` refusal.
+
+The format plan computes each exact size, so the list states sizes by
+what they reach, not by number. The payload size is a few TiB: one bit
+per SIT block of a copy ([F 23]) and 55 entries a SIT block ([F 55])
+give a little over 3 TiB, where [T 13] says about twice that, 6.4 TiB;
+the plan's computation, checked by the mount and by Linux, settles it.
+A large volume costs the host the blocks written and the SIT the mount
+holds, about 150 bytes a segment, and the test sets the mount's
+allowance to admit it. Every profile has a byte budget, the same at
+every geometry, so the backing file and the model's bytes stay as small
+on a large volume as on a small one; the near-full profile runs only on
+small volumes, where filling is what is tested.
+
+Linux-made volumes come from `mkfs.f2fs` with a feature set chosen for
+the code it reaches. The inode layout is where features meet in erXos's
+code ([Inodes](#inodes)), so the sets are those that give each layout:
+no feature, the default ([T 6]); `EXTRA_ATTR` alone, and with each
+feature that raises `i_extra_isize`, `PRJQUOTA` to 8 bytes,
+`INODE_CHKSUM` to 12 and `INODE_CRTIME` to 24 ([T 9]);
+`FLEXIBLE_INLINE_XATTR`, which sets the inline xattr size ([F 48]); and
+the set erXos formats with, `EXTRA_ATTR`, `INODE_CHKSUM` and
+`SB_CHKSUM`, with and without `LOST_FOUND`. Beside these, `QUOTA_INO`
+alone, whose quota inodes lie outside the tree, and every R feature
+together. Each set is made at 128 MiB
+and at 64 GiB; the default also at 44 and 49 MiB, which erXos mounts
+read-only, and at 50 MiB; and each other option that changes what the
+volume holds, as part 3 of the facts records lists them (segments per
+section, [Open decisions](#open-decisions); heap allocation; the
+cold-file extension list; the volume name; the overprovisioning), once
+at 128 MiB with the default features. On the host, the Linux-made
+volumes are the fetched corpora's and the oracle guest's
+([Corpora](#corpora)); the distribution guest makes and reads its own
+inside itself ([The distribution guest](#the-distribution-guest)).
+
+**The matrix is sampled.** A cell is a geometry, a profile and, for a
+Linux-made volume, a feature set. Each runner first runs every cell of
+its list once, with one seed, and then spends what is left of its budget
+on more seeds of cells drawn by the batch's seed. Its report gives each
+cell's seeds and run time, so the budgets are set from what the runs
+measure; a budget that ends before every cell ran once reports the rest
+as not run, which fails the gate, never passes it. The budgets of
+[Where each test runs](#where-each-test-runs) are limits the runners
+enforce, not measurements.
 
 **Profiles.** A profile weights the generator:
 
@@ -1650,8 +1738,36 @@ distribution guest makes the rest.
 * **chains**: many `fsync`s between checkpoints, for the harness and
   for Linux's replay of erXos's records.
 
-A run is its seed, geometry and profile; a report names them, so any
-failure reruns alone.
+**Concurrent clients.** Clients of a generated workload work on
+disjoint subtrees, but they share the volume: its free space, its logs,
+its checkpoints and its cleaner. Which client meets `enospc`, which
+`fsync`s join one record and where a checkpoint falls depend on the
+schedule, so a concurrent run is checked by a rule that holds under any
+schedule, not by exact replay. Each client's subtree is its own, so its
+replies, its reads and the listings of its subtree at its `sync`s and
+at the end follow its own sequence of operations, which the model runs
+alone. The generator gives each client a share of the volume's space
+and keeps the client within it, so no concurrent run reaches the
+margin, and an `enospc` there fails it. What the schedule decides is
+checked by what does not depend on it: the image's counters against a
+recount, `fsck.f2fs`'s pass rule and Linux's listing. Crash states need
+the model's durable tree, which a schedule makes ambiguous, so the
+harness's generated workloads are sequential, and its concurrent
+`fsync`s are fixed workloads whose expectations say what each order may
+give.
+
+**The trace.** Every run records its trace: the seed, geometry and
+profile; the SHA-256 of the image it started from; every request with
+its client and each reply, in the order the recorder received them; the
+committed version after each reply of a sequential run; and, in the
+harness, the recorded writes and flushes and each state's selection of
+them. A sequential run is reproduced from its seed and its starting
+image, the timer's checkpoints aside, which a rerun from the trace
+places as `sync`s where the trace shows them. A
+concurrent run's failure is rerun from its trace as a sequential
+workload, one request at a time in the recorded reply order; if it fails
+there it shrinks as any sequential failure does, and if not it is
+reported as schedule-dependent, with its trace.
 
 ### The crash states as the oracle
 
@@ -1692,7 +1808,9 @@ Two cut points of erXos's own complete the rows:
 
 Walked against the construction, every row holds: C1-C9 and C13-C19 hold
 in erXos's mount and in Linux's of the same image; C10-C12 cannot arise
-from erXos's writes and are Linux's own results for images Linux wrote;
+from erXos's writes and are Linux's own results for images Linux wrote,
+which the oracle guest's edited images check
+([The Linux oracle guest](#the-linux-oracle-guest));
 C14 is stronger than Linux's own recovery, which a cut may cost records
 ([R 65]); and C20 is the mount-policy difference of
 [Read-only mounts](#read-only-mounts).
@@ -1708,11 +1826,12 @@ medium may complete them. It enumerates every subset
 of the unflushed writes kept, up to ten of them, and each such state with
 one kept write torn at each of its sector boundaries, and samples beyond
 ten. Each state is mounted by the core, read-only and then read-write,
-and checked against a model of the workload: every file whose `fsync`
-returned holds exactly what it held then or a later write; every block of
-every file holds bytes some write put there or zeros where none did
-(F2-R4); names are the committed ones or those an operation in flight
-could leave; the counters equal a recount; a second mount after the
+and checked against the reference model's crash rule
+([Testing on the host](#testing-on-the-host)): the tree is a base with
+`fsync` states, every answered `fsync` among them, and since every
+allowed tree is made of states the model reached, every block of every
+file holds bytes some write put there or zeros where none did (F2-R4);
+the counters equal a recount; a second mount after the
 read-write mount's checkpoint gives the same tree; and a cut during that
 mount checkpoint gives the same tree again (C14). Workloads cover
 creates, writes of every size and alignment, truncates to and from
@@ -1725,8 +1844,9 @@ old files, concurrent `fsync`s, overwrites of checkpointed files beside
 until the cleaner runs, and mounts of Linux-made images with chains,
 those whose replay copies blocks included. Beside these fixed workloads,
 the harness takes the generator's, under the chains and general profiles
-at the small geometries, and its model is the reference model of
-[Testing on the host](#testing-on-the-host).
+at the small geometries. A state is made from the recorded writes and a
+selection of them, so the record and the selection reproduce a failing
+state whatever schedule made the writes.
 
 | Test | Seeded fault the harness must catch |
 | --- | --- |
@@ -1740,12 +1860,13 @@ at the small geometries, and its model is the reference model of
 | no stale block after a cut | an address installed before its write is answered |
 | freed blocks stay until the commit is durable | prefree segments freed at the last block's write, before its flush |
 | no stale chain after a crash and a mount | the mount checkpoint skipped when nothing was replayed |
-| a rename made durable by an `fsync` survives a cut, over generated workloads | the record decision's rename fact ignored, which a generated workload reaches when it renames before an `fsync` |
+| a rename made durable by an `fsync` survives a cut, over generated workloads | the record decision's rename fact ignored, which a generated workload reaches when it renames before an `fsync`: the record replays the file under its old name, which no state the model allows holds |
 
 The distribution guest runs the harness itself and checks its states in
 `fsck.f2fs` and in Linux's mount, every state of the fixed workloads and
-a sample of the generated ones; a sample of the states, every row of the
-table above at least, goes to the pinned oracle guest too.
+a sample of the generated ones. The host's harness writes a sample of
+its own states, every row of the table above at least, as image files,
+which the pinned oracle guest attaches read-only.
 
 ### The Linux oracle guest
 
@@ -1774,7 +1895,10 @@ with recovery and a listing (names, modes, links, sizes, SHA-256 of
 every file) that must equal erXos's own replayed tree; then a
 `ro,norecovery` mount whose listing must equal erXos's checkpoint tree;
 and `fsck.f2fs -l`, whose superblock and checkpoint fields must equal
-erXos's decode ([T 79]). One image more: a file erXos wrote whole,
+erXos's decode ([T 79]). Each is its own observation and each must
+hold, since `fsck.f2fs` and Linux accept different things ([T 89] to
+[T 92]): an image `fsck.f2fs` passes and Linux lists otherwise fails,
+and so does one Linux lists equal and `fsck.f2fs` faults. One image more: a file erXos wrote whole,
 truncated to one byte and checkpointed, which Linux extends to a block
 and must read as zeros past the first byte.
 
@@ -1818,7 +1942,16 @@ kernel, and fails the suite when the fact changes:
   still mapped, recording whether Linux reads zeros there
   ([Operations](#operations), [Risks](#risks));
 * **feature dependencies**: a superblock with `INODE_CHKSUM` and without
-  `EXTRA_ATTR`, which erXos refuses.
+  `EXTRA_ATTR`, which erXos refuses;
+* **Linux's unflushed data** (C10 to C12): states no cut of erXos's
+  writes leaves, made by editing a Linux image with a chain on the host
+  through erXos's codec: a data block a marked dnode of the chain names
+  overwritten with other bytes, as if its write never landed (C10); a
+  data block of CP N's view with its first sectors overwritten, a torn
+  update in place (C11); and a slot of a checkpointed direct node set to
+  `NEW_ADDR` (C12). Data blocks and direct nodes carry no checksum, so
+  each edit leaves the image otherwise as Linux wrote it, and erXos's
+  read-only mount of each must list what Linux's mount of it lists.
 
 The guest is the reference: F2-R1 and F2-R2 name v7.3.4, so where the
 distribution guest's kernel and this one disagree, this one's result
@@ -1828,9 +1961,10 @@ decides whether erXos is at fault.
 
 The distribution guest runs Linux's F2FS and f2fs-tools at scale, with
 many CPUs and large sparse disks, over a distribution's own kernel. It is
-needed because the host has neither: Homebrew has no f2fs-tools formula,
-Apple's container kernel is built without F2FS, and f2fs-tools is GPL, so
-it runs only as a black box inside a Linux guest.
+needed because the host has neither, and because f2fs-tools is GPL, so
+it runs only as a black box inside a Linux guest. That Homebrew has no
+f2fs-tools formula and that Apple's container kernel is built without
+F2FS are unverified: no probe record checks them.
 
 **What is known of it.** A probe on 2026-11-14 (record
 `~/erxos-scratch/notes/probe-f2fs-host-2026-11-14/README.md`, SHA-256
@@ -1851,9 +1985,11 @@ device, with a deadline and its serial log, killed when it stops
 answering. Its root disk is the cloud image provisioned once by the fetch
 step, the only boot with a network: the image by its SHA-256, f2fs-tools
 and the build tools by package version, each package's SHA-256 recorded
-in `deps.lock`, and stock OTP 29.1.2 built from the oracle's pinned
-archive. A run boots a snapshot of the provisioned disk and fetches
-nothing.
+in `deps.lock`, stock OTP 29.1.2 built from the oracle's pinned
+archive, and xfstests' `replay-log`, built from a pinned commit at its
+SHA-256; both are built inside the guest, never on the host, and
+nobody reads `replay-log`'s source. A run boots a snapshot of the
+provisioned disk and fetches nothing.
 
 **Everything runs inside.** The guest runs erXos's F2FS too, on that
 OTP over the test window, and the harness and the generator with it, so
@@ -1861,7 +1997,11 @@ an image is written, checked and read back without leaving the guest.
 Its one input is a read-only disk the host makes with fsimg, an EROFS
 image of the compiled modules, the seeds and the tree declarations; its
 one output is the serial log, which carries verdicts, the differing
-entries of two listings and the seeds that failed. The images live as
+entries of two listings and the traces of the runs that failed. Its
+images never leave it: the host's Linux-made volumes are the fetched
+corpora's and the oracle guest's ([Corpora](#corpora)), and a batch
+that fails keeps its snapshot, so a later boot of that snapshot finds
+the failing images where the log names them. The images live as
 sparse files on the guest's own disk, and Linux mounts each through a
 device-mapper snapshot over a read-only loop device, so a mount with
 recovery writes into the snapshot's own store, never into the image
@@ -1872,18 +2012,20 @@ never passed.
 
 **What a batch runs.**
 
-* **erXos to Linux**: every erXos image of the profiles at every
-  geometry, and the harness's states, through the oracle guest's checks
+* **erXos to Linux**: the erXos images of the matrix's cells
+  ([Testing on the host](#testing-on-the-host)), and the harness's
+  states, through the oracle guest's checks
   ([The Linux oracle guest](#the-linux-oracle-guest)): `fsck.f2fs
   --dry-run` under its pass rule, a mount with recovery whose listing
   equals erXos's replayed tree, an `ro,norecovery` mount whose listing
   equals erXos's checkpoint tree, and `fsck.f2fs -l` against erXos's
   decode.
-* **Linux to erXos**: `mkfs.f2fs` at every valid combination of the
-  features in R, their dependency kept, over the geometries above; then
-  Linux runs workloads of every profile through the `file` backend,
-  filling the volume, churning it until Linux's own cleaner runs, growing
-  inline files and directories past their inline forms, and ending with
+* **Linux to erXos**: `mkfs.f2fs` with each feature set at its
+  geometries ([Testing on the host](#testing-on-the-host)); then Linux
+  runs the matrix's workloads through the `file` backend, growing inline
+  files and directories past their inline forms, filling the small
+  volumes and churning them until Linux's own cleaner runs, and ending
+  with
   `fsync`s and a cut, a device-mapper target that drops every write after
   a chosen point (`flakey`; its exact use is settled by probe), so the
   image carries a chain. erXos reads each image read-only and must list
@@ -1895,15 +2037,20 @@ never passed.
   neither, so the guest makes them with `mknod` and `mkfifo`, started
   with an argument vector.
 * **The model's own check**: every profile over Linux's F2FS and
-  `tmpfs`.
+  `tmpfs`, at the small volumes' byte budgets.
 
 **Linux's own cuts**, on demand: `log-writes` records the order of
-Linux's writes and flushes under a workload, and replaying it up to each
-entry gives the states a cut of Linux's writes can leave, those of
-C10-C12 included; erXos's read-only mount of each must list what Linux's
-mount of the same state lists. Replaying needs a reader of the log's
-format, which no facts record describes
-([Open decisions](#open-decisions)).
+Linux's writes and flushes under a workload, and xfstests' `replay-log`,
+pinned and run only inside the guest as a black box, replays the log
+onto a snapshot up to a chosen entry. erXos's read-only mount of each
+replayed state must list what Linux's mount of the same state lists. A
+replay keeps every write before its entry and none after, in the order
+the log holds them, so it gives the states a cut of Linux's writes in
+that order leaves; it never reorders or tears a write, so it produces no
+C10 or C11 state, which the oracle guest's edited images cover instead.
+The run names no crash row it reached: its report gives, for each state,
+the checkpoint erXos's mount chose and the records it replayed, as the
+volume publishes them. erXos has no reader of the log's format.
 
 **Kernels.** A guest row is an image pin, its kernel's version string and
 its f2fs-tools package, recorded with every result. Ubuntu 26.04 is the
@@ -1913,10 +2060,30 @@ one kernel and fails on another is reported as a kernel difference, with
 both kernels named, and only the pinned guest's result counts against
 erXos.
 
-**Hostile images**, syzbot's and the mutants of differential fuzzing,
-run in a guest booted for their batch from a fresh snapshot and discarded
-after it, whose results feed only the corpus tables, so a kernel a
-crafted image subverts never vouches for an erXos image.
+### Hostile images
+
+Every image that neither erXos's own writes nor a guest's own Linux
+made, from a declared tree or a workload, is hostile, whatever its
+source: syzkaller's seeds, whose trees nobody has verified, Fuchsia's
+image and its copy with two bits cleared, syzbot's images, the mutants
+of differential fuzzing, and any image derived from one of them,
+syzkaller's writable seeds after erXos wrote into them included. A
+pinned SHA-256 says which bytes an image is, not that they are safe to
+hand a kernel. So `fsck.f2fs` and Linux see a hostile image only in a
+**hostile-image guest**: the distribution guest's runner and root disk,
+or the oracle guest's, booted for one batch from a fresh snapshot,
+given the batch's images as read-only disks, and discarded after it.
+Its results are observations of those images alone, kept in the
+corpus results: a kernel or `fsck.f2fs` a crafted image subverts can
+falsify only its own batch's observations, and never runs in a guest
+that certifies an erXos-made image. The guests that check erXos's own
+images and the images their own Linux makes boot only from snapshots
+no hostile image has reached.
+
+erXos's own parsers meet hostile images on the host, as they are built
+to: the codec's bounded decoders, the mount and the fuzz targets run on
+the host's stock OTP, under their deadlines and the mount's allowance
+([Reading the medium](#reading-the-medium)).
 
 ### Corpora
 
@@ -1932,26 +2099,41 @@ source, and never passes by skipping it.
 | syzkaller's F2FS seeds | `sys/linux/test/syz_mount_image_f2fs_0` to `_15` and `fscrypt_f2fs`, syzkaller commit `819ebe34df0f1cb61a2c97ced41d03285824b6c1`; each test program embeds its image as `$` and base64 of zlib, which the corpus reader decodes, the decoded image's SHA-256 pinned beside the program's | Apache-2.0, the repository's | 17 images that `mkfs.f2fs` made, 64 and 128 MiB, with `-e cold`, `-a 0` and `-a 1`, `-s 1` and `-s 2`, and features none, `encrypt`, `extra_attr`, or `extra_attr` with `flexible_inline_xattr`, `inode_checksum`, `inode_crtime` and `project_quota`; their trees are syzkaller's, unverified |
 | Fuchsia's f2fs_reader image | `src/storage/f2fs_reader/testdata/f2fs.img.zst` at the Fuchsia commit of [Context](#what-erxos-matches), 16,947,630 bytes | BSD-2-Clause, the repository's `LICENSE`; the directory has no license of its own | a 256 MiB image that `scripts/mk_test_img.sh` (BSD) made on Linux with `-O encrypt,verity`: a tree with an inline file, short and 300-byte symlinks, a hard link, a file owned by 999:999, a directory of 2001 entries and one of 2001 made and 2000 removed, a sparse file reaching the double indirect node with xattrs, and encrypted and verity subtrees |
 | syzbot's F2FS images | the disk images of syzbot's F2FS reports, each by URL and SHA-256 in a fetch manifest; only the image, never the report's C reproducer | unknown: fetched on demand, never committed or redistributed | images that crashed or hung Linux |
-| the Linux-made corpus | made by the oracle guest and the distribution guest | erXos's | the geometries and profiles above |
+| the Linux-made corpus | made by the oracle guest and cached in the build tree ([The Linux oracle guest](#the-linux-oracle-guest)); the distribution guest's images stay inside it | erXos's | the oracle guest's feature sets, sizes and declared trees, clean and with chains |
 
 Janus, the file-system fuzzer, ships no F2FS seed image at its commit
 `58d9e85df86068f9532f28f45a7e2041b32a165c` (its tree holds a fuzzer and
 copies of Linux and f2fs-tools, which are GPL and not opened), and no
 curated corpus of damaged F2FS images was found.
 
-**Verdicts.** For every corpus image, erXos's mount must finish within
-its deadline, without a crash, a loop or an allocation past its
-allowance, and write nothing when it refuses. Beyond that, the verdict
-`fsck.f2fs --dry-run` gives in the guest decides what erXos's must be:
+**Verdicts.** Each corpus image gives three observations, kept apart in
+its result, since no one of them stands in for another:
 
-| `fsck.f2fs` | erXos must |
+* **`fsck.f2fs`'s**, in a hostile-image guest: its pass rule met, the
+  fault lines it printed, or timed out;
+* **Linux's**, in the same guest: a mount with recovery, through a
+  snapshot, that succeeded with its listing or failed with its log line,
+  or timed out, or a kernel that stopped;
+* **erXos's**, on the host: read-write, read-only, or refused with the
+  rule named, and its listing when it mounts.
+
+`fsck.f2fs` and Linux disagree in both directions ([T 89] to [T 92]):
+`fsck.f2fs` passes an `i_extra_isize` up to 3692 that Linux, and erXos's
+codec, refuse, and fails the inode checksum of an inode whose
+`i_extra_isize` stops short of the field, which Linux reads. So
+`fsck.f2fs`'s result decides nothing about erXos's and excuses nothing;
+it is recorded beside the others, and a disagreement between it and
+Linux is recorded as such. erXos's expectations come from its own rules
+and from Linux's mount:
+
+| Case | erXos must |
 | --- | --- |
-| passes | mount it as [Scope](#scope-features-and-forms) says, read-write when every feature is in W, read-only when every one is in R, and otherwise refuse it naming the bits; and list what Linux lists |
-| reports faults | refuse it with `eintegrity`, naming a structure and a rule, or mount it; a listing that differs from Linux's is recorded beside the faults `fsck.f2fs` names, not failed |
-| passes its deadline, or the guest's kernel stops | the rule above alone; the image is recorded as a Linux finding |
-
-An erXos refusal of an image `fsck.f2fs` passes, with every feature in
-R, is a bug until explained.
+| every image | finish its mount within its deadline, without a crash, a loop or an allocation past its allowance, and write nothing when it refuses or mounts read-only |
+| any image | admit it as its own rules say: read-write when every feature is in W, read-only when every one is in R, and otherwise refused naming the bits ([Scope](#scope-features-and-forms)), or refused with `eintegrity` naming a structure and a rule of the codec ([Reading the medium](#reading-the-medium)) |
+| Linux mounts it and erXos refuses it | name a rule Linux does not apply: a feature or flag outside R or W, a geometry rule of Scope, or one of the bounds the codec adds to Linux's; any other refusal is a bug until explained |
+| Linux refuses it and erXos mounts it | a bug until explained: a read rule of Linux's the codec lacks, which is fixed, or a documented difference with a test |
+| both mount it | list what Linux lists, entry by entry; an entry may differ only where erXos answers it with an error naming a structure and a rule, on the terms of a refusal above, and then only that entry and what lies beneath it; every other difference fails, whatever `fsck.f2fs` reports |
+| Linux times out or its kernel stops | the first two rows alone; the image is recorded as a Linux finding |
 
 **The fixed corpora's expectations.** syzkaller's seeds without features
 or with `extra_attr` alone mount read-write, and take the profiles'
@@ -1968,8 +2150,8 @@ wrote, inline data, a large directory with and without its removed
 entries, a file with xattrs and the double indirect node.
 
 **Differential fuzzing**, on demand: the fuzz targets' mutants that
-erXos mounts go in batches to a hostile-image guest; where `fsck.f2fs`
-passes a mutant and Linux mounts it, Linux's listing must equal erXos's.
+erXos mounts go in batches to a hostile-image guest, and each is judged
+by the verdicts above.
 
 ### POSIX suites
 
@@ -1999,16 +2181,24 @@ named for it. A run with a seeded fault stops at its first failure, so a
 seed costs little when the check works, and a seed that survives its
 whole budget fails the run. The budgets below are limits the runners
 enforce, set when they are built and adjusted to what they measure, not
-measurements.
+measurements; the host slice's time is measured at every run, and the
+slice is cut back when it passes its budget.
+
+The deep runs have no gate of their own: the host runs, the
+distribution guest's batch, the oracle guest and the fixed corpora's
+hostile-image batch are part of `make check-oracle`, at the milestone
+gate, as OTP's suites and `libc-test` are, and `make check-f2fs` runs
+them alone, as a focused entry point.
 
 | Test | What it catches | Where | Budget | Seeded fault |
 | --- | --- | --- | --- | --- |
-| the host slice: the model at 56 MiB and 128 MiB and over syzkaller's writable seeds, a few seeds of each profile; the harness's fixed workloads with up to four unflushed writes; the corpora's verdicts and Fuchsia's listing | wrong bytes, names, links and sizes; counters off a recount; an early `enospc`; a wrong verdict | `make check`, every landing | 30 s together | a write that spans a direct node's edge maps its second part one slot off; `ENCRYPT` put in R |
-| the host runs: every geometry, every profile, many seeds; the harness with up to ten unflushed writes and generated workloads | what the slice catches, at sizes and ages the slice never reaches | `make check-f2fs`, the milestone gate, on the host in the background | 2 h | the SIT version bitmap kept in the header past its 3836 bytes, which only the multi-TiB geometry reaches; the space counting the overprovisioned segments twice, which only the near-full profile reaches; the harness's table |
+| the host slice: the model at 56 MiB and 128 MiB and over syzkaller's writable seeds, a few seeds of each profile; the harness's fixed workloads with up to four unflushed writes; erXos's verdicts of the fixed corpora and Fuchsia's listing | wrong replies, bytes, names, links and sizes; counters off a recount; an early `enospc`; a wrong verdict | `make check`, every landing | 30 s together | a write that spans a direct node's edge maps its second part one slot off; `ENCRYPT` put in R |
+| the host runs: every geometry, every profile, many seeds; the harness with up to ten unflushed writes and generated workloads | what the slice catches, at sizes and ages the slice never reaches | `make check-oracle`, the milestone gate, on the host in the background | 2 h | the SIT version bitmap kept in the header past its 3836 bytes, which only the multi-TiB geometry reaches; the space counting the overprovisioned segments twice, which only the near-full profile reaches; the harness's table |
 | the fuzz targets, seeded from every corpus | a crash, loop or overread on a malformed block or image | `make check-fuzz`, the milestone gate | its configured budgets | the table of [Reading the medium](#reading-the-medium) |
-| the distribution guest's batch | an erXos image Linux or `fsck.f2fs` rejects or reads otherwise; a Linux image erXos reads otherwise; a wrong model | `make check-f2fs`, the milestone gate, on a host whose QEMU runs the guest; elsewhere reported unsupported, never passed | 3 h | `i_ext` written with a non-zero length, which only Linux reads; the NAT journal's entries ignored at mount, which only Linux-made images reach; the model allowing a rename onto a non-empty directory |
-| the pinned oracle guest | a difference from v7.3.4 exactly | the milestone gate, and on demand | 1 h | its probes, each failing when its fact changes |
-| syzbot's images and differential fuzzing, in a hostile-image guest | a crash on an image that crashed Linux; a listing that differs from Linux's on a mutant `fsck.f2fs` passes | on demand | 1 h | the walk's `cp_ver` comparison dropped |
+| the distribution guest's batch | an erXos image Linux or `fsck.f2fs` rejects or reads otherwise; a Linux image erXos reads otherwise; a wrong model | `make check-oracle`, the milestone gate, on a host whose QEMU runs the guest; elsewhere reported unsupported, never passed | 3 h | `i_ext` set at a file's first write to the extent of its blocks and never updated, under a workload that then rewrites part of that range: Linux seeds its extent cache from `i_ext` ([F 44]) and its listing hashes the old bytes there, and `fsck.f2fs` finds the extent disagreeing with the address array ([T 61]); the NAT journal's entries ignored at mount, which only Linux-made images reach; the model allowing a rename onto a non-empty directory |
+| the pinned oracle guest | a difference from v7.3.4 exactly | `make check-oracle`, the milestone gate, and on demand | 1 h | its probes, each failing when its fact changes |
+| the fixed corpora in a hostile-image guest: syzkaller's seeds, Fuchsia's image and the images derived from them, through `fsck.f2fs` and Linux | an erXos verdict or listing the rules of [Corpora](#corpora) refuse | `make check-oracle`, the milestone gate | 30 min | an erXos error on one entry allowed to excuse a difference on another |
+| syzbot's images and differential fuzzing, in a hostile-image guest | a crash on an image that crashed Linux; a listing that differs from Linux's on a mutant both mount | on demand | 1 h | the walk's `cp_ver` comparison dropped |
 | other kernels | kernel differences | on demand | as the batch | the batch's |
 | Linux's own cuts | a Linux crash state erXos reads otherwise | on demand | 1 h | the walk dropping a chain's last record |
 | pjdfstest over F2FS and littlefs | POSIX semantics broken on F2FS alone | the QEMU suite, on demand and at the milestone gate | 20 min | an unlink that leaves the inode's link count unchanged |
@@ -2147,6 +2337,11 @@ watch list ([todo-performance.md](todo-performance.md)):
   is pjdfstest alone, which runs inside erXos instead; the interpreter
   reaches `erx_fs` without one, and the Mac's FUSE layer is a separate
   item of [TODO.md](../TODO.md) for the namespace mount.
+* **A reader of `log-writes`' log format**, so the harness enumerates
+  subsets of Linux's writes as it does its own. Only Linux's GPL source
+  and documentation state the format, so it would need a facts record
+  of its own; `replay-log`'s prefixes, run as a black box in the guest,
+  and the oracle guest's edited images cover the rows without one.
 * **Host and guest splitting the batch**, erXos writing images on the
   host and the guest checking them. Every image would cross into the
   guest as a disk, and Linux's back out as one; running erXos's F2FS
@@ -2206,24 +2401,16 @@ tests.
    The options: mount such a volume read-only, as a volume whose main
    area leaves the cleaner no room is; refuse it; or make the cleaner,
    the room rule and the logs work by section. Recommendation: read-only,
-   one rule beside an existing one; the corpus test pins whichever is
-   chosen.
-2. **The gate of the deep runs.** `make check-f2fs`, the host runs and
-   the distribution guest's batch, is a new target, and the milestone
-   gate's list is CLAUDE.md's. Recommendation: add it to that list; the
-   host slice stays in `make check`.
-3. **Reading Linux's write log.** Linux's own cuts need the format of
-   `log-writes`' log, which only Linux's GPL source and documentation
-   state. The options: a facts writer records the format, as for F2FS,
-   so erXos's harness enumerates subsets of Linux's writes as it does its
-   own; or xfstests' `replay-log`, GPL, runs as a black box in the guest,
-   prefixes only. Recommendation: `replay-log` as a black box, on demand;
-   the facts record only if prefixes find a difference that subsets
-   would explain.
-4. **syzbot's images.** Their license is unknown. Recommendation: list
-   each by URL and SHA-256 in `deps.lock`, fetch them only on demand into
-   the build tree, and never commit, redistribute or attach them to a
-   report.
+   one rule beside an existing one. It narrows F2-R2's read-write
+   contract, so F2-R2, the mount's admission rules and the corpus
+   expectations change together once it is accepted, and the corpus test
+   pins whichever is chosen; until then no mount writes such a volume.
+2. **syzbot's images.** Their license is unknown. Recommendation: list
+   each by URL and SHA-256 in `deps.lock`, fetch them only on an explicit
+   request into the build tree, never as a prerequisite of `make check`
+   or of any gate, and never commit, redistribute or attach them to a
+   report, nor any image derived from one, a minimized one included,
+   while their license is unknown.
 
 ## References
 

@@ -4145,7 +4145,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   cloud image under Lima, not under the oracle guest's QEMU runner. Settle by probe before building on
   them: that image boots under QEMU with UEFI and a cloud-init seed fsimg makes; `flakey` drops writes
   after a chosen point as the Linux cut needs; which other distributions package f2fs-tools with an F2FS
-  kernel; and syzbot's F2FS images, by URL and SHA-256, for the fetch manifest.
+  kernel; that Homebrew has no f2fs-tools formula and Apple's container kernel has no F2FS, which the
+  design states as unverified; xfstests' `replay-log`: its pinned commit, and that it builds in the guest
+  and replays a `log-writes` log onto a snapshot up to a chosen entry; and syzbot's F2FS images, by URL and
+  SHA-256, for the fetch manifest.
 * [Medium] storage, F2FS sections: `mkfs.f2fs -s` makes volumes of more than one segment per section,
   which F2-R2 admits read-write, but the cleaner, the room rule and the logs treat segments as sections
   ([design-f2fs.md](docs/design-f2fs.md#open-decisions), open decision 1). Until decided, a mount must not

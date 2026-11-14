@@ -55,7 +55,8 @@ Ground rules:
   the kernel or the stopgap, the scheduler, memory, the funnel and the
   connections' carrier, the adapter, the loader, or the build of OTP or
   musl) and at each milestone's exit. `make check-oracle` also runs musl's
-  `libc-test`. A case that cannot run yet is never a pass: the run shows it as
+  `libc-test`, and from M13 erXos's F2FS's deep runs against Linux's
+  ([design-f2fs.md](design-f2fs.md#where-each-test-runs)). A case that cannot run yet is never a pass: the run shows it as
   "cannot run" with its reason, and the milestone that brings what it needs
   must run it. Files arrive with `/tmp` at M3 and the file services of M4 and
   M6, peers with the domains and connections of 1b-A, sockets with the
