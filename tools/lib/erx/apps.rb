@@ -427,7 +427,7 @@ module Erx
       def run_boots(accel:, cpus:, remote:, boots:, built:, written:, manifest:)
         run = "#{boots.first}-#{accel}-#{cpus}cpu-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}"
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(@root, 'build/apps', run))
-        medium = ReleaseMedium.medium(written.slot, directory: directory, data_sectors: written.data_sectors, volume: written.volume)
+        medium = written.fresh(directory: directory)
         begin
           boots.each do |boot|
             boot_once(accel: accel, cpus: cpus, remote: remote, boot: boot, built: built, manifest: manifest,

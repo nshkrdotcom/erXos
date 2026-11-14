@@ -40,8 +40,13 @@ module Erx
     SlotPlan = Data.define(:boot, :images)
     # The medium as written: its path, the EROFS image's path beside it, its data
     # partition's length, slot A's plan and the data partition's fresh volume
-    # (DataVolume.format).
-    Written = Data.define(:path, :erofs, :data_sectors, :slot, :volume)
+    # (DataVolume.format). A boot of the image boots it with a medium as its disk: this
+    # one, or one made by fresh, so that the storage domain serves /data.
+    Written = Data.define(:path, :erofs, :data_sectors, :slot, :volume) do
+      # A fresh copy of the medium in directory, as written, for a boot that may write
+      # its medium; returns its path.
+      def fresh(directory:) = ReleaseMedium.medium(slot, directory: directory, data_sectors: data_sectors, volume: volume)
+    end
 
     module_function
 

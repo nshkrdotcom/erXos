@@ -139,7 +139,7 @@ module Erx
     def boot(built, written, manifest)
       run = "web-hvf-#{Process.pid}-#{Random.bytes(4).unpack1('H*')}"
       directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(@root, 'build/bench-web', run))
-      medium = ReleaseMedium.medium(written.slot, directory: directory, data_sectors: written.data_sectors, volume: written.volume)
+      medium = written.fresh(directory: directory)
       memory = @machine.memory_mib
       points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
                                                        manifest_source: manifest, memory_mib: memory)

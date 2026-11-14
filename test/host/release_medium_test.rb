@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'find'
+require 'fileutils'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
@@ -128,6 +129,9 @@ class ReleaseMediumTest < Minitest::Test
                    'the manifest records the image where the medium holds it')
 
       assert_equal Digest::SHA256.file(first.path), Digest::SHA256.file(second.path), 'two writes differ'
+      FileUtils.mkdir_p(File.join(directory, 'fresh'))
+      assert_equal Digest::SHA256.file(first.path), Digest::SHA256.file(first.fresh(directory: File.join(directory, 'fresh'))),
+                   'a fresh copy differs from the medium as written'
       assert_equal Medium.sectors(data_sectors: first.data_sectors) * SECTOR, File.size(first.path)
       assert_equal Medium.windows(data_sectors: first.data_sectors).map { |window| [window.role, window.start, window.sectors] },
                    admitted(first.path)

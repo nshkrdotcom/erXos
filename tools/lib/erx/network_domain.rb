@@ -202,16 +202,21 @@ module Erx
         fiasco.build(jobs: jobs) if build
         key = DevKey.ensure(directory: DevKey.directory(root: @root, runner: @runner), runner: @runner)
         directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/network-domain/image'))
-        built, = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
-                                     fiasco: fiasco, login_key: key.public_line)
-                                .build_medium(directory: directory, machine: @machine, manifest_source: @manifest)
-        { CELL => boot(built, key) }
+        built, written = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
+                                             fiasco: fiasco, login_key: key.public_line)
+                                        .build_medium(directory: directory, machine: @machine, manifest_source: @manifest)
+        { CELL => boot(built, written, key) }
       end
 
       private
 
-      def boot(built, key)
+      # Boots built with a fresh copy of its medium, written, as the disk, so the storage
+      # domain serves /data and root's session has its data facet, where erx_ssh_dev
+      # writes the host key; the medium as built stays as the image build wrote it.
+      def boot(built, written, key)
         accel = QemuGate::SUITE_ACCELERATOR
+        boot_directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/network-domain/boot'))
+        medium = written.fresh(directory: OutputDirectory.prepare(root: @root, path: boot_directory, mode: 0o700))
         echo = NetDevice::EchoServer.new(limit: 2 * ECHO_BYTES).start
         link = NetDevice::Link.new
         forward = QemuPlan::Forward.new(host: NetDevice.free_tcp_port, guest: DevKey::PORT)
@@ -221,7 +226,7 @@ module Erx
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
         Qemu.new(root: @root, runner: @runner).run(platform: @machine.platform, accel: accel, cpus: 1, image: built.single,
-                                                   memory_mib: @machine.memory_mib,
+                                                   memory_mib: @machine.memory_mib, disks: [QemuPlan::Disk.new(path: medium)],
                                                    checkpoints: NetworkDomain.checkpoints(points, figures, check_ssh: check_ssh), nic: nic)
         failed = echo.stop
         raise failed if failed
