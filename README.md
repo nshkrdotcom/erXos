@@ -248,6 +248,10 @@ Eshell V17.1.1 (type help(). for help)
   It runs in a network domain over the virtio-net driver on QEMU and the
   GENET driver on the Pi 4. `ifconfig`, `ping`, `host`, and `gen_tcp`
   connections out and in work in root's session.
+* In a development build, root logs in over SSH with the clone's
+  development key to an Erlang shell in root's session, served by OTP's
+  `ssh` daemon. The network suite logs in through a host port forward;
+  `tools/erx boot` gives its guest no network device yet.
 
 **Display and input**
 
