@@ -2425,8 +2425,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   facet refuses it with `no_facet`, but one that holds the facet still runs code that works only where the
   stack runs: `ifconfig` and `ping` call erx_net and erx_icmp_sock, which a session's release does not ship,
   and `host` opens its sockets through erx_net_client, which it does not ship either, so each ends with
-  `undef`. Reach the stack through the facet's value (`erx_cmd:facet(Ctx, net)`: `local` in the system
-  domain, the facet's pid elsewhere), with erx_net_client and its erXos grant module in the session's
+  `undef`. Reach the stack through the facet's value (`erx_cmd:facet(Ctx, net)`, the facet's pid; the
+  system shell never holds `net`, docs/design-shell.md, "Interfaces"), with erx_net_client and its erXos grant module in the session's
   release (docs/design-network-stack.md, "Two places, four seams"), and report a missing stack as
   `ping: socket: ...` and `ifconfig: network stack: ...` do. Then have `erx_shell_runner:command/4` hand
   each command only the facets it declares (`maps:with(Needs, Facets)`; `top` reads `inspect` without
