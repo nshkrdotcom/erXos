@@ -273,23 +273,33 @@ module Erx
       true
     end
 
-    # The machine's end from the system's command shell, after root_1's own shell refuses
-    # `reboot` as FreeBSD's refuses a user who is not root: command is `reboot` or `halt`,
-    # and the end's line (docs/design-stopgap.md, "The end path") names the kind that
-    # command asks of init, a reset or a power-off, after the one log line that names the
-    # end and the system principal, root. points must end at the command shell.
+    # The machine's end, whose console line (docs/design-stopgap.md, "The end path") names
+    # the kind of end asked for, a reset or a power-off, after the one log line that names
+    # the end and the principal, root (docs/design-system.md, "A session's request").
+    # `reboot` runs in root_1's own session, which holds the machine grant: a malformed
+    # line written to /machine/ctl is refused first, and then `reboot` ends the machine
+    # through the tree. `halt` runs in the system's command shell, whose machine entry is
+    # local. points must end at the command shell.
     MACHINE_ENDS = { 'reboot' => 'reset', 'halt' => 'off' }.freeze
     MACHINE_END_LOG = { 'reboot' => /rebooted by root/n, 'halt' => /powered off by root/n }.freeze
+    MACHINE_CTL_REFUSED = "echo trial > /machine/ctl || echo machine-ctl-refused\r"
 
     def machine_end_checkpoints(points, command:)
-      [*points,
-       session_shell('end-session-shell', "reboot\r"),
-       { name: 'end-session-refused', pattern: line('reboot: Operation not permitted'), seconds: 60,
-         type: CTRL_G }.freeze,
-       { name: 'end-menu', pattern: CTRL_G_MENU, seconds: 30, type: 's' }.freeze,
-       { name: 'end-system-shell', pattern: MENU_LEFT, seconds: 30, type: "#{command}\r" }.freeze,
+      [*points, *machine_end_route(command),
        { name: "end-#{command}", pattern: line("erx: end #{MACHINE_ENDS.fetch(command)}"),
          seconds: 120 }.freeze]
+    end
+
+    def machine_end_route(command)
+      case command
+      in 'reboot'
+        [session_shell('end-session-shell', MACHINE_CTL_REFUSED),
+         { name: 'end-ctl-refused', pattern: line('machine-ctl-refused'), seconds: 60, type: "reboot\r" }.freeze]
+      in 'halt'
+        [session_shell('end-session-shell', CTRL_G),
+         { name: 'end-menu', pattern: CTRL_G_MENU, seconds: 30, type: 's' }.freeze,
+         { name: 'end-system-shell', pattern: MENU_LEFT, seconds: 30, type: "halt\r" }.freeze]
+      end
     end
 
     # The production checkpoints to the system's command shell, then the cell. points must
