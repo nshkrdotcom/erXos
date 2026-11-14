@@ -1889,7 +1889,7 @@ snapshots, so Linux's writes never reach the image under test.
 workload's end state and the harness's sampled states): `fsck.f2fs
 --dry-run`, with standard input giving "n" to every prompt ([T 40]); the
 check passes only with exit status 0 and no line beginning `[ASSERT]`,
-`[FIX]` or `[Fail]` and no `Reconnect` line, since `fsck.f2fs` repairs
+`[FIX]` or `[Fail]`, no line beginning `[FSCK] fixing` ([T 75]) and no `Reconnect` line, since `fsck.f2fs` repairs
 some faults silently in check mode and exits 0 ([T 41]); then a mount
 with recovery and a listing (names, modes, links, sizes, SHA-256 of
 every file) that must equal erXos's own replayed tree; then a
