@@ -614,7 +614,7 @@ already show.
   `erl_vm.h:53`; the comment there says two, the code gives four), the
   rule ERTS already applies on a dirty CPU scheduler
   (`beam_common.c:160-171`) and here applied on both pools
-  ([Open decision 2](#open-decisions)). The worker reads its own
+  ([design-runtime.md](design-runtime.md), its ERTS changes). The worker reads its own
   reductions around the call and returns the difference with the
   answer, and the device service adds it to the cost its serving path
   returns with the reply. The PCIe domain's facet therefore accounts
@@ -961,6 +961,11 @@ This design lands only with these edits to the documents that own them:
   `sampled` says when.
 * **A `ctl` to change the period or force a reading.** No consumer needs
   either.
+* **The worker timing its own call** with `erlang:monotonic_time/0`
+  instead of the runtime charging dirty I/O calls by elapsed time. It
+  copies ERTS's rate of reductions a microsecond, a second source of
+  that fact, counts the wait for a free dirty scheduler as the call's,
+  and leaves every other dirty I/O call uncharged.
 
 ## Open decisions
 
@@ -972,22 +977,6 @@ This design lands only with these edits to the documents that own them:
    record, a closed tag set and a closed set of readings. Without it,
    the readings cannot exist, and this design waits; nothing else in the
    tree depends on it.
-2. **Dirty I/O calls charged their elapsed time.** OTP charges a call on
-   a dirty I/O scheduler one reduction however long it runs
-   (`beam_common.c:152-159`), so a service's work in such a call is
-   invisible to every facet's account, the firmware worker's here and,
-   by the same rule, the stopgap's littlefs worker and `prim_file`'s
-   calls. Charging both pools by elapsed time, as ERTS charges the dirty
-   CPU pool, deletes that branch and makes every such call show in the
-   admission the scheduler design already relies on. It differs from
-   stock OTP in the reductions `process_info/2` and `statistics/1`
-   report after a dirty I/O call, and it counts a call that sleeps in
-   the kernel as spent, which is the cost to a service whose dirty I/O
-   pool holds two schedulers. It constrains every runtime and service,
-   so it is recorded in `design.md` once taken. Recommendation: accept.
-   Without it, the worker measures its call with `erlang:monotonic_time/0`
-   and converts at a copy of ERTS's rate, a second source of that fact,
-   and every other dirty I/O call stays uncharged.
 
 ## References
 
