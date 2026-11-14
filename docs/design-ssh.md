@@ -520,7 +520,12 @@ forwarded port and no configuration file, and checks the guest's host
 key under one alias against a known-hosts file of the boot's own, in
 the boot's directory: it starts empty with each boot, as the guest's
 `/data` and so its host key do, so `ssh` adds the key on first use and
-refuses a changed one for the rest of the boot. At stage 1
+refuses a changed one for the rest of the boot. `ssh` holds the
+operator's terminal, so the session's bytes reach it unchanged, as with
+any `ssh` to a UNIX host: a session with a pseudo-terminal is a tty, and a
+program's output to a tty is its own. Text attributed to the guest, such
+as log records and names, keeps going through each sink's escaping
+function, and development builds run trusted code only. At stage 1
 `erx_ssh_dev`'s key callback reads exactly that release file and admits
 its key for `root` alone; from stage 2 the facet does. The facet issues
 cookies and derives each login's session identifier as at stage 4, but until the system domain has its Ed25519 verifier and the
