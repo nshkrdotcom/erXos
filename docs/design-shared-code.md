@@ -552,7 +552,8 @@ lies and in every input a domain may vary.
   count, other runtime limits (each still enough for the build), its
   hardware capability words cut to the architecture's baseline, and,
   since it runs later in the same boot, a later clock and other entropy
-  (`liberx/backend/fiasco/entropy.c` seeds from the counter).
+  (`liberx/backend/fiasco/entropy.c`'s one generator gives each read
+  new bytes).
 
 Identical images show that no word of the image points into private
 memory and no word depends on an input a domain may vary. They also show

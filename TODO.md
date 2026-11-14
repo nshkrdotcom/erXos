@@ -448,8 +448,10 @@ it; git history is the record of completed work.
   Decide it in the design: zero the `erx.dma_pool` once at boot and each range as it returns to the pool, or zero in
   preemptible steps, and keep only the measurement in `docs/todo-performance.md`.
 * [Low] stopgap, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
-* [Low] stopgap, `liberx/backend/fiasco/entropy.c`: the generator starts from the counter alone, not yet the manifest's seed,
-  though the root reads the manifest before it seeds the generator.
+* [Low] stopgap, `liberx/backend/fiasco/entropy.c`, Raspberry Pi 4: whether the board's firmware writes `/chosen/rng-seed` is
+  unverified; the entropy line of the first board boot settles it. If it writes none, the board's generator starts from the
+  counter alone, and whether to read the RNG200 instead ([design-platforms.md](docs/design-platforms.md#entropy-sources)) is a
+  question to bring back.
 * [Medium] stopgap, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the
   mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object, so `vm_give`'s address check and
@@ -6005,9 +6007,17 @@ to the corpus and follow rc
   counterpart of FreeBSD's `MaxStartups`, so a flood of unauthenticated
   connections holds the 64 slots until their 120 s grace ends, refusing
   others. It refuses; it admits no one.
+* [Medium] stopgap, `liberx/backend/fiasco/root_open.c`: the root's read-only copy of the device tree keeps `/chosen`'s
+  `rng-seed` and `kaslr-seed` for the boot's life, so code in the root task (the system domain's ERTS, a NIF) can read
+  through `erx_boot_tree` the bytes that seeded the generator; erXos's kernel zeroes them before any space sees the tree
+  ([design-device-tree.md](docs/design-device-tree.md)). The harness's boots from a dumped tree (`seeded_stdout_tree`
+  in `tools/lib/erx/production_image.rb`, `tools/lib/erx/net_device.rb`) may replay a seed stored on disk; unverified.
+  The root also erases its stack copy of the seeds only after `erx_fiasco_root_up` has started the service thread.
 * [Low] SSH on a weak seed ([design-ssh.md](docs/design-ssh.md#host-keys)):
-  on a boot whose `entropy_quality` is weak, as every stopgap boot's is
-  (`liberx/backend/fiasco/entropy.c` seeds from the counter alone), the
+  on a boot whose seed is weak, as a stopgap boot's is when its device
+  tree carries no seed (`liberx/backend/fiasco/entropy.c` then seeds from
+  the counter alone: deterministic mode, and the Raspberry Pi 4 unless its
+  firmware writes one), the
   host key is as guessable as the seed, and the login facet's cookies are
   only as unique across boots as the seed, so a key login that a
   compromised SSH domain recorded opens a session again on a later boot

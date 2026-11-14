@@ -27,7 +27,8 @@ seeded from `erx_entropy_read`, never from another source
 belongs to the machine: the boot banner reports `entropy_quality`, a
 release build stops the boot on a weak seed and a development build
 continues ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy));
-on the stopgap the seed comes from the counter alone
+on the stopgap the seed is the counter and `/chosen`'s seeds where the
+device tree carries them, and the counter alone where it does not
 ([design-stopgap.md](design-stopgap.md#the-call-table)).
 
 ERTS is built once per execution flavour, as the interpreter and as
@@ -337,10 +338,11 @@ OpenSSL's one seed path is `getrandom`, in musl, over the seam's
 * **Quality is the machine's.** OpenSSL credits each seed byte with eight
   bits, as from any operating system source. Whether the kernel's seed
   deserves that is reported by `entropy_quality`; a release build never
-  runs on a weak seed, and a development build on the stopgap does, with
-  the banner saying so. Keys made on such a boot are as weak as the
-  seed, which [design-ssh.md](design-ssh.md#host-keys) records for the
-  host key.
+  runs on a weak seed. A development build on the stopgap leaves
+  `entropy_quality` unreported, and its banner names the `/chosen` seeds
+  it mixed or says it seeds from the counter alone; keys made on a
+  boot without a seed are as weak as the counter, which
+  [design-ssh.md](design-ssh.md#host-keys) records for the host key.
 * **Reseeding** follows OpenSSL's own intervals, each a call through the
   same path; on the stopgap each is a request to the root's generator
   service. A generator already seeded need not read the kernel for every

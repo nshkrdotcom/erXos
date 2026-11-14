@@ -302,10 +302,11 @@ The machine has one SSH host key, Ed25519, and offers only it.
   the host key facet, so this arrangement never reaches a release.
 
 Either way the key persists across reboots and updates and changes only
-at a fresh installation (S7). A key made on a boot whose `entropy_quality`
-is weak, as every stopgap boot's is, is as guessable as that seed; the
-daemon logs `host key made on a weak seed` once at each start while it
-uses such a key, a residual recorded in `TODO.md`.
+at a fresh installation (S7). A key made on a boot whose seed is weak,
+as a stopgap boot's is when its device tree carries no seed, is as
+guessable as that seed; the daemon logs `host key made on a weak seed`
+once at each start while it uses such a key, a residual recorded in
+`TODO.md`.
 
 ### Logging in
 
@@ -341,8 +342,9 @@ machine's host key. Each requirement follows:
   the principal made at another server nor a login the SSH domain watched
   here earlier, in this boot or a past one, opens a session. Across boots
   the facet's cookies, 128 bits from the kernel's generator, do not repeat
-  while that generator is well seeded; on a weak seed, as on the stopgap,
-  they are as guessable as the seed, a residual recorded in `TODO.md`.
+  while that generator is well seeded; on a weak seed, as on a stopgap
+  boot whose device tree carries none, they are as guessable as the seed,
+  a residual recorded in `TODO.md`.
 * **Binding to this machine.** An exchange whose host key is another
   host's answers `no_match`, so a signature made for any other server,
   whoever chose its cookie, opens nothing here.

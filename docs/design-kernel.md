@@ -6932,8 +6932,10 @@ takes as a cold start ([design-time.md](design-time.md#steps)).
   it waits at most 100 ms, and counter jitter. Each source is mixed on
   its own and hashes within one chunk: `rng-seed` is 32 bytes under QEMU,
   `kaslr-seed` a 64-bit value, the board generator's read 32 bytes and
-  the jitter at most a chunk of samples; a firmware's longer `rng-seed`
-  is mixed one chunk at a time. Neither accelerator offers
+  the jitter at most a chunk of samples; a firmware's `rng-seed` longer
+  than a chunk gives its first chunk (`erx_dt_seeds`). The counter and
+  the tree's seeds go in through one core, `erx_rng_seed` in
+  `kernel/core/rng_seed.c`, which the stopgap's root also seeds through. Neither accelerator offers
   the architecture's random-number instruction
   ([measured](research-baselines.md#accelerator-capabilities)).
 * **Forward secrecy.** After each request the generator replaces its key

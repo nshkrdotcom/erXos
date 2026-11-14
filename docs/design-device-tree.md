@@ -410,6 +410,17 @@ other failure is `malformed`. On `ok` it returns the base, the length of
 `reg`, the width, height, stride and the format's index in its table;
 on `outside` it returns the base and length too, for the line.
 
+**The seeds.** `erx_dt_seeds(tree, &seeds)` copies `/chosen`'s
+`rng-seed` and `kaslr-seed`, each up to 1024 bytes, one BLAKE3 chunk, so
+it mixes as one part; a longer one gives its first 1024. A property that
+is missing, empty or all zeros is absent, as erXos's kernel leaves it once
+it has used it. The bytes are secret, and whoever asks for them erases
+them. The boot seed's one sequence, `erx_rng_seed` in
+`kernel/core/rng_seed.c`, keys a generator from the counter and mixes each
+present seed in on its own, in that order; the stopgap's root seeds through
+it in its step 6, and erXos's kernel will
+([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)).
+
 Every answer is a value of the facts structure, never a pointer into the
 tree, so nothing downstream holds the tree's bytes.
 
@@ -551,9 +562,17 @@ ran.
   fixture window over no RAM is present; the group-bit test removed, so a
   multicast address is accepted; the stride test removed, so a stride
   shorter than a row passes; each fails its test.
-* **The fuzz target**, `test/fuzz/dt_fuzz.c`, landing with the reader:
+* **The `/chosen` seeds.** Fixtures: QEMU `virt`'s 32 bytes of `rng-seed` and a
+  64-bit `kaslr-seed` give both; an `rng-seed` longer than 1024 bytes
+  gives its first 1024; seeds of zeros give neither; an `rng-seed` of
+  1024 zero bytes and then one non-zero byte gives none, since only the
+  bytes the reader gives count; a tree without them gives neither. Seeds:
+  the all-zero test turned round, and the zero fixture gives its seeds;
+  the zero test run over the whole property, and the zero-prefix
+  fixture gives 1024 zero bytes as a seed.
+* **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device` for fixed paths and `erx_dt_framebuffer`, under ASan and
+  `erx_dt_device` for fixed paths, `erx_dt_framebuffer` and `erx_dt_seeds`, under ASan and
   UBSan, with the platforms' trees, the fixtures and a truncated and a
   nested tree as its corpus, each handed over in a buffer of exactly its
   length. Seeds: acceptance that calls `fdt_check_header` before
@@ -650,22 +669,17 @@ claimed for either.
    is absent, bring the question back with what the pass showed; a static
    row from the mode `config.txt` asks for would be a guess at where the
    firmware put the framebuffer and how it laid it out.
-2. **`rng-seed` on the stopgap.** The root now holds `/chosen`, where QEMU
-   `virt` puts 32 bytes of seed. Recommendation: seed the root's
-   generator from it when present, which turns the entropy line's
-   "from the counter alone" into a named source on QEMU at the cost of one
-   more fact.
-3. **The tree object on erXos's kernel**, a new root slot and two machine
+2. **The tree object on erXos's kernel**, a new root slot and two machine
    page fields, against extending the root resource's entries.
    Recommendation: the object, for the reason under Alternatives.
-4. **The host link's `erx.hostlink=1`.** The word exists because the
+3. **The host link's `erx.hostlink=1`.** The word exists because the
    stopgap's root cannot see whether the machine has the host link's UART
    ([design-stopgap.md](design-stopgap.md#the-command-line)); with the tree
    in hand it can, as erXos's kernel does. Recommendation: give the host
    link's record exactly when the tree has an enabled node at the
    manifest's `hostlink` path, and delete the word and the harness's
    pairing of it with the second serial port.
-5. **No manifest copy of coherence and the DMA range.** The manifest's
+4. **No manifest copy of coherence and the DMA range.** The manifest's
    device record carries neither: no coherent flag bit and no
    `dma_cpu`, `dma_bus` and `dma_last`
    ([design-abi.md](design-abi.md#devices-and-partition-windows)), and
