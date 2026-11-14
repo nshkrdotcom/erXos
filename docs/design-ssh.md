@@ -184,8 +184,9 @@ build, `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in
 root's session starts OTP's daemon there with the development login key
 and root's host key, and the network domain's QEMU case
 (`tools/lib/erx/network_domain.rb`) logs in through a host forward with
-the host's `ssh`. No SSH domain is in any manifest, and `abi/services/`
-declares no login service for one.
+the host's `ssh`. `tools/erx boot` gives its guest no network device, so
+that case is the one boot `tools/erx ssh` can reach. No SSH domain is in
+any manifest, and `abi/services/` declares no login service for one.
 
 ## Overview
 
@@ -514,8 +515,11 @@ QEMU harnesses that log in pass the key to the image build, which a
 chokepoint check holds (`Checks::LOGIN_KEY_BUILDERS`), so the images the
 website offers carry none. The private half stays on the host.
 `tools/erx ssh` runs the host's `ssh` with that key, the guest's
-forwarded port and a known-hosts file of the clone's beside the pair,
-which pins the guest's host key under one alias. At stage 1
+forwarded port and no configuration file, and checks the guest's host
+key under one alias against a known-hosts file of the boot's own, in
+the boot's directory: it starts empty with each boot, as the guest's
+`/data` and so its host key do, so `ssh` adds the key on first use and
+refuses a changed one for the rest of the boot. At stage 1
 `erx_ssh_dev`'s key callback reads exactly that release file and admits
 its key for `root` alone; from stage 2 the facet does. The facet issues
 cookies and derives each login's session identifier as at stage 4, but until the system domain has its Ed25519 verifier and the
@@ -699,8 +703,8 @@ identifier.
    through OTP's `ssh_file`, made when missing and refused when it does
    not decode. Its only login is the development key for `root`
    ([Login keys](#login-keys)), offered by public key alone.
-   `tools/erx ssh`, which runs the host's `ssh` to the forwarded loopback
-   port 2222, reaches it. This is any principal running a daemon in its
+   The host's `ssh`, run by `tools/erx ssh`, reaches it through a host
+   loopback port forwarded to the guest's port 2222. This is any principal running a daemon in its
    own session with its own authority; it needs no new facet.
 2. **The SSH domain and `rc`** (1b-G, M14). The SSH domain, the login
    facet with its cookies and derived session identifiers, `erx_ssh_line`

@@ -94,10 +94,8 @@ module Erx
     # The host ssh's line when the daemon turns down every key it offered.
     SSH_REFUSED = 'Permission denied (publickey)'
     SSH_DEADLINE = 60
-    # The cell's ssh reads no configuration file and asks nothing; the guest's host key,
-    # new to each cell, is pinned on first use in the cell's own known-hosts file.
-    SSH_OPTIONS = ['-F', File::NULL, '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30', '-o', 'StrictHostKeyChecking=accept-new',
-                   '-o', "GlobalKnownHostsFile=#{File::NULL}"].freeze
+    # The cell's ssh asks nothing, on top of what every ssh of DevKey's runs with.
+    SSH_OPTIONS = ['-o', 'BatchMode=yes', '-o', 'ConnectTimeout=30'].freeze
 
     PROMPT = SessionDomain::PROMPT
 
@@ -142,10 +140,10 @@ module Erx
     end
 
     # The host's ssh through the host forward at port, as `tools/erx ssh` runs it but
-    # reading no configuration, asking nothing and pinning the guest's host key in a
-    # known-hosts file of its own: root with pair's key runs SSH_EXPRESSION and gets
-    # SSH_ANSWER, while the user daemon with that key and root with another key are
-    # refused. What the guest printed reaches an error only escaped.
+    # asking nothing, with the boot's known-hosts file in a directory of the cell's own,
+    # since the cell's guest is a boot of its own: root with pair's key runs
+    # SSH_EXPRESSION and gets SSH_ANSWER, while the user daemon with that key and root
+    # with another key are refused. What the guest printed reaches an error only escaped.
     def check_ssh(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
         ssh = ->(key, user: 'root', command: []) do
@@ -158,14 +156,16 @@ module Erx
         raise Error, "root ran #{SSH_EXPRESSION} over ssh and got #{answer.dump}, not #{SSH_ANSWER}" unless answer.strip == SSH_ANSWER
 
         other = DevKey.ensure(directory: File.join(work, 'other-key'), runner: runner)
-        refused(ssh.call(pair, user: 'daemon'), name: 'ssh-other-user', runner: runner)
-        refused(ssh.call(other), name: 'ssh-other-key', runner: runner)
+        refused(ssh.call(pair, user: 'daemon', command: [SSH_EXPRESSION]), name: 'ssh-other-user', work: work, runner: runner)
+        refused(ssh.call(other, command: [SSH_EXPRESSION]), name: 'ssh-other-key', work: work, runner: runner)
       end
     end
 
-    # Runs argv, which the guest's daemon must refuse with SSH_REFUSED.
-    def refused(argv, name:, runner:)
-      runner.run(argv, name: name, deadline: SSH_DEADLINE)
+    # Runs argv, which the guest's daemon must refuse with SSH_REFUSED. A login it
+    # admits runs argv's command and ends, and the command's output goes to a file of
+    # work's, so the log holds only what ssh itself printed.
+    def refused(argv, name:, work:, runner:)
+      runner.run(argv, name: name, deadline: SSH_DEADLINE, stdout: File.join(work, name))
       raise Error, "#{name}: the guest admitted a login it must refuse"
     rescue CommandError => error
       log = error.result.fetch('log')

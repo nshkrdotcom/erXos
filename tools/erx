@@ -921,10 +921,12 @@ module Erx
     end
 
     # The host's ssh as root into a development guest whose daemon root's session
-    # started with erx_ssh_dev:start/1, through the host loopback port --port (by
-    # default the one `tools/erx boot` forwards), with the clone's development login
-    # key (DevKey) and its known-hosts file; any further arguments are the command ssh
-    # runs there. ssh replaces this process, so the terminal is the guest's.
+    # started with erx_ssh_dev:start/1, through a host loopback port forwarded to it,
+    # --port (by default DevKey::PORT), with the clone's development login key (DevKey)
+    # and the interactive boot's known-hosts file, which each boot's build starts afresh
+    # in its directory; any further arguments are the command ssh runs there. ssh
+    # replaces this process, so the terminal is the guest's. `tools/erx boot` forwards
+    # no port to the guest (TODO.md, "SSH from tools/erx boot").
     def self.ssh(input_arguments)
       arguments = input_arguments.dup
       port = DevKey::PORT
@@ -934,7 +936,9 @@ module Erx
       directory = DevKey.directory(root: ROOT, runner: runner)
       raise Error, "no development login key at #{directory}; run tools/erx setup" unless File.exist?(directory)
 
-      exec(*DevKey.ssh_argv(pair: DevKey.read(directory: directory, runner: runner), port: port, command: arguments))
+      known_hosts = File.join(ROOT, InteractiveBoot::DIRECTORY, DevKey::KNOWN_HOSTS)
+      exec(*DevKey.ssh_argv(pair: DevKey.read(directory: directory, runner: runner), port: port, known_hosts: known_hosts,
+                            command: arguments))
     end
 
     # One boot of the built kernel image, its serial output in a log: under HVF
