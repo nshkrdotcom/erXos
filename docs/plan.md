@@ -2308,9 +2308,14 @@ keyboard, since the Pi 4's USB host sits behind the PCIe bridge, whose
 driver is [Track U](#track-u-usb-proposed)'s, so input comes over the serial
 console or the web front end over the host link. Drivers are Erlang,
 programmed I/O first where the device allows it. The kernel's platform
-items of M12, the hardware watchdog, the crash region, trial boot, the
-device secret and the random generator, are deferred as Phase 1
+items of M12, the hardware watchdog, the crash region, trial boot and the
+device secret, are deferred as Phase 1
 residuals ([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)).
+The random generator is not: the root reads the Pi 4's RNG200 when the
+firmware writes no seed into `/chosen`
+([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)), once the
+RNG200 facts record exists; the board's hand test checks that the
+banner names it as the source.
 
 **Parts.** Each ends in a demo reproduced on the board by hand; stage (a)'s
 also runs on QEMU's `raspi4b` model. Part (a) comes first; (b), (c), (d)
@@ -2447,9 +2452,9 @@ by side; (f) needs (b) and (c).
      same core, with its wait-state framing, along the vault's TPM
      design. Packages 2 and 3 each need only package 1, and go side
      by side.
-  4. **GPIO**, waiting on Open decision 1 of
-     [design-header-io.md](design-header-io.md#open-decisions), where
-     the pin controller lives; nothing else in (e) waits on it:
+  4. **GPIO**, with the trusted domain of its own that holds the pin
+     controller ([design-header-io.md](design-header-io.md#decisions));
+     nothing else in (e) needs it:
      the `gpio` unit's kind row, SVD and `PINS` field,
      `erx_gpio_core`, the driver and `/dev/gpio` with its `gpio`
      interface and `pins` parameter, and the LED and button.
@@ -2500,7 +2505,7 @@ by side; (f) needs (b) and (c).
   NIF's region call, `erx_device:fill/3` (`TODO.md`,
   `docs/design-display.md`).
 * (e): (a); 1b-E's configured domains, for the devices domain; for
-  package 4, the answer to Open decision 1 of design-header-io.md; for
+  package 4, the pin controller's trusted domain; for
   the TPM, the vault's TPM design and a module on the board.
 * (f): (b)'s storage domain on the board; (c)'s network domain on
   the board; for W5, the firmware's `sae_ext`, or another licensed
@@ -2913,8 +2918,8 @@ without pairing.
   development store keeps bonds.
 * **(e) Release.** The store's release backend, the vault's state slot
   ([design-system.md](design-system.md#state-slots)), which waits for
-  [M11](#m11-security-closure)'s vault, and the decision on whether
-  release builds may offer the phone console
+  [M11](#m11-security-closure)'s vault, and the phone console's
+  manifest opt-in, off in every shipped manifest
   ([design-bluetooth.md](design-bluetooth.md#decisions), 2),
   and the Pi 4 on erXos's kernel at
   [M12](#m12-storage-networking-boards), where the firmware notification

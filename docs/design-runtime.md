@@ -2974,7 +2974,8 @@ around them.
   seed is belongs to the machine, not to a call: `entropy_quality` in the
   machine information and the boot banner report it, a release build
   refuses a weak seed at boot, and the stopgap's banner names the seeds it
-  mixed, or says its seed comes from the counter alone
+  mixed (`/chosen`'s seeds or, on the Raspberry Pi 4, the RNG200), or says
+  its seed comes from the counter alone
   ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)). Any
   process in any domain may call it, as any thread may call
   `erx_entropy_read`. Its users are the network stack's generator keys

@@ -145,7 +145,7 @@ belong to the driver table of
 | IOMMU | SMMUv3, for PCIe only | none described | none assigned to Ethernet, USB or the SD controllers |
 | PCIe bridge | ECAM (`pci-host-ecam-generic`) | `brcm,bcm2711-pcie`, a closed bus with the VL805 at its one position ([design-pcie.md](design-pcie.md#the-bridge-seam), [design-usb.md](design-usb.md#the-bcm2711-bridge)) | `brcm,bcm2712-pcie` |
 | PCIe configuration space held by | the PCIe domain, alone | the PCIe domain, alone | the PCIe domain, alone |
-| Random generator | none; `/chosen/rng-seed` | RNG200 | RNG200 |
+| Random generator | none; `/chosen/rng-seed` | RNG200, read when `/chosen` holds no seed | RNG200, read when `/chosen` holds no seed |
 | Watchdog | none; the kernel's timer alone | power-management watchdog | power-management watchdog |
 | Crash record | the early console, whose log the harness keeps | the early console, and the crash region in RAM | the early console, and the crash region in RAM |
 | Unconfined DMA devices, each in a domain of its own in a release build | the virtio-mmio devices | the SD controller, Ethernet, the VL805 | the SD controllers, RP1, a function on the external connector |
@@ -807,7 +807,7 @@ reads the marks instead of keeping a list of device classes
 | PCIe domain | the ECAM bridge's configuration window | the BCM2711 bridge's unit: its register window, with the configuration access in it, and its two lines, left masked ([design-pcie.md](design-pcie.md#the-bridge-seam)) | the root complex's configuration window |
 | USB domain | `qemu-xhci`, a PCIe function on the root bus, confined | the VL805's unit: its functions at bus 1, device 0 and the INTx line that position routes, unconfined ([design-usb.md](design-usb.md#who-holds-a-controller)) | none of its own: RP1's USB hosts are in RP1's unit, whose domain holds them |
 | System domain | the console's PL011 and the host link's PL011 | the mini UART's unit, the console's, with the auxiliary SPI controllers, which it leaves undriven; the PL011s' unit, with the host link | the debug PL011, the console |
-| Devices domain | the remaining slow devices | I2C, and the SPI controllers outside the mini UART's unit; never the GPIO controller, which sets the console's and the host link's pins and goes to no domain until run-time GPIO has a home ([design-header-io.md](design-header-io.md#open-decisions)) | the slow devices outside RP1 other than the console |
+| Devices domain | the remaining slow devices | I2C, and the SPI controllers outside the mini UART's unit; never the GPIO controller, which sets the console's and the host link's pins and goes to no domain until run-time GPIO is built, and then to a trusted domain of its own ([design-header-io.md](design-header-io.md#decisions)) | the slow devices outside RP1 other than the console |
 | Domains of their own in a release build | each unit of virtio-mmio devices the manifest names, the transports of one page | the SD controller; Ethernet; each DMA engine the manifest names; the VL805's unit, which is the USB domain | each SD controller; RP1, one unit with its Ethernet, USB hosts and slow devices; a function on the external connector |
 | Left out of every resource | none | the VideoCore's message interface, beside the mailbox (PL2) | none |
 
@@ -829,10 +829,18 @@ allowed only a confined one.
 ### Entropy sources
 
 QEMU passes 32 bytes in `/chosen/rng-seed`. Both boards have an RNG200
-random generator, which seeds the kernel's generator at boot, for which
-the kernel waits at most 100 ms
+random generator, which the platform layer reads, 32 bytes, when the
+firmware wrote neither `rng-seed` nor `kaslr-seed` into `/chosen`, and
+for which the kernel waits at most 100 ms; the bytes seed the kernel's
+generator at boot
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy),
 [research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
+On the Raspberry Pi 4 under the stopgap, the root reads it on the same
+condition and seeds its generator from it
+([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)). The
+generator's registers and its read sequence are not stated here: they
+come from a clean-room facts record of the RNG200, written before the
+driver.
 Neither accelerator offers `RNDR`
 ([measured](research-baselines.md#accelerator-capabilities)).
 
@@ -1386,8 +1394,9 @@ document gives it. Fiasco's generic platform takes PSCI from BL31 and its
 devices from the device tree, and its `bootstrap` is built for RAM that
 starts at 0. The kernel's platform items of this document are not there:
 no hardware watchdog backs a hang, no crash region keeps a record across
-a reset, no trial is requested, no device secret is read and the random
-generator is not read. The early console's role passes to Fiasco's own
+a reset, no trial is requested and no device secret is read. The root
+reads the random generator when `/chosen` holds no seed ([Entropy
+sources](#entropy-sources)). The early console's role passes to Fiasco's own
 console on the same UART, and a board's end goes through BL31's PSCI as
 it does on erXos's kernel. [design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)
 describes that shape, and M12 of [plan.md](plan.md#m12-storage-networking-boards)

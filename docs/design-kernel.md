@@ -6926,10 +6926,11 @@ takes as a cold start ([design-time.md](design-time.md#steps)).
   its authors', imported as erXos's code into `kernel/crypto/`
   ([design.md](design.md#dependencies)); the generator around them is
   the C17 core `kernel/core/rng.c`.
-* **Seed.** At boot, `/chosen/rng-seed`, `/chosen/kaslr-seed`, 32 bytes
-  from the board's random generator where the platform layer drives one
+* **Seed.** At boot, `/chosen/rng-seed` and `/chosen/kaslr-seed` where
+  the firmware wrote them; when it wrote neither, 32 bytes from the
+  board's random generator where the platform layer drives one
   ([design-platforms.md](design-platforms.md#entropy-sources)), for which
-  it waits at most 100 ms, and counter jitter. Each source is mixed on
+  it waits at most 100 ms; and counter jitter. Each source is mixed on
   its own and hashes within one chunk: `rng-seed` is 32 bytes under QEMU,
   `kaslr-seed` a 64-bit value, the board generator's read 32 bytes and
   the jitter at most a chunk of samples; a firmware's `rng-seed` longer

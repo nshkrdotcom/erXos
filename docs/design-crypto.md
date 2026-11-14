@@ -28,7 +28,8 @@ belongs to the machine: the boot banner reports `entropy_quality`, a
 release build stops the boot on a weak seed and a development build
 continues ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy));
 on the stopgap the seed is the counter and `/chosen`'s seeds where the
-device tree carries them, and the counter alone where it does not
+device tree carries them; where it carries none, the Raspberry Pi 4 adds
+its RNG200 and other boards use the counter alone
 ([design-stopgap.md](design-stopgap.md#the-call-table)).
 
 ERTS is built once per execution flavour, as the interpreter and as

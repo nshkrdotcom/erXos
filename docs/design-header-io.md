@@ -40,8 +40,8 @@ Decisions every reader needs:
   therefore gives the pin controller to no domain, to the system domain,
   or to a domain that holds only such units, which property 8 of the
   manifest check proves from the header map. The Pi 4's manifests give
-  it to no domain, and serve no `/dev/gpio`, until Open decision 1
-  settles its home.
+  it to no domain, and serve no `/dev/gpio`, until run-time GPIO is built;
+  its home then is a trusted domain of its own ([Decisions](#decisions)).
 * **A pin, a chip select or a PWM channel is held by one grant at a
   time.** The first grant to open one of its files holds it; another
   grant's open answers `ebusy`; the hold ends when the holder's last file
@@ -318,7 +318,7 @@ The unit rule makes the units; the manifest places them.
 
 | Unit | Devices | Line | Holder |
 | --- | --- | --- | --- |
-| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | no domain on the Pi 4's manifests; its home once run-time GPIO is built is Open decision 1 |
+| `gpio` | the GPIO controller, the pin controller | 145 (bank 0); 146 to 148 go to no unit, as GENET's second line does | no domain on the Pi 4's manifests; its home once run-time GPIO is built is a trusted domain of its own ([Decisions](#decisions)) |
 | `i2c` | BSC1, driven; BSC0 and BSC3 to BSC6, which share BSC1's line and BSC0's page, and BSC2 and BSC7 where the board's tree lists them, of no kind | 149, shared | the devices domain |
 | `spi` | SPI0, driven; SPI3 to SPI6 of no kind, which share its page and line | 150, shared | the devices domain; the vault's domain on a manifest with a TPM |
 | `pwm` | PWM0 and PWM1, on one page | none | no domain until PWM is built; then the devices domain, with PWM0 driven |
@@ -382,8 +382,9 @@ classes. The check fails the build naming property 8, the unit and the
 holder.
 
 The Pi 4's manifests give `gpio` to no domain. I2C, SPI and the TPM need
-no run-time pin holder, so nothing but run-time GPIO waits on where the
-pin controller lives (Open decision 1).
+no run-time pin holder, so nothing but run-time GPIO needs the pin
+controller's home, which is a trusted domain of its own
+([Decisions](#decisions)).
 
 ### The buses
 
@@ -766,7 +767,8 @@ and no domain holds the `pwm` or `clocks` units. Building it means:
    design takes it to clock the UARTs and the SD controller as well
    (likely, unverified: the firmware lists UART, CORE and EMMC2 clocks,
    but no source read here places their registers in this page). Its
-   unit goes where Open decision 1 puts the pin controller, never to the
+   unit goes where the pin controller goes, to the trusted domain of its own
+   ([Decisions](#decisions)), never to the
    PWM's holder, and when the record states that the console's clock
    comes from it, property 8's clause covers it as it covers the pin
    controller. The write obeys DS 5.4, Table 99, which forbids changing
@@ -1094,8 +1096,8 @@ controller a DMA device of
   be a security residual against a stated commitment, not a placement.
 * **A console domain holding the mini UART and the pin controller.** It
   moves the login and the secure line out of the system domain and
-  changes property 8's UART clause, more accepted rules than either
-  option of Open decision 1, for no gain over them.
+  changes property 8's UART clause, more accepted rules than the
+  placement of [Decisions](#decisions), for no gain over it.
 * **The PWM clock set by the kernel through the firmware's mailbox**
   (the firmware's clock id for PWM). It widens the mailbox chokepoint
   beyond its two calls, as the core clock's alternative below would,
@@ -1138,40 +1140,33 @@ controller a DMA device of
   reach, and a POSIX-layer translation of those ioctls onto the trees is
   possible later without changing them.
 
-## Open decisions
+## Decisions
 
-1. **Where the units that control the console's wires live**: the pin
-   controller, and the clock manager if PWM needs its clock written.
-   Run-time GPIO, its `/dev/gpio`, the LED and the button wait on this
-   answer, and nothing else does: the header map, I2C, the RTC, SPI and
-   the TPM go ahead with the pin controller held by no domain. The
-   options, both of which property 8's clause allows:
-   * **The system domain.** No new domain, and no new authority, since
-     the system domain already holds the root authority. It adds code
-     that uses that authority: a `/dev/gpio` server parsing other
-     domains' `ctl` lines, an interrupt binding and a register path,
-     whose defects act with the root authority and whose faults reset
-     the machine. It adds the pin controller to the system domain's
-     devices, which today are the console's and the host link's UARTs
-     ([design-system.md](design-system.md#devices)), and to the devices
-     in `docs/design.md`'s placement decision.
-   * **One trusted domain of its own**, holding the pin controller, and
-     the clock manager if PWM needs it, and nothing else: the PCIe
-     domain's pattern for system-wide configuration authority
-     ([design-system.md](design-system.md#the-manifest), property 3).
-     The trusted code is the same as in the system domain; a defect in
-     it reaches the GPIO page, not the root authority. It costs one ERTS
-     instance's memory and start, the price
-     [design-platforms.md](design-platforms.md#what-the-manifest-says)
-     already pays for each unconfined DMA unit of a Pi 4 release
-     manifest, and it adds a domain to the trusted base and to
-     `docs/design.md`'s placement decision.
+1. **The units that control the console's wires, the pin controller and
+   the clock manager if PWM needs its clock written, go to one trusted
+   domain of their own** once run-time GPIO is built, holding those
+   units and nothing else: the PCIe domain's pattern for system-wide
+   configuration authority
+   ([design-system.md](design-system.md#the-manifest), property 3),
+   which property 8's clause allows. Run-time GPIO, its `/dev/gpio`,
+   the LED and the button wait on that domain's package, and nothing
+   else does: the header map, I2C, the RTC, SPI and the TPM go ahead
+   with the pin controller held by no domain. Serving pins to apps is
+   neither the system domain's policy nor its console, and a defect in
+   the trusted code reaches the GPIO page, not the root authority. The
+   domain costs one ERTS instance's memory and start, the price
+   [design-platforms.md](design-platforms.md#what-the-manifest-says)
+   already pays for each unconfined DMA unit of a Pi 4 release
+   manifest, and it adds a domain to the trusted base and to
+   `docs/design.md`'s placement decision.
 
-   Recommendation, from both advisors and this design: a domain of its
-   own, since serving pins to apps is neither the system domain's
-   policy nor its console, and the project already has the pattern for
-   this kind of authority. The system domain is a sound fallback if one
-   ERTS instance is judged too dear.
+   The alternative was the system domain: no new domain and no new
+   authority, since it already holds the root authority, but it adds
+   a `/dev/gpio` server parsing other domains' `ctl` lines, an
+   interrupt binding and a register path to code whose defects act
+   with the root authority and whose faults reset the machine, and it
+   adds the pin controller to the system domain's devices
+   ([design-system.md](design-system.md#devices)).
 
 ## References
 

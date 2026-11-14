@@ -6321,8 +6321,8 @@ to the corpus and follow rc
   web domain included (M5's kernel part); and nothing stopping a domain or
   program that bypasses `liberx` (M5's kernel part, M7); and, on the
   Raspberry Pi 4 (1b-I), the boards' platform items: no hardware watchdog
-  backs a hang of Fiasco, no crash region, no trial request, no device
-  secret and no random generator (M12). Development
+  backs a hang of Fiasco, no crash region, no trial request and no device
+  secret (M12). Development
   builds run trusted code only until M11.
 
 * [Medium] code service, atoms from loads (`erlang/apps/erx_code/src/erx_code.erl`):
@@ -6674,6 +6674,14 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] platform (Raspberry Pi 4), RNG200: read the random generator when the firmware writes neither
+  `rng-seed` nor `kaslr-seed` into `/chosen`, in the root on the stopgap
+  ([design-stopgap.md](docs/design-stopgap.md#the-raspberry-pi-4)) and in the kernel's platform layer
+  on erXos's kernel ([design-platforms.md](docs/design-platforms.md#entropy-sources)). Two pieces, in order:
+  a clean-room facts record of the RNG200's registers and read sequence (a separate agent reads the
+  sources; the design and code agents never do), then the driver, with its host test, a
+  read path bounded at 100 ms, and the banner line naming the source. The register facts are not in the tree
+  until the record exists; the design states none.
 * [Low] USB, DWC2 on QEMU `raspi4b` ([design-usb.md](docs/design-usb.md#dwc2)): `erx_dwc2`, a
   programmed-I/O host driver for the model's DWC2 beside `erx_xhci` under the same USB core, for low- and
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real

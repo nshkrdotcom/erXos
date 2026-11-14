@@ -426,7 +426,8 @@ no device. Its release ships `kernel`, `stdlib`, `erx`, `erx_files`,
   default), the appearance, the connection limit (1 by default, at most
   `bt_connections_max`), the patch file and the manufacturer it applies
   to where the board needs one, and the service the console serves, if
-  any;
+  any (the opt-in of [Decisions](#decisions), 2: absent from every
+  manifest erXos ships);
 * at stage 4, the store's grant: in a release build the vault's state
   facet `{state, "bt"}` ([design-system.md](design-system.md#state-slots)),
   and in a development build a `data` grant rooted at its own directory;
@@ -995,6 +996,10 @@ cross the air in clear and a login prompt must not be reachable by
 anyone nearby, the manifest check refuses a `console` service whose `rx`
 or `tx` is below `authenticated`, which in turn needs stage 4. The
 UART service and the console share UUIDs, so a machine serves one of them.
+A release build offers the console only when its manifest opts in, with
+the Bluetooth row's console argument, and no manifest erXos ships does: a
+build check over the shipped release manifests fails on one that names a
+console service ([Decisions](#decisions), 2).
 
 ## Stage 4: pairing and bonding
 
@@ -1652,14 +1657,16 @@ list ([todo-performance.md](todo-performance.md)):
    gives; and the development file in release builds, as FreeBSD's
    `hcsecd` keeps its link keys in `/var/db/hcsecd.keys` (`hcsecd.h:39`),
    which a copied medium yields whole.
-2. **Open: whether release builds may offer the phone console.** It is a
+2. **Decided: release builds offer the phone console only by a manifest
+   opt-in, and every manifest erXos ships leaves it off.** It is a
    login line reachable over the air by anyone who completed an
-   authenticated pairing in a window. **Recommendation:** allowed only by
-   an explicit manifest opt-in, the Bluetooth row's console argument, and
-   off in every manifest erXos ships; its characteristics `authenticated`,
-   which the manifest check requires; the normal login limits of the
-   login facet, as at every other line; and never the system shell,
-   which only the console's secure lines carry.
+   authenticated pairing in a window. A release build serves it only
+   when the Bluetooth row's console argument names the service, and
+   the manifests erXos ships do not; its characteristics are
+   `authenticated`, which the manifest check requires; the normal login
+   limits of the login facet apply, as at every other line; and it
+   never offers the system shell, which only the console's secure lines
+   carry.
 3. **Decided: fresh passkeys, shown through a management channel the
    machine already trusts.** A `display` window shows each pairing's
    fresh passkey on the `pair` file, to an administrator's session or an
