@@ -6321,7 +6321,8 @@ to the corpus and follow rc
   web domain included (M5's kernel part); and nothing stopping a domain or
   program that bypasses `liberx` (M5's kernel part, M7); and, on the
   Raspberry Pi 4 (1b-I), the boards' platform items: no hardware watchdog
-  backs a hang of Fiasco, no crash region, no trial request and no device
+  backs a hang of Fiasco, even on a board that runs unattended (its `config.txt` leaves
+  `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
 
@@ -6674,6 +6675,12 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] platform (Raspberry Pi 4), hardware watchdog on the stopgap: a board that runs unattended has no
+  hardware watchdog behind a hang of Fiasco or of the root's watchdog thread, because the watchdog the
+  firmware starts from `kernel_watchdog_timeout` needs a reload that only erXos's kernel makes
+  ([design-platforms.md](docs/design-platforms.md#the-watchdog)); a reload from the root would rebuild a
+  kernel mechanism in user mode. Residual until M12: the unattended board's `config.txt` sets the line
+  once erXos's kernel runs there.
 * [Medium] platform (Raspberry Pi 4), RNG200: read the random generator when the firmware writes neither
   `rng-seed` nor `kaslr-seed` into `/chosen`, in the root on the stopgap
   ([design-stopgap.md](docs/design-stopgap.md#the-raspberry-pi-4)) and in the kernel's platform layer

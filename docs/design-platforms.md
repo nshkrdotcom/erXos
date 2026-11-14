@@ -62,7 +62,7 @@ Decisions every reader of this document needs:
   on the boards. A fault of the system domain and a missed deadline of
   the kernel's watchdog end the machine the same way, after a crash
   record, as `erx.panic` says: by `SYSTEM_RESET` in release builds, and
-  by a halt in development builds, which a board's hardware watchdog
+  by a halt in development builds, which a running hardware watchdog
   turns into a reset ([The watchdog](#the-watchdog)).
 * **The boards' DMA devices are unconfined.** No IOMMU covers them, so
   each of their drivers holds a device whose DMA reaches all memory. A
@@ -122,8 +122,8 @@ documentation and QEMU's TPM documentation, directly
    and what holds where nothing does.
 9. End the machine as `erx.panic` says when the system runtime stops
    petting the kernel's watchdog or the system domain faults, after a
-   crash record; on a board with a hardware watchdog, reset also when the
-   kernel itself hangs or has halted; keep the crash record across the
+   crash record; on a board whose hardware watchdog is running, reset also
+   when the kernel itself hangs or has halted; keep the crash record across the
    reset where the board can, and say where it cannot.
 
 Non-goals: platforms of other architectures, which their own bindings
@@ -164,7 +164,7 @@ belong to the driver table of
 | **PL1.** Platforms differ only in data and in the early console's kind and address | the kernel discovers devices from the device tree and drives only the devices of `hw/kernel_devices.txt`, each by its compatible string; each platform's manifest is data the build packs; each platform's kernel build differs only in the early console's kind and address, and the boot stops unless the device tree's `/chosen/stdout-path` names that UART | a board check in generic code; a driver chosen by board name | a source check that generic code names no platform; the same conformance suite on every platform |
 | **PL2.** No driver reaches the firmware, and only the system domain holds the console's UART | the kernel keeps the register pages of the devices it drives, the mailbox among them, and no other node whose registers touch a kept page enters the root resource; devices whose registers share a page or whose interrupts arrive on one line form one unit, which goes whole to the one domain the manifest places it on, so no page and no line is held by two domains ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)); every manifest places the console's UART unit in the system domain, and the build's manifest check fails on one that does not | a device table without the mailbox; a resource carved across a kept page; a unit split between two domains; a manifest that places the console's unit in another domain | the boot log names every node left out; a test that the left-out nodes appear in no resource; the boot test in which a manifest that splits a unit is refused for that unit; the build's refusal of a seeded manifest whose two units share only a line; the manifest test that seeds the console's unit into the devices domain and expects the build to fail |
 | **PL3.** Every platform ends the machine and starts CPUs through PSCI | QEMU provides PSCI; the Pi 5's firmware carries BL31; the Pi 4's boot partition adds it; the kernel stops a boot that finds no PSCI node | a platform whose firmware lacks PSCI | the boot's PSCI check; the end tests of each platform |
-| **PL4.** On a board with a hardware watchdog, a kernel that stops running resets the machine | the platform layer reloads the hardware watchdog only from the kernel's timer, for as long as the kernel runs, and never stops it, so a kernel that stops taking interrupts, or has halted after a crash record, stops reloading it | a reload from anywhere but the timer; a path that stops the watchdog; a timeout shorter than the timer's period | on each board, a kernel hung with interrupts masked resets and boots again; the chokepoint check that the watchdog's registers are written only in its driver, with a seeded second writer |
+| **PL4.** On a board whose hardware watchdog is running, a kernel that stops running resets the machine | the platform layer reloads the hardware watchdog only from the kernel's timer, from the moment the firmware or a machine lease has started it and for as long as the kernel runs, and never stops it, so a kernel that stops taking interrupts, or has halted after a crash record, stops reloading it | a reload from anywhere but the timer; a path that stops the watchdog; a timeout shorter than the timer's period | on each board with the watchdog started by `config.txt`, a kernel hung with interrupts masked resets and boots again; the chokepoint check that the watchdog's registers are written only in its driver, with a seeded second writer |
 
 ## Data model
 
@@ -956,18 +956,25 @@ deterministic mode (`erx.det=1`) the watchdog is off.
 **The hardware watchdog.** Both boards have the same power-management
 watchdog (`brcm,bcm2835-pm-wdt`), whose range is about 16 s
 ([research](research-boards-storage.md#checks-against-local-copies)). The
-platform layer arms it with a 4 s timeout before the kernel starts the
-system domain, whether or not the firmware started it, and reloads it from
-the kernel's timer, at least once a second, for as long as the kernel
-runs; it never stops it (PL4). So a kernel that stops taking interrupts
-stops reloading it and the hardware resets the board without a crash
-record; a system runtime that stops petting reaches the kernel's deadline
-first, which writes the crash record and ends the machine as `erx.panic`
-says; and a development build's halt, in which the kernel reloads nothing,
-becomes a reset within the 4 s timeout, after the record is on the early
-console. The hardware never fires while the kernel runs, since the reload
-period is far inside the timeout, and it is never reloaded from the root
-task's pet. The same reload bounds a system update's trial: the kernel
+watchdog is started in one of two ways. The firmware starts it from
+`config.txt`'s `kernel_watchdog_timeout`, which is set, with a 4 s
+timeout, only in the `config.txt` of a board that runs unattended; a
+board that is attended, for development, leaves it unset and has no
+hardware watchdog running. Or the kernel starts it under a machine
+lease, with a 4 s timeout, as a system update's trial does. Once it
+runs, the platform layer reloads it from the kernel's timer, at least
+once a second, for as long as the kernel runs; it never stops it
+(PL4). So on a board whose watchdog runs, a kernel that stops taking
+interrupts stops reloading it and the hardware resets the board
+without a crash record; a system runtime that stops petting reaches the
+kernel's deadline first, which writes the crash record and ends the
+machine as `erx.panic` says; and a development build's halt, in which
+the kernel reloads nothing, becomes a reset within the 4 s timeout,
+after the record is on the early console. On a board whose watchdog does
+not run, a hung or halted kernel holds the board until its power is
+cycled, as on QEMU `virt`. The hardware never fires while the kernel
+runs, since the reload period is far inside the timeout, and it is never
+reloaded from the root task's pet. The same reload bounds a system update's trial: the kernel
 takes over the watchdog from the firmware at its first decision on a trial
 boot, and the boot reaches the kernel's timer far sooner than 4 s (an
 estimate that the boot probe checks on each board). On the Pi 4, PSCI
@@ -1134,9 +1141,10 @@ request its one-shot `tryboot` flag
   flag under `/chosen/bootloader` ([Data model](#data-model)).
 * **Supervision before the kernel.** The board's EEPROM configuration sets
   `BOOT_WATCHDOG_TIMEOUT` and each slot's `config.txt` sets
-  `kernel_watchdog_timeout`, so the firmware runs the watchdog from
-  power-on and hands it to the kernel, which keeps it running for the
-  machine's life ([The watchdog](#the-watchdog),
+  `kernel_watchdog_timeout` on a board that runs unattended, so the
+  firmware runs the watchdog from power-on and hands it to the kernel, which keeps it running for the
+  machine's life; an attended board's `config.txt` leaves
+  `kernel_watchdog_timeout` unset ([The watchdog](#the-watchdog),
   [research](research-boards-storage.md#booting-a-chosen-partition-on-the-raspberry-pi)).
   Each slot's `config.txt` leaves `kernel_watchdog_partition` unset, so a
   watchdog reset boots the slot `autoboot.txt` names, as every other reset
@@ -1717,7 +1725,7 @@ Ethernet step the switch or router the cable goes to.
   [design-system.md](design-system.md#the-manifest)).
 * **Boot arguments** a platform needs: `erx.trial_deadline`; the kernel's
   `erx.watchdog=P,D,B` and `erx.panic` decide when a hung system runtime
-  ends the machine and how, while the boards' hardware watchdog backs the
+  ends the machine and how, while the boards' hardware watchdog, where it runs, backs the
   kernel itself
   ([design-kernel.md](design-kernel.md#configuration),
   [design-kernel.md](design-kernel.md#the-watchdog)).
@@ -1835,13 +1843,14 @@ in [Trust in the boot](#trust-in-the-boot).
   after which the boot goes on and the test fails.
 * **The watchdog.** On each platform, a system runtime told to stop
   petting ends the machine at the deadline with a crash record naming the
-  watchdog, by a reset in a release build and, on each board, by a
-  development build's halt that the hardware watchdog turns into a reset;
+  watchdog, by a reset in a release build and, on each board whose
+  watchdog runs, by a development build's halt that the hardware watchdog
+  turns into a reset;
   a partial boot, selected by a development build's system manifest's
   `partial_boot` field, that outlives `B` runs on; the paired failure
   seeds a kernel whose timer skips the deadline check and expects the
-  reset not to come. On each board, a kernel hung with interrupts masked
-  resets within the hardware watchdog's timeout; the paired failure seeds
+  reset not to come. On each board with the watchdog started by `config.txt`, a kernel
+  hung with interrupts masked resets within the hardware watchdog's timeout; the paired failure seeds
   a reload of the hardware watchdog from outside the timer and expects the
   reset not to come. A boot in deterministic mode runs past the deadline
   without a pet and does not reset.

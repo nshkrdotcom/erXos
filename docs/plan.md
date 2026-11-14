@@ -3111,10 +3111,11 @@ no row, are built here and tested here.
   them: each board's
   interrupt controller, console UART, random generator, hardware watchdog
   and firmware mailbox, and the Pi 5's MSI frame, in the kernel's platform
-  layer, with the kernel's device table; the hardware watchdog armed
-  before the root task starts and reloaded from the kernel's timer for as
-  long as the kernel's own deadline on the pet has not passed, so a kernel
-  hang resets the board too
+  layer, with the kernel's device table; the hardware watchdog,
+  started by the firmware from `config.txt` on a board that runs unattended
+  or by the kernel under a machine lease, and reloaded from the kernel's
+  timer for as long as the kernel runs, so a kernel hang resets the board
+  too
   ([design-platforms.md](design-platforms.md#the-watchdog)); the crash
   region, `erxos,crash-region` under `/reserved-memory`, read at the next
   boot into the root task's information

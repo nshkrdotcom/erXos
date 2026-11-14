@@ -2056,8 +2056,9 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   it lies, inside the window of its manifest row, and its geometry from the `simple-framebuffer` node, if the firmware adds one, which the board pass
   confirms ([design-device-tree.md](design-device-tree.md#facts-into-records)).
 * **What the board does not get here.** The kernel's platform items, which M12 brings on erXos's kernel: the
-  hardware watchdog is not armed, so a hang of Fiasco or of the root's watchdog thread is caught only by the
-  harness's deadline, after which its power is cycled by hand; there is no crash region, so the crash record reaches the
+  hardware watchdog stays off, even on a board that runs unattended, since nothing under Fiasco reloads it and the root
+  does not, so a hang of Fiasco or of the root's watchdog thread is caught only by the harness's deadline, after which
+  its power is cycled by hand; there is no crash region, so the crash record reaches the
   console alone; there is no trial request, so the boot value is what `/chosen/bootloader` says and no update runs;
   and there is no device secret, so `sealing` stays `none`. Each is in [What Phase 1 defers](#what-phase-1-defers). The
   random generator is not among them: the root reads it (the Entropy item above).
