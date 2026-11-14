@@ -906,6 +906,14 @@ module Erx
         (share & ((1 << cpus) - 1)).to_s(2).count('1')
       end
 
+      # A line of the group's report, which the root task writes beside the console driver.
+      REPORT_LINE = 'erx: root task: group: parked \d+ of \d+\r*\n'
+      # TEXT as the console shows it with the report on: the report's lines may fall between
+      # any two of its bytes, even inside a word.
+      def self.beside_report(text)
+        Regexp.new(text.each_char.map { |char| Regexp.escape(char) }.join("(?:#{REPORT_LINE})*"), Regexp::NOENCODING)
+      end
+      
       # A machine at rest at the Erlang shell, with the group's report on: once the prompt is
       # up, a line of the report says every executor parked. The report writes a line only when
       # the counts change, and a fast machine may park everything before the banner, so the
@@ -917,9 +925,9 @@ module Erx
         # Each scheduler and each dirty CPU scheduler holds an executor slot.
         executors = 2 * schedulers(machine.platform.manifest_source(root), cpus: cpus)
         [*Qemu.boot_transcript(memory_mib: machine.memory_mib),
-         { name: 'release-slogan', pattern: %r{Erlang/OTP 29 }n, seconds: 240 }.freeze,
-         { name: 'release-shell', pattern: /#{Regexp.escape(COMMAND_SHELL_BANNER)}/n, seconds: 60, type: ERL_LINE }.freeze,
-         { name: 'erlang-shell', pattern: /Eshell V/n, seconds: 60, type: BUSY_EXPRESSION }.freeze,
+         { name: 'release-slogan', pattern: beside_report('Erlang/OTP 29 '), seconds: 240 }.freeze,
+         { name: 'release-shell', pattern: beside_report(COMMAND_SHELL_BANNER), seconds: 60, type: ERL_LINE }.freeze,
+         { name: 'erlang-shell', pattern: beside_report('Eshell V'), seconds: 60, type: BUSY_EXPRESSION }.freeze,
          # The report's bytes may fall inside the driver's, so the line is looked for at its end only.
          { name: 'idle-parked', pattern: /erx: root task: group: parked #{executors} of #{executors}\r*\n\z/n,
            seconds: EVAL_SECONDS }.freeze].freeze
