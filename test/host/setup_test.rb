@@ -18,10 +18,11 @@ class SetupTest < Minitest::Test
 
   def test_fresh_tree_runs_every_step_in_order
     assert_equal NAMES, Erx::Setup.plan({}, steps: Erx::Setup.steps(LOCK, hosted_runtime: true)).map(&:name)
-    assert_equal NAMES.length - 6, NAMES.take_while { |name| name.start_with?('source-') }.length
+    assert_equal NAMES.length - 7, NAMES.take_while { |name| name.start_with?('source-') }.length
     # The fetches come before the builds; the runtime build packs the hosted release,
     # whose EROFS image fsimg writes.
-    assert_equal %w[web-modules oracle-jit oracle-emu fsimg runtime rc-oracle], NAMES.last(6)
+    # The development login key comes last, so a refusal of it leaves every build done.
+    assert_equal %w[web-modules oracle-jit oracle-emu fsimg runtime rc-oracle dev-key], NAMES.last(7)
   end
 
   def test_a_host_without_the_hosted_runtime_leaves_out_only_its_step
@@ -148,6 +149,21 @@ class SetupDecisionsTest < Minitest::Test
       File.write(File.join(root, 'real.json'), JSON.pretty_generate(entry))
       File.symlink(File.join(root, 'real.json'), marker)
       refute setup.send(:source_valid?, 'musl'), 'a symlink marker'
+    end
+  end
+
+  # A damaged development key pair is a step still to run, as any other invalid output
+  # is: planning never raises on it, and the step's own refusal names the pair.
+  def test_a_damaged_dev_key_is_a_step_to_run_not_a_planning_failure
+    Dir.mktmpdir('erx-setup-') do |temporary|
+      root = File.realpath(temporary)
+      FileUtils.copy_file(File.expand_path('../../deps.lock', __dir__), File.join(root, 'deps.lock'))
+      directory = File.join(root, Erx::DevKey::UNCLONED_DIRECTORY)
+      FileUtils.mkdir_p(directory)
+      File.chmod(0o700, directory)
+      File.write(File.join(directory, 'id_ed25519'), 'not a key')
+      File.chmod(0o600, File.join(directory, 'id_ed25519'))
+      refute Erx::Setup.new(root: root).send(:dev_key_valid?)
     end
   end
 

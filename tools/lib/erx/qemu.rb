@@ -113,30 +113,36 @@ module Erx
     # The address is the one slirp gives a guest forward that names none.
     NIC_ECHO_ADDRESS = '10.0.2.4'
     NIC_ECHO_PORT = 7
-    # The guest's port of the host forward: slirp carries each connection to the host's
-    # loopback port Nic#forward_port to this port of the address slirp's DHCP server gives
-    # first, 10.0.2.15, the one a forward that names no guest address goes to (QEMU's
-    # invocation documentation, `-netdev user`) and the guest's lease (NetDevice::GUEST_IP).
-    # It is above 1023, so the default ports limit of a grant takes it.
-    NIC_LISTEN_PORT = 7007
 
     # A virtio-net device on QEMU's user networking (slirp), restricted so that nothing the
     # guest sends leaves the host, which serves the guest DHCP, except through one guest
     # forward: a TCP connection to NIC_ECHO_ADDRESS port NIC_ECHO_PORT, which QEMU carries
     # over its one connection, made when it starts, to the harness's server at loopback
-    # port echo_port. A plan with forward_port has one host forward as well: QEMU listens
-    # on that loopback port and carries each connection to it to the guest's
-    # NIC_LISTEN_PORT; restricted mode leaves the forward alone, since it does not affect
-    # forwarding rules (QEMU's invocation documentation, `-netdev user`). One hub joins it
-    # to a `dgram` backend on loopback, QEMU's end at frames_port and the harness's at
-    # peer_port, so the harness exchanges raw Ethernet frames with the guest as one more
-    # host on its link.
-    Nic = Data.define(:frames_port, :peer_port, :echo_port, :forward_port) do
-      def initialize(frames_port:, peer_port:, echo_port:, forward_port: nil)
-        ports = [frames_port, peer_port, echo_port] + (forward_port.nil? ? [] : [forward_port])
-        unless ports.all? { |port| port.is_a?(Integer) && port.between?(1, 65_535) }
-          raise Error, 'a network device plan names two loopback UDP ports and one or two loopback TCP ports'
+    # port echo_port. A plan with a forward (Forward) has one host forward as well: QEMU
+    # listens on its loopback port and carries each connection to it to the guest's port;
+    # restricted mode leaves the forward alone, since it does not affect forwarding rules
+    # (QEMU's invocation documentation, `-netdev user`). One hub joins it to a `dgram`
+    # backend on loopback, QEMU's end at frames_port and the harness's at peer_port, so
+    # the harness exchanges raw Ethernet frames with the guest as one more host on its link.
+    Nic = Data.define(:frames_port, :peer_port, :echo_port, :forward) do
+      def initialize(frames_port:, peer_port:, echo_port:, forward: nil)
+        unless [frames_port, peer_port, echo_port].all? { |port| port.is_a?(Integer) && port.between?(1, 65_535) }
+          raise Error, 'a network device plan names two loopback UDP ports and a loopback TCP port'
         end
+        raise Error, 'a network device plan forwards through a QemuPlan::Forward' unless forward.nil? || forward.is_a?(Forward)
+
+        super
+      end
+    end
+    # The host forward of a Nic: slirp carries each connection to the host's loopback
+    # port host to port guest of the address slirp's DHCP server gives first, 10.0.2.15,
+    # the one a forward that names no guest address goes to (QEMU's invocation
+    # documentation, `-netdev user`) and the guest's lease (NetDevice::GUEST_IP). The
+    # guest's port is above 1023, so the default ports limit of a grant takes it.
+    Forward = Data.define(:host, :guest) do
+      def initialize(host:, guest:)
+        raise Error, 'a host forward is from a loopback port to a guest port above 1023' unless
+          host.is_a?(Integer) && host.between?(1, 65_535) && guest.is_a?(Integer) && guest.between?(1024, 65_535)
 
         super
       end
@@ -333,7 +339,7 @@ module Erx
       return [] if nic.nil?
 
       loopback = '127.0.0.1'
-      host_forward = nic.forward_port ? ",hostfwd=tcp:#{loopback}:#{nic.forward_port}-:#{NIC_LISTEN_PORT}" : ''
+      host_forward = nic.forward ? ",hostfwd=tcp:#{loopback}:#{nic.forward.host}-:#{nic.forward.guest}" : ''
       ['-netdev', "user,id=nic_user,restrict=on,domainname=#{NIC_DOMAIN}," \
                   "guestfwd=tcp:#{NIC_ECHO_ADDRESS}:#{NIC_ECHO_PORT}-tcp:#{loopback}:#{nic.echo_port}#{host_forward}",
        '-netdev', "dgram,id=nic_frames,local.type=inet,local.host=#{loopback},local.port=#{nic.frames_port}," \

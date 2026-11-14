@@ -1,0 +1,164 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+require 'base64'
+require 'fileutils'
+require 'securerandom'
+require_relative 'error'
+require_relative 'source_revision'
+
+module Erx
+  # The development login key (docs/design-ssh.md, "Login keys"): an Ed25519 pair that
+  # OpenSSH's ssh-keygen makes, whose public half a development image carries as root's
+  # one login key and whose private half `tools/erx ssh` logs in with. It is a key of its
+  # own, never an update-signing key.
+  #
+  # There is one pair per clone, in DIRECTORY under git's common directory, which every
+  # worktree of the clone shares and no commit can hold, so every worktree builds the
+  # same image of one commit and the QEMU gate's reuse of passing boots holds across
+  # them (QemuReuse). A tree that is not a git checkout is its own clone and keeps the
+  # pair in its build tree. The private half is mode 0600 in a mode 0700 directory and
+  # never enters an image, a receipt or a log: the image build is handed only the public
+  # line, which carries no comment, so no user or host name of the builder rides along.
+  #
+  # ensure is the one operation that makes the pair, for `tools/erx setup` and the image
+  # build alike. It keeps a pair that checks out, refuses one that is damaged or whose
+  # halves disagree, and makes a missing one in a fresh directory that it then renames
+  # into place, so a build that stops part-way leaves no half-made pair and of two builds
+  # racing one wins and the other uses the winner's.
+  module DevKey
+    DIRECTORY = 'erxos/dev-key'
+    UNCLONED_DIRECTORY = 'build/dev-key'
+    PRIVATE = 'id_ed25519'
+    PUBLIC = "#{PRIVATE}.pub".freeze
+    # The private file's comment; the image's line has none.
+    COMMENT = 'erxos-development'
+    TYPE = 'ssh-ed25519'
+    # The wire form of an Ed25519 public key (RFC 8709, section 4): the type and the
+    # 32-byte key, each a string with its 32-bit length.
+    BLOB_BYTES = 4 + TYPE.bytesize + 4 + 32
+    DEADLINE = 60
+
+    # The pair at directory: the private key's path and the public half as the image
+    # carries it, `ssh-ed25519 BASE64`.
+    Pair = Data.define(:directory, :public_line) do
+      def private_path = File.join(directory, PRIVATE)
+    end
+
+    # The port a development guest's daemon listens on, erx_ssh_dev:start(PORT), and the
+    # host loopback port the interactive boot forwards to it (docs/design-ssh.md, "Stages").
+    PORT = 2222
+    # What `tools/erx ssh` adds to every ssh it runs: only this key is offered, it never
+    # enters the user's agent, and no agent is forwarded to the guest.
+    SSH_OPTIONS = %w[-o AddKeysToAgent=no -o IdentitiesOnly=yes -a].freeze
+
+    module_function
+
+    # The host's ssh to user at the guest whose daemon the host's loopback port port
+    # reaches, logging in with pair's key: options go before the destination, command,
+    # if any, after it.
+    def ssh_argv(pair:, port:, user: 'root', options: [], command: [])
+      raise Error, 'an ssh port is a port number' unless port.is_a?(Integer) && port.between?(1, 65_535)
+      # A name that began with '-' would be read as one of ssh's options.
+      raise Error, "#{user.inspect} is not a user name" unless user.is_a?(String) && /\A[a-z_][a-z0-9_-]{0,31}\z/.match?(user)
+
+      ['ssh', *SSH_OPTIONS, '-i', pair.private_path, '-p', port.to_s, *options, '--', "#{user}@127.0.0.1", *command]
+    end
+
+    # The clone's key directory for the tree at root.
+    def directory(root:, runner:)
+      return File.join(root, UNCLONED_DIRECTORY) unless File.exist?(File.join(root, '.git'))
+
+      environment = ENV.keys.grep(/\AGIT_/).to_h { |key| [key, nil] }
+      result = runner.run([*SourceRevision::GIT, 'rev-parse', '--path-format=absolute', '--git-common-dir'],
+                          name: 'dev-key-git-dir', deadline: DEADLINE, chdir: root, env: environment)
+      common = File.binread(result.fetch('log')).chomp
+      raise Error, "git's common directory is not an absolute path: #{common.dump}" unless
+        common.ascii_only? && common.start_with?('/') && !common.include?("\n")
+
+      File.join(common, DIRECTORY)
+    end
+
+    # The pair at directory, made first when there is none there.
+    def ensure(directory:, runner:)
+      make(directory: directory, runner: runner) unless File.exist?(directory)
+      read(directory: directory, runner: runner)
+    end
+
+    # The pair at directory, which must exist and check out: an owner-only directory
+    # holding an owner-only regular private file and a public file of one Ed25519 key that
+    # ssh-keygen derives from the private one.
+    def read(directory:, runner:)
+      raise Error, "the development key directory #{directory} is not an owner-only directory" unless
+        owner_only?(directory, directory: true)
+
+      private_path = File.join(directory, PRIVATE)
+      raise Error, "the development key #{private_path} is not an owner-only regular file" unless
+        owner_only?(private_path, directory: false)
+
+      public_path = File.join(directory, PUBLIC)
+      raise Error, "the development key's public half #{public_path} is missing" unless
+        File.file?(public_path) && !File.symlink?(public_path)
+
+      line = public_line(File.binread(public_path, 4096), source: public_path)
+      derived = derive(private_path, runner: runner)
+      raise Error, "the development key's halves in #{directory} disagree; remove the directory to make a new pair" unless
+        derived == line
+
+      Pair.new(directory: directory, public_line: line)
+    end
+
+    # `ssh-ed25519 BASE64` of text, an OpenSSH public key line whose key is one Ed25519
+    # key in its wire form (BLOB_BYTES); its comment, if any, is dropped.
+    def public_line(text, source:)
+      type, encoded = text.split(/[ \t]+/, 3)
+      blob = Base64.strict_decode64(encoded.to_s.chomp)
+      raise Error, "#{source} is not one Ed25519 public key" unless
+        type == TYPE && blob.bytesize == BLOB_BYTES && blob.byteslice(0, 4 + TYPE.bytesize) == [TYPE.bytesize].pack('N') + TYPE
+      "#{TYPE} #{Base64.strict_encode64(blob)}"
+    rescue ArgumentError
+      raise Error, "#{source} is not one Ed25519 public key"
+    end
+
+    # Makes a pair in a fresh owner-only directory beside directory, then renames it
+    # into place; when another build's pair took the place first, this one's is removed.
+    def make(directory:, runner:)
+      parent = File.dirname(directory)
+      FileUtils.mkdir_p(parent)
+      fresh = File.join(parent, ".#{File.basename(directory)}-#{Process.pid}-#{SecureRandom.hex(8)}")
+      Dir.mkdir(fresh, 0o700)
+      begin
+        runner.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', COMMENT, '-f', File.join(fresh, PRIVATE)],
+                   name: 'dev-key-make', deadline: DEADLINE)
+        begin
+          File.rename(fresh, directory)
+        rescue Errno::EEXIST, Errno::ENOTEMPTY
+          nil
+        end
+      ensure
+        FileUtils.rm_rf(fresh)
+      end
+    end
+
+    # The public line ssh-keygen derives from the private key at path. Only the public
+    # line reaches the command's output file.
+    def derive(path, runner:)
+      output = "#{File.dirname(path)}/.derived-#{Process.pid}-#{SecureRandom.hex(8)}"
+      runner.run(['ssh-keygen', '-y', '-f', path], name: 'dev-key-derive', deadline: DEADLINE, stdout: output)
+      public_line(File.binread(output, 4096), source: "ssh-keygen -y of #{path}")
+    rescue CommandError
+      raise Error, "ssh-keygen cannot read the development key #{path}; remove its directory to make a new pair"
+    ensure
+      FileUtils.rm_f(output) if output
+    end
+
+    def owner_only?(path, directory:)
+      stat = File.lstat(path)
+      kind = directory ? stat.directory? : stat.file?
+      kind && stat.uid == Process.uid && stat.mode.nobits?(0o077)
+    rescue SystemCallError
+      false
+    end
+  end
+end

@@ -19,6 +19,9 @@
 %%
 %% %CopyrightEnd%
 %%
+%% Modified by erXos: an Ed25519 or Ed448 private key is encoded as OpenSSH's
+%% private key format holds it, the private key followed by the public key, which is
+%% what ssh2_privkey_decode2/1 reads back.
 
 %%
 
@@ -764,7 +767,7 @@ ssh2_privkey_encode(#'ECPrivateKey'
     {CurveName,_} = oid2ssh_curvename(OID),
     <<?STRING(CurveName),
       ?STRING(Pub),
-      ?STRING(Priv)>>;
+      ?STRING(<<Priv/binary, Pub/binary>>)>>;
 
 ssh2_privkey_encode(#'ECPrivateKey'
                     {version = Version,

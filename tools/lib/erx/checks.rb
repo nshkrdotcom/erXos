@@ -95,6 +95,24 @@ module Erx
                              tools/lib/erx/programs.rb tools/lib/erx/apps.rb tools/lib/erx/display_domain.rb].freeze
     TEST_IMAGE_DEFINER = 'tools/lib/erx/production_image.rb'
     TEST_IMAGE_ENTRY = /\bbuild_test_image\b|\btest_code:\s*true\b/
+    # The development login key admits its holder as root (docs/design-ssh.md, "Login
+    # keys"), and the images the website offers carry none. So only the QEMU harnesses
+    # that serve SSH (LOGIN_KEY_BUILDERS) pass the production image's login_key keyword,
+    # which LOGIN_KEY_DEFINER defines; the website's builders, the interactive boot
+    # (`tools/erx boot --without-web`) and `tools/erx pack`, are not among them, so the
+    # images they make have no key. The check reads lines, as the test image one does.
+    LOGIN_KEY_BUILDERS = %w[tools/lib/erx/network_domain.rb].freeze
+    LOGIN_KEY_DEFINER = 'tools/lib/erx/production_image.rb'
+    LOGIN_KEY_ENTRY = /\blogin_key:/
+    # Each rule that only some tools sources may name an entry point: its pattern, the
+    # sources allowed to match it and the refusal, which names the place.
+    NamedOnly = Data.define(:pattern, :allowed, :refusal)
+    NAMED_ONLY = [
+      NamedOnly.new(pattern: TEST_IMAGE_ENTRY, allowed: [*TEST_IMAGE_BUILDERS, TEST_IMAGE_DEFINER].freeze,
+                    refusal: "a test image is built only by #{TEST_IMAGE_BUILDERS.join(' and ')}"),
+      NamedOnly.new(pattern: LOGIN_KEY_ENTRY, allowed: [*LOGIN_KEY_BUILDERS, LOGIN_KEY_DEFINER].freeze,
+                    refusal: "a development login key is packed only by #{LOGIN_KEY_BUILDERS.join(' and ')}")
+    ].freeze
 
     # Unsets every GIT_ variable of the caller's environment, for a git child
     # that must act on the repository it names and on nothing else.
@@ -151,7 +169,7 @@ module Erx
       own_sources = listed.reject { |relative| imported?(relative) }
       own_sources.each { |relative| check_own_source(relative, listed: listed_set) }
       check_json_parsing(own_sources)
-      check_test_image_builders(own_sources)
+      check_named_only(own_sources)
       check_area_mappers(listed)
       check_erofs_reads(listed)
       check_net(listed)
@@ -316,15 +334,15 @@ module Erx
       raise Error, violations.join("\n") unless violations.empty?
     end
 
-    def check_test_image_builders(own_sources)
-      allowed = [*TEST_IMAGE_BUILDERS, TEST_IMAGE_DEFINER]
+    def check_named_only(own_sources)
       own_sources.each do |relative_path|
-        next unless relative_path.start_with?('tools/') && !allowed.include?(relative_path)
+        next unless relative_path.start_with?('tools/')
         path = File.join(@root, relative_path)
         next unless ruby_source?(path)
+        rules = NAMED_ONLY.reject { |rule| rule.allowed.include?(relative_path) }
         File.binread(path).each_line.with_index(1) do |line, number|
-          next unless TEST_IMAGE_ENTRY.match?(line)
-          raise Error, "a test image is built only by #{TEST_IMAGE_BUILDERS.join(' and ')}: #{relative_path}:#{number}"
+          rule = rules.find { |candidate| candidate.pattern.match?(line) }
+          raise Error, "#{rule.refusal}: #{relative_path}:#{number}" if rule
         end
       end
     end

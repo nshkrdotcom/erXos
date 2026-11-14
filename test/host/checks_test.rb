@@ -193,6 +193,25 @@ class ChecksTest < Minitest::Test
     assert checks.run
   end
 
+  # Only the QEMU harnesses that serve SSH pass the production image's login key, so the
+  # website's builders, the interactive boot and the pack, make images without one.
+  def test_only_the_development_ssh_boots_pass_a_login_key
+    write('tools/lib/erx/production_image.rb', "def initialize(login_key: nil)\nend\n")
+    write('tools/lib/erx/network_domain.rb', "ProductionImage.new(login_key: key)\n")
+    assert checks.run
+    { 'tools/build_site.rb' => "ProductionImage.new(login_key: key)\n",
+      'tools/lib/erx/interactive_boot.rb' => "ProductionImage.new(login_key: key)\n",
+      'tools/lib/erx/production_image_pack.rb' => "new(root: r,\n    login_key: DevKey.ensure(directory: d, runner: r).public_line)\n" }
+      .each do |relative, source|
+        path = write(relative, source)
+        error = assert_raises(Erx::Error) { checks.run }
+        assert_equal "a development login key is packed only by #{Erx::Checks::LOGIN_KEY_BUILDERS.join(' and ')}: " \
+                     "#{relative}:#{source.lines.size}", error.message
+        File.unlink(path)
+      end
+    assert checks.run
+  end
+
   def test_ignored_files_and_agent_worktrees_are_not_source_inputs
     write('.gitignore', "/build/\n/.claude/\n")
     write('build/fiasco/inputs/uart.h', "/* \xc3\xa9 */\n".b)

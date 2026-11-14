@@ -7,14 +7,16 @@ require_relative 'error'
 require_relative 'host_os'
 require_relative 'runner'
 require_relative 'dependencies'
+require_relative 'dev_key'
 require_relative 'fsimg'
 require_relative 'rc_oracle'
 require_relative 'web_build'
 
 module Erx
   # Prepares a fresh checkout or worktree so `make check` can run: the sources
-  # the gates build from, the stock OTP oracle, the native runtime and the
-  # command shell's rc oracle, which its corpus test runs. A step
+  # the gates build from, the stock OTP oracle, the native runtime, the
+  # command shell's rc oracle, which its corpus test runs, and the clone's
+  # development login key (DevKey), which `tools/erx ssh` logs in with. A step
   # whose output is already present and valid is skipped.
   #
   # The decision of what to run (Setup.plan) is a pure function of what exists;
@@ -39,6 +41,8 @@ module Erx
 
     # The web client's packages, installed by the fetch (WebBuild.fetch).
     WEB_MODULES = Step.new(name: 'web-modules', kind: :web_modules, argv: [], deadline: WebBuild::DEADLINE)
+    # The clone's development login key, made by DevKey.ensure as the image build makes it.
+    DEV_KEY = Step.new(name: 'dev-key', kind: :dev_key, argv: [], deadline: DevKey::DEADLINE)
 
     COMMAND_STEPS = [
       Step.new(name: 'oracle-jit', kind: :command, deadline: ORACLE_BUILD_DEADLINE,
@@ -62,7 +66,7 @@ module Erx
       fetched = sources.map { |source| source.fetch('id') }.reject { |id| SKIPPED_SOURCES.key?(id) }
       builds = COMMAND_STEPS.reject { |step| step.name == 'runtime' && !hosted_runtime }
       fetched.map { |id| Step.new(name: "source-#{id}", kind: :source, argv: [id], deadline: 300) } +
-        [WEB_MODULES] + builds
+        [WEB_MODULES] + builds + [DEV_KEY]
     end
 
     # present: a hash of step name => true when the step's output is valid.
@@ -144,6 +148,7 @@ module Erx
       when 'rc-oracle' then rc_oracle_valid?
       when 'fsimg' then fsimg_valid?
       when 'web-modules' then WebBuild.fetched?(root: @root)
+      when 'dev-key' then dev_key_valid?
       end
     end
 
@@ -168,6 +173,16 @@ module Erx
 
     def source_valid?(id) = @dependencies.fetched?(id)
 
+    # A pair that is present and checks out. A damaged one, or a directory DevKey refuses,
+    # only means the step runs, as for rc_oracle_valid?; the step's own refusal says why.
+    def dev_key_valid?
+      directory = DevKey.directory(root: @root, runner: @runner)
+      DevKey.read(directory: directory, runner: @runner)
+      true
+    rescue Error
+      false
+    end
+
     def perform(step, toolchain)
       Terminal.puts("setup: #{step.name}")
       case step.kind
@@ -175,6 +190,8 @@ module Erx
         obtain_source(step.argv.first)
       when :web_modules
         WebBuild.fetch(root: @root, runner: @runner)
+      when :dev_key
+        DevKey.ensure(directory: DevKey.directory(root: @root, runner: @runner), runner: @runner)
       else
         @runner.run([RbConfig.ruby, File.join(@root, 'tools/erx'), *step.argv, *leftovers(step), '--jobs', @jobs.to_s],
                     name: "setup-#{step.name}", deadline: step.deadline, chdir: @root, env: toolchain)

@@ -27,6 +27,7 @@ begin
   require_relative 'lib/erx/runtime_seam'
   require_relative 'lib/erx/qemu'
   require_relative 'lib/erx/interactive_boot'
+  require_relative 'lib/erx/dev_key'
   require_relative 'lib/erx/conformance'
   require_relative 'lib/erx/boot_image_check'
   require_relative 'lib/erx/debug_log_probe'
@@ -107,6 +108,8 @@ module Erx
         check_runtime_seam(command_arguments, **collaborators)
       when 'boot'
         boot(command_arguments, **collaborators)
+      when 'ssh'
+        ssh(command_arguments)
       when 'qemu'
         qemu(command_arguments, **collaborators)
       when 'conformance'
@@ -748,7 +751,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--jobs N]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 
@@ -915,6 +918,23 @@ module Erx
         Terminal.puts("  #{InteractiveBoot.web_command(File.join(ROOT, 'tools/erx'), boot.link.socket)}")
       end
       InteractiveBoot.run(argv)
+    end
+
+    # The host's ssh as root into a development guest whose daemon root's session
+    # started with erx_ssh_dev:start/1, through the host loopback port --port (by
+    # default the one `tools/erx boot` forwards), with the clone's development login
+    # key (DevKey); any further arguments are the command ssh runs there. ssh replaces
+    # this process, so the terminal is the guest's.
+    def self.ssh(input_arguments)
+      arguments = input_arguments.dup
+      port = DevKey::PORT
+      OptionParser.new { |flags| flags.on('--port N', Integer, 'Host loopback port of the guest forward') { |value| port = value } }
+                  .order!(arguments)
+      runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+      directory = DevKey.directory(root: ROOT, runner: runner)
+      raise Error, "no development login key at #{directory}; run tools/erx setup" unless File.exist?(directory)
+
+      exec(*DevKey.ssh_argv(pair: DevKey.read(directory: directory, runner: runner), port: port, command: arguments))
     end
 
     # One boot of the built kernel image, its serial output in a log: under HVF

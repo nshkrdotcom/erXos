@@ -56,7 +56,7 @@ module Erx
   # forward.
   #
   # The reverse case follows: the Erlang shell listens with gen_tcp, whose backend on
-  # erXos is erx_gen_tcp by default, on QemuPlan::NIC_LISTEN_PORT and spawns an acceptor
+  # erXos is erx_gen_tcp by default, on LISTEN_PORT and spawns an acceptor
   # that reads the peer's first line and echoes what follows it until the peer's end,
   # then closes and tells the shell how many bytes it echoed. It reads the line as OTP's
   # ssh reads a banner: the accepted socket's `buffer` and `packet_size` through
@@ -90,6 +90,8 @@ module Erx
   # instructions in user mode on a booted guest.
   module NetDevice
     GUEST_IP = [10, 0, 2, 15].freeze
+    # The guest port of the listener case's host forward (QemuPlan::Forward).
+    LISTEN_PORT = 7007
     HOST_IP = [10, 0, 2, 100].freeze
     HOST_MAC = [0x02, 0, 0, 0, 0, 0x01].freeze
     BROADCAST = [0xff] * 6
@@ -165,7 +167,7 @@ module Erx
     # The peer's first line, a banner as an SSH peer sends it.
     HELLO_TEXT = 'SSH-2.0-erxos-check'
     HELLO = "#{HELLO_TEXT}\r\n".freeze
-    LISTEN_LINE = "{ok, L} = gen_tcp:listen(#{QemuPlan::NIC_LISTEN_PORT}, [binary, {active, false}]), ok.\r".freeze
+    LISTEN_LINE = "{ok, L} = gen_tcp:listen(#{LISTEN_PORT}, [binary, {active, false}]), ok.\r".freeze
     ACCEPT_LINE = 'Shell = self(), _ = spawn(fun() -> ' \
                   "{accept, {ok, A}} = {accept, gen_tcp:accept(L, #{TCP_RECV_MS})}, " \
                   '{ok, Opts} = inet:getopts(A, [buffer, packet_size]), ' \
@@ -565,7 +567,7 @@ module Erx
         echo = EchoServer.new(limit: ECHO_LIMIT).start
         forward_port = NetDevice.free_tcp_port
         nic = QemuPlan::Nic.new(frames_port: link.frames_port, peer_port: link.peer_port, echo_port: echo.port,
-                                forward_port: forward_port)
+                                forward: QemuPlan::Forward.new(host: forward_port, guest: LISTEN_PORT))
         answered = nil
         transfer_ms = nil
         verify_digest = ->(line) { transfer_ms = NetDevice.check_echo!(line, echo.received) }
@@ -591,7 +593,7 @@ module Erx
                   'and its shell showed vtnet0 with the lease, pinged 10.0.2.2 three times and resolved www ' \
                   "in the lease's domain through the name server at #{SERVER}, with random query IDs; " \
                   "its Erlang shell sent #{TCP_BYTES} bytes over TCP to the echo server and read them back, " \
-                  "and was refused the host's loopback; it listened on #{QemuPlan::NIC_LISTEN_PORT} and its acceptor " \
+                  "and was refused the host's loopback; it listened on #{LISTEN_PORT} and its acceptor " \
                   "echoed #{LISTEN_BYTES} bytes the harness sent through slirp's host forward, then closed after the " \
                   "harness's FIN; the session's grant admitted every call " \
                   'of these and refused one that is no operation; the system shell was refused ifconfig, ping and host'

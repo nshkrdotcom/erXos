@@ -14,6 +14,7 @@ require_relative 'build_path'
 require_relative 'compiler_rt'
 require_relative 'crash_frame'
 require_relative 'deterministic_transcript'
+require_relative 'dev_key'
 require_relative 'device_kinds'
 require_relative 'dom_planner'
 require_relative 'error'
@@ -51,9 +52,12 @@ module Erx
     # records and uname -i names (BuildFacts.configuration).
     BUILD_KIND = 'development'
     # The code that gathers and writes the build-facts file (BuildFacts, SourceRevision,
-    # build_facts_file, build_facts_entry and Fiasco#kernel_name), which its receipt names as its sources.
+    # build_facts_file, made_entry and Fiasco#kernel_name), which its receipt names as its sources.
     BUILD_FACTS_SOURCES = %w[tools/lib/erx/build_facts.rb tools/lib/erx/source_revision.rb tools/lib/erx/production_image.rb
                              tools/lib/erx/fiasco.rb].freeze
+    # The code that writes the login key's file (DevKey, login_key_file and made_entry),
+    # which its receipt names as its sources.
+    LOGIN_KEY_SOURCES = %w[tools/lib/erx/dev_key.rb tools/lib/erx/production_image.rb].freeze
     ROOT_ENTRY_PATH = 'system/root'
     NOTICES_PATH = 'system/NOTICES'
     # No more RAM than root_memory, of which Fiasco and the archive take their part first,
@@ -262,12 +266,19 @@ module Erx
     # at the system shell.
     def self.sessionless_manifest(root, platform:) = without_sessions(platform.manifest_source(root))
 
+    # login_key is the public line of the development login key (DevKey::Pair#public_line)
+    # that every release of the image carries as root's one login key, or nil for an image
+    # with none (docs/design-ssh.md, "Login keys"). Only the QEMU harnesses that serve SSH
+    # name one (Checks::LOGIN_KEY_BUILDERS); the images the website offers never do.
     def initialize(root:, runner:, compiler:, linker:, machine:, fiasco: Fiasco.new(root: root, runner: runner, compiler: compiler),
                    runtime: NativeRuntime.new(root: root, runner: runner, compiler: compiler, linker: linker, fiasco: fiasco,
                                               platform: platform_of(machine)),
                    jit_runtime: NativeJitRuntime.new(root: root, runner: runner, compiler: compiler, linker: linker,
-                                                     fiasco: fiasco, platform: platform_of(machine)))
+                                                     fiasco: fiasco, platform: platform_of(machine)),
+                   login_key: nil)
       platform_of(machine)
+      raise Error, 'a login key is a DevKey public line' unless
+        login_key.nil? || DevKey.public_line(login_key, source: 'the login key') == login_key
       @root = File.realpath(root)
       @runner = runner
       @compiler = compiler
@@ -276,6 +287,7 @@ module Erx
       @fiasco = fiasco
       @runtime = runtime
       @jit_runtime = jit_runtime
+      @login_key = login_key
       @codec = ABI::Codec.new(ABI::Generator.plan(root: @root).schema)
     end
 
@@ -387,18 +399,18 @@ module Erx
       sigma0 = assembled_receipt(@fiasco.sigma0_path, name: 'sigma0', directory: directory)
       archive = File.join(directory, 'image.erxpack')
       File.write(self.class.sources_path(archive), sources)
-      facts = build_facts_file(directory: directory, platform: machine.platform)
+      made = made_files(directory: directory, platform: machine.platform)
       system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
-      release = [*system_release.entries, build_facts_entry(facts, release: ReleaseFiles::SYSTEM)]
+      release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
       erofs, images = ReleaseMedium.image(entries: release, directory: directory, runner: @runner)
       # Only domains run the BeamAsm image, so an image without them does not build it.
       jit = domains.empty? ? nil : @jit_runtime.build(interpreter: erts)
-      domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, facts: facts, directory: directory)
+      domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
       report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries, *added.entries],
                     root_task: root_task, added_archives: added.archives,
                     images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                     imports: IMPORTS.merge(added.imports),
-                    inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *build_facts_sources, *domain.inputs,
+                    inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
                              *added.inputs].uniq,
                     test_code: test_code, machine: machine)
       single = File.join(directory, 'image.boot')
@@ -1586,7 +1598,7 @@ module Erx
     # their receipts name; nothing when there are no boot scripts. ReleaseFiles.domain
     # refuses a script it did not make, whose name could leave the work directory, and
     # two scripts of one name.
-    def domain_parts(boots, erts:, jit:, archives:, facts:, directory:)
+    def domain_parts(boots, erts:, jit:, archives:, made:, directory:)
       return NOTHING_ADDED if boots.empty?
 
       release = ReleaseFiles.domain(boots)
@@ -1595,7 +1607,7 @@ module Erx
                           .build_domain_runtime_receipted(directory: File.join(directory, 'domain-runtime'), archives: archives)
       domain_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'domains'), runner: @runner,
                                         codec: @codec, release: release)
-      releases = [*domain_release.entries, build_facts_entry(facts, release: release)]
+      releases = [*domain_release.entries, *made_entries(made, release: release)]
       beamasm = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
                                fiasco: @fiasco)
                           .build_jit_runtime_receipted(directory: File.join(directory, 'jit-runtime'),
@@ -1647,13 +1659,26 @@ module Erx
       BuildInputs.pack(root: @root, paths: [*root_task.fetch(:inputs), *inputs, *fiasco])
     end
 
-    def build_facts_sources = BUILD_FACTS_SOURCES.map { |source| File.join(@root, source) }
+    # The sources of the files this build makes for each release (made_files).
+    def made_sources
+      [*BUILD_FACTS_SOURCES, *(@login_key ? LOGIN_KEY_SOURCES : [])].uniq.map { |source| File.join(@root, source) }
+    end
+
+    # The files this build makes for each release of the image, each under the name of
+    # the ABI's path it goes to (made_entry): the build facts, and the login key's file
+    # when the image carries one.
+    def made_files(directory:, platform:)
+      facts = { 'build_facts_path' => build_facts_file(directory: directory, platform: platform) }
+      @login_key ? facts.merge('ssh_authorized_keys_path' => login_key_file(directory: directory)) : facts
+    end
+
+    def made_entries(made, release:) = made.map { |path_name, file| made_entry(file, path_name: path_name, release: release) }
 
     # The build-facts file (BuildFacts) and its receipt, from the facts this build
     # packs: the platform record's name and the build kind, the kernel it packs
     # (Fiasco#kernel_name, beside kernel_path), and the source revision. Its receipt
     # attributes it to the code that writes it. Each release of the image carries it
-    # (build_facts_entry), so every domain reads the same facts.
+    # (made_entry), so every domain reads the same facts.
     def build_facts_file(directory:, platform:)
       configuration = BuildFacts.configuration(platform: platform.name, build_kind: BUILD_KIND)
       facts = BuildFacts.gather(root: @root, runner: @runner, configuration: configuration, kernel: @fiasco.kernel_name)
@@ -1665,12 +1690,23 @@ module Erx
       { 'artifact' => path, 'receipt' => receipt }.freeze
     end
 
-    # The archive entry of facts, build_facts_file's, at the ABI's build_facts_path under
+    # The login key's file, root's authorized_keys: the one line of login_key, and its
+    # receipt, which attributes it to the code that writes it.
+    def login_key_file(directory:)
+      path = File.join(directory, 'authorized_keys')
+      File.write(path, "#{@login_key}\n")
+      receipt = File.join(directory, 'authorized_keys.receipt.json')
+      File.write(receipt, JSON.pretty_generate('version' => 1, 'kind' => 'compiled', 'artifact' => reference(path),
+                                               'sources' => LOGIN_KEY_SOURCES.map { |source| reference(File.join(@root, source)) }) + "\n")
+      { 'artifact' => path, 'receipt' => receipt }.freeze
+    end
+
+    # The archive entry of file, one of made_files', at the ABI's path path_name under
     # release's root, with the system mark only in the system release, as its other files.
-    def build_facts_entry(facts, release:)
-      entry_path = release.prefix + @codec.fixed_bytes('build_facts_path')
+    def made_entry(file, path_name:, release:)
+      entry_path = release.prefix + @codec.fixed_bytes(path_name)
       { 'path' => entry_path, 'kind' => @codec.member('entry_kind', 'file'),
-        'flags' => release.system ? @codec.member('entry_flags', 'system') : 0, 'id' => entry_path, **facts }
+        'flags' => release.system ? @codec.member('entry_flags', 'system') : 0, 'id' => entry_path, **file }
     end
 
     # A receipt that says the kernel or sigma0 comes from Fiasco's audited build.

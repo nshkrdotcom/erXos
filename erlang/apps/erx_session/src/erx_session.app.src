@@ -3,11 +3,12 @@
 
 %% A session's domain (docs/design-live.md, "Sessions"): the session's tty relay,
 %% erx_session_tty, on which the command shell runs, and the pure core of the tty's
-%% side of the messages to its master, erx_tty_link.
+%% side of the messages to its master, erx_tty_link; and erx_ssh_dev, which starts
+%% OTP's ssh daemon in a development session (docs/design-ssh.md, "Stages").
 {application, erx_session,
  [{description, "erXos session"},
   {vsn, "1"},
-  {modules, [erx_session_app, erx_session_sup, erx_session_tty, erx_tty_link]},
+  {modules, [erx_session_app, erx_session_sup, erx_session_tty, erx_ssh_dev, erx_tty_link]},
   {registered, [erx_session_sup, erx_session_tty, erx_session_shell]},
   {applications, [kernel, stdlib, erx, erx_shell]},
   {mod, {erx_session_app, []}},

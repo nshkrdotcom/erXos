@@ -40,6 +40,12 @@ module Erx
           test: 'test/host/checks_test.rb'
         ),
         Chokepoints::Elsewhere.new(
+          name: 'login-key-builder', rule: 'only the QEMU harnesses Checks::LOGIN_KEY_BUILDERS lists pass the ' \
+                                           "production image's login key, so the website's images carry none",
+          design: 'docs/design-ssh.md#login-keys', check: 'Checks::LOGIN_KEY_BUILDERS',
+          test: 'test/host/checks_test.rb'
+        ),
+        Chokepoints::Elsewhere.new(
           name: 'net-atoms', rule: 'no module of erx_net names binary_to_atom, list_to_atom or binary_to_term',
           design: 'docs/design-network-stack.md#build-checks', check: 'NetChecks, in Checks',
           test: 'test/host/net_checks_test.rb'

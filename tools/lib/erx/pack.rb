@@ -58,6 +58,13 @@ module Erx
         if rows.any? { |row| [generated_path, notices_path].include?(row.fetch('path')) }
           raise Error, 'artifact conflicts with a reserved generated path'
         end
+        # The development login key (docs/design-ssh.md, "Login keys") admits whoever
+        # holds its private half as root, so only a development build may carry it, in
+        # any release.
+        login_key = @codec.fixed_bytes('ssh_authorized_keys_path')
+        if build_kind != 'development' && rows.any? { |row| row.fetch('path').b.end_with?(login_key) }
+          raise Error, "a #{build_kind} build carries no development login key"
+        end
         system = @codec.member('entry_flags', 'system')
         file_kind = @codec.member('entry_kind', 'file')
         rows << { 'path' => generated_path, 'kind' => file_kind, 'flags' => system,
