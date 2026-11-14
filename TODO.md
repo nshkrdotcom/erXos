@@ -4149,10 +4149,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   design states as unverified; xfstests' `replay-log`: its pinned commit, and that it builds in the guest
   and replays a `log-writes` log onto a snapshot up to a chosen entry; and syzbot's F2FS images, by URL and
   SHA-256, for the fetch manifest.
-* [Medium] storage, F2FS sections: `mkfs.f2fs -s` makes volumes of more than one segment per section,
-  which F2-R2 admits read-write, but the cleaner, the room rule and the logs treat segments as sections
-  ([design-f2fs.md](docs/design-f2fs.md#open-decisions), open decision 1). Until decided, a mount must not
-  write such a volume.
 * [Low] test, pjdfstest over erXos's file systems: pjdfstest (FreeBSD `contrib/pjdfstest`, BSD-2-Clause)
   built for erXos's POSIX layer and run under QEMU over `/data` on F2FS and littlefs
   ([design-f2fs.md](docs/design-f2fs.md#posix-suites)); whether the POSIX layer offers every call it

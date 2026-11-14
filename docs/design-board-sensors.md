@@ -711,14 +711,11 @@ index. The replies are read as device-written memory: by fixed offsets,
 each field once, into a bounded window, and decoded in Erlang through a
 fuzzed decoder that echoes nothing of their text.
 
-This widens what the design records of the mailbox's use. `design.md`'s
-chokepoint row says the notification "sends one fixed tag and value and
-reads back only its status"; with this design every request after boot
-sends one row's fixed tag and arguments and reads back at most that tag's
-window. The mailbox's registers stay referenced from the same three
-functions, the request routine standing where the notification's was, so
-the chokepoint check's list does not grow. Changing the row is
-[Open decision 1](#open-decisions).
+`design.md`'s chokepoint row for the mailbox records this use: every
+request after boot sends one row's fixed tag and arguments and reads back
+at most that tag's window. The mailbox's registers stay referenced from
+the same three functions, the request routine standing where the
+notification's was, so the chokepoint check's list does not grow.
 
 ## Verification
 
@@ -880,7 +877,7 @@ This design lands only with these edits to the documents that own them:
 
 | Document | Change |
 | --- | --- |
-| [design.md](design.md) | the mailbox chokepoint row: every request after boot is a row of the checked record whose tag is in the closed set, reading back at most that tag's window ([Open decision 1](#open-decisions)) |
+| [design.md](design.md) | the mailbox chokepoint row: every request after boot is a row of the checked record whose tag is in the closed set, reading back at most that tag's window |
 | [design-usb.md](design-usb.md), [design-bluetooth.md](design-bluetooth.md), [design-pcie.md](design-pcie.md) | `erx_domain_lib:pci_firmware/1` and `device_notify/2` as uses of `erx_domain_lib:firmware/2`; in design-usb's contract, the answer window, the deadline from the call's start, `ERX_ENOTSUP` for an ignored tag and `ERX_EPROTO` for an answer outside the interface; the kernel section design-usb lists for design-kernel with the answer window, the root resource's machine rows and the answer's checks above |
 | [design-kernel.md](design-kernel.md) | that section, when design-usb's row lands |
 | [design-platforms.md](design-platforms.md) | the Pi 4's firmware requests; the board pass's sensors step |
@@ -888,7 +885,7 @@ This design lands only with these edits to the documents that own them:
 | [design-abi.md](design-abi.md), `abi/erx_abi.txt`, `abi/manifest.txt` | the status `proto`, `ERX_EPROTO`; the firmware request record in the system manifest; `abi/formats/vc_property.txt` with `fw_reading` and `fw_throttle`'s span; the `sensors` kind, its units and `@fw_throttle` in the inspection schema |
 | [design-stopgap.md](design-stopgap.md) | the backend's implementation of the call in the root, with the answer window |
 | [design-live.md](design-live.md), "The /proc tree" | `/proc/sensors/status` among the paths |
-| [design-runtime.md](design-runtime.md), its ERTS changes and "NIFs and blocking" | `beam/beam_common.c`: a dirty NIF is charged its elapsed time on either pool, the dirty I/O branch's one reduction a call removed ([Open decision 2](#open-decisions)) |
+| [design-runtime.md](design-runtime.md), its ERTS changes and "NIFs and blocking" | `beam/beam_common.c`: a dirty NIF is charged its elapsed time on either pool, the dirty I/O branch's one reduction a call removed |
 | [design-scheduler.md](design-scheduler.md#service-work) and [design-domains.md](design-domains.md#facets), "Admission by measured reductions" | a call a service's process makes on a dirty I/O scheduler counts at its elapsed time, and a request one of the service's processes hands to another is charged that process's reductions too, returned with its answer |
 | [design-pcie.md](design-pcie.md#facets) | the `pci_bus` grant's `in_flight 1` and its share, from [Concurrency and failure](#concurrency-and-failure) |
 
@@ -966,17 +963,6 @@ This design lands only with these edits to the documents that own them:
   copies ERTS's rate of reductions a microsecond, a second source of
   that fact, counts the wait for a free dirty scheduler as the call's,
   and leaves every other dirty I/O call uncharged.
-
-## Open decisions
-
-1. **The mailbox chokepoint.** `design.md` records that the notification
-   "reads back only its status". This design reads back each row's
-   answer window. Recommendation: accept the row as given under
-   [Security](#security); the functions that touch the mailbox stay
-   three, and what the firmware is asked stays fixed by the checked
-   record, a closed tag set and a closed set of readings. Without it,
-   the readings cannot exist, and this design waits; nothing else in the
-   tree depends on it.
 
 ## References
 

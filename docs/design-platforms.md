@@ -884,11 +884,15 @@ or inspection record. The platforms' keys are:
 * **On the Raspberry Pi boards** the key is the board's device-specific
   private key in OTP: 256 bits on the Pi 4, and the first 256 of the Pi
   5's 512. The kernel reads it through the firmware's mailbox, which only
-  the kernel reaches (PL2) and only the trial request, this read and, on
-  the Pi 4, the firmware notification, which sends one of the fixed tags
-  and values the platform record lists for a device, the VL805's and the
-  Bluetooth controller's power, and reads back only its status
-  ([design-usb.md](design-usb.md#the-vl805s-firmware)), use.
+  the kernel reaches (PL2) and only the trial request, this read and the
+  firmware requests of the platform record use. Each such request is a
+  row of the checked record, drawn from a closed tag set and a closed set
+  of readings, that `erx_firmware_request` sends and reads back at most
+  that row's fixed answer window: the VL805's and the Bluetooth
+  controller's notifications ([design-usb.md](design-usb.md#the-vl805s-firmware)),
+  which read back only a status, and the sensor readings
+  ([design-board-sensors.md](design-board-sensors.md)). No row can name
+  the key read.
   Rows that are all zero were never programmed, and the board then has no
   device secret. Programming the key cannot be undone, so erXos never
   writes OTP: provisioning a board's key with Raspberry Pi's own tools is

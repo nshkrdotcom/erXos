@@ -84,7 +84,6 @@ Decisions every reader of this document needs:
 * [Alternatives considered](#alternatives-considered)
 * [Stages](#stages)
 * [Risks](#risks)
-* [Open decisions](#open-decisions)
 * [References](#references)
 
 ## Context
@@ -185,10 +184,10 @@ entries and dentry slots ([F 1]).
   promised: the last completed checkpoint with every acknowledged `fsync`.
 * **F2-R2.** erXos mounts read-write any image Linux v7.3.4 or
   `mkfs.f2fs` 1.16.0 writes with features and checkpoint flags erXos
-  maintains, a main area of more than 16 segments and room for its mount
-  checkpoint, and replays Linux's roll-forward records as Linux would.
-  Any other image whose features and flags it can read it mounts
-  read-only.
+  maintains, one segment per section (`mkfs.f2fs -s 1`, its default), a
+  main area of more than 16 segments and room for its mount checkpoint,
+  and replays Linux's roll-forward records as Linux would. Any other
+  image whose features and flags it can read it mounts read-only.
 * **F2-R3.** An acknowledged `fsync` survives a power cut at any later
   point, including a cut while a mount recovers it.
 * **F2-R4.** No state erXos's own writes can leave shows a file bytes
@@ -261,7 +260,9 @@ Beyond the feature word and the flags, a mount refuses a block size
 other than 4096 bytes and a segment other than 512 blocks ([F 3]), and
 mounts read-only a volume whose main area of 16 segments or fewer leaves
 erXos's cleaner no room
-([The space a volume offers](#the-space-a-volume-offers)). A
+([The space a volume offers](#the-space-a-volume-offers)) and a volume
+with more than one segment per section
+([The cleaner](#the-cleaner)). A
 volume marked as needing a check (`FSCK` or `QUOTA_NEED_FSCK`, or a
 non-zero `s_errors` or stop-reason count in the superblock, [F 12])
 mounts as Linux mounts it ([F 56]), with the mark kept and shown: erXos
@@ -1094,8 +1095,8 @@ for every program that trusted those `fsync`s.
 
 ### Read-only mounts
 
-A read-only mount, a trial's or one that a volume's features, size or
-room require, runs every step above in memory and writes nothing: the
+A read-only mount, a trial's or one that a volume's features, size,
+sections or room require, runs every step above in memory and writes nothing: the
 volume answers every mutation `erofs`, runs no cleaner and no timer, and
 its checkpoint and freeze requests answer at once with nothing to do. It
 serves the replayed state, so it shows every acknowledged `fsync`
@@ -1204,6 +1205,15 @@ The cleaner is steps of the volume process. When free segments fall
 below `need + 6`, the volume runs cleaning steps between requests; when
 the rule refuses a request, the request waits while cleaning runs first
 (foreground cleaning).
+
+The cleaner, the room rule and the logs treat a segment as a section, as
+erXos's format makes one segment per section. A volume of another
+writer with more than one segment per section (`mkfs.f2fs -s` makes
+them, and eight of syzkaller's sixteen seeds have two) therefore mounts
+read-only, with a log line naming the count, as a volume whose main area
+leaves the cleaner no room does ([The space a volume
+offers](#the-space-a-volume-offers)); Linux accepts such a volume within
+the rules of [F 54].
 
 * **Victim**: the **closed** segment, one that is neither free nor any
   log's, with the fewest valid blocks, whether its log filled it or left
@@ -1480,7 +1490,7 @@ it fails any partition that holds no volume.
 | a structure fails its checks while serving | the codec | the volume; the operation changed nothing | none; `FSCK` is set in later checkpoints | `eio` for the operation; a log line naming the block |
 | the mount's checks or replay fail | `erx_f2fs_mount` | the medium as it was; nothing written | none on erXos; the partition is repaired with `fsck.f2fs`, or mounted once by Linux, elsewhere | `eintegrity`; the storage domain stays ended after its restarts, never formatted |
 | the SIT, the footprint or replay passes the mount's allowance | the mount's admission | the medium as it was; nothing written | none on erXos; the chain is replayed by Linux elsewhere, or the grant is resized | `enomem` and a log line naming the allowance; the storage domain stays ended after its restarts, never formatted |
-| another writer's volume leaves its mount checkpoint no room, or has a main area of 16 segments or fewer | the mount's room check; the space a volume offers | the medium as it was | none | a read-only mount and a log line naming the shortfall |
+| another writer's volume leaves its mount checkpoint no room, or has a main area of 16 segments or fewer or more than one segment per section | the mount's room check; the space a volume offers; the cleaner | the medium as it was | none | a read-only mount and a log line naming the shortfall |
 | the volume is full | the space check | everything | the cleaner, when invalid blocks can be reclaimed | `enospc` |
 | the room rule holds a request back | the step's room check | everything | the cleaner and checkpoints | the request waits; `enospc` only when the space check fails or no victim gains |
 | the volume process crashes | its supervisor | the durable view | as for a failed write | as for a failed write |
@@ -1703,7 +1713,7 @@ together. Each set is made at 128 MiB
 and at 64 GiB; the default also at 44 and 49 MiB, which erXos mounts
 read-only, and at 50 MiB; and each other option that changes what the
 volume holds, as part 3 of the facts records lists them (segments per
-section, [Open decisions](#open-decisions); heap allocation; the
+section, which erXos mounts read-only; heap allocation; the
 cold-file extension list; the volume name; the overprovisioning), once
 at 128 MiB with the default features. On the host, the Linux-made
 volumes are the fetched corpora's and the oracle guest's
@@ -2092,13 +2102,19 @@ the build tree by URL and checked by SHA-256, and none is committed. The
 two that are redistributable are megabytes of binary images the fetch
 step provides just as well. The probe record above lists every hash. A
 test whose corpus the fetch step has not provided fails, naming the
-source, and never passes by skipping it.
+source, and never passes by skipping it. The exception is syzbot's
+images: their license is unknown, so they are fetched only on an explicit
+request into the build tree, by pinned URL and SHA-256, never as a
+prerequisite of `make check` or of any gate, and never committed,
+redistributed or attached to a report, nor is any image derived from one,
+a minimized one included. A test that uses them runs only when they were
+fetched.
 
 | Corpus | Pin | License | What it holds |
 | --- | --- | --- | --- |
 | syzkaller's F2FS seeds | `sys/linux/test/syz_mount_image_f2fs_0` to `_15` and `fscrypt_f2fs`, syzkaller commit `819ebe34df0f1cb61a2c97ced41d03285824b6c1`; each test program embeds its image as `$` and base64 of zlib, which the corpus reader decodes, the decoded image's SHA-256 pinned beside the program's | Apache-2.0, the repository's | 17 images that `mkfs.f2fs` made, 64 and 128 MiB, with `-e cold`, `-a 0` and `-a 1`, `-s 1` and `-s 2`, and features none, `encrypt`, `extra_attr`, or `extra_attr` with `flexible_inline_xattr`, `inode_checksum`, `inode_crtime` and `project_quota`; their trees are syzkaller's, unverified |
 | Fuchsia's f2fs_reader image | `src/storage/f2fs_reader/testdata/f2fs.img.zst` at the Fuchsia commit of [Context](#what-erxos-matches), 16,947,630 bytes | BSD-2-Clause, the repository's `LICENSE`; the directory has no license of its own | a 256 MiB image that `scripts/mk_test_img.sh` (BSD) made on Linux with `-O encrypt,verity`: a tree with an inline file, short and 300-byte symlinks, a hard link, a file owned by 999:999, a directory of 2001 entries and one of 2001 made and 2000 removed, a sparse file reaching the double indirect node with xattrs, and encrypted and verity subtrees |
-| syzbot's F2FS images | the disk images of syzbot's F2FS reports, each by URL and SHA-256 in a fetch manifest; only the image, never the report's C reproducer | unknown: fetched on demand, never committed or redistributed | images that crashed or hung Linux |
+| syzbot's F2FS images | the disk images of syzbot's F2FS reports, each by pinned URL and SHA-256 in a fetch manifest; only the image, never the report's C reproducer | unknown: fetched only on explicit request, never committed or redistributed | images that crashed or hung Linux |
 | the Linux-made corpus | made by the oracle guest and cached in the build tree ([The Linux oracle guest](#the-linux-oracle-guest)); the distribution guest's images stay inside it | erXos's | the oracle guest's feature sets, sizes and declared trees, clean and with chains |
 
 Janus, the file-system fuzzer, ships no F2FS seed image at its commit
@@ -2139,8 +2155,8 @@ and from Linux's mount:
 or with `extra_attr` alone mount read-write, and take the profiles'
 workloads on the host as Linux-made volumes; those with the R features
 mount read-only; those with `encrypt`, and `fscrypt_f2fs`, are refused
-naming `ENCRYPT`; and the `-s 2` seeds follow the answer to segments per
-section ([Open decisions](#open-decisions)). Fuchsia's image is refused
+naming `ENCRYPT`; and the `-s 2` seeds mount read-only with a log line naming the two
+segments per section ([The cleaner](#the-cleaner)). Fuchsia's image is refused
 naming `ENCRYPT` and `VERITY`; a copy with those two bits cleared, its
 superblock checksum fixed if it has one, mounts read-only, and the
 subtrees the script made without encryption or verity must list as the
@@ -2389,28 +2405,6 @@ tests.
 | The clean room is challenged | low | high | facts only through separate writers; implementers read only this document, the records and permissive sources; a legal review before any distribution, as [design-storage.md](design-storage.md#read-write-storage) requires |
 | The reference model is wrong, so the host tests pass a wrong result | medium | a bug every host test agrees on | the model is checked against Linux's F2FS and `tmpfs` over every profile; the guests compare erXos with Linux without the model |
 | A distribution kernel's F2FS differs from v7.3.4 | medium | a difference reported as erXos's | every result names its kernel; only the pinned guest's result counts against erXos |
-
-## Open decisions
-
-1. **Volumes with more than one segment per section.** `mkfs.f2fs -s`
-   makes them, and eight of syzkaller's sixteen seeds have two segments
-   per section; Linux accepts them within the rules of [F 54]. This
-   design treats segments as sections because erXos's format makes one
-   segment per section ([The cleaner](#the-cleaner)), and says nothing of
-   a volume `mkfs.f2fs` made otherwise, which F2-R2 admits read-write.
-   The options: mount such a volume read-only, as a volume whose main
-   area leaves the cleaner no room is; refuse it; or make the cleaner,
-   the room rule and the logs work by section. Recommendation: read-only,
-   one rule beside an existing one. It narrows F2-R2's read-write
-   contract, so F2-R2, the mount's admission rules and the corpus
-   expectations change together once it is accepted, and the corpus test
-   pins whichever is chosen; until then no mount writes such a volume.
-2. **syzbot's images.** Their license is unknown. Recommendation: list
-   each by URL and SHA-256 in `deps.lock`, fetch them only on an explicit
-   request into the build tree, never as a prerequisite of `make check`
-   or of any gate, and never commit, redistribute or attach them to a
-   report, nor any image derived from one, a minimized one included,
-   while their license is unknown.
 
 ## References
 
