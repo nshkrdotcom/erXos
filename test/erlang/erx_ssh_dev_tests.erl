@@ -4,8 +4,9 @@
 %% erx_ssh_dev's daemon on stock OTP (docs/design-ssh.md, "Stages", stage 1):
 %% root logs in with the login key in the keys file and runs an Erlang
 %% expression, another user name with that key and root with another key are
-%% refused, a key in authorized_keys2 beside the file included, and the host
-%% key is made once, kept, and a damaged one refuses the start.
+%% refused, a key in authorized_keys2 beside the file included, an empty or
+%% missing keys file admits no one, and the host key is made once, kept, and a
+%% damaged one refuses the start.
 -module(erx_ssh_dev_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -17,7 +18,8 @@ daemon_test_() ->
              [?_test(root_runs_an_expression(Context)),
               ?_test(another_user_is_refused(Context)),
               ?_test(another_key_is_refused(Context)),
-              ?_test(the_host_key_is_kept(Context))]
+              ?_test(the_host_key_is_kept(Context)),
+              ?_test(no_keys_admit_no_one(Context))]
      end}.
 
 start() ->
@@ -86,3 +88,14 @@ the_host_key_is_kept(#{host := Host, login := Login}) ->
     ok = file:write_file(Path, <<"not a key">>),
     ?assertMatch({error, {host_key, Path, _}}, erx_ssh_dev:daemon(0, #{keys => Login, host => Host})),
     ok = file:write_file(Path, Made).
+
+%% With its keys file empty, or with none, the daemon admits no one, root with
+%% the login key included; the file is read at each login, so one daemon shows both.
+no_keys_admit_no_one(#{client := Client, login := Login} = Context) ->
+    {ok, Keys} = file:read_file(Login),
+    ok = file:write_file(Login, <<>>),
+    ?assertMatch({error, _}, connect(Context, "root", Client)),
+    ok = file:delete(Login),
+    ?assertMatch({error, _}, connect(Context, "root", Client)),
+    ok = file:write_file(Login, Keys),
+    ?assertMatch({ok, _}, connect(Context, "root", Client)).
