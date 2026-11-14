@@ -704,7 +704,13 @@ identifier.
    through OTP's `ssh_file`, made when missing and refused when it does
    not decode. Its only login is the development key for `root`
    ([Login keys](#login-keys)), offered by public key alone, with
-   `max_auth_tries` at 6.
+   `max_auth_tries` at 6. In any other build `start/1` starts nothing,
+   taking the build kind from its release's build facts
+   (`erx_build:development_facts/1`); a release image carries no login
+   key, and the module exports no entry that names another keys file. A
+   host key it makes is written whole and synced under another name,
+   0600 in a 0700 directory where the file system keeps modes, and
+   renamed into place.
    The host's `ssh`, run by `tools/erx ssh`, reaches it through a host
    loopback port forwarded to the guest's port 2222. This is any principal running a daemon in its
    own session with its own authority; it needs no new facet.

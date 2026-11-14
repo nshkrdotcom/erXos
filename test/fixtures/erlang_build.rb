@@ -44,8 +44,10 @@ module ErlangBuild
   # it) or of a test module, to the text compiled in its place. includes: further -I
   # directories, root-relative or absolute, searched first by the replaced modules and the
   # test modules alike, so a replaced module can be compiled against a header generated
-  # from a seeded ABI source. Raises Error with erlc's output on a failed compile.
-  def self.compile(work, applications:, tests: [], replaced: {}, includes: [])
+  # from a seeded ABI source. defines: macros erlc defines (-D) for the replaced modules
+  # and the test modules, such as TEST for a module that exports a function to its host
+  # tests alone. Raises Error with erlc's output on a failed compile.
+  def self.compile(work, applications:, tests: [], replaced: {}, includes: [], defines: [])
     unknown = replaced.keys - tests - with_dependencies(applications).flat_map { |application| modules(application) }
     raise Error, "replaced names no module compiled here: #{unknown.join(' ')}" unless unknown.empty?
 
@@ -57,8 +59,9 @@ module ErlangBuild
     # variable or function unused: the build's flags less -Werror.
     own = replaced.keys - tests
     searched = includes.flat_map { |directory| ['-I', directory] }
-    erlc(work, [*REPLACED_FLAGS, *searched, *beside], own.map { |source| written(work, source, replaced) }) unless own.empty?
-    flags = [*TEST_FLAGS, *searched, *beside]
+    defined = defines.map { |name| "-D#{name}" }
+    erlc(work, [*REPLACED_FLAGS, *defined, *searched, *beside], own.map { |source| written(work, source, replaced) }) unless own.empty?
+    flags = [*TEST_FLAGS, *defined, *searched, *beside]
     erlc(work, flags, tests.map { |source| written(work, source, replaced) }) unless tests.empty?
     work
   end

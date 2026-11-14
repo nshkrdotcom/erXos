@@ -3733,6 +3733,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   slot; the owner traps exits and ignores its supervisor's abnormal end; `remove/3` ignores
   the node unlink names, so it removes whatever entry has the name now; a 65,537-byte write
   (msize 65560) and a readdir offset of 2^32 or more answer `eio`.
+* [Low] storage, `erx_lfs` (`clunk/2`) and `erx_fs`'s `clunk` callback, typed `-> ok`:
+  littlefs commits a file's cached writes at close, and `clunk/2` drops the close's
+  result, so a write that fits in the cache and fails to commit (a full volume) is
+  answered `ok` at `file:close/1`. A writer that must know syncs first, as
+  `erx_ssh_dev`'s host key does, since `fsync` answers the error. Let the callback answer
+  an error and the grant answer it as Rlerror.
 * [Medium] storage, block service: a window has no `flush` (design-storage.md, Interfaces):
   `erx_lfs` answers littlefs's sync itself (`erlang/apps/erx_storage/src/erx_lfs.erl:249-263`) and
   `erx_blk_window` has no `flush` handler, so nothing reaches the transport's `flush/0`; the transport
@@ -7349,15 +7355,6 @@ document's "residual risks accepted" paragraph.
   `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
   it. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
-* [Low] SSH stage 1, the host key file
-  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `make_host_key/2`): the
-  key is written in place with `[exclusive]` and default modes, so a
-  crash mid-write leaves a partial file that later starts refuse (safe,
-  and the refusal names the file), a second start racing the first fails
-  with `eexist` instead of using the winner's key, and in hosted mode on
-  macOS the private key is readable by other users. Write to a temporary
-  name and rename it into place, and make the directory 0700 and the
-  file 0600 where the file server honours modes.
 * [Low] SSH stage 1, the chokepoint on login keys
   (`tools/lib/erx/checks.rb`, `LOGIN_KEY_ENTRY`): the check matches the
   keyword `login_key:` only, so `:login_key => key` or a splatted hash

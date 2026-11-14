@@ -5,11 +5,14 @@
 %% root logs in with the login key in the keys file and runs an Erlang
 %% expression, another user name with that key and root with another key are
 %% refused, a key in authorized_keys2 beside the file included, an empty or
-%% missing keys file admits no one, and the host key is made once, kept, and a
-%% damaged one refuses the start.
+%% missing keys file admits no one, the host key is made once, owner-only and
+%% whole, kept, and a damaged one refuses the start, and start/1 refuses a
+%% runtime whose release is not a development build's. The work directory is
+%% ERX_SSH_DEV_WORK, which the host test makes and removes.
 -module(erx_ssh_dev_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("kernel/include/file.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
 daemon_test_() ->
@@ -19,11 +22,30 @@ daemon_test_() ->
               ?_test(another_user_is_refused(Context)),
               ?_test(another_key_is_refused(Context)),
               ?_test(the_host_key_is_kept(Context)),
-              ?_test(no_keys_admit_no_one(Context))]
+              ?_test(no_keys_admit_no_one(Context)),
+              ?_test(the_host_key_is_owner_only(Context)),
+              ?_test(an_existing_directory_is_narrowed(Context))]
      end}.
 
+%% Stock OTP's release has no build facts, so it is not a development build's.
+start_refuses_a_release_build_test() ->
+    ?assertMatch({error, {not_development, _}}, erx_ssh_dev:start(0)).
+
+%% The build kind start/1 takes from build facts as the image build writes them:
+%% only a development configuration is a development build.
+the_build_kind_test() ->
+    Facts = fun(Configuration) ->
+                    {ok, _} = erx_build:parse_facts(<<"revision unknown\ndate unknown\nconfiguration ",
+                                                      Configuration/binary, "\nkernel unknown\n">>)
+            end,
+    ?assertEqual([{development, true}, {release, false}, {unknown, false}, {none, false}],
+                 [{development, erx_build:development_facts(Facts(<<"qemu-virt/development">>))},
+                  {release, erx_build:development_facts(Facts(<<"qemu-virt/release">>))},
+                  {unknown, erx_build:development_facts(Facts(<<"unknown">>))},
+                  {none, erx_build:development_facts({error, {no_facts, "none"}})}]).
+
 start() ->
-    Work = string:trim(os:cmd("mktemp -d -t erx-ssh-dev")),
+    Work = os:getenv("ERX_SSH_DEV_WORK"),
     [Keys, Host, Client, Wrong] = [filename:join(Work, Name) || Name <- ["keys", "host", "client", "wrong"]],
     ok = lists:foreach(fun(Dir) -> ok = file:make_dir(Dir) end, [Keys, Client, Wrong]),
     Public = client_key(Client),
@@ -37,9 +59,8 @@ start() ->
     #{work => Work, daemon => Daemon, port => proplists:get_value(port, Info),
       login => Login, host => Host, client => Client, wrong => Wrong}.
 
-stop(#{work := Work, daemon := Daemon}) ->
-    ok = ssh:stop_daemon(Daemon),
-    ok = file:del_dir_r(Work).
+stop(#{daemon := Daemon}) ->
+    ok = ssh:stop_daemon(Daemon).
 
 %% A fresh Ed25519 pair: the private key as id_ed25519 in Dir, and its public
 %% half as one authorized_keys line.
@@ -99,3 +120,23 @@ no_keys_admit_no_one(#{client := Client, login := Login} = Context) ->
     ?assertMatch({error, _}, connect(Context, "root", Client)),
     ok = file:write_file(Login, Keys),
     ?assertMatch({ok, _}, connect(Context, "root", Client)).
+
+%% The made key's directory is 0700 and the key 0600, on a file system that
+%% keeps modes, and nothing but the key is left beside it: the name it was
+%% written under has been renamed.
+the_host_key_is_owner_only(#{host := Host}) ->
+    {ok, #file_info{mode = Dir}} = file:read_file_info(Host),
+    {ok, #file_info{mode = Key}} = file:read_file_info(filename:join(Host, "ssh_host_ed25519_key")),
+    ?assertEqual({8#700, 8#600}, {Dir band 8#777, Key band 8#777}),
+    ?assertEqual({ok, ["ssh_host_ed25519_key"]}, file:list_dir(Host)).
+
+
+%% A host-key directory that is there already is narrowed to 0700 as well.
+an_existing_directory_is_narrowed(#{work := Work, login := Login}) ->
+    Host = filename:join(Work, "existing"),
+    ok = file:make_dir(Host),
+    ok = file:change_mode(Host, 8#755),
+    {ok, Daemon} = erx_ssh_dev:daemon(0, #{keys => Login, host => Host}),
+    ok = ssh:stop_daemon(Daemon),
+    {ok, #file_info{mode = Mode}} = file:read_file_info(Host),
+    ?assertEqual(8#700, Mode band 8#777).

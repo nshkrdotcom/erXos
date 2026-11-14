@@ -13,17 +13,23 @@ require_relative '../fixtures/erlang_build'
 # application and erXos's ssh, every module of otp/lib/ssh/src ahead of stock's on the
 # code path, on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies): root
 # logs in with the login key and runs an expression, another user name and another key
-# are refused, and the host key is made once and kept. Each seeded fault must fail the
-# cases: a key callback that admits every user name, and OTP's encoding of an Ed25519
-# private key without its public half, which ssh_file cannot read back as a host key.
+# are refused, the host key is made once, owner-only and whole, and kept, and start/1
+# refuses stock's release, whose missing build facts name no development build. The
+# module as the build compiles it exports no function that names a keys file. Each
+# seeded fault must fail the cases: a key callback that admits every user name, any
+# build kind taken for a development one, and OTP's encoding of an Ed25519 private key
+# without its public half, which ssh_file cannot read back as a host key.
 class ErxSshDevTest < Minitest::Test
   SSH = File.join(ErlangBuild::ROOT, 'otp/lib/ssh/src')
   APPLICATIONS = %w[erx erx_shell erx_session].freeze
   TESTS = %w[test/erlang/erx_ssh_dev_tests.erl].freeze
+  DEV = 'erlang/apps/erx_session/src/erx_ssh_dev.erl'
   Fault = Data.define(:name, :source, :from, :to)
   FAULTS = [
-    Fault.new(name: 'a callback for every user name', source: 'erlang/apps/erx_session/src/erx_ssh_dev.erl',
+    Fault.new(name: 'a callback for every user name', source: DEV,
               from: 'is_auth_key(Key, ?USER, Options) ->', to: 'is_auth_key(Key, _, Options) ->'),
+    Fault.new(name: 'any build kind taken for a development one', source: 'erlang/apps/erx/src/erx_build.erl',
+              from: '[_Platform, <<"development">>] -> true;', to: '[_Platform, _] -> true;'),
     Fault.new(name: 'an Ed25519 private key without its public half', source: 'otp/lib/ssh/src/ssh_message.erl',
               from: '?STRING(<<Priv/binary, Pub/binary>>)>>;', to: '?STRING(Priv)>>;')
   ].freeze
@@ -33,6 +39,17 @@ class ErxSshDevTest < Minitest::Test
       output, status = eunit(work)
       assert status.success?, output
       assert_match(/All \d+ tests passed/, output)
+    end
+  end
+
+  # The module as the build compiles it offers start/1 and the key callback alone, so
+  # no entry of a shipped image names a keys file or a host-key directory.
+  def test_the_shipped_module_names_no_keys_file
+    Dir.mktmpdir('erx-ssh-dev-shipped') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS)
+      output, status = erl(work, 'io:format("~w~n", [lists:sort(erx_ssh_dev:module_info(exports))]), halt().')
+      assert status.success?, output
+      assert_equal '[{host_key,2},{is_auth_key,3},{module_info,0},{module_info,1},{start,1}]', output.strip
     end
   end
 
@@ -52,6 +69,8 @@ class ErxSshDevTest < Minitest::Test
 
   # A work directory with the session's modules and the tests, and erXos's ssh in its
   # own ssh directory; replaced.fetch(:ssh) is ssh_message's text in place of the tree's.
+  # erx_ssh_dev is compiled again over the build's, with TEST defined, which exports
+  # daemon/2 to the cases; replaced.fetch(:session) is its text in place of the tree's.
   def in_build(replaced = {})
     Dir.mktmpdir('erx-ssh-dev-test') do |work|
       ebin = File.join(work, 'ssh')
@@ -63,15 +82,23 @@ class ErxSshDevTest < Minitest::Test
       end
       output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', ebin, '-I', SSH, *sources, stdin_data: '')
       assert status.success?, output
-      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced.fetch(:session, {}))
+      session = { DEV => File.read(File.join(ErlangBuild::ROOT, DEV)) }.merge(replaced.fetch(:session, {}))
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: session, defines: %w[TEST])
       yield work
     end
   end
 
-  # erl's -pa puts the last directory it is given first on the code path.
+  # erl's -pa puts the last directory it is given first on the code path. The cases'
+  # keys, host keys and clients live in a directory of work's, ERX_SSH_DEV_WORK.
   def eunit(work)
-    Open3.capture2e('gtimeout', '-k', '10', '300', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, File.join(work, 'ssh'),
-                    '-eval', 'halt(case eunit:test(erx_ssh_dev_tests, [verbose]) of ok -> 0; _ -> 1 end).',
-                    chdir: work, stdin_data: '')
+    cases = File.join(work, 'cases')
+    Dir.mkdir(cases)
+    erl(work, 'halt(case eunit:test(erx_ssh_dev_tests, [verbose]) of ok -> 0; _ -> 1 end).',
+        env: { 'ERX_SSH_DEV_WORK' => cases })
+  end
+
+  def erl(work, expression, env: {})
+    Open3.capture2e(env, 'gtimeout', '-k', '10', '300', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                    File.join(work, 'ssh'), '-eval', expression, chdir: work, stdin_data: '')
   end
 end

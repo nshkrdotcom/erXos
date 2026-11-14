@@ -5,7 +5,7 @@
 -moduledoc """
 What this runtime knows of the boot image's build: its identifier, the
 facts of its build that `uname -v` shows, and whether it is a development
-build (development/0).
+build (development/0, and development_facts/1 for any domain's release).
 
 The build identifier is the pack header's `build_id` (abi/erx_abi.txt,
 `erx_pack_header`), as every domain's init receives it: liberx's runtime
@@ -36,7 +36,7 @@ has no such file, such as a hosted one, has
 
 -export([id/0, id/1]).
 -export([facts/0, parse_facts/1]).
--export([development/0, development/1, development_flag/1]).
+-export([development/0, development/1, development_flag/1, development_facts/1]).
 -export([shell_principals/0, shell_principals/1, principals/0, principals/1, system_manifest/0]).
 
 -export_type([facts/0, principals/0]).
@@ -202,6 +202,23 @@ included. Pure, for its tests.
 -spec development_flag(non_neg_integer()) -> boolean().
 development_flag(Flags) ->
     Flags band ?ERX_MANIFEST_DEVELOPMENT =/= 0.
+
+-doc """
+Whether build facts, as facts/0 answers them, name a development build: the
+kind of their configuration, `Platform/Kind`. Any domain can take this
+answer for its own release, unlike development/0's, since the image build
+writes the facts into every release from the same build kind as the
+manifest's flag. Facts that are missing, unreadable or `unknown` are a
+release build's. Pure, for its tests.
+""".
+-spec development_facts({ok, facts()} | {error, term()}) -> boolean().
+development_facts({ok, #{configuration := Configuration}}) when is_binary(Configuration) ->
+    case binary:split(Configuration, <<"/">>) of
+        [_Platform, <<"development">>] -> true;
+        _ -> false
+    end;
+development_facts(_) ->
+    false.
 
 -doc "The build facts in this runtime's release.".
 -spec facts() -> {ok, facts()} | {error, {atom(), string()}}.
