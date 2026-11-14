@@ -703,7 +703,8 @@ identifier.
    key is root's, Ed25519, at `/data/ssh/ssh_host_ed25519_key`, read
    through OTP's `ssh_file`, made when missing and refused when it does
    not decode. Its only login is the development key for `root`
-   ([Login keys](#login-keys)), offered by public key alone.
+   ([Login keys](#login-keys)), offered by public key alone, with
+   `max_auth_tries` at 6.
    The host's `ssh`, run by `tools/erx ssh`, reaches it through a host
    loopback port forwarded to the guest's port 2222. This is any principal running a daemon in its
    own session with its own authority; it needs no new facet.

@@ -17,7 +17,8 @@ keys"). The release is read-only, so nothing the session runs can add a
 key. This module is the daemon's key callback: it admits that key for the
 user `root` and no other name, reading that one file, where OTP's `ssh_file`
 would read a second file beside it for every user name, and it offers public
-keys as the only method.
+keys as the only method, with at most MAX_AUTH_TRIES failed attempts a
+connection, FreeBSD's `MaxAuthTries`.
 
 The host key, Ed25519, is root's own, in HOST_DIR on root's data volume,
 in OpenSSH's private key format. start/1 makes it when the file is missing
@@ -35,6 +36,7 @@ pinned never changes silently; removing the file asks for a new one.
 -define(HOST_DIR, "/data/ssh").
 -define(HOST_KEY, "ssh_host_ed25519_key").
 -define(USER, "root").
+-define(MAX_AUTH_TRIES, 6).
 
 -doc """
 Starts the daemon on Port with the release's login key and root's host
@@ -59,6 +61,7 @@ daemon(Port, #{keys := Keys, host := Host}) ->
         ssh:daemon(Port, [{system_dir, Host},
                           {key_cb, {?MODULE, [{keys, Keys}]}},
                           {auth_methods, "publickey"},
+                          {max_auth_tries, ?MAX_AUTH_TRIES},
                           {shell, {shell, start, []}},
                           {exec, erlang_eval}])
     end.
