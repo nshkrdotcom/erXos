@@ -175,11 +175,12 @@ class ErxUIGrammarTest < Minitest::Test
     enums = wire.enums(schema)
     header = File.join(work, 'include', wire::C_HEADER_PATH.delete_prefix('include/'))
     FileUtils.mkdir_p(File.dirname(header))
-    File.write(header, wire.c_header(schema, enums: enums))
+    File.write(header, wire.c_header(schema))
     File.write(File.join(work, 'erx_ui_wire.c'), wire.c_source(schema, stopgaps: STOPGAPS, enums: enums))
     File.join(work, 'harness').tap do |binary|
       run!(ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=all', '-I', File.join(work, 'include'),
+           '-I', File.join(ROOT, Erx::Generated::OUTPUT, 'include'),
            HARNESS, File.join(work, 'erx_ui_wire.c'), '-o', binary, chdir: work)
     end
   end
