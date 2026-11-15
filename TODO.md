@@ -6613,12 +6613,26 @@ to the corpus and follow rc
   its window's invalidation completes and an unconfined device's for the
   boot, until the exact supported platform meets the contract
   ([design-platforms.md](docs/design-platforms.md),
-  [plan.md](docs/plan.md#m11-security-closure)). A platform whose DMA
-  contract lists a bus master's handover as unknown boots in development
-  builds, which run trusted code only, and release builds refuse it, so
-  this blocks each platform's release, not its development
-  ([design-arch-aarch64.md](docs/design-arch-aarch64.md#boot-entry)).
-  The Pi 4 is such a platform: every bus master's handover is unknown.
+  [plan.md](docs/plan.md#m11-security-closure)). What a bus master whose
+  handover at entry is unknown admits is stated in
+  [design-platforms.md](docs/design-platforms.md#dma): this blocks each
+  such platform's release, not its development. On QEMU `virt` every
+  bus master's handover is unknown, the functions behind the ECAM
+  bridge and each virtio-mmio device that masters DMA; on the Pi 4
+  every master's but the resident firmware's is.
+* [High] tools, the platform records' bus-master entries, M11
+  ([design-platforms.md](docs/design-platforms.md#dma)): no build check
+  exists yet, since every image is a development build
+  (`ProductionImage::BUILD_KIND`) and the Phase 1 manifest check refuses
+  every release build under property 9. Before M11's release admission
+  lands, give `config/platforms/qemu-virt.json` and
+  `config/platforms/raspi4b.json` their `loader` and `bus_masters`,
+  with the Pi 4's EEPROM bootloader version recorded in `loader`; make
+  `Platform` validate them for every build kind and derive each entry's
+  effective handover from the record and `deps.lock`; carry the loader
+  release in `Manifest::Context` beside the record; and add property 9's
+  handover clause to the release admission, with the host tests and
+  seeded failures the design names.
 * [High] platforms, the Pi 4's VL805 at handover
   ([design-usb.md](docs/design-usb.md#the-bcm2711-bridge),
   [design-platforms.md](docs/design-platforms.md#dma)), part of the DMA

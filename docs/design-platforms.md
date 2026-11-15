@@ -664,14 +664,102 @@ abort holds, and enables translation only after a completed sync. A
 device whose reset fails is not given to another driver. A protocol
 requirement is not evidence that a particular firmware meets it: source
 evidence and pending loader and hardware tests are distinguished in [the
-hardware-contract audit](research-hardware-contracts.md). A bus master
-whose handover the recorded evidence does not establish is listed as
-unknown, and a platform with one is admitted by build: development
-builds boot on it, since they run trusted code only, say so in their
-banner and never ship, and the gap is an open security residual in
-`TODO.md`; release builds refuse the platform until the evidence its
-contract names is recorded for each loader release the port supports
-([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)).
+hardware-contract audit](research-hardware-contracts.md).
+
+**The handover at entry.** The kernel cannot observe the time before its
+first instruction, so whether the loader stopped a bus master and drained
+its DMA is a fact the build is given, not one the boot checks. What
+follows is the one statement of how the build is given it and what
+follows from it; the boot binding
+([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)), the
+kernel's boot sequence
+([design-kernel.md](design-kernel.md#boot)), the VL805's
+evidence ([design-usb.md](design-usb.md#the-bcm2711-bridge)) and the
+release check ([design-system.md](design-system.md#the-manifest)) refer
+here. Each platform record, `config/platforms/NAME.json`, which
+`Platform` reads, lists under `bus_masters` every bus master of the
+platform's DMA contract, whether or not a device row names it. An entry
+has a `name`, the device-tree `paths` it covers, and a `handover` from a
+closed set:
+
+| `handover` | Meaning | Its own fields |
+| --- | --- | --- |
+| `unknown` | no recorded evidence establishes that the master is stopped and drained at the kernel's entry | none |
+| `stopped` | a research record proves that the loader release the entry names stops the master and drains its DMA before the kernel's first instruction | `release`, the loader release it covers; `evidence`, the research record's path |
+| `resident` | the master is the resident firmware, which keeps access to all memory for the machine's life and is trusted as any machine trusts its firmware ([Firmware](#firmware), [design.md](design.md#residual-risks)) | none |
+
+The record's `loader` names what runs before the kernel's first
+instruction: by `deps.lock` id each piece the build fetches, whose
+version is its pin, and by name and version each piece the port records
+but does not fetch. The platform's **loader release** is the map from
+each piece to its version, derived from `deps.lock` and the record and
+written nowhere else. On the Pi 4 it is `rpi-firmware-start4`,
+`rpi-firmware-fixup4` and `trusted-firmware-a` from `deps.lock`, and the
+EEPROM bootloader's version, which the board's port records with the
+boot order it sets; on QEMU `virt` it is the QEMU release whose
+contract tests the evidence was taken on, which the record names. Two of
+the Pi 4's entries, as the record gives them:
+
+```json
+"loader": { "deps": ["rpi-firmware-start4", "rpi-firmware-fixup4", "trusted-firmware-a"],
+            "recorded": { "eeprom-bootloader": "VERSION" } },
+"bus_masters": [
+  { "name": "firmware", "paths": [], "handover": "resident" },
+  { "name": "sd", "paths": ["/emmc2bus/mmc@7e340000"], "handover": "unknown" }
+]
+```
+
+A `stopped` entry adds `release`, the loader release its evidence
+covers, written as the map the derivation gives,
+`{ "rpi-firmware-start4": "1.20260915", ... }`, and `evidence`, the
+path of a research record under `docs/`.
+
+Everything else is derived. A device row is covered by the entry that
+lists its `path`, or, for a `pci` row, its host bridge's path, so one
+entry listing QEMU `virt`'s ECAM bridge node covers every function
+behind it, and one listing the Pi 4's PCIe bridge node covers the VL805
+whether or not a row names it yet. A `stopped` entry counts as
+stopped only while its `release` equals the platform's loader release:
+any difference, a firmware bump or a new EEPROM bootloader, makes it
+count as unknown until evidence for the new release is recorded. No
+default makes a master stopped: a master the record does not list is
+unknown, and a field left out is refused, not assumed. One function of
+`Platform` gives each entry's **effective handover** from the record and
+the loader release; a platform **may be released** exactly when every
+entry's effective handover is `stopped` or `resident`, and that verdict
+is never stored. A `resident` entry covers no path, since erXos drives
+nothing of the firmware's, so no device row can be declared resident;
+the firmware is in the trusted base on every board that has it, the
+release profile shows it as resident, and it is never the reason a
+release is refused.
+
+What a platform's entries admit differs by build. `Platform` validates
+the entries' shape for every build kind, with the refusals below.
+Development builds boot whatever the effective handovers are: they run
+trusted code only, say so in their banner and never ship, and each
+unknown master is an open security residual in `TODO.md`. A release
+build is refused by the release clause of property 9 of the manifest
+check ([design-system.md](design-system.md#the-manifest)), which reads
+the platform record and the loader release from the checked context
+the build gives the check, so the one admission that decides a release
+build decides this too, and the packer adds no check of its own.
+
+**The handover refusals.** `Platform`
+refuses a record, for every build kind, with an `Erx::Error` that names
+the record and the entry, when `bus_masters` is missing or not a list;
+an entry lacks a `name`, repeats another's, has `paths` that is not a
+list of strings, or has a `handover` outside the set; a `stopped` entry
+lacks `release` or `evidence`, or another entry has either; `evidence`
+names no `docs/research-*.md` file of the tree; a `resident` entry
+lists a path; a path is listed by two entries; a device row whose `dma`
+is not `none` is covered by no entry; or the record's `loader` is
+missing, names a `deps.lock` id that does not exist, or names no piece
+at all. A `stopped` entry whose `release` differs from the loader
+release is not refused: it counts as unknown, which fails safe.
+A release build on a platform that may not be released fails the
+manifest check under property 9, with a diagnostic that names each
+master whose effective handover is unknown and, for a `stopped` entry
+whose release is stale, both the release it covers and the build's.
 
 **The SMMUv3 is QEMU's.** The kernel's SMMUv3 driver covers what QEMU
 `virt`'s model needs: one SMMU, stage 1, 4 KiB pages and 16-bit ASIDs,
@@ -684,7 +772,8 @@ Raspberry Pi has one.
 
 | | QEMU `virt` | Raspberry Pi 4 | Raspberry Pi 5 |
 | --- | --- | --- | --- |
-| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)) and whose handover is unknown: the EEPROM's boot order names the microSD card alone, so that the boot firmware has no reason to start it, but until the firmware's documented behaviour for that order and a reading at the kernel's entry are recorded for the supported firmware release, the VL805 counts as possibly running at entry ([design-usb.md](design-usb.md#the-bcm2711-bridge)), and the firmware, which stays resident with access to all memory ([Firmware](#firmware)); every master's handover is unknown until its evidence is recorded, so development builds boot on the board, the gap an open security residual, and release builds refuse it | RP1's devices behind PCIe, Ethernet and two USB hosts among them; the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
+| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)), and the firmware, which stays resident with access to all memory ([Firmware](#firmware)) | RP1's devices behind PCIe, Ethernet and two USB hosts among them; the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
+| Handover at entry, as the platform record's entries give it ([The handover at entry](#dma)) | `unknown` for every master: the functions behind the ECAM bridge and each virtio-mmio device that masters DMA; their evidence is part of M11's hardware closure ([plan.md](plan.md#m11-security-closure), [audit](research-hardware-contracts.md#evidence-still-required)) | `resident` for the firmware; `unknown` for every other master, the VL805 among them: the EEPROM's boot order names the microSD card alone, so that the boot firmware has no reason to start it, but no source read says what the firmware does with it, so it counts as possibly running at entry ([design-usb.md](design-usb.md#the-bcm2711-bridge)) | `resident` for the firmware; `unknown` for every other master |
 | Translation | the SMMUv3, stage 1, for functions on the root bus, which the harness creates with `iommu=smmuv3`; nothing for virtio-mmio | none described ([research](research-boards-storage.md#raspberry-pi-4-model-b-bcm2711)) | none for Ethernet, USB, the SD controllers or the external connector; each BCM2712 IOMMU serves media blocks or RP1's camera and display paths, with one address space for all its devices |
 | Bypass | none: the driver sets the global bypass to abort before anything else, and a stream without a window aborts | every master | the BCM2712 IOMMUs pass addresses below their windows through untranslated |
 | Requester identity | fixed on the ECAM root bus: `smmu_get_sid` builds the id from the model's bus and `devfn`; `pcibus_num` fixes the root bus at zero, whereas a subordinate bus takes its number from writable bridge configuration. Each root-bus function is its own isolation group. This is source-checked in QEMU v11.1.2; the supported binary must pass the same contract tests before its confined profile is admitted ([audit](research-hardware-contracts.md)) | none used | none per device |
@@ -1831,6 +1920,22 @@ in [Trust in the boot](#trust-in-the-boot).
   pass's leaving out of nodes that share a kept page is tested with each
   tree, and so is the crash region's discovery, with a tree that has the
   node and one that lacks it.
+* **The handover at entry.** Host tests of `Platform` and the manifest
+  check, on records built for the test ([The handover at entry](#dma)).
+  A record whose `stopped` entry's `release` equals the loader release
+  derived from a test `deps.lock` gives that entry `stopped`, and a
+  release build on it, every other entry `resident`, passes property 9;
+  the paired failure bumps one piece's version in the test `deps.lock`
+  and expects `unknown` and a property-9 refusal naming the entry and
+  both releases, so the comparison is shown to read the pin. A release
+  build on the checked-in QEMU `virt` and Pi 4 records is refused,
+  naming every master but the Pi 4's firmware; with the property-9
+  clause seeded out, that test fails. A record with an unconfined
+  device row that no entry covers is refused in a development build;
+  the paired passing case adds the entry, and a seeded coverage check
+  that skips `pci` rows lets a function behind an uncovered bridge pass,
+  which the test catches. A `resident` entry listing a device row's
+  path is refused.
 * **Ends and trials.** Each end (off, reset, panic, trial) is tested on
   each platform with and without a lease, and on each board a trial that
   panics, hangs with interrupts masked or halts boots the committed slot.

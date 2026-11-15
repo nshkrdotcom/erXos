@@ -2500,8 +2500,8 @@ implements the same protocol, so no step is specific to one loader
    confined or unconfined, the platform contract also establishes a
    completed drain or reset of outstanding DMA, including the IOMMU's own
    accesses; a failed completion stops boot before allocator handoff,
-   and a platform whose contract leaves a completion unknown boots in
-   development builds only, release builds refusing the platform
+   and a completion before the kernel's entry, which the kernel cannot
+   observe, is the platform's handover at entry, a fact of the build
    ([design-platforms.md](design-platforms.md#dma),
    [design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)). Then seed the
    physical page allocator with RAM less the image, its tables, the device

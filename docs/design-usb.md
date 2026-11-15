@@ -932,22 +932,15 @@ order, whether loading the VL805's firmware on a board without its
 EEPROM starts the controller, or whether a firmware update changes
 either. The kernel reads nothing behind the bridge and cannot observe
 the VL805 before it reclaims memory, so on the Pi 4 the contract's rule
-acts through the platform's admission rather than at run time: the Pi
-4's DMA contract lists the VL805's handover as unknown, beside its
-other bus masters' ([design-platforms.md](design-platforms.md#dma)),
-and the board meets the boot contract only once the evidence below is
-recorded for the firmware release and configuration the board port
-supports, as `TODO.md`'s DMA platform-evidence item requires of every
-platform. What an unknown handover admits differs by build
-([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)):
-
-* **Development builds boot on the Pi 4.** They run trusted code only
-  and say so in their banner, and nothing ships before a release, so the
-  worst a VL805 left running can do is corrupt the memory of a
-  development machine. The gap is an open security residual in
-  `TODO.md`, and the inspector shows the handover as unknown.
-* **Release builds refuse the Pi 4** until both pieces of evidence below
-  are recorded for each firmware release the board port supports.
+acts through the build rather than at run time: the Pi 4's platform
+record lists the VL805, by the PCIe bridge's node, as a bus master
+whose handover is `unknown`, beside its other bus masters, and the
+entry becomes `stopped` only once the evidence below is recorded for
+the loader release the board port supports. What an unknown handover
+admits in each kind of build, and how a firmware update returns a
+`stopped` entry to unknown, is stated once, in [the handover at
+entry](design-platforms.md#dma); the worst a VL805 left running can do
+in a development build is corrupt the memory of a development machine.
 
 Until then this design claims nothing for the handover, and the
 bridge's reset path is no remedy, since it runs after the kernel has
@@ -986,10 +979,10 @@ observe. Two pieces, for each firmware release the board port supports:
    adds nothing to the kernel.
 
 (1) speaks for the time before entry and (2) shows that the board in
-hand matches it; with both recorded, the Pi 4's DMA contract lists the
-VL805's handover as stopped for that release. Without (1), or with (2)
-refuting it, the handover stays unknown: development builds still boot,
-release builds still refuse the board, and a release for the Pi 4 then
+hand matches it; with both recorded in one research record, the Pi 4's
+platform record marks the VL805's entry `stopped`, naming that record
+and the loader release it covers. Without (1), or with (2) refuting it,
+the entry stays `unknown`, and a release for the Pi 4 then
 needs a stop before kernel entry, a first stage that resets the VL805
 and waits out its drain, which this design does not define.
 
