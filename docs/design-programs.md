@@ -813,7 +813,7 @@ holds one ends the program (Credit, below).
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
 | `{local, Op}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{seek, Open, Offset, Whence}` on the open's description, `{setfl, Open, Flags}` of the description's status flags, `{chdir, Path}`, and `{access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
 | `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
-| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
+| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
 | `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
 | `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
 | `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
@@ -891,7 +891,7 @@ which the program does not answer:
 | `{exit, N, Pid, Status}` | a child ended: `Status` is `{exited, 0..255}` or `{signaled, Signal}`, and `N` the child's count of state changes ([A program's end](#a-programs-end)) |
 | `{signal, Signal, Sender}` | a signal for the program, any but `sigkill` and `sigstop`; `Sender` is the process id of the program that sent it, or 1 for the session |
 | `{stopped, N, Pid, Signal}`, `{continued, N, Pid}` | in the second tier, a child stopped by a stop signal or continued by `SIGCONT` ([The terminal](#the-terminal)); kept in the child table for `waitpid`'s `WUNTRACED` and `WCONTINUED` |
-| `{ready, Open, Events}` | a terminal or a socket the program watches is ready for the events named ([The terminal](#the-terminal)) |
+| `{ready, Open, Events}` | a terminal or a socket the program watches is ready for the events named; for a terminal, the relay's report with the program's open in place of the relay's and without the relay's signal number, which the handler keeps ([The terminal](#the-terminal)) |
 | `{server_gone, Open}` | the server of an open ended: the open's requests fail with `EIO` from then on |
 | `{pipe_writer, ...}`, `{pipe_writer_gone, ...}`, `{pipe_reader, ...}`, `{pipe_reader_gone, ...}`, `{pipe_lost, ...}`, `pipe_server_lost` | the pipe reports of [design-pipes.md](design-pipes.md#the-program-protocol) |
 
@@ -1055,8 +1055,9 @@ session's connection to the file's server and advances its offset by the
 count, and the handler copies the reply's bytes into the slot, or the
 slot's bytes into the request, through its NIF. A terminal's description
 instead sends the relay `{write, Open, Bytes}`, at most 4 KiB, which the
-relay answers at once, and answers a read `{error, enotsup}` itself until
-the signal handshake lets it pass reads on
+relay answers at once, and a read as `{tty_read, Open, Count, N}`, which
+the relay answers `{error, ebadf}` while the handler's open is
+write-only, until the signal handshake opens it for reading
 ([The terminal](#the-terminal)); a socket's goes to the network
 service. The reply names the
 count, and `liberx` then copies out of or into the caller's memory and
@@ -1494,17 +1495,25 @@ the path into one of four images:
   ends and opens the program handed the command and copies bytes between
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
-  An open of the session's tty it relays for writing only: it never
-  reads the terminal, and answers the command's read of that stream
-  `enotsup`, which ends the command with that status, as the program's
-  handler refuses the program's own terminal reads ([The
-  terminal](#the-terminal)). The stream relay belongs to no job, so no
-  signal's mark would stop it taking a key typed after the signal; with
-  no read it takes none, and a build check proves that it sends the
-  terminal relay no read ([design.md](design.md#chokepoint-checks)).
+  Its open of the session's tty is a write-only one, which it asks for
+  with `erx_session_relay:open_writer/1`, as a program's handler does
+  ([The terminal](#the-terminal)). The stream relay belongs to no job, so
+  no signal's mark would stop it taking a key typed after the signal;
+  its open takes none, and a build check proves that it asks for no open
+  that reads ([design.md](design.md#chokepoint-checks)). The startup
+  message it sends names each stream with the mode its own end or open
+  allows, `{relayed, read}`, `{relayed, write}` or `{relayed,
+  read_write}`, or `null` ([design-runtime.md](design-runtime.md#native-programs)):
+  a pipe's read end `read`, its write end `write`, a file open its access
+  mode, and the terminal `write`. The command's `erx_cmd` answers a read
+  of a stream named `write` itself, sending nothing, and ends the command
+  with status `ebadf`, as the terminal relay answers a read on a
+  write-only open, so a command there that reads a standard input that is
+  the terminal ends at once and the typed input stays in the tty.
   The relay starts its command as a run of the command domain's run
   server: it sends `{erx_start, 1, Start, Relay}`, `Start` the startup
-  message the handler built for the command and `Relay` itself, and
+  message the handler built for the command with its streams so named
+  and `Relay` itself, and
   takes the answer, `{erx_run, Alias, Run}`, the run's alias and pid,
   which it monitors ([design-runtime.md](design-runtime.md#native-programs)).
   The relay is its command's row's handler, so the job's actions reach
@@ -1760,7 +1769,9 @@ composes them and the image runs only when no cause remains. A
 continue lifts both from its target, as POSIX's `SIGCONT` continues a
 process however it was stopped: an authorized `SIGCONT` makes the
 program's handler lift the `signal` cause and tells the job table, which
-lifts the `job` cause and shows the job running, as a UNIX shell does once
+lifts the `job` cause and shows the job running, in the step that gives
+the stop's kept answers
+([design-shell.md](design-shell.md#job-control)), as a UNIX shell does once
 one of a stopped job's processes runs; `fg` and `bg` lift the `job` cause
 from every program of the job and send each `SIGCONT`. Each reaches only
 its target, so an outer job's `fg` continues no program of another job,
@@ -2337,16 +2348,22 @@ owns. The session's export names it `/dev/tty`, and a program's standard
 streams that go to the terminal are opens on it. The export serves the name
 alone: the handler that opens it makes a terminal's description
 ([Descriptors and files](#descriptors-and-files)) and asks the relay for an
-open, `{open, Job}`, under its program's job, which the command server's
-row gives it, and every read, write, watch and control of that open goes
-to the relay and never through the file protocol
-([design-shell.md](design-shell.md#the-terminal-relays-protocol)). So the
-relay knows the job of every reader, as a terminal knows the process group
-of every process that reads it. One program's output and error streams reach the
+open with `erx_session_relay:open_writer/1`, under its program's job,
+which the command server's row gives it, and every read, write, watch and
+control of that open goes to the relay and never through the file
+protocol ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+So the relay knows the job of every opener, as a terminal knows the
+process group of every process that reads it. The handler passes each
+request with the relay's open in place of the program's, and the relay's
+report `{ready, RelayOpen, Events, N}` back to the program as `{ready,
+Open, Events}`, the program's open in place of the relay's; it keeps `N`,
+the relay's signal number, with the open and names it in the read it
+passes on, `{tty_read, RelayOpen, Count, N}`, so the reads the handshake
+below enables need no other translation. One program's output and error streams reach the
 terminal in the order the program wrote them, as they do through one UNIX
 terminal. A write reaches the terminal exact, apart from the tty's output
 flags, whichever job wrote it. A program's read of the terminal fails with
-`ENOTSUP` until the handshake below exists. A terminal's
+`EBADF` until the handshake below exists. A terminal's
 `ioctl`s are `{tty, Open, Request}` requests to the handler, which takes them
 to the relay ([The program protocol](#the-program-protocol)). `tcgetattr` and
 `tcsetattr` read and set the tty's `termios`, so a program can go raw and
@@ -2364,15 +2381,16 @@ a handler's report of a signal to its program before the relay's ready
 report ([design-shell.md](design-shell.md#the-terminal-relays-protocol),
 "A reader the signal ends"): with a program waiting for `y` to confirm
 that it should delete a file, `Ctrl-C` and `y` typed together would let
-it read `y` and delete the file before `SIGINT` ends it. So the handler
-answers a program's `read` of a terminal open, and its watch of
-`{read, Count}` there, `{error, enotsup}` itself, without passing
-either to the relay, and the `read` fails with `ENOTSUP`; a build check
-proves that no handler sends the relay's read
-([design.md](design.md#chokepoint-checks)). The reads described next
-run only under a handshake that orders them: each handler answers the
-shell once its program has taken the signal, and the shell gives the
-job its reads back only after every answer. That handshake is open work
+it read `y` and delete the file before `SIGINT` ends it. So the handler's
+open is a write-only one, and the relay answers the program's `read` of
+it, and its watch of `{read, Count}` there, `{error, ebadf}`, as it
+answers any read on a write-only open, so the `read` fails with
+`EBADF`; a build check proves that no handler asks for an open that
+reads ([design.md](design.md#chokepoint-checks)). The reads described
+next run only under a handshake that orders them: each handler answers
+the shell once its program has taken the signal, and the shell gives
+the job its reads back only after every answer, and with it the
+handler opens the terminal for reading. That handshake is open work
 ([TODO.md](../TODO.md)). Writes, `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`
 and a `poll`, for input or output, are not affected; a `poll` for input
 takes no byte.
@@ -2443,7 +2461,10 @@ after which the call fails with `EINTR`, or is sent again under
 takes a job of `sh`, a group of the shell's session that is not
 orphaned, so `Orphaned` is always `false`, and the stop action stops the
 whole job, as `Ctrl-Z` does: the handler asks the job table for that
-stop and replies once `fg` or `bg` continues the job. So a background
+stop and replies when the table gives the stop's answer, in the step
+that continues the job, whatever continues it
+([design-shell.md](design-shell.md#job-control), "A stop keeps its
+answers"). So a background
 program that sets its terminal stops, `jobs` shows it stopped, `fg` lets
 the change through, and a job continued by `bg` stops again at its next
 `tcsetattr`. In the second tier the command server's process table
@@ -2459,7 +2480,8 @@ a `pid` of 0 or of minus its group, reach the program alone, since the
 handler refuses `sigtstp` to every other target, and under its default
 action the thread that takes it runs `liberx`'s stop action, which sends
 `{stop, sigtstp}`; the handler asks the job table for the stop `Ctrl-Z`
-makes and replies once `fg` or `bg` continues the job. So the whole job
+makes and replies when the table gives the stop's answer, in the step
+that continues the job, whatever continues it. So the whole job
 stops, its other programs with it, `jobs` shows it stopped, and the call
 returns only once the job is continued: a full-screen program that calls
 `endwin` and then `kill(0, SIGTSTP)`, as `less` does, redraws only after
@@ -3830,14 +3852,15 @@ terminal cases.
   `popen` of rc commands, whose wait statuses follow `$status`; a program
   whose standard output and error both go to the terminal, interleaved
   line by line in the order written; a `read` of `/dev/tty`, in the
-  foreground and in the background, which fails with `ENOTSUP` while a
+  foreground and in the background, which fails with `EBADF` while a
   typed line stays in the tty for the next prompt, where a handler that
-  passes the read to the relay fails the
+  opens the terminal for reading fails the
   case (the reads of "Reading a terminal" are tested with the handshake
   that enables them); an Erlang command that `rc` as a program starts in
   its command domain, whose standard input is the terminal, and whose
-  `erx_cmd:read/1` ends it with status `enotsup` while a typed line stays
-  in the tty for the next prompt, where a stream relay that copies the
+  `erx_cmd:read/1` ends it with status `ebadf` while a typed line stays
+  in the tty for the next prompt, where a stream relay that opens the
+  terminal for reading, names the stream `read_write` and copies the
   terminal's input fails the case; a background program's `tcsetattr` that stops
   its job, which `jobs` shows stopped with the `termios` unchanged, and
   is made after `fg`, where a `liberx` that fails the call with `EIO` as

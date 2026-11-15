@@ -7406,14 +7406,21 @@ document's "residual risks accepted" paragraph.
 * [Medium] programs and shell, terminal reads by programs and by command domains
   ([design-programs.md](docs/design-programs.md#the-terminal), "No terminal input without the signal handshake";
   [design-shell.md](docs/design-shell.md#the-terminal-relays-protocol), "A reader the signal ends"): a program's
-  handler refuses its terminal `read` with `ENOTSUP`, and a command domain's stream relay answers its command's read
-  of a terminal stream `enotsup`, because neither the handler nor the stream relay belongs to a job, so no tag mark
+  handler and a command domain's stream relay open the terminal write-only, so a program's terminal `read` fails
+  with `EBADF` and a command domain's read of a terminal stream, named `write` in its startup message, ends the
+  command with status `ebadf`, because neither the handler nor the stream relay belongs to a job, so no tag mark
   stops it, and nothing orders the handler's report of a signal to its program, or the run server's mark in the
   command domain, before the relay's ready report: a program or a narrowed command that a `Ctrl-C` ends could read a
   key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
   has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
-  the handler and the stream relay send `tty_read` (and join the chokepoint's list), the handler passes reads on as
-  "Reading a terminal" describes, and that section's tests run.
+  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
+  chokepoint's list), the stream relay names a terminal stream `read_write` and copies its input, the handler's
+  reads pass as "Reading a terminal" describes, and that section's tests run.
+* [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
+  the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
+  the group without end, though edit 72 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
+  most recent lines only, with the bound in design-runtime.md's edit table and a test that measures the whole group
+  after many lines, beside design-shell.md's "A line that never ends".
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

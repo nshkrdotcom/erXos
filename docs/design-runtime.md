@@ -486,10 +486,10 @@ of behaviour, however many lines it touches:
 | `beam/beam_common.c`, `beam/erl_process.h` | 68. a dirty scheduler charges every call its elapsed time in reductions through `erts_time2reds`, on the dirty I/O pool as on the dirty CPU pool, which stock charges one reduction a call, and the conversion charges an interval the clock ran backwards its one-reduction minimum ([NIFs and blocking](#nifs-and-blocking)) |
 | `beam/beam_debug.c` | 69. the dirty test BIFs of `erts_debug` take `busy_wait`, the busy loop that `wait` runs only on a dirty CPU scheduler, on either pool, so a test can charge a busy dirty I/O call |
 | `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_wakeup_other.h` | 70. no reduction counter of a dirty run queue can wrap, though a dirty call is charged up to `INT_MAX` (edit 68): a charge on a dirty scheduler leaves alone the balance counters, `prio_info[].reds` and `check_balance_reds`, which only `check_balance` reads and resets and only on normal queues, and which stock lets grow there until they wrap; `wakeup_other_reds` is 64 bits wide, since the schedulers sharing a dirty queue may each add a charge before one of them looks; and the wakeup-other check, a pure function in `erl_wakeup_other.h`, clamps that sum to `INT_MAX`, computes in 64 bits and keeps its count within its limit on every queue kind, a dirty queue's count holding at the limit, so each later look with a backlog still wakes a waiting dirty scheduler, where stock's grows until it wraps and the backlog wake stops. A threshold's negative shift, `+swt low` and `very_low`, divides the decay by its power of two, as stock's mask suggests was meant; stock shifts left by a negative count, which is undefined (with the shift count taken mod 32, as AArch64 and x86-64 take it, the mask then clears the decay; inferred, not disassembled) |
-| `lib/stdlib/src/edlin_key.erl`, `lib/stdlib/src/edlin.erl` | 72. the editor's answer for a key depends on the key's characters alone, never on where its input was cut; its six parts are listed after the table |
+| `lib/stdlib/src/edlin_key.erl`, `lib/stdlib/src/edlin.erl` | 72. the editor's answer for a key depends on the key's characters alone, never on where its input was cut, and what it holds for one line is bounded however much is typed; its seven parts are listed after the table |
 
 **Edit 72, in parts.** `get_valid_escape_key/2` in `edlin_key` follows
-the first three rules, and `edlin` the other three:
+the first three rules, and `edlin` the other four:
 
 1. The end of its input only makes it wait: it answers
    `{escape_prefix, State}` wherever one more character can still
@@ -538,6 +538,26 @@ the first three rules, and `edlin` the other three:
    `ESC` and NL arriving together it asks for the redraw and then the
    inserts of `b` and `a`, and arriving apart for the inserts of `a` and
    `b` and then the redraw.
+7. A line holds at most 65,536 characters, all its lines together, the
+   bound `erx_cmd:read_line/1` puts on a command's line: an operation
+   whose result would hold more is answered as `beep` is
+   (`edlin.erl:640-641`), leaving the line as it was. Every change to the
+   line is an operation of `do_op/3` (`:426-643`), which `edit/5` calls
+   for each key (`:342`, `:413`), and the bound is checked around that call,
+   so no operation is listed.
+   A character typed past the bound is dropped with a bell, as FreeBSD's
+   `ttydisc_rint` drops a byte that finds the input queue full and rings
+   the bell under `IMAXBEL` (`sys/kern/tty_ttydisc.c:1220-1236`), and
+   erXos's tty does for a cooked line
+   ([design-live.md](design-live.md#the-tty)). Stock grows the line with
+   every character, so a paste or a peer that sends megabytes with no
+   newline grows the group without end. The bound is above rc's 4 KiB
+   unit, so a line the editor cut never runs as rc's: its parser refuses
+   it as `line too long`
+   ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
+   A heap limit on the group would bound it too, but would end the
+   session's console, and every shell on it, at a paste, where a
+   terminal drops what does not fit and goes on.
 
 `edlin` already keeps an escape prefix from one call to the next for
 `ESC`, `ESC ESC` and `ESC [` (`edlin_key.erl:52-56`), so with the edit
@@ -3601,8 +3621,11 @@ message reaches it as an unknown one and is dropped:
   each Erlang command or `rc` script the program starts. `Start` is the
   program's startup message
   ([design-programs.md](design-programs.md#the-startup-message)) with its
-  streams relayed, and `Relay` must be a pid of `D` by `erx:owner/1`,
-  since the answers go to it. The server makes a new alias for the run,
+  streams relayed: each descriptor is `{relayed, read}`, `{relayed,
+  write}`, `{relayed, read_write}` or `null`, the mode the stream relay's
+  own end or open allows, which the ABI file declares beside the startup
+  message and the validator checks. `Relay` must be a pid of `D` by
+  `erx:owner/1`, since the answers go to it. The server makes a new alias for the run,
   spawns the run with `erx_job:spawn/1`, so under a new tag that neither
   the server nor any other run carries ([Scheduling](#scheduling)),
   monitors it, and answers `Relay` `{erx_run, Alias, Run}`, `Run` the
@@ -3610,6 +3633,13 @@ message reaches it as an unknown one and is dropped:
   `Start` names and runs either `rc` with a script or one Erlang command
   with exactly those capabilities in its context, and exits with its
   status as its reason: the command's result or `rc`'s `$status`. A
+  read of a stream named `write` never leaves the domain: `erx_cmd`
+  answers it itself and ends the command with status `ebadf`, which is
+  how a command there that reads a terminal on its standard input ends,
+  the stream relay's open of the terminal being a write-only one
+  ([design-programs.md](design-programs.md#what-a-program-can-start)). No
+  stream there is the terminal to `erx_cmd:isatty/2`, since no terminal
+  call reaches the terminal from a command domain. A
   `Start` the validator refuses, which only a bug in the session can
   produce, is answered `{erx_run_refused, Reason}` and runs nothing.
 * `{erx_job, Action}`, taken only at a run's alias, so only from the one
