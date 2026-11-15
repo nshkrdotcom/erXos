@@ -7418,7 +7418,7 @@ document's "residual risks accepted" paragraph.
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
   the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
-  the group without end, though edit 72 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
+  the group without end, though edit 73 of [design-runtime.md](docs/design-runtime.md) bounds each line. Keep the
   most recent lines only, with the bound in design-runtime.md's edit table and a test that measures the whole group
   after many lines, beside design-shell.md's "A line that never ends".
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),

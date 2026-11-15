@@ -1339,7 +1339,7 @@ that would otherwise be a case of its own follows from that value:
   console's group holds no more than the line it is editing, at most
   65,536 codepoints, past which a typed character is dropped with a bell
   as the tty drops a byte that finds its queue full
-  ([design-runtime.md](design-runtime.md), edit 72);
+  ([design-runtime.md](design-runtime.md), edit 73);
 * a background job's read waits until `fg` brings the job back
   ([Reading in the background](#job-control));
 * a background job's `tcsetattr` changes nothing and is answered
@@ -1574,7 +1574,7 @@ holds the session's authority anyway (SH1).
   * *The guard.* The group takes an input request, and a `setopts`, only
     from the process it started as its shell, and answers any other
     process `{error, enotsup}`, changing nothing
-    ([design-runtime.md](design-runtime.md), edit 73 of "The edits
+    ([design-runtime.md](design-runtime.md), edit 74 of "The edits
     outside `sys/erxos`"). An input request or a `setopts` inside
     `requests` is answered `{error, request}` in every group, from any
     process, by the same edit: stock's output dispatcher hands such an
@@ -1611,7 +1611,7 @@ holds the session's authority anyway (SH1).
   outstanding at most: it asks only when its line editor waits for more
   and no ask of its is outstanding, and an ask stays outstanding until
   the answer that carries its reference arrives
-  ([design-runtime.md](design-runtime.md), edit 71 of "The edits outside
+  ([design-runtime.md](design-runtime.md), edit 72 of "The edits outside
   `sys/erxos`"; stock's group asks its driver only in its raw `noshell`
   state, `lib/kernel/src/group.erl:342`, `:346`). The ask belongs to the
   group, not to the request being read, so it outlives the request that
@@ -1678,7 +1678,7 @@ holds the session's authority anyway (SH1).
 * **A key of several bytes.** An arrow's `ESC [ A` or Delete's
   `ESC [ 3 ~` reaches the group a byte per answer. The editor's answer
   for a key depends on the key's bytes alone, never on where its input
-  was cut ([design-runtime.md](design-runtime.md), edit 72): the end of
+  was cut ([design-runtime.md](design-runtime.md), edit 73): the end of
   its input only makes it wait, a key ends at the byte that completes it
   and looks at no byte after it, a byte that cannot continue a sequence
   ends it and is read again, after any prefix, so `ESC O` and then Enter
@@ -2677,7 +2677,7 @@ remain independent of catalog generation.
     next `foreground` is refused, which ends the shell.
   * `ls\npwd\n` typed in one input while the shell reads: the shell gets
     `ls\n`; the test then sends `{foreground, Line, cooked}`, and an open
-    of `Line` reads `pwd\n`. Seeded: a group without edit 71, which never
+    of `Line` reads `pwd\n`. Seeded: a group without edit 72, which never
     asks, so no line comes before the test's deadline; and a console
     that reads 4,096 bytes for an ask, which takes `pwd\n` into the group,
     so `Line`'s read finds nothing.
@@ -2697,7 +2697,7 @@ remain independent of catalog generation.
     `{requests, [{get_line, unicode, ""}]}`, and one that sends
     `{requests, [{put_chars, unicode, "x"}, {setopts, [{echo, false}]}]}`,
     each with `io:request/2`, get `{error, request}`, and the shell's next
-    line is read and echoed. Seeded: a group without edit 73, on which the
+    line is read and echoed. Seeded: a group without edit 74, on which the
     job's request pushes the shell's and takes `cat\n`; the shell-only
     refusal applied to every group, on which the Erlang shell's evaluation
     gets `{error, enotsup}`; and stock's fallback for an unknown entry of
@@ -2769,13 +2769,13 @@ remain independent of catalog generation.
     `é` after `ESC` is inserted. The property test cannot see this, since
     a clause that takes the character gives the same wrong answer for
     every cut. Seeded: stock's clause after `ESC O`
-    (`edlin_key.erl:82`) kept beside the rest of edit 72, which takes the
+    (`edlin_key.erl:82`) kept beside the rest of edit 73, which takes the
     NL into an invalid key whole and split, so the line does not end.
   * A sequence that never ends: `ESC [` and then 100,000 digits, given a
     character per call, leave the editor's continuation no larger, by
     `erts_debug:flat_size/1`, than after `ESC [` and 13 digits, and the
     digits past the thirteenth are in the line as text; `ESC [ 1 ; 5 C`
-    still moves a word right. Seeded: edit 72 without its bound, whose
+    still moves a word right. Seeded: edit 73 without its bound, whose
     continuation grows with the digits.
   * A line that never ends: 1,000,000 characters of text and no newline,
     given to the command shell's group through the fake console a
@@ -2788,7 +2788,7 @@ remain independent of catalog generation.
     characters are within four times those per character over the first
     1,000, typed into a short line. The measure is the
     whole group, not the editor's continuation alone, so it also catches
-    a copy of the line kept anywhere else in the group. Seeded: edit 72
+    a copy of the line kept anywhere else in the group. Seeded: edit 73
     without its seventh part, under which the group grows with the
     characters; and a seventh part that takes the count from the line at
     each key, whose reductions for the last characters grow with the
