@@ -123,7 +123,8 @@ struct erx_profile_case {
 };
 
 /*
- * One kind.  Each form reads its own members: an integer min to max, among
+ * One kind.  Each form reads its own members: an integer min to max, both
+ * int64_t held as their two's complement when sign, a file offset's, among
  * values when nvalues is not 0, never except when has_except; a text at
  * most text_max bytes with its rules, adding its length and one to the
  * total sum; a list at most list_max elements of element; a tuple or map
@@ -153,6 +154,7 @@ struct erx_profile_kind {
 	uint16_t		 target;
 	uint16_t		 table;
 	uint8_t			 rules;
+	bool			 sign;
 	bool			 has_except;
 	bool			 unique;
 	bool			 ascending;

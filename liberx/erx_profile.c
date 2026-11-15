@@ -197,6 +197,18 @@ store_integer(uint8_t *store, uint64_t v, uint16_t size)
 	}
 }
 
+/* A signed integer item's value, as its two's complement: false for a wider one. */
+static bool
+item_i64(const erx_etf_item_t *item, uint64_t *v)
+{
+
+	/* Past int64_t, a value is a big item. */
+	if (item->kind != ERX_ETF_INTEGER)
+		return (false);
+	*v = (uint64_t)item->u.integer;
+	return (true);
+}
+
 /* An integer item's value as a u64: false for a negative or wider one. */
 static bool
 item_u64(const erx_etf_item_t *item, uint64_t *v)
@@ -413,7 +425,10 @@ judge_integer(walk_t *w, uint16_t kind, uint64_t v, uint8_t *store)
 	uint16_t i;
 
 	k = &w->p->kinds[kind];
-	in = v >= k->min && v <= k->max;
+	if (k->sign)
+		in = (int64_t)v >= (int64_t)k->min && (int64_t)v <= (int64_t)k->max;
+	else
+		in = v >= k->min && v <= k->max;
 	if (k->nvalues != 0) {
 		in = false;
 		for (i = 0; i < k->nvalues; i++)
@@ -569,7 +584,7 @@ begin(walk_t *w, uint16_t kind, uint8_t *store)
 	case ERX_PROFILE_INTEGER:
 		if (item.kind != ERX_ETF_INTEGER && item.kind != ERX_ETF_BIG)
 			return (refuse(w, ERX_PROFILE_SHAPE, kind));
-		if (!item_u64(&item, &v))
+		if (!(k->sign ? item_i64(&item, &v) : item_u64(&item, &v)))
 			return (refuse(w, ERX_PROFILE_RANGE, kind));
 		return (judge_integer(w, kind, v, store));
 	case ERX_PROFILE_TEXT_FORM:

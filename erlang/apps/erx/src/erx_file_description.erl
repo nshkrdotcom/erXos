@@ -6,8 +6,10 @@
 An open-file description of a native program's file
 (docs/design-programs.md, "Descriptors and files"): a session process
 that opens one file for the program's handler and owns it, the file's
-offset and status flags with it, and serves the handler's reads, writes
-and clunk on it one at a time, in the order sent.
+offset and status flags with it, and serves the handler's reads, writes,
+seeks and clunk on it one at a time, in the order sent, so a seek's
+reading of the offset and its move are one step, as FreeBSD's
+foffset_lock makes them.
 
 The open resolves the program's path over the program's narrowed
 namespace from its working directory, with 9P2000.L's open flags and
@@ -15,8 +17,10 @@ create mode as the program gave them (prim_file:erx_open_at/5). Every
 answer goes to the handler as a message naming the request's reply slot:
 `{erx_file_opened, Slot, {ok, Description} | {error, Errno}}` for the
 open, and `{erx_file_done, Slot, Answer}` for a read (`{ok, Bytes}`,
-`eof` or `{error, Errno}`), a write (`ok` or `{error, Errno}`) and the
-clunk (`ok` or `{error, Errno}`), after which the description ends.
+`eof` or `{error, Errno}`), a write (`ok` or `{error, Errno}`), each
+also at an offset of its own (pread and pwrite), which moves none, a
+seek (`{ok, Offset}` or `{error, Errno}`) and the clunk (`ok` or
+`{error, Errno}`), after which the description ends.
 
 The handler starts it linked, so a crash of the description, a fault of
 the session's own code, ends the handler and with it the program. The
@@ -24,7 +28,9 @@ description traps exits, so the handler's end, however it comes, closes
 the file.
 """.
 
--export([table/0, open/6, read/3, write/3, clunk/2]).
+-export([table/0, open/6, read/3, write/3, pread/4, pwrite/4, seek/4, clunk/2]).
+
+-include_lib("kernel/include/file.hrl").
 
 -doc """
 The namespace a starter hands its program, before any narrowing: the
@@ -59,6 +65,29 @@ write(Description, Slot, Bytes) ->
     Description ! {write, Slot, Bytes},
     ok.
 
+-doc "Reads at most `Count` bytes at `Offset`, leaving the description's offset, for reply slot `Slot`.".
+-spec pread(pid(), non_neg_integer(), non_neg_integer(), pos_integer()) -> ok.
+pread(Description, Slot, Offset, Count) ->
+    Description ! {pread, Slot, Offset, Count},
+    ok.
+
+-doc "Writes `Bytes` at `Offset`, leaving the description's offset, for reply slot `Slot`.".
+-spec pwrite(pid(), non_neg_integer(), non_neg_integer(), binary()) -> ok.
+pwrite(Description, Slot, Offset, Bytes) ->
+    Description ! {pwrite, Slot, Offset, Bytes},
+    ok.
+
+-doc """
+Moves the description's offset by `Offset` from the file's start, the
+offset or the file's end (`Whence` `bof`, `cur` or `eof`), as FreeBSD's
+lseek moves a regular file's (erx_prog_handler_core:seek_to/2), for
+reply slot `Slot`; a refused move leaves the offset where it was.
+""".
+-spec seek(pid(), non_neg_integer(), integer(), bof | cur | eof) -> ok.
+seek(Description, Slot, Offset, Whence) ->
+    Description ! {seek, Slot, Offset, Whence},
+    ok.
+
 -doc "Closes the file once the requests sent before are answered, for reply slot `Slot`.".
 -spec clunk(pid(), non_neg_integer()) -> ok.
 clunk(Description, Slot) ->
@@ -84,8 +113,36 @@ serve(Handler, File) ->
         {write, Slot, Bytes} ->
             Handler ! {erx_file_done, Slot, file:write(File, Bytes)},
             serve(Handler, File);
+        {pread, Slot, Offset, Count} ->
+            Handler ! {erx_file_done, Slot, file:pread(File, Offset, Count)},
+            serve(Handler, File);
+        {pwrite, Slot, Offset, Bytes} ->
+            Handler ! {erx_file_done, Slot, file:pwrite(File, Offset, Bytes)},
+            serve(Handler, File);
+        {seek, Slot, Offset, Whence} ->
+            Handler ! {erx_file_done, Slot, seek(File, Offset, Whence)},
+            serve(Handler, File);
         {clunk, Slot} ->
             Handler ! {erx_file_done, Slot, file:close(File)};
         {'EXIT', Handler, _} ->
             _ = file:close(File)
+    end.
+
+%% The offset a seek reaches from its base, the start, the offset or the
+%% size, and the move there.
+seek(File, Offset, Whence) ->
+    maybe
+        {ok, Base} ?= base(File, Whence),
+        {ok, To} ?= erx_prog_handler_core:seek_to(Base, Offset),
+        file:position(File, {bof, To})
+    end.
+
+base(_File, bof) ->
+    {ok, 0};
+base(File, cur) ->
+    file:position(File, cur);
+base(File, eof) ->
+    maybe
+        {ok, #file_info{size = Size}} ?= file:read_file_info(File, [{time, posix}]),
+        {ok, Size}
     end.

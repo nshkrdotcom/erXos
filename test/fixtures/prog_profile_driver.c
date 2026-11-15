@@ -527,6 +527,30 @@ put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
 		put_u64(&w, r->u.file_write.io_count);
 		put_u64(&w, r->u.file_write.data_slot);
 		break;
+case ERX_PROG_REQUEST_FILE_PREAD:
+case ERX_PROG_REQUEST_FILE_PWRITE: {
+	const bool reading = r->which == ERX_PROG_REQUEST_FILE_PREAD;
+
+	erx_etf_put_tuple(&w, 6);
+	put_atom(&w, "file");
+	put_atom(&w, reading ? "pread" : "pwrite");
+	put_u64(&w, reading ? r->u.file_pread.open : r->u.file_pwrite.open);
+	erx_etf_put_integer(&w, reading ? r->u.file_pread.file_offset : r->u.file_pwrite.file_offset);
+	put_u64(&w, reading ? r->u.file_pread.io_count : r->u.file_pwrite.io_count);
+	put_u64(&w, reading ? r->u.file_pread.data_slot : r->u.file_pwrite.data_slot);
+	break;
+}
+case ERX_PROG_REQUEST_LOCAL_SEEK: {
+	static const char *const whences[] = { "bof", "cur", "eof" };
+
+	erx_etf_put_tuple(&w, 5);
+	put_atom(&w, "local");
+	put_atom(&w, "seek");
+	put_u64(&w, r->u.local_seek.open);
+	erx_etf_put_integer(&w, r->u.local_seek.seek_offset);
+	put_atom(&w, whences[r->u.local_seek.whence]);
+	break;
+}
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		erx_etf_put_tuple(&w, 3);
 		put_atom(&w, "file");
@@ -602,6 +626,23 @@ put_reply(uint8_t slot, const erx_prog_reply_t *r, uint8_t *out, size_t cap,
 		put_value_or_errno(&w, r->u.file_write.which == ERX_PROG_IO_REPLY_OK,
 		    r->u.file_write.u.ok.io_done, r->u.file_write.u.error.errnum);
 		break;
+case ERX_PROG_REQUEST_FILE_PREAD:
+	put_value_or_errno(&w, r->u.file_pread.which == ERX_PROG_IO_REPLY_OK,
+	    r->u.file_pread.u.ok.io_done, r->u.file_pread.u.error.errnum);
+	break;
+case ERX_PROG_REQUEST_FILE_PWRITE:
+	put_value_or_errno(&w, r->u.file_pwrite.which == ERX_PROG_IO_REPLY_OK,
+	    r->u.file_pwrite.u.ok.io_done, r->u.file_pwrite.u.error.errnum);
+	break;
+case ERX_PROG_REQUEST_LOCAL_SEEK:
+	if (r->u.local_seek.which != ERX_PROG_SEEK_REPLY_OK) {
+		put_ok_or_errno(&w, false, r->u.local_seek.u.error.errnum);
+		break;
+	}
+	erx_etf_put_tuple(&w, 2);
+	put_atom(&w, "ok");
+	erx_etf_put_integer(&w, r->u.local_seek.u.ok.file_offset);
+	break;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		put_ok_or_errno(&w, r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_OK, r->u.file_clunk.u.error.errnum);
 		break;

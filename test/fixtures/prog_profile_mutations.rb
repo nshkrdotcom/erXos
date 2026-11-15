@@ -29,7 +29,8 @@ module ProgProfileMutations
 
   # The first of the fresh unique values a list past its maximum takes, above BASE's.
   FRESH = 1000
-  BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff }.freeze
+  BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff,
+               'i64' => 0x7fff_ffff_ffff_ffff }.freeze
 
   def self.t(*items) = Tuple.new(items: items)
 
@@ -72,7 +73,13 @@ module ProgProfileMutations
     ['request', t(:file, :clunk, 7)],
     ['reply', t(:ok, 7), '3:file_lopen'], ['reply', t(:ok, 9), '3:file_lcreate'],
     ['reply', t(:ok, 0), '3:file_read'], ['reply', t(:error, :eio), '3:file_write'],
-    ['reply', :ok, '3:file_clunk']
+    ['reply', :ok, '3:file_clunk'],
+    ['request', t(:file, :pread, 3, 0, 65_536, 15)], ['request', t(:file, :pwrite, 0, (2**63) - 1, 1, 0)],
+    ['request', t(:local, :seek, 1, -(2**63), :bof)], ['request', t(:local, :seek, 1, (2**63) - 1, :eof)],
+    ['request', t(:local, :seek, 1, -1, :cur)],
+    ['reply', t(:ok, 65_536), '3:file_pread'], ['reply', t(:error, :enospc), '3:file_pwrite'],
+    ['reply', t(:ok, 0), '3:local_seek'], ['reply', t(:ok, (2**63) - 1), '3:local_seek'],
+    ['reply', t(:error, :eoverflow), '3:local_seek']
   ].freeze
 
   module_function
@@ -107,7 +114,7 @@ module ProgProfileMutations
     case value
     in Integer if value.between?(0, 255) then Etf.small(value)
     in Integer if value.between?(-(2**31), (2**31) - 1) then Etf.int(value)
-    in Integer if value.positive? then Etf.small_big(value)
+    in Integer then Etf.small_big(value)
     in String then Etf.binary(value)
     in Symbol | true | false then Etf.atom(value.to_s)
     in [] then Etf::NIL
@@ -261,7 +268,8 @@ module ProgProfileMutations
       high = model.dig(:max, :value) || BASE_MAX.fetch(model.fetch(:base))
       rules = [[:shape, :erlang, 'shape']]
       rules << [:value, (low..high).find { |n| !values.include?(n) }, 'range'] if values
-      rules << [:below, low - 1, 'range'] if !values && low.positive?
+      # An offset, signed, is refused below its range whatever its least value.
+      rules << [:below, low - 1, 'range'] if !values && (low.positive? || model[:offset])
       # One past the maximum, also when that is the base's own: an integer wider than the base.
       wider = high < BASE_MAX.fetch(model.fetch(:base)) || model.fetch(:base) != 'u64'
       rules << [:above, high + 1, 'range'] if !values && wider

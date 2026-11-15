@@ -20,6 +20,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <sys/types.h>
+#include <unistd.h>
 
 #include "erx/abi.h"
 #include "erx/etf.h"
@@ -134,13 +135,13 @@ dirfd_check(int dirfd)
 	return (result);
 }
 
-/* Starts a file request's value: its tuple of arity items, the atom file and the operation op. */
+/* Starts a request's value: its tuple of arity items, the atom group, file or local, and the operation op. */
 static void
-value_start(erx_etf_writer_t *w, uint8_t *value, uint32_t arity, const char *op)
+value_start(erx_etf_writer_t *w, uint8_t *value, uint32_t arity, const char *group, const char *op)
 {
 	erx_etf_writer_init(w, value, VALUE_MAX);
 	erx_etf_put_tuple(w, arity);
-	erx_etf_put_atom(w, "file", strlen("file"));
+	erx_etf_put_atom(w, group, strlen(group));
 	erx_etf_put_atom(w, op, strlen(op));
 }
 
@@ -175,13 +176,13 @@ open_request(const char *path, size_t path_len, const open_plan_t *plan, uint16_
 	int status;
 
 	if (plan->request == ERX_PROG_REQUEST_FILE_LCREATE) {
-		value_start(&w, value, 5, "lcreate");
+		value_start(&w, value, 5, "file", "lcreate");
 		erx_etf_put_binary(&w, path, path_len);
 		erx_etf_put_integer(&w, plan->p9_flags);
 		erx_etf_put_integer(&w, plan->mode);
 		answer = &reply.u.file_lcreate;
 	} else {
-		value_start(&w, value, 4, "lopen");
+		value_start(&w, value, 4, "file", "lopen");
 		erx_etf_put_binary(&w, path, path_len);
 		erx_etf_put_integer(&w, plan->p9_flags);
 		answer = &reply.u.file_lopen;
@@ -203,7 +204,7 @@ clunk(uint16_t open)
 	erx_etf_writer_t w;
 	int status;
 
-	value_start(&w, value, 3, "clunk");
+	value_start(&w, value, 3, "file", "clunk");
 	erx_etf_put_integer(&w, open);
 	if ((status = request(ERX_PROG_REQUEST_FILE_CLUNK, &w, value, &reply)) != 0)
 		return (status);
@@ -257,26 +258,58 @@ erx_prog_file_openat(int dirfd, const char *path, int flags, mode_t mode)
 }
 
 /*
- * One part of a read or a write, count bytes through data slot slot: 0 and
- * *done, at most count, or a negative errno.
+ * The four requests that move bytes through a data slot: each one's id, its
+ * operation's atom after file, whether its bytes come back into the slot,
+ * and whether it names an offset of its own (pread and pwrite) rather than
+ * the description's.
+ */
+typedef struct io_request {
+	uint16_t	 which;
+	const char	*op;
+	bool		 reading;
+	bool		 placed;
+} io_request_t;
+
+static const io_request_t io_read = { ERX_PROG_REQUEST_FILE_READ, "read", true, false };
+static const io_request_t io_pread = { ERX_PROG_REQUEST_FILE_PREAD, "pread", true, true };
+static const io_request_t io_write = { ERX_PROG_REQUEST_FILE_WRITE, "write", false, false };
+static const io_request_t io_pwrite = { ERX_PROG_REQUEST_FILE_PWRITE, "pwrite", false, true };
+
+/* The reply of request rq within *reply, whose union names one member for each request case. */
+static const erx_prog_io_reply_t *
+io_answer(const io_request_t *rq, const erx_prog_reply_t *reply)
+{
+	if (rq == &io_read)
+		return (&reply->u.file_read);
+	if (rq == &io_pread)
+		return (&reply->u.file_pread);
+	if (rq == &io_write)
+		return (&reply->u.file_write);
+	return (&reply->u.file_pwrite);
+}
+
+/*
+ * One part of request rq on open, count bytes through data slot slot, at
+ * offset when rq is placed: 0 and *done, at most count, or a negative errno.
  */
 static int
-io(uint16_t which, uint16_t open, uint32_t count, uint32_t slot, uint32_t *done)
+io(const io_request_t *rq, uint16_t open, int64_t offset, uint32_t count, uint32_t slot, uint32_t *done)
 {
-	const bool reading = which == ERX_PROG_REQUEST_FILE_READ;
 	uint8_t value[VALUE_MAX];
 	const erx_prog_io_reply_t *answer;
 	erx_prog_reply_t reply;
 	erx_etf_writer_t w;
 	int status;
 
-	value_start(&w, value, 5, reading ? "read" : "write");
+	value_start(&w, value, rq->placed ? 6 : 5, "file", rq->op);
 	erx_etf_put_integer(&w, open);
+	if (rq->placed)
+		erx_etf_put_integer(&w, offset);
 	erx_etf_put_integer(&w, count);
 	erx_etf_put_integer(&w, slot);
-	if ((status = request(which, &w, value, &reply)) != 0)
+	if ((status = request(rq->which, &w, value, &reply)) != 0)
 		return (status);
-	answer = reading ? &reply.u.file_read : &reply.u.file_write;
+	answer = io_answer(rq, &reply);
 	if (answer->which == ERX_PROG_IO_REPLY_ERROR)
 		return (-answer->u.error.errnum);
 	/*
@@ -286,38 +319,53 @@ io(uint16_t which, uint16_t open, uint32_t count, uint32_t slot, uint32_t *done)
 	 */
 	if (answer->u.ok.io_done > count)
 		return (-EIO);
-	if (!reading && answer->u.ok.io_done == 0)
+	if (!rq->reading && answer->u.ok.io_done == 0)
 		return (-EIO);
 	*done = answer->u.ok.io_done;
 	return (0);
 }
 
 /*
- * A read or a write of len bytes, 1 to SSIZE_MAX, at buf, in parts through
- * one data slot.  A read copies each part's bytes out of the slot after its
- * reply, a write copies them in before its request.
+ * Whether the part of a placed request after total bytes would start past
+ * OFF_MAX, where no byte lies; offset, the call's, is 0 to OFF_MAX, which
+ * is INT64_MAX for a 64-bit off_t (musl names no OFF_MAX).
+ */
+static bool
+past_off_max(int64_t offset, size_t total)
+{
+	return (total > (uint64_t)(INT64_MAX - offset));
+}
+
+/*
+ * Request rq for len bytes, 1 to SSIZE_MAX, at buf, in parts through one
+ * data slot, each part of a placed request at offset plus the bytes the
+ * parts before it moved.  A read copies each part's bytes out of the slot
+ * after its reply, a write copies them in before its request.  A part that
+ * would start past OFF_MAX is not made: the parts before it moved at least
+ * one byte, since offset itself is at most OFF_MAX.
  */
 static ssize_t
-transfer(erx_prog_file_t *file, uint16_t which, uint8_t *buf, size_t len)
+transfer(erx_prog_file_t *file, const io_request_t *rq, uint8_t *buf, size_t len, int64_t offset)
 {
 	const uint32_t slot = erx_prog_data_take();
 	uint8_t *const bytes = erx_prog_data_bytes(slot);
 	ssize_t result = 0;
 	size_t total = 0;
 
-	while (total < len) {
+	while (total < len && !(rq->placed && past_off_max(offset, total))) {
 		const uint32_t part = len - total < ERX_PROG_DATA_SLOT_BYTES ? (uint32_t)(len - total) :
 		    ERX_PROG_DATA_SLOT_BYTES;
+		const int64_t part_offset = rq->placed ? offset + (int64_t)total : 0;
 		uint32_t done;
 		int status;
 
-		if (which == ERX_PROG_REQUEST_FILE_WRITE)
+		if (!rq->reading)
 			memcpy(bytes, buf + total, part);
-		if ((status = io(which, file->open, part, slot, &done)) != 0) {
+		if ((status = io(rq, file->open, part_offset, part, slot, &done)) != 0) {
 			result = status;
 			break;
 		}
-		if (which == ERX_PROG_REQUEST_FILE_READ)
+		if (rq->reading)
 			memcpy(buf + total, bytes, done);
 		total += done;
 		if (done < part)
@@ -336,14 +384,66 @@ erx_prog_file_of(erx_prog_obj_t *obj)
 ssize_t
 erx_prog_file_read(erx_prog_file_t *file, void *buf, size_t len)
 {
-	return (transfer(file, ERX_PROG_REQUEST_FILE_READ, buf, len));
+	return (transfer(file, &io_read, buf, len, 0));
 }
 
 ssize_t
 erx_prog_file_write(erx_prog_file_t *file, const void *buf, size_t len)
 {
 	/* transfer only reads buf for a write. */
-	return (transfer(file, ERX_PROG_REQUEST_FILE_WRITE, (uint8_t *)(uintptr_t)buf, len));
+	return (transfer(file, &io_write, (uint8_t *)(uintptr_t)buf, len, 0));
+}
+
+ssize_t
+erx_prog_file_pread(erx_prog_file_t *file, void *buf, size_t len, off_t offset)
+{
+	return (transfer(file, &io_pread, buf, len, offset));
+}
+
+ssize_t
+erx_prog_file_pwrite(erx_prog_file_t *file, const void *buf, size_t len, off_t offset)
+{
+	/* transfer only reads buf for a write. */
+	return (transfer(file, &io_pwrite, (uint8_t *)(uintptr_t)buf, len, offset));
+}
+
+/* The protocol's name of an lseek whence: bof, cur or eof, or NULL for any other. */
+static const char *
+whence_name(int whence)
+{
+	switch (whence) {
+	case SEEK_SET:
+		return ("bof");
+	case SEEK_CUR:
+		return ("cur");
+	case SEEK_END:
+		return ("eof");
+	}
+	return (NULL);
+}
+
+off_t
+erx_prog_file_seek(erx_prog_file_t *file, off_t offset, int whence)
+{
+	const char *const name = whence_name(whence);
+	uint8_t value[VALUE_MAX];
+	const erx_prog_seek_reply_t *answer;
+	erx_prog_reply_t reply;
+	erx_etf_writer_t w;
+	int status;
+
+	if (name == NULL)
+		return (-EINVAL);
+	value_start(&w, value, 5, "local", "seek");
+	erx_etf_put_integer(&w, file->open);
+	erx_etf_put_integer(&w, offset);
+	erx_etf_put_atom(&w, name, strlen(name));
+	if ((status = request(ERX_PROG_REQUEST_LOCAL_SEEK, &w, value, &reply)) != 0)
+		return (status);
+	answer = &reply.u.local_seek;
+	if (answer->which == ERX_PROG_SEEK_REPLY_ERROR)
+		return (-answer->u.error.errnum);
+	return (answer->u.ok.file_offset);
 }
 
 void

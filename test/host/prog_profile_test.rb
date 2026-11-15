@@ -177,6 +177,18 @@ class ProgProfileTest < Minitest::Test
            'a capability field reads as a uint64_t'
   end
 
+  # An offset field is int64_t, FreeBSD's off_t, never erx_cap_t: a reply's offset
+  # handed to erx_cap_close fails to build, and so does a capability read as an offset.
+  def test_an_offset_and_a_capability_do_not_compile_as_each_other
+    assert compiles?(offset_reading('return (reply->u.ok.file_offset);')), 'the control does not compile'
+    refute compiles?(closing('const erx_prog_seek_reply_t *reply', 'reply->u.ok.file_offset')),
+           'erx_cap_close takes an offset'
+    refute compiles?("#include <erx/prog_profile.h>\n" \
+                     "int64_t offset(const erx_prog_reader_t *reader);\n" \
+                     "int64_t\noffset(const erx_prog_reader_t *reader)\n{\n\treturn (reader->cap);\n}\n"),
+           'a capability field reads as an offset'
+  end
+
   def test_a_view_is_read_only_by_its_own_list
     assert(c_answers(fixture_requests).none? { |answer| answer.split[2] == 'crossed' })
   end
@@ -323,6 +335,12 @@ class ProgProfileTest < Minitest::Test
     "#include <erx/prog_profile.h>\n" \
       "bool crossed(#{type} *it, erx_profile_text_t *t);\n" \
       "bool\ncrossed(#{type} *it, erx_profile_text_t *t)\n{\n\treturn (erx_prog_argv_next(it, t));\n}\n"
+  end
+
+  # A function that reads a seek reply with body, which returns its offset.
+  def offset_reading(body)
+    "#include <erx/prog_profile.h>\nint64_t offset(const erx_prog_seek_reply_t *reply);\n" \
+      "int64_t\noffset(const erx_prog_seek_reply_t *reply)\n{\n\t#{body}\n}\n"
   end
 
   # A function that hands value, of its one parameter's type, to erx_cap_close.

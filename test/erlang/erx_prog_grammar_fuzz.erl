@@ -19,7 +19,8 @@
 -define(ROUNDS, 20000).
 -define(WARM_ROUNDS, 200).
 %% The request cases, which name a reply slot's request.
--define(REQUESTS, [kill, probe, pipe, file_lopen, file_lcreate, file_read, file_write, file_clunk]).
+-define(REQUESTS, [kill, probe, pipe, file_lopen, file_lcreate, file_read, file_write, file_pread, file_pwrite,
+                   file_clunk, local_seek]).
 -define(DEPTH, 3).
 -define(PATH_MAX, 4096).
 
@@ -111,7 +112,10 @@ mutated_reply_round(Slot, Busy) ->
 requests() ->
     [{kill, 2, sigint}, {probe, 2}, {pipe, []}, {pipe, [cloexec, nonblock]},
      {file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"out">>, 16#241, 8#644},
-     {file, read, 3, 65536, 15}, {file, write, 0, 1, 0}, {file, clunk, 16#ffff}].
+     {file, read, 3, 65536, 15}, {file, write, 0, 1, 0}, {file, clunk, 16#ffff},
+     {file, pread, 3, 16#7fffffffffffffff, 65536, 15}, {file, pwrite, 0, 0, 1, 0},
+     {local, seek, 1, -16#8000000000000000, bof}, {local, seek, 1, 16#7fffffffffffffff, eof},
+     {local, seek, 1, -1, cur}].
 
 %% A reply of each case of each request's reply, with the request it answers; pipe's
 %% ends are the start value's fds 3 and 2.
@@ -121,7 +125,9 @@ replies() ->
     {2, Write} = lists:keyfind(2, 1, Fds),
     [{kill, ok}, {kill, {error, esrch}}, {kill, {error, eperm}}, {probe, ok}, {probe, {error, esrch}},
      {pipe, {ok, Read, Write}}, {pipe, {error, emfile}}, {file_lopen, {ok, 16#ffff}},
-     {file_read, {ok, 0}}, {file_read, {ok, 65536}}, {file_read, {error, eio}}, {file_clunk, ok}].
+     {file_read, {ok, 0}}, {file_read, {ok, 65536}}, {file_read, {error, eio}}, {file_clunk, ok},
+     {file_pread, {ok, 65536}}, {file_pwrite, {error, enospc}}, {local_seek, {ok, 0}},
+     {local_seek, {ok, 16#7fffffffffffffff}}, {local_seek, {error, eoverflow}}].
 
 %% Busy slots: none, some holding a request, or a term of another shape.
 random_busy() ->
@@ -255,7 +261,7 @@ random_leaf() ->
     case rand:uniform(4) of
         1 -> pick([-1, 0, 1, 2, 255, 256, 511, 512, 1023, 1024, 16384, 65535, 65536, 16#7fffffff, 16#80000000,
                    16#ffffffff, 16#100000000, 16#7fffffffffffffff, 16#8000000000000000, 16#ffffffffffffffff,
-                   16#10000000000000000]);
+                   16#10000000000000000, -16#8000000000000000, -16#8000000000000001]);
         2 -> random_atom();
         3 -> pick([<<>>, <<"/">>, <<"a">>, <<"a=b">>, <<"=b">>, <<0>>, <<16#ff>>, <<"/a/../b">>, <<1:3>>]);
         4 -> pick([1.0, self(), make_ref(), {}, [], #{}])
@@ -267,6 +273,7 @@ random_atom() ->
           true, false, erx_start, erx_prog, sigint, sigterm, sigkill, pid, cwd, fds, wend, readers, writers,
           closed, drained, pipe_writer, pipe_writer_gone, pipe_reader, pipe_reader_gone, pipe_lost,
           pipe_server_lost, erlang, ok, undefined, error, kill, probe, cloexec, nonblock, esrch, eperm, emfile,
-          enotsup, eopnotsupp, lopen, lcreate, clunk, file_read, eio]).
+          enotsup, eopnotsupp, lopen, lcreate, clunk, file_read, eio, pread, pwrite, local, seek, bof, cur,
+          eof, eoverflow]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).

@@ -347,6 +347,80 @@ serve_write(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
 	r->u.ok.io_done = n;
 }
 
+/* A pread at its own offset, which moves no open's. */
+static void
+serve_pread(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
+{
+	const struct open *const o = open_find(q->u.file_pread.open);
+	const uint64_t at = (uint64_t)q->u.file_pread.file_offset;
+	const size_t left = o->file->size > at ? o->file->size - (size_t)at : 0;
+	const size_t n = left < q->u.file_pread.io_count ? left : q->u.file_pread.io_count;
+	char line[96];
+
+	if (n > 0)
+		memcpy(slot_bytes(q->u.file_pread.data_slot), o->file->bytes + at, n);
+	snprintf(line, sizeof(line), "pread:%u:%lld:%u:%u", q->u.file_pread.open,
+	    (long long)q->u.file_pread.file_offset, q->u.file_pread.io_count, q->u.file_pread.data_slot);
+	log_line(line);
+	r->which = ERX_PROG_IO_REPLY_OK;
+	r->u.ok.io_done = (uint32_t)n;
+}
+
+/* A pwrite at its own offset, which moves no open's. */
+static void
+serve_pwrite(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
+{
+	const struct open *const o = open_find(q->u.file_pwrite.open);
+	const uint64_t at = (uint64_t)q->u.file_pwrite.file_offset;
+	const uint32_t n = q->u.file_pwrite.io_count;
+	char line[96];
+
+	if (at > FILE_BYTES || n > FILE_BYTES - at)
+		fail("a pwrite past the stand-in's file");
+	memcpy(o->file->bytes + at, slot_bytes(q->u.file_pwrite.data_slot), n);
+	if (at + n > o->file->size)
+		o->file->size = (size_t)(at + n);
+	snprintf(line, sizeof(line), "pwrite:%u:%lld:%u:%u", q->u.file_pwrite.open,
+	    (long long)q->u.file_pwrite.file_offset, n, q->u.file_pwrite.data_slot);
+	log_line(line);
+	r->which = ERX_PROG_IO_REPLY_OK;
+	r->u.ok.io_done = n;
+}
+
+/* A seek, as the description moves its offset (erx_prog_handler_core:seek_to/2). */
+static void
+serve_seek(const erx_prog_request_t *q, erx_prog_seek_reply_t *r)
+{
+	static const char *const names[] = { "bof", "cur", "eof" };
+	struct open *const o = open_find(q->u.local_seek.open);
+	const int64_t offset = q->u.local_seek.seek_offset;
+	int64_t base;
+	char line[96];
+
+	switch (q->u.local_seek.whence) {
+	case ERX_PROG_WHENCE_BOF:
+		base = 0;
+		break;
+	case ERX_PROG_WHENCE_CUR:
+		base = (int64_t)o->offset;
+		break;
+	default:
+		base = (int64_t)o->file->size;
+		break;
+	}
+	snprintf(line, sizeof(line), "seek:%u:%lld:%s", q->u.local_seek.open, (long long)offset,
+	    names[q->u.local_seek.whence]);
+	log_line(line);
+	if (offset > 0 && base > INT64_MAX - offset) {
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_ERROR, .u.error.errnum = EOVERFLOW };
+	} else if (base + offset < 0) {
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_ERROR, .u.error.errnum = EINVAL };
+	} else {
+		o->offset = (size_t)(base + offset);
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_OK, .u.ok.file_offset = base + offset };
+	}
+}
+
 /* The handler's answer to request q, into *reply. */
 static void
 serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
@@ -401,6 +475,15 @@ serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
 			break;
 		}
 		serve_write(q, &reply->u.file_write);
+		break;
+	case ERX_PROG_REQUEST_FILE_PREAD:
+		serve_pread(q, &reply->u.file_pread);
+		break;
+	case ERX_PROG_REQUEST_FILE_PWRITE:
+		serve_pwrite(q, &reply->u.file_pwrite);
+		break;
+	case ERX_PROG_REQUEST_LOCAL_SEEK:
+		serve_seek(q, &reply->u.local_seek);
 		break;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		open_find(q->u.file_clunk.open)->file = NULL;
@@ -597,6 +680,7 @@ main(int argc, char **argv)
 	static char line[ERX_PROG_PATH_MAX + 256];
 	char word[32], arg[ERX_PROG_PATH_MAX + 64], arg2[256];
 	unsigned long long a, b;
+	long long off;
 	FILE *script;
 	int fd;
 
@@ -648,8 +732,18 @@ main(int argc, char **argv)
 			while (erx_prog_fd_dup(fd) >= 0)
 				n++;
 			printf("%d\n", n);
-		} else if (strcmp(word, "lseek") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
-			printf("%lld\n", (long long)erx_prog_fd_lseek(fd, 0, SEEK_CUR));
+		} else if (strcmp(word, "lseek") == 0 && sscanf(line, "%*s %d %lld %31s", &fd, &off, arg) == 3) {
+			const int whence = strcmp(arg, "set") == 0 ? SEEK_SET : strcmp(arg, "cur") == 0 ? SEEK_CUR :
+			    strcmp(arg, "end") == 0 ? SEEK_END : 3;
+
+			printf("%lld\n", (long long)erx_prog_fd_lseek(fd, (off_t)off, whence));
+		} else if (strcmp(word, "pread") == 0 && sscanf(line, "%*s %d %llu %lld", &fd, &a, &off) == 3) {
+			char buf[256] = { 0 };
+			const ssize_t got = erx_prog_fd_pread(fd, buf, a < sizeof(buf) - 1 ? (size_t)a : sizeof(buf) - 1, (off_t)off);
+
+			printf("%zd %s\n", got, got > 0 ? buf : "-");
+		} else if (strcmp(word, "pwrite") == 0 && sscanf(line, "%*s %d %lld %255s", &fd, &off, arg) == 3) {
+			printf("%zd\n", erx_prog_fd_pwrite(fd, arg, strlen(arg), (off_t)off));
 		} else if (strcmp(word, "fstat") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
 			struct stat st;
 

@@ -58,8 +58,11 @@ class ErxProgHandlerTest < Minitest::Test
       Mutant.new(file: CORE, original: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =/= 0 -> none;',
                  replacement: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =:= -1 -> none;',
                  caught_by: 'directory_and_nofollow_are_relayed_test_'),
+    'a seek past off_t admitted' =>
+      Mutant.new(file: CORE, original: 'when Base + Offset > ?OFF_MAX ->', replacement: 'when Base + Offset > ?OFF_MAX + 1 ->',
+                 caught_by: 'seek_to_follows_freebsd'),
     'a data slot past the program slots admitted' =>
-      Mutant.new(file: CORE, original: '{ok, _} when Data >= Slots ->', replacement: '{ok, _} when Data > Slots ->',
+      Mutant.new(file: CORE, original: 'true when Data >= Slots ->', replacement: 'true when Data > Slots ->',
                  caught_by: 'data_slot_past_the_program_slots_is_einval'),
     'a refused start that keeps its hand-offs' =>
       Mutant.new(file: CORE, original: '[{hand_drop, Number} || {_, {pipe_hand, Number, _}} <- Made] ++',

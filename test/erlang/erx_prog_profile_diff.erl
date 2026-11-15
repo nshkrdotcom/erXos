@@ -266,8 +266,13 @@ pipe_mutations() ->
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
 
 %% The busy slots of the replies: slot 3 holds a kill, slot 5 a probe, slot 6 an
-%% lopen, slot 7 a read, slot 8 a clunk and slot 9 a pipe.
--define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk, 9 => pipe}).
+%% lopen, slot 7 a read, slot 8 a clunk, slot 9 a pipe, slot 10 a seek and slot 11 a
+%% pread.
+-define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk, 9 => pipe,
+                10 => local_seek, 11 => file_pread}).
+%% off_t's bounds, an offset's.
+-define(OFF_MIN, -(1 bsl 63)).
+-define(OFF_MAX, (1 bsl 63) - 1).
 
 %% A new pipe's two ends as pipe's reply names them: its read end, which the write end
 %% feeds as writer 1, and its write end, which rings the read end's reader 0.
@@ -302,6 +307,16 @@ request_valid() ->
      request(read_max, 2, {file, read, 16#ffff, 65536, 15}),
      request(write_max, 2, {file, write, 16#ffff, 65536, 15}),
      request(clunk_open, 3, {file, clunk, 7}),
+     request(pread_least, 4, {file, pread, 0, 0, 1, 0}),
+     request(pread_max, 4, {file, pread, 16#ffff, ?OFF_MAX, 65536, 15}),
+     request(pwrite_max, 4, {file, pwrite, 16#ffff, ?OFF_MAX, 65536, 15}),
+     request(seek_least, 5, {local, seek, 0, ?OFF_MIN, bof}),
+     request(seek_max, 5, {local, seek, 16#ffff, ?OFF_MAX, cur}),
+     request(seek_end, 5, {local, seek, 1, -1, eof}),
+     reply(seek_least, local_seek, 10, {ok, 0}),
+     reply(seek_max, local_seek, 10, {ok, ?OFF_MAX}),
+     reply(seek_eoverflow, local_seek, 10, {error, eoverflow}),
+     reply(pread_full, file_pread, 11, {ok, 65536}),
      reply(lopen_ok, file_lopen, 6, {ok, 16#ffff}),
      reply(lopen_enoent, file_lopen, 6, {error, enoent}),
      reply(read_eof, file_read, 7, {ok, 0}),
@@ -369,6 +384,15 @@ request_mutations() ->
      {lcreate_mode_past, {frame, request, {erx_prog, 1, 0, {file, lcreate, <<"f">>, 0, 8#10000}}}, "range file_mode"},
      {read_count_zero, {frame, request, {erx_prog, 1, 0, {file, read, 0, 0, 0}}}, "range io_count"},
      {read_count_past, {frame, request, {erx_prog, 1, 0, {file, read, 0, 65537, 0}}}, "range io_count"},
+     {pread_offset_negative, {frame, request, {erx_prog, 1, 0, {file, pread, 0, -1, 1, 0}}}, "range file_offset"},
+     {pwrite_offset_past, {frame, request, {erx_prog, 1, 0, {file, pwrite, 0, 1 bsl 63, 1, 0}}}, "range file_offset"},
+     {pread_offset_atom, {frame, request, {erx_prog, 1, 0, {file, pread, 0, cur, 1, 0}}}, "shape file_offset"},
+     {seek_offset_past, {frame, request, {erx_prog, 1, 0, {local, seek, 0, 1 bsl 63, bof}}}, "range seek_offset"},
+     {seek_offset_below, {frame, request, {erx_prog, 1, 0, {local, seek, 0, ?OFF_MIN - 1, bof}}}, "range seek_offset"},
+     {seek_whence_unknown, {frame, request, {erx_prog, 1, 0, {local, seek, 0, 0, set}}}, "no_case whence"},
+     {seek_reply_negative, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, -1}}}, "range file_offset"},
+     {seek_reply_past, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, 1 bsl 63}}}, "range file_offset"},
+     {seek_reply_wide, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, 1 bsl 64}}}, "range file_offset"},
      {write_slot_past, {frame, request, {erx_prog, 1, 0, {file, write, 0, 1, 16}}}, "range data_slot"},
      {file_unknown_op, {frame, request, {erx_prog, 1, 0, {file, mkdir, <<"d">>}}}, "no_case request"},
      {read_reply_past, {frame, reply, ?BUSY, {erx_prog, 1, 7, {ok, 65537}}}, "range io_done"},

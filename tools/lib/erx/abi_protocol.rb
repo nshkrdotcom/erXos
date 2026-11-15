@@ -61,6 +61,9 @@ module Erx
       # The limit (abi/kernel.txt) naming the null capability, which a
       # capability kind excludes.
       CAP_NULL = 'cap_null'
+      # An offset's bounds, FreeBSD's off_t: OFF_MIN and OFF_MAX.
+      OFFSET_MIN = -(1 << 63)
+      OFFSET_MAX = (1 << 63) - 1
       LENGTHS = { 'u16' => 65_535, 'u32' => 65_536 }.freeze
       # Names become Erlang atoms and functions: no reserved word, no dot, and no
       # kind whose check would clash with a BIF or a helper of the generated module.
@@ -111,7 +114,7 @@ module Erx
             line.fail!('expected errors type N') unless words.size == 2 && words.first == 'type'
             error_type = number(words[1], 255, line, constants).fetch(:value)
             errors = error_numbers(children, line, constants)
-          when 'integer', 'capability', 'text', 'tuple', 'list', 'map', 'union'
+          when 'integer', 'capability', 'offset', 'text', 'tuple', 'list', 'map', 'union'
             kind_name = atom_name(words.first, line: line)
             line.fail!("reserved kind name #{kind_name}") if RESERVED_KINDS.include?(kind_name)
             if kinds.key?(kind_name) || BASE_KINDS.include?(kind_name) || totals.key?(kind_name)
@@ -165,6 +168,7 @@ module Erx
         case form
         when 'integer' then integer_kind(words, line, constants)
         when 'capability' then capability_kind(words, line, constants)
+        when 'offset' then offset_kind(words, line, constants)
         when 'text' then text_kind(words, line, constants)
         when 'tuple'
           line.fail!('a tuple has 1 to 32 elements') unless words.size.between?(1, MAX_FIELDS)
@@ -275,6 +279,27 @@ module Erx
         { form: 'integer', base: 'u64'.b, local: false,
           except: number("@#{CAP_NULL}", (1 << 64) - 1, line, constants),
           unique: true, capability: true }.freeze
+      end
+
+      # "offset NAME [in MIN MAX]": a file offset (docs/design-abi.md,
+      # "Program protocol"), FreeBSD's off_t: a signed 64-bit integer, from 0
+      # to OFFSET_MAX unless the range given reaches below 0, as lseek's
+      # offset relative to its whence does. Its base, i64, is its own: no
+      # integer kind spells it, so a frame protocol's every 64-bit kind is
+      # told apart by its declaration, a capability or an offset, and the C
+      # check reads an offset as int64_t, never as erx_cap_t.
+      def offset_kind(words, line, constants)
+        range = case words
+                in [] then [0, OFFSET_MAX]
+                in ['in', low, high] then [low, high].map { |word| Model.numeric(word, constants, line) }
+                else line.fail!('an offset takes no option but in MIN MAX')
+                end
+        unless range.all? { |value| value.between?(OFFSET_MIN, OFFSET_MAX) }
+          line.fail!("an offset's range lies within #{OFFSET_MIN}..#{OFFSET_MAX}")
+        end
+        line.fail!('an offset range has MIN above MAX') if range.first > range.last
+        min, max = range.map { |value| { value: value, constant: nil }.freeze }
+        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, offset: true }.freeze
       end
 
       # max N, then "utf8", "refuse" and its refusals, "assign", "path",
