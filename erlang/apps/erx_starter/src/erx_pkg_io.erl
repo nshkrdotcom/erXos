@@ -212,7 +212,12 @@ tail(Place, File, Head, Extent, Size) ->
 %% contract is passed on, a listing of at most ERX_PKG_SCAN_MAX names and a
 %% read of at most the bytes asked; every other answer is a storage failure.
 medium(Call, Args) ->
-    contract(Call, Args, apply(erx_pkg_medium, Call, Args)).
+    contract(Call, Args, call(Call, Args)).
+
+call(list, [Max]) -> erx_pkg_medium:list(Max);
+call(size, [Place, File]) -> erx_pkg_medium:size(Place, File);
+call(pread, [Place, File, Offset, Size]) -> erx_pkg_medium:pread(Place, File, Offset, Size);
+call(delete, [File]) -> erx_pkg_medium:delete(File).
 
 contract(list, [Max], {ok, Names, More} = Answer)
   when is_list(Names), length(Names) =< Max, is_boolean(More) ->
