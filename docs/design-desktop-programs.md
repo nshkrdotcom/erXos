@@ -247,7 +247,7 @@ timer's tick. Effects form a closed set:
 | `{stat, Tag, Dir, Names}` | a worker calls `file:read_link_info/1` on each of at most 256 names | `{stated, Tag, Result}` |
 | `{read, Tag, Path, Bytes}` | a worker opens the file and reads at most `Bytes` | `{read, Tag, Result}` |
 | `{tick_after, Ms}` | `erlang:start_timer/3` with the relative delay `Ms`, cancelling the timer before | `{tick, Now}`, `Now` the wall clock read when the timer fires |
-| `{snarf, Bytes}` | a write of `/snarf` through the session's display grant | `{snarfed, ok \| {error, Errno}}` |
+| `{snarf, Bytes}` | a write of `/clipboard` through the session's display grant | `{snarfed, ok \| {error, Errno}}` |
 | `{cancel, Tag}` | the worker of `Tag` is unlinked and killed | none |
 | `close` | `erx_ui:close/1`, and the process ends | none |
 
@@ -917,7 +917,7 @@ buttons, one per folder from the root, the current folder's carrying
   says that the desktop has no viewer for it. Nothing is started: files
   starts no program and no app.
 * **Copy path** writes the selected item's path, its exact bytes, to
-  `/snarf`, when the session's display grant carries `snarf`
+  `/clipboard`, when the session's display grant carries `clipboard`
   ([design-display.md](design-display.md#the-window-process)); without
   it the button is disabled.
 * **Refresh** lists the folder again. Nothing watches a folder: the file
@@ -1062,7 +1062,7 @@ mailbox drains and the window takes input while a read waits.
 | a folder's names reach the listing worker's heap cap | the worker is killed; "This folder is too large to show here" in the list's place; history kept | back, or `ls` at a terminal |
 | a worker crashes | its request fails with the reason, shown as the error's text where the answer would go | refresh, or the next sample |
 | a preview read fails | the info section shows the error's text | none needed |
-| `/snarf` refuses a write | the copy button reports the errno once | none needed |
+| `/clipboard` refuses a write | the copy button reports the errno once | none needed |
 | the window is closed from the menu | the widget server ends, the program receives `{ui_down, Window, _}` and ends with `shutdown`, its workers with it | the command again |
 | the display goes away | the program receives `{ui_down, Window, display_down}` and ends | the command again, once the display is back |
 | the window process crashes | its window ends with it; the log records the reason; the supervisor does not restart a temporary child | the command again |

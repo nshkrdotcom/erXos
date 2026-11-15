@@ -853,7 +853,7 @@ it; git history is the record of completed work.
   * **The manifest** ([A display's session](docs/design-display.md#a-displays-session)): the `display` record in
     `abi/manifest.txt`, named after the `windows` service it describes, and its reader; property 18 of the manifest
     check (a template's `pixels` counted by its principal's `domains` quota, no facet row setting `session`) with its
-    seeded violations; `abi/services/windows.txt` with the parameters `windows`, `pixels`, `snarf` and `session`; the
+    seeded violations; `abi/services/windows.txt` with the parameters `windows`, `pixels`, `clipboard` and `session`; the
   * **The pixel area** ([The pixel area](docs/design-display.md#the-pixel-area)): `erx_dom_connect` with `area` and
     `area_reader`, the connection record's `area`, the grant-table rows and the Fiasco backend's row for an object two
     tasks map (`liberx/system`); `connection_up`'s `Area` and `ERX_LANE_CTL_SLOT`'s pinned length; the connection
@@ -863,7 +863,7 @@ it; git history is the record of completed work.
     display's session from a start row ([Track A](docs/plan.md#track-a-apps), part 1), with `session` carried by
     every mint of its grant from the session mark the domain service alone sets. A window's buffer at the screen's
     size, allocated once by `erx_win:open/2`, with
-    `resized/1` allocating nothing; the grant defaults of 1 window, 8 MiB and `snarf` off at the server.
+    `resized/1` allocating nothing; the grant defaults of 1 window, 8 MiB and `clipboard` off at the server.
   * **The reserved chord** ([The reserved chord](docs/design-display.md#windows-and-the-window-system)): its field in the
     `display` record, its source spelling and its key encoding, which land with the login design's choice of what
     the chord brings up ([Risks and decisions](docs/design-display.md#risks-and-decisions), 14). Until then no
@@ -1114,7 +1114,7 @@ it; git history is the record of completed work.
   `abi/services/windows.txt` names no root file, so `erx_win:open/2` sizes the buffer by the new window's `wctl`
   rectangle, which only the single policy sets to the screen's; under `erx_wm_rio` a buffer would be the size of the
   window's first placement. Serve `screen` as the design gives it (`EIO` while there is no screen, `EACCES` when
-  opened for writing, `EEXIST` for a `mkdir` of `screen` or `snarf`), have `open/2` read it before the `mkdir` for
+  opened for writing, `EEXIST` for a `mkdir` of `screen` or `clipboard`), have `open/2` read it before the `mkdir` for
   the size and the channel, keep the allocation after the `mkdir`, and correct the moduledoc's account of the order.
 * [Medium] `erlang/apps/erx_win/src/erx_pixels.erl`, [The lease](docs/design-display.md#the-pixel-area): a lease
   `lend/3` makes for a holder other than the range's owner can be taken by that holder's program port like any, so
@@ -1900,7 +1900,8 @@ it; git history is the record of completed work.
   only by `erx_fs`'s one request per open file; give them a cap of their own.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
-* [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/snarf` is not served, and the mint reads no `snarf` limit.
+* [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
+  `EPERM` (no `setattr`); an open with `O_TRUNC` is the one way to empty it.
 * [Low] `erlang/apps/erx_display/src/erx_window.erl`: `kbd` gives only `c` records; `k` and `K` are not produced.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: the window table carries no label, so a decorating policy cannot
   see it.

@@ -1447,7 +1447,7 @@ land after M11 repeat M11's closure over what they add.
    `erx_draw_codec` and `erx_memdraw` over the window's buffer, and
    `erx_draw` and `erx_font` for Erlang clients; the session's export of
    one window's directory, `/dev/draw` among its files, into a program's
-   namespace; `/snarf`; the terminal `erx_term` in the session's release,
+   namespace; `/clipboard`; the terminal `erx_term` in the session's release,
    the master of a tty of the session's terminal relay, with its sibling
    windows; the desktop's session, a manifest start row naming `root`
    and the display, whose template starts `erx_term_sup`;

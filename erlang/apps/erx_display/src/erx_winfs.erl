@@ -56,14 +56,20 @@ with `session` set, or `none`.
 
 **The tree.** A grant's root is its client's directory, named by the
 grantee's domain id in decimal, and lists the client's windows by the
-names the client chose; a window's directory lists `ctl`, `mouse`, `kbd`,
-`wctl` and `label`. A node is `root`, `{window, Id, Proc}` or
+names the client chose and, when the grant's limits carry `clipboard`, the
+file `clipboard`; a window's directory lists `ctl`, `mouse`, `kbd`, `wctl` and
+`label`. A node is `root`, `clipboard`, `{window, Id, Proc}` or
 `{file, Id, Proc, File}`, made by this module from the table, never from
 client bytes: a name is looked up, never turned into an atom. `wctl`
-writes come here; every other file is its window process's
+writes come here; every other file of a window is its window process's
 (erx_window). A window that has ended answers `EIO`. It is a made tree:
 its attributes, its statfs and its listings, each taken by a directory's
 open, are erx_fs_node's.
+
+**The clipboard.** The file `clipboard` (docs/design-display.md, "The
+clipboard") is one buffer of this process, which every grant carrying
+`clipboard` reads and writes and no other grant can walk to. Each write is
+applied here, whole or not at all.
 """.
 
 -behaviour(erx_fs).
@@ -79,6 +85,8 @@ open, are erx_fs_node's.
 
 -define(ID_MAX, 16#7fffffff).
 -define(READ_ONLY, [mouse, kbd]).
+%% The tree's own name for the clipboard, which no window takes.
+-define(CLIPBOARD, <<"clipboard">>).
 
 %% A window policy: its window manager module and that module's configuration.
 -type policy() :: {module(), map()}.
@@ -118,6 +126,8 @@ open, are erx_fs_node's.
                 depth = none :: none | pos_integer(),
                 screen = none :: none | {pid(), reference()},
                 next_id = 1 :: pos_integer(),
+                %% The display's clipboard.
+                clipboard = <<>> :: binary(),
                 minted = 0 :: non_neg_integer()}).
 
 %% The process ---------------------------------------------------------------
@@ -251,14 +261,17 @@ mint({grant, Tag, Grantee, Limits}, #winfs{options = #{minted := Minted}} = Stat
 grant(Grantee, Limits, #winfs{options = Options, grants_sup = Sup, minted = Minted} = State) ->
     Windows = maps:get(windows, Limits, ?ERX_WINDOWS_DEFAULT),
     Session = maps:get(session, Limits, false),
-    case is_integer(Windows) andalso Windows >= 0 andalso is_boolean(Session) of
+    HasClipboard = maps:get(clipboard, Limits, false),
+    case is_integer(Windows) andalso Windows >= 0 andalso is_boolean(Session) andalso is_boolean(HasClipboard) of
         false ->
             {{error, einval}, State};
         true ->
             Client = integer_to_binary(Grantee),
             case binding(Grantee, Options) of
                 {ok, Binding} ->
-                    case erx_fs_grants:grant(Sup, #{winfs => self(), client => Client}, Limits, Binding) of
+                    case erx_fs_grants:grant(Sup, #{winfs => self(), client => Client,
+                                                    clipboard => HasClipboard},
+                                             Limits, Binding) of
                         {ok, Grant} ->
                             Record = #{client => Client, area => area(Grantee, Options),
                                        windows => Windows, session => Session,
@@ -340,6 +353,15 @@ handle_call({remove, Client, Name, Expect}, _Pid, State) ->
     end;
 handle_call({wctl, Client, Id, Bytes}, _Pid, State) ->
     place_request(Client, Id, Bytes, State);
+handle_call(clipboard_empty, _Pid, State) ->
+    {ok, State#winfs{clipboard = <<>>}};
+handle_call({clipboard_read, Offset, Count}, _Pid, #winfs{clipboard = Clipboard} = State) ->
+    {{ok, clipboard_part(Clipboard, Offset, Count)}, State};
+handle_call({clipboard_write, Offset, Data}, _Pid, #winfs{clipboard = Clipboard} = State) ->
+    case clipboard_written(Clipboard, Offset, Data) of
+        {ok, Written} -> {ok, State#winfs{clipboard = Written}};
+        {error, _} = Refused -> {Refused, State}
+    end;
 handle_call({input, Device, Record}, Pid, #winfs{sources = Sources, screen = Screen} = State)
   when is_binary(Device) ->
     Monitored = case Sources of
@@ -362,6 +384,31 @@ find(Client, Name, #winfs{windows = Windows}) ->
 
 demonitor_screen(none) -> ok;
 demonitor_screen({_Pid, Ref}) -> true = erlang:demonitor(Ref, [flush]), ok.
+
+%% The clipboard's bytes from Offset, at most Count of them, copied so that the reply
+%% holds no reference to the whole buffer.
+clipboard_part(Clipboard, Offset, Count) ->
+    Size = byte_size(Clipboard),
+    From = min(Offset, Size),
+    binary:copy(binary:part(Clipboard, From, min(Count, Size - From))).
+
+%% The clipboard with Data in place at Offset, zeros in any hole between its end and
+%% Offset, or efbig when that would take it past its bound. A write of no bytes
+%% changes nothing.
+clipboard_written(Clipboard, _Offset, <<>>) ->
+    {ok, Clipboard};
+clipboard_written(Clipboard, Offset, Data) ->
+    Size = byte_size(Clipboard),
+    End = Offset + byte_size(Data),
+    case max(Size, End) =< ?ERX_WINDOWS_CLIPBOARD_BYTES of
+        true ->
+            Head = binary:part(Clipboard, 0, min(Offset, Size)),
+            Hole = binary:copy(<<0>>, max(0, Offset - Size)),
+            Tail = binary:part(Clipboard, min(End, Size), Size - min(End, Size)),
+            {ok, <<Head/binary, Hole/binary, Data/binary, Tail/binary>>};
+        false ->
+            {error, efbig}
+    end.
 
 %% A mkdir in a client's directory: the window takes the next id and the mkdir's
 %% Owner as its holder, within its grant's windows quota.
@@ -397,7 +444,7 @@ new_window(Grant, #{client := Client, area := Area}, Name, Owner, State) ->
 refusal(Grant, #{client := Client, windows := Quota}, Name,
         #winfs{screen_rect = Screen, next_id = Id, windows = Windows} = State) ->
     Held = length([W || W = #{grant := G} <- Windows, G =:= Grant]),
-    Exists = find(Client, Name, State) =/= error,
+    Exists = Name =:= ?CLIPBOARD orelse find(Client, Name, State) =/= error,
     if
         Screen =:= none -> eio;
         Exists -> eexist;
@@ -549,14 +596,17 @@ layout(#winfs{windows = Windows, screen_rect = Screen, policy = Policy}) ->
 %% The tree ------------------------------------------------------------------
 
 -doc false.
-init(#{winfs := Winfs, client := Client}) when is_pid(Winfs), is_binary(Client) ->
-    {ok, #{winfs => Winfs, client => Client, grant => self()}}.
+init(#{winfs := Winfs, client := Client, clipboard := HasClipboard})
+  when is_pid(Winfs), is_binary(Client), is_boolean(HasClipboard) ->
+    {ok, #{winfs => Winfs, client => Client, clipboard => HasClipboard, grant => self()}}.
 
 -doc false.
 root(_Fs) ->
     {ok, ?ERX_WINDOWS_TREE_BYTES, root, qid(root)}.
 
 -doc false.
+walk(root, ?CLIPBOARD, #{clipboard := true}) ->
+    {ok, clipboard, qid(clipboard)};
 walk(root, Name, #{winfs := Winfs, client := Client}) ->
     case call(Winfs, {walk, Client, Name}) of
         {ok, Id, Proc} -> {ok, {window, Id, Proc}, qid({window, Id, Proc})};
@@ -572,6 +622,7 @@ walk({file, _, _, _}, _Name, _Fs) ->
 
 -doc false.
 getattr({file, _, _, File} = Node, _Fs) -> erx_fs_node:attr(qid(Node), file, file_mode(File));
+getattr(clipboard, _Fs) -> erx_fs_node:attr(qid(clipboard), file, 8#600);
 getattr(Node, _Fs) -> erx_fs_node:attr(qid(Node), dir, 8#700).
 
 file_mode(File) ->
@@ -589,17 +640,29 @@ open({file, _, _, File} = Node, Flags, _Fs) ->
         true -> {error, eacces};
         false -> {ok, Node}
     end;
+open(clipboard, Flags, #{winfs := Winfs}) ->
+    case clipboard_open(Flags) of
+        keep -> {ok, clipboard};
+        empty -> maybe ok ?= call(Winfs, clipboard_empty), {ok, clipboard} end;
+        refused -> {error, einval}
+    end;
 open(Dir, Flags, Fs) ->
     case Flags band ?ERX_P9_O_ACCMODE of
         0 -> listing(Dir, Fs);
         _ -> {error, eisdir}
     end.
 
-listing(root, #{winfs := Winfs, client := Client}) ->
+%% The root lists the file clipboard first when the grant carries it, then the client's
+%% windows.
+listing(root, #{winfs := Winfs, client := Client, clipboard := HasClipboard}) ->
+    Entry = case HasClipboard of
+                true -> [{qid(clipboard), ?ERX_P9_DT_REG, ?CLIPBOARD}];
+                false -> []
+            end,
     case call(Winfs, {list, Client}) of
         {ok, Windows} ->
-            {ok, erx_fs_node:listing([{qid({window, Id, Proc}), ?ERX_P9_DT_DIR, Name}
-                                      || {Id, Name, Proc} <- Windows])};
+            {ok, erx_fs_node:listing(Entry ++ [{qid({window, Id, Proc}), ?ERX_P9_DT_DIR, Name}
+                                               || {Id, Name, Proc} <- Windows])};
         {error, _} = Error ->
             Error
     end;
@@ -607,9 +670,24 @@ listing({window, Id, Proc}, _Fs) ->
     {ok, erx_fs_node:listing([{qid({file, Id, Proc, File}), ?ERX_P9_DT_REG, Name}
                               || {Name, File, _} <- files()])}.
 
+%% What an open of the file clipboard with Flags does to the clipboard: an open for writing with
+%% O_TRUNC empties it, and access mode 3, which names no access, and O_APPEND, which the
+%% clipboard does not keep, are refused.
+clipboard_open(Flags) ->
+    Access = Flags band ?ERX_P9_O_ACCMODE,
+    Append = Flags band ?ERX_P9_O_APPEND =/= 0,
+    Truncate = Flags band ?ERX_P9_O_TRUNC =/= 0,
+    if
+        Access =:= ?ERX_P9_O_ACCMODE; Append -> refused;
+        Access =/= 0, Truncate -> empty;
+        true -> keep
+    end.
+
 -doc false.
 read({file, _Id, Proc, File}, Offset, Count, _Fs) ->
     call(Proc, {read, File, Offset, Count});
+read(clipboard, Offset, Count, #{winfs := Winfs}) ->
+    call(Winfs, {clipboard_read, Offset, Count});
 read({entries, _}, _Offset, _Count, _Fs) ->
     {error, eisdir}.
 
@@ -630,13 +708,21 @@ write({file, Id, _Proc, wctl}, Offset, Data, #{winfs := Winfs, client := Client}
     written(call(Winfs, {wctl, Client, Id, Data}), Offset, Data);
 write({file, _Id, Proc, File}, Offset, Data, _Fs) ->
     written(call(Proc, {write, File, Offset, Data}), Offset, Data);
+write(clipboard, Offset, Data, #{winfs := Winfs}) ->
+    written(call(Winfs, {clipboard_write, Offset, Data}), Offset, Data);
 write({entries, _}, _Offset, _Data, _Fs) ->
     {error, eisdir}.
 
-written(ok, Offset, Data) -> {ok, byte_size(Data), Offset + byte_size(Data)};
+%% A write's answer names the offset its bytes were written at.
+written(ok, Offset, Data) -> {ok, byte_size(Data), Offset};
 written({error, _} = Error, _Offset, _Data) -> Error.
 
+%% A create of the file clipboard opens it (erx_fs_node:open_by_create/4); every other
+%% create in the root is a mkdir, which makes a window.
 -doc false.
+make(root, ?CLIPBOARD, {file, _Mode, Flags}, #{clipboard := true} = Fs) ->
+    erx_fs_node:open_by_create(clipboard, qid(clipboard), Flags,
+                               fun(F) -> open(clipboard, F, Fs) end);
 make(root, Name, {directory, _Mode, Owner}, #{winfs := Winfs, client := Client, grant := Grant}) ->
     case call(Winfs, {make, Grant, Client, Name, Owner}) of
         {ok, Id, Proc} -> {ok, {window, Id, Proc}, qid({window, Id, Proc})};
@@ -646,6 +732,10 @@ make(_Dir, _Name, _What, _Fs) ->
     {error, eperm}.
 
 -doc false.
+unlink(root, ?CLIPBOARD, directory, #{clipboard := true}) ->
+    {error, enotdir};
+unlink(root, ?CLIPBOARD, _Kind, #{clipboard := true}) ->
+    {error, eperm};
 unlink(root, Name, directory, #{winfs := Winfs, client := Client}) ->
     call(Winfs, {remove, Client, Name, any});
 unlink(root, Name, {node, {window, Id, _}}, #{winfs := Winfs, client := Client}) ->
@@ -657,9 +747,10 @@ unlink(root, _Name, file, _Fs) ->
 unlink(_Dir, _Name, _Kind, _Fs) ->
     {error, eperm}.
 
-%% Paths: the root 0, a window's directory its id times 8, and each of its files
-%% that plus the file's number.
+%% Paths: the root 0, clipboard 1, a window's directory its id times 8, and each of its
+%% files that plus the file's number; ids start at 1, so no window's path is 1.
 qid(root) -> {?ERX_P9_QTDIR, 0, 0};
+qid(clipboard) -> {0, 0, 1};
 qid({window, Id, _}) -> {?ERX_P9_QTDIR, 0, Id * 8};
 qid({file, Id, _, File}) ->
     {File, N} = lists:keyfind(File, 1, ?ERX_WINDOWS_FILE_MEMBERS),

@@ -25,7 +25,7 @@ module Erx
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     START_ROW = "start system\n  enable NO\n  restarts 3\n  restart_period_s 60\n"
-    WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter snarf yes\n"
+    WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
 
     module_function
 

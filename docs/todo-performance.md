@@ -417,6 +417,14 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   the window process, `erx_screen` and the driver. Settled by round trips
   a second against the device's frame time on HVF; the fix on the table
   is a shorter way for a present than a file write.
+* **[Low] display, the clipboard's writes in `erx_winfs`**
+  ([design-display.md](design-display.md#the-window-tree), "The
+  clipboard"): each write to `/clipboard` builds a new buffer of up to 1 MiB
+  in `erx_winfs`, the process that also routes input and takes every
+  `wctl`, so a copy in small writes delays input by a copy of the buffer
+  per write. Settled by input latency at the window during a 1 MiB copy
+  in 4 KiB writes, on HVF; the fix on the table is a buffer kept as a
+  list of chunks, joined at a read.
 * **[Medium] display, pixel areas reserved and unused**
   ([design-display.md](design-display.md#the-pixel-area)): an area is
   charged whole when its connection is made. Settled by the bytes

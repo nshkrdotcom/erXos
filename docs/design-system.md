@@ -2609,7 +2609,7 @@ boolean as `true` or `false`, and text or bytes as a binary. The
 generator refuses a parameter that takes a limit field's name, so the
 two never meet in one map, and a `set` declaration, whose many values
 the view does not carry. So the `windows` grant's `pixels`, `windows`
-and `snarf` are the row's, and the pixel area `erx_domain_mints` charges
+and `clipboard` are the row's, and the pixel area `erx_domain_mints` charges
 the display is the one property 18 summed.
 
 The decisions are a pure state machine, `erx_domain_mints`, beside

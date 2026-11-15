@@ -13,7 +13,7 @@ require_relative '../../tools/lib/erx/host_os'
 # A facet row's parameters reach the mint (docs/design-system.md, "Facets a configured
 # domain serves"): the manifest fuzz target's windows-grant seed, the display_domain
 # suite's manifest with its client template's grant of the display stating pixels,
-# windows and snarf (Erx::ManifestSeeds.windows_grant), is packed by the manifest check;
+# windows and clipboard (Erx::ManifestSeeds.windows_grant), is packed by the manifest check;
 # the domain library's boot view (liberx/system/dom_boot_view.c) is built from those
 # bytes, and the NIF's erx_domain_served_terms
 # (otp/erts/emulator/nifs/erxos/erx_domain_terms.c) turns it into
@@ -36,7 +36,7 @@ class FacetParametersTest < Minitest::Test
   LIMITS_CASE = 'the_grant_s_limits_carry_its_parameters_by_name_test'
   FORGED_CASE = 'forged_parameter_rows_are_refused_test'
 
-  # The grant's packed parameter rows are windows (key 1), pixels (2) and snarf (3), the
+  # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
   # manifest's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
   # Each forgery edits the rows, given as an array of their bytes, and the view must refuse it.
   FORGED = {

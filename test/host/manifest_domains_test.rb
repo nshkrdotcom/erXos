@@ -766,7 +766,7 @@ class ManifestDomainsTest < Minitest::Test
   # A facet's parameters, resolved against its service's declarations, are packed in
   # key order, each facet's run its parameters span; facets are in name order, ob first.
   def test_facet_parameters_are_packed_in_key_order
-    view = @codec.open('manifest', admit(with_windows(sb: "  parameter snarf yes\n  parameter pixels 4096\n  parameter windows 2\n")).bytes)
+    view = @codec.open('manifest', admit(with_windows(sb: "  parameter clipboard yes\n  parameter pixels 4096\n  parameter windows 2\n")).bytes)
     u64, boolean = %w[u64 boolean].map { |kind| @codec.member('mf_parameter_kind', kind) }
     assert_equal [[2, u64, 4096], [1, u64, 2], [2, u64, 4096], [3, boolean, 1]],
                  rows(view, 'facet_parameters').map { |row| row.values_at('key', 'kind', 'scalar') }
@@ -779,7 +779,7 @@ class ManifestDomainsTest < Minitest::Test
       "  parameter windows 0\n" => /outside 1 to 4096/, "  parameter windows 4097\n" => /outside 1 to 4096/ }.each do |lines, message|
       refused(Erx::Manifest::Invalid, 2, 'facet.parameter', with_windows(sb: "  parameter pixels 4096\n#{lines}"), message: message)
     end
-    assert_raises(Erx::ABI::SchemaError) { admit(with_windows(sb: "  parameter pixels 4096\n  parameter snarf true\n")) }
+    assert_raises(Erx::ABI::SchemaError) { admit(with_windows(sb: "  parameter pixels 4096\n  parameter clipboard true\n")) }
     undeclared = facet('ab', '@domain.alpha', '@service.b') + "  parameter root \"/\"\n"
     refused(Erx::Manifest::Invalid, 2, 'facet.parameter', @source + service('b', '@domain.beta') + undeclared, message: /not declared/)
   end

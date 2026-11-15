@@ -285,7 +285,7 @@ is not driven by this design, which says where each attaches
  session domain (the client)                  display domain
 +----------------------------------------+   +----------------------------------------+
 | application --tree--> erx_ui_server    |   | erx_winfs (erx_fs): /S/N/{ctl,mouse,   |
-|   <--{ui,...}--   its renderer:        |   |   kbd,wctl,label}, /S/snarf; the       |
+|   <--{ui,...}--   its renderer:        |   |   kbd,wctl,label}, /S/clipboard; the   |
 |     erx_ui_erlang    draws             |   |   window table, erx_wm's policy,       |
 |     erx_ui_lvgl <-pipes-> erx-lvgl     |   |   input routing, the reserved chord    |
 |     erx_ui_browser --> the web line    |   | erx_window: one process per window:    |
@@ -484,7 +484,7 @@ header and no field: the display computes every address in it from the
 
 A display's grant carries its quotas, from the manifest's facet
 parameters: `windows`, the windows it may hold at once; `pixels`, the
-size of its pixel area; and `snarf`, whether its tree has the
+size of its pixel area; and `clipboard`, whether its tree has the
 clipboard. Their defaults are 1 window, a pixel area of 8 MiB, and no
 clipboard. A window is at most 16,384 pixels on a side, so a buffer is
 at most 1 GiB and a word, and its size is computed with checked arithmetic.
@@ -912,7 +912,7 @@ start then fails with `einval`.
 `erx_winfs` serves one tree per display, declared as the interface
 `windows` in `abi/services/windows.txt`: an `erx_fs` grant, as `files`
 is, whose operations are the file protocol's own, with the parameters
-`windows`, `pixels` and `snarf`. A client's grant is rooted at the
+`windows`, `pixels` and `clipboard`. A client's grant is rooted at the
 client's directory, so the client sees:
 
 ```text
@@ -922,7 +922,7 @@ client's directory, so the client sees:
 /N/wctl     read: the window's rectangle and state; write: a geometry command
 /N/label    read and write: the window's title
 /screen     read: the screen's rectangle and channel
-/snarf      the display's clipboard, read and write; present only when the grant carries snarf
+/clipboard  the display's clipboard, read and write; present only when the grant carries clipboard
 ```
 
 The tree is a made tree ([Serving](design-files.md#serving-the-erx_fs-behaviour),
@@ -964,12 +964,12 @@ since a terminal is a program's choice and attachment by name is gone.
 **`screen`.** A read answers one line: the screen's rectangle, as the
 four numbers that open a `wctl` read and in their form, and the
 display's channel descriptor, as `ctl` answers it. It lies at the
-client's root, beside its windows' directories and `snarf`, so a
+client's root, beside its windows' directories and `clipboard`, so a
 client reads it before it has a window. Each read answers the screen
 as it is at the read, so after a change of the screen's size the next
 read answers the new rectangle; a read while the display has no screen
 fails with `EIO`, as a `mkdir` then does, and opening it for writing
-fails with `EACCES`. `screen` and `snarf` are the tree's own names, so
+fails with `EACCES`. `screen` and `clipboard` are the tree's own names, so
 a `mkdir` of either fails with `EEXIST`. `erx_win:open/2` reads
 `screen` first, makes the window, where a client at its `windows` quota
 gets `EDQUOT`, and only then allocates the window's buffer at that size
@@ -1023,8 +1023,9 @@ ends with the program, and starts a draw connection on it. The handler
 binds the connection's `draw` and `ctl`, from the session's own export,
 and the window's `mouse`, `kbd`, `wctl` and `label`, from the display's
 tree, at `/dev/draw`, `/dev/ctl` and the rest, beside the session's own
-`/dev` entries, and, when the grant carries `snarf`, `/snarf` at
-`/dev/snarf`, so a Plan 9 program finds each where it expects it. The
+`/dev` entries, and, when the grant carries `clipboard`, `/clipboard` at
+`/dev/clipboard`. A Plan 9 program finds the draw and window files where
+it expects them; Plan 9 names its clipboard `/dev/snarf`. The
 `ctl` a program sees is the draw connection's, which answers the display
 information of draw(3); the window's own `ctl`, which takes presents,
 stays with the draw connection and is bound for no program.
@@ -2418,12 +2419,20 @@ and one at a nonzero offset fails with `EINVAL`, erXos's choice. The
 window ends with its holder, its directory or its grant, and holds
 nothing that outlives it: its buffer is its client's memory.
 
-**The clipboard.** `/snarf` holds at most 1 MiB, and a write that would
+**The clipboard.** `/clipboard` holds at most 1 MiB, `windows_clipboard_bytes` of
+`abi/services/windows.txt`, and a write that would
 take it past that is refused whole with `EFBIG`, leaving it as it was
 before that write,
-so nothing is ever truncated. It is one display's,
-shared by every grant on that display whose facet row turns `snarf`
-on, as X's selection is shared by a display's clients; `snarf` is off
+so nothing is ever truncated. It is a file as the file protocol has
+them: a read answers its bytes from the read's offset, a write replaces
+the bytes at its offset, and an open for writing with `O_TRUNC` empties
+it, so a copy is an open with `O_TRUNC` and its writes; an open with
+`O_APPEND` fails with `EINVAL`. `erx_winfs` applies each write whole, so
+writers that race lose no write, but a copy of several writes is not one
+step: a paste that races a copy can read part of it, and two copies that
+race can leave a mix of both. It is one display's,
+shared by every grant on that display whose facet row turns `clipboard`
+on, as X's selection is shared by a display's clients; `clipboard` is off
 unless the row turns it on (Security says with whom).
 
 ### The draw connection
@@ -2629,7 +2638,7 @@ The terminal's work is the master's side of those messages:
   [Bounds](#bounds), goes to `erx_vt:resize/3` and to the tty as
   `{tty_size, Rows, Columns}`.
 * **The pointer.** A drag selects cells, and a selection is copied to
-  `/snarf` when the session's grant carries `snarf` and kept inside the
+  `/clipboard` when the session's grant carries `clipboard` and kept inside the
   window otherwise; the middle button pastes through `erx_vt:paste/2`;
   the wheel moves the view through the scrollback; a click on a
   presentation is the action below.
@@ -3549,7 +3558,7 @@ on a display edits nothing of the board's:
 * **Facet rows say who may draw there, and how much.** A facet row of
   the display's service grants its tree to a configured domain or to a
   session template, an app's among them, with the grant's quotas,
-  `windows`, `pixels` and `snarf`, as its parameters. Every session made
+  `windows`, `pixels` and `clipboard`, as its parameters. Every session made
   from a template holds the template's grants, so every session of a
   template that the display is granted to holds one
   ([design-apps.md](design-apps.md#an-app)). The display pays for each
@@ -3804,7 +3813,7 @@ start thermostat
 windows, or two buffers for one window drawn double-buffered: 800 by
 480 pixels in `x8r8g8b8`, 1,536,000 bytes each. The manifest check
 counts it once for each session the principal's `domains` quota
-allows, here one. The row leaves `snarf` off, so the kiosk shares no
+allows, here one. The row leaves `clipboard` off, so the kiosk shares no
 clipboard. Where the manifest declares the row with `enable NO`,
 `service thermostat enable display=display` on the running machine
 turns it on in `/etc/rc.conf`, and `service thermostat start` starts it.
@@ -3991,7 +4000,7 @@ connection does not support, an image past its size limits, or its quota.
 **The window tree**, as the data model lists it, served by `erx_winfs`
 through the file protocol and declared as the interface `windows` in
 `abi/services/windows.txt`, with the grant's parameters `windows`,
-`pixels` and `snarf`, and `session`, which no facet row sets and the
+`pixels` and `clipboard`, and `session`, which no facet row sets and the
 domain service sets for the display's session alone; the `present`
 command of `ctl`; `wctl`'s commands
 `resize -r X0 Y0 X1 Y1`, `move -r X0 Y0 X1 Y1`, `hide`, `show`, `top`,
@@ -4142,7 +4151,7 @@ the stopgap.
 plan9port's `libdraw` connects to a `devdraw` process over a pipe with
 its own request messages, in which the draw messages themselves travel
 unchanged as the payload of its draw requests and the mouse, keyboard,
-label, snarf and resize traffic are requests of their own. A draw
+label, clipboard and resize traffic are requests of their own. A draw
 client of Plan 9 would replace that connection code with Plan 9's own
 file-based one against the files in the program's `/dev`, and run
 without a translating process; the session's draw connection stands
@@ -4254,7 +4263,7 @@ the window and the reason.
   at that terminal's shell, so it has the authority of the shells in the
   terminals of the session introduced to it, and through them what that
   session's principal reaches. It also reads and writes its display's
-  clipboard where `snarf` is on. It has nothing beyond: it cannot write a
+  clipboard where `clipboard` is on. It has nothing beyond: it cannot write a
   domain's memory or read any of it but the pixel areas, message a
   process it was not introduced to, start a
   program in a session, or reach a session that was not introduced to
@@ -4345,12 +4354,12 @@ the window and the reason.
   with a click or the menu, while it is shown
   ([Windows and the window system](#windows-and-the-window-system)).
 * **The clipboard** is shared, per display, by every grant on it whose
-  facet row turns `snarf` on, whatever its principal: the sessions of
+  facet row turns `clipboard` on, whatever its principal: the sessions of
   those rows' templates, their terminals and every program they give
-  `/dev/snarf`, and the configured domains those rows name. What one of
-  them copies, any other can read. `snarf` is off unless a row turns it
+  `/dev/clipboard`, and the configured domains those rows name. What one of
+  them copies, any other can read. `clipboard` is off unless a row turns it
   on, so an app reads a person's clipboard only where the board's
-  manifest turned it on for both; a grant without it has no `/snarf`,
+  manifest turned it on for both; a grant without it has no `/clipboard`,
   and its copy and paste stay within a program or a terminal window.
 * **Presentations grant nothing** (G4). The link carries a type and a
   text; the terminal inserts text; the shell checks facets. A hostile
@@ -4760,7 +4769,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   than the screen and that is then resized to the whole screen answers,
   from `resized/1`, an image of the screen's size, where a seeded
   `open/2` that sizes the buffer by the window's rectangle answers one
-  clipped to the first placement. A `mkdir` of `screen` or `snarf`
+  clipped to the first placement. A `mkdir` of `screen` or `clipboard`
   fails with `EEXIST`.
 * **A window over a lent range.** An `erx_ui_lvgl` window at 1920 by
   1080 in the default pixel area of 8 MiB shows the program's first
@@ -5263,7 +5272,7 @@ Decisions:
    output, holds no console line and starts no program in a session.
    The system shell is reached only at the UART and the host link.
 6. **The clipboard** is shared per display, as X does, by the grants
-   whose facet rows turn `snarf` on; it is off by default, so no app
+   whose facet rows turn `clipboard` on; it is off by default, so no app
    reads a person's clipboard unless the board's manifest says so, and
    Security states who shares it.
 7. **The input context.** The shell announces the argument types each

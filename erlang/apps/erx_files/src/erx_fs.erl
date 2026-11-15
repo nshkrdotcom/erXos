@@ -81,7 +81,9 @@ client as `eio`.
 -callback clunk(Handle :: term(), Fs :: term()) -> ok.
 %% A tree whose reads never wait for a medium answers immediate; absent: helper.
 -callback read_mode() -> helper | immediate.
-%% A tree that writes adds these; one without them is read-only (F5).
+%% A tree that writes adds these; one without them is read-only (F5). write's At is
+%% the offset the bytes were written at: the request's, or the file's end for an
+%% append fid (design-files.md, "Open files and offsets").
 -callback write(Handle :: term(), Offset :: non_neg_integer(), binary(),
                 Fs :: term()) ->
               {ok, Count :: non_neg_integer(), At :: non_neg_integer()}

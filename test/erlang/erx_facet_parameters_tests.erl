@@ -8,7 +8,7 @@
 %% view from the manifest bytes in manifest.bin and turns it into the
 %% services and grants erx_domain_lib:configured/0 returns, with the NIF's own
 %% erx_domain_served_terms. The manifest is the display_domain suite's, its
-%% client template's grant of the display stating pixels, windows and snarf;
+%% client template's grant of the display stating pixels, windows and clipboard;
 %% the grant's limits carry each by name, and erx_domain_mints charges the
 %% display the pixel area the row asks for. Each refused-NAME.bin beside it
 %% forges the grant's parameter rows, and the view refuses it.
@@ -35,9 +35,9 @@ display() ->
 
 the_grant_s_limits_carry_its_parameters_by_name_test() ->
     {_Services, _Grants, {_Grantee, _Name, _Server, Limits}} = display(),
-    ?assertMatch(#{pixels := 4194304, windows := 2, snarf := true}, Limits),
+    ?assertMatch(#{pixels := 4194304, windows := 2, clipboard := true}, Limits),
     ?assertEqual(lists:sort([max_request, in_flight, reductions, period_ns, max_heap_size, queue,
-                             pixels, windows, snarf]),
+                             pixels, windows, clipboard]),
                  lists:sort(maps:keys(Limits))).
 
 %% The mint core as the domain service makes it from those terms (erx_domain_srv:booted/1).

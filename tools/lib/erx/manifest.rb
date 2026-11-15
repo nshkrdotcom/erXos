@@ -1616,10 +1616,10 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # snarf as their declarations bound them. A service declaring a parameter that no
+      # clipboard as their declarations bound them. A service declaring a parameter that no
       # checker here consumes is unusable: no facet of it is admitted, since nothing would
       # check what it grants.
-      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels snarf session].freeze }.freeze
+      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within

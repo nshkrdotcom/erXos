@@ -35,6 +35,7 @@
 -define(NOFID, 16#ffffffff).
 -define(AT_REMOVEDIR, 16#200).
 -define(O_RDONLY, 0).
+-define(O_WRONLY, 1).
 -define(O_RDWR, 2).
 -define(WAIT, 5000).
 -define(QUIET, 300).
@@ -415,3 +416,146 @@ open_root(Grant, Fid) ->
 listed(Grant, Fid, Offset) ->
     {ok, Entries} = call(Grant, {readdir, Fid, Offset, 4096}),
     [{At, Name} || {_, At, _, Name} <- Entries].
+
+%% The clipboard ---------------------------------------------------------------
+
+%% Opens the root's clipboard as Fid.
+open_clipboard(Grant, Fid, Flags) ->
+    {ok, _} = call(Grant, {walk, 1, Fid, [<<"clipboard">>]}),
+    ok = element(1, call(Grant, {lopen, Fid, Flags})),
+    Fid.
+
+%% The names the grant's root lists from Offset, through a new open of it as Fid.
+names(Grant, Fid, Offset) ->
+    [Name || {_At, Name} <- listed(Grant, open_root(Grant, Fid), Offset)].
+
+%% What one grant writes to /clipboard every grant whose limits carry clipboard reads back, from
+%% any offset. Each write lands at its offset, which its answer names, so writes in turn
+%% on one fid follow each other; a write at an offset replaces the bytes there, and one
+%% of no bytes changes nothing.
+clipboard_is_shared_by_the_grants_that_carry_it_test() ->
+    World = start(answer),
+    Copier = mint(?SESSION, #{clipboard => true}),
+    Paster = mint(?OTHER, #{clipboard => true}),
+    Copy = open_clipboard(Copier, 2, ?O_RDWR),
+    Paste = open_clipboard(Paster, 2, ?O_RDONLY),
+    ?assertEqual({ok, <<>>}, read(Paster, Paste)),
+    ?assertEqual({ok, 5, 0}, write(Copier, Copy, <<"hello">>)),
+    ?assertEqual({ok, 6, 5}, call(Copier, {write, Copy, 5, <<" world">>})),
+    ?assertEqual({ok, <<"hello world">>}, read(Paster, Paste)),
+    ?assertEqual({ok, <<"llo">>}, call(Paster, {read, Paste, 2, 3})),
+    ?assertEqual({ok, <<>>}, call(Paster, {read, Paste, 99, 4096})),
+    ?assertEqual({ok, 1, 1}, call(Copier, {write, Copy, 1, <<"a">>})),
+    ?assertEqual({ok, 0, 99}, call(Copier, {write, Copy, 99, <<>>})),
+    ?assertEqual({ok, <<"hallo world">>}, read(Paster, Paste)),
+    stop(World).
+
+%% An open for writing with O_TRUNC empties the clipboard, through lopen or through
+%% lcreate, which opens it as an open with O_CREAT does; one for reading leaves it.
+%% O_APPEND, access mode 3 and an exclusive create are refused.
+clipboard_opens_test() ->
+    World = start(answer),
+    Grant = mint(?SESSION, #{clipboard => true}),
+    Clipboard = open_clipboard(Grant, 2, ?O_RDWR),
+    {ok, _, _} = write(Grant, Clipboard, <<"text">>),
+    _ = open_clipboard(Grant, 3, ?O_RDONLY bor ?ERX_P9_O_TRUNC),
+    ?assertEqual({ok, <<"text">>}, read(Grant, Clipboard)),
+    _ = open_clipboard(Grant, 4, ?O_WRONLY bor ?ERX_P9_O_TRUNC),
+    ?assertEqual({ok, <<>>}, read(Grant, Clipboard)),
+    {ok, _, _} = write(Grant, Clipboard, <<"text">>),
+    {ok, _} = call(Grant, {walk, 1, 5, []}),
+    ?assertMatch({ok, _, _}, call(Grant, {lcreate, 5, <<"clipboard">>, ?O_WRONLY bor ?ERX_P9_O_TRUNC, 8#666, 0})),
+    ?assertEqual({ok, <<>>}, read(Grant, Clipboard)),
+    ?assertEqual({ok, 2, 0}, write(Grant, 5, <<"hi">>)),
+    ?assertEqual({ok, <<"hi">>}, read(Grant, Clipboard)),
+    {ok, _} = call(Grant, {walk, 1, 6, []}),
+    ?assertEqual({error, eexist},
+                 call(Grant, {lcreate, 6, <<"clipboard">>, ?O_WRONLY bor ?ERX_P9_O_EXCL, 8#666, 0})),
+    {ok, _} = call(Grant, {walk, 1, 7, [<<"clipboard">>]}),
+    ?assertEqual({error, einval}, call(Grant, {lopen, 7, ?O_WRONLY bor ?ERX_P9_O_APPEND})),
+    ?assertEqual({error, einval}, call(Grant, {lopen, 7, 3 bor ?ERX_P9_O_TRUNC})),
+    ?assertEqual({ok, <<"hi">>}, read(Grant, Clipboard)),
+    stop(World).
+
+%% A grant without clipboard has no /clipboard to walk to, list or create; under either grant
+%% clipboard is the tree's own name, which no mkdir takes and no remove ends, and a listing
+%% read on from the clipboard's entry goes on with the windows.
+clipboard_is_the_tree_s_own_name_test() ->
+    World = start(answer),
+    With = mint(?SESSION, #{clipboard => true, windows => 2}),
+    Without = mint(?OTHER, #{windows => 2}),
+    {ok, _} = mkdir(With, <<"w">>),
+    {ok, _} = mkdir(Without, <<"w">>),
+    ?assertEqual({error, enoent}, call(Without, {walk, 1, 2, [<<"clipboard">>]})),
+    ?assertEqual([<<"w">>], names(Without, 2, 0)),
+    ?assertEqual([<<"clipboard">>, <<"w">>], names(With, 2, 0)),
+    ?assertEqual([<<"w">>], names(With, 3, 1)),
+    {ok, _} = call(Without, {walk, 1, 3, []}),
+    ?assertEqual({error, eperm}, call(Without, {lcreate, 3, <<"clipboard">>, ?O_WRONLY, 8#666, 0})),
+    ?assertEqual({error, eexist}, mkdir(With, <<"clipboard">>)),
+    ?assertEqual({error, eexist}, mkdir(Without, <<"clipboard">>)),
+    ?assertEqual({error, eperm}, call(With, {unlinkat, 1, <<"clipboard">>, 0})),
+    ?assertEqual({error, enotdir}, call(With, {unlinkat, 1, <<"clipboard">>, ?AT_REMOVEDIR})),
+    %% It is a regular file of one link, readable and writable by its owner.
+    {ok, _} = call(With, {walk, 1, 4, [<<"clipboard">>]}),
+    {ok, Attr} = call(With, {getattr, 4, 0}),
+    ?assertMatch(#{nlink := 1}, Attr),
+    ?assertEqual(?ERX_P9_S_IFREG bor 8#600, maps:get(mode, Attr)),
+    stop(World).
+
+%% The clipboard holds ERX_WINDOWS_CLIPBOARD_BYTES and no more: a client's write that would
+%% take it past that is refused whole with EFBIG, whatever its offset, and leaves the
+%% clipboard as it was.
+clipboard_is_bounded_test_() ->
+    {timeout, 60, fun clipboard_bound/0}.
+
+clipboard_bound() ->
+    World = start(answer),
+    Grant = mint(?SESSION, #{clipboard => true}),
+    Clipboard = open_clipboard(Grant, 2, ?O_RDWR),
+    Bound = ?ERX_WINDOWS_CLIPBOARD_BYTES,
+    Chunk = 32768,
+    Full = Bound div Chunk,
+    lists:foreach(fun(N) ->
+                          ?assertEqual({ok, Chunk, N * Chunk},
+                                       call(Grant, {write, Clipboard, N * Chunk, binary:copy(<<N>>, Chunk)}))
+                  end, lists:seq(0, Full - 1)),
+    Last = Full - 1,
+    ?assertEqual({error, efbig}, call(Grant, {write, Clipboard, Bound, <<"x">>})),
+    ?assertEqual({error, efbig}, call(Grant, {write, Clipboard, Bound - 1, <<"xy">>})),
+    ?assertEqual({error, efbig}, call(Grant, {write, Clipboard, 1 bsl 63, <<"x">>})),
+    ?assertEqual({ok, <<Last, Last>>}, call(Grant, {read, Clipboard, Bound - 2, 4096})),
+    ?assertEqual({ok, 1, Bound - 1}, call(Grant, {write, Clipboard, Bound - 1, <<"z">>})),
+    ?assertEqual({ok, <<Last, "z">>}, call(Grant, {read, Clipboard, Bound - 2, 4096})),
+    %% A mint whose clipboard is not a boolean is refused.
+    Tag = erlang:unique_integer([positive]),
+    erx_winfs ! {erx_origin, ?SYSTEM, {erx_facet_mint, Tag, ?SERVICE, ?OTHER, root, #{clipboard => 1}}},
+    ?assertEqual({error, einval}, receive {minted, Tag, Reply} -> Reply after ?WAIT -> no_mint end),
+    stop(World).
+
+%% Writers on several grants at once lose nothing: each write is applied whole, so every
+%% writer's bytes at its own offset are there when all have answered.
+concurrent_clipboard_writers_lose_nothing_test_() ->
+    {timeout, 60, fun concurrent_writers/0}.
+
+concurrent_writers() ->
+    World = start(answer),
+    Grants = [mint(?SESSION + K, #{clipboard => true}) || K <- lists:seq(0, 3)],
+    Size = 512,
+    Writers = 64,
+    Tags = [begin
+                Grant = lists:nth(K rem 4 + 1, Grants),
+                Fid = open_clipboard(Grant, K + 2, ?O_WRONLY),
+                call_async(Grant, {write, Fid, K * Size, binary:copy(<<K>>, Size)})
+            end || K <- lists:seq(0, Writers - 1)],
+    ?assertEqual(lists:duplicate(Writers, ok), [element(1, answered(Tag)) || Tag <- Tags]),
+    Read = open_clipboard(hd(Grants), Writers + 2, ?O_RDONLY),
+    Expected = << <<(binary:copy(<<K>>, Size))/binary>> || K <- lists:seq(0, Writers - 1) >>,
+    ?assertEqual(Expected, read_all(hd(Grants), Read, 0)),
+    stop(World).
+
+read_all(Grant, Fid, Offset) ->
+    case call(Grant, {read, Fid, Offset, 8192}) of
+        {ok, <<>>} -> <<>>;
+        {ok, Bytes} -> <<Bytes/binary, (read_all(Grant, Fid, Offset + byte_size(Bytes)))/binary>>
+    end.
