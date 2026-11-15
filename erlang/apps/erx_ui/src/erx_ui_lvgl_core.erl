@@ -39,6 +39,18 @@ rows have.
   ends the UI with `{ui_down, Window, renderer_down}`).
 * An event the program reports is passed to the widget server as a hit,
   in any state.
+* A resize's `screen` record is the window's new size clipped to the
+  buffer's extent, the size the renderer started at, which is the size
+  the program's buffer was allocated at, as erx_win:resized/1 clips an
+  image (docs/design-display.md, "Erlang clients"): a screen past the
+  buffer would have the program draw past its mapping, which it refuses.
+  A window shrunk to nothing is a screen of one pixel.
+
+input/2 turns the window's `mouse` and `kbd` records into the `input`
+records of the program's protocol: a pointer at its position in the
+window, its first three buttons, and a typed rune as a key down and up.
+The keys held, which a typed rune already carries, and the wheel's
+buttons make none.
 
 erx_ui_lvgl reads the window's `mouse` and `kbd` only while
 reads_window/1 says so, which is while idle, so what waits is at most
@@ -50,7 +62,7 @@ first is answered, and a `shown` with no report open, are the caller's
 bugs, raised as errors.
 """.
 
--export([start/3, step/2, size/1, reads_window/1]).
+-export([start/3, step/2, size/1, reads_window/1, input/2]).
 -export_type([state/0, event/0, action/0, stop_reason/0, exit_status/0, rect/0]).
 
 -type size() :: {Width :: 1..65535, Height :: 1..65535}.
@@ -59,12 +71,14 @@ bugs, raised as errors.
 -type held() :: erx_ui_model:diff_op() | {input, term()} | repaint.
 
 -doc """
-The renderer's state. `Size` is the last screen record written. An open
-report holds the records that wait for its answer, newest first, and the
-token of the apply whose operations are among them, or `none`.
+The renderer's state: the buffer's extent, which no screen record passes,
+and its phase. `Size` is the last screen record written. An open report
+holds the records that wait for its answer, newest first, and the token
+of the apply whose operations are among them, or `none`.
 """.
--opaque state() :: {idle, size()}
-                 | {open, size(), Held :: [held()], Waiter :: token() | none}.
+-opaque state() :: {Extent :: size(), phase()}.
+-type phase() :: {idle, size()}
+               | {open, size(), Held :: [held()], Waiter :: token() | none}.
 
 -doc """
 What happens to the renderer. `apply` and `window` come from the widget
@@ -78,7 +92,7 @@ left without room until its deadline.
 """.
 -type event() :: {apply, [erx_ui_model:diff_op()], token()}
                | {window, {input, term()} | repaint}
-               | {resize, 1..65535, 1..65535, Chan :: 0..16#ffffffff}
+               | {resize, integer(), integer(), Chan :: 0..16#ffffffff}
                | {damage, 0..65535, 0..65535, [rect(), ...]}
                | {event, erx_ui_model:node_id(), atom(), term()}
                | shown
@@ -106,62 +120,91 @@ answer an apply by its token, or hand the widget server a hit as
 -type exit_status() :: non_neg_integer() | {exited, 0..255} | {signaled, atom()}.
 
 -doc """
-The renderer of a window of `Width` by `Height` in channel `Chan`, and
-the screen record it writes first, before any other record.
+The renderer of a window of `Width` by `Height` in channel `Chan`, whose
+buffer was allocated at that size, and the screen record it writes
+first, before any other record.
 """.
 -spec start(1..65535, 1..65535, 0..16#ffffffff) -> {state(), [action()]}.
 start(Width, Height, Chan) ->
-    {{idle, {Width, Height}}, [{write, [{screen, Width, Height, Chan}]}]}.
+    {{{Width, Height}, {idle, {Width, Height}}}, [{write, [{screen, Width, Height, Chan}]}]}.
 
 -doc "The size of the last screen record written.".
 -spec size(state()) -> size().
-size({idle, Size}) -> Size;
-size({open, Size, _Held, _Waiter}) -> Size.
+size({_Extent, {idle, Size}}) -> Size;
+size({_Extent, {open, Size, _Held, _Waiter}}) -> Size.
 
 -doc "Whether erx_ui_lvgl may read the window's next input: only while no report is open.".
 -spec reads_window(state()) -> boolean().
-reads_window({idle, _Size}) -> true;
-reads_window({open, _Size, _Held, _Waiter}) -> false.
+reads_window({_Extent, {idle, _Size}}) -> true;
+reads_window({_Extent, {open, _Size, _Held, _Waiter}}) -> false.
+
+-doc """
+The `input` records of a window's `mouse` or `kbd` record, for a window
+whose rectangle begins at `{X0, Y0}`: a pointer's position is made
+relative to the window and held to the record's range.
+""".
+-spec input(erx_win_core:pointer() | erx_win_core:key(), {integer(), integer()}) ->
+          [{input, term()}].
+input({mouse, X, Y, Buttons, _Msec}, {X0, Y0}) ->
+    [{input, {pointer, coordinate(X - X0), coordinate(Y - Y0), Buttons band 2#111}}];
+input({typed, Rune}, _Origin) ->
+    [{input, {key, down, 0, Rune}}, {input, {key, up, 0, Rune}}];
+input({Held, _Keys}, _Origin) when Held =:= down; Held =:= up ->
+    [];
+input({resized, _X, _Y, _Buttons, _Msec}, _Origin) ->
+    [].
 
 -doc """
 `{ok, State, Actions}`, the next state and the actions for `Event`, or
 `{stop, Reason}` when the program broke the protocol or ended.
 """.
 -spec step(event(), state()) -> {ok, state(), [action()]} | {stop, stop_reason()}.
-step({damage, W, H, Rects}, {idle, {W, H}} = Idle) ->
+step({resize, W, H, Chan}, {{EW, EH} = Extent, Phase}) ->
+    {Width, Height} = Size = {clipped(W, EW), clipped(H, EH)},
+    {ok, {Extent, resized(Phase, Size)}, [{write, [{screen, Width, Height, Chan}]}]};
+step(Event, {Extent, Phase}) ->
+    case phase(Event, Phase) of
+        {ok, Phase1, Actions} -> {ok, {Extent, Phase1}, Actions};
+        {stop, _Reason} = Stop -> Stop
+    end.
+
+phase({damage, W, H, Rects}, {idle, {W, H}} = Idle) ->
     {ok, open(Idle), [{present, W, H, Rects}]};
-step({damage, _W, _H, _Rects}, {idle, _Size} = Idle) ->
+phase({damage, _W, _H, _Rects}, {idle, _Size} = Idle) ->
     {ok, Idle, [{write, [presented]}]};
-step({damage, _W, _H, _Rects}, {open, _, _, _}) ->
+phase({damage, _W, _H, _Rects}, {open, _, _, _}) ->
     {stop, report_before_presented};
-step(shown, {open, Size, Held, Waiter}) ->
+phase(shown, {open, Size, Held, Waiter}) ->
     {ok, {idle, Size}, [{write, [presented | lists:reverse(Held)]} | reply(Waiter)]};
-step(shown, {idle, _Size}) ->
+phase(shown, {idle, _Size}) ->
     error(no_present_open);
-step({apply, Ops, Token}, {idle, _Size} = Idle) ->
+phase({apply, Ops, Token}, {idle, _Size} = Idle) ->
     {ok, Idle, [{write, Ops}, {reply, Token}]};
-step({apply, Ops, Token}, {open, Size, Held, none}) ->
+phase({apply, Ops, Token}, {open, Size, Held, none}) ->
     {ok, {open, Size, lists:reverse(Ops, Held), Token}, []};
-step({apply, _Ops, _Token}, {open, _Size, _Held, _Waiter}) ->
+phase({apply, _Ops, _Token}, {open, _Size, _Held, _Waiter}) ->
     error(apply_in_flight);
-step({window, Record}, {idle, _Size} = Idle) ->
+phase({window, Record}, {idle, _Size} = Idle) ->
     {ok, Idle, [{write, [Record]}]};
-step({window, Record}, {open, Size, Held, Waiter}) ->
+phase({window, Record}, {open, Size, Held, Waiter}) ->
     {ok, {open, Size, [Record | Held], Waiter}, []};
-step({resize, W, H, Chan}, State) ->
-    {ok, resized(State, {W, H}), [{write, [{screen, W, H, Chan}]}]};
-step({event, Node, Name, Value}, State) ->
-    {ok, State, [{hit, Node, Name, Value}]};
-step({refused, Reason}, _State) ->
+phase({event, Node, Name, Value}, Phase) ->
+    {ok, Phase, [{hit, Node, Name, Value}]};
+phase({refused, Reason}, _Phase) ->
     {stop, {refused, Reason}};
-step({exit, Status}, _State) ->
+phase({exit, Status}, _Phase) ->
     {stop, {exit, Status}};
-step({lost, Reason}, _State) ->
+phase({lost, Reason}, _Phase) ->
     {stop, {lost, Reason}};
-step(stalled, _State) ->
+phase(stalled, _Phase) ->
     {stop, stalled}.
 
 open({idle, Size}) -> {open, Size, [], none}.
+
+%% A side of the window clipped to the buffer's, and never below one pixel.
+clipped(Side, Extent) -> max(1, min(Side, Extent)).
+
+coordinate(C) -> max(0, min(C, 16#ffff)).
 
 resized({idle, _Old}, Size) -> {idle, Size};
 resized({open, _Old, Held, Waiter}, Size) -> {open, Size, Held, Waiter}.

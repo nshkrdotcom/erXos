@@ -919,16 +919,32 @@ it; git history is the record of completed work.
     writes are bounded (`nosuspend` and a busy event for the core, or a `close/1` that kills the program itself).
     (`erlang/apps/erx_ui/src/erx_ui_lvgl.erl`) performs `erx_ui_lvgl_core`'s actions over the program's pipes on
     erXos, started with `erx_prog_handler:start/1` and a lent buffer (the display suite's lvgl-lease cell), and
-    over a port on the host (`test/host/erx_ui_lvgl_test.rb`). Left: `present`, `window/2` and `resize/3` bound to
-    a window over the lent buffer (`erx_win` with a buffer it does not own), and the program's pid from the
-    command server, which the caller's spec names for now; the fault log names the window and the report's byte
-    position, which the design asks for and the shell does not count yet. A window grown past its buffer is
-    refused by the program and ends the UI as `renderer_down`, so the restart allocates a buffer at the new
-    screen's size; the shell does not clamp. An `apply/2` that comes while a report is open returns only once
-    the report is answered, and `erx_ui_server` calls `Renderer:apply/2` synchronously, so that binding must
-    answer the window's presents from a process other than the one waiting in `apply/2` (the lvgl-lease cell
-    and `test/erlang/erx_ui_lvgl_shell.erl` apply from a process of their own); a binding that does not
-    deadlocks at the program's first report. A fault fails a waiting `apply/2` only by the shell's exit. On the
+    over a port on the host (`test/host/erx_ui_lvgl_test.rb`); `erx_ui:open/1` binds it to a window the widget
+    server opens with `buffer => none`, with a presenter process and mouse and kbd readers linked to the server.
+    Left: the display suite's `lvgl` cell, `erx_ui:open/1` on the display checked against a reference picture
+    of the same tree at 1280x800 from the host's model screen, which needs that reference and a boot of its
+    own beside the pattern's; the program's pid from the command server, which `erx_ui_lvgl` numbers from a
+    base and the runtime's unique integers for now, unique within the runtime and not the session; the wheel's
+    buttons, which `erx_ui_lvgl_core:input/2` drops. The window-bound path (presents through `erx_win:present/3`
+    from the shell, the window readers, `await_reading/1`, the `r` record's resize) has no host test, since it
+    needs a display; the lvgl cell is its test. A pointer is made window-relative with the rectangle the mouse
+    reader last read, which an `r` record refreshes, but `erx_window` marks `r` only when the size changes, so a
+    move at the same size leaves every later pointer off by the move (latent under the single policy, which
+    never moves a window): the display should mark `r` on any change of the rectangle, as Plan 9's mouse device
+    does, or send window-relative positions, a choice for docs/design-display.md. A resize is taken at once
+    and so overtakes a pointer record postponed while a report is open, which may then lie outside the smaller
+    screen. The shell waits for each present's answer, so a display that never answers holds the shell, a
+    waiting `apply/2` and `stop/1`; the supervisor's shutdown then kills the widget server, and the shell,
+    blocked in the request's receive, its readers and the program stay. The range is the handler's, not the
+    shell's, so the program's damage report and its handler's end race: a report the shell takes before the
+    handler's `DOWN` is presented even when the range has already returned and been lent again, and once the
+    lease is back the window, held by the widget server until it ends, still names the range in its last
+    present (the client's own pixels in its own area either way; the ordering in `erx_pixels` and the window
+    tree is unverified); a shell that held the range would close both by construction. The widget server's start, the window's open and up to `?START_MS` of
+    the program's start, runs inside `erx_ui_sup`'s `start_child`, so one slow start holds every other
+    `erx_ui:open/1`. The fault log names the window
+    and the report's byte position, which the design asks for and the shell does not count yet. A fault fails
+    a waiting `apply/2` only by the shell's exit. On the
     host a program that stops reading its input blocks the shell in `port_command/2`, and with it every call;
     erXos's writes are bounded by `erx_pipe_srv:write/3`'s deadline. The reader passes on every read of the
     program's output, so a program that floods events grows the shell's mailbox, as a port's data does.

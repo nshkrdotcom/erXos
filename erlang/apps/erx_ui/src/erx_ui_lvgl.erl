@@ -17,9 +17,41 @@ itself: every judgement is the core's.
 It writes each record with erx_ui_wire:encode/2, which writes every text
 through the line escape, so the program shows no text raw (G5).
 
-start/3 links the process to the widget server and ignores its target:
-until the window stack binds a window's size, channel and presents, the
-options carry them. The options:
+**On a window.** start/3 over `{window, Window}`, an erx_win window the
+widget server opened with no buffer of its own (docs/design-display.md,
+"Erlang clients"), with no options, binds the renderer to it: the
+window's size and channel come from erx_win:info/1, the program's buffer
+is lent at that size from the display's pixel area, each present is
+erx_win:present/3 of that buffer, and a present's text is
+erx_present:text/2.
+
+This process performs each present itself, waiting for the display's
+answer, and then casts itself `shown`, so the events already queued
+are taken first. It is never the process waiting in apply/2, which is
+the widget server, so an apply that comes while a report is open is
+answered once the present is; a refused present stops the program and
+ends the UI. No present is made after this process has taken the
+handler's `'DOWN'`; one whose report it took before may still name a
+range just returned (TODO.md, `erx_ui_lvgl`).
+
+Two readers serve the window's input, each a process linked to this
+one, whose end ends them (ended/1) and whose failure stops the program
+and so ends the UI as `renderer_down`. Each reads one record of its
+file, `mouse` or `kbd`, only once await_reading/1 says this process
+takes the window's input, erx_ui_lvgl_core:reads_window/1, so a record
+waits in the window's bounded queue, not here, while a report is open.
+A reader passes a record on through erx_ui_lvgl_core:input/2 with
+window/2; the mouse reader takes an `r` record as a resize, reading the
+window's new rectangle with erx_win:resized/1 and passing its size with
+resize/3.
+
+The program is `bin/erx-lvgl`, started as a program of the session.
+Its pid is one this module numbers from a base (TODO.md,
+`erx_ui_lvgl`).
+
+**Over options.** start/3 over any other target takes the window's
+size, channel and presents as options, the entry of the tests and the
+harnesses. The options:
 
 * `width`, `height` and `chan`: the window's size and channel.
 * `program`: how the program starts, with the window's buffer as its
@@ -46,15 +78,18 @@ options carry them. The options:
 * `present_text`: the canonical text of a `present` property
   (erx_ui_wire:present()).
 
-The shell takes the window's input and resizes, window/2 and resize/3,
-only while erx_ui_lvgl_core:reads_window/1 holds: in any other state they
-stay queued, postponed, until the open report is answered, so the core
-holds at most one apply's operations. stop/1 stops the program and ends
+The shell takes the window's input, window/2, only while
+erx_ui_lvgl_core:reads_window/1 holds: in any other state it stays
+queued, postponed, until the open report is answered, so the core holds
+at most one apply's operations. A resize, resize/3, it takes at once in
+any state, and the core writes its `screen` record at once (docs/design-display.md,
+"The widget server"). stop/1 stops the program and ends
 the shell without consulting the core, so the program's end then is no
 fault. A fault ends the shell, and with it an apply/2 that waits. An
 apply that comes while a report is open returns once the report is
-answered, so the process that answers the window's presents must not be
-the one waiting in apply/2.
+answered, so the process that answers the window's presents, this one
+on a window and the harness over options, must not be the one waiting
+in apply/2.
 
 start/3 waits at most ?START_MS for the program's start, the pipes, the
 buffer's lend and the handler's answer included; past it the shell is
@@ -70,7 +105,7 @@ program that stops reading its input blocks the shell in port_command/2,
 and with it every call (a residual, TODO.md).
 """.
 
--export([start/3, apply/2, stop/1, window/2, resize/3, shown/1]).
+-export([start/3, apply/2, stop/1, window/2, resize/3, shown/1, await_reading/1]).
 -export([init/1, callback_mode/0, handle_event/4, format_status/1]).
 
 %% How long start/3 waits for the shell's init, the program's start.
@@ -80,6 +115,9 @@ and with it every call (a residual, TODO.md).
 -define(WRITE_MS, 10000).
 %% The most a reader reads of the program's output at once.
 -define(READ_BYTES, 4096).
+%% The base of the pids this module gives its programs, above those the
+%% tests name.
+-define(PID_BASE, 1 bsl 20).
 
 -type program() :: {handler, Spec :: map(), Peer :: pos_integer(), Bytes :: pos_integer()}
                  | {port, Open :: fun(() -> port())}.
@@ -89,14 +127,33 @@ and with it every call (a residual, TODO.md).
 -type running() :: {port, port()}
                  | {piped, #{handler := pid(), watch := reference(), input := term(), reader := pid()}}.
 
+%% The options: a window to present through and read, bound by start/3,
+%% or the harness's `present` function.
 -type opts() :: #{width := 1..65535, height := 1..65535, chan := 0..16#ffffffff,
                   program := program(),
-                  present := fun((non_neg_integer(), 1..65535, 1..65535, [erx_ui_lvgl_core:rect(), ...]) -> ok),
+                  window => erx_win:window(),
+                  present => fun((non_neg_integer(), 1..65535, 1..65535, [erx_ui_lvgl_core:rect(), ...]) -> ok),
                   present_text := erx_ui_wire:present()}.
 
--doc "Starts the renderer of a window and its program, linked to the widget server, the caller.".
--spec start(erx_ui_renderer:target(), pid(), opts()) -> {ok, pid()}.
-start(_Target, Server, Opts) ->
+-doc """
+Starts the renderer of a window and its program, linked to the widget
+server, the caller: bound to an erx_win window given no options, or
+over the options.
+""".
+-spec start(erx_ui_renderer:target(), pid(), opts() | #{}) -> {ok, pid()}.
+start(_Target, Server, #{program := _} = Opts) ->
+    shell(Server, Opts);
+start({window, Window}, Server, Options) when map_size(Options) =:= 0 ->
+    #{peer := Peer, rect := {X0, Y0, X1, Y1}, chan := #{code := Code, depth := Depth}} = erx_win:info(Window),
+    %% The buffer is lent at the size the core's extent is: one width and
+    %% height for both, so no screen record passes the buffer.
+    {Width, Height} = {X1 - X0, Y1 - Y0},
+    {ok, Bytes} = erx_win_core:bytes(Width, Height, Depth),
+    shell(Server, #{width => Width, height => Height, chan => Code,
+                    program => {handler, program_spec(), Peer, Bytes},
+                    window => Window, present_text => fun erx_present:text/2}).
+
+shell(Server, Opts) ->
     {ok, _Shell} = gen_statem:start_link(?MODULE, Opts#{ui => Server}, [{timeout, ?START_MS}]).
 
 -doc "Applies a tree's operations; returns once they are written to the program.".
@@ -110,8 +167,8 @@ apply(Ops, Shell) ->
 window(Shell, Record) ->
     gen_statem:cast(Shell, {window, Record}).
 
--doc "The window's new size.".
--spec resize(pid(), 1..65535, 1..65535) -> ok.
+-doc "The window's new size, which the core clips to the buffer's.".
+-spec resize(pid(), integer(), integer()) -> ok.
 resize(Shell, Width, Height) ->
     gen_statem:cast(Shell, {resize, Width, Height}).
 
@@ -119,6 +176,11 @@ resize(Shell, Width, Height) ->
 -spec shown(pid()) -> ok.
 shown(Shell) ->
     gen_statem:cast(Shell, shown).
+
+-doc "Returns once the renderer takes the window's input: at once, or when the open report is answered.".
+-spec await_reading(pid()) -> ok.
+await_reading(Shell) ->
+    gen_statem:call(Shell, await_reading, infinity).
 
 -doc "Stops the program and ends the renderer; the program's end is then no fault.".
 -spec stop(pid()) -> ok.
@@ -151,8 +213,10 @@ init(#{width := W, height := H, chan := Chan, program := Program} = Opts) ->
     case run(Program) of
         {ok, Running, Offset} ->
             {Core, Actions} = erx_ui_lvgl_core:start(W, H, Chan),
-            Data = maps:merge(maps:with([present, present_text, ui, chan], Opts),
-                              #{core => Core, program => Running, offset => Offset, unread => <<>>}),
+            Presents = presents(Opts),
+            Data = maps:merge(maps:with([present_text, ui, chan], Opts),
+                              #{core => Core, program => Running, offset => Offset, unread => <<>>,
+                                presents => Presents, readers => readers(Presents)}),
             {ok, reading, Data, [{next_event, internal, {started, Actions}}]};
         {error, Reason} ->
             {stop, {shutdown, {renderer_down, {start, Reason}}}}
@@ -166,12 +230,14 @@ handle_event(cast, {window, _Record}, holding, _Data) ->
     {keep_state_and_data, [postpone]};
 handle_event(cast, {window, Record}, reading, Data) ->
     step({window, Record}, Data);
-handle_event(cast, {resize, _W, _H}, holding, _Data) ->
-    {keep_state_and_data, [postpone]};
-handle_event(cast, {resize, W, H}, reading, #{chan := Chan} = Data) ->
+handle_event(cast, {resize, W, H}, _State, #{chan := Chan} = Data) ->
     step({resize, W, H, Chan}, Data);
 handle_event(cast, shown, _State, Data) ->
     step(shown, Data);
+handle_event({call, _From}, await_reading, holding, _Data) ->
+    {keep_state_and_data, [postpone]};
+handle_event({call, From}, await_reading, reading, _Data) ->
+    {keep_state_and_data, [{reply, From, ok}]};
 handle_event(info, {Port, {data, Bytes}}, _State, #{program := {port, Port}} = Data) ->
     output(more(Bytes, Data));
 handle_event(info, {Reader, {data, Bytes}}, _State, #{program := {piped, #{reader := Reader}}} = Data) ->
@@ -204,9 +270,25 @@ handle_event(info, {pipe_report, _Report}, _State, _Data) ->
 handle_event(info, {pipe_server_lost, _End}, _State, _Data) ->
     %% A later write fails with epipe, and the reader's read with eio.
     keep_state_and_data;
-handle_event({call, From}, close, _State, #{program := Running}) ->
-    close(Running),
-    {stop_and_reply, normal, [{reply, From, ok}]}.
+handle_event(info, {'EXIT', Pid, Reason}, _State, #{readers := Readers} = Data) when is_map_key(Pid, Readers) ->
+    %% A window read that failed; the reason names the file and an errno.
+    step({lost, Reason}, Data);
+handle_event({call, From}, close, _State, Data) ->
+    ended(Data),
+    {stop_and_reply, normal, [{reply, From, ok}]};
+handle_event(info, _Message, _State, _Data) ->
+    %% A message of no known shape, such as a stray reply to a window
+    %% request, is dropped, so nothing another process sends crashes the
+    %% shell and logs its data.
+    keep_state_and_data.
+
+%% A crash report names the shell's state, never the core, whose held
+%% operations carry the application's texts, or the program's unread output.
+format_status(Status) ->
+    maps:map(fun(data, Data) when is_map(Data) -> Data#{core => hidden, unread => hidden};
+                (Key, _Value) when Key =:= queue; Key =:= postponed; Key =:= log -> hidden;
+                (_Key, Value) -> Value
+             end, Status).
 
 more(Bytes, #{unread := Unread} = Data) ->
     Data#{unread := <<Unread/binary, Bytes/binary>>}.
@@ -257,8 +339,13 @@ perform([Action | Rest], Data) ->
 
 perform_one({write, Records}, #{program := Running, present_text := Text}) ->
     write(Running, [erx_ui_wire:encode(Record, Text) || Record <- Records]);
-perform_one({present, W, H, Rects}, #{present := Present, offset := Offset}) ->
+perform_one({present, W, H, Rects}, #{presents := {function, Present}, offset := Offset}) ->
     ok = Present(Offset, W, H, Rects);
+perform_one({present, W, H, Rects}, #{presents := {window, Window}, offset := Offset}) ->
+    case erx_win:present(Window, #{offset => Offset, width => W, height => H}, Rects) of
+        ok -> shown(self());
+        {error, Reason} -> {failed, {lost, {present, Reason}}}
+    end;
 perform_one({reply, From}, _Data) ->
     gen_statem:reply(From, ok);
 perform_one({hit, Node, Event, Value}, #{ui := Ui}) ->
@@ -268,9 +355,9 @@ perform_one({hit, Node, Event, Value}, #{ui := Ui}) ->
 %% The core stopped the program: the reason, which names a fault's kind
 %% and never the program's bytes, goes to the log, and the shell's
 %% abnormal end ends the UI.
-down(Reason, #{program := Running}) ->
+down(Reason, Data) ->
     logger:warning("erx_ui_lvgl: erx-lvgl stopped: ~p", [Reason]),
-    close(Running),
+    ended(Data),
     {stop, {shutdown, {renderer_down, Reason}}}.
 
 %% The program --------------------------------------------------------------
@@ -298,6 +385,67 @@ run({handler, Spec, Peer, Bytes}) ->
         ok = erx_pipe_srv:close(OutRead),
         {ok, {piped, #{handler => Handler, watch => Watch, input => InWrite, reader => Reader}}, Offset}
     end.
+
+%% The window ------------------------------------------------------------------
+
+%% The spec of the program's start, but for its descriptors.
+program_spec() ->
+    Pid = ?PID_BASE + erlang:unique_integer([positive, monotonic]),
+    #{image => <<"bin/erx-lvgl">>, pid => Pid, ppid => 1, pgid => Pid, argv => [<<"erx-lvgl">>],
+      env => [], cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022}.
+
+%% Ends the window's readers and stops the program, at each end of this
+%% process but a crash, after which the readers end by their links and
+%% the handler stops the program when its starter ends.
+ended(#{readers := Readers, program := Running}) ->
+    lists:foreach(fun(Reader) -> unlink(Reader), exit(Reader, kill) end, maps:keys(Readers)),
+    close(Running).
+
+%% How presents are made: through the window, or by the harness's function.
+presents(#{window := Window}) -> {window, Window};
+presents(#{present := Present}) when is_function(Present, 4) -> {function, Present}.
+
+%% The window's readers, linked to this process, or none without a window.
+readers({function, _Present}) ->
+    #{};
+readers({window, Window}) ->
+    Shell = self(),
+    maps:from_keys([spawn_link(fun() -> mouse_reader(Window, Shell) end),
+                    spawn_link(fun() -> kbd_reader(Window, Shell) end)], reader).
+
+%% The mouse reader: one record at a time while the shell takes input; an
+%% `r` record is a resize to the window's new rectangle, whose origin the
+%% next pointers are relative to.
+mouse_reader(Window, Shell) ->
+    ok = await_reading(Shell),
+    case erx_win:mouse(Window) of
+        {ok, {resized, _X, _Y, _Buttons, _Msec}} ->
+            case erx_win:resized(Window) of
+                {ok, Resized, none} ->
+                    #{rect := {X0, Y0, X1, Y1}} = erx_win:info(Resized),
+                    resize(Shell, X1 - X0, Y1 - Y0),
+                    mouse_reader(Resized, Shell);
+                {error, Reason} ->
+                    exit({resized, Reason})
+            end;
+        {ok, Pointer} ->
+            forward_input(Shell, Pointer, Window),
+            mouse_reader(Window, Shell);
+        {error, Reason} ->
+            exit({mouse, Reason})
+    end.
+
+kbd_reader(Window, Shell) ->
+    ok = await_reading(Shell),
+    case erx_win:kbd(Window) of
+        {ok, Key} -> forward_input(Shell, Key, Window), kbd_reader(Window, Shell);
+        {error, Reason} -> exit({kbd, Reason})
+    end.
+
+%% A window record as the program's input records, handed to the shell.
+forward_input(Shell, Record, Window) ->
+    #{rect := {X0, Y0, _X1, _Y1}} = erx_win:info(Window),
+    lists:foreach(fun(Input) -> window(Shell, Input) end, erx_ui_lvgl_core:input(Record, {X0, Y0})).
 
 %% The reader: takes its end of the program's output, then sends each read
 %% to the shell until the output ends; a lost pipe ends it abnormally.

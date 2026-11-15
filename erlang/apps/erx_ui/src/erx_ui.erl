@@ -21,14 +21,15 @@ erx_ui_host, the SDK's stand-in for a display on the development host
 (docs/design-packaging.md, "The SDK"), runs in the node under that name,
 it is the default display unless the environment's `display` names one
 the domain holds, LVGL is the default renderer unless the environment's
-`ui_renderer` names one, and the window comes from the host. Elsewhere
-the server opens
-its own target, a window made with the server as its holder, or the web
-line: until the window stack and the web line are built, a display the
-domain holds, and `web`, answer `{error, enotsup}`. start/1 starts a UI on
-a target its caller made: the entry of the tests, the renderers'
-harnesses and the host's window, and goes when the server opens its own
-window.
+`ui_renderer` names one, and the window comes from the host. On a display
+the domain holds, the server opens its own target, a window made with the
+server as its holder: for the LVGL renderer a window with no buffer of its
+own (`buffer => none`), since its program draws in a range its handler
+lends (docs/design-display.md, "Erlang clients"). The Erlang renderer and
+the web line are not built yet, so `erlang` on a display, and `web`,
+answer `{error, enotsup}`. start/1 starts a UI on a target its caller
+made; it is the entry of the tests, the renderers' harnesses and the
+host's window.
 """.
 
 -export([open/1, tree/2, close/1]).
@@ -43,9 +44,11 @@ window.
 -doc """
 Opens a UI on the display that `Options`' `display` names, or the default
 display, the environment variable `display`, drawn by the renderer that
-`Options`' `renderer` names, or the one `ui_renderer` names, or `erlang`.
+`Options`' `renderer` names, or the one `ui_renderer` names, or `erlang`,
+in a window titled by `Options`' `label`, a binary, when it is given.
 `{error, no_display}` when the name is unset or names no display the
-domain holds.
+domain holds; otherwise the refusal of the window's open, as
+`{window, Reason}`, or `renderer_down` for a renderer that did not start.
 """.
 -spec open(map()) -> {ok, window()} | {error, term()}.
 open(Options) when is_map(Options) ->
@@ -56,9 +59,11 @@ open(Options) when is_map(Options) ->
     case choose(Options, Env) of
         {ok, web, _Renderer} -> {error, enotsup};
         {ok, erx_ui_host, Renderer} when is_pid(Host) -> on_host(Host, Renderer);
-        {ok, Display, _Renderer} -> on_display(Display, Caps);
+        {ok, Display, Renderer} -> on_display(Display, Renderer, label(Options), Caps);
         {error, _Why} = Refused -> Refused
-    end.
+    end;
+open(_Options) ->
+    {error, badarg}.
 
 -doc "Hands the UI a tree: `ok`, or `{error, Reason}` with the UI unchanged.".
 -spec tree(window(), term()) -> ok | {error, term()}.
@@ -114,12 +119,13 @@ choose(Options, #{display := DefaultDisplay, ui_renderer := DefaultRenderer}) ->
     end.
 
 -doc """
-Starts a UI for the caller on a target it made, drawn by `renderer`, a
-module of the erx_ui_renderer behaviour, started with `opts`. The entry
-of the tests, the renderers' harnesses and erx_ui_host's window; it is
-deleted when the server opens its own window.
+Starts a UI for the caller, drawn by `renderer`, a module of the
+erx_ui_renderer behaviour, started with `opts`, on `target`: one its
+caller made, the entry of the tests, the renderers' harnesses and
+erx_ui_host's window, or a display the server opens a window on
+(erx_ui_server:target()), open/1's.
 """.
--spec start(#{renderer := module(), target := erx_ui_renderer:target(), opts := map()}) ->
+-spec start(#{renderer := module(), target := erx_ui_server:target(), opts := map()}) ->
           {ok, window()} | {error, term()}.
 start(#{renderer := Renderer, target := Target, opts := Opts}) ->
     Spec = #{opener => self(), renderer => Renderer, target => Target, opts => Opts},
@@ -135,6 +141,8 @@ start(#{renderer := Renderer, target := Target, opts := Opts}) ->
                     demonitor(Window, [flush]),
                     {error, Why}
             end;
+        {error, {shutdown, Why}} ->
+            {error, Why};
         {error, _Why} = Failed ->
             Failed
     end.
@@ -163,13 +171,20 @@ on_host(Host, Renderer) ->
     catch exit:{_Why, {gen_server, call, _}} -> {error, no_display}
     end.
 
-%% A display the domain holds opens a window there, which the window
-%% stack provides.
-on_display(Display, Caps) ->
-    case Caps of
-        #{Display := _Grant} -> {error, enotsup};
-        #{} -> {error, no_display}
-    end.
+%% A display the domain holds: the LVGL renderer in a window the server
+%% opens with no buffer of its own.
+on_display(_Display, _Renderer, badarg, _Caps) ->
+    {error, badarg};
+on_display(Display, _Renderer, _Label, Caps) when not is_map_key(Display, Caps) ->
+    {error, no_display};
+on_display(Display, lvgl, Label, _Caps) ->
+    start(#{renderer => erx_ui_lvgl, target => {display, Display, #{buffer => none}, Label}, opts => #{}});
+on_display(_Display, erlang, _Label, _Caps) ->
+    {error, enotsup}.
+
+label(#{label := Label}) when is_binary(Label) -> Label;
+label(#{label := _NotABinary}) -> badarg;
+label(#{}) -> none.
 
 existing_atom(false) -> undefined;
 existing_atom(Name) ->

@@ -20,9 +20,11 @@ run/1 returns what test/host/erx_ui_lvgl_test.rb checks:
 * `held`: the hits that came while that present was unanswered and a
   click was sent, none, since the shell takes the window's input only
   while no report is open; `hit`, the click's hit once it is answered.
-* `grown`: a resize past the buffer, which the program refuses: the UI
-  ends as `renderer_down`: the shell ends abnormally with the program's
-  exit, which the widget server, played by this process, is linked to.
+* `grown`: a resize past the buffer: the shell writes the screen record
+  clipped to the buffer's size, so the program keeps running and its
+  reports keep the buffer's size, and stop/1 then ends the shell
+  normally. A shell that writes the window's unclipped size makes the
+  program refuse it, and the UI end as `renderer_down`.
 * `closed`: stop/1 after the first frame: the shell ends normally and the
   widget server hears nothing.
 """.
@@ -50,7 +52,7 @@ run(Paths) ->
     erx_ui_lvgl:shown(Shell),
     Hit = answer_until_hit(Shell),
     erx_ui_lvgl:resize(Shell, 2 * ?WIDTH, 2 * ?HEIGHT),
-    Grown = until_down(Shell),
+    Grown = grown(Shell, none),
     Shell2 = start(Paths, Buffer),
     {ok, Shell2} = applied(Shell2),
     {present, Shell2, _, _, _} = next_present(),
@@ -132,6 +134,17 @@ answer_until_hit(Shell) ->
         {present, Shell, _, _, _} -> erx_ui_lvgl:shown(Shell), answer_until_hit(Shell);
         {ui_hit, _, _, _} = Hit -> Hit
     after ?WAIT_MS -> error(no_hit)
+    end.
+
+%% Answers every present until ?HOLD_MS pass without one, then stops the
+%% shell: the last present's size and the shell's exit, or the UI's end.
+grown(Shell, Size) ->
+    receive
+        {present, Shell, W, H, _} -> erx_ui_lvgl:shown(Shell), grown(Shell, {W, H});
+        {'EXIT', Shell, Exit} -> {renderer_down, Exit}
+    after ?HOLD_MS ->
+        ok = erx_ui_lvgl:stop(Shell),
+        receive {'EXIT', Shell, Why} -> {Size, Why} after ?WAIT_MS -> error(close_hung) end
     end.
 
 %% Answers presents until the UI ends: the shell's abnormal exit, which the

@@ -49,7 +49,8 @@ toolkit_test_() ->
       fun a_refused_apply_ends_the_ui_as_renderer_down/0,
       fun a_renderer_that_raises_ends_the_ui_as_renderer_down/0,
       fun close_ends_the_ui_with_no_message/0,
-      fun the_server_ends_with_its_opener/0]}.
+      fun the_server_ends_with_its_opener/0,
+      fun a_window_refused_fails_the_start/0]}.
 
 a_tree_is_validated_numbered_and_applied() ->
     {Window, _Reader} = open(#{}),
@@ -156,6 +157,26 @@ choose_test() ->
 
 open_without_a_display_test() ->
     ?assertEqual({error, no_display}, erx_ui:open(#{display => erx_ui_server_tests_display})).
+
+%% A display the domain holds: the Erlang renderer is not built, so it is
+%% refused.
+the_erlang_renderer_on_a_held_display_is_refused_test() ->
+    persistent_term:put({erx, facets}, #{erx_ui_server_tests_display => self()}),
+    try
+        ?assertEqual({error, enotsup},
+                     erx_ui:open(#{display => erx_ui_server_tests_display, renderer => erlang})),
+        ?assertEqual({error, badarg},
+                     erx_ui:open(#{display => erx_ui_server_tests_display, renderer => lvgl, label => "t"}))
+    after
+        persistent_term:erase({erx, facets})
+    end.
+
+%% A window the server cannot open, on a display the domain does not
+%% hold, fails the start with the open's refusal and starts no renderer.
+a_window_refused_fails_the_start() ->
+    Spec = (spec(#{}))#{target := {display, erx_ui_server_tests_display, #{buffer => none}, none}},
+    ?assertEqual({error, {window, none}}, erx_ui:start(Spec)),
+    receive {reader, _} -> error(renderer_started) after 0 -> ok end.
 
 %% Helpers.
 

@@ -30,6 +30,13 @@ dropped, so nothing a renderer sends crashes the server or makes an atom.
 A crash report of the server shows neither the tree nor the message it
 was handling (format_status/1), so no application term leaves the domain
 through the log.
+
+**Its window.** Given a display as its target, the server opens the
+window itself, with erx_win:open/2, before it starts the renderer, so the
+server is the window's holder and the window ends with it, whatever ends
+the server (docs/design-display.md, "The widget server"). A label names
+the window's title. A refused open, or label, fails the start as
+`{window, Reason}` and leaves no renderer.
 """.
 
 -export([start_link/1, opened/2, tree/2, close/1]).
@@ -39,9 +46,14 @@ through the log.
 %% trees", `ui_nodes`).
 -define(UI_NODES, 10000).
 
--type spec() :: #{opener := pid(), renderer := module(),
-                  target := erx_ui_renderer:target(), opts := map()}.
--export_type([spec/0]).
+-doc """
+What the server draws on: a target its caller made, or a display the
+server opens a window on, with erx_win:open/2's options and a title.
+""".
+-type target() :: erx_ui_renderer:target()
+                | {display, Display :: atom(), erx_win:options(), Label :: binary() | none}.
+-type spec() :: #{opener := pid(), renderer := module(), target := target(), opts := map()}.
+-export_type([spec/0, target/0]).
 
 -record(server, {opener :: pid(),
                  opener_monitor :: reference(),
@@ -79,12 +91,17 @@ init(#{opener := Opener, renderer := Renderer, target := Target, opts := Opts}) 
     %% ends the UI as renderer_down.
     process_flag(trap_exit, true),
     Monitor = monitor(process, Opener),
-    case renderer(fun() -> Renderer:start(Target, self(), Opts) end) of
-        {ok, State} ->
-            {ok, #server{opener = Opener, opener_monitor = Monitor, renderer = Renderer,
-                         renderer_state = State, realised = erx_ui_model:empty()}};
-        _Failed ->
-            {stop, {shutdown, renderer_down}}
+    case target(Target) of
+        {ok, Opened} ->
+            case renderer(fun() -> Renderer:start(Opened, self(), Opts) end) of
+                {ok, State} ->
+                    {ok, #server{opener = Opener, opener_monitor = Monitor, renderer = Renderer,
+                                 renderer_state = State, realised = erx_ui_model:empty()}};
+                _Failed ->
+                    {stop, {shutdown, renderer_down}}
+            end;
+        {error, Reason} ->
+            {stop, {shutdown, {window, Reason}}}
     end.
 
 handle_call({opened, Window}, {Opener, _Tag}, #server{opener = Opener, window = undefined} = S)
@@ -145,6 +162,20 @@ renderer(Callback) ->
     try Callback()
     catch Class:_Why -> {failed, Class}
     end.
+
+%% The renderer's target: a window this process opens on a display, so it
+%% is the window's holder, or the target its caller made.
+target({display, Display, Options, Label}) ->
+    maybe
+        {ok, Window} ?= erx_win:open(Display, Options),
+        ok ?= titled(Window, Label),
+        {ok, {window, Window}}
+    end;
+target(Target) ->
+    {ok, Target}.
+
+titled(_Window, none) -> ok;
+titled(Window, Label) -> erx_win:label(Window, Label).
 
 down_reason({shutdown, closed}) -> none;
 down_reason({shutdown, Why}) -> Why;

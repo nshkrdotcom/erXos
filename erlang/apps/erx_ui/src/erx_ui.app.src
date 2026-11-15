@@ -21,6 +21,6 @@
   {modules, [erx_ui, erx_ui_app, erx_ui_layout, erx_ui_lvgl, erx_ui_lvgl_core, erx_ui_model, erx_ui_renderer, erx_ui_schema,
              erx_ui_server, erx_ui_sup, erx_ui_wire]},
   {registered, [erx_ui_sup]},
-  {applications, [kernel, stdlib, erx]},
+  {applications, [kernel, stdlib, erx, erx_win]},
   {env, []},
   {mod, {erx_ui_app, []}}]}.

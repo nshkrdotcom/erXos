@@ -65,6 +65,35 @@ a_resize_during_a_present_is_written_at_once_and_the_report_still_shown_test() -
     %% The program's next report, drawn after it read the screen record.
     {ok, _, [{present, 2, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 2, 2, ?RECTS}, Again).
 
+%% The buffer was allocated at the size the renderer started at, so no
+%% screen record passes it: a window grown past it is a screen of the
+%% buffer's size, and one shrunk to nothing a screen of one pixel. A core
+%% that writes the window's unclipped size fails.
+a_resize_past_the_buffer_is_clipped_to_it_test() ->
+    {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
+    {ok, Grown, [{write, [{screen, 4, 2, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 8, 2, ?CHAN}, Idle),
+    {ok, _, [{present, 4, 2, ?RECTS}]} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
+    {ok, Open, _} = erx_ui_lvgl_core:step({damage, 4, 2, ?RECTS}, Grown),
+    {ok, Taller, [{write, [{screen, 4, 3, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 9, 70000, ?CHAN}, Open),
+    {4, 3} = erx_ui_lvgl_core:size(Taller),
+    {ok, Gone, [{write, [{screen, 1, 1, ?CHAN}]}]} = erx_ui_lvgl_core:step({resize, 0, -5, ?CHAN}, Idle),
+    {1, 1} = erx_ui_lvgl_core:size(Gone).
+
+%% A window's records as the program's input: a pointer relative to the
+%% window's origin, held to the record's range, with its first three
+%% buttons; a typed rune as its key down and up; the keys held and the
+%% resize mark as nothing.
+window_records_become_input_records_test() ->
+    ?assertEqual([{input, {pointer, 5, 0, 2#101}}],
+                 erx_ui_lvgl_core:input({mouse, 15, 20, 2#11101, 7}, {10, 20})),
+    ?assertEqual([{input, {pointer, 0, 16#ffff, 0}}],
+                 erx_ui_lvgl_core:input({mouse, -3, 70000, 0, 0}, {0, 0})),
+    ?assertEqual([{input, {key, down, 0, $a}}, {input, {key, up, 0, $a}}],
+                 erx_ui_lvgl_core:input({typed, $a}, {10, 20})),
+    ?assertEqual([], erx_ui_lvgl_core:input({down, [$a]}, {0, 0})),
+    ?assertEqual([], erx_ui_lvgl_core:input({up, []}, {0, 0})),
+    ?assertEqual([], erx_ui_lvgl_core:input({resized, 0, 0, 0, 0}, {0, 0})).
+
 held_records_follow_the_answer_in_order_test() ->
     {Idle, _} = erx_ui_lvgl_core:start(4, 3, ?CHAN),
     {ok, Open, _} = erx_ui_lvgl_core:step({damage, 4, 3, ?RECTS}, Idle),

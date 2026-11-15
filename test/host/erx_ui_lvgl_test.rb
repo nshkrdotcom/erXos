@@ -11,7 +11,7 @@ require_relative '../../tools/lib/erx/lvgl'
 # The LVGL renderer's shell, erx_ui_lvgl, around erx_ui_lvgl_core, driving the real
 # erx-lvgl on the host through test/erlang/erx_ui_lvgl_shell.erl (docs/design-display.md,
 # "The widget server"): an apply is written and answered, a click sent while a report is
-# open waits for its answer, a window grown past its buffer ends the UI as renderer_down,
+# open waits for its answer, a window grown past its buffer gets a screen clipped to it and runs on,
 # and a close ends the shell with no fault.
 class ErxUiLvglTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -32,7 +32,7 @@ class ErxUiLvglTest < Minitest::Test
       assert_match(/first => \{240,160\}/, output)
       assert_match(/held => \[\]/, output)
       assert_match(/hit => \{ui_hit,3,on_click,none\}/, output)
-      assert_match(/grown => \{renderer_down,\{shutdown,\{renderer_down,\{exit,1\}\}\}\}/, output)
+      assert_match(/grown => \{\{240,160\},normal\}/, output)
       assert_match(/closed => \{normal,\[\]\}/, output)
       assert_match(/killed => \{renderer_down,\{shutdown,\{renderer_down,\{exit,137\}\}\}\}/, output)
     end
