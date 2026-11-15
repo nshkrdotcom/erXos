@@ -185,13 +185,17 @@ What the sources say, read at the pins of [Sources](#sources):
 
 ## What the code does today
 
-* `lib/crypto`, `lib/asn1`, `lib/public_key` and `lib/ssh` are imported
-  into `otp/` as "OTP's applications" below describes; `otp/ORIGIN.md`
-  excludes `lib/ssl` and `lib/inets` as "outside the shipped OTP
-  application set in the runtime design". No release loads `ssl`, the
-  tree holds no trust store, and on erXos, whose `os:type/0` is `{unix,
-  erxos}`, `public_key:cacerts_load/0` would answer `{error, {enotsup,
-  {unix, erxos}}}`.
+* `lib/crypto`, `lib/asn1`, `lib/public_key`, `lib/ssh`, `lib/ssl` and
+  `lib/inets` are imported into `otp/` as "OTP's applications" below
+  describes. `ssl` and `inets` are domain-image applications
+  (`tools/lib/erx/domain_image_apps.rb`), so the runtime builds them and
+  the `session` and `app` scripts load them; the web domain's
+  script does not hold `ssl` yet, and `inets` has no `httpc_bound` edit.
+* `config/trust/` holds the five roots with their `ORIGIN.md`, and
+  `Erx::TrustStore` (`tools/lib/erx/trust_store.rb`) reads and joins
+  them, and `pubkey_os_cacerts` has its `{unix, erxos}` row; the domain
+  release does not carry `cacerts.pem` yet, so on erXos
+  `public_key:cacerts_get/0` raises `failed_load_cacerts`.
 * The wall clock of a boot on the stopgap starts at 1970-01-01 on QEMU
   `virt` and on the Raspberry Pi 4, and nothing in the tree sets it
   ([design-time.md](design-time.md#phase-1)).

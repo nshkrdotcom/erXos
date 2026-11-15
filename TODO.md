@@ -68,8 +68,7 @@ it; git history is the record of completed work.
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  `{not_supported, program}` until then).
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the
@@ -1983,6 +1982,21 @@ it; git history is the record of completed work.
   `opendir`, `stat` and `syslog` (file BIOs, the `file:` store loader, `X509_LOOKUP` by directory) and keeps
   `OPENSSLDIR="/usr/local/ssl"`; K5 holds because `no-autoload-config` stops the implicit loads and OTP's `crypto` names
   no file. Give Configure an `--openssldir` of erXos's, so a caller that does name OpenSSL's directory finds erXos's.
+* [High] HTTPS clients, the trust store in the domain release (`config/trust/`, `tools/lib/erx/trust_store.rb`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the five roots, their record and the reader are in the
+  tree and `pubkey_os_cacerts` has its `{unix, erxos}` row, but no build writes `cacerts.pem` into `public_key`'s
+  `priv` of the domain release, so `public_key:cacerts_get/0` raises `failed_load_cacerts` on erXos and the full
+  kiosk's quotes cannot fetch. The pack's provenance check attributes every receipt source through an import
+  record with a license per file, so `config/trust/ORIGIN.md` needs a license for each root certificate, and `config/trust` a row in the images' imports, before the release names the store. Then: the layout row
+  for `priv/cacerts.pem`, a test image's extra roots, and the design's "store on QEMU" row.
+* [Medium] HTTPS clients, the store by construction (`tools/lib/erx/trust_store.rb`): build it from `config/trust/ORIGIN.md`'s
+  rows instead of a `*.pem` glob (which is case-insensitive on macOS and follows links): each recorded file a regular
+  file by `lstat`, its bytes matching the recorded SHA-256, one block decoding to exactly one DER certificate (two
+  certificates base64ed into one block, or an empty block, pass the form check today), and any other entry of the
+  directory refused. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
+* [Medium] HTTPS clients, the rest of design-crypto's client work: `inets`' `httpc_bound` edit and its tests (CR8),
+  and `ssl` in the web domain's script for its listener
+  ([design-crypto.md](docs/design-crypto.md#otps-applications)).
 * [Medium] crypto NIFs, rebuild (`tools/lib/erx/native_runtime.rb`, `build_openssl`): the static objects of `crypto.a` and
   `asn1rt_nif.a` have no header dependencies (`otp/lib/crypto/c_src/Makefile.in`'s `%_static` rule, `otp/lib/asn1/c_src/Makefile`)
   and the configure stamp does not cover OpenSSL's options or headers, so a change to `Libcrypto::OPTIONS`, `openssl/include` or
