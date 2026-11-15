@@ -16,6 +16,7 @@ include formats/elf64.txt
 include formats/virtio.txt
 include formats/evdev.txt
 include formats/hid.txt
+include formats/bluetooth.txt
 include formats/input.txt
 include formats/mbr.txt
 include formats/usb.txt
