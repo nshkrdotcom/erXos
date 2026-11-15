@@ -14,7 +14,8 @@ pattern into the window's buffer and presents it, so a screenshot of the
 display shows the pattern (docs/design-display.md, "Erlang clients" and
 "A display's session").
 
-show/0 logs `erx_pattern_test: started`, then opens the window, retrying
+show/0 logs `erx_pattern_test: started` and starts the window's holder,
+which opens the window, retrying
 while the session holds no grant of the display or no pixel area to it,
 both of which arrive after the session starts, as `{error, none}`, or while
 the area has no room for the window's buffer, `{error, enomem}`, which the
@@ -37,8 +38,15 @@ of its `mouse` file, each logged as one notice,
     erx_pattern_test: mouse {0,0,0}
 
 the mouse record's position and buttons, or one notice naming the read that
-failed. The process then waits for ever: it holds the window, which ends
-when its holder does.
+failed. The window's holder is a process of its own, registered as
+`erx_pattern_test` once the window is presented; it ends after the input's
+notices, which ends the window, and logs
+
+    erx_pattern_test: closed
+
+first, so the display's session holds no window and the lvgl cell's
+client, erx_kiosk_test, which waits for that end, opens the only one. The
+application's process waits for ever.
 """.
 
 -export([show/0, pattern/0]).
@@ -76,14 +84,20 @@ pattern() ->
 -spec show() -> no_return().
 show() ->
     logger:notice("erx_pattern_test: started"),
+    _ = spawn(fun hold/0),
+    receive after infinity -> ok end.
+
+%% The window's holder: the window ends when this process does.
+hold() ->
     case presented() of
         {ok, Window} ->
+            true = register(erx_pattern_test, self()),
             logger:notice("erx_pattern_test: presented"),
-            read_input(Window);
+            read_input(Window),
+            logger:notice("erx_pattern_test: closed");
         Failed ->
             logger:notice("erx_pattern_test: ~0p", [Failed])
-    end,
-    receive after infinity -> ok end.
+    end.
 
 presented() ->
     maybe

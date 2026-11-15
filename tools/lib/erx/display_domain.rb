@@ -48,15 +48,27 @@ module Erx
   # "passed" (check_lease_lines); that is the boot's second cell, lvgl-lease (cells). That
   # cell fails on its own outcome, and the boot's cell passes whatever it is; a boot that
   # fails before the lease's wait fails the suite, both cells with it.
+  #
+  # Once the pattern client has read its input it ends its window, and erx_kiosk_test, the
+  # lvgl cell's client in the same session, opens its UI with erx_ui:open(#{renderer =>
+  # lvgl}): erx-lvgl, a native program of the session, draws the client's tree into the
+  # window's buffer, which the single policy shows over the whole screen. The harness reads
+  # the screen until it equals the reference (test/display/reference/display-lvgl.sha256),
+  # the host's erx-lvgl's render of the same tree at the same size (test/host/
+  # erx_lvgl_test.rb), clicks the button and waits for the client's line of the button's
+  # event (check_lvgl). That is the boot's lvgl cell, which fails on its own outcome as the
+  # lease cell does. A program that draws another picture than the host's, a window that
+  # is not shown, or an input path that loses the click, fails it.
   module DisplayDomain
     REFERENCES = 'test/display/reference'
     PATTERN = 'display-pattern'
     # The boot script of the client's session template: the client release's applications
     # (ReleaseFiles::RELEASE_SCRIPTS, client), the command shell and erx_session, which
     # the template's -eval starts, and the test-only clients, erx_pattern_test and the
-    # lvgl-lease cell's erx_lvgl_lease_test.
+    # lvgl-lease cell's erx_lvgl_lease_test and the lvgl cell's erx_kiosk_test.
     CLIENT_SCRIPT = ReleaseFiles::RELEASE_SCRIPTS.fetch('client')
-    CLIENT_APPLICATIONS = [*CLIENT_SCRIPT, 'erx_shell', 'erx_session', 'erx_pattern_test', 'erx_lvgl_lease_test'].freeze
+    CLIENT_APPLICATIONS = [*CLIENT_SCRIPT, 'erx_shell', 'erx_session', 'erx_pattern_test', 'erx_lvgl_lease_test',
+                           'erx_kiosk_test'].freeze
     BOOT = ReleaseFiles.domain_boot('pattern', applications: CLIENT_APPLICATIONS, test: true)
     # How long the harness reads the screen after the shell's banner before it fails, and
     # how often.
@@ -154,7 +166,7 @@ module Erx
     # "presented" and no other, or Error naming them, so a client that failed, or whose
     # session was started again before the picture came, does not pass, and a failing
     # cell says what the client reported.
-    CLIENT_LINE = /erx_pattern_test: (?!started|kbd |mouse )[^\r\n]*/n
+    CLIENT_LINE = /erx_pattern_test: (?!started|kbd |mouse |closed)[^\r\n]*/n
     PRESENTED = 'erx_pattern_test: presented'
     def check_client_lines(log)
       lines = log.b.scan(CLIENT_LINE)
@@ -235,17 +247,58 @@ module Erx
       raise Error, "the lvgl-lease client logged #{lines.size} outcomes, not one passed: #{lines.first(4).inspect}"
     end
 
-    # The suite's cells, from the cells of its boots: each boot's own, and its lvgl-lease
-    # cell.
+    # The lvgl cell's reference, the host's render of erx_kiosk_test:tree/0, and the
+    # client's lines once the screen shows it and the harness has clicked its button: the
+    # UI shown, then the button's event, and no other (erx_kiosk_test).
+    LVGL = 'display-lvgl'
+    KIOSK_LINE = /erx_kiosk_test: (?!started|refused )[^\r\n]*/n
+    KIOSK_LINES = ['erx_kiosk_test: shown', 'erx_kiosk_test: event pressed'].freeze
+    # The click: the tablet at 0x4000 on each axis, then the left button down and up. The
+    # driver scales the device's own range to the screen (erx_virtio_input_core); the
+    # range QMP's values span is not checked here, but the point lands on the button
+    # (x 16 to 1263, y 96 to 655 in display-lvgl.ppm.gz) whether 0x4000 is half of it,
+    # the screen's centre, or a quarter, (320, 200).
+    CLICK = [%w[x y].map { |axis| { 'type' => 'abs', 'data' => { 'axis' => axis, 'value' => 0x4000 } } },
+             [{ 'type' => 'btn', 'data' => { 'down' => true, 'button' => 'left' } }],
+             [{ 'type' => 'btn', 'data' => { 'down' => false, 'button' => 'left' } }]].freeze
+
+    # The lvgl cell's check: the screen until it equals LVGL, the click, then the client's
+    # lines in the serial log at serial, or Error naming what came.
+    def check_lvgl(socket:, references:, serial:)
+      await_screen(socket: socket, references: references, name: LVGL)
+      click(socket)
+      check_kiosk_lines(await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size >= KIOSK_LINES.size })
+    end
+
+    # The lvgl client's lines of a boot's serial log: KIOSK_LINES and no other, or Error
+    # naming them.
+    def check_kiosk_lines(log)
+      lines = log.b.scan(KIOSK_LINE)
+      raise Error, "the lvgl client logged #{lines.first(4).inspect}, not #{KIOSK_LINES.inspect}" unless lines == KIOSK_LINES
+    end
+
+    # The click sent through the QMP socket at socket.
+    def click(socket)
+      client = Qmp.connect(socket)
+      CLICK.each { |events| client.input_events(events) }
+    ensure
+      client&.close
+    end
+
+    # The suite's cells, from the cells of its boots: each boot's own, and its side cells,
+    # which a boot checks one after the other and each of which fails on its own outcome.
+    LVGL_CELL = '-lvgl'
     LEASE_CELL = '-lvgl-lease'
-    def cells(boots) = boots.flat_map { |cell| [cell, "#{cell}#{LEASE_CELL}"] }
+    SIDE_CELLS = [LVGL_CELL, LEASE_CELL].freeze
+    def cells(boots) = boots.flat_map { |cell| [cell, *SIDE_CELLS.map { |side| "#{cell}#{side}" }] }
 
     # The production checkpoints to the command shell, whose banner starts the screen's
     # reads, then the driver's and the client's lines of the serial log at serial, then the
-    # input typed and its lines, then the serial log once the lvgl-lease client's line came,
-    # or once LEASE_WAIT_SECONDS passed, handed to lease. points must end at the command
-    # shell.
-    def checkpoints(points, socket:, references:, serial:, lease:)
+    # input typed and its lines, then the side cells, each through side, which records its
+    # outcome: the lvgl cell (check_lvgl), then the lease cell on the serial log once the
+    # lvgl-lease client's line came, or once LEASE_WAIT_SECONDS passed. points must end at
+    # the command shell.
+    def checkpoints(points, socket:, references:, serial:, side:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = points.last
@@ -257,16 +310,18 @@ module Erx
         type_input(socket)
         typed = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(INPUT_READ_LINE).size >= INPUT_READ.size }
         check_input_lines(typed)
-        lease.call(await_log(serial, wait_seconds: LEASE_WAIT_SECONDS) { |text| text.match?(LEASE_LINE) })
+        side.call(LVGL_CELL) { check_lvgl(socket: socket, references: references, serial: serial) }
+        side.call(LEASE_CELL) do
+          check_lease_lines(await_log(serial, wait_seconds: LEASE_WAIT_SECONDS) { |text| text.match?(LEASE_LINE) })
+        end
       end
-      seconds = shell.fetch(:seconds) + WAIT_SECONDS + (2 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS + 15
+      seconds = shell.fetch(:seconds) + (2 * WAIT_SECONDS) + (3 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS + 15
       [*points[0...-1], shell.merge(seconds: seconds, verify: screen).freeze].freeze
     end
 
     # Boots the image under HVF at each CPU count, where placement puts each cell.
-    # Returns { "<accel>-<n>cpu" => 'passed', "<accel>-<n>cpu-lvgl-lease" => status }, the
-    # lease cell's 'passed', or 'failed' with its reason in notes; any other disagreement
-    # raises.
+    # Returns { "<accel>-<n>cpu" => 'passed', and each side cell's "<accel>-<n>cpu<side>" =>
+    # 'passed', or 'failed' with its reason in notes }; any other disagreement raises.
     class Run
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64',
@@ -281,7 +336,7 @@ module Erx
         @notes = []
       end
 
-      # Why each failed lease cell failed.
+      # Why each failed side cell failed.
       def notes = @notes.dup.freeze
 
       # Packs the test image, which carries the client's boot script (BOOT), once, then boots
@@ -298,26 +353,26 @@ module Erx
         booted = placement.each(accels: [QemuCells::LOCAL_ACCELERATOR], cpus: cpus) do |accel, count, remote|
           ["#{accel}-#{count}cpu", show(accel, count, remote, built)]
         end
-        booted.flat_map { |cell, lease| [[cell, 'passed'], ["#{cell}#{LEASE_CELL}", lease]] }.to_h
+        booted.flat_map { |cell, sides| [[cell, 'passed'], *sides.map { |side, status| ["#{cell}#{side}", status] }] }.to_h
       end
 
       private
 
-      # One boot to the command shell, then the screen's reads; returns the lease cell's
-      # status. The run's directory is made afresh and owner-only here, so the QMP socket
-      # QEMU creates in it and the dumps beside it are the harness's alone. A remote
+      # One boot to the command shell, then the screen's reads; returns each side cell's
+      # status, by its suffix. The run's directory is made afresh and owner-only here, so
+      # the QMP socket QEMU creates in it and the dumps beside it are the harness's alone. A remote
       # placement reaches Qemu#run, which refuses a boot with a display there.
       def show(accel, count, remote, built)
         path = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/display-domain', "#{accel}-#{count}cpu"))
         boot = OutputDirectory.prepare(root: @root, path: path, mode: 0o700)
         socket = File.join(boot, 'qmp.sock')
         display = QemuPlan::Display.new(qmp_socket: socket)
-        lease = 'failed'
-        check_lease = lambda do |log|
-          DisplayDomain.check_lease_lines(log)
-          lease = 'passed'
+        sides = SIDE_CELLS.to_h { |side| [side, 'failed'] }
+        side = lambda do |suffix, &check|
+          check.call
+          sides[suffix] = 'passed'
         rescue Error => e
-          @notes << "#{accel}-#{count}cpu#{LEASE_CELL}: #{e.message}"
+          @notes << "#{accel}-#{count}cpu#{suffix}: #{e.message}"
         end
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib,
@@ -326,8 +381,8 @@ module Erx
             .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                  memory_mib: @machine.memory_mib, directory: boot, display: display,
                  checkpoints: DisplayDomain.checkpoints(points, socket: socket, references: File.join(@root, REFERENCES),
-                                                        serial: File.join(boot, 'serial.log'), lease: check_lease))
-        lease
+                                                        serial: File.join(boot, 'serial.log'), side: side))
+        sides
       end
     end
   end

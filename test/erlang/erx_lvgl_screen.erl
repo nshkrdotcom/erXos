@@ -43,6 +43,9 @@ checked it. It checks what erx_ui_lvgl and the display rely on:
   presented at the size it was drawn at, and the next report covers the
   new size.
 
+picture/3 returns what the program draws of a tree at a size, for the
+display suite's reference picture.
+
 refused/2 checks that the program stops, with status 1, at a screen whose
 rows at its stride do not fit the buffer (LVGL would draw past the
 mapping), and at a presented record that answers no report.
@@ -51,7 +54,7 @@ run/2 raises at the first check that fails and otherwise returns a
 summary.
 """.
 
--export([run/2, refused/2]).
+-export([run/2, refused/2, picture/3]).
 
 -define(WIDTH, 240).
 -define(HEIGHT, 160).
@@ -155,6 +158,31 @@ exit_status(Port, Deadline) ->
     after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
         error(never_stopped)
     end.
+
+-doc """
+Starts the program as run/2 does on an x8r8g8b8 screen of `Width` by
+`Height`, hands it `Tree` as the widget server does (erx_ui_model:pair/3
+and delta/2 from the empty tree), answers its reports until it is silent,
+and returns the buffer's pixels as rows of 8-bit red, green and blue, the
+order a PPM holds them (the display suite's reference pictures,
+tools/lib/erx/screen_reference.rb).
+""".
+-spec picture(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
+              erx_ui_model:tree(), {pos_integer(), pos_integer()}) -> binary().
+picture(#{program := Program, ruby := Ruby, launcher := Launcher}, Tree, {Width, Height}) ->
+    Buffer = filename:absname("buffer"),
+    ok = file:write_file(Buffer, binary:copy(<<0>>, stride(Width, 32) * Height)),
+    Port = open_port({spawn_executable, Ruby},
+                     [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program]}]),
+    {Core, Start} = erx_ui_lvgl_core:start(Width, Height, ?X8R8G8B8),
+    Screen0 = #{port => Port, buffer => Buffer, depth => 32, chan => ?X8R8G8B8, core => Core},
+    send(Screen0, [Record || {write, Records} <- Start, Record <- Records]),
+    {Realised, _Next} = erx_ui_model:pair(erx_ui_model:empty(), Tree, 1),
+    Screen = step({apply, erx_ui_model:delta(erx_ui_model:empty(), Realised), tree}, Screen0),
+    {_Reports, []} = settle(Screen, [], fun(Reports, _) -> Reports =/= [] end),
+    Pixels = << <<R, G, B>> || <<B, G, R, _X>> <= snapshot(Screen) >>,
+    port_close(Port),
+    Pixels.
 
 %% The tree, as erx_ui_model:delta/2 makes it from the empty tree.
 ops() ->

@@ -921,13 +921,13 @@ it; git history is the record of completed work.
     erXos, started with `erx_prog_handler:start/1` and a lent buffer (the display suite's lvgl-lease cell), and
     over a port on the host (`test/host/erx_ui_lvgl_test.rb`); `erx_ui:open/1` binds it to a window the widget
     server opens with `buffer => none`, with a presenter process and mouse and kbd readers linked to the server.
-    Left: the display suite's `lvgl` cell, `erx_ui:open/1` on the display checked against a reference picture
-    of the same tree at 1280x800 from the host's model screen, which needs that reference and a boot of its
-    own beside the pattern's; the program's pid from the command server, which `erx_ui_lvgl` numbers from a
+    Left: `erx_ui_server:init/1` answers every renderer start failure as `renderer_down`, so a caller cannot
+    tell a full pixel area (`enomem`) from a crash and the display suite's lvgl client retries every refusal;
+    the program's pid from the command server, which `erx_ui_lvgl` numbers from a
     base and the runtime's unique integers for now, unique within the runtime and not the session; the wheel's
     buttons, which `erx_ui_lvgl_core:input/2` drops. The window-bound path (presents through `erx_win:present/3`
     from the shell, the window readers, `await_reading/1`, the `r` record's resize) has no host test, since it
-    needs a display; the lvgl cell is its test. A pointer is made window-relative with the rectangle the mouse
+    needs a display; the display suite's lvgl cell is its test. A pointer is made window-relative with the rectangle the mouse
     reader last read, which an `r` record refreshes, but `erx_window` marks `r` only when the size changes, so a
     move at the same size leaves every later pointer off by the move (latent under the single policy, which
     never moves a window): the display should mark `r` on any change of the rectangle, as Plan 9's mouse device

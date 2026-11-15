@@ -9,6 +9,8 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 require_relative '../../tools/lib/erx/lvgl'
 require_relative '../../tools/lib/erx/origin'
+require_relative '../../tools/lib/erx/ppm'
+require_relative '../../tools/lib/erx/screen_reference'
 
 # erx-lvgl end to end on the host (docs/design-display.md, "The widget
 # server"): the program, built from LVGL's submodule under ASan and UBSan, is run
@@ -49,6 +51,37 @@ TESTS = %w[test/erlang/erx_lvgl_screen.erl].freeze
         assert_match(/^status 1$/, output, name)
         assert_match(said, output, name)
       end
+    end
+  end
+
+  # The display suite's lvgl cell compares the guest's screen with a reference picture
+  # (tools/lib/erx/display_domain.rb, LVGL): this checks that the reference is what the
+  # host's erx-lvgl draws of the cell client's tree (erx_kiosk_test:tree/0) on the
+  # suite's screen, the reference's own size, so the guest's picture equals the host's
+  # render. ERX_RECORD_REFERENCE=1 writes the reference from the render instead, for a
+  # person who has looked at the picture.
+  KIOSK_REFERENCE = 'display-lvgl'
+  KIOSK_CLIENT = %w[test/erlang/apps/erx_kiosk_test/src/erx_kiosk_test.erl].freeze
+  def test_the_kiosk_reference_is_the_programs_picture
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    program = Erx::Lvgl::Build.new(root: ROOT, runner: runner).call
+    references = File.join(ROOT, 'test/display/reference')
+    Dir.mktmpdir('erx-lvgl-kiosk') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS + KIOSK_CLIENT)
+      reference = Erx::ScreenReference.load(references, KIOSK_REFERENCE)
+      width = reference.width
+      height = reference.height
+      run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+           "ok = file:write_file(\"picture.rgb\", erx_lvgl_screen:picture(#{screen(program)}, " \
+           "erx_kiosk_test:tree(), {#{width}, #{height}})), halt(0)",
+           chdir: work)
+      image = Erx::Ppm::Image.new(width: width, height: height, pixels: File.binread(File.join(work, 'picture.rgb')))
+      if ENV['ERX_RECORD_REFERENCE'] == '1'
+        digest, picture = Erx::ScreenReference.encode(image)
+        File.write(File.join(references, "#{KIOSK_REFERENCE}.sha256"), digest)
+        File.binwrite(File.join(references, "#{KIOSK_REFERENCE}.ppm.gz"), picture)
+      end
+      assert_nil Erx::ScreenReference.check(image, directory: references, name: KIOSK_REFERENCE)
     end
   end
 

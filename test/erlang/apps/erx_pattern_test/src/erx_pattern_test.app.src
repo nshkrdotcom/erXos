@@ -5,6 +5,6 @@
  [{description, "erXos test: a display's session that presents a known pattern in a window"},
   {vsn, "1"},
   {modules, [erx_pattern_test, erx_pattern_test_app]},
-  {registered, []},
+  {registered, [erx_pattern_test]},
   {applications, [kernel, stdlib, erx, erx_memdraw, erx_win]},
   {mod, {erx_pattern_test_app, []}}]}.

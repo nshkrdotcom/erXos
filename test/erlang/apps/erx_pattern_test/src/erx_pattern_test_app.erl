@@ -7,7 +7,8 @@ The test-only application erx_pattern_test, which only a test image's domain
 boot script boots (tools/lib/erx/erlang_apps.rb, TEST_ONLY): the client of
 the display suite (tools/lib/erx/display_domain.rb). Its one process,
 erx_pattern_test:show/0, opens a window, presents the pattern once and then
-waits, holding the window, until the session is ended from outside.
+ends the window once it has read the harness's input; the process then
+waits until the session is ended from outside.
 """.
 -behaviour(application).
 

@@ -1,0 +1,10 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+{application, erx_kiosk_test,
+ [{description, "erXos test: a display's session that opens an LVGL-drawn UI and logs its events"},
+  {vsn, "1"},
+  {modules, [erx_kiosk_test, erx_kiosk_test_app]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx, erx_win, erx_ui]},
+  {mod, {erx_kiosk_test_app, []}}]}.

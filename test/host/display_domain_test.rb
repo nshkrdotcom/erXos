@@ -59,11 +59,31 @@ class DisplayDomainTest < Minitest::Test
     assert Suite::BOOT.test
     assert_includes Suite::BOOT.applications, 'erx_pattern_test'
     assert_includes Suite::BOOT.applications, 'erx_lvgl_lease_test'
+    assert_includes Suite::BOOT.applications, 'erx_kiosk_test'
   end
 
-  # Each boot's cell has its lvgl-lease cell beside it.
-  def test_each_boot_carries_its_lvgl_lease_cell
-    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl-lease], Suite.cells(%w[hvf-1cpu])
+  # Each boot's cell has its lvgl and lvgl-lease cells beside it.
+  def test_each_boot_carries_its_side_cells
+    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl hvf-1cpu-lvgl-lease], Suite.cells(%w[hvf-1cpu])
+  end
+
+  # The lvgl client's lines are shown and then the button's event, and nothing else: a
+  # client that never got the click, or whose UI went down, fails.
+  def test_the_kiosk_lines_are_shown_then_pressed
+    shown = "space 4: notice: erx_kiosk_test: shown\r\n"
+    pressed = "space 4: notice: erx_kiosk_test: event pressed\r\n"
+    Suite.check_kiosk_lines("space 4: notice: erx_kiosk_test: started\r\n#{shown}#{pressed}")
+    [shown, "#{shown}space 4: notice: erx_kiosk_test: {ui_down,renderer_down}\r\n", "#{shown}#{pressed}#{pressed}"].each do |log|
+      assert_raises(Erx::Error) { Suite.check_kiosk_lines(log) }
+    end
+  end
+
+  # The lvgl cell's reference is a picture of the suite's screen, the pattern's size.
+  def test_the_lvgl_reference_is_of_the_screen
+    references = File.expand_path('../display/reference', __dir__)
+    lvgl = Erx::ScreenReference.load(references, Suite::LVGL)
+    pattern = Erx::ScreenReference.load(references, Suite::PATTERN)
+    assert_equal [pattern.width, pattern.height], [lvgl.width, lvgl.height]
   end
 
   # One passed passes; a failed round, a second outcome after the session was started
@@ -135,15 +155,15 @@ end
 
   def test_the_screen_is_read_at_the_shell
     points = [{ name: 'boot' }.freeze, { name: 'release-shell', seconds: 60 }.freeze]
-    lease = ->(_log) {}
+    side = ->(_suffix, &_check) {}
     shell = Suite.checkpoints(points, socket: '/nonexistent/qmp.sock', references: '/nonexistent',
-                                      serial: '/nonexistent/serial.log', lease: lease).last
+                                      serial: '/nonexistent/serial.log', side: side).last
     assert_equal 'release-shell', shell.fetch(:name)
-    assert_equal 60 + Suite::WAIT_SECONDS + (2 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS + 15,
+    assert_equal 60 + (2 * Suite::WAIT_SECONDS) + (3 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS + 15,
                  shell.fetch(:seconds)
     assert shell.fetch(:verify).respond_to?(:call)
     assert_raises(Erx::Error) do
-      Suite.checkpoints([{ name: 'boot' }.freeze], socket: '/x', references: '/y', serial: '/z', lease: lease)
+      Suite.checkpoints([{ name: 'boot' }.freeze], socket: '/x', references: '/y', serial: '/z', side: side)
     end
   end
 end
