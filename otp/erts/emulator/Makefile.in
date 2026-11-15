@@ -1025,6 +1025,9 @@ $(OBJDIR)/erx_device.o $(OBJDIR)/erx_device_nif.o: CFLAGS += $(if $(findstring h
 # make_driver_tab names its init function after the object less _nif.
 $(OBJDIR)/erx_pipe_nif.o: CFLAGS += -DSTATIC_ERLANG_NIF_LIBNAME=erx_pipe
 
+# The clock NIF's module is erx_clock_nif, since erx_clock is the clock service.
+$(OBJDIR)/erx_clock_nif.o: CFLAGS += -DSTATIC_ERLANG_NIF_LIBNAME=erx_clock
+
 # littlefs, the stopgap read-write file system of /data (docs/design-stopgap.md,
 # "littlefs in the storage domain"), built from its import in littlefs/.
 LFS_DIR = $(ERX_TREE)/littlefs
@@ -1305,6 +1308,7 @@ NIF_OBJS = \
 	$(OBJDIR)/erx_area_nif.o \
 	$(OBJDIR)/erx_log_nif.o \
 	$(OBJDIR)/erx_object_info_nif.o \
+	$(OBJDIR)/erx_clock_nif.o \
 	$(OBJDIR)/erx_littlefs_nif.o \
 	$(OBJDIR)/erx_memdraw_nif.o \
 	$(OBJDIR)/erx_domain_lib_nif.o \

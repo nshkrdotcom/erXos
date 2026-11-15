@@ -17,6 +17,7 @@
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/time_table.h"
+#include "liberx/backend/runtime_entry.h"
 
 uint64_t
 erx_time_monotonic_ns(void)
@@ -29,21 +30,47 @@ erx_time_monotonic_ns(void)
 	return (erx_fiasco_time_ns(erx_fiasco_counter(), scale));
 }
 
-bool
-erx_time_wall_ns(uint64_t *wall_ns)
+/*
+ * The page's sequence and offset from one write, retried while a write is in
+ * progress or lands between the loads. False when the sequence has run out.
+ */
+static bool
+offset_read(uint64_t *seq, int64_t *offset)
 {
 	const erx_time_page_t *const page = erx_time_page();
 	uint64_t before, after;
-	int64_t offset;
 
 	do {
 		before = atomic_load_explicit(&page->seq, memory_order_acquire);
 		if (before >= ERX_FIASCO_TIME_SEQ_LAST)
 			return (false);
-		offset = atomic_load_explicit(&page->wall_offset_ns, memory_order_relaxed);
+		*offset = atomic_load_explicit(&page->wall_offset_ns, memory_order_relaxed);
 		atomic_thread_fence(memory_order_acquire);
 		after = atomic_load_explicit(&page->seq, memory_order_relaxed);
 	} while (before != after || (before & 1) != 0);
+	*seq = before;
+	return (true);
+}
+
+bool
+erx_time_wall_ns(uint64_t *wall_ns)
+{
+	uint64_t seq;
+	int64_t offset;
+
+	if (!offset_read(&seq, &offset))
+		return (false);
 	*wall_ns = erx_time_monotonic_ns() + (uint64_t)offset;
+	return (true);
+}
+
+bool
+erx_time_offset(int64_t *offset_ns, bool *cold)
+{
+	uint64_t seq;
+
+	if (!offset_read(&seq, offset_ns))
+		return (false);
+	*cold = seq == 0;
 	return (true);
 }

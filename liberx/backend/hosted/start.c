@@ -81,6 +81,15 @@ erx_time_wall_ns(uint64_t *wall_ns)
 	return (true);
 }
 
+/* The host's clock read once at start is the boot's reading, and nothing here sets it. */
+bool
+erx_time_offset(int64_t *offset_ns, bool *cold)
+{
+	*offset_ns = (int64_t)wall_offset_ns;
+	*cold = true;
+	return (true);
+}
+
 /* Read once, as the time page's offset is natively: a later step of the host's clock stays out. */
 static void
 wall_offset_init(void)

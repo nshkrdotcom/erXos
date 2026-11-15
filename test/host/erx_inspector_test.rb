@@ -10,17 +10,18 @@ require_relative '../fixtures/erlang_build'
 # Runs the EUnit cases of the inspector on stock's emulator (ERX_ERL and ERX_ERLC, which
 # make check supplies): erx_kernel_records' pure core (test/erlang/erx_kernel_records_tests.erl),
 # the process records, scopes and renderers (test/erlang/erx_inspector_tests.erl), the start
-# table's records (test/erlang/erx_app_records_tests.erl), the runtime
+# table's records (test/erlang/erx_app_records_tests.erl), the clock's record
+# (test/erlang/erx_time_records_tests.erl), the runtime
 # agent and the query worker
 # (test/erlang/erx_inspect_agent_tests.erl, erx_inspect_worker_tests.erl), against
-# the applications compiled whole (ErlangBuild). erx_object_info is compiled but its NIF is
-# never loaded: the cases reach the kernel only through the pure core.
+# the applications compiled whole (ErlangBuild). erx_object_info and erx_clock_nif are compiled
+# but their NIFs are never loaded: the cases reach the kernel only through the pure core.
 class ErxInspectorTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The applications the suites exercise, compiled whole (ErlangBuild), and the suites.
   APPLICATIONS = %w[erx erx_shell].freeze
-  TESTS = %w[erx_kernel_records erx_inspector erx_app_records erx_inspect_agent erx_inspect_worker
-             erx_inspect_facet].map { |name| "test/erlang/#{name}_tests.erl" }.freeze
+  TESTS = %w[erx_kernel_records erx_inspector erx_app_records erx_time_records erx_inspect_agent
+             erx_inspect_worker erx_inspect_facet].map { |name| "test/erlang/#{name}_tests.erl" }.freeze
   ERX = 'erlang/apps/erx'
 
   # Each fault replaces one passage of one source, and the case it names must fail.
@@ -31,6 +32,7 @@ class ErxInspectorTest < Minitest::Test
   QUERY = File.join(ERX, 'src/erx_inspect_query.erl')
   FACET = File.join(ERX, 'src/erx_inspect_facet.erl')
   APP_RECORDS = File.join(ERX, 'src/erx_app_records.erl')
+  TIME_RECORDS = File.join(ERX, 'src/erx_time_records.erl')
   # The logger's default handler is configured to write to standard error, so a report a case
   # provokes, such as a process's crash at its maximum heap size, cannot land inside EUnit's
   # line for that case, which names the case and ends with its verdict.
@@ -39,6 +41,14 @@ class ErxInspectorTest < Minitest::Test
   # whole text, both streams, for messages.
   EunitRun = Data.define(:passed, :report, :text)
   FAULTS = [
+    Fault.new(name: 'a cold page with an offset shown as unset, and one without as boot', file: TIME_RECORDS,
+              from: "state({ok, \#{cold := true, offset := 0}}) -> {ok, unset};\nstate({ok, \#{cold := true}}) -> {ok, boot};",
+              to: "state({ok, \#{cold := true, offset := 0}}) -> {ok, boot};\nstate({ok, \#{cold := true}}) -> {ok, unset};",
+              tests: 'erx_time_records_tests', caught_by: 'each_page_state_is_shown_test_'),
+    Fault.new(name: 'the clock closed to scoped callers', file: INSPECTOR,
+              from: "scoped_machine_path([time]) -> true;\n",
+              to: '',
+              tests: 'erx_time_records_tests', caught_by: 'any_scope_reads_the_whole_record_test'),
     Fault.new(name: 'a down row shown with no reason', file: APP_RECORDS,
               from: 'state(enabled, down) -> {down, unknown};', to: 'state(enabled, down) -> {down, {ok, <<>>}};',
               tests: 'erx_app_records_tests', caught_by: 'a_down_rows_reason_is_unknown_test'),
@@ -115,6 +125,10 @@ class ErxInspectorTest < Minitest::Test
 
   def test_start_table_record_cases_pass_under_eunit
     eunit('erx_app_records_tests')
+  end
+
+  def test_clock_record_cases_pass_under_eunit
+    eunit('erx_time_records_tests')
   end
 
   def test_runtime_agent_cases_pass_under_eunit

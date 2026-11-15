@@ -1729,7 +1729,8 @@ What part 8 builds on, outside its packages:
    system domain, `state` among them, and the clock service's attributes
    `unsupported` until that service reports them; `/proc/time/status`.
    Start: [design-time.md](design-time.md#what-proc-shows), the attribute
-   table; `abi/inspection.txt`; `erx_inspector.erl:317`. Depends on: 8.2.
+   table; `abi/inspection.txt`; `erx_inspector.erl:317`. Depends on:
+   nothing; lands after 8.2, builds in parallel.
    Tests: `state` for each page state, `unset`, `boot` and `set`, where a
    seeded swap of `boot` and `unset` fails. QEMU: none; on the stopgap
    `state` reads `unset`, which 8.4's cell shows.

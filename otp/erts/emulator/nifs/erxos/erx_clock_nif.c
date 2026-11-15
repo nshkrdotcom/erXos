@@ -1,0 +1,46 @@
+/*
+ * Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+ * SPDX-License-Identifier: BSD-2-Clause
+ *
+ * The calls under erx_clock_nif (docs/design-time.md, "The NIF and the liberx calls"):
+ * the reading side, which needs nothing beyond the time page every domain maps.
+ */
+
+#define STATIC_ERLANG_NIF 1
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "erl_nif.h"
+
+#include "liberx/backend/api.h"
+#include "liberx/backend/runtime_entry.h"
+
+/* The page's offset and whether its sequence is zero, then the monotonic clock right after. */
+static ERL_NIF_TERM
+read_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	ERL_NIF_TERM keys[3], values[3], page;
+	int64_t offset_ns;
+	bool cold;
+
+	(void)argc;
+	(void)argv;
+	if (!erx_time_offset(&offset_ns, &cold))
+		return (enif_make_tuple2(env, enif_make_atom(env, "error"), enif_make_atom(env, "limit")));
+	keys[0] = enif_make_atom(env, "offset");
+	values[0] = enif_make_int64(env, offset_ns);
+	keys[1] = enif_make_atom(env, "cold");
+	values[1] = enif_make_atom(env, cold ? "true" : "false");
+	keys[2] = enif_make_atom(env, "monotonic");
+	values[2] = enif_make_uint64(env, erx_clock_ns());
+	if (!enif_make_map_from_arrays(env, keys, values, 3, &page))
+		return (enif_make_badarg(env));
+	return (enif_make_tuple2(env, enif_make_atom(env, "ok"), page));
+}
+
+static ErlNifFunc nif_funcs[] = {
+	{ "read_nif", 0, read_nif, 0 },
+};
+
+ERL_NIF_INIT(erx_clock_nif, nif_funcs, NULL, NULL, NULL, NULL)

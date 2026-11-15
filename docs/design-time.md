@@ -662,9 +662,11 @@ manifest ships a server, enabling ntpd without naming one does this.
 
 ## What /proc shows
 
-`abi/inspection.txt` gains a kind `clock`, reported by the service and
-visible to every scope, at path `time`, so `cat /proc/time/status`
-reads it. Each attribute names its source and its lifetime: the page
+`abi/inspection.txt` gains a kind `clock`, visible to every scope, at
+path `time`, so `cat /proc/time/status` reads it. The inspector reads
+`state` from the page through `erx_clock_nif:read/0`, reported by
+`kernel`, whose object the page is; the clock service reports the
+rest. Each attribute names its source and its lifetime: the page
 lives for the boot, and the service's record from the service's start,
 `record_since`, to its next crash or restart.
 

@@ -48,7 +48,9 @@ erx_kernel_records on the root's own capabilities, and the domain record,
 through erx_runtime_records, are the system domain's only; the kernel
 log, through erx_log_records, is read in the system domain only, and the
 start table, through erx_app_records, from the start service of the
-system domain, `{error, unsupported}` where none runs. To the
+system domain, `{error, unsupported}` where none runs. The clock's
+record, through erx_time_records, reads the time page of the system
+domain, `{error, unsupported}` where the runtime has no clock NIF. To the
 scoped core, a process of another runtime, and any other domain's path,
 name nothing it can
 reach and are answered `{error, scope}`; a path the schema declares
@@ -262,11 +264,13 @@ reachable(Path, Scope) ->
 %% The machine's paths a scoped caller reaches (docs/design-live.md,
 %% "Scopes"): the machine's record and each CPU's, of which scoped/3 keeps
 %% only the attributes the schema marks `visible any`, the CPUs' listing,
-%% and the processes, listing only its own domains'.
+%% the processes, listing only its own domains', and the clock
+%% (docs/design-time.md, "What /proc shows").
 scoped_machine_path([]) -> true;
 scoped_machine_path([cpus]) -> true;
 scoped_machine_path([cpus, _Index]) -> true;
 scoped_machine_path([processes]) -> true;
+scoped_machine_path([time]) -> true;
 scoped_machine_path(_Path) -> false.
 
 answer(true, Owner) -> {ok, Owner};
@@ -349,6 +353,8 @@ collect([kernel] = Path, _Scope) ->
     literals(Path);
 collect([apps | _] = Path, _Scope) ->
     erx_app_records:collect(Path);
+collect([time], _Scope) ->
+    erx_time_records:collect();
 collect(Path, Scope) ->
     listing(Path, enumerate(Path, Scope)).
 

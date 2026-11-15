@@ -19,6 +19,7 @@ inspection 1
   unit ns "ns"
   unit words "words"
   unit mcpu "mCPU"
+  unit s "s"
 
   integer count 0 0xffffffffffffffff
   integer page_count 0 0xffffffffffffffff unit pages
@@ -57,6 +58,15 @@ inspection 1
   # Why a start row is refused, as `/proc/apps` prints it: the refusal and
   # the display, the row or the field it names, such as "no_grant display".
   text app_reason 512 utf8
+  # The clock (docs/design-time.md, "What /proc shows"): the time page's
+  # state, and the clock service's record of its samples and steps.
+  atoms clock_state unset boot set
+  atoms clock_refusal unsupported limit badarg
+  integer seconds 0 0xffffffffffffffff unit s
+  integer wall_time 0 0xffffffffffffffff unit ns
+  integer signed_duration -0x8000000000000000 0x7fffffffffffffff unit ns
+  integer stratum 1 15
+  text net_address 64
   list urgency_counts count 64
   list proc_ids proc_id 1000
   tuple location module_name name arity file_name line_number
@@ -166,6 +176,24 @@ inspection 1
     attr local app_fields reporters service visible all build all projections shell,host,proc,web
     attr ends count reporters service visible all build all projections shell,host,proc,web
 
+  # The clock: state from the time page, which lives for the boot; the
+  # rest from the clock service's record, which lives from its start,
+  # record_since, to its next restart.
+  kind clock
+    attr state clock_state reporters kernel visible any build all projections shell,host,proc,web
+    attr record_since seconds reporters service visible any build all projections shell,host,proc,web
+    attr sample_at wall_time reporters service visible any build all projections shell,host,proc,web
+    attr offset_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr distance_ns duration reporters service visible any build all projections shell,host,proc,web
+    attr stratum stratum reporters service visible any build all projections shell,host,proc,web
+    attr server net_address reporters service visible any build all projections shell,host,proc,web
+    attr source domain_id reporters service visible any build all projections shell,host,proc,web
+    attr step_at wall_time reporters service visible any build all projections shell,host,proc,web
+    attr step_ns signed_duration reporters service visible any build all projections shell,host,proc,web
+    attr step_error clock_refusal reporters service visible any build all projections shell,host,proc,web
+    attr steps count reporters service visible any build all projections shell,host,proc,web
+    attr refused count reporters service visible any build all projections shell,host,proc,web
+
   path machine
   path listing cpus
   path cpu cpus *cpu_index
@@ -195,6 +223,7 @@ inspection 1
   path start_table apps
     visible all
   path app apps *name
+  path clock time
   path listing kernel
     visible all
   # The kernel log from any sequence number on; its ring holds fewer than
