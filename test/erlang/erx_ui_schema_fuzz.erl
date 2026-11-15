@@ -93,7 +93,11 @@ value(Property) ->
 plain({integer, Min, Max}) -> lists:nth(rand:uniform(3), [Min, Max, Min + rand:uniform(Max - Min + 1) - 1]);
 plain({text, Max}) -> text(Max);
 plain({bytes, Max}) -> binary:copy(<<7>>, rand:uniform(min(Max, 64) + 1) - 1);
-plain({list, {text, TextMax}, Max}) -> [text(TextMax) || _ <- lists:seq(1, rand:uniform(min(Max, 8) + 1) - 1)];
+plain({list, Element, Max, None}) ->
+    [case None andalso rand:uniform(4) =:= 1 of
+         true -> none;
+         false -> plain(Element)
+     end || _ <- lists:seq(1, rand:uniform(min(Max, 8) + 1) - 1)];
 plain({enum, Atoms}) -> lists:nth(rand:uniform(length(Atoms)), Atoms);
 plain({image, Atoms}) -> lists:nth(rand:uniform(length(Atoms)), Atoms);
 plain(boolean) -> rand:uniform(2) =:= 1;
@@ -164,8 +168,8 @@ break(7, Tree, Count) ->
 bad({integer, _Min, Max}) -> lists:nth(rand:uniform(2), [Max + 1, one]);
 bad({text, Max}) -> lists:nth(rand:uniform(3), [binary:copy(<<"a">>, Max + 1), <<"a", 16#c0, 16#80>>, "list"]);
 bad({bytes, Max}) -> lists:nth(rand:uniform(2), [binary:copy(<<0>>, Max + 1), [0]]);
-bad({list, {text, TextMax}, Max}) ->
-    lists:nth(rand:uniform(3), [[<<>> | tail], lists:duplicate(Max + 1, <<>>), [binary:copy(<<"a">>, TextMax + 1)]]);
+bad({list, Element, Max, _None}) ->
+    lists:nth(rand:uniform(3), [[plain(Element) | tail], lists:duplicate(Max + 1, plain(Element)), [bad(Element)]]);
 bad({enum, _Atoms}) -> nowhere;
 bad({image, _Atoms}) -> gif;
 bad(boolean) -> 0;

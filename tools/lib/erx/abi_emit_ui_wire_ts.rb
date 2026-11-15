@@ -56,6 +56,8 @@ module Erx
           ts.names(constant: 'REPORTERS', type: 'Reporter', members: wire::REPORTERS,
                    comment: "A status block's reporters, in code order."),
           ts.names(constant: 'FORMS', type: 'Form', members: wire::FORMS, comment: "A property's forms: which shape its value takes."),
+          ts.names(constant: 'LIST_ELEMENTS', type: 'ListElement', members: UI::LIST_ELEMENTS,
+                   comment: "The forms a list's values may have."),
           ts.names(constant: 'DETAILS', type: 'DetailTag', members: wire::DETAILS, comment: "An event's detail tags, in code order."),
           ts.names(constant: 'STOPGAPS', type: 'Stopgap', members: stopgaps,
                    comment: "The inspection schema's stopgap reporters, the names a status may carry."),
@@ -171,7 +173,8 @@ module Erx
           ['EVENT_TEXT_MAX', ui.op_max - UIWireEmitter::EVENT_TEXT_FIELDS, 'the longest text detail of an event'],
           ['PROPERTY_MAX', UIWireEmitter.wire_properties(ui).size, 'the most properties one record carries, each at most once'],
           ['NAME_MAX', UIWireEmitter::NAME_MAX, 'the longest stopgap or presentation name'],
-          ['PRESENT_MAX', UIWireEmitter::PRESENT_MAX, "the longest presentation's canonical text"]
+          ['PRESENT_MAX', UIWireEmitter::PRESENT_MAX, "the longest presentation's canonical text"],
+          ['NONE', UI::NONE, 'none in a list of integers that allows it; no integer of such a list is this value']
         ].map { |name, value, comment| TypeScript.constant(name: name, value: value, comment: comment) }.join
       end
 
@@ -179,15 +182,28 @@ module Erx
         type = property.type
         fields = { 'name' => TypeScript.string(property.name), 'number' => property.number,
                    'form' => TypeScript.string(type.form), 'status' => property.status ? 'true' : 'false',
-                   'minimum' => 0, 'maximum' => 0, 'limit' => 0, 'elementLimit' => 0, 'members' => 'null' }
+                   'minimum' => 0, 'maximum' => 0, 'limit' => 0, 'elementLimit' => 0, 'members' => 'null',
+                   'element' => 'null', 'none' => 'false' }
         case type.form
-        when 'integer' then fields.merge!('minimum' => type.minimum, 'maximum' => type.maximum)
         when 'text', 'bytes' then fields['limit'] = type.maximum
-        when 'list' then fields.merge!('limit' => type.maximum, 'elementLimit' => type.element.maximum)
-        when 'enum' then fields['members'] = members(type.numbers.zip(type.atoms))
         when 'image' then fields['members'] = members(ui.images.map { |image| [image.number, image.name] })
+        when 'list'
+          fields.merge!('limit' => type.maximum, 'element' => TypeScript.string(type.element.form), 'none' => type.none.to_s)
+          fields.merge!(bounds(type.element, limit: 'elementLimit'))
+        else fields.merge!(bounds(type, limit: 'limit'))
         end
         "{ #{fields.map { |key, value| "#{key}: #{value}" }.join(', ')} }"
+      end
+
+      # An integer's bounds, an enum's members or a text's most bytes, under
+      # LIMIT: a property's own, or its list's element's.
+      def bounds(type, limit:)
+        case type.form
+        when 'integer' then { 'minimum' => type.minimum, 'maximum' => type.maximum }
+        when 'enum' then { 'members' => members(type.numbers.zip(type.atoms)) }
+        when 'text' then { limit => type.maximum }
+        else {}
+        end
       end
 
       def members(pairs)
@@ -198,8 +214,10 @@ module Erx
       TYPES = <<~'TS'
         /*
          * A property's type: its form, an integer's bounds, a text's, bytes' or
-         * a list's most bytes or entries, a list text's most bytes, an enum's or
-         * image's members by number, and whether a status block precedes it.
+         * a list's most bytes or entries, an enum's or image's members by
+         * number, and whether a status block precedes it. A list's element is the
+         * form of its values, whose bounds, members or most bytes (elementLimit)
+         * are the element's, and none says whether null, for none, is also one.
          */
         export interface PropertyType {
           readonly name: string;
@@ -211,6 +229,8 @@ module Erx
           readonly limit: number;
           readonly elementLimit: number;
           readonly members: ReadonlyMap<number, string> | null;
+          readonly element: ListElement | null;
+          readonly none: boolean;
         }
       TS
 
@@ -232,9 +252,15 @@ module Erx
         }
 
         /*
+         * A value of a list: a text, an enum's member by name, or an integer, with
+         * null for none where the list allows it.
+         */
+        export type ListValue<T> = T | string | number | null;
+
+        /*
          * A property's value by its form: a boolean; an integer within its bounds;
          * an enum's or image's member by name; a text of valid UTF-8; bytes; a
-         * list's texts; a presentation. It is null for an event, which has none,
+         * list's values; a presentation. It is null for an event, which has none,
          * and for a status that is neither ok nor partial.
          */
         export type FormValue<T> =
@@ -243,7 +269,7 @@ module Erx
           | { readonly form: 'enum' | 'image'; readonly value: string | null }
           | { readonly form: 'text'; readonly value: T | null }
           | { readonly form: 'bytes'; readonly value: Uint8Array | null }
-          | { readonly form: 'list'; readonly value: readonly T[] | null }
+          | { readonly form: 'list'; readonly value: readonly ListValue<T>[] | null }
           | { readonly form: 'event'; readonly value: null }
           | { readonly form: 'presentation'; readonly value: Presentation<T> | null };
 
@@ -334,7 +360,7 @@ module Erx
               return { form: type.form, value: carried ? readInteger(cursor, type) : null };
             case 'enum':
             case 'image':
-              return { form: type.form, value: carried ? (type.members?.get(cursor.u8(REFUSAL.badValue)) ?? refuse(REFUSAL.badValue)) : null };
+              return { form: type.form, value: carried ? readMember(cursor, type) : null };
             case 'text':
               return { form: type.form, value: carried ? machineText(cursor, 4, type.limit) : null };
             case 'bytes':
@@ -357,11 +383,17 @@ module Erx
           return byte === 1;
         }
 
+        /* A u32's two's-complement value: | 0 reads it as a signed 32-bit integer. */
+        const readI32 = (cursor: Cursor): number => cursor.u32(REFUSAL.badValue) | 0;
+
         function readInteger(cursor: Cursor, type: PropertyType): number {
-          /* The u32's two's-complement value: | 0 reads it as a signed 32-bit integer. */
-          const integer = cursor.u32(REFUSAL.badValue) | 0;
+          const integer = readI32(cursor);
           if (integer < type.minimum || integer > type.maximum) refuse(REFUSAL.badValue);
           return integer;
+        }
+
+        function readMember(cursor: Cursor, type: PropertyType): string {
+          return type.members?.get(cursor.u8(REFUSAL.badValue)) ?? refuse(REFUSAL.badValue);
         }
 
         function readBytes(cursor: Cursor, type: PropertyType): Uint8Array {
@@ -370,10 +402,31 @@ module Erx
           return cursor.take(length, REFUSAL.badValue);
         }
 
-        function readList(cursor: Cursor, type: PropertyType): MachineText[] {
+        function readList(cursor: Cursor, type: PropertyType): ListValue<MachineText>[] {
           const count = cursor.u16(REFUSAL.badValue);
           if (count > type.limit) refuse(REFUSAL.badValue);
-          return Array.from({ length: count }, () => machineText(cursor, 4, type.elementLimit));
+          return Array.from({ length: count }, () => readElement(cursor, type));
+        }
+
+        /*
+         * One value of the list TYPE; where the list allows none, the i32 NONE,
+         * which its integers never take, reads as null.
+         */
+        function readElement(cursor: Cursor, type: PropertyType): ListValue<MachineText> {
+          switch (type.element) {
+            case 'text':
+              return machineText(cursor, 4, type.elementLimit);
+            case 'enum':
+              return readMember(cursor, type);
+            case 'integer': {
+              const integer = readI32(cursor);
+              if (type.none && integer === NONE) return null;
+              if (integer < type.minimum || integer > type.maximum) refuse(REFUSAL.badValue);
+              return integer;
+            }
+            default:
+              return refuse(REFUSAL.badValue);
+          }
         }
 
         /* A node's number, never 0. */
@@ -641,11 +694,9 @@ module Erx
               writer.integer(4, prop.value);
               return;
             case 'enum':
-            case 'image': {
-              const member = [...(type.members ?? [])].find(([, name]) => name === prop.value);
-              writer.integer(1, member?.[0] ?? refuse(reason));
+            case 'image':
+              writeMember(writer, type, prop.value);
               return;
-            }
             case 'text':
               writeText(writer, 4, type.limit, prop.value);
               return;
@@ -656,7 +707,7 @@ module Erx
             case 'list':
               if (prop.value === null || prop.value.length > type.limit) refuse(reason);
               writer.integer(2, prop.value.length);
-              for (const entry of prop.value) writeText(writer, 4, type.elementLimit, entry);
+              for (const entry of prop.value) writeElement(writer, type, entry);
               return;
             case 'event':
               return;
@@ -666,6 +717,31 @@ module Erx
               writeText(writer, 4, PRESENT_MAX, prop.value.text);
               return;
           }
+        }
+
+        /* One value of the list TYPE, as readElement() reads it. */
+        function writeElement(writer: Writer, type: PropertyType, entry: ListValue<Uint8Array>): void {
+          switch (type.element) {
+            case 'text':
+              writeText(writer, 4, type.elementLimit, entry instanceof Uint8Array ? entry : null);
+              return;
+            case 'enum':
+              writeMember(writer, type, entry);
+              return;
+            case 'integer':
+              if (entry === null && type.none) writer.integer(4, NONE);
+              else if (typeof entry === 'number' && Number.isInteger(entry) && entry >= type.minimum && entry <= type.maximum) writer.integer(4, entry);
+              else refuse('bad value');
+              return;
+            default:
+              refuse('bad value');
+          }
+        }
+
+        /* An enum's or image's member, by name, as its u8 number. */
+        function writeMember(writer: Writer, type: PropertyType, name: unknown): void {
+          const member = [...(type.members ?? [])].find(([, known]) => known === name);
+          writer.integer(1, member?.[0] ?? refuse('bad value'));
         }
 
         /* A length of WIDTH bytes and the bytes: valid UTF-8 of at most LIMIT bytes. */

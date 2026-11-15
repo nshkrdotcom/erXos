@@ -115,7 +115,7 @@ module Erx
         case type.form
         when 'integer' then "{integer, #{type.minimum}, #{type.maximum}}"
         when 'text', 'bytes' then "{#{type.form}, #{type.maximum}}"
-        when 'list' then "{list, #{type_term(type.element)}, #{type.maximum}}"
+        when 'list' then "{list, #{type_term(type.element)}, #{type.maximum}, #{type.none}}"
         when 'enum', 'image' then "{#{type.form}, [#{type.atoms.map { |name| atom(name) }.join(', ')}]}"
         else type.form
         end
@@ -198,17 +198,21 @@ module Erx
         "%% Whether Value is of the property's type.\n#{clauses.join(";\n")}.\n"
       end
 
-      def plain_body(type)
+      # The test that VALUE, an Erlang variable, is of TYPE.
+      def plain_body(type, value = 'Value')
         case type.form
-        when 'integer' then "is_integer(Value) andalso Value >= #{type.minimum} andalso Value =< #{type.maximum}"
-        when 'text' then "text(Value, #{type.maximum})"
-        when 'bytes' then "is_binary(Value) andalso byte_size(Value) =< #{type.maximum}"
-        when 'list' then "texts(Value, #{type.element.maximum}, #{type.maximum})"
-        when 'enum', 'image' then "lists:member(Value, [#{type.atoms.map { |name| atom(name) }.join(', ')}])"
-        when 'boolean' then 'is_boolean(Value)'
-        when 'key' then "\n    is_integer(Value) orelse is_atom(Value) orelse (is_binary(Value) andalso byte_size(Value) =< #{UI::KEY_MAX})"
+        when 'integer' then "is_integer(#{value}) andalso #{value} >= #{type.minimum} andalso #{value} =< #{type.maximum}"
+        when 'text' then "text(#{value}, #{type.maximum})"
+        when 'bytes' then "is_binary(#{value}) andalso byte_size(#{value}) =< #{type.maximum}"
+        when 'list'
+          # The reader allows no list of lists, so Element names one value.
+          none = type.none ? 'Element =:= none orelse ' : ''
+          "\n    values(#{value}, #{type.maximum},\n           fun(Element) -> #{none}#{plain_body(type.element, 'Element')} end)"
+        when 'enum', 'image' then "lists:member(#{value}, [#{type.atoms.map { |name| atom(name) }.join(', ')}])"
+        when 'boolean' then "is_boolean(#{value})"
+        when 'key' then "\n    is_integer(#{value}) orelse is_atom(#{value}) orelse (is_binary(#{value}) andalso byte_size(#{value}) =< #{UI::KEY_MAX})"
         when 'event' then 'true'
-        when 'presentation' then 'presentation(Value)'
+        when 'presentation' then "presentation(#{value})"
         end
       end
 
@@ -254,8 +258,9 @@ module Erx
         marks = ui.kinds.flat_map(&:takes)
         used = clauses.join
         <<~ERLANG
-          %% The marks that relate a kind's properties: a value within two bounds,
-          %% an index into a list, and a flag under which a property is refused.
+          %% The marks that relate a kind's properties: a value, or each value of
+          %% a list, within two bounds; an index into a list; a flag under which a
+          %% property is refused; and a list as long as another.
           #{used}relations(_Kind, _Props, _Path) -> ok.
           #{relation_helpers(marks)}
         ERLANG
@@ -270,6 +275,7 @@ module Erx
         end
         calls << "index(Props, Path, #{name}, #{atom(entry.index)})" if entry.index
         calls << "hides(Props, Path, #{name}, #{atom(entry.hides)})" if entry.hides
+        calls << "parallel(Props, Path, #{name}, #{atom(entry.parallel)})" if entry.parallel
         calls
       end
 
@@ -281,9 +287,17 @@ module Erx
                 Low = maps:get(LowName, Props, LowDefault),
                 High = maps:get(HighName, Props, HighDefault),
                 Low < High orelse fault(bad_value, Path, blamed(Props, LowName, HighName)),
+                %% none, a value of a list that allows it alone, lies within any bounds.
+                Inside = fun(Value) -> Value =:= none orelse (Value >= Low andalso Value =< High) end,
                 case Props of
-                    #{Property := Value} when Value < Low; Value > High -> fault(bad_value, Path, Property);
-                    _ -> ok
+                    #{Property := Values} when is_list(Values) ->
+                        lists:all(Inside, Values) orelse fault(bad_value, Path, Property),
+                        ok;
+                    #{Property := Value} ->
+                        Inside(Value) orelse fault(bad_value, Path, Property),
+                        ok;
+                    _ ->
+                        ok
                 end.
 
             %% The bound the tree set, the high one when it set both or neither.
@@ -315,15 +329,28 @@ module Erx
                 end.
           ERLANG
         end
+        if marks.any?(&:parallel)
+          helpers << <<~'ERLANG'
+            parallel(Props, Path, Property, List) ->
+                case Props of
+                    #{Property := Values} ->
+                        length(Values) =:= length(maps:get(List, Props, [])) orelse fault(bad_value, Path, Property),
+                        ok;
+                    _ ->
+                        ok
+                end.
+          ERLANG
+        end
         helpers.map { |text| "\n#{text}" }.join
       end
 
       def helpers(forms)
         parts = []
         parts << <<~ERLANG if forms.include?('list')
-          texts([], _TextMax, _Left) -> true;
-          texts([Text | Rest], TextMax, Left) when Left > 0 -> text(Text, TextMax) andalso texts(Rest, TextMax, Left - 1);
-          texts(_Value, _TextMax, _Left) -> false.
+          %% A proper list of at most Left values, each one Valid accepts.
+          values([], _Left, _Valid) -> true;
+          values([Value | Rest], Left, Valid) when Left > 0 -> Valid(Value) andalso values(Rest, Left - 1, Valid);
+          values(_Value, _Left, _Valid) -> false.
         ERLANG
         parts << <<~ERLANG if forms.include?('text')
           text(Value, Max) -> is_binary(Value) andalso byte_size(Value) =< Max andalso utf8(Value).

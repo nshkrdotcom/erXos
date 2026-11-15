@@ -5,8 +5,9 @@
  * The generated reader of the widget server's records, fed what a hostile
  * writer of a renderer's standard input could send. The input is a stream:
  * records are read until one is refused or the stream ends inside one. Each
- * record read must lie within the input, and each list's texts must number
- * its count and lie within the record.
+ * record read must lie within the input, each list of texts' texts must
+ * number its count and lie within the record, and each list of integers or
+ * enum members must read exactly its count of values.
  */
 
 #include <stddef.h>
@@ -23,6 +24,7 @@ check_lists(const erx_ui_record_t *record, const uint8_t *start, size_t size)
 	const erx_ui_prop_t *prop;
 	erx_ui_bytes_t text;
 	uint32_t count, cursor;
+	int32_t value;
 
 	if (record->nprops > ERX_UI_PROPERTY_MAX ||
 	    record->nremoved > ERX_UI_PROPERTY_MAX)
@@ -31,6 +33,21 @@ check_lists(const erx_ui_record_t *record, const uint8_t *start, size_t size)
 		prop = &record->props[index];
 		if (prop->form != ERX_UI_FORM_LIST || !prop->has_value)
 			continue;
+		if (prop->bytes.data < start ||
+		    prop->bytes.data + prop->bytes.length > start + size)
+			abort();
+		if (prop->element != ERX_UI_FORM_TEXT) {
+			if (prop->bytes.length != (uint32_t)prop->count *
+			    (prop->element == ERX_UI_FORM_ENUM ? 1 : 4))
+				abort();
+			for (uint16_t at = 0; at < prop->count; at++) {
+				if (!erx_ui_list_value(prop, at, &value))
+					abort();
+			}
+			if (erx_ui_list_value(prop, prop->count, &value))
+				abort();
+			continue;
+		}
 		count = 0;
 		cursor = 0;
 		while (erx_ui_list_next(prop, &cursor, &text)) {

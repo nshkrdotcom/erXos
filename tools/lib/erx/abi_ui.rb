@@ -9,17 +9,21 @@ module Erx
     # A property's type, resolved. FORM is one of integer, text, bytes, list,
     # enum, boolean, image, key, event and presentation. MINIMUM and MAXIMUM
     # bound an integer; MAXIMUM is a text's or bytes' byte count and a list's
-    # entry count; ELEMENT is a list's text type; ATOMS are an enum's or the
-    # image types' names in number order, and NUMBERS their wire numbers.
-    UIType = Struct.new(:name, :form, :minimum, :maximum, :element, :atoms, :numbers, keyword_init: true)
+    # entry count; ELEMENT is a list's element type, a text, an integer or an
+    # enum, and NONE whether the atom none is also one of its values, written
+    # on the wire as -2^31, which an integer element never holds; ATOMS are an
+    # enum's or the image types' names in number order, and NUMBERS their wire
+    # numbers.
+    UIType = Struct.new(:name, :form, :minimum, :maximum, :element, :none, :atoms, :numbers, keyword_init: true)
     UIImage = Struct.new(:name, :number, :content_type, keyword_init: true)
     # DEFAULT is the value the property's absence means, as an Integer, true,
     # false or an enum member's name, or nil. DETAIL is 'state' for an event
     # whose detail is the kind's state value.
     UIProperty = Struct.new(:name, :number, :type, :common, :status, :default, :detail, keyword_init: true)
     # One property a kind takes, with the marks of its line beneath the kind:
-    # WITHIN is [LOW, HIGH], INDEX the list property, HIDES the hidden one.
-    UITaken = Struct.new(:property, :state, :fixed, :within, :index, :hides, keyword_init: true)
+    # WITHIN is [LOW, HIGH], INDEX the list property, HIDES the hidden one and
+    # PARALLEL the list property this list is exactly as long as.
+    UITaken = Struct.new(:property, :state, :fixed, :within, :index, :hides, :parallel, keyword_init: true)
     # TAKES holds every property the kind takes, the common ones first, in
     # declaration order.
     UIKind = Struct.new(:name, :number, :children, :takes, keyword_init: true) do
@@ -51,6 +55,11 @@ module Erx
       NAME = /\A[a-z][a-z0-9_]{0,62}\z/.freeze
       NUMBERS = 1..255
       INT32 = (-(1 << 31))..((1 << 31) - 1)
+      # The value none takes on the wire in a list of integers that allows
+      # it, an i32 no integer element holds; every codec writes it from here.
+      NONE = INT32.min
+      # The forms a list's element may have.
+      LIST_ELEMENTS = %w[text integer enum].freeze
       MAX_BYTES = 65_536
       MAX_LIST = 1000
       KEY_MAX = 255
@@ -213,12 +222,24 @@ module Erx
             UIType.new(name: name, form: 'text', maximum: bound(max, MAX_BYTES, line))
           in ['bytes', _, max]
             UIType.new(name: name, form: 'bytes', maximum: bound(max, MAX_BYTES, line))
-          in ['list', _, element, max]
-            text = types[element]
-            line.fail!("list element #{element} is not a text type") unless text&.form == 'text'
-            UIType.new(name: name, form: 'list', element: text, maximum: bound(max, MAX_LIST, line))
+          in ['list', _, element, max, *none] if [[], ['none']].include?(none)
+            UIType.new(name: name, form: 'list', element: list_element(element, line, types, none: !none.empty?),
+                       none: !none.empty?, maximum: bound(max, MAX_LIST, line))
           else line.fail!("malformed #{line.words.first} member")
           end
+        end
+
+        # A list's element: a text or integer type, or a root enum. With none,
+        # the element is an integer type that does not hold -2^31, the value
+        # none takes on the wire, so the sentinel is never a value.
+        def list_element(word, line, types, none:)
+          element = word.start_with?('@') ? root_enum(word, line) : types[word]
+          unless LIST_ELEMENTS.include?(element&.form)
+            line.fail!("list element #{word} is not a text type, an integer type or a root enum")
+          end
+          line.fail!('only a list of integers allows none') if none && element.form != 'integer'
+          line.fail!("list element #{word} holds -2^31, the wire's none") if none && element.minimum == NONE
+          element
         end
 
         # A bound written as a number or as a root limit's @name.
@@ -274,12 +295,7 @@ module Erx
 
         def property_type(word, line, types, images)
           line.fail!('a property needs a type') unless word
-          if word.start_with?('@')
-            enum = @root_types[word.delete_prefix('@')]
-            line.fail!("#{word} is not a root enum of type u8") unless enum.is_a?(EnumType) && !enum.flags && enum.base.size == 1 && !enum.base.signed
-            members = enum.members.sort_by { |_, value| value }
-            return UIType.new(name: word, form: 'enum', atoms: members.map(&:first), numbers: members.map(&:last))
-          end
+          return root_enum(word, line) if word.start_with?('@')
           if word == 'image'
             line.fail!('an image property follows the image types it takes') if images.empty?
             ordered = images.values.sort_by(&:number)
@@ -288,6 +304,15 @@ module Erx
           return UIType.new(name: word, form: word) if BUILTIN_TYPES.include?(word)
 
           types[word] || line.fail!("unknown ui type #{word}")
+        end
+
+        # @NAME, a root enum of type u8, whose members a property or a list
+        # element takes.
+        def root_enum(word, line)
+          enum = @root_types[word.delete_prefix('@')]
+          line.fail!("#{word} is not a root enum of type u8") unless enum.is_a?(EnumType) && !enum.flags && enum.base.size == 1 && !enum.base.signed
+          members = enum.members.sort_by { |_, value| value }
+          UIType.new(name: word, form: 'enum', atoms: members.map(&:first), numbers: members.map(&:last))
         end
 
         def default_value(word, type, line)
@@ -336,6 +361,7 @@ module Erx
             in ['within', low, high, *rest] then entry[:within] = [low, high]
             in ['index', list, *rest] then entry[:index] = list
             in ['hides', hidden, *rest] then entry[:hides] = hidden
+            in ['parallel', list, *rest] then entry[:parallel] = list
             else line.fail!("unknown kind property mark #{marks.first}")
             end
             marks = rest
@@ -354,10 +380,18 @@ module Erx
           end
           kind.takes.each do |entry|
             name = entry.property.name
+            type = entry.property.type
+            integers = type.form == 'integer' || (type.form == 'list' && type.element.form == 'integer')
             entry.within&.each do |bound|
               other = kind.taken(bound)&.property
-              unless entry.property.type.form == 'integer' && other&.type&.form == 'integer' && !other.default.nil?
-                line.fail!("#{name} within #{bound}: both integers, the bound taken with a default")
+              unless integers && other&.type&.form == 'integer' && !other.default.nil?
+                line.fail!("#{name} within #{bound}: an integer or a list of them, the bound an integer taken with a default")
+              end
+            end
+            if entry.parallel
+              other = kind.taken(entry.parallel)&.property
+              unless type.form == 'list' && other&.type&.form == 'list' && other != entry.property
+                line.fail!("#{name} parallel #{entry.parallel}: a list as long as another list the kind takes")
               end
             end
             if entry.within && kind.taken(entry.within[0]).property.default >= kind.taken(entry.within[1]).property.default
@@ -382,8 +416,6 @@ module Erx
           @groups.first&.first&.fail!('ui.txt declares no common key property') unless key&.common
         end
 
-        # The largest insert of KIND: its header and every property it takes
-        # at its bound, the key excepted, which is never written.
         # record NAME TAG [short REASON], its fields at four spaces.
         def record(line, children, tags, inputs)
           short = case line.words.drop(3)
@@ -464,6 +496,8 @@ module Erx
           1 + record.fields.select(&:fixed?).sum(&:width) + 1
         end
 
+        # The largest insert of KIND's properties: every one it takes at its
+        # bound, the key excepted, which is never written.
         def insert_size(kind)
           kind.takes.sum do |entry|
             property = entry.property

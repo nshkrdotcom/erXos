@@ -288,10 +288,14 @@ class ErxUIWireTest < Minitest::Test
     end.sort.map(&:last)
   end
 
+  # A value as the C harness prints it: booleans and enum members by number,
+  # a list's values each so, and none as the -2^31 it is on the wire.
   def wire_value(type, value)
     case type.form
     when 'boolean' then { 'true' => '1', 'false' => '0' }.fetch(value)
     when 'enum', 'image' then type.numbers.fetch(type.atoms.index(value)).to_s
+    when 'integer' then value == 'none' ? (-(1 << 31)).to_s : value
+    when 'list' then "[#{value.delete_prefix('[').delete_suffix(']').split(',').map { |item| wire_value(type.element, item) }.join(',')}]"
     else value
     end
   end

@@ -135,6 +135,8 @@ module Erx
           -define(NAME_MAX, #{NAME_MAX}).
           -define(PRESENT_MAX, #{PRESENT_MAX}).
           -define(DAMAGE_MAX, #{ui.damage_max}).
+          %% A none value of a list that allows none: an i32 no integer of it holds.
+          -define(NONE, #{UI::NONE}).
           -define(PROPERTY_MAX, #{wire_properties(ui).size}).
           -define(EVENT, #{report_tag(ui, 'event')}).
           -define(DAMAGE, #{report_tag(ui, 'damage')}).
@@ -287,9 +289,17 @@ module Erx
           text_bytes(Value, Max, {_Present, Form}, Name) when is_binary(Value) -> bytes(Form(Value, Max), Max, Name);
           text_bytes(_Value, _Max, _Texts, Name) -> error({bad_value, Name}).
 
-          list(Value, TextMax, Max, Texts, Name) when is_list(Value), length(Value) =< Max ->
-              [<<(length(Value)):16/little>> | [text_bytes(Text, TextMax, Texts, Name) || Text <- Value]];
-          list(_Value, _TextMax, _Max, _Texts, Name) -> error({bad_value, Name}).
+          %% A u16 count, then each value as its element type's own field, a text
+          %% in the form Texts writes texts in. Where the list allows none, none is
+          %% the one i32 its integers never take.
+          list(Value, Element, Max, None, Texts, Name) when is_list(Value), length(Value) =< Max ->
+              [<<(length(Value)):16/little>> | [element(Item, Element, None, Texts, Name) || Item <- Value]];
+          list(_Value, _Element, _Max, _None, _Texts, Name) -> error({bad_value, Name}).
+
+          element(none, _Element, true, _Texts, _Name) -> <<?NONE:32/little-signed>>;
+          element(Item, {integer, Min, Max}, _None, _Texts, Name) -> integer(Item, Min, Max, Name);
+          element(Item, {member, Members}, _None, _Texts, Name) -> member(Item, Members, Name);
+          element(Item, {text, Max}, _None, Texts, Name) -> text_bytes(Item, Max, Texts, Name).
 
           %% A presentation's name as a u8 length and at most 63 bytes, then its
           %% canonical text, erx_present:text/2's valid UTF-8, as a text of at
@@ -338,18 +348,19 @@ module Erx
 
       # A property's entry in the reader's table: its name, whether a status
       # block precedes its value, and what read_value/2 reads.
-      def reader_entry(property)
-        type = property.type
-        read =
-          case type.form
-          when 'integer' then "{integer, #{type.minimum}, #{type.maximum}}"
-          when 'boolean', 'event', 'presentation' then type.form
-          when 'enum', 'image'
-            "{member, [#{type.numbers.zip(type.atoms).map { |number, member| "{#{number}, #{atom(member)}}" }.join(', ')}]}"
-          when 'text', 'bytes' then "{#{type.form}, #{type.maximum}}"
-          when 'list' then "{list, #{type.element.maximum}, #{type.maximum}}"
-          end
-        "{#{atom(property.name)}, #{property.status}, #{read}}"
+      def reader_entry(property) = "{#{atom(property.name)}, #{property.status}, #{reader_type(property.type)}}"
+
+      # What read_value/2 reads for TYPE; a list's element is read as a value
+      # of its own type.
+      def reader_type(type)
+        case type.form
+        when 'integer' then "{integer, #{type.minimum}, #{type.maximum}}"
+        when 'boolean', 'event', 'presentation' then type.form
+        when 'enum', 'image'
+          "{member, [#{type.numbers.zip(type.atoms).map { |number, member| "{#{number}, #{atom(member)}}" }.join(', ')}]}"
+        when 'text', 'bytes' then "{#{type.form}, #{type.maximum}}"
+        when 'list' then "{list, #{reader_type(type.element)}, #{type.maximum}, #{type.none}}"
+        end
       end
 
       def clauses(name, pairs, fallback:, comment: nil)
@@ -369,11 +380,10 @@ module Erx
           case type.form
           when 'integer' then "integer(Value, #{type.minimum}, #{type.maximum}, #{name})"
           when 'boolean' then "boolean(Value, #{name})"
-          when 'enum', 'image'
-            "member(Value, [#{type.atoms.zip(type.numbers).map { |member, number| "{#{atom(member)}, #{number}}" }.join(', ')}], #{name})"
+          when 'enum', 'image' then "member(Value, #{members(type)}, #{name})"
           when 'text' then "text_bytes(Value, #{type.maximum}, Texts, #{name})"
           when 'bytes' then "bytes(Value, #{type.maximum}, #{name})"
-          when 'list' then "list(Value, #{type.element.maximum}, #{type.maximum}, Texts, #{name})"
+          when 'list' then "list(Value, #{element_type(type.element)}, #{type.maximum}, #{type.none}, Texts, #{name})"
           when 'event' then '<<>>'
           when 'presentation' then "presentation(Value, Texts, #{name})"
           end
@@ -381,6 +391,18 @@ module Erx
         texts = %w[text list presentation].include?(type.form) ? 'Texts' : '_Texts'
         "plain(#{name}, #{value}, #{texts}) ->\n    #{body}"
       end
+
+      # What element/4 writes for a list's element type.
+      def element_type(type)
+        case type.form
+        when 'integer' then "{integer, #{type.minimum}, #{type.maximum}}"
+        when 'enum' then "{member, #{members(type)}}"
+        when 'text' then "{text, #{type.maximum}}"
+        end
+      end
+
+      # An enum's or image's members as the encoder looks them up: by name.
+      def members(type) = "[#{type.atoms.zip(type.numbers).map { |member, number| "{#{atom(member)}, #{number}}" }.join(', ')}]"
 
       def erlang_reader
         <<~'ERLANG'
@@ -599,8 +621,8 @@ module Erx
               text(Bytes, 4, Max, bad_value);
           read_value(<<Length:32/little, Value:Length/binary, Rest/binary>>, {bytes, Max}) when Length =< Max ->
               {Value, Rest};
-          read_value(<<Count:16/little, Rest/binary>>, {list, TextMax, Max}) when Count =< Max ->
-              read_list(Count, Rest, TextMax, []);
+          read_value(<<Count:16/little, Rest/binary>>, {list, Element, Max, None}) when Count =< Max ->
+              read_list(Count, Rest, Element, None, []);
           read_value(Rest, event) ->
               {true, Rest};
           read_value(Bytes, presentation) ->
@@ -610,11 +632,15 @@ module Erx
           read_value(_Bytes, _Type) ->
               refuse(bad_value).
 
-          read_list(0, Rest, _TextMax, Texts) ->
-              {lists:reverse(Texts), Rest};
-          read_list(Count, Bytes, TextMax, Texts) ->
-              {Text, Rest} = text(Bytes, 4, TextMax, bad_value),
-              read_list(Count - 1, Rest, TextMax, [Text | Texts]).
+          %% Count values of the element type; where the list allows none, the i32
+          %% none is written as, which its integers never take, reads as none.
+          read_list(0, Rest, _Element, _None, Values) ->
+              {lists:reverse(Values), Rest};
+          read_list(Count, <<?NONE:32/little-signed, Rest/binary>>, Element, true, Values) ->
+              read_list(Count - 1, Rest, Element, true, [none | Values]);
+          read_list(Count, Bytes, Element, None, Values) ->
+              {Value, Rest} = read_value(Bytes, Element),
+              read_list(Count - 1, Rest, Element, None, [Value | Values]).
         ERLANG
 
       # --- C -------------------------------------------------------------------
@@ -631,6 +657,7 @@ module Erx
           ['ERX_UI_EVENT_TEXT_MAX', ui.op_max - EVENT_TEXT_FIELDS, 'the longest text detail of an event'],
           ['ERX_UI_PROPERTY_MAX', properties.size, 'the most properties one record carries, each at most once'],
           ['ERX_UI_RUNE_NONE', '0xffffffffU', "a key's rune when it has none"],
+          ['ERX_UI_NONE', c_int32(UI::NONE), 'none in a list of integers that allows it'],
           ['ERX_UI_NAME_MAX', NAME_MAX, 'the longest stopgap or presentation name'],
           ['ERX_UI_PRESENT_MAX', PRESENT_MAX, "the longest presentation's canonical text"]
         ]
@@ -697,13 +724,14 @@ module Erx
 
           /*
            * One property of an insert or a set. A boolean, integer, enum or image
-           * value is in integer; a text or bytes in bytes; a list's count in count
-           * and its encoded texts in bytes, walked with erx_ui_list_next(); a
-           * presentation's name in name and its canonical text in bytes. An event
-           * has no value, nor has a status property whose status is neither ok nor
-           * partial: has_value is false for both. Status, reporter, stopgap and
-           * timeout_ms are the status block of a status property, and ok, own,
-           * empty and 0 for any other.
+           * value is in integer; a text or bytes in bytes; a list's count in count,
+           * its element's form in element and its encoded values in bytes, texts
+           * walked with erx_ui_list_next() and integers and enum members read with
+           * erx_ui_list_value(); a presentation's name in name and its
+           * canonical text in bytes. An event has no value, nor has a status
+           * property whose status is neither ok nor partial: has_value is false
+           * for both. Status, reporter, stopgap and timeout_ms are the status
+           * block of a status property, and ok, own, empty and 0 for any other.
            */
           typedef struct erx_ui_prop erx_ui_prop_t;
           struct erx_ui_prop {
@@ -715,6 +743,7 @@ module Erx
           	uint16_t	 count;
           	uint8_t		 number;
           	uint8_t		 form;
+          	uint8_t		 element;
           	uint8_t		 status;
           	uint8_t		 reporter;
           	bool		 has_value;
@@ -743,11 +772,20 @@ module Erx
               erx_ui_record_t *record, size_t *used);
 
           /*
-           * The next text of a list property read by erx_ui_read(), starting from
+           * The next text of a list of texts read by erx_ui_read(), starting from
            * *cursor 0; false after the last. The reader has checked every text.
            */
           bool erx_ui_list_next(const erx_ui_prop_t *list, uint32_t *cursor,
               erx_ui_bytes_t *text);
+
+          /*
+           * The value at index of a list of integers or enum members read by
+           * erx_ui_read(): an integer, ERX_UI_NONE for none where the list allows
+           * it, or an enum member's number. False for an index not below count or
+           * a list of texts. The reader has checked every value.
+           */
+          bool erx_ui_list_value(const erx_ui_prop_t *list, uint16_t index,
+              int32_t *value);
 
           /*
            * Whether a node of kind takes property prop: every property marked
@@ -840,9 +878,11 @@ module Erx
 
           /*
            * A property's type: its form, an integer's bounds, a text's, bytes' or a
-           * list's most bytes or entries, a list text's most bytes, an enum's or
-           * image's members, and whether it carries a status block. Form 0 is a
-           * number no property has on the wire, the key's included.
+           * list's most bytes or entries, an enum's or image's members, and whether
+           * it carries a status block. A list's element is the form of its values,
+           * whose bounds, members or most bytes are the element's, and none says
+           * whether ERX_UI_NONE is also a value. Form 0 is a number no property has
+           * on the wire, the key's included.
            */
           typedef struct erx_ui_type erx_ui_type_t;
           struct erx_ui_type {
@@ -853,6 +893,8 @@ module Erx
           	uint32_t	 element_limit;
           	uint8_t		 nmembers;
           	uint8_t		 form;
+          	uint8_t		 element;
+          	bool		 none;
           	bool		 status;
           };
 
@@ -893,13 +935,24 @@ module Erx
         case type.form
         when 'integer' then fields.merge!('minimum' => c_int32(type.minimum), 'maximum' => c_int32(type.maximum))
         when 'text', 'bytes' then fields['limit'] = type.maximum
-        when 'list' then fields.merge!('limit' => type.maximum, 'element_limit' => type.element.maximum)
-        when 'enum', 'image'
-          array = type.form == 'image' ? 'erx_ui_image_members' : member_array_name(type)
-          fields.merge!('members' => array, 'nmembers' => "sizeof(#{array})")
+        when 'enum', 'image' then fields.merge!(members_initializer(type))
+        when 'list'
+          element = type.element
+          fields.merge!('limit' => type.maximum, 'element' => macro('ui_form', element.form))
+          case element.form
+          when 'text' then fields['element_limit'] = element.maximum
+          when 'integer' then fields.merge!('minimum' => c_int32(element.minimum), 'maximum' => c_int32(element.maximum))
+          when 'enum' then fields.merge!(members_initializer(element))
+          end
+          fields['none'] = 'true' if type.none
         end
         fields['status'] = 'true' if property.status
         "\t[#{macro('ui_prop', property.name)}] = { #{fields.map { |key, value| ".#{key} = #{value}" }.join(', ')} }"
+      end
+
+      def members_initializer(type)
+        array = type.form == 'image' ? 'erx_ui_image_members' : member_array_name(type)
+        { 'members' => array, 'nmembers' => "sizeof(#{array})" }
       end
 
       # INT32_MIN is not a literal in C: write it as an expression.
@@ -910,6 +963,10 @@ module Erx
         static bool erx_ui_u8(erx_ui_cursor_t *, uint8_t *);
         static bool erx_ui_u16(erx_ui_cursor_t *, uint16_t *);
         static bool erx_ui_u32(erx_ui_cursor_t *, uint32_t *);
+        static int32_t erx_ui_signed(uint32_t);
+        static bool erx_ui_member(erx_ui_cursor_t *, const erx_ui_type_t *,
+            int32_t *);
+        static bool erx_ui_element(erx_ui_cursor_t *, const erx_ui_type_t *);
         static bool erx_ui_utf8(const uint8_t *, size_t);
         static bool erx_ui_text(erx_ui_cursor_t *, uint8_t, uint32_t,
             erx_ui_bytes_t *);
@@ -963,6 +1020,59 @@ module Erx
         	*value = (uint32_t)bytes[0] | ((uint32_t)bytes[1] << 8) |
         	    ((uint32_t)bytes[2] << 16) | ((uint32_t)bytes[3] << 24);
         	return (true);
+        }
+
+        /* A u32's two's-complement value, read without an implementation-defined cast. */
+        static int32_t
+        erx_ui_signed(uint32_t raw)
+        {
+        	return (raw <= INT32_MAX ? (int32_t)raw :
+        	    (int32_t)(raw - 0x80000000U) - INT32_MAX - 1);
+        }
+
+        /* A u8 that is one of TYPE's members. */
+        static bool
+        erx_ui_member(erx_ui_cursor_t *cursor, const erx_ui_type_t *type,
+            int32_t *value)
+        {
+        	uint8_t small;
+        	bool member;
+
+        	if (!erx_ui_u8(cursor, &small))
+        		return (false);
+        	member = false;
+        	for (uint8_t index = 0; index < type->nmembers; index++)
+        		member = member || type->members[index] == small;
+        	*value = small;
+        	return (member);
+        }
+
+        /*
+         * One value of the list TYPE: a text, an enum member, or an integer
+         * within the element's bounds or, where the list allows none,
+         * ERX_UI_NONE, which those bounds never hold.
+         */
+        static bool
+        erx_ui_element(erx_ui_cursor_t *cursor, const erx_ui_type_t *type)
+        {
+        	erx_ui_bytes_t text;
+        	uint32_t raw;
+        	int32_t value;
+
+        	switch (type->element) {
+        	case ERX_UI_FORM_TEXT:
+        		return (erx_ui_text(cursor, 4, type->element_limit, &text));
+        	case ERX_UI_FORM_ENUM:
+        		return (erx_ui_member(cursor, type, &value));
+        	case ERX_UI_FORM_INTEGER:
+        		if (!erx_ui_u32(cursor, &raw))
+        			return (false);
+        		value = erx_ui_signed(raw);
+        		return ((type->none && value == ERX_UI_NONE) ||
+        		    (value >= type->minimum && value <= type->maximum));
+        	default:
+        		return (false);
+        	}
         }
 
         /* Decode each scalar once, refusing overlong forms and surrogates. */
@@ -1083,11 +1193,9 @@ module Erx
         erx_ui_value(erx_ui_cursor_t *cursor, const erx_ui_type_t *type,
             erx_ui_prop_t *prop)
         {
-        	erx_ui_bytes_t text;
         	uint32_t raw;
         	const uint8_t *start;
         	uint8_t small;
-        	bool member;
 
         	prop->has_value = type->form != ERX_UI_FORM_EVENT;
         	switch (type->form) {
@@ -1099,20 +1207,12 @@ module Erx
         	case ERX_UI_FORM_INTEGER:
         		if (!erx_ui_u32(cursor, &raw))
         			return (false);
-        		/* Two's complement, read without an implementation-defined cast. */
-        		prop->integer = raw <= INT32_MAX ? (int32_t)raw :
-        		    (int32_t)(raw - 0x80000000U) - INT32_MAX - 1;
+        		prop->integer = erx_ui_signed(raw);
         		return (prop->integer >= type->minimum &&
         		    prop->integer <= type->maximum);
         	case ERX_UI_FORM_ENUM:
         	case ERX_UI_FORM_IMAGE:
-        		if (!erx_ui_u8(cursor, &small))
-        			return (false);
-        		member = false;
-        		for (uint8_t index = 0; index < type->nmembers; index++)
-        			member = member || type->members[index] == small;
-        		prop->integer = small;
-        		return (member);
+        		return (erx_ui_member(cursor, type, &prop->integer));
         	case ERX_UI_FORM_TEXT:
         		return (erx_ui_text(cursor, 4, type->limit, &prop->bytes));
         	case ERX_UI_FORM_BYTES:
@@ -1126,7 +1226,7 @@ module Erx
         			return (false);
         		start = cursor->next;
         		for (uint16_t index = 0; index < prop->count; index++) {
-        			if (!erx_ui_text(cursor, 4, type->element_limit, &text))
+        			if (!erx_ui_element(cursor, type))
         				return (false);
         		}
         		prop->bytes.data = start;
@@ -1168,6 +1268,7 @@ module Erx
         			return (ERX_UI_REFUSAL_PROPERTY_TWICE);
         		seen[prop->number] = true;
         		prop->form = type->form;
+        		prop->element = type->element;
         		if (type->status && !erx_ui_status(cursor, prop))
         			return (ERX_UI_REFUSAL_BAD_STATUS);
         		if ((!type->status || prop->status <= ERX_UI_STATUS_PARTIAL) &&
@@ -1245,7 +1346,8 @@ module Erx
         	const uint8_t *at;
         	uint32_t length;
 
-        	if (*cursor > list->bytes.length || list->bytes.length - *cursor < 4)
+        	if (list->element != ERX_UI_FORM_TEXT || *cursor > list->bytes.length ||
+        	    list->bytes.length - *cursor < 4)
         		return (false);
         	at = list->bytes.data + *cursor;
         	length = (uint32_t)at[0] | ((uint32_t)at[1] << 8) |
@@ -1256,6 +1358,32 @@ module Erx
         	text->length = length;
         	*cursor += 4 + length;
         	return (true);
+        }
+
+        bool
+        erx_ui_list_value(const erx_ui_prop_t *list, uint16_t index,
+            int32_t *value)
+        {
+        	const uint8_t *at;
+
+        	if (index >= list->count)
+        		return (false);
+        	switch (list->element) {
+        	case ERX_UI_FORM_ENUM:
+        		if (index >= list->bytes.length)
+        			return (false);
+        		*value = list->bytes.data[index];
+        		return (true);
+        	case ERX_UI_FORM_INTEGER:
+        		if ((size_t)index * 4 + 4 > list->bytes.length)
+        			return (false);
+        		at = list->bytes.data + (size_t)index * 4;
+        		*value = erx_ui_signed((uint32_t)at[0] | ((uint32_t)at[1] << 8) |
+        		    ((uint32_t)at[2] << 16) | ((uint32_t)at[3] << 24));
+        		return (true);
+        	default:
+        		return (false);
+        	}
         }
       C
 

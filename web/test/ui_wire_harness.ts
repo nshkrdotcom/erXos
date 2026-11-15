@@ -48,7 +48,7 @@ import {
   type Report,
   type UIRecord,
 } from '../src/generated/ui_wire.ts';
-import type { MachineText } from '../src/text.ts';
+import { MachineText } from '../src/text.ts';
 
 const hex = (bytes: Uint8Array): string => `x${Buffer.from(bytes).toString('hex')}`;
 
@@ -76,7 +76,7 @@ function withBytes(prop: Prop): Prop<Uint8Array> {
     case 'text':
       return { ...prop, value: prop.value && bytesOf(prop.value) };
     case 'list':
-      return { ...prop, value: prop.value && prop.value.map(bytesOf) };
+      return { ...prop, value: prop.value && prop.value.map((entry) => (entry instanceof MachineText ? bytesOf(entry) : entry)) };
     case 'presentation':
       return { ...prop, value: prop.value && { name: bytesOf(prop.value.name), text: bytesOf(prop.value.text) } };
     default:
@@ -98,7 +98,7 @@ function valueText(prop: Prop<Uint8Array>): string {
   if (prop.value === null) return '-';
   switch (prop.form) {
     case 'list':
-      return `[${prop.value.map(hex).join(',')}]`;
+      return `[${prop.value.map((entry) => (entry instanceof Uint8Array ? hex(entry) : String(entry ?? 'none'))).join(',')}]`;
     case 'presentation':
       return `${hex(prop.value.name)}:${hex(prop.value.text)}`;
     case 'text':

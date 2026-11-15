@@ -37,11 +37,38 @@ print_hex(erx_ui_bytes_t bytes)
 		printf("%02x", bytes.data[index]);
 }
 
+/*
+ * A list's values: texts in hex, integers and enum members by number, none
+ * as the ERX_UI_NONE it is on the wire.
+ */
 static void
-print_value(const erx_ui_prop_t *prop)
+print_list(const erx_ui_prop_t *prop)
 {
 	erx_ui_bytes_t text;
 	uint32_t cursor;
+	int32_t value;
+
+	putchar('[');
+	cursor = 0;
+	for (uint16_t index = 0; index < prop->count; index++) {
+		if (index > 0)
+			putchar(',');
+		if (prop->element == ERX_UI_FORM_TEXT) {
+			if (!erx_ui_list_next(prop, &cursor, &text))
+				abort();
+			print_hex(text);
+		} else {
+			if (!erx_ui_list_value(prop, index, &value))
+				abort();
+			printf("%d", (int)value);
+		}
+	}
+	putchar(']');
+}
+
+static void
+print_value(const erx_ui_prop_t *prop)
+{
 
 	if (!prop->has_value) {
 		putchar('-');
@@ -53,15 +80,7 @@ print_value(const erx_ui_prop_t *prop)
 		print_hex(prop->bytes);
 		break;
 	case ERX_UI_FORM_LIST:
-		putchar('[');
-		cursor = 0;
-		for (uint16_t index = 0; erx_ui_list_next(prop, &cursor, &text);
-		    index++) {
-			if (index > 0)
-				putchar(',');
-			print_hex(text);
-		}
-		putchar(']');
+		print_list(prop);
 		break;
 	case ERX_UI_FORM_PRESENTATION:
 		print_hex(prop->name);

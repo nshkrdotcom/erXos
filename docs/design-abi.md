@@ -777,11 +777,11 @@ Every wire number is literal in the source.
 | `integer NAME MIN MAX` | an integer within the inclusive bounds, which lie within a signed 32-bit integer |
 | `text NAME MAX utf8` | at most MAX bytes of valid UTF-8, MAX at most 65,536 |
 | `bytes NAME MAX` | at most MAX bytes, MAX at most 65,536 |
-| `list NAME TEXT MAX` | at most MAX values of the text type TEXT, MAX at most 1,000 |
+| `list NAME ELEMENT MAX [none]` | at most MAX values of ELEMENT, a text type, an integer type or a root `@enum`, MAX at most 1,000; with `none`, the atom `none` is also a value, and only for an integer type that does not hold -2^31 |
 | `image NAME NUMBER CONTENT_TYPE` | an image type: its atom, its number from 1 to 255, and the quoted media type the browser is given |
 | `prop NAME NUMBER TYPE [common] [status] [default VALUE] [detail state]` | a property, NUMBER from 1 to 255 |
 | `kind NAME NUMBER [children]` | a kind, NUMBER from 1 to 255, which takes children when marked |
-| `prop NAME [state] [fixed] [within LOW HIGH] [index LIST] [hides PROP]` | at four spaces: the kind takes the property, with these marks |
+| `prop NAME [state] [fixed] [within LOW HIGH] [index LIST] [hides PROP] [parallel LIST]` | at four spaces: the kind takes the property, with these marks |
 | `record NAME TAG [short REASON]` | a record the server writes to a renderer, TAG from 1 to 255; a fixed field cut short is refused for REASON, `short_record` unless marked |
 | `input NAME NUMBER` | a form of an input record's event, NUMBER from 1 to 255 |
 | `field NAME TYPE` | at four spaces beneath a record or an input form: its next field in wire order |
@@ -799,10 +799,13 @@ makes every kind take the property. `status` lets the value also be an
 marks an event whose detail is the kind's state value; any other event
 has none. On a property's line beneath a kind, `state` marks the value the user changes,
 `fixed` a property that is part of the node's identity, `within LOW
-HIGH` an integer that lies between two integer properties of the kind,
-`index LIST` an integer that indexes a list property of the kind, and
-`hides PROP` a fixed boolean under which PROP is refused in a tree,
-never kept, and handed to the application as `{erx_secret, V}`.
+HIGH` an integer, or each value but `none` of a list of integers, that
+lies between two integer properties of the kind, `index LIST` an
+integer that indexes a list property of the kind, `hides PROP` a fixed
+boolean under which PROP is refused in a tree, never kept, and handed
+to the application as `{erx_secret, V}`, and `parallel LIST` a list
+exactly as long as the list property LIST, an absent LIST counting as
+empty; the validator refuses a value against any mark with `bad_value`.
 
 A field's TYPE is `u8`, `u16` or `u32`, any unsigned value; `i8`, a
 signed byte; `node`, a `u32` other than 0; `kind`, a declared kind's
@@ -827,8 +830,12 @@ bytes framed by the length alone, are the generator's fixed code.
 
 The generator refuses a number or a name used twice in its namespace; a
 kind that takes an event marked `detail state` without exactly one
-`state` property; a `within`, `index` or `hides` naming a property the
-kind does not take or of the wrong type; a `within` bound without a
+`state` property; a list element that is not a text type, an integer
+type or a root `@enum`, and `none` on any element but an integer type
+that does not hold -2^31, so -2^31, the value that stands for `none` on
+the wire, is never an element's own value; a `within`, `index`, `hides`
+or `parallel` naming a property the kind does not take or of the wrong
+type; a `within` bound without a
 `default`, so a tree that omits it still has a range; a content type other than an
 `image/` type, and `image/svg+xml`; and a record or a report whose tag another has; a field type outside the
 list, a `short` reason not among the readers', or an `input` field
@@ -923,7 +930,10 @@ knows the window.
 Properties are a `u8` count and, for each, its number and its value: a
 boolean as a `u8` of 0 or 1; an integer as a signed 32-bit value; an enum or an
 image type as its `u8` number; a text or bytes as a `u32` length and the
-bytes; a list as a `u16` count and its texts; an event as nothing, the
+bytes; a list as a `u16` count and each value as its element type's own
+field, a text, an enum's `u8` or an integer's signed 32-bit value, with
+`none` written as -2^31 (the C reader hands it over as `ERX_UI_NONE`, the
+TypeScript reader as `null`); an event as nothing, the
 number alone saying that the node takes it; a presentation as its name,
 a `u8` length and at most 63 bytes, and its canonical text, a text of at
 most 4,096 bytes. A `status` property begins with its status block: the
@@ -959,8 +969,9 @@ a `MachineText` ([The client](design-web.md#the-client)); and `erx/ui_wire.h` wi
 freestanding C source, the reader of `insert` to `commit`, `screen`,
 `input`, `repaint` and `presented` and the writer of `event` and
 `damage` that a native renderer links. The C code allocates nothing:
-texts read point into the caller's buffer, and a list's texts are walked
-from its encoded bytes; a record is written into the caller's buffer and
+texts read point into the caller's buffer, and a list's values are read
+from its encoded bytes, its texts walked and its integers and enum
+members read by index; a record is written into the caller's buffer and
 refused whole when it does not fit or breaks a rule a reader checks. The
 encoder takes the canonical
 text of a `present` value as a function, `erx_present:text/2` in the

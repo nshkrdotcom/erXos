@@ -59,6 +59,16 @@ class ErxUISchemaTest < Minitest::Test
     assert_equal 1024, schema.properties.find { |property| property.name == 'blob' }.type.maximum
   end
 
+  # A list of integers counts four bytes a value in a kind's largest insert,
+  # the bound the generator holds to web_ui_op_max.
+  def test_a_list_of_integers_counts_in_the_largest_insert
+    graph = "  integer sample 0 100\n  list samples sample 240 none\n  prop samples 8 samples\n" \
+            "  kind graph 1\n    prop min\n    prop max\n    prop samples within min max\n"
+    schema = read(BASE + graph)
+    assert_equal 13 + 5 + 5 + 1 + 2 + (240 * 4), schema.insert_max.fetch('graph')
+    assert_raises(Erx::ABI::SchemaError) { read(BASE + graph, op_max: 13 + 5 + 5 + 1 + 2 + (240 * 4) - 1) }
+  end
+
   def test_generator_refusals
     {
       'no root limit @no_such_limit' => "  bytes blob @no_such_limit\n",
@@ -68,7 +78,14 @@ class ErxUISchemaTest < Minitest::Test
       'outside 1..255' => "  kind big 256\n",
       'not a raster image/ type' => "  image svg 1 \"image/svg+xml\"\n",
       'state event without one state property' => "  kind box 1\n    prop on_change\n",
-      'both integers, the bound taken with a default' => "  kind s 1\n    prop value within min flag\n    prop flag\n",
+      'the bound an integer taken with a default' => "  kind s 1\n    prop value within min flag\n    prop flag\n",
+      'an integer or a list of them' => "  prop names 8 items\n  kind s 1\n    prop min\n    prop max\n    prop names within min max\n",
+      'only a list of integers allows none' => "  list names caption 4 none\n",
+      "holds -2^31, the wire's none" => "  integer wide -2147483648 0\n  list wides wide 4 none\n",
+      'is not a text type, an integer type or a root enum' => "  bytes blob 4\n  list blobs blob 4\n",
+      'malformed list member' => "  list odd caption 4 nil\n",
+      'a list as long as another list the kind takes' => "  prop names 8 items\n  kind s 1\n    prop names parallel text\n    prop text\n",
+      'parallel names: a list as long as another' => "  prop names 8 items\n  kind s 1\n    prop names parallel names\n",
       'an integer indexing a list' => "  kind s 1\n    prop value index text\n    prop text\n",
       'a fixed boolean hiding' => "  kind s 1\n    prop flag hides text\n    prop text\n",
       'is common to every kind' => "  kind s 1\n    prop key\n",
@@ -93,8 +110,8 @@ class ErxUISchemaTest < Minitest::Test
 
   private
 
-  def read(text)
+  def read(text, op_max: LIMITS.fetch('web_ui_op_max'))
     declarations = Erx::ABI::Syntax.parse(text, path: Erx::ABI::UI::SOURCE)
-    Erx::ABI::UI.validate(declarations, limits: LIMITS, types: {})
+    Erx::ABI::UI.validate(declarations, limits: LIMITS.merge('web_ui_op_max' => op_max), types: {})
   end
 end

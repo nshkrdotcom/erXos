@@ -273,7 +273,11 @@ prop_value(Name) ->
 value({integer, Min, Max}) -> pick([Min, Max, Min + rand:uniform(Max - Min + 1) - 1]);
 value({text, Max}) -> text(Max);
 value({bytes, Max}) -> pick([<<>>, rand:bytes(rand:uniform(64)), rand:bytes(Max)]);
-value({list, {text, TextMax}, Max}) -> [text(TextMax) || _ <- lists:seq(1, pick([0, 1, rand:uniform(8), Max]))];
+value({list, Element, Max, None}) ->
+    [case None andalso rand:uniform(4) =:= 1 of
+         true -> none;
+         false -> value(Element)
+     end || _ <- lists:seq(1, pick([0, 1, rand:uniform(8), Max]))];
 value({enum, Atoms}) -> pick(Atoms);
 value({image, Atoms}) -> pick(Atoms);
 value(boolean) -> pick([true, false]);
@@ -333,13 +337,14 @@ carried(unsupported, R, S, _Type) -> lists:concat(["3,", R, ",", S, ",0:-"]);
 carried({timeout, Ms}, R, S, _Type) -> lists:concat(["4,", R, ",", S, ",", Ms, ":-"]);
 carried(error, R, S, _Type) -> lists:concat(["5,", R, ",", S, ",0:-"]).
 
+value_text({integer, _, _}, none) -> "none";
 value_text({integer, _, _}, V) -> integer_to_list(V);
 value_text(boolean, V) -> atom_to_list(V);
 value_text({enum, _}, V) -> atom_to_list(V);
 value_text({image, _}, V) -> atom_to_list(V);
 value_text({text, _}, V) -> hex(V);
 value_text({bytes, _}, V) -> hex(V);
-value_text({list, _, _}, V) -> "[" ++ lists:join(",", [hex(T) || T <- V]) ++ "]";
+value_text({list, Element, _, _}, V) -> "[" ++ lists:join(",", [value_text(Element, Item) || Item <- V]) ++ "]";
 value_text(event, _V) -> "-";
 value_text(presentation, {Name, Text}) -> hex(Name) ++ ":" ++ hex(Text).
 
