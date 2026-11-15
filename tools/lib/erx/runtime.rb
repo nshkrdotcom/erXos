@@ -10,6 +10,7 @@ require_relative 'dependencies'
 require_relative 'domain_image_apps'
 require_relative 'erlang_apps'
 require_relative 'error'
+require_relative 'file_lock'
 require_relative 'generated'
 require_relative 'hosted_sources'
 require_relative 'oracle'
@@ -200,7 +201,28 @@ module Erx
       HostTestPlan.new(run: paths - not_run.map(&:path), not_run: not_run)
     end
 
-    def build(jobs: 4)
+    # Every runtime build and clean, of every kind, holds this lock for its
+    # whole run, so a second one in the same tree waits for the first instead
+    # of configuring over its copy. One lock serves every kind because the
+    # BeamAsm build compiles against the interpreter build's sysroot, which a
+    # concurrent interpreter build would rewrite.
+    LOCK_DIRECTORY = 'build/runtime'
+    LOCK = "#{LOCK_DIRECTORY}/.lock".freeze
+
+    # The one entry to a build of every kind: it passes its arguments to the
+    # kind's build_locked and returns its result. Runtime's own build_locked
+    # is the hosted build's; NativeRuntime and NativeJitRuntime define theirs.
+    def build(...) = with_build_lock { build_locked(...) }
+
+    private
+
+    def with_build_lock(&)
+      OutputDirectory.prepare(root: @root, path: File.join(@root, LOCK_DIRECTORY))
+      FileLock.hold(File.join(@root, LOCK), what: "the runtime build tree of #{@root}", busy: :wait, &)
+    end
+
+    # The hosted runtime's build.
+    def build_locked(jobs: 4)
       raise Error, HOST_RULE unless self.class.host_supported?
 
       @oracle.verify(HOST_OTP_FLAVOUR)
@@ -216,8 +238,6 @@ module Erx
       File.write(self.class.record_path(@output), digest)
       @output
     end
-
-    private
 
     # make removes nothing, so a beam it built for a module whose source has since left
     # otp/lib, or moved to erlang/apps, would stay in the copy's ebin and reach the release.

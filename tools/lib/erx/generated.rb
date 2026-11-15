@@ -7,6 +7,7 @@ require 'fileutils'
 require 'json'
 require 'securerandom'
 require_relative 'error'
+require_relative 'file_lock'
 require_relative 'generation_plan'
 require_relative 'json_input'
 require_relative 'abi'
@@ -463,32 +464,12 @@ module Erx
         end
       end
 
-      # The lock is per open file, so a second ensure of the same output on
-      # this thread (any fiber), from a generator or from a file a block
-      # loads, would wait on its own lock forever; it is refused instead.
-      # Held locks are named by the lock file's real path, so another
-      # spelling of the same tree is the same lock.
-      def with_lock(output)
-        lock_path = filesystem(output) do
-          FileUtils.mkdir_p(File.dirname(output))
-          File.join(File.realpath(File.dirname(output)), "#{File.basename(output)}.lock")
-        end
-        held = Thread.current.thread_variable_get(:erx_generated_locks) ||
-               Thread.current.thread_variable_set(:erx_generated_locks, [])
-        if held.include?(lock_path)
-          raise Error, "ensure of #{output} called again while it is held: " \
-                       'a generator or a generated file loads a generated file'
-        end
-
-        lock = filesystem(output) { File.open(lock_path, File::RDWR | File::CREAT, 0o644) }
-        begin
-          filesystem(output) { lock.flock(File::LOCK_EX) }
-          held.push(lock_path)
-          yield
-        ensure
-          held.delete(lock_path)
-          lock.close
-        end
+      # A tree's lock is the file output.lock beside it (FileLock). A
+      # generator, or a file a block loads, that ensures the same tree again
+      # on this thread is refused rather than left waiting on its own lock.
+      def with_lock(output, &)
+        filesystem(output) { FileUtils.mkdir_p(File.dirname(output)) }
+        FileLock.hold("#{output}.lock", what: "the generated tree #{output}", busy: :wait_silently, &)
       end
 
       # Runs one of ensure's own file operations on the tree at where; a

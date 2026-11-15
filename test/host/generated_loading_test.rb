@@ -104,8 +104,8 @@ class GeneratedLoadingTest < Minitest::Test
   # process's own lock forever; it is refused, and the lock is released.
   def test_a_nested_ensure_is_refused
     output = File.join(@directory, 'gen')
-    error = assert_raises(Erx::Generated::Error) { ensure_one(output) { ensure_one(output) } }
-    assert_match(/called again while it is held/, error.message)
+    error = assert_raises(Erx::Error) { ensure_one(output) { ensure_one(output) } }
+    assert_match(/locked again by the thread that holds it/, error.message)
     assert_equal :fresh, ensure_one(output).status
   end
 

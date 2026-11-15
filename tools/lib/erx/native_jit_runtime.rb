@@ -28,12 +28,14 @@ module Erx
 
     def self.output(root:) = flavour_output(root: root, base: BASE, flavour: FLAVOR)
 
+    private
+
     # interpreter is the interpreter build's Built, which must already be built: its
     # sysroot, with the header tree it merged, is what libc++ and this flavour compile
     # against. Make and ninja decide what is stale, so a build after no change costs
     # seconds. @headers and @libcxx are set first, since the configure stamp, the
     # environment and the import check read them.
-    def build(interpreter:, jobs: 4)
+    def build_locked(interpreter:, jobs: 4)
       @oracle.verify(HOST_OTP_FLAVOUR)
       FileUtils.rm_f(self.class.record_path(@output))
       digest = self.class.source_digest(root: @root, generated: @generated)
@@ -51,8 +53,6 @@ module Erx
                 libc: interpreter.libc, builtins: interpreter.builtins, otp: @output.root, cxx_archives: @libcxx.archives,
                 crypto: crypto)
     end
-
-    private
 
     def check_imports = check_imports_of(cxx_runtime: @libcxx.archives)
 

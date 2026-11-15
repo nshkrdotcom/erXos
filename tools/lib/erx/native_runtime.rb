@@ -76,9 +76,14 @@ module Erx
       OutputDirectory.check(root: @root, path: @base)
     end
 
+    # Takes away everything build made, so the next build reruns musl's and OTP's own.
+    def clean = with_build_lock { FileUtils.rm_rf(@base) }
+
+    private
+
     # Make decides what is stale, so a build after no change costs seconds. Fiasco's build
     # must have run.
-    def build(jobs: 4)
+    def build_locked(jobs: 4)
       @oracle.verify(HOST_OTP_FLAVOUR)
       FileUtils.rm_f(self.class.record_path(@output))
       # Also brings build/gen up to date, which the steps below read.
@@ -100,11 +105,6 @@ module Erx
                 otp: @output.root, openssl: @openssl, system_table: File.join(@output.objects, 'driver_tab.o'),
                 crypto: crypto, headers: @headers)
     end
-
-    # Takes away everything build made, so the next build reruns musl's and OTP's own.
-    def clean = FileUtils.rm_rf(@base)
-
-    private
 
     # Builds musl and compiler-rt's builtins and fills the sysroot with musl's headers and the
     # libraries the link names; returns them as a Sysroot.

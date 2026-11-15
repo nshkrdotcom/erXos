@@ -1939,6 +1939,15 @@ it; git history is the record of completed work.
   as `MediumBoot::SYSTEM_DOMAIN_ID` (kept in step by `medium_boot_test.rb`), `CodeCommands::SYSTEM_DOMAIN`,
   `reload_guest.rb` and `ProductionImage::Run::TRACE_DOMAIN`. Make it a row of `abi/erx_abi.txt`, generate the
   define, and read it in Ruby through `Erx::ABI`, so no copy can drift.
+* [Medium] runtime builds (`tools/lib/erx/runtime.rb` `Runtime::LOCK`): the lock covers each runtime build and
+  clean only, so two gates in one tree still meet outside it. A build removes the build record and relinks the
+  emulator while the other gate reads them after its own build returned: `Runtime.check_current`, the hosted test
+  runs, the hosted release (`tools/erx` `build_runtime`, whose `Release#build` empties `release/work`), the BeamAsm
+  image link into `build/runtime/native-jit/image` and every image link that reads the runtimes' archives. The
+  failures are errors, not silent corruption. Rather than putting each reader under the lock, readers could take a
+  shared lock on the same file (`FileLock` with `LOCK_SH`), the build could run its caller's link inside the lock,
+  or a gate could hold one lock for its whole run. A build whose Ruby process is killed outright (SIGKILL) also
+  leaves its make and configure running in the build directory with the lock released.
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network

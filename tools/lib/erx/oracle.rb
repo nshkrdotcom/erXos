@@ -6,6 +6,7 @@ require 'digest'
 require 'fileutils'
 require 'json'
 require_relative 'dependencies'
+require_relative 'file_lock'
 require_relative 'runner'
 require_relative 'sources'
 require_relative 'json_input'
@@ -77,8 +78,7 @@ module Erx
       validate_flavour(flavour)
       directory = OutputDirectory.check(root: @root, path: File.join(@build, flavour))
       raise Error, "oracle #{flavour} is not built" unless File.directory?(directory) && !File.symlink?(directory)
-      File.open(File.join(directory, '.lock'), File::RDWR | File::CREAT, 0o600) do |lock|
-        raise Error, "oracle #{flavour} is already in use" unless lock.flock(File::LOCK_EX | File::LOCK_NB)
+      FileLock.hold(File.join(directory, '.lock'), what: "oracle #{flavour}", busy: :refuse) do
         verify(flavour)
         yield({ 'erl' => erl_path(flavour), 'erlc' => File.join(directory, 'install/bin/erlc'),
                 'build' => JsonInput.parse(BoundedFile.read(File.join(directory, 'build.json'), maximum: 1024 * 1024), label: 'native oracle build receipt') })
@@ -120,9 +120,7 @@ module Erx
     def build_flavour(flavour, jobs:, clean:)
       validate_flavour(flavour)
       directory = OutputDirectory.prepare(root: @root, path: File.join(@build, flavour))
-      File.open(File.join(directory, '.lock'), File::RDWR | File::CREAT, 0o600) do |lock|
-        raise Error, "oracle #{flavour} is already in use" unless lock.flock(File::LOCK_EX | File::LOCK_NB)
-
+      FileLock.hold(File.join(directory, '.lock'), what: "oracle #{flavour}", busy: :refuse) do
         build_locked(flavour, jobs: jobs, clean: clean)
       end
     end
