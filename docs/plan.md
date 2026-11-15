@@ -1928,8 +1928,19 @@ part 4b of 1b-C's track D. The second app is a demo that exercises
 programs, windows and keyboard input; it is built out of tree and never
 shipped, and nothing of it enters erXos. Its basic milestone is Doom on
 QEMU `virt`, with keys from QEMU's virtio keyboard and a presentation on
-each frame end. Its full milestone is Doom as an app, with a USB
-keyboard and its WAD read from a file.
+each frame end. Its full milestone is Doom as an app: a package built
+from `examples/doom`, a submodule of erXos's fork of the demo built only
+on request, with keys still from the virtio keyboard, its WAD read from
+a file through `lseek`, `pread` and `fstat` on the program protocol's
+64-bit offsets, and its window's draw connection reached through the
+program's own `/dev`
+([design-files.md](design-files.md)). A USB keyboard
+follows with [track U](#track-u-usb), not as part of the milestone.
+
+**What comes first.** Where work can be chosen, the first two apps and
+what they stand on come before every other item: track A's second part
+(packages added to an image), then the kiosk's two milestones, then
+Doom's. The other items keep running beside them.
 
 1. **The start table**, in 1b, after 1b-A, 1b-B's session domain and
    M6's data partition, whose `etc` tree holds `rc.conf`. `start` rows in
@@ -2580,7 +2591,7 @@ on the board
 ([design-platforms.md](design-platforms.md#bring-up-under-qemu) lists
 what the model cannot check). The Pi has no input device: no USB
 keyboard, since the Pi 4's USB host sits behind the PCIe bridge, whose
-driver is [Track U](#track-u-usb-proposed)'s, so input comes over the serial
+driver is [Track U](#track-u-usb)'s, so input comes over the serial
 console or the web front end over the host link. Drivers are Erlang,
 programmed I/O first where the device allows it. The kernel's platform
 items of M12, the hardware watchdog, the crash region, trial boot and the
@@ -2917,10 +2928,12 @@ bootable file and the device tree, the entry state, the memory map,
 whether `stdout-path` names the mini UART, where the framebuffer lies,
 and the time to the system runtime's first pet.
 
-## Track U: USB (proposed)
+## Track U: USB
 
-**Status.** Proposed, not scheduled: no milestone depends on it, and
-where it goes in the order below is undecided.
+**Place.** In Phase 1b, below the first two apps (Track A, "What comes
+first"): part (a) runs beside every other item, part (b) follows 1b-E,
+and part (c) runs beside 1b-I's board work. Part (d) is Phase 2's. No
+milestone depends on the track.
 
 **Goal.** A USB keyboard, mouse or tablet and a USB stick work on QEMU
 `virt` and on the Raspberry Pi 4, along [design-usb.md](design-usb.md):
@@ -3410,7 +3423,7 @@ no row, are built here and tested here.
   controller in the vault's domain
   ([design-system.md](design-system.md#devices)), gives PCIe
   configuration space on a board that drives a bridge, the Pi 5, and the
-  Pi 4 once [Track U](#track-u-usb-proposed) drives its BCM2711 bridge,
+  Pi 4 once [Track U](#track-u-usb) drives its BCM2711 bridge,
   to the PCIe domain alone, and
   passes the manifest check; Erlang drivers for each board's storage and
   network devices, with their reset sequences, each measured for its row
@@ -3738,6 +3751,11 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
   M9, G6, M8, M10, M11 and M12; the rest of track P follows its first
   part, and track Q follows track P and M7; M13 and M14, already on QEMU,
   reach the boards with M12.
+* Within Phase 1b, track A's second part, the kiosk's parts 4a and 4b
+  and Doom's two milestones come first wherever work can be chosen
+  ([Track A](#track-a-apps), "What comes first"). Track U runs below
+  them: its part (a) beside everything, its part (b) after 1b-E, its
+  part (c) beside 1b-I's board work.
 * Track D runs beside the critical paths from the session domain on; no
   milestone needs it. Its first part, the browser over the host link,
   needs no device and comes first; the window stack follows, then the
@@ -3815,6 +3833,6 @@ Each is small, adds its tests, and leaves `make check` green.
 | Unmapping the kernel from user-mode page tables | needed only on cores that Arm lists as affected by rogue data cache loads | with each board port, from Arm's list of affected cores |
 | The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | erXos is a prototype and makes no releases | when erXos makes releases |
 | Graphics, audio | not needed for the thesis | not planned |
-| USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | proposed as [Track U](#track-u-usb-proposed), not scheduled |
+| USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | [Track U](#track-u-usb), in Phase 1b below the first two apps |
 | Bluetooth's later stages: Wi-Fi provisioning from a phone, HID over GATT, classic Bluetooth | track B's first consumer is a phone talking to a peripheral; provisioning needs a Wi-Fi driver no design has, and HID over GATT the central role and the USB design's HID cores ([design-bluetooth.md](design-bluetooth.md#later-stages)) | in that order, each when its consumer is named |
 | x86-64 | out of scope | not planned |

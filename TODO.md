@@ -7482,7 +7482,7 @@ document's "residual risks accepted" paragraph.
   programmed-I/O host driver for the model's DWC2 beside `erx_xhci` under the same USB core, for low- and
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
-  ([plan.md](docs/plan.md#track-u-usb-proposed)); its design keeps the three rules the USB design records.
+  ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's
   CPU share of `users`. The apps group takes what the principals' shares leave, each app an equal part, with
   no field of the `apps` row to set it; a builder who wants apps held to a smaller share has no lever.

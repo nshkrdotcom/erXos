@@ -68,7 +68,7 @@ Decisions every reader needs:
   are known when the manifest is written; every other PCIe function
   interrupts by MSI ([Interrupts](#interrupts)). DWC2 on QEMU `raspi4b`
   is outside this design, planned work in `TODO.md` ([DWC2](#dwc2)).
-  The order is a proposal of [plan.md](plan.md#track-u-usb-proposed).
+  The order is [plan.md](plan.md#track-u-usb)'s.
 * **The Pi 4 boots from its microSD card alone.** The board's EEPROM
   boot order names no USB device and no network boot, so the boot
   firmware has no reason to start the VL805. A VL805 the firmware left
@@ -309,7 +309,7 @@ The domain library's boot view gives only device-tree selectors a kind,
 so a PCIe function placed on a configured row would get no record,
 window or memory (`liberx/system/dom_boot_view.c`, `boot_devices`; a
 `TODO.md` item). The roadmap proposes this design's work as Track U
-([plan.md](plan.md#track-u-usb-proposed)).
+([plan.md](plan.md#track-u-usb)).
 
 What the design reuses:
 
@@ -1060,7 +1060,7 @@ the same check then refuses the unit.
 ### The Phase 1 part
 
 The PCIe domain runs on the stopgap on both targets, as Track U's first
-parts propose ([plan.md](plan.md#track-u-usb-proposed)):
+parts propose ([plan.md](plan.md#track-u-usb)):
 
 * **Domains.** `pcie` holds the bridge's unit, the ECAM window on QEMU
   `virt` and the BCM2711's register window on the Pi 4, given at its
@@ -2471,7 +2471,7 @@ bound is the medium's slowness, not the bus's.
 
 ## The order of work
 
-Proposed in [plan.md](plan.md#track-u-usb-proposed), not scheduled:
+Scheduled in [plan.md](plan.md#track-u-usb):
 
 1. **Host-built cores**, with no hardware: `erx_usb_desc`,
    `erx_usb_bus_core`, `erx_usb_hub_core`, `erx_hid_desc`,
