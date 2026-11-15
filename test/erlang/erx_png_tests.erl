@@ -10,6 +10,7 @@
 %% directory of the images.
 -module(erx_png_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(QUOTA, 1 bsl 26).
 
@@ -128,6 +129,52 @@ quota_test() ->
     ?assertEqual({error, too_large},
                  decode(erx_png_encode:png([{<<"IHDR">>, Huge}, {<<"IDAT">>, <<>>}]), "a8r8g8b8")).
 
+%% A 16-bit RGBA PNG read into k1 has 64 filtered bytes for each pixel
+%% byte, so its pixels fit a quota its filtered rows do not: it is refused
+%% before anything is inflated, the small one here and one whose rows
+%% would inflate to 32 MiB from a PNG within the picture cap.
+bomb_test() ->
+    Small = bomb(256, 128),
+    ?assertEqual(ok, erx_draw_core:admit({0, 0, 256, 128}, 1, #{pixels => 4096, side => 16384})),
+    ?assertEqual({error, quota}, erx_png:decode(Small, #{chan => chan("k1"), quota => #{pixels => 4096, side => 16384}})),
+    Large = bomb(4096, 1024),
+    ?assert(byte_size(Large) =< ?ERX_UI_PICTURE_BYTES),
+    ?assertEqual({error, quota},
+                 erx_png:decode(Large, #{chan => chan("k1"), quota => #{pixels => 1 bsl 19, side => 16384}})).
+
+%% A PNG at the picture cap is read, one byte past it is refused, and so is
+%% a bomb of 64 MiB of rows too long for the cap, under a quota its pixels fit.
+picture_cap_test() ->
+    Good = erx_png_encode:png([{<<"IHDR">>, grey_header()}, idat(good_rows())]),
+    Pad = fun(Length) ->
+                  <<Head:(byte_size(Good) - 12)/binary, Iend/binary>> = Good,
+                  Text = erx_png_encode:chunk(<<"tEXt">>, <<0:((Length - byte_size(Good) - 12) * 8)>>),
+                  <<Head/binary, Text/binary, Iend/binary>>
+          end,
+    ?assertMatch({ok, _, _}, decode(Pad(?ERX_UI_PICTURE_BYTES), "k8")),
+    ?assertEqual({error, too_large}, decode(Pad(?ERX_UI_PICTURE_BYTES + 1), "k8")),
+    ?assertEqual({error, too_large},
+                 erx_png:decode(bomb(4096, 2048), #{chan => chan("k1"), quota => #{pixels => 1 bsl 20, side => 16384}})).
+
+%% A W x H 16-bit RGBA PNG of zeros.
+bomb(W, H) ->
+    Header = erx_png_encode:header(#{width => W, height => H, depth => 16, colour => 6}),
+    erx_png_encode:png([{<<"IHDR">>, Header}, {<<"IDAT">>, zlib:compress(<<0:(H * (1 + W * 8) * 8)>>)}]).
+
+%% A second tRNS, one after the image data and one for a colour type with
+%% alpha are passed over, as any ancillary chunk the reader does not use.
+misplaced_trns_test() ->
+    IHDR = {<<"IHDR">>, grey_header()},
+    Key = {<<"tRNS">>, <<1:16>>},
+    {ok, R, Pixels} = decode(erx_png_encode:png([IHDR, idat(good_rows())]), "a8r8g8b8"),
+    {ok, R, Keyed} = decode(erx_png_encode:png([IHDR, Key, idat(good_rows())]), "a8r8g8b8"),
+    ?assertNotEqual(Pixels, Keyed),
+    ?assertEqual({ok, R, Keyed}, decode(erx_png_encode:png([IHDR, Key, {<<"tRNS">>, <<2:16>>}, idat(good_rows())]),
+                                        "a8r8g8b8")),
+    ?assertEqual({ok, R, Pixels}, decode(erx_png_encode:png([IHDR, idat(good_rows()), Key]), "a8r8g8b8")),
+    Alpha = erx_png_encode:header(#{width => 1, height => 1, depth => 8, colour => 4}),
+    ?assertMatch({ok, _, _}, decode(erx_png_encode:png([{<<"IHDR">>, Alpha}, Key, idat(<<0, 1, 255>>)]), "a8r8g8b8")).
+
 interlaced_test() ->
     Header = erx_png_encode:header(#{width => 4, height => 4, depth => 8, colour => 6, interlace => 1}),
     ?assertEqual({error, interlaced},
@@ -157,6 +204,8 @@ refusal_test_() ->
      ?_test(refuse(chunk, binary:part(Good, 0, byte_size(Good) - 3))),
      ?_test(refuse(chunk, <<Signature/binary, 16#80000000:32, "IHDR", IhdrData/binary>>)),
      ?_test(refuse(chunk, erx_png_encode:png([IHDR, {<<"bad!">>, <<>>}, idat(good_rows())]))),
+     ?_test(refuse(chunk, <<(binary:part(Good, 0, byte_size(Good) - 12))/binary,
+                             (erx_png_encode:chunk(<<"IEND">>, <<0>>))/binary>>)),
      ?_test(refuse(order, erx_png_encode:png([idat(good_rows())]))),
      ?_test(refuse(order, erx_png_encode:png([IHDR]))),
      ?_test(refuse(order, erx_png_encode:png([IHDR, IHDR, idat(good_rows())]))),

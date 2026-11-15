@@ -2,8 +2,11 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 %% The fuzz target of erx_png and erx_inflate (docs/design-display.md,
 %% "Verification and testing"). Each round decodes arbitrary bytes, a
-%% mutated PNG with its CRCs mended or not, and a mutated zlib stream under
-%% a random limit, and asserts that every call ends with pixels or a
+%% mutated PNG with its CRCs mended or not, a PNG of random filtered rows
+%% and chunks compressed afresh, so they pass the Adler-32 and reach the
+%% unfiltering, the unpacking and the palette, a mutated zlib stream and
+%% arbitrary deflate data behind a valid zlib header under a random limit,
+%% and asserts that every call ends with pixels or a
 %% refusal, that decoded pixels fill exactly their rectangle's rows, that
 %% inflated bytes never pass the limit and agree with stock OTP's zlib
 %% whenever the limit does not decide, and that an interlaced image or one
@@ -39,16 +42,18 @@ round() ->
     png(Png, Chan),
     png(mutate(Png), Chan),
     png(mend(mutate(Png)), Chan),
+    png(hostile_rows(), Chan),
     Random = zlib:compress(rand:bytes(rand:uniform(300))),
     stream(Random, rand:uniform(600) - 1),
     stream(mutate(Random), rand:uniform(600) - 1),
     stream(mutate(zlib:compress(binary:copy(rand:bytes(rand:uniform(4)), rand:uniform(500)))), 1 bsl 20),
+    stream(<<16#78, 16#9c, (rand:bytes(rand:uniform(64)))/binary>>, rand:uniform(600) - 1),
     refused_unread(Chan).
 
 %% Any PNG decodes to exactly its rectangle's rows or a known refusal.
 png(Bytes, Chan) ->
     {ok, Depth} = erx_chan:depth(Chan),
-    case erx_png:decode(Bytes, #{chan => Chan, quota => ?QUOTA}) of
+    case unless_crashed(fun() -> erx_png:decode(Bytes, #{chan => Chan, quota => ?QUOTA}) end, Bytes) of
         {ok, {0, 0, W, H} = R, Pixels} when W > 0, H > 0 ->
             Rows = erx_draw_image:bytes_per_line(R, Depth) * H,
             byte_size(Pixels) =:= Rows orelse error({wrong_size, R, byte_size(Pixels), Bytes});
@@ -61,7 +66,7 @@ png(Bytes, Chan) ->
 %% A stream inflates to at most Limit bytes, and to what zlib makes of it
 %% when the limit does not decide.
 stream(Bytes, Limit) ->
-    case erx_inflate:zlib(Bytes, Limit) of
+    case unless_crashed(fun() -> erx_inflate:zlib(Bytes, Limit) end, Bytes) of
         {ok, Data, _Rest} when byte_size(Data) > Limit -> error({past_limit, Limit, byte_size(Data), Bytes});
         {ok, Data, _Rest} -> agree({ok, Data}, Bytes, Limit);
         {error, limit} -> ok;
@@ -76,6 +81,36 @@ agree(Ours, Bytes, Limit) ->
                 error:_ -> error
             end,
     Stock =:= Ours orelse error({disagrees_with_zlib, Ours, Stock, Bytes}).
+
+%% What Call returns; a crash, which no input may cause, fails the run
+%% with the function it crashed in and the input.
+unless_crashed(Call, Bytes) ->
+    try
+        Call()
+    catch
+        Class:Reason:Stack -> error({crashed, Class, Reason, hd(Stack), Bytes})
+    end.
+
+%% A small image of a random format whose filtered rows are random bytes
+%% behind random filter types, 0 to 7, so any sample and so any palette
+%% index; a PLTE that is short of the bit depth's entries, or of any size,
+%% for colour type 3 and at times for the others; and at times a tRNS of
+%% a key's size or of any size.
+hostile_rows() ->
+    #{height := H, depth := Depth, colour := Colour, rows := [Row | _]} = Image = erx_png_encode:random_image(),
+    Filtered = << <<(rand:uniform(8) - 1), (rand:bytes(byte_size(Row)))/binary>> || _ <- lists:seq(1, H) >>,
+    Palette = [{<<"PLTE">>, rand:bytes(any_or(3 * rand:uniform(1 bsl min(Depth, 8)), 800))}
+               || Colour =:= 3 orelse rand:uniform(4) =:= 1],
+    Trns = [{<<"tRNS">>, rand:bytes(any_or(lists:nth(rand:uniform(2), [2, 6]), 260))} || rand:uniform(2) =:= 1],
+    erx_png_encode:png([{<<"IHDR">>, erx_png_encode:header(Image)}] ++ Palette ++ Trns ++
+                       [{<<"IDAT">>, zlib:compress(Filtered)}]).
+
+%% Size most of the time, otherwise any size below Bound.
+any_or(Size, Bound) ->
+    case rand:uniform(3) of
+        1 -> rand:uniform(Bound) - 1;
+        _ -> Size
+    end.
 
 %% An interlaced image and one past the quota, with garbage image data.
 refused_unread(Chan) ->

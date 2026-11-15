@@ -5,6 +5,7 @@
 require 'open3'
 require 'optparse'
 require 'tmpdir'
+require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_png and erx_inflate, the PNG reader of the Erlang renderer and
 # its inflate (docs/design-display.md, "Verification and testing"): arbitrary bytes,
@@ -24,8 +25,11 @@ module ErxPngFuzz
 
   # In a directory of its own, which also takes the crash dump of a failed round.
   def run(seed:)
+    Erx::Generated.ensure(root: ROOT)
+    include = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
     Dir.mktmpdir('erx-png-fuzz') do |work|
-      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'),
+                                       '-I', include, '-o', work,
                                        *SOURCES, stdin_data: '')
       abort(output) unless status.success?
 

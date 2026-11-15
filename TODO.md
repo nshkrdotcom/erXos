@@ -1221,12 +1221,6 @@ it; git history is the record of completed work.
 * [Low] `test/erlang/erx_draw_ref.erl` and `erlang/apps/erx_win/src/erx_draw_core.erl`: `supported_chan/2` is
   copied between the core and the reference, so a change to the channels `b` refuses must be made in both. Export it
   from the core, or keep the copy as the oracle's own and say so in it.
-* [Low] `erlang/apps/erx_win/src/erx_png.erl`, [The widget server](docs/design-display.md#the-widget-server): the
-  admission bounds the decoded pixels in the caller's channel, not the filtered rows `erx_inflate` may produce,
-  which for a 16-bit RGBA PNG decoded into `k1` are 64 times their charge. What bounds them is the widget format's
-  48 KiB cap on an `image` (deflate's 1032:1 ratio, about 50 MiB in the client's own runtime), which `erx_png`
-  neither states nor checks. Bound the filtered size in the design and in `erx_png`, by the quota left or by a
-  fixed multiple of it.
 * [Low] `display/memdraw/erx_memdraw_nif.c`: `ERL_NIF_INIT` gives no `upgrade` callback, so reloading `erx_memdraw`
   while images are live fails rather than taking over the resource type. Add one (`enif_open_resource_type` with
   `ERL_NIF_RT_TAKEOVER`) when hot reload of the display domain is wanted.

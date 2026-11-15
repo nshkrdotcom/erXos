@@ -54,8 +54,14 @@ class ErxUISchemaTest < Minitest::Test
     assert_equal 13 + 5 + 5 + 5 + 1, schema.insert_max.fetch('slider')
   end
 
+  def test_bound_names_a_root_limit
+    schema = read("#{BASE}  bytes blob @ui_children\n  prop blob 8 blob\n")
+    assert_equal 1024, schema.properties.find { |property| property.name == 'blob' }.type.maximum
+  end
+
   def test_generator_refusals
     {
+      'no root limit @no_such_limit' => "  bytes blob @no_such_limit\n",
       'duplicate number' => "  prop other 2 caption\n",
       'duplicate ui name' => "  prop text 9 caption\n",
       'duplicate ui name image' => "  integer image 0 1\n",

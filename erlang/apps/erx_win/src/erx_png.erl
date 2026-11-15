@@ -14,12 +14,17 @@ chunks, which are consecutive; an unknown chunk is skipped when it is
 ancillary and refused when it is critical. What libpng and the browsers
 pass over, so that every renderer shows the same images (decision 15), is
 passed over here too: bytes after IEND, bytes after the end of the image
-data's zlib stream, and tRNS alphas past the palette's end.
+data's zlib stream, and tRNS alphas past the palette's end. A tRNS that is
+repeated, comes after the image data or belongs to no colour type that
+takes one is passed over, as any ancillary chunk the reader does not use.
 
-Before anything is inflated, the header is checked, an interlaced image is
-refused, and the image is put to erx_draw_core's admission of an image of
-its size in the channel asked for, which bounds its sides and charges its
-pixel bytes against what is left of the draw connection's quota. Then
+A PNG longer than the widget format lets an `image` node's picture be
+(ui_picture_bytes) is refused. Before anything is inflated, the header is
+checked, an interlaced image is refused, and the image is put to
+erx_draw_core's admission of an image of its size in the channel asked
+for, which bounds its sides and charges its pixel bytes against what is
+left of the draw connection's quota; the filtered rows must each fit what
+is left too, so a decode holds at most about twice what is left. Then
 erx_inflate must yield the filtered rows the header declares, a filter
 byte and the packed samples of each row: it stops the moment its output
 would pass them, and a stream that ends short of them is refused.
@@ -38,13 +43,17 @@ and an ignored channel zeros. A channel with a colour map is refused.
 -export([decode/2]).
 -export_type([reason/0]).
 
+-include("generated/erx_abi.hrl").
+
 -doc """
 Why a PNG is refused: `signature`, bytes that are not a PNG; `chunk`, a
-chunk that is cut short, too long or misnamed; `crc`, a chunk whose CRC
-does not match; `order`, chunks missing, repeated or out of place, or an
-unknown critical chunk; `header`, an IHDR of no valid size or format;
-`interlaced`, an Adam7 image; `too_large`, an image whose sides the draw
-connection refuses, and `quota`, one whose pixels pass the quota left;
+chunk that is cut short, too long or misnamed, or an IEND with data;
+`crc`, a chunk whose CRC does not match; `order`, a critical chunk
+missing, repeated or out of place, or an unknown one; `header`, an IHDR
+of no valid size or format; `interlaced`, an Adam7 image; `too_large`, a
+PNG longer than an `image` node's picture may be or an image whose sides
+the draw connection refuses, and `quota`, one whose pixels or filtered
+rows pass the quota left;
 `palette`, a PLTE or tRNS whose size does not fit the image; `filter`, a
 row of an unknown filter type; `channel`, a channel with a colour map;
 `{inflate, Reason}`, image data erx_inflate refuses; and `size`, image data
@@ -86,43 +95,69 @@ fail(Reason) -> throw({?MODULE, Reason}).
 check(true, _Reason) -> ok;
 check(false, Reason) -> fail(Reason).
 
-image(<<Signature:8/binary, Chunks/binary>>, Chan, Quota) when Signature =:= ?SIGNATURE ->
+%% A decode's stages, each refusing through fail/1: the length and the
+%% channel, the chunks, the admission, the inflate, then the rows.
+image(Png, Chan, Quota) ->
+    check(byte_size(Png) =< ?ERX_UI_PICTURE_BYTES, too_large),
     {ok, Depth} = erx_chan:depth(Chan),
     Channels = erx_chan:channels(Chan),
     check(not lists:keymember(map, 1, Channels), channel),
+    {#{width := W, height := H} = Header, Colours, Idat} = validate(Png),
+    R = {0, 0, W, H},
+    Line = row_bytes(Header),
+    Filtered = H * (1 + Line),
+    admit(R, Depth, Filtered, Quota),
+    Data = inflate_rows(Idat, Filtered),
+    Pack = fun(Row) -> pack(Row, Header, Colours, Channels, Depth) end,
+    {R, rows(Data, Line, bytes_per_pixel(Header), <<0:(Line * 8)>>, Pack, <<>>)}.
+
+%% The signature and the chunks, read and checked: the header, the pixels'
+%% colours and the image data.
+-spec validate(binary()) -> {header(), colours(), binary()}.
+validate(<<Signature:8/binary, Chunks/binary>>) when Signature =:= ?SIGNATURE ->
     case chunks(Chunks, []) of
         [{<<"IHDR">>, Fields} | Rest] ->
-            #{width := W, height := H} = Header = header(Fields),
-            R = {0, 0, W, H},
-            case erx_draw_core:admit(R, Depth, Quota) of
-                ok -> ok;
-                {error, einval} -> fail(too_large);
-                {error, enomem} -> fail(quota)
-            end,
+            Header = header(Fields),
             {Colours, Idat} = image_chunks(Rest, Header),
-            Line = row_bytes(Header),
-            Filtered = H * (1 + Line),
-            Data = case erx_inflate:zlib(Idat, Filtered) of
-                       {ok, Inflated, _After} when byte_size(Inflated) =:= Filtered -> Inflated;
-                       {ok, _Short, _After} -> fail(size);
-                       {error, Reason} -> fail({inflate, Reason})
-                   end,
-            Pack = fun(Row) -> pack(Row, Header, Colours, Channels, Depth) end,
-            {R, rows(Data, Line, max(1, maps:get(pixel_bits, Header) div 8), <<0:(Line * 8)>>, Pack, <<>>)};
+            {Header, Colours, Idat};
         _ ->
             fail(order)
     end;
-image(_Png, _Chan, _Quota) ->
+validate(_Png) ->
     fail(signature).
 
-%% The chunks up to IEND, each CRC checked.
+%% The draw connection's admission of an image of rectangle R, and the
+%% Filtered bytes of the filtered rows, which must fit the quota left as
+%% well: a PNG of deep samples read into a shallow channel has many more
+%% of them than pixel bytes. Each fits what is left, so a decode holds
+%% at most about twice it.
+admit(R, Depth, Filtered, #{pixels := Left} = Quota) ->
+    case erx_draw_core:admit(R, Depth, Quota) of
+        ok -> check(Filtered =< Left, quota);
+        {error, einval} -> fail(too_large);
+        {error, enomem} -> fail(quota)
+    end.
+
+%% The image data inflated to exactly the Filtered bytes of the rows.
+inflate_rows(Idat, Filtered) ->
+    case erx_inflate:zlib(Idat, Filtered) of
+        {ok, Inflated, _After} when byte_size(Inflated) =:= Filtered -> Inflated;
+        {ok, _Short, _After} -> fail(size);
+        {error, Reason} -> fail({inflate, Reason})
+    end.
+
+%% The distance, in bytes, from a byte to the one it is filtered against
+%% (section 7.3): a pixel's bytes, at least one.
+bytes_per_pixel(#{pixel_bits := Bits}) -> max(1, Bits div 8).
+
+%% The chunks up to IEND, which holds no data, each CRC checked.
 chunks(<<Length:32, Type:4/binary, Rest/binary>>, Acc) when Length =< ?MAX_LENGTH ->
     check(lists:all(fun letter/1, binary_to_list(Type)), chunk),
     case Rest of
         <<Data:Length/binary, Crc:32, After/binary>> ->
             check(erlang:crc32([Type, Data]) =:= Crc, crc),
             case Type of
-                <<"IEND">> -> lists:reverse(Acc);
+                <<"IEND">> -> check(Data =:= <<>>, chunk), lists:reverse(Acc);
                 _ -> chunks(After, [{Type, Data} | Acc])
             end;
         _ ->
@@ -179,6 +214,11 @@ chunk({<<"PLTE">>, Data}, #{phase := before, plte := none, trns := none} = Seen,
 chunk({<<"tRNS">>, Data}, #{phase := before, trns := none} = Seen, #{colour := Colour})
   when Colour =:= 0; Colour =:= 2; Colour =:= 3 ->
     Seen#{trns := Data};
+%% Any other tRNS, a second one, one after the image data or one for a
+%% colour type with an alpha channel, is passed over as any ancillary
+%% chunk the reader does not use is.
+chunk({<<"tRNS">>, _Data}, Seen, _Header) ->
+    Seen;
 chunk({<<First, _/binary>>, _Data}, Seen, _Header) when First >= $a ->
     Seen;
 chunk(_Chunk, _Seen, _Header) ->

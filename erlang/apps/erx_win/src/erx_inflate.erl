@@ -106,22 +106,22 @@ block(0, Bits, Out, Limit) ->
             fail(truncated)
     end;
 block(1, Bits, Out, Limit) ->
-    codes(fixed_lengths(), fixed_distances(), Bits, Out, Limit);
+    codes(fixed_literal_code(), fixed_distance_code(), Bits, Out, Limit);
 block(2, Bits0, Out, Limit) ->
-    {Lengths, Distances, Bits} = dynamic(Bits0),
-    codes(Lengths, Distances, Bits, Out, Limit);
+    {LitCode, DistCode, Bits} = dynamic(Bits0),
+    codes(LitCode, DistCode, Bits, Out, Limit);
 block(3, _Bits, _Out, _Limit) ->
     fail(block).
 
-%% RFC 1951 3.2.6's codes, as huffman/2 would build them, written out so a
-%% stream of short fixed blocks costs no more than its codes: literals and
+%% RFC 1951 3.2.6's fixed codes, in the form huffman/2 builds: literals and
 %% lengths 0-143 take 8 bits, 144-255 9, 256-279 7 and 280-287 8; the 32
-%% distances take 5 bits each.
-fixed_lengths() ->
+%% distances take 5 bits each. They are written out rather than built, so
+%% that a stream of many short fixed blocks does not build them for each.
+fixed_literal_code() ->
     {{0, 0, 0, 0, 0, 0, 24, 152, 112, 0, 0, 0, 0, 0, 0},
      list_to_tuple(lists:seq(256, 279) ++ lists:seq(0, 143) ++ lists:seq(280, 287) ++ lists:seq(144, 255))}.
 
-fixed_distances() ->
+fixed_distance_code() ->
     {{0, 0, 0, 0, 32, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0}, list_to_tuple(lists:seq(0, 31))}.
 
 %% RFC 1951 3.2.7: HLIT, HDIST and HCLEN, the code-length code's lengths
@@ -137,11 +137,11 @@ dynamic(Bits0) ->
     {Ordered, Bits4} = fields(HCLen + 4, 3, Bits3, []),
     Order = [16, 17, 18, 0, 8, 7, 9, 6, 10, 5, 11, 4, 12, 3, 13, 2, 14, 1, 15],
     Placed = maps:from_list(lists:zip(lists:sublist(Order, length(Ordered)), Ordered)),
-    LengthCode = huffman([maps:get(Symbol, Placed, 0) || Symbol <- lists:seq(0, 18)], code_lengths),
-    {All, Bits} = code_lengths(LengthCode, NLengths + NDistances, Bits4, []),
+    CodeLengthCode = huffman([maps:get(Symbol, Placed, 0) || Symbol <- lists:seq(0, 18)], code_lengths),
+    {All, Bits} = code_lengths(CodeLengthCode, NLengths + NDistances, Bits4, []),
     {LitLengths, DistLengths} = lists:split(NLengths, All),
     check(lists:nth(257, LitLengths) > 0, codes),
-    {huffman(LitLengths, lengths), huffman(DistLengths, distances), Bits}.
+    {huffman(LitLengths, literals), huffman(DistLengths, distances), Bits}.
 
 %% Count fields of Width bits each, in order.
 fields(0, _Width, Bits, Acc) ->
@@ -176,23 +176,23 @@ repeat(Length, Base, Width, Bits0) ->
 %% Literals, back-references and the end of block, 256, which ends the
 %% loop. 286 and 287, which the fixed code has, are reserved, as are
 %% distances 30 and 31.
-codes(Lengths, Distances, Bits0, Out, Limit) ->
-    case decode(Lengths, Bits0) of
+codes(LitCode, DistCode, Bits0, Out, Limit) ->
+    case decode(LitCode, Bits0) of
         {Literal, Bits} when Literal < 256 ->
-            codes(Lengths, Distances, Bits, put(Out, <<Literal>>, Limit), Limit);
+            codes(LitCode, DistCode, Bits, put(Out, <<Literal>>, Limit), Limit);
         {256, Bits} ->
             {Out, Bits};
         {Symbol, Bits1} when Symbol =< 285 ->
             {Length, Bits2} = extra(Symbol - 257, length_bases(), length_extras(), Bits1),
             {Distance, Bits} =
-                case decode(Distances, Bits2) of
+                case decode(DistCode, Bits2) of
                     {DistanceSymbol, Bits3} when DistanceSymbol < 30 ->
                         extra(DistanceSymbol, distance_bases(), distance_extras(), Bits3);
                     _ ->
                         fail(symbol)
                 end,
             check(Distance =< byte_size(Out), distance),
-            codes(Lengths, Distances, Bits, put(Out, copy(Out, Distance, Length), Limit), Limit);
+            codes(LitCode, DistCode, Bits, put(Out, copy(Out, Distance, Length), Limit), Limit);
         _ ->
             fail(symbol)
     end.
@@ -233,7 +233,7 @@ put(Out, Bytes, Limit) ->
 %% The canonical code of Lengths, one length a symbol and 0 for a symbol
 %% with no code, as puff's construct builds it. Kind is how zlib's
 %% inflate_table judges a set that leaves codes unused.
--spec huffman([0..?MAX_BITS], code_lengths | lengths | distances) -> code().
+-spec huffman([0..?MAX_BITS], code_lengths | literals | distances) -> code().
 huffman(Lengths, Kind) ->
     Coded = lists:sort([{Length, Symbol} || {Symbol, Length} <- lists:enumerate(0, Lengths), Length > 0]),
     Tally = lists:foldl(fun({Length, _}, Seen) -> maps:update_with(Length, fun(N) -> N + 1 end, 1, Seen) end,

@@ -13,6 +13,9 @@
 limit ui_children u32 1024
 # The most rectangles one damage report carries.
 limit ui_damage_rects u32 16
+# The most encoded bytes an image node's picture holds, which the PNG
+# reader erx_png also refuses beyond.
+limit ui_picture_bytes u32 49152
 
 # Placement of a node within the room it gets.
 enum ui_align u8
@@ -31,7 +34,7 @@ ui 1
   text short 255 utf8
   text item 128 utf8
   list items item 256
-  bytes picture 49152
+  bytes picture @ui_picture_bytes
   image png 1 "image/png"
   prop key 1 key common
   prop width 2 size common

@@ -13,7 +13,7 @@ require_relative '../fixtures/erlang_build'
 # emulator (ERX_ERL and ERX_ERLC, which make check supplies). Then each seeded
 # fault of docs/design-display.md's "Verification and testing", applied to a
 # copy of erx_png or erx_inflate, must fail the case named for it, or the fuzz
-# run.
+# run with the failure its pattern matches.
 class ErxPngTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx_win].freeze
@@ -33,7 +33,7 @@ class ErxPngTest < Minitest::Test
              replacement: 'check(true, limit),', catching_case: 'limit_test'),
     Seed.new(fault: 'the output bound removed, under the fuzz target', source: INFLATE,
              anchor: 'check(byte_size(Out) + byte_size(Bytes) =< Limit, limit),',
-             replacement: 'check(true, limit),', catching_case: :fuzz),
+             replacement: 'check(true, limit),', catching_case: /past_limit/),
     Seed.new(fault: "an off-by-one in a back-reference's distance", source: INFLATE,
              anchor: 'put(Out, copy(Out, Distance, Length), Limit)',
              replacement: 'put(Out, copy(Out, max(1, Distance - 1), Length), Limit)',
@@ -47,6 +47,20 @@ class ErxPngTest < Minitest::Test
     Seed.new(fault: 'the image not put to the draw connection', source: PNG,
              anchor: 'case erx_draw_core:admit(R, Depth, Quota) of', replacement: 'case ok of',
              catching_case: 'quota_test'),
+    Seed.new(fault: 'the filtered rows not charged to the quota', source: PNG,
+             anchor: 'ok -> check(Filtered =< Left, quota);', replacement: 'ok -> ok;', catching_case: 'bomb_test'),
+    Seed.new(fault: 'the picture cap unchecked', source: PNG,
+             anchor: 'check(byte_size(Png) =< ?ERX_UI_PICTURE_BYTES, too_large),', replacement: 'ok,',
+             catching_case: 'picture_cap_test'),
+    Seed.new(fault: 'an unknown filter type read, under the fuzz target', source: PNG,
+             anchor: 'rows(<<Filter, Data/binary>>, Line, Bpp, Prior, Pack, Out) when Filter =< 4 ->',
+             replacement: 'rows(<<Filter, Data/binary>>, Line, Bpp, Prior, Pack, Out) ->',
+             catching_case: /crashed,error,function_clause,\{erx_png,predict/),
+    Seed.new(fault: 'a palette index past the palette read, under the fuzz target', source: PNG,
+             anchor: "entry(Index, Palette) when Index < tuple_size(Palette) -> element(Index + 1, Palette);\n" \
+                     "entry(_Index, _Palette) -> {0, 0, 0, 255}.\n",
+             replacement: "entry(Index, Palette) -> element(Index + 1, Palette).\n",
+             catching_case: /crashed,error,badarg,\{erlang,element/),
     Seed.new(fault: 'every code-length set taken as usable', source: INFLATE,
              anchor: 'usable(_Left, _Longest, _Kind) -> false.', replacement: 'usable(_Left, _Longest, _Kind) -> true.',
              catching_case: 'incomplete_codes_test_'),
@@ -75,7 +89,7 @@ class ErxPngTest < Minitest::Test
     end
     runs = SEEDS.map do |seed|
       seeded = { seed.source => sources.fetch(seed.source).sub(seed.anchor, seed.replacement) }
-      command = seed.catching_case == :fuzz ? fuzz_command : eunit_command
+      command = seed.catching_case.is_a?(Regexp) ? fuzz_command : eunit_command
       Thread.new { [seed, *run_cases(seeded, command)] }
     end
     runs.map(&:value).each do |seed, output, status|
@@ -90,11 +104,12 @@ class ErxPngTest < Minitest::Test
 
   def fuzz_command = "erx_png_fuzz:rounds(1, #{FUZZ_ROUNDS}), halt(0)"
 
-  # What the output shows when the case named, or the fuzz target, caught a fault: the fuzz
-  # target's past_limit, the one assertion a seed it is named for breaks; or the case's
-  # failure, EUnit naming a plain case by its function and a generator's by the fun inside it.
+  # What the output shows when the case named, or the fuzz target, caught a fault: for the
+  # fuzz target, the pattern of the one failure the seed breaks, given in place of a name;
+  # or the case's failure, EUnit naming a plain case by its function and a generator's by
+  # the fun inside it.
   def caught_by(name)
-    return /past_limit/ if name == :fuzz
+    return name if name.is_a?(Regexp)
 
     %r{#{Regexp.escape(name)}(/0-fun-\d+-)?\.\.\.(\[[^\]]*\] )?\*failed\*}
   end

@@ -3341,13 +3341,15 @@ properties changed through `erx_draw` into the window's buffer, with
 glyphs from a subfont it loaded, then presents the union of their
 rectangles. It reads `mouse` and `kbd`, and hit testing is the layout's
 rectangles. It decodes an `image` node's PNG with `erx_png`, in
-Erlang. Before anything is inflated, the reader checks the header's
+Erlang. The reader refuses a PNG longer than the widget format's cap
+on an `image` (`ui_picture_bytes`). Before anything is inflated, it checks the header's
 width, height, bit depth, colour type and interlace method, refuses
 an interlaced image, and computes with checked arithmetic two sizes:
 the filtered rows the header declares, one filter byte and the packed
 samples per row, and the decoded image's pixel bytes in the window's
 channel, rounded up as every image is, which must fit what remains of
-the draw connection's pixel quota. `erx_inflate`, an Erlang inflate written for
+the draw connection's pixel quota; the filtered size must fit it too,
+so a decode holds at most about twice what remains. `erx_inflate`, an Erlang inflate written for
 it, must then yield exactly the filtered size: it stops with an error
 the moment its output would pass it, and a stream that ends short of
 it, or input that ends before the stream does, is refused. A refused image is shown as
@@ -4489,6 +4491,13 @@ Each passing case has a seeded failure that proves the code ran.
   the filtered size the header declares, and that an interlaced image,
 or one whose decoded pixel bytes pass the draw connection's remaining
 pixel quota, is refused before anything is inflated, where a seeded removal of the output bound fails it.
+  Its PNGs of random filtered rows, filter types and palettes, compressed
+  afresh so they pass the Adler-32, reach the unfiltering and the palette,
+  where a seeded read of an unknown filter type or of an index past the
+  palette fails it.
+  Its cases refuse a PNG longer than `ui_picture_bytes` and one whose
+  filtered size passes the remaining quota though its pixels fit, before
+  anything is inflated, where a seeded removal of either check fails them.
   `erx_inflate` is tested differentially against stock OTP's `zlib` on
   the host over the corpus, accepting the same streams and yielding the
   same bytes, where a seeded off-by-one in a back-reference's distance

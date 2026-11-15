@@ -108,14 +108,15 @@ module Erx
         declaration.fail!('ui_damage_rects must lie in 1..255 and its report within web_ui_op_max') unless
           damage_max.between?(1, 255) && 6 + (8 * damage_max) <= op_max
         declaration.fail!('ui_children must lie in 1..65536, an index being a u16') unless children_max.between?(1, 65_536)
-        Reader.new(declaration, types).schema(version, op_max: op_max, children_max: children_max, damage_max: damage_max)
+        Reader.new(declaration, types, limits).schema(version, op_max: op_max, children_max: children_max, damage_max: damage_max)
       end
 
       # Validation state for one declaration: the members grouped with their
       # four-space lines, then each family resolved against the earlier ones.
       class Reader
-        def initialize(declaration, root_types)
+        def initialize(declaration, root_types, root_limits)
           @root_types = root_types
+          @root_limits = root_limits
           @groups = declaration.members.each_with_object([]) do |line, groups|
             if line.indent == 2
               groups << [line, []]
@@ -220,8 +221,13 @@ module Erx
           end
         end
 
+        # A bound written as a number or as a root limit's @name.
         def bound(word, maximum, line)
-          value = Syntax.integer(word, line: line)
+          value = if word.start_with?('@')
+                    @root_limits.fetch(word.delete_prefix('@')) { line.fail!("no root limit #{word}") }
+                  else
+                    Syntax.integer(word, line: line)
+                  end
           line.fail!("bound #{value} outside 0..#{maximum}") unless value.between?(0, maximum)
           value
         end
