@@ -7,10 +7,16 @@ The tty's side of the six messages between a session's tty and its master
 (docs/design-live.md, "Between domains", "A lost answer does not stop a
 tty" and "A stopped tty"), as a pure state machine: each call takes one
 event and returns the actions it decides, in order, and the next state.
-erx_session_tty carries the actions out.
+The calls only change what is held; send/1, which the owner calls once at
+the end of each step, sends what is held, as FreeBSD wakes the device once
+after a step's input or a write (ttydisc_rint_done, tty_ttydisc.c:1293-1305;
+the end of ttydisc_write, :653-658). So nothing a step drops, by a flush,
+reaches the master before the drop, and what the master has outstanding
+changes only between steps. erx_session_tty and erx_session_relay_core
+carry the actions out.
 
 The tty has one output outstanding at a time, numbered from 0. It sends
-the bytes once, as `{tty_output, N, Bytes}`, and asks for a timer; when
+the bytes held once, as `{tty_output, N, Bytes}`, and asks for a timer; when
 the timer for N fires with N still outstanding, it names itself again
 with `{tty_open, Tty}`, sends `{tty_output, N, <<>>}` and asks again, so a
 lost `{tty_taken, N}` is asked for once a second until it comes. The timer
@@ -40,11 +46,13 @@ table gives; a message that fails it is dropped and counted.
 The line discipline's actions on output reach it as calls: flush/1 drops
 what it holds but the outstanding output, which the master already has,
 and stop/1 and start/1 hold output back and let it go again, as VSTOP and
-VSTART do. room/1 is the room the line discipline is given, derived from
-what it holds, so its owner counts nothing itself.
+VSTART do. Output stopped is recorded here alone; writes still fill what
+is held while it is stopped, as FreeBSD's do. room/1 is the room the line
+discipline is given, derived from what it holds, so its owner counts
+nothing itself.
 """.
 
--export([new/0, write/3, master/2, timeout/2, flush/1, stop/1, start/1]).
+-export([new/0, write/3, master/2, timeout/2, flush/1, stop/1, start/1, send/1]).
 -export([held/1, room/1, stopped/1, waiting/1, counts/1]).
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
@@ -110,12 +118,12 @@ write(none, Bytes, L = #link{unowned = Unowned, counts = Counts})
     {[], L#link{counts = bump(output_dropped, Counts)}};
 write(Writer, Bytes, L = #link{waiting = Waiting, unowned = Unowned}) ->
     Added = case Writer of none -> byte_size(Bytes); _ -> 0 end,
-    send(L#link{waiting = queue:in({Writer, Bytes}, Waiting), unowned = Unowned + Added}).
+    fill(L#link{waiting = queue:in({Writer, Bytes}, Waiting), unowned = Unowned + Added}).
 
 -doc "One of the master's messages, checked as the design's table says.".
 -spec master(term(), link()) -> {[action()], link()}.
 master({tty_taken, N}, L = #link{outstanding = {N, _Size}, hung_up = false}) ->
-    send(L#link{outstanding = none});
+    fill(L#link{outstanding = none});
 master({tty_taken, _N}, L) ->
     {[], L};
 master({tty_input, Bytes}, L = #link{hung_up = false})
@@ -162,21 +170,34 @@ flush(L = #link{waiting = Waiting}) ->
     Done = lists:append([done(Writer) || {Writer, _Left} <- queue:to_list(Waiting)]),
     {Done, L#link{held = <<>>, waiting = queue:new(), unowned = 0}}.
 
--doc "Output stops: what is held waits until start/1.".
+-doc "Output stops: what is held waits until start/1; writes still fill it.".
 -spec stop(link()) -> link().
 stop(L) -> L#link{stopped = true}.
 
--doc "Output starts again, and what is held is sent.".
--spec start(link()) -> {[action()], link()}.
-start(L) -> send(L#link{stopped = false}).
+-doc "Output starts again: the next send/1 sends what is held.".
+-spec start(link()) -> link().
+start(L) -> L#link{stopped = false}.
+
+-doc """
+The end of a step: what is held goes to the master as a new output, if
+nothing is outstanding and output is not stopped.
+""".
+-spec send(link()) -> {[action()], link()}.
+send(L = #link{outstanding = none, held = Held, next = N, stopped = false})
+  when Held =/= <<>> ->
+    {[{output, N, Held}, {resend_after, N}],
+     L#link{outstanding = {N, byte_size(Held)}, held = <<>>, next = N + 1}};
+send(L) ->
+    {[], L}.
 
 -doc """
 The room for the line discipline, as erx_tty's room(): what is free of the
-4 KiB, and the outstanding output, which a flush cannot drop.
+4 KiB, the outstanding output, which a flush cannot drop, and whether output
+is stopped.
 """.
 -spec room(link()) -> erx_tty:room().
-room(L = #link{outstanding = Outstanding}) ->
-    {?MAX_HELD - held(L), outstanding_size(Outstanding)}.
+room(L = #link{outstanding = Outstanding, stopped = Stopped}) ->
+    {?MAX_HELD - held(L), outstanding_size(Outstanding), Stopped}.
 
 -doc "The bytes held, the outstanding output among them; never more than 4 KiB.".
 -spec held(link()) -> non_neg_integer().
@@ -197,20 +218,10 @@ counts(#link{counts = Counts}) -> Counts.
 
 %%% The core's steps
 
-%% Moves what fits from the waiting writers into the held bytes, and sends the
-%% held bytes if nothing is outstanding. The outstanding output counts as held,
-%% so sending makes no room.
-send(L0) ->
-    {Done, L1} = fill(L0, []),
-    {Sent, L2} = start_output(L1),
-    {Done ++ Sent, L2}.
-
-start_output(L = #link{outstanding = none, held = Held, next = N, stopped = false})
-  when Held =/= <<>> ->
-    {[{output, N, Held}, {resend_after, N}],
-     L#link{outstanding = {N, byte_size(Held)}, held = <<>>, next = N + 1}};
-start_output(L) ->
-    {[], L}.
+%% Moves what fits from the waiting writers into the held bytes. The
+%% outstanding output counts as held, so only its taking makes room.
+fill(L) ->
+    fill(L, []).
 
 fill(L = #link{waiting = Waiting, held = Held, unowned = Unowned}, Done) ->
     Room = ?MAX_HELD - held(L),

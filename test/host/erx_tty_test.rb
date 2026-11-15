@@ -28,7 +28,7 @@ class ErxTtyTest < Minitest::Test
     eof_as_empty: Fault.new(text: '<<>> -> eof;', broken: '<<>> -> {ok, <<>>};', property: /read_differs/),
     echo_without_echo: Fault.new(text: 'case on(echo, Tty) orelse (Char =:= $\n andalso on(echonl, Tty)) of',
                                  broken: 'case true of', property: /echo_without_echo/),
-    onlcr_without_opost: Fault.new(text: 'case {Stopped, on(opost, Tty)} of', broken: 'case {Stopped, true} of',
+    onlcr_without_opost: Fault.new(text: 'case on(opost, Tty) of', broken: 'case true of',
                                    property: /opost_clear_changes_bytes/),
     vstatus_without_iexten: Fault.new(text: 'case on(icanon, Tty) andalso on(iexten, Tty) andalso',
                                       broken: 'case on(icanon, Tty) andalso', property: /vstatus/),
@@ -48,6 +48,9 @@ class ErxTtyTest < Minitest::Test
                                        property: /echo_at_its_bound/),
     # Each call starts with a fresh bound of its own, whatever room the
     # owner has, so a chunk that a signal key cuts into calls echoes more.
+    # Output stopped is the owner's: input/3 takes it from the room it is given.
+    stopped_not_taken: Fault.new(text: 'out_stopped = Stopped}),', broken: 'out_stopped = false}),',
+                                 property: /signal_left_output_stopped/),
     echo_bound_per_call: Fault.new(text: 'keys(Bytes, [], Tty0#tty{echo_room = Free,',
                                    broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096,',
                                    property: /echo_across_calls_takes_one_room/),
@@ -90,6 +93,8 @@ class ErxTtyTest < Minitest::Test
   def test_an_end_of_file_read_as_empty_fails = assert_fault_fails(:eof_as_empty)
 
   def test_onlcr_with_opost_clear_fails = assert_fault_fails(:onlcr_without_opost)
+
+  def test_output_stopped_not_taken_from_the_room_fails = assert_fault_fails(:stopped_not_taken)
 
   def test_vstatus_without_iexten_fails = assert_fault_fails(:vstatus_without_iexten)
 

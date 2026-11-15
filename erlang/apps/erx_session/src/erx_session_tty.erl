@@ -142,8 +142,11 @@ loop(Tty = #{link := Link, console := Console, master := Master}) ->
             loop(Tty)
     end.
 
-effects({Actions, Link}, Tty) ->
-    lists:foreach(fun(Action) -> effect(Action, Tty) end, Actions),
+%% Every step ends here, so what it left held goes to the master once, after
+%% its own actions (erx_tty_link:send/1).
+effects({Actions, Link0}, Tty) ->
+    {Sent, Link} = erx_tty_link:send(Link0),
+    lists:foreach(fun(Action) -> effect(Action, Tty) end, Actions ++ Sent),
     Tty#{link := Link}.
 
 %% With no master, nothing is sent and no timer runs: the tty stays stopped.

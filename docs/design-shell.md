@@ -1369,10 +1369,17 @@ has answered the request. The core holds the line discipline's state and
 derives from what `erx_tty_link` holds, so no part of the relay counts echo
 or held bytes. A signal's `flush_output` empties what `erx_tty_link` holds
 but the output outstanding at the master, and drops the writers' messages
-not yet through `output/3`, which are answered then. After every step that
-can change who may read, every `read` and `in` wait is armed in the line
-discipline exactly when its open may read and parked otherwise, so no rule
-lists the steps that park or arm.
+not yet through `output/3`, which are answered then. Every step ends in
+one place: there every `read` and `in` wait is armed in the line discipline
+exactly when its open may read and parked otherwise, so no rule lists the
+steps that park or arm, and what the step left in `erx_tty_link` goes to
+the master, once. A step's calls only fill what `erx_tty_link` holds, so
+nothing a signal's flush drops, echo typed before the key or output held
+while output was stopped, reaches the master before the flush, as FreeBSD
+wakes the device once, after a step's input
+(`ttydisc_rint_done`, `sys/kern/tty_ttydisc.c:1293-1305`). Output stopped
+is `erx_tty_link`'s alone; writes fill what it holds while output is
+stopped, as FreeBSD's do.
 
 **Its parties.**
 
@@ -2664,8 +2671,9 @@ remain independent of catalog generation.
     with `gen_server:call(erx_tty_owner, _, infinity)`, each of which the
     check reports.
   * The runtime's writers: with output stopped by `VSTOP`, a
-    `tty_write` is not answered; after `VSTART` it is answered once its
-    bytes are held. A `tty_drain` is answered only when the fake master
+    `tty_write` is answered once its bytes are held and none reaches the
+    fake master; one past the room is answered after `VSTART`, once the
+    master has taken enough. A `tty_drain` is answered only when the fake master
     has answered every byte, at once after a hangup, and
     `erx_tty_owner` is free after it. Seeded: a `tty_write` answered when
     it arrives, which fails the stopped case; a drain answered when the

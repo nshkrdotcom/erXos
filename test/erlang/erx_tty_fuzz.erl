@@ -81,7 +81,7 @@ size_round() ->
     case erx_tty:size(Rows, Columns, Tty) of
         {ok, Actions, Sized} when Valid ->
             Changed = {Rows, Columns} =/= {24, 80},
-            check(Actions =:= [winch || Changed] andalso
+            check(Actions =:= [Action || Changed, Action <- [start_output, winch]] andalso
                       erx_tty:winsize(Sized) =:= {Rows, Columns}, size_not_kept, {Rows, Columns});
         {error, einval} when not Valid ->
             ok;
@@ -103,7 +103,8 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
         1 ->
             Bytes = random_input(Termios),
             Kept = pick([0, 0, 1, 4000, 4096, rand:uniform(4097) - 1]),
-            Room = {min(4096 - Kept, pick([0, 1, 7, 256, 4096, rand:uniform(4097) - 1])), Kept},
+            Room = {min(4096 - Kept, pick([0, 1, 7, 256, 4096, rand:uniform(4097) - 1])), Kept,
+                    pick([false, true])},
             {Actions, Rest, Left, Tty1} = erx_tty:input(Bytes, Room, Tty),
             Taken = byte_size(Bytes) - byte_size(Rest),
             check_input(Actions, Rest, {Room, Left}, {Termios, Tty, Tty1}, Bytes),
@@ -157,21 +158,32 @@ check_input(Actions, Rest, {Room, Left}, {Termios, Before, After}, Bytes) ->
 
 %% The echo before a flush_output fits Room, the echo after it the whole
 %% room the flush gives back, and the room returned is what the last of
-%% them left.
+%% them left, with output stopped as the stop_output and start_output
+%% among the actions left it, each of which changes it.
 %% The room is checked first, so a fault that breaks both fails one
 %% property whatever the seed.
-check_room(Actions, {Free, Kept} = Room, Left, Detail) ->
-    {Before, After} = lists:splitwith(fun(A) -> A =/= flush_output end, Actions),
-    Segments = case After of
-                   [] -> [{Before, Free}];
-                   [flush_output | Flushed] ->
-                       [{Before, Free}, {Flushed, erx_tty:master_room() - Kept}]
-               end,
+check_room(Actions, {Free, Kept, Stopped} = Room, Left, Detail) ->
+    StoppedAfter = lists:foldl(fun(stop_output, false) -> true;
+                                  (stop_output, true) -> fail(stop_while_stopped, Detail);
+                                  (start_output, true) -> false;
+                                  (start_output, false) -> fail(start_while_started, Detail);
+                                  (_, S) -> S
+                               end, Stopped, Actions),
+    Segments = segments(Actions, Free, erx_tty:master_room() - Kept),
     {Last, LastRoom} = lists:last(Segments),
-    check(Left =:= {LastRoom - echoed(Last), Kept}, room_left_wrong, {Detail, Room, Left}),
+    check(Left =:= {LastRoom - echoed(Last), Kept, StoppedAfter}, room_left_wrong,
+          {Detail, Room, Left}),
     [check(echoed(Echo) =< Within, echo_over_bound, {Detail, Room, Within, echoed(Echo)})
      || {Echo, Within} <- Segments],
     ok.
+
+%% The actions between flushes, each with the room its echo may take: Room
+%% before the first, and after each the whole room a flush gives back.
+segments(Actions, Room, Flushed) ->
+    case lists:splitwith(fun(A) -> A =/= flush_output end, Actions) of
+        {Before, []} -> [{Before, Room}];
+        {Before, [flush_output | After]} -> [{Before, Room} | segments(After, Flushed, Flushed)]
+    end.
 
 echoed(Actions) -> byte_size(iolist_to_binary([E || {echo, E} <- Actions])).
 

@@ -92,11 +92,14 @@ and takes no flow control.
 -doc "A read's timer: the open it times and a serial no other timer has.".
 -type timer() :: {open(), non_neg_integer()}.
 -doc """
-The room the owner has for the master, `{Free, Kept}`: what is free of
-master_room() now, and what it holds that a flush cannot drop, the output
-already sent to the master and not yet taken.
+The room the owner has for the master, `{Free, Kept, Stopped}`: what is
+free of master_room() now; what it holds that a flush cannot drop, the
+output already sent to the master and not yet taken; and whether output
+is stopped, which only the owner records, as FreeBSD keeps TF_STOPPED
+with the output queue (sys/sys/tty.h:82): while it is stopped, writes
+and echo still fill the room and nothing goes to the master.
 """.
--type room() :: {non_neg_integer(), non_neg_integer()}.
+-type room() :: {non_neg_integer(), non_neg_integer(), boolean()}.
 -type action() :: {echo, binary()}               % bytes for the master
                 | {signal, sigint | sigquit | sigtstp} % for the foreground group
                 | info                           % VSTATUS: the foreground job's status
@@ -121,7 +124,6 @@ already sent to the master and not yet taken.
     column = 0 :: non_neg_integer(),
     writepos = 0 :: non_neg_integer(),
     reprintpos = 0 :: non_neg_integer(),
-    stopped = false :: boolean(),
     hungup = false :: boolean(),
     waiters = #{} :: #{open() => waiter()},
     %% Opens whose read timer ended, so their next raw read with VMIN 0
@@ -134,7 +136,11 @@ already sent to the master and not yet taken.
     echo_room = 0 :: non_neg_integer(),
     %% What the owner holds for the master that a flush cannot drop, for
     %% the input/3 under way, 0 between calls.
-    echo_kept = 0 :: non_neg_integer()
+    echo_kept = 0 :: non_neg_integer(),
+    %% Whether output is stopped, for the input/3 under way, false between
+    %% calls: the owner records it, and input/3's keys change it as they
+    %% return stop_output and start_output.
+    out_stopped = false :: boolean()
 }).
 
 -opaque tty() :: #tty{}.
@@ -197,8 +203,8 @@ winsize(#tty{size = Size}) -> Size.
 -doc """
 Takes a window size the master reports, each side from 1 to 65,535, and
 refuses any other. It returns `winch` only when the size changes, after
-`start_output` when output was stopped, since SIGWINCH starts it as every
-signal does on FreeBSD (sys/kern/tty.c:1645-1648).
+`start_output`, since SIGWINCH starts output as every signal does on
+FreeBSD (sys/kern/tty.c:1646, :1536-1538).
 """.
 -spec size(term(), term(), tty()) -> {ok, [action()], tty()} | {error, einval}.
 size(Rows, Columns, #tty{size = Size} = Tty)
@@ -207,8 +213,7 @@ size(Rows, Columns, #tty{size = Size} = Tty)
     case Size of
         {Rows, Columns} -> {ok, [], Tty};
         _ ->
-            {Started, Tty1} = start([], Tty),
-            {ok, lists:reverse([winch | Started]), Tty1#tty{size = {Rows, Columns}}}
+            {ok, [start_output, winch], Tty#tty{size = {Rows, Columns}}}
     end;
 size(_, _, _) ->
     {error, einval}.
@@ -333,15 +338,18 @@ left of Room, or after a flush_output of master_room() less what the
 owner keeps, since the flush empties the rest of what it holds.
 """.
 -spec input(binary(), room(), tty()) -> {[action()], binary(), room(), tty()}.
-input(Bytes, {Free, Kept}, #tty{received = Before} = Tty0)
+input(Bytes, {Free, Kept, Stopped}, #tty{received = Before} = Tty0)
   when is_binary(Bytes), is_integer(Free), Free >= 0, is_integer(Kept), Kept >= 0,
-       Free + Kept =< ?MASTER_ROOM ->
-    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Free, echo_kept = Kept}),
+       Free + Kept =< ?MASTER_ROOM, is_boolean(Stopped) ->
+    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Free, echo_kept = Kept,
+                                                   out_stopped = Stopped}),
     Arrived = Tty1#tty.received > Before,
-    %% The echo room lives only within a call: it is read from Tty1 and
+    %% The room lives only within a call: it is read from Tty1 and
     %% cleared in the tty returned.
-    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0, echo_kept = 0}),
-    {merge(lists:reverse(Keyed)) ++ Settled, Rest, {Tty1#tty.echo_room, Kept}, Tty2}.
+    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0, echo_kept = 0,
+                                               out_stopped = false}),
+    {merge(lists:reverse(Keyed)) ++ Settled, Rest,
+     {Tty1#tty.echo_room, Kept, Tty1#tty.out_stopped}, Tty2}.
 
 %% The keys up to and including the first that makes a signal.
 keys(<<Byte, Rest/binary>>, Actions0, Tty0) ->
@@ -354,9 +362,9 @@ keys(<<>>, Actions, Tty) ->
 
 %% Actions are gathered newest first, and merge/1 joins neighbouring echoes.
 key(Byte, {Actions0, Tty0}) ->
-    {Actions, Tty} = case on(ixany, Tty0) andalso Tty0#tty.stopped of
+    {Actions, Tty} = case on(ixany, Tty0) andalso Tty0#tty.out_stopped of
                          true -> {[start_output | Actions0],
-                                  Tty0#tty{stopped = false}};
+                                  Tty0#tty{out_stopped = false}};
                          false -> {Actions0, Tty0}
                      end,
     Char = case on(istrip, Tty) of
@@ -396,8 +404,8 @@ signal_of(Char, Tty) ->
 
 %% A signal from a key starts stopped output, as FreeBSD's tty_signal_pgrp
 %% does (sys/kern/tty.c:1538-1540).
-start(Actions, #tty{stopped = true} = Tty) ->
-    {[start_output | Actions], Tty#tty{stopped = false}};
+start(Actions, #tty{out_stopped = true} = Tty) ->
+    {[start_output | Actions], Tty#tty{out_stopped = false}};
 start(Actions, Tty) ->
     {Actions, Tty}.
 
@@ -414,12 +422,12 @@ flush(Actions, Tty) ->
 
 %% IXON: VSTOP stops output and VSTART starts it; with both the same
 %% character, it toggles (tty_ttydisc.c:1140-1162).
-flow_key(Char, Actions, #tty{stopped = Stopped} = Tty) ->
+flow_key(Char, Actions, #tty{out_stopped = Stopped} = Tty) ->
     Stop = on(ixon, Tty) andalso is_char(vstop, Char, Tty),
     Start = on(ixon, Tty) andalso is_char(vstart, Char, Tty),
     if
-        Stop, not Stopped -> {[stop_output | Actions], Tty#tty{stopped = true}};
-        Start, Stopped -> {[start_output | Actions], Tty#tty{stopped = false}};
+        Stop, not Stopped -> {[stop_output | Actions], Tty#tty{out_stopped = true}};
+        Start, Stopped -> {[start_output | Actions], Tty#tty{out_stopped = false}};
         Stop; Start -> {Actions, Tty};
         true -> map_key(Char, Actions, Tty)
     end.
@@ -775,20 +783,19 @@ returns how many of Bytes it took and what they became. With OPOST clear
 the bytes are themselves; with OPOST, each control character becomes what
 its output flags make it (ttydisc_write_oproc), and a byte's rendering is
 never split, so 4 KiB of newlines with ONLCR and 4 KiB of room takes 2 KiB.
-Output stopped by VSTOP takes nothing.
+Output stopped by VSTOP takes bytes as any other output does, as FreeBSD's
+ttydisc_write fills the output queue whatever TF_STOPPED says
+(sys/kern/tty_ttydisc.c:560-665): the owner holds them until output starts.
 """.
 -spec output(binary(), non_neg_integer(), tty()) ->
           {non_neg_integer(), binary(), tty()}.
-output(Bytes, Room, #tty{stopped = Stopped} = Tty)
-  when is_binary(Bytes), is_integer(Room), Room >= 0 ->
-    case {Stopped, on(opost, Tty)} of
-        {true, _} ->
-            {0, <<>>, Tty};
-        {false, false} ->
+output(Bytes, Room, Tty) when is_binary(Bytes), is_integer(Room), Room >= 0 ->
+    case on(opost, Tty) of
+        false ->
             Taken = min(Room, byte_size(Bytes)),
             <<Out:Taken/binary, _/binary>> = Bytes,
             {Taken, Out, wrote(Taken, forward(Taken, Tty), Tty)};
-        {false, true} ->
+        true ->
             post_bytes(Bytes, Room, 0, [], Tty)
     end.
 

@@ -542,10 +542,11 @@ on the host:
 * `input(Bytes, Room, Tty)` returns what to do (bytes to echo, a signal
   for the foreground group, a report that a waiting read can go on), the
   bytes it did not take, the room left and the next state. `Room` is the
-  room the owner has for the master, `{Free, Kept}`: what is free of it,
-  and what it holds that a flush cannot drop, the output it has sent and
-  the master has not taken. It stops after a key that makes a signal and
-  returns the bytes after it untaken, as FreeBSD's `ttydisc_rint` signals the
+  room the owner has for the master, `{Free, Kept, Stopped}`: what is free
+  of it, what it holds that a flush cannot drop, the output it has sent and
+  the master has not taken, and whether output is stopped. It stops after a
+  key that makes a signal and returns the bytes after it untaken, as
+  FreeBSD's `ttydisc_rint` signals the
   foreground group before it takes the next byte
   (`sys/kern/tty_ttydisc.c:1124-1133`), so the owner acts on the signal before
   any reader can be reported the bytes typed after the key
@@ -672,11 +673,16 @@ program, are two waiters, and neither replaces the other.
 
 * With `IXON`, `VSTOP` stops output and `VSTART` starts it again, and with
   `IXANY` any key starts it, as FreeBSD's do (`tty_ttydisc.c:1055-1058`,
-  `:1141-1162`). `input/3` returns `stop_output` and `start_output`, and
-  `output/3` takes nothing while output is stopped, so the owner holds every
-  byte for the master, echo among them, until output starts. A signal from
-  a key, `info` and a window-size change start it too, as FreeBSD's
-  `tty_signal_pgrp` does (`tty.c:1538-1540`, `:1645-1648`).
+  `:1141-1162`). Output stopped is the owner's alone, recorded with what it
+  holds for the master as FreeBSD keeps `TF_STOPPED` with the output queue
+  (`sys/sys/tty.h:82`): `input/3` is given it in the room and returns
+  `stop_output` and `start_output` as its keys change it. While output is
+  stopped, `output/3` and echo still take the room, as FreeBSD's
+  `ttydisc_write` fills the output queue whatever `TF_STOPPED` says
+  (`tty_ttydisc.c:560-665`), and the owner sends the master nothing until
+  output starts. A signal from a key and `info` start it too, and a
+  window-size change always does, as FreeBSD's `tty_signal_pgrp` does
+  (`tty.c:1536-1538`, `:1646`).
 
 A new tty starts cooked, with FreeBSD's defaults
 (`sys/sys/ttydefaults.h:46-52`, `:102-104`): `ECHO`, `ECHOE`, `ECHOKE`,

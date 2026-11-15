@@ -34,7 +34,19 @@ module ErxTtyLinkFuzz
                                        property: 'numbering'),
     'the answer to a write held whole' => Seed.new(text: '<<>> -> fill(Next#link{waiting = Rest}, [done(Writer) | Done]);',
                                                    broken: '<<>> -> fill(Next#link{waiting = Rest}, Done);',
-                                                   property: 'write_unanswered')
+                                                   property: 'write_unanswered'),
+    'output held while stopped' => Seed.new(text: 'held = Held, next = N, stopped = false})',
+                                            broken: 'held = Held, next = N})',
+                                            property: 'output_while_stopped'),
+    'a flush dropping what is held' => Seed.new(text: '{Done, L#link{held = <<>>, waiting = queue:new(), unowned = 0}}.',
+                                                broken: '{Done, L#link{waiting = queue:new(), unowned = 0}}.',
+                                                property: 'sent_not_written'),
+    'room/1 counting the outstanding output' => Seed.new(text: '{?MAX_HELD - held(L), outstanding_size(Outstanding), Stopped}',
+                                                         broken: '{?MAX_HELD - held(L), byte_size(L#link.held), Stopped}',
+                                                         property: 'room_wrong'),
+    'room/1 naming the outstanding output' => Seed.new(text: '{?MAX_HELD - held(L), outstanding_size(Outstanding), Stopped}',
+                                                       broken: '{?MAX_HELD - held(L), 0, Stopped}',
+                                                       property: 'room_wrong')
   }.freeze
   DEADLINE_SECONDS = '60'
 

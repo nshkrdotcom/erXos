@@ -15,7 +15,8 @@
 
 %% The room the relay has for the master when it holds nothing for it.
 -define(ROOM, 4096).
--define(FREE, {?ROOM, 0}).
+-define(FREE, {?ROOM, 0, false}).
+-define(STOPPED, {?ROOM, 0, true}).
 
 %%% Cases
 
@@ -106,17 +107,35 @@ output_flags_test() ->
     Tty = with([tab3, onoeot, onocr, ocrnl], [], erx_tty:new()),
     ?assertMatch({6, <<"ab      \n">>, _}, erx_tty:output(<<"\rab\t", 4, "\r">>, 64, Tty)).
 
+%% The owner records output stopped and passes it in the room; input/3
+%% returns the room with it as its keys left it.
 ixon_stops_and_starts_output_test() ->
-    {[stop_output], Stopped} = input(<<19>>, erx_tty:new()),
-    ?assertMatch({0, <<>>, _}, erx_tty:output(<<"x">>, 64, Stopped)),
-    {[start_output], Started} = input(<<17>>, with([], [ixany], Stopped)),
-    ?assertMatch({1, <<"x">>, _}, erx_tty:output(<<"x">>, 64, Started)),
+    Tty = erx_tty:new(),
+    ?assertMatch({[stop_output], <<>>, {_, 0, true}, _}, erx_tty:input(<<19>>, ?FREE, Tty)),
+    %% With IXANY the key starts output before it stops it again.
+    ?assertMatch({[start_output, stop_output], <<>>, {_, 0, true}, _},
+                 erx_tty:input(<<19>>, ?STOPPED, Tty)),
+    Strict = with([], [ixany], Tty),
+    ?assertMatch({[], <<>>, {_, 0, true}, _}, erx_tty:input(<<19>>, ?STOPPED, Strict)),
+    ?assertMatch({[start_output], <<>>, {_, 0, false}, _}, erx_tty:input(<<17>>, ?STOPPED, Strict)),
+    ?assertMatch({[], <<>>, {_, 0, false}, _}, erx_tty:input(<<17>>, ?FREE, Strict)),
+    %% With VSTOP and VSTART the same, the key toggles (tty_ttydisc.c:1141-1159).
+    Toggle = erx_tty:termios(Strict),
+    {ok, _, Same} = erx_tty:set(Toggle#{cc := (maps:get(cc, Toggle))#{vstart := $\^S}}, Strict),
+    ?assertMatch({[stop_output, start_output], <<>>, {_, 0, false}, _},
+                 erx_tty:input(<<19, 19>>, ?FREE, Same)),
+    %% Output stopped takes bytes as any output does; the owner holds them.
+    ?assertMatch({1, <<"x">>, _}, erx_tty:output(<<"x">>, 64, Tty)),
     %% IXANY: any key restarts output, and is itself input.
-    {[start_output, {echo, <<"q">>}], _} = input(<<"q">>, Stopped),
-    %% A signal from a key, VSTATUS and a new size start it too, as on FreeBSD.
-    Strict = with([], [ixany], Stopped),
-    {[start_output, flush_output, {echo, <<"^C">>}, {signal, sigint}], _} = input(<<3>>, Strict),
-    {[start_output, info], _} = input(<<20>>, Strict),
+    ?assertMatch({[start_output, {echo, <<"q">>}], <<>>, {_, 0, false}, _},
+                 erx_tty:input(<<"q">>, ?STOPPED, Tty)),
+    %% A signal from a key and VSTATUS start it too, as on FreeBSD, and a
+    %% new size starts it whatever the owner holds (tty.c:1536-1538, :1646).
+    ?assertMatch({[start_output, flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, _, _},
+                 erx_tty:input(<<3>>, ?STOPPED, Strict)),
+    ?assertMatch({[start_output, info], <<>>, _, _}, erx_tty:input(<<20>>, ?STOPPED, Strict)),
+    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, _, _},
+                 erx_tty:input(<<3>>, ?FREE, Strict)),
     {ok, [start_output, winch], _} = erx_tty:size(30, 100, Strict).
 
 %% A signal's flush empties what the owner holds for the master, so the
@@ -126,19 +145,19 @@ ixon_stops_and_starts_output_test() ->
 %% With NOFLSH nothing is flushed, and the room stays as the echo left it.
 a_flush_gives_the_room_back_test() ->
     Full = erx_tty:master_room(),
-    {Actions, <<"x">>, Left, Tty} = erx_tty:input(<<"ab", 3, "x">>, {0, 0}, erx_tty:new()),
+    {Actions, <<"x">>, Left, Tty} = erx_tty:input(<<"ab", 3, "x">>, {0, 0, false}, erx_tty:new()),
     ?assertEqual([flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
-    ?assertEqual({Full - 2, 0}, Left),
+    ?assertEqual({Full - 2, 0, false}, Left),
     ?assertMatch({[{echo, <<"x">>}], <<>>, _, _}, erx_tty:input(<<"x">>, Left, Tty)),
     Kept = with([noflsh], [], erx_tty:new()),
-    ?assertMatch({[{signal, sigint}], <<>>, {0, 0}, _}, erx_tty:input(<<"ab", 3>>, {0, 0}, Kept)),
-    ?assertMatch({[{echo, <<"a">>}, {signal, sigint}], <<>>, {0, 0}, _},
-                 erx_tty:input(<<"a", 3>>, {1, 0}, Kept)),
+    ?assertMatch({[{signal, sigint}], <<>>, {0, 0, false}, _}, erx_tty:input(<<"ab", 3>>, {0, 0, false}, Kept)),
+    ?assertMatch({[{echo, <<"a">>}, {signal, sigint}], <<>>, {0, 0, false}, _},
+                 erx_tty:input(<<"a", 3>>, {1, 0, false}, Kept)),
     %% Output sent and not taken stays: the flush gives back the rest.
-    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, {94, 4000}, _},
-                 erx_tty:input(<<3>>, {0, 4000}, erx_tty:new())),
-    ?assertMatch({[flush_output, {signal, sigint}], <<>>, {1, 4095}, _},
-                 erx_tty:input(<<3>>, {0, 4095}, erx_tty:new())).
+    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, {94, 4000, false}, _},
+                 erx_tty:input(<<3>>, {0, 4000, false}, erx_tty:new())),
+    ?assertMatch({[flush_output, {signal, sigint}], <<>>, {1, 4095, false}, _},
+                 erx_tty:input(<<3>>, {0, 4095, false}, erx_tty:new())).
 
 %% The retyped line ends at its first piece that does not fit: with room
 %% for "^R", CR-LF, "a" and one byte more, ^A's two bytes end the walk,
@@ -146,8 +165,8 @@ a_flush_gives_the_room_back_test() ->
 %% echoed.
 a_reprint_ends_at_its_first_dropped_piece_test() ->
     {_, Typed} = input(<<"a", 1, "b">>, erx_tty:new()),
-    ?assertMatch({[{echo, <<"^R\r\na">>}], <<>>, {1, 0}, _}, erx_tty:input(<<18>>, {6, 0}, Typed)),
-    ?assertMatch({[{echo, <<"^R\r\na^Ab">>}], <<>>, {0, 0}, _}, erx_tty:input(<<18>>, {8, 0}, Typed)),
+    ?assertMatch({[{echo, <<"^R\r\na">>}], <<>>, {1, 0, false}, _}, erx_tty:input(<<18>>, {6, 0, false}, Typed)),
+    ?assertMatch({[{echo, <<"^R\r\na^Ab">>}], <<>>, {0, 0, false}, _}, erx_tty:input(<<18>>, {8, 0, false}, Typed)),
     %% With ECHO clear nothing echoes, and the line is not walked: 4 KiB of
     %% VREPRINT after a full line makes no action, within a bound on
     %% heap and work that a walk of the line per key, or an action per
@@ -231,7 +250,7 @@ status_line_test() ->
 
 window_size_test() ->
     Tty = erx_tty:new(),
-    {ok, [winch], Tty1} = erx_tty:size(50, 132, Tty),
+    {ok, [start_output, winch], Tty1} = erx_tty:size(50, 132, Tty),
     ?assertEqual({50, 132}, erx_tty:winsize(Tty1)),
     {ok, [], _} = erx_tty:size(50, 132, Tty1),
     [?assertEqual({error, einval}, erx_tty:size(R, C, Tty))
@@ -293,7 +312,7 @@ hangup_readies_every_waiter_test() ->
 input(Bytes, Tty) -> input(Bytes, ?ROOM, Tty).
 
 input(Bytes, Room, Tty) when is_integer(Room) ->
-    input(Bytes, {Room, 0}, Tty);
+    input(Bytes, {Room, 0, false}, Tty);
 input(Bytes, Room, Tty) ->
     case erx_tty:input(Bytes, Room, Tty) of
         {Actions, <<>>, _, Tty1} -> {Actions, Tty1};
@@ -367,7 +386,7 @@ events(#model{armed = Armed, stale = Stale}, Keys) ->
         [{timer, Timer} || Timer <- lists:sublist(Stale, 1)].
 
 step({input, <<Key>> = Bytes}, #model{tty = Tty, spec = Spec} = M, Path) ->
-    {Actions, Rest, _, Tty1} = erx_tty:input(Bytes, ?FREE, Tty),
+    {Actions, Rest, _, Tty1} = erx_tty:input(Bytes, {?ROOM, 0, Spec#spec.stopped}, Tty),
     property(Rest =:= <<>>, one_byte_left_untaken, Path),
     Spec1 = spec_key(Key, Spec, erx_tty:termios(Tty)),
     check_keyed(Key, Actions, erx_tty:termios(Tty), Spec#spec.stopped, Path),
@@ -404,11 +423,10 @@ step({read, Open, Max}, #model{tty = Tty, spec = Spec} = M, Path) ->
     {Want, Spec1} = spec_read(Max, Expired, Spec, erx_tty:termios(Tty)),
     property(Got =:= Want, read_differs, Path),
     M#model{tty = Tty1, spec = Spec1, expired = lists:delete(Open, M#model.expired)};
-step({output, Bytes, Room}, #model{tty = Tty, spec = Spec} = M, Path) ->
+step({output, Bytes, Room}, #model{tty = Tty} = M, Path) ->
     {Taken, Out, Tty1} = erx_tty:output(Bytes, Room, Tty),
     Opost = has(opost, erx_tty:termios(Tty)),
     property(byte_size(Out) =< Room, output_over_room, Path),
-    property(not Spec#spec.stopped orelse Taken =:= 0, output_while_stopped, Path),
     property(Opost orelse Out =:= binary:part(Bytes, 0, Taken), opost_clear_changes_bytes, Path),
     M#model{tty = Tty1};
 step(toggle, #model{tty = Tty, spec = Spec} = M, Path) ->

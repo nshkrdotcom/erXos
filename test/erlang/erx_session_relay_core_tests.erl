@@ -416,14 +416,31 @@ a_flush_drops_what_is_held_test() ->
     T5 = ev({master, {tty_taken, 0}}, T4),
     ?assertMatch({{ok, 1}, _}, do(pa, {write, aw, <<"y">>}, T5)).
 
-%% VSTOP holds echo and output in the link until VSTART lets them go.
+%% VSTOP holds echo and output in the link until VSTART lets them go; a
+%% write while output is stopped fills what the link holds, as FreeBSD's
+%% does, and an out watch is reported while there is room.
 stopped_output_holds_echo_test() ->
     NoIxany = with(iflag, [], [ixany], #{}, termios(a_holds())),
     T0 = ok(pa, {tty, ar, {tcsetattr, NoIxany}}, a_holds()),
     T1 = type(<<"ab">>, type(<<19>>, T0)),
     {[], T2} = take(master, T1),
-    ?assertMatch({eagain, _}, do(pa, {write, aw, <<"x">>}, T2)),
-    {[<<"ab">>], _} = take(master, type(<<17>>, T2)).
+    {{ok, 1}, T3} = do(pa, {write, aw, <<"x">>}, T2),
+    {_, _, T4} = report(pa, aw, ok(pa, {watch, aw, [out]}, T3)),
+    {[], T5} = take(master, T4),
+    {[<<"abx">>], _} = take(master, type(<<17>>, T5)).
+
+%% A signal key's flush drops what is held before anything of the step
+%% reaches the master, as FreeBSD wakes the device once, at
+%% ttydisc_rint_done: echo held by VSTOP and `abc` typed before the key
+%% in the same input are dropped, and the master gets the key's echo
+%% alone, whether or not output was stopped.
+a_signal_drops_held_output_before_any_send_test() ->
+    NoIxany = with(iflag, [], [ixany], #{}, termios(a_holds())),
+    T0 = ok(pa, {tty, ar, {tcsetattr, NoIxany}}, a_holds()),
+    T1 = type(<<"xyz">>, type(<<19>>, T0)),
+    {[], T2} = take(master, T1),
+    {[<<"^C">>], _} = take(master, type(<<"abc", 3>>, T2)),
+    {[<<"^C">>], _} = take(master, type(<<"abc", 3>>, T0)).
 
 %% A drain is answered once the master has taken everything, or at once
 %% while output is stopped.

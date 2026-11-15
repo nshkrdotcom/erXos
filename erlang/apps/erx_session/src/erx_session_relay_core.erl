@@ -20,9 +20,12 @@ Its construction is the design's: the terminal has one holder at a time,
 while its holder holds the terminal and, for a job, the shell has acted on
 every signal counted for the group that gave it the terminal (Seen equals
 Sent); and a read takes bytes only with the signal number of the moment.
-After every step that can change who may read, reconcile/1 makes every
-`read` and `in` wait armed in erx_tty exactly when its open may read and
-parked otherwise, so no rule lists the steps that must park or arm.
+Every step ends in settle/1, the one place a step ends: there every
+`read` and `in` wait is armed in erx_tty exactly when its open may read
+and parked otherwise, so no rule lists the steps that must park or arm,
+and what the step left held goes to the master once, so nothing a flush
+in the step drops reaches it first, as FreeBSD wakes the device once a
+step (ttydisc_rint_done, sys/kern/tty_ttydisc.c:1293-1305).
 
 Opens and waits are named by the edge: an open by the term the `open`
 request carries (a reference the server makes), a wait by `{Open, Kind}`,
@@ -153,7 +156,7 @@ handle(_Caller, {console_group, Group}, Core) when Group =/= none ->
     {Met, Core1} = meet(Group, Core),
     {ok, Met, Core1#core{console_group = Group}};
 handle(_Caller, {status, Line}, #core{tty = Tty, link = Link} = Core) when is_binary(Line) ->
-    {Free, _Kept} = erx_tty_link:room(Link),
+    {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
     {Bytes, Tty1} = erx_tty:status(Line, Free, Tty),
     {Actions, Core1} = to_master(Bytes, Core#core{tty = Tty1}),
     {ok, Actions, Core1};
@@ -232,15 +235,14 @@ settable(Termios, Tty) ->
             {error, einval}
     end.
 
-%% A watch replaces the open's wait of its kind. A `read` or `in` wait
-%% arms if its open may read and parks otherwise; an `out` wait is never
-%% parked and is reported by settle/1.
+%% A watch replaces the open's wait of its kind. settle/1 arms a `read` or
+%% `in` wait if its open may read; an `out` wait is never parked, and
+%% settle/1 reports it.
 watch(Caller, Open, Spec, Core0) ->
     Key = {Open, kind(Spec)},
     {Cancelled, Core1} = unwait(Key, Core0),
     Wait = #wait{caller = Caller, spec = Spec, armed = Spec =:= out},
-    {Armed, Core2} = reconcile(Core1#core{waits = (Core1#core.waits)#{Key => Wait}}),
-    {ok, Cancelled ++ Armed, Core2}.
+    {ok, Cancelled, Core1#core{waits = (Core1#core.waits)#{Key => Wait}}}.
 
 kind({read, _}) -> read;
 kind(in) -> in;
@@ -307,12 +309,12 @@ plan({Tag, Termios}, Caller, Group, #core{tty = Tty, cooked = Cooked}) ->
     end.
 
 %% The one change of holder: the waits of opens that may no longer read
-%% park, the termios is set, and the waits of opens that may now read arm.
+%% park before the termios is set, so the old holder's waits are not
+%% checked under the new one; settle/1 arms the new holder's.
 hand_over(Holder, Termios, Core0) ->
     {Parked, Core1} = park(Core0#core{holder = Holder}),
     {Set, Core2} = set_termios(Termios, Core1),
-    {Armed, Core3} = arm(Core2),
-    {Parked ++ Set ++ Armed, Core3}.
+    {Parked ++ Set, Core2}.
 
 set_termios(keep, Core) ->
     {[], Core};
@@ -377,7 +379,9 @@ caught_up(#core{holder = {job, _, _, Group}, groups = Groups}) ->
 may_wait({Open, _Kind}, #core{opens = Opens} = Core) ->
     may_read(maps:get(Open, Opens), Core).
 
-%% Every `read` and `in` wait armed exactly when its open may read.
+%% Every `read` and `in` wait armed exactly when its open may read. A step
+%% parks earlier where the order within it matters: a signal parks before
+%% the next key's report, and a change of holder before the new termios.
 reconcile(Core0) ->
     {Parked, Core1} = park(Core0),
     {Armed, Core2} = arm(Core1),
@@ -504,8 +508,7 @@ carry_one(flush_output, Core) -> flush(Core);
 carry_one(stop_output, #core{link = Link} = Core) ->
     {[], Core#core{link = erx_tty_link:stop(Link)}};
 carry_one(start_output, #core{link = Link} = Core) ->
-    {Actions, Link1} = erx_tty_link:start(Link),
-    link_actions(Actions, Core#core{link = Link1});
+    {[], Core#core{link = erx_tty_link:start(Link)}};
 carry_one({ready, Key}, Core) -> report(Key, Core);
 carry_one({timer_start, _, _} = Start, Core) -> {[Start], Core};
 carry_one({timer_cancel, _} = Cancel, Core) -> {[Cancel], Core}.
@@ -552,7 +555,7 @@ done({To, Message}) -> {send, To, Message}.
 %% Bytes through output/3 with the room free now, and what it took to the
 %% link, which holds it within that room.
 put_output(Bytes, #core{tty = Tty, link = Link} = Core) ->
-    {Free, _Kept} = erx_tty_link:room(Link),
+    {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
     {Taken, Out, Tty1} = erx_tty:output(Bytes, Free, Tty),
     {Actions, Core1} = to_master(Out, Core#core{tty = Tty1}),
     {Taken, Actions, Core1}.
@@ -563,14 +566,17 @@ to_master(Bytes, #core{link = Link} = Core) ->
     {Actions, Link1} = erx_tty_link:write(none, Bytes, Link),
     link_actions(Actions, Core#core{link = Link1}).
 
-%% After every step: the writers' messages take the room there is, in
-%% order; `out` waits are reported once a write would be taken; drains are
-%% answered once nothing waits or nothing would take it.
+%% The end of every step: the waits are reconciled with who may read; the
+%% writers' messages take the room there is, in order; `out` waits are
+%% reported once a write would be taken; drains are answered once nothing
+%% waits or nothing would take it; and what is held goes to the master.
 settle(Core0) ->
-    {Pumped, Core1} = pump(Core0),
-    {Writable, Core2} = writable(Core1),
-    {Drained, Core3} = drained(Core2),
-    {Pumped ++ Writable ++ Drained, Core3}.
+    {Reconciled, Core1} = reconcile(Core0),
+    {Pumped, Core2} = pump(Core1),
+    {Writable, Core3} = writable(Core2),
+    {Drained, Core4} = drained(Core3),
+    {Sent, Link} = erx_tty_link:send(Core4#core.link),
+    {Reconciled ++ Pumped ++ Writable ++ Drained ++ Sent, Core4#core{link = Link}}.
 
 pump(#core{writes = Writes} = Core) ->
     case queue:out(Writes) of
@@ -588,8 +594,8 @@ pump(#core{writes = Writes} = Core) ->
     end.
 
 writable(#core{waits = Waits, writes = Writes, link = Link, signal = N} = Core) ->
-    {Free, _Kept} = erx_tty_link:room(Link),
-    case queue:is_empty(Writes) andalso Free > 0 andalso not erx_tty_link:stopped(Link) of
+    {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
+    case queue:is_empty(Writes) andalso Free > 0 of
         true ->
             Ready = lists:sort([{Open, Caller} || {Open, out} := #wait{caller = Caller} <- Waits]),
             {[{send, Caller, {ready, Open, [out], N}} || {Open, Caller} <- Ready],

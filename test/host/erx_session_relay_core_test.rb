@@ -56,7 +56,7 @@ class ErxSessionRelayCoreTest < Minitest::Test
                               case_name: /a_signal_suspends_the_jobs_reads_test/),
     # The read gate alone, without parking, still reports a lagging job.
     signal_parks_nothing: Fault.new(text: '{Parked, Core2} = park(Core1),', broken: '{Parked, Core2} = {[], Core1},',
-                                    case_name: /exploration_signals/),
+                                    case_name: /a_report_after_a_signal_in_one_input_test/),
     report_after_park: Fault.new(text: '#{Key := #wait{armed = true, caller = Caller, spec = Spec}} ->',
                                  broken: '#{Key := #wait{caller = Caller, spec = Spec}} ->',
                                  case_name: /a_report_after_a_signal_in_one_input_test/),
@@ -88,8 +88,27 @@ class ErxSessionRelayCoreTest < Minitest::Test
     mode_ignored: Fault.new(text: "on_open(_Caller, {tty_read, _, _, _}, #open{mode = write}, Core) ->\n    " \
                                   "{{error, ebadf}, [], Core};\n",
                             broken: '', case_name: /the_mode_test/),
-    out_without_room: Fault.new(text: 'andalso Free > 0 andalso', broken: 'andalso Free >= 0 andalso',
+    out_without_room: Fault.new(text: 'andalso Free > 0 of', broken: 'andalso Free >= 0 of',
                                 case_name: /output_takes_the_links_room_test/),
+    # A step sends what is held once, at its end: a send inside it, at
+    # each echo or when output starts, puts bytes the step's flush drops
+    # in front of the master.
+    echo_sent_at_once: Fault.new(text: "{Actions, Link1} = erx_tty_link:write(none, Bytes, Link),\n",
+                                 broken: "{Actions0, Link0} = erx_tty_link:write(none, Bytes, Link),\n" \
+                                         "    {Sent0, Link1} = erx_tty_link:send(Link0),\n" \
+                                         "    Actions = Actions0 ++ Sent0,\n",
+                                 case_name: /a_signal_drops_held_output_before_any_send_test/),
+    start_sends: Fault.new(text: '{[], Core#core{link = erx_tty_link:start(Link)}};',
+                           broken: '{Sent, Link1} = erx_tty_link:send(erx_tty_link:start(Link)), ' \
+                                   '{Sent, Core#core{link = Link1}};',
+                           case_name: /a_signal_drops_held_output_before_any_send_test/),
+    never_sent: Fault.new(text: '{Sent, Link} = erx_tty_link:send(Core4#core.link),',
+                          broken: '{Sent, Link} = {[], Core4#core.link},',
+                          case_name: /a_signal_drops_held_output_before_any_send_test/),
+    # Every step ends with its waits armed exactly when their opens may read.
+    never_reconciled: Fault.new(text: '{Reconciled, Core1} = reconcile(Core0),',
+                                broken: '{Reconciled, Core1} = {[], Core0},',
+                                case_name: /input_on_demand_test/),
     flush_keeps_writes: Fault.new(text: '{Linked ++ drop_writes(Core1), Core1#core{writes = queue:new()}}.',
                                   broken: '{Linked, Core1}.', case_name: /a_flush_drops_what_is_held_test/),
     stop_ignored: Fault.new(text: '{[], Core#core{link = erx_tty_link:stop(Link)}};', broken: '{[], Core#core{link = Link}};',

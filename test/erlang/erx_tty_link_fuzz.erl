@@ -3,10 +3,13 @@
 
 %% The fuzz target of erx_tty_link, the tty's side of the messages between a
 %% session's tty and its master (docs/design-live.md, "Between domains"): random
-%% runs of writes, timer ends and master messages, the master's well-formed ones
-%% at and past their bounds among arbitrary terms, are fed to one tty. After
-%% every step the tty holds at most 4 KiB; each output is a binary of at most
-%% 4 KiB, numbered one past the last, or the outstanding one again empty; each
+%% runs of writes, timer ends, master messages, the master's well-formed ones
+%% at and past their bounds among arbitrary terms, and the line discipline's
+%% flush, stop and start are fed to one tty, each step ending in send/1 as
+%% its owner ends one. After every step the tty holds at most 4 KiB, room/1
+%% is what is free, the outstanding output and output stopped, and no new
+%% output is sent while output is stopped; a flush drops what was not sent;
+%% each output is a binary of at most 4 KiB, numbered one past the last, or the outstanding one again empty; each
 %% input is a binary of 1 to 4,096 bytes and each size within 1 to 65,535; after
 %% a hangup nothing is sent; and the bytes sent are, in order, a prefix of the
 %% bytes written and not dropped. At the end of a run, with every output taken,
@@ -21,10 +24,11 @@
 -define(MAX_SIDE, 65535).
 
 %% What the run has seen: the tty, the bytes written and not dropped, the bytes
-%% sent, the last output number, the writes not yet answered by writer, and
-%% whether the line has hung up.
+%% sent, the last output number, the writes not yet answered by writer, whether
+%% the line has hung up, whether output is stopped, and the output the tty has
+%% outstanding, {N, Size} or none.
 -record(run, {link, written = <<>>, sent = <<>>, last = -1, unanswered = #{},
-              hung_up = false, steps = []}).
+              hung_up = false, stopped = false, outstanding = none, steps = []}).
 
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
@@ -36,8 +40,10 @@ round_of() ->
                       lists:seq(1, rand:uniform(60))),
     drained(drain(Run, 1000)).
 
-%% Takes every outstanding output until none is left, so every write still
-%% waiting gets its room.
+%% Starts output, then takes every outstanding output until none is left, so
+%% every write still waiting gets its room.
+drain(Run = #run{stopped = true}, Left) ->
+    drain(step(start, Run), Left);
 drain(Run, 0) ->
     Run;
 drain(Run = #run{last = Last}, Left) ->
@@ -46,7 +52,9 @@ drain(Run = #run{last = Last}, Left) ->
         Run1 -> drain(Run1, Left - 1)
     end.
 
-drained(Run = #run{unanswered = Unanswered}) ->
+drained(Run = #run{unanswered = Unanswered, link = Link, hung_up = HungUp}) ->
+    erx_tty_link:held(Link) =:= 0 orelse fail(held_after_drain, history(Run)),
+    HungUp orelse Run#run.sent =:= Run#run.written orelse fail(bytes_left, history(Run)),
     case maps:filter(fun(_Writer, Count) -> Count =/= 0 end, Unanswered) of
         Waiting when map_size(Waiting) =:= 0 -> ok;
         Waiting -> fail(write_unanswered, {Waiting, history(Run)})
@@ -56,7 +64,7 @@ drained(Run = #run{unanswered = Unanswered}) ->
 
 step(Event, Run0 = #run{link = Link0, steps = Steps}) ->
     Run = Run0#run{steps = [Event | Steps]},
-    {Actions, Link} = try apply_event(Event, Link0)
+    {Actions, Link} = try ended(apply_event(Event, Link0))
                       catch Class:Reason -> fail(crashed, {Class, Reason, history(Run)})
                       end,
     Dropped = dropped(Link0, Link),
@@ -65,15 +73,37 @@ step(Event, Run0 = #run{link = Link0, steps = Steps}) ->
                       written(Writer, Bytes, Run);
                   {write, Writer, _Bytes} ->
                       answered_at_once(Writer, Run);
+                  flush ->
+                      Run#run{written = Run#run.sent};
+                  {master, {tty_taken, N}} when not Run#run.hung_up ->
+                      Run#run{outstanding = taken(N, Run#run.outstanding)};
+                  stop ->
+                      Run#run{stopped = true};
+                  start ->
+                      Run#run{stopped = false};
                   _ ->
                       Run
               end,
     held_within(Written#run{link = Link}),
-    lists:foldl(fun(Action, R) -> action(Action, R) end, Written#run{link = Link}, Actions).
+    Acted = lists:foldl(fun(Action, R) -> action(Action, R) end, Written#run{link = Link},
+                        Actions),
+    room_right(Acted),
+    Acted.
 
 apply_event({write, Writer, Bytes}, Link) -> erx_tty_link:write(Writer, Bytes, Link);
 apply_event({master, Message}, Link) -> erx_tty_link:master(Message, Link);
-apply_event({timeout, N}, Link) -> erx_tty_link:timeout(N, Link).
+apply_event({timeout, N}, Link) -> erx_tty_link:timeout(N, Link);
+apply_event(flush, Link) -> erx_tty_link:flush(Link);
+apply_event(stop, Link) -> {[], erx_tty_link:stop(Link)};
+apply_event(start, Link) -> {[], erx_tty_link:start(Link)}.
+
+taken(N, {N, _Size}) -> none;
+taken(_N, Outstanding) -> Outstanding.
+
+%% The end of the step, as the owner ends it.
+ended({Actions, Link}) ->
+    {Sent, Link1} = erx_tty_link:send(Link),
+    {Actions ++ Sent, Link1}.
 
 %% A write nobody waits on that the tty dropped, past its bound.
 dropped(Before, After) ->
@@ -95,13 +125,15 @@ action({output, _N, _Bytes}, Run = #run{hung_up = true}) ->
     fail(output_after_hangup, history(Run));
 action({output, N, <<>>}, Run = #run{last = N}) ->
     Run;
+action({output, _N, _Bytes}, Run = #run{stopped = true}) ->
+    fail(output_while_stopped, history(Run));
 action({output, N, Bytes}, Run = #run{last = Last, sent = Sent, written = Written})
   when is_binary(Bytes), byte_size(Bytes) =< ?MAX_HELD ->
     N =:= Last + 1 orelse fail(numbering, {N, Last, history(Run)}),
     All = <<Sent/binary, Bytes/binary>>,
     binary:longest_common_prefix([All, Written]) =:= byte_size(All)
         orelse fail(sent_not_written, {All, Written, history(Run)}),
-    Run#run{last = N, sent = All};
+    Run#run{last = N, sent = All, outstanding = {N, byte_size(Bytes)}};
 action({output, N, Bytes}, Run) ->
     fail(output_over_bound, {N, Bytes, history(Run)});
 action({input, Bytes}, Run) when is_binary(Bytes), byte_size(Bytes) >= 1, byte_size(Bytes) =< ?MAX_INPUT ->
@@ -121,7 +153,7 @@ action({done, Writer}, Run = #run{unanswered = Unanswered}) ->
 action(hangup, Run = #run{hung_up = true}) ->
     fail(hangup_twice, history(Run));
 action(hangup, Run) ->
-    Run#run{hung_up = true};
+    Run#run{hung_up = true, outstanding = none};
 action(open, Run) ->
     Run;
 action({resend_after, _N}, Run) ->
@@ -132,6 +164,18 @@ action(Other, Run) ->
 held_within(Run = #run{link = Link}) ->
     erx_tty_link:held(Link) =< ?MAX_HELD orelse fail(held_over_bound, history(Run)).
 
+%% room/1 as it follows from what is held: what is free, the outstanding
+%% output, which is the last sent or none, and output stopped.
+room_right(Run = #run{link = Link, stopped = Stopped}) ->
+    Held = erx_tty_link:held(Link),
+    {Free, Kept, Stopped1} = erx_tty_link:room(Link),
+    Free =:= ?MAX_HELD - Held andalso Kept =:= outstanding_size(Run#run.outstanding)
+        andalso Stopped1 =:= Stopped andalso erx_tty_link:stopped(Link) =:= Stopped
+        orelse fail(room_wrong, {{Free, Kept, Stopped1}, Held, history(Run)}).
+
+outstanding_size(none) -> 0;
+outstanding_size({_N, Size}) -> Size.
+
 history(#run{steps = Steps}) -> lists:reverse(Steps).
 
 fail(What, Detail) -> error({fuzz_failure, What, Detail}).
@@ -139,10 +183,11 @@ fail(What, Detail) -> error({fuzz_failure, What, Detail}).
 %%% The events
 
 event(#run{last = Last}) ->
-    case rand:uniform(10) of
+    case rand:uniform(12) of
         N when N =< 4 -> {write, writer(), bytes(rand:uniform(3))};
         5 -> {timeout, pick([Last, Last + 1, max(0, Last - 1)])};
         6 -> {master, {tty_taken, pick([Last, Last, Last + 1, max(0, Last - 1)])}};
+        7 -> pick([flush, stop, start]);
         _ -> {master, message()}
     end.
 
