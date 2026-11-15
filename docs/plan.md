@@ -1425,6 +1425,11 @@ land after M11 repeat M11's closure over what they add.
    and the session's by the row's keeper. The LVGL program holds its
    pipes and its buffer's pages and nothing else
    ([design-display.md](design-display.md#kiosks-and-glasses)).
+   The two steps are two milestones. The basic kiosk is part 4a: the
+   offline LVGL dashboard on QEMU `virt`, drawn by `erx-lvgl` in a
+   manifest principal's session, with no internet data and no package.
+   The full kiosk is part 4b: the same dashboard as a package in `/apps`,
+   with quotes fetched over HTTPS, so it also waits for 1b-G's network.
 5. **Kiosks on boards**, after part 4 and M12's boards. The firmware
    framebuffer driver of the Raspberry Pi comes earlier, with 1b-I's
    stage (d) on the stopgap; this part adds a panel on a serial bus, on
@@ -1908,6 +1913,14 @@ the start table, which track D's window stack needs; the second packages
 apps built outside the tree and adds them to an image, which track D's
 kiosk needs; the third installs, updates and removes packages at run
 time.
+
+**The first two apps, two milestones each.** The kiosk's are part 4a and
+part 4b of 1b-C's track D. The second app is a demo that exercises
+programs, windows and keyboard input; it is built out of tree and never
+shipped, and nothing of it enters erXos. Its basic milestone is Doom on
+QEMU `virt`, with keys from QEMU's virtio keyboard and a presentation on
+each frame end. Its full milestone is Doom as an app, with a USB
+keyboard and its WAD read from a file.
 
 1. **The start table**, in 1b, after 1b-A, 1b-B's session domain and
    M6's data partition, whose `etc` tree holds `rc.conf`. `start` rows in

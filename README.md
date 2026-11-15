@@ -232,15 +232,23 @@ Eshell V17.1.1 (type help(). for help)
   powers it off, at root's console session and at the system domain's
   shell.
 * Programs have pipes and a session process can start one. The shell does
-  not start programs yet.
+  not start programs yet. The file tree a program will see (`/bin`, `/dev`
+  with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
+  `/etc/group`) is written as a file server that nothing starts yet.
 
 **Files and storage**
 
 * Per-domain namespaces, file servers across domains and `/tmp` on a RAM
-  file system in Erlang.
+  file system in Erlang. The storage, apps and machine services mount
+  their own trees at `/data`, `/apps` and `/machine`, so one path reaches
+  each in every session, the system shell's included.
 * A storage domain serves `/data` from littlefs over a virtio block driver
   on QEMU and an SD driver on the Pi 4, and restarts cleanly after a
-  failure. An EROFS reader mounts read-only images.
+  failure. A QEMU suite kills the block driver in the middle of a transfer
+  and finds each kept file cut at a sync. An EROFS reader mounts read-only
+  images.
+* An F2FS codec reads a volume's superblock and checkpoint pack. The file
+  system is not built yet.
 
 **Networking**
 
@@ -261,6 +269,8 @@ Eshell V17.1.1 (type help(). for help)
   with `erx_win`, and the virtio-gpu, virtio-input (keyboard and tablet)
   and Pi firmware-framebuffer drivers are Erlang processes. A QEMU suite
   compares screenshots; the Pi's screen is checked by hand.
+* `erx-lvgl`, LVGL as a native program, is built into every image whose
+  release holds `erx_ui`.
 
 **Web demo and checks**
 
@@ -273,7 +283,9 @@ Eshell V17.1.1 (type help(). for help)
 
 * The rest of erXos's own kernel, programs started from the shell and
   the musl seam for C programs' pipes, the rest of the browser client, and
-  the POSIX-lite layer. Each has a design document in [docs/](docs/).
+  the POSIX-lite layer. Each has a design document in [docs/](docs/). The
+  Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
+  and the pure core of a pin's ownership, and no driver yet.
 
 ## Correctness and testing
 
