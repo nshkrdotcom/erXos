@@ -127,6 +127,9 @@ module Erx
     #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script and session's name them,
     #   so no other domain has crypto on its code path. No manifest names it yet; the
     #   native domain tests boot it (NativeDomain).
+    # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
+    #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
+    #   names it.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
                         'session' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_shell',
                                       'erx_web_line', 'erx_session'].freeze,
@@ -135,7 +138,8 @@ module Erx
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
-                        'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze }.freeze
+                        'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
+                        'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release

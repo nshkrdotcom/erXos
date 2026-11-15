@@ -8,18 +8,22 @@ parameters of each pipe it claims (docs/design-usb.md, "What the USB
 domain claims" and "Descriptors"). functions/3 is the claim table, one
 pure function of the device's speed and its device and configuration
 descriptors as `erx_usb_desc` decodes them; parameters/2 derives the
-three values an endpoint context takes from one bulk or interrupt
+four values an endpoint context takes from one bulk or interrupt
 endpoint descriptor, the only kinds a function claims, and the device's
 speed.
 
-The table names an interface by its alternate setting 0: HID (class 03h)
-takes its first interrupt-IN endpoint; mass storage over SCSI and
-Bulk-Only (08h, 06h, 50h) its first bulk-IN and first bulk-OUT endpoint;
-a hub (device or interface class 09h) at full or high speed its first
-interrupt-IN endpoint, in alternate setting 1 when the device protocol
-is the multi-TT hub's, as FreeBSD's `uhub_attach` selects it
-(sys/dev/usb/usb_hub.c:1252-1258, release/15.1.0, 95719d8a), and in 0
-otherwise. Every other interface runs no function, and so does one whose
+The table names an interface by its alternate setting 0. A hub is a
+device of device class 09h, as FreeBSD's `uhub_probe` matches it
+(sys/dev/usb/usb_hub.c:1134-1136, release/15.1.0, 95719d8a), and gets one
+function, on interface 0, the interface `uhub_attach` selects a setting
+of (:1252-1253): at full or high speed it takes that interface's first
+interrupt-IN endpoint, in alternate setting 1 when the device protocol is
+the multi-TT hub's (:1252-1258) and in 0 otherwise, whatever the
+interface's own class; at SuperSpeed it runs none. An interface of class
+09h on a device of another class is not a hub. Otherwise HID (class 03h)
+takes its first interrupt-IN endpoint, and mass storage over SCSI and
+Bulk-Only (08h, 06h, 50h) its first bulk-IN and first bulk-OUT endpoint.
+Every other interface runs no function, and so does one whose
 selected setting lacks an endpoint its function needs. A setting the table
 selects that the configuration lacks refuses it (`missing_setting`); so
 does, at SuperSpeed, an endpoint descriptor of any setting without its
@@ -47,7 +51,15 @@ An endpoint's parameters, by its type and the device's speed:
   companion's `wBytesPerInterval`, refused (`endpoint_too_large`) above
   that product or `usb_ss_interrupt_payload_max`. A payload of 0 is
   refused (`zero_interval_payload`), and one past the buffer of the queue
-  block the endpoint's type takes is refused (`endpoint_too_large`).
+  block the endpoint's type takes is refused (`endpoint_too_large`);
+* the interval exponent, xHCI's Interval field (xHCI 1.2, 6.2.3.6 and
+  Table 6-12, p. 456): on an interrupt endpoint at low and full speed,
+  where `bInterval` counts milliseconds, the base-2 logarithm of
+  `bInterval` times 8 rounded down; at high and SuperSpeed `bInterval`
+  less one. A `bInterval` outside the table's range, 0 at any speed or
+  above 16 at high and SuperSpeed, refuses the device
+  (`malformed_descriptor`). A bulk endpoint's is 0, as FreeBSD sets the
+  field only for periodic endpoints (sys/dev/usb/controller/xhci.c:2463-2470).
 
 Every bound comes from `abi/formats/usb.txt` and `abi/formats/xhci.txt`.
 Both entries answer `{ok, Value}` or `{error, Reason}`; every refusal
@@ -68,15 +80,15 @@ leaves through one `throw` caught in claimed/1.
 
 -doc """
 One pipe a function claims: its endpoint's address and type, its packet
-size, zero-based burst and payload of one service interval, and the
-endpoint's `bInterval` as the device wrote it.
+size, zero-based burst, payload of one service interval, and the base-2
+exponent of that interval in 125 us units.
 """.
 -type pipe() :: #{address := byte(),
                   type := bulk | interrupt,
                   packet_size := 1..?ERX_USB_BULK_PACKET_SUPER,
                   burst := 0..?ERX_USB_BURST_MAX,
                   payload := 1..?ERX_XHCI_BULK_BUFFER_SIZE,
-                  interval := byte()}.
+                  interval_exponent := 0..(?ERX_XHCI_INTERVAL_BINTERVAL_MAX - 1)}.
 
 -doc "One claimed function: its driver, the interface and setting it runs on, that setting, and its pipes in the order its driver needs them.".
 -type function_() :: #{driver := driver(),
@@ -135,7 +147,7 @@ claim(Speed, Device, Settings) ->
 
 %% The table, then the setting it selects and the endpoints its driver needs.
 interface_function(Speed, Device, Number, Settings) ->
-    case driver(Speed, Device, map_get({Number, 0}, Settings)) of
+    case driver(Speed, Device, Number, map_get({Number, 0}, Settings)) of
         none ->
             [];
         {Driver, Alternate, Needs} ->
@@ -152,22 +164,26 @@ interface_function(Speed, Device, Number, Settings) ->
 selected({ok, Setting}) -> Setting;
 selected(error) -> refuse(missing_setting).
 
--spec driver(speed(), erx_usb_desc:device(), erx_usb_desc:setting()) ->
+%% A hub device's interface 0 by the device's class alone; every other
+%% interface by its alternate setting 0.
+-spec driver(speed(), erx_usb_desc:device(), byte(), erx_usb_desc:setting()) ->
           none | {driver(), byte(), [need()]}.
-driver(_Speed, _Device, #{class := ?ERX_USB_CLASS_HID}) ->
+driver(Speed, #{class := ?ERX_USB_CLASS_HUB, protocol := Protocol}, 0, _Setting) ->
+    hub(Speed, Protocol);
+driver(_Speed, _Device, _Number, #{class := ?ERX_USB_CLASS_HID}) ->
     {erx_usb_hid, 0, [{interrupt, in}]};
-driver(_Speed, _Device, #{class := ?ERX_USB_CLASS_MASS_STORAGE, subclass := ?ERX_USB_SUBCLASS_SCSI,
-                          protocol := ?ERX_USB_PROTOCOL_BULK_ONLY}) ->
+driver(_Speed, _Device, _Number, #{class := ?ERX_USB_CLASS_MASS_STORAGE,
+                                   subclass := ?ERX_USB_SUBCLASS_SCSI,
+                                   protocol := ?ERX_USB_PROTOCOL_BULK_ONLY}) ->
     {erx_usb_bot, 0, [{bulk, in}, {bulk, out}]};
-driver(Speed, #{class := DeviceClass, protocol := DeviceProtocol}, #{class := Class})
-  when (Speed =:= full orelse Speed =:= high),
-       (DeviceClass =:= ?ERX_USB_CLASS_HUB orelse Class =:= ?ERX_USB_CLASS_HUB) ->
-    Alternate = case DeviceProtocol of
-                    ?ERX_USB_HUB_PROTOCOL_MULTI_TT -> ?ERX_USB_HUB_MULTI_TT_ALTERNATE;
-                    _ -> 0
-                end,
-    {erx_usb_hub, Alternate, [{interrupt, in}]};
-driver(_Speed, _Device, _Setting) ->
+driver(_Speed, _Device, _Number, _Setting) ->
+    none.
+
+hub(Speed, ?ERX_USB_HUB_PROTOCOL_MULTI_TT) when Speed =:= full; Speed =:= high ->
+    {erx_usb_hub, ?ERX_USB_HUB_MULTI_TT_ALTERNATE, [{interrupt, in}]};
+hub(Speed, _Protocol) when Speed =:= full; Speed =:= high ->
+    {erx_usb_hub, 0, [{interrupt, in}]};
+hub(_Speed, _Protocol) ->
     none.
 
 %% The first endpoint of each needed type and direction, or none when one is missing.
@@ -196,7 +212,7 @@ pipe(Speed, #{address := Address, type := Type, max_packet := MaxPacket, interva
     check(Payload >= 1, zero_interval_payload),
     check(Payload =< buffer(Type), endpoint_too_large),
     #{address => Address, type => Type, packet_size => PacketSize, burst => Burst,
-      payload => Payload, interval => Interval}.
+      payload => Payload, interval_exponent => interval_exponent(Type, Speed, Interval)}.
 
 packet_size(interrupt, low, Size) -> min(Size, ?ERX_USB_INTERRUPT_PACKET_LOW);
 packet_size(interrupt, full, Size) -> min(Size, ?ERX_USB_INTERRUPT_PACKET_FULL);
@@ -235,6 +251,20 @@ payload(interrupt, super, Product, #{bytes_per_interval := Declared}) ->
     Declared;
 payload(_Type, _Speed, Product, _Companion) ->
     Product.
+
+%% Milliseconds at low and full speed, rounded down to a power of two of
+%% 125 us; 2^(bInterval-1) microframes above.
+interval_exponent(bulk, _Speed, _Interval) ->
+    0;
+interval_exponent(interrupt, Speed, Interval) when Speed =:= low; Speed =:= full ->
+    check(Interval >= 1, malformed_descriptor),
+    ?ERX_XHCI_INTERVAL_FRAME_SHIFT + floor_log2(Interval);
+interval_exponent(interrupt, _Speed, Interval) ->
+    check(Interval >= 1 andalso Interval =< ?ERX_XHCI_INTERVAL_BINTERVAL_MAX, malformed_descriptor),
+    Interval - 1.
+
+floor_log2(1) -> 0;
+floor_log2(N) -> 1 + floor_log2(N bsr 1).
 
 buffer(interrupt) -> ?ERX_XHCI_INTERRUPT_BUFFER_SIZE;
 buffer(bulk) -> ?ERX_XHCI_BULK_BUFFER_SIZE.

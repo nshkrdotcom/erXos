@@ -18,8 +18,10 @@ require_relative '../../tools/lib/erx/abi'
 # the second definition of an interface setting kept over the first; the duplicate-
 # address rule removed; the payload computed as packet size times burst, so a high-speed
 # interrupt endpoint of 1024 bytes and one extra transaction is admitted to a 1 KiB
-# buffer; and the payload computed as the product at SuperSpeed, so the fixture's
-# payload says 64.
+# buffer; the payload computed as the product at SuperSpeed, so the fixture's payload
+# says 64; a hub function on every interface of a hub device, where FreeBSD gives one,
+# on interface 0; and the high-speed interval's upper bound removed, so a bInterval of
+# 17 gives an exponent past xHCI's 15.
 #
 # The modules take their bounds from abi/formats/ while the cases write each number out,
 # so one more seeded fault edits a copy of xhci.txt instead, with erx_abi.hrl generated
@@ -56,7 +58,15 @@ class ErxUsbDescTest < Minitest::Test
     Seed.new(fault: 'the payload computed as the product at SuperSpeed', file: CLAIM,
              anchor: "    Declared;\n",
              replacement: "    Product;\n",
-             catching_case: 'a_superspeed_interrupt_payload_is_the_companions_bytes_per_interval_test')
+             catching_case: 'a_superspeed_interrupt_payload_is_the_companions_bytes_per_interval_test'),
+    Seed.new(fault: "a hub function on every interface of a hub device", file: CLAIM,
+             anchor: 'driver(Speed, #{class := ?ERX_USB_CLASS_HUB, protocol := Protocol}, 0, _Setting) ->',
+             replacement: 'driver(Speed, #{class := ?ERX_USB_CLASS_HUB, protocol := Protocol}, _Number, _Setting) ->',
+             catching_case: 'a_hub_device_runs_one_hub_function_on_interface_0_test'),
+    Seed.new(fault: "the high-speed interval's upper bound removed", file: CLAIM,
+             anchor: 'check(Interval >= 1 andalso Interval =< ?ERX_XHCI_INTERVAL_BINTERVAL_MAX, malformed_descriptor),',
+             replacement: 'check(Interval >= 1, malformed_descriptor),',
+             catching_case: 'the_interval_exponent_follows_xhcis_table_test')
   ].freeze
 
   TABLE_SEED = Seed.new(fault: 'the interrupt buffer doubled', file: 'abi/formats/xhci.txt',

@@ -34,7 +34,7 @@ the_boot_keyboard_runs_a_hid_function_on_its_interrupt_endpoint_test() ->
     ?assertMatch({ok, [#{driver := erx_usb_hid, interface := 0, alternate := 0,
                          setting := #{class := 3, hid := #{}},
                          pipes := [#{address := 16#81, type := interrupt, packet_size := 8,
-                                     burst := 0, payload := 8, interval := 10}]}]},
+                                     burst := 0, payload := 8, interval_exponent := 6}]}]},
                  claim(low, erx_usb_desc_tests:boot_keyboard())),
     ?assertMatch({ok, [#{driver := erx_usb_hid}]}, claim(full, erx_usb_desc_tests:tablet())).
 
@@ -57,11 +57,27 @@ a_multi_tt_hub_selects_its_alternate_setting_1_test() ->
                  claim(high, device(9, 0, 2), Hub)),
     ?assertMatch({ok, [#{driver := erx_usb_hub, alternate := 0, setting := #{protocol := 1}}]},
                  claim(high, device(9, 0, 1), Hub)),
-    ?assertMatch({ok, [#{driver := erx_usb_hub, alternate := 0}]},
-                 claim(full, device(0, 0, 0), Hub)),
     ?assertEqual({error, missing_setting},
                  claim(high, device(9, 0, 2), configuration([interface(0, 0, 9, 0, 1),
                                                              endpoint(16#81, 3, 1, 12)]))).
+
+%% FreeBSD's rule: a hub is a device of class 09h, and its one function runs on
+%% interface 0 whatever that interface's class; an interface of class 09h on another
+%% device is no hub.
+a_hub_device_runs_one_hub_function_on_interface_0_test() ->
+    Two = configuration([interface(0, 0, 9, 0, 0), endpoint(16#81, 3, 1, 12),
+                         interface(1, 0, 9, 0, 0), endpoint(16#82, 3, 1, 12)]),
+    ?assertMatch({ok, [#{driver := erx_usb_hub, interface := 0}]}, claim(full, device(9, 0, 0), Two)),
+    ?assertMatch({ok, [#{driver := erx_usb_hub, interface := 0}]},
+                 claim(high, device(9, 0, 1), configuration([interface(0, 0, 16#ff, 0, 0),
+                                                             endpoint(16#81, 3, 1, 12)]))),
+    ?assertEqual({ok, []}, claim(full, device(0, 0, 0), Two)),
+    ?assertEqual({ok, []}, claim(high, device(16#ef, 2, 1), erx_usb_desc_tests:hub_multi_tt())),
+HidBeside = configuration([interface(0, 0, 3, 1, 1), hid(63), endpoint(16#81, 3, 8, 10),
+                           interface(1, 0, 3, 1, 1), hid(63), endpoint(16#82, 3, 8, 10)]),
+?assertMatch({ok, [#{driver := erx_usb_hub, interface := 0}, #{driver := erx_usb_hid, interface := 1}]},
+             claim(full, device(9, 0, 0), HidBeside)),
+?assertMatch({ok, [#{driver := erx_usb_hid, interface := 1}]}, claim(low, device(9, 0, 0), HidBeside)).
 
 a_superspeed_hub_runs_no_function_test() ->
     Hub = configuration([interface(0, 0, 9, 0, 0), endpoint(16#81, 3, 2, 8), companion(0, 0, 2)]),
@@ -159,3 +175,22 @@ a_superspeed_burst_is_the_companions_up_to_15_test() ->
     ?assertEqual({error, malformed_descriptor}, parameters(super, [endpoint(16#81, 2, 1024, 0), companion(16, 0, 0)])),
     ?assertEqual(#{packet_size => 1024, burst => 0, payload => 1024},
                  pipe(super, [endpoint(16#81, 2, 1024 bor (2 bsl 11), 0), companion(0, 0, 0)])).
+
+%% xHCI's Interval (Table 6-12): milliseconds rounded down to a power of two of 125 us
+%% at low and full speed, 2^(bInterval-1) microframes above, 0 on a bulk endpoint.
+the_interval_exponent_follows_xhcis_table_test() ->
+    Exponent = fun(Speed, Type, Interval) ->
+                       Companion = [companion(0, 0, 8) || Speed =:= super],
+                       {ok, #{interval_exponent := E}} =
+                           parameters(Speed, [endpoint(16#81, Type, 8, Interval) | Companion]),
+                       E
+               end,
+    ?assertEqual([3, 4, 4, 5, 6, 10, 10], [Exponent(full, 3, I) || I <- [1, 2, 3, 4, 10, 128, 255]]),
+    ?assertEqual([3, 6], [Exponent(low, 3, I) || I <- [1, 10]]),
+    ?assertEqual([0, 3, 15], [Exponent(high, 3, I) || I <- [1, 4, 16]]),
+    ?assertEqual([0, 15], [Exponent(super, 3, I) || I <- [1, 16]]),
+    ?assertEqual([0, 0, 0], [Exponent(high, 2, I) || I <- [0, 17, 255]]),
+    ?assertEqual({error, malformed_descriptor}, parameters(full, [endpoint(16#81, 3, 8, 0)])),
+    ?assertEqual({error, malformed_descriptor}, parameters(high, [endpoint(16#81, 3, 8, 0)])),
+    ?assertEqual({error, malformed_descriptor}, parameters(high, [endpoint(16#81, 3, 8, 17)])),
+    ?assertEqual({error, malformed_descriptor}, parameters(super, [endpoint(16#81, 3, 8, 17), companion(0, 0, 8)])).

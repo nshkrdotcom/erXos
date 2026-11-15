@@ -12,8 +12,8 @@
 %% `out_of_bounds` when an accepted value breaks a bound the stack relies on: a
 %% wTotalLength past 4096 bytes, an endpoint numbered 0, a hub of more than 15 ports, a
 %% string that is not UTF-8, an endpoint address claimed twice, more than 7 pipes, or a
-%% pipe whose packet size, burst or payload is not the one its speed and type allow, or
-%% whose payload does not fit its queue block's buffer.
+%% pipe whose packet size, burst, payload or interval exponent is not the one its speed
+%% and type allow, or whose payload does not fit its queue block's buffer.
 -module(erx_usb_desc_fuzz).
 
 -export([run/1]).
@@ -111,14 +111,22 @@ claimed(Speed, DeviceBytes, Configuration, Bytes) ->
             fail(crash, Bytes, {Speed, Answer})
     end.
 
-%% The packet sizes FreeBSD's filter gives, the burst each speed and type allow, and the
-%% payload rule, written out from the design rather than taken from the module.
-admissible(Speed, #{type := Type, packet_size := Size, burst := Burst, payload := Payload}) ->
+%% The packet sizes FreeBSD's filter gives, the burst each speed and type allow, the
+%% payload rule and xHCI's range of Interval exponents (Table 6-12), written out from the
+%% design rather than taken from the module.
+admissible(Speed, #{type := Type, packet_size := Size, burst := Burst, payload := Payload,
+                    interval_exponent := Exponent}) ->
     Product = Size * (Burst + 1),
     Buffer = case Type of interrupt -> 1024; bulk -> 32768 end,
     lists:member(Size, packet_sizes(Type, Speed))
         andalso lists:member(Burst, bursts(Type, Speed))
         andalso Payload >= 1 andalso Payload =< Buffer
+        andalso lists:member(Exponent, case {Type, Speed} of
+                                           {bulk, _} -> [0];
+                                           {interrupt, low} -> lists:seq(3, 10);
+                                           {interrupt, full} -> lists:seq(3, 10);
+                                           {interrupt, _} -> lists:seq(0, 15)
+                                       end)
         andalso case {Type, Speed} of
                     {interrupt, super} -> Payload =< Product andalso Payload =< 3072;
                     _ -> Payload =:= Product
@@ -162,7 +170,7 @@ setting() ->
 
 endpoint_with_companion() ->
     Endpoint = endpoint(pick([16#81, 16#82, 16#02, 16#03, 16#83, 16#84, 16#05, 16#00, 16#80]) bxor pick([0, 0, 0, 0, 16#80, 16#10]),
-                        pick([2, 3, 3, rand:uniform(4) - 1]), packet(), rand:uniform(16)),
+                        pick([2, 3, 3, rand:uniform(4) - 1]), packet(), pick([0, 1, 2, 15, 16, 17, 128, 255, rand:uniform(16)])),
     [Endpoint | [companion(pick([0, 1, 2, 15, 16, 255]), 0,
                            pick([0, 1, 8, 64, 65, 1023, 1024, 1025, 3072, 3073, 16#ffff]))
                  || rand:uniform(3) =/= 1]].

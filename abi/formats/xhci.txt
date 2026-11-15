@@ -46,6 +46,17 @@ limit xhci_endpoint_error_count u32 3
 limit xhci_interrupt_buffer_size u32 1024
 limit xhci_bulk_buffer_size u32 32768
 
+# An interrupt endpoint's Interval, the base-2 exponent of its period in 125 us units
+# (xHCI 1.2, 6.2.3.6 and Table 6-12, p. 456). At low and full speed bInterval counts
+# milliseconds, 1 to 255, and the exponent is the base-2 logarithm of bInterval times 8
+# (8 being 2 to the frame shift), rounded down, so 3 to 10; at high and SuperSpeed
+# bInterval is 1 to its maximum and the exponent is bInterval less one, 0 to 15. A bInterval
+# outside its range is one the table gives no period for. A bulk endpoint's Interval is
+# 0: the controller does not use it at SuperSpeed (6.2.3.6), and FreeBSD sets it only
+# for periodic endpoints (xhci.c:2463-2470).
+limit xhci_interval_frame_shift u8 3
+limit xhci_interval_binterval_max u8 16
+
 # The slot context (xhci.h:74-111): the device's route, speed and hub fields, its
 # last valid context index, the root hub port it is reached through, its
 # transaction translator, its interrupter, and the address and state the

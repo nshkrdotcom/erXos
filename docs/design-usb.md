@@ -570,7 +570,8 @@ whose creation gives it, and nothing else holds it
 ([design-system.md](design-system.md#devices)). The USB domain holds the
 controller's unit and nothing else in a release build's manifest, and
 runs the USB core, the controller's driver and the class drivers, and no
-file system:
+file system. Its release script, `usb`, holds the base every domain boots and
+`erx_usb`, the application that holds the stack:
 
 | Platform | Controller | Given as | Interrupt | DMA | The USB domain is |
 | --- | --- | --- | --- | --- | --- |
@@ -671,10 +672,20 @@ by its alternate setting 0:
 
 | Interface | Function | Alternate setting | Needs |
 | --- | --- | --- | --- |
+| interface 0 (`bInterfaceNumber` 0) of a device of device class 09h, hub, whatever the interface's own class | `erx_usb_hub` at full or high speed; none at low and SuperSpeed | 1 on a multi-TT hub (device protocol 2), as FreeBSD's `uhub_attach` selects it (`usb_hub.c:1252-1258`); 0 otherwise | the first interrupt-IN endpoint |
 | class 03h, HID, any subclass and protocol | `erx_usb_hid` | 0 | the first interrupt-IN endpoint |
 | class 08h, mass storage, subclass 06h, protocol 50h | `erx_usb_bot` | 0 | the first bulk-IN and the first bulk-OUT endpoint |
-| device class 09h, hub, or interface class 09h, at full or high speed | `erx_usb_hub` | 1 on a multi-TT hub (device protocol 2), as FreeBSD's `uhub_attach` selects it (`usb_hub.c:1252-1258`); 0 otherwise | the first interrupt-IN endpoint |
-| anything else, SuperSpeed hubs included | none | | |
+| anything else, an interface of class 09h on a device of another class included | none | | |
+
+A hub is a device, not an interface: FreeBSD's `uhub_probe` matches a
+device of class 09h alone (`usb_hub.c:1134-1136`), and `uhub_attach`
+selects the setting of interface index 0 (`usb_hub.c:1252-1253`), so a
+hub runs one hub function, on interface 0, and its other interfaces are
+claimed by the rows below the first. FreeBSD's index 0 is the first
+interface in the configuration's order; the claim, which reads the
+settings by number, takes `bInterfaceNumber` 0, the same interface on a
+hub that numbers its interfaces from 0, and runs no hub function on one
+that has no interface 0.
 
 The device's first configuration is set, as FreeBSD sets configuration
 index 0 unless a quirk names another (`usb_device.c:1969-2019`). Each
@@ -1344,8 +1355,10 @@ event:
    SuperSpeed device's value is the exponent of its size). Then all 18
    bytes.
 3. **Strings.** The language table, then the manufacturer, product and
-   serial strings in US English (0409h) when the table offers it and in
-   its first language otherwise; a failure leaves the string unknown and
+   serial strings in the table's first language whose primary language
+   is English, its low byte 09h under the mask 00ffh, and in its first
+   language when none is, as FreeBSD chooses (`usb_device.c:1717-1728`;
+   `abi/formats/usb.txt`); a failure leaves the string unknown and
    does not fail the device.
 4. **Configuration descriptor.** Its 9-byte header, then `wTotalLength`
    bytes, refused past `usb_config_max`, decoded and checked whole
@@ -1489,9 +1502,9 @@ bounds above, and the rules that make a configuration one endpoint graph:
   isochronous multiplier it may advertise are ignored, since the NIF
   forces both off;
 * an endpoint's type, direction and interval are checked against what
-  the claimed function accepts, and the three values the endpoint
+  the claimed function accepts, and the four values the endpoint
   context takes are derived by speed and type, one function of the
-  descriptor and the device's speed:
+  descriptor and the device's speed, `erx_usb_claim:parameters/2`:
   * the **packet size**, bits 10:0 of `wMaxPacketSize`, taken through
     FreeBSD's filter of standard sizes (`usbd_get_std_packet_size`,
     `usb_transfer.c:3525-3591`, applied at `:569-592`): an interrupt
@@ -1524,6 +1537,16 @@ bounds above, and the rules that make a configuration one endpoint graph:
     `wMaxPacketSize` whose bits 10:0 are 0, on any endpoint: FreeBSD
     raises it to the controller's largest packet before its filter
     (`usb_transfer.c:563-567`), a guess erXos does not make.
+  * the **interval exponent**, the endpoint context's Interval, the
+    period as a power of two of 125 us (xHCI 6.2.3.6 and Table 6-12,
+    p. 456): on an interrupt endpoint at low and full speed, where
+    `bInterval` counts milliseconds from 1 to 255, the base-2 logarithm
+    of `bInterval` times 8 rounded down, 3 to 10; at high and SuperSpeed,
+    where `bInterval` is 1 to 16, `bInterval` less one. A `bInterval`
+    outside its speed's range, for which the table gives no period,
+    refuses the device with `malformed descriptor`. A bulk endpoint's is
+    0: the controller does not use it at SuperSpeed (6.2.3.6), and
+    FreeBSD sets it only for periodic endpoints (`xhci.c:2463-2470`).
   The payload must fit one buffer of the queue block the endpoint's type
   takes, or the device is refused with `endpoint too large`. Its
   consumer is the controller's bandwidth reservation: the NIF writes the
@@ -2783,7 +2806,7 @@ targeted traces carry the longer sequences.
 | the event ring's bound | the table's sum, recomputed from the form's constants, is below the ring's capacity, and the explored model never holds more events than that sum | the forced stop event left out of the model's sources |
 | the install, in C on the host, against a model controller that interrupts only with both gates open and closes `INTE` at every reset | after the first install and after a reset and install again, an event raises the model's interrupt | the `INTE` write dropped, so the model raises nothing after install |
 | `erx_usb_desc` on the boot devices of HID 1.11 Appendix B and E, and on the descriptors QEMU's `usb-kbd`, `usb-tablet`, `usb-storage` and `usb-hub` return, captured once into small fixtures | each decodes to the expected interfaces and endpoints | the walk run over the bytes received instead of `wTotalLength`, with an interface descriptor in the trailing bytes, which is then claimed |
-| claiming and admission, a property test over fuzzed configurations through `erx_usb_desc`, `erx_usb_claim` and the endpoint parameters, with a fixture of a SuperSpeed interrupt endpoint of packet size 64, burst 0 and `wBytesPerInterval` 8 | no endpoint belongs to two functions; no configuration with two definitions of one interface setting, a missing selected setting or an endpoint 0 descriptor is admitted; every admitted endpoint's packet size is one FreeBSD's filter gives for its speed and type, its burst follows its speed and type, and its payload, packet size times burst plus one below SuperSpeed and on bulk endpoints, the companion's `wBytesPerInterval` on a SuperSpeed interrupt endpoint, fits its block's buffer; the fixture's payload parameter and the context the NIF builds from it both say 8, and the same companion with `wBytesPerInterval` 0 or 65 is refused; every parameter handed to the NIF is in range, and the NIF answers `badarg` to a payload of 0, one above packet size times burst plus one, and one that differs from that product on a slot below SuperSpeed | the duplicate-address rule removed; the payload computed as packet size times burst, so a high-speed interrupt endpoint of 1024 bytes and one extra transaction is admitted to a 1 KiB buffer; the payload computed as the product at SuperSpeed, so the fixture's context says 64; the second definition of an interface setting kept over the first |
+| claiming and admission, a property test over fuzzed configurations through `erx_usb_desc`, `erx_usb_claim` and the endpoint parameters, with a fixture of a SuperSpeed interrupt endpoint of packet size 64, burst 0 and `wBytesPerInterval` 8 | no endpoint belongs to two functions; no configuration with two definitions of one interface setting, a missing selected setting or an endpoint 0 descriptor is admitted; every admitted endpoint's packet size is one FreeBSD's filter gives for its speed and type, its burst follows its speed and type, and its payload, packet size times burst plus one below SuperSpeed and on bulk endpoints, the companion's `wBytesPerInterval` on a SuperSpeed interrupt endpoint, fits its block's buffer, and its interval exponent is in Table 6-12's range for its speed and type; the fixture's payload parameter and the context the NIF builds from it both say 8, and the same companion with `wBytesPerInterval` 0 or 65 is refused; every parameter handed to the NIF is in range, and the NIF answers `badarg` to a payload of 0, one above packet size times burst plus one, and one that differs from that product on a slot below SuperSpeed | the duplicate-address rule removed; the payload computed as packet size times burst, so a high-speed interrupt endpoint of 1024 bytes and one extra transaction is admitted to a 1 KiB buffer; the payload computed as the product at SuperSpeed, so the fixture's context says 64; the second definition of an interface setting kept over the first; a hub function claimed on every interface of a hub device; the high-speed interval's upper bound removed, so a `bInterval` of 17 gives an exponent past 15 |
 | `erx_hid_desc` against FreeBSD's `hid.c` compiled on the host as the oracle, over the fuzz corpus, comparing each input field's offset, size, count and usage | every descriptor within erXos's bounds that FreeBSD parses whole gives the same fields in both; where the host build of `hid.c` records that it stopped at a fourth push, erXos refuses; past erXos's own bounds, erXos refuses whatever FreeBSD does | the push-depth bound removed: a descriptor of four nested pushes is accepted |
 | `erx_hid_core` | a keyboard's held set gives ups then downs in code order; a rollover report changes nothing; an absolute position normalizes to 0 and 65535 at its range's ends; a report of id 2 leaves id 1's keys held; a report two packets long folds whole | the ErrorRollOver check removed; the state reduced to one previous report; the interrupt length taken as the packet size |
 | the usage table | `abi/formats/hid.txt`'s map equals FreeBSD's `evdev_usb_scancodes`, read from the pinned source | one map entry changed |
