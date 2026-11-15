@@ -241,7 +241,7 @@ module Erx
     # (erx_ns:mount_facets/1; docs/design-files.md, "A facet's mount"). Each is an empty
     # directory of every release, so where nothing is mounted the path is the release's
     # own empty directory, as FreeBSD shows a mount point with nothing mounted on it.
-    # erx_ns:mount_facet/1's clauses (erlang/apps/erx/src/erx_ns.erl) name the same points,
+    # Each is the place of its name in erx_ns:place/1 (erlang/apps/erx/src/erx_ns.erl),
     # and release_files_test compares the two.
     MOUNT_POINTS = %w[data].freeze
 

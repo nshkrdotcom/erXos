@@ -9,6 +9,7 @@ require 'minitest/autorun'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/oracle_hosted'
 require_relative '../../tools/lib/erx/production_image'
+require_relative '../../tools/lib/erx/ns_places'
 require_relative '../../tools/lib/erx/release_files'
 
 # What the system release and the oracle's hosted tree ship: each application's
@@ -221,17 +222,24 @@ class ReleaseFilesTest < Minitest::Test
     end
   end
 
-  # The mount points a release holds are where erx_ns mounts a granted facet: each
-  # mount_facet/1 clause that mounts {facet, Name} at a path names one of them, and
-  # nothing else does. A clause other than the catch-all that this test cannot read fails
-  # it, so a new mount point written in another shape is never skipped.
+  # The mount points a release holds are where erx_ns mounts a tree: every point of
+  # erx_ns:place/1 is a release's mount point but those of the system domain's files
+  # services, /apps and /machine, which a domain that holds no such facet lacks
+  # (erx_ns.erl, place/1), and nothing else is. So a new place fails this test until it
+  # is either a release directory or one of those. NsPlaces raises on a place/1 clause
+  # it cannot read, so a place written in another shape is never skipped.
   def test_the_mount_points_are_where_erx_ns_mounts_facets
-    source = File.read(File.join(ROOT, 'erlang/apps/erx/src/erx_ns.erl'))
-    heads = source.scan(/^mount_facet\(([a-z][a-z0-9_]*)\)/).flatten
-    mounted = source.scan(%r{^mount_facet\(([a-z_]+)\) -> mount\(\{facet, \1\}, <<"/([a-z_]+)">>}).map(&:last)
-    refute_empty mounted, 'erx_ns.erl has no mount_facet/1 clause this test recognizes'
-    assert_equal heads.size, mounted.size, "a mount_facet/1 clause of #{heads.inspect} is not in the shape this test reads"
-    assert_equal Erx::ReleaseFiles::MOUNT_POINTS.sort, mounted.sort
+    places = Erx::NsPlaces.points(File.read(File.join(ROOT, Erx::NsPlaces::PATH)))
+    released = Erx::ReleaseFiles::MOUNT_POINTS.map { |name| "/#{name}" }
+    assert_equal [*released, '/apps', '/machine'].sort, places.values.sort
+  end
+
+  # A place/1 clause in a shape NsPlaces does not read, here one split over two lines,
+  # fails rather than drops out of the comparison above.
+  def test_an_unreadable_place_clause_fails
+    text = "place(data) -> {<<\"/data\">>, [rw]};\nplace(new) ->\n    {<<\"/new\">>, [rw]};\nplace(_) -> none.\n"
+    assert_raises(Erx::NsPlaces::Error) { Erx::NsPlaces.points(text) }
+    assert_equal({ 'data' => '/data' }, Erx::NsPlaces.points(text.sub(/^place\(new\).*\n.*\n/, '')))
   end
 
   # One release holds every script's applications, each file once, and a script per

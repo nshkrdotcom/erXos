@@ -87,7 +87,8 @@ module Erx
         ),
         Chokepoints::Elsewhere.new(
           name: 'command-needs', rule: "only a command that declares a service's facet with -erx_needs names a module " \
-                                       'of that service of the system domain, and no other module of erx_shell names one',
+                                       "of that service of the system domain or a path under its tree's mount point, " \
+                                       'and no other module of erx_shell names one',
           design: 'docs/design-shell.md#invariants', check: 'CommandNeeds, in Checks',
           test: 'test/host/command_needs_test.rb'
         ),

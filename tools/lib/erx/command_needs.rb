@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'erlang_text'
+require_relative 'ns_places'
 
 module Erx
   # The chokepoint that only a command declaring a service's facet reaches that service
@@ -22,9 +23,13 @@ module Erx
   # through which any domain reaches the service count as Module:Function: for the
   # network stack, the socket modules, net and the resolver, whose sockets erXos's
   # inet backend opens through the stack (docs/design-network-stack.md, "The
-  # backend"), and inet's functions that resolve names or read the interfaces. Comments, strings and quoted atoms are left
-  # out, so 'erx_net':f() and an OTP function named through apply get past it, as do a
-  # name built from pieces and a call a command makes through a helper of another
+  # backend"), and inet's functions that resolve names or read the interfaces. A
+  # service whose tree erx_ns mounts (erx_ns:place/1, read through NsPlaces) is reached
+  # by path too: a string literal that is the tree's mount point or a path beneath it,
+  # as reboot's "/machine/ctl" is, counts as a name of the service, while a doc string
+  # does not. Comments, other strings and quoted atoms are left out, so 'erx_net':f(),
+  # an OTP function named through apply and a path built from pieces get past it, as
+  # do a name built from pieces and a call a command makes through a helper of another
   # application: like the other text rules it catches a slip. It is no boundary either:
   # a session's authority rests on its domain, whose release ships no service module
   # and whose sends to the system domain's registered names are dropped.
@@ -50,8 +55,11 @@ module Erx
     # Where a module names a service: the service's facet, the line and the name.
     Reach = Data.define(:facet, :line, :name)
     # Each service's facet by the names that reach it: its sources' modules as
-    # atoms, and the OTP names as Module or Module:Function before a call.
-    Names = Data.define(:atoms, :calls)
+    # atoms, the OTP names as Module or Module:Function before a call, and its tree's
+    # mount point as the start of a path.
+    Names = Data.define(:atoms, :calls, :points)
+    # A string literal, ~"..." and ~b"..." among them, that holds an absolute path.
+    PATH = %r{\A(?:~[bs]?)?"(?<path>/[^"\\]*)"\z}
 
     Violation = Data.define(:path, :line, :detail) do
       def to_s = "chokepoint command-needs: #{path}:#{line}: #{detail}"
@@ -72,15 +80,19 @@ module Erx
     end
 
     # The violations among files, a map of path to source text. The services' modules
-    # come from the same map, so it holds their sources too.
+    # and erx_ns's places come from the same map, so it holds their sources too; a map
+    # without erx_ns.erl, a test's own tree, has no paths to see, and the tree's own
+    # seed (reboot without its declaration, in command_needs_test) proves the real
+    # tree's erx_ns is read.
     def violations(files)
-      names = names_of(files.keys)
+      names = names_of(files)
       files.select { |path, _| covers?(path) }.flat_map do |path, text|
-        skeleton = blanked(ErlangText.code(text))
+        code = ErlangText.code(text)
+        skeleton = blanked(code)
         if skeleton.match?(COMMAND)
-          undeclared(path, skeleton, names)
+          undeclared(path, code, skeleton, names)
         elsif File.dirname(path) == SHELL
-          reaches(skeleton, names).map do |reach|
+          reaches(code, skeleton, names).map do |reach|
             Violation.new(path: path, line: reach.line,
                           detail: "names #{reach.name}, of the #{reach.facet} service, and is no command")
           end
@@ -90,23 +102,26 @@ module Erx
       end
     end
 
-    def names_of(paths)
-      atoms = paths.filter_map { |path| service_of(path)&.then { |facet| [File.basename(path, '.erl'), facet] } }
+    def names_of(files)
+      atoms = files.keys.filter_map { |path| service_of(path)&.then { |facet| [File.basename(path, '.erl'), facet] } }
       calls = SERVICES.flat_map { |facet, service| [*service.modules, *service.functions].map { |name| [name, facet] } }
-      Names.new(atoms: atoms.to_h, calls: calls.to_h)
+      ns = files[NsPlaces::PATH]
+      points = ns ? NsPlaces.points(ns).slice(*SERVICES.keys).invert : {}
+      Names.new(atoms: atoms.to_h, calls: calls.to_h, points: points)
     end
 
     # The first reach of each service whose facet the command does not declare.
-    def undeclared(path, skeleton, names)
+    def undeclared(path, code, skeleton, names)
       declared = skeleton.to_enum(:scan, NEEDS).flat_map { Regexp.last_match[:names].split(',').map(&:strip) }
-      reaches(skeleton, names).reject { |reach| declared.include?(reach.facet) }.uniq(&:facet).map do |reach|
+      reaches(code, skeleton, names).reject { |reach| declared.include?(reach.facet) }.uniq(&:facet).map do |reach|
         Violation.new(path: path, line: reach.line,
                       detail: "names #{reach.name}, of the #{reach.facet} service, without -erx_needs([#{reach.facet}])")
       end
     end
 
-    # Every place the skeleton names a service, in line order.
-    def reaches(skeleton, names)
+    # Every place the code names a service, in line order: by a name in the skeleton, or
+    # by a path in one of the code's string literals.
+    def reaches(code, skeleton, names)
       atoms = matches(skeleton, ATOM).filter_map do |found, line|
         facet = names.atoms[found[:atom]]
         next unless facet
@@ -119,7 +134,14 @@ module Erx
 
         Reach.new(facet: names.calls.fetch(name), line: line, name: name)
       end
-      (atoms + calls).sort_by(&:line)
+      paths = matches(code, ErlangText::LEXEME).filter_map do |found, line|
+        path = PATH.match(found[:kept].to_s)&.[](:path)
+        facet = path && names.points.find { |point, _| path == point || path.start_with?("#{point}/") }&.last
+        next unless facet
+
+        Reach.new(facet: facet, line: line, name: path)
+      end
+      (atoms + calls + paths).sort_by(&:line)
     end
 
     # Each match of pattern in text with the line it starts on.

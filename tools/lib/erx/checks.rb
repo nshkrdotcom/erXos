@@ -386,8 +386,9 @@ module Erx
       raise Error, violations.join("\n") unless violations.empty?
     end
 
-    # A command that names a module of a service of the system domain declares the
-    # service's facet, and erx_shell's other modules name none (CommandNeeds).
+    # A command that names a module of a service of the system domain, or a path under
+    # its tree's mount point, declares the service's facet, and erx_shell's other
+    # modules name none (CommandNeeds).
     def check_command_needs(listed)
       sources = listed.select { |relative| CommandNeeds.reads?(relative) && File.file?(File.join(@root, relative)) }
       violations = CommandNeeds.violations(sources.to_h { |relative| [relative, File.binread(File.join(@root, relative))] })

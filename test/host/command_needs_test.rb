@@ -13,7 +13,9 @@ require_relative '../../tools/lib/erx/command_needs'
 class CommandNeedsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   IFCONFIG = 'erlang/apps/erx_shell/src/erx_cmd_ifconfig.erl'
-  STACK = { 'erlang/apps/erx_net/src/erx_net.erl' => "-module(erx_net).\n" }.freeze
+  NS = "place(data) -> {<<\"/data\">>, [rw]};\nplace(machine) -> {<<\"/machine\">>, [rw]};\n" \
+       "place(apps) -> {<<\"/apps\">>, [rw]};\nplace(_Name) -> none.\n"
+  STACK = { 'erlang/apps/erx_net/src/erx_net.erl' => "-module(erx_net).\n", Erx::NsPlaces::PATH => NS }.freeze
 
   def tree
     paths = Dir.glob('erlang/apps/**/*.erl', base: ROOT).select { |path| Erx::CommandNeeds.reads?(path) }
@@ -76,10 +78,10 @@ class CommandNeedsTest < Minitest::Test
     assert_empty found(stack.merge('erlang/apps/erx/src/seeded.erl' => helper))
   end
 
-  # The system domain's own services count as the network stack does: reboot without its
-  # machine declaration fails, as does a helper of erx_shell that names the start
-  # service's tree, while a module of the domain service beside the machine tree's two
-  # is no reach of machine.
+  # The system domain's own services count as the network stack does: reboot, which
+  # reaches the machine by its path, fails without its machine declaration, as does a
+  # helper of erx_shell that names the start service's tree, while a module of the
+  # domain service beside the machine tree's two is no reach of machine.
   def test_the_machine_and_apps_services_count
     files = tree
     reboot = 'erlang/apps/erx_shell/src/erx_cmd_reboot.erl'
@@ -87,7 +89,7 @@ class CommandNeedsTest < Minitest::Test
     refute_equal files.fetch(reboot), seeded
     violations = Erx::CommandNeeds.violations(files.merge(reboot => seeded))
     assert_equal [reboot], violations.map(&:path)
-    assert_match(/names erx_machine_fs, of the machine service, without -erx_needs\(\[machine\]\)/,
+    assert_match(%r{names /machine/ctl, of the machine service, without -erx_needs\(\[machine\]\)},
                  violations.first.to_s)
     helper = "-module(seeded).\nf() -> erx_starter_fs:control(<<>>).\n"
     starter = { 'erlang/apps/erx_starter/src/erx_starter_fs.erl' => '' }
@@ -99,5 +101,21 @@ class CommandNeedsTest < Minitest::Test
                                            "-module(seeded).\nf() -> erx_machine:request(reboot, system).\n"))
     domain = { 'erlang/apps/erx_domain/src/erx_domain.erl' => '' }
     assert_empty found(domain.merge('erlang/apps/erx_shell/src/seeded.erl' => "-module(seeded).\nf() -> erx_domain:f().\n"))
+  end
+
+  # A path in a string literal reaches the service whose tree erx_ns mounts at its
+  # start, the mount point itself included, from a command or a helper of erx_shell; a
+  # declared facet, a doc string, a comment, a longer name and a tree of no service
+  # (data) do not.
+  def test_a_path_under_a_services_mount_point_counts
+    path = 'erlang/apps/erx_shell/src/erx_cmd_seeded.erl'
+    assert_equal [[path, 5]], found(path => command("run(_, _) ->\n    file:write_file(<<\"/apps/ctl\">>, <<>>).\n"))
+    assert_equal [[path, 4]], found(path => command("run(_, _) -> file:list_dir(~\"/machine\").\n"))
+    assert_equal [['erlang/apps/erx_shell/src/seeded.erl', 2]],
+                 found('erlang/apps/erx_shell/src/seeded.erl' => "-module(seeded).\nf() -> \"/machine/ctl\".\n")
+    assert_empty found(path => command("run(_, _) -> file:read_file(\"/apps/rc.conf\").\n", needs: 'apps'))
+    quiet = "-doc \"\"\"\nWrites `/machine/ctl`.\n\"\"\".\n%% \"/apps/ctl\"\n" \
+            "run(_, _) -> file:read_file(\"/machinery\"), file:read_file(\"/data/x\").\n"
+    assert_empty found(path => command(quiet))
   end
 end
