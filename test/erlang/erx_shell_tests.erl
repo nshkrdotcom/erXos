@@ -239,6 +239,22 @@ stop_own_job_test_() ->
              ?assertEqual({error, enotsup}, erx_cmd:stop(#{}))
      end}.
 
+%% A request whose sender is a process of another node is not the shell's to
+%% serve: the shell ignores it and reads the next line, where asking that
+%% process for its group leader would end the shell with badarg.
+request_from_another_node_is_ignored_test_() ->
+    {timeout, 30,
+     fun() ->
+             Forge = fun() -> get(shell) ! {erx_shell, other_node_pid(), make_ref(), {stop}} end,
+             Shown = session([{check, Forge, {line, <<"echo alive\n">>}}, eof]),
+             ?assertEqual(<<"alive\n">>, iolist_to_binary([O || {out, O} <- Shown]))
+     end}.
+
+%% A pid of the node other@nohost, from its external format (NEW_PID_EXT).
+other_node_pid() ->
+    Node = <<"other@nohost">>,
+    binary_to_term(<<131, 88, 119, (byte_size(Node)), Node/binary, 1:32, 0:32, 1:32>>).
+
 %% A burst of size changes reaches the process of the foreground line that
 %% asked for them as one or two messages, and nothing reaches its helper,
 %% which did not ask.

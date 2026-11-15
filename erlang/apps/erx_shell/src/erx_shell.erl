@@ -327,7 +327,10 @@ wait(S = #s{group = Group, reading = Reading, firsts = Firsts, delivery = Delive
             next(size_changed(S));
         {'DOWN', Delivering, process, _Pid, _Reason} ->
             next(delivered(S));
-        {?MODULE, From, Ref, Request} when is_pid(From), is_reference(Ref) ->
+        {?MODULE, From, Ref, Request} when is_pid(From), node(From) =:= node(), is_reference(Ref) ->
+            %% Only this node's processes are served: request/3 asks the
+            %% sender's group leader, which process_info/2 cannot tell of
+            %% another node's process, and a job of this shell is local.
             next(request(Request, {From, Ref}, S));
         {'DOWN', Ref, process, _Pid, Reason} when is_map_key(Ref, Firsts) ->
             next(first_ended(Ref, Reason, S));
