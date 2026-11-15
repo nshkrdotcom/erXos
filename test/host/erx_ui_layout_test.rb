@@ -21,10 +21,19 @@ class ErxUiLayoutTest < Minitest::Test
   Seed = Data.define(:fault, :anchor, :replacement, :catching_case)
 
   SEEDS = [
-    Seed.new(fault: 'pads wider than their slot that leave a negative size',
-             anchor: 'Inner = max(0, Room - 2 * Pad),',
-             replacement: 'Inner = Room - 2 * Pad,',
+    Seed.new(fault: 'pads wider than their node that leave a negative size',
+             anchor: 'Inner = max(0, Length - 2 * Pad),',
+             replacement: 'Inner = Length - 2 * Pad,',
              catching_case: 'containment_test_'),
+    Seed.new(fault: 'a layout that ignores the pad',
+             anchor: 'Content = content(Kind, inset(Rect, pad(Props)), Children),',
+             replacement: 'Content = content(Kind, Rect, Children),',
+             catching_case: 'padded_test_'),
+    Seed.new(fault: 'a filling node placed inside its pads, as an outside pad would place it',
+             anchor: 'span(X, Width, NeedWidth, Align, maps:is_key(width, Props)),',
+             replacement: 'span(X + pad(Props), max(0, Width - 2 * pad(Props)), NeedWidth, Align, ' \
+                          'maps:is_key(width, Props)),',
+             catching_case: 'padded_test_'),
     Seed.new(fault: 'slots that do not advance past one another',
              anchor: '{{At, Length}, At + Length}',
              replacement: '{{At, Length}, At}',

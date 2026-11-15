@@ -1392,7 +1392,7 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | Property | Type | Kinds | Meaning |
 | --- | --- | --- | --- |
 | `key` | an integer, an atom or a binary of at most 255 bytes | every kind | the node's identity among its siblings (below); it never leaves the widget server |
-| `width`, `height` | integer 0 to 16,384 | every kind | a size hint in the renderer's unit: a pixel on a display, a CSS pixel in the browser |
+| `width`, `height` | integer 0 to 16,384 | every kind | a size hint in the renderer's unit: a pixel on a display, a CSS pixel in the browser; the whole node, its `pad` inside it, as LVGL's width and CSS's under `box-sizing: border-box` are |
 | `weight` | integer 0 to 255 | every kind | the node's share of the room its row or column has left over |
 | `pad` | integer 0 to 255 | every kind | space inside the node, between its edge and its content on each side, in the same unit; the node's background, border and hit area cover it, as LVGL's and CSS's padding do |
 | `align` | `start`, `center`, `end` or `fill`; `fill` when absent | every kind | placement within the room the node gets |
@@ -3359,27 +3359,30 @@ its `alt` text, as a renderer that cannot show it does.
 places a tree in a window of that size and returns a tree of the same
 shape whose nodes are `{Rect, Content, Children}`, each rectangle
 `{X, Y, Width, Height}` in the window's pixels: `Rect` is where the node
-is, and `Content` the box its children are placed in, which is `Rect`
-for every kind but `scroll`. `Measure(Kind, Props)` is the renderer's
-pure function giving a widget's natural size, such as its text's extent
+is, its pad included, and where it takes the pointer, and `Content` the
+box its children are placed in, which is `Rect` less the `pad` on each
+side, and for a `scroll` as tall as its children need.
+`Measure(Kind, Props)` is the renderer's pure function giving a
+widget's measured size, without its pad, such as its text's extent
 in the subfont it loaded, so the layout reads no font and is a pure
 function of its arguments. It trusts its tree: the widget server
 validated it whole with `erx_ui_schema` before any of it reached the
 renderer, so every property is in range and the depth bound of 64
 bounds the layout's recursion.
 
-1. A node's **natural size** is, in each direction, its `width` or
-   `height` where it carries one, a fixed size, and otherwise its
-   widget's measured size or, for a container, what its children need:
+1. A node's **natural size**, which is what it needs, is in each
+   direction its `width` or `height` where it carries one, a fixed
+   size that holds its `pad`, and otherwise its `pad` on each side
+   around its widget's measured size or, for a container, what its
+   children need:
    a column its widest child and the sum of its children's heights, a
    row the same turned, a grid the sum of its columns' widest cells and
    of its rows' tallest, a stack its largest child in each direction,
    and a scroll its widest child across and nothing down, so that a
    scroll takes the height its parent gives it, by its `weight` or its
-   `height`, and what does not fit scrolls. A node needs its natural
-   size and its `pad` on each side. A node whose `visible` is `false`
-   needs nothing and is placed, with its subtree, at zero size where its
-   slot starts.
+   `height`, and what does not fit scrolls. A node whose `visible` is
+   `false` needs nothing and is placed, with its subtree, at zero size
+   where its slot starts.
 2. A container gives each child a **slot**. A column's slots are as wide
    as its content box and, down it, each child's need, with the room
    left over shared between the children in proportion to their
@@ -3395,16 +3398,16 @@ bounds the layout's recursion.
    rows as a row and a column share, a column's need being its widest
    cell's and its weight its heaviest cell's, and a row's alike. A
    scroll places its children as a column in a content box as wide as
-   the scroll and as tall as the larger of the scroll and its children's
-   needs, which the renderer moves under the scroll by an offset of its
-   own and clips to the scroll. A stack gives every child its whole
+   the scroll's inside its pad and as tall as the larger of that and
+   its children's needs, which the renderer moves under the scroll by
+   an offset of its own and clips to the scroll. A stack gives every child its whole
    content box, so its children overlap, the last on top.
-3. Within its slot a node keeps what its `pad` on each side leaves, or
-   nothing, in the slot's middle, when the pads do not fit. It takes all
-   of that in a direction where its `align` is `fill` and it has no
-   fixed size, and otherwise its natural size, at most what the pad
-   leaves, at the start, the center or the end; a fixed size under
-   `fill` sits at the start.
+3. Within its slot a node takes all of the slot in a direction where its
+   `align` is `fill` and it has no fixed size, and otherwise its
+   natural size, at most the slot, at the start, the center or the
+   end; that is its `Rect`, pads included. Its `Content` is the `Rect`
+   less its `pad` on each side, or nothing, in the `Rect`'s middle, when
+   the pads do not fit. A fixed size under `fill` sits at the start.
 
 So every node lies within its parent's content box, siblings in a
 column, row, grid or scroll never overlap, and no node shrinks when the
@@ -4910,11 +4913,14 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     reported; a `hit/4` that takes the value from the report fails;
   * `erx_ui_layout` over random trees and window sizes: every node within
     its parent's content box, no two siblings of a column, row, grid or
-    scroll overlapping, the result the same tree shape as the input, and
-    no node smaller in a larger window; pads wider than their slot that
-    leave a negative size fail the first, slots that do not advance past one another
-    fail the second, and a leftover shared by rounding running sums fails
-    the last;
+    scroll overlapping, the result the same tree shape as the input, no
+    node smaller in a larger window, and a padded node's `Content` its
+    `Rect` less its pads, with its `Rect`, where it takes the pointer, its
+    whole slot under `fill`; pads wider than their node that leave a
+    negative size fail the first, slots that do not advance past one
+    another fail the second, a leftover shared by rounding running sums
+    fails the fourth, and a layout that ignores the pad, or that keeps a
+    filling node inside its pads, fails the last;
   * the binary form: each generated reader, in Erlang, C and TypeScript,
     has a fuzz target, and the three accept the same inputs and decode
     the same operations and events; a reader with two property numbers

@@ -7,16 +7,18 @@ The box model of the Erlang renderer (docs/design-display.md, "The widget
 server", "The box model"): layout/3 places a widget tree in a window of a
 given size and returns a tree of the same shape holding each node's
 rectangles. A pure function: the renderer's own Measure gives a widget's
-natural size, so nothing here reads a font, a process or the clock.
+measured size, so nothing here reads a font, a process or the clock.
 
 It works in two passes. The first, bottom-up, gives every node its
-natural size and its need, the natural size with its pad on each side.
-The second, top-down, gives each child of a container a slot, and
-places the node within its slot by its pad and align. Three decisions
-carry the properties the tests check: distribute/2 shares a length
+need, its natural size: a fixed width or height, or its pad on each
+side around what its widget measures or its children need. The
+second, top-down, gives each child of a container a slot, places the
+node within its slot by its align, and makes its content box its
+rectangle less its pad, as LVGL's pad lies inside the object. Three
+decisions carry the properties the tests check: distribute/2 shares a length
 between needs and weights, so slots fit their parent and none shrinks
 when the room grows; spans/2 lays slots end to end, so siblings never
-overlap; and span/6 places a node within its slot, so a node never
+overlap; and span/5 places a node within its slot, so a node never
 leaves it.
 
 The tree is trusted: the widget server validated it whole with the
@@ -33,15 +35,16 @@ with badmatch rather than being placed as a widget.
 -type size() :: {Width :: non_neg_integer(), Height :: non_neg_integer()}.
 -type rect() :: {X :: non_neg_integer(), Y :: non_neg_integer(),
                  Width :: non_neg_integer(), Height :: non_neg_integer()}.
-%% A widget's natural size, before its pad, such as its text's extent in
+%% A widget's measured size, without its pad, such as its text's extent in
 %% the renderer's subfont. It is called for widgets alone, never for a
 %% container.
 -type measure() :: fun((Kind :: atom(), Props :: map()) -> size()).
-%% Rect is where the node is; Content the box its children are placed
-%% in, equal to Rect for every kind but scroll, whose content is as tall
-%% as its column needs. A scroll's descendants are placed in that box
-%% unscrolled, so they may lie outside the window: the renderer shifts
-%% them by its own scroll offset and clips them to the scroll's Rect.
+%% Rect is where the node is, its pad included, and where it takes the
+%% pointer; Content the box its children are placed in, Rect less the pad
+%% on each side, and for a scroll as tall as its column needs. A
+%% scroll's descendants are placed in that box unscrolled, so they may
+%% lie outside the window: the renderer shifts them by its own scroll
+%% offset and clips them to the scroll's Rect.
 -type placed() :: {Rect :: rect(), Content :: rect(), Children :: [placed()]}.
 
 -type direction() :: vertical | horizontal.
@@ -51,58 +54,57 @@ with badmatch rather than being placed as a widget.
 %% A node after the first pass.
 -record(sized, {kind :: atom(),
                 props :: map(),
-                natural :: size(),      % its own size, without its pad
-                need :: size(),         % its natural size and pad
+                need :: size(),         % its natural size, pad included
                 weight :: non_neg_integer(),
                 children :: [#sized{}]}).
 
 -doc """
 Places Tree, a tree erx_ui_schema has validated, in a window of
-{Width, Height}, with Measure giving each widget's natural size.
+{Width, Height}, with Measure giving each widget's measured size.
 """.
 -spec layout(erx_ui_model:tree(), size(), measure()) -> placed().
 layout(Tree, {Width, Height}, Measure) ->
     place(sized(Tree, Measure), {0, 0, Width, Height}).
 
-%%% The first pass: natural sizes and needs.
+%%% The first pass: needs.
 
 -spec sized(erx_ui_model:tree(), measure()) -> #sized{}.
 sized({Kind, Props, Children}, Measure) ->
     Sized = [sized(Child, Measure) || Child <- Children],
-    {Natural, Need, Weight} = footprint(Kind, Props, Sized, Measure),
-    #sized{kind = Kind, props = Props, natural = Natural, need = Need,
+    {Need, Weight} = footprint(Kind, Props, Sized, Measure),
+    #sized{kind = Kind, props = Props, need = Need,
            weight = Weight, children = Sized}.
 
-%% A node's natural size, its need and its weight; a hidden node has none.
+%% A node's need and its weight; a hidden node has none. A width or
+%% height is the whole node, its pad inside it, as LVGL's is.
 footprint(Kind, Props, Children, Measure) ->
     case prop(visible, Props) of
         false ->
-            {{0, 0}, {0, 0}, 0};
+            {{0, 0}, 0};
         true ->
-            {MeasuredWidth, MeasuredHeight} =
-                natural(arrangement(Kind), Kind, Props, Children, Measure),
-            Width = maps:get(width, Props, MeasuredWidth),
-            Height = maps:get(height, Props, MeasuredHeight),
-            Pad = 2 * pad(Props),
-            {{Width, Height}, {Width + Pad, Height + Pad},
+            {ContentWidth, ContentHeight} =
+                inner_need(arrangement(Kind), Kind, Props, Children, Measure),
+            Pads = 2 * pad(Props),
+            {{maps:get(width, Props, ContentWidth + Pads),
+              maps:get(height, Props, ContentHeight + Pads)},
              maps:get(weight, Props, 0)}
     end.
 
-%% What a node's content asks for when it carries no width or height.
-natural(widget, Kind, Props, [], Measure) ->
+%% What a node's content asks for, without its pad.
+inner_need(widget, Kind, Props, [], Measure) ->
     Measure(Kind, Props);
-natural({line, Direction}, _Kind, _Props, Children, _Measure) ->
+inner_need({line, Direction}, _Kind, _Props, Children, _Measure) ->
     Needs = [Need || #sized{need = Need} <- Children],
     turn(Direction, lists:sum([along(Direction, Need) || Need <- Needs]),
          largest([breadth(Direction, Need) || Need <- Needs]));
 %% A scroll asks for its widest child across and nothing down, so it
 %% takes the room its parent gives it and the rest of its column scrolls.
-natural(scroll, _Kind, _Props, Children, _Measure) ->
+inner_need(scroll, _Kind, _Props, Children, _Measure) ->
     {largest([Width || #sized{need = {Width, _}} <- Children]), 0};
-natural(stack, _Kind, _Props, Children, _Measure) ->
+inner_need(stack, _Kind, _Props, Children, _Measure) ->
     {largest([Width || #sized{need = {Width, _}} <- Children]),
      largest([Height || #sized{need = {_, Height}} <- Children])};
-natural(grid, _Kind, Props, Children, _Measure) ->
+inner_need(grid, _Kind, Props, Children, _Measure) ->
     {Columns, Rows} = grid_tracks(Props, Children),
     {lists:sum([Width || {Width, _} <- Columns]),
      lists:sum([Height || {Height, _} <- Rows])}.
@@ -121,48 +123,55 @@ collapse(#sized{children = Children}, {X, Y, _, _}) ->
     Point = {X, Y, 0, 0},
     {Point, Point, [collapse(Child, Point) || Child <- Children]}.
 
-place_shown(#sized{kind = Kind, props = Props, natural = Natural,
+place_shown(#sized{kind = Kind, props = Props, need = Need,
                    children = Children}, Slot) ->
-    Rect = within(Slot, Natural, Props),
-    Content = content(Kind, Rect, Children),
+    Rect = within(Slot, Need, Props),
+    Content = content(Kind, inset(Rect, pad(Props)), Children),
     {Rect, Content, place_children(arrangement(Kind), Props, Children, Content)}.
 
-%% A node's rectangle in its slot, in each direction alike: what its pad
-%% leaves, then all of that or its natural size placed by its align. A
-%% width or height is a fixed size, which fill does not stretch.
-within({X, Y, Width, Height}, {NaturalWidth, NaturalHeight}, Props) ->
-    Pad = pad(Props),
+%% A node's rectangle in its slot, in each direction alike: all of the
+%% slot or its need, at most the slot, placed by its align. A width or
+%% height is a fixed size, which fill does not stretch.
+within({X, Y, Width, Height}, {NeedWidth, NeedHeight}, Props) ->
     Align = prop(align, Props),
     {Left, PlacedWidth} =
-        span(X, Width, NaturalWidth, Pad, Align, maps:is_key(width, Props)),
+        span(X, Width, NeedWidth, Align, maps:is_key(width, Props)),
     {Top, PlacedHeight} =
-        span(Y, Height, NaturalHeight, Pad, Align, maps:is_key(height, Props)),
+        span(Y, Height, NeedHeight, Align, maps:is_key(height, Props)),
     {Left, Top, PlacedWidth, PlacedHeight}.
 
-%% What remains inside the pad is the room less both pads, or nothing in
-%% the room's middle when the pads do not fit, so it never shrinks as the
-%% room grows; a pad cut to half the room would leave 1 of 3 but 0 of 4.
-span(Start, Room, Natural, Pad, Align, Fixed) ->
-    Inner = max(0, Room - 2 * Pad),
-    Given = (Room - Inner) div 2,
+span(Start, Room, Need, Align, Fixed) ->
     Size = case Align =:= fill andalso not Fixed of
-               true -> Inner;
-               false -> min(Natural, Inner)
+               true -> Room;
+               false -> min(Need, Room)
            end,
-    {Start + Given + offset(Align, Inner - Size), Size}.
+    {Start + offset(Align, Room - Size), Size}.
 
 offset(fill, _Free) -> 0;
 offset(start, _Free) -> 0;
 offset(center, Free) -> Free div 2;
 offset('end', Free) -> Free.
 
-%% A scroll's children are a column at least as tall as the scroll; the
-%% renderer moves that box under the scroll's rectangle.
+%% A rectangle less Pad on each side, in each direction alike, or nothing
+%% in its middle when the pads do not fit, so it never shrinks as the
+%% rectangle grows; a pad cut to half the length would leave 1 of 3 but
+%% 0 of 4.
+inset({X, Y, Width, Height}, Pad) ->
+    {Left, InnerWidth} = inner(X, Width, Pad),
+    {Top, InnerHeight} = inner(Y, Height, Pad),
+    {Left, Top, InnerWidth, InnerHeight}.
+
+inner(Start, Length, Pad) ->
+    Inner = max(0, Length - 2 * Pad),
+    {Start + (Length - Inner) div 2, Inner}.
+
+%% A scroll's children are a column at least as tall as the scroll's
+%% inside; the renderer moves that box under the scroll's rectangle.
 content(scroll, {X, Y, Width, Height}, Children) ->
     {X, Y, Width,
      max(Height, lists:sum([Down || #sized{need = {_, Down}} <- Children]))};
-content(_Kind, Rect, _Children) ->
-    Rect.
+content(_Kind, Inside, _Children) ->
+    Inside.
 
 place_children(widget, _Props, [], _Content) ->
     [];

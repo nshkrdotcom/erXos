@@ -1226,12 +1226,12 @@ it; git history is the record of completed work.
   `ERL_NIF_RT_TAKEOVER`) when hot reload of the display domain is wanted.
 * [Low] `tools/lib/erx/abi_emit_draw.rb`: design-display.md says the generator also produces the message table of its
   interface section from `draw.txt`; it does not, and the table in "Draw messages" is hand-written.
-* [Medium] `erlang/apps/erx_ui/src/erx_ui_layout.erl` and `display/lvgl/erx_lvgl.c`, [Widget
-  trees](docs/design-display.md#widget-trees): the two renderers read `pad` differently. The property table's "space
-  around the node" is read by the box model as space outside the node's rectangle, so a padded button's background and
-  hit area hug its text; `erx_lvgl.c` sets LVGL's `pad_all`, space inside the object, as CSS `padding` is. Settle one
-  meaning in the table (inside, as LVGL and CSS read it, would make a node's `Content` its `Rect` less the pad) and
-  make the other renderer follow it.
+* [Medium] `display/lvgl/erx_lvgl.c` and `erlang/apps/erx_ui/src/erx_ui_layout.erl`, [Widget
+  trees](docs/design-display.md#widget-trees): an absent `pad` is none in the box model, but `erx_lvgl.c` strips the
+  theme style only from containers (`lv_obj_remove_style_all`, line 401), so a widget keeps the LVGL default theme
+  pad (a button sets `pad_hor` to `PAD_DEF`, `lv_theme_default.c:292` at lvgl `80ca777e3`) and the two renderers size
+  a button without `pad` differently. Clear the theme pad on every widget, or declare the default in `ui.txt` for
+  both.
 * [Low] `erlang/apps/erx_ui/src/erx_ui_layout.erl`, [The widget server](docs/design-display.md#the-widget-server):
   `layout/3` takes a `tree()` and returns a placed tree of the same shape, while `erx_ui_erlang` will hold the
   opaque `erx_ui_model:realised()` the operations build, so it must walk the two side by side. When `erx_ui_erlang`

@@ -9,7 +9,8 @@ properties of "Verification and testing" over random trees and window
 sizes. Each property checks the placed tree against the input tree alone,
 not against a second layout: a node within its parent's content box,
 siblings of a column, row, grid or scroll apart, the same shape as the
-input, and no node smaller in a larger window.
+input, no node smaller in a larger window, and a padded node's content
+box its rectangle less its pads.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -53,20 +54,36 @@ too_little_room_cuts_in_order_test() ->
     ?assertEqual([{0, 0, 10, 30}, {0, 30, 10, 20}, {0, 50, 10, 0}],
                  rects(layout(Column, {10, 50}))).
 
-%% A 10 by 4 widget with a pad of 5 in a 100 by 40 window: the pad leaves
-%% it 90 by 30 at {5, 5}.
+%% A 10 by 4 widget with a pad of 5 in a 100 by 40 window: it needs 20 by
+%% 14, its pads inside it, and its content is its rectangle less the pads.
 pad_and_align_place_a_node_in_its_slot_test() ->
     Padded = fun(Align) -> #{test_size => {10, 4}, pad => 5, align => Align} end,
-    ?assertMatch({{5, 5, 10, 4}, _, []}, layout(widget(Padded(start)), {100, 40})),
-    ?assertMatch({{45, 18, 10, 4}, _, []}, layout(widget(Padded(center)), {100, 40})),
-    ?assertMatch({{85, 31, 10, 4}, _, []}, layout(widget(Padded('end')), {100, 40})),
-    ?assertMatch({{5, 5, 90, 30}, _, []}, layout(widget(Padded(fill)), {100, 40})).
+    ?assertMatch({{0, 0, 20, 14}, {5, 5, 10, 4}, []},
+                 layout(widget(Padded(start)), {100, 40})),
+    ?assertMatch({{40, 13, 20, 14}, {45, 18, 10, 4}, []},
+                 layout(widget(Padded(center)), {100, 40})),
+    ?assertMatch({{80, 26, 20, 14}, {85, 31, 10, 4}, []},
+                 layout(widget(Padded('end')), {100, 40})),
+    ?assertMatch({{0, 0, 100, 40}, {5, 5, 90, 30}, []},
+                 layout(widget(Padded(fill)), {100, 40})).
 
-%% A pad wider than its slot leaves nothing, in the slot's middle; a pad
-%% cut to half the slot would leave 1 of 3 but 0 of 4.
-a_pad_wider_than_its_slot_leaves_nothing_test() ->
-    ?assertMatch({{1, 2, 0, 0}, _, []}, layout(widget(#{pad => 5}), {3, 4})),
-    ?assertMatch({{2, 2, 0, 0}, _, []}, layout(widget(#{pad => 5}), {4, 4})).
+%% A column's pad keeps its children off its edges.
+a_pad_insets_a_containers_children_test() ->
+    Column = {column, #{pad => 3}, [sized_widget(5, 10), sized_widget(5, 10)]},
+    ?assertMatch({{0, 0, 40, 50}, {3, 3, 34, 44}, [{{3, 3, 34, 10}, _, []},
+                                                   {{3, 13, 34, 10}, _, []}]},
+                 layout(Column, {40, 50})).
+
+%% A width is the whole node, its pad inside it, as LVGL's is.
+a_width_holds_its_pad_test() ->
+    Fixed = widget(#{test_size => {10, 10}, width => 30, pad => 5, align => center}),
+    ?assertMatch({{35, 40, 30, 20}, {40, 45, 20, 10}, []}, layout(Fixed, {100, 100})).
+
+%% Pads wider than the node leave no content, in its middle; a pad cut to
+%% half the node would leave 1 of 3 but 0 of 4.
+a_pad_wider_than_its_node_leaves_no_content_test() ->
+    ?assertMatch({{0, 0, 3, 4}, {1, 2, 0, 0}, []}, layout(widget(#{pad => 5}), {3, 4})),
+    ?assertMatch({{0, 0, 4, 4}, {2, 2, 0, 0}, []}, layout(widget(#{pad => 5}), {4, 4})).
 
 %% Under the default fill, the 30 wide label keeps its width at the start
 %% and stretches only down, where it has no fixed size.
@@ -123,6 +140,7 @@ siblings_apart_test_() -> {timeout, 120, fun() -> every_tree(fun apart/3) end}.
 same_shape_test_() -> {timeout, 120, fun() -> every_tree(fun same_shape/3) end}.
 deterministic_test_() -> {timeout, 120, fun() -> every_tree(fun deterministic/3) end}.
 monotonic_test_() -> {timeout, 120, fun() -> every_tree(fun monotonic/3) end}.
+padded_test_() -> {timeout, 120, fun() -> every_tree(fun padded/3) end}.
 
 %% Runs Check(Tree, Size, Placed) over ?TREES random trees and sizes, from
 %% a fixed seed so a failure repeats.
@@ -139,9 +157,9 @@ every_tree(Check) ->
 contained(Tree, {Width, Height}, Placed) ->
     contained(Tree, {0, 0, Width, Height}, Placed, []).
 
-contained({_Kind, _Props, Children}, Parent, {Rect, Content, Placed}, Path) ->
+contained({Kind, _Props, Children}, Parent, {Rect, Content, Placed}, Path) ->
     ?assert(inside(Rect, Parent), {outside, Path, Rect, Parent}),
-    ?assert(holds(Content, Rect), {content, Path, Content, Rect}),
+    ?assert(holds(Kind, Content, Rect), {content, Path, Content, Rect}),
     lists:foreach(fun({Index, Child, ChildPlaced}) ->
                           contained(Child, Content, ChildPlaced, Path ++ [Index])
                   end, indexed(Children, Placed)).
@@ -150,9 +168,12 @@ inside({X, Y, W, H}, {PX, PY, PW, PH}) ->
     W >= 0 andalso H >= 0 andalso X >= PX andalso Y >= PY
         andalso X + W =< PX + PW andalso Y + H =< PY + PH.
 
-%% A content box starts where its rectangle does, as wide and no shorter.
-holds({X, Y, W, ContentHeight}, {X, Y, W, H}) -> ContentHeight >= H;
-holds(_Content, _Rect) -> false.
+%% A content box starts within its rectangle and is no wider; only a
+%% scroll's may be taller.
+holds(scroll, {X, Y, W, H}, {RX, RY, RW, RH}) ->
+    inside({X, Y, W, min(H, RY + RH - Y)}, {RX, RY, RW, RH});
+holds(_Kind, Content, Rect) ->
+    inside(Content, Rect).
 
 %% No two children of a column, row, grid or scroll share a pixel.
 apart(Tree, _Size, Placed) ->
@@ -203,6 +224,49 @@ no_smaller({Rect, Content, Children}, {LargerRect, LargerContent, LargerChildren
                   end, indexed(Children, LargerChildren)).
 
 covers({_, _, LargerW, LargerH}, {_, _, W, H}) -> LargerW >= W andalso LargerH >= H.
+
+%% A shown node's content box is its rectangle less its pad on each side,
+%% or nothing in its middle where the pads do not fit; a scroll's may be
+%% taller. Its rectangle, where it takes the pointer, keeps its pads:
+%% under fill and without a fixed size it spans its whole slot, checked
+%% where the slot follows from the parent alone: the window for the root,
+%% a stack's content box for its children, the content box's width for a
+%% column's or a scroll's and its height for a row's.
+padded(Tree, {Width, Height}, Placed) ->
+    padded(Tree, {window, {0, 0, Width, Height}}, Placed, []).
+
+padded({Kind, Props, Children}, Parent, {Rect, Content, Placed}, Path) ->
+    case maps:get(visible, Props, true) of
+        false ->
+            ok;
+        true ->
+            assert_inset(Kind, maps:get(pad, Props, 0), Rect, Content, Path),
+            assert_fills(Parent, Props, Rect, Path),
+            lists:foreach(fun({Index, Child, ChildPlaced}) ->
+                                  padded(Child, {Kind, Content}, ChildPlaced,
+                                         Path ++ [Index])
+                          end, indexed(Children, Placed))
+    end.
+
+assert_inset(Kind, Pad, {X, Y, W, H} = Rect, {CX, CY, CW, CH} = Content, Path) ->
+    {InnerX, InnerW} = inset(X, W, Pad),
+    {InnerY, InnerH} = inset(Y, H, Pad),
+    Height = CH =:= InnerH orelse (Kind =:= scroll andalso CH > InnerH),
+    ?assert({CX, CY, CW} =:= {InnerX, InnerY, InnerW} andalso Height,
+            {not_inset, Path, Pad, Rect, Content}).
+
+inset(Start, Length, Pad) ->
+    Inner = max(0, Length - 2 * Pad),
+    {Start + (Length - Inner) div 2, Inner}.
+
+assert_fills({Parent, {SX, SY, SW, SH}}, Props, {X, Y, W, H} = Rect, Path) ->
+    Fill = maps:get(align, Props, fill) =:= fill,
+    Across = Fill andalso not maps:is_key(width, Props)
+        andalso lists:member(Parent, [window, stack, column, scroll]),
+    Down = Fill andalso not maps:is_key(height, Props)
+        andalso lists:member(Parent, [window, stack, row]),
+    ?assert(not Across orelse {X, W} =:= {SX, SW}, {not_filled, Path, Rect, Parent}),
+    ?assert(not Down orelse {Y, H} =:= {SY, SH}, {not_filled, Path, Rect, Parent}).
 
 indexed(As, Bs) ->
     lists:zip3(lists:seq(0, length(As) - 1), As, Bs).
