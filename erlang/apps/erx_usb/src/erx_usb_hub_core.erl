@@ -16,17 +16,18 @@ report, at start, names the hub and every port, so a new instance, the
 first or one restarted after a failure, has the bus core read every
 port's status, and the change bits the hub latched while no transfer was
 posted are not lost. A report that names nothing posts the next transfer
-at once. A failed transfer, and a bitmap shorter than the port count
-needs, end the function (`{stop, Reason}`), the one recovery a hub's pipe
-has: the bus resets the pipe and starts the function again, within its
-restarts.
+at once. A failed transfer ends the function (`{stop, {transfer, Reason}}`),
+the one recovery a hub's pipe has: the bus resets the pipe and starts the
+function again, within its restarts.
 
 bitmap/2 decodes a status-change report as the design states it: bit 0
 the hub itself, bit n port n, bit n in byte n div 8 at position n rem 8;
-bits above the port count are ignored. The report is at least
-transfer_length/1 bytes, (Ports + 1) bits rounded up to bytes; FreeBSD's
-`uhub_intr_callback` reads none of the bitmap and explores every port,
-so this layout rests on the design and is not checked against a source.
+bits above the port count, and bytes past transfer_length/1, (Ports + 1)
+bits rounded up to bytes, are ignored. A report shorter than that names
+every port and the hub, so the bus core reads them all, as FreeBSD's
+`uhub_intr_callback` reads none of the bitmap (sys/dev/usb/usb_hub.c:185-218)
+and `uhub_explore` reads every port (usb_hub.c:993-1090). The bit layout rests on the
+design and is not checked against a source.
 
 hub_status/1 decodes GET_STATUS's answer for a hub, its status and change
 words (`usb_hub_status`, usb.h:698-699); port_status/2 for a hub's port
@@ -42,9 +43,10 @@ the speed `unsupported`, with the status and changes still decoded, so
 the bus core can clear the port's changes and see it disconnect while
 it refuses the device on it.
 
-Every word and report comes from a device and is untrusted: each decoder
-takes exactly the bytes its format has, ignores bits it does not know,
-answers `{error, Reason}` instead of raising, and creates no atom.
+Every word and report comes from a device and is untrusted: each status
+decoder takes exactly the bytes its format has, ignores bits it does not
+know and answers `{error, Reason}` instead of raising; bitmap/2 cannot
+fail, since every report names a bounded set; none creates an atom.
 """.
 
 -export([new/1, transfer_length/1, step/2, bitmap/2, hub_status/1, port_status/2]).
@@ -61,7 +63,7 @@ answers `{error, Reason}` instead of raising, and creates no atom.
 -type event() :: start | handled | {transfer, {ok, binary()} | {error, term()}}.
 
 -doc "Post one status transfer of Length bytes; report a change set to the bus process; end the function.".
--type action() :: {post, pos_integer()} | {changed, change_set()} | {stop, term()}.
+-type action() :: {post, pos_integer()} | {changed, change_set()} | {stop, {transfer, term()}}.
 
 -opaque state() :: #{ports := ports(), phase := idle | posted | reporting | stopped}.
 
@@ -78,7 +80,7 @@ answers `{error, Reason}` instead of raising, and creates no atom.
 -type hub_status() :: #{local_power := boolean(), over_current := boolean(),
                         changes := ordsets:ordset(local_power | over_current)}.
 
--type reason() :: short_bitmap | malformed_status.
+-type reason() :: malformed_status.
 
 -doc "A hub function's machine for a hub of Ports ports, as its hub descriptor gives them.".
 -spec new(ports()) -> state().
@@ -97,9 +99,8 @@ step(handled, State = #{phase := reporting}) ->
     post(State);
 step({transfer, {ok, Bytes}}, State = #{ports := Ports, phase := posted}) ->
     case bitmap(Ports, Bytes) of
-        {ok, []} -> post(State);
-        {ok, Set} -> {[{changed, Set}], State#{phase := reporting}};
-        {error, Reason} -> {[{stop, Reason}], State#{phase := stopped}}
+        [] -> post(State);
+        Set -> {[{changed, Set}], State#{phase := reporting}}
     end;
 step({transfer, {error, Reason}}, State = #{phase := posted}) ->
     {[{stop, {transfer, Reason}}], State#{phase := stopped}}.
@@ -107,17 +108,17 @@ step({transfer, {error, Reason}}, State = #{phase := posted}) ->
 post(State = #{ports := Ports}) ->
     {[{post, transfer_length(Ports)}], State#{phase := posted}}.
 
--doc "The hub and ports a status-change report of a hub of Ports ports names.".
--spec bitmap(ports(), binary()) -> {ok, change_set()} | {error, short_bitmap}.
+-doc "The hub and ports a status-change report of a hub of Ports ports names; a short report names them all.".
+-spec bitmap(ports(), binary()) -> change_set().
 bitmap(Ports, Bytes) ->
     Length = transfer_length(Ports),
     case Bytes of
         <<Head:Length/binary, _/binary>> ->
             Bits = binary:decode_unsigned(Head, little),
-            {ok, [Port || Port <- lists:seq(1, Ports), Bits band (1 bsl Port) =/= 0] ++
-                 [hub || Bits band 1 =/= 0]};
-        _ ->
-            {error, short_bitmap}
+            [Port || Port <- lists:seq(1, Ports), Bits band (1 bsl Port) =/= 0] ++
+                [hub || Bits band 1 =/= 0];
+        _Short ->
+            lists:seq(1, Ports) ++ [hub]
     end.
 
 -doc "A hub's own status and changes, from GET_STATUS's 4-byte answer.".

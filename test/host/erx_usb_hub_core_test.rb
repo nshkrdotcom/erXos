@@ -14,7 +14,8 @@ require_relative '../fixtures/erlang_build'
 # change report sent with the next transfer already posted, so a hub has two bitmaps in
 # flight; the bus process's answer taken without posting the next transfer, so the hub
 # falls silent; and the bits above the port count kept, so a report names ports the hub
-# does not have.
+# does not have; and a report shorter than the port count taken as naming nothing, so
+# the ports it should have named are never read.
 class ErxUsbHubCoreTest < Minitest::Test
   APPLICATIONS = %w[erx_usb].freeze
   CORE = 'erlang/apps/erx_usb/src/erx_usb_hub_core.erl'
@@ -25,8 +26,8 @@ class ErxUsbHubCoreTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'a change report sent with the next transfer posted',
-             anchor: '{ok, Set} -> {[{changed, Set}], State#{phase := reporting}};',
-             replacement: '{ok, Set} -> {[{changed, Set}, {post, transfer_length(Ports)}], State#{phase := posted}};',
+             anchor: 'Set -> {[{changed, Set}], State#{phase := reporting}}',
+             replacement: 'Set -> {[{changed, Set}, {post, transfer_length(Ports)}], State#{phase := posted}}',
              catching_case: 'the_machine_keeps_one_bitmap_in_flight_test'),
     Seed.new(fault: "the bus process's answer taken without posting the next transfer",
              anchor: "step(handled, State = \#{phase := reporting}) ->\n    post(State);",
@@ -35,6 +36,12 @@ class ErxUsbHubCoreTest < Minitest::Test
     Seed.new(fault: 'the bits above the port count kept',
              anchor: '[Port || Port <- lists:seq(1, Ports), Bits band (1 bsl Port) =/= 0]',
              replacement: '[Port || Port <- lists:seq(1, 8 * Length - 1), Bits band (1 bsl Port) =/= 0]',
+             catching_case: 'the_bitmap_names_bit_n_as_port_n_test'),
+    Seed.new(fault: 'a report shorter than the port count taken as naming nothing',
+             anchor: '_Short ->
+            lists:seq(1, Ports) ++ [hub]',
+             replacement: '_Short ->
+            []',
              catching_case: 'the_bitmap_names_bit_n_as_port_n_test')
   ].freeze
 

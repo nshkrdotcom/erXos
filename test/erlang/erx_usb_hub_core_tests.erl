@@ -83,16 +83,19 @@ a_report_naming_nothing_posts_again_test() ->
     ?assertMatch({[{post, 1}], _}, erx_usb_hub_core:step({transfer, {ok, <<0>>}}, S)),
     ?assertMatch({[{post, 1}], _}, erx_usb_hub_core:step({transfer, {ok, <<2#11100000>>}}, S)),
     ?assertMatch({[{changed, [2, hub]}], _}, erx_usb_hub_core:step({transfer, {ok, <<2#101>>}}, S)),
-    ?assertMatch({[{stop, short_bitmap}], _}, erx_usb_hub_core:step({transfer, {ok, <<>>}}, S)),
+    ?assertMatch({[{changed, [1, 2, 3, 4, hub]}], _}, erx_usb_hub_core:step({transfer, {ok, <<>>}}, S)),
     ?assertMatch({[{stop, {transfer, halted}}], _}, erx_usb_hub_core:step({transfer, {error, halted}}, S)).
 
 the_bitmap_names_bit_n_as_port_n_test() ->
-    ?assertEqual({ok, [1, 3, hub]}, erx_usb_hub_core:bitmap(3, <<2#1011>>)),
-    ?assertEqual({ok, [3]}, erx_usb_hub_core:bitmap(3, <<2#11111000>>)),
-    ?assertEqual({ok, [7, 8, 15]}, erx_usb_hub_core:bitmap(15, <<16#80, 16#81, 16#ff>>)),
-    ?assertEqual({ok, [8]}, erx_usb_hub_core:bitmap(8, <<0, 1>>)),
-    ?assertEqual({error, short_bitmap}, erx_usb_hub_core:bitmap(8, <<16#ff>>)),
-    ?assertEqual({ok, [7]}, erx_usb_hub_core:bitmap(7, <<16#80>>)),
+    ?assertEqual([1, 3, hub], erx_usb_hub_core:bitmap(3, <<2#1011>>)),
+    ?assertEqual([3], erx_usb_hub_core:bitmap(3, <<2#11111000>>)),
+    ?assertEqual([7, 8, 15], erx_usb_hub_core:bitmap(15, <<16#80, 16#81, 16#ff>>)),
+    ?assertEqual([8], erx_usb_hub_core:bitmap(8, <<0, 1>>)),
+    %% A report shorter than the port count needs names every port and the hub, as
+    %% FreeBSD's uhub explores every port on any report (usb_hub.c:185-218, 993-1090).
+    ?assertEqual(lists:seq(1, 8) ++ [hub], erx_usb_hub_core:bitmap(8, <<16#ff>>)),
+    ?assertEqual([1, 2, hub], erx_usb_hub_core:bitmap(2, <<>>)),
+    ?assertEqual([7], erx_usb_hub_core:bitmap(7, <<16#80>>)),
     ?assertEqual(2, erx_usb_hub_core:transfer_length(8)),
     ?assertEqual(1, erx_usb_hub_core:transfer_length(7)).
 

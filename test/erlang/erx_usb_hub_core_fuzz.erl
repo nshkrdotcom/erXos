@@ -8,7 +8,7 @@
 %% when a decoder raises or answers outside its spec; `out_of_bounds` when an answer
 %% differs from the reference decoders written here from the design and FreeBSD's
 %% speed rule (usb_hub.c:738-752): a bitmap naming a port past the hub's count, a short
-%% report accepted or a long enough one refused, a status of a length other than 4
+%% report not read as naming every port and the hub, a status of a length other than 4
 %% bytes accepted or one of 4 refused, or a field or speed decoded otherwise.
 -module(erx_usb_hub_core_fuzz).
 
@@ -32,17 +32,14 @@ round() ->
 bitmap(Ports, Bytes) ->
     Answer = call(fun() -> erx_usb_hub_core:bitmap(Ports, Bytes) end, Bytes),
     sound(Answer =:= reference_bitmap(Ports, Bytes), {Ports, Bytes, Answer}),
-    case Answer of
-        {ok, _} -> 1;
-        _ -> 0
-    end.
+    1.
 
 %% Bit n of the report, in byte n div 8 at position n rem 8, names port n, bit 0 the hub.
 reference_bitmap(Ports, Bytes) when bit_size(Bytes) >= Ports + 1 ->
     Bit = fun(N) -> binary:at(Bytes, N div 8) band (1 bsl (N rem 8)) =/= 0 end,
-    {ok, [P || P <- lists:seq(1, Ports), Bit(P)] ++ [hub || Bit(0)]};
-reference_bitmap(_Ports, _Bytes) ->
-    {error, short_bitmap}.
+    [P || P <- lists:seq(1, Ports), Bit(P)] ++ [hub || Bit(0)];
+reference_bitmap(Ports, _Short) ->
+    lists:seq(1, Ports) ++ [hub].
 
 hub_status(Bytes) ->
     case call(fun() -> erx_usb_hub_core:hub_status(Bytes) end, Bytes) of
