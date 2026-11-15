@@ -941,6 +941,13 @@ it; git history is the record of completed work.
     and `erx_ui_lvgl_shell.erl`, a present the program sends after the tree is written can reach the test
     before the apply's answer and be taken as an earlier frame's, which leaves the first-present wait to
     time out; the cell's 240x160 check shows only that a present came.
+  * **`erx_ui_host`** ([The SDK](docs/design-packaging.md#the-sdk)) [Medium]: `sdk/erx_ui_host.erl` runs an app's UI
+    under stock OTP with the LVGL renderer, and `test/host/erx_ui_host_test.rb` checks its frame against
+    `test/display/reference/ui-host-lvgl`. Left: the Erlang renderer, for which `start/1` answers `{error, enotsup}`
+    until `erx_ui_erlang` exists; a tree with a `present` property ends the UI as `renderer_down`, since the host
+    has no canonical text for a presentation until `erx_present:text/2` exists; and the host starts `erx-lvgl`
+    through `ruby -e`, because a port cannot hand a program its buffer as descriptor 3, so an app's host test needs
+    Ruby on the path.
   * **Programs** ([The startup message](docs/design-programs.md#the-startup-message)): the profile, `liberx`'s
     decoder, its fuzz targets and the descriptor table (`erx_prog_fd_mmap`, `erx_prog_fd_fstat`) take the `mem`
     descriptor; `erx_program:start/1` takes a window buffer's lease, the driver maps it at the buffer place, and

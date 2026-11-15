@@ -16,12 +16,19 @@ so a server that is killed outright leaves the opener that monitor's
 `{erx_ui, Window}`: a UI is its opener's, as its events are, and tree/2
 and close/1 work from the opener.
 
-open/1 chooses the display and the renderer by choose/2. The server opens
+open/1 chooses the display and the renderer by choose/2. While
+erx_ui_host, the SDK's stand-in for a display on the development host
+(docs/design-packaging.md, "The SDK"), runs in the node under that name,
+it is the default display unless the environment's `display` names one
+the domain holds, LVGL is the default renderer unless the environment's
+`ui_renderer` names one, and the window comes from the host. Elsewhere
+the server opens
 its own target, a window made with the server as its holder, or the web
 line: until the window stack and the web line are built, a display the
 domain holds, and `web`, answer `{error, enotsup}`. start/1 starts a UI on
-a target its caller made; it is the entry of the tests and the renderers'
-harnesses only, and goes when the server opens its own window.
+a target its caller made: the entry of the tests, the renderers'
+harnesses and the host's window, and goes when the server opens its own
+window.
 """.
 
 -export([open/1, tree/2, close/1]).
@@ -40,12 +47,16 @@ display, the environment variable `display`, drawn by the renderer that
 `{error, no_display}` when the name is unset or names no display the
 domain holds.
 """.
--spec open(map()) -> {ok, window()} | {error, no_display | enotsup | badarg}.
+-spec open(map()) -> {ok, window()} | {error, term()}.
 open(Options) when is_map(Options) ->
-    Env = #{display => os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES)), ui_renderer => os:getenv("ui_renderer")},
+    Caps = erx:caps(),
+    Host = whereis(erx_ui_host),
+    Env = #{display => default_display(os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES)), Host, Caps),
+            ui_renderer => host_renderer(os:getenv("ui_renderer"), Host)},
     case choose(Options, Env) of
         {ok, web, _Renderer} -> {error, enotsup};
-        {ok, Display, _Renderer} -> on_display(Display, erx:caps());
+        {ok, erx_ui_host, Renderer} when is_pid(Host) -> on_host(Host, Renderer);
+        {ok, Display, _Renderer} -> on_display(Display, Caps);
         {error, _Why} = Refused -> Refused
     end.
 
@@ -105,8 +116,8 @@ choose(Options, #{display := DefaultDisplay, ui_renderer := DefaultRenderer}) ->
 -doc """
 Starts a UI for the caller on a target it made, drawn by `renderer`, a
 module of the erx_ui_renderer behaviour, started with `opts`. The entry
-of the tests and the renderers' harnesses only; it is deleted when the
-server opens its own window.
+of the tests, the renderers' harnesses and erx_ui_host's window; it is
+deleted when the server opens its own window.
 """.
 -spec start(#{renderer := module(), target := erx_ui_renderer:target(), opts := map()}) ->
           {ok, window()} | {error, term()}.
@@ -126,6 +137,30 @@ start(#{renderer := Renderer, target := Target, opts := Opts}) ->
             end;
         {error, _Why} = Failed ->
             Failed
+    end.
+
+%% The default display: the environment's `display` when it names a display
+%% the domain holds, else erx_ui_host while it runs, else the environment's
+%% `display`, which then names none.
+default_display(Named, Host, Caps) ->
+    case is_map_key(existing_atom(Named), Caps) orelse Host =:= undefined of
+        true -> Named;
+        false -> "erx_ui_host"
+    end.
+
+%% The default renderer: the environment's `ui_renderer`, or else LVGL
+%% while erx_ui_host runs, the one renderer it draws with.
+host_renderer(false, Host) when is_pid(Host) -> "lvgl";
+host_renderer(Named, _Host) -> Named.
+
+%% A window of erx_ui_host, drawn by Renderer: the host answers the
+%% renderer's module and its options, or refuses. A host that ends before
+%% it answers is no display.
+on_host(Host, Renderer) ->
+    try gen_server:call(Host, {window, Renderer}) of
+        {ok, Module, Opts} -> start(#{renderer => Module, target => {window, Host}, opts => Opts});
+        {error, _Why} = Refused -> Refused
+    catch exit:{_Why, {gen_server, call, _}} -> {error, no_display}
     end.
 
 %% A display the domain holds opens a window there, which the window

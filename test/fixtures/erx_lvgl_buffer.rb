@@ -10,4 +10,4 @@
 # port hands a program only its standard input and output.
 abort 'usage: erx_lvgl_buffer.rb BUFFER PROGRAM' unless ARGV.size == 2
 buffer, program = ARGV
-exec(program, 3 => File.open(buffer, File::RDWR))
+exec([program, program], 3 => File.open(buffer, File::RDWR))
