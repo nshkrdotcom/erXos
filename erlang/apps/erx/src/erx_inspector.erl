@@ -16,7 +16,8 @@ whose scope the system domain fixed when it minted it
   as it may see the machine. inspect/2 takes the query's options:
   `offset`, for a path the schema marks append-only, is the sequence
   number its entries start from, 0 when it is left out
-  (docs/design-live.md, "Paths").
+  (docs/design-live.md, "Paths"), and `timeout` is the caller's own
+  wait, which shortens the default one and is not sent.
 * inspect/3 and entries/2 are the core a query worker and a domain's
   agent run at a given scope: the record of one path, and the records of
   a listing's entries, the listing's own status beside them.
@@ -26,7 +27,8 @@ whose scope the system domain fixed when it minted it
   schema marks `visible all` needs scope `all`, a domain's path needs its
   domain in the scope, and a path outside the scope gets the answer of a
   path that names nothing, `{error, scope}`, so a scoped caller cannot
-  learn whether it exists.
+  learn whether it exists. Of the machine's paths a scoped caller reaches
+  only the machine's record, the CPUs and the processes.
 * Of a record it may reach, the caller sees the attributes whose
   visibility class its scope admits (scoped/3): `any` always, `owner`
   with scope `all` or its owner's domain in the scope, `all` with scope
@@ -55,7 +57,7 @@ that has no collector here is
 """.
 
 -export([inspect/1, inspect/2, entries/1, overview/0]).
--export([inspect/3, entries/2, route/3, proc_id/1, runtime_domain/0, is_system_runtime/0]).
+-export([inspect/3, entries/2, route/4, proc_id/1, runtime_domain/0, is_system_runtime/0]).
 -export([scoped/3, declared_reachable/3, listing/2, collects_domain/2]).
 -export([page/0, page_add/2, page_full/1, page_entries/2, view/1]).
 -export_type([scope/0, query_scope/0, answer/0, entries/0, page/0]).
@@ -68,7 +70,7 @@ that has no collector here is
 -type query_scope() :: scope() | {principal, pos_integer()}.
 -type answer() :: {ok, erx_schema:record()}
                   | {error, scope | unsupported | invalid | failed | no_facet | busy | badarg}.
--type options() :: #{offset => non_neg_integer()}.
+-type options() :: #{offset => non_neg_integer(), limit => pos_integer(), timeout => pos_integer()}.
 -type entries() :: {ok | partial, [erx_schema:record()]}
                    | {error, scope | unsupported | failed | no_facet | busy | badarg}.
 %% Whose a path is: the machine's, or a domain's by its id.
@@ -84,13 +86,12 @@ that has no collector here is
 %% and tail, rounded up. Each record's external_size/1 counts a version
 %% byte of its own besides, so the sum is a bound, never short.
 -define(ANSWER_OVERHEAD, 32).
-%% The machine's paths a scoped caller reaches: the machine's record, with
-%% only the attributes the schema marks `visible any`, and the
-%% processes, listing only its own domains' (docs/design-live.md, "Scopes").
--define(SCOPED_MACHINE_PATHS, [[], [processes]]).
 %% How much longer than a query's own deadline a caller waits for the facet's
 %% answer, for the frames' way between the domains.
 -define(FACET_MARGIN, 1000).
+%% How long a caller waits for a query's answer when its options set no
+%% shorter timeout (inspect/2).
+-define(CALLER_WAIT, (?ERX_INSPECT_QUERY_MAX + ?FACET_MARGIN)).
 
 -doc """
 The record of Path as the caller's domain may see it, with no scope of the
@@ -111,24 +112,37 @@ inspect(Path) ->
     inspect(Path, #{}).
 
 -doc """
-The record of Path as inspect/1 asks for it, for the query's Options,
-which only an append-only path reads (inspect/3).
+The record of Path as inspect/1 asks for it, for the query's Options
+(docs/design-live.md, "Bounds"). `offset` and `limit` travel with the
+query; only an append-only path reads `offset` (inspect/3). `timeout`,
+the caller's own wait in milliseconds, is not sent and can only shorten
+the wait: in the system domain it narrows the query worker's deadline,
+at most inspect_query_max, so what the worker has not heard by then
+reads as timed out; through the facet it is how long the caller waits
+for the answer, `{error, failed}` past it. A `timeout` that is not a
+positive integer is `{error, badarg}`, as the facet refuses an option it
+does not take.
 """.
 -spec inspect(term(), options()) -> answer().
+inspect(Path, #{timeout := Timeout} = Options) when is_integer(Timeout), Timeout > 0 ->
+    query({inspect, Path, maps:remove(timeout, Options)}, min(Timeout, ?CALLER_WAIT));
+inspect(_Path, #{timeout := _Timeout}) ->
+    {error, badarg};
 inspect(Path, Options) ->
-    query({inspect, Path, Options}).
+    query({inspect, Path, Options}, ?CALLER_WAIT).
 
 -doc "The records of the entries of the listing at Path, as inspect/1 asks.".
 -spec entries(term()) -> entries().
 entries(Path) ->
-    query({entries, Path}).
+    query({entries, Path}, ?CALLER_WAIT).
 
-query(Query) ->
-    route(is_system_runtime(), erx:cap(inspect), Query).
+query(Query, Wait) ->
+    route(is_system_runtime(), erx:cap(inspect), Query, Wait).
 
 -doc """
-Where a query goes: in the system domain (System true) to a local query
-worker at scope `all`; in any other runtime to the domain's inspect
+Where a query goes, its caller waiting at most Wait milliseconds for the
+answer: in the system domain to a local query worker at scope `all`,
+whose deadline Wait narrows; in any other runtime to the domain's inspect
 facet, Facet, or nowhere, `{error, no_facet}`, when it holds none or
 holds one that has ended: a revoked facet admits no query after its end
 (docs/design-live.md, "The /proc tree"), and a call to it exits `noproc`,
@@ -138,13 +152,13 @@ a scope. The facet decodes the request and refuses what the interface
 does not take, so a path that is no data is `{error, badarg}` here too,
 and a request past its requests in flight is `{error, busy}`.
 """.
--spec route(boolean(), pid() | undefined, term()) -> answer() | entries().
-route(true, _Facet, Query) ->
-    erx_inspect_worker:call(Query, all, #{view => fun view/1});
-route(false, undefined, _Query) ->
+-spec route(boolean(), pid() | undefined, term(), pos_integer()) -> answer() | entries().
+route(true, _Facet, Query, Wait) ->
+    erx_inspect_worker:call(Query, all, #{view => fun view/1, query_max => min(Wait, ?ERX_INSPECT_QUERY_MAX)});
+route(false, undefined, _Query, _Wait) ->
     {error, no_facet};
-route(false, Facet, Query) ->
-    try gen_server:call(Facet, Query, ?ERX_INSPECT_QUERY_MAX + ?FACET_MARGIN)
+route(false, Facet, Query, Wait) ->
+    try gen_server:call(Facet, Query, Wait)
     catch
         exit:{noproc, _} -> {error, no_facet};
         exit:_ -> {error, failed}
@@ -237,13 +251,23 @@ declared_reachable(Path, {ok, _Declaration}, Scope) ->
 
 %% A path no declaration closes to a scoped caller: a domain's when its
 %% domain is in the scope; the machine's only when it is one a scoped
-%% caller may read, so a machine-wide path declared later is closed to
-%% scoped callers until it is named here.
+%% caller may read (scoped_machine_path/1), so a machine-wide path declared
+%% later is closed to scoped callers until it is named there.
 reachable(Path, Scope) ->
     case owner(Path) of
         {domain, Domain} = Owner -> answer(covered(Scope, Domain), Owner);
-        machine -> answer(Scope =:= all orelse lists:member(Path, ?SCOPED_MACHINE_PATHS), machine)
+        machine -> answer(Scope =:= all orelse scoped_machine_path(Path), machine)
     end.
+
+%% The machine's paths a scoped caller reaches (docs/design-live.md,
+%% "Scopes"): the machine's record and each CPU's, of which scoped/3 keeps
+%% only the attributes the schema marks `visible any`, the CPUs' listing,
+%% and the processes, listing only its own domains'.
+scoped_machine_path([]) -> true;
+scoped_machine_path([cpus]) -> true;
+scoped_machine_path([cpus, _Index]) -> true;
+scoped_machine_path([processes]) -> true;
+scoped_machine_path(_Path) -> false.
 
 answer(true, Owner) -> {ok, Owner};
 answer(false, _Owner) -> error.

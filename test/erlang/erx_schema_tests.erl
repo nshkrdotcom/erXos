@@ -109,7 +109,8 @@ every_path_resolves_to_exactly_one_declaration_test() ->
 
 machine_wide_paths_are_marked_test() ->
     Visible = fun(Path) -> {ok, #{visible := V}} = erx_schema:resolve(Path), V end,
-    ?assertEqual([all], Visible([cpus, 0])),
+    ?assertEqual([], Visible([cpus])),
+    ?assertEqual([], Visible([cpus, 0])),
     ?assertEqual([all], Visible([budgets, 1])),
     ?assertEqual([all], Visible([groups, 1])),
     ?assertEqual([], Visible([domains, 4, group])),

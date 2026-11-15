@@ -9,7 +9,7 @@ to the module that does the work, with that module's authority and no
 authority of its own.
 """.
 
--export([i/0, i/1, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0]).
+-export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0]).
 
 %%% Source lines: erx:source/1.
 
@@ -58,6 +58,18 @@ i(Path) ->
         {error, _Reason} = Error ->
             Error
     end.
+
+-doc """
+The record of Path through the caller's inspect facet, as data for a
+program to read (docs/design-live.md, "Erlang, in every domain"): what
+erx_inspector:inspect/2 answers for Path with each pid in it as its
+`proc_id()`, as erx:i/1 asks. Options holds `offset` and `limit`, which
+travel with the query, and `timeout`, the caller's own wait in
+milliseconds, which is not sent.
+""".
+-spec inspect([erx_schema:segment() | pid()], map()) -> erx_inspector:answer().
+inspect(Path, Options) ->
+    erx_inspector:inspect(as_data(Path), Options).
 
 %% Path with each pid in it as its proc_id(), an improper tail kept as it is
 %% for the inspector to refuse.

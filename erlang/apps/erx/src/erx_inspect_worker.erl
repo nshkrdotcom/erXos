@@ -65,7 +65,9 @@ domain service's (erx_domain:inspect_view/1).
 -type agent() :: pid() | none | ended.
 -type view() :: [{non_neg_integer(), agent()}].
 %% view gives the domains a scope covers, `all` or `{principal, P}`;
-%% agent_wait and query_max narrow the interface's waits for a test.
+%% query_max narrows the query's deadline, for a caller's own timeout
+%% (erx_inspector:inspect/2) or a test; agent_wait narrows an agent's wait
+%% for a test.
 -type options() :: #{view := fun((all | {principal, pos_integer()}) -> {ok, view()} | unavailable),
                      agent_wait => pos_integer(), query_max => pos_integer()}.
 -type answer() :: erx_inspector:answer() | erx_inspector:entries().

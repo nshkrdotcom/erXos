@@ -213,14 +213,17 @@ the_processes_directory_lists_this_process_test() ->
     receive {'DOWN', Ref, process, Dead, _} -> ok end,
     ?assertEqual({error, enoent}, erx_procfs:walk(Processes, erx_procfs_core:name(erx_inspector:proc_id(Dead)), Fs)).
 
+%% The snapshots are of [processes], which the core in this process lists on
+%% stock; the root's listing asks for /cpus, whose collector needs
+%% erx_object_info's NIF, which stock does not load.
 the_257th_snapshot_is_refused_test() ->
     {ok, Fs} = erx_procfs:init(scoped([4])),
-    Root = erx_procfs_core:root(),
-    Handles = [element(2, {ok, _} = erx_procfs:open(Root, 0, Fs)) || _ <- lists:seq(1, 256)],
-    ?assertEqual({error, emfile}, erx_procfs:open(Root, 0, Fs)),
+    Processes = {dir, [processes]},
+    Handles = [element(2, {ok, _} = erx_procfs:open(Processes, 0, Fs)) || _ <- lists:seq(1, 256)],
+    ?assertEqual({error, emfile}, erx_procfs:open(Processes, 0, Fs)),
     ok = erx_procfs:clunk(hd(Handles), Fs),
-    ?assertMatch({ok, _}, erx_procfs:open(Root, 0, Fs)),
-    ?assertEqual({error, erofs}, erx_procfs:open(Root, 1, Fs)).
+    ?assertMatch({ok, _}, erx_procfs:open(Processes, 0, Fs)),
+    ?assertEqual({error, erofs}, erx_procfs:open(Processes, 1, Fs)).
 
 a_crashing_query_answers_eio_and_keeps_its_snapshot_test() ->
     {ok, Fs} = erx_procfs:init(scoped(all)),
@@ -265,7 +268,7 @@ an_ended_facet_empties_the_tree_and_a_busy_one_does_not_test() ->
 
 %% A query as a domain other than the system domain makes it, through Facet.
 through(Facet, Path, Options) ->
-    erx_inspector:route(false, Facet, {inspect, Path, Options}).
+    erx_inspector:route(false, Facet, {inspect, Path, Options}, 1000).
 
 %% The tree asks its inspector with no scope of its own: every question is
 %% a path and the query's options, never a scope.

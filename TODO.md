@@ -2687,10 +2687,27 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   stand-in has no `owner/1`, so a request cannot go through a facet the service minted. Give it one, mint with
   `inspect_policy => #{roots => [1], development => false}` for principal 1, expect `{error, scope}` for
   `[kernel, log]`, and seed `inspect_scope/3` replaced by `all`; test `shell_principals/1` on a packed manifest.
-* [Low] facets, a request past `max_request` (`erlang/apps/erx/src/erx_inspector.erl`, `route/3`): the facet
+* [Low] facets, a request past `max_request` (`erlang/apps/erx/src/erx_inspector.erl`, `route/4`): the facet
   drops it unanswered, so the inspector waits `inspect_query_max` and a margin before `{error, failed}`. It can
   refuse such a request at once from the grant's `max_request` (`erx_facet:info/1`).
-* [Low] inspection consumers, a busy facet (`erlang/apps/erx/src/erx_inspector.erl`, `route/3`): a request past
+* [Medium] inspection, `erx:inspect/2`'s options (`erlang/apps/erx/src/erx_inspector.erl`, `inspect/2`): through
+  the facet `erx_inspect_query` refuses an unknown key, a bad `offset` or `limit` with `{error, badarg}`, while
+  in the system domain and on a development host nothing checks them (`#{foo => 1}` answers `ok`, a bad
+  `offset` on `[kernel, log]` answers `invalid`), so programs tested on the host meet behaviour sessions do
+  not have. Run the decoder's option check once in `inspect/2` before routing either way. `limit` is admitted
+  but nothing reads it.
+* [Medium] inspection, `timeout` in the system domain (`erx_inspector.erl`, `route/4`;
+  `erx_inspect_worker.erl`, `await/1`): it narrows only the worker's deadline for agents; the view call
+  (up to `inspect_agent_wait`) and the local collectors run before or outside it, so the caller can wait
+  longer than its timeout. Give `await/1` an `after Wait` answering `{error, failed}`, as the facet path does.
+* [Low] inspection, a short `timeout` through the facet (`erx_inspector.erl`, `route/4`): the caller gives up
+  but the facet's worker runs on to `inspect_query_max` and holds its in-flight slot, since the timeout is
+  not sent, so a program polling with short timeouts can make its session's other queries answer busy.
+* [Low] inspection tests, scoped `[cpus]` (`test/erlang/erx_inspector_tests.erl`): stock does not load
+  `erx_object_info`'s NIF, so inspect/3 and entries/2 never run for `[cpus]` and `[cpus, N]` at a scoped
+  scope, a scoped `/proc` root is not listed, and the facet path of `inspect/2`'s `timeout` is untested; a
+  stub collector for `erx_kernel_records:cpus/0` would cover them.
+* [Low] inspection consumers, a busy facet (`erlang/apps/erx/src/erx_inspector.erl`, `route/4`): a request past
   the inspect facet's `in_flight` answers `{error, busy}` at once and no consumer retries it, so a browser with
   many views open can make the same session's `top` print `[inspector busy]` and its `/proc` files `[error]`.
   A facet that crashes, through a fault in its callback (`erx_facet:loop/1`), reads as one revoked: `no_facet`,
@@ -3844,11 +3861,11 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   names a pid of its own runtime by the runtime's domain rather than by the creation the pid carries; drop that
   special case wherever the creation already is the domain. The browser shows a
   process's links and monitors, lists of `proc_id()`, as tuples (`erx_web_value`), not as pid presentations.
-  The listing page (1,000) and the scoped machine paths (`[]`, `[processes]`) are written
+  The listing page (1,000) and the scoped machine paths (`[]`, `[cpus]`, `[cpus, N]`, `[processes]`) are written
   in `erx_inspector`; have `erx_schema` export the page and the schema mark which machine paths a scoped facet
   reads. A thread past a partial listing's end is answered `{error, scope}`, as one that does not exist.
   Not collected yet: `[groups]`, `[budgets]`, `[domains]` and a domain's record, modules, exports, connections
-  and paginated `[domains, Id, processes]`; `erx:inspect/2`, and `erx:ps/0` and `erx:domains/0` with their
+  and paginated `[domains, Id, processes]`; `erx:ps/0` and `erx:domains/0` with their
   `shell_default` shortcuts, which `test/erlang/erx_shortcut_tests.erl` lists as pending.
 * [Medium] /proc (`erlang/apps/erx_files/src/erx_procfs.erl`, `erx_procfs_core.erl`; design-live's
   [The /proc tree](docs/design-live.md#the-proc-tree)): `kernel_safe_sup` starts the tree at boot in every

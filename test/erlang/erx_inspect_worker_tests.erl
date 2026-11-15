@@ -200,6 +200,21 @@ a_principals_scope_is_its_domains_test() ->
                  erx_inspect_worker:call({inspect, [processes, {pid, ?D + 1, 1, 0}], #{}}, {principal, 7},
                                          options(View))).
 
+%% An ordinary session's scope, {principal, P}, reaches no machine-wide path
+%% but the machine's record, its CPUs and the processes
+%% (erx_inspector_tests), and no domain of another principal, the system
+%% domain's own records included: each answers as a path that names nothing
+%% (docs/design-live.md, "Scopes").
+a_session_reads_no_other_principals_domain_test() ->
+    View = [{?D, listing(?D, 1, 0)}],
+    Ask = fun(Query) -> erx_inspect_worker:call(Query, {principal, 7}, options(View)) end,
+    System = erx_kernel_records:system_domain(),
+    [?assertEqual({error, scope}, Ask(Query))
+     || Query <- [{inspect, [groups], #{}}, {inspect, [budgets], #{}}, {inspect, [kernel], #{}},
+                  {inspect, [domains, System], #{}}, {inspect, [domains, System, group], #{}},
+                  {inspect, [domains, System, budget], #{}}, {entries, [domains, System, threads]},
+                  {inspect, [domains, ?D + 1], #{}}, {inspect, [domains, ?D + 1, group], #{}}]].
+
 %% A domain that ended names nothing, and one without an agent has its runtime
 %% attributes unknown, and makes a listing partial.
 ended_and_agentless_domains_test() ->

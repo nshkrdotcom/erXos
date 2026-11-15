@@ -81,8 +81,8 @@ inspection 1
 
   kind cpu
     attr running_thread thread_id reporters kernel visible all build all projections shell,host,proc,web
-    attr idle_time duration reporters kernel visible all build all projections shell,host,proc,web
-    attr ready_threads urgency_counts reporters kernel visible all build all projections shell,host,proc,web
+    attr idle_time duration reporters kernel visible any build all projections shell,host,proc,web
+    attr ready_threads urgency_counts reporters kernel visible any build all projections shell,host,proc,web
     attr interrupts count reporters kernel visible all build all projections shell,host,proc,web
     attr throttled_groups count reporters kernel visible all build all projections shell,host,proc,web
 
@@ -168,7 +168,6 @@ inspection 1
 
   path machine
   path listing cpus
-    visible all
   path cpu cpus *cpu_index
   path listing groups
     visible all

@@ -126,12 +126,18 @@ foreign_pid() ->
 
 reachable(Path, Scope) -> erx_inspector:declared_reachable(Path, erx_schema:resolve(Path), Scope).
 
-machine_paths_need_scope_all_test() ->
+%% A scoped caller reaches the machine's record and its CPUs, the machine's
+%% load, and no other machine-wide path (docs/design-live.md, "Scopes").
+machine_paths_a_scope_reaches_test() ->
     ?assertEqual({ok, machine}, reachable([], [5])),
     ?assertEqual({ok, machine}, reachable([cpus], all)),
-    ?assertEqual(error, reachable([cpus], [?SYSTEM])),
-    ?assertEqual(error, reachable([cpus, 0], [?SYSTEM])),
-    ?assertEqual(error, reachable([budgets], [?SYSTEM])).
+    ?assertEqual({ok, machine}, reachable([cpus], [?SYSTEM])),
+    ?assertEqual({ok, machine}, reachable([cpus, 0], [?SYSTEM])),
+    ?assertEqual({ok, machine}, reachable([cpus, 63], [5])),
+    ?assertEqual(error, reachable([groups], [?SYSTEM])),
+    ?assertEqual(error, reachable([groups, 1], [?SYSTEM])),
+    ?assertEqual(error, reachable([budgets], [?SYSTEM])),
+    ?assertEqual(error, reachable([budgets, 1], [?SYSTEM])).
 
 domain_paths_need_their_domain_test() ->
     ?assertEqual({ok, {domain, ?SYSTEM}}, reachable([domains, ?SYSTEM, budget], [?SYSTEM])),
@@ -150,7 +156,7 @@ unknown_and_unreachable_paths_answer_as_scope_test() ->
     %% proc_id() reaches no process of this runtime.
     {pid, ?SYSTEM, N, S} = me(),
     ?assertEqual({error, scope}, erx_inspector:inspect([processes, {pid, 5, N, S}], [5], #{})),
-    ?assertEqual({error, scope}, erx_inspector:inspect([cpus], [?SYSTEM], #{})),
+    ?assertEqual({error, scope}, erx_inspector:inspect([groups], [?SYSTEM], #{})),
     ?assertEqual({error, scope}, erx_inspector:inspect([domains, 9, budget], all, #{})),
     ?assertEqual({error, scope}, erx_inspector:inspect([nothing], all, #{})).
 
@@ -186,6 +192,20 @@ scoped_record_keeps_what_the_scope_sees_test() ->
     Record = #{kind => process, attrs => Process},
     ?assertEqual(Process, maps:get(attrs, erx_inspector:scoped(Record, {domain, ?SYSTEM}, [?SYSTEM]))),
     ?assertEqual(#{}, maps:get(attrs, erx_inspector:scoped(Record, {domain, ?SYSTEM}, [5]))).
+
+%% Of a CPU, a scoped caller sees the machine's load, its idle time and ready
+%% threads, and nothing else: not the thread it runs, its interrupts or its
+%% throttled groups. It is what inspect/3 answers for [cpus, 0] once the
+%% collector has given the record, which on stock needs erx_object_info's
+%% NIF, not loaded here.
+scoped_cpu_keeps_the_machines_load_test() ->
+    {ok, Cpu} = erx_kernel_records:record(cpu, [cpus, 0], 0, {error, ?ERX_ENOTSUP}, 0),
+    {ok, Owner} = reachable([cpus, 0], [5]),
+    #{attrs := All} = erx_inspector:scoped(Cpu, Owner, all),
+    #{attrs := Scoped} = erx_inspector:scoped(Cpu, Owner, [5]),
+    ?assertEqual([idle_time, interrupts, ready_threads, running_thread, throttled_groups],
+                 lists:sort(maps:keys(All))),
+    ?assertEqual([idle_time, ready_threads], lists:sort(maps:keys(Scoped))).
 
 %%% Renderers
 
@@ -335,14 +355,35 @@ a_development_host_is_the_system_domain_test() ->
 %% and one with the facet gets the facet's answer.
 a_domain_asks_only_through_its_facet_test() ->
     Own = [domains, ?SYSTEM],
-    ?assertEqual({error, no_facet}, erx_inspector:route(false, undefined, {inspect, Own, #{}})),
-    ?assertEqual({error, no_facet}, erx_inspector:route(false, undefined, {entries, [processes]})),
+    ?assertEqual({error, no_facet}, erx_inspector:route(false, undefined, {inspect, Own, #{}}, 1000)),
+    ?assertEqual({error, no_facet}, erx_inspector:route(false, undefined, {entries, [processes]}, 1000)),
     Facet = spawn_link(fun() -> receive {'$gen_call', From, Query} -> gen:reply(From, {asked, Query}) end end),
     Ended = monitor(process, Facet),
     ?assertEqual({asked, {inspect, Own, #{offset => 3}}},
-                 erx_inspector:route(false, Facet, {inspect, Own, #{offset => 3}})),
+                 erx_inspector:route(false, Facet, {inspect, Own, #{offset => 3}}, 1000)),
     receive {'DOWN', Ended, process, Facet, _} -> ok end,
-    ?assertEqual({error, no_facet}, erx_inspector:route(false, Facet, {entries, [processes]})).
+    ?assertEqual({error, no_facet}, erx_inspector:route(false, Facet, {entries, [processes]}, 1000)).
+
+%% erx:inspect/2 answers what erx_inspector:inspect/2 does, a pid in its path
+%% asked as the pid's proc_id(). A timeout is the caller's own wait: one that
+%% is a positive integer is taken off the options, any other is refused.
+erx_inspect_answers_as_the_inspector_test() ->
+    [?assertEqual(erx_inspector:inspect(Path, Options), erx:inspect(Path, Options))
+     || {Path, Options} <- [{[kernel], #{}}, {[apps], #{}}, {[nothing], #{}},
+                            {[kernel, log], #{offset => -1}}, {[kernel], #{timeout => 0}}]],
+    ?assertMatch({ok, #{kind := process, id := {pid, ?SYSTEM, _, _}}}, erx:inspect([processes, self()], #{})),
+    ?assertMatch({ok, #{kind := listing, children := [log]}}, erx:inspect([kernel], #{timeout => 500})),
+    ?assertEqual({error, badarg}, erx:inspect([], #{timeout => 0})),
+    ?assertEqual({error, badarg}, erx:inspect([], #{timeout => infinity})).
+
+%% Through the facet, the caller waits Wait and no longer: a facet that never
+%% answers is a failed query by then.
+the_caller_waits_no_longer_than_its_wait_test() ->
+    Silent = spawn_link(fun() -> receive stop -> ok end end),
+    Start = erlang:monotonic_time(millisecond),
+    ?assertEqual({error, failed}, erx_inspector:route(false, Silent, {inspect, [], #{}}, 100)),
+    ?assert(erlang:monotonic_time(millisecond) - Start < 1000),
+    Silent ! stop.
 
 %% A facet that has ended, as a revoked one does, admits no query: the
 %% domain holds no facet from then on (design-live.md, "The /proc tree").
@@ -352,9 +393,9 @@ an_ended_facet_is_no_facet_test() ->
     Dead = spawn(fun() -> ok end),
     Gone = monitor(process, Dead),
     receive {'DOWN', Gone, process, Dead, _} -> ok end,
-    ?assertEqual({error, no_facet}, erx_inspector:route(false, Dead, {inspect, [], #{}})),
+    ?assertEqual({error, no_facet}, erx_inspector:route(false, Dead, {inspect, [], #{}}, 1000)),
     Ending = spawn(fun() -> receive {'$gen_call', _From, _Query} -> exit(revoked) end end),
-    ?assertEqual({error, failed}, erx_inspector:route(false, Ending, {inspect, [], #{}})).
+    ?assertEqual({error, failed}, erx_inspector:route(false, Ending, {inspect, [], #{}}, 1000)).
 
 %% The system domain's record carries this runtime's figures, its run queue
 %% among them, and the domain service's and the kernel's, which have no

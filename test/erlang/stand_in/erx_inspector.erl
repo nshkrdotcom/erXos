@@ -3,7 +3,7 @@
 
 %% erXos's erx_inspector as the host tests of the shell's commands see it: a
 %% domain that holds no inspect facet, so every query is answered `no_facet`,
-%% as erx_inspector:route/3 answers one outside the system domain, unless a
+%% as erx_inspector:route/4 answers one outside the system domain, unless a
 %% test has set the persistent term `erx_inspector` to a fun from a path to
 %% the answer its facet would give.
 
