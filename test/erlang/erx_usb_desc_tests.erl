@@ -225,6 +225,8 @@ a_hub_descriptor_names_1_to_15_ports_test() ->
     ?assertMatch({ok, #{ports := 1}}, erx_usb_desc:hub(<<7, 16#29, 1, 0:16, 10, 0>>)),
     ?assertEqual({error, malformed_descriptor}, erx_usb_desc:hub(<<6, 16#29, 1, 0:16, 10>>)),
     ?assertMatch({ok, #{ports := 10}}, erx_usb_desc:hub(<<11, 16#29, 10, 0:16, 10, 0, 0, 0, 16#ff>>)),
+    ?assertMatch({ok, #{ports := 10}}, erx_usb_desc:hub(<<11, 16#29, 10, 0:16, 10, 0>>)),
+    ?assertEqual({error, malformed_descriptor}, erx_usb_desc:hub(<<6, 16#29, 1, 0:16, 10, 0>>)),
     ?assertEqual({error, malformed_descriptor}, erx_usb_desc:hub(<<7, 16#28, 1, 0:16, 10, 0>>)).
 
 a_string_is_decoded_to_utf8_test() ->

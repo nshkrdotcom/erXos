@@ -2100,7 +2100,13 @@ at most 64 usages a main item, 16 report ids and a report count of 2048
 keeps what it read (`hid.c:446-450`), erXos refuses the descriptor, so a
 layout is never built from part of one. erXos adds two bounds: an input
 report of at most the interrupt buffer, 1 KiB with its report-id byte,
-and a descriptor of at most `hid_report_descriptor_max`. Its result is a
+and a descriptor of at most `hid_report_descriptor_max`. It also refuses
+a report id of 0 or above 255, since a report carries its id in one byte
+and HID 1.11 reserves 0 (section 6.2.2.7); input items, padding
+included, both outside and inside numbered reports, since a report then
+cannot say which it is; an item cut off by the descriptor's end, whose missing bytes
+FreeBSD reads as zero; and a data input field wider than 32 bits. Its
+result is a
 **layout**: for each report id, the input fields in order, each a bit
 offset, a size from 1 to 32 bits, a count, a logical minimum and maximum,
 a usage page and its usages or usage range, and the flags variable or
@@ -2157,9 +2163,10 @@ since a transfer ends only at its length or a short packet (HID 1.11,
 section 8.4; xHCI 4.10.1.1, p. 191).
 
 `erx_hid_core:step(Layout, Report, State) -> {Records, State}` keeps,
-for each report id the layout has, the values of the fields that id
-carries as its last report of that id set them, and derives the held
-set, the keys and buttons held, as the union over every id. A report of
+for each report id the layout has, what its last report of that id
+left: the keys and buttons it held and its absolute position, not the
+fields' values; and derives the held set, the keys and buttons held, as
+the union over every id. A report of
 id *k* replaces only id *k*'s entry, as FreeBSD's keyboard driver clears
 and sets only the keys of the received id (`hkbd.c:706-745`), so a
 report of id 2 never releases a key that id 1 holds. Then:
@@ -2169,9 +2176,12 @@ report of id 2 never releases a key that id 1 holds. Then:
   Each key in the old held set and not the new gives `{key, up, Code}`,
   then each in the new and not the old `{key, down, Code}`, in ascending
   code order, so a report that changes several keys gives a
-  deterministic sequence. A report whose array fields all hold
-  ErrorRollOver (usage 01h) is the phantom state of Appendix C and
-  changes nothing. A usage the table maps to no code is dropped and
+  deterministic sequence. A report whose array values that name a
+  Keyboard/Keypad page usage all hold ErrorRollOver (usage 01h) is the phantom state of
+  Appendix C and changes nothing. An array value above the field's
+  logical maximum still names a usage, the one at `v - min` of its
+  usage ranges when they reach that far, since the fold checks only the
+  minimum. A usage the table maps to no code is dropped and
   counted.
 * **Pointer.** A relative X and Y give `{pointer, rel, DX, DY}` when
   either is non-zero. An absolute X and Y are clamped to their logical
@@ -2184,7 +2194,8 @@ report of id 2 never releases a key that id 1 holds. Then:
 * **Buttons** give key records with their `BTN_` codes on each edge of
   the held set.
 * **Wheel.** A non-zero wheel gives `{wheel, Steps}`, clamped to -128 to
-  127.
+  127. A wheel field without the relative flag is read the same way, so
+  it scrolls on every report in which it is non-zero.
 
 Moves come before button edges within one report, so a click lands where
 the report put the pointer. The state holds one entry per report id, at
