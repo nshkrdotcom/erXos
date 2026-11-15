@@ -46,13 +46,19 @@ earlier. The root hub's is FreeBSD's xHCI root hub value, 10 units
 
 **The address-zero turn** is not a field: the port that holds it is the
 one in `resetting`, `recovering`, `enumerating` before its address is
-answered, or `disabling`: a port given up while its device may still be
-enabled is disabled at its hub before the turn moves on. The turn goes to the `waiting` port that arrived first only
+answered, or `disabling` after holding it: a port given up while its
+device may still be enabled is disabled at its hub before the turn moves
+on. The turn goes to the `waiting` port that arrived first only
 when no port holds it, so at most one device is in the default state on
 the bus, and a port that leaves those states, by any path, a detach of
 its hub included, has released it.
 
-**Detach** is one function, detach_device/2: it detaches every device
+**Detach** is one function, detach_device/2, and update_port/4, the one
+writer of a port's state but for a reset's send, which moves an unoccupied
+port to another, is its only caller: a port whose new state
+does not keep its occupant has the occupant detached first, so the state
+holds a device exactly while a port holds its reference and no path that
+moves a port can forget its device. It detaches every device
 below a hub first, deepest first, drops each device and hub from the
 state and answers `{detach, Ref}` for each, which tells the bus process
 to stop the device's functions, free its places and have the controller
@@ -71,8 +77,8 @@ device's functions, and a hub's configuration adds the hub, its ports
 `off`.
 
 Every status word comes from a device and is decoded by erx_usb_hub_core,
-which refuses a malformed one; a malformed status, like a failed port
-operation, detaches an external hub. The root hub's operations are the
+which refuses a malformed one; a malformed status or answer, like a failed
+port operation, detaches an external hub. The root hub's operations are the
 controller process's register accesses and do not fail.
 """.
 
@@ -112,11 +118,12 @@ A port's state, with its deadline and, while it has one, its occupant. A
 resetting port's reset is `to_send` until its hub sends it, `sent` until the
 hub answers, then `{poll, At}` until its next status read is due and
 `read_queued` until that read is answered; its deadline runs from the send.
-`disabling` is a port given up whose hub has yet to answer its disable.
+`disabling` is a port given up whose hub has yet to answer its disable, with
+whether it holds the address-zero turn meanwhile.
 """.
 -type port_state() :: off | empty | {settling, ms()} | waiting
                     | {resetting, to_send} | {resetting, ms(), sent | {poll, ms()} | read_queued}
-                    | {disabling, term()}
+                    | {disabling, term(), boolean()}
                     | {recovering, ms(), speed()}
                     | {enumerating, ref(), enabling_slot | addressing | configuring}
                     | {running, ref()}
@@ -196,8 +203,9 @@ event({port_event, N}, _Now, State) ->
                                 Hub
                         end, State)};
 event({changed, Id, Set, From}, _Now, State) ->
-    {[], with_hub(Id, fun(Hub = #{pending := P}) ->
-                              Hub#{pending := ordsets:union(P, Set), reporter := From}
+    {[], with_hub(Id, fun(Hub = #{pending := P, ports := Ports}) ->
+                              Named = [T || T <- Set, T =:= hub orelse is_map_key(T, Ports)],
+                              Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := From}
                       end, State)};
 event({port_done, Id, Target, Result}, Now, State = #{hubs := Hubs}) ->
     case Hubs of
@@ -232,13 +240,13 @@ at_step(Ref, Step, State = #{devices := Devices}, Fun) ->
 
 slot(Ref, Device0, {ok, Slot}, State = #{devices := Devices}) ->
     Device = Device0#{slot := Slot},
-    {[{address, Ref, address_params(Device, State)}],
-     set_step(Ref, addressing, State#{devices := Devices#{Ref := Device}})};
+    then([{address, Ref, address_params(Device, State)}],
+         set_step(Ref, addressing, State#{devices := Devices#{Ref := Device}}));
 slot(Ref, _Device, {error, Reason}, State) ->
     fail_device(Ref, {enable_slot, Reason}, State).
 
 addressed(Ref, {ok, _Address}, State) ->
-    {[], set_step(Ref, configuring, State)};
+    set_step(Ref, configuring, State);
 addressed(Ref, {error, Reason}, State) ->
     fail_device(Ref, {address, Reason}, State).
 
@@ -247,11 +255,11 @@ configured(Ref, #{port := {Id, N}, speed := Speed}, Config = #{functions := Func
         {#{hub := #{}}, super} ->
             fail_device(Ref, superspeed_hub, State0);
         {#{hub := none}, _} ->
-            {[{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0)};
+            then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0));
         {#{hub := #{ports := Ports, power_good := Units, multi_tt := MultiTT}}, _} ->
-            State = #{hubs := Hubs} = set_port(Id, N, {running, Ref}, State0),
+            #{hubs := Hubs} = State0,
             Hub = hub({hub, hub_speed(Speed)}, Ports, Units, MultiTT),
-            {[{start, Ref, Functions}], State#{hubs := Hubs#{Ref => Hub}}}
+            then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0#{hubs := Hubs#{Ref => Hub}}))
     end.
 
 hub_speed(high) -> high;
@@ -267,13 +275,13 @@ hub(Parent, Ports, PowerGoodUnits, MultiTT) ->
 %% operation was issued keeps its state.
 
 answered(Id, N, power_on, ok, _Now, State) ->
-    {[], update_port(Id, N, fun(off) -> empty; (Other) -> Other end, State)};
+    update_port(Id, N, fun(off) -> empty; (Other) -> Other end, State);
 answered(Id, N, reset, ok, Now, State) ->
-    {[], update_port(Id, N, fun({resetting, At, sent}) -> {resetting, At, {poll, Now + ?RESET_POLL_MS}};
-                               (Other) -> Other
-                            end, State)};
+    update_port(Id, N, fun({resetting, At, sent}) -> {resetting, At, {poll, Now + ?RESET_POLL_MS}};
+                          (Other) -> Other
+                       end, State);
 answered(Id, N, disable, ok, _Now, State) ->
-    {[], update_port(Id, N, fun({disabling, Reason}) -> {disabled, Reason}; (Other) -> Other end, State)};
+    update_port(Id, N, fun({disabling, Reason, _Held}) -> {disabled, Reason}; (Other) -> Other end, State);
 answered(Id, Target, {clear, Change}, ok, _Now, State) ->
     {[], with_hub(Id, fun(Hub = #{clears := [{T, C} | Rest]}) when T =:= Target, C =:= Change ->
                               Hub#{clears := Rest}
@@ -290,7 +298,9 @@ answered(Id, Target, get_status, Result, Now, State) ->
             fail_hub(Id, Target, Reason, State)
     end;
 answered(Id, Target, _Op, {error, Reason}, _Now, State) ->
-    fail_hub(Id, Target, Reason, State).
+    fail_hub(Id, Target, Reason, State);
+answered(Id, Target, _Op, _Malformed, _Now, State) ->
+    fail_hub(Id, Target, malformed_answer, State).
 
 decode(_Id, hub, {ok, Words}, _State) ->
     erx_usb_hub_core:hub_status(Words);
@@ -312,12 +322,11 @@ read(Id, N, Status = #{connected := Connected}, Now, State) ->
     Port = port(Id, N, State),
     case connection_changed(Status, Port) of
         true ->
-            {Detached, Vacated} = vacate(Id, N, State),
             Arrival = case Connected of
                           true -> {settling, Now + ?POWER_UP_DELAY_MS};
                           false -> empty
                       end,
-            {Detached, set_port(Id, N, Arrival, Vacated)};
+            set_port(Id, N, Arrival, State);
         false ->
             follow(Id, N, Port, Status, Now, State)
     end.
@@ -333,13 +342,13 @@ connection_changed(#{changes := Changes, connected := Connected}, Port) ->
 %% port disabled, given up; done at a speed the controller cannot run, disabled at
 %% the hub; otherwise its 20 ms recovery.
 follow(Id, N, {running, _Ref}, #{enabled := false}, _Now, State) ->
-    disable(Id, N, port_disabled, State);
+    set_port(Id, N, {disabled, port_disabled}, State);
 follow(Id, N, {resetting, At, Phase}, Status, Now, State) when Phase =/= sent ->
     case Status of
         #{reset := true, changes := Changes} ->
             case lists:member(reset, Changes) of
                 true -> reset_done(Id, N, Status, Now, State);
-                false -> {[], set_port(Id, N, {resetting, At, {poll, Now + ?RESET_POLL_MS}}, State)}
+                false -> set_port(Id, N, {resetting, At, {poll, Now + ?RESET_POLL_MS}}, State)
             end;
         #{} ->
             reset_done(Id, N, Status, Now, State)
@@ -348,11 +357,11 @@ follow(_Id, _N, _Port, _Status, _Now, State) ->
     {[], State}.
 
 reset_done(Id, N, #{enabled := false}, _Now, State) ->
-    disable(Id, N, reset_disabled, State);
+    set_port(Id, N, {disabled, reset_disabled}, State);
 reset_done(Id, N, #{speed := unsupported}, _Now, State) ->
     give_up(Id, N, unsupported_speed, State);
 reset_done(Id, N, #{speed := Speed}, Now, State) ->
-    {[], set_port(Id, N, {recovering, Now + ?RESET_RECOVERY_MS, Speed}, State)}.
+    set_port(Id, N, {recovering, Now + ?RESET_RECOVERY_MS, Speed}, State).
 
 %% Deadlines.
 
@@ -363,33 +372,31 @@ expire_hub(Id, Now, {Actions, State = #{hubs := Hubs}}) ->
                           {good_at, At} when At =< Now -> Hub#{power := good};
                           _ -> Hub
                       end,
-            lists:foldl(fun(N, Acc) -> expire_port(Id, N, maps:get(N, Ports), Now, Acc) end,
+            lists:foldl(fun(N, {Acc, S}) -> then(Acc, expire_port(Id, N, maps:get(N, Ports), Now, S)) end,
                         {Actions, State#{hubs := Hubs#{Id := Powered}}}, lists:sort(maps:keys(Ports)));
         #{} ->
             {Actions, State}
     end.
 
-expire_port(Id, N, {settling, At}, Now, {Actions, State = #{waiting := Waiting}}) when At =< Now ->
-    {Actions, set_port(Id, N, waiting, State#{waiting := Waiting ++ [{Id, N}]})};
-expire_port(Id, N, {resetting, At, _Phase}, Now, {Actions, State}) when At =< Now ->
-    {GivenUp, Next} = give_up(Id, N, reset_timeout, State),
-    {Actions ++ GivenUp, Next};
-expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, {Actions, State}) when Poll =< Now ->
+expire_port(Id, N, {settling, At}, Now, State = #{waiting := Waiting}) when At =< Now ->
+    set_port(Id, N, waiting, State#{waiting := Waiting ++ [{Id, N}]});
+expire_port(Id, N, {resetting, At, _Phase}, Now, State) when At =< Now ->
+    give_up(Id, N, reset_timeout, State);
+expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, State) when Poll =< Now ->
     Polled = with_hub(Id, fun(Hub = #{pending := P}) -> Hub#{pending := ordsets:add_element(N, P)} end, State),
-    {Actions, set_port(Id, N, {resetting, At, read_queued}, Polled)};
-expire_port(Id, N, {recovering, At, Speed}, Now, {Actions, State}) when At =< Now ->
-    {Enabling, Next} = enumerate(Id, N, Speed, State),
-    {Actions ++ Enabling, Next};
-expire_port(_Id, _N, _Port, _Now, Acc) ->
-    Acc.
+    set_port(Id, N, {resetting, At, read_queued}, Polled);
+expire_port(Id, N, {recovering, At, Speed}, Now, State) when At =< Now ->
+    enumerate(Id, N, Speed, State);
+expire_port(_Id, _N, _Port, _Now, State) ->
+    {[], State}.
 
 %% A device for the port at the end of its reset recovery.
 enumerate(Id, N, Speed, State = #{devices := Devices, next := Ref = {device, Next}}) ->
     Device = #{port => {Id, N}, route => route(Id, State) ++ [N], speed => Speed, slot => none,
                tt => translator(Id, N, Speed, State)},
-    {[{enable_slot, Ref}],
-     set_port(Id, N, {enumerating, Ref, enabling_slot},
-              State#{devices := Devices#{Ref => Device}, next := {device, Next + 1}})}.
+    then([{enable_slot, Ref}],
+         set_port(Id, N, {enumerating, Ref, enabling_slot},
+                  State#{devices := Devices#{Ref => Device}, next := {device, Next + 1}})).
 
 route(root, _State) -> [];
 route(Ref, #{devices := Devices}) -> maps:get(route, maps:get(Ref, Devices)).
@@ -438,24 +445,21 @@ fail_device(Ref, Reason, State = #{devices := Devices}) ->
 %% holding the turn until then, as FreeBSD clears the port's enable on its error
 %% path (usb_hub.c:827-832), so a device left in the default state never meets
 %% the next port's reset.
+%% The port keeps the turn while disabling when it, or a port below the hub on
+%% it, held the turn: that holder goes with the hub in the same write, and its
+%% device stays reachable through the hub until the disable is answered. A
+%% configuring or running device with no holder below was addressed already, so
+%% at most one port holds the turn.
 give_up(Id, N, Reason, State) ->
-    {Detached, Vacated} = vacate(Id, N, State),
-    {Detached, set_port(Id, N, {disabling, Reason}, Vacated)}.
+    update_port(Id, N, fun(Old) -> {disabling, Reason, holds_turn_below(Old, State)} end, State).
 
-%% Port N of hub Id recorded `disabled`: its hub already reports it disabled, or
-%% cannot be asked; its occupant detached, the reason kept.
-disable(Id, N, Reason, State) ->
-    {Detached, Vacated} = vacate(Id, N, State),
-    {Detached, set_port(Id, N, {disabled, Reason}, Vacated)}.
-
-vacate(Id, N, State) ->
-    case occupant(port(Id, N, State)) of
-        [Ref] -> detach_device(Ref, State);
-        [] -> {[], State}
-    end.
+holds_turn_below(Port, State = #{hubs := Hubs}) ->
+    Below = [P || Ref <- occupant(Port), #{Ref := #{ports := Ports}} <- [Hubs], P <- maps:values(Ports)],
+    holds_turn(Port) orelse lists:any(fun(P) -> holds_turn_below(P, State) end, Below).
 
 %% Detaches Ref and, when it is a hub, every device below it first, deepest
-%% first. The port Ref occupied is left to the caller.
+%% first. Only update_port calls it, for the occupant a port's new state drops;
+%% the ports of a detached hub go with the hub.
 detach_device(Ref, State = #{hubs := Hubs}) ->
     Below = case Hubs of
                 #{Ref := #{ports := Ports}} -> [Child || {_N, Port} <- lists:sort(maps:to_list(Ports)),
@@ -478,9 +482,9 @@ occupant(_Unoccupied) -> [].
 %% earliest deadline.
 
 settle(Now, Actions, State0) ->
-    State1 = grant_turn(prune_waiting(State0)),
+    {Granted, State1} = grant_turn(prune_waiting(State0)),
     {Operations, State} = run_hubs(Now, State1),
-    {Actions ++ Operations ++ deadline(State), State}.
+    {Actions ++ Granted ++ Operations ++ deadline(State), State}.
 
 %% The arrival order keeps only ports still `waiting`.
 prune_waiting(State = #{waiting := Waiting}) ->
@@ -490,17 +494,17 @@ prune_waiting(State = #{waiting := Waiting}) ->
 %% deadline starts when its hub sends the reset.
 grant_turn(State = #{waiting := [{Id, N} | Rest]}) ->
     case lists:any(fun holds_turn/1, maps:values(ports(State))) of
-        true -> State;
+        true -> {[], State};
         false -> set_port(Id, N, {resetting, to_send}, State#{waiting := Rest})
     end;
 grant_turn(State) ->
-    State.
+    {[], State}.
 
 holds_turn({resetting, to_send}) -> true;
 holds_turn({resetting, _At, _Phase}) -> true;
 holds_turn({recovering, _At, _Speed}) -> true;
 holds_turn({enumerating, _Ref, Step}) -> Step =/= configuring;
-holds_turn({disabling, _Reason}) -> true;
+holds_turn({disabling, _Reason, Held}) -> Held;
 holds_turn(_Port) -> false.
 
 run_hubs(Now, State = #{hubs := Hubs}) ->
@@ -534,18 +538,24 @@ next_op(Id, Hub = #{power := powering, ports := Ports, power_good := PowerGood},
         [N | _] -> issue(Id, N, power_on, Hub);
         [] -> next_op(Id, Hub#{power := {good_at, Now + PowerGood}}, Now)
     end;
-next_op(Id, Hub = #{ports := Ports, pending := Pending, power := Power}, Now) ->
+next_op(Id, Hub = #{ports := Ports}, Now) ->
     Sorted = lists:sort(maps:to_list(Ports)),
-    case {[N || {N, {disabling, _}} <- Sorted], [N || {N, {resetting, to_send}} <- Sorted], Pending, Power} of
-        {[N | _], _, _, _} ->
-            issue(Id, N, disable, Hub);
-        {[], [N | _], _, _} ->
-            issue(Id, N, reset, Hub#{ports := Ports#{N := {resetting, Now + ?RESET_DEADLINE_MS, sent}}});
-        {[], [], [Target | _], good} ->
-            issue(Id, Target, get_status, Hub);
-        {[], [], _, _} ->
-            {[], Hub}
+    case [N || {N, {disabling, _, _}} <- Sorted] of
+        [N | _] -> issue(Id, N, disable, Hub);
+        [] -> next_reset(Id, Hub, [N || {N, {resetting, to_send}} <- Sorted], Now)
     end.
+
+next_reset(Id, Hub = #{ports := Ports}, [N | _], Now) ->
+    %% From `{resetting, to_send}` to `sent`, neither occupied, so this hub-local
+    %% write needs nothing of update_port's.
+    issue(Id, N, reset, Hub#{ports := Ports#{N := {resetting, Now + ?RESET_DEADLINE_MS, sent}}});
+next_reset(Id, Hub, [], _Now) ->
+    next_read(Id, Hub).
+
+next_read(Id, Hub = #{pending := [Target | _], power := good}) ->
+    issue(Id, Target, get_status, Hub);
+next_read(_Id, Hub) ->
+    {[], Hub}.
 
 issue(Id, Target, Op, Hub) ->
     {[{port, Id, Target, Op}], Hub#{op := {Target, Op}}}.
@@ -576,8 +586,25 @@ find_port(Id, N, #{hubs := Hubs}) ->
 set_port(Id, N, Port, State) ->
     update_port(Id, N, fun(_Old) -> Port end, State).
 
+%% The one way a port's state changes: an occupant the new state does not keep is
+%% detached first, with every device below it, so the state holds a device exactly
+%% while a port holds its reference. A port of a hub already gone is left alone.
 update_port(Id, N, Fun, State) ->
-    with_hub(Id, fun(Hub = #{ports := Ports = #{N := Old}}) -> Hub#{ports := Ports#{N := Fun(Old)}} end, State).
+    case find_port(Id, N, State) of
+        none ->
+            {[], State};
+        Old ->
+            New = Fun(Old),
+            {Detached, Vacated} = case occupant(Old) -- occupant(New) of
+                                      [Ref] -> detach_device(Ref, State);
+                                      [] -> {[], State}
+                                  end,
+            {Detached, with_hub(Id, fun(Hub = #{ports := Ports}) -> Hub#{ports := Ports#{N := New}} end,
+                                Vacated)}
+    end.
+
+%% The actions Actions, then those of a step's answer.
+then(Actions, {More, State}) -> {Actions ++ More, State}.
 
 set_step(Ref, Step, State = #{devices := Devices}) ->
     #{port := {Id, N}} = maps:get(Ref, Devices),

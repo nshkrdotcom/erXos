@@ -23,9 +23,8 @@ class ErxUsbBusCoreTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'a connection change with the port still connected not detaching the occupant',
-             anchor: "{Detached, Vacated} = vacate(Id, N, State),\n            Arrival",
-             replacement: "{Detached, Vacated} = case Connected of true -> {[], State}; " \
-                          "false -> vacate(Id, N, State) end,\n            Arrival",
+             anchor: 'true -> {settling, Now + ?POWER_UP_DELAY_MS};',
+             replacement: 'true when Port =/= empty -> Port; true -> {settling, Now + ?POWER_UP_DELAY_MS};',
              catching_case: EXPLORATION),
     Seed.new(fault: "the address-zero turn released at the reset's end instead of the address",
              anchor: "holds_turn({recovering, _At, _Speed}) -> true;\n" \
@@ -38,21 +37,33 @@ class ErxUsbBusCoreTest < Minitest::Test
              replacement: 'holds_turn({enumerating, _Ref, Step}) -> Step =:= enabling_slot;',
              catching_case: EXPLORATION),
     Seed.new(fault: "a port's status read before the hub's power-good time",
-             anchor: '{[], [], [Target | _], good} ->',
-             replacement: '{[], [], [Target | _], _} ->',
+             anchor: 'next_read(Id, Hub = #{pending := [Target | _], power := good}) ->',
+             replacement: 'next_read(Id, Hub = #{pending := [Target | _]}) ->',
              catching_case: 'the_root_hub_powers_its_ports_before_reading_them_test'),
     Seed.new(fault: 'a hub detached before the devices below it',
              anchor: '{Actions ++ [{detach, Ref}],',
              replacement: '{[{detach, Ref} | Actions],',
              catching_case: 'a_hub_detached_during_its_childs_enumeration_test'),
     Seed.new(fault: "`handled` sent to the first reporter, not a restarted hub function's",
-             anchor: 'Hub#{pending := ordsets:union(P, Set), reporter := From}',
-             replacement: 'Hub#{pending := ordsets:union(P, Set), reporter := case Hub of #{reporter := none} -> From; #{reporter := R} -> R end}',
+             anchor: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := From}',
+             replacement: 'Hub#{pending := ordsets:union(P, ordsets:from_list(Named)), reporter := case Hub of #{reporter := none} -> From; #{reporter := R} -> R end}',
              catching_case: 'handled_goes_to_the_reporter_test'),
     Seed.new(fault: 'a port given up with its device still enabled, the turn handed on',
-             anchor: 'set_port(Id, N, {disabling, Reason}, Vacated)',
-             replacement: 'set_port(Id, N, {disabled, Reason}, Vacated)',
-             catching_case: EXPLORATION)
+             anchor: '{disabling, Reason, holds_turn_below(Old, State)}',
+             replacement: '{disabled, Reason}',
+             catching_case: EXPLORATION),
+    Seed.new(fault: 'a port given up after its address keeping the turn, so two ports hold it',
+             anchor: '{disabling, Reason, holds_turn_below(Old, State)}',
+             replacement: '{disabling, Reason, true}',
+             catching_case: EXPLORATION),
+    Seed.new(fault: "a port's new state dropping its occupant without detaching it",
+             anchor: 'case occupant(Old) -- occupant(New) of',
+             replacement: 'case occupant(Old) -- occupant(Old) of',
+             catching_case: EXPLORATION),
+    Seed.new(fault: "a hub given up handing on the turn a port below it held",
+             anchor: 'holds_turn_below(Old, State)}',
+             replacement: 'holds_turn(Old)}',
+             catching_case: 'a_hub_given_up_keeps_its_childs_turn_test')
   ].freeze
 
   def test_bus_core_cases_pass_under_eunit

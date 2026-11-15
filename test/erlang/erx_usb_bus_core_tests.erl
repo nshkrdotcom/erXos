@@ -88,12 +88,25 @@ model0() ->
 
 port0() -> #{thing => none, chg => [], enabled => false, addressed => false, powered => false, signaled => false}.
 
-%% The choices the environment has in a node. It answers what is in flight, finishes
-%% a device's descriptor steps and delivers reports and port events in one fixed
-%% order, the first of them only, which keeps two devices' lifecycles from multiplying
-%% into each other; reports and port events arrive in any state; any answer may fail, the next deadline may pass first,
-%% so an answer can come after its deadline or never, and anything may be connected
-%% or disconnected at any point.
+%% The choices the environment has in a node. It answers what is in flight and
+%% finishes a device's descriptor steps in one fixed order, the first of them only,
+%% which keeps two devices' lifecycles from multiplying into each other; reports and
+%% port events arrive in any state; any answer may fail, the next deadline may pass
+%% first, so an answer can come after its deadline or never, and anything may be
+%% connected or disconnected at any point.
+%%
+%% Fixing the order of the successful answers loses no reachable situation, because
+%% answers to different hubs and devices commute in the core's state: the core decides
+%% on the state when an answer arrives, not when its request was issued, and so does
+%% the model's hardware; an answer touches only its own hub's ports or its own device's
+%% port, except that a detach makes the other's answer stale, which the core ignores
+%% whichever comes first, and that an answer releasing the turn lets the same step
+%% grant it on another hub, to the port the arrival order names whichever answer
+%% released it; and the turn is granted in the arrival order the settling
+%% deadlines set, and the model's clock moves only at a deadline, so answers reordered
+%% between two deadlines set the same times. What the fixed order would hide, an answer
+%% held back while others overtake it, the interleaved failures, deadlines and
+%% stimuli reach instead.
 choices(Node = {M, _Core}) ->
     {Ready, Failed} = environment(Node),
     {Answers, Reports} = lists:partition(fun({Kind, _}) -> Kind =:= core end, Ready),
@@ -279,6 +292,7 @@ observe(Event, Actions, M0, Before, After) ->
 in_window({resetting, _, _}) -> true;
 in_window({recovering, _, _}) -> true;
 in_window({enumerating, _, Step}) -> Step =/= configuring;
+in_window({disabling, _, Held}) -> Held;
 in_window(_) -> false.
 
 %% The hardware's own count: at most one device enabled and not yet addressed, so at
@@ -321,10 +335,11 @@ first_detaches(Ref, Actions) ->
 %% reaches `configuring` without the answer.
 close_window(_Event, M = #{window := none}, _Before, _After) ->
     M;
-close_window({addressed, Ref, _}, M = #{window := Window}, Before, _After) ->
-    case maps:find(Ref, erx_usb_bus_core:devices(Before)) of
-        {ok, #{port := Window}} -> M#{window := none};
-        _ -> left(M, _After)
+close_window({addressed, Ref, _}, M = #{window := Window}, Before, After) ->
+    case {maps:find(Ref, erx_usb_bus_core:devices(Before)), maps:get(Window, erx_usb_bus_core:ports(After), gone)} of
+        {{ok, #{port := Window}}, {disabling, _, true}} -> M;
+        {{ok, #{port := Window}}, _} -> M#{window := none};
+        _ -> left(M, After)
     end;
 close_window(_Event, M, _Before, After) ->
     left(M, After).
@@ -473,6 +488,39 @@ the_root_hub_powers_its_ports_before_reading_them_test() ->
     ?assertEqual(#{{root, 1} => empty, {root, 2} => empty}, erx_usb_bus_core:ports(S3)),
     ?assertMatch({[{deadline, 47}], _}, erx_usb_bus_core:step(expired, 46, S3)),
     ?assertMatch({[{port, root, 1, get_status}], _}, erx_usb_bus_core:step(expired, 47, S3)).
+
+%% A report naming a port the hub does not have reads nothing of it, and an answer of
+%% a shape its operation never answers gives the hub up, as a failed answer does.
+out_of_shape_reports_and_answers_test() ->
+    Powering = fun({#{ops := Ops}, _}) -> [H || H := {_, power_on} <- Ops, H =/= root] =/= [] end,
+    {#{now := Now}, Core} = Node = drive(follow({stimulus, {root, 1}, hub}, trace_start()), Powering, fun(_) -> true end),
+    {running, HubRef} = port_of(Node, {root, 1}),
+    {Detached, _} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<>>}}, Now, Core),
+    ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Detached]),
+    {_, Idle} = Hub = settle(Node),
+    Later = maps:get(now, element(1, Hub)),
+    {A1, S1} = erx_usb_bus_core:step({changed, HubRef, [3], fn}, Later, Idle),
+    ?assertEqual([{handled, HubRef, fn}], [A || A <- A1, element(1, A) =/= deadline]),
+    ?assertMatch({[{port, HubRef, 1, get_status} | _], _}, erx_usb_bus_core:step({changed, HubRef, [1, 3], fn}, Later, S1)).
+
+%% A hub given up while a port below it holds the turn keeps the turn on its own port
+%% until its parent answers the disable, since the child stays reachable through the
+%% hub until then: a device waiting on the other root port is reset only after that.
+a_hub_given_up_keeps_its_childs_turn_test() ->
+    Hub = settle(follow({stimulus, {root, 1}, hub}, trace_start())),
+    {running, HubRef} = port_of(Hub, {root, 1}),
+    Resetting = fun(Node) -> P = port_of(Node, {HubRef, 1}), is_tuple(P) andalso element(1, P) =:= resetting end,
+    Child = drive(follow({stimulus, {ext, 1}, dev1}, Hub), Resetting, fun(_) -> true end),
+    HubAnswer = fun({core, {port_done, H, _, _}}) -> H =:= HubRef; (_) -> false end,
+    Waiting = fun(Node) -> port_of(Node, {root, 2}) =:= waiting end,
+    {#{now := Now, ops := #{HubRef := {Target, _}}}, Core} =
+        drive(follow({stimulus, {root, 2}, dev1}, Child), Waiting, fun(C) -> not HubAnswer(C) end),
+    {Actions, Failed} = erx_usb_bus_core:step({port_done, HubRef, Target, {error, stall}}, Now, Core),
+    ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Actions]),
+    ?assertMatch(#{{root, 1} := {disabling, _, true}, {root, 2} := waiting}, erx_usb_bus_core:ports(Failed)),
+    ?assert(lists:member({port, root, 1, disable}, Actions)),
+    {Next, _} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Failed),
+    ?assert(lists:member({port, root, 2, reset}, Next)).
 
 %% decision 3: `handled` goes to the instance that reported; a restarted hub
 %% function's report replaces its predecessor's, which is never answered.
