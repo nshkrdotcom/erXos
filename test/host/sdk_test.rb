@@ -84,6 +84,17 @@ class SdkTest < Minitest::Test
     assert_equal %w[abi_version arch commit otp], record.keys.sort
     assert_equal '29.1.2', record.fetch('otp')
     assert_match(/\A\h{40}(-dirty)?\z/, record.fetch('commit'))
+    assert File.file?(File.join(sdk, 'host/erlang/ebin/erx_bytes.beam'))
+  end
+
+  # An SDK is handed to others, so it carries no private key: its packer makes its own
+  # development key on the host that uses it.
+  def test_an_exported_sdk_holds_no_private_key
+    keys = Dir.glob('**/*', File::FNM_DOTMATCH, base: sdk).select do |name|
+      path = File.join(sdk, name)
+      File.file?(path) && File.binread(path).include?('PRIVATE KEY-----')
+    end
+    assert_empty keys
   end
 
   def test_an_app_that_keeps_to_the_sdk_passes_the_boundary

@@ -270,8 +270,11 @@ Eshell V17.1.1 (type help(). for help)
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
   and segment tables, journals, inodes and directory entries. The file
   system is not built yet.
-* `tools/erx-app pack` packs an app directory into a `.app` file: a
-  header, an EROFS image of the app's files and a dm-verity tree.
+* `erx-app pack`, the SDK's packer, compiles an app directory's Erlang
+  sources against the SDK and packs it into a `.app` file: a header
+  signed by default with a development key the packer makes on the host,
+  never shipped in the SDK, an EROFS image of the
+  app's files and a dm-verity tree, judged by the machine's file check.
 
 **Networking**
 

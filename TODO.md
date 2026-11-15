@@ -2622,9 +2622,10 @@ it; git history is the record of completed work.
   the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
   application name and a relative path of plain names, with a seeded case each.
 * [Medium] apps, the SDK (`tools/lib/erx/sdk.rb`, `tools/erx sdk export`): the export writes `SDK.txt` and
-  `erlang/` (the public applications and `public.txt`) only. Not yet written: `sysroot/<arch>` (musl's
+  `erlang/` (the public applications and `public.txt`) and `host/erlang/ebin`
+  only. Not yet written: `sysroot/<arch>` (musl's
   headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
-  `share/erxos/development.key`, `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
+  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
   which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
   of the advisors' review: while it runs it is the node's default display, `erx_ui:open/1` takes a window
@@ -2633,16 +2634,28 @@ it; git history is the record of completed work.
   exists; design-display.md ("The widget server", "Choosing a display") and design-packaging.md (two opens on
   one host) gain those sentences first. The design's public table names `erx_draw`, which the tree does not
   have; `sdk/public.txt` lists `erx_win` alone. Fix: build each with the next SDK packages, ahead of
-  `examples/dashboard`.
-* [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer packs what the app's directory
-  already holds. It does not yet compile `lib/APP/src` with `erlc`, run `DIR/Makefile`, check the program
-  with `erx_elf_plan`, sign with the SDK's development key when `--key` is absent, write the build record
-  beside `NAME.app`, or run `erx_pkg_header:check_file/2` on what it wrote (docs/design-packaging.md,
-  "Building and packing"). Each waits on the SDK (its public applications, development key and host
-  `erx_elf_plan`). Safe meanwhile: `--key` is required and a missing
-  `ebin/APP.app` or program is refused. Until the packer compiles with `+deterministic`, a prebuilt
-  `.beam` enters the package as given, with whatever host paths its compile information holds. Fix: add
-  each with the SDK package.
+  `examples/dashboard`. `host/bin/erx-app` waits on a choice: the packer's Ruby is not self-contained, since
+  `Erx::AppPackage.codec` plans the whole ABI with `ABI::Generator.plan` from `abi/` at run time (about seventy
+  generator files), `Erx::LineEscape` regenerates its tables through `Erx::Generated.ensure`, and `Erx::Fsimg`
+  finds fsimg by the tree's build record against `deps.lock`. Recommended fix: the packer reads the generated
+  host binding (`build/gen/tools/generated/abi.rb`, `tools/lib/erx/generated_abi.rb`) and the generated
+  terminal tables, which the export copies, `Erx::ErofsImage` takes the fsimg path it runs, and the export
+  copies `erx-app`, its handful of library files, those generated files and fsimg into `host/`; until then
+  `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
+* [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
+  compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
+  does not yet run `DIR/Makefile`, check the program with `erx_elf_plan`, or write the build record beside
+  `NAME.app` (docs/design-packaging.md, "Building and packing"). Each waits on the SDK (`sdk.mk` and a host
+  `erx_elf_plan`). Safe meanwhile: a missing program is refused, and a prebuilt `bin/`, or the `ebin/` of an
+  application without `src/`, enters the package as given, with whatever host paths a beam's compile
+  information holds. Also open: the packer runs the first `erlc` on PATH without checking that it is the
+  OTP release `SDK.txt` names, so a beam another release compiled fails only when the app starts; erlc's
+  environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
+  `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
+  shows only as the runner's log path. The image build does not yet carry the public half of its builder's
+  development package key as the `development` signer (docs/design-packaging.md, "Adding an app to an
+  image"), so no development image trusts an installed package yet; it lands with `tools/erx pack --app`.
+  Fix: add each with the SDK package.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on

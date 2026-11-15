@@ -19,9 +19,12 @@ module Erx
   # depends on, compiled by Erx::ErlangApps with the build's own flags and compiler, so its
   # beams are the image's; DIR/erlang/public.txt lists the public functions one
   # MODULE:FUNCTION/ARITY a line, a module line of sdk/public.txt expanded to the module's
-  # exports.
+  # exports. DIR/host/erlang/ebin holds erx_bytes for stock OTP (test/erlang/host_bytes),
+  # which the packer's file check calls. No private key enters an SDK: its packer makes
+  # its own development key on the host that uses it (Erx::PackageKey).
   class Sdk
     PUBLIC = 'sdk/public.txt'
+    HOST_BYTES = 'test/erlang/host_bytes/erx_bytes.erl'
     DEADLINE = 300
     IDENTIFIER = /\A[a-z][a-z0-9_]*\z/
 
@@ -121,6 +124,10 @@ module Erx
       File.write(File.join(work, 'erlang', 'public.txt'),
                  self.class.expand(entries, exports: exports(entries, lib: lib)).map { "#{it}\n" }.join)
       File.write(File.join(work, 'SDK.txt'), description)
+      host = File.join(work, 'host', 'erlang', 'ebin')
+      FileUtils.mkdir_p(host)
+      @runner.run([@erlc, '+deterministic', '-o', host, File.join(@root, HOST_BYTES)],
+                  name: 'sdk-host-bytes', deadline: DEADLINE, env: Oracle::CLEAN_ERLANG_ENV)
     end
 
     def owners
