@@ -4535,9 +4535,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
   `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
   transfers alike; make the code answer the table's value, or the table say 0, so one statement holds.
-* [Low] `erlang/apps/erx_files/src/erx_fs.erl:179`: a grant for its own domain ignores `ends_with`, where
-  `docs/design-files.md` ("Interfaces") has every grant monitor what `ends_with` names; a program's `/dev` tree ends
-  with its handler through it, a refused start's `normal` exit included ("A program's window").
 * [Medium] programs and shell, the files a stage hands a program: `docs/design-shell.md` (Overview, "Starting
   programs") has the shell hand a program it starts with `erx_prog_handler:start/1` the files its redirections opened,
   sharing their offsets, where `start/1` takes pipe ends and buffers only (`docs/design-programs.md`, "A session

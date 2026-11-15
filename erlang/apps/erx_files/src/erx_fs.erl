@@ -138,7 +138,10 @@ client's domain pid, which the grant monitors before the export and ends with
 `{shutdown, connection_ended}` when it ends, so the grant and its export
 never outlive the connection its client calls through; or `none`, for a
 client whose grant lives as long as this domain. A grant for another domain
-without it fails to start.
+without it fails to start. A grant for its own domain ends with the process
+`ends_with` names, whatever that process's reason, as a program's `/dev`
+tree ends with its handler (docs/design-files.md, "A program's window"), and
+lives as long as this domain without it.
 """.
 -spec start_link(module(), term(), erx_fs_grant:rights(),
                  #{client => erx_fs_grant:client(), pool => pos_integer(),
@@ -162,8 +165,8 @@ init(Parent, {Module, Args, Rights, Options}) ->
                                module => Module, fs => Fs, rights => Rights,
                                client => Client}),
     %% The monitor comes first: a connection that ends at any time from here on,
-    %% before the export or after it, ends the grant, and a port that has ended
-    %% already is answered at once with a 'DOWN'.
+    %% before the export or after it, ends the grant, and a port or process that
+    %% has ended already is answered at once with a 'DOWN'.
     ConnectionMonitor = connection_monitor(Client, Options),
     case export(Client, maps:get(exports, Options, erx_dist)) of
         ok ->
@@ -173,13 +176,14 @@ init(Parent, {Module, Args, Rights, Options}) ->
             proc_lib:init_ack(Parent, Refused)
     end.
 
-%% A grant for another domain ends with the connection Options name, or with the
-%% client's domain pid, or names none; one that names none of these is a caller's
-%% mistake, and its start fails.
-connection_monitor(own, _Options) -> none;
+%% A grant ends with what Options' ends_with names: a port (a connection's) or a
+%% process (a client domain's pid, or the holder of a grant for this domain), or
+%% none. A grant for its own domain may leave it out; one for another domain that
+%% names nothing is a caller's mistake, and its start fails.
 connection_monitor(_Client, #{ends_with := none}) -> none;
 connection_monitor(_Client, #{ends_with := Port}) when is_port(Port) -> erlang:monitor(port, Port);
-connection_monitor(_Client, #{ends_with := DomainPid}) when is_pid(DomainPid) -> erlang:monitor(process, DomainPid).
+connection_monitor(_Client, #{ends_with := Process}) when is_pid(Process) -> erlang:monitor(process, Process);
+connection_monitor(own, #{}) -> none.
 
 %% A grant for another domain is exported to that domain alone, with send alone; a
 %% grant for the server's own domain is exported to no one.
@@ -196,7 +200,7 @@ export(Client, Exports) ->
 -spec loop(erx_fs_grant:grant(), reference() | none) -> no_return().
 loop(Grant, ConnectionMonitor) ->
     receive
-        {'DOWN', ConnectionMonitor, _PortOrProcess, _, _} ->
+        {'DOWN', ConnectionMonitor, _PortOrProcess, _, _} when is_reference(ConnectionMonitor) ->
             exit({shutdown, connection_ended});
         {'DOWN', Ref, process, Owner, _} when is_reference(Ref), is_pid(Owner) ->
             ?MODULE:loop(perform(erx_fs_grant:owner_down(Ref, Owner, Grant)), ConnectionMonitor);
