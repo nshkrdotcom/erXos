@@ -1,0 +1,99 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's SPI master, written by erXos from Raspberry Pi Ltd's "BCM2711 ARM
+     Peripherals" (release 4, 18 January 2022, SHA-256
+     d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78), section 9.5 "SPI
+     Register Map", Tables 159 to 165, printed pages 136 to 140. One window describes each
+     of SPI0 (0x7e204000), SPI3 (0x7e204600), SPI4 (0x7e204800), SPI5 (0x7e204a00) and SPI6
+     (0x7e204c00): six 32-bit registers, 0x18 bytes. The auxiliary SPI1 and SPI2 are other
+     hardware (section 2.3) and are not described here. Section 9.6 gives the polled
+     sequence: set CS, CPOL and CPHA with TA = 1, move bytes through FIFO by TXD and RXD,
+     wait for DONE, then clear TA. The profile keeps no reset values; Tables 160 to 165
+     give them. -->
+<device schemaVersion="1.3">
+  <name>BCM2711_SPI</name><version>1</version>
+  <description>BCM2711 SPI master (SPI0, SPI3 to SPI6)</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>BCM2711_SPI</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x18</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>CS</name><ownedByNif>false</ownedByNif>
+          <description>Control and status (Table 160); CLEAR is one-shot and reads back 0, the FIFO and transfer flags are read-only</description>
+          <addressOffset>0x00</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>CS</name><description>The chip select a transfer asserts</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues>
+                <enumeratedValue><name>CE0</name><value>0</value></enumeratedValue>
+                <enumeratedValue><name>CE1</name><value>1</value></enumeratedValue>
+                <enumeratedValue><name>CE2</name><value>2</value></enumeratedValue>
+              </enumeratedValues>
+            </field>
+            <field><name>CPHA</name><description>0 the first SCLK transition at the middle of a data bit, 1 at its beginning</description><bitOffset>2</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CPOL</name><description>The rest state of SCLK: 0 low, 1 high</description><bitOffset>3</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CLEAR</name><description>Bit 0 clears the TX FIFO, bit 1 the RX FIFO, one-shot, read back 0; set with TA, the FIFOs are cleared before the transfer starts</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>CSPOL</name><description>Chip select lines active: 0 low, 1 high</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>TA</name><description>1 while a transfer is active, the chip select asserted by CS and CSPOL; 0 deasserts every chip select and clears RXR and DONE</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>DMAEN</name><description>1 enables DMA requests</description><bitOffset>8</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INTD</name><description>Interrupt while DONE is 1</description><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INTR</name><description>Interrupt while RXR is 1</description><bitOffset>10</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>ADCS</name><description>1 deasserts the chip select at the end of a DMA transfer</description><bitOffset>11</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>REN</name><description>Read enable in bidirectional mode: 1 the next transfer reads; resets to 1</description><bitOffset>12</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>LEN</name><description>1 makes the controller a LoSSI master, 0 an SPI master</description><bitOffset>13</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>LMONO</name><description>Unused (Table 160)</description><bitOffset>14</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>TE_EN</name><description>Unused (Table 160)</description><bitOffset>15</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>DONE</name><description>1 once the transfer completes; cleared by writing more data to the TX FIFO or by clearing TA</description><bitOffset>16</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXD</name><description>1 while the RX FIFO holds a byte</description><bitOffset>17</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>TXD</name><description>1 while the TX FIFO has room for a byte</description><bitOffset>18</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXR</name><description>1 while the RX FIFO is three quarters full or more and TA is 1</description><bitOffset>19</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXF</name><description>1 while the RX FIFO is full; the transfer stalls until it is read</description><bitOffset>20</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>CSPOL0</name><description>Chip select 0 active: 0 low, 1 high</description><bitOffset>21</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CSPOL1</name><description>Chip select 1 active: 0 low, 1 high</description><bitOffset>22</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CSPOL2</name><description>Chip select 2 active: 0 low, 1 high</description><bitOffset>23</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>DMA_LEN</name><description>1 enables DMA mode in LoSSI mode</description><bitOffset>24</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>LEN_LONG</name><description>With DMA_LEN, 1 makes a FIFO write a 32-bit word in LoSSI mode, 0 a byte</description><bitOffset>25</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>FIFO</name><ownedByNif>false</ownedByNif>
+          <description>TX and RX FIFOs (Table 161): with TA set and DMAEN clear, a write queues a byte to send and a read takes the next byte received; with DMAEN set and TA clear, the first write sets DLEN and CS's low byte</description>
+          <addressOffset>0x04</addressOffset><access>read-write</access><readAction>modify</readAction>
+          <fields><field><name>DATA</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>CLK</name><ownedByNif>false</ownedByNif>
+          <description>Clock divider (Table 162): SCLK is the core clock divided by CDIV, odd values rounded down; 0 divides by 65536; unverified the fastest rate, which Table 162 leaves blank ("is of the APB clock")</description>
+          <addressOffset>0x08</addressOffset><access>read-write</access>
+          <fields><field><name>CDIV</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>DLEN</name><ownedByNif>false</ownedByNif>
+          <description>Data length (Table 163): the bytes a DMA transfer moves; meaningful only with DMAEN set</description>
+          <addressOffset>0x0c</addressOffset><access>read-write</access>
+          <fields><field><name>LEN</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>LTOH</name><ownedByNif>false</ownedByNif>
+          <description>LoSSI output hold (Table 164): the hold delay in APB clocks, 0 meaning 1</description>
+          <addressOffset>0x10</addressOffset><access>read-write</access>
+          <fields><field><name>TOH</name><bitOffset>0</bitOffset><bitWidth>4</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>DC</name><ownedByNif>false</ownedByNif>
+          <description>DMA request and panic thresholds (Table 165), in FIFO levels</description>
+          <addressOffset>0x14</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>TDREQ</name><description>TX DREQ while the TX FIFO level is at most this</description><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field>
+            <field><name>TPANIC</name><description>TX panic while the TX FIFO level is at most this</description><bitOffset>8</bitOffset><bitWidth>8</bitWidth></field>
+            <field><name>RDREQ</name><description>RX DREQ while the RX FIFO level is above this, or the transfer has finished with the RX FIFO not empty</description><bitOffset>16</bitOffset><bitWidth>8</bitWidth></field>
+            <field><name>RPANIC</name><description>RX panic while the RX FIFO level is above this</description><bitOffset>24</bitOffset><bitWidth>8</bitWidth></field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

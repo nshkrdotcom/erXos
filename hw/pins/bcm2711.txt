@@ -1,0 +1,89 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+#
+# The BCM2711's bank-0 pins and the controllers that own their functions, written by
+# erXos from Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 4, 18 January 2022,
+# SHA-256 d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78). The pin rows
+# are section 5.3, Table 94 ("GPIO Pins Alternative Function Assignment", printed pages 77
+# and 78); the controllers' addresses are sections 2.1 (Table 2), 3.2, 9.5 and 11.5. The
+# platform record's header map is checked against this table, and config.txt's gpio=
+# lines take their alternate numbers from it (docs/design-header-io.md, "The
+# construction"); tools/lib/erx/pins.rb reads it.
+#
+# pin GPIO PULL ALT0 ALT1 ALT2 ALT3 ALT4 ALT5
+#   One row for each of GPIO 0 to 27, in order. PULL is the pull a pin has after power-on:
+#   Table 94's High is up and Low is down, which the reset values of
+#   GPIO_PUP_PDN_CNTRL_REG0 and REG1 (Tables 90 and 91) confirm pin by pin. ALTn is the
+#   function the pin carries when its FSEL field selects alternate n; - is Table 94's
+#   <reserved>. Table 94's names are kept, with a space inside a name written _ and the
+#   spaces around / dropped: "SOE_N / SE" is SOE_N/SE, "BSCSL SDA / MOSI" is
+#   BSCSL_SDA/MOSI.
+#
+# controller NAME BASE SIGNAL... [optional SIGNAL...]
+#   One row for each controller a header map may give pins to, sorted by name. BASE is the
+#   controller's registers' bus address as the datasheet gives it, the address in its
+#   device tree path, or none for a controller with no registers of its own. The signals
+#   before optional are those it cannot work without; each signal is a function of some
+#   pin row and belongs to one controller. uart1 is the auxiliary block's mini UART, whose
+#   registers start at offset 0x40 of the block at 0x7e215000 (Table 2).
+#
+# A header map gives a pin to the device at a base address only when a controller row has
+# that base and the pin's function is one of its signals, so functions no controller row
+# owns cannot be given to a device: the
+# auxiliary SPI1 (SPI1_*), PWM0 (PWM0_*), the general-purpose clocks (GPCLK*), PCM
+# (PCM_*), the secondary memory interface (SA*, SD0 to SD17, SOE_N/SE, SWE_N/SRW_N), the
+# display interface (PCLK, DE, LCD_*, DPI_*), the SD controllers (SD0_*, SD1_*) and the BSC
+# slave (BSCSL*). A row is added with the driver that needs it.
+#
+# Unverified: BSC5's address 0x7e205a80 is as section 3.2 lists it but breaks the 0x200
+# spacing of BSC3, BSC4 and BSC6; and the datasheet does not say which JTAG signals a
+# probe needs: jtag's required set is IEEE 1149.1's mandatory test port (TCK, TMS, TDI,
+# TDO), not checked against a source read here.
+
+pin 0 up SDA0 SA5 PCLK SPI3_CE0_N TXD2 SDA6
+pin 1 up SCL0 SA4 DE SPI3_MISO RXD2 SCL6
+pin 2 up SDA1 SA3 LCD_VSYNC SPI3_MOSI CTS2 SDA3
+pin 3 up SCL1 SA2 LCD_HSYNC SPI3_SCLK RTS2 SCL3
+pin 4 up GPCLK0 SA1 DPI_D0 SPI4_CE0_N TXD3 SDA3
+pin 5 up GPCLK1 SA0 DPI_D1 SPI4_MISO RXD3 SCL3
+pin 6 up GPCLK2 SOE_N/SE DPI_D2 SPI4_MOSI CTS3 SDA4
+pin 7 up SPI0_CE1_N SWE_N/SRW_N DPI_D3 SPI4_SCLK RTS3 SCL4
+pin 8 up SPI0_CE0_N SD0 DPI_D4 BSCSL/CE_N TXD4 SDA4
+pin 9 down SPI0_MISO SD1 DPI_D5 BSCSL/MISO RXD4 SCL4
+pin 10 down SPI0_MOSI SD2 DPI_D6 BSCSL_SDA/MOSI CTS4 SDA5
+pin 11 down SPI0_SCLK SD3 DPI_D7 BSCSL_SCL/SCLK RTS4 SCL5
+pin 12 down PWM0_0 SD4 DPI_D8 SPI5_CE0_N TXD5 SDA5
+pin 13 down PWM0_1 SD5 DPI_D9 SPI5_MISO RXD5 SCL5
+pin 14 down TXD0 SD6 DPI_D10 SPI5_MOSI CTS5 TXD1
+pin 15 down RXD0 SD7 DPI_D11 SPI5_SCLK RTS5 RXD1
+pin 16 down - SD8 DPI_D12 CTS0 SPI1_CE2_N CTS1
+pin 17 down - SD9 DPI_D13 RTS0 SPI1_CE1_N RTS1
+pin 18 down PCM_CLK SD10 DPI_D14 SPI6_CE0_N SPI1_CE0_N PWM0_0
+pin 19 down PCM_FS SD11 DPI_D15 SPI6_MISO SPI1_MISO PWM0_1
+pin 20 down PCM_DIN SD12 DPI_D16 SPI6_MOSI SPI1_MOSI GPCLK0
+pin 21 down PCM_DOUT SD13 DPI_D17 SPI6_SCLK SPI1_SCLK GPCLK1
+pin 22 down SD0_CLK SD14 DPI_D18 SD1_CLK ARM_TRST SDA6
+pin 23 down SD0_CMD SD15 DPI_D19 SD1_CMD ARM_RTCK SCL6
+pin 24 down SD0_DAT0 SD16 DPI_D20 SD1_DAT0 ARM_TDO SPI3_CE1_N
+pin 25 down SD0_DAT1 SD17 DPI_D21 SD1_DAT1 ARM_TCK SPI4_CE1_N
+pin 26 down SD0_DAT2 - DPI_D22 SD1_DAT2 ARM_TDI SPI5_CE1_N
+pin 27 down SD0_DAT3 - DPI_D23 SD1_DAT3 ARM_TMS SPI6_CE1_N
+
+controller bsc0 0x7e205000 SDA0 SCL0
+controller bsc1 0x7e804000 SDA1 SCL1
+controller bsc3 0x7e205600 SDA3 SCL3
+controller bsc4 0x7e205800 SDA4 SCL4
+controller bsc5 0x7e205a80 SDA5 SCL5
+controller bsc6 0x7e205c00 SDA6 SCL6
+controller jtag none ARM_TCK ARM_TMS ARM_TDI ARM_TDO optional ARM_TRST ARM_RTCK
+controller spi0 0x7e204000 SPI0_SCLK SPI0_MOSI SPI0_MISO optional SPI0_CE0_N SPI0_CE1_N
+controller spi3 0x7e204600 SPI3_SCLK SPI3_MOSI SPI3_MISO optional SPI3_CE0_N SPI3_CE1_N
+controller spi4 0x7e204800 SPI4_SCLK SPI4_MOSI SPI4_MISO optional SPI4_CE0_N SPI4_CE1_N
+controller spi5 0x7e204a00 SPI5_SCLK SPI5_MOSI SPI5_MISO optional SPI5_CE0_N SPI5_CE1_N
+controller spi6 0x7e204c00 SPI6_SCLK SPI6_MOSI SPI6_MISO optional SPI6_CE0_N SPI6_CE1_N
+controller uart0 0x7e201000 TXD0 RXD0 optional CTS0 RTS0
+controller uart1 0x7e215040 TXD1 RXD1 optional CTS1 RTS1
+controller uart2 0x7e201400 TXD2 RXD2 optional CTS2 RTS2
+controller uart3 0x7e201600 TXD3 RXD3 optional CTS3 RTS3
+controller uart4 0x7e201800 TXD4 RXD4 optional CTS4 RTS4
+controller uart5 0x7e201a00 TXD5 RXD5 optional CTS5 RTS5

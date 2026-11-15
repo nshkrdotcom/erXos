@@ -1,0 +1,98 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's Broadcom Serial Controller (BSC), its I2C master, written by erXos from
+     Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 4, 18 January 2022, SHA-256
+     d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78), section 3.2
+     "Register View", Tables 24 to 32, printed pages 24 to 29. One window describes every
+     user-accessible master, BSC0 (0x7e205000), BSC1 (0x7e804000), BSC3 (0x7e205600), BSC4
+     (0x7e205800), BSC5 (0x7e205a80) and BSC6 (0x7e205c00): eight 32-bit registers, 0x20
+     bytes. BSC5's address is unverified: it breaks the 0x200 spacing of the others, which
+     would put it at 0x7e205a00. BSC2 and BSC7 serve the HDMI interfaces and are not for
+     user programs. The profile keeps no reset values; Tables 25 to 32 give them. The FIFO
+     holds 16 bytes (Table 29), and DIV divides the core clock, nominally 150 MHz (Table
+     30). -->
+<device schemaVersion="1.3">
+  <name>BSC</name><version>1</version>
+  <description>BCM2711 Broadcom Serial Controller, I2C master (BSC0, BSC1, BSC3 to BSC6)</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>BSC</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x20</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>C</name><ownedByNif>false</ownedByNif>
+          <description>Control (Table 25): enables, the transfer's direction, and the one-shot FIFO clear and start, which read back 0</description>
+          <addressOffset>0x00</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>READ</name><description>0 a write transfer, 1 a read transfer</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>CLEAR</name><description>Either bit set clears the FIFO, one-shot, read back 0; set with ST, the FIFO is cleared before the transfer starts; clearing during a transfer aborts it</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>ST</name><description>1 starts a transfer, one-shot, read back 0</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INTD</name><description>Interrupt while S.DONE is 1</description><bitOffset>8</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INTT</name><description>Interrupt while S.TXW is 1</description><bitOffset>9</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>INTR</name><description>Interrupt while S.RXR is 1</description><bitOffset>10</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>I2CEN</name><description>1 enables the controller; while 0 no transfer runs, registers stay accessible</description><bitOffset>15</bitOffset><bitWidth>1</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>S</name><ownedByNif>false</ownedByNif>
+          <description>Status (Table 26): activity, FIFO levels and the transfer's errors; DONE, ERR and CLKT clear by writing 1, writing 0 has no effect</description>
+          <addressOffset>0x04</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>TA</name><description>1 while a transfer is active</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>DONE</name><description>1 once the transfer completes</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+            <field><name>TXW</name><description>1 during a write while the FIFO is less than a quarter full; cleared by writing enough data</description><bitOffset>2</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXR</name><description>1 during a read while the FIFO is three quarters full or more; cleared by reading enough data</description><bitOffset>3</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>TXD</name><description>1 while the FIFO has room for a byte; a write to a full FIFO is ignored</description><bitOffset>4</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXD</name><description>1 while the FIFO holds a byte; a read of an empty FIFO returns invalid data</description><bitOffset>5</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>TXE</name><description>1 while the FIFO is empty</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>RXF</name><description>1 while the FIFO is full; a read stalls until data is removed</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth><access>read-only</access></field>
+            <field><name>ERR</name><description>1 once the slave fails to acknowledge: its address in Table 26, its address or a written data byte in the section's text</description><bitOffset>8</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+            <field><name>CLKT</name><description>1 once the slave stretches the clock past CLKT.TOUT; unverified which level: Table 26 says SCL held low, the section's text says high</description><bitOffset>9</bitOffset><bitWidth>1</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+          </fields>
+        </register>
+        <register>
+          <name>DLEN</name><ownedByNif>false</ownedByNif>
+          <description>Data length (Table 27): a write sets the transfer's byte count; a read returns the bytes still to move while TA or DONE is 1, and the last value written otherwise</description>
+          <addressOffset>0x08</addressOffset><access>read-write</access>
+          <fields><field><name>DLEN</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>A</name><ownedByNif>false</ownedByNif>
+          <description>Slave address (Table 28), kept across transfers</description>
+          <addressOffset>0x0c</addressOffset><access>read-write</access>
+          <fields><field><name>ADDR</name><bitOffset>0</bitOffset><bitWidth>7</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>FIFO</name><ownedByNif>false</ownedByNif>
+          <description>Data FIFO (Table 29): a write queues a byte to send, a read takes the next byte received</description>
+          <addressOffset>0x10</addressOffset><access>read-write</access><readAction>modify</readAction>
+          <fields><field><name>DATA</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>DIV</name><ownedByNif>false</ownedByNif>
+          <description>Clock divider (Table 30): SCL is the core clock divided by CDIV, rounded down to even; 0 divides by 32768</description>
+          <addressOffset>0x14</addressOffset><access>read-write</access>
+          <fields><field><name>CDIV</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>DEL</name><ownedByNif>false</ownedByNif>
+          <description>Data delay (Table 31), in core clocks; each must stay below CDIV / 2</description>
+          <addressOffset>0x18</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>REDL</name><description>Clocks after SCL's rising edge before the input is sampled</description><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field>
+            <field><name>FEDL</name><description>Clocks after SCL's falling edge before the next bit is driven</description><bitOffset>16</bitOffset><bitWidth>16</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>CLKT</name><ownedByNif>false</ownedByNif>
+          <description>Clock stretch timeout (Table 32): SCL clocks the master waits on a stretching slave before setting S.CLKT; 0 disables the timeout</description>
+          <addressOffset>0x1c</addressOffset><access>read-write</access>
+          <fields><field><name>TOUT</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

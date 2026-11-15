@@ -348,6 +348,121 @@ class HardwareTest < Minitest::Test
     assert_equal 'succeeded', result.fetch('state')
   end
 
+  # The header's controllers as BCM2711 ARM Peripherals (release 4) lays them out, written
+  # here from its tables rather than read from the SVDs: each register's offset (Tables 24,
+  # 159 and 63) and the fields a driver steers by, as [register, field, bit offset, width].
+  HEADER_REGISTERS = {
+    'BSC' => { 'C' => 0x00, 'S' => 0x04, 'DLEN' => 0x08, 'A' => 0x0c, 'FIFO' => 0x10, 'DIV' => 0x14,
+               'DEL' => 0x18, 'CLKT' => 0x1c },
+    'BCM2711_SPI' => { 'CS' => 0x00, 'FIFO' => 0x04, 'CLK' => 0x08, 'DLEN' => 0x0c, 'LTOH' => 0x10, 'DC' => 0x14 },
+    'BCM2711_GPIO' => { 'GPFSEL0' => 0x00, 'GPFSEL5' => 0x14, 'GPSET0' => 0x1c, 'GPCLR0' => 0x28, 'GPLEV0' => 0x34,
+                        'GPEDS0' => 0x40, 'GPREN0' => 0x4c, 'GPFEN0' => 0x58, 'GPHEN0' => 0x64, 'GPLEN0' => 0x70,
+                        'GPAREN0' => 0x7c, 'GPAFEN1' => 0x8c, 'PUP_PDN0' => 0xe4, 'PUP_PDN3' => 0xf0 }
+  }.freeze
+  HEADER_FIELDS = {
+    'BSC' => [%w[C I2CEN 15 1], %w[C ST 7 1], %w[C CLEAR 4 2], %w[C READ 0 1], %w[S CLKT 9 1], %w[S ERR 8 1],
+              %w[S DONE 1 1], %w[S TA 0 1], %w[A ADDR 0 7], %w[DEL FEDL 16 16]],
+    'BCM2711_SPI' => [%w[CS RXF 20 1], %w[CS DONE 16 1], %w[CS TA 7 1], %w[CS CLEAR 4 2], %w[CS CPOL 3 1],
+                      %w[CS CPHA 2 1], %w[CS CS 0 2], %w[CLK CDIV 0 16]],
+    'BCM2711_GPIO' => [%w[GPFSEL0 FSEL9 27 3], %w[GPFSEL2 FSEL27 21 3], %w[GPFSEL5 FSEL57 21 3], %w[GPSET1 SET 0 26],
+                       %w[PUP_PDN0 PULL15 30 2], %w[PUP_PDN1 PULL16 0 2], %w[PUP_PDN3 PULL57 18 2]]
+  }.freeze
+  HEADER_SVDS = { 'BSC' => 'hw/svd/bsc/bsc.svd', 'BCM2711_SPI' => 'hw/svd/bcm2711_spi/bcm2711_spi.svd',
+                  'BCM2711_GPIO' => 'hw/svd/bcm2711_gpio/bcm2711_gpio.svd' }.freeze
+
+  def header_device(name) = Erx::Hardware.parse_svd(File.binread(File.join(@repository, HEADER_SVDS.fetch(name))))
+
+  def test_header_controllers_match_the_datasheet
+    HEADER_REGISTERS.each do |name, offsets|
+      registers = header_device(name).registers.to_h { |register| [register.name, register] }
+      offsets.each { |register, offset| assert_equal offset, registers.fetch(register).offset, "#{name}.#{register}" }
+      HEADER_FIELDS.fetch(name).each do |register, field, shift, width|
+        found = registers.fetch(register).fields.find { |candidate| candidate.name == field }
+        assert_equal [Integer(shift), Integer(width)], [found&.offset, found&.width], "#{name}.#{register}.#{field}"
+      end
+    end
+  end
+
+  # Every pin's function select and pull follow one rule (Tables 64 to 69 and 90 to 93):
+  # GPIO n's FSEL is three bits at 3 * (n mod 10) of GPFSEL(n div 10), its pull two bits
+  # at 2 * (n mod 16) of PUP_PDN(n div 16), each with the encodings the tables give.
+  def test_every_gpio_pin_has_its_function_select_and_pull
+    registers = header_device('BCM2711_GPIO').registers.to_h { |register| [register.name, register] }
+    alternates = { 'input' => 0, 'output' => 1, 'alt0' => 4, 'alt1' => 5, 'alt2' => 6, 'alt3' => 7, 'alt4' => 3, 'alt5' => 2 }
+    58.times do |pin|
+      fsel = registers.fetch("GPFSEL#{pin / 10}").fields.find { |field| field.name == "FSEL#{pin}" }
+      assert_equal [3 * (pin % 10), 3, alternates], [fsel.offset, fsel.width, fsel.values], "FSEL#{pin}"
+      pull = registers.fetch("PUP_PDN#{pin / 16}").fields.find { |field| field.name == "PULL#{pin}" }
+      assert_equal [2 * (pin % 16), 2, { 'none' => 0, 'up' => 1, 'down' => 2 }], [pull.offset, pull.width, pull.values], "PULL#{pin}"
+    end
+  end
+
+  def test_header_controllers_side_effects_are_marked
+    bsc = header_device('BSC').registers.to_h { |register| [register.name, register] }
+    assert_equal %w[DONE ERR CLKT], bsc.fetch('S').fields.select(&:clear).map(&:name)
+    assert_equal 'modify', bsc.fetch('FIFO').read_action
+    refute Erx::Hardware.plain_update?(bsc.fetch('S'))
+    spi = header_device('BCM2711_SPI').registers.to_h { |register| [register.name, register] }
+    assert_equal 'modify', spi.fetch('FIFO').read_action
+    assert Erx::Hardware.plain_update?(spi.fetch('CS'))
+    gpio = header_device('BCM2711_GPIO').registers.to_h { |register| [register.name, register] }
+    assert_equal %w[write-only write-only read-only], %w[GPSET0 GPCLR1 GPLEV0].map { |name| gpio.fetch(name).access }
+    assert gpio.fetch('GPEDS0').fields.all?(&:clear)
+  end
+
+  # The seeded fault: FSEL9 three bits wider, past bit 31, which the generator must refuse
+  # before it writes an accessor.
+  def test_a_header_field_wider_than_its_register_is_refused
+    source = File.binread(File.join(@repository, HEADER_SVDS.fetch('BCM2711_GPIO')))
+    widened = source.sub(%r{(<name>FSEL9</name>.*?<bitWidth>)3(</bitWidth>)}) { "#{$1}6#{$2}" }
+    refute_equal source, widened
+    error = assert_raises(Erx::Error) { Erx::Hardware.parse_svd(widened) }
+    assert_equal 'SVD field exceeds register width', error.message
+  end
+
+  # Selecting GPIO 2's alternate 0 (SDA1) through the generated accessors changes FSEL2's
+  # bits alone, and BSC's and SPI's headers compile beside it.
+  def test_header_accessors_compile_and_select_a_function
+    HEADER_SVDS.each_value do |relative|
+      FileUtils.mkdir_p(File.dirname(File.join(@root, relative)))
+      File.binwrite(File.join(@root, relative), File.binread(File.join(@repository, relative)))
+    end
+    Erx::Hardware.output_plan(root: @root).each do |relative, bytes|
+      FileUtils.mkdir_p(File.dirname(File.join(@root, relative)))
+      File.binwrite(File.join(@root, relative), bytes)
+    end
+    source = File.join(@root, 'header.c')
+    File.binwrite(source, <<~C)
+      #include "erx/hw/bcm2711_gpio.h"
+      #include "erx/hw/bcm2711_spi.h"
+      #include "erx/hw/bsc.h"
+      #include <assert.h>
+      int main(void)
+      {
+      \t_Alignas(8) uint32_t registers[64] = {0};
+      \terx_mmio_t device = {(volatile uint8_t *)registers, 0xf4};
+      \tuint32_t word = 0;
+      \tregisters[0] = UINT32_C(0x3ffffe3f);
+      \tassert(erx_bcm2711_gpio_gpfsel0_read(device, &word));
+      \tassert(erx_bcm2711_gpio_gpfsel0_fsel2_set(word, ERX_BCM2711_GPIO_GPFSEL0_FSEL2_ALT0, &word));
+      \tassert(erx_bcm2711_gpio_gpfsel0_write(device, word));
+      \tassert(registers[0] == UINT32_C(0x3fffff3f));
+      \tassert(!erx_bcm2711_gpio_gpset1_write(device, UINT32_C(1) << 26));
+      \tassert(erx_bcm2711_gpio_gpeds0_eds_clear(device, UINT32_C(1) << 15));
+      \tassert(registers[16] == UINT32_C(1) << 15);
+      \tassert(erx_bsc_s_done_clear(device, 1));
+      \tassert(erx_bcm2711_spi_cs_cs_set(0, ERX_BCM2711_SPI_CS_CS_CE1, &word) && word == 1);
+      \treturn (0);
+      }
+    C
+    runner = Erx::Runner.new(owner_root: @root, log_dir: File.join(@root, 'logs'))
+    program = File.join(@root, 'header')
+    runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic',
+                '-fsanitize=address,undefined', '-I', File.join(@root, 'include'), source,
+                '-o', program], name: 'compile-header', deadline: 60)
+    assert_equal 'succeeded', runner.run([program], name: 'header-accessors', deadline: 30).fetch('state')
+  end
+
   private
 
   # What CMDTM_CHECK returns against the Erlang header generated from svd, compiled with

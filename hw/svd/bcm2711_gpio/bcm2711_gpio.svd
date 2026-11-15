@@ -1,0 +1,612 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's GPIO controller, the Raspberry Pi 4's pin controller, written by erXos
+     from Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 4, 18 January 2022, SHA-256
+     d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78), section 5.2
+     "Register View", Tables 63 to 93, printed pages 66 to 77. The controller is at
+     0x7e200000; its 58 pins are bank 0 (GPIO 0 to 27), bank 1 (28 to 45) and bank 2 (46 to
+     57), and the window is the 0xf4 bytes of Table 63's last register. Offsets the table
+     skips (0x18, 0x24 and so on) are not described.
+
+     Each FSELn field takes an input, an output, or one of the pin's six alternate
+     functions, encoded as Tables 64 to 69 give (ALT4 is 3 and ALT5 is 2); which function
+     each alternate is on each pin is Table 94, transcribed into hw/pins/bcm2711.txt. The
+     pull registers' reset values (Tables 90 to 93) agree pin by pin with Table 94's pull
+     column. The output, level, event and detect-enable registers hold one bit per pin:
+     GPIO 0 to 31 in the first register of each pair, so bank 0 and bank 1's first four
+     pins, and GPIO 32 to 57 in the second. Nothing in the controller locks a pin, so
+     whoever holds the window sets every pin's function
+     (docs/design-header-io.md, "The pin controller and the console"). -->
+<device schemaVersion="1.3">
+  <name>BCM2711_GPIO</name><version>1</version>
+  <description>BCM2711 GPIO controller: pin functions, pulls, levels and event detection</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>BCM2711_GPIO</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0xf4</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>GPFSEL0</name><ownedByNif>false</ownedByNif>
+          <description>Function select 0 (Table 64): GPIO 0 to 9, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x00</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL0</name><description>GPIO 0's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL1</name><description>GPIO 1's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL2</name><description>GPIO 2's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL3</name><description>GPIO 3's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL4</name><description>GPIO 4's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL5</name><description>GPIO 5's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL6</name><description>GPIO 6's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL7</name><description>GPIO 7's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL8</name><description>GPIO 8's function</description><bitOffset>24</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL9</name><description>GPIO 9's function</description><bitOffset>27</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFSEL1</name><ownedByNif>false</ownedByNif>
+          <description>Function select 1 (Table 65): GPIO 10 to 19, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x04</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL10</name><description>GPIO 10's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL11</name><description>GPIO 11's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL12</name><description>GPIO 12's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL13</name><description>GPIO 13's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL14</name><description>GPIO 14's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL15</name><description>GPIO 15's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL16</name><description>GPIO 16's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL17</name><description>GPIO 17's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL18</name><description>GPIO 18's function</description><bitOffset>24</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL19</name><description>GPIO 19's function</description><bitOffset>27</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFSEL2</name><ownedByNif>false</ownedByNif>
+          <description>Function select 2 (Table 66): GPIO 20 to 29, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x08</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL20</name><description>GPIO 20's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL21</name><description>GPIO 21's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL22</name><description>GPIO 22's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL23</name><description>GPIO 23's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL24</name><description>GPIO 24's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL25</name><description>GPIO 25's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL26</name><description>GPIO 26's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL27</name><description>GPIO 27's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL28</name><description>GPIO 28's function</description><bitOffset>24</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL29</name><description>GPIO 29's function</description><bitOffset>27</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFSEL3</name><ownedByNif>false</ownedByNif>
+          <description>Function select 3 (Table 67): GPIO 30 to 39, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x0c</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL30</name><description>GPIO 30's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL31</name><description>GPIO 31's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL32</name><description>GPIO 32's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL33</name><description>GPIO 33's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL34</name><description>GPIO 34's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL35</name><description>GPIO 35's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL36</name><description>GPIO 36's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL37</name><description>GPIO 37's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL38</name><description>GPIO 38's function</description><bitOffset>24</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL39</name><description>GPIO 39's function</description><bitOffset>27</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFSEL4</name><ownedByNif>false</ownedByNif>
+          <description>Function select 4 (Table 68): GPIO 40 to 49, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x10</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL40</name><description>GPIO 40's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL41</name><description>GPIO 41's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL42</name><description>GPIO 42's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL43</name><description>GPIO 43's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL44</name><description>GPIO 44's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL45</name><description>GPIO 45's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL46</name><description>GPIO 46's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL47</name><description>GPIO 47's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL48</name><description>GPIO 48's function</description><bitOffset>24</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL49</name><description>GPIO 49's function</description><bitOffset>27</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFSEL5</name><ownedByNif>false</ownedByNif>
+          <description>Function select 5 (Table 69): GPIO 50 to 57, each an input, an output or one of its six alternate functions</description>
+          <addressOffset>0x14</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FSEL50</name><description>GPIO 50's function</description><bitOffset>0</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL51</name><description>GPIO 51's function</description><bitOffset>3</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL52</name><description>GPIO 52's function</description><bitOffset>6</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL53</name><description>GPIO 53's function</description><bitOffset>9</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL54</name><description>GPIO 54's function</description><bitOffset>12</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL55</name><description>GPIO 55's function</description><bitOffset>15</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL56</name><description>GPIO 56's function</description><bitOffset>18</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>FSEL57</name><description>GPIO 57's function</description><bitOffset>21</bitOffset><bitWidth>3</bitWidth>
+              <enumeratedValues><enumeratedValue><name>INPUT</name><value>0</value></enumeratedValue><enumeratedValue><name>OUTPUT</name><value>1</value></enumeratedValue><enumeratedValue><name>ALT0</name><value>4</value></enumeratedValue><enumeratedValue><name>ALT1</name><value>5</value></enumeratedValue><enumeratedValue><name>ALT2</name><value>6</value></enumeratedValue><enumeratedValue><name>ALT3</name><value>7</value></enumeratedValue><enumeratedValue><name>ALT4</name><value>3</value></enumeratedValue><enumeratedValue><name>ALT5</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>GPSET0</name><ownedByNif>false</ownedByNif>
+          <description>Output set: 1 sets the pin's output, 0 has no effect (Table 70), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x1c</addressOffset><access>write-only</access>
+          <fields>
+            <field><name>SET</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPSET1</name><ownedByNif>false</ownedByNif>
+          <description>Output set: 1 sets the pin's output, 0 has no effect (Table 71), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x20</addressOffset><access>write-only</access>
+          <fields>
+            <field><name>SET</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPCLR0</name><ownedByNif>false</ownedByNif>
+          <description>Output clear: 1 clears the pin's output, 0 has no effect (Table 72), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x28</addressOffset><access>write-only</access>
+          <fields>
+            <field><name>CLR</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPCLR1</name><ownedByNif>false</ownedByNif>
+          <description>Output clear: 1 clears the pin's output, 0 has no effect (Table 73), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x2c</addressOffset><access>write-only</access>
+          <fields>
+            <field><name>CLR</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPLEV0</name><ownedByNif>false</ownedByNif>
+          <description>Pin level: 1 the pin is high (Table 74), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x34</addressOffset><access>read-only</access>
+          <fields>
+            <field><name>LEV</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPLEV1</name><ownedByNif>false</ownedByNif>
+          <description>Pin level: 1 the pin is high (Table 75), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x38</addressOffset><access>read-only</access>
+          <fields>
+            <field><name>LEV</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPEDS0</name><ownedByNif>false</ownedByNif>
+          <description>Event detect status: 1 once an enabled edge or level is seen on the pin; writing 1 clears it, and a level still present sets it again (Table 76), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x40</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>EDS</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPEDS1</name><ownedByNif>false</ownedByNif>
+          <description>Event detect status: 1 once an enabled edge or level is seen on the pin; writing 1 clears it, and a level still present sets it again (Table 77), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x44</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>EDS</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth><modifiedWriteValues>oneToClear</modifiedWriteValues></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPREN0</name><ownedByNif>false</ownedByNif>
+          <description>Rising edge detect enable, sampled by the system clock (Table 78), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x4c</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>REN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPREN1</name><ownedByNif>false</ownedByNif>
+          <description>Rising edge detect enable, sampled by the system clock (Table 79), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x50</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>REN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFEN0</name><ownedByNif>false</ownedByNif>
+          <description>Falling edge detect enable, sampled by the system clock (Table 80), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x58</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FEN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPFEN1</name><ownedByNif>false</ownedByNif>
+          <description>Falling edge detect enable, sampled by the system clock (Table 81), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x5c</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>FEN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPHEN0</name><ownedByNif>false</ownedByNif>
+          <description>High level detect enable (Table 82), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x64</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>HEN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPHEN1</name><ownedByNif>false</ownedByNif>
+          <description>High level detect enable (Table 83), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x68</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>HEN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPLEN0</name><ownedByNif>false</ownedByNif>
+          <description>Low level detect enable (Table 84), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x70</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>LEN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPLEN1</name><ownedByNif>false</ownedByNif>
+          <description>Low level detect enable (Table 85), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x74</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>LEN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPAREN0</name><ownedByNif>false</ownedByNif>
+          <description>Asynchronous rising edge detect enable (Table 86), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x7c</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>AREN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPAREN1</name><ownedByNif>false</ownedByNif>
+          <description>Asynchronous rising edge detect enable (Table 87), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x80</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>AREN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPAFEN0</name><ownedByNif>false</ownedByNif>
+          <description>Asynchronous falling edge detect enable (Table 88), one bit per GPIO 0 to 31</description>
+          <addressOffset>0x88</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>AFEN</name><description>Bit n is GPIO 0 + n</description><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>GPAFEN1</name><ownedByNif>false</ownedByNif>
+          <description>Asynchronous falling edge detect enable (Table 89), one bit per GPIO 32 to 57</description>
+          <addressOffset>0x8c</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>AFEN</name><description>Bit n is GPIO 32 + n</description><bitOffset>0</bitOffset><bitWidth>26</bitWidth></field>
+          </fields>
+        </register>
+        <register>
+          <name>PUP_PDN0</name><ownedByNif>false</ownedByNif>
+          <description>GPIO_PUP_PDN_CNTRL_REG0 (Table 90): the pull resistor of GPIO 0 to 15; a read gives the current pull; 3 is reserved</description>
+          <addressOffset>0xe4</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>PULL0</name><description>GPIO 0's resistor</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL1</name><description>GPIO 1's resistor</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL2</name><description>GPIO 2's resistor</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL3</name><description>GPIO 3's resistor</description><bitOffset>6</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL4</name><description>GPIO 4's resistor</description><bitOffset>8</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL5</name><description>GPIO 5's resistor</description><bitOffset>10</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL6</name><description>GPIO 6's resistor</description><bitOffset>12</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL7</name><description>GPIO 7's resistor</description><bitOffset>14</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL8</name><description>GPIO 8's resistor</description><bitOffset>16</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL9</name><description>GPIO 9's resistor</description><bitOffset>18</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL10</name><description>GPIO 10's resistor</description><bitOffset>20</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL11</name><description>GPIO 11's resistor</description><bitOffset>22</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL12</name><description>GPIO 12's resistor</description><bitOffset>24</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL13</name><description>GPIO 13's resistor</description><bitOffset>26</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL14</name><description>GPIO 14's resistor</description><bitOffset>28</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL15</name><description>GPIO 15's resistor</description><bitOffset>30</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PUP_PDN1</name><ownedByNif>false</ownedByNif>
+          <description>GPIO_PUP_PDN_CNTRL_REG1 (Table 91): the pull resistor of GPIO 16 to 31; a read gives the current pull; 3 is reserved</description>
+          <addressOffset>0xe8</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>PULL16</name><description>GPIO 16's resistor</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL17</name><description>GPIO 17's resistor</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL18</name><description>GPIO 18's resistor</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL19</name><description>GPIO 19's resistor</description><bitOffset>6</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL20</name><description>GPIO 20's resistor</description><bitOffset>8</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL21</name><description>GPIO 21's resistor</description><bitOffset>10</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL22</name><description>GPIO 22's resistor</description><bitOffset>12</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL23</name><description>GPIO 23's resistor</description><bitOffset>14</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL24</name><description>GPIO 24's resistor</description><bitOffset>16</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL25</name><description>GPIO 25's resistor</description><bitOffset>18</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL26</name><description>GPIO 26's resistor</description><bitOffset>20</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL27</name><description>GPIO 27's resistor</description><bitOffset>22</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL28</name><description>GPIO 28's resistor</description><bitOffset>24</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL29</name><description>GPIO 29's resistor</description><bitOffset>26</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL30</name><description>GPIO 30's resistor</description><bitOffset>28</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL31</name><description>GPIO 31's resistor</description><bitOffset>30</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PUP_PDN2</name><ownedByNif>false</ownedByNif>
+          <description>GPIO_PUP_PDN_CNTRL_REG2 (Table 92): the pull resistor of GPIO 32 to 47; a read gives the current pull; 3 is reserved</description>
+          <addressOffset>0xec</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>PULL32</name><description>GPIO 32's resistor</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL33</name><description>GPIO 33's resistor</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL34</name><description>GPIO 34's resistor</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL35</name><description>GPIO 35's resistor</description><bitOffset>6</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL36</name><description>GPIO 36's resistor</description><bitOffset>8</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL37</name><description>GPIO 37's resistor</description><bitOffset>10</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL38</name><description>GPIO 38's resistor</description><bitOffset>12</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL39</name><description>GPIO 39's resistor</description><bitOffset>14</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL40</name><description>GPIO 40's resistor</description><bitOffset>16</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL41</name><description>GPIO 41's resistor</description><bitOffset>18</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL42</name><description>GPIO 42's resistor</description><bitOffset>20</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL43</name><description>GPIO 43's resistor</description><bitOffset>22</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL44</name><description>GPIO 44's resistor</description><bitOffset>24</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL45</name><description>GPIO 45's resistor</description><bitOffset>26</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL46</name><description>GPIO 46's resistor</description><bitOffset>28</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL47</name><description>GPIO 47's resistor</description><bitOffset>30</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>PUP_PDN3</name><ownedByNif>false</ownedByNif>
+          <description>GPIO_PUP_PDN_CNTRL_REG3 (Table 93): the pull resistor of GPIO 48 to 57; a read gives the current pull; 3 is reserved</description>
+          <addressOffset>0xf0</addressOffset><access>read-write</access>
+          <fields>
+            <field><name>PULL48</name><description>GPIO 48's resistor</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL49</name><description>GPIO 49's resistor</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL50</name><description>GPIO 50's resistor</description><bitOffset>4</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL51</name><description>GPIO 51's resistor</description><bitOffset>6</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL52</name><description>GPIO 52's resistor</description><bitOffset>8</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL53</name><description>GPIO 53's resistor</description><bitOffset>10</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL54</name><description>GPIO 54's resistor</description><bitOffset>12</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL55</name><description>GPIO 55's resistor</description><bitOffset>14</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL56</name><description>GPIO 56's resistor</description><bitOffset>16</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field><name>PULL57</name><description>GPIO 57's resistor</description><bitOffset>18</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>NONE</name><value>0</value></enumeratedValue><enumeratedValue><name>UP</name><value>1</value></enumeratedValue><enumeratedValue><name>DOWN</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

@@ -1590,6 +1590,19 @@ it; git history is the record of completed work.
   3), which `erx_mini_uart` sets; whether QEMU's model ignores them is unchecked. Probe by writing
   each IER bit alone and watching the interrupt line and IIR, then correct the file and the
   driver, and drop the bits if not needed.
+* [Low] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass: confirm on silicon that the mini
+  UART's receive interrupt needs IER's `RX_ERRATA` bits (`hw/svd/mini_uart/mini_uart.svd`), which
+  `erx_mini_uart` sets as the BCM2835 errata asks and QEMU's model ignores, and drop them if not.
+* [Medium] hardware generator, `tools/lib/erx/hardware.rb`, no field arrays or shared enumerations:
+  `dim` applies to registers only and `derivedFrom` to clusters only, so `hw/svd/bcm2711_gpio/bcm2711_gpio.svd`
+  writes the FSEL encoding (eight values) and the pull encoding (three) once per pin, about 470 of its 612
+  lines, and `test_every_gpio_pin_has_its_function_select_and_pull` in `test/host/hardware_test.rb` keeps the
+  58 copies in step. CMSIS-SVD's field `dim`/`dimIndex` (`FSEL%s`, indexes 10 to 19 and so on) or an
+  `enumeratedValues` `derivedFrom` in the profile would state each once and delete that test.
+* [Low] hardware generator, read-write fields the hardware also changes: `plain_update?` takes the SPI
+  master's `CS` (`hw/svd/bcm2711_spi/bcm2711_spi.svd`) as safe to read, modify and write back, but its `TA`
+  is cleared by the DMA controller's frame-end pulse (BCM2711 ARM Peripherals, Table 160), so a field write
+  racing that pulse sets `TA` again. Polled transfers are unaffected; DMA on SPI settles how `CS` is marked.
 * [Medium] SD host controller, `hw/svd/sdhci/sdhci.svd` (docs/design-storage.md, "The SD host controller"), unnamed
   bits: the file names only the bits FreeBSD's `sdhci.h` names, so `write_field/4` writes every other bit of a word
   back as zero. In `CONTROL0` that is the block gap control byte, whose stop at block gap and continue requests
