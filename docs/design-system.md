@@ -480,14 +480,10 @@ violation fails the build with the property, the record and the field:
    device and this property, and a development manifest that gives it one
    passes, with the display domain reported in the trusted base. The
    manifest has no
-   partial boot. A release build's platform may be released: the check
-   reads the platform record, the evidence blocks of the research
-   records and the loader identity from the checked context and refuses
-   a platform whose inventory of bus masters no evidence binds, or with
-   a bus master whose effective handover at entry is unknown, naming the
-   inventory and each such master, by the rule
-   [design-platforms.md](design-platforms.md#dma) states; a development
-   build is not refused for it.
+   partial boot. It has no clause for the bus masters the loader left
+   running: those are the trusted loader's until each driver's reset,
+   by the rule [design-platforms.md](design-platforms.md#dma) states, so
+   development and release builds are admitted alike.
    The packer sets the boot image's `ERX_PACK_UNCONFINED_DMA` exactly
    when the manifest gives an unconfined device.
 10. **The domains have a boot order:** no configured domain's facets lead

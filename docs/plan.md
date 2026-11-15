@@ -3078,7 +3078,8 @@ exercise 128-bit session identifiers, counter exhaustion, restricted local
 transport access and rejection of unauthenticated network exposure.
 
 The hardware closure records the exact supported SMMUv3 and platform
-evidence for loader quiescence/drain, closed initialization, ATS rejection,
+evidence for the SMMU's own quiescence and drain at handoff, closed
+initialization, ATS rejection,
 sync ordering, the hold of a confined device's memory until its window's
 invalidation completes, and stream reuse. Specification citations alone
 do not replace executable tests. The Pi 4 port later applies the same

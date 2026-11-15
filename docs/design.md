@@ -1189,7 +1189,11 @@ another domain.
   resident for the machine's life, with access to all memory. The firmware
   that starts CPUs and ends the machine stays resident on both boards,
   more privileged than the kernel. Both are trusted as any machine trusts
-  its firmware. The Pi 5's firmware, its resident part included, and both
+  its firmware, and so is every bus master the loader started and left
+  running, until its driver resets it: erXos proves no master stopped at
+  its entry, gives a device no address before its reset, and leaves a
+  master it never drives as the loader left it
+  ([design-platforms.md](design-platforms.md#dma)). The Pi 5's firmware, its resident part included, and both
   boards' bootloaders live in the board's EEPROM, outside the slots, so an
   update does not change them
   ([design-platforms.md](design-platforms.md#firmware)). What checks a

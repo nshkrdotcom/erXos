@@ -618,11 +618,11 @@ register values are the facts record's:
   179 and 180), are lines of its own unit; the PCIe domain holds them
   and leaves them masked.
 
-The handover question, whether the boot firmware leaves the VL805
-running, belongs to the board's boot contract and is the USB design's,
-which lists the VL805's handover as unknown until its evidence is
-recorded ([design-usb.md](design-usb.md#the-bcm2711-bridge)); this
-design's keep rests on it and adds nothing to it.
+A VL805 the boot firmware left running is part of the trusted loader
+until the start's rule clears its bus mastering and its driver resets
+it ([design-platforms.md](design-platforms.md#dma),
+[design-usb.md](design-usb.md#the-bcm2711-bridge)); this design's keep
+adds nothing to that rule.
 
 ### The walk
 
@@ -1447,7 +1447,7 @@ Made in their owning documents with this design:
 | [design.md](design.md) | the index row; SD1's summary: MSI except on a closed bus |
 | [design-shared-devices.md](design-shared-devices.md) | the closed bus's exception to "MSI only" in the decisions, the unit rule's line relation, the PCIe INTx paragraph and SD1; a closed bus is one whose platform record lists every place on it with its pin |
 | [design-system.md](design-system.md) | property 3: the Pi 4 drives its bridge, and a `pci` row's line only at a closed bridge's listed place; the PCIe paragraph: the BCM2711's access, the layout and setting, the closed bus, the give enabling nothing, the holder's requests through `pci`, the restart's rule; Resets: a PCIe function's reset after its `open`, and `reset` through `pci`; Security: the enumerator's crash ends its domain |
-| [design-platforms.md](design-platforms.md) | the Pi 4's PCIe bridge driven by the PCIe domain as a closed bus, in the platform table, the placement table, the Pi 4's section and PCIe bridges; the VL805 driven through the PCIe domain, its handover unknown, in the bus masters row; a PCIe function's DMA range cut at its `dma_limit`; the MSI frame's range on the stopgap |
+| [design-platforms.md](design-platforms.md) | the Pi 4's PCIe bridge driven by the PCIe domain as a closed bus, in the platform table, the placement table, the Pi 4's section and PCIe bridges; the VL805 driven through the PCIe domain in the bus masters row; a PCIe function's DMA range cut at its `dma_limit`; the MSI frame's range on the stopgap |
 | [design-usb.md](design-usb.md) | its sections on the PCIe domain, the BCM2711 bridge, the Pi 4's interrupt and the Phase 1 part, and its VL805 firmware section, cite this design for what they share: the give programs no MSI and enables nothing, `open` and `master` do; the BCM2711's access refuses every place its platform record does not list; the notification is `pci_bus:firmware/1`, which the device service makes through `erx_domain_lib:pci_firmware/1`; a VL805 whose firmware stays absent is reported `not_ready` and stays out of the catalogue until a later start of the PCIe domain finds it loaded, which after a timed-out notification is the next boot, by the bridge's `firmware_lost` in the library, which the device service's call marks and the intake reads, so no keep of the bridge at a later start admits it; its contiguous memory is made from its DMA facts with `erx_mem_create_contiguous_in`, not with a limit passed to `erx_mem_create_contiguous` |
 | [design-stopgap.md](design-stopgap.md) | property 3's Phase 1 row: one `pcie` domain on QEMU `virt` and the Pi 4 |
 | [design-abi.md](design-abi.md) | a `pci` row's `line` at a closed bridge's listed place |

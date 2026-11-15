@@ -6609,65 +6609,35 @@ to the corpus and follow rc
 * [High] DMA platform evidence: the SMMUv3 specification and QEMU
   v11.1.2 source audit is recorded in
   [research-hardware-contracts.md](docs/research-hardware-contracts.md).
-  Close each platform's outstanding evidence gate for loader/device and
-  SMMU queue quiescence and drain, valid-abort and ATS rejection, completed
-  invalidation visibility, failed-reset handling and stale-event retirement.
-  Source inspection is not executable conformance evidence. Keep unknown
-  handoffs and completions closed, a confined device's memory held until
-  its window's invalidation completes and an unconfined device's for the
-  boot, until the exact supported platform meets the contract
-  ([design-platforms.md](docs/design-platforms.md),
-  [plan.md](docs/plan.md#m11-security-closure)). What a bus master whose
-  handover at entry is unknown admits is stated in
-  [design-platforms.md](docs/design-platforms.md#dma): this blocks each
-  such platform's release, not its development. No research record
-  binds either platform's inventory of bus masters or any master's
-  handover, so on QEMU `virt` every master's handover is unknown, and
-  on the Pi 4 every master's but the resident firmware's is.
-* [High] tools, the platform records' bus-master inventories, M11
-  ([design-platforms.md](docs/design-platforms.md#dma)): no build check
-  exists yet, since every image is a development build
-  (`ProductionImage::BUILD_KIND`) and the Phase 1 manifest check refuses
-  every release build under property 9. Before M11's release admission
-  lands, give `config/platforms/qemu-virt.json` and
-  `config/platforms/raspi4b.json` their `loader` and `bus_masters`:
-  on QEMU `virt` the ECAM bridge and each virtio-mmio device that
-  masters DMA; on the Pi 4 the SD controller, the legacy and
-  large-address DMA engines, Ethernet, the PCIe bridge for the VL805,
-  and the firmware as `resident`, with the EEPROM bootloader's version
-  recorded in `loader`. Make `Platform` validate the records and the
-  `erx-evidence` blocks of `docs/research-*.md` for every build kind,
-  compute the inventory digest and the loader identity, and derive the
-  verdicts from them; carry the blocks and the loader identity in
-  `Manifest::Context` beside the record; and add property 9's handover
-  clause to the release admission, with the host tests and seeded
-  failures the design names.
-* [High] platforms, the Pi 4's VL805 at handover
-  ([design-usb.md](docs/design-usb.md#the-bcm2711-bridge),
-  [design-platforms.md](docs/design-platforms.md#dma)), part of the DMA
-  platform-evidence item, blocking the Pi 4's release and not its
-  development builds: the board's installation sets the EEPROM's boot
-  order to the microSD card alone so that the boot firmware has no reason
-  to start the VL805, but no source read says what the firmware does
-  with it, so the VL805 counts as possibly running at entry and the
-  boot contract's stopped-and-drained rule is unmet for it. A VL805 left
-  running may write memory the kernel has reclaimed; development builds
-  boot with that open. Establish the handover
-  for each firmware release the port supports: fetch and record
-  Raspberry Pi's documentation of the boot firmware and the EEPROM
-  bootloader at the pinned release, which must say that under this boot
-  order the firmware never starts the VL805, or stops and drains it by a
-  documented reset, before it starts the ARM cores, on boards with and
-  without the VL805's EEPROM; and on the 4 GB Pi 4, with a USB keyboard
-  and stick attached, halt the cores at the kernel's first instruction
-  with a JTAG probe and read the bridge's reset and PERST# bits, its link
-  state and, with the link up, the VL805's command register, `USBCMD`
-  and `USBSTS`. Probe B3, the same reading at the PCIe domain's first
-  start, comes after the kernel has reclaimed memory, so it can refute
-  the handover but never establish it. If the documentation is silent or
-  a reading refutes it, a release for the Pi 4 needs a stop before
-  kernel entry, which is to be designed. Record the bootloader version
-  and the boot order's value in the board's port.
+  Close each platform's outstanding evidence gate for SMMU queue
+  quiescence and drain, valid-abort and ATS rejection, completed
+  invalidation visibility, failed-reset handling and stale-event
+  retirement. Source inspection is not executable conformance evidence.
+  Keep unknown SMMU handoffs and completions closed, a confined device's
+  memory held until its window's invalidation completes and an
+  unconfined device's for the boot, until the exact supported platform
+  meets the contract ([design-platforms.md](docs/design-platforms.md),
+  [plan.md](docs/plan.md#m11-security-closure)).
+* [Medium] platforms, bus masters the loader left running
+  ([design-platforms.md](docs/design-platforms.md#dma)): a bus master
+  the loader started is part of the trusted loader until its driver
+  resets it, so from the kernel's first instruction until that reset it
+  can write whatever memory it reaches, and the kernel may already have
+  handed that memory out. On the Pi 4 every DMA master is unconfined:
+  the window is all memory below its bus's limit, and it closes for the
+  VL805 at the PCIe domain's first start, which clears its bus
+  mastering, and for each driven device at its driver's `negotiate/2`.
+  A master no driver of erXos resets, the DWC2 on the USB-C connector,
+  each DMA channel the manifest gives no driver and the VideoCore's
+  blocks among them, stays the loader's for the whole boot. On QEMU
+  `virt` the window is all memory for a virtio-mmio device, and for a
+  confined function ends at the kernel's IOMMU abort. The board's
+  installation sets the EEPROM's boot order to the microSD card alone, so
+  that the boot firmware has no reason to start the VL805; probe B3
+  ([design-usb.md](docs/design-usb.md#the-bcm2711-bridge)) shows whether
+  it does, and its answer belongs here. The stand-in test of a device the
+  loader left running, under Reset before use in the same design's
+  verification, is not written yet.
 * [Medium] kernel, attributing asynchronous errors: on a board with PCIe,
   a device error caused by a posted write can be reported after the window
   that would attribute it, and then ends the wrong domain; one the

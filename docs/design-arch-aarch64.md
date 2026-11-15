@@ -200,11 +200,11 @@ requires the loader to quiesce every DMA-capable device before entry
 platform contract additionally requires that quiescence drain outstanding
 DMA through the platform's documented completion or reset mechanism
 before memory is reclaimed. Setting an SMMU to abort future traffic does
-not drain requests already beyond it. A failed drain stops boot before
-allocator handoff in every build. A drain before the kernel's entry,
-which the kernel cannot observe, is a fact the build is given by the
-platform record's bus-master entries, and what an unknown one admits in
-each kind of build is stated once, in [the handover at
+not drain requests already beyond it. A failed drain the kernel observes
+stops boot before allocator handoff in every build. What the loader does
+before the kernel's entry the kernel cannot observe: a bus master the
+loader started and left running is part of the trusted loader until its
+driver resets it, by the rule stated once in [the handover at
 entry](design-platforms.md#dma); the IOMMU's own handoff is in
 [IOMMU](#iommu).
 
@@ -497,8 +497,9 @@ device, not the architecture's
 The SMMUv3 driver (`kernel/platform/smmuv3.c`) is erXos's own C17, written
 with OpenBSD's and FreeBSD's drivers as references. On a platform without
 an SMMU the kernel has nothing to check at boot: every DMA device there
-is unconfined, and the loader's quiescence of every bus master ([Boot
-entry](#boot-entry)) is what keeps old DMA out of reclaimed memory. On a
+is unconfined, and until each device's reset the trusted loader's
+quiescence of every bus master ([Boot entry](#boot-entry)) is what keeps
+old DMA out of reclaimed memory. On a
 platform with one, boot checks the SMMU's reset-state handoff and brings
 it up in four ordered stages; the first two precede allocator handoff,
 and no stage repairs an unknown live firmware configuration by guessing
@@ -524,13 +525,15 @@ how to drain it.
 2. **Close future access and establish the drain.** The kernel writes
    `SMMU_GBPA` with `ABORT` and `Update` set and polls until the SMMU
    clears `Update`, allocating no memory meanwhile. The port contract
-   separately establishes that every outstanding device and
-   SMMU-originated memory access has completed to the domain covering
-   reclaimed memory. Queue-disable acknowledgement alone does not
-   drain a command's outstanding sync MSI, and translation-disable
-   acknowledgement alone does not drain old DMA. Unknown completion stops
-   boot. Only the completed stopped handoff, global abort and platform
-   drain permit boot step 4 to release memory to the allocator.
+   separately requires the loader to complete every outstanding device
+   and SMMU-originated memory access to the domain covering reclaimed
+   memory before entry, since queue-disable acknowledgement alone does
+   not drain a command's outstanding sync MSI, and translation-disable
+   acknowledgement alone does not drain old DMA. That completion is the
+   trusted loader's, which the kernel cannot observe
+   ([the handover at entry](design-platforms.md#dma)). Only the stopped
+   handoff of step 1 and a global abort the SMMU has acknowledged permit
+   boot step 4 to release memory to the allocator.
 3. **Initialize and invalidate while closed.** In boot step 5 the driver
    allocates a linear stream table sized from `SMMU_IDR1.SIDSIZE`, refusing
    widths beyond 16 bits, and initializes every entry to valid abort
@@ -1019,10 +1022,8 @@ which a GICv3 ITS would close on boards that have one.
   it must never bypass translation. Contrast valid abort with invalid
   STEs to test silent quarantine. Check requester identity under hostile
   configuration writes, and MSI spoofing within the documented interrupt
-  trust boundary. Loader tests retain outstanding writes beyond the SMMU
-  and verify that failed quiescence prevents allocator handoff. Seed stale
-  firmware configuration/TLB entries, inherited live queue and MSI
-  controls, and pending writes: unsupported handoff must stop before
+  trust boundary. Seed stale firmware configuration/TLB entries and
+  inherited live queue and MSI controls: unsupported handoff must stop before
   allocator handoff, while a supported handoff must invalidate every
   inherited entry before translation is enabled. Delay an old stream's
   events across destruction and verify that rebinding waits for their

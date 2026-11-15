@@ -661,166 +661,121 @@ a queue running, and on one that lacks a feature its driver needs. It
 then makes the IOMMU abort every transaction, invalidates every
 configuration and translation cache through its own queue while that
 abort holds, and enables translation only after a completed sync. A
-device whose reset fails is not given to another driver. A protocol
-requirement is not evidence that a particular firmware meets it: source
-evidence and pending loader and hardware tests are distinguished in [the
+device whose reset fails is not given to another driver. The loader's
+quiescence of the bus masters is a requirement on a trusted loader,
+which nothing checks (The handover at entry, below); for the IOMMU,
+source evidence and pending hardware tests are distinguished in [the
 hardware-contract audit](research-hardware-contracts.md).
 
 **The handover at entry.** The kernel cannot observe the time before its
-first instruction, so whether the loader stopped a bus master and drained
-its DMA is a fact the build is given, not one the boot checks. What
-follows is the one statement of how the build is given it and what
-follows from it; the boot binding
-([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)), the
-kernel's boot sequence
-([design-kernel.md](design-kernel.md#boot)), the VL805's
-evidence ([design-usb.md](design-usb.md#the-bcm2711-bridge)) and the
-release check ([design-system.md](design-system.md#the-manifest)) refer
-here. Two facts decide it, and both are reviewed evidence the build
-cannot produce: that a platform's list of bus masters is complete, and
-that the loader stops a given master. Each is recorded the same way, as
-an evidence block of a research record bound to exactly what it proves,
-and everything the build concludes from them is derived, never written.
+first instruction, so no boot and no build proves that the loader
+stopped a bus master. A bus master the loader started is part of the
+loader: whatever it does until its driver resets it is the loader's act,
+and the loader is trusted as the firmware is
+([Firmware](#firmware), [design.md](design.md#residual-risks)). What
+erXos guarantees begins at each device's reset, and holds by
+construction, for every device and every driver, with no list of either
+to keep:
 
-**The inventory.** Each platform record, `config/platforms/NAME.json`,
-which `Platform` reads, holds the platform's one list of its bus
-masters, `bus_masters`. The contract table below names this list and
-does not repeat it; the release profile, the inspector and release
-admission read it whole. An entry has a `name`, the device-tree `paths`
-it covers, and a `kind` from a closed set:
+1. **No device is given an address before its driver has reset it.**
+   Every device address erXos gives a device is written by the device
+   NIF, through registers the SVD source marks `ownedByNif`, and a queue
+   is on a device only once `negotiate/2` has installed it
+   ([design-runtime.md](design-runtime.md#the-device-nif), R8 and the
+   reset rule). For every descriptor form, `negotiate/2` writes the
+   device's reset first and installs nothing until the device's own
+   report that it holds no descriptor: virtio's status read back as 0,
+   GENET's DMA status, the SD controller's data-line reset bit clear
+   ([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)),
+   xHCI's halt and then `HCRST` clear
+   ([design-usb.md](design-usb.md#install)). A driver's first start and
+   its restart are one sequence ([design-system.md](design-system.md#drivers),
+   Resets), so a device the loader left running is reset exactly as one
+   a crashed driver left running is, and no driver can aim a device at
+   memory by another path. The consumer is every DMA driver: it hands
+   its device buffers only once the device has forgotten what it was
+   aimed at before.
+2. **A confined device reaches only its own memory from before any
+   memory is reclaimed.** The kernel makes the IOMMU abort every
+   transaction before it reclaims memory (above), and a stream reaches
+   memory only through a DMA window, which holds only the memory of that
+   device's record; nothing reads that memory before `negotiate/2`'s
+   install has written it whole, so what a running device writes there
+   before its reset is never read
+   ([design-runtime.md](design-runtime.md#the-device-nif), the reset
+   rule). The consumer is every domain other than the device's holder,
+   whose memory a confined device never reaches, reset or not.
+3. **A PCIe function stops mastering at the PCIe domain's first start.**
+   That start turns off every function that does not read exactly as its
+   setting, and a function no holder has opened has the setting `off`,
+   so a function the loader left mastering, driven or not, has its bus
+   mastering cleared before any holder opens it; bus mastering is raised
+   again only by a holder's `master`, after its reset
+   ([design-pcie.md](design-pcie.md#requirements), R5 and R6). The
+   consumer is the VL805 on the Pi 4 and every function on QEMU `virt`'s
+   bridge, which stop issuing new requests before their drivers start.
+   Clearing bus mastering does not wait for requests already issued,
+   which stay the loader's.
 
-| `kind` | The master | Its handover |
-| --- | --- | --- |
-| `device` | a controller, a DMA engine, or a bridge that stands for every function behind it, whether erXos drives it or not | `stopped` while an evidence block binds it to the build's loader identity, below, and `unknown` otherwise |
-| `resident` | the resident firmware, which keeps access to all memory for the machine's life and is trusted as any machine trusts its firmware ([Firmware](#firmware), [design.md](design.md#residual-risks)); it lists no path, since erXos drives nothing of the firmware's | `resident` |
+An unconfined device can reach all memory its bus reaches, so for it
+rule 2 has no counterpart: before its reset it can write anywhere, and
+that window is the loader's, the residual below. After the reset it is
+aimed only at its own memory, which is the device's for the boot and
+never given to anything else
+([design-system.md](design-system.md#devices), What a device keeps).
 
-Nothing in the platform record says that a master is stopped, and no
-default makes one so. A device row is covered by the entry that lists
-its `path`, or, for a `pci` row, its host bridge's path, so one entry
-listing QEMU `virt`'s ECAM bridge node covers every function behind it,
-and one listing the Pi 4's PCIe bridge node covers the VL805 whether or
-not a row names it yet. The **inventory digest** is the SHA-256 of the
-canonical encoding of `bus_masters`, its entries sorted by name, which
-`Platform` computes; any change to the list, an entry left out among
-them, gives another digest.
+**Masters erXos never drives.** A bus master that no driver of erXos
+resets is the loader's for the whole boot. No step of erXos stops it, and
+none is added: the PCIe domain's start of rule 3 clears a function's
+bus mastering whether or not anything drives it, and the IOMMU of rule 2
+aborts a confined function that no window binds, but a master behind
+neither stays as the loader left it. The BCM2711's manual says that
+"the majority of hardware pipelines and peripherals within the BCM2711
+are bus masters" (BCM2711 ARM Peripherals, section 4.1, p. 31), without
+listing them, so on the Pi 4 these include:
 
-**The loader identity.** The record's `loader` names what runs before
-the kernel's first instruction: by `deps.lock` id each piece the build
-fetches, and by name and version each piece the port records but does
-not fetch. The platform's **loader identity** is a SHA-256 that
-`Platform` derives over every input of the loader as the build gives
-it, and that is written nowhere: the `deps.lock` SHA-256 of each fetched
-piece; the SHA-256 of each file the build makes for the loader to run or
-read, on the Pi 4 BL31 as built, the slot's `config.txt` and the
-EEPROM configuration that installing erXos writes; and each recorded
-piece's version. A firmware bump, a new EEPROM bootloader, another boot
-order, a TF-A build option that changes BL31's bytes and any line of
-`config.txt` each give another identity, so a board that runs
-unattended, whose `config.txt` sets the watchdog, and one that does not
-have identities of their own. On the Pi 4 the fetched pieces are
-`rpi-firmware-start4`, `rpi-firmware-fixup4` and `trusted-firmware-a`,
-and the recorded one the EEPROM bootloader; on QEMU `virt` the recorded
-piece is the QEMU release, and what the build makes for it is the
-harness's machine options, which decide the devices the machine has and
-under which the contract tests run. Two of the Pi 4's entries,
-as the record gives them:
+* the USB controller on the USB-C connector, the DWC2, which erXos does
+  not drive on the board and which is disabled and in device mode by
+  default ([design-usb.md](design-usb.md#dwc2)); the manual lists a USB
+  block among the peripherals the ARM may access and a USB interrupt
+  among the VideoCore's (section 1.1, p. 4; section 6.2.4, table 102,
+  p. 87), and does not say that it masters DMA, which is unverified;
+* each of the sixteen DMA channels (section 4.1, p. 31) that the
+  manifest gives no driver;
+* the blocks the VideoCore controls, which the manual leaves out as
+  "intended to be controlled by the GPU" (section 1.1, p. 4) and names
+  only as interrupt sources, among them V3D, the H.264, JPEG and ISP
+  blocks, the cameras, the HVS and the pixel valves (section 6.2.4,
+  table 102, pp. 86-87); which of them master DMA is unverified, and
+  they are the resident firmware's, which keeps access to all memory for
+  the machine's life anyway.
 
-```json
-"loader": { "deps": ["rpi-firmware-start4", "rpi-firmware-fixup4", "trusted-firmware-a"],
-            "recorded": { "eeprom-bootloader": "VERSION" } },
-"bus_masters": [
-  { "name": "firmware", "kind": "resident", "paths": [] },
-  { "name": "sd", "kind": "device", "paths": ["/emmc2bus/mmc@7e340000"] }
-]
-```
+The same holds on every platform. The bus masters row of the table below
+lists each board's masters for the reader and the residual; no check reads it.
 
-**Evidence blocks.** A research record under `docs/` binds what it
-proves with a fenced block whose info string is `erx-evidence` and
-whose body is one JSON object, which `Platform` reads from every
-`docs/research-*.md` file. The record's prose is the proof; the block
-says what the proof covers, so that the build can tell evidence for one
-master and one loader from evidence for another:
+**What the rule needs of the build and the boot.** Nothing beyond the
+mechanisms above, each of which its own design specifies and tests: the
+SVD generator refuses a register without its `ownedByNif` mark, the
+chokepoint that keeps the raw accessors in `erx_device.c` fails the build
+on another holder, `negotiate/2` is the one install, the kernel aborts
+every IOMMU stream before allocator handoff, and the PCIe domain's start
+rule lowers every function that does not read as its setting. No
+platform record lists bus masters, no
+research record carries a proof for the build to bind, and development
+and release builds are admitted alike: the manifest check has no
+handover clause. A native shim, a row of
+[the driver table](design-system.md#the-driver-table), writes its device's
+addresses itself, so for it the reset before use is a requirement its row
+states and its review checks; the table has no rows.
 
-| `claim` | Its other fields | It binds |
-| --- | --- | --- |
-| `inventory` | `platform`, the record's name; `masters`, an inventory digest | the platform's inventory with that digest, which the research record found complete against the platform's documentation and the device tree the firmware hands over |
-| `stopped` | `platform`; `master`, an entry's name; `paths`, that entry's paths; `loader`, a loader identity; `proof`, the anchors of the headings of its own record under which each piece of the proof stands | that one master, under that one loader build and configuration |
-
-```erx-evidence
-{ "claim": "stopped", "platform": "raspi4b", "master": "sd",
-  "paths": ["/emmc2bus/mmc@7e340000"], "loader": "SHA256",
-  "proof": ["#documented-behaviour", "#reading-at-entry"] }
-```
-
-A research record carries a `stopped` block only once every piece of
-its proof agrees, and a record whose reading refutes the documented
-behaviour carries none. The hardware-contract audit takes only
-executable evidence of a loader's quiescence
-([research-hardware-contracts.md](research-hardware-contracts.md#evidence-still-required)),
-so every `stopped` proof includes a reading at entry; a reading that
-needs a configuration the release does not have, such as the debug pins
-the VL805's reading enables, states in its record how its configuration
-differs from the bound one and why that difference does not change the
-master's handover. Whether a proof proves is the research record's
-review, as for any research record; that a block binds only what it
-names is the build's. Research records are point-in-time reports,
-re-checked rather than edited in place, so new evidence, a smaller
-inventory among it, is a new reviewed record.
-
-**What follows.** One function of `Platform` gives the verdicts, from
-the record, the blocks and the loader identity, and none is stored:
-
-* an entry's **effective handover** is `resident` for a `resident`
-  entry; `stopped` for a `device` entry when a `stopped` block names the
-  record's platform, the entry's name, exactly its paths and the build's
-  loader identity; and `unknown` otherwise;
-* the platform's inventory is **bound** when an `inventory` block names
-  the platform and the digest of its `bus_masters`;
-* a platform **may be released** exactly when its inventory is bound and
-  every entry's effective handover is `stopped` or `resident`.
-
-So no evidence stands in for another's: a block for one master binds no
-other, a block taken under one loader binds no other loader, and a
-platform whose record leaves out a master, used or not, no longer has
-the inventory its evidence found complete. A master that no reviewed
-inventory names is beyond what any build can see, which is why the
-inventory is evidence. The firmware is in the trusted base on every
-board that has it, the release profile shows it as resident, and it is
-never the reason a release is refused.
-
-What a platform's evidence admits differs by build. `Platform` validates
-the record's and the blocks' shape for every build kind, with the
-refusals below. Development builds boot whatever the verdicts are: they
-run trusted code only, say so in their banner and never ship, and each
-unknown master and an unbound inventory are open security residuals in
-`TODO.md`. A release build is refused by the release clause of property
-9 of the manifest check
-([design-system.md](design-system.md#the-manifest)), which reads the
-platform record, the blocks and the loader identity from the checked
-context the build gives the check, so the one admission that decides a
-release build decides this too, and the packer adds no check of its own.
-
-**The handover refusals.** `Platform` refuses, for every build kind,
-with an `Erx::Error` that names the file and the entry or block: a
-record whose `bus_masters` is missing or not a list; an entry that lacks
-a `name`, repeats another's, has `paths` that is not a list of strings
-or a `kind` outside the set; a `resident` entry that lists a path, or a
-`device` entry that lists none; a path listed by two entries; a device
-row whose `dma` is not `none` that no entry covers; a record whose
-`loader` is missing, names a `deps.lock` id that does not exist, or
-names no piece at all; and an evidence block whose body is not one JSON
-object with exactly the fields of its claim, whose `claim` is outside
-the set, whose digest or identity is not 64 lowercase hexadecimal
-digits, or whose `proof` is empty or names an anchor that no heading of
-its own record has. A block that binds nothing, because it names
-another platform, a master the record does not have, other paths, or
-another loader identity or inventory digest, is not refused: it binds
-nothing, which fails safe. A release build on a platform that may not
-be released fails the manifest check under property 9, with a
-diagnostic that names an unbound inventory with the digest the build
-computed, and each master whose effective handover is unknown with the
-loader identity the build computed, each input of that identity, and the
-identity of every `stopped` block that names the master under another.
+**The residual.** From the kernel's first instruction until a master's
+reset, and for the whole boot for a master no driver resets, a master the
+loader left running can still write what it reaches: on the Pi 4, where
+every DMA master is unconfined, any memory below its bus's limit; on QEMU
+`virt`, any memory for a virtio-mmio device, and only its own window's
+for a confined function once the kernel's abort holds. A write in that
+window into memory the kernel has handed out corrupts it unseen. The gap
+is a security residual in `TODO.md`.
 
 **The SMMUv3 is QEMU's.** The kernel's SMMUv3 driver covers what QEMU
 `virt`'s model needs: one SMMU, stage 1, 4 KiB pages and 16-bit ASIDs,
@@ -833,7 +788,7 @@ Raspberry Pi has one.
 
 | | QEMU `virt` | Raspberry Pi 4 | Raspberry Pi 5 |
 | --- | --- | --- | --- |
-| Bus masters | the inventory of `config/platforms/qemu-virt.json` ([The handover at entry](#dma)) | the inventory of `config/platforms/raspi4b.json` | the inventory of the Pi 5's platform record, which its port writes from the board's documentation ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)) |
+| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)); masters erXos does not drive, the DWC2 and the VideoCore's blocks among them ([The handover at entry](#dma)); and the firmware, which stays resident with access to all memory ([Firmware](#firmware)) | RP1's devices behind PCIe, Ethernet and two USB hosts among them; the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
 | Translation | the SMMUv3, stage 1, for functions on the root bus, which the harness creates with `iommu=smmuv3`; nothing for virtio-mmio | none described ([research](research-boards-storage.md#raspberry-pi-4-model-b-bcm2711)) | none for Ethernet, USB, the SD controllers or the external connector; each BCM2712 IOMMU serves media blocks or RP1's camera and display paths, with one address space for all its devices |
 | Bypass | none: the driver sets the global bypass to abort before anything else, and a stream without a window aborts | every master | the BCM2712 IOMMUs pass addresses below their windows through untranslated |
 | Requester identity | fixed on the ECAM root bus: `smmu_get_sid` builds the id from the model's bus and `devfn`; `pcibus_num` fixes the root bus at zero, whereas a subordinate bus takes its number from writable bridge configuration. Each root-bus function is its own isolation group. This is source-checked in QEMU v11.1.2; the supported binary must pass the same contract tests before its confined profile is admitted ([audit](research-hardware-contracts.md)) | none used | none per device |
@@ -1980,37 +1935,26 @@ in [Trust in the boot](#trust-in-the-boot).
   pass's leaving out of nodes that share a kept page is tested with each
   tree, and so is the crash region's discovery, with a tree that has the
   node and one that lacks it.
-* **The handover at entry.** Host tests of `Platform` and the manifest
-  check, on records, evidence blocks and loader files built for the test
-  ([The handover at entry](#dma)). A record whose inventory an
-  `inventory` block binds, with a `stopped` block naming one entry's
-  name and paths and the loader identity derived from a test `deps.lock`
-  and test loader files, every other entry `resident`, gives that entry
-  `stopped`, and a release build on it passes property 9. Each paired
-  failure expects `unknown` or an unbound inventory and a property-9
-  refusal naming it:
-  * stale evidence: one piece's hash bumped in the test `deps.lock`, and
-    separately one line added to the test `config.txt`, each with the
-    block unchanged, so the identity is shown to read both;
-  * unrelated evidence: the same block naming another master of the
-    record, and the block unchanged with the entry's paths changed;
-  * an omitted master: the record with an unused master's entry
-    deleted, one that no device row names, and the `inventory` block
-    unchanged, which the refusal names with the digest the build
-    computed; a seeded admission without the inventory clause, which
-    judges only the entries the record still has, passes it, and the
-    test catches that.
-  A block whose `proof` names an anchor no heading of its record has is
-  refused in a development build, and the paired passing case adds the
-  heading. A release build on the checked-in QEMU `virt` and Pi 4
-  records is refused, naming each unbound inventory and every master but
-  the Pi 4's firmware;
-  with the property-9 clause seeded out, that test fails. A record with
-  an unconfined device row that no entry covers is refused in a
-  development build; the paired passing case adds the entry, and a
-  seeded coverage check that skips `pci` rows lets a function behind an
-  uncovered bridge pass, which the test catches. A `resident` entry
-  listing a device row's path is refused.
+* **Reset before use.** The three rules of [The handover at
+  entry](#dma) rest on tests the designs that own them name: the device
+  NIF's property tests, whose seeded post before `negotiate/2` fails
+  ([design-runtime.md](design-runtime.md#the-device-nif), R8); GENET's
+  stop, whose seeded idle test of one direction lets the install write
+  under a running engine
+  ([design-device-dma.md](design-device-dma.md#verification)); and
+  `erx_pcie_plan`'s exhaustive test, under which the start's target for
+  a function that does not read as its setting is `off`
+  ([design-pcie.md](design-pcie.md#verification)). One test is this
+  rule's own, the device the loader left running: over the device NIF's
+  hosted stand-in, for each descriptor form, a record opened for the
+  first time on a stand-in that already runs a queue aimed into the
+  memory the record holds. `negotiate/2` writes the form's reset before
+  any other owned register and writes no address until the stand-in
+  reports idle, and the stand-in records no owned-register write but the
+  reset while it runs. Seed: `negotiate/2` skips the reset for a record that no
+  driver has opened before, as if a new record's device were idle, and
+  the stand-in records the install's base-address writes while it is
+  still running.
 * **Ends and trials.** Each end (off, reset, panic, trial) is tested on
   each platform with and without a lease, and on each board a trial that
   panics, hangs with interrupts masked or halts boots the committed slot.

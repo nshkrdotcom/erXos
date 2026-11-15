@@ -71,11 +71,11 @@ Decisions every reader needs:
   The order is a proposal of [plan.md](plan.md#track-u-usb-proposed).
 * **The Pi 4 boots from its microSD card alone.** The board's EEPROM
   boot order names no USB device and no network boot, so the boot
-  firmware has no reason to start the VL805. Whether it leaves the
-  controller stopped is unknown until the firmware's documentation and a
-  reading at kernel entry are recorded: development builds boot on the
-  board meanwhile, with the gap an open security residual, and release
-  builds refuse it ([The boot firmware's handover](#the-bcm2711-bridge)).
+  firmware has no reason to start the VL805. A VL805 the firmware left
+  running anyway is part of the trusted loader until the PCIe domain's
+  start clears its bus mastering and the xHCI driver resets it; the
+  window before then is a security residual
+  ([The boot firmware's handover](#the-bcm2711-bridge)).
 
 ## Contents
 
@@ -891,23 +891,20 @@ same windows again changes nothing it uses.
 
 **The boot firmware's handover.** The boot's first start is decided by
 the same table, so a link the boot firmware left up with the VL805's
-firmware loaded is kept (probes B1 and B3). That keep is safe only
-under the boot contract's requirement: the loader leaves every
-bus master stopped, its outstanding DMA drained, before the kernel
-reclaims any memory; a failed drain stops the boot before allocator
-handoff, and a platform whose DMA contract leaves a drain unknown boots
-only in development builds
-([design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)). The
-VL805 is one of the Pi 4's bus masters
-([design-platforms.md](design-platforms.md#dma)). The PCIe domain
-starts long after that reclamation, and the Pi 4's kernel reads nothing
-behind the bridge, so nothing the bridge driver does at its first
-start, a reset included, can protect memory a running VL805 has already
-written: the keep decision rests on the boot contract and adds nothing
-to it. Under the contract a kept handover link carries a VL805 that
-issues no DMA, so writing the windows again races nothing, and the USB
-domain's driver starts from a stopped controller and resets it
-([design-system.md](design-system.md#devices), Resets).
+firmware loaded is kept (probes B1 and B3). The keep needs no proof that
+the VL805 is stopped, because nothing erXos hands out is aimed at it
+before its reset ([The handover at entry](design-platforms.md#dma)):
+the PCIe domain's start turns off every function that does not read as
+its setting, and the VL805's is `off` until the USB domain opens it, so
+a VL805 the boot firmware left mastering has its bus mastering cleared
+at the PCIe domain's first start; the USB domain's xHCI driver then
+halts and resets the controller in `negotiate/2` before it gives it any
+address ([Install](#install)), and asks for bus mastering only after
+([design-system.md](design-system.md#drivers), Resets). Until its bus
+mastering is cleared, a VL805 the firmware left running is part of the
+trusted loader, and what it writes from the kernel's entry until then is
+the residual that [the handover at entry](design-platforms.md#dma) records. The bridge's reset path does not close
+that window, since it too runs after the kernel has reclaimed memory.
 
 **The Pi 4 boots from its microSD card alone.** The board's
 installation, which already writes the EEPROM's configuration and each
@@ -924,89 +921,16 @@ firmware after erXos's own bring-up. A board whose EEPROM names any
 other boot order is not an installation the board port supports. The
 cost is that erXos does not boot from USB or the network on the Pi 4.
 
-**The VL805 is possibly running at entry until evidence says
-otherwise.** The boot order is the configuration erXos supports, not
-evidence that it meets the boot contract. No source read for this
-design says what the boot firmware does with the VL805 under any boot
-order, whether loading the VL805's firmware on a board without its
-EEPROM starts the controller, or whether a firmware update changes
-either. The kernel reads nothing behind the bridge and cannot observe
-the VL805 before it reclaims memory, so on the Pi 4 the contract's rule
-acts through the build rather than at run time: the Pi 4's platform
-record's inventory lists the VL805, by the PCIe bridge's node, as a
-`device` master beside its other bus masters, and its handover is
-`stopped` only while a research record holding the evidence below binds
-it to the loader identity of the build. What an unknown handover admits
-in each kind of build, and how a firmware update or a change of
-configuration leaves such evidence binding nothing, is stated once, in
-[the handover at entry](design-platforms.md#dma); the worst a VL805 left running can do
-in a development build is corrupt the memory of a development machine.
-
-Until then this design claims nothing for the handover, and the
-bridge's reset path is no remedy, since it runs after the kernel has
-reclaimed memory a running VL805 may have written. The same question
-for the Pi 4's other bus masters, the SD controller among them, which
-the boot firmware does use under this boot order, belongs to
-[design-platforms.md](design-platforms.md#dma), under the same rule.
-
-**What establishes the handover** is evidence for the time before the
-kernel's first instruction, which nothing erXos runs after it can
-observe. Two pieces, for each loader identity the board port supports:
-
-1. **The firmware's documented behaviour.** Raspberry Pi's own
-   documentation of the boot firmware and the EEPROM bootloader at the
-   release the board port pins, fetched and recorded in a research record
-   with its version and SHA-256, saying what the firmware does with the
-   PCIe bridge and the VL805 under a boot order of the microSD card
-   alone, on boards with and without the VL805's EEPROM: that it never
-   releases PERST# and never starts the controller, or that it stops the
-   controller and drains its DMA, by a reset whose completion it
-   documents, before it starts the ARM cores. Only the firmware's
-   supplier can say this; no source read for this design does.
-2. **A reading at entry**, since the hardware-contract audit takes
-   only executable evidence of a loader's quiescence
-   ([research-hardware-contracts.md](research-hardware-contracts.md#evidence-still-required)).
-   On a board installed as the board port installs it, with the JTAG
-   pins enabled in `config.txt` and a USB keyboard and a USB drive
-   attached, a debug probe halts the cores at the kernel's first
-   instruction and reads the bridge's reset and PERST# bits (bits 1 and
-   0 of `0x9210`) and its link state (`PHYLINKUP` and `DL_ACTIVE` in
-   `0x4068`), and, when the link is up, the VL805's command register
-   through the bridge's configuration window and its `USBCMD` and
-   `USBSTS`. A reading that differs from what (1) says the firmware
-   leaves, or shows the VL805 running (bus mastering set, `USBCMD.R/S`
-   set or `USBSTS.HCH` clear), refutes (1) for that release. The probe
-   adds nothing to the kernel.
-
-(1) speaks for the time before entry and (2) shows that the board in
-hand matches it. With both recorded in one research record, that record
-carries a `stopped` evidence block naming the VL805's entry, its path,
-the loader identity of the build the board port installs and the
-headings of (1) and (2), and states that the reading's `config.txt`
-differs from that build's by the JTAG pins alone, and why that leaves the handover as it is
-([The handover at entry](design-platforms.md#dma)). Without (1), or
-with (2) refuting it, the record carries no block, the handover stays
-`unknown`, and a release for the Pi 4 then
-needs a stop before kernel entry, a first stage that resets the VL805
-and waits out its drain, which this design does not define.
-
-Probe B3 repeats the reading of (2) later, at the PCIe domain's first
-start in a test build, before the bridge driver writes anything, with
-the same installation and devices attached. It can refute the handover
-or corroborate it; it cannot establish it. A reading that shows the
-VL805 running refutes it: the boot firmware started the VL805 after
-all. A reading of a stopped controller, or of a link down or PERST#
-asserted, is only consistent with it, for three reasons:
-
-* B3 reads after the kernel has reclaimed memory, so a controller
-  stopped then says nothing of when it stopped;
-* a link down or PERST# asserted stops further traffic, but whether a
-  reset with DMA still in flight is safe is unknown (facts record,
-  section 6);
-* `HCH` set follows a forced halt as well as an orderly one: the
-  controller halts within 16 ms of `R/S` being cleared whatever is
-  still queued, and without the orderly sequence pending transactions
-  may be lost or aborted (xHCI 5.4.1.1, pp. 396-397).
+**Probe B3 reads what the firmware leaves.** At the PCIe domain's first
+start in a test build, before the bridge driver writes anything, with a
+USB keyboard and a USB drive attached, B3 reads the bridge's reset and
+PERST# bits (bits 1 and 0 of `0x9210`), its link state (`PHYLINKUP` and
+`DL_ACTIVE` in `0x4068`) and, when the link is up, the VL805's command
+register through the bridge's configuration window and its `USBCMD` and
+`USBSTS`. A VL805 found running, bus mastering set, `USBCMD.R/S` set or
+`USBSTS.HCH` clear, shows that the window of that residual is open on that
+board under that firmware, and its `TODO.md` record says so; nothing in
+this design depends on the answer.
 
 Every reset is followed by the firmware notification of
 [The VL805's firmware](#the-vl805s-firmware); a VL805 whose firmware
@@ -1046,7 +970,7 @@ with this design's probes, each with what settles it:
 | that the VL805's INTA arrives on SPI 143 alone, apart from the bridge's SPI 147 and 148, as the tree says (record unknown 4), and what raises SPI 147 (unknown 3) | B2, with the VL805 driven: its line counted, the bridge's two read while masked |
 | the VL805's header type, its functions and its interrupt pin | B4: the enumerator's configuration-space dump |
 | the VL805's state at erXos's start: an EEPROM or none, `0x50` before and after the notification, what a missing notification looks like, and whether this board's boot firmware reloads firmware already present (unknown 7) | B1 |
-| whether the boot firmware's handover leaves the VL805 running: bus mastering on, `USBCMD.R/S` set or `USBSTS.HCH` clear ([The boot firmware's handover](#the-bcm2711-bridge)); whether it leaves the link up and PERST# released (unknown 8); the bridge's `MISC_REVISION` (unknown 1) | B3, which refutes or corroborates the handover and cannot establish it; establishing it takes the firmware's documented behaviour and the reading at entry of [What establishes the handover](#the-bcm2711-bridge) |
+| whether the boot firmware's handover leaves the VL805 running: bus mastering on, `USBCMD.R/S` set or `USBSTS.HCH` clear ([The boot firmware's handover](#the-bcm2711-bridge)); whether it leaves the link up and PERST# released (unknown 8); the bridge's `MISC_REVISION` (unknown 1) | B3, whose answer the residual of [the handover at entry](design-platforms.md#dma) records and nothing else depends on |
 | the reference clock's source and whether anything must enable it (unknown 9) | B3: if bring-up finds no link, the clock is the first question, and no source answers it yet |
 | the real DMA limit, against FreeBSD's 960 MiB and the tree's 3 GiB (unknown 5) | B5 |
 | whether a narrowed inbound window blocks the VL805 outside it | B6 |
@@ -2651,8 +2575,8 @@ rules this design's decisions change: the Pi 4's exception to MSI in
 mailbox's third referrer in [design.md](design.md#chokepoint-checks),
 [design-kernel.md](design-kernel.md#chokepoint-checks),
 [design-arch-aarch64.md](design-arch-aarch64.md#chokepoints) and
-[design-platforms.md](design-platforms.md#device-secrets); the VL805's
-handover, unknown until its evidence is recorded, in the bus masters row
+[design-platforms.md](design-platforms.md#device-secrets); the VL805,
+part of the trusted loader until its reset, in the bus masters row
 of [design-platforms.md](design-platforms.md#dma); the Pi 4's PCIe
 domain and the VL805's placement in property 3 of
 [design-system.md](design-system.md#the-manifest), in the Phase 1
@@ -2925,20 +2849,15 @@ at erXos's start and after a bring-up of erXos's own, the firmware
 version, and whether the board has the VL805's EEPROM (B1); the bridge
 node as the boot firmware hands it over, and which line the VL805's
 INTA raises (B2); the link, PERST#, `MISC_REVISION`, and the VL805's
-command register and xHCI status at erXos's start, which corroborate
-the boot firmware's handover or refute it, with its seeded fault the
+command register and xHCI status at erXos's start, which show whether
+the boot firmware leaves the VL805 running, with its seeded fault the
 same reading taken after a PCIe domain restart under a running USB
 domain, which it must report as running, and the reference clock if
 no link comes up (B3); the VL805's header type, functions and interrupt pin
 (B4); DMA above 960 MiB (B5); whether a narrowed inbound window blocks
 the VL805 outside it (B6); the VL805's capability registers (B7); and
-what a configuration access with the link down raises (B8). Beside
-them, for each firmware release the port supports, the reading at entry
-by a debug probe of [What establishes the handover](#the-bcm2711-bridge),
-whose seeded fault is the same probe's reading with the cores halted
-after erXos's own bring-up has released PERST#, which must show the
-bridge out of reset and the link up, so a probe that reads nothing live
-cannot pass; and the mailbox's answer time for the notification (B1).
+what a configuration access with the link down raises (B8); and the
+mailbox's answer time for the notification (B1).
 
 ## Performance
 

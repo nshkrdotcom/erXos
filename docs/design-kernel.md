@@ -2497,11 +2497,12 @@ implements the same protocol, so no step is specific to one loader
    stops boot, since the kernel does not take over live firmware state.
    Then set global abort through the binding's memory-independent
    register transition to close future requests. For every bus master,
-   confined or unconfined, the platform contract also establishes a
-   completed drain or reset of outstanding DMA, including the IOMMU's own
-   accesses; a failed completion stops boot before allocator handoff,
-   and a completion before the kernel's entry, which the kernel cannot
-   observe, is the platform's handover at entry, a fact of the build
+   confined or unconfined, the platform contract also requires the
+   loader to complete or reset outstanding DMA, including the IOMMU's own
+   accesses; a failed completion the kernel observes stops boot before
+   allocator handoff, and a master the loader started and left running,
+   which the kernel cannot observe, is part of the trusted loader until
+   its driver resets it
    ([design-platforms.md](design-platforms.md#dma),
    [design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)). Then seed the
    physical page allocator with RAM less the image, its tables, the device
