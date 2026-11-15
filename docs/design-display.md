@@ -3734,6 +3734,52 @@ answers an image at the new size over the same buffer, clipped to it,
 and allocates nothing; `resize/2` and `label/2` write `wctl`
 and `label`.
 
+**A window over a range it does not own.** The LVGL renderer's frames
+are drawn in a range of the pixel area that the program's handler owns
+and lends to the program ([A buffer in a
+program](#the-pixel-area)), and a window's own buffer beside it would
+cost a second screen's bytes: the default area of 8 MiB holds one buffer
+at 1920 by 1080, so that second allocation would be refused with
+`enomem`. `open(Display, #{buffer => none})` makes the window as any
+`open` does and allocates no range, so the window holds none and its
+end frees none; the widget server opens `erx_ui_lvgl`'s window so.
+`info/1` answers the handle's `peer`, `rect` and `chan`, from which the
+renderer sizes the program's buffer, and `present(Window, Buffer,
+Rects)` presents rectangles of `Buffer`, a `buffer()` of [Windows and
+buffers](#windows-and-buffers): a range's offset in the client's area
+and the width and height its frame was drawn at. `present/2` is
+`present/3` over the window's own buffer at the window's size, clipped
+to it; of a window opened with `buffer => none`, `image/1` and
+`present/2` answer `{error, none}` and `resized/1` re-reads the
+rectangle and answers `{ok, Window, none}`.
+
+The display checks a `present/3` as any present, against the client's
+area and never against a range, since it does not see the allocator
+([The window tree](#the-window-tree)), and clips the buffer to the
+window. Keeping a present inside its range is the client's:
+`erx_ui_lvgl` asks for the program's buffer at the window's size when it
+starts the program, keeps that size, writes each `screen` record at the
+window's size clipped to it, as `resized/1` clips an image, and presents
+a report only at the last `screen` record's size (`erx_ui_lvgl_core`),
+so no present names a byte past the range and the program never draws
+past its mapping. The window's holder is the widget server; the range is
+the handler's and returns to the free list at the handler's exit once
+the lease is back. Each end follows from those two owners:
+
+* **The program or its handler ends:** the renderer names the offset in
+  no present after the handler's `'DOWN'`
+  ([design-programs.md](design-programs.md#the-handler)) and ends, as
+  `renderer_down`, and the widget server and its window with it. Until
+  then the display may read the range's last frame; a reuse of the
+  range, possible only once the lease is back, shows the client's own
+  pixels in its own area, as two overlapping windows of one client do.
+* **The window is closed** (`erx_ui:close/1`, the opener's exit): it
+  ends with its holder, the linked renderer ends, and the handler, which
+  monitors its starter, stops the program.
+* **The handler's allocation fails** with `enomem`: the program's start,
+  the renderer's and the widget server's fail in turn, and the window
+  ends with its holder, leaving no window and no buffer.
+
 `erx_draw` draws with Plan 9's messages: `open(Window)` starts a draw
 connection on a window; `alloc/4`, `draw/6`, `line/6`, `string/5`,
 `load/3`, `flush/1` and the rest encode messages with the generated
@@ -4490,6 +4536,14 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   space as it was, where a seeded `open/2` that allocates first fails
   it. A `mkdir` of `screen` or `snarf`
   fails with `EEXIST`.
+* **A window over a lent range.** An `erx_ui_lvgl` window at 1920 by
+  1080 in the default pixel area of 8 MiB shows the program's first
+  frame, where a seeded `open/2` that allocates a buffer despite
+  `buffer => none` fails the program's start with `enomem`. After the
+  screen grows past the size the program's buffer was allocated at, the
+  program receives a `screen` record clipped to that size and keeps
+  running, where a seeded renderer that writes the window's unclipped
+  size makes the program fault past its mapping.
 * **Draw connections.** The same bytes written by a program to
   `/dev/draw` and handed over by `erx_draw` leave the same pixels in the
   window's buffer; a `v` presents exactly the rectangles the write's
