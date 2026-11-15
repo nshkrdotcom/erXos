@@ -64,8 +64,8 @@ cpus() ->
 Domain's group: the system domain's on ERX_CAP_SELF, and another
 domain's as the domain library reads it on its own handle
 (erx_domain_lib:info/2). The stopgap's backend refuses any group but the
-root's, against its design, so every attribute is unsupported there
-(TODO.md, the stopgap's group reports).
+root's, unlike erXos's kernel, which reports any group the caller holds,
+so every attribute is unsupported there (TODO.md, the stopgap's group reports).
 """.
 -spec group(non_neg_integer()) -> erx_schema:record().
 group(Domain) ->
