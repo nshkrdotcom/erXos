@@ -132,13 +132,30 @@ What the sources say, read at the pins of [Sources](#sources):
   gives no `ssl` option takes `ssl_verify_host_options(true)`:
   `verify_peer`, `public_key:cacerts_get()` and RFC 6125's wildcard rule
   for the host name (`lib/inets/src/http_client/httpc.erl:861-871`,
-  `:1506-1508`). Its `max_body_size` refuses a body whose
-  `content-length` is larger and bounds a chunked one
-  (`httpc_handler.erl:1011-1031`, `http_chunk.erl:161-166`); a body that
-  ends when the server closes, with no length, is kept growing whatever
-  `max_body_size` says (`httpc_response.erl:68-85`,
-  `httpc_handler.erl:512-527`). `autoredirect` is on by default, and
-  `max_body_size` is `nolimit` (`httpc.erl:293-299`, `:443-451`).
+  `:1506-1508`). A direct `ssl:connect/3` gets no such default: it must
+  name `cacerts` itself (above).
+* **`httpc`'s bounds are partial.** `max_header_size` and
+  `max_body_size` are options of a request, the fourth argument of
+  `httpc:request/4`; placed among the HTTP options of the third, an
+  option is ignored with an info report (`httpc.erl:215-233`,
+  `:1412-1423`, `:1600-1610`). Their defaults are 10,240 bytes and
+  `nolimit` (`http_internal.hrl:29-30`). `max_body_size` refuses a body
+  whose `content-length` is larger (`httpc_handler.erl:1011-1031`) and
+  bounds a chunked one's decoded bytes, with the error `{body_too_long,
+  {max, Max}}` (`http_chunk.erl:161-166`). What it misses: a body that
+  ends when the server closes, with no length, grows whatever the bound
+  says (`httpc_response.erl:68-85`, `httpc_handler.erl:512-527`), and so
+  does such a body's first fragment, which arrives with the headers and
+  is kept or delivered at the close without passing that branch
+  (`httpc_handler.erl:606-613`, `:1011-1024`). `max_header_size` counts
+  header bytes only: the status line and reason phrase are gathered with
+  no count (`httpc_response.erl:169-264`), and the branch for a line
+  break followed by a byte adds to the count without checking it
+  (`:332-336`), so a server that sends an endless reason phrase or
+  endless one-byte lines grows the client's memory until the request's
+  timeout. `autoredirect` is on by default (`httpc.erl:293-299`), and
+  `autoretry`, `infinity` by default, repeats a request once after a
+  `Retry-After` of any length (`:301-309`).
 
 ## Requirements
 
@@ -154,14 +171,17 @@ What the sources say, read at the pins of [Sources](#sources):
   has them and constant-time software where it does not, decided from the
   features the kernel reports, never from a probe that faults.
 * **CR5.** OpenSSL reads no file and opens no socket on erXos.
-* **CR6.** A TLS client in a session or an app that names no TLS option
-  checks the server's chain against the image's trust store and its
-  certificate against the host name it asked for, and speaks only TLS 1.3
-  or 1.2.
+* **CR6.** An `httpc` request to an `https` URL that names no `ssl`
+  option checks the server's chain against the image's trust store and
+  its certificate against the host name it asked for, and speaks only
+  TLS 1.3 or 1.2; a direct `ssl` client gets the same by naming the
+  store, `{cacerts, public_key:cacerts_get()}`, and nothing else.
 * **CR7.** The trust store is the same file in every domain, no domain
   can change it, and it changes only with the image.
-* **CR8.** An HTTP response body is never kept past the caller's
-  `max_body_size`, whatever its framing.
+* **CR8.** `httpc` never holds more of a response's head than the
+  request's `max_header_size` and one read of the socket, nor more of its
+  body than its `max_body_size`, whatever the framing and however the
+  bytes are split.
 
 ## What the code does today
 
@@ -476,13 +496,38 @@ ask for them; the system release never does.
   client ([HTTPS clients](#https-clients)).
 * **`inets`** ships its HTTP client, `httpc`, and with it the rest of the
   application as OTP builds it; its HTTP server, `httpd`, is part of the
-  application and nothing starts it. It takes one edit: the branch of
-  `httpc_handler` that reads a body ending with the connection
-  (`httpc_handler.erl:512-527`) answers `body_too_big` once the bytes it
-  holds pass the request's `max_body_size`, as the branch for a
-  `content-length` does (`:1014-1031`), so the option bounds every
-  framing (CR8). A request without `max_body_size` behaves as on stock
-  OTP.
+  application and nothing starts it. It takes one edit: **every byte of
+  a response is counted where it enters the handler**, so the two limits
+  hold for every path the parsers take (CR8):
+  * `httpc_handler`'s receive of socket data (`httpc_handler.erl:499`)
+    passes each segment's size to `httpc_bound`, a pure module added to
+    the application, before any parser sees it. `httpc_bound:take(Count,
+    Bytes, Limits)` answers the new count or the error the request ends
+    with. The count starts at zero with each response.
+  * While the response's head, its status line and headers, is
+    unfinished, every byte taken is the head's. When a segment arrives
+    and the head's count before it is already above `max_header_size`,
+    the request ends with `{error, {header_too_long, {max, Max}}}`
+    without the segment being parsed. This one
+    rule covers the status line, the reason phrase, every header branch
+    and every continuation, so none of the parsers' own counts has to be
+    complete; a head can hold at most `max_header_size` and one segment.
+  * When the head ends (`handle_http_msg`, `httpc_handler.erl:927-947`),
+    the count restarts at the bytes after it in that segment, the body's
+    first fragment, and every later segment adds to it. Once it passes
+    `max_body_size`, before the bytes are kept, decoded or delivered, the
+    request ends with `{error, body_too_big}`. The count is of bytes as
+    they arrive, chunk framing included, so it bounds a body framed by
+    `content-length`, by chunks or by the connection's end alike, and an
+    overflow has one error in every framing; a chunked body whose decoded
+    size fits but whose framing does not is refused, which only a server
+    sending chunks of a few bytes meets.
+
+  A request with `nolimit` for either limit, or none for
+  `max_body_size`, is unbounded there as on stock OTP, and its domain's
+  memory is the bound. The chunked overflow's error, `body_too_big`
+  where stock OTP answers `{body_too_long, {max, Max}}`, is a documented
+  difference with its own test (below).
 
 The oracle's stock OTP 29.1.2 builds `crypto` on the development host
 against the same OpenSSL 3.5.9 with the same options, the target and the
@@ -497,29 +542,42 @@ own tests check them against Annex J.10's vectors and each other.
 The construction is that **the trust store is one file of the domain
 release, and stock OTP's defaults do the rest.** `public_key:cacerts_get/0`
 reads that file through `public_key`'s `{unix, erxos}` row; `ssl`'s
-client defaults and `httpc`'s default `ssl` options use what it returns.
-So a client that names no TLS option gets the image's roots, the host
-name check and TLS 1.3 or 1.2, with no erXos module between it and OTP:
+client defaults take it when a caller names it, and `httpc`'s default
+`ssl` options name it. So an `httpc` request that names no TLS option
+gets the image's roots, the host name check and TLS 1.3 or 1.2, with no
+erXos module between it and OTP:
 
 ```erlang
+{ok, _} = application:ensure_all_started(ssl),
 {ok, _} = application:ensure_all_started(inets),
 {ok, {{_, 200, _}, _Headers, Body}} =
     httpc:request(get, {"https://api.kraken.com/0/public/Ticker?pair=XBTUSD", []},
-                  [{timeout, 20000}, {max_body_size, 65536}],
-                  [{body_format, binary}]).
+                  [{timeout, 20000}, {autoredirect, false}, {autoretry, 0}],
+                  [{body_format, binary}, {max_body_size, 65536}]).
+```
+
+`inets` does not name `ssl` among its applications, so a program starts
+both, or names both in its own `.app`. The limits are options of the
+fourth argument; `autoredirect` is off because a redirect may lead to
+plain `http`, and `autoretry` off because the program, not `httpc`,
+should decide when to ask again. A direct `ssl` client names the store:
+
+```erlang
+ssl:connect(Host, 443, [{cacerts, public_key:cacerts_get()}], 10000)
 ```
 
 What this removes: an HTTP or TLS client of erXos's own with an API
 programs must learn; a certificate path every caller must name; a trust
-setting per app; a list of callers that must remember to verify. A
-caller that names `ssl` options of its own and leaves out `cacerts` is
-refused before it connects (`ssl_config.erl:942-955`), so forgetting the
-store fails closed.
+setting per app. A caller that names `ssl` options of its own and leaves
+out `cacerts`, or calls `ssl:connect/3` without it, is refused before it
+connects (`ssl_config.erl:942-955`), so forgetting the store fails
+closed.
 
 Each requirement follows:
 
 * **CR6** is `ssl`'s and `httpc`'s defaults as the sources state them
-  ([Context](#context)), over the store below. What a caller can still
+  ([Context](#context)), over the store below; a direct `ssl` client
+  names the store, as above. What a caller can still
   weaken, it weakens for its own connections in its own domain alone:
   `{verify, verify_none}`, `versions` naming `tlsv1.1`,
   `{server_name_indication, disable}`, a `customize_hostname_check` of
@@ -531,7 +589,8 @@ Each requirement follows:
   code may trust other roots for its own connections, by naming
   `cacerts` or by `public_key:cacerts_load/1` into its own persistent
   term; no other domain sees it.
-* **CR8** is `inets`' edit ([OTP's applications](#otps-applications)).
+* **CR8** is `inets`' edit ([OTP's applications](#otps-applications)),
+  for a request that gives the limits in its fourth argument.
 
 #### Releases
 
@@ -607,12 +666,22 @@ clock's state is `/proc/time/status`'s `state`: `unset`, `boot` or `set`
 | any machine running `ntpd` | set by the first sample ([design-time.md](design-time.md)); off unless enabled |
 | hosted mode | the host's clock, `boot` |
 
-**On an unset clock a client fails closed.** Every certificate's
-validity period lies after 1970, so `ssl` refuses the server's chain
-with `certificate_expired` and the connection fails. No client skips the
-validity check because the clock is unset, and nothing sets the clock
-from a TLS peer's time. A client that shows the failure to a person
-reads the clock's state to say so: the quotes kiosk shows `clock not set`
+**What an unset clock does.** Validation compares each certificate's
+validity period with the wall clock as it reads; it never reads the
+clock's `state` (`pubkey_cert.erl:177-189`). On an unset clock the wall
+clock reads 1970 plus the uptime, so a chain is accepted only if every
+certificate in it was valid then. Certificates from public authorities
+are not: the leaves the sources sent were issued within their 90-day
+lifetimes, so `ssl` refuses their chains with `certificate_expired` and
+the connection fails. A certificate made to be valid from 1970, as a
+test may make, is accepted on an unset clock as on a set one; erXos adds
+no rule that refuses every connection while the clock is unset. No
+client skips the validity check, and nothing sets the clock from a TLS
+peer's time. A client that shows the failure to a person can tell an
+unset clock from the wall clock alone: no machine erXos runs on reads a
+time before 2000 once its clock is set, and the quotes kiosk shows
+`clock not set` when a certificate is refused as outside its validity
+while the wall clock reads before 2000
 ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
 
 #### Reaching the network
@@ -641,9 +710,9 @@ for the resolver.
 | **K3.** A failed seed never yields bytes | the seam answers `EIO` and OpenSSL's unseeded generator refuses |
 | **K4.** CPU features come from the kernel's report | `armcap.c`'s edit compiles `getauxval` and no `SIGILL` probe; its one read of the CPU, the main ID register, runs only when the feature words claim `HWCAP_CPUID`, which the kernel's never do (`liberx/backend/core/arch/aarch64/cpu_features.c`, `test/host/cpu_features_test.rb`) |
 | **K5.** OpenSSL loads no code, and reads no file unless a caller names one | `no-shared`, `no-module`, `no-dso` and `no-engine` leave no loader; `no-autoload-config` reads no configuration file at start. OpenSSL's file functions (`BIO_new_file`, the configuration and store loaders) stay compiled and run only on a path a caller passes, and `crypto`'s NIF passes none |
-| **K6.** A client that names no TLS option verifies the server against the image's store and its host name, over TLS 1.3 or 1.2 | `ssl`'s and `httpc`'s defaults, and `cacerts_get/0`'s `{unix, erxos}` row; a client naming options without `cacerts` is refused before connecting |
+| **K6.** An `httpc` request that names no TLS option verifies the server against the image's store and its host name, over TLS 1.3 or 1.2 | `httpc`'s default `ssl` options, `ssl`'s defaults, and `cacerts_get/0`'s `{unix, erxos}` row; a client, `httpc`'s or a direct `ssl` one, that names options without `cacerts` is refused before connecting |
 | **K7.** Every domain's store is the image's, unchangeable by any domain | the store is a file of the domain release, read from the boot image's checked slice or a hash-checked EROFS image; its build joins only `config/trust/` and a suite's named roots |
-| **K8.** A body is never held past `max_body_size` | `httpc` checks a `content-length` and a chunked body upstream, and `inets`' edit checks the body that ends with the connection |
+| **K8.** `httpc` holds at most `max_header_size` and one segment of a head, and at most `max_body_size` of a body | every segment of a response passes `httpc_bound` in the handler's receive before a parser sees it, the head's count while the head is unfinished and the body's from the first byte after it |
 
 ## Failure handling
 
@@ -654,11 +723,12 @@ for the resolver.
 | a domain's environment sets `OPENSSL_armcap` | slower or software code paths, or a fault at the first use of an instruction the CPU lacks | that domain's own cryptography only; a fault ends that domain |
 | a `crypto` beam in the system release | `on_load` fails: no static NIF `crypto` | the system release does not boot; the build's release check refuses it first |
 | the imported tree lacks a directory `Configure` reads | `Configure` fails in the build and in `make check-openssl` | the build fails, naming the `build.info` it could not open |
-| the wall clock is unset, or wrong by more than a certificate's validity | `ssl` refuses the chain with `certificate_expired` | the connection fails; a client that shows it reads `/proc/time/status` to say the clock is not set |
+| the wall clock is unset, or wrong by more than a certificate's validity | `ssl` refuses the chain with `certificate_expired` | the connection fails; a client that shows it says the clock is not set when the wall clock reads before 2000 |
 | a server's chain ends at no root of the store, or its certificate does not name the host | `unknown_ca`, or `bad_certificate` | the connection fails; the image's store is unchanged |
 | a file of `config/trust/` is not one PEM certificate | the build's reader | the build fails, naming the file |
 | the store is missing from the domain release | `cacerts_get/0` raises `failed_load_cacerts` | every verifying client fails before connecting; the store's QEMU test fails on it (below) |
-| a server sends more body than `max_body_size` | `{error, body_too_big}` | that request fails; the connection is closed |
+| a server sends more body than `max_body_size`, in any framing | `{error, body_too_big}` | that request fails; the connection is closed |
+| a server sends a head longer than `max_header_size`, in its status line, reason phrase or headers | `{error, {header_too_long, {max, Max}}}` | that request fails; the connection is closed |
 
 ## Security
 
@@ -682,10 +752,15 @@ for the resolver.
   TLS 1.3 or 1.2 (CR6, K6). A program weakens them only for its own
   connections; a domain's weak client harms that domain alone. Plain
   `http` stays available to `httpc`, and `autoredirect`, on by default,
-  follows a redirect wherever it points, so a client whose answers must
-  come over TLS turns it off and follows only `https` locations itself,
-  as the quotes kiosk does
-  ([design-quotes.md](design-quotes.md#one-request)).
+  follows a redirect wherever it points, to plain `http` or to another
+  host, this machine's listeners included; so the example above turns it
+  off, and a client whose answers must come from the host it named
+  follows redirects itself, as the quotes kiosk does, within the same
+  origin ([design-quotes.md](design-quotes.md#one-request)).
+* **Response size.** `inets`' edit bounds what a server can make `httpc`
+  hold, head and body, at the one place every byte enters (K8), for a
+  request that gives its limits in the fourth argument; a request that
+  gives none is bounded by its domain's memory.
 * **The store's integrity** is the release's: no domain writes a release
   file, the boot image's slices are checked at boot, and an EROFS image's
   blocks against its hash tree as they are read
@@ -698,7 +773,8 @@ for the resolver.
   right as the clock: a clock set by an attacker on the path of
   unauthenticated network time can make an expired certificate valid
   again ([design-time.md](design-time.md#security)); an unset clock
-  makes every certificate invalid, which fails closed.
+  makes every certificate from a public authority invalid, which fails
+  closed ([Time](#time)).
 * **What a holder of `net` can reach.** A session or app with the grant
   reaches every address the stack routes to: the internet, the local
   network, and this machine's own addresses through loopback, where the
@@ -706,8 +782,14 @@ for the resolver.
   port mapper on 4,369 and the distribution ports of exposed domains,
   and other apps' listeners); and, under a grant's default limits, it
   may listen on any port above 1,023 of every local address
-  ([design-network-stack.md](design-network-stack.md#the-grant)). Each of
-  those listeners authenticates its own peers. The grant's limits can
+  ([design-network-stack.md](design-network-stack.md#the-grant)). What
+  those listeners give a peer is each one's own: the port mapper answers
+  any peer's lookups and name lists and takes registrations only through
+  grants
+  ([design-network-stack.md](design-network-stack.md#distribution-to-other-machines)),
+  the web front end and SSH authenticate a person before granting
+  anything, and an app's listener answers whom its author lets it. The
+  grant's limits can
   narrow binding and listening, not the remote addresses a socket may
   reach ([Risks and open questions](#risks-and-open-questions), 3).
 * **DNS is unauthenticated.** An on-path attacker can answer a name with
@@ -727,21 +809,39 @@ Each test names the seeded failure that proves it ran.
 | first seeding on QEMU | `crypto:strong_rand_bytes(32)` returns 32 bytes in a fresh domain of the interpreter image and in one of the BeamAsm image; in a domain of each started with the backend's generator made to fail by the test image's hook, so that its first seed fails, the first call raises, and in the SSH domain so made a key exchange fails | the seam falls back to zeros on failure: the call returns and the test fails |
 | OpenSSL's start on QEMU | a domain that loads `crypto` starts on a CPU model with the cryptographic extension and on one without (`-cpu cortex-a72` under TCG), and AES-256-GCM vectors pass on both | `armcap.c` built without its edit: the probe's `SIGILL` ends the domain at load and the test fails |
 | known-answer vectors | AES-GCM, ChaCha20-Poly1305, X25519, Ed25519 and ML-KEM-768 vectors from their specifications through `crypto` on QEMU | one vector's expected tag changed: the test fails |
-| `ssl`'s suites and `inets`' `httpc_SUITE` through `make check-oracle` | every case agrees with stock OTP 29.1.2, but the body-bound case of `inets`' edit, a documented difference with the test below | erXos's `ssl` built with `?ALL_SUPPORTED_VERSIONS` cut to `tlsv1.3`: the TLS 1.2 cases differ from the oracle |
+| `ssl`'s suites and `inets`' `httpc_SUITE` through `make check-oracle` | every case agrees with stock OTP 29.1.2, but those whose answer `inets`' edit changes, a chunked overflow's error and the bounds it adds, each a documented difference with a test below | erXos's `ssl` built with `?ALL_SUPPORTED_VERSIONS` cut to `tlsv1.3`: the TLS 1.2 cases differ from the oracle |
 | the store's reader, a host test | the store the build writes from `config/trust/` is its files joined in name order, and stock OTP's `public_key:pem_decode/1` reads from it one self-signed CA certificate per file; a fixture directory holding a file of two certificates, one holding a private key and one of 9 KiB is refused, naming each file | a reader that takes a file's first block accepts the two-certificate file |
 | the store on QEMU | in a session of the interpreter image, `public_key:cacerts_get/0` returns one certificate per file of `config/trust/`, and the quotes cell connects through it ([design-quotes.md](design-quotes.md#verification-and-testing)) | `public_key` built without its `{unix, erxos}` row: the call raises `failed_load_cacerts` |
-| `inets`' body bound, an EUnit case with erXos's `inets` beams ahead of stock OTP's | a loopback server's body that ends with the connection, `max_body_size + 1` bytes long, gives `{error, body_too_big}`, and one of exactly `max_body_size` bytes gives the body | the edit taken out: the first request returns the whole body |
+| `httpc_bound`, EUnit | a head whose count is exactly `max_header_size` takes the next segment, and one whose count is a byte more refuses it; a body's count of exactly `max_body_size`, the arriving segment included, is accepted and one byte more refused; `nolimit` refuses nothing | comparing the head's count with `>=` refuses the head whose count is exactly `max_header_size` |
 
-**`erx_httpc_body_fuzz`**, run by `make check-fuzz`, reads responses
-through `httpc` as erXos's clients use it: generated status lines,
-headers within and past `max_header_size`, and bodies framed by
-`content-length`, by chunks and by the connection's end, split into
-random segments and fed through `httpc_response:parse/1`,
-`http_chunk:decode/3` and the body branches of `httpc_handler` with a
-`max_body_size` of 4 KiB. Properties: nothing raises but the parser's
-own errors, and no accepted body passes 4 KiB. *Seeded failure:* the
-edit taken out lets a body framed by the connection's end grow past the
-bound.
+**`inets`' bounds against a server.** EUnit cases with erXos's `inets`
+beams ahead of stock OTP's; a server on the host's loopback answers each
+request, and each case makes it with the request expression of the
+example above, limits in the fourth argument, `max_header_size` 1,024
+and `max_body_size` 4,096. The server counts what it writes, and a case
+that expects an error also expects the client to close before the
+server has written 4 MiB, so a client that kept reading fails it.
+
+| Case | Passes when | Seeded failure |
+| --- | --- | --- |
+| `content-length` | a body of 4,096 bytes arrives; one of 4,097 gives `{error, body_too_big}` | the limit placed in the third argument, as an HTTP option: the 4,097-byte body arrives |
+| chunked | a body of 4,000 bytes in two chunks arrives; one of 4,097 bytes in chunks of 1,000 gives `{error, body_too_big}`, the same error as the other framings | the edit taken out: the error is `{body_too_long, {max, 4096}}` |
+| ending with the connection | a body of 4,096 bytes then the close arrives; an endless body gives `{error, body_too_big}` | the edit taken out: the client reads to the 4 MiB cap |
+| first fragment | headers and a 5,000-byte body in one segment, then the close at once, give `{error, body_too_big}` | the body's count started at the next segment: the body arrives |
+| endless reason phrase | `HTTP/1.1 200 ` and reason bytes with no line end give `{error, {header_too_long, {max, 1024}}}` | the edit taken out: the client reads to the cap |
+| endless short lines | a status line, then `\r\nA` repeated, gives `{error, {header_too_long, {max, 1024}}}` | the edit taken out: the client reads to the cap |
+
+**`erx_httpc_response_fuzz`**, run by `make check-fuzz`, serves
+generated responses over the host's loopback to `httpc` as the cases
+above call it: status lines and reason phrases of every length, headers
+within and past 1,024 bytes, line breaks of `\r\n`, `\n` and a bare
+`\r`, bodies framed by `content-length`, by chunks with extensions and
+trailers, and by the connection's end, some endless, each written in
+segments split at random. Properties: every request ends, before the
+server has written 4 MiB, with a status and a body of at most 4,096
+bytes or with one of the errors `httpc` documents; nothing in the
+client raises. *Seeded failure:* the head's count taken out of the
+receive lets an endless reason phrase run to the cap.
 
 The first-seeding test makes the generator fail before the domain's
 first call, since an already seeded generator need not read the kernel
@@ -881,8 +981,9 @@ The decisions below are open:
    configured test domain instead of an app; (c) a limit on remote
    addresses, which the grant does not have and the network stack's
    design would add. *Recommendation:* (a): an administrator installs
-   every app, each listener on the machine authenticates its peers, and
-   narrowing per app needs a choice the declaration deliberately does not
+   every app, the machine's privileged listeners authenticate a person
+   before granting anything and the port mapper answers only public
+   lookups, and narrowing per app needs a choice the declaration deliberately does not
    carry.
 
 ## Sources
@@ -898,8 +999,8 @@ The decisions below are open:
   `lib/public_key/src/public_key.erl`, `pubkey_os_cacerts.erl`,
   `pubkey_cert.erl` (`public_key` 1.21.8);
   `lib/inets/src/http_client/httpc.erl`, `httpc_handler.erl`,
-  `httpc_response.erl`, `lib/inets/src/http_lib/http_chunk.erl`
-  (`inets` 9.8.1); `lib/stdlib/src/json.erl`.
+  `httpc_response.erl`, `lib/inets/src/http_lib/http_chunk.erl`,
+  `http_internal.hrl` (`inets` 9.8.1); `lib/stdlib/src/json.erl`.
 * OpenSSL 3.5.9, `https://github.com/openssl/openssl/releases/download/openssl-3.5.9/openssl-3.5.9.tar.gz`,
   SHA-256 `603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a`,
   matching the release's published `.sha256`: `INSTALL.md`,

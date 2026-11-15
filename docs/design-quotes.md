@@ -40,9 +40,10 @@ Decisions every reader needs:
 * **No byte of a response reaches the screen as text.** The app shows
   numbers it formats itself, the labels and credits of its own table,
   and fixed words for its reasons.
-* **HTTPS only, validated as the system validates.** The table refuses a
-  URL that is not `https`, the app follows a redirect only to an `https`
-  URL, and it passes no TLS option, so every connection takes the
+* **HTTPS only, to the table's hosts only, validated as the system
+  validates.** The table refuses a URL that is not `https`, the app
+  follows a redirect only within the origin it asked (the same scheme,
+  host and port), and it passes no TLS option, so every connection takes the
   defaults of [design-crypto.md](design-crypto.md#https-clients): the
   image's trust store, the server's host name checked, TLS 1.3 or 1.2.
 * **Nothing is kept across a restart.** A restarted session shows "no
@@ -105,8 +106,12 @@ about 90 days, so the trust store holds roots, never leaves
   `label`, and a renderer that escapes every text property it draws
   ([design-display.md](design-display.md), G5); `erx_ui_host` stands in
   for a display on the host.
-* **The clock's state** at `/proc/time/status`, attribute `state`:
-  `unset`, `boot` or `set` ([design-time.md](design-time.md#what-proc-shows)).
+* **The wall clock**, which every domain reads from the time page with
+  `os:system_time/1`; on an unset clock it reads 1970 plus the uptime
+  ([design-time.md](design-time.md#what-erxos-already-has)). The clock's
+  `state` at `/proc/time/status` is not the app's to read: its session
+  holds no `inspect` grant, and the declaration has no reason to ask for
+  one.
 
 ## Requirements
 
@@ -115,12 +120,14 @@ about 90 days, so the trust store holds roots, never leaves
   it has none.
 * **Q-R2.** A value older than its quote's stale age is shown as stale,
   with its age, and never as current.
-* **Q-R3.** When a quote cannot be refreshed, the screen says why, in one
-  of a closed set of reasons, and says "clock not set" when certificate
-  checks failed because the machine's clock was never set.
+* **Q-R3.** When a quote's last round failed, the screen says why, in one
+  of a closed set of reasons, whether its value is fresh, stale or
+  absent, and says "clock not set" when a certificate was refused as
+  outside its validity while the wall clock reads before 2000.
 * **Q-R4.** The app asks each source at most once per its quote's period
-  while the source answers, and backs off exponentially, with jitter and
-  any `Retry-After` the source sends, while every source of a quote fails.
+  while the source answers, asks no source before the time its last
+  `Retry-After` named, up to an hour, and backs off exponentially, with
+  jitter, while every source of a quote fails.
 * **Q-R5.** Every response is untrusted: its size is bounded before it is
   read, it is parsed by total functions with a fuzz target, and a
   malformed one is a reason, never a crash or a value.
@@ -136,7 +143,7 @@ The app is a pure core and one effect process:
   erx_quotes (effect process)                         pure modules
   ---------------------------                         ------------
   file:consult(/app/share/quotes.config) ----------> erx_quotes_config: validate
-  1 s tick, httpc answers, /proc/time state -------> erx_quotes_core: state, rounds,
+  1 s tick, httpc answers, the wall clock ---------> erx_quotes_core: state, rounds,
                                                        backoff, staleness
   httpc:request(get, ...) <------------------------- actions: fetch, render
   httpc's answer ----------------------------------> erx_quotes_http: status, redirect,
@@ -231,6 +238,8 @@ an [open decision](#open-decisions).
 
 A table that breaks any bound, names an unknown field, or leaves a field
 out that has no default, is refused whole, with the row and field named.
+Validation turns `period` into milliseconds, so every time the core
+holds or compares, `Now` included, is in milliseconds.
 
 ### A quote's state
 
@@ -241,31 +250,38 @@ out that has no default, is refused whole, with the row and field named.
                    failed_rounds := non_neg_integer(),
                    next_at  := integer(),
                    trying   := none | {Index :: pos_integer(), FirstReason :: none | reason()}}.
+-type source() :: #{not_before := integer()}.
 ```
 
 `value` changes only on a successful outcome, which replaces it whole;
 `failure` is set when a round ends with every source failed and cleared
 when a round succeeds. `trying` is the round in flight: the index of the
-source asked and the first source's reason, if it failed.
+source asked and the first source's reason, if it failed. A source's
+`not_before` is the time its last `Retry-After` named, or 0; it belongs
+to the source, so a source two quotes share is held back for both.
 
 ## Algorithms
 
 ### A round
 
 A quote's round is due when `Now >= next_at` and no round of it is in
-flight. The core asks its first source. On that source's outcome:
+flight. The core asks its first source whose `not_before` has passed;
+a source still held back is passed over with the reason `{status, 429}`
+or `{status, 503}` it was held back for. On a source's outcome:
 
 * **a value**: the round ends; `value` is the new pair, `failure` is
   cleared, `failed_rounds` is 0 and `next_at` is `Now + period`;
-* **a reason**, with sources left: the core asks the next source at once,
-  keeping the first source's reason;
+* **a reason**, with sources left: the core asks the next source that is
+  not held back at once, keeping the first source's reason;
 * **a reason**, on the last source: the round ends failed; `failure` is
   the first source's reason, since the first source is the one the table
   prefers, `failed_rounds` grows by one, and `next_at` follows the
   backoff below.
 
-A round always starts again at the first source, so a quote returns to
-its preferred source as soon as that source answers again.
+Any reason that came with a `RetryAfter` also sets that source's
+`not_before` to `Now + RetryAfter`. A round always starts again at the
+first source, so a quote returns to its preferred source as soon as that
+source answers again and is not held back.
 
 ### One request
 
@@ -273,44 +289,55 @@ The effect process makes each request with
 
 ```erlang
 httpc:request(get, {Url, [{"user-agent", "erxos-quotes/1"}]},
-              [{timeout, 20000}, {connect_timeout, 10000}, {autoredirect, false},
-               {max_body_size, 65536}],
-              [{sync, false}, {receiver, self()}, {body_format, binary}])
+              [{timeout, 20000}, {connect_timeout, 10000},
+               {autoredirect, false}, {autoretry, 0}],
+              [{sync, false}, {receiver, self()}, {body_format, binary},
+               {max_header_size, 10240}, {max_body_size, 65536}])
 ```
 
 and no `ssl` option, so `httpc` takes the system's TLS defaults
-([design-crypto.md](design-crypto.md#https-clients)). The header limit is
-`httpc`'s default, 10,240 bytes (`httpc.erl:431-441`). The answer reaches
-the process as `{http, {RequestId, Result}}`, and
+([design-crypto.md](design-crypto.md#https-clients)). The two limits are
+options of the fourth argument, where `httpc` reads them; `inets`' edit
+makes them bound the response's head and body in every framing
+([design-crypto.md](design-crypto.md#otps-applications)). `autoretry` is
+0, so `httpc` never repeats a request on a `Retry-After` of its own
+accord and the core alone decides when a source is asked again. The
+answer reaches the process as `{http, {RequestId, Result}}`, and
 `erx_quotes_http:classify(Result, Url, Hops)` turns it into one of:
 
 * **`{body, Bytes}`** for status 200;
 * **`{follow, Url2}`** for status 301, 302, 303, 307 or 308 with one
   `location` header whose value, resolved against `Url` with
-  `uri_string:resolve/2`, has the scheme `https` and a host, while `Hops`
-  is below 3; the effect process asks `Url2` within the same round, as
-  Cboe's first answer needs;
+  `uri_string:resolve/2`, has the scheme, host and port of `Url`, while
+  `Hops` is below 3; the effect process asks `Url2` within the same
+  round. So every request goes to the origin the table names, the
+  server's certificate is checked against that host, and the credit the
+  screen shows stays true. Whether Cboe's first answer, a 307, stays
+  within its origin was not seen (unverified); if it does not, the table
+  names the URL it leads to;
 * **`{error, Reason, RetryAfter}`** for anything else, from the table of
   [Reasons](#refusals-and-error-results). `RetryAfter` is the
   `retry-after` header of a 429 or 503 answer when it is a decimal number
-  of seconds from 1 to 3,600, and `none` otherwise.
+  of seconds of at most 10 digits and at least 1, in milliseconds and
+  capped at an hour, and `none` otherwise, its date form included.
 
 A body goes to `erx_quotes_extract:value(Source, Bytes)`, which answers
 `{ok, Price, Change}` or `{error, bad_data}`.
 
 ### Refresh and backoff
 
-After a failed round,
+After a failed round, in milliseconds,
 
 ```text
-wait = min(period * 2^failed_rounds, 900 s) * Jitter
-wait = min(max(wait, RetryAfter), 3600 s)        when the round saw a RetryAfter
-next_at = Now + wait
+wait    = min(period * 2^failed_rounds, 900000) * Jitter
+next_at = max(Now + wait, the earliest not_before of the quote's sources)
 ```
 
 So a quote with a period of 10 s waits about 20, 40, 80 s and so on to
-15 minutes while its sources fail, a server's `Retry-After` is honoured
-up to an hour, and quotes that failed together do not retry together.
+15 minutes while its sources fail, no round starts while every source of
+the quote is held back, a server's `Retry-After` holds back that source
+alone, for up to an hour, while the quote's other sources serve, and
+quotes that failed together do not retry together.
 At most one request per quote is in flight, so the app has at most 8
 requests open at once.
 
@@ -327,8 +354,7 @@ at most 65,536 bytes, the bound `httpc` enforced.
   that does not match is `bad_data`.
 * **`{csv, Column}`**: the body is split into lines at `\n`, a trailing
   `\r` dropped; the first line is the header; the value is `Column` of
-  the last line whose field there is a decimal. At most 100,000 lines are
-  looked at.
+  the last line whose field there is a decimal.
 * **A price** is a JSON number, or a decimal string of at most 32 bytes in
   the grammar `-?[0-9]{1,15}(\.[0-9]{1,12})?`, converted to a float. It
   must be above 0 and below 10^15. A change's reference value is checked
@@ -347,7 +373,7 @@ digits, its change with a sign and two digits, and a status line:
 | --- | --- |
 | no value, no failure | `waiting` |
 | no value, a failure | `no data: REASON` |
-| a value, age at most `3 * period` | `CREDIT[, NOTE] - AGE` |
+| a value, age at most `3 * period` | `CREDIT[, NOTE] - AGE`, and `: REASON` when the last round failed |
 | a value, older | `stale, AGE - CREDIT[, NOTE]`, and `: REASON` when the last round failed |
 
 `AGE` is `N s` below two minutes, `N min` below two hours, `N h` below
@@ -386,11 +412,11 @@ only when a text changed, which the toolkit diffs against the last one.
 | `connect` | `cannot connect` | `econnrefused`, `ehostunreach`, `enetunreach`, or the connect timeout |
 | `timeout` | `timed out` | `httpc`'s `timeout` |
 | `certificate` | `certificate rejected` | the TLS alerts of a failed path or name check: `bad_certificate` (a host name that does not match included), `unsupported_certificate`, `certificate_revoked`, `certificate_expired`, `certificate_unknown`, `unknown_ca` (`ssl_handshake.erl:2287-2320`) |
-| `clock_unset` | `clock not set` | `certificate`, when `/proc/time/status` says `state unset` |
+| `clock_unset` | `clock not set` | `certificate_expired`, when the wall clock reads before 2000-01-01 |
 | `tls` | `TLS failed` | any other TLS alert |
 | `{status, Code}` | `HTTP CODE` | a status other than 200 and the followed redirects |
-| `redirect` | `bad redirect` | a redirect to a URL that is not `https`, one without a usable `location`, or a fourth hop |
-| `too_big` | `answer too big` | `body_too_big` |
+| `redirect` | `bad redirect` | a redirect that leaves the origin asked, one without a usable `location`, or a fourth hop |
+| `too_big` | `answer too big` | `body_too_big`, which `inets`' edit answers for a body too big in any framing, or `{header_too_long, _}` |
 | `bad_data` | `bad answer` | the extractor's refusal |
 | `failed` | `failed` | any answer the classifier does not recognise |
 
@@ -404,14 +430,17 @@ so it never names a cause it did not see.
 reading at boot when the machine has one, so QEMU `virt`'s boots at
 `boot`; on the stopgap, and on a Raspberry Pi 4 without a clock module,
 every boot starts at 1970-01-01 and stays `unset` until something sets
-it ([design-crypto.md](design-crypto.md#time)). Against an unset clock
-every certificate is outside its validity period and `ssl` refuses it
-with `certificate_expired` (`pubkey_cert.erl:155-166`), so the app
-fetches nothing it could show. When a round ends with `certificate`, the
-effect process reads `/proc/time/status`, at most 4 KiB, and passes the
-`state` attribute to the core, which shows `clock not set` for `unset`;
-a missing file, a failed read or another value leaves the reason
-`certificate`.
+it ([design-crypto.md](design-crypto.md#time)). Validation compares
+each certificate's dates with the wall clock; an unset clock reads 1970
+plus the uptime, before the validity of every certificate a public
+authority issues, so `ssl` refuses the sources' chains with
+`certificate_expired` (`pubkey_cert.erl:155-166`) and the app shows
+nothing it fetched. The effect process passes the wall clock,
+`os:system_time(second)`, with each outcome, and the classifier turns
+`certificate_expired` into `clock_unset` when it reads before
+2000-01-01, a time no set clock on a machine erXos runs on shows. Every
+other certificate reason, `unknown_ca` among them, stays `certificate`,
+since the clock does not decide it.
 
 ## Security
 
@@ -419,18 +448,21 @@ a missing file, a failed read or another value leaves the reason
   address the network stack routes to, this machine's own listeners
   included, and ports above 1,023 to listen on
   ([design-crypto.md](design-crypto.md#security)). It asks only the
-  hosts of its table.
+  origins of its table: it follows no redirect out of the origin it
+  asked, so no source can send it to another host, this machine's
+  listeners included.
 * **What it trusts** is the image's trust store, read-only to every
   domain, and its own package. A source, a DNS answer or anyone on the
   path can withhold an answer, which shows as a reason; none can make
   the screen show a number that did not come over a connection whose
-  certificate the trust store vouches for and whose name matches the
-  table's URL.
+  certificate the trust store vouches for and whose name is the host of
+  the table's URL, which is also the host every redirect stays on.
 * **Plain HTTP is unreachable.** The table refuses an `http` URL and the
   classifier a redirect to one, and `autoredirect` is off, so no value
   arrives over an unauthenticated connection.
-* **A hostile source** can send at most 64 KiB of body and 10 KiB of
-  headers per request, at most 8 requests at once, and make the app parse
+* **A hostile source** can make `httpc` hold at most 64 KiB of body and
+  10 KiB and one read of head per request, in any framing, at most 8
+  requests at once, and make the app parse
   them; it cannot make the app crash, allocate past those bounds, create
   an atom, or put text on the screen.
 * **Text.** The screen's texts are the table's, the app's own words and
@@ -448,13 +480,14 @@ seeded failure that proves it ran.
 | --- | --- | --- |
 | table | the shipped table validates; one table per bound, one past its edge, is refused with that row and field named; an `http` URL is refused | accepting `period` 4 passes the one-past-the-edge table |
 | rounds | a first source's failure asks the second at once; a second success shows the second's credit; the next round starts at the first; every source failing sets `failure` to the first's reason | starting the next round at the source that last answered fails the third case |
-| backoff | waits for periods 10 and 60 over eight failed rounds with `Jitter` 1.0 are exact, capped at 900 s; `RetryAfter` 1800 gives 1800, 7200 gives 3600; a success resets the count | dropping the cap gives 2560 s at the eighth round |
-| staleness and ages | a value shows fresh at `3 * period` ms after its fetch and stale 1 ms later; ages format at 119 s, 120 s, 7,199 s, 7,200 s and two days | comparing `>=` instead of `>` shows the value stale at exactly `3 * period` |
+| held-back sources | the first source answering 429 with `RetryAfter` 3,600,000 ms while the second answers: the next rounds ask only the second until an hour has passed, then the first again; both held back: no request until the earlier `not_before` | keeping `not_before` per quote instead of per source asks the first source ten seconds later |
+| backoff | waits in milliseconds for periods of 10,000 and 60,000 over eight failed rounds with `Jitter` 1.0 are exact, capped at 900,000; a success resets the count | dropping the cap gives 2,560,000 at the eighth round |
+| staleness and ages | a value shows fresh at `3 * period` after its fetch and stale 1 ms later; a failed round while the value is fresh shows its reason beside the fresh value; ages format at 119 s, 120 s, 7,199 s, 7,200 s and two days | comparing `>=` instead of `>` shows the value stale at exactly `3 * period` |
 | no fabrication | over generated event sequences, every price the view shows is the price of some successful outcome for that quote, with that outcome's credit and an age equal to `Now` minus its time | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
-| classify | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; a redirect to `http:` is `redirect`; a fourth hop is `redirect` | following a redirect without checking its scheme turns the `http:` case into `follow` |
+| classify | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; redirects to `http:`, to another host and to another port of the same host are `redirect`; a relative one is followed; a fourth hop is `redirect`; `retry-after` of 0, 1, 3,600, 7,200, 11 digits and a date give none, 1,000, 3,600,000, 3,600,000, none and none; `certificate_expired` with the wall clock at 1970-01-01T00:05 is `clock_unset`, with it in 2026 `certificate`, and `unknown_ca` at 1970 `certificate` | following a redirect without comparing its host turns the other-host case into `follow` |
 | extract | bodies in the shape of each source of [What the sources offer](#what-the-sources-offer), generated by the test, give the price and change they carry; a missing key, a wrong type, a 33-byte decimal, `0`, a negative price and a CSV whose last line has `.` give `bad_data` or the previous line as the rule says | taking the CSV's last line whatever its field turns the `.` case into `bad_data` |
 | frame | `erx_ui_host` with the Erlang renderer draws a fixed state, one quote of each row of the screen table, `clock not set` among them, equal to `examples/quotes/test/reference/quotes` | showing a stale value without `stale` changes the frame |
-| HTTPS on the host | the app's effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`), fetches from an `ssl` server the test runs on the host's loopback with a chain from `public_key:pkix_test_data/1` for `localhost`, and shows its value | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big` |
+| HTTPS on the host | the app's effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`), fetches from an `ssl` server the test runs on the host's loopback with a chain from `public_key:pkix_test_data/1` for `localhost`, with the request expression of [One request](#one-request) unchanged, and shows its value | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big`, and with `max_body_size` moved into the third argument is taken whole |
 
 **The fuzz target.** `erx_quotes_extract_fuzz`, in the example's tests
 and run by the landing gate at a small budget and by `make check-fuzz` at
@@ -489,7 +522,9 @@ so nothing the guest sends leaves the host. Its image carries:
 
 The fixture's chain is made on the host by the stock oracle's
 `public_key:pkix_test_data/1` with a validity from 1970 to 2099, so it is
-valid on the stopgap's unset clock as on a set one. The fixture runs in
+valid on the stopgap's unset clock as on a set one; this is a property
+of the test's certificate, not of the clock, and the cell's third case
+below shows an ordinary certificate refused. The fixture runs in
 the guest rather than on the host because slirp's TCP guest forward
 carries every guest connection to its address over one stream to the
 host (`tools/lib/erx/net_device_echo_server.rb`), which cannot carry
@@ -504,10 +539,20 @@ passes when every quote reaches `fresh` with the fixture's prices, and
 `btc` turns `stale` after the fixture's 503s, still showing the price of
 its last answer and `HTTP 503` as its reason. *Seeded
 failures:* the image's trust store built without the fixture's root
-makes every quote `no data: certificate rejected`; the fixture answering
-`/eth` with a body of 70,000 bytes and no `content-length` makes `eth`
-`no data: answer too big`, which only `httpc`'s erXos edit gives
+makes every quote `no data: certificate rejected`, the `unknown_ca`
+reason whatever the clock; the fixture answering `/eth` with a body of
+70,000 bytes and no `content-length` makes `eth` `no data: answer too
+big`, which only `httpc`'s erXos edit gives
 ([design-crypto.md](design-crypto.md#otps-applications)).
+
+A third case runs the cell with the fixture's certificate for `/spx`
+made with an ordinary validity, from the build's date to ten years
+later, on a wall clock before 2000: the stopgap's unset clock, or on
+erXos's kernel QEMU's real-time clock started at 1970 with `-rtc
+base=1970-01-01` (unverified: QEMU's documentation was not read). It
+passes when `spx` shows `no data: clock not set` while `btc` and `eth`
+stay `fresh`. *Seeded failure:* the classifier's wall-clock test taken
+out shows `certificate rejected`.
 
 ## Alternatives considered
 
