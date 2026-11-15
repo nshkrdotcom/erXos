@@ -2546,10 +2546,6 @@ it; git history is the record of completed work.
   answer does not fit in 512 bytes fails to resolve. Give the connection `{packet, 2}` framing, or
   have `erx_gen_tcp` frame the two-byte length itself, and test a truncated reply against a name
   server on the host.
-* [Medium] shell, a job's io input (`erlang/apps/erx_shell/src/erx_shell.erl`, `forward/3`): a job has one
-  group leader but each stage has its own standard input, so a stage whose input is a pipe or a file still
-  reads the terminal through `io:get_line` (docs/design-shell.md, the job's leader). Decide how a stage's io
-  requests reach its own standard input: one leader per stage, or the leader routing by the requester.
 * [Medium] shell, `cp` (`erlang/apps/erx_shell/src/erx_cmd_cp.erl`, `copy_bytes/2`): a failed close of the
   target is not reported. `cp` copies with `file:copy/2` between two names, which stock OTP runs in
   `file_server`, whose copy closes the target and drops the close's answer

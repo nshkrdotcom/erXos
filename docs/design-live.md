@@ -539,8 +539,15 @@ on the host:
   POSIX's output flags. With `OPOST` clear the bytes are its input. A CR-LF is
   never split, so 4 KiB of newlines with 4 KiB of room takes 2 KiB. This is the
   only thing that ever happens to a program's output.
-* `input(Bytes, Tty)` returns the next state and what to do: bytes to echo, a
-  signal for the foreground group, a report that a waiting read can go on. A
+* `input(Bytes, Tty)` returns the next state, what to do and the bytes it did
+  not take: bytes to echo, a signal for the foreground group, a report that a
+  waiting read can go on. It stops after a key that makes a signal and
+  returns the bytes after it untaken, as FreeBSD's `ttydisc_rint` signals the
+  foreground group before it takes the next byte
+  (`sys/kern/tty_ttydisc.c:1124-1133`), so the owner acts on the signal before
+  any reader can be reported the bytes typed after the key
+  ([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and then
+  passes them to `input/2` again. A
   line in cooked mode holds at most 4,095 bytes and its end, and in raw mode at
   most 4 KiB wait unread; further bytes are dropped and counted, with a bell
   when `IMAXBEL` is set, as FreeBSD's `ttydisc_rint` drops a byte that finds
@@ -669,7 +676,8 @@ editor waits for a key (`contrib/libedit/read.c:289`, at FreeBSD commit
 the answer `{self(), {read, Ref, Chars}}` to the group's ask, edit 71 of
 [design-runtime.md](design-runtime.md). The editor alone decides
 where a line ends, whatever keys its keymap binds to that, and the
-command shell's group reads for the shell alone, which asks for no line
+command shell's group reads for the shell alone, refusing every other
+process's input request (edit 73), and the shell asks for no line
 before it has acted on the last, so a line typed ahead for the next
 command stays in the tty for that command
 ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
@@ -2774,7 +2782,10 @@ determinism test of the generated tree.
   `read_wait/3`, `timer/2` and `read/3` as events, over each of
   POSIX's four `VMIN` and `VTIME` cases and read counts below and above
   `VMIN`. A `read_wait` that ignores its count fails the exploration's
-  model. `erx_tty_modes`' `adopt/2` is checked
+  model. `input/2` returns untaken exactly the bytes after the first key
+  that makes a signal, and passing them back until none is left gives the
+  same state, echo and actions as passing the input a byte at a time; an
+  `input/2` that goes on past the key fails the first check. `erx_tty_modes`' `adopt/2` is checked
   exhaustively over the flags of `erx_tty`'s table against libedit's
   masks, with and without `ICANON` in what a job left; an `adopt/2`
   without its masks fails it.
