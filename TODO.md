@@ -1673,6 +1673,24 @@ it; git history is the record of completed work.
   domain at the driver's first read. The word goes once erXos's kernel finds
   the UART in the device tree and the root hands the record only for a UART
   that is there ([design-stopgap.md](docs/design-stopgap.md#the-command-line)).
+* [Medium] stopgap, cross-CPU signal delivery ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
+  a delivery from another CPU reaches the target's home CPU as a cross-CPU request (`fiasco/kernel/src/kern/irq.cpp:1003-1007`,
+  `:942-972`), read in source only; how that request's interrupt brings a thread running in user mode on the remote CPU
+  to the upcall was not read. Unverified until `native_signal` runs at 4 CPUs; if it fails, the signal waits for the
+  target's next kernel call or resume.
+* [Medium] stopgap, `liberx/backend/fiasco` and `liberx/program/`, the event rule of
+  [vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco): a kernel call a program's thread makes
+  outside the entry macro and the backend's depth-zero call path runs with events enabled and leaves a signal queued
+  until the thread's next return through them, silently. The chokepoint check that keeps the backend's kernel calls
+  in a program behind those two paths is not built; build it with the vCPU row, with a seeded direct call it catches.
+* [Low] stopgap, signals during musl's own waits: Fiasco ends no semaphore down for an event
+  (`fiasco/kernel/src/kern/semaphore.cpp:175-179`, `receiver.cpp:663-664`), so a signal for a thread in a condition
+  variable's, a mutex's or `sem_wait`'s wait runs only when the wait ends, and `sem_wait` never fails with `EINTR`.
+  erXos's kernel ends the wait with `ERX_EINTR`; nothing to do on the stopgap but record the cases `libc-test` and the
+  Open POSIX Test Suite show.
+* [Low] stopgap, vCPU arming, not read in source: `ex_regs` on an armed thread and the teardown of an armed thread's
+  Fiasco state area in the task's second kernel-user area. Read both before the vCPU row lands, and arm a thread only
+  after its start, as the thread-start path of [Signals in liberx](docs/design-programs.md#signals-in-liberx) does.
 * [Medium] network, `erx_net_admit` ([design-network-stack.md](docs/design-network-stack.md#the-grants-contract)):
   the admission path of grants and sockets is hand-written, with the
   generated module's exact signature, until the schema generator over
@@ -1791,6 +1809,17 @@ it; git history is the record of completed work.
   none. It fails safe, by a stop; `SIG_IGN`, the usual way to get `EPIPE`, works. Keep each thread's mask in the
   program layer and hold a blocked `SIGPIPE` pending, as [Signals in liberx](docs/design-programs.md#signals-in-liberx)
   describes.
+* [Medium] programs, `kill(pid, 0)` ([The program protocol](docs/design-programs.md#the-program-protocol)): add the
+  `{probe, Target}` request to `abi/protocols/prog.txt` beside `kill`, as `case probe process_id` with
+  `reply probe_reply` and `union probe_reply` of `ok` and `error errno`; have `liberx` send it for `kill` with signal
+  0, the handler answer it from its child record and the command server's `{probe, Scope, Target}`, and the grammar
+  refuse a `kill` whose signal is 0, with the tests and seeds design-programs.md names.
+* [Medium] programs, a program's identifiers ([The startup message](docs/design-programs.md#the-startup-message)):
+  the musl seam (`musl/src/internal/erxos/syscall.c`, `SYS_getpid` to `SYS_getegid`) answers every program the
+  root's fixed 1, 0 and 0. Add `uid` to the startup message in `abi/protocols/prog.txt`, have the handler fill it from
+  the session's `principal` environment variable, keep it in `erx_prog_self_t` (`liberx/program/program.h`), and in a
+  program answer `getpid` and `getppid` from the record's `pid` and `ppid` and `getuid`, `geteuid`, `getgid` and
+  `getegid` from its `uid`.
 * [Medium] programs, the descriptor seam offers a listed set of calls (`musl/src/internal/erxos/syscall.c`,
   `seam_offered`, and `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`, two lists that must agree):
   design-programs.md, "The POSIX-lite personality", says every call that names a descriptor reaches the table, but
@@ -6071,6 +6100,11 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
+  the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
+  the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
+  Fiasco sanitizes the processor state it restores; acceptable for Phase 1's trusted domains, and gone with erXos's
+  kernel, which reads user-writable state only through accessors that load each field once.
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
   `login_key` admits root's development key on the SSH domain's own

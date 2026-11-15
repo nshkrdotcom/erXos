@@ -151,7 +151,7 @@ names; the table's order is the order.
 | M2 The execution contract holds | a native test domain and a hostile domain share four CPUs by grants; no wakeup is lost; a blocking call from an executor is refused | 4,000 lines of C17 | M7 | G2 |
 | M5's kernel part | a hostile runtime attacks a neighbour's funnel for ten minutes without effect; a domain killed under load gives every charge back to its principal's budget | in track K's figure | M2 | G5, confirmed |
 | M9's kernel part | the drivers' restarts over virtio-pci with MSIs, each device's DMA confined behind the IOMMU, and the PCIe domain alone reaching configuration space | the PCIe enumerator and the MSI frame's driver, within M9's figure | M7 | G9, then G6 |
-| Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; catchable signals the stopgap's vCPU row or M7 | GP |
+| Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; the stopgap's vCPU row | GP |
 | M8 Cooperation earns its place | the ladder from plain threads to full cooperation, measured on seven workloads, with each feature kept or dropped by its numbers | 4,000 lines of C17 and C | G6 | G8 |
 | M10 Users without a container runtime | two users, two domains, one runs out of memory or CPU alone | 4,000 lines of Erlang | M8, M9's kernel part | |
 | Track Q The second tier | toybox's `sh` runs a script with subshells and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's | track P, M7 | GQ |
@@ -1208,13 +1208,10 @@ it; the Open POSIX Test Suite as an external test tool in a test domain.
 Its first part, descriptors with `dup` and `fcntl`, `pipe`, `posix_spawn`
 with inherited descriptors and file actions, `wait` and `kill`, and
 `erx_exec` with `rx` grants, is 1b-D: it follows track S's programs, on
-the stopgap, and ends with the G6 baseline. The rest follows. Signals
-depend on a source check of Fiasco's vCPU interface in the kernel-mode
-build, made before 1b-D starts
-([design-stopgap.md](design-stopgap.md#open-decisions)): if it carries the ABI's `erx_vcpu` layout without leaking
-Fiasco's, the backend gains a vCPU row and `kill` and catchable signals
-run on the stopgap; otherwise the stopgap delivers only signals whose
-default action ends the program, and catchable signals arrive at M7.
+the stopgap, and ends with the G6 baseline. The rest follows. `kill` and
+catchable signals run on the stopgap, through the backend's vCPU row over
+Fiasco's vCPU upcall
+([design-stopgap.md](design-stopgap.md#vcpu-upcalls-on-fiasco)).
 
 **Exit criteria, the first part (1b-D).** Descriptors, `dup`, `fcntl`,
 `pipe`, `posix_spawn` with inherited descriptors and file actions, `wait`

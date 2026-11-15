@@ -701,7 +701,7 @@ callers as it says.
 | `erx_backend_trace_read`, `erx_trace_read` | `erx_trace_ring:read/3`, for `erx:trace` | local, in the root: [The trace ring](#the-trace-ring) | the root's parks, wakes, IRQ deliveries and task starts and ends, reported by `liberx trace`; a cursor past the head, or `max` of 0 or over 512, `ERX_EINVAL`; an exhausted ring `ERX_ELIMIT`; `erx_backend_trace_read` in a task `ERX_ENOTSUP`; `erx_trace_read` `ERX_ENOTSUP` everywhere, so the kernel's row is `unsupported` | `erx_trace_read` over each CPU's kernel ring; `erx_backend_trace_read` `ERX_ENOTSUP` |
 | `erx_watchdog_pet`, the crash record, `erx_machine_end(res, how)` | M3's criteria | pet: a local atomic store in the root, which alone links it (a task's ERTS fails to link, so no task can call it), and hosted `ERX_OK` with no effect. End: the root's alone, a task's call `ERX_ENOTSUP`, as the kernel's `POWER` check leaves it to the system domain ([design-system.md](design-system.md#a-sessions-request)); [The end path](#the-end-path) | correct, except a kernel hang or a stalled watchdog | in the kernel (K19, K31) |
 | a thread's fault | a domain's or a program's fault; a test task's fault | [Faults](#faults-and-the-fault-of-the-root-task) | a fault record at the space's fault gate, thread `unknown`, the faulting thread left waiting; with no fault gate, a crash record and the task's end; the machine's end for the root | with the thread's identity; a fault's queue entry comes from a pool of its space, so a task that reaps faulted threads and faults again can run its own pool out and lose its own records, harming only itself (a residual) |
-| `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | carried only if [the source check](#open-decisions) passes: [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco) | otherwise `ERX_ENOTSUP`, and programs take default signal actions only | the subset of [vCPU upcalls](design-kernel.md#vcpu-upcalls) |
+| `erx_vcpu_control`, `erx_vcpu_resume`; `erx_irq_bind` to a thread | `liberx`'s signals in programs (Track P) | [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco), over Fiasco's vCPU interface with no kernel change | correct for programs whose every kernel call keeps `liberx`'s event rule; no umtx wait ends with `ERX_EINTR`, and a delivery that arrives during a kernel call is taken at the thread's return to its own code | the subset of [vCPU upcalls](design-kernel.md#vcpu-upcalls) |
 | messages through gates, rendezvous passing, `erx_mem_child`, `erx_mem_own`, `erx_mem_dirty`, `erx_dma_*`, `erx_resource_carve`, `erx_space_pause`, `_resume`, `_quiesce`, `_clear_caps`, `_copy` | none | none | `ERX_ENOTSUP` | supported |
 
 `erx_entropy_read` leaves the generator's bytes in the caller's UTCB, where the next call that writes the
@@ -1206,7 +1206,7 @@ the `SYS_` names, so that a call not ported fails at link rather than at run tim
 | `write`, `writev` to 1 and 2, `ioctl` `TIOCGWINSZ` on them | `erx_fiasco_libc_write`: the root's (`libc_root_write.c`, alone in its file so that musl's reference pulls in the console and not the start path) to `erx_fiasco_console_write`, a task's through the service ([The console](#the-console)) | the bytes go out unchanged, as on UNIX; in the root and in a task other descriptors are `EBADF`; the size reads zero, which keeps stdio line buffered |
 | a program's descriptor calls: `read`, `readv`, `write`, `writev`, `close`, `ppoll`, `pselect6`, `pipe2`, `dup3`, `fcntl`, `lseek`, `pread64`, `pwrite64`, `fstat`, `ioctl`, `mmap` of a descriptor, and the range checks of `munmap` and of `mmap` with `MAP_FIXED` | the program layer's descriptor table, through a seam function that every build's entry file defines beside `erx_fiasco_libc_write` (`libc_root_write.c`, `libc_task.c`, `domain_entry.c`, `program_task.c`), so a build without it fails to link; musl's syscall switch (`syscall.c`) asks the seam first, and only a program's (`program_task.c`) takes a call, the others answering that they hold no descriptor; musl's `fstatat` reads `SYS_fstat` into the kernel's `struct kstat` layout, so `syscall.c` hands the seam a `struct stat` and copies its answer into that layout ([design-programs.md](design-programs.md#the-posix-lite-personality)) | the table answers each call on a descriptor it holds, with `ENOSYS` for what it does not implement, and a call on a descriptor it does not hold with `EBADF`: a program's seam takes every descriptor call, so nothing a program does reaches the console row above, and a program writes only to the descriptors its session installed, its standard output and error among them, as pipe ends ([design-pipes.md](design-pipes.md#inherited-ends)) or opens of a terminal ([design-programs.md](design-programs.md#descriptors-and-files)); the root and a task are offered only the console `write`, `writev` and `ioctl` row above, and the others are `ENOSYS` there |
 | `set_tid_address`, `gettid` | `erx_fiasco_thread_set_clear_word`, the index plus one | |
-| `getpid`, `getppid`, the user and group identifiers | 1, 0 and 0 | fixed values: Phase 1 has no processes and no users, so every task reads the same |
+| `getpid`, `getppid`, the user and group identifiers | in a program, the startup message's `pid`, `ppid` and `uid`, from `liberx`'s record of the program's start ([design-programs.md](design-programs.md#the-startup-message)); elsewhere 1, 0 and 0 | the root and a task that is no program have no process id and no user, so each reads the same fixed values |
 | `sched_yield` | `erx_yield` | |
 | `getrandom` | `erx_entropy_take`, at most 256 bytes a read | the whole length or a failure, never a short count: a read the generator does not complete fails the call with `EIO` and leaves zeros where the call wrote; `GRND_NONBLOCK`, `GRND_RANDOM` and `GRND_INSECURE` change nothing, since the generator never waits to be seeded, another flag is `EINVAL`, as FreeBSD's `sys_getrandom.c` refuses it, and so is a length past `SSIZE_MAX`, which the count returned could not hold; musl's `getentropy` over it keeps its own 256-byte limit, `EIO` past it |
 | `set_robust_list`, `get_robust_list` | the calling thread's list head, kept in musl's `struct pthread` | kept and never walked: musl walks the list itself at thread exit, and only a task's death would need a kernel's help; a size other than Linux's three-word head is `EINVAL`; another thread's list is not offered: `ENOSYS` |
@@ -1540,20 +1540,52 @@ service thread ([What Phase 1 code must not assume](#what-phase-1-code-must-not-
 
 ### vCPU upcalls on Fiasco
 
-Carried only if [the source check](#open-decisions) passes; otherwise `erx_vcpu_control`, `erx_vcpu_resume` and a bind of an
-IRQ object to a thread are `ERX_ENOTSUP`. If carried, the body is this:
+Catchable signals are delivered on this backend through Fiasco's vCPU upcall, with no change to Fiasco's kernel: the
+backend carries `erx_vcpu_control`, `erx_vcpu_resume` and a bind of an IRQ object to a thread over Fiasco's own vCPU
+interface, and [design-programs.md](design-programs.md#signals-in-liberx) runs on it as written, with the event rule
+below. The facts it rests on were read in source, at the cited lines of `fiasco/kernel/src/kern` (`Modules.arm` one
+directory up), and have not been executed; `native_signal` ([Verification](#verification)) runs them.
 
-* **Arming** runs Fiasco's `vcpu_control` on the thread with a Fiasco state area the backend keeps beside the thread's record,
-  with every state bit that diverts faults or selects vCPU user mode clear, so faults still reach the task's gate and from
-  there the fault gate. The ABI's `erx_vcpu` area stays the public one in the thread's record.
-* **A bind to a thread** runs `l4_rcv_ep_bind_thread(irq, thread, label)` on that thread, outside the dispatcher.
-* **An upcall** enters a backend entry, which copies Fiasco's saved state into the public `erx_vcpu` area in the ABI's layout,
-  sets `saved_state` and the label, and enters the program's `entry`; nothing of Fiasco's layout reaches it.
-* **`erx_vcpu_resume`** validates the public frame, writes it into Fiasco's area and resumes through Fiasco's resume, which
-  takes a delivery queued meanwhile as a new upcall.
+* **The interface is there.** The vCPU modules build into the fork's kernel for this architecture (`Modules.arm:94`,
+  `:154`, `:166`), and a state area that is not the extended one needs no virtualization option. Fiasco's state area
+  holds the saved frame, the event-enable and fault-diverting state bits, the saved state, a sticky pending flag set whenever
+  a delivery queues at the thread and cleared when none is left (`vcpu.cpp:7-47`; `receiver.cpp:532`, `:696-703`), and
+  the entry address. `vcpu_control` arms a thread through any capability to it, and arming cannot be undone
+  (`thread_object.cpp:555-615`, `:603-609`); `vcpu_resume` acts only on the calling thread (`thread_object.cpp:255`).
+* **Arming** runs `vcpu_control` on the thread with a Fiasco state area in a second kernel-user memory area of the task,
+  which the backend adds with `l4_task_add_ku_mem` (`task.cpp:860-890`), since the task's UTCB area holds exactly its 128
+  UTCB slots and Fiasco requires the state area to lie in kernel-user memory (`space.cpp:152-170`). Every state bit that
+  diverts faults or selects vCPU user mode is clear, so page faults still reach the pager and exceptions the exception
+  handler, the task's gate and from there the fault gate (`thread-vcpu.cpp:79-100`, `thread-ipc.cpp:1017-1052`). The
+  ABI's `erx_vcpu` area stays the public one in the thread's record.
+* **A bind to a thread** runs `l4_rcv_ep_bind_thread(irq, thread, label)` on that thread, outside the dispatcher. A
+  task's stop detaches it at its first step ([Task exit](#task-exit)).
+* **An upcall.** A delivery to an armed thread that is in no IPC and has events enabled enters the upcall
+  (`receiver.cpp:597-599`, `:661-691`): Fiasco saves the state bits, disables events and fault diversion
+  (`context-vcpu.cpp:166-174`), saves the general registers, stack pointer, program counter and processor state in the
+  area, and jumps to the entry on the interrupted stack (`context-vcpu.cpp:176-179`, `arm/64/thread-arm-64.cpp:50-58`).
+  A delivery from another CPU reaches the target's home CPU as a cross-CPU request (`irq.cpp:1003-1007`, `:942-972`).
+  The backend entry copies Fiasco's saved state into the public `erx_vcpu` area in the ABI's layout, field by field
+  (`abi/arch/aarch64.txt:37-41`), sets `saved_state` and the label, and enters the program's `entry`; nothing of
+  Fiasco's layout reaches it. Fiasco saves no FP or SIMD register, so the backend entry, like `liberx`'s entry, executes
+  no FP or SIMD instruction, and the trampoline's save is the one that keeps the interrupted code's FP state.
+* **`erx_vcpu_resume`** validates the public frame, writes it into Fiasco's area and resumes through Fiasco's resume,
+  which restores the whole frame (`task.cpp:93-116`) and, when the restored state has events enabled and the sticky flag
+  is set, takes the queued delivery and enters the upcall again in the same call (`thread_object.cpp:312-346`), so K29
+  holds at a handler's return.
 
-Each step is conditional on what the check finds, and a step the check cannot confirm makes the whole row `ERX_ENOTSUP`, since
-a partial upcall would lose signals.
+**What Fiasco does not do, and the event rule.** Fiasco ends no semaphore down for a delivery: the down blocks in an IPC
+state, so the delivery queues (`semaphore.cpp:175-179`, `receiver.cpp:663-664`). A umtx wait of `liberx` ends anyway,
+because the raiser wakes the thread's wake word before it triggers the IRQ object, so this backend's umtx wait never
+returns `ERX_EINTR`. Fiasco also takes no queued delivery when a kernel call returns to user mode: it checks only at a
+resume and after page-fault and exception IPC (`thread-ipc.cpp:280`, `:331-334`, `:962`, `:999`, `:1075-1076`), and it
+warns of kernel calls made with events enabled (`syscalls.cpp:18-22`). So a program's thread has events enabled only
+while it runs its own code: `liberx`'s entry macro disables them at a call's entry, the backend's one path for a kernel
+call made at depth zero disables them around it, and each return to the program's own code enables them, tests the
+sticky flag, and if it is set takes the delivery with one `erx_vcpu_resume` of its own continuation. That costs two
+stores and a load per call, and a kernel call only when a delivery is pending
+([design-programs.md](design-programs.md#signals-in-liberx)). A chokepoint check keeps the backend's kernel calls in a
+program behind those two paths.
 
 ### Faults, and the fault of the root task
 
@@ -2128,7 +2160,7 @@ since no consumer calls it before then.
 | K18, K27 | a stop ends the tree below a space, children first, and posts each exit record after every thread's deletion has returned; in 1b-A every space is created by the root under its own space, so a tree is one level deep | 1b-B (sub-spaces at a task's request, ended with their parent); Track K (the bounded finishing path, stops under hostile load) |
 | K26 | a deleted object's mappings revoked in every task, its handles `ERX_ESTALE` and their entries taken until their holder closes them, so a domain keeps those of a connect or a give that failed, whose values it never learned, for its life | Track K (queued threads woken with `ERX_ESTALE` and `ERX_EDEAD`) |
 | K28 | fault and exit records at the gate fixed at creation, with thread `unknown` and an exit record's `space` the space of the task that asked for the stop | Track K (the thread's identity, resume after repair) |
-| K29, K30 | vCPU upcalls over Fiasco's interface if [the source check](#open-decisions), made before 1b-D, passes; otherwise none | 1b-D (the row, if the check passes); Track K; Track P's catchable signals at M7 if the check fails |
+| K29, K30 | vCPU upcalls over Fiasco's interface, [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco) | 1b-D (the row); Track K |
 | K19, K31 | none | Track K; M12 (the lease, the board watchdog) |
 | the boards' platform items: the hardware watchdog, the crash region, the trial request, the device secret | none on the Raspberry Pi 4: the root's watchdog thread, a crash record on the console alone, the boot value as the firmware reports it, and `sealing` `none` ([The Raspberry Pi 4](#the-raspberry-pi-4)) | M12 |
 | K22, K23 | none | Track Q |
@@ -2184,10 +2216,11 @@ since no consumer calls it before then.
 * `erx_fiasco_task_join` trusts its caller: its stub waits on the ended semaphore of the task index the service named, so a space deleted by another root thread between the answer and the wait (a join or release of a space above it, or a budget's end) leaves the stub spinning on the empty slot, and an index reused in that window takes another join's up. The launcher joins from one thread.
 * An exit or fault record's `space` is the task's index, which no handle a receiver holds names; the label tells a receiver which space a record is for.
 * The handle the root or a creator holds of another task's first thread carries the task's index and no generation, so one kept past that space's deletion (by a join, a release or the deletion of a space above it) can name a thread of a space that reuses the index.
-* No IRQ object is bound to a task's thread, since a bind to a thread is `ERX_ENOTSUP`, so a stop's detach step has no site.
 * `erx_image_map` does not check a file entry's hash, and every refusal of its segments reads `ERX_ENOMEM`; a file entry's segments are copied into each space. The root maps the whole archive read and execute, its files included, beside its own image read, write and execute. A fault message's words are not counted, so a task's raw IPC can put stale numbers in its own crash record.
 * A slice's destroy revokes its pages from every space, so a second slice over the same entries loses its mappings too; `erx_mem_copy` does not refuse a JIT object, which this backend does not tell from another, and copies overlapping ranges of one object forward; a task's `erx_release_entry` asks the service for each entry, its file checked on the service thread, and slicing checks no file.
-* Without vCPU upcalls, a program takes each signal's default action only.
+* A program's signal waits for a wait musl makes on a word of its own, a condition variable's, a mutex's or `sem_wait`'s, to end, since Fiasco ends no semaphore down for an event, and `sem_wait` never fails with `EINTR`.
+* A kernel call a program makes outside `liberx`'s two kernel-call paths, with events enabled, leaves a delivery queued until the thread's next return through them; the chokepoint check is what keeps such a call from being written.
+* Fiasco's vCPU state area is writable by the program it belongs to, so a program can mark itself pending or rewrite the saved frame it is resumed with; it harms only itself, since `erx_vcpu_resume` validates the frame and Fiasco sanitizes the processor state it restores (`task.cpp:93-116`, `arm/64/context-arm-hyp-64.cpp:27-35`).
 * When the watchdog ends the machine, log lines the log service had not taken are lost.
 * The crash frame may interleave with a console driver that is writing, a task's frame with the watchdog end's art and frame, and a kernel `WARN` or panic line may interleave at any time.
 * Any littlefs block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the volume again.
@@ -2266,7 +2299,7 @@ the tests.
 | **A payload read once**, a host test of the service's decoder over a public UTCB a second thread rewrites in a loop: `erx_debug_log` and `task_write` with their length changing between reads never copy more than `utcb_bytes_max` and never more than the length the decoder checked | the body reading the length again from the public UTCB: AddressSanitizer reports the overread |
 | **A configured holder restarted**, the QEMU gate's `device_give` suite: a configured domain holding the platform's spare unit opens it from its `given` record and reads the transport's magic; it is halted, the domain service restarts its row under the next id, and the new domain reads the magic again through the window and line its creation was given | the restart's plan with no gives: the new domain finds no record of the unit, and the cell's answer disagrees |
 | **A device's holder restarted**, the production image suite: the network domain is killed and restarted; the new driver gets a new window and line object and the same contiguous memory, resets the device and passes its traffic test | the line's object not deleted at the exit record: the restarted holder's give is refused with `ERX_EBUSY`, since the line already has an object |
-| **vCPU upcalls**, if carried, `native_signal`: an upcall interrupts a computing worker, ends a umtx wait with `ERX_EINTR` and a reply wait not at all, and the frame is restored register by register; a delivery between a handler's last check and its resume enters the handler again | the resume ignoring a queued delivery: the second signal is lost |
+| **vCPU upcalls**, `native_signal`, at 1 and 4 CPUs: an upcall interrupts a computing worker, including one on another CPU than the raiser's; a umtx wait of `liberx` ends by the raiser's wake and a reply wait not at all; a signal raised while the target is in a kernel call runs at the call's return to the program's own code, and then the worker computes without kernel calls; the frame and the FP registers are restored register by register; a delivery between a handler's last check and its resume enters the handler again | the resume ignoring a queued delivery: the second signal is lost; the return to the program's own code without the pending-flag test: the signal raised during the call never runs while the worker computes; the backend entry copying with a SIMD instruction: the FP registers come back changed |
 
 ## Differences from erXos's kernel
 
@@ -2364,29 +2397,6 @@ The same suite boots the image twice in deterministic mode to the shell and comp
 * The size estimate: the rows between tasks, 2,000 to 4,000 lines of C17 across both backends, a guess until the first rows land.
 
 ## Open decisions
-
-**The source check of Fiasco's vCPU interface for signals.** The decision is: a source check first; if Fiasco's
-interface carries the ABI's `erx_vcpu` layout without leaking Fiasco's, the backend carries `erx_vcpu_control` and
-`erx_vcpu_resume` as [vCPU upcalls on Fiasco](#vcpu-upcalls-on-fiasco) says; otherwise programs take default signal actions
-only until M7, and catchable signals arrive with erXos's kernel. The check is one package, read in source and never run, and
-must answer each question below at cited lines; any answer of no, or any it cannot give, means the row stays `ERX_ENOTSUP`:
-
-1. Does the fork's kernel, as `Fiasco::KERNEL_OPTIONS` builds it, give a plain task `vcpu_control` and `vcpu_resume`, and
-   where must the Fiasco state area live, beside the 128 UTCB slots of the task's area?
-2. Does a delivery to an armed thread with events enabled that is blocked in `l4_semaphore_down` end the down, so that a umtx
-   wait returns `ERX_EINTR` and the upcall follows, or does it queue until the down ends?
-3. Does a delivery to an armed thread running on another CPU bring it to an upcall at its next return to user mode?
-4. Does a resume with events enabled and a delivery queued enter the upcall again, so no signal is lost between a handler's
-   last check and its return (K29), and what does the sticky flag add?
-5. With every fault-diverting and user-mode state bit clear, do page faults and exceptions of an armed thread still reach its
-   pager and exception handler, the task's gate?
-6. Can the backend copy Fiasco's saved state into the ABI's `erx_vcpu` frame and back, so nothing of Fiasco's layout reaches a
-   caller?
-
-**Recommendation:** run the check before Track P's first part starts, so its result decides that part's scope, not its
-schedule. If the row stays refused, `sigaction` with a handler fails with `EINVAL`, the error POSIX gives for a signal that
-cannot be caught, rather than succeeding with a handler that never runs, so no program mistakes the gap for working signals;
-`SIG_IGN` and `SIG_DFL` work. That return is [design-programs.md](design-programs.md#signals-in-liberx)'s to state.
 
 littlefs's protocol stays here while the system domain's form has a manifest that uses it, and `design-storage.md`, whose
 target text describes the port, states the placement and links to it.

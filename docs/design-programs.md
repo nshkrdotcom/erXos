@@ -412,6 +412,7 @@ carries what a sub-space needs:
 {erx_start, 1, #{pid := 2..16#7fffffff,       % this program's process id
                  ppid := 1..16#7fffffff,      % its parent's; 1 is the command server
                  pgid := 2..16#7fffffff,      % its job's first program's pid
+                 uid := 1..16#7fffffff,       % the session principal's number
                  argv := [binary()],
                  env := [binary()],           % each NAME=value
                  cwd := binary(),             % absolute and normalised
@@ -505,7 +506,14 @@ rounded length computed with checked arithmetic, passes 2^64, fail with
 `EINVAL` as for any `munmap`, and only then is the range compared with
 the mem range. It names a mapping of this one
 sub-space, so a spawn's `Start` cannot name one, `fork` does not copy
-it and `erx_exec` closes it. `sigmask` and
+it and `erx_exec` closes it. `uid` is the number of the principal the session runs for, which the
+handler takes from the session's `principal` environment variable, set
+to that number when the session is planned; `liberx` keeps it in its
+record of the program's start, and `getuid`, `getgid` and their
+relatives return it ([The POSIX-lite
+personality](#the-posix-lite-personality)). Like `pid`, it is the
+handler's to write, so a spawn's `Start` does not carry it and no
+program chooses its own. `sigmask` and
 `sigignore` follow POSIX's rule for `posix_spawn`: the program starts with
 its parent's mask and ignores what its parent ignores, unless the spawn's
 attributes set them, and every other signal starts with its default
@@ -762,7 +770,7 @@ each kind; two matter to programs:
 | Right | What the handler allows for the program | What the program's command domain receives |
 | --- | --- | --- |
 | `inspect`, with a scope of domains | nothing in `liberx` itself: a program lists processes by running `ps`, an Erlang command | an `inspect` facet the system domain makes for the command domain, with no more than that scope, so `xargs ps` lists what the program may list |
-| `signal`, with a scope of process ids: the session's, or one job's | `{kill, Pid, Signal}` for any process in the scope, as `kill` does, but for the stop and continue signals, which belong to the session's job control and get `eperm`; a process outside the scope, and pid 1, gets `esrch`, whether or not it exists | nothing further: its `kill` is the program's handler's |
+| `signal`, with a scope of process ids: the session's, or one job's | `{kill, Pid, Signal}` and `{probe, Pid}` for any process in the scope, as `kill` does, but for the stop and continue signals, which belong to the session's job control and get `eperm`; a process outside the scope, and pid 1, gets `esrch`, whether or not it exists | nothing further: its `kill` is the program's handler's |
 
 A program holds no right by default: the shell hands a program only what
 `within -f` names, and an entry of `/bin` that needs one declares it
@@ -787,8 +795,9 @@ holds one ends the program (Credit, below).
 
 | Request | Meaning | Reply |
 | --- | --- | --- |
-| `{spawn, Path, Start}` | start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without `pid`, `ppid`, `pgid`, `data_area` and `image`, each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
-| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, or `0` to check that the target exists. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigtstp`, `sigttin`, `sigttou` and `sigcont`, which belong to the session's job control |
+| `{spawn, Path, Start}` | start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without `pid`, `ppid`, `pgid`, `uid`, `data_area` and `image`, each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
+| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigtstp`, `sigttin`, `sigttou` and `sigcont`, which belong to the session's job control |
+| `{probe, Target}` | `kill` with signal 0: check that `Target`, as `kill` names it, exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `{error, Errno}` otherwise, `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
 | `{waited, Pid, N}` | the program's `wait`, `waitpid` or `waitid` returned the state of its child `Pid` whose count of state changes is `N`, and a `waitid` with `WNOWAIT` sends none ([A program's end](#a-programs-end)); the event executor sends it too for an exit that `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
 | `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action ([The terminal](#the-terminal)) | `ok` once the program has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
 | `{file, Op}` | an operation of 9P2000.L for the program ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
@@ -892,10 +901,23 @@ A program reaches its own children, itself and the processes of its
 raises no `kill`-sent signal locally, so a signal has one path: for
 `sigkill` the handler of the target stops the target's anchor; for any
 other signal it sends the target the report `{signal, Signal, Sender}`,
-with the requester's process id as `Sender`; a signal `0` sends nothing.
+with the requester's process id as `Sender`.
 `raise` and `pthread_kill` are thread-directed and local to the program.
 A `kill` of a child that has ended but not been waited for succeeds and
 does nothing, as POSIX says of a process that has not been waited for.
+
+`kill` with signal 0 only asks whether its targets exist, and it is a
+request of its own, `{probe, Target}`, rather than a `kill` whose signal
+may be 0. So a signal in the protocol is always one of the signal table's
+names, and the path that sends a report never has to tell a check from a
+signal: the handler answers a probe from its child record and, for a
+target that is not its program or one of its children, from the command
+server's `{probe, Scope, Target}`, and neither sends anything to a target.
+A probe reaches exactly what a `kill` of the same target would, through
+the same scope, so a probe never tells a program more than a `kill` would.
+`abi/protocols/prog.txt` declares it beside `kill`, as
+`case probe process_id` with `reply probe_reply`, where
+`probe_reply` is `ok | {error, errno}`.
 
 ### Descriptors and files
 
@@ -1272,6 +1294,7 @@ handler that asks keeps serving its program meanwhile (P3):
 | `programs()` | `read/2`, below | answers the rows |
 | `{await, Tag}` | the shell's job table, once a job's evaluator has ended ([design-shell.md](design-shell.md#job-control)) | answers `{programs_ended, Tag}` once no row carries `Tag`, at once when none does, and otherwise when the `'DOWN'` that removes the last such row arrives |
 | `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
+| `{probe, Scope, Target}` | a program's handler, for a probe whose target is neither its program nor one of its children | answers as `kill` with the same `Scope` and `Target` would, `ok` or `esrch`, and hands nothing to any handler |
 | `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
 
 A spawn is an effect, so the pure core decides it and the server
@@ -1746,9 +1769,10 @@ armed thread as a vCPU upcall
 ([design-kernel.md](design-kernel.md#vcpu-upcalls)). `liberx` keeps
 POSIX's rules for every signal of the ABI file's signal table: masks,
 dispositions and pending sets accept them all, `raise`, `pthread_kill`
-and a `kill` of the program itself deliver any of them, and signal 0
-checks without sending. Three things lie outside `liberx`, and each has
-one owner:
+and a `kill` of the program itself deliver any of them, and a `kill`
+with signal 0 is the handler's probe, which sends nothing ([The program
+protocol](#the-program-protocol)). Three things lie outside `liberx`, and
+each has one owner:
 
 | What | Owner | What a program sees |
 | --- | --- | --- |
@@ -1991,23 +2015,37 @@ executor for vCPU upcalls, so preemption still never runs runtime code
 
 **On the stopgap.** Upcalls on the stopgap Fiasco are the backend's
 `erx_vcpu_control` and `erx_vcpu_resume` over Fiasco's own vCPU
-interface ([vCPU upcalls on Fiasco](design-stopgap.md#vcpu-upcalls-on-fiasco)),
-which waits on a source check: whether Fiasco's kernel-mode
-build offers that interface to a plain task, and whether its state area
-can carry the ABI's `erx_vcpu` layout without exposing any of Fiasco's
-([design-stopgap.md](design-stopgap.md#open-decisions)). If the check
-passes, signals behave on the stopgap as this section describes. If it
-fails, the backend refuses both calls with `ERX_ENOTSUP`, the first thread
-arms nothing, and programs on the stopgap get default actions only: the
-event executor carries out a signal's default action, ending the program
-or ignoring the signal, a stop stops nothing, as under
-[Job control](#job-control), and handlers run only on erXos's kernel.
-`sigaction` with a handler then fails with `EINVAL`, the error POSIX gives
-for a signal that cannot be caught, so no program mistakes the gap for
-working signals, while `SIG_IGN` and `SIG_DFL` work. The vCPU conformance
-tests, and the cases of `libc-test` and the Open POSIX Test Suite that need
-a handler, then run only on erXos's kernel, and show as "cannot run" on the
-stopgap with that reason.
+interface, which carries them with no change to Fiasco's kernel
+([vCPU upcalls on Fiasco](design-stopgap.md#vcpu-upcalls-on-fiasco)),
+so handlers run on the stopgap and signals behave as this section
+describes. Fiasco takes a queued event at fewer places than erXos's
+kernel, and one rule of `liberx` makes up the difference: **a program's
+thread has events enabled only while it runs its own code.** The entry
+macro disables them at a call's entry, and the backend's one function
+for a kernel call made at depth zero, such as musl's futex wait,
+disables them around that call. Every return to the program's own code,
+the entry macro's outermost exit and the end of such a call, enables
+them again and, if the vCPU state's pending flag is set, takes the
+queued event at once with one `erx_vcpu_resume`. On the stopgap that
+flag is the test at those returns, not a hint, and K29 holds there
+because events are enabled nowhere else. Two cases of waking a thread,
+above, change with it:
+
+* **Waiting on a umtx word:** Fiasco ends no wait for an event; the event
+  queues. A wait of `liberx` still ends at once, because the raiser's
+  `erx_umtx_wake` of the thread's wake word ends it as an ordinary wake,
+  which every wait of `liberx` accepts. A wait musl makes at depth zero
+  on a word of its own, a condition variable's, a mutex's or `sem_wait`'s,
+  takes its signal only when the wait ends, and `sem_wait` never fails
+  with `EINTR`.
+* **In a kernel call:** Fiasco takes no queued event when a call returns,
+  so the event waits for the return to the program's own code, which
+  takes it. A program's kernel calls are brief, as above, so P7 holds.
+
+A kernel call that bypassed both would run with events enabled and leave
+an event queued until the thread's next such return, so in a program the
+backend's kernel calls are reached only through those two, which a
+chokepoint check enforces.
 
 ### Signal numbers
 
@@ -3079,7 +3117,15 @@ define it.
   report the children that stop and continue within the caller's POSIX
   session ([The terminal](#the-terminal)). `kill` reaches the caller's own
   children, the caller itself, and the processes of a `signal` right's
-  scope when the caller holds one ([Facets](#facets)). A **process id** is
+  scope when the caller holds one ([Facets](#facets)). Behind musl's
+  `kill`, `liberx` sends `{kill, Target, Signal}` for a signal and
+  `{probe, Target}` for signal 0, with the same targets, so `kill(pid, 0)`
+  reports whether `kill` could reach `pid` and signals nothing
+  ([The program protocol](#the-program-protocol)). `getpid` and `getppid`
+  return the startup message's `pid` and `ppid`, and `getuid`, `geteuid`,
+  `getgid` and `getegid` its `uid` ([The startup
+  message](#the-startup-message)), each read from `liberx`'s record of the
+  program's start, as `getpgid` reads `pgid`. A **process id** is
   a number from 2 to 2^31 - 1 that the command server assigns to each
   program it starts, in order and never reused within the session, so a
   session that has assigned the last one fails every later spawn with
@@ -3206,7 +3252,7 @@ define it.
   `ENOTSUP` in the first. `PROT_EXEC` in `mmap` or `mprotect` fails with
   `ENOTSUP`: only the loader maps code (P10).
 * **Users and files.** `getuid`, `getgid` and their relatives return the
-  principal's number, never 0. `/etc/passwd` and `/etc/group`, which the
+  principal's number, the startup message's `uid`, never 0. `/etc/passwd` and `/etc/group`, which the
   session's export serves, hold the session's principal and `nobody`
   (65534), the owner a file shows when its server records none. `open` and
   `mkdir` send the mode they create with, less the `umask`, in 9P2000.L's
@@ -3543,7 +3589,8 @@ terminal cases.
     without `SIGINFO`'s row, which turns 29 into exited 255;
   * the protocol's grammar accepts every name of the table and refuses
     `sigpwr`, `sigstkflt` and `sigthr`; seeded with a grammar that admits
-    `sigpwr`;
+    `sigpwr`; it refuses a `kill` whose signal is 0 and accepts
+    `{probe, Pid}`; seeded with a grammar that admits 0 as a signal;
   * in QEMU, FreeBSD 15.1's `bin/kill/kill.c`, built against erXos's musl
     as a test program: its `kill -l` prints what the shell's builtin
     prints, byte for byte, and for each `N` from 1 to 31 its `kill -l N`
@@ -3693,8 +3740,19 @@ terminal cases.
   `SIGCHLD`'s handler finds its child with `WNOHANG`, and with `SIGCHLD`
   ignored, `wait` fails with `ECHILD` once the children end; a child
   spawned while its parent ignores `SIGHUP` ignores it too and inherits the
-  parent's mask and `umask`; `pthread_sigmask` with a full set, `kill(pid,
-  0)` and `sigaction(SIGWINCH, SIG_IGN)` succeed; `kill` of a child that
+  parent's mask and `umask`; `pthread_sigmask` with a full set and
+  `sigaction(SIGWINCH, SIG_IGN)` succeed; `kill(pid, 0)` of a running
+  child, of a child that has ended and not been reaped, and of the program
+  itself succeeds, and of a reaped child, pid 1 and a process outside the
+  program's `signal` right fails with `ESRCH`, while a child with a handler
+  for every catchable signal records none, seeded with a handler that
+  carries a probe out as a `kill` of `sigusr1`, which that child records;
+  `getpid` and `getppid` in a parent and its child agree with the pids
+  `posix_spawn` returned, and `getuid`, `geteuid`, `getgid` and `getegid`
+  return the number of the session's principal, in a session whose
+  principal's number is not 1, seeded with a `liberx` that answers
+  `getpid` with 1 and a handler that writes `uid` 1, each of which the
+  test catches; `kill` of a child that
   has ended succeeds until `waitpid` reaps it and fails with `ESRCH`
   after, when the child stops counting against `children`; `kill` of
   `SIGSTOP`, `SIGTSTP` or `SIGCONT` to a child fails with `EPERM`, and
