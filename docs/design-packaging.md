@@ -1591,13 +1591,15 @@ its sessions at `[domains, Id]`, as any row's and any session's.
 
 **Manifest rows**: `apps`, as in [The `apps` row](#the-apps-row);
 `package`, with `input` naming the package's artifact and `enable`,
-whose header hash the packer records; `signer`, with `key`. Their
-packed records and the readers' bounds are in `abi/manifest.txt`; the
-facet parameter `tree` is in the storage service's schema.
+whose header hash the packer records; `signer`, with `key`, written
+`hex:` and 64 hexadecimal digits. Their packed records and the readers'
+bounds are in `abi/manifest.txt`, with the limits `apps_max_limit`,
+`apps_max_default` (8) and `signer_key_bytes` (32); the facet parameter
+`tree` is in the storage service's schema.
 
 **The ABI source**: `abi/formats/package.txt`, the header and the packed
-declaration; the limits `apps_max_limit`, `app_memory_default`,
-`app_memory_min`, `pkg_version`, `pkg_header_max`, `pkg_needs_max`,
+declaration; the limits `app_memory_default`, `app_memory_min`,
+`pkg_version`, `pkg_header_max`, `pkg_needs_max`,
 `pkg_applications_max`, `pkg_program_max`, `pkg_args_max`,
 `pkg_args_bytes_max`, `pkg_license_max`,
 `pkg_bytes_max` and `pkg_scan_max`.

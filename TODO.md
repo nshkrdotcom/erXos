@@ -18,6 +18,19 @@ it; git history is the record of completed work.
   keeping its data, which is named by app and signer, and `mount /apps/NAME.app DIR` shows its image
   read-only; each app is a principal of its own, its budget elastic under the `apps` budget, as
   design-kernel.md and design-system.md record.
+* [High] apps, the manifest check's property 19
+  ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
+  stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
+  and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and refuses every
+  `package` row. What remains, each with its seeded violation: the rows derived from `apps` (the app
+  template, its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which
+  wait for the domain release's `app` script, the storage service's `tree` parameter and its enforcement, a
+  server of `packages`, and the `apps` service freed from the start table; clause 4, which needs
+  `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
+  package file check and admission; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
+  scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
+  the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
+  leaving it out.
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the

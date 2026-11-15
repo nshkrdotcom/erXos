@@ -22,8 +22,8 @@ module Erx
 
     # The form of a field Record#decimal reads: digits, no sign, no base prefix.
     DECIMAL = /\A[0-9]+\z/.freeze
-    # One record of a manifest as Frontend reads it: its kind, its name (nil for the
-    # machine and a directive), each field's tokens, a facet's parameters and its first
+    # One record of a manifest as Frontend reads it: its kind, its name (nil for NAMELESS
+    # kinds and a directive), each field's tokens, a facet's parameters and its first
     # line. A field is read as one value of a type, and a field that is absent or holds
     # anything else is refused, so a reader never mistakes one form for another.
     Record = Struct.new(:kind, :name, :properties, :parameters, :line, keyword_init: true) do
@@ -71,11 +71,18 @@ module Erx
         'image' => %w[device input salt],
         'partial_boot' => %w[image],
         'start' => %w[enable display restarts restart_period_s],
-        'display' => %w[policy idle_dim_s idle_off_s]
+        'display' => %w[policy idle_dim_s idle_off_s],
+        'apps' => %w[memory services max],
+        'package' => %w[input enable],
+        'signer' => %w[key]
       }.freeze
       OPTIONAL = { 'machine' => %w[system_args], 'domain' => %w[boot_timeout_s args env], 'session' => %w[args env], 'service' => %w[name],
                    'facet' => %w[name queue], 'image' => %w[salt],
-                   'start' => %w[enable display restarts restart_period_s] }.freeze
+                   'start' => %w[enable display restarts restart_period_s],
+                   'apps' => %w[services max], 'package' => %w[enable] }.freeze
+      # The declarations that carry no source alias: the one machine and the one apps
+      # row (docs/design-packaging.md, "The apps row").
+      NAMELESS = %w[machine apps].freeze
       DIRECTIVES = { 'introduce' => 2, 'liveness' => 1, 'shell_principal' => 1 }.freeze
       IDENTIFIER = /\A[a-z0-9][a-z0-9_-]{0,62}\z/.freeze
       module_function
@@ -97,6 +104,9 @@ module Erx
         records = record_list(declarations).group_by(&:kind)
         raise Invalid.new('one machine declaration is required', property: 'source', field: 'machine') unless
           records.fetch('machine', []).size == 1
+        # Property 19's first clause (docs/design-packaging.md, "The build's check").
+        raise Invalid.new('at most one apps row', property: 19, field: 'apps') if records.fetch('apps', []).size > 1
+
         records.each do |kind, list|
           next if kind == 'machine' || DIRECTIVES.key?(kind)
           unless list.map(&:name).uniq.size == list.size
@@ -132,8 +142,8 @@ module Erx
                             parameters: [].freeze, line: declaration.line).freeze
         end
         fields = FIELDS[kind] || declaration.fail!('unknown manifest declaration')
-        if kind == 'machine'
-          declaration.fail!('machine has no source alias') unless declaration.args.empty?
+        if NAMELESS.include?(kind)
+          declaration.fail!("#{kind} has no source alias") unless declaration.args.empty?
           name = nil
         else
           declaration.fail!('named declaration needs one identifier') unless declaration.args.size == 1 && declaration.args.first.match?(IDENTIFIER)

@@ -428,6 +428,15 @@ module Erx
       # A device-tree node path as erx_boot_node_path_valid (include/erx/core/boot_handoff.h)
       # has it: '/' and the characters the specification allows in names.
       NODE_PATH = %r{\A/[A-Za-z0-9,._+@/-]*\z}
+      # The apps row (docs/design-packaging.md, "The apps row"), its defaults applied:
+      # the budget all apps share, the names of the services an app may take, and max,
+      # how many apps a boot holds. Every sum that counts a principal counts max apps,
+      # each a principal with a domains quota of one holding every service of services,
+      # and adds memory once (property 19's second clause). A manifest without the row
+      # has NO_APPS, which takes no packages and adds nothing to any sum, so each sum
+      # counts the row the same way whether or not the manifest has one.
+      AppsRow = Data.define(:memory, :services, :max)
+      NO_APPS = AppsRow.new(memory: 0, services: [].freeze, max: 0)
 
       def initialize(source, codec:, context:, planner:, consumers:)
         @source = source
@@ -452,6 +461,7 @@ module Erx
         partial = (flags & @codec.member('manifest_flags', 'partial_boot')) != 0
         invalid('partial boot requires development mode', 9, 'machine.flags') if partial && !development
         check_mode(development: development, partial: partial)
+        @apps = apps_row
         root_private_bytes = check_catalog
         platform_name = text(machine, 'platform')
         invalid('configuration names a different checked platform', 1, 'machine.platform') unless platform_name == @context.platform['name']
@@ -477,9 +487,10 @@ module Erx
         normalize_profiles(rows)
         principals = normalize_principals(rows, users_cpus, users_rate)
         max_domains = number(machine, 'max_domains')
-        # Every living domain, configured or requested, is one of its principal's quota.
-        if principals.sum { |row| row.fetch('domains') } > max_domains
-          invalid('principal domain quotas exceed max_domains', 4, 'principals.domains')
+        # Every living domain, configured or requested, is one of its principal's quota,
+        # and every app is a principal with a quota of one (property 19's second clause).
+        if principals.sum { |row| row.fetch('domains') } + @apps.max > max_domains
+          invalid('principal domain quotas and the apps row\'s max exceed max_domains', 4, 'principals.domains')
         end
         normalize_units(rows)
         device_memory = rows.fetch('devices').sum { |device| device.fetch('dma_memory') }
@@ -487,9 +498,10 @@ module Erx
         if device_memory > RootStartup::CONTIGUOUS_POOL_MAX_BYTES
           invalid("device memory exceeds the #{RootStartup::CONTIGUOUS_POOL_MAX_BYTES >> 20} MiB contiguous pool", 4, 'devices.dma_memory')
         end
-        promised = principals.sum { |row| row.fetch('memory') } + baseline + device_memory
+        # The apps budget is carved from root_memory as a principal's is (property 19).
+        promised = principals.sum { |row| row.fetch('memory') } + @apps.memory + baseline + device_memory
         if promised > root_memory
-          invalid('principal budgets, system baseline and device memory exceed root memory', 4, 'principals.memory')
+          invalid('principal budgets, the apps budget, system baseline and device memory exceed root memory', 4, 'principals.memory')
         end
         console = text(machine, 'console')
         hostlink = text(machine, 'hostlink')
@@ -552,6 +564,27 @@ module Erx
 
       def records(kind)
         @source.records.fetch(kind, [])
+      end
+
+      # The manifest's apps row, or NO_APPS. Its memory is a whole number of pages, as
+      # root_memory is; its max is 1 to apps_max_limit; its services are distinct
+      # identifiers, which the stopgap's check_apps resolves against the services.
+      def apps_row
+        record = records('apps').first
+        return NO_APPS unless record
+
+        memory = number(record, 'memory')
+        invalid('the apps budget must be positive and page-aligned', 19, 'apps.memory') unless
+          memory.positive? && (memory % @codec.constant('page_size')).zero?
+        max = record.properties.key?('max') ? number(record, 'max') : @codec.constant('apps_max_default')
+        limit = @codec.constant('apps_max_limit')
+        invalid("max is outside 1 to #{limit}", 19, 'apps.max') unless max.between?(1, limit)
+        services = record.properties.fetch('services', []).map do |token|
+          record.line.fail!('services requires service names') if token.quoted || !token.value.match?(Frontend::IDENTIFIER)
+          token.value
+        end
+        invalid('services names a service twice', 19, 'apps.services') unless services.uniq.size == services.size
+        AppsRow.new(memory: memory, services: services.freeze, max: max)
       end
 
       def one(record, key)
@@ -1110,7 +1143,7 @@ module Erx
         %w[domain session partial_boot].each do |kind|
           unsupported('child domain planning is unavailable', kind) unless records(kind).empty?
         end
-        %w[window service facet introduce image liveness display].each do |kind|
+        %w[window service facet introduce image liveness display apps package signer].each do |kind|
           invalid('empty native boot has no service or child assignments', 9, kind) unless records(kind).empty?
         end
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
@@ -1136,7 +1169,9 @@ module Erx
     class Stopgap < SystemDomainCheck
       REFUSED = {
         'partial_boot' => 'child domains of a partial boot arrive at M5',
-        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
+        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings',
+        'package' => 'a package row needs the package file check and admission (docs/design-packaging.md, "Admission"), ' \
+                     'which this check does not run'
       }.freeze
 
       private
@@ -1151,6 +1186,9 @@ module Erx
         invalid('a partial boot configures no domains', 12, 'domain') unless records('domain').empty?
         invalid('a partial boot makes no sessions', 14, 'session') unless records('session').empty?
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
+        %w[apps signer].each do |kind|
+          invalid('a partial boot takes no packages', 19, kind) unless records(kind).empty?
+        end
         %w[service facet introduce liveness display].each do |kind|
           invalid('a partial boot runs no services', 2, kind) unless records(kind).empty?
         end
@@ -1187,7 +1225,10 @@ module Erx
         rows['introductions'] = normalize_introductions
         rows['facets'], rows['facet_parameters'], facet_values = normalize_facets(services.map(&:first), rows)
         rows['starts'] = normalize_starts(services.map(&:first), rows)
-        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values)
+        app_services = check_apps(rows)
+        check_app_start_rows
+        check_signers
+        rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values, app_services)
         edges = boot_edges(rows['facets'], rows['services'])
         rows['boot_order'] = boot_order(rows['domains'], edges)
         check_rescue(rows['domains'], edges)
@@ -1369,6 +1410,67 @@ module Erx
       START_RESTARTS = 5
       START_RESTART_PERIOD_S = 600
 
+      # The services an app may never take, whatever the apps row says, by name
+      # (docs/design-packaging.md, "The build's check", property 19's first clause).
+      APP_SERVICES_REFUSED = {
+        'packages' => 'every app holds its packages grant already',
+        'start' => 'it would let an app command the start table',
+        'apps' => 'it would let an app install packages',
+        'etc' => 'it would let an app rewrite /etc/rc.conf'
+      }.freeze
+
+      # Property 19's first clause on the apps row; answers the index of each service of
+      # its services, the services the board's sums count max apps holding. Each name is
+      # the name of exactly one service of the manifest, none of APP_SERVICES_REFUSED,
+      # of an interface an ABI file declares, which gives every parameter a default (an
+      # optional parameter), since an app's row is granted with no parameter stated. A
+      # service of the inspect interface is refused until the scope an app principal
+      # gets is checked to be its own, never all, by interface, whatever its name.
+      def check_apps(tables)
+        service_rows = tables.fetch('services')
+        indices = @apps.services.map do |name|
+          reason = APP_SERVICES_REFUSED[name]
+          invalid("services names #{name}: #{reason}", 19, 'apps.services') if reason
+          matching = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name.b }
+          invalid("services names #{name}, which is not the name of one service of the manifest", 19, 'apps.services') unless
+            matching.size == 1
+          interface = service_rows.fetch(matching.first).fetch('interface')
+          unsupported("services names #{name}, of the inspect interface, whose scope for an app is not checked", 'apps.services') if
+            interface == fetch_interface('inspect')
+          declared = declared_parameters(interface) ||
+                     invalid("services names #{name}, whose interface no ABI file declares", 19, 'apps.services')
+          required = declared.reject { |_key, parameter| parameter.fetch(:cardinality) == 'optional' }.keys
+          invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 19, 'apps.services') unless
+            required.empty?
+          matching.first
+        end
+        indices.freeze
+      end
+
+      # Property 19's third clause: the start rows and every app's row fit the start table.
+      def check_app_start_rows
+        rows_max = @codec.constant('start_rows_max')
+        invalid("the start rows and the apps row's max pass start_rows_max, #{rows_max}", 19, 'apps.max') if
+          records('start').size + @apps.max > rows_max
+      end
+
+      # Property 19's sixth clause: every signer row holds an Ed25519 public key of
+      # signer_key_bytes, written hex: and its digits, never quoted. The frontend keeps
+      # the rows' names unique.
+      def check_signers
+        size = @codec.constant('signer_key_bytes')
+        records('signer').each do |record|
+          record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
+          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless text(record, 'key').bytesize == size
+        end
+      end
+
+      # The parameters an ABI file declares for interface, by key, or nil when no ABI
+      # file declares the interface.
+      def declared_parameters(interface)
+        @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:parameters)
+      end
+
       # The manifest's start rows, sorted by their principal's index, each with its
       # defaults applied: enabled, no display and START_RESTARTS ends in
       # START_RESTART_PERIOD_S seconds. Property 17's structural clauses: a row is keyed
@@ -1522,7 +1624,7 @@ module Erx
       # and their packed facet_parameters rows in key order.
       def facet_parameters(record, row, tables)
         interface = tables.fetch('services').fetch(row.fetch('service')).fetch('interface')
-        declared = @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:parameters) || {}
+        declared = declared_parameters(interface) || {}
         unless declared.all? { |key, parameter| GRANT_CHECKERS.fetch(parameter.fetch(:helper), []).include?(key) }
           unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
         end
@@ -1594,7 +1696,7 @@ module Erx
       # every record names one; a display domain serves one display, so no domain pays
       # for two displays' grants out of one outer budget; and each display's grants pass
       # check_display_grants.
-      def normalize_displays(services, tables, facet_values)
+      def normalize_displays(services, tables, facet_values, app_services)
         windows = find_interface('windows')
         rows = records('display').map do |record|
           index = services.index { |service| service.name == record.name } ||
@@ -1610,7 +1712,7 @@ module Erx
         end
         servers = rows.map { |row| tables.fetch('services').fetch(row.fetch('service')).fetch('server') }
         invalid('one domain serves two displays', 18, 'display.name') unless servers.uniq.size == servers.size
-        rows.each { |row| check_display_grants(row, tables, facet_values) }
+        rows.each { |row| check_display_grants(row, tables, facet_values, app_services) }
         rows.sort_by { |row| row.fetch('service') }
       end
 
@@ -1640,8 +1742,9 @@ module Erx
       # windows_pixels_default, and the side the display reads for it, the display's own
       # lane, each rounded up to pages; a session template's grant costs that once for
       # each session its principal's domains quota lets live at once, a configured
-      # domain's once.
-      def check_display_grants(display, tables, facet_values)
+      # domain's once. When the apps row's services name the display, its apps hold max
+      # grants more, each of the parameters' defaults (property 19's second clause).
+      def check_display_grants(display, tables, facet_values, app_services)
         service = tables.fetch('services').fetch(display.fetch('service'))
         server = service.fetch('server')
         invalid("display #{service.fetch('name')} is served by the system domain, not a display domain", 18, 'display.name') if
@@ -1651,18 +1754,23 @@ module Erx
           domain.fetch('env').split("\0").any? { |word| display_keys.include?(word.partition('=').first) }
         limits = tables.fetch('limits').fetch(domain.fetch('limits'))
         grants = tables.fetch('facets').zip(facet_values).select { |facet, _values| facet.fetch('service') == display.fetch('service') }
-        cost = grants.sum do |facet, values|
+        counted = grants.map do |facet, values|
           invalid("facet #{facet.fetch('name')} grants a display to the system domain, whose connections carry no pixel area", 18,
                   'facet.grantee') if facet.fetch('grantee_kind') == grantee_kind('system')
           invalid("facet #{facet.fetch('name')} sets session, which the domain service alone sets", 18, 'facet.parameter') if
             values.key?('session')
+          [grant_instances(facet, tables), values]
+        end
+        apps = app_services.include?(display.fetch('service'))
+        counted << [@apps.max, {}] if apps
+        cost = counted.sum do |instances, values|
           pixels = values.fetch('pixels') { @codec.constant('windows_pixels_default') }
-          grant_instances(facet, tables) * (pages(pixels) + pages(limits.fetch('lane')))
+          instances * (pages(pixels) + pages(limits.fetch('lane')))
         end
         return if cost <= limits.fetch('outer')
 
-        invalid("display #{service.fetch('name')}'s grants cost #{cost} bytes, past its domain's outer budget of " \
-                "#{limits.fetch('outer')}", 18, 'facet.parameter')
+        invalid("display #{service.fetch('name')}'s grants#{' and the apps row\'s max apps' if apps} cost #{cost} bytes, " \
+                "past its domain's outer budget of #{limits.fetch('outer')}", 18, apps ? 'apps.max' : 'facet.parameter')
       end
 
       # How many grants a facet row makes at once: one for a domain, and for a session

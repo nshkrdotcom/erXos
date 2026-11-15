@@ -783,4 +783,126 @@ class ManifestDomainsTest < Minitest::Test
     undeclared = facet('ab', '@domain.alpha', '@service.b') + "  parameter root \"/\"\n"
     refused(Erx::Manifest::Invalid, 2, 'facet.parameter', @source + service('b', '@domain.beta') + undeclared, message: /not declared/)
   end
+
+  # Property 19 (docs/design-packaging.md, "The build's check"): the apps row, its
+  # services, the signer rows, and the board's sums counting max apps, each a principal
+  # with a domains quota of one holding every service of the row. Each clause has a
+  # seeded violation.
+  def self.apps(memory: 65_536, services: nil, max: nil)
+    "apps\n  memory #{memory}\n#{"  services #{services}\n" if services}#{"  max #{max}\n" if max}"
+  end
+
+  # source with max_domains raised by count, the domains max apps take (property 4).
+  def with_room(source, count) = source.sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + count}" }
+
+  def test_an_apps_row_takes_its_default_max_within_max_domains
+    admit(with_room(@source + self.class.apps, 8))
+    admit(with_room(@source + self.class.apps(max: 64), 64))
+    # Seed: an app not counted as a principal with a domain quota of one.
+    refused(Erx::Manifest::Invalid, 4, 'principals.domains', with_room(@source + self.class.apps, 7), message: /apps row's max/)
+  end
+
+  def test_an_apps_row_s_max_and_memory_are_bounded
+    refused(Erx::Manifest::Invalid, 19, 'apps.max', with_room(@source + self.class.apps(max: 0), 8))
+    refused(Erx::Manifest::Invalid, 19, 'apps.max', with_room(@source + self.class.apps(max: 65), 65))
+    refused(Erx::Manifest::Invalid, 19, 'apps.memory', with_room(@source + self.class.apps(memory: 4097), 8))
+    refused(Erx::Manifest::Invalid, 19, 'apps.memory', with_room(@source + self.class.apps(memory: 0), 8))
+  end
+
+  # Seed: the apps budget left out of property 4's sum within root_memory.
+  def test_the_apps_budget_counts_within_root_memory
+    root_memory = Integer(@source[/^  root_memory (\d+)$/, 1])
+    refused(Erx::Manifest::Invalid, 4, 'principals.memory', with_room(@source + self.class.apps(memory: root_memory), 8),
+            message: /apps budget/)
+  end
+
+  def test_a_manifest_holds_at_most_one_apps_row
+    refused(Erx::Manifest::Invalid, 19, 'apps', with_room(@source + self.class.apps + self.class.apps, 8))
+  end
+
+  # Seeds: services naming what would let an app command the start table, install
+  # packages or rewrite /etc/rc.conf, or what it holds already, each refused by name
+  # whether or not the manifest has such a service; and a name of no service.
+  def test_an_apps_row_s_services_are_services_an_app_may_take
+    %w[packages start apps etc].each do |name|
+      refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(@source + self.class.apps(services: name), 8),
+              message: /services names #{name}:/)
+    end
+    refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(@source + self.class.apps(services: 'nowhere'), 8),
+            message: /not the name of one service/)
+    refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(@source + self.class.apps(services: 'data data'), 8),
+            message: /twice/)
+    admit(with_room(with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n") +
+                    self.class.apps(services: 'b'), 8))
+    refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(with_display(grants: []) + self.class.apps(services: 'b'), 8),
+            message: /no ABI file declares/)
+    two = with_display(grants: [], served: "service b\n  server @domain.beta\n  interface files\n" \
+                                         "service a2\n  name \"b\"\n  server @domain.alpha\n  interface files\n")
+    refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(two + self.class.apps(services: 'b'), 8),
+            message: /not the name of one service/)
+    inspect = "service seen\n  server system\n  interface inspect\n"
+    refused(Erx::Manifest::Unsupported, 'unsupported', 'apps.services', with_room(@source + inspect + self.class.apps(services: 'seen'), 8))
+  end
+
+  # Seed: a service whose ABI file gives a parameter no default, which an app's row,
+  # granted with no parameter stated, could not satisfy.
+  def test_an_apps_row_names_only_services_whose_parameters_have_defaults
+    root = File.expand_path('../..', __dir__)
+    needy = Erx::ABI::Syntax.parse("service needy 99\n  parameter depth 1 u64 one range 1 2 checked_by windows_grant\n",
+                                   path: 'abi/services/needy.txt')
+    sources = Erx::ABI::Sources.read(root: root)
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(
+                                  Erx::ABI::SourceSet.new(declarations: sources.declarations + needy, inputs: sources.inputs)
+                                ))
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec).merge(platform: @platform))
+    source = with_room(@source + "service needy\n  server @domain.beta\n  interface needy\n" + self.class.apps(services: 'needy'), 8)
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
+    end
+    assert_equal [19, 'apps.services'], [error.property, error.field], error.message
+    assert_match(/gives depth no default/, error.message)
+  end
+
+  # Seed: the app template counted once in property 18. Beta's outer budget holds sb's
+  # two grants of a page and its side and one app's default pixel area and side, so one
+  # app is admitted and two pass the budget.
+  def test_every_app_counts_against_a_display_its_row_names
+    outer = 2 * (4096 + 4096) + @codec.constant('windows_pixels_default') + 4096
+    roomy = ->(source) { source.sub("  memory 4194304\n  outer 1048576\n", "  memory 16777216\n  outer #{outer}\n") }
+    admit(with_room(roomy.call(with_windows + self.class.apps(services: 'b', max: 1)), 1))
+    refused(Erx::Manifest::Invalid, 18, 'apps.max', with_room(roomy.call(with_windows + self.class.apps(services: 'b', max: 2)), 2),
+            message: /past its domain's outer budget/)
+    admit(with_room(roomy.call(with_windows + self.class.apps(max: 2)), 2))
+  end
+
+  # Seed: an apps row whose max and the manifest's start rows pass start_rows_max.
+  # Each start row is a disabled row of a principal of its own, with a template.
+  def test_the_start_rows_and_every_app_s_row_fit_the_start_table
+    rows_max = @codec.constant('start_rows_max')
+    max = @codec.constant('apps_max_limit')
+    starts = (rows_max - max + 1).times.map do |index|
+      "principal p#{index}\n  memory 4096\n  grant @share.half\n  domains 0\n  names 1\n" \
+        "  default_limits @limits.native\n  ceiling_limits @limits.native\n" \
+        "#{self.class.session("p#{index}")}#{self.class.start("p#{index}", "  enable NO\n")}"
+    end
+    base = with_display(grants: []) + starts.join
+    admit(with_room(base + self.class.apps(max: max - 1), max - 1))
+    refused(Erx::Manifest::Invalid, 19, 'apps.max', with_room(base + self.class.apps(max: max), max), message: /start_rows_max/)
+  end
+
+  def test_a_signer_row_holds_an_ed25519_public_key_under_a_unique_name
+    key = ->(bytes) { "  key hex:#{'ab' * bytes}\n" }
+    admit(@source + "signer dev\n#{key.call(32)}signer ops\n#{key.call(32)}")
+    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer dev\n#{key.call(31)}")
+    refused(Erx::Manifest::Invalid, 19, 'signer.key', @source + "signer dev\n#{key.call(33)}")
+    refused(Erx::Manifest::Invalid, 'source', 'signer', @source + "signer dev\n#{key.call(32)}signer dev\n#{key.call(32)}")
+    assert_raises(Erx::ABI::SchemaError) { admit(@source + "signer dev\n  key \"#{'a' * 32}\"\n") }
+  end
+
+  # A package row is refused until the package file check and admission check it, so
+  # none is admitted unchecked.
+  def test_a_package_row_is_refused_until_its_package_can_be_checked
+    refused(Erx::Manifest::Unsupported, 'unsupported', 'package',
+            with_room(@source + self.class.apps + "package clock\n  input @artifact.clock\n", 8))
+  end
 end
