@@ -34,6 +34,33 @@ module Erx
   # that does not come back "blk: storage domain not back", and a step that fails at the
   # storage node "blk: no driver: REASON" or its own "failed" line.
   #
+  # The block driver's kill boots the same image on a fresh medium and starts the module's
+  # `blk_kill` entry, which kills the driver while a transfer runs through /data. A failure
+  # of the driver ends the domain as littlefs's does (docs/design-stopgap.md), and the
+  # restart's driver resets the device before littlefs mounts the volume again. Its lines:
+  #
+  #   blk: lfs wrote kept files     at the storage domain's node, a few files written and
+  #                                 closed under /data
+  #   blk: transfer running         a process there writes /data/transfer piece by piece,
+  #                                 synced every few pieces, telling the system domain of
+  #                                 each sync that answered ok, and its first sync is done
+  #   blk: block driver found       the node's block driver, the device process registered
+  #                                 as erx_blk, is found and is killed a moment after this
+  #                                 line leaves the node, while the transfer writes on
+  #   blk: storage domain ended
+  #   blk: storage domain back
+  #   blk: lfs read back kept files each kept file holds what was written
+  #   blk: transfer cut at a sync   /data/transfer holds the transfer's bytes up to a
+  #                                 sync, at least to the last that answered ok and not
+  #                                 all of them, and the transfer stopped at the driver's
+  #                                 end or not before the domain's: the kill came
+  #                                 mid-transfer and lost nothing synced
+  #   blk: done
+  #
+  # Any other cut prints "blk: transfer cut at N bytes, S synced, HOW", where HOW is done
+  # for a transfer that ended before the kill and driver_up for one that failed with the
+  # driver still up.
+  #
   # The corrupt volume boots the same image on a fresh medium whose /data a first boot
   # fills (the block device suite's data_write), and whose volume's superblock pair, both
   # copies of the root's metadata pair, the host then inverts. A mount never formats, so
@@ -95,6 +122,7 @@ module Erx
     # Seconds the guest has, after its banner, to print "blk: done": the storage domain
     # boots twice, and the kill waits up to a minute for the first to end.
     RESTART_SECONDS = 300
+    KILL_ARGUMENTS = ['-pa', BlockDevice::GUEST_PATH, '-run', BlockDevice::GUEST_MODULE, 'blk_kill'].freeze
     CORRUPT_ARGUMENTS = ['-pa', BlockDevice::GUEST_PATH, '-run', BlockDevice::GUEST_MODULE, 'lfs_corrupt'].freeze
     # Seconds the corrupt volume's guest has: six boots of the storage domain, each ending
     # at its mount, within the guest's five-minute watch.
@@ -283,6 +311,11 @@ module Erx
        'blk: storage domain back', "blk: lfs read back #{bytes} bytes", 'blk: done']
     end
 
+    def kill_expected_lines
+      ['blk: lfs wrote kept files', 'blk: transfer running', 'blk: block driver found', 'blk: storage domain ended',
+       'blk: storage domain back', 'blk: lfs read back kept files', 'blk: transfer cut at a sync', 'blk: done']
+    end
+
     def corrupt_expected_lines = ['blk: storage domain ended 6 times', 'blk: storage domain not restarted', 'blk: done']
 
     class Run
@@ -296,9 +329,9 @@ module Erx
         @block = BlockDevice::Run.new(root: root, runner: runner, compiler: compiler, linker: linker, platform: platform)
       end
 
-      # Runs the littlefs restart, the corrupt volume and the network cells under each
-      # accelerator at one CPU. Returns { "<accelerator>-1cpu" => 'passed' }; any
-      # disagreement raises.
+      # Runs the littlefs restart, the block driver's kill, the corrupt volume and the
+      # network cells under each accelerator at one CPU. Returns
+      # { "<accelerator>-1cpu" => 'passed' }; any disagreement raises.
       def call(accels:, jobs: 4, build: true)
         image = @block.test_image_for(accels: accels, jobs: jobs, build: build)
         development = development_image
@@ -306,6 +339,9 @@ module Erx
           ["#{accel}-1cpu", @block.boot_fresh_medium(accel, image, arguments: RESTART_ARGUMENTS,
                                                                    expected: DriverDomains.restart_expected_lines,
                                                                    seconds: RESTART_SECONDS) &&
+                                @block.boot_fresh_medium(accel, image, arguments: KILL_ARGUMENTS,
+                                                                       expected: DriverDomains.kill_expected_lines,
+                                                                       seconds: RESTART_SECONDS) &&
                                 @block.boot_corrupt_medium(accel, image, arguments: CORRUPT_ARGUMENTS,
                                                                          expected: DriverDomains.corrupt_expected_lines,
                                                                          seconds: CORRUPT_SECONDS) &&

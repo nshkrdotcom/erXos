@@ -216,7 +216,7 @@ class SystemDomainTest < Minitest::Test
     shell = { name: 'release-shell', pattern: /y/n, seconds: 30 }.freeze
     points = regrant.checkpoints([shell])
     assert_raises(Erx::Error) { regrant.checkpoints([shell.merge(type: "x\r")]) }
-    assert_equal %w[release-shell root_1-shell menu system-shell erlang-shell regrant system-domain-ended],
+    assert_equal %w[release-shell root_1-shell menu system-shell erlang-shell regrant load crash-record],
                  points.map { |point| point.fetch(:name) }
     assert_equal [nil, "\a", 's', "erl\r", "#{regrant::EXPRESSION}\r"], points[0..4].map { |point| point[:type] }
     verify = points[5].fetch(:verify)
@@ -235,6 +235,21 @@ class SystemDomainTest < Minitest::Test
       refute_equal regrant::ANSWER, bad
       assert_raises(Erx::Error) { verify.call("#{bad}\r\n") }
     end
+    load = points[6].fetch(:verify)
+    load.call("#{regrant::LOAD_ANSWER}\r\n")
+    assert_raises(Erx::Error) { load.call("{load,[true,false,true]}\r\n") }
     assert_raises(Erx::Error) { regrant.checkpoints([shell, { name: 'other' }]) }
+  end
+
+  # The boot's end is judged by the first crash record after the load's line: the abort's
+  # write to address 0 in the root task passes; a record before that line, or another
+  # root fault, a read of a decommitted page, does not.
+  def test_the_regrant_boot_ends_with_a_crash_record_of_the_aborts_write_to_address_0
+    load = "#{Suite::Regrant::LOAD_ANSWER}\r\n"
+    abort = File.binread(File.expand_path('../fixtures/system_domain/abort.log', __dir__))
+    Suite::Regrant.judge(abort)
+    other = File.binread(File.expand_path('../fixtures/native_crash/decommitted.log', __dir__))
+    assert_match(/absent/, assert_raises(Erx::Error) { Suite::Regrant.judge(other + load) }.message)
+    assert_match(/address, access disagree/, assert_raises(Erx::Error) { Suite::Regrant.judge(load + other) }.message)
   end
 end

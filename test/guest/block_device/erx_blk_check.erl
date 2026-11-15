@@ -43,6 +43,17 @@
 %% the storage domain ending, waits for the domain's next incarnation to run erx_storage, and
 %% reads the file back from /data as that incarnation mounted it.
 %%
+%% blk_kill/0 is the driver domains suite's too: at the storage domain's node it writes and
+%% closes KEPT files, starts the transfer, a process that writes /data/transfer piece by piece
+%% and syncs it every SYNC_BYTES, and once the transfer's first sync is done kills the block
+%% driver, the device process registered as erx_blk, while the transfer writes on. The
+%% transfer tells the system domain of each sync that answered ok and of why it stopped,
+%% if it did before the domain ended. The domain ends and comes back as for lfs_restart/0,
+%% and the next incarnation reads every kept file back and finds /data/transfer cut at a
+%% sync: its bytes the transfer's, a whole number of syncs' worth, at least every byte the
+%% syncs that answered ok vouched for, and fewer than TRANSFER_BYTES, with the transfer
+%% not stopped by anything but the driver's end.
+%%
 %% lfs_corrupt/0 is the driver domains suite's too, on a medium whose populated volume's
 %% metadata the harness corrupted: it watches the domain service's records until the storage
 %% domain has ended once for its first boot and once for each of its five restarts, each
@@ -55,10 +66,11 @@
 
 -module(erx_blk_check).
 
--export([main/0, medium/0, data_write/0, data_read/0, lfs_restart/0, lfs_corrupt/0]).
+-export([main/0, medium/0, data_write/0, data_read/0, lfs_restart/0, lfs_corrupt/0, blk_kill/0]).
 %% Run at the storage domain's node by step/1.
 -export([run/1, main_here/0, read_again_here/0, medium_here/0, data_write_here/0,
-         data_read_here/0, lfs_write_here/0, lfs_kill_here/0, lfs_read_here/0]).
+         data_read_here/0, lfs_write_here/0, lfs_kill_here/0, lfs_read_here/0,
+         blk_kill_here/1, blk_read_here/2]).
 
 -define(ROLES, [record, slot_a, slot_b, vault, data]).
 
@@ -100,6 +112,15 @@
 -define(STORAGE_ENDS, 6).
 -define(CORRUPT_WAIT_MS, 240000).
 -define(SETTLE_MS, 5000).
+%% blk_kill's files: KEPT files, file N at kept_path(N) holding data_content(N), and the
+%% transfer, TRANSFER_BYTES bytes at most, byte I holding I rem 251, written PIECE_BYTES at
+%% a time and synced every SYNC_BYTES. The data window holds more than twice TRANSFER_BYTES
+%% (MediumImage::DATA_SECTORS); a transfer that ends before the kill fails the read back.
+-define(KEPT, 3).
+-define(TRANSFER, "/data/transfer").
+-define(TRANSFER_BYTES, 64 * 1024 * 1024).
+-define(PIECE_BYTES, 16384).
+-define(SYNC_BYTES, 65536).
 
 -spec main() -> ok.
 main() -> report(at_storage(main_here) ++ control()).
@@ -127,7 +148,8 @@ at_storage(Step) ->
     end.
 
 %% Step's lines from the storage domain's node, after loading this module's object code
-%% there, which each incarnation of the domain needs anew.
+%% there, which each incarnation of the domain needs anew. A step is a function of this
+%% module's that run/1 calls: its name, or its name and arguments.
 step(Step) ->
     {Module, Binary, File} = code:get_object_code(?MODULE),
     try
@@ -210,16 +232,27 @@ attempt(Fun) ->
     try Fun() catch Class:Reason -> {Class, Reason} end.
 
 -spec lfs_restart() -> ok.
-lfs_restart() ->
-    report(case wait_storage(?STORAGE_WAIT_MS div ?POLL_MS) of
-               ok ->
-                   Written = step(lfs_write_here),
-                   true = erlang:monitor_node(?STORAGE_NODE, true),
-                   Killed = step(lfs_kill_here),
-                   Written ++ Killed ++ restarted();
-               timeout ->
-                   [text("no driver", [])]
-           end).
+lfs_restart() -> report(across_restart([lfs_write_here, lfs_kill_here], fun() -> lfs_read_here end)).
+
+%% The transfer's messages wait in this process's mailbox until the storage domain's end,
+%% when transfer_seen/2 takes them for the read back.
+-spec blk_kill() -> ok.
+blk_kill() ->
+    report(across_restart([{blk_kill_here, [self()]}],
+                          fun() -> {blk_read_here, tuple_to_list(transfer_seen(0, running))} end)).
+
+%% Runs Steps at the storage domain's node once it runs erx_storage, the last of them
+%% killing a process whose end ends the domain, then sees the domain end and come back
+%% and runs the step Read() names at its next incarnation, Read called as the end is
+%% seen: the lines of each, in order.
+across_restart(Steps, Read) ->
+    case wait_storage(?STORAGE_WAIT_MS div ?POLL_MS) of
+        ok ->
+            true = erlang:monitor_node(?STORAGE_NODE, true),
+            lists:append([step(Step) || Step <- Steps]) ++ restarted(Read);
+        timeout ->
+            [text("no driver", [])]
+    end.
 
 -spec lfs_corrupt() -> ok.
 lfs_corrupt() ->
@@ -262,12 +295,13 @@ storage_record() ->
     {length(lists:filter(Storage, Deaths)), length(lists:filter(Storage, erx_domain_core:domains(Core)))}.
 
 %% The storage domain's end, seen as its node going down, and its next incarnation, seen
-%% running erx_storage, with the file read back from its /data.
-restarted() ->
+%% running erx_storage, with the lines from its /data of the step Read() names.
+restarted(Read) ->
     receive
         {nodedown, ?STORAGE_NODE} ->
+            Step = Read(),
             case wait_storage(?STORAGE_WAIT_MS div ?POLL_MS) of
-                ok -> [text("storage domain ended", []), text("storage domain back", []) | step(lfs_read_here)];
+                ok -> [text("storage domain ended", []), text("storage domain back", []) | step(Step)];
                 timeout -> [text("storage domain ended", []), text("storage domain not back", [])]
             end
     after ?STORAGE_END_MS ->
@@ -289,10 +323,14 @@ wait_storage(Tries) ->
 
 %% At the storage domain's node: Step's lines, in order.
 -spec run(main_here | read_again_here | medium_here | data_write_here | data_read_here
-          | lfs_write_here | lfs_kill_here | lfs_read_here) -> [binary()].
+          | lfs_write_here | lfs_kill_here | lfs_read_here
+          | {blk_kill_here | blk_read_here, [term()]}) -> [binary()].
 run(Step) ->
     put(lines, []),
-    ok = ?MODULE:Step(),
+    ok = case Step of
+             {Name, Arguments} -> apply(?MODULE, Name, Arguments);
+             Name -> ?MODULE:Name()
+         end,
     lines().
 
 lines() -> lists:reverse(get(lines)).
@@ -521,6 +559,140 @@ lfs_read_here() ->
         {ok, _Other} -> line("lfs read back other", []);
         _Failed -> line("lfs read failed", [])
     end.
+
+%% Writes and closes the kept files, starts the transfer, which reports to Watcher in the
+%% system domain, and, once its first sync is done, kills the block driver KILL_DELAY_MS
+%% after its line, while the transfer writes on.
+-spec blk_kill_here(pid()) -> ok.
+blk_kill_here(Watcher) ->
+    case [N || N <- lists:seq(1, ?KEPT), file:write_file(kept_path(N), data_content(N)) =:= ok] of
+        Written when length(Written) =:= ?KEPT -> line("lfs wrote kept files", []);
+        Written -> line("lfs wrote ~b of ~b files", [length(Written), ?KEPT])
+    end,
+    Parent = self(),
+    {Writer, Monitor} = spawn_monitor(fun() -> transfer(Parent, Watcher) end),
+    receive
+        {Writer, synced} ->
+            line("transfer running", []),
+            kill_driver();
+        {'DOWN', Monitor, process, Writer, _} ->
+            line("transfer failed", [])
+    end.
+
+%% The transfer, which outlives the step's erpc call. It tells Parent of each sync that
+%% answered ok, and Watcher the size that sync vouches for, {transfer_synced, Size}. It
+%% stops at TRANSFER_BYTES, {transfer_stopped, done}, or at its first failure,
+%% {transfer_stopped, Driver}: driver_gone when no block driver is registered, as after
+%% the kill, driver_up when one still is, a failure of something else.
+transfer(Parent, Watcher) ->
+    {ok, File} = file:open(?TRANSFER, [write, binary]),
+    Watcher ! {transfer_stopped, transfer(File, transfer_cycle(), 0, {Parent, Watcher})}.
+
+transfer(File, Cycle, Offset, {Parent, Watcher} = Told) when Offset < ?TRANSFER_BYTES ->
+    Next = Offset + ?PIECE_BYTES,
+    case file:write(File, piece(Cycle, Offset, ?PIECE_BYTES)) of
+        ok when Next rem ?SYNC_BYTES =/= 0 ->
+            transfer(File, Cycle, Next, Told);
+        ok ->
+            case file:sync(File) of
+                ok ->
+                    Parent ! {self(), synced},
+                    Watcher ! {transfer_synced, Next},
+                    transfer(File, Cycle, Next, Told);
+                _Failed ->
+                    transfer_failed()
+            end;
+        _Failed ->
+            transfer_failed()
+    end;
+transfer(_File, _Cycle, _Offset, _Told) ->
+    done.
+
+transfer_failed() ->
+    case whereis(erx_blk) of
+        undefined -> driver_gone;
+        _Driver -> driver_up
+    end.
+
+%% In the system domain, once the storage domain has ended: the size the transfer's last
+%% sync vouched for, Synced, and how it stopped, running while no stop came before the
+%% end. Each message from the storage domain arrives in {erx_origin, D, Msg}.
+transfer_seen(Synced, Stopped) ->
+    receive
+        {erx_origin, _, {transfer_synced, Size}} -> transfer_seen(max(Size, Synced), Stopped);
+        {erx_origin, _, {transfer_stopped, How}} -> transfer_seen(Synced, How)
+    after 0 ->
+        {Synced, Stopped}
+    end.
+
+%% The block driver is the device process registered as erx_blk (erx_blk_sup).
+kill_driver() ->
+    case whereis(erx_blk) of
+        undefined ->
+            line("block driver not found", []);
+        Driver ->
+            _ = spawn(fun() -> timer:sleep(?KILL_DELAY_MS), exit(Driver, kill) end),
+            line("block driver found", [])
+    end.
+
+%% At the next incarnation: every kept file whole, and the transfer cut at a sync, with
+%% at least the Synced bytes the syncs that answered ok vouched for, of which the system
+%% domain must have heard at least the first, and fewer than all, while Stopped
+%% (transfer_seen/2) says the driver's end stopped it, or nothing did before the domain
+%% ended.
+-spec blk_read_here(non_neg_integer(), running | done | driver_gone | driver_up) -> ok.
+blk_read_here(Synced, Stopped) ->
+    case [N || N <- lists:seq(1, ?KEPT), file:read_file(kept_path(N)) =:= {ok, data_content(N)}] of
+        Read when length(Read) =:= ?KEPT -> line("lfs read back kept files", []);
+        Read -> line("lfs read back ~b of ~b files", [length(Read), ?KEPT])
+    end,
+    Cut = fun(Size) ->
+                  Size rem ?SYNC_BYTES =:= 0 andalso Synced >= ?SYNC_BYTES andalso Size >= Synced andalso
+                      Size < ?TRANSFER_BYTES andalso lists:member(Stopped, [running, driver_gone])
+          end,
+    case transfer_size() of
+        {ok, Size} ->
+            case Cut(Size) of
+                true -> line("transfer cut at a sync", []);
+                false -> line("transfer cut at ~b bytes, ~b synced, ~p", [Size, Synced, Stopped])
+            end;
+        other ->
+            line("transfer read back other", []);
+        _Failed ->
+            line("transfer read failed", [])
+    end.
+
+%% /data/transfer's size if every byte of it is the transfer's, other if one is not, or
+%% the error that stopped the read.
+transfer_size() ->
+    case file:open(?TRANSFER, [read, binary]) of
+        {ok, File} ->
+            try transfer_size(File, transfer_cycle(), 0) after file:close(File) end;
+        Failed ->
+            Failed
+    end.
+
+transfer_size(File, Cycle, Offset) ->
+    case file:read(File, ?PIECE_BYTES) of
+        {ok, Bytes} ->
+            case Bytes =:= piece(Cycle, Offset, byte_size(Bytes)) of
+                true -> transfer_size(File, Cycle, Offset + byte_size(Bytes));
+                false -> other
+            end;
+        eof ->
+            {ok, Offset};
+        Failed ->
+            Failed
+    end.
+
+kept_path(N) -> "/data/kept." ++ integer_to_list(N).
+
+%% The transfer's bytes repeat every 251, so each piece is a part of one cycle long enough
+%% to start anywhere in it.
+transfer_cycle() -> << <<(Index rem 251)>> || Index <- lists:seq(0, 250 + ?PIECE_BYTES) >>.
+
+%% Length =< PIECE_BYTES bytes of the transfer from Offset.
+piece(Cycle, Offset, Length) -> binary:part(Cycle, Offset rem 251, Length).
 
 %% A driver call, with the exit of a call that timed out or found the driver gone taken as
 %% that step's failure, so one bad step does not end the run before "blk: done".

@@ -40,7 +40,9 @@ module Erx
   # must end by itself (Qemu#run's machine_end). That no domain is left running follows
   # from it, since every domain's space is a child of the system domain's; the cell does
   # not look for one. Nor does it read a crash record: on the stopgap kernel the root's
-  # own stop writes none (TODO.md, the liberx Fiasco backend's halt item).
+  # own stop writes none (TODO.md, the liberx Fiasco backend's halt item). The re-grant
+  # boot (Regrant) ends with the system domain killed under load, whose fault does write
+  # one, and reads it back.
   module SystemDomain
     # What the configured domains' ERTS runs: MediumBoot's arguments without the -eval
     # that halts, so its init runs the release's boot script over the erx carrier and the
@@ -694,10 +696,11 @@ module Erx
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @regrant_manifest, memory_mib: @machine.memory_mib,
                                                          test_image: true)
-        Qemu.new(root: @root, runner: @runner, program: @qemu)
-            .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
-                 memory_mib: @machine.memory_mib, machine_end: true,
-                 checkpoints: Regrant.checkpoints(points))
+        report = Qemu.new(root: @root, runner: @runner, program: @qemu)
+                     .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
+                          memory_mib: @machine.memory_mib, machine_end: true,
+                          checkpoints: Regrant.checkpoints(points))
+        Regrant.judge(File.binread(File.expand_path(report.fetch('serial_log'), @root)))
         'passed'
       end
 

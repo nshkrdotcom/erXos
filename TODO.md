@@ -3457,6 +3457,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   path with no fault; [design-system.md](docs/design-system.md) "The crash record" gives a halt the cause
   `halt`. musl's `abort()` meanwhile ends in a store to address 0, because `tkill` answers `ENOSYS`
   (`musl/src/internal/erxos/syscall.c:290`), so an abort reads as a fault rather than as an abort.
+  The system_domain suite's re-grant boot kills the system domain with `erlang:halt(abort)` and holds
+  its crash record to that write to address 0 (`Regrant.judge`), so a fix here changes that judge too.
 * [Medium] domain library, `liberx/system/dom_core.c`: a specification
   with `ERX_DOM_SECRET`, or a release file marked `ERX_ENTRY_SEAL`, is
   refused with `ERX_EINVAL` until the vault exists (M11); the plan then

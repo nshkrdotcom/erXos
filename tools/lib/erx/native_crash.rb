@@ -9,6 +9,7 @@ require_relative 'fiasco'
 require_relative 'native_root'
 require_relative 'qemu'
 require_relative 'qemu_cells'
+require_relative 'root_fault'
 require_relative 'runner'
 
 module Erx
@@ -22,13 +23,8 @@ module Erx
   module NativeCrash
     MEMORY_MIB = 512
     SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, 'test/guest/native_crash/guest.c'].freeze
-    THREAD_UNKNOWN = (1 << 64) - 1
-    ROOT_TASK = 0
-    # The fault word's low bits: bit 1 says the access was a write.
-    WRITE_BIT = 2
-    FAULT = CrashFrame::CODEC.member('crash_cause', 'fault')
-    MEMORY = CrashFrame::CODEC.member('fault_kind', 'memory')
-    UNDEFINED = CrashFrame::CODEC.member('fault_kind', 'undefined')
+    MEMORY = RootFault::MEMORY
+    UNDEFINED = RootFault::UNDEFINED
     Case = Data.define(:name, :number, :kind, :write)
     CASES = [
       Case.new(name: 'decommitted', number: 1, kind: MEMORY, write: false),
@@ -59,16 +55,8 @@ module Erx
 
       record = result.record
       fault = record.fetch('fault')
-      expected = said[:address].to_i(16)
-      disagreements = {
-        'cause' => record.fetch('cause') == FAULT,
-        'kind' => fault.fetch('kind') == kase.kind,
-        'address' => kase.kind != MEMORY || fault.fetch('addr') == expected,
-        'access' => kase.kind != MEMORY || (fault.fetch('cause') & WRITE_BIT != 0) == kase.write,
-        'pc' => fault.fetch('pc') >= ram_first,
-        'thread' => fault.fetch('thread') == THREAD_UNKNOWN,
-        'space' => fault.fetch('space') == ROOT_TASK
-      }.reject { |_name, agrees| agrees }.keys
+      disagreements = RootFault.disagreements(record, kind: kase.kind, address: said[:address].to_i(16), write: kase.write)
+      disagreements += ['pc'] unless fault.fetch('pc') >= ram_first
       raise Error, "#{kase.name}: the record's #{disagreements.join(', ')} disagree: #{record}" unless disagreements.empty?
 
       fault
