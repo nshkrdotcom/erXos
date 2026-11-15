@@ -257,7 +257,7 @@ consists of:
 | its **group** | a child of the session's **programs group**, the sub-space group the system domain gives a domain allowed `SPACES` ([design-system.md](design-system.md#sub-spaces)); it charges the program's threads, binds its doorbells, and parks its event executor; the session sets its grant within its own and reads its CPU time | the session with `CONFIGURE`, `SIGNAL` and `ATTACH`; the program with `SIGNAL` and the rights an executor needs to park |
 | its **channel** | two lanes and two doorbells to its handler ([The channel](#the-channel)) | both, as the channel says |
 | its **table** | what the program may reach: its namespace, its opens, its rights beyond files, its children and its pipe ends, kept in Erlang by its handler and at the servers ([The handler](#the-handler)) | the handler |
-| its **data area** | a memory object the session creates from its own budget, `slots` slots of 64 KiB, 4 by default, through which the bytes of the program's reads and writes of files, terminals and sockets move ([Descriptors and files](#descriptors-and-files)) | the program with `READ`, `WRITE` and `MAP`; the session, whose handler copies into and out of it through its NIF |
+| its **data area** | a memory object the session creates from its own budget, `slots` slots of 64 KiB, 4 by default, through which the bytes of the program's reads and writes of files, terminals and sockets move ([Descriptors and files](#descriptors-and-files)) | the program with `READ`, `WRITE` and `MAP`; the session, which maps it read-write and whose handler copies into and out of one slot at a time through the program's port (`erx_program:data_write/3` and `data_read/3`) |
 | its **process id** | a number from 2 to 2^31 - 1 the command server assigns, never reused within the session; 1 is the command server | the command server's process table |
 
 A program is not a node: it has no domain id, no node name, no export
@@ -1047,7 +1047,8 @@ the handler hands the request to the open's description, which sends
 9P2000.L's `read` or `write` at its offset, or at the one named, over the
 session's connection to the file's server and advances its offset by the
 count, and the handler copies the reply's bytes into the slot, or the
-slot's bytes into the request, through its NIF; the reply names the
+slot's bytes into the request, through the program's port, which copies
+only within the slot the request names; the reply names the
 count, and `liberx` then copies out of or into the caller's memory and
 frees the slot. So no byte crosses the channel, no server reaches a
 program's memory, and every server stays a plain process speaking frames.

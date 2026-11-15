@@ -2333,8 +2333,8 @@ into the program's sub-space, which maps it read-write; it holds `slots`
 slots of 64 KiB, the protocol's largest payload inside the machine, 4 by default and set by
 the session's policy for each program. A `read` names a free slot and a
 count; the handler relays `{read, Fid, Offset, Count}` at the
-description's offset, copies the reply's bytes into the slot through its
-NIF, and answers the count, after which `liberx` copies the slot into the
+description's offset, copies the reply's bytes into the slot through the
+program's port, within that slot, and answers the count, after which `liberx` copies the slot into the
 caller's buffer, never more than the count it asked for, and frees the
 slot. A `write` copies the caller's bytes
 into a slot first and the handler copies them out into the `write`

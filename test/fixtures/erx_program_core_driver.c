@@ -322,6 +322,7 @@ static const char *const act_names[] = {
 	[ERX_PROGRAM_CHANNEL_MAP] = "channel_map",
 	[ERX_PROGRAM_BELL_CREATE] = "bell_create",
 	[ERX_PROGRAM_DATA_CREATE] = "data_create",
+	[ERX_PROGRAM_DATA_MAP] = "data_map",
 	[ERX_PROGRAM_IRQ_CREATE] = "irq_create",
 	[ERX_PROGRAM_SINK_REGISTER] = "sink_register",
 	[ERX_PROGRAM_IRQ_BIND] = "irq_bind",
@@ -350,6 +351,7 @@ static const char *const act_names[] = {
 	[ERX_PROGRAM_IRQ_UNBIND] = "irq_unbind",
 	[ERX_PROGRAM_SINK_UNREGISTER] = "sink_unregister",
 	[ERX_PROGRAM_IRQ_CLOSE] = "irq_close",
+	[ERX_PROGRAM_DATA_UNMAP] = "data_unmap",
 	[ERX_PROGRAM_DATA_DESTROY] = "data_destroy",
 	[ERX_PROGRAM_BELL_DESTROY] = "bell_destroy",
 	[ERX_PROGRAM_CHANNEL_UNMAP] = "channel_unmap",
@@ -392,6 +394,7 @@ constants(void)
 	printf("const hr_alloc %" PRIu32 "\nconst hr_attach %" PRIu32 "\nconst hr_signal %" PRIu32 "\n", ERX_HR_ALLOC,
 	    ERX_HR_ATTACH, ERX_HR_SIGNAL);
 	printf("const prot_r %" PRIu32 "\nconst prot_rw %" PRIu32 "\n", ERX_PROT_R, ERX_PROT_RW);
+	printf("const data_slot_bytes %" PRIu32 "\n", (uint32_t)ERX_PROG_DATA_SLOT_BYTES);
 	printf("const hr_read %" PRIu32 "\nconst hr_write %" PRIu32 "\nconst hr_map %" PRIu32 "\nconst hr_trigger %" PRIu32 "\n",
 	    ERX_HR_READ, ERX_HR_WRITE, ERX_HR_MAP, ERX_HR_TRIGGER);
 	for (size_t i = 0; i < sizeof(kinds) / sizeof(kinds[0]); i++)
@@ -428,11 +431,38 @@ installs(void)
 	printf("handrights %" PRIu32 " %" PRIu32 "\n", UINT32_MAX, erx_program_hand_rights(UINT32_MAX));
 }
 
+/*
+ * Each copy into or out of a data area: in an area of one slot and of the most, the first slot,
+ * the last, the one past it and the largest; counts of 0, 1, a slot's bytes, one past them and
+ * the largest.
+ */
+static void
+data_spans(void)
+{
+	static const uint64_t areas[] = { 1, ERX_PROG_DATA_SLOTS_MAX };
+	static const uint64_t counts[] = { 0, 1, ERX_PROG_DATA_SLOT_BYTES, ERX_PROG_DATA_SLOT_BYTES + 1, UINT64_MAX };
+
+	for (size_t a = 0; a < sizeof(areas) / sizeof(areas[0]); a++) {
+		const uint64_t slots = areas[a];
+		const uint64_t named[] = { 0, slots - 1, slots, UINT64_MAX };
+
+		for (size_t s = 0; s < sizeof(named) / sizeof(named[0]); s++)
+			for (size_t c = 0; c < sizeof(counts) / sizeof(counts[0]); c++) {
+				uint64_t offset = UINT64_MAX;
+				const int status = erx_program_data_span(slots, named[s], counts[c], &offset);
+
+				printf("data %" PRIu64 " %" PRIu64 " %" PRIu64 " = %d %" PRIu64 "\n", slots, named[s],
+				    counts[c], status, offset);
+			}
+	}
+}
+
 int
 main(void)
 {
 	constants();
 	installs();
+	data_spans();
 	specs();
 	starts();
 	ends();

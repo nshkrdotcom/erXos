@@ -44,23 +44,24 @@ class ErxProgramCoreTest < Minitest::Test
   # the port's hold on the program's holder entry and then the lease's return, are the last
   # of every release, and the hand-offs' copies and doorbells follow the program's own
   # (docs/design-pipes.md, "Hand-offs").
-  STEPS = %i[lease_take hands_take channel_create channel_map bell_create data_create irq_create
-             sink_register irq_bind budget_create group_create gate_register_anchor
+  STEPS = %i[lease_take hands_take channel_create channel_map bell_create data_create data_map
+             irq_create sink_register irq_bind budget_create group_create gate_register_anchor
              gate_register_image anchor_create image_create lease_map image_map install
              hands_install bell_bind hands_bind thread_create].freeze
-  # What undoes each step that made something; a map and an install die with their space, the
-  # buffer's map among them, and nothing else needs undoing.
+  # What undoes each step that made something; a map into the image and an install die with
+  # their space, the buffer's map among them, and nothing else needs undoing. The session's own
+  # maps, of the channel and of the data area, are released by undos of their own.
   UNDO = { lease_take: :lease_return, hands_take: :hold_release, channel_create: :channel_destroy,
            channel_map: :channel_unmap, bell_create: :bell_destroy,
-           data_create: :data_destroy, irq_create: :irq_close, sink_register: :sink_unregister,
-           irq_bind: :irq_unbind, budget_create: :budget_destroy, group_create: :group_close,
+           data_create: :data_destroy, data_map: :data_unmap, irq_create: :irq_close,
+           sink_register: :sink_unregister, irq_bind: :irq_unbind, budget_create: :budget_destroy, group_create: :group_close,
            gate_register_anchor: :gate_unregister_anchor, gate_register_image: :gate_unregister_image,
            anchor_create: :anchor_destroy, image_create: :image_close, bell_bind: :bell_unbind,
            thread_create: :thread_close }.freeze
   RELEASE = STEPS.reverse.filter_map { UNDO[_1] }.freeze
   # The undos that delete or unmap what the session made from its own budget for the program:
   # docs/design-programs.md ("The channel") deletes them only after the program's budget.
-  SESSION_KEPT = %i[channel_destroy channel_unmap bell_destroy data_destroy irq_close].freeze
+  SESSION_KEPT = %i[channel_destroy channel_unmap bell_destroy data_destroy data_unmap irq_close].freeze
   # The rights of each copy the install passes, by the names of docs/design-programs.md's tables.
   # The program writes its own side of the channel alone, and only maps the session's side,
   # its peer side, which the session writes.
@@ -220,6 +221,10 @@ class ErxProgramCoreTest < Minitest::Test
     assert_empty side_differences(output), side_differences(output).join("\n")
   end
 
+  def test_a_data_copy_stays_within_the_slot_it_names
+    assert_empty data_differences(output), data_differences(output).first(20).join("\n")
+  end
+
   def test_the_install_passes_each_copy_once_with_its_rights
     assert_empty install_differences(output), install_differences(output).join("\n")
   end
@@ -237,6 +242,7 @@ class ErxProgramCoreTest < Minitest::Test
                '{ ERX_PROGRAM_CHANNEL_MAP, ERX_PROGRAM_CHANNEL_UNMAP },',
                '{ ERX_PROGRAM_BELL_CREATE, ERX_PROGRAM_BELL_DESTROY },',
                '{ ERX_PROGRAM_DATA_CREATE, ERX_PROGRAM_DATA_DESTROY },',
+               '{ ERX_PROGRAM_DATA_MAP, ERX_PROGRAM_DATA_UNMAP },',
                '{ ERX_PROGRAM_IRQ_CREATE, ERX_PROGRAM_IRQ_CLOSE },',
                '{ ERX_PROGRAM_SINK_REGISTER, ERX_PROGRAM_SINK_UNREGISTER },',
                '{ ERX_PROGRAM_IRQ_BIND, ERX_PROGRAM_IRQ_UNBIND },',
@@ -264,8 +270,18 @@ class ErxProgramCoreTest < Minitest::Test
     "the session maps the program's side writable" =>
       [:side_differences, '!= 0 ? ERX_PROT_R : ERX_PROT_RW', '!= 0 ? ERX_PROT_RW : ERX_PROT_R'],
     'the session maps an index that is not a side' =>
-      [:side_differences, 'if (index != ERX_PROGRAM_ARG_OWN_SIDE && index != ERX_PROGRAM_ARG_PEER_SIDE)',
-       'if (index >= ERX_PROGRAM_INSTALLS)'],
+      [:side_differences, "\tdefault:\n\t\treturn (0);", "\tdefault:\n\t\treturn (index < ERX_PROGRAM_INSTALLS ? ERX_PROT_RW : 0);"],
+    'a byte count past the slot, bounded by the data area alone' =>
+      [:data_differences, 'count > ERX_PROG_DATA_SLOT_BYTES)', 'count > slots * ERX_PROG_DATA_SLOT_BYTES)'],
+    'a byte count one past the slot, and past the data area in its last slot' =>
+      [:data_differences, 'count > ERX_PROG_DATA_SLOT_BYTES)', 'count > ERX_PROG_DATA_SLOT_BYTES + 1)'],
+    'a slot past the data area' =>
+      [:data_differences, 'slot >= slots', 'slot > slots'],
+    'the session maps the data area read-only' =>
+      [:side_differences, "case ERX_PROGRAM_INSTALL_DATA:\n\t\treturn (ERX_PROT_RW);",
+       "case ERX_PROGRAM_INSTALL_DATA:\n\t\treturn (ERX_PROT_R);"],
+    "the data area's map is never undone" =>
+      [:start_differences, '{ ERX_PROGRAM_DATA_MAP, ERX_PROGRAM_DATA_UNMAP },', '{ ERX_PROGRAM_DATA_MAP, NO_UNDO },'],
     'the install passes one copy fewer' =>
       [:install_differences, 'count - first < ERX_MSG_CAPS ? count - first :',
        'count - 1 - first < ERX_MSG_CAPS ? count - 1 - first :'],
@@ -410,15 +426,30 @@ class ErxProgramCoreTest < Minitest::Test
   end
 
   # The session maps the program's side read-only and its own read-write, so each side has
-  # exactly one writer, the party whose copy carries WRITE, and maps nothing else.
+  # exactly one writer, the party whose copy carries WRITE; it maps the data area read-write,
+  # since its handler copies a read's bytes into a slot and a write's out of one
+  # (docs/design-programs.md, "Descriptors and files"); and it maps nothing else.
   def side_differences(out)
     k = out[:constants]
-    want = out[:prots].keys.to_h { [_1, 0] }.merge('own_side' => k.fetch('prot_r'), 'peer_side' => k.fetch('prot_rw'))
+    want = out[:prots].keys.to_h { [_1, 0] }
+                      .merge('own_side' => k.fetch('prot_r'), 'peer_side' => k.fetch('prot_rw'), 'data' => k.fetch('prot_rw'))
     writers = %w[own_side peer_side].reject do |side|
       (out[:installs].fetch(side) & k.fetch('hr_write') != 0) ^ (out[:prots].fetch(side) == k.fetch('prot_rw'))
     end
     (out[:prots] == want ? [] : ["session mappings: got #{out[:prots].inspect}, want #{want.inspect}"]) +
       writers.map { "side #{_1}: not exactly one writer" }
+  end
+
+  # Each copy the driver asked about, a slot and a count in a data area of some slots: admitted
+  # exactly when the slot is one of the area's and the count at most a slot's bytes, at the
+  # slot's first byte, so an admitted copy never leaves its slot or the area.
+  def data_differences(out)
+    slot_bytes = constant('data_slot_bytes')
+    problems = out[:data].filter_map do |(slots, slot, count), (status, offset)|
+      want = slot < slots && count <= slot_bytes ? [constant('ok'), slot * slot_bytes] : [constant('einval'), 0]
+      "data slots #{slots} slot #{slot} count #{count}: got #{[status, offset]}, want #{want}" unless [status, offset] == want
+    end
+    out[:data].empty? ? ['the driver asked about no data copy'] : problems
   end
 
   # Passes from 0, each where the last ended, must reach exactly count in steps of 1..caps.
@@ -573,7 +604,7 @@ class ErxProgramCoreTest < Minitest::Test
 
   def parse(lines)
     out = { acts: {}, phases: {}, constants: {}, signals: {}, specs: {}, starts: {}, ends: {}, installs: {},
-            prots: {}, batches: {}, hand_batches: {}, hand_rights: {} }
+            prots: {}, data: {}, batches: {}, hand_batches: {}, hand_rights: {} }
     lines.each { parse_line(out, _1.split) }
     out
   end
@@ -585,6 +616,8 @@ class ErxProgramCoreTest < Minitest::Test
     in ['spec', name, status] then out[:specs][name] = Integer(status)
     in ['install', _, name, rights] then out[:installs][name] = Integer(rights)
     in ['prot', _, name, prot] then out[:prots][name] = Integer(prot)
+    in ['data', slots, slot, count, '=', status, offset]
+      out[:data][[slots, slot, count].map { Integer(_1) }] = [Integer(status), Integer(offset)]
     in ['batch', first, count] then out[:batches][Integer(first)] = Integer(count)
     in ['handbatch', first, count] then out[:hand_batches][Integer(first)] = Integer(count)
     in ['handrights', given, passed] then out[:hand_rights][Integer(given)] = Integer(passed)

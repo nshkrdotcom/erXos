@@ -44,6 +44,7 @@ static const struct {
 	{ ERX_PROGRAM_CHANNEL_MAP, ERX_PROGRAM_CHANNEL_UNMAP },
 	{ ERX_PROGRAM_BELL_CREATE, ERX_PROGRAM_BELL_DESTROY },
 	{ ERX_PROGRAM_DATA_CREATE, ERX_PROGRAM_DATA_DESTROY },
+	{ ERX_PROGRAM_DATA_MAP, ERX_PROGRAM_DATA_UNMAP },
 	{ ERX_PROGRAM_IRQ_CREATE, ERX_PROGRAM_IRQ_CLOSE },
 	{ ERX_PROGRAM_SINK_REGISTER, ERX_PROGRAM_SINK_UNREGISTER },
 	{ ERX_PROGRAM_IRQ_BIND, ERX_PROGRAM_IRQ_UNBIND },
@@ -174,9 +175,28 @@ erx_program_hand_rights(uint32_t rights)
 uint32_t
 erx_program_session_prot(uint32_t index)
 {
-	if (index != ERX_PROGRAM_ARG_OWN_SIDE && index != ERX_PROGRAM_ARG_PEER_SIDE)
+	switch (index) {
+	case ERX_PROGRAM_ARG_OWN_SIDE:
+	case ERX_PROGRAM_ARG_PEER_SIDE:
+		return ((install_rights[index] & ERX_HR_WRITE) != 0 ? ERX_PROT_R : ERX_PROT_RW);
+	case ERX_PROGRAM_INSTALL_DATA:
+		return (ERX_PROT_RW);
+	default:
 		return (0);
-	return ((install_rights[index] & ERX_HR_WRITE) != 0 ? ERX_PROT_R : ERX_PROT_RW);
+	}
+}
+
+/* A data area's offsets fit in 64 bits: slot is below slots, which the spec check bounds. */
+_Static_assert(ERX_PROG_DATA_SLOTS_MAX <= UINT64_MAX / ERX_PROG_DATA_SLOT_BYTES, "a data area's offsets fit");
+
+int
+erx_program_data_span(uint64_t slots, uint64_t slot, uint64_t count, uint64_t *offset)
+{
+	*offset = 0;
+	if (slot >= slots || count > ERX_PROG_DATA_SLOT_BYTES)
+		return (ERX_EINVAL);
+	*offset = slot * ERX_PROG_DATA_SLOT_BYTES;
+	return (ERX_OK);
 }
 
 uint32_t

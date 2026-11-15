@@ -1612,7 +1612,8 @@ applied in this order, each step undoing the ones before it on failure:
    session's doorbell bound to the session's group under the port's
    label, registered as the port's sink in the event table; and the
    program's data area, from the session's budget as the channel is
-   ([design-programs.md](design-programs.md#the-channel)). They come
+   ([design-programs.md](design-programs.md#the-channel)), with the
+   session's read-write mapping of it. They come
    first, before the program's budget, so the undo, last step first,
    deletes them only after that budget is destroyed, and the program
    never faults on its own channel.
@@ -1718,7 +1719,10 @@ and installs and binds as the start does, answering
 `{ok, Term}` with each `{hand, I}` replaced by its value
 ([design-programs.md](design-programs.md#the-handler)). File data never
 crosses the channel per byte: it moves through the program's data area,
-which the handler fills and drains
+which the handler fills and drains with `erx_program:data_write/3` and
+`data_read/3`, each a copy into or out of one slot through the session's
+mapping, which the driver takes only from the port's owner and only within
+the slot it names and the program's `slots`
 ([design-programs.md](design-programs.md#descriptors-and-files)). A
 program's shared mapping of a file is the session's memory object for
 that file, which the handler fills with ordinary reads, installs into the

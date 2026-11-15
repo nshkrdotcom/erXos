@@ -146,7 +146,7 @@ static _Atomic uint64_t labels_given;
  * and the outbound reader page, the program's side the outbound ring and the inbound reader
  * page. channel_sides gives each the program_arg index its value takes in the program,
  * named from the program's view, and the session maps each as the core says
- * (erx_program_session_prot), so the core's rights decide both parties' access.
+ * (erx_program_session_prot), so the core's rights decide both parties' access to each side.
  */
 enum { SESSION_SIDE, PROGRAM_SIDE, CHANNEL_SIDES };
 static const uint32_t channel_sides[CHANNEL_SIDES] = {
@@ -167,6 +167,7 @@ typedef struct {
 	uint64_t		side_addr[CHANNEL_SIDES]; /* and the session's mappings of them */
 	uint64_t		bell;		/* the program's doorbell */
 	uint64_t		data;		/* the program's data area */
+	uint64_t		data_addr;	/* and the session's mapping of it */
 	uint64_t		budget;
 	uint64_t		group;
 	uint64_t		irq;		/* the session's doorbell, the port's own IRQ object */
@@ -433,6 +434,41 @@ channel_map(program_t *program)
 	}
 	program->mapped = true;
 	return (ERX_OK);
+}
+
+/* The data area's bytes: the spec's slots, at most ERX_PROG_DATA_SLOTS_MAX, of a slot's bytes each. */
+static uint64_t
+data_bytes(const program_t *program)
+{
+	return (program->spec.slots * ERX_PROG_DATA_SLOT_BYTES);
+}
+
+/* The session's mapping of the data area, as erx_program_session_prot says, or none. */
+static int
+data_map(program_t *program)
+{
+	uint64_t addr = 0;
+	int status = erx_vm_reserve(ERX_CAP_SELF, 0, data_bytes(program), 0, &addr);
+
+	if (status != ERX_OK)
+		return (status);
+	status = erx_vm_map(ERX_CAP_SELF, addr, data_bytes(program), program->data, 0,
+	    erx_program_session_prot(ERX_PROGRAM_INSTALL_DATA));
+	if (status != ERX_OK) {
+		(void)erx_vm_release(ERX_CAP_SELF, addr, data_bytes(program));
+		return (status);
+	}
+	program->data_addr = addr;
+	return (ERX_OK);
+}
+
+/* Releases the session's mapping of the data area; a copy then finds none (data_slot). */
+static void
+data_unmap(program_t *program)
+{
+	if (program->data_addr != 0)
+		(void)erx_vm_release(ERX_CAP_SELF, program->data_addr, data_bytes(program));
+	program->data_addr = 0;
 }
 
 /* Drops the frame being written, if any. */
@@ -755,8 +791,9 @@ apply(program_t *program, erx_program_action_t action)
 	case ERX_PROGRAM_BELL_CREATE:
 		return (erx_irq_create(boot->budget.raw, 0, ERX_IRQ_SOFT, 0, &program->bell));
 	case ERX_PROGRAM_DATA_CREATE:
-		return (erx_mem_create(boot->budget.raw, program->spec.slots * ERX_PROG_DATA_SLOT_BYTES, 0,
-		    &program->data));
+		return (erx_mem_create(boot->budget.raw, data_bytes(program), 0, &program->data));
+	case ERX_PROGRAM_DATA_MAP:
+		return (data_map(program));
 	case ERX_PROGRAM_BUDGET_CREATE:
 		return (erx_budget_create(boot->budget.raw, ERX_BUDGET_ELASTIC, program->spec.guarantee,
 		    program->spec.cap, &program->budget));
@@ -838,6 +875,9 @@ apply(program_t *program, erx_program_action_t action)
 	case ERX_PROGRAM_BUDGET_DESTROY:
 		return (destroy(&program->budget));
 	/* What the session made from its own budget, deleted only after the program's. */
+	case ERX_PROGRAM_DATA_UNMAP:
+		data_unmap(program);
+		return (ERX_OK);
 	case ERX_PROGRAM_DATA_DESTROY:
 		return (destroy(&program->data));
 	case ERX_PROGRAM_BELL_DESTROY:
@@ -1513,21 +1553,47 @@ hand_install(program_t *program, uint64_t number, uint64_t expected, ErlDrvBinar
 }
 
 /*
+ * The first of count bytes in the session's mapping of the program's data area at slot, for
+ * the handler's copy out of it (DATA_READ) or into it (DATA_WRITE), in *at. Only the port's
+ * owner, the program's handler, copies, since ERTS lets any process call port_control on a
+ * port it names. ERX_EINVAL for another caller, a start that failed, or a slot or a count
+ * the core refuses (erx_program_data_span), so a copy never leaves the slot it names;
+ * ERX_EDEAD once the release has unmapped the area.
+ */
+static int
+data_slot(program_t *program, uint64_t slot, uint64_t count, uint8_t **at)
+{
+	uint64_t offset;
+	int status;
+
+	if (program->start_error != ERX_OK || driver_caller(program->port) != driver_connected(program->port))
+		return (ERX_EINVAL);
+	if (program->data_addr == 0)
+		return (ERX_EDEAD);
+	status = erx_program_data_span(program->spec.slots, slot, count, &offset);
+	if (status == ERX_OK)
+		*at = (uint8_t *)(uintptr_t)(program->data_addr + offset);
+	return (status);
+}
+
+/*
  * The owner's commands. STARTED reads the start's answer, which feeds the end, and
  * the end closes the port here when the program already ended; the answer is built first,
  * since that close frees program. SEND, RUN and STOP act only on a
  * program whose start succeeded; the end decides whether each is admitted. A STOP's status
- * is the one the program's end reports, from 0 to 2^32 - 1.
+ * is the one the program's end reports, from 0 to 2^32 - 1. DATA_READ's slot and count, and
+ * DATA_WRITE's slot, are 64-bit words; DATA_WRITE's bytes follow its slot, and DATA_READ
+ * answers "ok" and the slot's first count bytes.
  */
 static ErlDrvSSizeT
 program_control(ErlDrvData data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen)
 {
 	program_t *const program = (program_t *)data;
 	ErlDrvBinary *installed;
-	uint8_t *values;
+	uint8_t *values, *at = NULL;
 	size_t values_len;
 	ErlDrvSSizeT need;
-	uint64_t stop;
+	uint64_t stop, count;
 	int status;
 
 	(void)rlen;
@@ -1572,6 +1638,21 @@ program_control(ErlDrvData data, unsigned int command, char *buf, ErlDrvSizeT le
 		if (program->start_error == ERX_OK && stop <= UINT32_MAX)
 			(void)end_feed(program, (erx_program_input_t){ .kind = ERX_PROGRAM_STOP,
 			    .status = (int64_t)stop }, &status);
+		return (answer(status, NULL, 0, rbuf));
+	case ERX_PROGRAM_CONTROL_DATA_READ:
+		if (len != 2 * sizeof(uint64_t))
+			return (-1);
+		count = word_at((const uint8_t *)buf + sizeof(uint64_t), sizeof(uint64_t));
+		status = data_slot(program, word_at((const uint8_t *)buf, sizeof(uint64_t)), count, &at);
+		/* answer takes the bytes only on ERX_OK, when the count is at most a slot's. */
+		return (answer(status, at, (size_t)count, rbuf));
+	case ERX_PROGRAM_CONTROL_DATA_WRITE:
+		if (len < sizeof(uint64_t))
+			return (-1);
+		count = len - sizeof(uint64_t);
+		status = data_slot(program, word_at((const uint8_t *)buf, sizeof(uint64_t)), count, &at);
+		if (status == ERX_OK)
+			memcpy(at, buf + sizeof(uint64_t), (size_t)count);
 		return (answer(status, NULL, 0, rbuf));
 	default:
 		return (-1);

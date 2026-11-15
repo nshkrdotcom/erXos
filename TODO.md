@@ -3042,18 +3042,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (docs/design-pipes.md, "The second tier" and "Deposits"), and `holder()` has no
   `{deposit, Ticket}`. `test/erlang/erx_pipe_explore.erl` gains their events with them.
 * [High] session, `erx_prog_handler` (file requests): the handler serves `lopen`, `lcreate`, `read`,
-  `write` and `clunk` over the program's narrowed namespace through `erx_file_description`, but every
-  read and write answers `enosys`, since `erx_program:data_read/3` and `data_write/3` do: the program
-  driver creates the data area (`ERX_PROGRAM_DATA_CREATE`) and does not yet map it into the session.
-  It needs a map and an unmap step in erx_program_core.c's plan, and two port control commands that
-  copy out of and into one slot, bounded to the slot and the count, with a seeded fault for a count past
-  the data area. No program sends a file request yet: `liberx` has no file client
-  (docs/design-files.md, "Native clients"), so the programs QEMU suite has no C test program that opens,
-  reads, writes and closes a file. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
+  `write` and `clunk` over the program's narrowed namespace through `erx_file_description`, and moves
+  their bytes through the data area (`erx_program:data_read/3` and `data_write/3`), but no program
+  sends a file request yet: `liberx` has no file client (docs/design-files.md, "Native clients"), so
+  the programs QEMU suite has no C test program that opens, reads, writes and closes a file. The
+  driver's two data copies (`erx_program_drv.c` `data_slot`, `DATA_READ`, `DATA_WRITE`) run on no
+  target test either, though one needs no file client: a test that owns a program's port can write
+  and read back a slot, and be refused a slot equal to `slots`, a caller other than the owner and a
+  copy after the program ended. The handler's stand-in `erx_program:data_read/3` answers `enosys`, so
+  its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
   host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
   The other operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need
   a 64-bit offset or size, which the frame profile cannot spell, since it refuses every `u64` but a
   capability (docs/design-abi.md, "Program protocol").
+* [Low] erx_program driver, `erx_program_drv.c` (`program_control`): only `INSTALL` and the two data
+  copies check that the caller is the port's owner; `SEND`, `RUN` and `STOP` do not, so any process of
+  the session that names the port can write the program a frame or stop it. One check at the entry of
+  `program_control` would make every owner's command owner-only by construction.
 * [Low] session, `erx_file_remote:open_flags/4`: an `lopen` that writes on an entry that is not `rw`
   answers `erofs` before the path is walked, so a missing file opened to write there is `erofs`, where
   FreeBSD's `vn_open` answers `ENOENT` from the lookup first.
@@ -3067,8 +3072,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   actions and the description's loop run in no test; and the core's exhaustive walk checks only the
   frames sent, not the relayed actions, and leaves out write, clunk, error answers and an answer of the
   wrong kind on a waiting slot.
-* [Low] session, `erx_prog_handler` (files): while `erx_program:data_write/3` answers `enosys`, a read
-  advances the description's offset and then fails; the release refuses every `lcreate` with `erofs`,
+* [Low] session, `erx_prog_handler` (files): the release refuses every `lcreate` with `erofs`,
   an exclusive one at an existing name included, where an image answers `eexist`; an open at a
   directory of the empty root answers `eio`; a start whose `cwd` the startup grammar accepts but
   `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`; and `O_DIRECTORY`, `O_NOFOLLOW`,
@@ -3221,10 +3225,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   tree and `erx_time_set_offset` in [design-time.md](docs/design-time.md#phase-1), which says the hosted setter
   answers `ERX_ENOTSUP`, and declares it only in the Fiasco backend's `time.h`, so `erx_clock_nif` has nothing to
   call in a hosted build. Add the refusal beside the others in `refused.c`.
-* [Low] erx_program driver, `otp/erts/emulator/sys/erxos/erx_program_drv.c`: the session makes and
-  installs the program's data area, but the session's own mapping of it waits for the handler's
-  copier, its NIF, which copies the bytes of reads and writes (docs/design-programs.md, "Descriptors
-  and files").
 * [Medium] erx_program driver and core (`erx_program_drv.c` `channel_sides`, `install()`;
   `erx_program_core.c` `install_rights`): which channel side sits at which `program_arg` index, how
   the session maps it and what rights the program gets are three tables joined by index, and no

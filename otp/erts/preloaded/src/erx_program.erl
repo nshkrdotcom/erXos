@@ -33,6 +33,8 @@ frame it sends gives the program's credit, and reads how each step ended.
 %% grant's kind (?ERX_PROGRAM_GRANT_*) are abi/erx_abi.txt's.
 -include("generated/erx_abi.hrl").
 -define(IS_NUMBER(N), (is_integer(N) andalso N >= 1 andalso N =< 16#ffffffff)).
+%% A data copy's slot and count, each a 64-bit word of its command.
+-define(IS_WORD(W), (is_integer(W) andalso W >= 0 andalso W =< 16#ffffffffffffffff)).
 %% A program's budget, in pages, when the spec names none.
 -define(DEFAULT_GUARANTEE, 0).
 -define(DEFAULT_CAP, 4096).
@@ -282,22 +284,33 @@ slots(Spec) -> maps:get(slots, Spec, ?DEFAULT_SLOTS).
 
 -doc """
 The first `Count` bytes of the program's data area slot `Slot`, for a write the
-program asked (docs/design-programs.md, "Reads and writes"). The driver does
-not yet map the data area into the session, so every call answers
-`{error, enosys}` (TODO.md).
+program asked (docs/design-programs.md, "Reads and writes"): `{ok, Bytes}`,
+`Count` bytes, which the program may still be changing, as it may any of its
+own; `{error, einval}` for a caller other than the port's owner, a slot past
+the program's `slots/1` or a count past a slot's 64 KiB, which the driver
+refuses before it reads a byte; `{error, edead}` once the program's end has
+released its data area. A `Slot` or `Count` outside 0..2^64-1 is `badarg`.
 """.
--spec data_read(port(), non_neg_integer(), pos_integer()) -> {ok, binary()} | {error, atom()}.
-data_read(Port, Slot, Count) when is_port(Port), is_integer(Slot), is_integer(Count) ->
-    {error, enosys}.
+-spec data_read(port(), non_neg_integer(), non_neg_integer()) -> {ok, binary()} | {error, atom()}.
+data_read(Port, Slot, Count) when is_port(Port), ?IS_WORD(Slot), ?IS_WORD(Count) ->
+    %% The driver answers exactly Count bytes or refuses: any other answer is its bug, a
+    %% case_clause here.
+    case port_control(Port, ?ERX_PROGRAM_CONTROL_DATA_READ, <<Slot:64, Count:64>>) of
+        <<"ok", Bytes/binary>> when byte_size(Bytes) =:= Count -> {ok, Bytes};
+        <<$e, _/binary>> = Refused -> {error, binary_to_atom(Refused)}
+    end.
 
 -doc """
-Copies `Bytes` into the program's data area slot `Slot`, for a read the program
-asked. As data_read/3, every call answers `{error, enosys}` until the driver
-maps the data area (TODO.md).
+Copies `Bytes` to the start of the program's data area slot `Slot`, for a read
+the program asked: `ok`, or the refusals of data_read/3, with `Bytes` longer
+than a slot's 64 KiB in place of its count, and nothing copied.
 """.
 -spec data_write(port(), non_neg_integer(), binary()) -> ok | {error, atom()}.
-data_write(Port, Slot, Bytes) when is_port(Port), is_integer(Slot), is_binary(Bytes) ->
-    {error, enosys}.
+data_write(Port, Slot, Bytes) when is_port(Port), ?IS_WORD(Slot), is_binary(Bytes) ->
+    case port_control(Port, ?ERX_PROGRAM_CONTROL_DATA_WRITE, [<<Slot:64>>, Bytes]) of
+        <<"ok">> -> ok;
+        <<$e, _/binary>> = Refused -> {error, binary_to_atom(Refused)}
+    end.
 
 %% What a frame gives the program's credit (docs/design-programs.md, Credit): the
 %% reply slot it answers, ?ERX_PROGRAM_SEND_NO_REPLY for none, and the notices it makes due, a

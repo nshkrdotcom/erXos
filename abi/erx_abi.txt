@@ -259,14 +259,18 @@ limit program_cap_limit u32 16
 # The program port's control commands, from erx_program.erl to
 # erx_program_drv.c (docs/design-runtime.md#programs-as-ports): how the
 # start ended, a frame to write, the first thread's start, the anchor's
-# stop, and the install of a pipe hand-off into the running program
-# (docs/design-pipes.md#hand-offs).
+# stop, the install of a pipe hand-off into the running program
+# (docs/design-pipes.md#hand-offs), and the handler's copies out of and
+# into one slot of the program's data area
+# (docs/design-programs.md#descriptors-and-files).
 enum program_control u8
   value started 1
   value send 2
   value run 3
   value stop 4
   value install 5
+  value data_read 6
+  value data_write 7
 # The kind of each grant a send's payload carries: a {closed} or a
 # {drained} notice the frame makes due (docs/design-programs.md#the-program-protocol,
 # Credit). A send's reply slot is program_send_no_reply for a frame that

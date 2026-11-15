@@ -60,7 +60,7 @@
  * A bound on the actions one input of the end returns: a report, a stop, the whole release
  * (one undo per step at most) and a close. erx_program_core.c asserts the plan fits.
  */
-#define ERX_PROGRAM_ACTIONS_MAX	25
+#define ERX_PROGRAM_ACTIONS_MAX	26
 
 typedef enum {
 	ERX_PROGRAM_DONE = 0,		/* the start's run is over; see erx_program_start_t.error */
@@ -80,6 +80,7 @@ typedef enum {
 	ERX_PROGRAM_CHANNEL_MAP,	/* both into the session's space, as erx_program_session_prot says */
 	ERX_PROGRAM_BELL_CREATE,	/* the program's doorbell, which the driver triggers */
 	ERX_PROGRAM_DATA_CREATE,	/* the program's data area */
+	ERX_PROGRAM_DATA_MAP,		/* it into the session's space, as erx_program_session_prot says */
 	ERX_PROGRAM_IRQ_CREATE,		/* the session's doorbell, the port's own IRQ object, which the program triggers */
 	ERX_PROGRAM_SINK_REGISTER,	/* the port's sink in the event table, which gives the bind's label */
 	ERX_PROGRAM_IRQ_BIND,		/* the session's doorbell into the session's group under that label */
@@ -109,6 +110,7 @@ typedef enum {
 	ERX_PROGRAM_IRQ_UNBIND,		/* a bind to ERX_CAP_NULL */
 	ERX_PROGRAM_SINK_UNREGISTER,
 	ERX_PROGRAM_IRQ_CLOSE,
+	ERX_PROGRAM_DATA_UNMAP,		/* erx_vm_release of the session's mapping of the data area */
 	ERX_PROGRAM_DATA_DESTROY,
 	ERX_PROGRAM_BELL_DESTROY,
 	ERX_PROGRAM_CHANNEL_UNMAP,	/* erx_vm_release of the session's four mappings */
@@ -304,11 +306,22 @@ uint32_t	erx_program_install_rights(uint32_t index);
  */
 uint32_t	erx_program_hand_rights(uint32_t rights);
 /*
- * How the session maps the channel's side at index: read-only the side the program's copy
- * may write, its own, and read-write the side it may only read, the session's, so each
- * side has exactly one writer by the rights above. 0, no mapping, at any other index.
+ * How the session maps the copy at index: of the channel's sides, read-only the side the
+ * program's copy may write, its own, and read-write the side it may only read, the session's,
+ * so each side has exactly one writer by the rights above; the data area read-write, since
+ * the handler copies a read's bytes into a slot and a write's out of one
+ * (docs/design-programs.md, "Descriptors and files"). 0, no mapping, at any other index.
  */
 uint32_t	erx_program_session_prot(uint32_t index);
+/*
+ * Where the handler's copy of count bytes into or out of slot of a program's data area of
+ * slots slots starts: ERX_OK with the byte offset into the area in *offset when slot is one
+ * of the area's and count at most a slot's bytes, so the copy stays within its slot and the
+ * area; else ERX_EINVAL with *offset 0. slots is the spec's, which erx_program_spec_check
+ * bounds; slot and count are the handler's, from a request of the program's
+ * (erx_program:data_read/3 and data_write/3).
+ */
+int	erx_program_data_span(uint64_t slots, uint64_t slot, uint64_t count, uint64_t *offset);
 /*
  * How many of count copies one erx_cap_pass from index first passes: at most ERX_MSG_CAPS,
  * and 0 once first is past the last, so passes from 0, each starting where the last ended,
