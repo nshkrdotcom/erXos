@@ -1146,28 +1146,83 @@ identity address and at most `bt_bonds_max` bonds, encoded by `erx_bt_state`
 in a form with a version, which refuses any other version and any
 malformed or oversized input with a fuzz target, since what a store
 returns is untrusted wherever a medium can be written. The store keeps
-the whole state through one seam, `get() -> {ok, Blob} | none` and
-`put(Blob) -> ok | {error, unavailable}`:
+the whole state through one seam, the vault's state slot
+([design-system.md](design-system.md#state-slots)), taken with all its
+results: `get() -> {ok, Blob} | none | {error, unavailable}` and
+`put(Blob) -> ok | {error, too_large | unavailable}`, the blob replaced
+whole. Both stores behind it answer with exactly these results:
 
 * **in a development build**, a file in the Bluetooth domain's directory
   on the data partition, replaced whole by write, sync and rename, as the
   SSH domain keeps its host key before the vault
-  ([design-ssh.md](design-ssh.md#host-keys));
+  ([design-ssh.md](design-ssh.md#host-keys)); `get` answers `none` when
+  the file does not exist and `unavailable` when it cannot be read, and
+  `put` answers `unavailable` when any step of the replacement fails;
 * **in a release build**, the vault's state slot `{state, "bt"}`,
   whose `get` and `put` are the seam's
   ([design-system.md](design-system.md#state-slots)); the release
   manifest check refuses a `bt` row whose store is the development one.
 
+What `get` returns is untrusted wherever the medium can be written:
+`erx_bt_state` decodes it, and a blob that does not decode is not a
+state.
+
+**The domain changes only a state it has read.** The store process
+holds the store as one of two values: `read`, the state last read or
+confirmed, or `unknown`. At the start of the Bluetooth domain it starts
+`unknown` and calls `get`:
+
+| `get` answers | The store | The bonds | The identity address | Reason at `/proc/bt` and in the log |
+| --- | --- | --- | --- | --- |
+| `none` | `read`, empty | none | made now, kept by the first `put` | none |
+| `{ok, Blob}` that decodes | `read` | the blob's | the blob's | none |
+| `{ok, Blob}` that does not decode | `unknown` | none | made now, for this start only | `store_unreadable` |
+| `{error, unavailable}` | `unknown` | none | made now, for this start only | `store_unavailable` |
+
+A store that is `unknown` after the start's read refuses every change
+until `forget all`, below, or the next start, which reads again: the
+domain runs without bonds and refuses pairing, as it did before stage 4,
+and the address made for this start is not the one a stored state may
+name, so a later read could give bonds an address they were never
+advertised under. A pairing, a bonded link's configuration write and
+`forget` are the changes. Each puts the whole new state, built from the
+state last read or confirmed, and goes on only from `read`; a store that
+is `unknown` otherwise fails the change as the next paragraphs say and
+is left as it was. So no ordinary change replaces a state the domain
+could not read. The one write that does not start from a read state is
+`forget all`: it puts an empty state with the identity address in use,
+whatever the store holds, the explicit way past a blob that does not
+decode, and a confirmed answer makes the store `read` and the address
+kept.
+
+**Publication.** A `put` that answers `ok` is confirmed: the store holds
+the new state and the domain's `read` value is it. Any other answer
+leaves the change unconfirmed: the medium may keep the old blob or the
+new, each complete, as for every change to the vault's files that fails
+before its checkpoint answers
+([design-system.md](design-system.md#the-vault), One owner per file),
+and as for a development file whose rename may or may not have reached
+the medium. The domain then keeps what it had, fails the change, and
+sets the store to `unknown`, so the next change reads first and starts
+from whichever blob the store kept; when that read leaves the store
+`unknown` the change fails and the store stays so. A read that follows
+an unconfirmed put replaces the bonds with the blob's, and a connected
+link whose bond the blob lacks ends, as forgetting a bond ends it. The
+identity address a stored blob names is the one in use, since the domain
+made it or read it before any `put`. `too_large` takes the same path: the
+encoder bounds a state to `bt_bonds_max` bonds, whose largest encoding
+fits the vault's 4 KiB, so meeting it is a bug.
+
 A pairing that completes asks the store to keep the new state, the
 bond with the subscriptions its link has made so far, and the link's key
 is a kept bond's once the store answered `ok`, which `connected` tells
 the handlers with `bonded => true`; the link's level does not wait on
-the store ([One table, one gate](#one-table-one-gate)). A store that
-answers `unavailable` fails the pairing, `failed ... unavailable`, and
-the link ends. On a trial boot both stores are read-only, since every
-file system mounts read-only
-([design-storage.md](design-storage.md#system-updates)), so pairing
-fails `unavailable` there and bonds already kept work.
+the store ([One table, one gate](#one-table-one-gate)). A pairing whose
+store is `unknown`, or whose `put` is not `ok`, fails `failed ...
+unavailable`, its keys are discarded and the link ends. On a trial boot
+both stores are read-only, since every file system mounts read-only
+([design-storage.md](design-storage.md#system-updates)), so a `put`
+fails `unavailable` there, pairing fails, and bonds already kept work.
 
 **Pairing never replaces a bond.** A pairing whose phone turns out, at
 its key distribution, to have the identity of a bond already kept fails
@@ -1183,8 +1238,8 @@ A bonded link's subscriptions persist across connections, as GATT
 3.3.3.3 requires: a write of a Client Characteristic Configuration that
 changes it on a link with a kept bond's key is answered with its Write
 Response only once the store has kept the new state, and a store that
-answers `unavailable` answers Unlikely Error and leaves the configuration
-as it was. So a phone that saw its write answered may rely on it after a
+is `unknown` or does not answer `ok` answers Unlikely Error and leaves
+the configuration as it was. So a phone that saw its write answered may rely on it after a
 power cut, Service Changed's configuration included, which a change of
 the table at a later start needs. A write that changes nothing, and
 every write on a link whose key is not yet kept, is answered at once; a
@@ -1408,11 +1463,11 @@ erx_bt_sup                      rest_for_one
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
 | a handler that ends | the facet's monitor | the handler's attachment | the app attaches again |
-| a store that answers `unavailable` | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing | `/proc/bt` and the log say so; the next start reads again |
+| the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line | the line service | reads of `data` | the controller group's restart writes `reset` |
 | a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the Bluetooth domain's reads fail and its controller group restarts; the console, in no group, is untouched |
 | a power notification that fails | `reset`'s answer, `eio` | the bring-up | the group's restart retries within its intensity; after an unanswered request every later notification of the boot fails at once, the VL805's included, so the Bluetooth domain ends at its intensity, and its log records and the line service's `/proc` show why |
-| a configuration write the store does not keep | the store's `unavailable` | nothing: Unlikely Error, the configuration unchanged | the phone writes again |
+| a configuration write the store does not keep | the store, `unknown` or a `put` not `ok` | nothing: Unlikely Error, the configuration unchanged | the phone writes again |
 
 ## Refusals and error results
 
@@ -1423,8 +1478,9 @@ erx_bt_sup                      rest_for_one
 | the line's `data` | `eio` | the line is broken |
 | the control tree's `pair` | `ebusy` | another window is open |
 | | `einval` | a first write other than `display` or `nodisplay` |
-| | `eio` | the store is unavailable |
+| | `eio` | the store is `unknown` after its read |
 | the control tree's `ctl` | `einval` | any write but `forget ADDRESS` or `forget all` |
+| | `eio` | `forget ADDRESS` while the store stays `unknown`, or any `forget` whose `put` is unconfirmed |
 | | `enoent` | no bond has that identity |
 | `ble` facet | `{error, not_granted}` | a service the grant does not name |
 | | `{error, attached}` | the service already has a handler |
@@ -1436,7 +1492,7 @@ erx_bt_sup                      rest_for_one
 | | `{error, timeout}` | an indication unconfirmed in 30 s, after which the link ends (ATT 3.3.3) |
 | a pairing, on `pair` | `failed ADDR not_supported`, `secure_connections_required`, `key_size`, `method`, `confirm`, `dhkey`, `timeout`, `already_bonded`, `bonds_full`, `unavailable`, `disconnected` | SMP's reasons and the store's, each mapped from one Pairing Failed code or one event |
 | a Pairing Request during the pairing wait | Pairing Failed, Repeated Attempts (`0x09`) | the wait has not passed; no line on `pair`, the window stays open |
-| a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store answered `unavailable` |
+| a configuration write on a bonded link | Unlikely Error (`0x0E`) | the store is `unknown` or its `put` was not `ok` |
 
 The ATT errors erXos sends are Table 3.4's: Invalid Handle, Read Not
 Permitted, Write Not Permitted, Invalid PDU, Insufficient Authentication,
@@ -1471,7 +1527,8 @@ Each passing case is paired with the seeded fault it must catch.
 | `erx_bt_window`, the window and the wait | the wait is 2, 4, ... 64 s after successive failures, a disconnection mid-pairing counting as one, stays at 64, halves after 600 s without one; a Pairing Request during it answers Repeated Attempts and leaves the window open; windows opened back to back do not shorten it | the wait reset when a window opens; a disconnection not counted as a failure |
 | `erx_pl011:program/2` | `fresh` writes `CR` 0 first, clears `FEN` before the divisors, drains the receive side within 33 reads, writes `IBRD` and `FBRD` before `LCR_H` and `CR` whole last with the flow enables; `keep` is today's sequence | `LCR_H` written before the divisors, so the rate never latches; `fresh` keeping the boot's divisors |
 | `erx_smp_crypto` | SMP Appendix D's sample data for `f4`, `f5`, `f6` and `ah` | the AES-CMAC key byte order reversed |
-| `erx_bt_state` | a state round-trips; every other version, a truncation and an oversized count are refused | the bond count read without its bound |
+| `erx_bt_state` | a state round-trips; every other version, a truncation and an oversized count are refused; the largest state, `bt_bonds_max` bonds with the most subscriptions, encodes in at most 4 KiB | the bond count read without its bound |
+| the store's table, against a fake store that answers each call as a test scripts it, and the development file over a fake data tree that fails a chosen step | a start whose `get` answers `unavailable` runs with no bonds, refuses pairing, a configuration write and `forget ADDRESS`, and puts nothing; a start that reads a blob that does not decode does the same and `forget all` then replaces it, after which pairing works; a start reading `none` makes the identity address and the first pairing's `put` keeps it; a `put` whose rename reached the medium but whose answer is `unavailable` fails the pairing, and the next pairing reads first and keeps the bond the failed one added; after every confirmed change and every read the domain's bonds are what the store's `get` returns | `unavailable` at the start read as `none`, which the first case finds as a pairing that overwrites the stored bonds; a domain that keeps its pre-put state after an unconfirmed `put`, which the rename case finds as the failed pairing's bond gone after the next pairing |
 | the line's `ctl` grammar | `reset` with and without newline accepted; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and a model device service | the four steps run in order; the driver's input during the on time is discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
 | the identity address | 10,000 addresses all have the static form and parse in Bumble's `Address` as static | the top bits cleared |
