@@ -26,6 +26,7 @@ require_relative 'hostlink_guest'
 require_relative 'reload_guest'
 require_relative 'code_watch'
 require_relative 'json_input'
+require_relative 'lvgl'
 require_relative 'manifest'
 require_relative 'manifest_edit'
 require_relative 'native_root'
@@ -100,8 +101,9 @@ module Erx
     # What a test image adds to the system release (OracleQemu): entries for Pack#build,
     # each with its receipt, the files those receipts name, and the imported trees their
     # sources come from, each with its status, and the archives their links take members
-    # of that no receipt describes, each attributed whole (Archive): LVGL's liblvgl.a for
-    # erx-lvgl. A production image adds nothing.
+    # of that no receipt describes, each attributed whole (Archive). A production image
+    # adds nothing. The domain release's own parts (domain_parts) take the same shape,
+    # LVGL's liblvgl.a for erx-lvgl among their archives (toolkit_parts).
     Added = Data.define(:entries, :inputs, :imports, :archives) do
       def initialize(entries:, inputs:, imports:, archives: [].freeze) = super
     end
@@ -137,6 +139,42 @@ module Erx
       end
       ReleaseFiles.domain_boot(name, applications: applications)
     end
+
+    # The widget toolkit's program ships with the toolkit (docs/design-packaging.md,
+    # "Where the toolkit's programs live"): a domain release that holds erx_ui carries
+    # erx-lvgl in its bin/, a production image's included, and one that does not carries
+    # nothing of it. The toolkit is an application the runtime builds and the system
+    # release does not hold, so only a domain release, whose files carry no system mark,
+    # ever carries the program.
+    TOOLKIT_APPLICATION = 'erx_ui'
+    raise Error, "the toolkit, #{TOOLKIT_APPLICATION}, is an application the runtime builds" unless
+      ReleaseFiles::APPLICATIONS.include?(TOOLKIT_APPLICATION)
+    raise Error, "the system release does not hold the toolkit, #{TOOLKIT_APPLICATION}" if
+      ReleaseFiles::SYSTEM_APPLICATIONS.include?(TOOLKIT_APPLICATION)
+
+    # The entry of the native program name in the domain release's bin/, from program, its
+    # build (NativeRoot#build_task_receipted's program and receipt): no system mark,
+    # since only the system release's files carry it.
+    def self.program_entry(name, program, codec:)
+      { 'path' => "#{ReleaseFiles::DOMAIN_PREFIX}bin/#{name}", 'kind' => codec.member('entry_kind', 'file'), 'flags' => 0,
+        'id' => "program-#{name}", 'artifact' => program.fetch(:program), 'receipt' => program.fetch(:receipt) }.freeze
+    end
+
+    # What a domain release adds for the toolkit: nothing unless it holds
+    # TOOLKIT_APPLICATION; otherwise erx-lvgl's entry, the files its receipt names, and
+    # liblvgl.a attributed whole under LVGL's license, notices and font-data statement
+    # (Lvgl::Program), from the program the block builds (Lvgl::Program#call's result),
+    # which only such a release asks for.
+    def self.toolkit_parts(release, codec:)
+      return NOTHING_ADDED unless release.applications.include?(TOOLKIT_APPLICATION)
+
+      lvgl = yield
+      library = Archive.new(path: lvgl.fetch(:archive), label: 'lvgl liblvgl.a', license: Lvgl::Program::LICENSE, status: 'stopgap',
+                            notices: Lvgl::Program::NOTICES, font_data: Lvgl::Program::FONT_DATA)
+      Added.new(entries: [program_entry(Lvgl::Program::NAME, lvgl, codec: codec)].freeze, inputs: lvgl.fetch(:inputs),
+                imports: {}.freeze, archives: [library].freeze)
+    end
+
     # A domain's runtime image in the archive: the interpreter's, under the flavour
     # erx_domain's spec names it by (docs/design-domains.md, "Erlang interface"), and the
     # artifact name a domain row's runtime takes. It sorts after domains/ and before
@@ -402,7 +440,7 @@ module Erx
       jit = domains.empty? ? nil : @jit_runtime.build(interpreter: erts)
       domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
       report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries, *added.entries],
-                    root_task: root_task, added_archives: added.archives,
+                    root_task: root_task, added_archives: [*domain.archives, *added.archives],
                     images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                     imports: IMPORTS.merge(added.imports),
                     inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
@@ -1590,13 +1628,15 @@ module Erx
     # The domain release's entries, each file once under domains/erxos/ without the
     # system mark, with a boot script for each of boots, and the two runtime images', the
     # interpreter's and the BeamAsm one (jit, NativeJitRuntime's build), with the files
-    # their receipts name; nothing when there are no boot scripts. ReleaseFiles.domain
+    # their receipts name, and the toolkit's program when the release holds the toolkit
+    # (toolkit_parts); nothing when there are no boot scripts. ReleaseFiles.domain
     # refuses a script it did not make, whose name could leave the work directory, and
     # two scripts of one name.
     def domain_parts(boots, erts:, jit:, archives:, made:, directory:)
       return NOTHING_ADDED if boots.empty?
 
       release = ReleaseFiles.domain(boots)
+      toolkit = self.class.toolkit_parts(release, codec: @codec) { lvgl_program(erts, directory: directory) }
       runtime = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
                                fiasco: @fiasco)
                           .build_domain_runtime_receipted(directory: File.join(directory, 'domain-runtime'), archives: archives)
@@ -1611,9 +1651,19 @@ module Erx
                 'id' => 'domain-runtime', 'artifact' => runtime.fetch(:program), 'receipt' => runtime.fetch(:receipt) }
       jit_image = { 'path' => JIT_RUNTIME_PATH, 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0, 'jit' => true,
                     'id' => 'jit-runtime', 'artifact' => beamasm.fetch(:program), 'receipt' => beamasm.fetch(:receipt) }
-      Added.new(entries: [image, jit_image, *releases, *domain_release.directories].freeze,
-                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, applications: release.applications)].freeze,
-                imports: {}.freeze)
+      Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *domain_release.directories].freeze,
+                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, applications: release.applications),
+                         *toolkit.inputs].freeze,
+                imports: {}.freeze, archives: toolkit.archives)
+    end
+
+    # erx-lvgl (Lvgl::Program) linked over erts's musl libc.a and compiler-rt builtins,
+    # the ones the runtime images link, built in directory's erx-lvgl/.
+    def lvgl_program(erts, directory:)
+      native = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
+                              fiasco: @fiasco)
+      Lvgl::Program.new(root: @root, runner: @runner, native: native, compiler: @compiler, archives: [erts.libc, erts.builtins],
+                        directory: File.join(directory, Lvgl::Program::NAME)).call
     end
 
     # What a manifest's references name in an archive of these sorted paths: the root

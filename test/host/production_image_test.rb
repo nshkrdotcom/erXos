@@ -461,6 +461,30 @@ class ProductionImageTest < Minitest::Test
     assert_equal %w[beta display network storage web zeta], Erx::Manifest.release_names(source: source + rows.join + quoted, codec: codec)
   end
 
+  # The widget toolkit's program ships with the toolkit (docs/design-packaging.md, "Where
+  # the toolkit's programs live"): a domain release that holds erx_ui, as the client
+  # script does, lists bin/erx-lvgl, and links its liblvgl.a under LVGL's license with
+  # its font data stated; a release without erx_ui, the session script's alone, builds
+  # nothing of it.
+  def test_a_release_that_holds_the_toolkit_carries_erx_lvgl
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    lvgl = { program: 'build/erx-lvgl/erx-lvgl', receipt: 'build/erx-lvgl/receipt.json', inputs: ['display/lvgl/erx_lvgl.c'],
+             archive: 'build/lvgl/target/liblvgl.a' }
+    session = Erx::ProductionImage.domain_boot('session')
+    release = Erx::ReleaseFiles.domain([session, Erx::ProductionImage.domain_boot('client')])
+    parts = Erx::ProductionImage.toolkit_parts(release, codec: codec) { lvgl }
+    assert_equal [{ 'path' => 'domains/erxos/bin/erx-lvgl', 'kind' => codec.member('entry_kind', 'file'), 'flags' => 0,
+                    'id' => 'program-erx-lvgl', 'artifact' => lvgl.fetch(:program), 'receipt' => lvgl.fetch(:receipt) }],
+                 parts.entries
+    assert_equal lvgl.fetch(:inputs), parts.inputs
+    library = parts.archives.fetch(0)
+    assert_equal [lvgl.fetch(:archive), 'MIT AND OFL-1.1', true], [library.path, library.license, library.font_data]
+    assert_includes library.notices, 'display/lvgl/lvgl/scripts/generators/built_in_font/font_license/Montserrat/OFL.txt'
+
+    parts = Erx::ProductionImage.toolkit_parts(Erx::ReleaseFiles.domain([session]), codec: codec) { flunk 'erx-lvgl was built' }
+    assert_equal [[], []], [parts.entries, parts.archives]
+  end
+
   # A domain row's runtime names the domain runtime image and its release a boot script
   # of the domain release, as the run of the release's entries, beside the root and the
   # release medium's EROFS image.

@@ -76,10 +76,13 @@ module Erx
   # (erx_fiasco_task_image_map_body); a program of image kind, whose code its slice
   # shares, is not run here.
   module Programs
-    # Each program by its name in the session's release, domains/erxos/bin/<name>, and the
-    # source it is built from. erx-lvgl joins them there, built from LVGL (Run#added).
+    # Each program by its name in the session's release, domains/erxos/bin/<name>
+    # (ProductionImage.program_entry), and the source it is built from. erx-lvgl joins
+    # them there as the toolkit's program, which every release that holds erx_ui carries
+    # (ProductionImage.toolkit_parts); the image carries the client script, TOOLKIT_BOOT,
+    # for it, which no domain of the suite boots.
     PROGRAMS = %w[exit42 fault spin args bigargs note pipeio].to_h { |name| [name, "test/guest/programs/#{name}.c"] }.freeze
-    PROGRAM_PREFIX = "#{ReleaseFiles::DOMAIN_PREFIX}bin/".freeze
+    TOOLKIT_BOOT = ProductionImage.domain_boot('client')
     # How many rounds many runs: more than the 32 programs the gate worker's 64
     # registrations hold at once, for each way a program ends.
     MANY_RUNS = 50
@@ -519,7 +522,8 @@ end,
       private
 
       # The production image with PROGRAMS added to the domain release, under the
-      # development manifest, session template and all.
+      # development manifest, session template and all, and with the client script
+      # (TOOLKIT_BOOT), whose erx_ui brings erx-lvgl into the release's bin/.
       def image(fiasco)
         runtime = NativeRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, fiasco: fiasco,
                                     platform: @machine.platform)
@@ -529,7 +533,7 @@ end,
         ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
                             fiasco: fiasco, runtime: runtime)
                        .build_test_image(directory: directory, added: added(fiasco, libc: libc),
-                                         manifest_source: @manifest)
+                                         domains: [TOOLKIT_BOOT], manifest_source: @manifest)
       end
 
       # Each program linked over musl's libc.a, the one the runtime images link, as a
@@ -543,18 +547,9 @@ end,
           [name, native.build_task_receipted(name: name, sources: [*NativeRoot::PROGRAM, source], directory: File.join(@build, name),
                                              archives: archives)]
         end
-        lvgl = Lvgl::Program.new(root: @root, runner: @runner, native: native, compiler: @compiler,
-                                 archives: archives,
-                                 directory: File.join(@build, Lvgl::Program::NAME)).call
-        programs = [*programs, [Lvgl::Program::NAME, lvgl]]
-        library = ProductionImage::Archive.new(path: lvgl.fetch(:archive), label: 'lvgl liblvgl.a', license: Lvgl::Program::LICENSE,
-                                               status: 'stopgap', notices: Lvgl::Program::NOTICES, font_data: Lvgl::Program::FONT_DATA)
-        entries = programs.map do |name, program|
-          { 'path' => "#{PROGRAM_PREFIX}#{name}", 'kind' => @codec.member('entry_kind', 'file'), 'flags' => 0, 'id' => "program-#{name}",
-            'artifact' => program.fetch(:program), 'receipt' => program.fetch(:receipt) }.freeze
-        end
+        entries = programs.map { |name, program| ProductionImage.program_entry(name, program, codec: @codec) }
         ProductionImage::Added.new(entries: entries.freeze, inputs: programs.flat_map { |_, program| program.fetch(:inputs) }.uniq.freeze,
-                                   imports: {}.freeze, archives: [library].freeze)
+                                   imports: {}.freeze)
       end
 
       def boot(accel, count, remote, built)
