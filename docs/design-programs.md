@@ -671,7 +671,7 @@ the program's starter, monitors the handler and only then sends it the
 start. The spec is `erx_program:start/1`'s with two
 differences. It names no process id, parent or group: `start/1` asks
 the command server for them and the handler as `{process, Tag}`, `Tag`
-the caller's own job tag, which `start/1` reads in the caller ([The
+the caller's own job tag, which `start/1` reads with `erx_job:tag/0` ([The
 command server](#the-command-server)). And it names the
 descriptors as the starter holds them: `{N, {pipe, End}}` for a pipe end it
 holds, which the handler asks the pipe server for as an inherit with the
@@ -1270,7 +1270,28 @@ handler that asks keeps serving its program meanwhile (P3):
 | `{reserve, Starter}`, `Starter` as above | a command's stream relay | assigns the next process id; makes the row with the caller as the handler and the parent, job and group above; monitors the caller; answers `{ok, Pid, Pgid}`, or `{error, eagain}` as above |
 | `programs()` | `read/2`, below | answers the rows |
 | `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
-| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag, which carries it out with the `job` cause ([Job control](#job-control)) |
+| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
+
+A spawn is an effect, so the pure core decides it and the server
+performs it. On `{handler, Starter}` the core assigns the id and answers
+`{spawn_handler, Id, Init}`, `Init` being the caller, the id, the
+parent, the job and the group; the server spawns the handler with
+`Init` and, before it takes its next message, steps
+`{spawned, Id, Handler}`, on which the core makes the row and answers
+the actions that monitor the handler and reply to the caller. The
+handler's **start**, which the caller then sends it, is `{start,
+Start}`, everything the handler builds the program from: for a spawn
+or a fork, the request as steps 3 and 4 checked and resolved it, with
+the image, `argv`, `env`, `cwd`, the signal mask and ignored signals,
+the file mode creation mask and each descriptor as the end or open its
+starter holds, the starter's namespace, rights beyond files and right
+to start commands, and for a fork the parent's image to copy ([Fork](#fork));
+for `start/1`, its spec. So the handler asks its starter nothing later.
+
+The server does not check who calls it. Every caller is a process of
+the session, which is trusted Erlang, and a program reaches the server
+only through its handler, which has checked the program's own table
+first.
 
 In the second tier `setpgid` and `setsid` reach the server the same way,
 through the requester's handler, and the server sends an orphaned group
@@ -1419,8 +1440,21 @@ the path into one of four images:
   the program's handler and so outside every job as well, that holds the
   ends and opens the program handed the command and copies bytes between
   them and the command domain's connection, the session's one path to
-  another domain ([design-domains.md](design-domains.md#connections)). The
-  programs a command of that domain starts, as `rc -c 'a | b'` does, are
+  another domain ([design-domains.md](design-domains.md#connections)).
+  The relay is its command's row's handler, so the job's actions reach
+  it, and it carries them out on the command as the session carries
+  them out on a job of Erlang commands
+  ([design-shell.md](design-shell.md#job-control)): on `pause` it stops
+  copying and sends the command domain `{erx_job, pause}`, which marks
+  the command's job tag there stopped; on `resume` it sends `{erx_job,
+  resume}`, which clears the mark, and copies again; and `{signal, S}`
+  it takes as `pause` for `SIGSTOP` and `SIGTSTP` and as `resume` for
+  `SIGCONT`, sends as `{erx_job, {signal, S}}` for an ending signal,
+  `SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGKILL` or `SIGTERM`, which ends the
+  run with `S`'s name as its status, and ignores otherwise. The
+  command runtime takes these only from the relay its `erx_start` names
+  for its streams ([design-runtime.md](design-runtime.md#native-programs)).
+  The programs a command of that domain starts, as `rc -c 'a | b'` does, are
   sub-spaces of the session like any other, anchored under the program
   whose command domain it is, with pipes of their own between them.
   `xargs ps` lists processes when the program holds the `inspect` right
@@ -3567,7 +3601,15 @@ terminal cases.
   and resume across three generations of one job, a program started while
   its job is paused, which starts paused, `Ctrl-Z` during a `fork`'s copy
   and `fg` after it, which leave the job paused and then running, and
-  `kill %1` of a paused job, which ends it; a `SIGCONT` from a second-tier
+  `kill %1` of a paused job, which ends it; `Ctrl-Z` of a job whose
+  program runs an Erlang command in its command domain, a command that
+  writes a line to standard output and appends one to a file of its
+  namespace each 10 ms, after which neither the output nor the file
+  grows until `fg`, where a seeded relay that only stops copying lets
+  the file grow, and `Ctrl-C` of such a job, after which the command's
+  run ends with status `sigint` and the program reads that status, where
+  a seeded relay that drops `{signal, sigint}` leaves the file growing;
+  a `SIGCONT` from a second-tier
   program of the same POSIX session to a program of a job that `Ctrl-Z`
   stopped, which resumes that program alone, makes `jobs` show the job
   running and leaves the job's other members stopped until `bg`, where a

@@ -423,7 +423,7 @@ of behaviour, however many lines it touches:
 | File | Edit |
 | --- | --- |
 | `beam/erl_process.c` | 1. `scheduler_wait` parks with `erx_park` instead of the thread event or the poll set; 2. `wake_scheduler` and the enqueue paths wake with `erx_executor_wake`; 3. the safe point in `erts_schedule` runs the adapter's plan (ready list, capacity, urgency); 4. the pick of the next process reads its job tag; 5. schedulers are created as executors, pinned to the run, and `+S` is derived from the grant |
-| `beam/erl_process.h`, `beam/erl_process.c` | 6. `Process` carries a job tag, taken from its parent at `erl_create_process` |
+| `beam/erl_process.h`, `beam/erl_process.c` | 6. `Process` carries a job tag, taken from its parent at `erl_create_process`, which the BIF `erx_job:tag/0` reads for the calling process |
 | `beam/erl_lock_count.c` and the run-queue, process and carrier lock paths | 7. `defer` raised and lowered around the scheduler's and allocator's critical sections, under `ERX_GROUP_DEFER` |
 | `beam/external.c` | 8. encoding one of the domain's own pids or aliases for a connection, a control term's sender included, gives the peer `send` on it where it holds nothing yet, and past the table's bound writes nothing and counts the failure for `erx_dist:exports_refused/0`; 9. the distribution decoder takes a safe-mode flag, set in the system domain, which creates no atom and reports a refused atom apart from a malformed term |
 | `beam/dist.c` | 10. in the system domain, a message to a peer whose entry's queue, the frames of `async_dist` senders included, is past the manifest's `system_queue` is dropped and counted on the receiver instead of suspending the sender, and any other signal that does not fit ends the connection; 11. an entry counts toward `peer_held` each link and monitor a peer's process holds with a local one and each signal ERTS queues for the peer on behalf of no process, answers a new `LINK` or `MONITOR_P` past it with `system_limit`, and ends the connection when a signal does not fit; 12. `erts_net_message` drops and counts a message whose decoded size, as the funnel measured it, is past its target's `max_request`, the request limit a facet sets on itself |
@@ -874,7 +874,11 @@ ERTS's scheduler is the second level, kept whole except at these points:
   whose queued processes would otherwise wait for their executor's next
   turn on a CPU.
 * **Job tags.** Every process carries a job tag, which it takes from the
-  process that spawns it, at its creation, and never changes; the
+  process that spawns it, at its creation, and never changes; a process
+  reads its own with `erx_job:tag/0`, a BIF, which is how
+  `erx_prog_handler:start/1` names its caller's job
+  ([design-programs.md](design-programs.md#the-handler)), and no call
+  reads another process's; the
   session's job table marks a tag stopped or ending
   ([design-shell.md](design-shell.md#job-control)). The one place where a
   scheduler picks the next process to run reads the picked process's
@@ -3485,7 +3489,14 @@ its arguments name, over their connection, and ignores any other sender's;
 decodes it with the generated validator; builds the namespace, facets and
 standard streams the message names; and runs either `rc` with a script
 or one Erlang command with exactly those capabilities in its context,
-then halts with the status the command or `rc`'s `$status` gives. The
+then halts with the status the command or `rc`'s `$status` gives. While
+it runs, it takes `{erx_job, Action}`, declared and validated beside
+`erx_start`, from the stream relay that `erx_start` names for its
+streams and from no other sender, and acts on the run's job tag as the
+session acts on a job of Erlang commands: `pause` marks the tag
+stopped, `resume` clears the mark, and `{signal, S}` with an ending
+signal ends the run with `S`'s name as its status
+([design-programs.md](design-programs.md#what-a-program-can-start)). The
 interpreter image keeps a command domain out of the JIT spaces, so a
 command domain makes no code, as no program does.
 

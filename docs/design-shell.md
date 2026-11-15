@@ -201,10 +201,12 @@ what a terminal needs added:
   a line at a time under `$prompt(1)`, `% ` by default; a unit that only
   more lines can complete reads on under `$prompt(2)`, empty by default. A
   whole unit runs in an evaluator process of its own, so `Ctrl-C` ends it
-  and the shell reads on with the variables it had before it and `$status`
-  saying the line was interrupted; `Ctrl-C`
+  and its Erlang commands, and the shell reads on, once the line's job is
+  over, with the variables it had before it and `$status` saying the line
+  was interrupted; `Ctrl-C`
   while a line is typed drops the unit read so far. A foreground line is
-  a job, so what it starts ends with it, by its job tag
+  a job, which is over when its last stage has ended, and a stage that
+  names a program ends only with its program
   ([Job control](#job-control)). A unit that does not
   parse is reported, sets `$status` as in a script and is skipped; `exit`
   and the end of input, `Ctrl-D`, end the shell.
@@ -803,6 +805,20 @@ so a process spawned at any moment is stopped or ended with its job, and
 no list of members is kept or raced
 ([design-runtime.md](design-runtime.md)).
 
+**When a job is over.** A job is over when its last stage has ended, as
+a UNIX shell waits for every process of a job's process group. A stage
+that names a program waits for its program's end, the `'DOWN'` of its
+handler, and ends with it, and the program's tree ends with the program
+([design-programs.md](design-programs.md#a-programs-end)), so no
+program of a job outlives it and the shell needs no count of the
+command server's rows. `Ctrl-C` ends the job's Erlang commands at once
+but no stage that names a program: that stage's program takes `SIGINT`
+from its handler and ends or not as it chooses. Until the job is over
+it keeps its place: a foreground job keeps the terminal and the shell
+prints no prompt, so a program that catches `SIGINT`, as an editor
+does, goes on in the foreground as on UNIX, and `jobs` shows a
+background job running while any of its stages lives.
+
 **Ending a job** signals its programs through their handlers and ends its
 tag's processes. It also reaches members that wait in `receive`: it marks
 the job ending and then wakes each member it finds among the runtime's
@@ -1242,7 +1258,12 @@ remain independent of catalog generation.
   the terminal; a program that floods its output while `Ctrl-C` is typed,
   which stops within a second at 115,200 baud; a program that stops
   draining its channel while the relay has its handler send `Ctrl-C`,
-  which leaves the relay and the prompt responsive; `kill %1` of a
+  which leaves the relay responsive, so a `Ctrl-Z` that follows stops
+  the job and gives the prompt back; a program that catches `SIGINT`,
+  which `Ctrl-C` leaves running in the foreground with no prompt until
+  it exits, after which the prompt returns, where a seeded shell that
+  reads on when the evaluator ends prints the prompt while the program
+  still runs; `kill %1` of a
   stopped job; a program that catches `SIGCONT` and sees it after `fg`;
   and a `SIGCONT` that another program of the POSIX session sends to a
   member of a stopped job, after which `jobs` shows the job running and
