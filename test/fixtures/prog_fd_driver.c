@@ -40,7 +40,14 @@
  *   fdmmap FD LEN PROT FLAGS OFF
  *                          erx_prog_fd_mmap: STATUS ADDRESS (do_fdmmap)
  *   fdstat FD              erx_prog_fd_fstat: STATUS MODE SIZE, the mode in octal
- *   fdseek FD | fdioctl FD erx_prog_fd_lseek and erx_prog_fd_ioctl: STATUS
+ *   fdseek FD OFF WHENCE   erx_prog_fd_lseek, WHENCE set, cur, end or a number (do_fdseek)
+ *   fdioctl FD REQ V       erx_prog_fd_ioctl of REQ with the int V (do_fdioctl)
+ *   dup3 FROM TO FLAGS     erx_prog_fd_dup3, FLAGS as flags_of reads them: SLOT
+ *   fcntl FD CMD ARG       erx_prog_fd_fcntl (do_fcntl): ANSWER
+ *   fdwritev FD TEXT...    erx_prog_fd_writev, an entry a word: COUNT
+ *   wpos FD                the write end FD holds: its write position
+ *   snapshot               erx_prog_fd_snapshot: FD:CLOEXEC for each held slot, each
+ *                          reference dropped after
  *   reserve PAGES          read-write memory wherever the host puts it, which a
  *                          release may free: "reserved". Later lines name it:
  *                          @P is its first page, in eight hex digits, and
@@ -82,7 +89,9 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -1098,6 +1107,104 @@ do_fdmmap(int fd, size_t len, const char *prot_word, const char *flags_word, off
 	printf("%d %" PRIxPTR "\n", status, (uintptr_t)addr);
 }
 
+/* The value of a word naming flags joined by '+' (nonblock, append, async, cloexec, oc for O_CLOEXEC, rdonly), or a number. */
+static long
+flags_of(const char *word)
+{
+	static const struct { const char *name; long value; } names[] = {
+		{ "nonblock", O_NONBLOCK }, { "append", O_APPEND }, { "async", O_ASYNC },
+		{ "cloexec", FD_CLOEXEC }, { "oc", O_CLOEXEC }, { "rdonly", O_RDONLY },
+	};
+	char copy[64], *rest = copy, *name;
+	long value = 0;
+
+	if ((word[0] >= '0' && word[0] <= '9') || word[0] == '-')
+		return (strtol(word, NULL, 10));
+	(void)snprintf(copy, sizeof(copy), "%s", word);
+	while ((name = strsep(&rest, "+")) != NULL) {
+		size_t at = 0;
+
+		while (at < sizeof(names) / sizeof(names[0]) && strcmp(names[at].name, name) != 0)
+			at++;
+		if (at == sizeof(names) / sizeof(names[0]))
+			fail(name);
+		value |= names[at].value;
+	}
+	return (value);
+}
+
+/* fcntl FD CMD ARG: CMD is dupfd, dupfd_cloexec, getfd, setfd, getfl, setfl or getlk; prints the answer. */
+static void
+do_fcntl(int fd, const char *cmd_word, const char *arg_word)
+{
+	static const struct { const char *name; int cmd; } cmds[] = {
+		{ "dupfd", F_DUPFD }, { "dupfd_cloexec", F_DUPFD_CLOEXEC }, { "getfd", F_GETFD }, { "setfd", F_SETFD },
+		{ "getfl", F_GETFL }, { "setfl", F_SETFL }, { "getlk", F_GETLK },
+	};
+	size_t at = 0;
+
+	while (at < sizeof(cmds) / sizeof(cmds[0]) && strcmp(cmds[at].name, cmd_word) != 0)
+		at++;
+	if (at == sizeof(cmds) / sizeof(cmds[0]))
+		fail(cmd_word);
+	printf("%ld\n", erx_prog_fd_fcntl(fd, cmds[at].cmd, flags_of(arg_word)));
+}
+
+/* fdseek FD OFF WHENCE: WHENCE is set, cur, end or a number; prints the answer. */
+static void
+do_fdseek(int fd, long long offset, const char *whence_word)
+{
+	const int whence = strcmp(whence_word, "set") == 0 ? SEEK_SET : strcmp(whence_word, "cur") == 0 ? SEEK_CUR :
+	    strcmp(whence_word, "end") == 0 ? SEEK_END : (int)strtol(whence_word, NULL, 10);
+
+	printf("%lld\n", (long long)erx_prog_fd_lseek(fd, (off_t)offset, whence));
+}
+
+/* fdioctl FD REQ V: REQ is fionbio, fioasync, fioclex, fionclex or winsize, with the int V; prints the answer. */
+static void
+do_fdioctl(int fd, const char *req_word, int value)
+{
+	const unsigned long request = strcmp(req_word, "fionbio") == 0 ? FIONBIO :
+	    strcmp(req_word, "fioasync") == 0 ? FIOASYNC : strcmp(req_word, "fioclex") == 0 ? FIOCLEX :
+	    strcmp(req_word, "fionclex") == 0 ? FIONCLEX : TIOCGWINSZ;
+	struct winsize size;
+
+	printf("%d\n", erx_prog_fd_ioctl(fd, request, request == TIOCGWINSZ ? (void *)&size : (void *)&value));
+}
+
+/* fdwritev FD TEXT...: one erx_prog_fd_writev, an entry a word; prints its count. */
+static void
+do_fdwritev(int fd, char *texts)
+{
+	struct iovec iov[8];
+	char *rest = texts, *text;
+	int count = 0;
+
+	while (count < 8 && (text = strsep(&rest, " \n")) != NULL) {
+		if (*text != '\0')
+			iov[count++] = (struct iovec){ .iov_base = text, .iov_len = strlen(text) };
+	}
+	printf("%zd\n", erx_prog_fd_writev(fd, iov, count));
+}
+
+/* snapshot: each held slot as FD:CLOEXEC, its reference dropped once printed. */
+static void
+do_snapshot(void)
+{
+	static erx_prog_slot_t table[ERX_PROG_FDS_MAX];
+	const char *sep = "";
+
+	erx_prog_fd_snapshot(table);
+	for (uint32_t fd = 0; fd < ERX_PROG_FDS_MAX; fd++) {
+		if (table[fd].obj == NULL)
+			continue;
+		printf("%s%" PRIu32 ":%d", sep, fd, table[fd].cloexec ? 1 : 0);
+		sep = " ";
+		erx_prog_obj_put(table[fd].obj);
+	}
+	printf("\n");
+}
+
 int
 main(int argc, char **argv)
 {
@@ -1107,7 +1214,7 @@ main(int argc, char **argv)
 	long long ms, ms2;
 	FILE *requests;
 	pthread_t executor;
-	int fd;
+	int fd, a_at;
 
 	for (uint32_t value = 0; value < CAPS; value++)
 		caps[value].fd = -1;
@@ -1161,10 +1268,23 @@ main(int argc, char **argv)
 
 			printf("%d %o %lld\n", status, status == 0 ? (unsigned)st.st_mode : 0U,
 			    status == 0 ? (long long)st.st_size : 0LL);
-		} else if (strcmp(word, "fdseek") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
-			printf("%lld\n", (long long)erx_prog_fd_lseek(fd));
-		} else if (strcmp(word, "fdioctl") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
-			printf("%d\n", erx_prog_fd_ioctl(fd));
+		} else if (strcmp(word, "fdseek") == 0 && sscanf(line, "%*s %d %lld %15s", &fd, &ms, arg) == 3) {
+			do_fdseek(fd, ms, arg);
+		} else if (strcmp(word, "fdioctl") == 0 && sscanf(line, "%*s %d %15s %lld", &fd, arg, &ms) == 3) {
+			do_fdioctl(fd, arg, (int)ms);
+		} else if (strcmp(word, "dup3") == 0 && sscanf(line, "%*s %d %lld %15s", &fd, &ms, arg) == 3) {
+			printf("%d\n", erx_prog_fd_dup3(fd, (int)ms, (int)flags_of(arg)));
+		} else if (strcmp(word, "fcntl") == 0 && sscanf(line, "%*s %d %15s %31s", &fd, arg, arg + 16) == 3) {
+			do_fcntl(fd, arg, arg + 16);
+		} else if (strcmp(word, "fdwritev") == 0 && sscanf(line, "%*s %d %n", &fd, &a_at) == 1) {
+			do_fdwritev(fd, line + a_at);
+		} else if (strcmp(word, "snapshot") == 0) {
+			do_snapshot();
+		} else if (strcmp(word, "wpos") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
+			erx_prog_obj_t *const obj = erx_prog_fd_get(fd);
+
+			printf("%" PRIu64 "\n", erx_pipe_end_of(obj)->u.w.st.wpos);
+			erx_prog_obj_put(obj);
 		} else if (strcmp(word, "reserve") == 0 && sscanf(line, "%*s %llu", &a) == 1) {
 			do_reserve(a);
 		} else if (strcmp(word, "munmap") == 0 && sscanf(line, "%*s %llx %llx", &a, &b) == 2) {

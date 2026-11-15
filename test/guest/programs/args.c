@@ -10,12 +10,16 @@
  * names, and no descriptor: every call naming one reaches the program layer's
  * table through musl's descriptor seam (liberx/backend/fiasco/libc_start.h)
  * and fails with EBADF, never the console, and munmap's own checks refuse an
- * address off a page, a length of 0 and an end past 2^64 with EINVAL. It ends
- * with 0 when all agree, and with a code of its own for the first that does
- * not.
+ * address off a page, a length of 0 and an end past 2^64 with EINVAL; dup3 onto
+ * its own descriptor is EINVAL, and PROT_EXEC in mmap and mprotect ENOTSUP,
+ * since only the loader maps code. It ends with 0 when all agree, and with a
+ * code of its own for the first that does not.
  */
 
+#define _GNU_SOURCE
+
 #include <errno.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <string.h>
 #include <sys/ioctl.h>
@@ -48,6 +52,39 @@ failed(long got, int want)
 	return (got == -1 && errno == want);
 }
 
+/*
+ * 0 when the seam answers the dups, fcntl and a call the table does not offer with EBADF
+ * for a descriptor it does not hold, dup3 onto its own descriptor with EINVAL, and
+ * PROT_EXEC in mmap and mprotect with ENOTSUP, while an anonymous mapping, which goes back
+ * to musl's own rows, is made and released; else the first check's code.
+ */
+static int
+descriptor_calls(void)
+{
+	void *anon;
+
+	if (!failed(dup(0), EBADF))
+		return (19);
+	if (!failed(dup2(0, 5), EBADF))
+		return (20);
+	if (!failed(dup3(1, 1, 0), EINVAL))
+		return (21);
+	if (!failed(fcntl(0, F_GETFD), EBADF))
+		return (22);
+	if (!failed(fsync(0), EBADF))
+		return (23);
+	if (mmap(NULL, 4096, PROT_READ | PROT_EXEC, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0) != MAP_FAILED ||
+	    errno != ENOTSUP)
+		return (24);
+	if ((anon = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0)) == MAP_FAILED)
+		return (25);
+	if (!failed(mprotect(anon, 4096, PROT_READ | PROT_EXEC), ENOTSUP))
+		return (26);
+	if (munmap(anon, 4096) != 0)
+		return (27);
+	return (0);
+}
+
 /* 0 when no descriptor is installed and munmap checks its own arguments, else the first check's code. */
 static int
 descriptors(void)
@@ -78,7 +115,7 @@ descriptors(void)
 		return (17);
 	if (!failed(munmap((void *)top, 8192), EINVAL))
 		return (18);
-	return (0);
+	return (descriptor_calls());
 }
 
 int

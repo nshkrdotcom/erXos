@@ -376,36 +376,6 @@ getrandom_call(unsigned char *buffer, size_t length, unsigned flags)
 	return ((long)length);
 }
 
-/* Whether the call is one the descriptor seam is offered (libc_start.h). */
-static int
-seam_offered(long n, long flags)
-{
-	switch (n) {
-	case SYS_read:
-	case SYS_readv:
-	case SYS_write:
-	case SYS_writev:
-	case SYS_close:
-	case SYS_ppoll:
-	case SYS_pselect6:
-	case SYS_pipe2:
-	case SYS_dup3:
-	case SYS_fcntl:
-	case SYS_lseek:
-	case SYS_pread64:
-	case SYS_pwrite64:
-	case SYS_fstat:
-	case SYS_ioctl:
-	case SYS_munmap:
-	case SYS_rt_sigaction:
-		return (1);
-	case SYS_mmap:
-		return (!(flags & MAP_ANONYMOUS) || (flags & MAP_FIXED));
-	default:
-		return (0);
-	}
-}
-
 /* fstat through the seam, whose struct stat is copied into the layout musl's fstatat reads. */
 static long
 seam_fstat(const long args[6], long *result)
@@ -467,15 +437,16 @@ seam_sigaction(const long args[6], long *result)
 long
 __erx_syscall(long n, long a, long b, long c, long d, long e, long f)
 {
-	/* The seam is offered all six arguments as the call passed them; musl's rows below read at most four. */
+	/*
+	 * The seam is offered every call, with all six arguments as the call passed them
+	 * (libc_start.h); musl's rows below read at most four and answer what it hands back.
+	 */
 	const long args[6] = { a, b, c, d, e, f };
 	long result;
 
-	if (seam_offered(n, d)) {
-		if (n == SYS_fstat ? seam_fstat(args, &result) :
-		    n == SYS_rt_sigaction ? seam_sigaction(args, &result) : erx_fiasco_libc_fd(n, args, &result))
-			return (result);
-	}
+	if (n == SYS_fstat ? seam_fstat(args, &result) :
+	    n == SYS_rt_sigaction ? seam_sigaction(args, &result) : erx_fiasco_libc_fd(n, args, &result))
+		return (result);
 	switch (n) {
 	case SYS_futex:
 		return (futex_call((volatile int *)a, (int)b, (int)c, (const struct timespec *)d));

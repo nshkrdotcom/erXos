@@ -20,27 +20,49 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <limits.h>
 #include <pthread.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/uio.h>
+#include <unistd.h>
 
 #include "erx/abi.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/fd.h"
+#include "liberx/program/fd_plan.h"
 #include "liberx/program/pages.h"
 #include "liberx/program/pipe.h"
 #include "liberx/program/signal.h"
 
 static pthread_mutex_t table_lock = PTHREAD_MUTEX_INITIALIZER;
-static erx_prog_obj_t *slots[ERX_PROG_FDS_MAX];
+static erx_prog_slot_t slots[ERX_PROG_FDS_MAX];
 static erx_prog_obj_t *live;
-static erx_prog_obj_t null_obj = { .kind = ERX_PROG_OBJ_NULL };
+
+/*
+ * An open of /dev/null, one for each null descriptor of the startup
+ * message and shared by its dups: reads end the stream, writes take every
+ * byte, and offset, table_lock's, moves only by lseek, as FreeBSD's
+ * /dev/null keeps the offset of each open.  It owns nothing but itself and
+ * never joins the live list.
+ */
+typedef struct erx_prog_null {
+	erx_prog_obj_t	 obj;		/* first, so a head is its object */
+	int64_t		 offset;
+} erx_prog_null_t;
+
+static erx_prog_null_t *
+null_of(erx_prog_obj_t *obj)
+{
+	return ((erx_prog_null_t *)obj);
+}
 
 /*
  * A mem range of the startup message: bytes of memory at address that the
@@ -83,6 +105,7 @@ obj_hold(erx_prog_obj_t *obj)
 {
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
+		obj->refs++;
 		return;
 	case ERX_PROG_OBJ_PIPE:
 		if (obj->refs++ == 0) {
@@ -109,7 +132,7 @@ obj_drop(erx_prog_obj_t *obj)
 {
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
-		return (false);
+		return (--obj->refs == 0);
 	case ERX_PROG_OBJ_PIPE:
 		if (--obj->refs != 0)
 			return (false);
@@ -136,6 +159,7 @@ obj_release(erx_prog_obj_t *obj)
 {
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
+		erx_prog_pages_give(obj, sizeof(erx_prog_null_t));
 		return;
 	case ERX_PROG_OBJ_PIPE:
 		erx_pipe_release(erx_pipe_end_of(obj));
@@ -159,10 +183,10 @@ fd_install(int fd, erx_prog_obj_t *obj)
 	bool ok;
 
 	table_take();
-	ok = fd_valid(fd) && slots[fd] == NULL;
+	ok = fd_valid(fd) && slots[fd].obj == NULL;
 	if (ok) {
 		obj_hold(obj);
-		slots[fd] = obj;
+		slots[fd] = (erx_prog_slot_t){ .obj = obj };
 	}
 	(void)pthread_mutex_unlock(&table_lock);
 	return (ok);
@@ -205,6 +229,7 @@ fd_setup_one(const erx_prog_fd_entry_t *entry)
 {
 	erx_pipe_end_t *end;
 	erx_prog_mem_t *mem;
+	erx_prog_null_t *null;
 	int status;
 
 	switch (entry->descriptor.which) {
@@ -216,7 +241,13 @@ fd_setup_one(const erx_prog_fd_entry_t *entry)
 		erx_prog_pages_give(mem, sizeof(*mem));
 		return (ERX_EINVAL);
 	case ERX_PROG_DESCRIPTOR_NULL:
-		return (fd_install(entry->fd, &null_obj) ? ERX_OK : ERX_EINVAL);
+		if ((null = erx_prog_pages_take(sizeof(*null))) == NULL)
+			return (ERX_ENOMEM);
+		*null = (erx_prog_null_t){ .obj = { .kind = ERX_PROG_OBJ_NULL } };
+		if (fd_install(entry->fd, &null->obj))
+			return (ERX_OK);
+		erx_prog_pages_give(null, sizeof(*null));
+		return (ERX_EINVAL);
 	case ERX_PROG_DESCRIPTOR_PIPE_WRITE:
 	case ERX_PROG_DESCRIPTOR_PIPE_READ:
 		status = erx_pipe_open(&entry->descriptor, &end);
@@ -252,7 +283,7 @@ erx_prog_fd_get(int fd)
 	erx_prog_obj_t *obj = NULL;
 
 	table_take();
-	if (fd_valid(fd) && (obj = slots[fd]) != NULL)
+	if (fd_valid(fd) && (obj = slots[fd].obj) != NULL)
 		obj_hold(obj);
 	(void)pthread_mutex_unlock(&table_lock);
 	return (obj);
@@ -270,25 +301,46 @@ erx_prog_obj_put(erx_prog_obj_t *obj)
 		obj_release(obj);
 }
 
-int
-erx_prog_fd_dup(int fd)
+/*
+ * Applies the dup erx_prog_dup_plan answers for req.  What the slot held
+ * is let go after the lock, as close lets it go.
+ */
+static int
+fd_dup(erx_prog_dup_t req)
 {
-	int result = -EBADF;
+	erx_prog_obj_t *closed = NULL;
+	bool last = false;
+	int at;
 
 	table_take();
-	if (fd_valid(fd) && slots[fd] != NULL) {
-		result = -EMFILE;
-		for (uint32_t at = 0; at < ERX_PROG_FDS_MAX; at++) {
-			if (slots[at] == NULL) {
-				obj_hold(slots[fd]);
-				slots[at] = slots[fd];
-				result = (int)at;
-				break;
-			}
-		}
+	at = erx_prog_dup_plan(slots, ERX_PROG_FDS_MAX, req);
+	if (at >= 0) {
+		obj_hold(slots[req.from].obj);
+		if ((closed = slots[at].obj) != NULL)
+			last = obj_drop(closed);
+		slots[at] = (erx_prog_slot_t){ .obj = slots[req.from].obj, .cloexec = req.cloexec };
 	}
 	(void)pthread_mutex_unlock(&table_lock);
-	return (result);
+	if (last)
+		obj_release(closed);
+	return (at);
+}
+
+int
+erx_prog_fd_dup(int from)
+{
+	return (fd_dup((erx_prog_dup_t){ .mode = ERX_PROG_DUP_LOWEST, .from = from, .at = 0 }));
+}
+
+int
+erx_prog_fd_dup3(int from, int to, int flags)
+{
+	erx_prog_dup_t req;
+	const int status = erx_prog_dup3_req(from, to, flags, &req);
+
+	if (status != 0)
+		return (status);
+	return (fd_dup(req));
 }
 
 int
@@ -298,8 +350,8 @@ erx_prog_fd_close(int fd)
 	bool last = false;
 
 	table_take();
-	if (fd_valid(fd) && (obj = slots[fd]) != NULL) {
-		slots[fd] = NULL;
+	if (fd_valid(fd) && (obj = slots[fd].obj) != NULL) {
+		slots[fd] = (erx_prog_slot_t){ .obj = NULL };
 		last = obj_drop(obj);
 	}
 	(void)pthread_mutex_unlock(&table_lock);
@@ -334,31 +386,163 @@ erx_prog_fd_read(int fd, void *buf, size_t len)
 	return (result);
 }
 
+/* A write of len bytes to obj, which the caller holds a counted reference to: the count or a negative errno. */
+static ssize_t
+obj_write(erx_prog_obj_t *obj, const void *buf, size_t len)
+{
+	switch (obj->kind) {
+	case ERX_PROG_OBJ_NULL:
+		return ((ssize_t)len);
+	case ERX_PROG_OBJ_PIPE:
+		return (erx_pipe_write(erx_pipe_end_of(obj), buf, len));
+	case ERX_PROG_OBJ_MEM:
+		return (-ESPIPE);
+	}
+	return (-ESPIPE);
+}
+
+/* A write call's answer: EPIPE raises SIGPIPE for the writing thread before the write returns (design-pipes.md, "Writing"). */
+static ssize_t
+write_answer(ssize_t result)
+{
+	if (result == -EPIPE)
+		erx_prog_sig_raise(ERX_SIGPIPE);
+	return (result);
+}
+
 ssize_t
 erx_prog_fd_write(int fd, const void *buf, size_t len)
 {
 	erx_prog_obj_t *obj;
-	ssize_t result = (ssize_t)len;
+	ssize_t result;
 
 	if (len > SSIZE_MAX)
 		return (-EINVAL);
 	if ((obj = erx_prog_fd_get(fd)) == NULL)
 		return (-EBADF);
-	switch (obj->kind) {
-	case ERX_PROG_OBJ_NULL:
-		break;
-	case ERX_PROG_OBJ_PIPE:
-		result = erx_pipe_write(erx_pipe_end_of(obj), buf, len);
-		break;
-	case ERX_PROG_OBJ_MEM:
-		result = -ESPIPE;
-		break;
-	}
+	result = obj_write(obj, buf, len);
 	erx_prog_obj_put(obj);
-	/* EPIPE raises SIGPIPE for the writing thread before the write returns (design-pipes.md, "Writing"). */
-	if (result == -EPIPE)
-		erx_prog_sig_raise(ERX_SIGPIPE);
-	return (result);
+	return (write_answer(result));
+}
+
+/* Whether a vector's count and lengths may move: its byte count in *sum, or -EINVAL. */
+static int
+vector_check(const struct iovec *iov, int count, size_t *sum)
+{
+	*sum = 0;
+	if (count < 0 || count > IOV_MAX)
+		return (-EINVAL);
+	for (int at = 0; at < count; at++) {
+		if (__builtin_add_overflow(*sum, iov[at].iov_len, sum) || *sum > SSIZE_MAX)
+			return (-EINVAL);
+	}
+	return (0);
+}
+
+void
+erx_prog_fd_snapshot(erx_prog_slot_t table[ERX_PROG_FDS_MAX])
+{
+	table_take();
+	for (uint32_t fd = 0; fd < ERX_PROG_FDS_MAX; fd++) {
+		if (slots[fd].obj != NULL)
+			obj_hold(slots[fd].obj);
+		table[fd] = slots[fd];
+	}
+	(void)pthread_mutex_unlock(&table_lock);
+}
+
+long
+erx_prog_fd_held_or(int fd, long what)
+{
+	erx_prog_obj_t *const obj = erx_prog_fd_get(fd);
+
+	if (obj == NULL)
+		return (-EBADF);
+	erx_prog_obj_put(obj);
+	return (what);
+}
+
+/* The first entry of a length above 0 is the one read: its bytes, the end of the stream or its error answer. */
+ssize_t
+erx_prog_fd_readv(int fd, const struct iovec *iov, int count)
+{
+	size_t sum;
+	int status;
+
+	if ((status = vector_check(iov, count, &sum)) != 0)
+		return (status);
+	for (int at = 0; at < count; at++) {
+		if (iov[at].iov_len != 0)
+			return (erx_prog_fd_read(fd, iov[at].iov_base, iov[at].iov_len));
+	}
+	return (erx_prog_fd_held_or(fd, 0));
+}
+
+/*
+ * The entries gathered into buf, which holds ERX_PIPE_BUF bytes: each length is
+ * loaded once and bounded by the room left, so a length another thread
+ * changes after vector_check never writes past buf.  The bytes gathered.
+ */
+static size_t
+vector_gather(const struct iovec *iov, int count, unsigned char *buf)
+{
+	size_t used = 0;
+
+	for (int at = 0; at < count; at++) {
+		const size_t room = ERX_PIPE_BUF - used;
+		const size_t len = iov[at].iov_len < room ? iov[at].iov_len : room;
+
+		if (len != 0)
+			memcpy(buf + used, iov[at].iov_base, len);
+		used += len;
+	}
+	return (used);
+}
+
+/*
+ * The entries written one at a time to obj, until a short write: the bytes
+ * written, or the error that ended the call, as erx_pipe_write answers
+ * across its waits, EAGAIN after bytes went being their count.
+ */
+static ssize_t
+vector_write(erx_prog_obj_t *obj, const struct iovec *iov, int count)
+{
+	ssize_t total = 0;
+
+	for (int at = 0; at < count; at++) {
+		const size_t len = iov[at].iov_len;
+		const ssize_t put = obj_write(obj, iov[at].iov_base, len);
+
+		if (put == -EAGAIN && total > 0)
+			break;
+		if (put < 0)
+			return (put);
+		total += put;
+		if ((size_t)put < len)
+			break;
+	}
+	return (total);
+}
+
+ssize_t
+erx_prog_fd_writev(int fd, const struct iovec *iov, int count)
+{
+	unsigned char gathered[ERX_PIPE_BUF];
+	erx_prog_obj_t *obj;
+	ssize_t result;
+	size_t sum;
+	int status;
+
+	if ((status = vector_check(iov, count, &sum)) != 0)
+		return (status);
+	if ((obj = erx_prog_fd_get(fd)) == NULL)
+		return (-EBADF);
+	if (sum <= sizeof(gathered))
+		result = obj_write(obj, gathered, vector_gather(iov, count, gathered));
+	else
+		result = vector_write(obj, iov, count);
+	erx_prog_obj_put(obj);
+	return (write_answer(result));
 }
 
 /* Whether a mmap of mem may return its mapping: the one way design-programs.md gives. */
@@ -367,9 +551,6 @@ mem_map_check(const erx_prog_mem_t *mem, size_t len, int prot, int flags, off_t 
 {
 	if (flags != MAP_SHARED || offset != 0 || len == 0 || len > mem->bytes)
 		return (-EINVAL);
-	/* Only the loader maps code (docs/design-programs.md, P10). */
-	if ((prot & PROT_EXEC) != 0)
-		return (-ENOTSUP);
 	if ((prot & ~(PROT_READ | PROT_WRITE)) != 0)
 		return (-EACCES);
 	return (0);
@@ -422,34 +603,149 @@ erx_prog_fd_fstat(int fd, struct stat *st)
 }
 
 off_t
-erx_prog_fd_lseek(int fd)
+erx_prog_fd_lseek(int fd, off_t offset, int whence)
 {
 	erx_prog_obj_t *obj;
-	off_t result = 0;
+	off_t result = -ESPIPE;
+	int64_t to;
 
 	if ((obj = erx_prog_fd_get(fd)) == NULL)
 		return (-EBADF);
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
+		table_take();
+		result = erx_prog_seek_plan(null_of(obj)->offset, offset, whence, 0, &to);
+		if (result == 0) {
+			null_of(obj)->offset = to;
+			result = to;
+		}
+		(void)pthread_mutex_unlock(&table_lock);
 		break;
 	case ERX_PROG_OBJ_PIPE:
 	case ERX_PROG_OBJ_MEM:
-		result = -ESPIPE;
 		break;
 	}
 	erx_prog_obj_put(obj);
 	return (result);
 }
 
-int
-erx_prog_fd_ioctl(int fd)
+/* The slot fd's FD_CLOEXEC: FD_CLOEXEC or 0, or -EBADF for an empty slot. */
+static int
+slot_cloexec_get(int fd)
 {
-	erx_prog_obj_t *obj;
+	int result = -EBADF;
 
-	if ((obj = erx_prog_fd_get(fd)) == NULL)
-		return (-EBADF);
-	erx_prog_obj_put(obj);
-	return (-ENOTTY);
+	table_take();
+	if (fd_valid(fd) && slots[fd].obj != NULL)
+		result = slots[fd].cloexec ? FD_CLOEXEC : 0;
+	(void)pthread_mutex_unlock(&table_lock);
+	return (result);
+}
+
+/* Sets the slot fd's FD_CLOEXEC to cloexec: 0, or -EBADF for an empty slot. */
+static int
+slot_cloexec_set(int fd, bool cloexec)
+{
+	int result = -EBADF;
+
+	table_take();
+	if (fd_valid(fd) && slots[fd].obj != NULL) {
+		slots[fd].cloexec = cloexec;
+		result = 0;
+	}
+	(void)pthread_mutex_unlock(&table_lock);
+	return (result);
+}
+
+/*
+ * Replaces the bits of mask in the status flags of slot fd's open with those
+ * of bits, under the table lock, which every change of them takes: 0, or
+ * -EBADF for an empty slot.
+ */
+static int
+status_change(int fd, uint32_t mask, uint32_t bits)
+{
+	int result = -EBADF;
+
+	table_take();
+	if (fd_valid(fd) && slots[fd].obj != NULL) {
+		erx_prog_obj_t *const obj = slots[fd].obj;
+		const uint32_t now = __atomic_load_n(&obj->status, __ATOMIC_RELAXED);
+
+		__atomic_store_n(&obj->status, (now & ~mask) | bits, __ATOMIC_RELAXED);
+		result = 0;
+	}
+	(void)pthread_mutex_unlock(&table_lock);
+	return (result);
+}
+
+/* The access mode of obj's open, which F_GETFL reads with its status flags. */
+static long
+obj_access(erx_prog_obj_t *obj)
+{
+	switch (obj->kind) {
+	case ERX_PROG_OBJ_NULL:
+	case ERX_PROG_OBJ_MEM:
+		return (O_RDWR);
+	case ERX_PROG_OBJ_PIPE:
+		return (erx_pipe_end_of(obj)->kind == ERX_PIPE_READ ? O_RDONLY : O_WRONLY);
+	}
+	return (O_RDWR);
+}
+
+long
+erx_prog_fd_fcntl(int fd, int cmd, long arg)
+{
+	erx_prog_fcntl_t req;
+	erx_prog_obj_t *obj;
+	uint32_t status;
+	long result;
+
+	if ((result = erx_prog_fcntl_req(fd, cmd, arg, &req)) != 0)
+		return (result);
+	switch (req.op) {
+	case ERX_PROG_FCNTL_DUP:
+		return (fd_dup(req.u.dup));
+	case ERX_PROG_FCNTL_GETFD:
+		return (slot_cloexec_get(fd));
+	case ERX_PROG_FCNTL_SETFD:
+		return (slot_cloexec_set(fd, req.u.cloexec));
+	case ERX_PROG_FCNTL_GETFL:
+		if ((obj = erx_prog_fd_get(fd)) == NULL)
+			return (-EBADF);
+		result = obj_access(obj) | (long)__atomic_load_n(&obj->status, __ATOMIC_RELAXED);
+		erx_prog_obj_put(obj);
+		return (result);
+	case ERX_PROG_FCNTL_SETFL:
+		/* An empty slot's EBADF comes before the change's own refusal, as in FreeBSD's kern_fcntl. */
+		if ((result = erx_prog_status_set(req.u.status, &status)) != 0)
+			return (erx_prog_fd_held_or(fd, result));
+		return (status_change(fd, UINT32_MAX, status));
+	}
+	return (-EINVAL);
+}
+
+int
+erx_prog_fd_ioctl(int fd, unsigned long request, void *arg)
+{
+	bool on;
+	int refusal;
+
+	switch (request) {
+	case FIOCLEX:
+		return (slot_cloexec_set(fd, true));
+	case FIONCLEX:
+		return (slot_cloexec_set(fd, false));
+	case FIONBIO:
+		on = *(const int *)arg != 0;
+		return (status_change(fd, O_NONBLOCK, on ? O_NONBLOCK : 0));
+	case FIOASYNC:
+		on = *(const int *)arg != 0;
+		refusal = erx_prog_async_set(on);
+		return ((int)erx_prog_fd_held_or(fd, refusal));
+	default:
+		return ((int)erx_prog_fd_held_or(fd, -ENOTTY));
+	}
 }
 
 /* Where [lo, end) lies against the held mem range; end is past lo, both checked. */

@@ -809,6 +809,8 @@ erx_pipe_read(erx_pipe_end_t *e, void *buf, size_t len)
 	for (;;) {
 		const uint32_t seen = erx_prog_wake_seen();
 
+		/* O_NONBLOCK is the open's, which F_SETFL may change between calls (fd.h). */
+		r->st.nonblock = erx_prog_obj_nonblock(&e->obj);
 		erx_pipe_rstart(&r->st, len);
 		act = erx_pipe_rrun(&r->st, r->maps, r->lockpage, buf, &fx);
 		if (r->st.wake_local)
@@ -840,6 +842,7 @@ erx_pipe_write(erx_pipe_end_t *e, const void *buf, size_t len)
 	for (;;) {
 		const uint32_t seen = erx_prog_wake_seen();
 
+		w->st.nonblock = erx_prog_obj_nonblock(&e->obj);
 		erx_pipe_wstart(&w->st, len - written);
 		act = erx_pipe_wrun(&w->st, &w->map, bytes + written, &fx);
 		if (w->st.wake_local)

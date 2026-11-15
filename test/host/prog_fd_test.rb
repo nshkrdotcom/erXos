@@ -4,6 +4,7 @@
 # erx-gate: sanitizers
 
 require 'minitest/autorun'
+require 'fcntl'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/generated'
@@ -30,7 +31,7 @@ class ProgFdTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   FD = 'liberx/program/fd.c'
   PIPE = 'liberx/program/pipe.c'
-  SOURCES = [FD, PIPE, 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
+  SOURCES = [FD, 'liberx/program/fd_plan.c', PIPE, 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
              'liberx/erx_pipe_core.c', 'liberx/erx_pipe_check.c', 'liberx/erx_pipe_run.c',
              'liberx/erx_profile.c', 'liberx/erx_etf.c', 'kernel/crypto/blake3/blake3.c',
              'kernel/crypto/blake3/blake3_portable.c', 'build/gen/liberx/generated/prog_profile.c',
@@ -47,10 +48,15 @@ class ProgFdTest < Minitest::Test
   EACCES = Errno::EACCES::Errno
   ENODEV = Errno::ENODEV::Errno
   ESPIPE = Errno::ESPIPE::Errno
-  ENOTSUP = Errno::ENOTSUP::Errno
   ENOTTY = Errno::ENOTTY::Errno
+  EAGAIN = Errno::EAGAIN::Errno
+  CLOEXEC = Fcntl::FD_CLOEXEC.to_s
+  # The write position after one record of three bytes, its header included.
+  RECORD_ABC = '32'
+  RECORD_4096 = '4112'
   ENOMEM = -6 # ERX_ENOMEM
 
+  def self.fl(*flags) = flags.reduce(0, :|).to_s
   def self.int(value) = value < 256 ? E.small(value) : E.int(value)
   def self.pairs(map) = E.map(map.map { |key, value| [E.atom(key.to_s), value] })
   def self.report(*items) = E.frame(E.tuple(E.atom('erx_prog'), E.small(1), E.tuple(*items))).unpack1('H*')
@@ -212,7 +218,7 @@ class ProgFdTest < Minitest::Test
                   ['state 1', 'write 7 2 refs=1 readers=1 lost=1 size=65536 peers=2'],
                   ['caps', '103:1:0 107:1:0 113:0:1 122:0:1 132:0:1 142:0:1 152:0:1 162:1:0 190:1:0 ' \
                            '191:1:0 193:1:0'],
-                  ['close 0', '0'], ['close 1', '0'], ['maps', '0']],
+                  ['close 0', '0'], ['close 1', '0'], ['close 2', '0'], ['maps', '0']],
     # The write end's reader page fails to map, after its ring did: the set-up fails and gives
     # back the ring's whole mapping and the capabilities it kept.
     'failed set-up' => [['alias 105 101', 'alias'], ['alias 106 102', 'alias'], ['failmap 5', 'armed'],
@@ -227,12 +233,12 @@ class ProgFdTest < Minitest::Test
                       ['fdmmap 3 4096 rw shared 4096', "#{-EINVAL} 0"],
                       ['fdmmap 3 4096 rw private 0', "#{-EINVAL} 0"],
                       ['fdmmap 3 4096 rw shared+fixed 0', "#{-EINVAL} 0"],
-                      ['fdmmap 3 4096 rwx shared 0', "#{-ENOTSUP} 0"],
-                      ['fdseek 3', (-ESPIPE).to_s], ['fdseek 0', '0'], ['fdseek 5', (-EBADF).to_s],
-                      ['fdioctl 0', (-ENOTTY).to_s], ['fdioctl 5', (-EBADF).to_s], ['fdmmap 0 4096 rw shared 0', "#{-ENODEV} 0"],
+                      ['fdmmap 3 4096 rwx shared 0', "#{-EACCES} 0"],
+                      ['fdseek 3 0 set', (-ESPIPE).to_s], ['fdseek 0 0 set', '0'], ['fdseek 5 0 set', (-EBADF).to_s],
+                      ['fdioctl 0 winsize 0', (-ENOTTY).to_s], ['fdioctl 5 winsize 0', (-EBADF).to_s], ['fdmmap 0 4096 rw shared 0', "#{-ENODEV} 0"],
                       ['fdmmap 5 4096 rw shared 0', "#{-EBADF} 0"], ['fdwrite 3 ab', (-ESPIPE).to_s],
                       ['dup 3', '1'], ['close 3', '0'], ['fdstat 1', '0 100600 8192'], ['close 1', '0'],
-                      ['fdstat 3', "#{-EBADF} 0 0"], ['maps', '0']],
+                      ['fdstat 3', "#{-EBADF} 0 0"], ['close 0', '0'], ['maps', '0']],
 # docs/design-programs.md#the-startup-message: while a descriptor holds the mem range, a
 # munmap inside it unmaps nothing, so a byte written before reads back after; one a page
 # across either end and a fixed mmap inside fail; munmap's own checks come first; and once
@@ -267,9 +273,51 @@ class ProgFdTest < Minitest::Test
                                              int(65_536), int(142), E.atom('open'))}", 'applied'],
                            ['state 0', READ_STATE], ['state 1', WRITE_STATE],
                            ['caps', '103:1:1 130:1:0 131:1:0 132:0:1 140:1:0 141:1:0 142:1:0'],
-                           ['close 0', '0'], ['close 1', '0'], ['maps', '0']],
+                           ['close 0', '0'], ['close 1', '0'], ['close 2', '0'], ['maps', '0']],
     'locked' => [*SET_UP, ["locked 1 #{report(E.atom('pipe_lost'), int(7), int(2))}", 'waited'],
                  ['state 1', 'write 7 2 refs=1 readers=1 lost=1 size=65536 peers=1']],
+    # docs/design-programs.md, "Descriptors and files": FD_CLOEXEC is the slot's, which a dup
+    # never copies; the status flags are the open's, which its dups share; dup3 onto a slot
+    # holding another object closes it, sending the write end's {closed} with its last
+    # reference; the commands and requests the table does not offer are EINVAL and ENOTTY.
+    'descriptor calls' =>
+      [*SET_UP, ['dup3 1 5 oc', '5'], ['fcntl 5 getfd 0', CLOEXEC], ['fcntl 1 getfd 0', '0'],
+       ['fcntl 1 setfd cloexec', '0'], ['fcntl 1 getfd 0', CLOEXEC], ['dup 1', '3'], ['fcntl 3 getfd 0', '0'], ['dup3 1 3 0', '3'],
+       ['fcntl 3 getfd 0', '0'],
+       ['fcntl 1 dupfd_cloexec 7', '7'], ['fcntl 7 getfd 0', CLOEXEC], ['fdioctl 7 fionclex 0', '0'],
+       ['fcntl 7 getfd 0', '0'], ['fdioctl 7 fioclex 0', '0'], ['fcntl 7 getfd 0', CLOEXEC],
+       ['fcntl 1 dupfd 1023', '1023'], ['close 1023', '0'], ['fcntl 1 dupfd 1024', "-#{EINVAL}"],
+       ['dup3 1 1024 0', "-#{EBADF}"], ['dup3 1 1 0', "-#{EINVAL}"], ['dup3 9 4 0', "-#{EBADF}"],
+       ['dup3 1 4 append', "-#{EINVAL}"],
+       ['fcntl 1 getfl 0', fl(Fcntl::O_WRONLY)], ['fcntl 0 getfl 0', fl(Fcntl::O_RDONLY)],
+       ['fcntl 2 getfl 0', fl(Fcntl::O_RDWR)], ['fcntl 1 setfl nonblock+append', '0'],
+       ['fcntl 3 getfl 0', fl(Fcntl::O_WRONLY, Fcntl::O_NONBLOCK, Fcntl::O_APPEND)], ['fdioctl 3 fionbio 0', '0'],
+       ['fcntl 1 getfl 0', fl(Fcntl::O_WRONLY, Fcntl::O_APPEND)], ['fcntl 1 setfl async', "-#{EINVAL}"],
+       ['fcntl 1 getfl 0', fl(Fcntl::O_WRONLY, Fcntl::O_APPEND)], ['fdioctl 1 fioasync 1', "-#{EINVAL}"],
+       ['fdioctl 1 fioasync 0', '0'], ['fdioctl 1 winsize 0', "-#{ENOTTY}"], ['fcntl 1 getlk 0', "-#{EINVAL}"],
+       ['fcntl 9 getfd 0', "-#{EBADF}"], ['fcntl 9 setfl async', "-#{EBADF}"], ['fdioctl 9 fionbio 1', "-#{EBADF}"],
+       ['fcntl 0 setfl nonblock', '0'], ['fdread 0 8', "-#{EAGAIN}"],
+       ['close 3', '0'], ['close 7', '0'], ['close 1', '0'], ['notices', 'none'], ['dup3 0 5 0', '5'],
+       ['notices', 'closed:7:2'], ['fcntl 5 getfd 0', '0'], ['close 0', '0'], ['notices', 'closed:7:2'],
+       ['close 5', '0'], ['notices', 'closed:7:2 closed:7:1']],
+    # Null keeps an offset of its own, which only lseek moves and its dups share; a pipe end
+    # is no stream whatever the whence.
+    'null seeks' => [*SET_UP, ['fdseek 2 7 set', '7'], ['fdseek 2 3 cur', '10'], ['fdwrite 2 abc', '3'],
+                     ['dup 2', '3'], ['fdseek 3 0 cur', '10'], ['fdseek 2 4 end', '4'], ['fdseek 2 -5 cur', "-#{EINVAL}"],
+                     ['fdseek 2 0 99', "-#{EINVAL}"], ['fdseek 3 0 cur', '4'], ['fdseek 1 0 99', "-#{ESPIPE}"],
+                     ['fdseek 0 0 cur', "-#{ESPIPE}"]],
+    # A writev of at most PIPE_BUF bytes is one record, as one write of its bytes is, so it
+    # is atomic against another writer; an empty vector still names its descriptor.
+    'writev gathers' => [*SET_UP, ['fdwritev 1 a bc', '3'], ['wpos 1', RECORD_ABC], ['fdwrite 1 abc', '3'],
+                         ['wpos 1', (2 * RECORD_ABC.to_i).to_s], ['fdwritev 1', '0'], ['fdwritev 9', "-#{EBADF}"],
+                         ['read 0 64', '6 abcabc']],
+    # A spawn's snapshot names every held slot with its FD_CLOEXEC, and its references go
+    # with it: the write end's last close still sends {closed} once.
+    'snapshot' => [*SET_UP, ['fcntl 1 setfd cloexec', '0'], ['dup 1', '3'], ['snapshot', '0:0 1:1 2:0 3:0'],
+                   ['close 1', '0'], ['close 3', '0'], ['notices', 'closed:7:2']],
+    # Entries that sum to PIPE_BUF bytes are still one record, as a write of as many is.
+    'writev of PIPE_BUF bytes' => [*SET_UP, ["fdwritev 1 #{'a' * 2048} #{'b' * 2048}", '4096'], ['wpos 1', RECORD_4096],
+                                   ["fdwrite 1 #{'c' * 4096}", '4096'], ['wpos 1', (2 * RECORD_4096.to_i).to_s]],
     # read and write through the table: a pipe end's, null's, and an empty slot's.
     'calls' => [*SET_UP, ['fdwrite 1 hi', '2'], ['fdread 0 8', '2 hi'], ['fdwrite 2 abc', '3'], ['fdread 2 8', '0'],
                 ['fdread 1 8', "-#{EBADF}"], ['fdwrite 0 x', "-#{EBADF}"], ['fdread 9 8', "-#{EBADF}"]],
@@ -278,6 +326,13 @@ class ProgFdTest < Minitest::Test
 
   # A seeded fault, the case that must catch it, and the edit that plants it.
   MUTANTS = {
+    'a snapshot drops FD_CLOEXEC' => ['snapshot', FD, "\t\ttable[fd] = slots[fd];\n", "\t\ttable[fd] = (erx_prog_slot_t){ .obj = slots[fd].obj };\n"],
+    'a snapshot takes no reference' => ['snapshot', FD, "\t\tif (slots[fd].obj != NULL)\n\t\t\tobj_hold(slots[fd].obj);\n", ""],
+    'a writev of a few bytes writes each entry' => ['writev gathers', FD, 'if (sum <= sizeof(gathered))', 'if (false)'],
+    'a writev of PIPE_BUF bytes writes each entry' => ['writev of PIPE_BUF bytes', FD, 'if (sum <= sizeof(gathered))', 'if (sum < sizeof(gathered))'],
+    'a dup copies FD_CLOEXEC' => ['descriptor calls', FD, '.cloexec = req.cloexec };', '.cloexec = slots[req.from].cloexec || req.cloexec };'],
+    'a seek of null forgets its offset' =>
+      ['null seeks', FD, "\t\tresult = erx_prog_seek_plan(null_of(obj)->offset, offset, whence, 0, &to);", "\t\tresult = erx_prog_seek_plan(0, offset, whence, 0, &to);"],
     'a poll that keeps its registrations' => ['ppoll', 'liberx/program/poll.c', "\t\tif (slots[i].obj->kind == ERX_PROG_OBJ_PIPE)\n\t\t\terx_pipe_unwatch",
        "\t\tif (false)\n\t\t\terx_pipe_unwatch"],
     'a pipe write that raises nothing' => ['sigpipe ends', FD, "\t\terx_prog_sig_raise(ERX_SIGPIPE);\n", "\t\t;\n"],

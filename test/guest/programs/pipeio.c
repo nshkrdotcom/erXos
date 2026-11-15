@@ -12,6 +12,9 @@
  *   more descriptors than the table has, and 0 once a timeout of 50 ms has passed;
  * - sigign: signal(SIGPIPE, SIG_IGN) succeeds, sigaction with a handler fails with
  *   EINVAL, and the write fails with EPIPE;
+ * - dup: dup, dup2, dup3, fcntl and the generic ioctls answer as FreeBSD does, FD_CLOEXEC
+ *   the slot's and the status flags the open's, lseek is ESPIPE whatever the whence, and
+ *   with SIGPIPE ignored a writev and a write on the end fail with EPIPE;
  * - sigdfl: the write raises SIGPIPE under its default action, which ends the program
  *   by the signal before the write returns.
  *
@@ -19,11 +22,16 @@
  * failed, so the case's answer names it.
  */
 
+#define _GNU_SOURCE
+
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/ioctl.h>
+#include <sys/uio.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -84,6 +92,51 @@ sigign_checks(void)
 	return (42);
 }
 
+/*
+ * The dup mode: the descriptor calls on descriptor 3 through musl, each answer as FreeBSD
+ * gives it; the write's EPIPE closes it, with SIGPIPE ignored.
+ */
+static int
+dup_checks(void)
+{
+	static const struct iovec two[] = { { .iov_base = "a", .iov_len = 1 }, { .iov_base = "bc", .iov_len = 2 } };
+	const int off = 0;
+
+	if (dup(PIPE_FD) != 0 || fcntl(0, F_GETFD) != 0)
+		return (1);
+	if (fcntl(PIPE_FD, F_SETFD, FD_CLOEXEC) != 0 || fcntl(PIPE_FD, F_GETFD) != FD_CLOEXEC)
+		return (2);
+	if (dup(PIPE_FD) != 1 || fcntl(1, F_GETFD) != 0)
+		return (3);
+	if (fcntl(PIPE_FD, F_DUPFD_CLOEXEC, 10) != 10 || fcntl(10, F_GETFD) != FD_CLOEXEC)
+		return (4);
+	if (dup2(PIPE_FD, PIPE_FD) != PIPE_FD || dup3(PIPE_FD, PIPE_FD, 0) != -1 || errno != EINVAL)
+		return (5);
+	if (dup3(PIPE_FD, 7, O_CLOEXEC) != 7 || fcntl(7, F_GETFD) != FD_CLOEXEC || dup2(0, 7) != 7 ||
+	    fcntl(7, F_GETFD) != 0)
+		return (6);
+	if (dup2(PIPE_FD, TOO_MANY - 1) != -1 || errno != EBADF || fcntl(PIPE_FD, F_DUPFD, TOO_MANY - 1) != -1 ||
+	    errno != EINVAL)
+		return (7);
+	if (fcntl(PIPE_FD, F_GETFL) != O_WRONLY || fcntl(PIPE_FD, F_SETFL, O_NONBLOCK) != 0 ||
+	    fcntl(0, F_GETFL) != (O_WRONLY | O_NONBLOCK))
+		return (8);
+	if (ioctl(0, FIONBIO, &off) != 0 || fcntl(PIPE_FD, F_GETFL) != O_WRONLY ||
+	    fcntl(PIPE_FD, F_SETFL, O_ASYNC) != -1 || errno != EINVAL)
+		return (9);
+	if (lseek(PIPE_FD, 0, SEEK_CUR) != -1 || errno != ESPIPE || lseek(PIPE_FD, 0, 99) != -1 || errno != ESPIPE)
+		return (10);
+	if (ioctl(PIPE_FD, FIONCLEX) != 0 || fcntl(PIPE_FD, F_GETFD) != 0)
+		return (11);
+	if (signal(SIGPIPE, SIG_IGN) != SIG_DFL || writev(7, two, 2) != -1 || errno != EPIPE)
+		return (12);
+	if (close(0) != 0 || close(1) != 0 || close(7) != 0 || close(10) != 0 || close(7) != -1 || errno != EBADF)
+		return (13);
+	if (write(PIPE_FD, "x", 1) != -1 || errno != EPIPE)
+		return (14);
+	return (42);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -91,6 +144,8 @@ main(int argc, char **argv)
 		return (poll_checks());
 	if (argc == 2 && strcmp(argv[1], "sigign") == 0)
 		return (sigign_checks());
+	if (argc == 2 && strcmp(argv[1], "dup") == 0)
+		return (dup_checks());
 	if (argc == 2 && strcmp(argv[1], "sigdfl") == 0) {
 		(void)write(PIPE_FD, "x", 1);
 		return (1);

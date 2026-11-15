@@ -1836,13 +1836,6 @@ it; git history is the record of completed work.
 * [Low] `abi/protocols/9p.txt`: `error edquot 122` follows 9P2000.L and musl; check the POSIX layer's mapping if it
   follows FreeBSD's numbering (69).
 
-* [Medium] programs, `PROT_EXEC` in a program's `mmap` or `mprotect` (`musl/src/internal/erxos/syscall.c`, `mmap_call`
-  and `mprotect_call`; `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`): design-programs.md, "The
-  POSIX-lite personality", says it fails with `ENOTSUP`, since only the loader maps code, but the descriptor seam takes
-  only descriptor mmaps, `munmap` and the range check of `MAP_FIXED`, so an anonymous mapping or a protection change of
-  anonymous memory reaches musl's own rows, which refuse only write and execute together (a protection change that
-  meets a mapping, the window buffer's included, is refused by `liberx/backend/core/vm_table.c` already). Have the
-  program's seam refuse `PROT_EXEC` in both with `ENOTSUP`, with a check in the programs suite's `args` program.
 * [Medium] programs, the programs suite's `lvgl` case (`tools/lib/erx/programs.rb`) checks only that `erx-lvgl`
   (`display/lvgl/erx_lvgl.c`) reaches main's map of descriptor 3 and ends with status 1: the suite can hand a
   program only a pipe write end (`hand_off`), not the read end its standard input needs, and the session holds no
@@ -1881,6 +1874,17 @@ it; git history is the record of completed work.
   separately, so entries that sum to at most `PIPE_BUF` are not one atomic write against another writer of the same
   pipe; gather them into one pipe write. `lseek` ignores `whence` and `ioctl` its request (`liberx/program/fd.c`), so
   a bad `whence` answers 0 and `FIONBIO` on a pipe answers `ENOTTY`.
+* [Low] programs, the program's seam keeps two lists by hand (`liberx/backend/fiasco/program_task.c`,
+  `erx_fiasco_libc_fd`): the calls it hands back to musl's rows (`musl/src/internal/erxos/syscall.c`), which must name
+  every row that names no descriptor, and the calls that name a descriptor, which answer `EBADF` for one the table does
+  not hold. Both fail safe, with `ENOSYS`: a new musl row is unreachable from a program until the hand-back list names
+  it, and an unlisted descriptor call answers `ENOSYS`, not `EBADF`. Generate both from one table of musl's calls with
+  the argument that names a descriptor, or have musl's descriptor-free rows be one function the seam hands back to.
+* [Low] programs, descriptor calls the table does not offer yet (`liberx/backend/fiasco/program_task.c`,
+  `erx_fiasco_libc_fd`; `liberx/program/fd.c`): `pread`, `pwrite` and their vector forms answer `ENOSYS` on a
+  descriptor the table holds, where FreeBSD's `kern_pread` gives a pipe end `ESPIPE` and `/dev/null` its read of 0 or
+  its write of every byte; `FIONREAD` on a pipe end is `ENOTTY`, where FreeBSD's `pipe_ioctl` gives the bytes
+  readable; `F_GETOWN` and `F_SETOWN` are `EINVAL`. Answer each from the object's kind in the table.
 * [Medium] device-tree reader, split DMA translations (`kernel/core/dt.c`, `range_read`): a translation written as
   several adjacent `dma-ranges` entries, as a full 32-bit identity map under a one-cell `#size-cells` must be,
   leaves several windows with RAM behind them, and the device gets `ranges` (no DMA range). It fails safe. Merge

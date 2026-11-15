@@ -33,7 +33,8 @@ module Erx
   # * fault loads from the null page, and the fault ends it with ERX_EXIT_SIGNAL plus
   #   SIGSEGV, which erx_prog:status/1 reads as {signaled, sigsegv};
   # * args, started with no descriptors, finds what its startup message gave it, every
-  #   descriptor call EBADF and munmap's own checks EINVAL (test/guest/programs/args.c),
+  #   descriptor call EBADF, munmap's own checks EINVAL and PROT_EXEC in mmap and mprotect
+  #   ENOTSUP (test/guest/programs/args.c),
   #   and a start naming a window buffer's lease the session does not hold answers
   #   {error, einval}: the take's refusal (docs/design-display.md, "A program's window
   #   buffer");
@@ -65,11 +66,12 @@ module Erx
   #   install_refused makes an install fail at the bind, with a doorbell already bound to
   #   another program's group: the program keeps running, and none of the refused
   #   install's copies took a place in its table.
-# * poll, sigign and sigdfl run pipeio (test/guest/programs/pipeio.c) with a hand-off of a
-#   write end of a pipe that has no read end at descriptor 3: poll answers POLLOUT|POLLHUP
-#   for it, POLLNVAL, EINVAL past the table's size and 0 at a timeout; with SIGPIPE ignored
-#   the write fails with EPIPE, and under its default action the write ends the program
-#   with ERX_EXIT_SIGNAL plus SIGPIPE, 269.
+# * poll, sigign, sigdfl and dup run pipeio (test/guest/programs/pipeio.c) with a hand-off
+#   of a write end of a pipe that has no read end at descriptor 3: poll answers
+#   POLLOUT|POLLHUP for it, POLLNVAL, EINVAL past the table's size and 0 at a timeout; with
+#   SIGPIPE ignored the write fails with EPIPE, and under its default action the write ends
+#   the program with ERX_EXIT_SIGNAL plus SIGPIPE, 269; dup, dup2, dup3, fcntl and the
+#   generic ioctls answer on the end and its dups as FreeBSD does.
   # The shell then answers node() again.
   #
   # The programs are file entries, so the backend copies their segments into the space
@@ -398,7 +400,7 @@ module Erx
             receive {P, {exit_status, S}} -> {lvgl, S} after #{WAIT_MS} -> {lvgl, timeout, P} end
           end)().
        ERLANG
-*[['poll', 27, 42], ['sigign', 28, 42], ['sigdfl', 29, 269]].map do |mode, pid, status|
+*[['poll', 27, 42], ['sigign', 28, 42], ['sigdfl', 29, 269], ['dup', 30, 42]].map do |mode, pid, status|
   Case.new(name: mode, seconds: 60, answer: "{#{mode},#{status}}", expression: line(<<~ERLANG))
     (fun() ->
        #{hand_off(pid, rights)}

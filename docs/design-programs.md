@@ -956,6 +956,14 @@ every close of a descriptor of it; the handler then releases the
 program's locks on the file, as it does at the open's `clunk`
 ([design-files.md](design-files.md#locks)). A program that never took a
 lock holds none, and sends nothing for such a close.
+Each `null` of the startup message is an open of its own, which its dups
+share, with an offset that only `lseek` moves, as FreeBSD's `/dev/null`
+keeps one; a seek to a negative offset fails with `EINVAL`, since `lseek`'s
+return could not tell it from an error. A descriptor's status flags,
+`O_NONBLOCK` and `O_APPEND`, are its open's; `O_ASYNC` fails with
+`EINVAL`, since no object signals its readiness, and `F_GETFL` reads a
+pipe's read end as `O_RDONLY` and its write end as `O_WRONLY`, all each
+allows, where FreeBSD's pipe ends are both `O_RDWR`.
 Descriptors 0, 1 and 2 are the standard streams. `isatty` is true for a
 terminal object; the window size and every other terminal `ioctl` are
 `{tty, Open, Request}` requests, which the handler takes to the session's
