@@ -1,0 +1,12 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The USB stack (docs/design-usb.md). Its pure cores build and are tested on the host:
+%% erx_hid_desc, the HID report descriptor's parser.
+{application, erx_usb,
+ [{description, "erXos USB stack"},
+  {vsn, "1"},
+  {modules, [erx_hid_desc]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx]},
+  {env, []}]}.
