@@ -54,7 +54,9 @@ handler_test_() ->
       fun a_port_closed_without_a_status_ends_the_handler/1,
       fun a_killed_handler_ends_its_program/1,
       fun starters_exit_stops_the_program/1,
-      fun pipe_server_loss_reaches_the_program/1]}.
+      fun pipe_server_loss_reaches_the_program/1,
+      fun a_window_without_a_display_is_enodev/1,
+      fun a_refused_windowed_start_ends_what_it_made/1]}.
 
 setup() ->
     erx_pipe_fake_nif:setup(self()),
@@ -316,6 +318,40 @@ pipe_server_loss_reaches_the_program(Srv) ->
     exit(Srv, kill),
     Sent = fake(send),
     ?_assertEqual({send, Port, {erx_prog, 1, pipe_server_lost}}, Sent).
+
+%% A program's window (docs/design-files.md, "A program's window"), over the
+%% stand-ins of test/erlang/stand_in for the window and the draw connection and
+%% a real erx_fs grant of the program's /dev.
+a_window_without_a_display_is_enodev(_) ->
+    ?_assertEqual({error, enodev}, erx_prog_handler:start((spec([]))#{window => nogrant})).
+
+%% A start refused after the /dev tree's grant has started: the window, the
+%% connection and the grant each end within 5 seconds of the handler's normal
+%% exit, in any order, since each sees the handler's end on its own.
+a_refused_windowed_start_ends_what_it_made(_) ->
+    ok = erx_fs_version:init(),
+    persistent_term:put(erx_win, self()),
+    erx_prog_handler_fakes:set(start, {held, {error, enomem}}),
+    Test = self(),
+    spawn(fun() -> Test ! {answer, erx_prog_handler:start((spec([]))#{window => display})} end),
+    {start_held, Handler} = fake(start_held),
+    Made = [receive {erx_win, {opened, Window}} -> Window after 5000 -> none end,
+            receive {erx_win, {conn, Conn}} -> Conn after 5000 -> none end
+            | dev_grants()],
+    Monitors = [monitor(process, Pid) || Pid <- Made, is_pid(Pid)],
+    Handler ! go,
+    Answer = receive {answer, A} -> A after 5000 -> none end,
+    Ended = [receive {'DOWN', Ref, process, _, _} -> ended after 5000 -> alive end || Ref <- Monitors],
+    persistent_term:erase(erx_win),
+    [?_assertEqual({error, enomem}, Answer),
+     ?_assertEqual(3, length(Monitors)),
+     ?_assertEqual([ended, ended, ended], Ended)].
+
+%% The live grants of erx_fs, found by their initial call.
+dev_grants() ->
+    [Pid || Pid <- processes(),
+            {dictionary, Dictionary} <- [process_info(Pid, dictionary)],
+            lists:member({'$initial_call', {erx_fs, init, 2}}, Dictionary)].
 
 fake(Kind) ->
     receive {fake, Call} when element(1, Call) =:= Kind -> Call after ?WAIT -> {timeout, Kind} end.

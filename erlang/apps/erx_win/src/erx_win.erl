@@ -57,9 +57,12 @@ made, and an area with no room answers `{error, enomem}` after the
 
 -export([open/2, info/1, image/1, image_rect/1, chan/1, lease/2, present/2, present/3, mouse/1,
          kbd/1, resized/1, resize/2, label/2, read_at/4, write_at/4]).
--export_type([window/0, options/0, buffer/0, info/0]).
+-export([clipboard/1, clipboard_open/2, clipboard_read/3, clipboard_write/3, clipboard_close/1]).
+-export_type([window/0, options/0, buffer/0, info/0, clipboard/0]).
 
 -define(O_RDONLY, 0).
+%% The display's name for its clipboard at the window tree's root.
+-define(CLIPBOARD, <<"clipboard">>).
 %% The window's files read_at/4 and write_at/4 relay for a program: every one but
 %% ctl, which presents any range of the client's pixel area.
 -define(RELAYED(File), (File =:= kbd orelse File =:= mouse orelse File =:= wctl orelse File =:= label)).
@@ -203,6 +206,82 @@ as the display answers it, or its error.
           {ok, non_neg_integer(), non_neg_integer()} | {error, atom()}.
 write_at(#{tree := Tree, fids := Fids}, File, Offset, Bytes) when ?RELAYED(File), is_binary(Bytes) ->
     one(Tree, {write, map_get(File, Fids), Offset, Bytes}).
+
+-doc """
+The display's clipboard opened on a fid of its own: the grant's tree and the
+fid, which the caller owns.
+""".
+-opaque clipboard() :: {{pid(), binary(), rw}, non_neg_integer()}.
+
+-doc """
+Whether the domain's grant of the display `Display` carries `clipboard`:
+whether a walk of `clipboard` from its root reaches the file. `false` for a
+display the domain holds no grant of, or one whose root it cannot attach.
+""".
+-spec clipboard(atom()) -> boolean().
+clipboard(Display) when is_atom(Display) ->
+    case clipboard_fid(Display) of
+        {ok, Tree, Fid} ->
+            clunk(Tree, [Fid]),
+            true;
+        {error, _} ->
+            false
+    end.
+
+-doc """
+Opens the display's clipboard with the 9P2000.L open flags `Flags`, on a fid
+of its own owned by the caller, so an open with `O_TRUNC` empties it as the
+display answers it (docs/design-files.md, "A program's window"): the
+clipboard, or the display's error, with every fid the attempt made clunked.
+""".
+-spec clipboard_open(atom(), non_neg_integer()) -> {ok, clipboard()} | {error, atom()}.
+clipboard_open(Display, Flags) when is_atom(Display), is_integer(Flags), Flags >= 0 ->
+    maybe
+        {ok, Tree, Fid} ?= clipboard_fid(Display),
+        {ok, _} ?= case one(Tree, {lopen, Fid, Flags}) of
+                       {error, _} = Refused -> clunk(Tree, [Fid]), Refused;
+                       Opened -> Opened
+                   end,
+        {ok, {Tree, Fid}}
+    else
+        {error, none} -> {error, enodev};
+        {error, _} = Failed -> Failed
+    end.
+
+-doc "A read of `Count` bytes at `Offset` of the clipboard, as the display answers it.".
+-spec clipboard_read(clipboard(), non_neg_integer(), non_neg_integer()) -> {ok, binary()} | {error, atom()}.
+clipboard_read({Tree, Fid}, Offset, Count) ->
+    one(Tree, {read, Fid, Offset, Count}).
+
+-doc "A write of `Bytes` at `Offset` of the clipboard: `{ok, Count, Offset1}` as the display answers it.".
+-spec clipboard_write(clipboard(), non_neg_integer(), binary()) ->
+          {ok, non_neg_integer(), non_neg_integer()} | {error, atom()}.
+clipboard_write({Tree, Fid}, Offset, Bytes) when is_binary(Bytes) ->
+    one(Tree, {write, Fid, Offset, Bytes}).
+
+-doc "Clunks the clipboard's fid.".
+-spec clipboard_close(clipboard()) -> ok.
+clipboard_close({Tree, Fid}) ->
+    clunk(Tree, [Fid]).
+
+%% A fid walked to the clipboard from a root attached for the walk alone, which
+%% is clunked once the walk is answered; a walk that fails leaves no fid.
+clipboard_fid(Display) ->
+    case erx:cap(Display) of
+        undefined ->
+            {error, none};
+        Grant ->
+            Tree = {Grant, ?ERX_WINDOWS_TREE_BYTES, rw},
+            Root = fid(),
+            Fid = fid(),
+            maybe
+                {ok, _} ?= one(Tree, {attach, Root, ?ERX_P9_NOFID, <<>>, ?ERX_WINDOWS_TREE_BYTES, 0}),
+                Walked = walked(one(Tree, {walk, Root, Fid, [?CLIPBOARD]}), 1),
+                clunk(Tree, [Root]),
+                ok ?= Walked,
+                {ok, Tree, Fid}
+            end
+    end.
 
 -doc "Reads one `mouse` record, waiting for one.".
 -spec mouse(window()) -> {ok, erx_win_core:pointer()} | {error, atom()}.

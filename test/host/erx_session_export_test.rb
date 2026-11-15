@@ -17,7 +17,8 @@ class ErxSessionExportTest < Minitest::Test
   # The applications the suite exercises, compiled whole (ErlangBuild), and the suite.
   APPLICATIONS = %w[erx_session].freeze
   # The preloaded 9P grammar the grant decodes frames with, then the suite.
-  TESTS = %w[build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_session_export_tests.erl].freeze
+  TESTS = %w[build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/stand_in/erx_win.erl
+             test/erlang/stand_in/erx_draw_conn.erl test/erlang/erx_session_export_tests.erl].freeze
   TREE = 'erlang/apps/erx_session/src/erx_session_export.erl'
 
   Fault = Data.define(:name, :from, :to, :caught_by)
@@ -25,13 +26,21 @@ class ErxSessionExportTest < Minitest::Test
   # Each fault replaces one passage of the tree; the case named in caught_by must fail.
   FAULTS = [
     Fault.new(name: 'a read-only file opened for writing',
-              from: '{write, _, true} -> {ok, {Node, write}};',
-              to: '{write, _, _} -> {ok, {Node, write}};',
+              from: '{write, _, true} -> handle(Node, write, Flags, Fs);',
+              to: '{write, _, _} -> handle(Node, write, Flags, Fs);',
               caught_by: 'the_read_only_files_refuse_writing_test'),
     Fault.new(name: 'a generator read past its bound',
               from: "{ok, << <<(Entropy(Size))/binary>> || Size <- Sizes >>}",
               to: '{ok, Entropy(Count)}',
-              caught_by: 'urandom_reads_the_generator_within_its_bound_test')
+              caught_by: 'urandom_reads_the_generator_within_its_bound_test'),
+    Fault.new(name: 'a mouse relay that never remakes image 0',
+              from: '_ = [erx_draw_conn:resized(Conn)',
+              to: '_ = [ok',
+              caught_by: 'an_r_record_of_mouse_remakes_image_0_before_the_read_answers_test'),
+    Fault.new(name: 'a ctl read that answers a short count',
+              from: '{ok, Text} when byte_size(Text) > Count -> {error, einval};',
+              to: '{ok, Text} when Count < 0 -> {error, einval};',
+              caught_by: 'ctl_reads_whole_at_offset_zero_and_never_opens_for_writing_test')
   ].freeze
 
   def test_the_cases_pass

@@ -376,3 +376,87 @@ export_args_take_the_number_and_the_node_names_prefix_test() ->
                  erx_session_sup:export_args("1", 'root_1@erxos', ?COMMANDS)),
     ?assertMatch(#{principal := #{name := <<"a_b">>, number := 1002}},
                  erx_session_sup:export_args("1002", 'a_b_12@erxos', ?COMMANDS)).
+
+%% A program's own /dev (docs/design-files.md, "A program's window"), over the
+%% stand-ins of test/erlang/stand_in for the window and the draw connection: the
+%% tree's state, its window and its connection. The window's mouse answers Mouse.
+window_fs(Display, Mouse) ->
+    persistent_term:put(erx_win, self()),
+    {ok, Window} = erx_win:open(Display, #{answers => #{mouse => {ok, Mouse}}}),
+    {ok, Conn} = erx_draw_conn:start(#{window => Window}),
+    Fs = init(#{window => #{window => Window, conn => Conn, display => Display,
+                            clipboard => erx_win:clipboard(Display)}}),
+    {Fs, Conn}.
+
+-define(MOUSE(Kind), <<Kind, 0:((?ERX_WINDOWS_MOUSE_RECORD - 1) * 8)>>).
+-define(WINDOW_DEV, [<<"null">>, <<"tty">>, <<"urandom">>, <<"zero">>, <<"draw">>, <<"ctl">>, <<"kbd">>,
+                     <<"mouse">>, <<"wctl">>, <<"label">>]).
+
+a_programs_dev_holds_the_devices_and_its_window_test() ->
+    {Fs, _} = window_fs(d, ?MOUSE($m)),
+    {Clip, _} = window_fs(clip, ?MOUSE($m)),
+    ?assertEqual([<<"dev">>], names([], Fs)),
+    ?assertEqual(?WINDOW_DEV, names([<<"dev">>], Fs)),
+    ?assertEqual(?WINDOW_DEV ++ [<<"clipboard">>], names([<<"dev">>], Clip)),
+    %% No name leads into the window's directory, and nothing is created.
+    ?assertEqual({error, enotdir}, walk([<<"dev">>, <<"kbd">>, <<"ctl">>], Fs)),
+    ?assertEqual({error, enoent}, walk([<<"dev">>, <<"w1">>], Fs)),
+    ?assertEqual({error, eacces}, erx_session_export:make(dev, <<"w1">>, {dir, 8#755, 0}, Fs)).
+
+ctl_reads_whole_at_offset_zero_and_never_opens_for_writing_test() ->
+    {Fs, _} = window_fs(d, ?MOUSE($m)),
+    {ok, Ctl} = open([<<"dev">>, <<"ctl">>], 0, Fs),
+    {ok, Text} = erx_session_export:read(Ctl, 0, 4096, Fs),
+    ?assertEqual(144, byte_size(Text)),
+    ?assertEqual({error, einval}, erx_session_export:read(Ctl, 0, 143, Fs)),
+    ?assertEqual({ok, <<>>}, erx_session_export:read(Ctl, 144, 4096, Fs)),
+    ?assertEqual({error, eacces}, open([<<"dev">>, <<"ctl">>], ?ERX_P9_O_WRONLY, Fs)),
+    ?assertEqual({error, eacces}, open([<<"dev">>, <<"ctl">>], ?ERX_P9_O_RDWR, Fs)).
+
+%% The first field of the stand-in's ctl counts the resized/1 calls.
+resizes(Fs) ->
+    {ok, Text} = read([<<"dev">>, <<"ctl">>], 144, Fs),
+    binary_to_integer(string:trim(binary:part(Text, 0, 11))).
+
+an_r_record_of_mouse_remakes_image_0_before_the_read_answers_test() ->
+    {Fs, _} = window_fs(d, ?MOUSE($r)),
+    ?assertEqual({ok, ?MOUSE($r)}, read([<<"dev">>, <<"mouse">>], ?ERX_WINDOWS_MOUSE_RECORD, Fs)),
+    ?assertEqual(1, resizes(Fs)),
+    {Moved, _} = window_fs(d, ?MOUSE($m)),
+    {ok, _} = read([<<"dev">>, <<"mouse">>], ?ERX_WINDOWS_MOUSE_RECORD, Moved),
+    ?assertEqual(0, resizes(Moved)).
+
+a_draw_write_is_one_call_of_the_connection_test() ->
+    {Fs, Conn} = window_fs(d, ?MOUSE($m)),
+    {ok, Draw} = open([<<"dev">>, <<"draw">>], ?ERX_P9_O_RDWR, Fs),
+    ?assertEqual({ok, 3, 0}, erx_session_export:write(Draw, 0, <<"abc">>, Fs)),
+    ?assertEqual({error, eio}, erx_session_export:write(Draw, 0, <<"bad">>, Fs)),
+    exit(Conn, kill),
+    ?assertEqual({error, ebadf}, erx_session_export:write(Draw, 0, <<"abc">>, Fs)),
+    ?assertEqual({error, ebadf}, read([<<"dev">>, <<"ctl">>], 144, Fs)).
+
+the_window_files_relay_on_the_windows_own_handle_test() ->
+    {Fs, _} = window_fs(d, ?MOUSE($m)),
+    flush_win(),
+    {ok, Wctl} = open([<<"dev">>, <<"wctl">>], ?ERX_P9_O_RDWR, Fs),
+    ?assertEqual({ok, 4, 0}, erx_session_export:write(Wctl, 0, <<"move">>, Fs)),
+    {ok, _} = read([<<"dev">>, <<"kbd">>], 64, Fs),
+    ?assertEqual({error, eacces}, open([<<"dev">>, <<"kbd">>], ?ERX_P9_O_WRONLY, Fs)),
+    ?assertEqual([{write_at, wctl, 0, <<"move">>}, {read_at, kbd, 0, 64}], win_events()).
+
+each_clipboard_open_has_a_fid_of_its_own_test() ->
+    {Fs, _} = window_fs(clip, ?MOUSE($m)),
+    flush_win(),
+    {ok, A} = open([<<"dev">>, <<"clipboard">>], ?ERX_P9_O_RDWR bor ?ERX_P9_O_TRUNC, Fs),
+    {ok, B} = open([<<"dev">>, <<"clipboard">>], 0, Fs),
+    ?assertEqual({ok, <<"snarf">>}, erx_session_export:read(B, 0, 64, Fs)),
+    ok = erx_session_export:clunk(A, Fs),
+    Self = self(),
+    ?assertMatch([{clipboard_open, Trunc, Self}, {clipboard_open, 0, Self}, {clipboard_close, _}]
+                 when Trunc =:= ?ERX_P9_O_RDWR bor ?ERX_P9_O_TRUNC, win_events()).
+
+flush_win() ->
+    receive {erx_win, _} -> flush_win() after 0 -> ok end.
+
+win_events() ->
+    receive {erx_win, Event} -> [Event | win_events()] after 0 -> [] end.

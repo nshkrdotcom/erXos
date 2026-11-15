@@ -283,6 +283,40 @@ export_names_test_() ->
      %% Beside the export's names, and at /dev itself, an entry stays.
      ?_assertMatch([_, _], Start([Bind([<<"dev">>, <<"draw">>])], all)),
      ?_assertMatch([_, _], Start([Bind([<<"dev">>])], all))].
+%% A program's window (docs/design-files.md, "A program's window"): after the
+%% holder entry and the descriptors, the window action; its /dev grant takes
+%% the place of every entry at /dev; a window beside a buffer, an entry at or
+%% below one of the window's names and a table with no room for /dev refuse.
+window_test_() ->
+    Bind = fun(Point) -> #{point => Point, provider => {grant, self(), <<"t">>}, root => [], rights => rw} end,
+    Grant = list_to_pid("<0.4242.0>"),
+    Dev = #{point => [<<"dev">>], provider => {grant, Grant, <<"export">>}, root => [<<"dev">>], rights => rw},
+    New = fun(Entries, Fds) ->
+                  erx_prog_handler_core:new(?PID, Fds, (files())#{table := ?TABLE ++ Entries, window => display})
+          end,
+    {ok, C0, [holder]} = New([Bind([<<"data">>]), Bind([<<"dev">>]), Bind([<<"dev">>, <<"usb">>])], []),
+    {C1, Window} = erx_prog_handler_core:step(C0, {holder, ok}),
+    {C2, Start} = erx_prog_handler_core:step(C1, {windowed, Grant}),
+    {_, [{open, _, _, _, _, Table, _}]} =
+        erx_prog_handler_core:step(run(C2, [started]), ?ASK(7, {file, lopen, <<"x">>, 0})),
+    {_, Refused} = erx_prog_handler_core:step(C1, {refused, enodev}),
+    Full = [Bind([integer_to_binary(N)]) || N <- lists:seq(2, ?ERX_NS_MOUNTS_MAX)],
+    [?_assertEqual([{window, display}], Window),
+     %% A display may be named none: it still gets its window.
+     ?_assertMatch({_, [{window, none}]},
+                   erx_prog_handler_core:step(element(2, erx_prog_handler_core:new(?PID, [], (files())#{window => none})),
+                                              {holder, ok})),
+     ?_assertEqual([{start, []}], Start),
+     ?_assertEqual(?TABLE ++ [Bind([<<"data">>]), Bind([<<"dev">>, <<"usb">>]), Dev], Table),
+     ?_assertEqual([holder_drop, {answer, {error, enodev}}], Refused),
+     ?_assertEqual({error, einval}, New([], [{3, {buffer, 1, 4096}}])),
+     ?_assertEqual({error, einval}, New([Bind([<<"dev">>, <<"kbd">>, <<"x">>])], [])),
+     ?_assertEqual({error, einval}, New([Bind([<<"dev">>, <<"clipboard">>])], [])),
+     ?_assertMatch({ok, _, _}, erx_prog_handler_core:new(?PID, [], (files())#{table := ?TABLE ++ [Bind([<<"dev">>, <<"kbd">>, <<"x">>])]})),
+     ?_assertEqual({error, einval}, New(Full, [])),
+     ?_assertMatch({ok, _, _}, New(tl(Full) ++ [Bind([<<"dev">>])], [])),
+     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [], (files())#{window => "d"}))].
+
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
      ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},

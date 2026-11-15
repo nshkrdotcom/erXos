@@ -34,6 +34,27 @@ program reaches of them.
   `>/dev/null` reaches `null`; a create of any other name answers `eacces`,
   as the tree's names are its own and fixed.
 
+**A program's own `/dev`** (docs/design-files.md, "A program's window") is
+this tree started by a program's handler for that program alone, with its
+window, its draw connection and its display among its arguments. Its root
+holds `dev` alone, which holds the four devices and the window's names,
+`clipboard` only when the session's grant on the display carries it:
+
+* `draw` is the connection's (erx_draw_conn:write/2 and read/2): a write's
+  bytes are one call, executed whole or not at all, answered with the whole
+  count or the errno of a refused or an incomplete write, and `ebadf` once
+  the connection has ended.
+* `ctl` is read-only: a read at offset 0 of at least 144 bytes answers
+  erx_draw_conn:ctl/1's text, one of fewer `einval`, and a read at any other
+  offset no bytes (docs/design-display.md, "The connection's files").
+* `kbd`, `mouse`, `wctl` and `label` are relayed on the window handle's own
+  fids (erx_win:read_at/4 and write_at/4), which no request of this tree
+  walks or opens; no relay reaches the window's `ctl`. A `mouse` read that
+  answers an `r` record makes image 0 anew (erx_draw_conn:resized/1) before
+  it answers, whatever that call answers.
+* `clipboard` is opened on a fid of its own per open (erx_win:clipboard_open/2),
+  owned by this grant and clunked by the open's clunk.
+
 An open records its access mode, and a read or a write that the mode does not
 allow answers `ebadf`, as on UNIX.
 """.
@@ -48,21 +69,36 @@ allow answers `ebadf`, as on UNIX.
 -export_type([args/0]).
 
 -doc """
-What init/1 takes: the session's principal, the names `/bin` lists, and, for
-a test, stand-ins for the kernel's generator and the session's tty.
+What init/1 takes: for the shared tree, the session's principal and the names
+`/bin` lists; for a program's own `/dev`, its window; and, for a test,
+stand-ins for the kernel's generator and the session's tty.
 """.
 -type args() :: #{principal := #{name := binary(), number := pos_integer()},
                   commands := [binary()],
                   entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary()),
+                  tty => fun((binary()) -> ok)}
+              | #{window := window(),
+                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary()),
                   tty => fun((binary()) -> ok)}.
+
+-doc """
+A program's window: the window erx_win:open/2 made, the draw connection on
+it, the display, the name of the session's grant of it, and whether that
+grant carries `clipboard`.
+""".
+-type window() :: #{window := erx_win:window(), conn := pid(), display := atom(),
+                    clipboard := boolean()}.
 
 %% The tree's name, which attach's Aname names.
 -define(TREE, <<"export">>).
 -define(NOBODY, 65534).
+-define(IS_RELAYED(File), (File =:= kbd orelse File =:= mouse orelse File =:= wctl orelse File =:= label)).
 
-%% A directory, a command of /bin, a device of /dev or a file of /etc.
+%% A directory, a command of /bin, a device of /dev or a file of /etc, or one of a
+%% program's window files.
 -type node_() :: root | bin | dev | etc | {command, binary()}
-               | null | zero | urandom | tty | passwd | group.
+               | null | zero | urandom | tty | passwd | group
+               | draw | ctl | kbd | mouse | wctl | label | clipboard.
 -type access() :: read | write | read_write.
 
 %% ---------------------------------------------------------------------------
@@ -71,20 +107,26 @@ a test, stand-ins for the kernel's generator and the session's tty.
 
 -doc false.
 -spec init(args()) -> {ok, map()}.
-init(#{principal := Principal, commands := Commands} = Args) ->
-    Dirs = dirs(Commands),
+init(Args) ->
+    Dirs = dirs(Args),
     Files = [Node || Entries <- maps:values(Dirs), {_, Node} <- Entries,
                      not is_map_key(Node, Dirs)],
     Qids = maps:from_list([{Dir, qid(?ERX_P9_QTDIR)} || Dir <- maps:keys(Dirs)]
                           ++ [{File, qid(0)} || File <- Files]),
-    {ok, #{dirs => Dirs, qids => Qids, texts => texts(Principal),
-           entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1),
-           tty => maps:get(tty, Args, fun erx_session_tty:write/1)}}.
+    {ok, (maps:with([window], Args))#{dirs => Dirs, qids => Qids, texts => texts(Args),
+                                       entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1),
+                                       tty => maps:get(tty, Args, fun erx_session_tty:write/1)}}.
 
 %% Each directory's listing, in order: /bin's commands, and /dev's devices and
 %% /etc's files as every program's handler knows them
-%% (erx_prog_handler_core:exported/0), each the node of its name.
-dirs(Commands) ->
+%% (erx_prog_handler_core:exported/1), each the node of its name. A program's
+%% own /dev holds dev alone, with the window's names, clipboard only when the
+%% session's grant on the display carries it.
+dirs(#{window := #{display := Display, clipboard := Clipboard}}) ->
+    #{dev := Names} = erx_prog_handler_core:exported({window, Display}),
+    #{root => [{<<"dev">>, dev}],
+      dev => [{Name, binary_to_existing_atom(Name)} || Name <- Names, Clipboard orelse Name =/= <<"clipboard">>]};
+dirs(#{commands := Commands}) ->
     #{dev := Devices, etc := Texts} = erx_prog_handler_core:exported(),
     #{root => [{<<"bin">>, bin}, {<<"dev">>, dev}, {<<"etc">>, etc}],
       bin => [{Name, {command, Name}} || Name <- lists:usort(Commands)],
@@ -101,7 +143,10 @@ qid(Type) ->
 %% password, uid, gid, gecos, home and shell), and the four of a group line
 %% (name, password, gid and members). No password is set: a session is
 %% already its principal's.
-texts(#{name := Name, number := Number}) ->
+texts(#{principal := Principal}) -> passwd_group(Principal);
+texts(#{window := _}) -> #{}.
+
+passwd_group(#{name := Name, number := Number}) ->
     Id = integer_to_binary(Number),
     Nobody = integer_to_binary(?NOBODY),
     #{passwd => <<Name/binary, ":*:", Id/binary, ":", Id/binary, "::/:/bin/rc\n",
@@ -115,6 +160,8 @@ texts(#{name := Name, number := Number}) ->
 file({command, _}) -> {file, 8#111};
 file(Device) when Device =:= null; Device =:= zero; Device =:= tty -> {char, 8#666};
 file(urandom) -> {char, 8#444};
+file(Device) when Device =:= draw; Device =:= wctl; Device =:= label; Device =:= clipboard -> {char, 8#666};
+file(Device) when Device =:= ctl; Device =:= kbd; Device =:= mouse -> {char, 8#444};
 file(Text) when Text =:= passwd; Text =:= group -> {file, 8#444}.
 
 -doc false.
@@ -146,7 +193,7 @@ open(Node, Flags, #{dirs := Dirs} = Fs) ->
         {error, _} -> {error, einval};
         {{ok, read}, #{Node := Entries}} -> {ok, {entries, listing(Entries, Fs)}};
         {{ok, _}, #{Node := _}} -> {error, eisdir};
-        {{ok, Access}, #{}} -> opened(Node, Access)
+        {{ok, Access}, #{}} -> opened(Node, Access, Flags, Fs)
     end.
 
 -spec access(non_neg_integer()) -> {ok, access()} | error.
@@ -169,17 +216,27 @@ dirent_type(Node, _Dirs) ->
         {file, _} -> ?ERX_P9_DT_REG
     end.
 
-%% A file opens with Access when its permission bits allow every part of it.
-opened(Node, Access) ->
+%% A file opens with Access when its permission bits allow every part of it. The
+%% clipboard is opened at the display with the program's flags, on a fid of the
+%% open's own.
+opened(Node, Access, Flags, Fs) ->
     {_Kind, Mode} = file(Node),
     Reads = Mode band 8#444 =/= 0,
     Writes = Mode band 8#222 =/= 0,
     case {Access, Reads, Writes} of
-        {read, true, _} -> {ok, {Node, read}};
-        {write, _, true} -> {ok, {Node, write}};
-        {read_write, true, true} -> {ok, {Node, read_write}};
+        {read, true, _} -> handle(Node, read, Flags, Fs);
+        {write, _, true} -> handle(Node, write, Flags, Fs);
+        {read_write, true, true} -> handle(Node, read_write, Flags, Fs);
         _ -> {error, eacces}
     end.
+
+handle(clipboard, Access, Flags, #{window := #{display := Display}}) ->
+    case erx_win:clipboard_open(Display, Flags) of
+        {ok, Clipboard} -> {ok, {{clipboard, Clipboard}, Access}};
+        {error, _} = Refused -> Refused
+    end;
+handle(Node, Access, _Flags, _Fs) ->
+    {ok, {Node, Access}}.
 
 -doc false.
 read({entries, _}, _Offset, _Count, _Fs) ->
@@ -194,6 +251,31 @@ read({urandom, _}, _Offset, Count, #{entropy := Entropy}) ->
     random(Count, Entropy);
 read({tty, _}, _Offset, _Count, _Fs) ->
     {error, enotsup};
+read({draw, _}, _Offset, Count, #{window := #{conn := Conn}}) ->
+    erx_draw_conn:read(Conn, Count);
+read({ctl, _}, 0, Count, #{window := #{conn := Conn}}) ->
+    %% Whole or not at all, as devdraw refuses a short read.
+    case erx_draw_conn:ctl(Conn) of
+        {ok, Text} when byte_size(Text) > Count -> {error, einval};
+        Answer -> Answer
+    end;
+read({ctl, _}, _Offset, _Count, _Fs) ->
+    {ok, <<>>};
+read({mouse, _}, Offset, Count, #{window := #{window := Window, conn := Conn}}) ->
+    %% The program never sees an r before image 0 has the window's new size.
+    Answer = erx_win:read_at(Window, mouse, Offset, Count),
+    case Answer of
+        {ok, Records} ->
+            _ = [erx_draw_conn:resized(Conn)
+                 || <<Kind, _:(?ERX_WINDOWS_MOUSE_RECORD - 1)/binary>> <= Records, Kind =:= $r],
+            Answer;
+        {error, _} ->
+            Answer
+    end;
+read({File, _}, Offset, Count, #{window := #{window := Window}}) when ?IS_RELAYED(File) ->
+    erx_win:read_at(Window, File, Offset, Count);
+read({{clipboard, Clipboard}, _}, Offset, Count, _Fs) ->
+    erx_win:clipboard_read(Clipboard, Offset, Count);
 read({Text, _}, Offset, Count, #{texts := Texts}) when Text =:= passwd; Text =:= group ->
     Bytes = map_get(Text, Texts),
     Start = min(Offset, byte_size(Bytes)),
@@ -211,7 +293,7 @@ random(Count, Entropy) ->
         error:{entropy, _Status} -> {error, eio}
     end.
 
-%% Only null, zero and tty open for writing (file/1).
+%% Only the files whose bits allow it open for writing (file/1).
 -doc false.
 write({_Node, read}, _Offset, _Bytes, _Fs) ->
     {error, ebadf};
@@ -224,8 +306,23 @@ write({tty, _}, Offset, Bytes, #{tty := Tty}) ->
     catch
         exit:_ -> {error, eio}
     end;
+write({draw, _}, Offset, Bytes, #{window := #{conn := Conn}}) ->
+    case erx_draw_conn:write(Conn, Bytes) of
+        ok -> {ok, byte_size(Bytes), Offset};
+        {error, Errno} -> {error, Errno};
+        {incomplete, Errno} -> {error, Errno}
+    end;
+write({File, _}, Offset, Bytes, #{window := #{window := Window}}) when ?IS_RELAYED(File) ->
+    relayed(erx_win:write_at(Window, File, Offset, Bytes), Offset);
+write({{clipboard, Clipboard}, _}, Offset, Bytes, _Fs) ->
+    relayed(erx_win:clipboard_write(Clipboard, Offset, Bytes), Offset);
 write({entries, _}, _Offset, _Bytes, _Fs) ->
     {error, ebadf}.
+
+%% A relayed write's answer at the request's offset; the file protocol's reader
+%% already refuses a count past the bytes sent (erx_file_remote).
+relayed({ok, Count, _}, Offset) -> {ok, Count, Offset};
+relayed({error, _} = Refused, _Offset) -> Refused.
 
 -doc false.
 make(dev, Name, {file, _Mode, Flags}, Fs) ->
@@ -247,5 +344,7 @@ statfs(_Fs) ->
     erx_fs_node:statfs(?ERX_P9_MAGIC_DEVFS).
 
 -doc false.
+clunk({{clipboard, Clipboard}, _}, _Fs) ->
+    erx_win:clipboard_close(Clipboard);
 clunk(_Handle, _Fs) ->
     ok.

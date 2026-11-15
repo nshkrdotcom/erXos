@@ -29,6 +29,15 @@ ends"):
   is gone. start/1 answers the range's offset, which the starter names in
   the window's presents.
 
+The spec's `window => Display`, in place of a buffer, starts the program
+with a window of its own on the display whose grant this domain names
+`Display`: the handler opens the window as its holder, starts a draw
+connection on it and gives the program a `/dev` of its own, an
+erx_session_export tree that serves the connection's `draw` and `ctl` and
+relays the window's `kbd`, `mouse`, `wctl`, `label` and the display's
+`clipboard` (docs/design-files.md, "A program's window"). All three end
+when the handler does.
+
 The pid, ppid and pgid come from the command server, which assigns
 process ids (docs/design-programs.md, "The parties").
 
@@ -95,6 +104,10 @@ speaks for, `ebadf` for a pipe end the caller does not hold, `emfile`
 beyond a pipe's read ends, `enfile` at the session's pipes quota,
 `enodev` for a buffer in a domain where no pixel allocator runs,
 `einval` for a buffer in an area the domain does not share with `Peer`,
+`einval` for a window beside a buffer or for a table with no room for the
+window's `/dev`, `enodev` for a window in a domain without the display
+client or with no grant of the display, the display's or the connection's
+errno for a window they refuse, `eio` for a `/dev` tree that does not start,
 `enomem` (for a pipe server that is gone too), `eio` when the handler
 crashed, `e2big` for strings past the startup message's bound, the
 start's own refusal (erx_program:start/1), or `timeout` when the handler
@@ -148,11 +161,13 @@ stop(Handler) when is_pid(Handler) ->
 
 init(Starter, Ref, #{pid := Pid} = Spec) ->
     erlang:monitor(process, Starter),
-    Files = #{table => erx_file_description:table(), within => maps:get(within, Spec, all),
-              cwd => maps:get(cwd, Spec, undefined), slots => erx_program:slots(Spec)},
+    Files = (maps:with([window], Spec))#{table => erx_file_description:table(),
+                                         within => maps:get(within, Spec, all),
+                                         cwd => maps:get(cwd, Spec, undefined),
+                                         slots => erx_program:slots(Spec)},
     case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, []), Files) of
         {ok, Core, Actions} ->
-            H = #h{core = Core, starter = Starter, spec = maps:without([fds, within], Spec),
+            H = #h{core = Core, starter = Starter, spec = maps:without([fds, within, window], Spec),
                    reply = {Starter, Ref}, pipes = watch_pipes()},
             loop(perform(Actions, H));
         {error, _} = Refused ->
@@ -219,6 +234,8 @@ act({inherit, End}, #h{starter = Starter, spec = #{pid := Pid}} = H) ->
     end;
 act({lend, Peer, Bytes}, H) ->
     {event, lend(Peer, Bytes), H};
+act({window, Display}, H) ->
+    {event, window(Display), H};
 act({start, Fds}, #h{spec = Spec} = H) ->
     %% A spec of the wrong shape is the starter's, refused as einval.
     Started = try erx_program:start(Spec#{fds => Fds})
@@ -326,6 +343,39 @@ lend(Peer, Bytes) ->
         error:undef -> {refused, enodev};
         exit:{noproc, _} -> {refused, enodev}
     end.
+
+%% The program's window on Display, its draw connection and its own /dev tree
+%% (docs/design-files.md, "A program's window"), each with the handler as its
+%% one owner: the window's holder, the connection's starter and what the
+%% tree's grant ends with, so each ends when the handler does, whatever its
+%% reason, and a refused start undoes nothing by hand. A domain without the
+%% display client, or with no grant of Display, refuses with enodev.
+window(Display) ->
+    maybe
+        {ok, Window} ?= open_window(Display),
+        {ok, Conn} ?= erx_draw_conn:start(#{window => Window}),
+        Args = #{window => #{window => Window, conn => Conn, display => Display,
+                             clipboard => erx_win:clipboard(Display)}},
+        {ok, DevGrant} ?= dev_grant(erx_fs:start_link(erx_session_export, Args, rw,
+                                                      #{client => own, ends_with => self()})),
+        {windowed, DevGrant}
+    else
+        {error, Errno} -> {refused, Errno}
+    end.
+
+%% The window, or enodev in a domain whose release lacks the display client or
+%% that holds no grant of Display.
+open_window(Display) ->
+    try erx_win:open(Display, #{}) of
+        {error, none} -> {error, enodev};
+        Answer -> Answer
+    catch
+        error:undef -> {error, enodev}
+    end.
+
+%% A grant that does not start refuses the start with eio.
+dev_grant({ok, _} = Started) -> Started;
+dev_grant({error, _}) -> {error, eio}.
 
 %% A monitor of the pipe server, or none while it is between restarts.
 watch_pipes() ->

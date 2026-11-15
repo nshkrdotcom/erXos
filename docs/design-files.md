@@ -1465,7 +1465,10 @@ is a window tree, `windows` (`windows_tree`,
 `abi/services/windows.txt`), passes to no program, whatever its point
 and however it got into the starter's table, a bind of one included;
 a program reaches a display only through its own window ([A program's
-window](#a-programs-window)). The tree is the one fact the test needs:
+window](#a-programs-window)). The drop is the rule for a narrowing too:
+a starter that narrows a program to a place on a window tree, such as
+`within [/mnt/w/w1]`, starts it with nothing at that place, and the
+start is not refused. The tree is the one fact the test needs:
 a bind keeps its source's provider, and a grant answers only the tree it
 roots in at `attach` ([Namespaces](#namespaces)), so every entry that
 reaches a display names `windows`, under any point and any alias. A tree
@@ -1569,7 +1572,10 @@ connection's `draw` and `ctl` and its window's `kbd`, `mouse`, `wctl`
 and `label` at `/dev/draw`, `/dev/ctl`, `/dev/kbd` and so on, and
 `/dev/clipboard` when the session's grant on the display carries
 `clipboard` ([design-display.md](design-display.md#the-window-tree), "A
-program's `/dev`"). The window's directory holds one more file the
+program's `/dev`"): the handler learns that when it starts the tree, by a
+walk of `clipboard` from a root of that grant
+(`erx_win:clipboard/1`), whose fids it clunks at once. The window's
+directory holds one more file the
 program must not reach: the window's own `ctl`, which presents any range
 of the session's whole pixel area
 ([design-display.md](design-display.md#the-window-tree), "`ctl`"), so a
@@ -1611,12 +1617,16 @@ owns ([design-display.md](design-display.md#the-pixel-area),
 
 **The `/dev` tree.** It is the export's fixed tree, `erx_session_export`,
 started for the one program with its window and connection among its
-arguments. Its `dev` directory holds `null`, `zero`, `urandom` and `tty`,
-as the shared tree's does, and the window's names, and nothing else; the
-program's `/bin` and `/etc` stay on the shared tree's grants, and only
-its `/dev` entry names this tree. Its qid paths are drawn from
+arguments. Its root holds `dev` alone, and its `dev` directory holds
+`null`, `zero`, `urandom` and `tty`, as the shared tree's does, and the
+window's names, and nothing else; the program's `/bin` and `/etc` stay on
+the shared tree's grants, and only its `/dev` entry names this tree. The
+names no entry of the program's table may stand at or below are the
+devices' and every window name, `clipboard` included whether or not the
+session's grant carries it (`erx_prog_handler_core:exported/1`), so the
+check does not depend on the display. Its qid paths are drawn from
 the domain's counter when its grant starts
-(`erlang/apps/erx_session/src/erx_session_export.erl:74-92`), as the
+(`erlang/apps/erx_session/src/erx_session_export.erl:110-140`), as the
 shared tree's are, so its tree's name, `export`, may be the shared
 tree's and the domain, tree and path of each of its files still name no
 other file ([Identity and version](#identity-and-version)). Its window
@@ -1685,7 +1695,7 @@ and its names are among the export's names there.
 
 **A resize.** The connection's image 0 has the window's size only after
 `erx_draw_conn:resized/1`
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:129-136, 174-181`), and a
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:129-136, 183-190`), and a
 program learns of a resize from an `r` record of `mouse`
 ([design-display.md](design-display.md#the-window-tree)). The tree is
 the one place both meet: when a read of `mouse` answers a record whose
@@ -1716,15 +1726,22 @@ handler, after building the program's table:
    self()`);
 4. puts in the program's table, at `/dev`, the entry `{grant, DevGrant,
    <<"export">>}` with `root` `[<<"dev">>]` and rights `rw`, in place of
-   the shared tree's `/dev` entry, or beside the others when the
+   every entry at exactly `/dev`, or beside the others when the
    narrowing left none.
+
+The handler does not yet join the export and a grant at `/dev` ([Where
+the export and a grant meet](#narrowing-for-a-program), TODO.md), so a
+grant the session mounts at `/dev` itself, such as an administrator's
+device tree, is among the entries step 4 replaces: a program with a
+window loses it and gains nothing, which fails safe. An entry below
+`/dev` that names none of the tree's names stays.
 
 A table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev` cannot take
 the entry, and the start is refused with `EINVAL` before the window is
 opened. A step that fails refuses the start with its errno: the window's
 as [design-programs.md](design-programs.md#the-handler) lists them, the
 connection's (`ENOMEM` when image 0 cannot be made,
-`erlang/apps/erx_win/src/erx_draw_conn.erl:149-160`), and `EIO` for a
+`erlang/apps/erx_win/src/erx_draw_conn.erl:158-169`), and `EIO` for a
 grant that does not start. The handler undoes nothing by hand: a refused
 start ends it, and what it made ends with it, as follows.
 
@@ -1738,7 +1755,7 @@ reaches a linked process as a signal it ignores
 ends the window when its holder ends
 ([design-display.md](design-display.md#the-window-tree)); the connection
 monitors its starter and stops at its end
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:150, 190-191`), giving back
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:159, 201-202`), giving back
 its buffer's lease, after which the buffer's range is free
 ([design-display.md](design-display.md#the-pixel-area)); and the tree's
 grant ends with what its `ends_with` names
@@ -1751,7 +1768,7 @@ a program holds no pid (F9). While the program runs:
 * a connection that ends alone, for an allocation that failed after its
   plan, leaves the tree in place, and `draw` and `ctl` answer `EBADF`,
   as every call to an ended connection does
-  (`erlang/apps/erx_win/src/erx_draw_conn.erl:138-144`); the program
+  (`erlang/apps/erx_win/src/erx_draw_conn.erl:147-153`); the program
   decides whether to exit, and nothing restarts the connection;
 * a window that ends alone, its display lost, leaves the connection
   running with each present failing
