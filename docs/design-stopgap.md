@@ -1977,7 +1977,10 @@ nothing else, while the volume's end ends the mint and every grant, and the doma
 facet row's limits a grant applies three: `in_flight`, the most requests it holds at once (at most `erx_fs_grant`'s 64); `max_request`, the largest
 message size it agrees to at `version`, which it advertises but does not check against each frame (at most 9P's 65,560; a row below 9P's least, 4,096, is refused with `{error, einval}`); and `max_heap_size`,
 its process's heap bound in words, shared binaries included. `reductions` and `period_ns` bind no grant, as they bind no facet yet. The grantee's
-namespace reads its `data` grant at each lookup, so the mint keeps no record of what it handed out. Only a domain the manifest grants `data`
+namespace reads its `data` grant at each lookup, so the mint keeps no record of what it handed out. The volume's `packages/` directory is
+the files service `packages` ([design-packaging.md](design-packaging.md#where-a-package-lies)), with a mint of its own beside `data`'s that
+works the same way: each of its grants roots at `packages/`, answers `..` there itself, and takes no `.` or `..` as a name, so it reaches
+nothing else of the volume, and the mount makes the directory when the volume lacks it. Only a domain the manifest grants `data`
 mounts its `data` facet at `/data`, read-write and on the tree `data`, with `erx_ns:mount_facets/1` ([design-files.md](design-files.md), "A
 facet's mount"): the system domain's domain service once it has read the manifest, and a session domain as `erx_session` starts
 (`erx_session_app`), from the names of its granted facets its ready answer carries. The mount names the facet, never a grant, so every lookup

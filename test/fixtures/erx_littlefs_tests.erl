@@ -13,7 +13,7 @@
          worker_end_ends_the_owner/0, window_end_ends_the_owner/0,
          mount_failure_ends_the_owner/0, corrupt_volume_never_formats/0, blank_blocks_do_not_mount/0,
          deadline_ends_a_request/0, refuses_bad_arguments/0, fsync_flushes_the_window/0,
-         failed_flush_fails_the_fsync/0]).
+         failed_flush_fails_the_fsync/0, a_tree_reaches_only_its_own/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -30,7 +30,7 @@ main() ->
              worker_end_ends_the_owner, window_end_ends_the_owner,
              mount_failure_ends_the_owner, corrupt_volume_never_formats, blank_blocks_do_not_mount,
              deadline_ends_a_request, refuses_bad_arguments, fsync_flushes_the_window,
-             failed_flush_fails_the_fsync],
+             failed_flush_fails_the_fsync, a_tree_reaches_only_its_own],
     Results = [run(Case) || Case <- Cases],
     erlang:halt(case lists:all(fun(R) -> R end, Results) of true -> 0; false -> 1 end).
 
@@ -105,7 +105,7 @@ start_volume(Disk, Name) ->
     Window = start_window(Disk),
     {ok, Owner} = erx_lfs:start_link({window, Window}, Name),
     unlink(Owner),
-    {ok, Fs} = erx_lfs:init(Name),
+    {ok, Fs} = erx_lfs:init({Name, data}),
     {Window, Owner, Fs}.
 
 stop_volume({Window, Owner, _}) ->
@@ -190,7 +190,9 @@ tree_operations() ->
     {error, eexist} = erx_lfs:make(Dir, <<"f">>, {file, 8#644, ?ERX_P9_O_WRONLY}, Fs),
     {error, eperm} = erx_lfs:make(Dir, <<"l">>, {symlink, <<"f">>}, Fs),
     {error, einval} = erx_lfs:walk(Dir, <<"a/b">>, Fs),
-    {ok, Root, _} = erx_lfs:walk(Dir, <<"..">>, Fs),
+    %% `.` and `..` are no entry: the grant answers `..` itself (erx_fs_grant).
+    {error, einval} = erx_lfs:walk(Dir, <<"..">>, Fs),
+    {error, einval} = erx_lfs:walk(Dir, <<".">>, Fs),
     {ok, DirH} = erx_lfs:open(Dir, 0, Fs),
     {ok, [{{0, _, FileId}, 1, 8, <<"f">>}]} = erx_lfs:readdir(DirH, 0, 16, Fs),
     {ok, []} = erx_lfs:readdir(DirH, 1, 16, Fs),
@@ -211,6 +213,37 @@ tree_operations() ->
     ok = erx_lfs:unlink(Root, <<"\xfe">>, directory, Fs),
     {ok, #{bsize := 4096, blocks := 256}} = erx_lfs:statfs(Fs),
     true = DirId =/= FileId,
+    stop_volume(Volume).
+
+%% A grant of the packages tree reaches the volume's packages/ directory and
+%% nothing above it: the mount made the directory, a file of the data tree's
+%% root is no entry of the packages root, and no name walks, makes, removes
+%% or renames out of it. The data tree, the whole volume, sees what the
+%% packages grant wrote under packages/.
+a_tree_reaches_only_its_own() ->
+    Volume = {_, _, Data} = start_volume(fresh_disk(), lfs_trees),
+    {ok, Packages} = erx_lfs:init({lfs_trees, packages}),
+    {ok, <<"data">>, Top, _} = erx_lfs:root(Data),
+    {ok, <<"packages">>, Root, {?ERX_P9_QTDIR, _, _}} = erx_lfs:root(Packages),
+    {ok, Root, {?ERX_P9_QTDIR, _, _}} = erx_lfs:walk(Top, <<"packages">>, Data),
+    {ok, _, _, Secret} = erx_lfs:make(Top, <<"secret">>, {file, 8#644, ?ERX_P9_O_RDWR}, Data),
+    ok = erx_lfs:clunk(Secret, Data),
+    {error, enoent} = erx_lfs:walk(Root, <<"secret">>, Packages),
+    Escapes = [erx_lfs:walk(Root, <<"..">>, Packages),
+               erx_lfs:make(Root, <<"..">>, {directory, 8#755, self()}, Packages),
+               erx_lfs:make(Root, <<"..">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+               erx_lfs:unlink(Root, <<"..">>, directory, Packages),
+               erx_lfs:rename(Root, <<"..">>, Root, <<"moved">>, Packages),
+               erx_lfs:rename(Root, <<"x">>, Root, <<"..">>, Packages),
+               erx_lfs:unlink(Root, <<".">>, directory, Packages)],
+    [{error, einval}] = lists:usort(Escapes),
+    {ok, _, _, App} = erx_lfs:make(Root, <<"a.app">>, {file, 8#644, ?ERX_P9_O_RDWR}, Packages),
+    ok = erx_lfs:clunk(App, Packages),
+    {ok, RootH} = erx_lfs:open(Root, 0, Packages),
+    {ok, [{_, _, _, <<"a.app">>}]} = erx_lfs:readdir(RootH, 0, 16, Packages),
+    ok = erx_lfs:clunk(RootH, Packages),
+    {ok, _, _} = erx_lfs:walk(Top, <<"secret">>, Data),
+    {ok, _, {0, _, _}} = erx_lfs:walk(Root, <<"a.app">>, Data),
     stop_volume(Volume).
 
 %% A block request the window refuses fails its operation with eio, and the

@@ -27,7 +27,7 @@ it; git history is the record of completed work.
   `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
   `erx_app` depends on `erx_session`,
   its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
-  storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
+  storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
   from the start table, and the app session below; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
   package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
@@ -6834,6 +6834,17 @@ to the corpus and follow rc
   enabling or disabling declared rows and moving a display among rows whose templates are granted it. It cannot
   add a row or widen a grant. Closed by rooting each `data` grant at its principal's or service's directory,
   with the test that a session holding `data` finds no `etc/` under its `/data`.
+* [Medium] packages on the stopgap ([design-packaging.md](docs/design-packaging.md#where-a-package-lies)),
+  `erlang/apps/erx_storage/src/erx_lfs.erl`: a `packages` grant reaches the volume's `packages/` directory alone,
+  but a `data` grant still covers the whole volume, so every domain holding `data` can add, rewrite or remove an
+  installed package at `/data/packages`, past the package process. A changed package fails its header check or,
+  from M11, `erx_verity`'s; a removed one is withheld. Closed by rooting each `data` grant at its principal's
+  directory, with the test that a session holding `data` finds no `packages/` under its `/data`. The tree has
+  three more gaps: every grant of it is read-write, since no facet row can make an `erx_fs` grant read-only yet,
+  so the app template's derived row needs that before it lands; the owner trusts any path a grant hands it, so
+  the rooting rests on `erx_fs_grant` building nodes only from the callbacks' answers (`erx_lfs` should check
+  each path against its grant's root, as `tree apps` will need); and a file at `/packages`, or a directory a
+  full volume cannot make, leaves the tree failing its requests without a diagnostic at attach.
 * [Medium] system log on the stopgap ([design-log.md](docs/design-log.md#the-store)): a development build's `data`
   grant to `root`'s sessions covers the whole of `/data`, read-write, so those sessions reach the log's store at
   `/data/log` past `erx_logfs`: they can rewrite, truncate or forge either family, the kernel's included, so the
