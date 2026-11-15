@@ -967,7 +967,10 @@ principal keeps its entry and name, with nothing to run, until the
 machine reboots, so its atoms and its table entry stay within the
 build's count (PK9). Installing the name again in that boot, or updating
 it, takes the same entry, with the same signer only, and writes the
-record again.
+record again. The registry is a value the domain service keeps, since it
+names and starts every session from its principal, and
+`erx_principal:register_app/2` and `erx_principal:app_registry/0`, the
+registry admission reads, reach it there.
 
 Its budget is a child of the `apps` budget. Every principal of the
 manifest has a wall, a budget whose cap is its guarantee; an app's is
@@ -988,10 +991,13 @@ any session, with three differences, all decided by the domain service
 from the app's admitted record:
 
 * the domain library's plan takes the app template and the app's
-  principal: `erx_dom_plan_session` accepts a principal that is the
-  template's own or an app principal when the template is the app
-  template, and no other, and for an app principal takes the template's
-  limits with the `memory` its record carries;
+  principal: `erx_dom_plan_app_session` plans the app template under the
+  app's entry, with the template's limits and the `memory` its record
+  carries, and plans no other template; `erx_dom_plan_session` plans a
+  template under its own principal only, and the app template names none,
+  so it refuses that template, and neither entry can pair an app
+  principal with another template or the app template with another
+  principal;
 * its facets are the template's `packages` row and the rows the
   admission kept, and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
@@ -1664,9 +1670,9 @@ authenticated layout or `header`.
 | --- | --- |
 | the manifest check ([design-system.md](design-system.md#the-manifest)) | the `apps`, `package` and `signer` rows and the rows derived from `apps`; property 19; A10 holds, since an app selects among rows the manifest set |
 | the root task and the resource policy | the `apps` budget carved from the root at boot as a wall, the apps group under `users`; app principals' elastic budgets under it, with no guarantee and the `apps` budget's guarantee as cap |
-| the domain library | the principal table sized for the manifest's principals and `max` apps; `erx_dom_principal` carving an app principal's elastic budget under the `apps` budget; `erx_dom_plan_session` taking an app principal with the app template |
+| the domain library | the principal table sized for the manifest's principals and `max` apps, whose app entries `erx_dom_apps_place` puts after the manifest's principals; each app entry's elastic budget carved under the `apps` budget at boot; `erx_dom_plan_app_session` planning an app principal's session from the app template, which `erx_dom_plan_session` refuses |
 | the domain service | the app's session: the kept rows, and the app's record, with its package's place and layout, in the ready answer |
-| the principal service | `register_app/2`, called at a committed install or update and at recovery; no app principal is unregistered within a boot |
+| the principal service | `register_app/2`, called at a committed install or update and at recovery; `app_registry/0`, the registry admission reads; no app principal is unregistered within a boot |
 | the start service ([design-apps.md](design-apps.md#the-start-table)) | its tree at `/etc/start`, holding `ctl`; the package rows after the manifest's; `packages/2`, answered once the dropped apps' sessions have ended and refused for an ended lifetime; the merge's grants for an app from its admission; `purge` in its `ctl` |
 | the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the file's owner has run it, after every request sent before it; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
 | the shell ([design-shell.md](design-shell.md#commands)) | `cp` opens its target itself, copies in pieces as its info report needs, and reports a failed close of the target as it reports a failed write; `mount FILE DIR`, the EROFS mount of a package file with the layout of its own header; `service NAME purge` |

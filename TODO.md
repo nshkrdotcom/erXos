@@ -71,11 +71,33 @@ it; git history is the record of completed work.
   listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
+  the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
+  and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
+  remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
+  supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
+  them; `erx_pkg_medium`, the medium over the `packages` grant (`erx_file_remote`), declaring
+  `-behaviour(erx_pkg_io)` so the test stub and it meet one contract and, on the stopgap, the release's
+  `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
+  `unknown`; `erx_starter:packages/2` and the start table's package rows; the domain
+  service's `apps_max` option from the packed `apps` row, which registration (`erx_principal`, stubbed in
+  the package tests) bounds its entries by and refuses every one without; the `apps` tree serving
+  `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
+  `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute included; and the system_domain QEMU
+  cell. Also: the recovery runs in one `handle_continue`, so `erx_pkg:packages/0` waits for it to finish and
+  a `/proc/packages` read during it times out (drive one plan step per message instead); the log lines for a
+  refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
+  mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
+  offset and size; the lifetime taken from the caller rather than the request; and whether image header
+  reads wait for the `packages` grant.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
-  table, an app principal's elastic budget under the `apps` budget, and `erx_dom_plan_session` taking an
-  app principal with the app template and no other template; `erx_principal:register_app/2`; the session plan
+  (`erx_domain_srv:grant_facets/4`). What remains: the boot view placing the app entries
+  (`erx_dom_apps_place`) from the packed `apps` row and its app template, a session template naming no
+  principal, with the principal tables sized for them; the library entry and NIF over
+  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
+  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
+  and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
+  leave out; the session plan
   in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for

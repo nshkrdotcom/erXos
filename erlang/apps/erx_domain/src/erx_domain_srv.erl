@@ -148,6 +148,8 @@ deadline that erx_domain_mints:new/1 takes; facet_names, the table of
 facet names that facets/2 checks (the generated ?ERX_FACET_NAMES by default);
 inspect_policy, #{roots, development}, the system-shell principals and
 development flag every inspect facet's scope is decided from (inspect_policy/1);
+apps_max, the apps row's max, which bounds the registry of app principals
+(erx_principal), 0 by default;
 and principals, the manifest's system principal and principal names, which
 name each principal's sessions (principals/2).
 """.
@@ -185,6 +187,8 @@ state(Lib, Principals, Opts) ->
     %% Served holds, by configured row and by {template, T}, the facets of services the
     %% system domain serves that the manifest grants the row or the template's sessions,
     %% each its service's name, its kind (served_kind/2) and the grant's limits.
+    %% Apps is the boot's registry of app principals (erx_principal), of apps_max entries,
+    %% the apps row's max.
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [],
@@ -195,7 +199,8 @@ state(Lib, Principals, Opts) ->
       mint_timers => #{}, mint_counts => #{}, mint_log => {erlang:monotonic_time(millisecond), 0, 0},
       served => #{}, web_lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
-      inspect_policy => inspect_policy(Opts), principals => Principals}.
+      inspect_policy => inspect_policy(Opts), principals => Principals,
+      apps => erx_principal:new(maps:get(apps_max, Opts, 0))}.
 
 %% What every inspect facet's scope is decided from (erx_domain_core:inspect_scope/3): the
 %% system manifest's system-shell principals and its development flag, read once, as the
@@ -323,6 +328,13 @@ handle_call({display_settled, Name}, From, #{display_waiting := Displays} = Stat
     catch
         error:badarg -> {reply, ok, State}
     end;
+handle_call({register_app, Name, Record}, _From, #{apps := Apps} = State) ->
+    case erx_principal:register(Name, Record, Apps) of
+        {ok, Registered} -> {reply, ok, State#{apps := Registered}};
+        {error, _} = Refused -> {reply, Refused, State}
+    end;
+handle_call(app_registry, _From, #{apps := Apps} = State) ->
+    {reply, erx_principal:registry(Apps), State};
 handle_call(system_principal, _From, #{principals := #{system := System}} = State) ->
     Reply = case System of
                 none -> {error, enotsup};
