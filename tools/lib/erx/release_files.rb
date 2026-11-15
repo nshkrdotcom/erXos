@@ -54,7 +54,7 @@ module Erx
     # built without crypto. Every release only loads them (release_entry): the boot script
     # puts them on the code path and starts nothing of theirs, so a domain runs no ssh
     # supervisor until a program of its own calls ssh:start/0 (docs/design-ssh.md,
-    # "Stages"); ssh alone has processes to start.
+    # "Stages"), and none runs ssl's or inets' supervisors until a program starts them.
     DOMAIN_IMAGE_ONLY = DomainImageApps::APPLICATIONS
 
     NAME = 'erxos'
@@ -108,9 +108,10 @@ module Erx
     #   sessions and quotas"): the network client, whose `grant` key the session
     #   template's arguments set; the session's line to the web domain (docs/design-web.md,
     #   "Views on the line"), which must be up before init's ready report names it, so the
-    #   script starts it; and asn1, crypto, public_key and ssh (DOMAIN_IMAGE_ONLY), which
-    #   it only loads, so that a principal can run OTP's ssh daemon in its own session
-    #   (docs/design-ssh.md, "Stages", stage 1) and no session runs ssh's supervisors
+    #   script starts it; and asn1, crypto, public_key, ssh, ssl and inets
+    #   (DOMAIN_IMAGE_ONLY), which it only loads, so that a principal can run OTP's ssh
+    #   daemon in its own session (docs/design-ssh.md, "Stages", stage 1) and fetch over
+    #   HTTPS (docs/design-crypto.md, "Releases"), and no session runs ssh's supervisors
     #   unasked;
     # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
     #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
@@ -133,14 +134,14 @@ module Erx
     #   No manifest names it yet: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
-    #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script, session's and app's
+    #   public_key and ssh (docs/design-ssh.md lists no more). Only this script, session's and app's
     #   name crypto, so no other domain has it on its code path. No manifest names it
     #   yet; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
-    #   programs (erx_desk), the network client, asn1, crypto and public_key, which it
-    #   only loads (with ssl and inets, for an app's HTTPS requests, once the runtime
-    #   builds them), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
+    #   programs (erx_desk), the network client, asn1, crypto, public_key, ssl and inets,
+    #   which it only loads, for an app's HTTPS requests (docs/design-crypto.md,
+    #   "Releases"), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
     #   which mounts the app's package at /app and starts what it declares. Its .app
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
@@ -153,8 +154,8 @@ module Erx
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
-                        'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
-                        'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
+                        'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
+                        'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
                                   'erx_net_client', 'erx_app'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
@@ -315,6 +316,17 @@ module Erx
       File.join('otp/lib', application)
     end
 
+    # An application's resource file, the .app.src its .app is made from: the one
+    # <application>.app.src beneath its src, which is src/ itself but for an OTP
+    # application whose src has subdirectories, as inets' does (src/inets_app).
+    def self.app_resource(root:, application:)
+      source = File.join(root, source_directory(application), 'src')
+      found = Dir.glob("**/#{application}.app.src", base: source)
+      raise Error, "#{source_directory(application)}/src holds #{found.size} #{application}.app.src, not one" unless found.size == 1
+
+      File.join(source, found.first)
+    end
+
     # The version an application's .app file in ebin names.
     def self.app_version(ebin, application)
       text = File.read(File.join(ebin, "#{application}.app"))
@@ -372,7 +384,7 @@ module Erx
     def sources_of(application, name)
       source = File.join(@root, self.class.source_directory(application), 'src')
       base = File.basename(name, '.*')
-      return [File.join(source, "#{base}.app.src")] if name.end_with?('.app')
+      return [self.class.app_resource(root: @root, application: application)] if name.end_with?('.app')
 
       found = ErlangApps.own?(application) ? [erxos_source(application, base)].compact : otp_sources(application, base)
       raise Error, "no source in #{self.class.source_directory(application)} for #{name}" if found.empty?
@@ -418,7 +430,7 @@ module Erx
           release: "{release,{\"#{@release.system ? @release.name : name}\",\"1\"},{erts,\"#{erts_version}\"}," \
                    "[#{applications.map { |application| release_entry(application) }.join(',')}]}.\n"
         )
-        sources = applications.map { |application| File.join(@root, self.class.source_directory(application), 'src', "#{application}.app.src") }
+        sources = applications.map { |application| self.class.app_resource(root: @root, application: application) }
         ReleaseFile.new(path: "#{@release.prefix}bin/#{name}.boot", artifact: boot, sources: sources)
       end
     end
