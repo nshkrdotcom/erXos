@@ -88,7 +88,8 @@ The declaration forms are:
 | `enum NAME TYPE` | indented `value NAME INTEGER` members; every value explicit and distinct |
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
-| `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native` or `packed_le` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
+| `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native`, `packed_le` or `packed_be` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
+| `elements NAME STORAGE TAG_ENUM LENGTH_TYPE` | tag, length and body records repeated to the end of their bytes, with indented `element MEMBER REPEAT BODY` members ([Element sequences](#element-sequences)) |
 | `variant NAME PREFIX TAG_FIELD TAG_ENUM MAX_BYTES` | a fixed prefix containing the tag and indented `case TAG BODY_LAYOUT` members; each body begins after the prefix |
 | `status NAME INTEGER DESCRIPTION` | a signed 32-bit result; zero is success and every error is negative |
 | `signal NAME NUMBER ACTION [alias NAME]` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, and its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps; the generator gives each name and alias the constant `ERX_SIG` and its name in upper case, `erx/abi.h` the lookups `erx_sig_name`, `erx_sig_action` and `erx_sig_valid`, and `erx_abi_signals` the protocol names of the signals a program may name |
@@ -260,9 +261,15 @@ adding a service-execution language.
 
 ### Packed layouts
 
-A layout of storage `packed_le` is a record of a medium whose fields sit
-at any byte offset, little-endian: F2FS's superblock has a 64-bit
-`block_count` at offset 36 ([design-f2fs.md](design-f2fs.md#reading-the-medium)).
+A layout of a packed storage is a record of a medium whose fields sit
+at any byte offset: F2FS's superblock has a 64-bit `block_count` at
+offset 36 ([design-f2fs.md](design-f2fs.md#reading-the-medium)). The
+storage's name carries the record's byte order, the one way two packed
+layouts differ: `packed_le` is little-endian, as F2FS is, and
+`packed_be` big-endian, as Broadcom's event message and IEEE 802.11's
+EAPOL-Key frame are ([design-wifi.md](design-wifi.md)). A packed layout
+embeds only packed layouts of its own storage, so a record has one byte
+order throughout.
 Its fields still cover it exactly and the model still checks every
 declared offset against the widths before it; only the alignment rule is
 lifted, so a packed layout declares alignment 1. It holds nothing but
@@ -281,6 +288,47 @@ field is an integer, a byte array or a `bytes` field a binary, a packed
 layout a map, and any other array a list. Neither function checks a value
 against more than its width: the bounds are its reader's, such as
 `erx_f2fs_codec`'s.
+
+### Element sequences
+
+An element sequence is records of a tag, a length and a body of that
+many bytes, repeated to the end of a buffer: IEEE 802.11's information
+elements, and the key data elements of an EAPOL-Key frame
+([design-wifi.md](design-wifi.md)). `elements NAME STORAGE TAG_ENUM
+LENGTH_TYPE` declares one:
+
+* `STORAGE` is `packed_le` or `packed_be`, the byte order of the tag and
+  the length, and the storage of every layout a body names.
+* `TAG_ENUM` is an `enum` over an unsigned integer, whose base is the
+  tag's width. Its members are the sequence's known tags, exactly: each
+  has one `element` line, in ascending tag order, so the closed set is
+  the enumeration's and the spec has one sorted form.
+* `LENGTH_TYPE` is an unsigned base integer, `u8` to `u64`, the length's
+  width. The length counts the body's bytes alone.
+
+Each member is `element MEMBER REPEAT LAYOUT` or `element MEMBER REPEAT
+bytes MIN MAX`. `REPEAT` is `once`, for an element that appears at most
+once, or `many`. A body is exactly a packed layout of the sequence's
+storage, or `MIN` to `MAX` bytes; either way it is no longer than the
+length type can count, which the model checks. An element of a tag
+outside the enumeration is skipped: the sequence states what its reader
+understands, not everything a sender may write.
+
+The generated module `erx_abi_packed` gives `decode_elements/2`, a
+sequence's bytes to `{ok, Elements}`, its known elements in order as
+`{Name, Body}`, a body a binary or its layout's map, and
+`encode_elements/2`, such a list back to bytes. The decoder is total
+over any binary. Each step reads one tag and length, refuses
+`truncated` when the bytes end inside them and `overrun` when the
+length exceeds the bytes that remain, and only then forms the body; a
+known element's body outside its bounds is `{length, Name}`, and a
+second element that appears once `{duplicate, Name}`. Every step
+consumes at least the header and every call is a tail call, so the walk
+ends within its bytes in constant stack whatever they hold, and it
+creates no atom: a name is one of the enumeration's. The encoder refuses
+an unknown name, a body outside its bounds and a second element that
+appears once. A body's own contents are its reader's to check, as for a
+packed layout. C reads no element sequence.
 
 ### Kernel calls and bindings
 

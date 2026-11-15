@@ -414,7 +414,7 @@ module Erx
       # whose fields may sit at any byte offset (docs/design-abi.md, "Packed
       # layouts").
       def layout_declaration(layout)
-        return [] if layout.storage == Model::PACKED
+        return [] if layout.packed?
 
         tag = name(layout.name)
         extent = layout_extent(layout)

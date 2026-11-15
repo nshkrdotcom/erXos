@@ -102,6 +102,9 @@ module Erx
       # header declares only its tag, size and alignment.
       def private? = !private_owner.nil?
       def private_header = private? ? "kernel/generated/#{Names.stem(name)}_impl.h" : nil
+      def packed? = Model::PACKED_ORDERS.key?(storage)
+      # A packed layout's byte order, as bit syntax spells it.
+      def byte_order = Model::PACKED_ORDERS.fetch(storage)
 
       def fetch_field(name)
         fields.find { |field| field.name == name } || line.fail!("unknown field #{name}")
@@ -114,6 +117,21 @@ module Erx
     # field holds, by name, and for an enum with args lines the u64 array
     # that holds its events' arg words.
     FieldBinding = Struct.new(:type, :args, keyword_init: true)
+    # An element sequence (docs/design-abi.md, "Element sequences"): records
+    # of a tag and a length, both of storage's byte order, each followed by a
+    # body of that many bytes, repeated to the end of the bytes. Every member
+    # of tag_type, an enum, is one known element, in tag order; a tag outside
+    # it is skipped.
+    ElementSequence = Struct.new(:name, :storage, :tag_type, :length_type,
+                                 :elements, :line, keyword_init: true) do
+      def byte_order = Model::PACKED_ORDERS.fetch(storage)
+    end
+    # A known element: its tag's member name and value, whether it may
+    # appear more than once (repeat, once or many), and its body: between
+    # minimum and maximum bytes, decoded by layout when it names a packed
+    # layout, whose size both bounds then are.
+    Element = Struct.new(:name, :tag, :repeat, :layout, :minimum, :maximum,
+                         keyword_init: true)
     Reader = Struct.new(:name, :root, :maximum, :tables, :strings, :rules,
                         :order, :source_role, :extent, :line, keyword_init: true)
     # A translation from the source type's values to the target enum's
@@ -125,7 +143,7 @@ module Erx
                         :constants, :rights, :objects, :kinds, :caps, :calls,
                         :readers, :translations, :services, :projections,
                         :protocols, :inspection, :ui, :draw, :input_records, :web, :inputs, :statuses, :signals, :faults,
-                        :errnos,
+                        :errnos, :elements,
                         keyword_init: true) do
       # The enums with args lines, in type order: the ones the generator
       # emits event tables for.
@@ -139,7 +157,7 @@ module Erx
     module Model
       TOP_LEVEL = %w[abi arch trap reg limit scalar enum flags bytes layout
                      status right type kind cap call reader translation service
-                     projection protocol inspection ui draw input web signal realtime fault errno].freeze
+                     projection protocol inspection ui draw input web signal realtime fault errno elements].freeze
       TYPE_KINDS = %w[scalar enum flags bytes layout].freeze
       BASE_TYPES = [1, 2, 4, 8].flat_map do |size|
         [false, true].map do |signed|
@@ -153,12 +171,14 @@ module Erx
       MAX_TYPE_DEPTH = 64
       # A layout's storage: wire_le, read in place by C on the wire and by
       # Erlang at its offsets; shared, memory two parties use at once;
-      # native, one party's own; and packed_le, whose fields sit at any byte
+      # native, one party's own; and packed, whose fields sit at any byte
       # offset and which only Erlang reads and writes, by bit-syntax matching
-      # (docs/design-abi.md, "Packed layouts").
-      PACKED = 'packed_le'
-      STORAGES = ['wire_le', 'shared', 'native', PACKED].freeze
+      # (docs/design-abi.md, "Packed layouts"). A packed storage's name
+      # carries its byte order, the one way two packed layouts differ.
+      PACKED_ORDERS = { 'packed_le' => 'little', 'packed_be' => 'big' }.freeze
+      STORAGES = (%w[wire_le shared native] + PACKED_ORDERS.keys).freeze
       PACKED_MEMBERS = %w[field padding].freeze
+      ELEMENT_REPEATS = %w[once many].freeze
       # The most arg words an event uses; the C table's argument array
       # has this many slots, and each carrier's args array at least as
       # many words as its enum's longest args line.
@@ -211,6 +231,7 @@ module Erx
         abi.fail!('calls require a complete architecture binding') if calls.any? && !architecture
         readers = by_kind.fetch('reader', []).map { |item| validate_reader(item, types, constants) }
         translations = validate_translations(by_kind.fetch('translation', []), types)
+        elements = by_kind.fetch('elements', []).map { |item| validate_elements(item, types) }
         services = validate_services(by_kind.fetch('service', []))
         projections = validate_projections(by_kind.fetch('projection', []), types)
         protocols = validate_protocols(by_kind.fetch('protocol', []), constants, signals: signals, errnos: errnos)
@@ -246,7 +267,7 @@ module Erx
                    projections: projections.freeze, protocols: protocols,
                    inspection: inspection, ui: ui, draw: draw, input_records: input_records, web: web, inputs: source.inputs,
                    statuses: status_values(by_kind), signals: signals, faults: faults,
-                   errnos: errnos).freeze
+                   errnos: errnos, elements: elements.sort_by(&:name).freeze).freeze
         freeze_value(result)
       end
 
@@ -578,6 +599,7 @@ module Erx
         arity(declaration.line, 5)
         name, storage, alignment, size = declaration.args
         declaration.fail!('unknown layout storage') unless STORAGES.include?(storage)
+        packed = PACKED_ORDERS.key?(storage)
         alignment = power_of_two(alignment, declaration.line)
         size = positive(size, declaration.line, maximum: MAX_LAYOUT_SIZE)
         declaration.fail!('layout size is not aligned') unless (size % alignment).zero?
@@ -593,7 +615,7 @@ module Erx
           keyword, *words = line.words
           # Every member but a field or padding is refused in a packed layout,
           # whatever its kind, so a member kind added here stays out of one.
-          if storage == PACKED && (line.indent == 4 || !PACKED_MEMBERS.include?(keyword))
+          if packed && (line.indent == 4 || !PACKED_MEMBERS.include?(keyword))
             line.fail!('a packed layout holds only fields and padding')
           end
           if line.indent == 4
@@ -658,8 +680,8 @@ module Erx
           else line.fail!("unknown layout member #{keyword}")
           end
         end
-        validate_packed(declaration, fields, alignment: alignment) if storage == PACKED
-        validate_layout_extents(fields, padding, size: size, alignment: alignment, packed: storage == PACKED, line: declaration.line)
+        validate_packed(declaration, fields, alignment: alignment) if packed
+        validate_layout_extents(fields, padding, size: size, alignment: alignment, packed: packed, line: declaration.line)
         completed = attach_metadata(fields, metadata, storage: storage)
         if tail
           count_field = completed.find { |field| field.name == tail.count_field }
@@ -764,6 +786,58 @@ module Erx
 
           field.fetch(:line).fail!('a packed field is an unsigned integer, bytes or a packed layout')
         end
+      end
+
+      # `elements NAME STORAGE TAG_ENUM LENGTH_TYPE`: a packed storage, whose
+      # byte order the tag and length take; an enum over an unsigned integer,
+      # whose members are exactly the known tags; and an unsigned base integer
+      # counting each body's bytes. One `element` line per member, in
+      # ascending tag order, so the spec has one sorted form.
+      def validate_elements(declaration, types)
+        arity(declaration.line, 5)
+        name, storage, tag_name, length_name = declaration.args
+        declaration.fail!('an element sequence has a packed storage') unless PACKED_ORDERS.key?(storage)
+        tag_type = types[tag_name]
+        unless tag_type.is_a?(EnumType) && !tag_type.flags && !tag_type.base.signed
+          declaration.fail!('element tags are an enum over an unsigned integer')
+        end
+        length_type = BASE_TYPES[length_name]
+        declaration.fail!('an element length is an unsigned integer') unless length_type && !length_type.signed
+        elements = declaration.members.map do |line|
+          known_element(line, types, tag_type: tag_type, storage: storage, length_type: length_type)
+        end
+        tags = elements.map(&:tag)
+        declaration.fail!('duplicate element') unless tags.uniq.size == tags.size
+        declaration.fail!('elements are not in ascending tag order') unless tags == tags.sort
+        missing = tag_type.members.keys - elements.map(&:name)
+        declaration.fail!("tag #{missing.min} has no element") unless missing.empty?
+        ElementSequence.new(name: name, storage: storage, tag_type: tag_type, length_type: length_type,
+                            elements: elements.freeze, line: declaration.line).freeze
+      end
+
+      # `element MEMBER REPEAT LAYOUT` or `element MEMBER REPEAT bytes MIN MAX`:
+      # a body of exactly a packed layout of the sequence's storage, or of MIN
+      # to MAX bytes; either way no longer than a length can count.
+      def known_element(line, types, tag_type:, storage:, length_type:)
+        keyword, member, repeat, body, *range = line.words
+        unless line.indent == 2 && keyword == 'element' && [4, 6].include?(line.tokens.size)
+          line.fail!('expected element MEMBER REPEAT LAYOUT or element MEMBER REPEAT bytes MIN MAX')
+        end
+        tag = tag_type.members.fetch(member) { line.fail!("#{member} is not a member of #{tag_type.name}") }
+        line.fail!('an element repeats once or many') unless ELEMENT_REPEATS.include?(repeat)
+        limit = length_type.maximum
+        layout = range.empty? ? types[body] : nil
+        if range.empty?
+          line.fail!("element body #{body} is not a layout of storage #{storage}") unless layout.is_a?(Layout) && layout.storage == storage
+          line.fail!('element body is longer than its length can count') if layout.size > limit
+          minimum = maximum = layout.size
+        else
+          line.fail!('expected bytes MIN MAX') unless body == 'bytes'
+          minimum, maximum = range.map { |bound| unsigned(bound, line, maximum: limit) }
+          line.fail!('element body minimum exceeds its maximum') if minimum > maximum
+        end
+        Element.new(name: member, tag: tag, repeat: repeat, layout: layout,
+                    minimum: minimum, maximum: maximum).freeze
       end
 
       def validate_layout_extents(fields, padding, size:, alignment:, packed:, line:)
