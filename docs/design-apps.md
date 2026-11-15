@@ -424,7 +424,20 @@ to a new file in `/etc`, created exclusively under a name of its own,
 syncs it and renames it over `rc.conf`, so a reader finds the old text
 or the new one whole, as `sysrc` writes a temporary file and moves it
 over the file (`f_sysrc_set`,
-`usr.sbin/bsdconfig/share/sysrc.subr:524-650`). `enable` and
+`usr.sbin/bsdconfig/share/sysrc.subr:524-650`). A rename becomes
+durable only later, so the command then syncs the file again, under its
+new name and through the descriptor it wrote, and reports success only
+once that sync has answered; a failed sync reports the error, and the
+file holds the old text or the new one, whole. The data partition's
+storage services make the rename durable at that sync: erXos's F2FS
+waits for a checkpoint for a sync of a file renamed since the last one
+([design-f2fs.md](design-f2fs.md#what-is-durable-when)), and under
+littlefs a rename is a metadata commit that ends with the block
+device's sync (`lfs_dir_commitcrc`, `littlefs/lfs.c:1771-1777`,
+v2.11.3), and a client's sync then flushes the medium
+([design-storage.md](design-storage.md#read-write-storage)). So a power
+cut after `enable` or `disable` has reported success never undoes it.
+`enable` and
 `disable` do nothing more, as FreeBSD's only write the variable
 (`rc.subr:1451-1459`): they write nothing to `ctl`, and `service NAME
 start` is what starts the row now. Until the row's own command or the
@@ -967,6 +980,7 @@ it guards.
 | `rc.conf`'s flags | `ntpd_flags` of 1,024 bytes with spaces and `=` sets the row's flags byte for byte, and `ntpd_flags=""` clears them; a value of 1,025 bytes, one holding `\` and one holding a tab are each skipped and reported, and the row keeps its declared flags | an off-by-one bound, which accepts the 1,025-byte value; a parser that splits the value at spaces, which changes the 1,024-byte value |
 | a keeper's flags | with a stub domain service: a row's keeper passes its applied flags as `Start`'s `flags` at its first start and at a restart within its intensity, and a `onestart` passes the row's flags read at that command; a row with none passes the empty string | a keeper that passes `flags` only at the first start, which the stub sees start the restarted session without them |
 | the edit, `erx_start_table:set/3` | a file with comments, a variable set on two lines and one set nowhere: both lines are replaced, the missing one appended, and every other byte kept | an edit that replaces only the first line that sets the variable, which leaves the later one standing |
+| `service NAME disable` across a power cut | over the storage power-cut harness's simulated medium ([design-storage.md](design-storage.md#read-write-storage)), with no checkpoint after the rename but the one the final sync waits for: a cut at each write before the command reports finds the old text or the new one, whole, and a cut after it reports finds the new text | the command without the final sync, after which a cut after its report finds the old text and the row enabled at the next boot |
 | one row for each command, through the real start service over a fixture `etc` tree | `clock` and `kiosk` enabled and running, and the file edited to disable `clock` and enable `dash`, declared `enable NO`: the edit alone starts and stops nothing; `service kiosk restart` restarts `kiosk` alone, while `clock` runs on and `dash` stays disabled; `service clock stop` then ends `clock` and leaves it disabled, and `service dash start` starts `dash` | a command that applies the whole file, which ends `clock` and starts `dash` at `kiosk`'s restart; a command that acts without reading the file, which answers `enotsup` to `dash`'s start |
 | a row's supervisor | with a stub domain service: an ended session is started again; one end more than the intensity leaves the row down and the other rows up; a keeper on a display asks the stub's `display_settled/1` before each start of its session, its first and every restart | a keeper that does not link to its session; a keeper that waits only before its first start, which the stub sees start a session unasked |
 | judging a command, `erx_start_table:command/3`, every command of the table in [How a command is judged](#how-a-command-is-judged) against every row state | each cell's answer, action and record; a `start` of a running row the read finds disabled answers `enotsup` and leaves it running, and a `stop` of it answers `ok` and records it disabled; a `start` refused for its display records nothing; a `start` on the display of a stopped row is admitted, and on a kept row's display refused with that row's name; a `restart` of a kept row on its own display is admitted; `display=` on a `onestart` of an enabled row answers `einval`; and, for a read that cannot read the file, the table's last column against every row state: `start`, `restart`, `onestart` and `onerestart` answer `eio` and record nothing, a `stop` of a kept row ends its session and records it stopped with its applied settings, and a `stop` of a disabled row's `onestart` session ends it and leaves the row disabled | a judgement made from the table before the read, which answers `enotsup` to a `start` after an edit to `YES`; `one` forms judged as ordinary ones, which refuse `onestart` of a disabled row; a display check that counts the row itself, which refuses the `restart`; holders taken from the rows recorded enabled rather than the rows kept, which refuses the start on the stopped row's display; an unreadable file judged as a file with no settings, which starts a row declared `enable YES` whose record is disabled; the `eio` refusal applied to every command, which refuses the `stop` of the kept row |
