@@ -67,7 +67,7 @@ it; git history is the record of completed work.
   in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
+  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
@@ -3151,13 +3151,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   taken ahead of the pipe server's `'DOWN'` goes to the restarted server before `pipe_server_lost`
   reaches the program, against docs/design-pipes.md, "The pipe server" (harmless: the restarted server
   numbers its pipes past the old ones, so the notice names no end).
-* [Medium] session, `erx_prog_handler`: the starter hears of its program's end only from a handler that
-  does not crash, since `start/1` drops its monitor of the handler before answering; a crash (a
-  `hand_drop` or `unlend` that does not answer `ok`, an answer of the pipe server outside its spec)
-  leaves a starter that waits only for `erx_prog_exit` waiting. Answering the monitor with the handler
-  (`{ok, Handler, Monitor, Offsets}`) makes the report hold by construction. A port the driver closes
-  with no status (`ERX_PROGRAM_LOST`, when a record of the end may be lost) ends the handler with no
-  report either, as it read no status; the starter needs to hear that its program ended, status unknown.
 * [Medium] session, `erx_pipe_nif.c` and `erx_event.c`: each ring of a session end's doorbell is one
   `{erx_pipe_ready, _, _}` message, uncoalesced, so while an end waits (bits set for that wait only) a
   co-reader that loops on the lock or a writer's repeated crossings can queue many messages before the

@@ -100,8 +100,16 @@ class ErxProgHandlerTest < Minitest::Test
       Mutant.new(file: HANDLER, original: "{'DOWN', _, process, Starter, _} -> stop;",
                  replacement: '', caught_by: 'starters_exit_stops_the_program'),
     'a handler that stays after its program ends' =>
-      Mutant.new(file: HANDLER, original: "        ended ->\n            ok;\n", replacement: '',
-                 caught_by: 'exit_tells_the_starter'),
+      Mutant.new(file: HANDLER, original: "        {ended, Reason} ->\n            exit(Reason);\n",
+                 replacement: "        {ended, _Reason} ->\n            receive after infinity -> ok end;\n",
+                 caught_by: 'exit_is_the_monitors_down'),
+    'a handler that exits normal, which the starter reads as a lost status' =>
+      Mutant.new(file: HANDLER, original: '            exit(Reason);', replacement: '            exit(normal);',
+                 caught_by: 'exit_is_the_monitors_down'),
+    'a handler that reports sigkill for every stop, which loses the exit 3' =>
+      Mutant.new(file: CORE, original: 'erx_prog:status(Status)',
+                 replacement: 'erx_prog:status(case C#core.stopping of true -> ?STOP_STATUS; false -> Status end)',
+                 caught_by: 'an_end_behind_a_closed_port_keeps_its_status'),
     'a start past its deadline that leaves its handler holding the range and the holder entry' =>
       Mutant.new(file: HANDLER,
                  original: "        exit(Handler, kill),\n        receive {'DOWN', Watch, process, Handler, _} -> ok end,\n",

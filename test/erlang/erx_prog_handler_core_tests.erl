@@ -55,9 +55,9 @@ refused_start_undoes_everything_test() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
     C3 = run(C0, [{holder, ok}, {reserved, ?HAND(1)}, {reserved, {mem, 77, 2, 4096}}, {reserved, ?HAND(2)}]),
     {C4, Actions} = erx_prog_handler_core:step(C3, {refused, enomem}),
-    ?assertEqual([{hand_drop, 1}, {hand_drop, 2}, {unlend, 77}, holder_drop, {answer, {error, enomem}}, exit],
+    ?assertEqual([{hand_drop, 1}, {hand_drop, 2}, {unlend, 77}, holder_drop, {answer, {error, enomem}}],
                  Actions),
-    ?assertEqual(ended, erx_prog_handler_core:phase(C4)).
+    ?assertEqual({ended, normal}, erx_prog_handler_core:phase(C4)).
 
 refused_reservation_undoes_what_came_before_test_() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {1, {pipe, w}}]),
@@ -65,10 +65,10 @@ refused_reservation_undoes_what_came_before_test_() ->
     {_, Actions} = erx_prog_handler_core:step(C1, {refused, ebadf}),
     {_, Refused} = erx_prog_handler_core:step(run(C0, []), {holder, {error, eexist}}),
     {_, NoMemory} = erx_prog_handler_core:step(run(C0, []), {holder, {error, enomem}}),
-    [?_assertEqual([{hand_drop, 1}, holder_drop, {answer, {error, ebadf}}, exit], Actions),
+    [?_assertEqual([{hand_drop, 1}, holder_drop, {answer, {error, ebadf}}], Actions),
      %% Another handler's entry is not this handler's to drop.
-     ?_assertEqual([{answer, {error, einval}}, exit], Refused),
-     ?_assertEqual([{answer, {error, enomem}}, exit], NoMemory)].
+     ?_assertEqual([{answer, {error, einval}}], Refused),
+     ?_assertEqual([{answer, {error, enomem}}], NoMemory)].
 
 reports_wait_for_the_start_test() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}]),
@@ -327,9 +327,19 @@ refused_frames_after_a_stop_ask_nothing_more_test() ->
 stop_once_then_exit_test() ->
     {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
     {C2, []} = erx_prog_handler_core:step(C1, stop),
-    {C3, [{tell_starter, 265}, exit]} = erx_prog_handler_core:step(C2, {exit_status, 265}),
-    ?assertEqual(ended, erx_prog_handler_core:phase(C3)),
+    {C3, []} = erx_prog_handler_core:step(C2, {exit_status, 265}),
+    ?assertEqual({ended, {shutdown, {program_exit, {signaled, sigkill}}}}, erx_prog_handler_core:phase(C3)),
     ?assertEqual({C3, []}, erx_prog_handler_core:step(C3, {report, {pipe_lost, 9, 1}})).
+
+%% A program that exited before the stop reached it keeps its own status.
+a_stop_behind_an_exit_keeps_its_status_test() ->
+    {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
+    {C2, []} = erx_prog_handler_core:step(C1, {exit_status, 3}),
+    ?assertEqual({ended, {shutdown, {program_exit, {exited, 3}}}}, erx_prog_handler_core:phase(C2)).
+
+a_port_closed_without_a_status_is_lost_test() ->
+    {C1, []} = erx_prog_handler_core:step(running(), port_closed),
+    ?assertEqual({ended, program_lost}, erx_prog_handler_core:phase(C1)).
 
 refused_send_stops_the_program_test() ->
     {C1, [{send, _}]} = erx_prog_handler_core:step(running(), {report, {pipe_lost, 9, 1}}),

@@ -18,11 +18,13 @@ and its offset answered; a start whose lend never answers is refused at
 its deadline, its handler killed with what it held; the program's notice reaches the pipe server as
 the program's; a request is answered on its slot and a frame the grammar
 refuses stops the program; a report owed while the lane is busy waits for room; a
-hand-off report is installed and sent filled; the exit tells the
-starter and ends the handler, also when a report or a stop meets the
-port the driver closed at the program's end; a port closed with no
-status ends the handler; the starter's exit stops the program; and the pipe server's
-loss reaches the program.
+hand-off report is installed and sent filled; the program's end is the
+starter's one message, the 'DOWN' of the monitor start/1 answered, with
+the status as its reason: an exit, a stop, and an exit that a report and
+a stop taken after it meet at the port the driver closed; a port closed
+with no status ends the handler program_lost and a killed handler ends
+killed, each with the program gone; the starter's exit stops the
+program; and the pipe server's loss reaches the program.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -46,9 +48,11 @@ handler_test_() ->
       fun a_refused_install_undoes_the_pipe/1,
       fun owed_report_waits_for_room/1,
       fun hand_off_report_is_installed_then_sent/1,
-      fun exit_tells_the_starter/1,
-      fun an_end_behind_a_closed_port_still_tells_the_starter/1,
+      fun exit_is_the_monitors_down/1,
+      fun a_stop_ends_signaled_sigkill/1,
+      fun an_end_behind_a_closed_port_keeps_its_status/1,
       fun a_port_closed_without_a_status_ends_the_handler/1,
+      fun a_killed_handler_ends_its_program/1,
       fun starters_exit_stops_the_program/1,
       fun pipe_server_loss_reaches_the_program/1]}.
 
@@ -74,8 +78,9 @@ spec(Fds) ->
 
 %% A started program: its handler, its fake port and the descriptors its start named.
 started(Fds) ->
-    {ok, H, _} = erx_prog_handler:start(spec(Fds)),
+    {ok, H, Monitor, _} = erx_prog_handler:start(spec(Fds)),
     erlang:put(H, handler),
+    erlang:put(monitor, Monitor),
     {start, #{fds := Named}, Port} = fake(start),
     {H, Port, Named}.
 
@@ -131,7 +136,7 @@ refused_start_undoes_everything(_) ->
      ?_assert(lists:member({holder_drop, ?PID}, Calls))].
 
 buffer_is_lent_by_the_handler(_) ->
-    {ok, H, Offsets} = erx_prog_handler:start(spec([{3, {buffer, 5, 8192}}])),
+    {ok, H, _, Offsets} = erx_prog_handler:start(spec([{3, {buffer, 5, 8192}}])),
     erlang:put(H, handler),
     Calls = [fake(alloc), fake(lend), fake(start)],
     [?_assertEqual([{3, 4096}], Offsets),
@@ -226,40 +231,67 @@ hand_off_report_is_installed_then_sent(_) ->
     Calls = [fake(install), fake(send)],
     ?_assertEqual([{install, Port, 8}, {send, Port, {erx_prog, 1, {pipe_reader, 9, 1, 2, 100, open}}}], Calls).
 
-exit_tells_the_starter(_) ->
+exit_is_the_monitors_down(_) ->
     {H, Port, []} = started([]),
-    Ref = monitor(process, H),
-    H ! {Port, {exit_status, 42}},
-    Told = receive {erx_prog_exit, H, S} -> S after ?WAIT -> timeout end,
-    Down = receive {'DOWN', Ref, process, H, Why} -> Why after ?WAIT -> timeout end,
-    [?_assertEqual({exited, 42}, Told), ?_assertEqual(normal, Down)].
+    H ! {Port, {exit_status, 3}},
+    Down = down(H),
+    Left = mailbox(),
+    [?_assertEqual({shutdown, {program_exit, {exited, 3}}}, Down), ?_assertEqual([], Left)].
+
+a_stop_ends_signaled_sigkill(_) ->
+    {H, Port, []} = started([]),
+    erx_prog_handler:stop(H),
+    {stop, Port, Status} = fake(stop),
+    H ! {Port, {exit_status, Status}},
+    Down = down(H),
+    ?_assertEqual({shutdown, {program_exit, {signaled, sigkill}}}, Down).
 
 %% The driver writes the exit status and closes the port in one step, so a
-%% report and a stop the handler takes ahead of the status meet a closed port.
-an_end_behind_a_closed_port_still_tells_the_starter(_) ->
-    erx_prog_handler_fakes:set(start, {program, "read x; exit 42"}),
+%% report and a stop the handler takes ahead of the status meet a closed
+%% port, and the stop changes nothing of the status read after it.
+an_end_behind_a_closed_port_keeps_its_status(_) ->
+    erx_prog_handler_fakes:set(start, {program, "read x; exit 3"}),
     {H, Port, []} = started([]),
-    Ref = monitor(process, H),
     erlang:suspend_process(H),
     H ! {pipe_report, ?PID, {pipe_lost, 9, 1}},
     erx_prog_handler:stop(H),
     true = port_command(Port, <<"\n">>),
     Closed = closed(Port, 200),
     erlang:resume_process(H),
-    Told = receive {erx_prog_exit, H, S} -> S after ?WAIT -> timeout end,
-    Down = receive {'DOWN', Ref, process, H, Why} -> Why after ?WAIT -> timeout end,
-    [?_assert(Closed), ?_assertEqual({exited, 42}, Told), ?_assertEqual(normal, Down)].
+    Down = down(H),
+    [?_assert(Closed), ?_assertEqual({shutdown, {program_exit, {exited, 3}}}, Down)].
 
 %% A port the driver closes with no status, as it does when the program's
 %% records may be lost, ends the handler, which reports no status it did not read.
 a_port_closed_without_a_status_ends_the_handler(_) ->
     erx_prog_handler_fakes:set(start, {program, "read x"}),
     {H, Port, []} = started([]),
-    Ref = monitor(process, H),
     true = port_close(Port),
-    Down = receive {'DOWN', Ref, process, H, Why} -> Why after ?WAIT -> timeout end,
-    Told = receive {erx_prog_exit, H, S} -> S after 100 -> none end,
-    [?_assertEqual(normal, Down), ?_assertEqual(none, Told)].
+    Down = down(H),
+    ?_assertEqual(program_lost, Down).
+
+%% The handler's crash ends the program with it: its port closes with its owner.
+a_killed_handler_ends_its_program(_) ->
+    erx_prog_handler_fakes:set(start, {program, "read x"}),
+    {H, Port, []} = started([]),
+    exit(H, kill),
+    Down = down(H),
+    Closed = closed(Port, 200),
+    [?_assertEqual(killed, Down), ?_assert(Closed)].
+
+%% The reason in the 'DOWN' of the monitor start/1 answered for H.
+down(H) ->
+    Monitor = erlang:get(monitor),
+    receive {'DOWN', Monitor, process, H, Why} -> Why after ?WAIT -> timeout end.
+
+%% Every message waiting but the stand-ins' reports of their calls: once its
+%% 'DOWN' came, none is for the starter.
+mailbox() ->
+    receive
+        {Fake, _} when Fake =:= fake; Fake =:= nif -> mailbox();
+        Message -> [Message | mailbox()]
+    after 100 -> []
+    end.
 
 %% Whether Port closes within Tries waits of 10 ms.
 closed(_Port, 0) -> false;
@@ -272,7 +304,7 @@ closed(Port, Tries) ->
 starters_exit_stops_the_program(_) ->
     Self = self(),
     Starter = spawn(fun() -> Self ! {started, erx_prog_handler:start(spec([]))} end),
-    {ok, H, []} = receive {started, A} -> A after ?WAIT -> timeout end,
+    {ok, H, _, []} = receive {started, A} -> A after ?WAIT -> timeout end,
     erlang:put(H, handler),
     {start, _, Port} = fake(start),
     _ = Starter,

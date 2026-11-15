@@ -244,13 +244,14 @@ handle_event(info, {Reader, {data, Bytes}}, _State, #{program := {piped, #{reade
     output(more(Bytes, Data));
 handle_event(info, {Port, {exit_status, Status}}, _State, #{program := {port, Port}} = Data) ->
     step({exit, Status}, Data);
-handle_event(info, {erx_prog_exit, Handler, Status}, _State, #{program := {piped, #{handler := Handler}}} = Data) ->
+handle_event(info, {'DOWN', Watch, process, _Handler, {shutdown, {program_exit, Status}}}, _State,
+             #{program := {piped, #{watch := Watch}}} = Data) ->
     step({exit, Status}, Data);
 handle_event(info, {'DOWN', Watch, process, _Handler, _Reason}, _State,
              #{program := {piped, #{watch := Watch}}} = Data) ->
-    %% A handler that ends without telling of the program's end, which
-    %% it does when it read none. Its reason may hold the program's
-    %% spec and frames, so the log names only the handler.
+    %% The handler's own end, with no status read: a crash, or a port
+    %% closed with none. Its reason may hold the program's spec and
+    %% frames, so the log names only the handler.
     step({lost, handler}, Data);
 handle_event(info, {'EXIT', Reader, normal}, _State, #{program := {piped, #{reader := Reader}}}) ->
     %% The reader read the end of the output; the program's end follows.
@@ -367,8 +368,7 @@ run({handler, Spec, Peer, Bytes}) ->
         {ok, InRead, InWrite} ?= erx_pipe_srv:pipe(),
         {ok, OutRead, OutWrite} ?= erx_pipe_srv:pipe(),
         Fds = [{0, {pipe, InRead}}, {1, {pipe, OutWrite}}, {3, {buffer, Peer, Bytes}}],
-        {ok, Handler, [{3, Offset}]} ?= erx_prog_handler:start(Spec#{fds => Fds}),
-        Watch = monitor(process, Handler),
+        {ok, Handler, Watch, [{3, Offset}]} ?= erx_prog_handler:start(Spec#{fds => Fds}),
         ok = erx_pipe_srv:close(InRead),
         ok = erx_pipe_srv:close(OutWrite),
         Reader = spawn_link(fun reader/0),

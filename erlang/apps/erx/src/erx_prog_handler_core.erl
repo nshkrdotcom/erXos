@@ -28,9 +28,13 @@ A handler lives through three phases:
   program. Its requests are answered on their own reply slots, each
   reply queued like a report, so it reaches the program after every
   frame queued before it (Requests, below).
-* **ended**: the program's exit status reached the handler, which tells
-  the starter and exits, or its port closed with none, and the handler
-  exits without a report.
+* **ended**, `{ended, Reason}`, with the reason the handler exits with,
+  so a handler that reaches the end cannot stay: `normal` for a refused
+  start, once the refusal is answered; `{shutdown, {program_exit,
+  Status}}` once the program's exit status reached the handler, `Status`
+  as erx_prog:status/1 reads it, the reason its starter reads in the
+  `'DOWN'` of its monitor; or `program_lost` for a port closed with no
+  status, which tells no status the handler did not read.
 
 A stop, asked by the starter or forced by its exit, stops the program's
 anchor with `ERX_EXIT_SIGNAL + SIGKILL`, a stop by its session, and the
@@ -166,14 +170,15 @@ session code and the program's own driver.
                 | {install_end, hand()}
                 | {forward, tuple()}
                 | {stop, non_neg_integer()}
-                | {tell_starter, integer()}
                 | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
                    erx_path:table(), erx_path:place()}
                 | {read, description(), slot(), pos_integer()}
                 | {write, description(), slot(), slot(), pos_integer()}
                 | {copy_in, slot(), slot(), binary()}
-                | {clunk, description(), slot()}
-                | exit.
+                | {clunk, description(), slot()}.
+
+%% The reason the handler exits with once it has ended.
+-type reason() :: normal | program_lost | {shutdown, {program_exit, erx_prog:status()}}.
 
 %% What waits to reach the program, oldest first: a frame to send, or a
 %% hand-off to install, whose filled report is then sent.
@@ -182,7 +187,7 @@ session code and the program's own driver.
 -type hand() :: {pipe_hand, pos_integer(), term()}.
 
 -record(core, {pid :: pos_integer(),
-               phase = reserving :: reserving | running | ended,
+               phase = reserving :: reserving | running | {ended, reason()},
                %% reserving: the starter's descriptors not yet reserved, in order.
                todo = [] :: [starter_fd()],
                %% reserving: the reserved descriptors, newest first, for the start
@@ -303,8 +308,8 @@ narrowed_at(_Entry, _Place, _Rights, _Table) ->
 below_rights(ro, _Mount) -> ro;
 below_rights(_Own, #{rights := Rights}) -> Rights.
 
--doc "The handler's phase: `reserving`, `running` or `ended`.".
--spec phase(core()) -> reserving | running | ended.
+-doc "The handler's phase: `reserving`, `running` or `{ended, Reason}`.".
+-spec phase(core()) -> reserving | running | {ended, reason()}.
 phase(#core{phase = Phase}) -> Phase.
 
 -doc "The next state and the actions that carry out one event.".
@@ -316,7 +321,7 @@ step(#core{phase = reserving} = C, {holder, {error, Errno}}) when is_atom(Errno)
     %% No entry was made for this handler, so it has nothing to let go.
     %% eexist: the pid has an entry, another handler speaks for it, and
     %% the starter named a pid that is not its program's.
-    {C#core{phase = ended}, [{answer, {error, holder_errno(Errno)}}, exit]};
+    {C#core{phase = {ended, normal}}, [{answer, {error, holder_errno(Errno)}}]};
 step(#core{phase = reserving, todo = [{N, {pipe, _}} | Todo], made = Made} = C,
      {reserved, {pipe_hand, Number, _Term} = Hand}) when ?IS_POS(Number) ->
     reserve_next(C#core{todo = Todo, made = [{N, Hand} | Made]});
@@ -325,15 +330,15 @@ step(#core{phase = reserving, todo = [{N, {buffer, _, _}} | Todo], made = Made, 
     reserve_next(C#core{todo = Todo, made = [{N, {mem, Lease, Pages}} | Made],
                         offsets = [{N, Offset} | Offsets]});
 step(#core{phase = reserving} = C, {refused, Errno}) when is_atom(Errno) ->
-    {C#core{phase = ended}, undo(C) ++ [{answer, {error, Errno}}, exit]};
+    {C#core{phase = {ended, normal}}, undo(C) ++ [{answer, {error, Errno}}]};
 step(#core{phase = reserving, todo = []} = C, started) ->
     {C1, Actions} = pump(C#core{phase = running}),
     {C1, [{answer, {ok, lists:reverse(C#core.offsets)}} | Actions]};
 %% Reports queue from the first: those that arrive while the program is
 %% built wait behind its startup message, which the start wrote.
-step(#core{phase = Phase} = C, {report, Report}) when Phase =/= ended ->
+step(#core{phase = Phase} = C, {report, Report}) when not is_tuple(Phase) ->
     pump(enqueue(C, outgoing(Report)));
-step(#core{phase = Phase} = C, pipes_lost) when Phase =/= ended ->
+step(#core{phase = Phase} = C, pipes_lost) when not is_tuple(Phase) ->
     pump(enqueue(C, {frame, {erx_prog, 1, pipe_server_lost}}));
 %% Running: the queue's head, and the program's notices.
 step(#core{phase = running, out = sending} = C, {sent, ok}) ->
@@ -384,11 +389,11 @@ step(#core{phase = running} = C, {frame, Frame}) ->
 step(#core{phase = running} = C, stop) ->
     stop(C, ?STOP_STATUS);
 step(#core{phase = running} = C, {exit_status, Status}) when is_integer(Status) ->
-    {C#core{phase = ended, queue = queue:new()}, [{tell_starter, Status}, exit]};
+    {C#core{phase = {ended, {shutdown, {program_exit, erx_prog:status(Status)}}}, queue = queue:new()}, []};
 step(#core{phase = running} = C, port_closed) ->
     %% The port closed with no status: a record of the end may be lost, and
-    %% the starter is told nothing the handler did not read.
-    {C#core{phase = ended, queue = queue:new()}, [exit]};
+    %% the starter is told no status the handler did not read.
+    {C#core{phase = {ended, program_lost}, queue = queue:new()}, []};
 step(#core{phase = running, pending = Pending} = C, {file_opened, Slot, Result}) ->
     case maps:take(Slot, Pending) of
         {Case, Rest} when Case =:= file_lopen; Case =:= file_lcreate ->
