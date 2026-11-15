@@ -149,8 +149,10 @@ check-arch-terms:
 check-stack-proof:
 	$(RUBY) tools/erx check-stack-proof
 
+# Setup's steps for both stock oracles and fsimg (Erx::Setup::BOOTSTRAP), each
+# skipped when its output is already valid.
 oracle-bootstrap:
-	$(RUBY) tools/erx oracle build --backend native --flavour jit --jobs $(JOBS)
+	$(RUBY) tools/erx setup --bootstrap --jobs $(JOBS)
 
 oracle-build:
 	$(RUBY) tools/erx oracle build $(if $(strip $(DOCKER_CONTEXT)),--docker-context "$(DOCKER_CONTEXT)",) --flavour $(FLAVOUR) --jobs $(JOBS)

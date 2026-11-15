@@ -14,10 +14,11 @@ require_relative 'web_build'
 
 module Erx
   # Prepares a fresh checkout or worktree so `make check` can run: the sources
-  # the gates build from, the stock OTP oracle, the native runtime, the
-  # command shell's rc oracle, which its corpus test runs, and the clone's
-  # development login key (DevKey), which `tools/erx ssh` logs in with. A step
-  # whose output is already present and valid is skipped.
+  # the gates build from, the stock OTP oracles (JIT and emu), fsimg, the
+  # native runtime, the command shell's rc oracle, which its corpus test runs,
+  # and the clone's development login key (DevKey), which `tools/erx ssh` logs
+  # in with; or only BOOTSTRAP's steps. A step whose output is already present
+  # and valid is skipped.
   #
   # The decision of what to run (Setup.plan) is a pure function of what exists;
   # Setup#call gathers that and performs the steps in order.
@@ -57,6 +58,13 @@ module Erx
       Step.new(name: 'rc-oracle', kind: :command, deadline: ORACLE_BUILD_DEADLINE,
                argv: %w[build rc-oracle])
     ].freeze
+
+    # The steps `make oracle-bootstrap` runs (`tools/erx setup --bootstrap`): both
+    # stock oracles, built from OTP's archive (Oracle#build), and fsimg, built from
+    # its fetched tree (Fsimg::Build), with those two sources. The host tests and
+    # the hosted runtime's build need these; the runtime itself and the rc oracle
+    # are left to `make setup`.
+    BOOTSTRAP = %w[source-otp source-fsimg oracle-jit oracle-emu fsimg].freeze
 
     # Every step for deps.lock's sources: each source setup fetches, in
     # deps.lock's order, then the builds that read them. The hosted runtime
@@ -106,9 +114,18 @@ module Erx
       File.join(File.dirname(File.expand_path(cache)), 'downloads')
     end
 
-    # ports_prefix is where FreeBSD's ports install (LOCALBASE).
+    # The named steps of steps, in their order; a name steps lacks is refused.
+    def self.subset(steps, names:)
+      missing = names - steps.map(&:name)
+      raise Error, "setup has no step #{missing.join(', ')}" unless missing.empty?
+
+      steps.select { |step| names.include?(step.name) }
+    end
+
+    # ports_prefix is where FreeBSD's ports install (LOCALBASE). only names the
+    # steps to run (BOOTSTRAP); nil runs them all.
     def initialize(root:, runner: nil, cache: ENV.fetch('ERX_SOURCE_CACHE', nil), jobs: 4, env: ENV.to_h,
-                   ports_prefix: '/usr/local')
+                   ports_prefix: '/usr/local', only: nil)
       @root = File.expand_path(root)
       @runner = runner || Runner.new(owner_root: @root, log_dir: File.join(@root, 'build/logs'))
       @cache = cache.to_s.empty? ? nil : cache
@@ -116,7 +133,8 @@ module Erx
       @env = env
       @ports_prefix = ports_prefix
       @dependencies = Dependencies.new(root: @root, runner: @runner)
-      @steps = self.class.steps(@dependencies.sources)
+      steps = self.class.steps(@dependencies.sources)
+      @steps = only ? self.class.subset(steps, names: only) : steps
     end
 
     def call

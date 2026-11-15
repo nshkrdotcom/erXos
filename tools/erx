@@ -753,7 +753,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 
@@ -964,19 +964,22 @@ module Erx
       0
     end
 
-    # Everything a fresh worktree needs before its gates run; steps whose
-    # output is already valid are skipped. Takes no network path: sources
-    # come from `make fetch` or from ERX_SOURCE_CACHE, verified by hash.
+    # Everything a fresh worktree needs before its gates run, or with
+    # --bootstrap the steps `make oracle-bootstrap` runs (Setup::BOOTSTRAP);
+    # steps whose output is already valid are skipped. Takes no network path:
+    # sources come from `make fetch` or from ERX_SOURCE_CACHE, verified by hash.
     def self.setup(input_arguments, setup_class: Setup)
       arguments = input_arguments.dup
       jobs = 4
+      only = nil
       parser = OptionParser.new do |options|
         options.on('--jobs N', Integer, 'Parallel inherited build jobs') { |value| jobs = value }
+        options.on('--bootstrap', 'Only the oracles and fsimg') { only = Setup::BOOTSTRAP }
       end
       parser.parse!(arguments)
       raise OptionParser::InvalidArgument, 'unexpected arguments' unless arguments.empty?
 
-      ran = setup_class.new(root: ROOT, jobs: jobs).call
+      ran = setup_class.new(root: ROOT, jobs: jobs, only: only).call
       Terminal.puts(ran.empty? ? 'setup: nothing to do' : "setup: ran #{ran.join(', ')}")
       0
     end

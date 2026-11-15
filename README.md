@@ -436,10 +436,13 @@ ERX_SOURCE_CACHE=/path/to/other/checkout/build/third_party make setup
 ```
 
 `make setup` (`tools/erx setup --jobs N`) runs, in order: every source
-`deps.lock` pins, in its order, except those named below, the
-JIT oracle (`make oracle-bootstrap`), the `emu` oracle,
-`tools/erx build runtime`, `tools/erx build rc-oracle` and
-`tools/erx build fsimg`. A step whose output is already valid is
+`deps.lock` pins, in its order, except those named below, the web
+client's packages, the JIT oracle, the `emu` oracle,
+`tools/erx build fsimg`, `tools/erx build runtime`,
+`tools/erx build rc-oracle` and the development login key.
+`make oracle-bootstrap` (`tools/erx setup --bootstrap`) runs only the
+oracles' and fsimg's steps, with OTP's and fsimg's sources, from the
+cache as `make setup` does. A step whose output is already valid is
 skipped, so a second run does nothing. Each build runs under a deadline
 with its own log in `build/logs/`.
 
@@ -468,9 +471,12 @@ make oracle-bootstrap
 make check
 ```
 
-The bootstrap builds stock native OTP 29.1.2 with the JIT, offline, from
-the archive the fetch verified. To rebuild it, run
-`tools/erx oracle build --backend native --flavour jit --clean`. The
+The bootstrap builds stock native OTP 29.1.2 twice, offline, from the
+archive the fetch verified: with the JIT and as the `emu` interpreter,
+which the hosted runtime's build runs as its host OTP. It also builds
+fsimg, which writes the EROFS images. To rebuild an oracle, run
+`tools/erx oracle build --backend native --flavour jit --clean` (or
+`--flavour emu`). The
 modified dependencies live in `otp/`, `musl/` and `fiasco/`, each with
 its recorded origin. LVGL is the git submodule `display/lvgl/lvgl`,
 cloned from erXos's fork at the commit its gitlink records

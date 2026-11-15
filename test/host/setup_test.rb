@@ -39,6 +39,16 @@ class SetupTest < Minitest::Test
     assert_equal %w[source-musl runtime], Erx::Setup.plan(present, steps: Erx::Setup.steps(LOCK, hosted_runtime: true)).map(&:name)
   end
 
+  # make oracle-bootstrap runs setup's own steps for the oracles and fsimg, with
+  # OTP's and fsimg's sources before their builds, in setup's order; a name setup lacks is refused.
+  def test_bootstrap_is_setup_s_oracle_and_fsimg_steps_in_order
+    steps = Erx::Setup.steps(LOCK, hosted_runtime: true)
+    assert_equal %w[source-otp source-fsimg oracle-jit oracle-emu fsimg],
+                 Erx::Setup.subset(steps, names: Erx::Setup::BOOTSTRAP).map(&:name)
+    error = assert_raises(Erx::Error) { Erx::Setup.subset(steps, names: %w[oracle-jit oracle-emu-typo]) }
+    assert_match(/no step oracle-emu-typo/, error.message)
+  end
+
   # Every pinned source is fetched by setup or skipped with its reason, and a
   # skip names a source deps.lock still pins.
   def test_every_pinned_source_is_fetched_or_skipped_with_a_reason
