@@ -5690,6 +5690,12 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock. Name each board's
   clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
+* [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
+  says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
+  it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,
+  so nothing sets the wall clock from the Pi's clock module. HTTPS clients refuse every certificate on an unset
+  clock ([design-crypto.md](docs/design-crypto.md#time)). Design the keeper in design-time.md: how the clock service
+  takes the RTC's reading at boot, how it ranks it against network time, and when it writes the RTC.
 * [Low] platforms, panic output: the board port measures whether the
   kernel's polled early-console writes at a panic complete after the
   console driver has reconfigured the UART, on each board

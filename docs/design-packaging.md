@@ -411,10 +411,15 @@ From the row the build derives, as rows of the image's manifest that the
 board's source does not hold and the build record lists:
 
 * **the app template**, a session template whose runtime is the
-  system's interpreter, whose release boots the domain release's `app`
+  interpreter image, which links `crypto`
+  ([design-crypto.md](design-crypto.md#three-runtime-images-and-openssl-in-two-of-them)),
+  whose release boots the domain release's `app`
   script (the base every session boots, the client side of the display,
-  `erx_memdraw`, `erx_win` and `erx_ui`, and `erx_app`), and whose limits
-  are a session's defaults with `SPACES` (property 14);
+  `erx_memdraw`, `erx_win` and `erx_ui`, the network client
+  `erx_net_client`, OTP's `asn1`, `crypto`, `public_key`, `ssl` and
+  `inets`, which it only loads, for an app's HTTPS requests
+  ([design-crypto.md](design-crypto.md#https-clients)), and `erx_app`),
+  and whose limits are a session's defaults with `SPACES` (property 14);
 * **one facet row for each service of `services`**, which never holds
   `packages`, `start`, `apps` or `etc` (property 19), granted to the app
   template, named as the service is, with the parameters the service's
@@ -1487,6 +1492,12 @@ only as a third party would build it, through the SDK.
   its license: `app.txt`, `lib/erx_dashboard/` and its host test, which
   checks a frame through `erx_ui_host` against
   `test/display/reference/dashboard`.
+* **`examples/quotes/`**, the quotes kiosk, erXos's own code under its
+  license: `app.txt`, which needs `display` and `net`,
+  `lib/erx_quotes/`, its source table `share/quotes.config`, its host
+  tests and its fuzz target, which the landing gate runs at a small
+  budget and `make check-fuzz` at its configured one
+  ([design-quotes.md](design-quotes.md)).
 * **`examples/doom/`**, the Doom demo, structured as a separate app:
   `ORIGIN.md` beside `doom/`, a git submodule pinned by its gitlink, as
   `display/lvgl/lvgl` is ([design.md](design.md#dependencies)). The
@@ -1505,10 +1516,10 @@ only as a third party would build it, through the SDK.
   No erXos code includes or links it, so working on erXos never needs
   reading it.
 
-To the packer both are app directories with an `app.txt`, as is a
+To the packer each is an app directory with an `app.txt`, as is a
 third party's anywhere on disk. The landing gate exports the SDK, packs
-and host-tests `examples/dashboard` with nothing but the SDK on its
-paths, and checks that every call the example makes into erXos's
+and host-tests `examples/dashboard` and `examples/quotes` with nothing
+but the SDK on their paths, and checks that every call each example makes into erXos's
 modules is one of `public.txt`'s functions, so a change that breaks the
 boundary fails there.
 

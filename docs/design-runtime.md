@@ -390,11 +390,13 @@ release holds it, where the session template's `-eval` starts it once
 the domain holds its facets; `erx_web_line` starts from the session's
 boot script, before the session reports ready, since the ready report
 names the line.
-`crypto`, `asn1`, `public_key`, `ssh` and `ssl` ship in the releases
-that ask for them, never in the system release, and their NIFs are
-linked into the interpreter and BeamAsm images alone, with OpenSSL 3.5
-([design-crypto.md](design-crypto.md#otps-applications)). `inets` and the
-rest are outside the shipped set.
+`crypto`, `asn1`, `public_key`, `ssh`, `ssl` and `inets` ship in the
+releases that ask for them, never in the system release, and the NIFs of
+the first two are linked into the interpreter and BeamAsm images alone,
+with OpenSSL 3.5; `inets` ships for its HTTP client, `httpc`
+([design-crypto.md](design-crypto.md#otps-applications),
+[HTTPS clients](design-crypto.md#https-clients)). The rest are outside
+the shipped set.
 
 NIF libraries: `socket` and `net` dropped; `prim_file` kept with erXos's
 platform layer; `zlib`, `zstd`, `erl_tracer` and `prim_buffer` kept;
