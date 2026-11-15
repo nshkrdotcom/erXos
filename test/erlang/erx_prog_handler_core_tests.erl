@@ -14,9 +14,11 @@ the program itself alone; a pipe installs both ends before its reply, and
 a refused install closes both; a frame the grammar refuses stops the program
 with SIGSYS; a stop is asked once;
 and the exit status tells the starter and ends the handler. A bounded
-exhaustive walk over every sequence of the running phase's events checks
-that at most one frame is ever out, that frames reach the program in the
-order they were queued, and that nothing follows the end.
+exhaustive walk over every sequence of the running phase's events, a
+pipe's request with each of its outcomes among them, checks that at most
+one frame is ever out, that frames reach the program in the order they
+were queued, that a pipe does exactly what its outcome asks, and that
+nothing follows the end.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -324,8 +326,8 @@ refused_send_stops_the_program_test() ->
     ?assertMatch({_, []}, erx_prog_handler_core:step(C3, {report, {pipe_lost, 9, 3}})).
 
 %% Every sequence of up to DEPTH running-phase events, the driver's answers
-%% included wherever they may come, and an open, its answer, a read of the
-%% first open and the read's two answers among them.
+%% included wherever they may come, an open, its answer, a read of the
+%% first open and the read's two answers, and a pipe's request.
 -define(DEPTH, 6).
 
 exhaustive_running_walk_test_() ->
@@ -340,18 +342,20 @@ walk(_C, _M, 0, Count) ->
     Count + 1;
 walk(C, M, Depth, Count) ->
     lists:foldl(fun(Event, Acc) ->
-                        {C1, Actions} = erx_prog_handler_core:step(C, Event),
+                        {C1, Actions} = walk_step(C, Event),
                         M1 = check(Event, Actions, M),
                         walk(C1, M1, Depth - 1, Acc)
                 end, Count + 1, events(M)).
 
 %% The reports are numbered so the order they reach the program can be
-%% checked; a probe of the program itself queues its reply among them.
+%% checked; a probe of the program itself and a pipe's request queue their
+%% replies among them.
 events(#{next := N}) ->
     [{report, {pipe_lost, 9, N}}, {sent, ok}, {sent, busy}, room, stop, {exit_status, 0},
      {frame, {erx_prog, 1, {closed, 9, 1}}}, ?ASK(N rem 16, {probe, ?PID}),
      ?ASK(14, {file, lopen, <<"x">>, 0}), {file_opened, 14, {ok, desc}}, ?ASK(13, {file, read, 0, 4, 0}),
-     {file_done, 13, {ok, <<"ab">>}}, {file_copied, 13, ok}].
+     {file_done, 13, {ok, <<"ab">>}}, {file_copied, 13, ok}
+     | [{pipe_request, N rem 16, Outcome} || Outcome <- [installed, read_refused, write_refused, enfile]]].
 
 %% The files of the model: an open waits on slot 14 and becomes the lowest
 %% free open; a read of open 0 on slot 13 is ebadf until it exists, then
@@ -374,6 +378,41 @@ file_model({file_copied, 13, ok}, #{pending := #{13 := copied} = P} = M) ->
 file_model(_Event, M) ->
     M.
 
+%% A pipe's request is one event of the walk together with the effect
+%% layer's answers to it, which come within the steps of that event: the
+%% pipe made and both ends installed, made and the read end's install
+%% refused, made and the write end's install refused, or refused by the
+%% session's quota.
+walk_step(C, {pipe_request, Slot, Outcome}) ->
+    lists:foldl(fun(Event, {Ci, Actions}) ->
+                        {Cj, More} = erx_prog_handler_core:step(Ci, Event),
+                        {Cj, Actions ++ More}
+                end, {C, []}, [?ASK(Slot, {pipe, []}) | pipe_answers(Outcome)]);
+walk_step(C, Event) ->
+    erx_prog_handler_core:step(C, Event).
+
+pipe_answers(installed) -> [{pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}, {end_installed, ?READ}, {end_installed, ?WRITE}];
+pipe_answers(read_refused) -> [{pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}, {end_refused, einval}];
+pipe_answers(write_refused) -> [{pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}, {end_installed, ?READ}, {end_refused, elimit}];
+pipe_answers(enfile) -> [{pipe_made, {error, enfile}}].
+
+%% What a pipe's request does besides its reply, and the reply it queues. A
+%% refusal drops the hand-offs not installed, numbered 1 and 2 in ?READ_HAND
+%% and ?WRITE_HAND, and closes both ends, {9, 1} and {9, 2}.
+pipe_effects(installed) -> [{make_pipe, []}, {install_end, ?READ_HAND}, {install_end, ?WRITE_HAND}];
+pipe_effects(read_refused) ->
+    [{make_pipe, []}, {install_end, ?READ_HAND}, {hand_drop, 1}, {hand_drop, 2},
+     {forward, {closed, {program, ?PID}, 9, 1}}, {forward, {closed, {program, ?PID}, 9, 2}}];
+pipe_effects(write_refused) ->
+    [{make_pipe, []}, {install_end, ?READ_HAND}, {install_end, ?WRITE_HAND}, {hand_drop, 2},
+     {forward, {closed, {program, ?PID}, 9, 1}}, {forward, {closed, {program, ?PID}, 9, 2}}];
+pipe_effects(enfile) -> [{make_pipe, []}].
+
+pipe_reply(installed) -> {ok, ?READ, ?WRITE};
+pipe_reply(read_refused) -> {error, enomem};
+pipe_reply(write_refused) -> {error, enomem};
+pipe_reply(enfile) -> {error, enfile}.
+
 %% The model: each report and each reply is queued; a send takes the oldest
 %% unsent; at most one send is out; after the end nothing happens.
 check(_Event, Actions, #{ended := true} = M) ->
@@ -389,6 +428,9 @@ check(Event, Actions, M0) ->
              {{file_opened, _, _}, _} -> file_model(Event, M0);
              {{file_done, _, _}, _} -> file_model(Event, M0);
              {{file_copied, _, _}, _} -> file_model(Event, M0);
+             {{pipe_request, Slot, Outcome}, _} ->
+                 ?assertEqual(pipe_effects(Outcome), [Action || Action <- Actions, element(1, Action) =/= send]),
+                 M0#{queued := maps:get(queued, M0) ++ [{erx_prog, 1, Slot, pipe_reply(Outcome)}]};
              {{sent, ok}, sending} ->
                  [_ | Rest] = maps:get(queued, M0),
                  M0#{out := none, queued := Rest};
