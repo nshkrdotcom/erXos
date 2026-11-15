@@ -1423,7 +1423,7 @@ land after M11 repeat M11's closure over what they add.
    the master of a tty of the session's terminal relay, with its sibling
    windows; the desktop's session, a manifest start row naming `root`
    and the display, whose template starts `erx_term_sup`;
-   the reserved chord; the inspector's windows under `[domains, Id]` and
+   the inspector's windows under `[domains, Id]` and
    `/proc`
    ([design-display.md](design-display.md#windows-and-the-window-system),
    [design-display.md](design-display.md#the-draw-connection),
@@ -1440,10 +1440,9 @@ land after M11 repeat M11's closure over what they add.
    preview, deciding nothing
    ([design-display.md](design-display.md#presentations)).
 8. **Plan 9's programs**, in 1b-F, after part 6 and track P's first part
-   (1b-D); 9term
-   and acme's `win` after track Q's pseudo-terminals. plan9port's
+   (1b-D). plan9port's
    `libdraw` with Plan 9's file connection in place of `devdraw`'s pipe,
-   served from the session's export, and acme, sam and 9term, imported as
+   served from the session's export, and acme and sam, imported as
    erXos's code with an origin file
    ([design-display.md](design-display.md#compatibility-and-migration)).
 9. **The web on the network**, after part 2, M10's logins, M11's vault
@@ -1585,8 +1584,7 @@ its terminal's window at boot, and a new one when its last window
 closes, where a seeded domain service that skips the introduction fails;
 with the display running, the console's lines are the UART and the host
 link alone and the display domain holds no facet of the console service;
-the reserved chord, typed while each window has the keyboard, reaches no
-window; `erx:attach` of `root`'s UART session from a terminal on the
+`erx:attach` of `root`'s UART session from a terminal on the
 display gives that session without the system-shell facet;
 each chokepoint check catches its seeded
 violation.
@@ -1604,9 +1602,8 @@ G7's status tests through a widget tree; `erx_ui_schema`'s fuzz target
 over arbitrary terms runs its budget clean.
 
 **Exit criteria, Plan 9's programs.** acme and sam open, edit and save a
-file in their windows under HVF, and 9term runs the command shell
-over a pseudo-terminal; the session's draw connections refuse no draw
-message they send.
+file in their windows under HVF; the session's draw connections refuse
+no draw message they send.
 
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for
@@ -2773,9 +2770,12 @@ full-screen programs run
 **Demo.** In a terminal session, toybox's `sh` runs a script with
 subshells, command substitution and a pipeline; `vi` edits a file and
 `less` pages through a log, each leaving the console as it found it; a
-dynamically linked program loads a library with `dlopen`; and two
+dynamically linked program loads a library with `dlopen`; two
 programs of one session that map one file `MAP_SHARED` see each other's
-stores at once, and `msync` makes them durable.
+stores at once, and `msync` makes them durable; and on the desktop,
+9term and acme's `win` run the command shell over a pseudo-terminal,
+imported from plan9port beside acme and sam
+([design-display.md](design-display.md#compatibility-and-migration)).
 
 **Scope.**
 
@@ -2822,7 +2822,9 @@ stores at once, and `msync` makes them durable.
 
 **Exit criteria.** musl's `libc-test` and the Open POSIX Test Suite pass
 their `fork`, `exec`, `dlopen` and `mmap` cases, or each failure is
-classified; toybox's tests pass for the second tier's applets; a forked
+classified; toybox's tests pass for the second tier's applets; 9term
+runs the command shell over a pseudo-terminal in a desktop window under
+HVF; a forked
 child holds no capability outside its type's pass set and executes only
 code its parent had mapped, and a fork whose copy its session cannot pay
 for fails with `ENOMEM` at the call, the child undone; a child survives
