@@ -11,7 +11,7 @@ limit mf_none u32 0xffffffff
 # start table").
 limit start_rows_max u32 256
 # The largest rc.conf the start service reads or writes, and the longest
-# write the apps tree's ctl file reads (docs/design-apps.md, "Where the file
+# write the start service's ctl file reads (docs/design-apps.md, "Where the file
 # is" and "Interfaces").
 limit start_rc_conf_max u32 65536
 limit start_ctl_max u32 4096

@@ -1,17 +1,15 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% EUnit cases of the `apps` tree (docs/design-apps.md, "Interfaces"): erx_starter_fs's
-%% callbacks, called without a grant, over stand-ins for the start service. The command
-%% stand-in decides each command with erx_start_table:apply_ctl/4 over a small table, as
-%% erx_starter does, and reports it to the test; the rc_conf stand-in answers a fixed
-%% text. test/host/erx_starter_test.rb runs them on stock's emulator.
+%% EUnit cases of the start service's tree, `start` (docs/design-apps.md,
+%% "Interfaces"): erx_starter_fs's callbacks, called without a grant, over a stand-in
+%% for the start service. The stand-in decides each command with
+%% erx_start_table:apply_ctl/4 over a small table, as erx_starter does, and reports it
+%% to the test. test/host/erx_starter_test.rb runs them on stock's emulator.
 -module(erx_starter_fs_tests).
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
-
--define(RC_CONF, <<"logger_enable=\"YES\"\n">>).
 
 %% logger is enabled on display d1; kiosk is granted d1 too; clock is granted none.
 rows() ->
@@ -32,7 +30,7 @@ fs() ->
                           _Action -> ok
                       end
               end,
-    {ok, Fs} = erx_starter_fs:init(#{rc_conf => fun() -> ?RC_CONF end, command => Command}),
+    {ok, Fs} = erx_starter_fs:init(#{command => Command}),
     Fs.
 
 write_ctl(Line) ->
@@ -49,34 +47,21 @@ commands() ->
 %% The tree
 %% ---------------------------------------------------------------------------
 
-the_root_holds_ctl_and_rc_conf_test() ->
+%% The tree holds ctl alone: rc.conf is a file of the etc tree, so the name is no node
+%% here, and neither a create of it nor a write through the root's handle reaches the
+%% start service.
+the_root_holds_ctl_alone_test() ->
     Fs = fs(),
     ?assertMatch({ok, ctl, _}, erx_starter_fs:walk(root, <<"ctl">>, Fs)),
-    ?assertMatch({ok, rc_conf, _}, erx_starter_fs:walk(root, <<"rc.conf">>, Fs)),
     [?assertEqual({error, enoent}, erx_starter_fs:walk(root, Name, Fs))
-     || Name <- [<<"..">>, <<"rc">>, <<"ctl/">>, <<>>, <<"apps">>]],
+     || Name <- [<<"rc.conf">>, <<"..">>, <<"rc">>, <<"ctl/">>, <<>>, <<"apps">>]],
     ?assertEqual({error, enotdir}, erx_starter_fs:walk(ctl, <<"x">>, Fs)),
-    {ok, {entries, Entries}} = erx_starter_fs:open(root, 0, Fs),
-    ?assertEqual([<<"ctl">>, <<"rc.conf">>], [Name || {_, _, _, Name} <- Entries]),
+    {ok, {entries, Entries} = Root} = erx_starter_fs:open(root, 0, Fs),
+    ?assertEqual([<<"ctl">>], [Name || {_, _, _, Name} <- Entries]),
+    ?assertEqual({error, erofs}, erx_starter_fs:open(root, ?ERX_P9_O_WRONLY, Fs)),
     ?assertMatch({ok, #{mode := Mode}} when Mode band 8#777 =:= 8#200, erx_starter_fs:getattr(ctl, Fs)),
-    ?assertMatch({ok, #{mode := Mode}} when Mode band 8#777 =:= 8#444, erx_starter_fs:getattr(rc_conf, Fs)).
-
-rc_conf_shows_the_start_services_text_test() ->
-    Fs = fs(),
-    {ok, Handle} = erx_starter_fs:open(rc_conf, 0, Fs),
-    ?assertEqual({ok, ?RC_CONF}, erx_starter_fs:read(Handle, 0, 4096, Fs)),
-    ?assertEqual({ok, <<"YES\"\n">>}, erx_starter_fs:read(Handle, 15, 4096, Fs)),
-    ?assertEqual({ok, <<>>}, erx_starter_fs:read(Handle, byte_size(?RC_CONF), 4096, Fs)).
-
-%% Neither an open for writing, nor a create over it, nor a write through another
-%% file's handle writes rc.conf.
-rc_conf_cannot_be_written_test() ->
-    Fs = fs(),
-    [?assertEqual({error, erofs}, erx_starter_fs:open(rc_conf, Flags, Fs))
-     || Flags <- [?ERX_P9_O_WRONLY, ?ERX_P9_O_RDWR, ?ERX_P9_O_WRONLY bor ?ERX_P9_O_TRUNC]],
-    ?assertEqual({error, erofs}, erx_starter_fs:make(root, <<"rc.conf">>, {file, 8#644, ?ERX_P9_O_WRONLY}, Fs)),
-    {ok, Handle} = erx_starter_fs:open(rc_conf, 0, Fs),
-    ?assertEqual({error, ebadf}, erx_starter_fs:write(Handle, 0, <<"x=1\n">>, Fs)),
+    ?assertEqual({error, eacces}, erx_starter_fs:make(root, <<"rc.conf">>, {file, 8#644, ?ERX_P9_O_WRONLY}, Fs)),
+    ?assertEqual({error, ebadf}, erx_starter_fs:write(Root, 0, <<"x=1\n">>, Fs)),
     ?assertEqual([], commands()).
 
 ctl_opens_for_writing_only_test() ->
@@ -132,10 +117,8 @@ a_line_of_4096_bytes_is_one_command_test() ->
 
 %% A start service that exits while the table restarts answers eio and ends nothing here.
 a_start_service_that_exits_answers_eio_test() ->
-    {ok, Fs} = erx_starter_fs:init(#{rc_conf => fun() -> exit(noproc) end,
-                                      command => fun(_) -> exit(noproc) end}),
-    ?assertEqual({error, eio}, erx_starter_fs:write(ctl, 0, <<"stop kiosk\n">>, Fs)),
-    ?assertEqual({error, eio}, erx_starter_fs:open(rc_conf, 0, Fs)).
+    {ok, Fs} = erx_starter_fs:init(#{command => fun(_) -> exit(noproc) end}),
+    ?assertEqual({error, eio}, erx_starter_fs:write(ctl, 0, <<"stop kiosk\n">>, Fs)).
 
 errno_test() ->
     [?assertEqual(Errno, erx_starter_fs:errno(Answer))
@@ -152,18 +135,19 @@ errno_test() ->
                             {{error, {failed, enospc}}, {error, eio}},
                             {{error, {failed, {exit, noproc}}}, {error, eio}}]].
 
-%% The system shell's `service` writes /apps/ctl as a session's does: serving the tree
-%% names its grants the apps service and mounts one grant of them, bound to the system
-%% domain, at /apps in the domain's own namespace (docs/design-shell.md, "Interfaces").
-%% The grant is a child of the grants, so it ends with them.
+%% The system shell's `service` writes /etc/start/ctl as a session's does: serving the
+%% tree names its grants the start service and mounts one grant of them, bound to the
+%% system domain, at /etc/start in the domain's own namespace (docs/design-shell.md,
+%% "Interfaces"), and nothing at /apps, which holds apps alone. The grant is a child of
+%% the grants, so it ends with them.
 serving_mounts_the_own_grant_test() ->
     persistent_term:erase(erx_ns),
     {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
-    {ok, Grants} = erx_starter_fs:start_link(#{rc_conf => fun() -> <<>> end, command => fun(_) -> ok end}),
+    {ok, Grants} = erx_starter_fs:start_link(#{command => fun(_) -> ok end}),
     try
-        ?assert(lists:member(apps, erx_facet:served())),
-        [#{point := [<<"apps">>], provider := {grant, Own, <<"apps">>}, rights := rw}] =
-            [Entry || #{point := [<<"apps">>]} = Entry <- erx_ns_prim_stub:erx_mounts()],
+        ?assert(lists:member(start, erx_facet:served())),
+        [#{point := [<<"etc">>, <<"start">>], provider := {grant, Own, <<"start">>}, rights := rw}] =
+            [Entry || #{point := [_ | _]} = Entry <- erx_ns_prim_stub:erx_mounts()],
         ?assertEqual([Own], [Pid || {_, Pid, _, _} <- supervisor:which_children(Grants)])
     after
         [begin unlink(Pid), exit(Pid, kill) end || Pid <- [Grants, Ns]],

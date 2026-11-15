@@ -495,18 +495,18 @@ inspect_setup(Grants) ->
 inspect_cleanup(Started) ->
     served_cleanup(Started).
 
-%% A session's template granted apps, a service of the files interface the system domain
+%% A session's template granted start, a service of the files interface the system domain
 %% serves, finds in its ready answer an erx_fs grant that the service's erx_fs_grants
 %% supervisor started, exported to the session alone and ending with its domain pid;
 %% no facet stands in front of it (docs/design-system.md, "Facets of the system
 %% domain's services").
 session_files_grant_test() ->
-    Started = {_, _, Grants} = files_setup([{{template, 0}, apps, system, #{max_request => 131072, in_flight => 4}}]),
+    Started = {_, _, Grants} = files_setup([{{template, 0}, start, system, #{max_request => 131072, in_flight => 4}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
-        #{apps := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
-        ?assertEqual([apps], maps:keys(Facets)),
+        #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
+        ?assertEqual([start], maps:keys(Facets)),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
         ok = await_call({start, Id}),
@@ -520,10 +520,10 @@ session_files_grant_test() ->
         files_cleanup(Started)
     end.
 
-%% A session whose template the manifest does not grant apps finds no grant, though
+%% A session whose template the manifest does not grant start finds no grant, though
 %% another template holds one, and the service starts none.
 session_without_files_grant_test() ->
-    Started = {_, _, Grants} = files_setup([{{template, 1}, apps, system, #{max_request => 131072}}]),
+    Started = {_, _, Grants} = files_setup([{{template, 1}, start, system, #{max_request => 131072}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         ?assertEqual(#{}, maps:get(domain_pid(Id), answers([domain_pid(Id)], #{}))),
@@ -532,15 +532,15 @@ session_without_files_grant_test() ->
         files_cleanup(Started)
     end.
 
-%% No configured domain, apps a files service of the system domain with a test tree's
+%% No configured domain, start a files service of the system domain with a test tree's
 %% grants behind it, and a trace of the domain pids' receives to this process, with
 %% Grants the manifest's.
 files_setup(Grants) ->
     persistent_term:put({erx_domain_fake_lib, boot},
-                        #{domains => [], services => [{system, apps, ?ERX_SERVICE_FILES}], grants => Grants}),
+                        #{domains => [], services => [{system, start, ?ERX_SERVICE_FILES}], grants => Grants}),
     {ok, Tree} = erx_fs_grants:start_link(erx_fs_test_tree, []),
     unlink(Tree),
-    ok = erx_facet:serve(apps, Tree),
+    ok = erx_facet:serve(start, Tree),
     erlang:trace(new_processes, true, ['receive', {tracer, self()}]),
     Fake = erx_domain_fake_lib:start_log(),
     %% The service reads the manifest in its init, so a boot it refuses is start_link's

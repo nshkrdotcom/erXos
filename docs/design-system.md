@@ -2044,7 +2044,7 @@ leaves the system domain. In a session, `init:reboot/0` and
 ([design-runtime.md](design-runtime.md#crash-handling)).
 
 **The `machine` tree** is a service of the system domain and an instance
-of `files`, as `apps` is
+of `files`, as the start service's tree, `start`, is
 ([design-apps.md](design-apps.md#interfaces)). The domain service's
 application serves it with `erx_fs`, beside the coordinator, and a
 session that holds the grant mounts it at `/machine`, where the system
@@ -2056,8 +2056,8 @@ domain mounts its own grant of it
 | `ctl` | nothing: write-only, mode `0200`, and an open for reading is refused with `eacces` | one end per write, whatever the offset: `reset` or `off`, with at most one trailing newline. The write succeeds once the coordinator has installed the ending record. It is refused with `einval` for any other bytes, `trial` and an empty write included; with `ebusy` while an ending record is installed, whoever asked for it; and with `eio` when the coordinator ended before it answered |
 
 A session whose template holds no `machine` grant has no `/machine`. A
-path into it answers `enoent`, as `/apps` does for a session without
-`apps`.
+path into it answers `enoent`, as `/etc/start` does for a session without
+`start`.
 
 **The right is the grant.** The manifest's facet rows say which session
 templates hold it. For each session of such a template, the domain
@@ -2068,9 +2068,9 @@ for one `erx_fs` grant bound to the session's domain and ending with it
 development manifest takes grant it to root's template alone
 (`@session.system`). A release manifest
 grants it to root's template and to any administrator's template its
-author lists, as it does `apps`. There is no administrator flag, group or
+author lists, as it does `start`. There is no administrator flag, group or
 list beside the facet rows, and the tree does not check who a writer is:
-whoever holds the grant may end the machine, as whoever holds `/apps` may
+whoever holds the grant may end the machine, as whoever holds `/etc/start` may
 command the start table. It follows that:
 
 * every session of root holds the grant: one started by a login at a
@@ -2237,7 +2237,7 @@ the log names the holder's principal.
 
 **Manifest rows.** The records every development manifest takes
 (`config/manifest/development.txt`, which both boards' manifests
-follow with their own parts) add, beside `apps`:
+follow with their own parts) add, beside `start`:
 
 ```text
 service machine

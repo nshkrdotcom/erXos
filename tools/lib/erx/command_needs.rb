@@ -17,7 +17,7 @@ module Erx
   #
   # A service's modules are the modules of its sources, path globs read from the
   # listing: the network stack's applications, the start service's application behind
-  # `apps`, and the machine tree with its coordinator, the two modules of the domain
+  # `start`, and the machine tree with its coordinator, the two modules of the domain
   # service behind `machine`. Each counts wherever its name stands as an atom: in a
   # call, a remote fun or type, an -import or an apply. The OTP modules and functions
   # through which any domain reaches the service count as Module:Function: for the
@@ -45,7 +45,7 @@ module Erx
                            modules: %w[gen_tcp gen_udp gen_sctp socket net inet_res],
                            functions: %w[inet:getaddr inet:getaddrs inet:gethostbyname inet:gethostbyaddr
                                          inet:getifaddrs]),
-      'apps' => Service.new(sources: %w[erlang/apps/erx_starter/**/*.erl], modules: [], functions: []),
+      'start' => Service.new(sources: %w[erlang/apps/erx_starter/**/*.erl], modules: [], functions: []),
       'machine' => Service.new(sources: %w[erlang/apps/erx_domain/src/erx_machine{,_fs}.erl], modules: [],
                                functions: [])
     }.freeze

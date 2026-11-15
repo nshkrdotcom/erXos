@@ -289,7 +289,7 @@ system_facets_refuse_only_the_network_commands_test() ->
     {Table, []} = erx_shell_namespace:build(
                     [{Module, Module:module_info(attributes), Module:module_info(exports)} || Module <- Modules]),
     ?assert(lists:member(erx_cmd_ifconfig, Modules)),
-    System = erx_shell_runner:facets(true, [apps, inspect, log, machine], #{}),
+    System = erx_shell_runner:facets(true, [inspect, log, machine, start], #{}),
     Missing = [{Name, Need} || {erlang, #{name := Name, needs := Needs}} <- maps:values(Table),
                                Need <- Needs, not is_map_key(Need, System)],
     ?assertEqual([{<<"host">>, net}, {<<"ifconfig">>, net}, {<<"ping">>, net}],
@@ -329,8 +329,8 @@ runner_background_leaves_no_message_test() ->
 %% the facets it holds; any other session holds its domain's facets alone.
 runner_facets_test_() ->
     Caps = #{net => facet},
-    [?_assertEqual(#{apps => local, machine => local, net => facet},
-                   erx_shell_runner:facets(true, [apps, machine], Caps)),
-     ?_assertEqual(Caps, erx_shell_runner:facets(false, [apps, machine], Caps)),
+    [?_assertEqual(#{start => local, machine => local, net => facet},
+                   erx_shell_runner:facets(true, [start, machine], Caps)),
+     ?_assertEqual(Caps, erx_shell_runner:facets(false, [start, machine], Caps)),
      %% A facet the domain holds is kept over the service's `local`.
      ?_assertEqual(#{machine => facet}, erx_shell_runner:facets(true, [machine], #{machine => facet}))].

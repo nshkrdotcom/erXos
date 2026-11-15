@@ -3,24 +3,23 @@
 
 -module(erx_starter_fs).
 -moduledoc """
-The `apps` tree (docs/design-apps.md, "Interfaces"): the `erx_fs` callback
-module the start service serves `ctl` and `rc.conf` with, which a session whose
-template holds the `apps` grant mounts at `/apps`, and the system domain mounts
-there its own grant of it.
+The start service's tree, `start` (docs/design-apps.md, "Interfaces"): the
+`erx_fs` callback module the start service serves `ctl` with, which a session
+whose template holds the `start` grant mounts at `/etc/start`, and the system
+domain mounts there its own grant of it. It holds `ctl` alone: `rc.conf` is an
+ordinary file of the data partition's `etc` tree, not of this one.
 
 * **Serving.** start_link/0 starts the tree's grants (erx_fs_grants) and names
-  them the process behind the system domain's `apps` service
+  them the process behind the system domain's `start` service
   (erx_facet:serve/2). The domain service asks it, in each grantee's ready
   answer, for one erx_fs grant bound to that domain and ending with it, so a
   session reaches the tree only through a grant the manifest gave its template
   (docs/design-system.md, "Facets of the system domain's services"). One more
-  grant, for the system domain itself, is mounted at `/apps` in the system
-  domain's namespace (erx_ns:mount_own/2), so the system shell's `service`
-  writes the path a session's does (docs/design-shell.md, "Interfaces").
-* **rc.conf.** Read-only: an open takes the text the start service's table
-  is made from (erx_starter:rc_conf/0) once, and reads see that text until the
-  clunk. Every node is owned by uid 0 and has size 0, as a `/proc` file does.
-* **ctl.** Write-only. A write is one command line, whatever its offset:
+  grant, for the system domain itself, is mounted at `/etc/start` in the
+  system domain's namespace (erx_ns:mount_own/2), so the system shell's
+  `service` writes the path a session's does (docs/design-shell.md,
+  "Interfaces").
+* **ctl.** Owned by uid 0, of size 0, as a `/proc` file is. Write-only. A write is one command line, whatever its offset:
   erx_start_table:parse_ctl/1 parses it, at most 4,096 bytes with one trailing
   newline, and erx_starter:command/1 carries it out within the write. A 9P
   write carries no text back, so a refusal answers an errno (errno/1) and its
@@ -29,8 +28,8 @@ there its own grant of it.
   the control, as for every file server (docs/design.md, Decisions).
 
 Every decision is a pure function of a node, the open flags or the start
-service's answer. The effects are the two calls into the start service,
-which a test stands in for, and the log line of a refused write.
+service's answer. The effects are the call into the start service, which a
+test stands in for, and the log line of a refused write.
 """.
 
 -behaviour(erx_fs).
@@ -43,24 +42,26 @@ which a test stands in for, and the log line of a refused write.
 
 %% The service's name in the manifest, and the tree's name, which a mount's
 %% {tree, Name} and attach's Aname name.
--define(SERVICE, apps).
--define(TREE, <<"apps">>).
+-define(SERVICE, start).
+-define(TREE, <<"start">>).
+%% The one file's name.
+-define(CTL, <<"ctl">>).
 
--type node_() :: root | ctl | rc_conf.
+-type node_() :: root | ctl.
 -type errno() :: einval | ebusy | eperm | eagain | eio.
 
 -doc """
 Starts the tree's grants, linked to the caller, erx_starter_sup, names them the
-process behind the `apps` service, and mounts the system domain's own grant at
-`/apps`.
+process behind the `start` service, and mounts the system domain's own grant at
+`/etc/start`.
 """.
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     start_link(#{}).
 
 -doc """
-As start_link/0, with Args handed to init/1: a test's stand-ins for the start
-service, `rc_conf` and `command`.
+As start_link/0, with Args handed to init/1: a test's stand-in for the start
+service, `command`.
 """.
 -spec start_link(map()) -> {ok, pid()}.
 start_link(Args) when is_map(Args) ->
@@ -91,19 +92,18 @@ errno({error, Refused}) -> {error, erx_start_table:ctl_errno(Refused)}.
 
 -doc false.
 init(Args) ->
-    {ok, maps:merge(defaults(), maps:with([rc_conf, command], Args))}.
+    {ok, maps:merge(defaults(), maps:with([command], Args))}.
 
-%% The start service's two calls the tree makes, which a test's Args stand in for.
+%% The start service's call the tree makes, which a test's Args stand in for.
 defaults() ->
-    #{rc_conf => fun erx_starter:rc_conf/0, command => fun erx_starter:command/1}.
+    #{command => fun erx_starter:command/1}.
 
 -doc false.
 root(_Fs) ->
     {ok, ?TREE, root, qid(root)}.
 
 -doc false.
-walk(root, <<"ctl">>, _Fs) -> found(ctl);
-walk(root, <<"rc.conf">>, _Fs) -> found(rc_conf);
+walk(root, ?CTL, _Fs) -> found(ctl);
 walk(root, _Name, _Fs) -> {error, enoent};
 walk(_File, _Name, _Fs) -> {error, enotdir}.
 
@@ -112,38 +112,23 @@ found(Node) ->
 
 -doc false.
 getattr(root, _Fs) -> erx_fs_node:attr(qid(root), dir, 8#555);
-getattr(ctl, _Fs) -> erx_fs_node:attr(qid(ctl), file, 8#200);
-getattr(rc_conf, _Fs) -> erx_fs_node:attr(qid(rc_conf), file, 8#444).
+getattr(ctl, _Fs) -> erx_fs_node:attr(qid(ctl), file, 8#200).
 
-%% ctl opens for writing only; the root and rc.conf for reading only.
+%% ctl opens for writing only; the root, whose listing the open takes, for reading
+%% only.
 -doc false.
 open(ctl, Flags, _Fs) ->
     case Flags band ?ERX_P9_O_ACCMODE of
         ?ERX_P9_O_WRONLY -> {ok, ctl};
         _ -> {error, eacces}
     end;
-open(Node, Flags, Fs) ->
+open(root, Flags, _Fs) ->
     case Flags band ?ERX_P9_O_ACCMODE of
-        0 -> snapshot(Node, Fs);
+        0 -> {ok, erx_fs_node:listing([{qid(ctl), ?ERX_P9_DT_REG, ?CTL}])};
         _ -> {error, erofs}
     end.
 
-snapshot(root, _Fs) ->
-    {ok, erx_fs_node:listing([{qid(Node), dirent_type(Node), Name}
-                              || {Name, Node} <- [{<<"ctl">>, ctl}, {<<"rc.conf">>, rc_conf}]])};
-snapshot(rc_conf, #{rc_conf := RcConf}) ->
-    %% The table's process may be restarting; the open fails and ends nothing here.
-    try RcConf() of
-        Text when is_binary(Text) -> {ok, {bytes, Text}}
-    catch
-        exit:_ -> {error, eio}
-    end.
-
 -doc false.
-read({bytes, Bytes}, Offset, _Count, _Fs) when Offset >= byte_size(Bytes) ->
-    {ok, <<>>};
-read({bytes, Bytes}, Offset, Count, _Fs) ->
-    {ok, binary:part(Bytes, Offset, min(Count, byte_size(Bytes) - Offset))};
 read({entries, _}, _Offset, _Count, _Fs) ->
     {error, eisdir};
 read(ctl, _Offset, _Count, _Fs) ->
@@ -168,7 +153,7 @@ command(Bytes, #{command := Command}) ->
              end,
     _ = case Answer of
             ok -> ok;
-            {error, Reason} -> logger:notice("apps ctl: refused: ~0P", [Reason, 8])
+            {error, Reason} -> logger:notice("start ctl: refused: ~0P", [Reason, 8])
         end,
     Answer.
 
@@ -179,13 +164,10 @@ call(Command, Parsed) ->
     catch exit:Reason -> {error, {failed, {exit, Reason}}}
     end.
 
-%% A create of ctl opens it (erx_fs_node:open_by_create/4); rc.conf is read-only, and
-%% the tree makes nothing else.
+%% A create of ctl opens it (erx_fs_node:open_by_create/4); the tree makes nothing else.
 -doc false.
-make(root, <<"ctl">>, {file, _Mode, Flags}, Fs) ->
+make(root, ?CTL, {file, _Mode, Flags}, Fs) ->
     erx_fs_node:open_by_create(ctl, qid(ctl), Flags, fun(F) -> open(ctl, F, Fs) end);
-make(root, <<"rc.conf">>, _What, _Fs) ->
-    {error, erofs};
 make(_Dir, _Name, _What, _Fs) ->
     {error, eacces}.
 
@@ -201,15 +183,12 @@ statfs(_Fs) ->
 clunk(_Handle, _Fs) ->
     ok.
 
-%% A read is a part of the text the open already took.
+%% No read reaches a file: ctl is write-only, and the root's listing is taken at its
+%% open.
 -doc false.
 read_mode() -> immediate.
 
-%% A node's qid is fixed, the same in every grant: the tree has three nodes.
+%% A node's qid is fixed, the same in every grant: the tree has two nodes.
 -spec qid(node_()) -> erx_fs:qid().
 qid(root) -> {?ERX_P9_QTDIR, 0, 1};
-qid(ctl) -> {0, 0, 2};
-qid(rc_conf) -> {0, 0, 3}.
-
-dirent_type(root) -> ?ERX_P9_DT_DIR;
-dirent_type(_File) -> ?ERX_P9_DT_REG.
+qid(ctl) -> {0, 0, 2}.

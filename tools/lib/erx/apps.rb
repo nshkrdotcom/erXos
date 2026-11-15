@@ -30,8 +30,8 @@ module Erx
   #
   # * kept: the row enabled with an intensity of one end in ten minutes. clock_1 boots
   #   with no login and erx_clock_test logs what its session holds (CLOCK_REPORT): its
-  #   template's one grant, `data`, and nothing of root's, no `apps` among them, so
-  #   erx:cap(apps) is undefined and /apps does not exist where /data lists. At root_1's
+  #   template's one grant, `data`, and nothing of root's, no `start` among them, so
+  #   erx:cap(start) is undefined and /etc/start does not exist where /data lists. At root_1's
   #   command shell `service ghost enable` is refused, ghost having no manifest row. At
   #   the system's Erlang shell the row is running; clock's session is killed, a new one
   #   takes its place, that one is killed too, and the row is then down (KILL_CLOCK).
@@ -220,13 +220,13 @@ module Erx
     # says the command's status was 0.
     SERVICE_DISABLE = "service #{PRINCIPAL} disable && echo disable-done\r"
     SERVICE_ENABLE = "service #{PRINCIPAL} enable && echo enable-done\r"
-    DISABLED_IN = "#{PRINCIPAL} disabled in /apps/rc.conf"
-    ENABLED_IN = "#{PRINCIPAL} enabled in /apps/rc.conf"
+    DISABLED_IN = "#{PRINCIPAL} disabled in /data/etc/rc.conf"
+    ENABLED_IN = "#{PRINCIPAL} enabled in /data/etc/rc.conf"
     # `service -e`: the configured domains, then the enabled rows, a row that is down
     # among them, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
     # What every report line of clock's sessions says (erx_clock_test:report/0): a
-    # session of clock holding the data grant alone, erx:cap(apps) undefined, no /apps,
+    # session of clock holding the data grant alone, erx:cap(start) undefined, no /etc/start,
     # and /data listed.
     # Each anchored at the kernel log record's own prefix, which no echo of a typed line has.
     CLOCK_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,#{PRINCIPAL}_[0-9]+@erxos,\[data\],true,\{error,enoent\},ok\}/n

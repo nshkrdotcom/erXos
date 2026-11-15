@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The fuzz target of the apps tree's ctl file (docs/design-apps.md, "Interfaces"):
+%% The fuzz target of the start service's ctl file (docs/design-apps.md, "Interfaces"):
 %% erx_start_table:parse_ctl/1, the reader of one untrusted write. A round takes a
 %% command this module writes, with its settings in any order and any blanks
 %% between its words, and uses it as it is, padded with blanks to exactly 4,096

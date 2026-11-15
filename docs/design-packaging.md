@@ -180,10 +180,10 @@ An app is a principal with a session template, whose release is its code
 and whose facet rows are its authority, and the start table starts and
 keeps its session ([design-apps.md](design-apps.md#an-app)). Built:
 the `start` rows, `erx_start_table`, `erx_starter` with its keepers, the
-start service's tree (`erx_starter_fs`, with `ctl` and a read-only
-`rc.conf`, which sessions mount at `/apps`; design-apps.md keeps only
-`ctl` there, at `/etc/start/ctl`, and makes `rc.conf` the ordinary file
-`/etc/rc.conf`, so that `/apps` holds apps alone) and
+start service's tree (`erx_starter_fs`, holding `ctl` alone, which
+sessions mount at `/etc/start`, so that `/apps` holds apps alone; the
+start service reads and writes `rc.conf` in the data partition's `etc/`
+directory, which design-apps.md serves as the `etc` tree at `/etc`) and
 `erx_domain:start_session/2` (TODO.md, the design-apps.md items). The EROFS reader `erx_erofs` and
 its block funnel `erx_verity` read images through a block window
 (`otp/erts/preloaded/src/erx_verity.erl`, which checks no hash tree yet).

@@ -5,7 +5,7 @@
 -moduledoc """
 The pure decisions of the start table (docs/design-apps.md, "The start
 table"): what `rc.conf` sets, how its settings merge over the manifest's
-`start` rows, what a write to the `apps` tree's `ctl` file asks for, and
+`start` rows, what a write to the start service's `ctl` file asks for, and
 how a command's settings are written back into `rc.conf`. The start
 service reads the manifest and the file and hands them in as plain terms,
 so every decision is tested with made-up manifests.

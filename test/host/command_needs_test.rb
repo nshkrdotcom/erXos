@@ -14,7 +14,7 @@ class CommandNeedsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   IFCONFIG = 'erlang/apps/erx_shell/src/erx_cmd_ifconfig.erl'
   NS = "place(data) -> {<<\"/data\">>, [rw]};\nplace(machine) -> {<<\"/machine\">>, [rw]};\n" \
-       "place(apps) -> {<<\"/apps\">>, [rw]};\nplace(_Name) -> none.\n"
+       "place(start) -> {<<\"/etc/start\">>, [rw]};\nplace(_Name) -> none.\n"
   STACK = { 'erlang/apps/erx_net/src/erx_net.erl' => "-module(erx_net).\n", Erx::NsPlaces::SOURCE => NS }.freeze
 
   def tree
@@ -82,7 +82,7 @@ class CommandNeedsTest < Minitest::Test
   # reaches the machine by its path, fails without its machine declaration, as does a
   # helper of erx_shell that names the start service's tree, while a module of the
   # domain service beside the machine tree's two is no reach of machine.
-  def test_the_machine_and_apps_services_count
+  def test_the_machine_and_start_services_count
     files = tree
     reboot = 'erlang/apps/erx_shell/src/erx_cmd_reboot.erl'
     seeded = files.fetch(reboot).sub(/^-erx_needs\(\[machine\]\)\.\n/, '')
@@ -109,12 +109,12 @@ class CommandNeedsTest < Minitest::Test
   # (data) do not.
   def test_a_path_under_a_services_mount_point_counts
     path = 'erlang/apps/erx_shell/src/erx_cmd_seeded.erl'
-    assert_equal [[path, 5]], found(path => command("run(_, _) ->\n    file:write_file(<<\"/apps/ctl\">>, <<>>).\n"))
+    assert_equal [[path, 5]], found(path => command("run(_, _) ->\n    file:write_file(<<\"/etc/start/ctl\">>, <<>>).\n"))
     assert_equal [[path, 4]], found(path => command("run(_, _) -> file:list_dir(~\"/machine\").\n"))
     assert_equal [['erlang/apps/erx_shell/src/seeded.erl', 2]],
                  found('erlang/apps/erx_shell/src/seeded.erl' => "-module(seeded).\nf() -> \"/machine/ctl\".\n")
-    assert_empty found(path => command("run(_, _) -> file:read_file(\"/apps/rc.conf\").\n", needs: 'apps'))
-    quiet = "-doc \"\"\"\nWrites `/machine/ctl`.\n\"\"\".\n%% \"/apps/ctl\"\n" \
+    assert_empty found(path => command("run(_, _) -> file:read_file(\"/etc/start/ctl\").\n", needs: 'start'))
+    quiet = "-doc \"\"\"\nWrites `/machine/ctl`.\n\"\"\".\n%% \"/etc/start/ctl\"\n" \
             "run(_, _) -> file:read_file(\"/machinery\"), file:read_file(\"/data/x\").\n"
     assert_empty found(path => command(quiet))
   end

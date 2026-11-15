@@ -130,13 +130,13 @@ module ManifestContextFixture
                  /^service web\n(?:  .*\n)*/, /^facet web\n(?:  .*\n)*/,
                  /^runtime_limits display\n(?:  .*\n)*/, /^limits display\n(?:  .*\n)*/, /^domain display\n(?:  .*\n)*/,
                  /^service display\n(?:  .*\n)*/, /^display display\n(?:  .*\n)*/, /^unit display\n(?:  .*\n)*/].freeze
-  # Root's session template's facets, of data, net, inspect, apps and machine, which a
+  # Root's session template's facets, of data, net, inspect, start and machine, which a
   # sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
-                    /^facet apps\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/].freeze
-  # The services the system domain serves: inspect, apps and machine, to session templates
+                    /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/].freeze
+  # The services the system domain serves: inspect, start and machine, to session templates
   # alone, and log, which no facet row grants.
-  SYSTEM_SERVICES = [/^service inspect\n(?:  .*\n)*/, /^service apps\n(?:  .*\n)*/,
+  SYSTEM_SERVICES = [/^service inspect\n(?:  .*\n)*/, /^service start\n(?:  .*\n)*/,
                      /^service machine\n(?:  .*\n)*/, /^service log\n(?:  .*\n)*/].freeze
   DOMAIN_HOLDER = /^  holder @domain\.(?:storage|network)$/
 

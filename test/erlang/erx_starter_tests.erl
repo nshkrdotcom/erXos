@@ -171,7 +171,7 @@ setup(Prepare, Namespace, Manifest) ->
     ok = file:make_dir(Dir),
     ok = Prepare(Dir),
     Setup = self(),
-    %% The namespace the apps tree mounts its own grant in.
+    %% The namespace the start tree mounts its own grant in.
     persistent_term:erase(erx_ns),
     {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
     unlink(Ns),
@@ -605,7 +605,7 @@ a_write_of_an_ended_table_lands_before_the_next_table_reads(Setup) ->
             ok = wait_until(fun() -> queued(erx_starter_rc) =:= 2 end),
             ok = sys:resume(erx_starter_rc),
             ok = wait_until(fun() -> rc_conf() =:= read end),
-            ?assertEqual(<<"clock_enable=\"YES\"\n">>, erx_starter:rc_conf()),
+            ?assertEqual({ok, <<"clock_enable=\"YES\"\n">>}, file:read_file(rc_path(Setup))),
             ?assertEqual(ok, erx_starter:command({disable, <<"logger">>, #{}})),
             ?assertEqual({ok, <<"clock_enable=\"YES\"\nlogger_enable=\"NO\"\n">>}, file:read_file(rc_path(Setup)))
     end.

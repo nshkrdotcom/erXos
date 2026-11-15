@@ -662,7 +662,8 @@ it; git history is the record of completed work.
   the configured domains);
   `erx_start_table` (`merge/3`, `rc.conf`'s and `ctl`'s parsers with their fuzz targets, `set/3`, the command check
   `apply_ctl/4`); `erx_starter` with its table, a supervisor and keeper per enabled row, and `rc.conf` read and
-  written under `/data`; the `apps` tree (`erx_starter_fs`), which a session mounts at `/apps`;
+  written at `/data/etc/rc.conf`; the start service's tree, `start` (`erx_starter_fs`), holding `ctl` alone,
+  which a session mounts at `/etc/start`;
   `erx_domain:start_session/2` with `display` and `default_display`, and the session mark; a row that names a
   display started once that display's server has settled (`erx_domain:display_settled/1`).
   Not built: the session's default display handed on with the ready answer and its `display` variable
@@ -674,13 +675,18 @@ it; git history is the record of completed work.
   `erx_domain:start_session/2`'s `Start` and `ERX_START_FLAGS` in the session's environment; and the boot view's
   refusal of a session template whose environment sets the key, with the variable at its longest in its strings
   reserve (`boot_strings_fit` in `liberx/system/dom_boot_view.c`).
-* [Medium] apps, `/etc/start/ctl` and `/etc/rc.conf` ([design-apps.md](docs/design-apps.md#the-start-table)):
-  `/apps` holds apps alone, so the tree that `erx_starter_fs` serves at `/apps` becomes the service `start`,
-  mounted at `/etc/start`, holding only `ctl`, whose `enable` and `disable` go and which gains `restart`; and
-  `rc.conf` becomes an ordinary file of the data partition's `etc` tree, a service directory with a facet `etc`
-  (read-only to the system domain, read-write to the templates that hold `start`, rows the build derives, and an
-  entry of the facet table), mounted at `/etc`. Code to change: `erx_starter_fs` loses its read-only `rc.conf`
-  node; `erx_starter_rc` only reads, from the `etc` grant, and its write path and the `superseded` rule go;
+* [Medium] apps, `/etc/rc.conf` and the commands of `/etc/start/ctl`
+  ([design-apps.md](docs/design-apps.md#the-start-table)): `ctl`'s `enable` and `disable` go and it gains
+  `restart`; and `rc.conf` becomes an ordinary file of the data partition's `etc` tree, a service directory with a
+  facet `etc` (read-only to the system domain, read-write to the templates that hold `start`, rows the build
+  derives, and an entry of the facet table), mounted at `/etc`. The `etc` grant waits for grants rooted at a
+  service directory and read-only by facet row (the facet parameters of design-apps.md, "Phase 1"): the storage
+  service's mint grants the whole volume read-write, and the `files` interface declares no parameters. Until
+  then the file lies in the volume's `etc/` directory, at `/data/etc/rc.conf` for the system domain and for root's
+  session, through their `data` grants. The start service writes it from the text it last read, so a hand edit
+  made since is lost at the next `enable` or `disable`; `service` therefore names `service NAME enable` rather
+  than the file in its rc.subr answer. Code to change: `erx_starter_rc` only reads, from the `etc` grant, and its
+  write path and the `superseded` rule go;
   `erx_starter` reads `rc.conf` before every `ctl` command and writes nothing; a command applies the file to its
   own row alone, and the whole file applies only at boot (design-apps.md, "When the file is read"), so
   `erx_start_table:reconcile/3`, the stopped marks, the recorded `rc.conf` text, the restart of a running row whose
@@ -704,9 +710,9 @@ it; git history is the record of completed work.
   `esrch`; `erx_cmd_service` drops its decisions from `/proc/apps` (`plan/3` and `act/4`,
   `erlang/apps/erx_shell/src/erx_cmd_service.erl:236-290`, which refuse a start from the cached `enabled` and
   `state`) and answers from the write's errno, and its `service -e` reads `/etc/rc.conf` itself with the rows'
-  `declared_enable`; the development manifests' `service apps` and `facet apps` rows, the session's mount of the
-  facet, the chokepoint that the start service writes no file on `etc`, and the QEMU checkpoints that read
-  `/apps/rc.conf` or write `/apps/ctl`. The manifest check gains property 17's clause that every writable grant of
+  `declared_enable`; the session's and the system domain's mounts of `etc` at `/etc`, and the paths
+  `/data/etc/rc.conf` names in `erx_starter_rc:directory/0`, `erx_cmd_service` and the `apps` QEMU suite; and
+  the chokepoint that the start service writes no file on `etc`. The manifest check gains property 17's clause that every writable grant of
   `etc` in the resolved manifest belongs to a template holding `start`
   ([design-system.md](docs/design-system.md#the-manifest)), and a program's handler joins the session's export and
   its grant at `/etc` and `/dev` ([design-files.md](docs/design-files.md#narrowing-for-a-program)), so a native
@@ -722,15 +728,11 @@ it; git history is the record of completed work.
   the ended domain's budget is apparently not back when the keeper retries (`erlang/apps/erx_starter`, the domain
   service's budget release). Unverified whether the keeper should wait for the ended domain's exit record, or the
   principal needs headroom; reproduce with a session that crashes at start.
-  (`erx_domain:system_namespace/0`), but a storage domain that ends once during boot, or misses the mint deadline,
-  settles that wait as failed: the read answers an error, the boot applies the declared defaults, and a row
-  `rc.conf` disables runs until its own `service` command or the next boot. Waiting through a storage restart
-  within its intensity would close it (`erlang/apps/erx_starter/src/erx_starter.erl`).
-* [Low] The `apps` tree (`erx_starter_fs`) is served once `erx_starter` starts, after `erx_domain`, whose start
-  has the console ask for root's session: root's session gets `/apps` only because its boot outlasts the next
-  application's start. A session that reported ready before then has no `/apps` until it restarts. Serving the
-  start service's tree before the login (or the login after every application) makes it hold by construction.
-  The grants of `apps` also end with a crash of `erx_starter_sup` itself, or of the tree's grants supervisor,
+* [Low] The start service's tree, `start` (`erx_starter_fs`), is served once `erx_starter` starts, after
+  `erx_domain`, whose start has the console ask for root's session: root's session gets `/etc/start` only because
+  its boot outlasts the next application's start. A session that reported ready before then has no `/etc/start`
+  until it restarts. Serving the start service's tree before the login (or the login after every application)
+  makes it hold by construction. The grants of `start` also end with a crash of `erx_starter_sup` itself, or of the tree's grants supervisor,
   and nothing grants a session no keeper kept (root's console session among them) a new one, as for every service
   the system domain serves.
 * [Medium] The keepers' branch is a permanent child of the start service's top supervisor (`erx_starter_sup`), so
@@ -739,13 +741,8 @@ it; git history is the record of completed work.
   branch a temporary significant child of a top supervisor with `auto_shutdown => any_significant`, so that end
   ends the application and resets the machine ([design-apps.md](docs/design-apps.md#concurrency), "Losing that
   store resets the machine"); with it the race between the branch ending its rows and the table's calls goes too.
-* [Low] `apps` tree review residuals (A6, `erx_starter_fs`): the grant's heap bound in the development manifests
-  (131,072 words) is not sized against its fids, each open of `rc.conf` holding the text (up to 64 KiB) until its
-  clunk, so enough concurrent opens end the grant at its bound and the session has no `/apps` until it restarts;
-  each refused `ctl` write logs a line with no rate bound, so a session writing refused lines in a loop fills the
-  system log; and the QEMU checkpoint `session-apps-ctl-refused` (`tools/lib/erx/session_domain.rb`) passes on any
-  failed write, so it cannot tell the `einval` it expects from `eacces` or `eio` (the shell prints no errno);
-  `erx_start_table:ctl_errno/1` has a clause per refusal and no catch-all, but nothing checks it against
+* [Low] `start` tree review residuals (`erx_starter_fs`): each refused `ctl` write logs a line with no rate bound,
+  so a session writing refused lines in a loop fills the system log; and `erx_start_table:ctl_errno/1` has a clause per refusal and no catch-all, but nothing checks it against
   `ctl_error()` (no dialyzer runs), so a new refusal without a clause ends the session's grant on its first
   write: returning the errno with the refusal from `apply_ctl/4` makes it hold by construction.
 * [Low] Property 17 plans one root session for the console, but a development build's console also logs root in

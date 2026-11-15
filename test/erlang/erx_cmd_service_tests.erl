@@ -7,7 +7,7 @@ EUnit cases of the command shell's `service` (erx_cmd_service,
 docs/design-apps.md, "Interfaces"): its plans from inspector answers made
 up as data, as FreeBSD's service(8) and rc.subr(8) answer. A command on a
 row that is not enabled names its `one` form and acts on nothing;
-`onestart` writes `start` to /apps/ctl; `service -e` lists the configured
+`onestart` writes `start` to /etc/start/ctl; `service -e` lists the configured
 domains in boot order and then the enabled rows, and says so when
 rc.conf is unread or a row's state is unknown; each state `status`
 shows comes from the row's record, never made up.
@@ -47,7 +47,7 @@ usage_test_() ->
                  [<<"clock">>, <<"enable">>, <<"display">>]]].
 
 start_of_a_row_not_enabled_names_onestart_test() ->
-    ?assertEqual([{out, <<"Cannot 'start' clock. Set clock_enable to YES in /apps/rc.conf or use 'onestart' "
+    ?assertEqual([{out, <<"Cannot 'start' clock. Set clock_enable to YES with 'service clock enable' or use 'onestart' "
                           "instead of 'start'.\n">>}, {status, ok}],
                  plan(<<"clock start">>, row(false, disabled))).
 
@@ -79,9 +79,9 @@ restart_stops_and_starts_test() ->
 
 enable_and_disable_write_rc_conf_test() ->
     ?assertEqual([{ctl, <<"enable clock display=display restarts=3\n">>},
-                  {out, <<"clock enabled in /apps/rc.conf\n">>}],
+                  {out, <<"clock enabled in /data/etc/rc.conf\n">>}],
                  plan(<<"clock enable display=display restarts=3">>, row(false, disabled))),
-    ?assertEqual([{ctl, <<"disable kiosk\n">>}, {out, <<"kiosk disabled in /apps/rc.conf\n">>}],
+    ?assertEqual([{ctl, <<"disable kiosk\n">>}, {out, <<"kiosk disabled in /data/etc/rc.conf\n">>}],
                  plan(<<"kiosk disable">>, row(true, running))).
 
 status_shows_each_state_test_() ->
@@ -135,7 +135,7 @@ listing_says_what_it_does_not_know_test() ->
     {ok, Unread} = table(),
     #{attrs := Attrs} = Unread,
     Answer = {ok, Unread#{attrs := Attrs#{rc_conf := {service, {ok, unread}}}}},
-    ?assertMatch([{err, <<"service: /apps/rc.conf has not been read yet", _/binary>>}, {out, <<"storage\n">>},
+    ?assertMatch([{err, <<"service: /data/etc/rc.conf has not been read yet", _/binary>>}, {out, <<"storage\n">>},
                   {out, <<"net\n">>}, {err, <<"service: kiosk: /proc/apps: failed\n">>}, {status, failed}],
                  flat(erx_cmd_service:listing(Answer, [{<<"kiosk">>, {error, failed}}]))),
     ?assertMatch([{out, <<"storage\n">>}, {out, <<"net\n">>}, {err, <<"service: the start table is not made yet\n">>},

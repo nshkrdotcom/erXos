@@ -299,7 +299,7 @@ it.
 ### The file tree
 
 `erx_logfs` is an `erx_fs` callback module served by the system domain,
-as `erx_starter_fs` serves `apps` ([design-apps.md](design-apps.md#interfaces)).
+as `erx_starter_fs` serves `start` ([design-apps.md](design-apps.md#interfaces)).
 Its `start_link/0`, a child of `erx_domain`'s supervisor started after
 the domain service ([The store](#the-store)), starts both kinds of grant:
 

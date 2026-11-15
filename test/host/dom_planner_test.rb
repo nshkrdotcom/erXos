@@ -613,17 +613,17 @@ class DomPlannerTest < Minitest::Test
       end
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
-    # network 1, storage 2, web 3) or none for the system domain: apps, of files, data, of
-    # files, display, of windows, inspect, log, machine, of files, net, network_ctl,
+    # network 1, storage 2, web 3) or none for the system domain: data, of files, display,
+    # of windows, inspect, log, machine, of files, net, network_ctl, start, of files,
     # storage_ctl and web.
-    assert_equal ["service 0 name=apps server=none interface=#{interface.call('files')}",
-                  "service 1 name=data server=2 interface=#{interface.call('files')}",
-                  "service 2 name=display server=0 interface=#{interface.call('windows')}",
-                  "service 3 name=inspect server=none interface=#{interface.call('inspect')}",
-                  "service 4 name=log server=none interface=#{interface.call('log')}",
-                  "service 5 name=machine server=none interface=#{interface.call('files')}",
-                  "service 6 name=net server=1 interface=#{interface.call('net')}",
-                  "service 7 name=network_ctl server=1 interface=#{interface.call('driver_control')}",
+    assert_equal ["service 0 name=data server=2 interface=#{interface.call('files')}",
+                  "service 1 name=display server=0 interface=#{interface.call('windows')}",
+                  "service 2 name=inspect server=none interface=#{interface.call('inspect')}",
+                  "service 3 name=log server=none interface=#{interface.call('log')}",
+                  "service 4 name=machine server=none interface=#{interface.call('files')}",
+                  "service 5 name=net server=1 interface=#{interface.call('net')}",
+                  "service 6 name=network_ctl server=1 interface=#{interface.call('driver_control')}",
+                  "service 7 name=start server=none interface=#{interface.call('files')}",
                   "service 8 name=storage_ctl server=2 interface=#{interface.call('driver_control')}",
                   "service 9 name=web server=3 interface=#{interface.call('web')}"],
                  lines.grep(/\Aservice /)

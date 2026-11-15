@@ -264,13 +264,15 @@ facets_mount_only_where_granted() ->
     ?assertEqual(ok, erx_ns:mount_facets([echo, data])),
     ?assertEqual([?RELEASE, #{point => [<<"data">>], provider => ended, root => [], rights => rw}], at_use()).
 
-%% The system domain's files services, apps and machine, have their places too: a
+%% The system domain's files services, start and machine, have their places too: a
 %% session that holds their facets mounts each where the system domain mounts its own
-%% grant of it (docs/design-shell.md, "Interfaces").
+%% grant of it (docs/design-shell.md, "Interfaces"). The start service's tree mounts at
+%% /etc/start, so that /apps holds apps alone: a name apps has no place.
 the_system_domain_trees_mount_at_their_places() ->
-    ?assertEqual(ok, erx_ns:mount_facets([apps, inspect, machine])),
-    ?assertEqual([?RELEASE, #{point => [<<"apps">>], provider => ended, root => [], rights => rw},
-                  #{point => [<<"machine">>], provider => ended, root => [], rights => rw}], at_use()).
+    ?assertEqual(ok, erx_ns:mount_facets([apps, inspect, machine, start])),
+    ?assertEqual([?RELEASE, #{point => [<<"machine">>], provider => ended, root => [], rights => rw},
+                  #{point => [<<"etc">>, <<"start">>], provider => ended, root => [], rights => rw}],
+                 at_use()).
 
 %% A tree the domain serves itself mounts its own grant at the place of the facet of its
 %% name, and a second mount, an instance restarted after the first one's grant ended,

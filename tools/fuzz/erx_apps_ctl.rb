@@ -7,7 +7,7 @@ require 'optparse'
 require 'tmpdir'
 require_relative '../lib/erx/generated'
 
-# The fuzz target of the apps tree's ctl file, erx_start_table:parse_ctl/1
+# The fuzz target of the start service's ctl file, erx_start_table:parse_ctl/1
 # (test/erlang/erx_apps_ctl_fuzz.erl), compiled from source and run alone on stock's
 # emulator (ERX_ERL and ERX_ERLC, the oracle's), so it needs no hosted build. It runs
 # the sources as they are, then a copy of erx_start_table without the 4,096-byte bound

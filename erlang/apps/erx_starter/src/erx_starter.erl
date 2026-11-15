@@ -68,7 +68,7 @@ erx_start_table's; this process carries them out.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/2, command/1, rows/0, rc_conf/0]).
+-export([start_link/2, command/1, rows/0]).
 -export_type([source/0, answer/0, run/0]).
 -export([manifest_table/1]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
@@ -126,15 +126,6 @@ and may not be what the file sets.
                   boot_order := [binary()]}.
 rows() ->
     gen_server:call(?MODULE, rows).
-
--doc """
-The text of rc.conf the table is made from, which `/apps/rc.conf` shows: the
-text of the last read or write, the text the keepers' branch recorded while
-rc.conf is unread, or the empty text before either.
-""".
--spec rc_conf() -> binary().
-rc_conf() ->
-    gen_server:call(?MODULE, rc_conf).
 
 %% ---------------------------------------------------------------------------
 %% The manifest
@@ -240,9 +231,7 @@ handle_call({command, Command}, From, #{writer := none, queue := Queue} = State)
 handle_call({command, Command}, From, #{queue := Queue} = State) ->
     {noreply, State#{queue := queue:in({Command, From}, Queue)}};
 handle_call(rows, _From, State) ->
-    {reply, table(State), State};
-handle_call(rc_conf, _From, #{text := Text} = State) ->
-    {reply, Text, State}.
+    {reply, table(State), State}.
 
 handle_cast(_Request, State) ->
     {noreply, State}.

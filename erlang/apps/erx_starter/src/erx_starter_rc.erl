@@ -6,10 +6,15 @@
 The rc.conf process: it does every file operation on rc.conf
 (docs/design-apps.md, "Where the file is" and "Concurrency"), one at a
 time, for the table, which does none itself. The file is `rc.conf` in a
-directory the table names: directory/0, `start` at the root of the
-system domain's `data` grant, which the domain service mounts at /data where the
-manifest grants it (with no grant the path is the root's and the file absent), or a
-test's own.
+directory the table names: a test's own, or directory/0, `/data/etc`.
+
+`/data/etc` is the volume's `etc/` directory, where the data partition's
+`etc` tree lies, reached through the system domain's `data` grant, which
+the domain service mounts at /data where the manifest grants it (with no
+grant the path is the root's and the file absent). The grant reaches it
+because every `data` grant covers the whole volume (docs/design-apps.md,
+"Phase 1"); the path gives way to `/etc/rc.conf` on the `etc` grant
+(TODO.md, "/etc/rc.conf").
 
 The table asks with read/1 and write/2, which return at once, and takes
 each answer as the reply to its request (gen_server:check_response/2),
@@ -54,7 +59,7 @@ start_link() ->
 -doc "The directory of the system's rc.conf.".
 -spec directory() -> binary().
 directory() ->
-    <<"/data/start">>.
+    <<"/data/etc">>.
 
 -doc """
 Asks for the text of rc.conf in Directory, and makes the calling process

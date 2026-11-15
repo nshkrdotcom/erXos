@@ -9,8 +9,8 @@
 
 The command reads the table from the inspector, `[apps]` and `[apps,
 Name]` (`/proc/apps`), and changes it only by writing one line to
-`/apps/ctl` for each act, so it holds no authority of its own: the
-session's `apps` grant is what lets it act, and the start service checks
+`/etc/start/ctl` for each act, so it holds no authority of its own: the
+session's `start` grant is what lets it act, and the start service checks
 every line it writes. In the system domain's command shell the path
 reaches the system domain's own grant of the tree, which the start
 service mounts there (docs/design-shell.md, "Interfaces").
@@ -21,11 +21,11 @@ service mounts there (docs/design-shell.md, "Interfaces").
   the file sets.
 * `enable` and `disable` write the row's settings to rc.conf, `enable`
   with any `display=D`, `restarts=N` and `period=S`, and say so as
-  FreeBSD's do: `NAME enabled in /apps/rc.conf`. `enable` also starts
+  FreeBSD's do: `NAME enabled in /data/etc/rc.conf`. `enable` also starts
   the row.
 * `start`, `stop`, `restart` and `status` act on an enabled row. On a row
   that is not enabled each answers as rc.subr does, `Cannot 'start'
-  NAME. Set NAME_enable to YES in /apps/rc.conf or use 'onestart'
+  NAME. Set NAME_enable to YES with 'service NAME enable' or use 'onestart'
   instead of 'start'.`, with status 0, and does nothing. `onestart`,
   `onestop`, `onerestart` and `onestatus` skip that check; `onestart`
   starts one session no supervisor keeps, and takes `display=D`. A
@@ -38,7 +38,7 @@ service mounts there (docs/design-shell.md, "Interfaces").
   answers that it is configured in the system manifest, with status 1,
   since `service` neither changes one nor reads its state.
 
-A refused ctl write answers an errno (design-apps.md, "The apps tree"),
+A refused ctl write answers an errno (design-apps.md, "Interfaces"),
 which the command names in words, with status 1; the row's own reason is
 at `/proc/apps`. Every name and value written comes from the inspector or
 the command line and passes through the field escape
@@ -46,22 +46,25 @@ the command line and passes through the field escape
 
 The decisions are a pure core, parse/1, listing/2 and plan/3, which the
 tests drive with records made up as data; run/2 reads the inspector,
-writes `/apps/ctl` and prints.
+writes `/etc/start/ctl` and prints.
 """.
 
 -behaviour(erx_cmd).
 -erx_command(service).
 -erx_usage("service -e | service name command [display=D] [restarts=N] [period=S]").
-%% The start table's tree, `/apps`: a session whose template holds no apps grant
-%% has none, and every act of the command is a line of its ctl file.
--erx_needs([apps]).
+%% The start service's tree, `/etc/start`: a session whose template holds no start
+%% grant has none, and every act of the command is a line of its ctl file.
+-erx_needs([start]).
 
 -export([run/2]).
 -export([parse/1, listing/2, plan/3]).
 -export_type([request/0, step/0]).
 
--define(CTL, <<"/apps/ctl">>).
--define(RC_CONF, <<"/apps/rc.conf">>).
+-define(CTL, <<"/etc/start/ctl">>).
+%% Where the session finds rc.conf: the data partition's `etc` directory, which the
+%% start service reads and writes (erx_starter_rc:directory/0), under the session's
+%% `data` grant until the `etc` tree is mounted at /etc (TODO.md, "/etc/rc.conf").
+-define(RC_CONF, <<"/data/etc/rc.conf">>).
 
 -doc """
 A parsed command line: `-e`, or a command on a row, `one` saying the
@@ -72,7 +75,7 @@ command skips the enabled check, with its `key=value` settings.
                     One :: boolean(), Settings :: [binary()]}.
 -doc """
 One step of a plan, carried out in order: text to standard output or
-standard error, a line written to `/apps/ctl`, which ends the plan with
+standard error, a line written to `/etc/start/ctl`, which ends the plan with
 status 1 when it is refused, or the status the command exits with.
 """.
 -type step() :: {out, iodata()} | {err, iodata()} | {ctl, binary()} | {status, ok | failed}.
@@ -144,7 +147,7 @@ write_ctl(Ctx, Line) ->
             Error
     end.
 
-%% A ctl write's errno in words (docs/design-apps.md, "The apps tree").
+%% A ctl write's errno in words (docs/design-apps.md, "Interfaces").
 refusal(einval) -> <<"the start service refused the request; the log says why">>;
 refusal(ebusy) -> <<"the display is held by another enabled row">>;
 refusal(eperm) -> <<"the display is not granted to the row's template">>;
@@ -261,9 +264,12 @@ act({Name, disable, _One, []}, _Enabled, _State, _Row) ->
     [{ctl, line(<<"disable">>, Name, [])}, {out, [field(Name), <<" disabled in ">>, ?RC_CONF, $\n]}];
 act({Name, Command, false, _Settings}, false, _State, _Row) ->
     Word = atom_to_binary(Command),
-    %% rc.subr answers so and returns 0.
+    %% rc.subr answers so and returns 0, naming rc.conf; this names `service NAME enable`
+    %% instead, since the start service writes the file from the text it last read, so a
+    %% hand edit made since would be lost at the next enable or disable (TODO.md).
     [{out, [<<"Cannot '">>, Word, <<"' ">>, field(Name), <<". Set ">>, field(Name),
-            <<"_enable to YES in ">>, ?RC_CONF, <<" or use 'one">>, Word, <<"' instead of '">>, Word, <<"'.\n">>]},
+            <<"_enable to YES with 'service ">>, field(Name), <<" enable' or use 'one">>, Word,
+            <<"' instead of '">>, Word, <<"'.\n">>]},
      {status, ok}];
 act({Name, start, _One, _Settings}, _Enabled, running, _Row) ->
     [{err, [field(Name), <<" already running?\n">>]}, {status, failed}];

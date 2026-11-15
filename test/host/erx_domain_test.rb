@@ -126,7 +126,7 @@ class ErxDomainTest < Minitest::Test
               to: 'grantee({session, _Template}) -> none;',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_inspect'),
     # The grant check of a system domain's service (R3): a ready answer that takes every
-    # grantee's grants, so a session whose template holds no apps grant gets one.
+    # grantee's grants, so a session whose template holds no start grant gets one.
     Fault.new(name: "a ready answer that ignores whose grant a system service's grant is", file: SERVICE,
               from: 'end, maps:get(Grantee, Served, []))).',
               to: 'end, lists:append(maps:values(Served)))).',

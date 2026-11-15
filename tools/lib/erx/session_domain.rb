@@ -191,10 +191,11 @@ module Erx
     PROC_STATUS = "cat /proc/status\r"
     PROC_UPTIME = /\Auptime\t[0-9]+\tkernel\r*\n\z/n
     # The start service's tree at root_1's command shell (docs/design-apps.md,
-    # "Interfaces"): root's template holds the apps grant, so rc.conf reads, and a ctl
-    # write naming no manifest row is refused with an errno.
-    APPS_RC_CONF = "cat /apps/rc.conf && echo apps-read\r"
-    APPS_CTL_REFUSED = "echo enable ghost > /apps/ctl || echo ctl-refused\r"
+    # "Interfaces"): root's template holds the start grant, so /etc/start lists its one
+    # file, ctl, and a ctl write naming no manifest row is refused with einval, which the
+    # shell's $status names as the machine tree's refusal below does.
+    START_LISTED = "ls /etc/start && echo start-listed\r"
+    START_CTL_REFUSED = "echo enable ghost > /etc/start/ctl || echo start-ctl-refused-$status\r"
     # `service -e` there: the configured domains in boot order and the enabled rows, read
     # from /proc/apps through the session's inspect facet, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
@@ -335,9 +336,9 @@ module Erx
        { name: 'session-top', pattern: TOP_FIRST, seconds: 60 }.freeze,
        { name: 'session-top-memory', pattern: TOP_MEMORY, seconds: 30 }.freeze,
        { name: 'session-top-budget', pattern: TOP_BUDGET, seconds: 30, type: PROC_STATUS }.freeze,
-       { name: 'session-proc-status', pattern: PROC_UPTIME, seconds: 60, type: APPS_RC_CONF }.freeze,
-       { name: 'session-apps-rc-conf', pattern: line('apps-read'), seconds: 60, type: APPS_CTL_REFUSED }.freeze,
-       { name: 'session-apps-ctl-refused', pattern: line('ctl-refused'), seconds: 60, type: SERVICE_E }.freeze,
+       { name: 'session-proc-status', pattern: PROC_UPTIME, seconds: 60, type: START_LISTED }.freeze,
+       { name: 'session-start-listed', pattern: line('start-listed'), seconds: 60, type: START_CTL_REFUSED }.freeze,
+       { name: 'session-start-ctl-refused', pattern: line('start-ctl-refused-invalid argument'), seconds: 60, type: SERVICE_E }.freeze,
        { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
        { name: 'root_1-node', pattern: answer('root_1@erxos'), seconds: 60, type: MACHINE }.freeze,
