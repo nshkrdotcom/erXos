@@ -2716,15 +2716,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   [The runtime agent](docs/design-live.md#the-runtime-agent) name `[processes, Pid, source]`, the source lines
   around a process's location from `erx_source`, but the schema declares no such path, so the inspector, and a
   domain's `erx_inspect_agent` through it, answer it `{error, scope}`. Declare the path and its collector.
-* [Medium] inspector, another domain's kernel records (`erlang/apps/erx/src/erx_kernel_records.erl`,
-  `group/1` and `budget/1`; `erx_inspect_worker.erl`, `given/2`): `[domains, D, group]` of a domain other than
-  the system domain shows every attribute `unsupported`, although the domain library holds a handle to each
-  domain's group and the stopgap reports its `cpuset`, `parked` and `ready` (design-stopgap.md, "Reporting
-  kernel objects"): no call of `erx_domain_lib` hands the inspector that handle or its report. Add one (a NIF
-  over the domain library's record of D, as `crash_nif` reads D's crash area) and take `[domains, D, budget]`
-  through it too, so erXos's kernel reports both behind the same call. A domain record's `threads` is
-  `unsupported` for the same reason, and the system domain's own record has no name, principal or state,
-  since the domain service's table does not hold the system domain.
+* [Medium] stopgap, `liberx/backend/fiasco/group.c` (`erx_object_info`, `erx_group_info`) and `service.c`
+  (`service_object_info`): the group topic answers only the root's own group; any other group handle the root
+  holds is `ERX_ENOTSUP`, though design-stopgap.md, "Reporting kernel objects", says the stopgap reports any group
+  the caller holds, `parked` and `ready` from its home task's status page. So `[domains, D, group]` of another
+  domain, which the inspector asks for through the domain library's handle (`erx_domain_lib:info/2`), shows every
+  attribute `unsupported`. Reading the status page needs it at one address in every task (in the task area beside
+  the label page, `thread.h`) so the service reads it through the task window, as `irq.c` writes labels; that
+  conflicts with `object_info.h`'s rule that a backend's facts never come from a task's memory, so either the rule
+  or the design table changes. A group record also keeps no CPU set (`erx_fiasco_group_configure_body`), so
+  another group's `cpuset` stays unreported. A domain record's `threads` is `unsupported`, and the system
+  domain's own record has no name, principal or state, since the domain service's table does not hold the
+  system domain.
 * [Medium] query worker, `erlang/apps/erx/src/erx_inspect_worker.erl`: an agent's answer the worker refuses is
   dropped but not counted where an operator can read it, which design-live.md ("The runtime agent") asks; a
   `{principal, P}` query whose view the domain service does not give answers `{error, scope}` for P's

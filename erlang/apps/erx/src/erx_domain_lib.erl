@@ -20,21 +20,24 @@ return value of the call that caused it.
 
 A refused call is {error, Name}, Name the ABI file's status name with an
 e before it (einval, enomem, ebusy, enotsup), or {error, {status, N}} for
-a status the ABI file does not name. Where there is no library, in a
-domain's runtime and a hosted runtime, the module loads all the same and
-every well-formed call is {error, enotsup}, register/0 included. It does not load a second time, since its library,
+a status the ABI file does not name. info/2 alone answers {error, N}, the
+status number, as erx_object_info:info/3 does, since erx_kernel_records
+takes both alike. Where there is no library, in a domain's runtime and a
+hosted runtime, the module loads all the same and every well-formed call
+is {error, enotsup}, register/0 included, and info/2 {error, ?ERX_ENOTSUP}. It does not load a second time, since its library,
 lock and fault thread live as long as the system domain.
 
 The registered process, the domain service, is also the only one that may
 change the library: create/1, configured/3, session/5, start/1, stop/2, retire/1,
 connect/6 and disconnect/1 answer {error, erights} to any other caller, and
-so does crash/1, which reads a domain's crash dump.
+so does crash/1, which reads a domain's crash dump. info/2 answers any
+caller, since a group's or budget's report holds none of the domain's data.
 """.
 
--export([register/0, create/1, start/1, stop/2, retire/1, crash/1, connect/6, disconnect/1,
+-export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
          configured/0, configured/3, templates/0, devices/0, session/5, code_object/2, code_drop/2,
          end_commit/1]).
--nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, connect_nif/6,
+-nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, devices_nif/0,
        session_create_nif/5, end_commit_nif/1]).
 -on_load(on_load/0).
@@ -183,6 +186,19 @@ crash(Id) ->
     crash_nif(Id).
 
 -doc """
+Domain Id's group or budget report, as erx_object_info:info/3 gives one
+for an object the inspector holds: {ok, Bytes} for erx_schema:decode_report/2,
+or {error, Status} with the refusal's status number. The domain library
+asks on its own handle, which never leaves it, and the backend answers:
+ERX_ENOTSUP where it cannot report that object, and ERX_EINVAL for a
+domain neither built nor running.
+""".
+-spec info(group | budget, pos_integer()) -> erx_kernel_records:answer().
+info(Kind, Id) when Kind =:= group; Kind =:= budget ->
+    {ok, #{topic := Topic, size := Size}} = erx_schema:report_layout(Kind),
+    info_nif(Id, Topic, Size).
+
+-doc """
 Connects domains A and B, A reading a ring of AReads bytes and B one of
 BReads, with a pixel area of Area bytes, whole pages, that AreaReader,
 A or B, maps read-only and the other writes (docs/design-display.md,
@@ -307,6 +323,9 @@ retire_nif(_Id) ->
     erlang:nif_error(undef).
 
 crash_nif(_Id) ->
+    erlang:nif_error(undef).
+
+info_nif(_Id, _Topic, _Size) ->
     erlang:nif_error(undef).
 
 connect_nif(_A, _B, _AReads, _BReads, _Area, _AreaReader) ->

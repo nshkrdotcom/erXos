@@ -223,6 +223,17 @@ erx_status_t	erx_dom_lib_crash_copy(erx_dom_lib_t *, uint32_t id, uint64_t dst)
 		    ERX_WARN_UNUSED_RESULT;
 
 /*
+ * Domain id's report of topic, ERX_INFO_GROUP or ERX_INFO_BUDGET, from
+ * erx_object_info on the library's own handle to the domain's group or own
+ * budget, written into window, size bytes, with the backend's answer
+ * (docs/design-live.md, "Inspection records"), so the inspector reads
+ * another domain's group and budget without a handle of its own. ERX_EINVAL for a domain neither built nor running, whose
+ * own budget and group are gone or not yet made, and for any other topic.
+ */
+erx_status_t	erx_dom_lib_info(erx_dom_lib_t *, uint32_t id, uint32_t topic,
+		    void *window, uint64_t size) ERX_WARN_UNUSED_RESULT;
+
+/*
  * The fault thread's wait, outside the lock: the next record at the gates bound
  * to the calling thread, with its label, or the backend's ERX_ETIMEDOUT. A
  * message whose tag is not a record from the kernel, an erx_fault_t of words

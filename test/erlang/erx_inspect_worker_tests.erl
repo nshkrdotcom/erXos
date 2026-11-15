@@ -44,8 +44,15 @@ stalling(D) ->
 %% Worker options over View, whose entries are {D, Agent} or the domain
 %% service's own {D, Agent, Service}; {D, Agent} stands for a living domain
 %% of principal 7 (living/2), and {D, ended} for one that ended.
+%% The kernel collector answers as the stopgap's domain library does for
+%% another domain's group and budget, ERX_ENOTSUP.
 options(View) ->
-    #{view => fun(_Scope) -> {ok, [entry(Entry) || Entry <- View]} end}.
+    #{view => fun(_Scope) -> {ok, [entry(Entry) || Entry <- View]} end,
+      kernel => fun(Kind, D) ->
+                        {ok, Record} = erx_kernel_records:record(Kind, [domains, D, Kind], 0,
+                                                                 {error, ?ERX_ENOTSUP}, 0),
+                        Record
+                end}.
 
 entry({D, ended}) -> {D, ended, none};
 entry({D, Agent}) -> living(D, Agent);

@@ -53,7 +53,7 @@ system_domain() -> ?SYSTEM_DOMAIN.
 -doc "The machine's record.".
 -spec machine() -> erx_schema:record().
 machine() ->
-    collect(machine, [], ?ERX_CAP_NULL, 0).
+    collect(machine, [], erx_object_info:info(machine, ?ERX_CAP_NULL, 0)).
 
 -doc "A record for each CPU the kernel lists, partial when the listing stopped short.".
 -spec cpus() -> {ok | partial, [erx_schema:record()]}.
@@ -61,10 +61,11 @@ cpus() ->
     list(cpu, ?ERX_CAP_NULL, ?MAX_CPUS).
 
 -doc """
-Domain's group: the system domain's on ERX_CAP_SELF, and for another
-domain a record of every attribute unsupported, as ERX_ENOTSUP gives it,
-since the domain library's handle to that domain's group does not reach
-this collector (TODO.md, the inspector's other domains' groups).
+Domain's group: the system domain's on ERX_CAP_SELF, and another
+domain's as the domain library reads it on its own handle
+(erx_domain_lib:info/2). The stopgap's backend refuses any group but the
+root's, against its design, so every attribute is unsupported there
+(TODO.md, the stopgap's group reports).
 """.
 -spec group(non_neg_integer()) -> erx_schema:record().
 group(Domain) ->
@@ -72,28 +73,28 @@ group(Domain) ->
 
 -doc """
 Domain's budget: the system domain's on ERX_CAP_SELF, the root's one
-budget, and for another domain every attribute unsupported, as the
-stopgap answers any other budget handle (docs/design-stopgap.md,
-"Reporting kernel objects").
+budget, and another domain's own budget through the domain library, as
+for group/1, which the stopgap refuses as it does any other budget handle
+(docs/design-stopgap.md, "Reporting kernel objects").
 """.
 -spec budget(non_neg_integer()) -> erx_schema:record().
 budget(Domain) ->
     domain_object(budget, Domain).
 
 domain_object(Kind, ?SYSTEM_DOMAIN = Domain) ->
-    collect(Kind, [domains, Domain, Kind], ?ERX_CAP_SELF, 0);
+    collect(Kind, [domains, Domain, Kind], erx_object_info:info(Kind, ?ERX_CAP_SELF, 0));
 domain_object(Kind, Domain) ->
-    {ok, Record} = record(Kind, [domains, Domain, Kind], 0, {error, ?ERX_ENOTSUP}, 0),
-    Record.
+    collect(Kind, [domains, Domain, Kind], erx_domain_lib:info(Kind, Domain)).
 
 -doc "A record for each thread of the system domain, partial when the listing stopped short.".
 -spec threads() -> {ok | partial, [erx_schema:record()]}.
 threads() ->
     list(thread, ?ERX_CAP_SELF, ?MAX_THREADS).
 
-collect(Kind, Path, Object, Index) ->
-    {ok, Record} = record(Kind, Path, Index, erx_object_info:info(Kind, Object, Index),
-                          erx_object_info:partial(Kind)),
+%% A record of Kind at index 0 from Answer, a call's, with the partial mask
+%% of the system domain's own liberx, which made or relayed every call.
+collect(Kind, Path, Answer) ->
+    {ok, Record} = record(Kind, Path, 0, Answer, erx_object_info:partial(Kind)),
     Record.
 
 list(Kind, Object, Max) ->

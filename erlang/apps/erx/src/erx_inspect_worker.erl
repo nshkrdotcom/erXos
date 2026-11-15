@@ -55,7 +55,9 @@ Every answer passes erx_schema:validate_record/1 before it leaves (V10).
 The view, which domains a scope covers with their agents and the domain
 service's report of each, is injected, so
 the host tests stand fake agents for domains; erx_inspector passes the
-domain service's (erx_domain:inspect_view/1).
+domain service's (erx_domain:inspect_view/1). So is the collector of
+another domain's group and budget, erx_kernel_records by default, whose
+calls reach the system domain's own domain library.
 """.
 
 -export([call/3, start/3, await/1, serve/3]).
@@ -68,8 +70,9 @@ domain service's (erx_domain:inspect_view/1).
 %% view gives the domains a scope covers, `all` or `{principal, P}`;
 %% query_max narrows the query's deadline, for a caller's own timeout
 %% (erx_inspector:inspect/2) or a test; agent_wait narrows an agent's wait
-%% for a test.
+%% for a test; kernel collects a domain's group or budget, for a test.
 -type options() :: #{view := fun((all | {principal, pos_integer()}) -> {ok, view()} | unavailable),
+                     kernel => fun((group | budget, pos_integer()) -> erx_schema:record()),
                      agent_wait => pos_integer(), query_max => pos_integer()}.
 -type answer() :: erx_inspector:answer() | erx_inspector:entries().
 -type worker() :: {pid(), reference(), reference()}.
@@ -174,7 +177,7 @@ context(Scope, Options, Owner) ->
     #{view := View} = Options,
     {Resolved, Domains, Known} = resolve(Scope, View(view_scope(Scope))),
     #{until => Until, query_max => QueryMax, agent_wait => maps:get(agent_wait, Options, ?ERX_INSPECT_AGENT_WAIT),
-      owner => Owner,
+      owner => Owner, kernel => maps:get(kernel, Options, fun kernel_record/2),
       scope => Resolved, domains => Domains, known => Known, self => erx_inspector:runtime_domain()}.
 
 view_scope({principal, _} = Scope) -> Scope;
@@ -225,13 +228,16 @@ route(Path, #{scope := Scope, self := Self}) ->
 %% Domain's group or budget as the scope sees it, while the view holds the
 %% domain living; any other domain names nothing. With the view unknown no
 %% domain is known to live, so it names nothing either.
-root_object(Domain, Object, #{domains := Domains} = Context) ->
+root_object(Domain, Object, #{domains := Domains, kernel := Kernel} = Context) ->
     case lists:keyfind(Domain, 1, Domains) of
         {Domain, Agent, _Service} when Agent =/= ended ->
-            {ok, scoped(erx_kernel_records:Object(Domain), Domain, Context)};
+            {ok, scoped(Kernel(Object, Domain), Domain, Context)};
         _ ->
             {error, scope}
     end.
+
+kernel_record(group, Domain) -> erx_kernel_records:group(Domain);
+kernel_record(budget, Domain) -> erx_kernel_records:budget(Domain).
 
 %% The record of Path of another domain: its runtime attributes from the
 %% domain's agent, the rest given here. A domain the view does not hold, or

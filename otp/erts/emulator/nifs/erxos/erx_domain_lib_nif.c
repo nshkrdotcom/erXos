@@ -31,7 +31,10 @@
  * any other caller. So only the process that registered drives the
  * library, and no domain the module made can end with no one to hear of
  * it. crash, which reads an ended domain's crash area, asks the same, since
- * the dump holds that domain's data. Which process registers is the domain service's to win: it registers
+ * the dump holds that domain's data. info reads a living domain's group
+ * or budget report for any caller, since a report holds none of the
+ * domain's data. Which process registers is the domain service's to win:
+ * it registers
  * at its start, and a registration while it lives is refused (TODO.md, the
  * domain service's trust in system-domain processes).
  *
@@ -814,6 +817,39 @@ crash_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (status == ERX_OK ? result : status_error(env, status));
 }
 
+/* Room for the longer of a group's and a budget's report. */
+#define INFO_BYTES_MAX	(ERX_INFO_GROUP_SIZE > ERX_INFO_BUDGET_SIZE ? ERX_INFO_GROUP_SIZE : ERX_INFO_BUDGET_SIZE)
+
+/*
+ * info_nif(Id, Topic, Size): domain Id's group or budget report
+ * (erx_dom_lib_info), {ok, Bytes}, its first Size bytes, or {error, Status}
+ * with the status number, as erx_object_info's info_nif answers, since the
+ * collector erx_kernel_records takes both answers alike. A report holds no
+ * data of the domain, only the kernel's view of its scheduling and memory,
+ * so any process of the system domain may ask; the inspector's worker asks
+ * only for a domain its caller's scope covers.
+ */
+static ERL_NIF_TERM
+info_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	_Alignas(8) uint8_t window[INFO_BYTES_MAX];
+	unsigned int id, topic, size;
+	erx_status_t status;
+
+	if (argc != 3 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &topic) ||
+	    !enif_get_uint(env, argv[2], &size) || size > sizeof(window))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (enif_make_tuple2(env, atom(env, "error"), enif_make_int(env, ERX_ENOTSUP)));
+	memset(window, 0, sizeof(window));
+	enif_mutex_lock(lib_lock);
+	status = erx_dom_lib_info(lib, id, topic, window, size);
+	enif_mutex_unlock(lib_lock);
+	if (status != ERX_OK)
+		return (enif_make_tuple2(env, atom(env, "error"), enif_make_int(env, status)));
+	return (enif_make_tuple2(env, atom(env, "ok"), bytes_term(env, window, size)));
+}
+
 /*
  * One party's values of a connection, as a map; area is none for a
  * connection without a pixel area, else {Handle, Bytes, write | read}.
@@ -1094,6 +1130,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "stop_nif", 2, stop_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "retire_nif", 1, retire_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "crash_nif", 1, crash_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "info_nif", 3, info_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "connect_nif", 6, connect_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "disconnect_nif", 1, disconnect_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "configured_nif", 0, configured_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },

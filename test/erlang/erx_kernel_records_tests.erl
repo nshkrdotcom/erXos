@@ -161,3 +161,22 @@ machine_build_and_boot_value_test() ->
 machine_attr_map(Answer) ->
     {ok, #{attrs := Attrs}} = erx_kernel_records:record(machine, [], 0, Answer, 0),
     Attrs.
+
+%% Another domain's group, as the domain library reads it on its own handle:
+%% only what the report's reported bits name is ok, cpuset among the rest
+%% unsupported, and a refusal for a domain that ended between the view and
+%% the call is that status, never a value. The seed, cpuset's bit set too,
+%% makes cpuset ok.
+another_domains_group_test() ->
+    Report = fun(Reported) -> {ok, <<5:64/little, 0:64, 0:32, 1:32/little, 2:32/little, Reported:32/little>>} end,
+    Attr = fun(Key, Answer) ->
+                   {ok, #{path := [domains, 8, group], attrs := Attrs}} =
+                       erx_kernel_records:record(group, [domains, 8, group], 0, Answer, 0),
+                   maps:get(Key, Attrs)
+           end,
+    Seen = ?ERX_INFO_GROUP_REPORTED_PARKED bor ?ERX_INFO_GROUP_REPORTED_READY,
+    ?assertEqual({kernel, {ok, 1}}, Attr(parked, Report(Seen))),
+    ?assertEqual({kernel, {ok, 2}}, Attr(ready, Report(Seen))),
+    ?assertEqual({kernel, unsupported}, Attr(cpuset, Report(Seen))),
+    ?assertNotEqual({kernel, unsupported}, Attr(cpuset, Report(Seen bor ?ERX_INFO_GROUP_REPORTED_CPUSET))),
+    ?assertEqual({kernel, {error, einval}}, Attr(parked, {error, ?ERX_EINVAL})).

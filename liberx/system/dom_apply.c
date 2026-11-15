@@ -1371,6 +1371,27 @@ erx_dom_lib_crash_copy(erx_dom_lib_t *lib, uint32_t id, uint64_t dst)
 }
 
 erx_status_t
+erx_dom_lib_info(erx_dom_lib_t *lib, uint32_t id, uint32_t topic, void *window, uint64_t size)
+{
+	const uint32_t slot = lib_slot(lib, id);
+	const erx_dom_t *dom;
+
+	if (slot == lib->view.max_domains)
+		return (ERX_EINVAL);
+	dom = &lib->view.domains[slot];
+	if (dom->state != ERX_DOM_BUILT && dom->state != ERX_DOM_RUNNING)
+		return (ERX_EINVAL);
+	switch (topic) {
+	case ERX_INFO_GROUP:
+		return (erx_object_info(dom->group.raw, topic, 0, window, size));
+	case ERX_INFO_BUDGET:
+		return (erx_object_info(dom->budget.raw, topic, 0, window, size));
+	default:
+		return (ERX_EINVAL);
+	}
+}
+
+erx_status_t
 erx_dom_lib_take(uint64_t wait_by, uint64_t *label, erx_fault_t *record)
 {
 	const erx_utcb_t *const utcb = erx_utcb_self();
