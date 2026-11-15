@@ -44,6 +44,13 @@ module Erx
   # Erlang shell, the echo's bindings) between the lease and the last reading. The domain
   # runs within the development manifest's budget, so the cell also shows that the budget
   # holds the domain through the echo.
+  #
+  # The reboot cell boots the same image again to the lease, starts the daemon the same
+  # way, and root, logged in over ssh, ends the machine (check_ssh_reboot): the login's
+  # Erlang shell runs in root_1's session, which holds the machine grant, and writes the
+  # line `reboot` writes to the /machine/ctl the session mounts (docs/design-system.md,
+  # "A session's request"). QEMU's exit under -no-reboot shows the reset, after
+  # `rebooted by root` on the console and with no crash frame.
   module NetworkDomain
     # The one edit of the development manifest: the network domain is never restarted.
     EDIT = { ['domain network', 'restarts'] => 0 }.freeze
@@ -86,11 +93,16 @@ module Erx
       '{nd_ended, NdEnded, NdUsed()}'
     ].join(', ') + ".\r"
 
-    # Typed at root's session's Erlang shell after the echo.
-    SSH_LINE = "{ok, _} = erx_ssh_dev:start(#{DevKey::PORT}).\r".freeze
+    # Typed at root's session's Erlang shell: starts the daemon once the session's data
+    # grant has arrived, since the daemon keeps its host key under /data.
+    SSH_LINE = SessionDomain.with_data("erx_ssh_dev:start(#{DevKey::PORT})").freeze
     # What root's login runs; OTP's erlang_eval exec prints its value.
     SSH_EXPRESSION = 'lists:sum([1,2,3]).'
     SSH_ANSWER = '6'
+    # What root's login runs to end the machine: the line `reboot` writes (erx_cmd_reboot)
+    # to the machine tree root's session mounts. In Ruby's single quotes, \n is the two
+    # bytes of Erlang's escape.
+    SSH_REBOOT = 'file:write_file("/machine/ctl", <<"reset\n">>).'
     # The host ssh's line when the daemon turns down every key it offered.
     SSH_REFUSED = 'Permission denied (publickey)'
     SSH_DEADLINE = 60
@@ -109,34 +121,64 @@ module Erx
     # The production checkpoints to the system's command shell, then the cell; figures
     # collects the pool pages each answer gives, and check_ssh runs once the daemon is up.
     def checkpoints(points, figures, check_ssh:)
-      raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
-
       run = ProductionImage::Run
       menu_left = SessionDomain::MENU_LEFT
       figure = ->(key) { ->(line) { figures[key] = Integer(line[/([0-9]+)\}\r*\n\z/, 1], 10) } }
-      [*points,
-       SessionDomain.session_shell('root_1-shell', run::CTRL_G),
-       { name: 'menu', pattern: run::CTRL_G_MENU, seconds: 30, type: 's' }.freeze,
-       { name: 'system-shell', pattern: menu_left, seconds: 30, type: run::ERL_LINE }.freeze,
-       run::ERLANG_SHELL.merge(name: 'system-erlang-shell', type: LEASE_LINE).freeze,
-       { name: 'lease', pattern: answer('\{nd_lease,\{ok,\[\]\},true,[0-9]+\}'), seconds: 240, verify: figure.call(:lease),
-         type: run::CTRL_G }.freeze,
-       { name: 'session-menu', pattern: run::CTRL_G_MENU, seconds: 30, type: '1' }.freeze,
-       { name: 'session-shell', pattern: menu_left, seconds: 30, type: NetDevice::IFCONFIG_LINE }.freeze,
+      [*leased_session(points, typed: NetDevice::IFCONFIG_LINE, verify_lease: figure.call(:lease)),
        line_point('ifconfig-vtnet0', 'vtnet0: flags=1008843<UP,BROADCAST,RUNNING,SIMPLEX,MULTICAST,LOWER_UP> metric 0 mtu 1500'),
        line_point('ifconfig-inet', "\tinet 10.0.2.15 netmask 0xffffff00 broadcast 10.0.2.255", type: NetDevice::PING_LINE),
        line_point('ping-head', 'PING 10.0.2.2 (10.0.2.2): 56 data bytes'),
        line_point('ping-counts', '3 packets transmitted, 3 packets received, 0.0% packet loss', type: run::ERL_LINE),
        run::ERLANG_SHELL.merge(name: 'session-erlang-shell', type: ECHO_LINE).freeze,
        { name: 'tcp-echo', pattern: answer('true'), seconds: 120, type: SSH_LINE }.freeze,
-       { name: 'ssh-daemon', pattern: answer('\{ok,<[0-9]+\.[0-9]+\.[0-9]+>\}'), seconds: 60,
-         verify: ->(_line) { check_ssh.call }, type: run::CTRL_G }.freeze,
+       ssh_daemon(check_ssh).merge(type: run::CTRL_G).freeze,
        # Its clock starts before check_ssh runs its three logins.
        { name: 'system-menu', pattern: run::CTRL_G_MENU, seconds: (3 * SSH_DEADLINE) + 30, type: 's' }.freeze,
        { name: 'system-again', pattern: menu_left, seconds: 30, type: ECHOED_LINE }.freeze,
        { name: 'echoed', pattern: answer('\{nd_echoed,[0-9]+\}'), seconds: 60, verify: figure.call(:echoed),
          type: END_LINE }.freeze,
        { name: 'ended', pattern: answer('\{nd_ended,ended,[0-9]+\}'), seconds: 120, verify: figure.call(:ended) }.freeze]
+    end
+
+    # The reboot cell's checkpoints: the production checkpoints to the system's command
+    # shell, the lease, root_1's Erlang shell starting the daemon, and, once the login
+    # (check_ssh_reboot) has ended the machine, the end's console line.
+    def reboot_checkpoints(points, login:)
+      run = ProductionImage::Run
+      [*leased_session(points, typed: run::ERL_LINE),
+       run::ERLANG_SHELL.merge(name: 'session-erlang-shell', type: SSH_LINE).freeze,
+       ssh_daemon(login).freeze,
+       # Its clock starts before the login runs.
+       SessionDomain.machine_end_point('reboot').merge(seconds: SSH_DEADLINE + 120).freeze]
+    end
+
+    # The production checkpoints to the system's command shell; then, from the system's
+    # Erlang shell, the network domain's lease, whose line verify_lease (if any) takes;
+    # then root_1's command shell again, where typed is typed. points must end at the
+    # command shell.
+    def leased_session(points, typed:, verify_lease: nil)
+      raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
+
+      run = ProductionImage::Run
+      menu_left = SessionDomain::MENU_LEFT
+      [*points,
+       SessionDomain.session_shell('root_1-shell', run::CTRL_G),
+       { name: 'menu', pattern: run::CTRL_G_MENU, seconds: 30, type: 's' }.freeze,
+       { name: 'system-shell', pattern: menu_left, seconds: 30, type: run::ERL_LINE }.freeze,
+       run::ERLANG_SHELL.merge(name: 'system-erlang-shell', type: LEASE_LINE).freeze,
+       { name: 'lease', pattern: answer('\{nd_lease,\{ok,\[\]\},true,[0-9]+\}'), seconds: 240, verify: verify_lease,
+         type: run::CTRL_G }.compact.freeze,
+       { name: 'session-menu', pattern: run::CTRL_G_MENU, seconds: 30, type: '1' }.freeze,
+       { name: 'session-shell', pattern: menu_left, seconds: 30, type: typed }.freeze]
+    end
+
+    # The checkpoint of the daemon's start answered at root_1's Erlang shell (SSH_LINE),
+    # whose verify runs logins, the host's login or logins. Its time covers SSH_LINE's
+    # wait for the data grant, at most 240 polls 500 ms apart, as the session suite's
+    # with_data points do.
+    def ssh_daemon(logins)
+      { name: 'ssh-daemon', pattern: answer('\{ok,<[0-9]+\.[0-9]+\.[0-9]+>\}'), seconds: 180,
+        verify: ->(_line) { logins.call } }
     end
 
     # The host's ssh through the host forward at port, as `tools/erx ssh` runs it but
@@ -146,10 +188,7 @@ module Erx
     # with another key are refused. What the guest printed reaches an error only escaped.
     def check_ssh(pair:, port:, runner:)
       Dir.mktmpdir('erx-ssh-cell') do |work|
-        ssh = ->(key, user: 'root', command: []) do
-          DevKey.ssh_argv(pair: key, port: port, user: user, known_hosts: File.join(work, DevKey::KNOWN_HOSTS),
-                          options: SSH_OPTIONS, command: command)
-        end
+        ssh = ->(key, user: 'root', command: []) { ssh_argv(key, port: port, work: work, user: user, command: command) }
         output = File.join(work, 'answer')
         runner.run(ssh.call(pair, command: [SSH_EXPRESSION]), name: 'ssh-root', deadline: SSH_DEADLINE, stdout: output)
         answer = File.binread(output, 256).to_s
@@ -161,6 +200,32 @@ module Erx
       end
     end
 
+    # Root with pair's key logs in through the host forward at port and runs SSH_REBOOT.
+    # The guest's end may close the connection before ssh has read the answer, so a
+    # failed ssh is no failure of the cell unless the daemon refused the login: the end's
+    # console line and log line decide. An answer that did arrive must be `ok`; what the
+    # guest printed reaches an error only escaped.
+    def check_ssh_reboot(pair:, port:, runner:)
+      Dir.mktmpdir('erx-ssh-cell') do |work|
+        output = File.join(work, 'answer')
+        begin
+          runner.run(ssh_argv(pair, port: port, work: work, command: [SSH_REBOOT]), name: 'ssh-reboot',
+                                                                                    deadline: SSH_DEADLINE, stdout: output)
+        rescue CommandError => error
+          raise Error, "the guest refused root's login; log: #{error.result.fetch('log')}" if ssh_refused?(error)
+        end
+        answer = File.file?(output) ? File.binread(output, 256).to_s.strip : ''
+        raise Error, "root ran #{SSH_REBOOT} over ssh and got #{answer.dump}, not ok" unless ['', 'ok'].include?(answer)
+      end
+    end
+
+    # The host's ssh as user with pair's key through the host forward at port, running
+    # command, with a known-hosts file in work, a directory of the check's own.
+    def ssh_argv(pair, port:, work:, command:, user: 'root')
+      DevKey.ssh_argv(pair: pair, port: port, user: user, known_hosts: File.join(work, DevKey::KNOWN_HOSTS),
+                      options: SSH_OPTIONS, command: command)
+    end
+
     # Runs argv, which the guest's daemon must refuse with SSH_REFUSED. A login it
     # admits runs argv's command and ends, and the command's output goes to a file of
     # work's, so the log holds only what ssh itself printed.
@@ -168,19 +233,24 @@ module Erx
       runner.run(argv, name: name, deadline: SSH_DEADLINE, stdout: File.join(work, name))
       raise Error, "#{name}: the guest admitted a login it must refuse"
     rescue CommandError => error
-      log = error.result.fetch('log')
-      raise Error, "#{name}: ssh failed before the daemon refused its key; log: #{log}" unless
-        File.binread(log, 1 << 16).to_s.include?(SSH_REFUSED)
+      raise Error, "#{name}: ssh failed before the daemon refused its key; log: #{error.result.fetch('log')}" unless
+        ssh_refused?(error)
     end
+
+    # Whether a failed ssh's log, which holds only what ssh itself printed, says that the
+    # daemon turned down every key it offered.
+    def ssh_refused?(error) = File.binread(error.result.fetch('log'), 1 << 16).to_s.include?(SSH_REFUSED)
 
     def line_point(name, text, type: nil)
       { name: name, pattern: /\A#{Regexp.escape(text)}\r*\n\z/n, seconds: 60, type: type }.compact.freeze
     end
 
-    # Builds the image once and boots it under HVF with one CPU. Returns
-    # { CELL => 'passed' }; any disagreement raises.
+    # Builds the image once and boots it under HVF with one CPU twice: the footprint cell
+    # and the reboot cell. Returns { CELL => 'passed', REBOOT_CELL => 'passed' }; any
+    # disagreement raises.
     class Run
       CELL = "#{QemuGate::SUITE_ACCELERATOR}-1cpu-network-domain"
+      REBOOT_CELL = "#{CELL}-ssh-reboot"
 
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''),
@@ -205,34 +275,50 @@ module Erx
         built, written = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
                                              fiasco: fiasco, login_key: key.public_line)
                                         .build_medium(directory: directory, machine: @machine, manifest_source: @manifest)
-        { CELL => boot(built, written, key) }
+        { CELL => footprint_boot(built, written, key), REBOOT_CELL => ssh_reboot_boot(built, written, key) }
       end
 
       private
 
+      def footprint_boot(built, written, key)
+        figures = {}
+        boot(built, written, name: 'footprint') do |points, port|
+          NetworkDomain.checkpoints(points, figures, check_ssh: -> { NetworkDomain.check_ssh(pair: key, port: port, runner: @runner) })
+        end
+        record(QemuGate::SUITE_ACCELERATOR, figures)
+        'passed'
+      end
+
+      def ssh_reboot_boot(built, written, key)
+        report = boot(built, written, name: 'ssh-reboot', machine_end: true) do |points, port|
+          NetworkDomain.reboot_checkpoints(points, login: -> { NetworkDomain.check_ssh_reboot(pair: key, port: port, runner: @runner) })
+        end
+        SessionDomain.machine_ended!(File.binread(report.fetch('serial_log')), command: 'reboot')
+        'passed'
+      end
+
       # Boots built with a fresh copy of its medium, written, as the disk, so the storage
       # domain serves /data and root's session has its data facet, where erx_ssh_dev
-      # writes the host key; the medium as built stays as the image build wrote it.
-      def boot(built, written, key)
-        accel = QemuGate::SUITE_ACCELERATOR
-        boot_directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/network-domain/boot'))
+      # writes the host key; the medium as built stays as the image build wrote it. The
+      # block takes the production checkpoints and the host's port of the ssh forward,
+      # and answers the boot's checkpoints. Returns QEMU's report.
+      def boot(built, written, name:, machine_end: false)
+        boot_directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/network-domain', name))
         medium = written.fresh(directory: OutputDirectory.prepare(root: @root, path: boot_directory, mode: 0o700))
         echo = NetDevice::EchoServer.new(limit: 2 * ECHO_BYTES).start
         link = NetDevice::Link.new
         forward = QemuPlan::Forward.new(host: NetDevice.free_tcp_port, guest: DevKey::PORT)
         nic = QemuPlan::Nic.new(frames_port: link.frames_port, peer_port: link.peer_port, echo_port: echo.port, forward: forward)
-        check_ssh = -> { NetworkDomain.check_ssh(pair: key, port: forward.host, runner: @runner) }
-        figures = {}
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: 1,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
-        Qemu.new(root: @root, runner: @runner).run(platform: @machine.platform, accel: accel, cpus: 1, image: built.single,
-                                                   memory_mib: @machine.memory_mib, disks: [QemuPlan::Disk.new(path: medium)],
-                                                   checkpoints: NetworkDomain.checkpoints(points, figures, check_ssh: check_ssh), nic: nic)
+        report = Qemu.new(root: @root, runner: @runner)
+                     .run(platform: @machine.platform, accel: QemuGate::SUITE_ACCELERATOR, cpus: 1, image: built.single,
+                          memory_mib: @machine.memory_mib, disks: [QemuPlan::Disk.new(path: medium)],
+                          checkpoints: yield(points, forward.host), nic: nic, machine_end: machine_end)
         failed = echo.stop
         raise failed if failed
 
-        record(accel, figures)
-        'passed'
+        report
       ensure
         echo&.stop
         link&.close

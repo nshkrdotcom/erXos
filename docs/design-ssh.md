@@ -184,7 +184,10 @@ build, `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in
 root's session starts OTP's daemon there with the development login key
 and root's host key, and the network domain's QEMU case
 (`tools/lib/erx/network_domain.rb`) logs in through a host forward with
-the host's `ssh`. `tools/erx boot` gives its guest no network device, and
+the host's `ssh`; in a second boot of the same image, root's login
+writes `reset` to the session's `/machine/ctl` and the machine resets
+([design-system.md](design-system.md#a-sessions-request)).
+`tools/erx boot` gives its guest no network device, and
 the QEMU case's forward is a free port it does not print, so `tools/erx
 ssh` reaches no guest yet. No SSH domain is in
 any manifest, and `abi/services/` declares no login service for one.

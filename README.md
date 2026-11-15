@@ -251,8 +251,9 @@ Eshell V17.1.1 (type help(). for help)
   connections out and in work in root's session.
 * In a development build, root logs in over SSH with the clone's
   development key to an Erlang shell in root's session, served by OTP's
-  `ssh` daemon. The network suite logs in through a host port forward;
-  `tools/erx boot` gives its guest no network device yet.
+  `ssh` daemon. The network suite logs in through a host port forward,
+  and root's login there reboots the machine; `tools/erx boot` gives its
+  guest no network device yet.
 
 **Display and input**
 

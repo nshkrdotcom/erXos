@@ -285,9 +285,22 @@ module Erx
     MACHINE_CTL_REFUSED = "echo trial > /machine/ctl || echo machine-ctl-refused-$status\r"
 
     def machine_end_checkpoints(points, command:)
-      [*points, *machine_end_route(command),
-       { name: "end-#{command}", pattern: line("erx: end #{MACHINE_ENDS.fetch(command)}"),
-         seconds: 120 }.freeze]
+      [*points, *machine_end_route(command), machine_end_point(command)]
+    end
+
+    # The last checkpoint of a boot that command ends: the end's console line. The root
+    # writes it past the console driver, straight to the console, so it may follow
+    # whatever the console had begun on that line, such as the prompt a shell redraws
+    # when the session it gave the line to ends.
+    def machine_end_point(command)
+      { name: "end-#{command}", pattern: /erx: end #{MACHINE_ENDS.fetch(command)}\r*\n\z/n, seconds: 120 }.freeze
+    end
+
+    # Raises unless log, a boot's serial log that command ended, holds command's log line
+    # and no crash frame, so a watchdog's end does not pass for command's.
+    def machine_ended!(log, command:)
+      raise Error, "#{command} logged no line before the end" unless log.match?(MACHINE_END_LOG.fetch(command))
+      raise Error, "#{command} ended through a crash" unless CrashFrame.read(log).status == :absent
     end
 
     def machine_end_route(command)
@@ -442,9 +455,7 @@ module Erx
                      .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                           memory_mib: @machine.memory_mib, disks: [QemuPlan::Disk.new(path: medium)],
                           checkpoints: SessionDomain.machine_end_checkpoints(points, command: command), machine_end: true)
-        log = File.binread(report.fetch('serial_log'))
-        raise Error, "#{command} logged no line before the end" unless log.match?(MACHINE_END_LOG.fetch(command))
-        raise Error, "#{command} ended through a crash" unless CrashFrame.read(log).status == :absent
+        SessionDomain.machine_ended!(File.binread(report.fetch('serial_log')), command: command)
       end
 
       # At one CPU, once the transcript is whole, the host opens the web facet and a
