@@ -54,10 +54,10 @@ module Erx
 
     def check_imports = check_imports_of(cxx_runtime: @libcxx.archives)
 
-    # The configure stamp records libc++'s configuration beside the sysroot: a change to
-    # it changes the headers every C++ object was compiled with, which OTP's make does
-    # not track, so the copy starts again.
-    def sdk_root = [@sysroot, @libcxx.configuration].join("\n")
+    # The configure stamp records libc++'s configuration beside the interpreter's: a
+    # change to it changes the headers every C++ object was compiled with, which OTP's
+    # make does not track, so the copy starts again.
+    def sdk_root = [super, @libcxx.configuration].join("\n")
 
     def flavour_environment
       { 'ERX_JIT' => '--enable-jit', 'ERX_CXX_INCLUDE' => @libcxx.include,

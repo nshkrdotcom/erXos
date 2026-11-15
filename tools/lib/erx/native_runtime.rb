@@ -4,6 +4,7 @@
 
 require 'fileutils'
 require 'open3'
+require_relative 'build_memo'
 require_relative 'compiler_rt'
 require_relative 'domain_image_apps'
 require_relative 'error'
@@ -241,7 +242,10 @@ module Erx
       end
     end
 
-    # The configure stamp records the sysroot where the hosted build records its SDK.
-    def sdk_root = @sysroot
+    # The configure stamp records the sysroot where the hosted build records its SDK,
+    # with its headers by content: OTP's make dependencies leave out system headers, so
+    # a changed musl or ABI header (an errno or signal number) starts the copy again
+    # rather than leaving objects compiled against the old one.
+    def sdk_root = [@sysroot, BuildMemo.tree_digest(File.join(@root, NativeRoot::LIBC_HEADERS))].join("\n")
   end
 end

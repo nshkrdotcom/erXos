@@ -138,6 +138,17 @@ class LibcryptoConfigureTest < Minitest::Test
     assert_equal 2, build_and_count_configures
   end
 
+  # OpenSSL's make dependencies leave out the sysroot's headers, as system headers, so
+  # only a new configuration, which empties the directory, rebuilds an object compiled
+  # against an earlier errno or signal number.
+  def test_a_changed_sysroot_header_configures_again
+    write('sysroot/include/bits/errno.h', '#define EAGAIN 11', tree: :root)
+    assert_equal 1, build_and_count_configures
+    write('sysroot/include/bits/errno.h', '#define EAGAIN 35', tree: :root)
+
+    assert_equal 2, build_and_count_configures
+  end
+
   def test_another_compiler_of_the_same_name_configures_again
     assert_equal 1, build_and_count_configures
     write('llvm/bin/clang', 'clang 2', tree: :root)

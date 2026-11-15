@@ -1886,6 +1886,11 @@ it; git history is the record of completed work.
   and the configure stamp does not cover OpenSSL's options or headers, so a change to `Libcrypto::OPTIONS`, `openssl/include` or
   `erl_nif.h` leaves them compiled against the old headers. Fold a digest of the OpenSSL prefix into the stamp, as
   `NativeJitRuntime#sdk_root` does for libc++, and give the prefix's header copy `--delete`.
+* [Low] LVGL, rebuild (`tools/lib/erx/lvgl.rb`, `make_library`): `display/lvgl/Makefile`'s `-MMD` leaves out musl's
+  headers, which `library_flags` names with `-isystem`, and `library_directory` is keyed on the flags alone, so a changed
+  errno, signal or other musl header leaves `liblvgl.a`'s objects compiled against the old one. Key the objects on
+  `BuildMemo.tree_digest` of the sysroot's headers, as `NativeRuntime#sdk_root` and `Libcrypto#configuration_key` do,
+  without leaving one directory behind per header change.
 * [Medium] crypto, first seeding's failing half (`docs/design-crypto.md`, "Verification"; `test/guest/native_domain/guest.c`,
   the crypto cases): the QEMU test that a domain of each image whose generator fails before its first seed gets an exception
   from `crypto:strong_rand_bytes/1`, not bytes, is not written. No test hook makes the generator service refuse one domain's
@@ -7309,14 +7314,6 @@ document's "residual risks accepted" paragraph.
   table's FreeBSD numbers; check that each row names an errno of the table, keeping its own wire number.
   `enodata` (wire 61) names no errno of the table (the `enoattr` item below). The frame grammar's
   `errno` kind joins with the first reply that carries an error name (P2a).
-* [Medium] build, `tools/lib/erx/native_runtime.rb`, `tools/lib/erx/libcrypto.rb`: a change to the libc numbers
-  generated from `abi/errno.txt` and `abi/signals.txt` (`build/gen/musl/include/bits/`) rebuilds musl
-  (`musl/arch/erxos/arch.mak`) but no ERTS or OpenSSL object of an existing build tree: OTP's `-MM` dependency
-  lists and the configure stamp leave out the sysroot's headers, so a stale object reads `EAGAIN` as 11 while musl
-  returns 35, a wrong answer without an error. Put a digest of the generated headers into the native runtimes'
-  configure stamp (`sdk_root`) and Libcrypto's `configuration_key`, as the BeamAsm build does for libc++'s
-  configuration, with a test that a changed header restarts the copy. Until then, a tree built before a change to
-  those tables removes `build/runtime/native*` before building.
 * [Medium] ABI, `abi/errno.txt`, `test/host/abi_errno_test.rb`: the table leaves out FreeBSD names "nothing in
   erXos names" by hand (`LEFT_OUT` repeats the list), yet keeps `eusers` and `eremote`, which nothing names, and
   leaves out `enoattr`, whose concept `erx_littlefs_nif.c` and design-files.md name as `enodata`. Take FreeBSD's

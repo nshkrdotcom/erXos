@@ -150,7 +150,7 @@ module Erx
     # (Musl#merge_headers).
     def build(directory:, sysroot:, jobs: 4, target: ARCHIVE)
       environment = environment(directory: directory, sysroot: sysroot)
-      configure(directory: directory, environment: environment)
+      configure(directory: directory, environment: environment, sysroot: sysroot)
       # OpenSSL's own build_libs, for target alone: the headers Configure's generators
       # make, which no object names, then depend, which writes the header dependencies
       # the last build's compiles recorded into the Makefile, so an edited header
@@ -177,9 +177,9 @@ module Erx
     # (configuration_key) differs from the one the directory was configured for, so a
     # configuration is never reused for inputs it was not made from. Source files are
     # make's to judge.
-    def configure(directory:, environment:)
+    def configure(directory:, environment:, sysroot:)
       command = ['perl', File.join(@source, 'Configure'), TARGET, "--config=#{target_file}", *OPTIONS]
-      key = configuration_key(command, environment)
+      key = configuration_key(command, environment, sysroot: sysroot)
       key_file = File.join(directory, CONFIGURATION_KEY_FILE)
       return if File.file?(key_file) && File.read(key_file) == key
 
@@ -203,9 +203,12 @@ module Erx
     # source tree, the target, the target file's path and the options), the variables it
     # sees, the target file's bytes, the compiler by identity (a new clang rebuilds every
     # object, which make alone would not do) and the bytes of every file CONFIGURE_INPUTS
-    # names in the source tree and TEMPLATE_INPUTS in the fetched Text::Template. perl, gmake and LLVM's archivers are named only by the PATH they are found on.
-    def configuration_key(command, environment)
+    # names in the source tree and TEMPLATE_INPUTS in the fetched Text::Template, and the
+    # sysroot's headers by content, which OpenSSL's make dependencies leave out as system
+    # headers. perl, gmake and LLVM's archivers are named only by the PATH they are found on.
+    def configuration_key(command, environment, sysroot:)
       BuildMemo.key('command' => command, 'environment' => environment.compact, 'target' => digest(target_file),
+                    'headers' => BuildMemo.tree_digest(File.join(sysroot, 'include')),
                     'compiler' => BuildMemo.program_identity(@compiler),
                     'inputs' => digests(CONFIGURE_INPUTS, base: @source),
                     'template' => digests(TEMPLATE_INPUTS, base: @template))
