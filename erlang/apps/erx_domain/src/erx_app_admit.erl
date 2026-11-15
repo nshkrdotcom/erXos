@@ -8,26 +8,25 @@ whether a package whose header the file check accepted and authenticated
 may become an app of this machine, and with what. `admit/3` is a pure
 function of that header, the facts of the manifest it reads and the boot's
 registry of app principals, and the first of its six checks that fails is
-the answer:
+the answer, each check a function of the same name:
 
-1. the manifest has an `apps` row;
-2. the header's ABI version and architecture are the image's, which are
-   `ERX_ABI_VERSION` and `ERX_ARCH_MACHINE_ARCH`, the name of the
-   `abi/arch/` file the build was generated from;
-3. the name is an app name: property 5's reservation rule
+1. `check_apps`: the manifest has an `apps` row;
+2. `check_built_for_image`: the header's ABI version and architecture are
+   the image's, which are `ERX_ABI_VERSION` and `ERX_ARCH_MACHINE_ARCH`,
+   the name of the `abi/arch/` file the build was generated from;
+3. `check_name`: the name is an app name, property 5's reservation rule
    (docs/design-system.md, "Identifiers") applied to it;
-4. a name the registry holds keeps its entry, for its own signer only, and
-   a new name takes the lowest entry the registry does not hold;
-5. the declared memory is at least `ERX_APP_MEMORY_MIN` and at most the
-   `apps` row's budget;
-6. each need is a service of the `apps` row.
+4. `check_entry`: a name the registry holds keeps its entry, for its own
+   signer only, and a new name takes the lowest entry the registry does
+   not hold;
+5. `check_memory`: the declared memory is at least `ERX_APP_MEMORY_MIN`
+   and at most the `apps` row's budget;
+6. `check_needs`: each need is a service of the `apps` row.
 
 Nothing else is judged: a declaration can only name what the row offers,
 so the build's proof over the row is the proof over the app. Admission
 reserves nothing and writes nothing; the package process registers the
-principal when the package is committed. The packer runs this module on
-the host over each package of an image, so one implementation decides at
-build and on the machine.
+principal when the package is committed.
 """.
 
 -export([admit/3]).
@@ -97,7 +96,7 @@ its start row's display, its one `windows` need if it has exactly one and
                       rows := [non_neg_integer()],
                       display := none | binary()}.
 
--doc "Why a package is refused, each tag the check of the same name.".
+-doc "Why a package is refused, each tag refused by one check of the six.".
 -type reason() :: no_apps
                 | {abi, Have :: non_neg_integer(), Want :: non_neg_integer()}
                 | {arch, Have :: binary(), Want :: binary()}
@@ -125,19 +124,19 @@ admitted(#{name := Name, signer := Signer, memory := Memory,
            needs := Needs} = Header,
          #{apps := AppsRow} = Manifest, Registry) ->
     #{memory := Budget, max := Max, packages_row := PackagesRow,
-      services := Offered} = apps_row(AppsRow),
+      services := Offered} = check_apps(AppsRow),
     check_built_for_image(Header),
-    check_app_name(Name, Signer, Manifest),
-    Entry = entry(Name, Signer, Max, Registry),
+    check_name(Name, Signer, Manifest),
+    Entry = check_entry(Name, Signer, Max, Registry),
     check_memory(Memory, Budget),
-    Kept = kept(Needs, Offered),
+    Kept = check_needs(Needs, Offered),
     #{entry => Entry,
       rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
       display => display([Service || #{name := Service,
                                        windows := true} <- Kept])}.
 
-apps_row(none) -> refuse(no_apps);
-apps_row(#{} = Apps) -> Apps.
+check_apps(none) -> refuse(no_apps);
+check_apps(#{} = Apps) -> Apps.
 
 check_built_for_image(#{abi_version := Abi, arch := Arch}) ->
     require(Abi =:= ?ERX_ABI_VERSION, {abi, Abi, ?ERX_ABI_VERSION}),
@@ -145,17 +144,15 @@ check_built_for_image(#{abi_version := Abi, arch := Arch}) ->
             {arch, Arch, ?ERX_ARCH_MACHINE_ARCH_BYTES}).
 
 %% An app name is an identifier that stays one with `_` and the digits of
-%% the names quota every principal has appended, so every pooled name of
-%% its sessions is one; is not of a pooled name's form, so it takes no other
-%% principal's; is not root, the prefix of the system principal's session
-%% names; and is no name of the manifest, nor, for an installed package, of
-%% a package of the image.
-check_app_name(Name, Signer, #{reserved := Reserved,
-                               packages := ImagePackages}) ->
+%% the names quota every principal has appended, so every session name it
+%% takes is one; is none that session naming keeps (property 5): not root,
+%% whose session names are the system principal's, and not of a session
+%% name's form, so it is no principal's session name; and is no name of the
+%% manifest, nor, for an installed package, of a package of the image.
+check_name(Name, Signer, #{reserved := Reserved, packages := ImagePackages}) ->
     Suffix = integer_to_binary(erx_domain_core:names_quota()),
     require(is_identifier(<<Name/binary, $_, Suffix/binary>>)
-            andalso not is_pooled(Name)
-            andalso Name =/= <<"root">>,
+            andalso not erx_domain_core:session_reserved(Name),
             {bad_name, Name}),
     Taken = case Signer of
                 image -> Reserved;
@@ -169,23 +166,9 @@ is_identifier(Bin) ->
         _ -> true
     end.
 
-%% A pooled name is an identifier, `_` and decimal digits: a name whose
-%% part after its last `_` is digits and whose part before it is not empty.
-is_pooled(Name) ->
-    case binary:matches(Name, <<"_">>) of
-        [] ->
-            false;
-        Matches ->
-            {Last, 1} = lists:last(Matches),
-            Digits = binary:part(Name, Last + 1, byte_size(Name) - Last - 1),
-            Last > 0 andalso Digits =/= <<>>
-                andalso lists:all(fun(C) -> C >= $0 andalso C =< $9 end,
-                                  binary_to_list(Digits))
-    end.
-
 %% A name the registry holds keeps its entry, for its own signer only; a new
 %% name takes the lowest entry no name holds.
-entry(Name, Signer, Max, Registry) ->
+check_entry(Name, Signer, Max, Registry) ->
     case Registry of
         #{Name := #{entry := Entry, signer := Signer}} ->
             Entry;
@@ -204,7 +187,7 @@ check_memory(Memory, Budget) ->
             {memory, Memory}).
 
 %% The service of each need, once each; a need the row lacks is refused.
-kept(Needs, Offered) ->
+check_needs(Needs, Offered) ->
     lists:usort([offered(Need, Offered) || Need <- Needs]).
 
 offered(Need, Offered) ->

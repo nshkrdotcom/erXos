@@ -13,6 +13,7 @@ and admits the header against the manifest and registry `Context` names.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(MIB, 1048576).
 
@@ -54,3 +55,13 @@ registry(full) ->
 registry(_) ->
     #{<<"clock">> => #{entry => 0, signer => <<"vendor">>},
       <<"chess">> => #{entry => 2, signer => <<"vendor">>}}.
+
+%% Names that are no identifier, each refused by check 3 whatever its
+%% length. The package reader refuses them in a file (its name field is an
+%% identifier), so these headers are written here rather than decoded.
+bad_names_test_() ->
+    Header = #{abi_version => ?ERX_ABI_VERSION, arch => ?ERX_ARCH_MACHINE_ARCH_BYTES,
+               memory => 64 * ?MIB, needs => [], signer => development},
+    [?_assertEqual({error, {bad_name, Name}},
+                   erx_app_admit:admit(Header#{name => Name}, manifest(base), registry(base)))
+     || Name <- [<<"Clock">>, <<"a/b">>, <<"a.b">>, <<"-ab">>, <<"_ab">>, <<"a", 1, "b">>, <<>>]].

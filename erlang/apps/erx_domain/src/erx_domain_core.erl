@@ -37,13 +37,15 @@ state is a bug of the caller and fails with a badmatch.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
          restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3,
-         names_quota/0]).
+         session_reserved/1, names_quota/0]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0]).
 
 -define(SYSTEM_ID, 4).
 -define(ID_MAX, 16#ffffffff).
 -define(NAMES_QUOTA, 64).
+%% The prefix of the system principal's session names.
+-define(SYSTEM_PREFIX, <<"root">>).
 -define(DEATHS_KEPT, 16).
 
 -type origin() :: request | {configured, Row :: non_neg_integer()} | {session, Template :: non_neg_integer()}.
@@ -90,7 +92,10 @@ host(#{host := Host}) -> Host.
 -doc """
 Admits a domain named Name for Principal: spends the next id, binds the name
 and records the domain as building. It refuses with system_limit, name_taken
-or quota, leaving the state as it was.
+or quota, leaving the state as it was. A name session naming keeps
+(session_reserved/1) is name_taken for every origin but a session, which the
+service names (session_name/3), so one funnel keeps each prefix's session names
+for its own principal's sessions.
 """.
 -spec admit(erx_ident:t(), pos_integer(), origin(), state()) ->
           {ok, domain(), state()} | {error, system_limit | name_taken | quota}.
@@ -101,7 +106,11 @@ admit(Name, Principal, Origin, #{names := Names, bound := Bound} = State) ->
     Count = maps:get(Principal, Bound, 0),
     %% Only the configured domains, which the checked manifest bounds, bind outside it.
     Counted = case Origin of {configured, _} -> false; _ -> true end,
+    Reserved = not is_session(Origin) andalso session_reserved(Bytes),
     case Names of
+        %% First, so a request cannot take even a session name that is bound and free.
+        #{} when Reserved ->
+            {error, name_taken};
         #{Bytes := #{principal := Principal, holder := none} = Binding} ->
             take(Name, Binding, Principal, Origin, State);
         #{Bytes := _} ->
@@ -113,6 +122,9 @@ admit(Name, Principal, Origin, #{names := Names, bound := Bound} = State) ->
             Binding = #{principal => Principal, node => Node, holder => none},
             take(Name, Binding, Principal, Origin, State#{bound := Bound#{Principal => Count + 1}})
     end.
+
+is_session({session, _Template}) -> true;
+is_session(_Origin) -> false.
 
 -doc "How many names each principal binds, its app principals included.".
 -spec names_quota() -> pos_integer().
@@ -127,7 +139,7 @@ of principal clock is clock_1. error for a principal Names does not name.
 """.
 -spec session_prefix(pos_integer(), pos_integer() | unknown, #{pos_integer() => binary()}) ->
           {ok, binary()} | error.
-session_prefix(System, System, _Names) -> {ok, <<"root">>};
+session_prefix(System, System, _Names) -> {ok, ?SYSTEM_PREFIX};
 session_prefix(Principal, _System, Names) -> maps:find(Principal, Names).
 
 -doc """
@@ -147,6 +159,23 @@ session_name(Prefix, Principal, Names, N) ->
         #{Name := #{principal := Principal, holder := none}} -> Name;
         #{Name := _} -> session_name(Prefix, Principal, Names, N + 1);
         #{} -> Name
+    end.
+
+-doc """
+Whether session naming keeps Name: root, the system principal's prefix, or a
+name of a session name's form, an identifier's bytes, `_` and decimal digits.
+Only a session takes either (admit/4), and no app is named either
+(erx_app_admit). Name is an identifier's bytes.
+""".
+-spec session_reserved(binary()) -> boolean().
+session_reserved(?SYSTEM_PREFIX) ->
+    true;
+session_reserved(Name) ->
+    case string:split(Name, <<"_">>, trailing) of
+        [Prefix, Digits] when Prefix =/= <<>>, Digits =/= <<>> ->
+            lists:all(fun(C) -> C >= $0 andalso C =< $9 end, binary_to_list(Digits));
+        _ ->
+            false
     end.
 
 take(Name, #{node := Node} = Binding, Principal, Origin,

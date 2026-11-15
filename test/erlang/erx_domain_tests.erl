@@ -91,6 +91,20 @@ names_test() ->
     ?assertEqual({error, name_taken}, erx_domain_core:admit(ident(<<"web">>), 2, request, Core2)),
     {_, _} = admit(<<"web">>, 1, request, Core2).
 
+%% Only a session takes a name session naming keeps, root or a session name's form: a
+%% request or configured domain is refused it, even once its session ended.
+session_reserved_names_test() ->
+    Core = erx_domain_core:new(<<"erxos">>),
+    [?assertEqual({error, name_taken}, erx_domain_core:admit(ident(Name), 1, request, Core))
+     || Name <- [<<"root">>, <<"clock_1">>, <<"clock_100">>, <<"a_b_7">>]],
+    {#{id := Id}, Session} = admit(<<"clock_1">>, 3, {session, 0}, Core),
+    Ended = erx_domain_core:failed(Id, Session),
+    ?assertEqual({error, name_taken}, erx_domain_core:admit(ident(<<"clock_1">>), 3, request, Ended)),
+    ?assertEqual({error, name_taken},
+                 erx_domain_core:admit(ident(<<"root_2">>), 3, {configured, 0}, Core)),
+    [?assertNot(erx_domain_core:session_reserved(Name))
+     || Name <- [<<"clock">>, <<"room_a">>, <<"clock_">>, <<"root_a">>]].
+
 names_quota_test() ->
     Core = lists:foldl(fun(N, Acc) ->
                                {#{id := Id}, Next} = admit(integer_to_binary(N), 2, request, Acc),

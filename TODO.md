@@ -3565,12 +3565,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `abi_binary.rb`, the emitters `abi_emit_erlang.rb` and `abi_emit_reader.rb`, `manifest.rb`
   `IDENTIFIER`). Define the `identifier` string class once in the ABI source and generate the C
   predicate, the Erlang predicate and the Ruby pattern from it.
-* [Low] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl` (`admit/4`): a
-  request name of the pooled form (`<ident>_<digits>`) is not refused with `name_taken`, as
-  design-system.md "Identifiers" says; where the root built no library the service still
-  admits a name under an empty host and makes an atom such as `'web@'` before the create is
-  refused; and `restart_period_s 0` reads as no limit. Refuse the pooled form, refuse before
-  admission when there is no library, and decide the meaning of period 0.
+* [Low] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl` (`admit/4`): where
+  the root built no library the service still admits a name under an empty host and makes an
+  atom such as `'web@'` before the create is refused; and `restart_period_s 0` reads as no
+  limit. Refuse before admission when there is no library, and decide the meaning of period 0.
 * [Low] domain library, `include/erx/dom_lib.h` (`ERX_DOM_HOST_MAX`): the host bound is 64
   bytes and `dom_boot_view.c` checks only its length, where design-system.md has the host an
   identifier of at most 63. Check the host with the identifier rule and bound it at 63.

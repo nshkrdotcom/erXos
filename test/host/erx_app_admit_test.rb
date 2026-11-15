@@ -13,38 +13,52 @@ require_relative '../../tools/fuzz/package_seeds'
 # stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). Each case is a package
 # file written here through the encoder erx_pkg_header's tests use (Erx::PackageSeeds),
 # decoded by erx_pkg_header and admitted: each refusal of the design with its accepting
-# neighbour. Each fault of FAULTS replaces one passage of erx_app_admit, and the cases must
-# then fail.
+# neighbour, and for each two adjacent checks a header both refuse, answered by the earlier.
+# Each fault of FAULTS replaces one passage of one source, and the cases must then fail.
 class ErxAppAdmitTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   MODULE = File.join(ROOT, 'erlang/apps/erx_domain/src/erx_app_admit.erl')
-  SOURCES = %w[erlang/apps/erx_domain/src/erx_ident.erl erlang/apps/erx_domain/src/erx_domain_core.erl
+  DOMAIN_CORE = File.join(ROOT, 'erlang/apps/erx_domain/src/erx_domain_core.erl')
+  SOURCES = [MODULE, DOMAIN_CORE] +
+            %w[erlang/apps/erx_domain/src/erx_ident.erl
                erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
                build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
                test/erlang/erx_app_admit_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
-  # The design's seeded faults: the subset test of step 6 dropped, which admits a need the
-  # row lacks; root dropped from the reserved names.
+  # A seeded fault: the passage `from` of the source `file` replaced by `to`.
+  Fault = Data.define(:file, :from, :to)
+  # The design's seeded faults, and those of the order and the name rule: the subset test of
+  # step 6 dropped, which admits a need the row lacks; root no longer kept by session naming;
+  # steps 4 and 5 swapped, which answers memory for a name another signer holds; the
+  # identifier rule reduced to its length bound, which admits any byte.
   FAULTS = {
-    'step 6 dropped' => ["[] -> refuse({not_offered, Need})", '[] -> #{row => 0, windows => false}'],
-    'root not reserved' => ["Name =/= <<\"root\">>", 'true']
+    'step 6 dropped' => Fault.new(file: MODULE, from: '[] -> refuse({not_offered, Need})',
+                                  to: '[] -> #{row => 0, windows => false}'),
+    'root not kept' => Fault.new(file: DOMAIN_CORE, from: "session_reserved(?SYSTEM_PREFIX) ->\n    true;\n", to: ''),
+    'steps 4 and 5 swapped' =>
+      Fault.new(file: MODULE,
+                from: "    Entry = check_entry(Name, Signer, Max, Registry),\n    check_memory(Memory, Budget),\n",
+                to: "    check_memory(Memory, Budget),\n    Entry = check_entry(Name, Signer, Max, Registry),\n"),
+    'identifier rule reduced to its length' =>
+      Fault.new(file: MODULE,
+                from: "    case erx_ident:new(Bin) of\n        {error, bad_identifier} -> false;\n        _ -> true\n    end.",
+                to: '    byte_size(Bin) =< 63.')
   }.freeze
 
   Seeds = Erx::PackageSeeds
   Tuple = Data.define(:items)
 
   def test_admission_cases_pass_under_eunit
-    output, status = eunit(File.read(MODULE))
+    output, status = eunit
     assert status.success?, output
     assert_match(/All \d+ tests passed/, output)
   end
 
   def test_each_seeded_fault_fails_a_case
-    source = File.read(MODULE)
-    FAULTS.each do |name, (passage, replacement)|
-      assert_equal 1, source.scan(passage).size, "#{name}: the passage occurs once"
-      output, status = eunit(source.sub(passage, replacement))
+    FAULTS.each do |name, fault|
+      assert_equal 1, File.read(fault.file).scan(fault.from).size, "#{name}: the passage occurs once"
+      output, = eunit(fault)
       assert_match(/Failed: [1-9]\d*\./, output, "#{name} failed no case")
     end
   end
@@ -107,7 +121,23 @@ class ErxAppAdmitTest < Minitest::Test
      [package('low', memory: min - 1), :development, :base, error(Tuple.new([:memory, min - 1]))],
      [package('high', memory: (128 * MIB) + 1), :development, :base, error(Tuple.new([:memory, (128 * MIB) + 1]))],
      [package('netuser', needs: %w[display net]), :development, :base, error(Tuple.new([:not_offered, 'net']))],
-     [package('pkgs', needs: %w[packages]), :development, :base, error(Tuple.new([:not_offered, 'packages']))]]
+     [package('pkgs', needs: %w[packages]), :development, :base, error(Tuple.new([:not_offered, 'packages']))]] +
+      earlier_check_answers
+  end
+
+  # For each two adjacent checks of the six, a header both refuse, answered by the earlier.
+  def earlier_check_answers
+    abi = Seeds.codec.abi_version
+    newer_abi = ->(values) { values.merge('abi_version' => abi + 1) }
+    long = 'a' * (MAX_NAME + 1)
+    [[package('two_1', edits: newer_abi), :development, :no_apps, error(:no_apps)], # 1 before 2 (and 3)
+     [package(long, edits: newer_abi), :development, :base, error(Tuple.new([:abi, abi + 1, abi]))], # 2 before 3
+     # 3 before 4: full holds every entry
+     [package('storage'), :development, :full, error(Tuple.new([:name_taken, 'storage']))],
+     [package('clock', memory: Seeds.codec.constant('app_memory_min') - 1), :development, :base, # 4 before 5
+      error(Tuple.new([:signer_changed, 'clock']))],
+     [package('high', needs: %w[net], memory: (128 * MIB) + 1), :development, :base, # 5 before 6
+      error(Tuple.new([:memory, (128 * MIB) + 1]))]]
   end
 
   def ok(entry, rows, display) = Tuple.new([:ok, { entry: entry, rows: rows, display: display }])
@@ -124,9 +154,9 @@ class ErxAppAdmitTest < Minitest::Test
     end
   end
 
-  # Compiles source as erx_app_admit beside SOURCES and runs the cases: each case's file
-  # bytes in a directory of its own as NNN.bin, and cases.term.
-  def eunit(source)
+  # Compiles SOURCES, with fault's file replaced by its faulted copy, and runs the cases:
+  # each case's file bytes in a directory of its own as NNN.bin, and cases.term.
+  def eunit(fault = nil)
     Dir.mktmpdir('erx-app-admit-test') do |work|
       lines = cases.each_with_index.map do |(sample, signer, context, answer), index|
         name = format('%03d_%s', index, sample.name.byteslice(0, 16))
@@ -134,15 +164,22 @@ class ErxAppAdmitTest < Minitest::Test
         "{\"#{name}\", #{sample.length}, #{term(signer)}, #{context}, #{term(answer)}}.\n"
       end
       File.write(File.join(work, 'cases.term'), lines.join)
-      module_file = File.join(work, 'erx_app_admit.erl')
-      File.write(module_file, source)
+      sources = SOURCES.map { |path| fault&.file == path ? faulted(fault, work) : path }
       output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-Werror', '-I', INCLUDE,
-                                       '-o', work, module_file, *SOURCES, stdin_data: '')
+                                       '-o', work, *sources, stdin_data: '')
       return [output, status] unless status.success?
 
       Open3.capture2e({ 'ERX_ADMIT_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
                       '-noshell', '-pa', work, '-eval', 'eunit:test(erx_app_admit_tests, [verbose]), halt().',
                       stdin_data: '')
+    end
+  end
+
+  # Writes fault's file with its passage replaced into work, under the same name, and
+  # answers the copy's path.
+  def faulted(fault, work)
+    File.join(work, File.basename(fault.file)).tap do |copy|
+      File.write(copy, File.read(fault.file).sub(fault.from, fault.to))
     end
   end
 end

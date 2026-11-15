@@ -3750,8 +3750,8 @@ domain holds one atom for each number of the pool ever in use, never one
 for each session or command domain started, and a pool that the quota
 leaves no room in refuses the creation with `{error, quota}`. A creation
 that asks for a name of the pool's form, an identifier, `_` and decimal
-digits, is refused with `{error, name_taken}`, so no principal takes
-another's pooled names. The manifest check proves that every principal's
+digits, or for `root`, is refused with `{error, name_taken}`, so no
+principal takes another's pooled names. The manifest check proves that every principal's
 name, with `_` and the digits of its `names` quota, is still an
 identifier (property 5). A pooled name is itself an identifier, so it is a
 node name that stock distribution accepts and needs no OTP change.
