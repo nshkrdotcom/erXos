@@ -3,7 +3,7 @@
 
 %% Terms near the program protocol's grammar through erx_prog_grammar
 %% (docs/design-abi.md#program-protocol): valid start frames, notices, reports, kill
-%% requests and their replies with one subterm replaced, replies under random busy
+%% and file requests and their replies with one subterm replaced, replies under random busy
 %% slots, random terms as frames of either direction, and start frames whose cwd is
 %% drawn near its bound and its rules. Whatever arrives, every check answers ok or
 %% {error, {Reason, Kind}} and never raises; a notice, a report or a reply draws the
@@ -38,6 +38,8 @@ rounds(N) ->
                           start_round(random_term(?DEPTH)),
                           request_round(random_term(?DEPTH), random_term(?DEPTH)),
                           request_round(rand:uniform(17) - 1, mutated({kill, 2, sigint})),
+                          request_round(rand:uniform(17) - 1, mutated(pick(file_requests()))),
+                          file_reply_round(rand:uniform(17) - 1, mutated(pick(file_replies()))),
                           reply_round(rand:uniform(17) - 1, random_busy(), mutated(pick(replies()))),
                           reply_round(random_term(1), random_term(1), random_term(?DEPTH)),
                           notice_round(mutated(pick(notices()))),
@@ -99,6 +101,27 @@ reply_round(Slot, Busy, Value) ->
         {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => kill});
         Refused -> answer(Refused)
     end.
+
+%% A file request's reply goes through the check of a reply on a slot that holds a
+%% read: one the builder accepts passes the check, and the check and the dispatch agree.
+file_reply_round(Slot, Value) ->
+    Frame = {erx_prog, 1, Slot, Value},
+    Verdict = ?G:check_reply(Frame, #{Slot => file_read}),
+    answer(Verdict),
+    Verdict = ?G:check_to_program(Frame, #{Slot => file_read}),
+    case ?G:build_reply(file_read, Slot, Value) of
+        {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => file_read});
+        Refused -> answer(Refused)
+    end.
+
+%% A request of each file case, at its bounds.
+file_requests() ->
+    [{file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"out">>, 16#241, 8#644},
+     {file, read, 3, 65536, 15}, {file, write, 0, 1, 0}, {file, clunk, 16#ffff}].
+
+%% A reply of each case of a read's reply.
+file_replies() ->
+    [{ok, 0}, {ok, 65536}, {error, eio}].
 
 %% A reply of each case of each request's reply.
 replies() ->
@@ -247,6 +270,7 @@ random_atom() ->
     pick([read, write, read_write, pipe, socketpair, file, tty, dir, socket, dup, mem, null, object, open, gone,
           true, false, erx_start, erx_prog, sigint, sigterm, sigkill, pid, cwd, fds, wend, readers, writers,
           closed, drained, pipe_writer, pipe_writer_gone, pipe_reader, pipe_reader_gone, pipe_lost,
-          pipe_server_lost, erlang, ok, undefined, error, kill, esrch, eperm, enotsup, eopnotsupp]).
+          pipe_server_lost, erlang, ok, undefined, error, kill, esrch, eperm, enotsup, eopnotsupp,
+          lopen, lcreate, clunk, file_read, eio]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).

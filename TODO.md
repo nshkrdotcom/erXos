@@ -2947,6 +2947,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `{discard}`, `{withdraw}` and the collector of deposits no reader can reach
   (docs/design-pipes.md, "The second tier" and "Deposits"), and `holder()` has no
   `{deposit, Ticket}`. `test/erlang/erx_pipe_explore.erl` gains their events with them.
+* [High] session, `erx_prog_handler`: the program protocol carries the file requests `lopen`, `lcreate`,
+  `read`, `write` and `clunk` (abi/protocols/prog.txt), but the handler answers each `enosys`. Serving
+  them (docs/design-programs.md, "Descriptors and files"; docs/design-files.md, "Narrowing for a
+  program") needs the program's narrowed namespace in the handler, open-file descriptions as session
+  processes over `erx_file_remote`, a resolution entry of `prim_file` over a given table and working
+  directory, an `erx_file_remote` open that takes 9P2000.L flags and a create mode as given, and the
+  program driver mapping the data area into the session with a bounded copy into and out of a slot.
+  The read reply's count must be held to the request's, which the grammar cannot state. The other
+  operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need a 64-bit
+  offset or size, which the frame profile cannot spell, since it refuses every `u64` but a capability
+  (docs/design-abi.md, "Program protocol").
+* [Low] ABI, abi/protocols/prog.txt: `data_slot`'s bound writes out `prog_data_slots_max - 1`, since an
+  integer kind's bound cannot be a limit less one; an exclusive bound (`below @prog_data_slots_max`)
+  in tools/lib/erx/abi_protocol.rb would make it one fact.
 * [Medium] session, `erx_prog_handler`: the handler starts a program for a session process with its pipe
   ends and a window's buffer, forwards its notices and reports, and tells the starter its end; what
   remains is the command server that assigns process ids and spawns every handler, so that no handler

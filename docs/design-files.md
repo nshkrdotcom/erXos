@@ -2375,8 +2375,8 @@ operations of their names, the removals as `unlinkat` and renames between
 directories as `renameat`; `fcntl`'s record locks are `lock` and
 `getlock`, with the program's own `ProcId`, taken through the
 description's first opened fid; `close` of a file descriptor that leaves
-its open other references sends `{close, Open}`, once the program has
-taken a record lock, and the open's last reference sends `{clunk, Open}`,
+its open other references sends `{file, close, Open}`, once the program has
+taken a record lock, and the open's last reference sends `{file, clunk, Open}`,
 and at each the handler releases the program's locks on the file, as
 POSIX says, while the description's fids close only with its last open
 ([design-programs.md](design-programs.md#descriptors-and-files)); a

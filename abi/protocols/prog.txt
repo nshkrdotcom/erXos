@@ -28,6 +28,24 @@
 #   page from 1 and a count from 1, each a u32, since every u64 of a frame
 #   is a capability: the mapping starts below 2^44 bytes and ends below 2^45, and
 #   page 0 is never mapped.
+# * A file request's path is any text without a NUL a program's open
+#   names, relative or absolute, up to prog_path_max bytes. It is not held
+#   to UTF-8 here: the handler resolves it through the program's namespace
+#   (erx_path), which answers a name that is not UTF-8 with einval
+#   (docs/design-files.md, "Resolving a path"), as a POSIX call fails.
+# * A file request's flags are 9P2000.L's open flags as a u32, the bits
+#   the handler maps (p9_o_* of protocols/9p.txt); a file mode is 0 to
+#   8#7777.
+# * A read or a write names a data area slot, 0 to prog_data_slots_max - 1,
+#   which the handler checks against the program's own slots, and a count of
+#   1 to prog_data_slot_bytes, one slot's bytes (liberx answers a count of 0
+#   itself and sends a larger one in parts). Its reply's count is 0 to the
+#   same, 0 at the end of the file; that it is at most the request's own
+#   count no grammar can state, so the handler holds a reply to it and
+#   liberx copies no more than it asked for (docs/design-programs.md,
+#   "Reads and writes").
+# * data_slot's bound is prog_data_slots_max - 1, written out, since a
+#   bound here names a limit or a number and no sum of them.
 #
 # Members (docs/design-abi.md#program-protocol has the full table):
 # "version N" is the version every frame carries; "reader c" makes the
@@ -103,10 +121,16 @@ protocol erx_prog
   integer lane_size u32 values 16384 65536
   integer mem_page u32 in 1 0xffffffff
   integer mem_pages u32 in 1 0xffffffff
+  integer open_flags u32 in 0 0xffffffff
+  integer file_mode u16 in 0 4095
+  integer data_slot u8 in 0 15
+  integer io_count u32 in 1 @prog_data_slot_bytes
+  integer io_done u32 in 0 @prog_data_slot_bytes
   total args @prog_args_max
   text arg max @prog_args_max utf8 refuse nul sum args
   text env_var max @prog_args_max utf8 refuse nul assign sum args
   text cwd max @prog_path_max utf8 refuse nul path
+  text file_path max @prog_path_max refuse nul
   list argv arg max @prog_args_max
   list env env_var max @prog_args_max
   list signals signal max 128 ascending
@@ -174,6 +198,15 @@ protocol erx_prog
   union probe_reply
     case ok
     case error errno
+  union open_reply
+    case ok open
+    case error errno
+  union io_reply
+    case ok io_done
+    case error errno
+  union clunk_reply
+    case ok
+    case error errno
   # kill's Signal is a signal's name, never 0: kill(pid, 0), which only
   # checks that kill would reach the target, is the request probe.
   union request
@@ -181,6 +214,20 @@ protocol erx_prog
     reply kill_reply
     case probe process_id
     reply probe_reply
+    # The file requests (docs/design-programs.md, "Descriptors and files"):
+    # 9P2000.L's operations, each a case of its own after the atom file, a
+    # path in place of a walked fid and the program's open in place of an
+    # opened one.
+    case file =lopen file_path open_flags
+    reply open_reply
+    case file =lcreate file_path open_flags file_mode
+    reply open_reply
+    case file =read open io_count data_slot
+    reply io_reply
+    case file =write open io_count data_slot
+    reply io_reply
+    case file =clunk open
+    reply clunk_reply
   union notice
     case closed pipe_id end_id
     case drained pipe_id end_id wend

@@ -11,7 +11,7 @@
  * scratch's offset from an aligned address; bits 6-7 the busy slots a
  * reply is judged by: none (0), every slot holding a kill (1), the even
  * slots holding one (2), or slot 0 holding a kill, slot 1 a probe and the
- * others ids that name no request case (3).
+ * others ids past the request union's cases, which name none (3).
  * The rest is the frame's bytes.
  *
  * For every input the harness checks the frame twice: with all the scratch
@@ -27,8 +27,11 @@
  * than the null one and distinct within the frame, and an end state open or
  * gone, and a mem range's first page and count from 1.  An accepted request
  * holds a kill of a process id from 2 and a signal of the signal table, or
- * a probe of a process id from 2; an accepted reply came on a slot that
- * holds its request, and holds ok or an errno of the errno table.  The executor's read of a frame to the program
+ * a probe of a process id from 2, or a file request: a path within the
+ * frame of at most prog_path_max bytes without a NUL, a mode to 07777, a
+ * count from 1 to a data slot's bytes and a data slot to 15; an accepted
+ * reply came on a slot that holds its request, and holds ok, an open, a
+ * count to a data slot's bytes, or an errno of the errno table.  The executor's read of a frame to the program
  * over reply slots holding those requests accepts exactly what the check
  * does, moves a reply's slot to answered so the same reply read again is
  * refused, and leaves the slots unchanged otherwise.
@@ -415,6 +418,23 @@ is_process_id(uint32_t pid)
 	return (pid >= 2 && pid <= 0x7fffffffu);
 }
 
+/* A file request's path: within the frame, bounded, without a NUL. */
+static void
+read_path(erx_profile_text_t t)
+{
+	check_text(t);
+	if (t.len > ERX_PROG_PATH_MAX || memchr(t.bytes, '\0', t.len) != NULL)
+		abort();
+}
+
+/* A read's or a write's count and data slot. */
+static void
+read_io(uint32_t count, uint8_t slot)
+{
+	if (count < 1 || count > ERX_PROG_DATA_SLOT_BYTES || slot >= ERX_PROG_DATA_SLOTS_MAX)
+		abort();
+}
+
 static void
 read_request(const erx_prog_request_t *r)
 {
@@ -427,11 +447,27 @@ read_request(const erx_prog_request_t *r)
 		if (!is_process_id(r->u.probe.process_id))
 			abort();
 		return;
+	case ERX_PROG_REQUEST_FILE_LOPEN:
+		read_path(r->u.file_lopen.file_path);
+		return;
+	case ERX_PROG_REQUEST_FILE_LCREATE:
+		read_path(r->u.file_lcreate.file_path);
+		if (r->u.file_lcreate.file_mode > 07777)
+			abort();
+		return;
+	case ERX_PROG_REQUEST_FILE_READ:
+		read_io(r->u.file_read.io_count, r->u.file_read.data_slot);
+		return;
+	case ERX_PROG_REQUEST_FILE_WRITE:
+		read_io(r->u.file_write.io_count, r->u.file_write.data_slot);
+		return;
+	case ERX_PROG_REQUEST_FILE_CLUNK:
+		return;
 	}
 	abort();
 }
 
-/* An ok, or an error of the errno table, kill's and probe's replies. */
+/* An ok, or an error of the errno table: kill's, probe's and clunk's replies. */
 static void
 read_ok_or_errno(bool ok, bool error, int32_t errnum)
 {
@@ -456,6 +492,28 @@ read_reply(const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t slot,
 	case ERX_PROG_REQUEST_PROBE:
 		read_ok_or_errno(r->u.probe.which == ERX_PROG_PROBE_REPLY_OK,
 		    r->u.probe.which == ERX_PROG_PROBE_REPLY_ERROR, r->u.probe.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_FILE_LOPEN:
+		read_ok_or_errno(r->u.file_lopen.which == ERX_PROG_OPEN_REPLY_OK,
+		    r->u.file_lopen.which == ERX_PROG_OPEN_REPLY_ERROR, r->u.file_lopen.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_FILE_LCREATE:
+		read_ok_or_errno(r->u.file_lcreate.which == ERX_PROG_OPEN_REPLY_OK,
+		    r->u.file_lcreate.which == ERX_PROG_OPEN_REPLY_ERROR, r->u.file_lcreate.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_FILE_READ:
+		read_ok_or_errno(r->u.file_read.which == ERX_PROG_IO_REPLY_OK &&
+		    r->u.file_read.u.ok.io_done <= ERX_PROG_DATA_SLOT_BYTES,
+		    r->u.file_read.which == ERX_PROG_IO_REPLY_ERROR, r->u.file_read.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_FILE_WRITE:
+		read_ok_or_errno(r->u.file_write.which == ERX_PROG_IO_REPLY_OK &&
+		    r->u.file_write.u.ok.io_done <= ERX_PROG_DATA_SLOT_BYTES,
+		    r->u.file_write.which == ERX_PROG_IO_REPLY_ERROR, r->u.file_write.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_FILE_CLUNK:
+		read_ok_or_errno(r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_OK,
+		    r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_ERROR, r->u.file_clunk.u.error.errnum);
 		return;
 	}
 	abort();
@@ -525,7 +583,8 @@ busy_slots(unsigned pattern, uint16_t busy[ERX_PROFILE_SLOTS])
 			else if (slot == 1)
 				busy[slot] = ERX_PROG_REQUEST_PROBE;
 			else
-				busy[slot] = (uint16_t)(ERX_PROG_REQUEST_PROBE + slot);
+				busy[slot] = (uint16_t)(erx_prog_profile.kinds[
+				    erx_prog_profile.frames[ERX_PROG_FRAME_REQUEST].kind].ncases + slot);
 			break;
 		default:
 			busy[slot] = ERX_PROFILE_NONE;

@@ -58,7 +58,8 @@ beyond its reach. A probe of itself is `ok`. A kill of itself with
 or continue signal, which belong to the session's job control, it is
 `eperm`; with any other signal it is `enosys`, since the protocol has no
 report that carries a signal to a program (TODO.md), and a kill answered
-`ok` must have signaled.
+`ok` must have signaled. The file requests are not served yet, and each is
+answered `enosys` on its own slot (TODO.md).
 
 Every other event the core does not expect in its phase leaves the state
 as it was and does nothing: the handler's mailbox is reached only by
@@ -245,7 +246,18 @@ from_program(C, {erx_prog, _, Slot, {probe, Target}}) ->
     case reach(C, Target) of
         none -> reply(C, probe, Slot, {error, esrch});
         self -> reply(C, probe, Slot, ok)
-    end.
+    end;
+from_program(C, {erx_prog, _, Slot, Request}) when element(1, Request) =:= file ->
+    %% The file requests are not served yet: each is answered enosys on its
+    %% own slot, so a program learns the call is unsupported (TODO.md).
+    reply(C, file_case(element(2, Request)), Slot, {error, enosys}).
+
+%% The request case of a file operation, which names its reply.
+file_case(lopen) -> file_lopen;
+file_case(lcreate) -> file_lcreate;
+file_case(read) -> file_read;
+file_case(write) -> file_write;
+file_case(clunk) -> file_clunk.
 
 %% A kill of the program itself. A signal whose default action in the
 %% signal table is stop or continue belongs to the session's job control.

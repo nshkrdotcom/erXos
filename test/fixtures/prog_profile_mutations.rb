@@ -62,7 +62,13 @@ module ProgProfileMutations
     ['report', :pipe_server_lost],
     ['request', t(:kill, 2, :sigint)], ['request', t(:probe, 2)],
     ['reply', :ok, '3:kill'], ['reply', t(:error, :eperm), '3:kill'],
-    ['reply', :ok, '3:probe'], ['reply', t(:error, :esrch), '3:probe']
+    ['reply', :ok, '3:probe'], ['reply', t(:error, :esrch), '3:probe'],
+    ['request', t(:file, :lopen, '/w', 0)], ['request', t(:file, :lcreate, 'f', 0x241, 0o644)],
+    ['request', t(:file, :read, 3, 65_536, 15)], ['request', t(:file, :write, 0, 1, 0)],
+    ['request', t(:file, :clunk, 7)],
+    ['reply', t(:ok, 7), '3:file_lopen'], ['reply', t(:ok, 9), '3:file_lcreate'],
+    ['reply', t(:ok, 0), '3:file_read'], ['reply', t(:error, :eio), '3:file_write'],
+    ['reply', :ok, '3:file_clunk']
   ].freeze
 
   module_function

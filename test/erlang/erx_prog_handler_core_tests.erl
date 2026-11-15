@@ -121,6 +121,13 @@ kill_of_itself_with_another_signal_is_enosys_test() ->
     ?assertMatch({_, [?ANSWER(15, {error, enosys})]},
                  erx_prog_handler_core:step(running(), ?ASK(15, {kill, ?PID, sigterm}))).
 
+%% The file requests are not served yet: each is answered enosys on its own
+%% slot, and the handler goes on running (TODO.md).
+file_requests_are_enosys_test_() ->
+    [?_assertMatch({_, [?ANSWER(7, {error, enosys})]}, erx_prog_handler_core:step(running(), ?ASK(7, Request)))
+     || Request <- [{file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"f">>, 1, 8#644},
+                    {file, read, 3, 65536, 15}, {file, write, 3, 1, 0}, {file, clunk, 3}]].
+
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
      ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},

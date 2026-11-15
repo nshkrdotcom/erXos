@@ -265,8 +265,9 @@ pipe_mutations() ->
      {report_version, {frame, report, {erx_prog, 0, pipe_server_lost}}, "version report"},
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
 
-%% The busy slots of the replies: slot 3 holds a kill and slot 5 a probe.
--define(BUSY, #{3 => kill, 5 => probe}).
+%% The busy slots of the replies: slot 3 holds a kill, slot 5 a probe, slot 6 an
+%% lopen, slot 7 a read and slot 8 a clunk.
+-define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk}).
 
 %% Requests and their replies, each through its builder, and frames to the program
 %% through check_to_program/2's dispatch: a report, and a reply on a busy slot.
@@ -282,6 +283,18 @@ request_valid() ->
      reply(kill_last_errno, kill, 3, {error, ehwpoison}),
      reply(probe_ok, probe, 5, ok),
      reply(probe_esrch, probe, 5, {error, esrch}),
+     request(lopen_least, 0, {file, lopen, <<>>, 0}),
+     request(lopen_max, 15, {file, lopen, binary:copy(<<"a">>, 4096), 16#ffffffff}),
+     request(lcreate_mode_max, 1, {file, lcreate, <<"/tmp/f">>, 1, 8#7777}),
+     request(read_least, 2, {file, read, 0, 1, 0}),
+     request(read_max, 2, {file, read, 16#ffff, 65536, 15}),
+     request(write_max, 2, {file, write, 16#ffff, 65536, 15}),
+     request(clunk_open, 3, {file, clunk, 7}),
+     reply(lopen_ok, file_lopen, 6, {ok, 16#ffff}),
+     reply(lopen_enoent, file_lopen, 6, {error, enoent}),
+     reply(read_eof, file_read, 7, {ok, 0}),
+     reply(read_full, file_read, 7, {ok, 65536}),
+     reply(clunk_ok, file_clunk, 8, ok),
      {to_program_report, {frame, to_program, ?BUSY, Report}, "accept"},
      {to_program_reply, {frame, to_program, ?BUSY, Reply}, "accept"}].
 
@@ -315,6 +328,16 @@ request_mutations() ->
      {reply_version, {frame, reply, ?BUSY, {erx_prog, 2, 3, ok}}, "version reply"},
      {reply_without_slot, {frame, reply, ?BUSY, {erx_prog, 1, ok}}, "shape reply"},
      {reply_tag, {frame, reply, ?BUSY, {erx_start, 1, 3, ok}}, "shape reply"},
+     {lopen_path_nul, {frame, request, {erx_prog, 1, 0, {file, lopen, <<"a", 0>>, 0}}}, "text file_path"},
+     {lopen_path_long, {frame, request, {erx_prog, 1, 0, {file, lopen, binary:copy(<<"a">>, 4097), 0}}}, "length file_path"},
+     {lcreate_mode_past, {frame, request, {erx_prog, 1, 0, {file, lcreate, <<"f">>, 0, 8#10000}}}, "range file_mode"},
+     {read_count_zero, {frame, request, {erx_prog, 1, 0, {file, read, 0, 0, 0}}}, "range io_count"},
+     {read_count_past, {frame, request, {erx_prog, 1, 0, {file, read, 0, 65537, 0}}}, "range io_count"},
+     {write_slot_past, {frame, request, {erx_prog, 1, 0, {file, write, 0, 1, 16}}}, "range data_slot"},
+     {file_unknown_op, {frame, request, {erx_prog, 1, 0, {file, mkdir, <<"d">>}}}, "no_case request"},
+     {read_reply_past, {frame, reply, ?BUSY, {erx_prog, 1, 7, {ok, 65537}}}, "range io_done"},
+     {lopen_reply_no_case, {frame, reply, ?BUSY, {erx_prog, 1, 6, ok}}, "no_case open_reply"},
+     {clunk_reply_no_case, {frame, reply, ?BUSY, {erx_prog, 1, 8, {ok, 1}}}, "no_case clunk_reply"},
      {to_program_idle, {frame, to_program, #{}, {erx_prog, 1, 3, ok}}, "range slot"},
      {to_program_start, {frame, to_program, ?BUSY, {erx_start, 1, pipe_server_lost}}, "shape reply"},
      {to_program_report_case, {frame, to_program, ?BUSY, {erx_prog, 1, {pipe_lost, 0, 1}}}, "range pipe_id"}].

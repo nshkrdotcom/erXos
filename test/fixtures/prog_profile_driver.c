@@ -485,13 +485,50 @@ put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
 		put_atom(&w, "probe");
 		put_u64(&w, r->u.probe.process_id);
 		break;
+	case ERX_PROG_REQUEST_FILE_LOPEN:
+		erx_etf_put_tuple(&w, 4);
+		put_atom(&w, "file");
+		put_atom(&w, "lopen");
+		put_text(&w, r->u.file_lopen.file_path);
+		put_u64(&w, r->u.file_lopen.open_flags);
+		break;
+	case ERX_PROG_REQUEST_FILE_LCREATE:
+		erx_etf_put_tuple(&w, 5);
+		put_atom(&w, "file");
+		put_atom(&w, "lcreate");
+		put_text(&w, r->u.file_lcreate.file_path);
+		put_u64(&w, r->u.file_lcreate.open_flags);
+		put_u64(&w, r->u.file_lcreate.file_mode);
+		break;
+	case ERX_PROG_REQUEST_FILE_READ:
+		erx_etf_put_tuple(&w, 5);
+		put_atom(&w, "file");
+		put_atom(&w, "read");
+		put_u64(&w, r->u.file_read.open);
+		put_u64(&w, r->u.file_read.io_count);
+		put_u64(&w, r->u.file_read.data_slot);
+		break;
+	case ERX_PROG_REQUEST_FILE_WRITE:
+		erx_etf_put_tuple(&w, 5);
+		put_atom(&w, "file");
+		put_atom(&w, "write");
+		put_u64(&w, r->u.file_write.open);
+		put_u64(&w, r->u.file_write.io_count);
+		put_u64(&w, r->u.file_write.data_slot);
+		break;
+	case ERX_PROG_REQUEST_FILE_CLUNK:
+		erx_etf_put_tuple(&w, 3);
+		put_atom(&w, "file");
+		put_atom(&w, "clunk");
+		put_u64(&w, r->u.file_clunk.open);
+		break;
 	default:
 		return (false);
 	}
 	return (erx_etf_writer_done(&w, len));
 }
 
-/* A reply of ok or {error, Errno}, kill's and probe's. */
+/* A reply of ok or {error, Errno}, kill's, probe's and clunk's. */
 static void
 put_ok_or_errno(erx_etf_writer_t *w, bool ok, int32_t errnum)
 {
@@ -500,6 +537,20 @@ put_ok_or_errno(erx_etf_writer_t *w, bool ok, int32_t errnum)
 		return;
 	}
 	erx_etf_put_tuple(w, 2);
+	put_atom(w, "error");
+	put_named(w, "errno", errnum);
+}
+
+/* A reply of {ok, Value} or {error, Errno}, an open's and a read's or write's. */
+static void
+put_value_or_errno(erx_etf_writer_t *w, bool ok, uint32_t value, int32_t errnum)
+{
+	erx_etf_put_tuple(w, 2);
+	if (ok) {
+		put_atom(w, "ok");
+		put_u64(w, value);
+		return;
+	}
 	put_atom(w, "error");
 	put_named(w, "errno", errnum);
 }
@@ -519,10 +570,48 @@ put_reply(uint8_t slot, const erx_prog_reply_t *r, uint8_t *out, size_t cap,
 	case ERX_PROG_REQUEST_PROBE:
 		put_ok_or_errno(&w, r->u.probe.which == ERX_PROG_PROBE_REPLY_OK, r->u.probe.u.error.errnum);
 		break;
+	case ERX_PROG_REQUEST_FILE_LOPEN:
+		put_value_or_errno(&w, r->u.file_lopen.which == ERX_PROG_OPEN_REPLY_OK,
+		    r->u.file_lopen.u.ok.open, r->u.file_lopen.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_FILE_LCREATE:
+		put_value_or_errno(&w, r->u.file_lcreate.which == ERX_PROG_OPEN_REPLY_OK,
+		    r->u.file_lcreate.u.ok.open, r->u.file_lcreate.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_FILE_READ:
+		put_value_or_errno(&w, r->u.file_read.which == ERX_PROG_IO_REPLY_OK,
+		    r->u.file_read.u.ok.io_done, r->u.file_read.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_FILE_WRITE:
+		put_value_or_errno(&w, r->u.file_write.which == ERX_PROG_IO_REPLY_OK,
+		    r->u.file_write.u.ok.io_done, r->u.file_write.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_FILE_CLUNK:
+		put_ok_or_errno(&w, r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_OK, r->u.file_clunk.u.error.errnum);
+		break;
 	default:
 		return (false);
 	}
 	return (erx_etf_writer_done(&w, len));
+}
+
+/* Whether a case's C name, its atoms joined by underscores, is name. */
+static bool
+case_named(const erx_profile_case_t *c, const char *name)
+{
+	size_t at, n;
+	uint16_t a;
+
+	at = 0;
+	for (a = 0; a < c->natoms; a++) {
+		if (a > 0 && name[at++] != '_')
+			return (false);
+		n = strlen(c->atoms[a]);
+		if (strncmp(name + at, c->atoms[a], n) != 0)
+			return (false);
+		at += n;
+	}
+	return (name[at] == '\0');
 }
 
 /*
@@ -548,10 +637,8 @@ parse_busy(char *word, uint16_t busy[ERX_PROFILE_SLOTS])
 		if (*end != ':' || slot >= ERX_PROFILE_SLOTS)
 			return (false);
 		name = end + 1;
-		/* A case of one atom: the request cases have no literal atoms. */
 		for (c = 0; c < request->ncases; c++) {
-			if (request->cases[c].natoms == 1 &&
-			    strcmp(request->cases[c].atoms[0], name) == 0)
+			if (case_named(&request->cases[c], name))
 				break;
 		}
 		if (c == request->ncases)
