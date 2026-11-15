@@ -9,13 +9,14 @@ buffers"). It is the one reader of a descriptor on both sides of the
 window system: the display reads its driver's channel with it, and a
 client the channel a window's `ctl` answers, which is untrusted to the
 client. `depth/1` is the one test of a channel's code, for a code read
-as text here or as a number from a draw message, and `stride/2` the one
-layout of a buffer's rows, which the display checks a present against
-and a client allocates by. It is pure and loads no NIF, so the fuzz
-target of erx_win_core runs it on stock's emulator.
+as text here or as a number from a draw message, `stride/2` the one
+layout of a buffer's rows, and `bytes/3` the one extent of a buffer,
+which the display checks a present against and a client allocates by.
+It is pure and loads no NIF, so the fuzz target of erx_win_core runs it
+on stock's emulator.
 """.
 
--export([parse/1, depth/1, stride/2]).
+-export([parse/1, depth/1, stride/2, bytes/3]).
 -export_type([text/0, code/0, depth/0]).
 
 -doc "A channel descriptor as text.".
@@ -97,3 +98,14 @@ pixel, whole 32-bit words as Plan 9 lays rows.
 -spec stride(pos_integer(), depth()) -> pos_integer().
 stride(Width, Depth) ->
     4 * ((Width * Depth + 31) div 32).
+
+-doc """
+The bytes of a buffer `Width` by `Height` pixels at `Depth` bits a pixel:
+its rows, and the 32-bit word past them that `libmemdraw` may load when it
+reads a row's last pixel as a whole word (display/memdraw/erx_memdraw.c,
+erx_memdraw_wrap), so an image over the buffer reads nothing past these
+bytes.
+""".
+-spec bytes(pos_integer(), pos_integer(), depth()) -> pos_integer().
+bytes(Width, Height, Depth) ->
+    stride(Width, Depth) * Height + 4.

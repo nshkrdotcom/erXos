@@ -505,7 +505,6 @@ erx_region_view(ErlNifEnv *env, ERL_NIF_TERM term, erx_region_view_t *out)
 	if (!enif_get_uint(env, term, &region) || !erx_device_region_memory(region, &out->base, &bytes))
 		return (false);
 	out->bytes = (size_t)bytes;
-	out->page = ERX_PAGE_SIZE;
 	return (true);
 }
 

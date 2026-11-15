@@ -52,7 +52,7 @@ device's region, the screen image a display driver made with the device
 NIF's region call and the device reads, which is kept for the boot. Only a
 driver names the device NIF, so a region appears here as the opaque term
 that call returns. `einval` for an Offset that is
-not a multiple of the page size, a channel or rectangle `alloc/5` refuses,
+not a multiple of erXos's page size (`ERX_PAGE_SIZE`), a channel or rectangle `alloc/5` refuses,
 or rows that, with one word libmemdraw may load past them, pass the
 backing's end. An image over the display's read-only mapping is read and
 never written: an operation that would write it fails with `badarg`.

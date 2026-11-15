@@ -9,6 +9,7 @@ require_relative 'bounded_file'
 require_relative 'dependencies'
 require_relative 'json_input'
 require_relative 'error'
+require_relative 'generated'
 require_relative 'host_os'
 
 module Erx
@@ -144,8 +145,11 @@ module Erx
       copy
     end
 
+    # The NIF takes erXos's page size from the generated erx/abi.h.
     def compile(compiler, flags, sources, output, root:)
-      includes = ['-I', File.join(root, LIBMEMDRAW), '-I', File.join(root, MEMDRAW), '-I', File.join(root, AREA)]
+      Generated.ensure(root: root)
+      includes = ['-I', File.join(root, LIBMEMDRAW), '-I', File.join(root, MEMDRAW), '-I', File.join(root, AREA),
+                  *Generated.include_flags(root: root)]
       command = [compiler, '-std=c17', '-g', '-O1', *WARNINGS, '-DERX_MEMDRAW_CLOAD', *flags, *includes, '-o', output,
                  *sources]
       text, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE, *command, stdin_data: '')

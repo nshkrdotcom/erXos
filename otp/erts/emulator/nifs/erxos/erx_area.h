@@ -26,7 +26,6 @@ typedef struct erx_area_view {
 	void *resource;		/* for enif_keep_resource and enif_release_resource */
 	uint8_t *base;		/* the mapping's first byte, on a page boundary */
 	size_t bytes;		/* the mapping's length, whole pages */
-	size_t page;		/* the page size the mapping is made of */
 	bool writable;		/* false for the reader's read-only mapping */
 } erx_area_view_t;
 

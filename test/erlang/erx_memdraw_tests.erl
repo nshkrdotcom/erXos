@@ -416,7 +416,10 @@ wrap_refusals() ->
     {ok, Area, Page} = erx_memdraw:test_area(?AREA_BYTES, write),
     R = {0, 0, 16, 16},
     {error, einval} = erx_memdraw:wrap(Area, 1, R, x32()),
-    {error, einval} = erx_memdraw:wrap(Area, Page div 2, R, x32()),
+    %% Offsets go by erXos's page, whatever the host's: 4 bytes past one is refused, and
+    %% 4096 bytes in is a page even on a host of 16 KiB pages.
+    {error, einval} = erx_memdraw:wrap(Area, 4, R, x32()),
+    {ok, _} = erx_memdraw:wrap(Area, 4096, R, x32()),
     {error, einval} = erx_memdraw:wrap(Area, ?AREA_BYTES, R, x32()),
     {error, einval} = erx_memdraw:wrap(Area, 0, R, erx_draw_ref:chan([{map, 4}])),
     %% 64-byte rows: 1023 leave the word libmemdraw may load past them; 1024 do not.

@@ -1127,15 +1127,17 @@ it; git history is the record of completed work.
   `erx_draw_cload_frame`, so the differential test of the codec against it compares `erx_draw_image` with the
   stand-in, not with 9front's decoder. Link `display/libmemdraw/cload.c` behind it and delete the stand-in.
   `cloadmemimage`'s `badrect` bounds are narrower than the stand-in's, so keep the harness's rectangles within them.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`, `erlang/apps/erx_display/src/erx_screen.erl`,
-  `display/memdraw/erx_memdraw.c`, [Windows and buffers](docs/design-display.md#windows-and-buffers): a present
-  in the area's last page is refused. In `test/erlang/erx_win_tests.erl`'s fixture (a 16 KiB stand-in area, an
-  8 by 4 `x8r8g8b8` window), a present at offset 12288 of 8 by 127 pixels, which ends 32 bytes before the area's
-  end, answers `EINVAL`, though `erx_window:check/2` admits it; presents at offset 0 are shown. One known
-  disagreement: `check/2` admits a buffer of exactly `stride * height` bytes up to the area's end, while
-  `erx_memdraw_wrap` also wants the word past the rows that `allocmemimage` keeps. That word does not explain
-  the 127-row case, whose cause is not found. Give the window and the screen one rule for a buffer's extent and
-  add a test at the area's last byte.
+* [Medium] `erlang/apps/erx_memdraw/src/erx_chan.erl`, `display/memdraw/erx_memdraw.c`,
+  `erlang/apps/erx_fb/src/erx_virtio_gpu_core.erl`, [Windows and
+  buffers](docs/design-display.md#windows-and-buffers): the 4 bytes past a buffer's rows are stated by hand in
+  three places: `erx_chan:bytes/3` (`+ 4`), `erx_memdraw_wrap` (`sizeof(ulong)`) and `region_size/1` (its own
+  `WORD_PAST_ROWS`, 8). A change to libmemdraw's load width would make the window admit presents the wrap
+  refuses. Add a limit such as `windows_buffer_tail` to `abi/services/windows.txt`; `erx_chan:bytes/3` uses it,
+  `erx_memdraw_wrap` uses it under `_Static_assert(ERX_WINDOWS_BUFFER_TAIL >= sizeof(ulong))`, and
+  `region_size/1` calls `erx_chan:bytes/3` (with `erx_chan` added to the module lists of
+  `test/host/erx_virtio_gpu_core_test.rb` and `tools/fuzz/erx_virtio_gpu_core.rb`). Add a property test that
+  `erx_window:check/2` admits a present exactly when `erx_memdraw:wrap/4` accepts it, over random sides, every
+  supported depth and offsets near the area's end.
 * [Medium] `display/memdraw/erx_memdraw.c`, [the pixel
   primitives](docs/design-display.md#verification-and-testing): the 9front build (unmodified 9front `libmemdraw`
   built for the host, the test tool of design.md's dependency table) does not exist yet, so `erx_memdraw` is checked

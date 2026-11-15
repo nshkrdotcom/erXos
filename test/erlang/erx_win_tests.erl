@@ -17,7 +17,8 @@
 %% A window opened with buffer => none over a full area allocates nothing, answers its
 %% peer, rectangle and channel, refuses image/1 and present/2, and presents a range of
 %% the area it does not own through present/3, at the range's own size after the screen
-%% shrinks past it; a present/3 past the area's end is refused.
+%% shrinks past it; a present/3 in the area's last page is shown up to the area's last
+%% byte and refused a word past it.
 
 -module(erx_win_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -216,18 +217,21 @@ lent_range_resized_test() ->
                                                      height => ?HEIGHT}, []))
     end).
 
-present_outside_area_test() ->
+present_area_end_test() ->
     with(fun(_) ->
         {ok, Window} = erx_win:open(?SERVICE, #{buffer => none}),
-        %% A buffer at the area's end and one whose last row passes it are refused. (No
-        %% present in the area's last page is shown: TODO.md, a present in the area's last
-        %% page is refused.)
-        Rows = ?PAGE div (?WIDTH * 4),
-        ?assertEqual({error, einval},
-                     erx_win:present(Window, #{offset => ?AREA, width => ?WIDTH, height => 1}, [])),
-        ?assertEqual({error, einval},
-                     erx_win:present(Window, #{offset => ?AREA - ?PAGE, width => ?WIDTH,
-                                               height => Rows + 1}, []))
+        Last = ?AREA - ?PAGE,
+        Present = fun(Offset, Width, Height) ->
+                      erx_win:present(Window, #{offset => Offset, width => Width, height => Height}, [])
+                  end,
+        %% A buffer's bytes are its rows and the word past them (erx_chan:bytes/3). In the
+        %% area's last page: 127 rows of 32 bytes and the word fit with room to spare; one
+        %% row of 1,023 pixels and the word end at the area's last byte; one of 1,024
+        %% pixels passes it by a word, as does a buffer at the area's end.
+        ?assertEqual(ok, Present(Last, ?WIDTH, 127)),
+        ?assertEqual(ok, Present(Last, 1023, 1)),
+        ?assertEqual({error, einval}, Present(Last, 1024, 1)),
+        ?assertEqual({error, einval}, Present(?AREA, ?WIDTH, 1))
     end).
 
 call(Grant, Request) ->

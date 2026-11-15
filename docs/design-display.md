@@ -466,8 +466,14 @@ rectangle (0, 0)-(width, height) in memory: rows from the top, each of
 
 ```text
 stride(width, depth) = 4 * ((width * depth + 31) div 32)     bytes in a row
-bytes(buffer)        = stride(width, depth) * height
+bytes(buffer)        = stride(width, depth) * height + 4
 ```
+
+The 4 bytes past the rows are the word `libmemdraw` may load when it
+reads a row's last pixel as a whole word, which an image over the buffer
+needs inside the area as `erx_memdraw:wrap/4` checks
+([The pixel area](#the-pixel-area)); `erx_chan:bytes/3` is the one
+statement of the sum, by which a client allocates and the window checks.
 
 The depth is that of the display's channel, which a client reads from
 `ctl`. So a buffer in `x8r8g8b8` has rows of 4 times its width, the
@@ -481,7 +487,7 @@ parameters: `windows`, the windows it may hold at once; `pixels`, the
 size of its pixel area; and `snarf`, whether its tree has the
 clipboard. Their defaults are 1 window, a pixel area of 8 MiB, and no
 clipboard. A window is at most 16,384 pixels on a side, so a buffer is
-at most 1 GiB, and its size is computed with checked arithmetic.
+at most 1 GiB and a word, and its size is computed with checked arithmetic.
 
 **A window's buffer is the screen's size.** Every buffer a client
 allocates for a window, the first and a second if it keeps two, is at
@@ -491,11 +497,11 @@ rectangle the policy may set smaller than the screen's, and its
 holder keeps it until it exits: a resize changes the width and height
 the client draws and presents within it, never the allocation, so a
 resize allocates nothing and nothing is left behind to free. A window's
-cost is therefore one screen's bytes, rounded up to pages, for each
-buffer it keeps, and a grant's `pixels` is sized as its `windows` times
-that: the defaults hold one buffer for one window on a screen of 1920
-by 1080 pixels in `x8r8g8b8`, 8,294,400 bytes, rounded up to 8 MiB,
-and two at 1280 by 800, 4,096,000 bytes each. A client
+cost is therefore `bytes(buffer)` at the screen's size, rounded up to
+pages, for each buffer it keeps, and a grant's `pixels` is sized as its
+`windows` times that: the defaults hold one buffer for one window on a
+screen of 1920 by 1080 pixels in `x8r8g8b8`, 8,298,496 bytes in pages,
+rounded up to 8 MiB, and two at 1280 by 800, 4,100,096 bytes each. A client
 whose area has no room for a new window's buffer is refused at `open`,
 which removes the window it made for the buffer
 ([The window tree](#the-window-tree)), and a screen that grows after
@@ -566,7 +572,7 @@ In each runtime the connection agent maps a connection's area when it
 maps its sides, and `erx_area:open(Peer)` answers `{ok, Area, Bytes}`,
 a NIF resource for the mapping, or `{error, none}` for a connection
 without one. `erx_memdraw:wrap(Area, Offset, Rect, Chan)` makes an image
-over a range of it, refusing an `Offset` that is not a multiple of the
+over a range of it, refusing an `Offset` that is not a multiple of erXos's
 page size and a range that, with the one word `libmemdraw` may load past
 an image's rows, passes the area's end, so every word `libmemdraw` loads
 or stores in the image is aligned and inside the area; an image over the

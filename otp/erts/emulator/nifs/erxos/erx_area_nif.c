@@ -207,7 +207,6 @@ erx_area_view(ErlNifEnv *env, ERL_NIF_TERM term, erx_area_view_t *out)
 	out->resource = area;
 	out->base = (uint8_t *)(uintptr_t)area->addr;
 	out->bytes = (size_t)area->bytes;
-	out->page = ERX_PAGE_SIZE;
 	out->writable = area->writable;
 	return (true);
 }

@@ -24,7 +24,6 @@
 typedef struct erx_region_view {
 	uint8_t *base;		/* the mapping's first byte, on a page boundary */
 	size_t bytes;		/* the region's length, whole pages */
-	size_t page;		/* the page size the region is made of */
 } erx_region_view_t;
 
 /* The region a term names, erx_device:region/3's R, or false for a term that is none. */

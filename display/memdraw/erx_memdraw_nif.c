@@ -25,6 +25,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "erx/abi.h"
 #include "erx_area.h"
 #include "erx_memdraw.h"
 #include "erx_fb_store.h"
@@ -222,16 +223,16 @@ get_backing(ErlNifEnv *env, ERL_NIF_TERM term, erx_area_view_t *backing)
 		return true;
 	if (!erx_region_view(env, term, &region))
 		return false;
-	*backing = (erx_area_view_t){ .resource = NULL, .base = region.base, .bytes = region.bytes,
-	    .page = region.page, .writable = true };
+	*backing = (erx_area_view_t){ .resource = NULL, .base = region.base, .bytes = region.bytes, .writable = true };
 	return true;
 }
 
 /*
  * wrap(Backing, Offset, R, Chan) -> {ok, Image} | {error, einval | enomem}:
  * an image of channel Chan over R whose pixels are the bytes of Backing, a
- * pixel area or a device's region, from Offset, a multiple of the page
- * size, so every word libmemdraw loads or stores is aligned; einval for an
+ * pixel area or a device's region, from Offset, a multiple of erXos's page
+ * size (ERX_PAGE_SIZE, the one erx_window checks a present's offset by),
+ * so every word libmemdraw loads or stores is aligned; einval for an
  * Offset off a page boundary or past the backing, and for rows that pass
  * its end (erx_memdraw_wrap).
  */
@@ -247,7 +248,7 @@ wrap_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	if (!get_backing(env, argv[0], &area) || !enif_get_uint64(env, argv[1], &offset) ||
 	    !get_rect(env, argv[2], &r) || !get_u32(env, argv[3], &chan))
 		return enif_make_badarg(env);
-	if (offset % area.page != 0 || offset >= area.bytes)
+	if (offset % ERX_PAGE_SIZE != 0 || offset >= area.bytes)
 		return error(env, ERX_MEMDRAW_EINVAL);
 	image_res_t *res = enif_alloc_resource(image_type, sizeof *res);
 	if (res == NULL)

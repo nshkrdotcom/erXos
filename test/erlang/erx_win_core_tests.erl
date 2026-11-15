@@ -61,8 +61,8 @@ chan_depth_test() ->
 layout_test() ->
     ?assertEqual(32, erx_chan:stride(8, 32)),
     ?assertEqual(4, erx_chan:stride(1, 16)),
-    ?assertEqual({ok, 8294400}, erx_win_core:bytes(1920, 1080, 32)),
-    ?assertEqual({ok, 1 bsl 30}, erx_win_core:bytes(16384, 16384, 32)),
+    ?assertEqual({ok, 8294404}, erx_win_core:bytes(1920, 1080, 32)),
+    ?assertEqual({ok, (1 bsl 30) + 4}, erx_win_core:bytes(16384, 16384, 32)),
     [?assertEqual({error, einval}, erx_win_core:bytes(W, H, 32))
      || {W, H} <- [{0, 1}, {1, 0}, {16385, 1}, {1, 16385}, {-1, -1}]],
     ?assertEqual({0, 0, 8, 4}, erx_win_core:image_rect({10, 10, 30, 30}, {8, 4})),

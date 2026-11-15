@@ -83,7 +83,7 @@ erx_area_view(ErlNifEnv *env, ERL_NIF_TERM term, erx_area_view_t *out)
 
 	if (!enif_get_resource(env, term, stand_in_type, (void **)&area))
 		return false;
-	*out = (erx_area_view_t){ .resource = area, .base = area->base, .bytes = area->bytes, .page = page(),
+	*out = (erx_area_view_t){ .resource = area, .base = area->base, .bytes = area->bytes,
 		.writable = area->writable };
 	return true;
 }

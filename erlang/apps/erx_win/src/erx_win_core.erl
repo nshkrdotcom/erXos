@@ -25,9 +25,9 @@ atom or reads past its record. The formats are the window tree's:
   and a NUL: `c` and exactly one rune, or `k` or `K` and any runes, none
   of them NUL.
 
-**A buffer's layout.** `bytes/3` is `erx_chan:stride(Width, Depth)` times
-the height, for a width and height from 1 to 16,384; Erlang's integers do
-not overflow, and the sides are checked before any product is taken.
+**A buffer's layout.** `bytes/3` is `erx_chan:bytes/3`, the rows and the
+word past them, for a width and height from 1 to 16,384; Erlang's integers
+do not overflow, and the sides are checked before any product is taken.
 
 **Lines.** `present/4` writes a `present` line of at most 16 rectangles,
 sending the bounding box of more, as Plan 9's `flushimage` does; `resize/1`
@@ -122,7 +122,7 @@ The bytes of a buffer of `Width` by `Height` pixels at `Depth`, or
 -spec bytes(integer(), integer(), erx_chan:depth()) -> {ok, pos_integer()} | {error, einval}.
 bytes(Width, Height, Depth) when is_integer(Width), Width >= 1, Width =< ?ERX_WINDOWS_SIDE_MAX,
                                  is_integer(Height), Height >= 1, Height =< ?ERX_WINDOWS_SIDE_MAX ->
-    {ok, erx_chan:stride(Width, Depth) * Height};
+    {ok, erx_chan:bytes(Width, Height, Depth)};
 bytes(_, _, _) ->
     {error, einval}.
 

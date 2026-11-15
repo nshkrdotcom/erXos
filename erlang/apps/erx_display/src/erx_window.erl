@@ -11,7 +11,7 @@ its last present, and is told its rectangle and state by `erx_winfs`.
 **ctl.** A read answers the display's channel descriptor. A write is one
 `present` line, read by `erx_winctl:parse/1` and checked against the
 client's pixel area: the offset a multiple of the page size, and the
-buffer's bytes, `erx_chan:stride(width, depth) * height`, ending at or
+buffer's bytes, `erx_chan:bytes(width, height, depth)`, ending at or
 before the area's end.
 Erlang's integers do not overflow, so the sums are exact whatever the
 line's numbers. A line outside the grammar or the checks is `EINVAL`, a
@@ -163,8 +163,8 @@ check(Line, #window{area = Area, depth = Depth}) ->
         {{error, einval}, _} -> {error, einval};
         {{ok, _}, none} -> {error, enxio};
         {{ok, #{offset := Offset, width := Width, height := Height} = Present}, {_, Bytes}} ->
-            Stride = erx_chan:stride(Width, Depth),
-            case Offset rem ?ERX_PAGE_SIZE =:= 0 andalso Offset + Stride * Height =< Bytes of
+            Extent = erx_chan:bytes(Width, Height, Depth),
+            case Offset rem ?ERX_PAGE_SIZE =:= 0 andalso Offset + Extent =< Bytes of
                 true -> {ok, Present};
                 false -> {error, einval}
             end
