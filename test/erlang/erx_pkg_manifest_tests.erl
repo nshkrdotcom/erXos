@@ -3,14 +3,16 @@
 
 -module(erx_pkg_manifest_tests).
 -moduledoc """
-erx_pkg_manifest:system_config/1 over the manifests test/host/erx_pkg_manifest_test.rb
-writes to $ERX_PKG_MANIFEST_FILES: the hand-built bytes of
-AbiManifestFixture.packages, the fixture with none of the records, the
-development key in a release manifest, two apps rows, and the manifest the
-host's check packs.
+erx_pkg_manifest:system_config/1 and admission/1, and erx_pkg:system_config/2
+over them, over the manifests test/host/erx_pkg_manifest_test.rb writes to
+$ERX_PKG_MANIFEST_FILES: the hand-built bytes of AbiManifestFixture.packages
+(development and release), its refused variants, the fixture with none of
+the records, and the manifest the host's check packs.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
+
+-define(MIB, 1048576).
 
 manifest(Name) ->
     {ok, Bytes} = file:read_file(filename:join(os:getenv("ERX_PKG_MANIFEST_FILES"), Name ++ ".bin")),
@@ -19,29 +21,81 @@ manifest(Name) ->
 key(Byte) ->
     binary:copy(<<Byte>>, 32).
 
+%% The apps row of AbiManifestFixture.packages with max Max: the app
+%% template's packages row is facet 2, not facet 1, granted to the system
+%% domain, and its display and data rows are 3 and 4, not facet 0, which
+%% grants display to the other template.
+apps(Max) ->
+    #{memory => ?MIB, max => Max, packages_row => 2,
+      services => [#{name => <<"display">>, windows => true, row => 3},
+                   #{name => <<"data">>, windows => false, row => 4}]}.
+
+%% The names of its principal, domain, services and facet rows, sorted.
+reserved() ->
+    [<<"data">>, <<"display">>, <<"kiosk_display">>, <<"packages">>, <<"pkg_admin">>,
+     <<"root">>, <<"spare">>, <<"storage">>].
+
+packages() ->
+    [#{name => <<"clock">>, sha256 => key(16#ab), enabled => true},
+     #{name => <<"quotes">>, sha256 => key(16#ee), enabled => false}].
+
 hand_built_records_test() ->
-    ?assertEqual({ok, #{apps => #{memory => 1048576, max => 2, services => []},
-                        packages => [#{name => <<"clock">>, sha256 => key(16#ab), enabled => true}],
-                        signers => [{<<"ops">>, key(16#cd)}],
-                        development => key(7)}},
+    ?assertEqual({ok, #{apps => apps(2), reserved => reserved(), packages => packages(),
+                        signers => [{<<"ops">>, key(16#cd)}], development => key(7)}},
                  erx_pkg_manifest:system_config(manifest("packages"))).
 
+admission_test() ->
+    {ok, Config} = erx_pkg_manifest:system_config(manifest("packages")),
+    ?assertEqual(#{apps => apps(2), reserved => reserved(), packages => [<<"clock">>, <<"quotes">>]},
+                 erx_pkg_manifest:admission(Config)).
+
 no_records_test() ->
-    ?assertEqual({ok, #{apps => none, packages => [], signers => [], development => none}},
+    ?assertEqual({ok, #{apps => none, reserved => [<<"root">>], packages => [], signers => [],
+                        development => none}},
                  erx_pkg_manifest:system_config(manifest("none"))).
 
-%% A release manifest holds no development key, and the apps table holds one row.
+%% A release manifest holds no development key, and the apps table holds one
+%% row; an apps row needs one app template, holding one packages row.
 refused_test() ->
     ?assertMatch({error, #{reason := inactive, field := <<"root.development_key.count">>}},
                  erx_pkg_manifest:system_config(manifest("release_development"))),
     ?assertMatch({error, #{reason := extent, field := <<"apps">>}},
                  erx_pkg_manifest:system_config(manifest("two_apps"))),
+    ?assertEqual({error, {apps, {templates, 0}}},
+                 erx_pkg_manifest:system_config(manifest("no_template"))),
+    ?assertEqual({error, {apps, {grants, <<"packages">>, 0}}},
+                 erx_pkg_manifest:system_config(manifest("no_packages_grant"))),
     ?assertMatch({error, _}, erx_pkg_manifest:system_config(<<>>)).
 
-admitted_manifest_test() ->
-    ?assertEqual({ok, #{apps => #{memory => 1048576, max => 2, services => [<<"shared">>]},
-                        packages => [#{name => <<"clock">>, sha256 => key(16#ab), enabled => true},
-                                     #{name => <<"quotes">>, sha256 => key(16#ab), enabled => false}],
-                        signers => [{<<"ops">>, key(16#cd)}],
-                        development => key(7)}},
+%% The host's check packs the apps, package and signer rows and derives no
+%% app template (TODO.md, "apps, the manifest check's property 19").
+packed_manifest_test() ->
+    ?assertEqual({error, {apps, {templates, 0}}},
                  erx_pkg_manifest:system_config(manifest("admitted"))).
+
+library(Max) ->
+    {ok, #{template => 0, first => 2, max => Max, memory => ?MIB}}.
+
+%% The library's max, not the row's, in the config and in admission's row;
+%% the development key as the development signer, after the signer rows.
+recovery_config_test() ->
+    ?assertEqual(#{images => [{<<"clock.app">>, key(16#ab)}, {<<"quotes.app">>, key(16#ee)}],
+                   signers => [{<<"ops">>, key(16#cd)}, {development, key(7)}],
+                   max => 3,
+                   manifest => #{apps => apps(3), reserved => reserved(),
+                                 packages => [<<"clock">>, <<"quotes">>]}},
+                 erx_pkg:system_config(library(3), {ok, manifest("packages")})).
+
+release_config_test() ->
+    #{signers := Signers} = erx_pkg:system_config(library(2), {ok, manifest("release")}),
+    ?assertEqual([{<<"ops">>, key(16#cd)}], Signers).
+
+%% No package process without app entries or without an apps row, nor for a
+%% manifest the library placed entries from that gives no config here, a
+%% broken image that costs the packages alone.
+no_config_test() ->
+    ?assertEqual(none, erx_pkg:system_config({ok, none}, {ok, manifest("packages")})),
+    ?assertEqual(none, erx_pkg:system_config({error, enotsup}, {error, enoent})),
+    ?assertEqual(none, erx_pkg:system_config(library(2), {ok, manifest("none")})),
+    ?assertEqual(none, erx_pkg:system_config(library(2), {error, enoent})),
+    ?assertEqual(none, erx_pkg:system_config(library(2), {ok, manifest("no_template")})).

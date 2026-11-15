@@ -37,26 +37,33 @@ it; git history is the record of completed work.
   from the start table, and the app session below; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; the rest of clause 5: the enabled packages' session outer budgets in
   the `apps` budget sum, which wait for the app template's limits, an enabled row meeting property 17's
-  display and planning clauses, and admission on the host, which needs the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
-  facet-row indices, the manifest's reserved names and the image's package names) read from the packed
-  records through `erx_pkg_manifest`, which then owns the types `erx_app_admit` declares
-  for them, and which the packer's host check runs on the manifest it packs; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
+  display and planning clauses, and admission on the host: the packer's host check running
+  `erx_pkg_manifest:system_config/1`, which reads admission's facts from the packed records, and
+  `erx_app_admit:admit/3` on the manifest it packs; the derivation names the `packages` service by
+  `packages_service` (`abi/manifest.txt`), the name the reader finds the template's row by
+  (`APP_SERVICES_REFUSED` and `config/manifest/development.txt` still spell it); clause 7, once the `apps` service and `tree` exist; clause 1's inspect
   scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
   the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
   leaving it out.
+* [Medium] apps, the app template's rows by index (`erlang/apps/erx_starter/src/erx_pkg_manifest.erl`,
+  `liberx/system/dom_boot_view.c`): the reader finds the app template (the session naming no principal), its
+  `packages` row (by the service's name) and each service's row (by grantee kind and number) by search, and the
+  C boot view decides the template by its own rule (last, and refused without an `apps` row), so the packer's
+  host check can pass a manifest the boot refuses. Since the build derives these rows, it can pack them as
+  indices the generated readers check (`root.app_template`, `apps[].packages_facet`, `app_services[].facet`),
+  proved by property 19, which deletes the name search, the reader's `{apps, _}` refusals and the divergence.
+  Needs a design decision in design-packaging.md. Also: `app_services` naming one service twice, or two
+  services of one name, is accepted by the reader and makes `erx_app_admit:offered/2` raise `case_clause`
+  on a need for it instead of refusing (property 19 or the reader should refuse repeats).
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
   the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
-  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. What remains:
-  the config, `erx_pkg:system_config/0`, answers `none`, since the packed manifest holds no `apps`, `package`
-  or `signer` record (the property 19 item above), so no boot runs the package process; once those records
-  exist it reads them, the development key among the signers in a development build. The principal
-  service's app registry, `erx_principal:register_app/2` and `app_registry/0`, does not exist (no
-  `erx_principal` module is in the tree), nor the domain library's app entries it registers into (the
-  app's session item below); its record takes admission's answer, which carries the declared memory.
-  `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
+  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
+  the config from the manifest and the library's app entries, but no boot runs the package process: no
+  manifest has the app template yet (the property 19 item above), so the library places no entries.
+  What remains: `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
   boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
   otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
   last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
@@ -69,35 +76,13 @@ it; git history is the record of completed work.
   the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
-  the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
-  and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
-  remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
-  supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
-  them; `erx_pkg_medium`, the medium over the `packages` grant (`erx_file_remote`), declaring
-  `-behaviour(erx_pkg_io)` so the test stub and it meet one contract and, on the stopgap, the release's
-  `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
-  `unknown`; `erx_starter:packages/2` and the start table's package rows; the domain
-  service's `apps_max` option from the packed `apps` row, which registration (`erx_principal`, stubbed in
-  the package tests) bounds its entries by and refuses every one without; the `apps` tree serving
-  `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
-  `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute included; and the system_domain QEMU
-  cell. Also: the recovery runs in one `handle_continue`, so `erx_pkg:packages/0` waits for it to finish and
-  a `/proc/packages` read during it times out (drive one plan step per message instead); the log lines for a
-  refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
-  mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
-  offset and size; the lifetime taken from the caller rather than the request; and whether image header
-  reads wait for the `packages` grant.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
   (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
   the app template, the session template naming no principal (`mf_none`), sized into the principal and
   held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
   check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
-  today. What remains: `erx_pkg:system_config/0` building its config from
-  `erx_pkg_manifest:system_config/1` and `erx_domain_lib:apps/0` (images from the packages, signers
-  with `{development, Key}`, `max` from the library), with admission's inputs (the app template's
-  `packages` facet row, each service's row and windows flag, the reserved names) read from the packed
-  facet, service and session rows once the template is derived; the library entry and NIF over
+  today. What remains: the library entry and NIF over
   `erx_dom_plan_app_session` and the domain service's start of an app's session from its
   `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
   and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups

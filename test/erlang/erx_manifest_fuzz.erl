@@ -36,8 +36,12 @@ verdict(Record) ->
         {ok, View} ->
             {ok, _} = ?M:header(View),
             lists:foreach(fun(Table) -> rows(View, Table) end, ?TABLES),
-            %% The package process's reader answers every manifest the generated reader accepts.
-            {ok, #{}} = erx_pkg_manifest:system_config(Record),
+            %% The package process's reader answers every manifest the generated reader
+            %% accepts, refusing only an apps row without its app template's rows.
+            case erx_pkg_manifest:system_config(Record) of
+                {ok, #{}} -> ok;
+                {error, {apps, _}} -> ok
+            end,
             <<"ok\n">>;
         {error, #{reason := Reason, field := Field, offset := Offset}}
           when is_atom(Reason), is_binary(Field), is_integer(Offset) ->

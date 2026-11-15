@@ -144,6 +144,10 @@ bytes display_idle_off_key 18 value 646973706c61795f69646c655f6f66665f73
 # files"): "principal", its principal's number in decimal. A session
 # template's environment may set neither it nor "display".
 bytes principal_key 9 value 7072696e636970616c
+# The name of the service whose facet rows hold the packages
+# (docs/design-packaging.md, "The apps row"): "packages". The app
+# template's row of it is the one every app's session keeps.
+bytes packages_service 8 value 7061636b61676573
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2

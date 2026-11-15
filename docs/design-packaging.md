@@ -1665,9 +1665,15 @@ its sessions at `[domains, Id]`, as any row's and any session's.
 whose header hash the packer records; `signer`, with `key`, written
 `hex:` and 64 hexadecimal digits, under any name but `development`. Their packed records, the
 `development_key` record and the readers' bounds are in `abi/manifest.txt`, with the limits `apps_max_limit`,
-`apps_max_default` (8) and `signer_key_bytes` (32); the facet parameter
+`apps_max_default` (8) and `signer_key_bytes` (32), and the name
+`packages_service` of the service the `packages` rows grant; the facet parameter
 `tree` is in the storage service's schema. `erx_pkg_manifest:system_config/1` is the one
-Erlang reader of them, through the generated manifest reader.
+Erlang reader of them, through the generated manifest reader, and of what
+admission reads beside them: the app template, the one session template
+naming no principal; its `packages` row and each service's row, the facet
+rows granted to that template's sessions; and the reserved names. It
+refuses an `apps` row without exactly one of each, as the domain library
+places no app entries without the template.
 
 **The ABI source**: `abi/formats/package.txt`, the header and the packed
 declaration; the limits `app_memory_default`, `app_memory_min`,

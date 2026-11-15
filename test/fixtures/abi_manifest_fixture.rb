@@ -232,33 +232,92 @@ module AbiManifestFixture
     bytes
   end
 
-  # The valid fixture as a manifest of flags (development by default) with an apps row
-  # of 1 MiB and max 2 and no services, the enabled package clock, the signer ops and
-  # the development key: Header440, principal80, limits160, runtime-limits56, apps24 at
-  # 736, no app services, package44 at 760, signer40 at 804, development key32 at 844,
-  # then strings at 876, with clock at 34 and ops at 39. apps names the count its span
-  # claims, which the reader bounds to 1.
-  def packages(flags: 1, apps: 1)
-    original = valid
-    strings = original.byteslice(736..-1) + 'clockops'.b
-    bytes = original.byteslice(0, 736) + "\0".b * 140 + strings
-    integer(bytes, 8, bytes.bytesize)
+  # abi/manifest.txt's tables in its `order`: each table's span in the header and its
+  # alignment. The strings table, whose span is at STRINGS_SPAN, comes last.
+  TABLES = {
+    principals: [208, 8], domains: [216, 8], sessions: [376, 8], limits: [224, 8],
+    runtime_limits: [232, 8], lane_classes: [240, 8], units: [248, 8], devices: [256, 8],
+    windows: [264, 8], services: [272, 8], facets: [280, 8], facet_operations: [288, 4],
+    facet_parameters: [296, 8], introductions: [304, 8], images: [312, 8], extents: [320, 8],
+    boot_order: [328, 4], liveness: [336, 4], shell_principals: [344, 4], partial_boot: [352, 8],
+    starts: [384, 4], displays: [392, 4], apps: [400, 8], app_services: [408, 4],
+    packages: [416, 4], signers: [424, 4], development_key: [432, 1]
+  }.freeze
+  STRINGS_SPAN = 360
+
+  # The valid fixture's header with flags, each table's rows (byte strings of its record
+  # size) at its place in TABLES's order, padded to its alignment, and text as the strings
+  # table. counts overrides the count a table's span claims. The block, given the bytes
+  # and each table's offset, writes the fields that name another table's place.
+  def layout(flags:, rows:, text:, counts: {})
+    bytes = valid.byteslice(0, 440)
     integer(bytes, 6, flags, width: 2)
-    span(bytes, 360, 876, strings.bytesize)
-    span(bytes, 400, 736, apps)
-    span(bytes, 408, 760, 0)
-    span(bytes, 416, 760, 1)
-    span(bytes, 424, 804, 1)
-    span(bytes, 432, 844, 1)
-    integer(bytes, 736, 1_048_576, width: 8)
-    integer(bytes, 744, 2)
-    span(bytes, 752, 760, 0)
-    span(bytes, 760, 34, 5)
-    integer(bytes, 768, 1)
-    bytes[772, 32] = "\xab".b * 32
-    span(bytes, 804, 39, 3)
-    bytes[812, 32] = "\xcd".b * 32
-    bytes[844, 32] = "\x07".b * 32
+    offsets = TABLES.to_h do |table, (field, alignment)|
+      bytes << ("\0".b * (-bytes.bytesize % alignment))
+      offset = bytes.bytesize
+      records = rows.fetch(table, [])
+      span(bytes, field, offset, counts.fetch(table, records.size))
+      records.each { |record| bytes << record }
+      [table, offset]
+    end
+    span(bytes, STRINGS_SPAN, bytes.bytesize, text.bytesize)
+    bytes << text
+    integer(bytes, 8, bytes.bytesize)
+    yield bytes, offsets
     bytes
+  end
+
+  # The names the packages fixture adds to the valid fixture's strings.
+  PACKAGE_NAMES = %w[clock quotes ops storage packages display data spare kiosk_display pkg_admin].freeze
+
+  # The valid fixture as a manifest of flags (development by default) holding everything
+  # erx_pkg_manifest reads. Its principal root; the domain storage; the session templates
+  # 0, the app template (whose principal is absent unless template is false), and 1, root's;
+  # the services packages, data and spare of storage's files interface and display of the
+  # system domain's windows interface; the facet rows 0 kiosk_display, display granted to
+  # template 1, 1 pkg_admin, packages granted to the system domain, and the app template's
+  # 2 packages (granted to template 1 when packages_grant is false), 3 display and 4 data;
+  # an apps row of 1 MiB and max 2 offering display and data, whose span claims apps rows,
+  # which the reader bounds to 1; the enabled package clock and the package quotes; the
+  # signer ops; and the development key of 7s when development is true.
+  def packages(flags: 1, apps: 1, development: true, template: true, packages_grant: true)
+    text = valid.byteslice(736..-1)
+    names = {}
+    PACKAGE_NAMES.each do |label|
+      names[label] = [text.bytesize, label.bytesize]
+      text += label
+    end
+    name = ->(label) { names.fetch(label).pack('V2') }
+    facet = lambda do |label, kind:, grantee:, service:|
+      (name.(label) + [grantee, service].pack('V2') + "\0".b * 56 + [kind, 0].pack('V2')).b
+    end
+    rows = {
+      principals: [valid.byteslice(440, 80)],
+      domains: [name.('storage') + [0, 1, 0, 0, 0, 0, 0, 0, 0, 10, 0, 0, 0, 0].pack('V14')],
+      sessions: [[template ? 0xffffffff : 0, *[0] * 9], [0] * 10].map { |fields| fields.pack('V10') },
+      limits: [valid.byteslice(520, 160)],
+      runtime_limits: [valid.byteslice(680, 56)],
+      services: [['packages', 0, 5], ['display', 0xffffffff, 8], ['data', 0, 5], ['spare', 0, 5]]
+        .map { |label, server, interface| name.(label) + [server, interface, 0].pack('V2Q<') },
+      facets: [facet.('kiosk_display', kind: 2, grantee: 1, service: 1),
+               facet.('pkg_admin', kind: 0, grantee: 0, service: 0),
+               facet.('packages', kind: 2, grantee: packages_grant ? 0 : 1, service: 0),
+               facet.('display', kind: 2, grantee: 0, service: 1),
+               facet.('data', kind: 2, grantee: 0, service: 2)],
+      apps: ["\0".b * 24],
+      app_services: [[1].pack('V'), [2].pack('V')],
+      packages: [name.('clock') + [1].pack('V') + "\xab".b * 32, name.('quotes') + [0].pack('V') + "\xee".b * 32],
+      signers: [name.('ops') + "\xcd".b * 32],
+      development_key: development ? ["\x07".b * 32] : []
+    }
+    layout(flags: flags, rows: rows, text: text, counts: { apps: apps }) do |bytes, at|
+      5.times do |index|
+        span(bytes, at[:facets] + index * 80 + 16, at[:facet_operations], 0)
+        span(bytes, at[:facets] + index * 80 + 24, at[:facet_parameters], 0)
+      end
+      integer(bytes, at[:apps], 1_048_576, width: 8)
+      integer(bytes, at[:apps] + 8, 2)
+      span(bytes, at[:apps] + 16, at[:app_services], 2)
+    end
   end
 end

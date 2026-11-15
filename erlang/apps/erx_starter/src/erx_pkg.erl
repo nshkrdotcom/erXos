@@ -28,7 +28,7 @@ and no package is listed.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, packages/0, system_config/0]).
+-export([start_link/1, packages/0, system_config/0, system_config/2]).
 -export_type([config/0]).
 -export([init/1, handle_continue/2, handle_call/3, handle_cast/2, handle_info/2]).
 
@@ -53,15 +53,62 @@ packages() ->
     gen_server:call(?MODULE, packages).
 
 -doc """
-The recovery's config from the system manifest, or `none` for a manifest
-with no `apps` row, whose machine takes no packages and runs no package
-process. The packed manifest holds no `apps`, `package` or `signer` record
-(TODO.md, "apps, the manifest check's property 19"), so every system
-manifest is one with no `apps` row.
+The recovery's config from the domain library's app entries and the
+system manifest, `system_config/2` of `erx_domain_lib:apps/0` and
+`erx_build:system_manifest/0`.
 """.
 -spec system_config() -> config() | none.
 system_config() ->
+    system_config(erx_domain_lib:apps(), erx_build:system_manifest()).
+
+-doc """
+The recovery's config from `Apps`, the domain library's app entries, and
+`Manifest`, the system manifest's bytes as read.
+
+The answer is `none`, and the machine takes no packages and runs no
+package process, when there is no library (a domain's runtime and a hosted
+one), when the library places no app entries (its manifest has no `apps`
+row), and when the manifest read here gives no config: it cannot be read,
+is refused, or has no `apps` row. The last is a broken image, which is
+logged; it costs the packages alone, never the start service, whose
+supervisor builds its children from this answer.
+
+Otherwise the images are the manifest's packages, each its file `NAME.app`
+and header hash; the signers are its `signer` rows, then the `development`
+signer when it holds the development key, which only a development
+manifest does; and `max` is the library's, the one source of max
+(docs/design-packaging.md, "An app's principal"), which admission's `apps`
+row takes too.
+""".
+-spec system_config({ok, none | erx_domain_lib:apps()} | erx_domain_lib:error(),
+                    {ok, binary()} | {error, term()}) -> config() | none.
+system_config({ok, #{max := Max}}, {ok, Bytes}) ->
+    case erx_pkg_manifest:system_config(Bytes) of
+        {ok, #{apps := #{} = Apps, packages := Packages, signers := Signers,
+               development := Development} = Read} ->
+            #{images => [{<<Name/binary, ".app">>, Sha256} || #{name := Name, sha256 := Sha256} <- Packages],
+              signers => Signers ++ development_signer(Development),
+              max => Max,
+              manifest => erx_pkg_manifest:admission(Read#{apps := Apps#{max := Max}})};
+        {ok, #{apps := none}} ->
+            broken_image(no_apps);
+        {error, Reason} ->
+            broken_image(Reason)
+    end;
+system_config({ok, #{}}, {error, Reason}) ->
+    broken_image(Reason);
+system_config({ok, none}, _Manifest) ->
+    none;
+system_config({error, _NoLibrary}, _Manifest) ->
     none.
+
+%% The library placed app entries from a manifest that gives no config here.
+broken_image(Reason) ->
+    logger:error("packages: the system manifest gives no package config: ~0tp", [Reason]),
+    none.
+
+development_signer(none) -> [];
+development_signer(Key) -> [{development, Key}].
 
 init(Config) ->
     {ok, #{config => Config, scan => unknown, packages => #{}}, {continue, recover}}.

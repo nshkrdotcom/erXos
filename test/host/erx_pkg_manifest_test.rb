@@ -12,16 +12,20 @@ require_relative '../../tools/lib/erx/platform'
 require_relative '../fixtures/abi_manifest_fixture'
 require_relative '../fixtures/manifest_context'
 
-# erx_pkg_manifest:system_config/1, the one Erlang reader of the manifest's apps, package
-# and signer records and the development key (abi/manifest.txt), on stock OTP: over the
-# hand-built bytes of AbiManifestFixture.packages and its refused variants, and over the
+# erx_pkg_manifest:system_config/1, the one Erlang reader of what the manifest says about
+# packages (abi/manifest.txt), and erx_pkg:system_config/2, the package process's config
+# from it and the domain library's app entries, on stock OTP: over the hand-built bytes of
+# AbiManifestFixture.packages, its release form and its refused variants, and over the
 # manifest the check packs from rows (Erx::Manifest), so the machine reads what the host
-# admitted.
+# admitted. Each fault of FAULTS replaces one passage of one source, and the cases must
+# then fail.
 class ErxPkgManifestTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
-  SOURCES = %w[build/gen/erlang/apps/erx/src/generated/erx_manifest.erl
-               erlang/apps/erx_starter/src/erx_pkg_manifest.erl
+  READER = File.join(ROOT, 'build/gen/erlang/apps/erx/src/generated/erx_manifest.erl')
+  MODULE = File.join(ROOT, 'erlang/apps/erx_starter/src/erx_pkg_manifest.erl')
+  SOURCES = [READER, MODULE] +
+            %w[erlang/apps/erx_starter/src/erx_pkg.erl
                test/erlang/erx_pkg_manifest_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   # Every domain, introduction and session planned: property 12 is not what is read here.
@@ -30,19 +34,58 @@ class ErxPkgManifestTest < Minitest::Test
       'sessions' => view.fetch('sessions').map { 0 } }
   end
 
+  # A seeded fault: the passage `from` of the source `file` replaced by `to`.
+  Fault = Data.define(:file, :from, :to)
+  RESERVED = '[principals, domains, services, facets]'
+  # The end of the release case of the generated reader's mode choice, whose fields are the
+  # counts a release manifest may hold, and that case with the development key's count added.
+  RELEASE_END = "'label' => <<\"root.signers.count\">>\n#{' ' * 24}}\n#{' ' * 20}],\n#{' ' * 20}1 => ["
+  DEVELOPMENT_KEY = %q(#{'scope' => 'root', 'fields' => ['development_key', 'count'], 'offset' => 436, ) +
+                    %q('size' => 4, 'label' => <<"root.development_key.count">>})
+  # The design's seeded faults: each kind of reserved name dropped, which lets an app take a
+  # row's name; the app template found by root's principal rather than the absent one; and
+  # the development key accepted in a release manifest. And a facet row's grantee read
+  # without its kind, which takes the system domain's packages row for the app template's.
+  FAULTS = {
+    'principals not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[domains, services, facets]'),
+    'domains not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, services, facets]'),
+    'services not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, domains, facets]'),
+    'facets not reserved' => Fault.new(file: MODULE, from: RESERVED, to: '[principals, domains, services]'),
+    'template by root' => Fault.new(file: MODULE, from: '#{principal := ?ERX_MF_NONE}', to: '#{principal := 0}'),
+    'development key in a release' =>
+      Fault.new(file: READER, from: RELEASE_END,
+                to: RELEASE_END.sub("\n#{' ' * 24}}", "},\n#{DEVELOPMENT_KEY}")),
+    'grantee kind ignored' =>
+      Fault.new(file: MODULE, from: '#{grantee_kind := ?ERX_MF_GRANTEE_SESSION, grantee := Grantee,',
+                to: '#{grantee := Grantee,')
+  }.freeze
+
   def test_the_reader_answers_what_the_manifest_packs
-    output, status = eunit(
-      'packages' => AbiManifestFixture.packages,
-      'none' => AbiManifestFixture.valid,
-      'release_development' => AbiManifestFixture.packages(flags: 0),
-      'two_apps' => AbiManifestFixture.packages(apps: 2),
-      'admitted' => admitted
-    )
+    output, status = eunit
     assert status.success?, output
     assert_match(/All \d+ tests passed/, output)
   end
 
+  def test_each_seeded_fault_fails_a_case
+    FAULTS.each do |name, fault|
+      assert_equal 1, File.read(fault.file).scan(fault.from).size, "#{name}: the passage occurs once"
+      output, = eunit(fault)
+      assert_match(/Failed: [1-9]\d*\./, output, "#{name} failed no case")
+    end
+  end
+
   private
+
+  def manifests
+    { 'packages' => AbiManifestFixture.packages,
+      'release' => AbiManifestFixture.packages(flags: 0, development: false),
+      'none' => AbiManifestFixture.valid,
+      'release_development' => AbiManifestFixture.packages(flags: 0),
+      'two_apps' => AbiManifestFixture.packages(apps: 2),
+      'no_template' => AbiManifestFixture.packages(template: false),
+      'no_packages_grant' => AbiManifestFixture.packages(packages_grant: false),
+      'admitted' => admitted }
+  end
 
   # QEMU virt's development manifest with an apps row of 1 MiB and max 2 offering the
   # system domain's files service shared, the package
@@ -67,16 +110,27 @@ class ErxPkgManifestTest < Minitest::Test
     Erx::Manifest.admit(source: source + rows, codec: codec, context: context, planner: PLANS_EVERYTHING).bytes
   end
 
-  def eunit(manifests)
+  # Compiles SOURCES, with fault's file replaced by its faulted copy, and runs the cases
+  # over the manifests, each written as NAME.bin.
+  def eunit(fault = nil)
     Dir.mktmpdir('erx-pkg-manifest-test') do |work|
       manifests.each { |name, bytes| File.binwrite(File.join(work, "#{name}.bin"), bytes) }
+      sources = SOURCES.map { |path| fault&.file == path ? faulted(fault, work) : path }
       output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-Werror', '-I', INCLUDE,
-                                       '-o', work, *SOURCES, stdin_data: '')
+                                       '-o', work, *sources, stdin_data: '')
       return [output, status] unless status.success?
 
       Open3.capture2e({ 'ERX_PKG_MANIFEST_FILES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
                       '-noshell', '-pa', work, '-eval', 'eunit:test(erx_pkg_manifest_tests, [verbose]), halt().',
                       stdin_data: '')
+    end
+  end
+
+  # Writes fault's file with its passage replaced into work, under the same name, and
+  # answers the copy's path.
+  def faulted(fault, work)
+    File.join(work, File.basename(fault.file)).tap do |copy|
+      File.write(copy, File.read(fault.file).sub(fault.from, fault.to))
     end
   end
 end
