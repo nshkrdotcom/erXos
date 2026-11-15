@@ -56,6 +56,7 @@
              erx_shell_namespace,
              erx_shell_parse,
              erx_shell_pipe,
+             erx_shell_program,
              erx_shell_runner,
              erx_shell_script]},
   {registered, []},

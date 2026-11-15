@@ -157,7 +157,7 @@ module Erx
                       liberx/program/spawn_plan.c liberx/erx_profile.c
                       build/gen/liberx/generated/prog_profile.c test/guest/programs/args.c
                       test/guest/programs/bigargs.c test/guest/programs/note.c test/guest/programs/pipeio.c
-                      test/guest/programs/uiprobe.c test/guest/programs/fileio.c
+                      test/guest/programs/uiprobe.c test/guest/programs/fileio.c test/guest/programs/rcio.c
                       display/lvgl/erx_lvgl.c build/gen/display/generated/erx_ui_wire.c].freeze
     # The native runtime's sysroot (NativeRuntime), whose header tree LIBC_SOURCES compile with.
     LIBC_SYSROOT = 'build/runtime/native/sysroot'

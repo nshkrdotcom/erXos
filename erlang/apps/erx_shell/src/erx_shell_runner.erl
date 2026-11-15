@@ -24,8 +24,9 @@ erx_shell:builtin/3 runs against the interactive shell's job table, or
 an Erlang command, which runs in a process of its
 own with a heap limit, reached by its context alone (erx_cmd). A command
 whose declared facets the session lacks fails with `no_facet` before it
-starts. Anything else is `not found`: programs, and names that hold `/`,
-are Phase 2's (docs/plan.md).
+starts. Any other name, or a path, is a program command, which
+erx_shell_program finds, starts and waits for, in a process of its own
+with the same limit; one it does not find is `not found`.
 
 Pieces of the tree. A pipeline's stages, a substitution, a subshell and
 a background block each run apart, in a stage process with a heap limit
@@ -139,7 +140,12 @@ request({run, [Name | Args], Vars}, #{table := Table} = S) ->
         {builtin, cd} -> cd(Args, Vars, S);
         {builtin, _Job} -> {job_builtin(Name, Args, S), S};
         {erlang, Entry} -> {command(Entry, Args, Vars, S), S};
-        _NotFoundOrConflict -> {<<"not found">>, diagnose(S, [Name, <<": not found\n">>])}
+        {conflict, _} -> not_found(Name, S);
+        not_found ->
+            case erx_shell_program:find(Name) of
+                {ok, Image} -> {program(Name, Image, Args, Vars, S), S};
+                not_found -> not_found(Name, S)
+            end
     end;
 request({glob, Pattern}, #{cwd := Cwd} = S) ->
     {glob(Pattern, Cwd), S};
@@ -212,6 +218,25 @@ job_builtin(Name, Args, S) ->
 %% but not start or move them.
 apart(S = #{job_control := {Shell, _Where}}) -> S#{job_control := {Shell, apart}};
 apart(S) -> S.
+
+not_found(Name, S) ->
+    {<<"not found">>, diagnose(S, [Name, <<": not found\n">>])}.
+
+%%% Program commands
+
+%% A program's status; its starter is a process of its own, so its pipe
+%% ends and pumps end with it, and an interrupt that ends the line ends it.
+program(Name, Image, Args, Vars, #{cwd := Cwd} = S) ->
+    Ctx = #{name => Name, cwd => Cwd, env => Vars,
+            stdin => stream(0, S), stdout => stream(1, S), stderr => stream(2, S)},
+    case isolated(fun() -> erx_shell_program:run(Image, Args, Ctx) end) of
+        {crashed, Reason} ->
+            Text = status_text(iolist_to_binary(io_lib:format("~0tp", [Reason]))),
+            safe_say(Ctx, [Name, <<": crashed: ">>, Text, $\n]),
+            Text;
+        Status ->
+            Status
+    end.
 
 %%% Erlang commands
 

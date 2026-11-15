@@ -334,3 +334,19 @@ runner_facets_test_() ->
      ?_assertEqual(Caps, erx_shell_runner:facets(false, [start, machine], Caps)),
      %% A facet the domain holds is kept over the service's `local`.
      ?_assertEqual(#{machine => facet}, erx_shell_runner:facets(true, [machine], #{machine => facet}))].
+
+%% A name the namespace does not hold names a program in /bin, and a path
+%% only as /bin/NAME, where a command server runs; elsewhere none does.
+program_names_test() ->
+    ?assertEqual(not_found, erx_shell_program:find(<<"exit42">>)),
+    Server = spawn(fun() -> receive stop -> ok end end),
+    true = register(erx_command_srv, Server),
+    try
+        ?assertEqual({ok, <<"bin/exit42">>}, erx_shell_program:find(<<"exit42">>)),
+        ?assertEqual({ok, <<"bin/exit42">>}, erx_shell_program:find(<<"/bin/exit42">>)),
+        [?assertEqual(not_found, erx_shell_program:find(Name))
+         || Name <- [<<"/tmp/exit42">>, <<"bin/exit42">>, <<"/bin/">>, <<"/bin/a/b">>, <<"..">>,
+                     <<"/bin/..">>, <<".">>, <<>>]]
+    after
+        Server ! stop
+    end.

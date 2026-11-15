@@ -130,6 +130,7 @@ session code and the program's own driver.
                | room
                | pipes_lost
                | stop
+               | {signal, atom()}
                | {exit_status, integer()}
                | port_closed
                | {file_opened, slot(), {ok, description()} | {error, atom()}}
@@ -382,6 +383,12 @@ step(#core{phase = running} = C, {frame, Frame}) ->
         {error, _} -> stop(C, ?REFUSED_STATUS)
     end;
 step(#core{phase = running} = C, stop) ->
+    stop(C, ?STOP_STATUS);
+%% A signal from the session, a kill or the program's job's. The protocol
+%% has no report that carries a signal into a program (TODO.md), and only
+%% sigkill ends a program whatever it set at run time, so sigkill stops it
+%% as a stop does and every other signal does nothing.
+step(#core{phase = running} = C, {signal, sigkill}) ->
     stop(C, ?STOP_STATUS);
 step(#core{phase = running} = C, {exit_status, Status}) when is_integer(Status) ->
     {C#core{phase = ended, queue = queue:new()}, [{tell_starter, Status}, exit]};

@@ -130,6 +130,16 @@ kill_of_itself_with_another_signal_is_enosys_test() ->
 %% directory, and its answer becomes the lowest free open; a read, a write
 %% and a clunk go to the open's description; each answer comes back on the
 %% request's own slot.
+%% A signal from the session: sigkill stops the program as a stop does,
+%% once; every other signal does nothing, since no report carries one into
+%% the program.
+session_sigkill_stops_the_program_test_() ->
+    {C1, Stop} = erx_prog_handler_core:step(running(), {signal, sigkill}),
+    [?_assertEqual([{stop, ?ERX_EXIT_SIGNAL + 9}], Stop),
+     ?_assertMatch({_, []}, erx_prog_handler_core:step(C1, {signal, sigkill}))
+     | [?_assertMatch({_, []}, erx_prog_handler_core:step(running(), {signal, Signal}))
+        || Signal <- [sigint, sigterm, sigchld, sigtstp, nosuch]]].
+
 open_is_relayed_then_answered_with_an_open_test_() ->
     {C1, Relayed} = erx_prog_handler_core:step(running(), ?ASK(7, {file, lopen, <<"doom.wad">>, 0})),
     {C2, Answered} = erx_prog_handler_core:step(C1, {file_opened, 7, {ok, desc}}),
