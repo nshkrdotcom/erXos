@@ -802,8 +802,7 @@ protocol](#the-terminal-relays-protocol):
   foreground job's pending read with it, newline included, when the line
   ends. `Ctrl-D` at the start of a line answers that read with no bytes,
   which the program reads as the end of its input; its later reads go on, as
-  on a UNIX terminal. Input typed after `Ctrl-C` and before the next prompt
-  is discarded. The relay handles input before output, so `Ctrl-C` and
+  on a UNIX terminal. The relay handles input before output, so `Ctrl-C` and
   `Ctrl-Z` act however much output waits.
 * **Output.** What any program writes to the terminal goes through the line
   discipline's output and to the master as `{tty_output, N, Bytes}`, in the
@@ -855,7 +854,13 @@ spawned. The shell makes the tag when it starts the job's evaluator with
 `erx_job:spawn/1`, which starts a process under a tag no other process
 carries ([design-runtime.md](design-runtime.md#scheduling)); the group
 leader, which a process may change, stays only the
-route of its input and output. A program's handler is not among them:
+route of its input and output. The first process of a line or a job
+starts under a leader of the job's own, set before it runs any of the
+job's code, so every process of the job inherits that leader. The leader
+never passes an input request to the shell's group: it reads the terminal
+for it through an open of the job's own ([One reader for the command
+shell's group](#the-terminal-relays-protocol)). A
+program's handler is not among the job's processes:
 the command server spawns it, outside every job, and the job reaches
 the program through the server's row
 ([design-programs.md](design-programs.md#the-handler)), so a stopped
@@ -1193,13 +1198,19 @@ wait, which `sh`'s line editor reads as any foreground process does, and
 a key's signal reaches the group that is in the foreground when the key
 arrives (`tty.c:1544-1550`). Every reader of the tty is an open, which
 belongs to a holder: the console's open to `console`, and every other
-open to the job it was made for. A wait reaches the line discipline only
-while its open's holder holds the terminal, and the shell changes the
-holder and the `termios` in one request. Each rule that would otherwise
-be a case of its own follows from that value:
+open to the job it was made for; a request for input to one of the
+console's groups is a read of `console`, and a job's processes make
+none, since their leader reads for them through an open of their job. A
+wait reaches the line discipline only while its open's holder holds the
+terminal, and the shell changes the holder and the `termios` in one
+request. Each rule that would otherwise be a case of its own follows
+from that value:
 
 * the console reads only while it holds the terminal, and then only the
-  bytes its group's line editor asks for, one at a time
+  bytes its group's line editor asks for, one at a time, and the command
+  shell's group asks only for the shell, which asks for another line only
+  once it has acted on the last, and so only after a command that line
+  started has had the terminal
   ([The console reads on demand](#the-terminal-relays-protocol)), so every
   byte the editor has not used is still in the tty when the next holder
   reads, and nothing is ever given back;
@@ -1258,7 +1269,7 @@ instead, and the handler copies between the two.
 
 | Request | Sent by | Answer | What follows the answer |
 | --- | --- | --- | --- |
-| `{open, Holder}` | a program's handler, for each terminal open of its program, `Holder` being the job its row names ([design-programs.md](design-programs.md#the-terminal)); `erx_cmd`, in the calling process at its first terminal call, under the caller's own job tag, kept in the caller's dictionary; the console of the session role, once at its start, with `Holder` `console` | `{ok, Open}`, `Open` a new reference | the relay monitors the caller and closes the open when the caller ends |
+| `{open, Holder}` | a program's handler, for each terminal open of its program, `Holder` being the job its row names ([design-programs.md](design-programs.md#the-terminal)); `erx_cmd`, in the calling process at its first terminal call, under the caller's own job tag, kept in the caller's dictionary; a job's leader, at its members' first input request, with `Holder` the job's tag; the console of the session role, once at its start, with `Holder` `console` | `{ok, Open}`, `Open` a new reference | the relay monitors the caller and closes the open when the caller ends |
 | `{close, Open}` | a process given the open | `ok` | the open's waits end, and no report for it is sent after the close is taken |
 | `{tty, Open, tcgetattr}` | a process given the open | `{ok, Termios}` | nothing |
 | `{tty, Open, {tcsetattr, Termios}}` | a process given the open | `ok`; `{error, einval}` when `erx_tty:set/2` refuses `Termios` or `TOSTOP` is set; `{background, false}` when the open's holder does not hold the terminal, with nothing changed | on `ok`, the line discipline's waits are checked again under the new `termios` ([design-live.md](design-live.md#the-tty)) |
@@ -1392,6 +1403,37 @@ reads through it with the requests every reader uses. Only the console
 opens for `console`; any process of the session's domain could, but
 holds the session's authority anyway (SH1).
 
+* **One reader for the command shell's group.** The command shell's
+  group serves one process, the shell, as FreeBSD's `sh` is the only
+  process of its own process group: each job there is a process group of
+  its own, which has the terminal before its code runs
+  (`bin/sh/jobs.c:918-934`, at commit `95719d8a`). A job's processes
+  inherit the job's leader ([Jobs and their tags](#job-control)), and the
+  leader answers each input request of theirs, alone or inside
+  `requests`, by reading the terminal through an open of the job's own,
+  `{open, Tag}`, so such a read waits in the relay while another holder
+  holds, as every read of a job does, and it reads only while the process
+  that made the request lives, so a member ended by `Ctrl-C` leaves the
+  bytes typed after it in the tty; it never passes an input request to
+  the shell's group. Where no relay serves the terminal, on the system console, it
+  answers each with `eof`, as a command's standard input is empty there
+  ([Pipelines](#pipelines)). The shell has one line request outstanding
+  at most, and makes the next only once it has acted on the line it got:
+  a whole unit runs as a line, which it gives the terminal with
+  `{foreground, Line, cooked}` before the line starts. So once the group has answered a
+  line it serves no request (`lib/kernel/src/group.erl:557-560`) and
+  makes no ask until the shell asks for its next line, as `sh` reads
+  nothing until it calls `el_gets` for its next line
+  (`bin/sh/input.c:138`). A nested request, whose state the group pushes
+  and resumes with a read of its own once the request after it is
+  answered (`group.erl:396-397`, `:439`), never arises there. An Erlang
+  shell's group serves its shell and every process of its evaluations,
+  nested requests included, as stock's does; no job takes the terminal
+  while it runs, so whichever of them reads next takes the next key.
+  A process of the session's domain that makes the command shell's group
+  its group leader reads as a reader of `console` beside the shell, as a
+  process that joined `sh`'s process group would; it holds the session's
+  authority anyway (SH1).
 * **The ask.** The console's current group asks it for input with
   `{self(), read, Ref}`, `Ref` a new reference, and has one ask
   outstanding at most: it asks only when its line editor waits for more
@@ -1401,28 +1443,49 @@ holds the session's authority anyway (SH1).
   `sys/erxos`"; stock's group asks its driver only in its raw `noshell`
   state, `lib/kernel/src/group.erl:342`, `:346`). The ask belongs to the
   group, not to the request being read, so it outlives the request that
-  made it: the blink timer's second pass over the line, a nested request,
-  and the next request after an interrupt or an error, are each served by
-  the ask already outstanding, and none of them makes another.
+  made it: the blink timer's second pass over the line, a nested request
+  of an Erlang shell's group, and the next request after an interrupt or
+  an error, are each served by the ask already outstanding, and none of
+  them makes another. An answer that arrives while the group serves no
+  request waits in the group for the next (`group.erl:259-261`); in the
+  command shell's group that is the shell's next line request, at the
+  same prompt, since an interrupt or an error there changes no holder.
 * **The answer.** On an ask, the console watches `{read, 1}`, reads one
   byte at the report, and passes it through its UTF-8 decoder
   ([design-runtime.md](design-runtime.md), "Which input bytes mean
-  something"). When the byte completes a character, the console answers
-  `{Console, {read, Ref, Chars}}` in the same step, `Chars` being what the
-  byte completes; when it does not, as for the first byte of `é`, the ask
-  stays outstanding and the console watches again. A read answered
-  `eagain` sends it back to watching, and an end of file is answered
-  `{Console, {read, Ref, eof}}`. The console keeps one ask per group,
-  reads only for its current group's, and forgets a group's ask when the
-  group ends. A report that finds its current group without an ask is
-  left alone, and the byte stays in the tty.
+  something"). The leading bytes of a character belong to the ask they
+  were read for: the console keeps them with that ask and they leave with
+  it, as libedit keeps them in one call of `read_char`, from which an
+  interrupted read returns without them (`read.c:278-345`). When the byte
+  completes a character, the console answers `{Console, {read, Ref,
+  Chars}}` in the same step, `Chars` being what the byte completes, and
+  the ask ends with nothing kept; when it does not, as for the first byte
+  of `é`, the ask stays outstanding with the byte kept, and the console
+  watches again. A read answered `eagain` sends it back to watching, and
+  an end of file is answered `{Console, {read, Ref, eof}}`, which ends the
+  ask and what it kept. Each of the line discipline's signals that names a
+  group, `interrupt`, `suspend` and `quit` alike, drops what that group's
+  ask keeps, since the signal flushed the tty's input typed with it, and
+  leaves the ask outstanding. The console keeps one ask per group, reads
+  only for its current group's, and forgets a group's ask, with what it
+  keeps, when the group ends; so bytes read for one group never join a
+  character of another's. A report that finds its current group without
+  an ask is left alone, and the byte stays in the tty.
 * **A key of several bytes.** An arrow's `ESC [ A` or Delete's
-  `ESC [ 3 ~` reaches the group a byte per answer. `edlin` keeps what it
-  has of a sequence until the rest arrives
-  ([design-runtime.md](design-runtime.md), edit 72), as libedit's
-  `read_getcmd` reads on through `keymacro_get` while what it has read
-  leads a bound sequence (`read.c:255-270`), so a key gives the same
-  action whether its bytes arrive together or one at a time.
+  `ESC [ 3 ~` reaches the group a byte per answer. The editor's answer
+  for a key depends on the key's bytes alone, never on where its input
+  was cut ([design-runtime.md](design-runtime.md), edit 72): the end of
+  its input only makes it wait, a key ends at the byte that completes it
+  and looks at no byte after it, a byte that cannot continue a sequence
+  ends it and is read again, and a key that a mode hands to another mode
+  is read there again whole. libedit's `read_getcmd` likewise reads on
+  through `keymacro_get` while what it has read leads a bound sequence
+  (`read.c:255-270`). So every key gives the same action, in every mode of
+  the editor, whether its bytes arrive together or one at a time, and a
+  `shell_keymap` entry that no stream of bytes could match whole, such as
+  `ESC [ H ~`, which reads as Home and then `~`, is refused when the
+  keymap is read, with stock's diagnostic
+  (`lib/stdlib/src/edlin_key.erl:124-133`).
 
 Each property follows:
 
@@ -1433,30 +1496,31 @@ Each property follows:
   `cat` reads the rest. This holds for every key the editor ends a line
   at, a `shell_keymap` that binds `^X` to `new_line_finish` included
   (`lib/stdlib/src/edlin.erl:32-50`, `:378-381`): the answer that ends
-  the line ends with the character of the byte just read, and the group
-  asks again only while its editor waits for more. The bytes `cat` reads
-  arrived under the editing setting, with `ECHO` clear, and are not
-  echoed, as FreeBSD's tty echoes a byte once, when it arrives, under the
-  setting of that moment.
+  the line ends with the character of the byte just read, and the group,
+  which serves only the shell, asks again only once the shell asks for
+  another line. The bytes `cat` reads arrived under the editing setting,
+  with `ECHO` clear, and are not echoed, as FreeBSD's tty echoes a byte
+  once, when it arrives, under the setting of that moment.
 * **No input is in flight.** The console takes a byte only by a read
   answered at once, for the ask of its current group at that moment, and
-  passes it on in the same step. A group that has returned a line has no
-  ask outstanding, since the answer that ended the line ended its ask,
-  and it asks again only once its editor waits for more. So no byte is on
-  its way to a group that has stopped reading, and a change of holder
-  needs no message to the console, no drain and no order between the
-  console's messages and the shell's. Only a group killed while it waits
-  for a key can lose a byte: the one the console read for it before it
-  took the group's end.
-* **Nothing is held.** The console holds the leading bytes of one
-  character at most, and a byte that ends a line completes its
-  character, so after a line's last answer the console holds nothing.
-  The group holds at most the part of the line it is editing. So when
-  the console loses the terminal, which the shell gives away only once
-  its group has returned a line, the console and its group hold none of
-  the input that follows. The Erlang shell's group may keep the rest of a
-  line after an expression it returned, `q().` among them; that rest goes
-  with the Erlang shell when it ends, as with stock OTP.
+  passes it on in the same step, or keeps it with that ask. A command
+  shell's group that has returned a line has no ask outstanding, since
+  the answer that ended the line ended its ask, and no request to make
+  another. So no byte is on its way to a group that has stopped reading,
+  and a change of holder needs no message to the console, no drain and no
+  order between the console's messages and the shell's. Only a group
+  killed while it waits for a key can lose a byte: the one the console
+  read for it before it took the group's end.
+* **Nothing is held.** The console holds, with each ask, the leading
+  bytes of one character at most, and a byte that ends a line completes
+  its character, so after a line's last answer the console holds nothing
+  for that group. The group holds at most the part of the line it is
+  editing. So when the console loses the terminal, which the shell gives
+  away only once its group has returned a line, the console and its
+  group hold none of the input that follows. The Erlang shell's group may
+  keep the rest of a line after an expression it returned, `q().` among
+  them; that rest goes with the Erlang shell when it ends, as with stock
+  OTP.
 * **Keys reach the console whether or not it reads.** The editing
   setting keeps `ISIG`, as libedit's does (`contrib/libedit/tty.c:83`),
   so `Ctrl-C`, `Ctrl-Z` and `Ctrl-\` are the line discipline's signals
@@ -1989,13 +2053,27 @@ remain independent of catalog generation.
     `cat`, and after `{foreground, Line, cooked}` an open of `Line` reads
     `secret\n`. Seeded: a console that reads up to the first CR or NL,
     which takes `secret\n` into the group.
+  * A job's input request: with a background job whose process calls
+    `io:get_line/1` while the shell reads, `cat\nsecret\n` typed in one
+    input gives the shell `cat\n`, and after `{foreground, Line, cooked}`
+    an open of `Line` reads `secret\n`; the background read waits, and
+    after `{foreground, Job, cooked}` it returns the next line typed. A
+    foreground command's `io:get_line/1` returns the line typed for it.
+    Seeded: a leader that passes input requests to the shell's group, on
+    which the background request pushes the shell's and takes `cat\n`,
+    and the foreground read never returns before the deadline, since the
+    console does not hold the terminal.
   * One answer for one ask: with a test process as the console's group,
     an ask `R` with `ab` typed gets `{Console, {read, R, "a"}}` and
     nothing more until a second ask; `é` typed as two writes of the
-    master, under one ask, gets one answer carrying `é`. Seeded: a
-    console that keeps reading after it answers, which sends `b` without
-    an ask; one that ends the ask at every read, which never reads `é`'s
-    second byte, so no answer comes before the deadline.
+    master, under one ask, gets one answer carrying `é`. With `C3` kept
+    for the ask, `Ctrl-C` and then `A` typed give the answer `A`; with
+    `C3` kept for group `G1`'s ask and `G2` made current, `A` typed under
+    `G2`'s ask gives `G2` the answer `A`. Seeded: a console that keeps
+    reading after it answers, which sends `b` without an ask; one that
+    ends the ask at every read, which never reads `é`'s second byte, so
+    no answer comes before the deadline; and one that keeps the leading
+    bytes apart from the ask, which answers `ÃA` in both cases.
   * One ask for a group: a group against a test driver that records
     asks and answers none, after `(1)` typed as three answers: the group
     asks once at the blink, and not again when the blink's timer ends; an
@@ -2004,13 +2082,22 @@ remain independent of catalog generation.
     Seeded: a group that asks at every `more_chars` and `blink`, which
     asks again at the timer's end; and one that forgets its ask at the
     interrupt, which asks again with the first unanswered.
-  * Keys of several bytes: every key of `edlin`'s default keymap, given to
-    `edlin:edit_line/2` whole and given a byte per call, produces the
-    same line and the same requests. Seeded: stock's
-    `get_valid_escape_key/2` (edit 72 undone), which ends Delete's
-    `ESC [ 3 ~` at `ESC [ 3` and inserts `~`; and an edit 72 that waits
-    after one digit but keeps stock's answer after more, on which
-    `ESC [ 3 ; 5 ~`, `forward_delete_word`, fails.
+  * Keys of several bytes, a property test of `edlin:edit_line/2` in each
+    of its modes, `normal`, `search`, `tab_expand` and `help`: a byte
+    string drawn from the default keymap's sequences, their prefixes, a
+    byte that continues none of them, CR, NL, `ESC`, `~` and UTF-8 text,
+    given whole, a byte per call and cut at random points, gives the same
+    line and the same actions in the same order, the expansion and
+    history answers included; only a blink, which waits for input that
+    does not come at once, may differ. A `shell_keymap` binding
+    `ESC [ H ~` to `new_line_finish` is refused with stock's diagnostic.
+    Seeded, each restoring one of stock's answers that edit 72 removes:
+    the key ended at `ESC [ 3`, which inserts Delete's `~`; no clause for
+    a byte that cannot continue `ESC [ 3`, which crashes on `ESC [ 3`
+    and NL; a `~` taken after a complete key, which makes `ESC [ A ~`
+    whole one unbound key and accepts the `ESC [ H ~` binding; and
+    `tab_expand` left at an escape prefix, which makes a split `ESC [ A`
+    in the expansion list `history_up`.
   * A late event: with the command shell's group `P` current again after
     an Erlang shell's group `E` has ended, `{erx_tty_event, E,
     interrupt}` reaches no group, and the command shell's line goes on;
@@ -2237,6 +2324,17 @@ do, not as the program wrote them, so an error message can appear before
 the output it follows; and each stream costs a pipe. Opens on `/dev/tty`
 reach the relay through the program's handler in the order written and
 cost no pipe ([Job control](#job-control)).
+
+**Ending the console's reading at each answer of its group.** The group
+would tell the console when it answers a request, and the console would
+read nothing more until the shell gave it the terminal again. It loses:
+the group's word to the console, the group's answer to the shell and the
+shell's next `foreground` are messages of three senders, which no process
+orders, so each grant would need a name that the end of the grant
+repeats; and an Erlang shell's group, which reads on with no shell to
+grant it anything, would need an exception. Giving the command shell's
+group one reader removes the read that the grant would have stopped
+([The console reads on demand](#the-terminal-relays-protocol)).
 
 **Job control through a party outside the session.** A separate trusted
 program would pause and resume a session's programs at the shell's

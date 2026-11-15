@@ -666,8 +666,10 @@ uses (`lib/ssh/src/ssh_cli.erl:420`). A session's console takes it from
 the tty as libedit does, one byte at a time and only while its group's
 editor waits for a key (`contrib/libedit/read.c:289`, at FreeBSD commit
 `95719d8a`), through an open of the relay. The editor alone decides
-where a line ends, whatever keys its keymap binds to that, so a line
-typed ahead for the next command stays in the tty for that command
+where a line ends, whatever keys its keymap binds to that, and the
+command shell's group reads for the shell alone, which asks for no line
+before it has acted on the last, so a line typed ahead for the next
+command stays in the tty for that command
 ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 `Ctrl-C` interrupts the shell's evaluator as `ssh_cli` turns it into
 `exit(Group, interrupt)` (`lib/ssh/src/ssh_cli.erl:409-411`). A foreground
