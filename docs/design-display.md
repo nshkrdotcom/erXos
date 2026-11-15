@@ -1025,9 +1025,10 @@ the window and the connection. Its `/dev` holds the session's devices
 and `draw`, `ctl`, `mouse`, `kbd`, `wctl` and `label`, and `clipboard`
 when the grant carries `clipboard`: `draw` and `ctl` are the
 connection's, and the window's files are relayed to the window's own,
-so the program reaches those files and nothing else of the window or of
-the session's grant on the display, and no program's namespace holds an
-entry on a window tree
+on the fids `erx_win:open/2` opened on the window when the handler made
+it, so the program reaches those files and nothing else of the window
+or of the session's grant on the display, and nothing on a window tree,
+an entry or an open file, enters a program
 ([design-files.md](design-files.md#a-programs-window)). The same tree
 calls the connection's `resized` when it hands the program an `r`
 record of `mouse`, so image 0 has the window's new size before the
@@ -1036,8 +1037,11 @@ it expects them; Plan 9 names its clipboard `/dev/snarf`. The
 `ctl` a program sees is the draw connection's, which answers the display
 information of draw(3) ([The draw connection](#the-draw-connection),
 "The connection's files"); the window's own `ctl`, which takes presents,
-stays with the draw connection and is served to no program, since a
-present may name any range of the session's pixel area.
+stays with the draw connection and reaches no program, since a
+present may name any range of the session's pixel area. The display
+checks a present against the client's area, not a window's buffer: the
+client is the session, and which of its ranges a window shows is the
+session's to decide ([The pixel area](#the-pixel-area)).
 
 ### Draw messages
 
@@ -4024,7 +4028,11 @@ and waits for its answer; `mouse/1` and `kbd/1` read records;
 `resized/1`, after an `r` record, re-reads the window's rectangle and
 answers an image at the new size over the same buffer, clipped to it,
 and allocates nothing; `resize/2` and `label/2` write `wctl`
-and `label`.
+and `label`; and `read_at/4` and `write_at/4` read and write the bytes
+of `kbd`, `mouse`, `wctl` or `label` at an offset on the handle's fid of
+that name, for a relay such as a program's `/dev` tree
+([design-files.md](design-files.md#a-programs-window)); neither takes
+`ctl`, which only `present/2` and `present/3` write.
 
 **A window over a range it does not own.** The LVGL renderer's frames
 are drawn in a range of the pixel area that the program's handler owns

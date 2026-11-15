@@ -4543,6 +4543,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] `erlang/apps/erx_files/src/erx_fs.erl:179`: a grant for its own domain ignores `ends_with`, where
   `docs/design-files.md` ("Interfaces") has every grant monitor what `ends_with` names; a program's `/dev` tree ends
   with its handler through it, a refused start's `normal` exit included ("A program's window").
+* [Medium] programs and shell, the files a stage hands a program: `docs/design-shell.md` (Overview, "Starting
+  programs") has the shell hand a program it starts with `erx_prog_handler:start/1` the files its redirections opened,
+  sharing their offsets, where `start/1` takes pipe ends and buffers only (`docs/design-programs.md`, "A session
+  process's program"; `erlang/apps/erx/src/erx_prog_handler.erl:19-30, 86-93`). Design the form in design-programs
+  and design-shell. It must keep `docs/design-files.md`'s rule that every description a program holds was opened
+  through a program's table, so that nothing on a window tree enters a program ("A program's window"): for example
+  a description the program's handler opens through the program's own table for the starter, or one whose tree,
+  part of its identity, the handler refuses when it is `windows`.
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
   leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
   draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.

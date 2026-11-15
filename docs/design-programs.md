@@ -620,8 +620,9 @@ program's own table. It does five things:
   program holds there, the starter's or fewer, which the
   handler checks on every request
   ([design-files.md](design-files.md#narrowing-for-a-program)); the open
-  table, each open naming an open-file description of the session
-  ([Descriptors and files](#descriptors-and-files)); the rights beyond
+  table, each open naming an open-file description of the session that
+  was opened through a program's table, this program's or the one that
+  passed it on ([Descriptors and files](#descriptors-and-files)); the rights beyond
   files; the children; and the pipe ends. The program sees paths,
   descriptor numbers and open numbers, never a grant, a fid or a pid.
 * **It serves the program's requests**, in the order they arrive on the
@@ -686,7 +687,10 @@ holds, which the handler asks the pipe server for as an inherit with the
 starter as the end's holder
 ([design-pipes.md](design-pipes.md#inherited-ends)), and
 `{N, {buffer, Peer, Bytes}}` for a window's buffer of `Bytes` in the
-pixel area it shares with the display domain `Peer`, at most one. The
+pixel area it shares with the display domain `Peer`, at most one, and
+never a file or a directory it opened, so every description a program
+holds was opened through a program's table
+([design-files.md](design-files.md#a-programs-window)). The
 handler allocates that buffer's range and lends it to the program
 itself, so the range is the handler's, as the buffer of every program is
 ([design-display.md](design-display.md#the-pixel-area)), and the starter,
@@ -1085,7 +1089,11 @@ nothing. So two programs given one file share its offset and its status
 flags, as POSIX processes do: `{date; uname} >f` writes both outputs one
 after the other, and `>[2=1]` is a `dup`, one object under two numbers.
 A passed file reaches the program whatever its namespace holds, and a
-file removed after it was opened stays readable through it, as on UNIX.
+file removed after it was opened stays readable through it, as on UNIX;
+it was opened through some program's table, the only way a description
+is made, so it is never a file no program's table reaches, a window's
+`ctl` among them
+([design-files.md](design-files.md#narrowing-for-a-program)).
 The shell's redirections open, create or truncate the file before the
 spawn, as a UNIX shell does, and a redirection to `/dev/null` hands the
 program a `null` descriptor. A pipe end's `O_NONBLOCK` stays in the
@@ -3556,7 +3564,8 @@ terminal cases.
   spec naming a window and a buffer answers `EINVAL`, a display the
   session holds no grant on `ENODEV`, a fixture tree with the session at
   its `windows` quota `EDQUOT`, and one whose pixel area is full
-  `ENOMEM`, each with no window, hand-off or lease left behind. A
+  `ENOMEM`, and the test awaits, within a deadline, the end of each
+  window, hand-off and lease the refused start made. A
   program that exits 3 gives its starter one message, the `'DOWN'` of
   the returned monitor with `{shutdown, {program_exit, {exited, 3}}}`;
   `stop/1` of a running program gives `{shutdown, {program_exit,
