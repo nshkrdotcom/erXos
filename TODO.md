@@ -1894,6 +1894,11 @@ it; git history is the record of completed work.
   errno, signal or other musl header leaves `liblvgl.a`'s objects compiled against the old one. Key the objects on
   `BuildMemo.tree_digest` of the sysroot's headers, as `NativeRuntime#sdk_root` and `Libcrypto#configuration_key` do,
   without leaving one directory behind per header change.
+* [Medium] musl, strerror (`musl/src/errno/__strerror.h`, `test/host/abi_errno_test.rb`): the 17 texts taken
+  from FreeBSD's `lib/libc/gen/errlst.c` are a hand-kept copy that no test compares, while the signal table's
+  descriptions are checked against a pinned `siglist.c`. Pin `errlst.c` in deps.lock (`freebsd-errlst`), name it
+  in design.md's dependency row beside `sys/sys/errno.h`, and compare each FreeBSD-sourced text with it, or give
+  `errno` rows a description column and generate them.
 * [Medium] crypto, first seeding's failing half (`docs/design-crypto.md`, "Verification"; `test/guest/native_domain/guest.c`,
   the crypto cases): the QEMU test that a domain of each image whose generator fails before its first seed gets an exception
   from `crypto:strong_rand_bytes/1`, not bytes, is not written. No test hook makes the generator service refuse one domain's
@@ -2374,11 +2379,9 @@ it; git history is the record of completed work.
   what libc++ and libc++abi define as available to ERTS, but never checks their own undefined names (`malloc`, `abort`,
   pthreads) against `otp/erts/emulator/sys/erxos/imports.txt`, so the C library seam does not cover the C++ runtime. Add
   the two archives to the undefined-name pass.
-* [Low] runtime build, `tools/lib/erx/libcxx.rb` and `tools/lib/erx/native_runtime.rb` (`build_sysroot`): the merged
-  sysroot headers are copied with their original times, so a header dropped from an upper layer can leave an older time
-  that ninja's libc++ build does not see as a change; and the libc++ configure stamp records the compiler's path, not its
-  version, so a Homebrew upgrade of LLVM at the same path keeps the old objects (ERTS's stamp has the same gap). Stamp the
-  merged headers' digest and `clang --version` instead.
+* [Low] runtime build, `tools/lib/erx/libcxx.rb`: the libc++ configure stamp records the compiler's path, not its
+  version, so a Homebrew upgrade of LLVM at the same path keeps the old objects (ERTS's stamp has the same gap). Stamp
+  `clang --version` instead, or `BuildMemo.program_identity` as `Libcrypto#configuration_key` does.
 * [Medium] network build checks, `tools/lib/erx/net_checks.rb` (seq-wrap, atoms): the checks scan text
   with a regex copy of Erlang's lexer and a list of literal spellings, so they miss the idiomatic wrap
   `<<D:32/signed>> = <<(A - B):32>>`, a mask defined by a macro in a non-TCP header and used in a TCP

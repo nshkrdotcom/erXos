@@ -116,16 +116,14 @@ module Erx
     # Where `tools/erx build openssl` builds: musl, its headers as one tree, and OpenSSL.
     BASE = 'build/openssl'
 
-    # A sysroot for a build of OpenSSL alone, under root's BASE: erXos's musl built, and
-    # its headers merged into the sysroot's include/. Returns the sysroot. A runtime's
-    # build passes its own sysroot instead, which holds the same headers.
-    def self.sysroot(root:, runner:, compiler:, jobs: 4)
+    # musl's headers for a build of OpenSSL alone, under root's BASE: erXos's musl built,
+    # and its headers merged into a sysroot (Musl#merge_headers). Returns the header tree.
+    # A runtime's build passes its own sysroot's tree instead, which holds the same headers.
+    def self.headers(root:, runner:, compiler:, jobs: 4)
       musl = Musl.new(root: root, runner: runner, compiler: compiler)
       built = File.join(root, BASE, 'musl')
       musl.build(directory: built, jobs: jobs)
-      sysroot = File.join(root, BASE, 'sysroot')
-      musl.merge_headers(directory: built, into: File.join(sysroot, 'include'))
-      sysroot
+      musl.merge_headers(directory: built, sysroot: File.join(root, BASE, 'sysroot'))
     end
 
     # compiler is the clang every erXos build uses (ERX_CLANG); llvm-ar, llvm-ranlib and
@@ -146,11 +144,11 @@ module Erx
 
     # Configures directory for TARGET when its configuration changed, makes target there
     # (the archive, or one of its objects for a test), and checks the imports of what it
-    # made; returns its path. sysroot's include/ holds musl's headers as one tree
-    # (Musl#merge_headers).
-    def build(directory:, sysroot:, jobs: 4, target: ARCHIVE)
-      environment = environment(directory: directory, sysroot: sysroot)
-      configure(directory: directory, environment: environment, sysroot: sysroot)
+    # made; returns its path. headers is musl's headers as one tree (Musl#merge_headers),
+    # named by its content, so the configuration, which keys the path, follows a change.
+    def build(directory:, headers:, jobs: 4, target: ARCHIVE)
+      environment = environment(directory: directory, headers: headers)
+      configure(directory: directory, environment: environment)
       # OpenSSL's own build_libs, for target alone: the headers Configure's generators
       # make, which no object names, then depend, which writes the header dependencies
       # the last build's compiles recorded into the Makefile, so an edited header
@@ -177,9 +175,9 @@ module Erx
     # (configuration_key) differs from the one the directory was configured for, so a
     # configuration is never reused for inputs it was not made from. Source files are
     # make's to judge.
-    def configure(directory:, environment:, sysroot:)
+    def configure(directory:, environment:)
       command = ['perl', File.join(@source, 'Configure'), TARGET, "--config=#{target_file}", *OPTIONS]
-      key = configuration_key(command, environment, sysroot: sysroot)
+      key = configuration_key(command, environment)
       key_file = File.join(directory, CONFIGURATION_KEY_FILE)
       return if File.file?(key_file) && File.read(key_file) == key
 
@@ -201,14 +199,13 @@ module Erx
 
     # What a configuration follows from, as a BuildMemo key: Configure's command (the
     # source tree, the target, the target file's path and the options), the variables it
-    # sees, the target file's bytes, the compiler by identity (a new clang rebuilds every
-    # object, which make alone would not do) and the bytes of every file CONFIGURE_INPUTS
-    # names in the source tree and TEMPLATE_INPUTS in the fetched Text::Template, and the
-    # sysroot's headers by content, which OpenSSL's make dependencies leave out as system
-    # headers. perl, gmake and LLVM's archivers are named only by the PATH they are found on.
-    def configuration_key(command, environment, sysroot:)
+    # sees (the header tree's path among them), the target file's bytes, the compiler by
+    # identity (a new clang rebuilds every object, which make alone would not do) and the
+    # bytes of every file CONFIGURE_INPUTS names in the source tree and TEMPLATE_INPUTS in
+    # the fetched Text::Template. perl, gmake and LLVM's archivers are named only by the
+    # PATH they are found on.
+    def configuration_key(command, environment)
       BuildMemo.key('command' => command, 'environment' => environment.compact, 'target' => digest(target_file),
-                    'headers' => BuildMemo.tree_digest(File.join(sysroot, 'include')),
                     'compiler' => BuildMemo.program_identity(@compiler),
                     'inputs' => digests(CONFIGURE_INPUTS, base: @source),
                     'template' => digests(TEMPLATE_INPUTS, base: @template))
@@ -224,15 +221,15 @@ module Erx
 
     # The whole environment of Configure and make: the caller's variables unset but for
     # PASSED, FIXED's, PATH with the compiler's directory first, PERL5LIB naming the
-    # template engine, and what the target file reads. The sysroot is named relative to
-    # directory, where Configure and make run.
-    def environment(directory:, sysroot:)
-      relative = Pathname.new(File.expand_path(sysroot)).relative_path_from(Pathname.new(File.expand_path(directory)))
+    # template engine, and what the target file reads. The header tree is named relative
+    # to directory, where Configure and make run.
+    def environment(directory:, headers:)
+      relative = Pathname.new(File.expand_path(headers)).relative_path_from(Pathname.new(File.expand_path(directory)))
       ENV.keys.to_h { |name| [name, nil] }
          .merge(ENV.to_h.slice(*PASSED), FIXED)
          .merge('PATH' => [@tools, ENV.fetch('PATH', '')].join(File::PATH_SEPARATOR),
                 'PERL5LIB' => File.join(@template, 'lib'),
-                'ERX_CC' => File.basename(@compiler), 'ERX_SYSROOT' => relative.to_s)
+                'ERX_CC' => File.basename(@compiler), 'ERX_LIBC_INCLUDE' => relative.to_s)
     end
   end
 end

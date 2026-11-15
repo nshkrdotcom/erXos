@@ -197,6 +197,9 @@ class LvglProgramTest < Minitest::Test
     Dir.mktmpdir('erx-lvgl-program') do |root|
       FileUtils.mkdir_p(File.join(root, Erx::Lvgl::SUBMODULE))
       FileUtils.touch([File.join(root, Erx::Lvgl::SUBMODULE, 'lvgl.h'), File.join(root, '.git'), log = File.join(root, 'status')])
+      headers = File.join(root, Erx::NativeRoot::LIBC_SYSROOT, 'include-0123456789abcdef')
+      stale = File.join(root, Erx::Lvgl::Program::LIBRARY, '0000000000000000')
+      FileUtils.mkdir_p([headers, stale])
       runner = Runner.new(log)
       native = Native.new
       built = Erx::Lvgl::Program.new(root: root, runner: runner, native: native, compiler: '/llvm/clang', archives: %w[libc.a libclang_rt.builtins.a],
@@ -204,12 +207,13 @@ class LvglProgramTest < Minitest::Test
                                      generated: Generated).call
 
       flags = Erx::Lvgl::Program.library_flags(root)
-      assert_equal [*Erx::NativeRoot::CODE_FLAGS, '-isystem', File.join(root, Erx::NativeRoot::LIBC_HEADERS), '-D_BSD_SOURCE'].join(' '),
+      assert_equal [*Erx::NativeRoot::CODE_FLAGS, '-isystem', headers, '-D_BSD_SOURCE'].join(' '),
                    flags
       refute_includes flags, '-mgeneral-regs-only'
       make = runner.commands.find { |argv| argv.first == 'gmake' }
       archive = make.last
       assert_match %r{\A#{root}/build/lvgl/target/\h{16}/liblvgl\.a\z}, archive
+      refute File.exist?(stale), "an earlier flags' directory is removed"
       assert_includes make, "FLAGS=#{flags}"
       assert_includes make, 'CC=/llvm/clang'
       assert_includes make, 'AR=/llvm/llvm-ar'

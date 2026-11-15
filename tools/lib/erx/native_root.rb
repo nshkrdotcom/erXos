@@ -9,6 +9,7 @@ require_relative 'compile_memo'
 require_relative 'counter_reads'
 require_relative 'error'
 require_relative 'fiasco'
+require_relative 'musl'
 require_relative 'platform'
 require_relative 'interpreter_image'
 require_relative 'pack_provenance'
@@ -155,7 +156,8 @@ module Erx
                       build/gen/liberx/generated/prog_profile.c test/guest/programs/args.c
                       test/guest/programs/bigargs.c test/guest/programs/note.c test/guest/programs/pipeio.c
                       display/lvgl/erx_lvgl.c build/gen/display/generated/erx_ui_wire.c].freeze
-    LIBC_HEADERS = 'build/runtime/native/sysroot/include'
+    # The native runtime's sysroot (NativeRuntime), whose header tree LIBC_SOURCES compile with.
+    LIBC_SYSROOT = 'build/runtime/native/sysroot'
     # The sources that use the FP registers, which a task may (only the kernel runs no FP
     # instruction): erx_etf.c reads and writes floats.
     FP_SOURCES = %w[liberx/erx_etf.c].freeze
@@ -237,6 +239,11 @@ module Erx
       receipted(program, sources: DOMAIN_RUNTIME, script: TASK_LINK_SCRIPT, directory: directory)
     end
 
+    # musl's headers as one tree (Musl#merge_headers), relative to root as a compile names
+    # it: the tree's name follows its content, so a compile keyed on its arguments follows
+    # a changed header.
+    def self.libc_headers(root) = File.join(LIBC_SYSROOT, File.basename(Musl.headers(File.join(root, LIBC_SYSROOT))))
+
     # The linker flag that gives root.ld its place: an address in RAM, which starts at
     # ram_first, on a page boundary.
     def self.place_flags(place, ram_first:)
@@ -298,7 +305,7 @@ module Erx
       headers = @fiasco.user_include_directories.flat_map { |path| ['-isystem', path] }
       # musl declares the BSD memory primitives (bcmp, bcopy, bzero) only under _BSD_SOURCE,
       # which -std=c17 leaves undefined.
-      libc = (LIBC_SOURCES + DEVICE_TREE).include?(source) ? ['-isystem', LIBC_HEADERS, '-D_BSD_SOURCE'] : []
+      libc = (LIBC_SOURCES + DEVICE_TREE).include?(source) ? ['-isystem', self.class.libc_headers(@source), '-D_BSD_SOURCE'] : []
       tree = DEVICE_TREE.include?(source) ? DEVICE_TREE_FLAGS : []
       lvgl = LVGL_SOURCES.include?(source) ? LVGL_FLAGS : []
       base = FP_SOURCES.include?(source) ? FLAGS - ['-mgeneral-regs-only'] : FLAGS

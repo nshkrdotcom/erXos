@@ -20,7 +20,7 @@ class NativeRuntimeLinkTest < Minitest::Test
   CRYPTO = Erx::NativeRuntime::Crypto.new(table: "#{OTP}/emu/driver_tab_crypto.o",
                                           nifs: Erx::DomainImageApps::NIF_ARCHIVES.map { |app, archive| "/otp/lib/#{app}/#{archive}" },
                                           libcrypto: '/openssl/prefix/lib/libcrypto.a')
-  BUILT = Erx::NativeRuntime::Built.new(otp_archives: ["#{OTP}/emu/erl_main.o", '/otp/bin/libbeam.a'], libc: '/musl/libc.a',
+  BUILT = Erx::NativeRuntime::Built.new(otp_archives: ["#{OTP}/emu/erl_main.o", '/otp/bin/libbeam.a'], libc: '/musl/libc.a', headers: '/sysroot/include-0',
                                         builtins: '/crt/libclang_rt.builtins.a', otp: '/otp', openssl: '/openssl/prefix',
                                         system_table: "#{OTP}/emu/driver_tab.o", crypto: CRYPTO)
   JIT = Erx::NativeJitRuntime::Built.new(otp_archives: ["#{OTP}/jit/erl_main.o", '/otp-jit/bin/libbeam.a'], libc: BUILT.libc,

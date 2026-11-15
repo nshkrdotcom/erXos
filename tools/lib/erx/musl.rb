@@ -4,6 +4,7 @@
 
 require 'fileutils'
 require 'open3'
+require_relative 'build_memo'
 require_relative 'error'
 require_relative 'generated'
 require_relative 'abi_emit_musl'
@@ -18,6 +19,10 @@ module Erx
     CFLAGS = %w[--target=aarch64-none-elf -Os -pipe -fomit-frame-pointer -fno-unwind-tables
                 -fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections -frounding-math
                 -fno-stack-protector -mno-outline-atomics -Wa,--noexecstack].freeze
+    # What names a sysroot's header tree (merge_headers), before its digest.
+    HEADERS_PREFIX = 'include-'
+    # Where merge_headers copies a tree before naming it, outside HEADERS_PREFIX's names.
+    HEADERS_STAGING = 'include.new'
 
     # The CPU's sources under source that trap to a kernel with no replacement under
     # the arch: a build holding one would reach the kernel past liberx.
@@ -59,21 +64,43 @@ module Erx
        File.join(@root, Generated::OUTPUT, ABI::MuslEmitter::INCLUDE)]
     end
 
-    # The headers of include_directories as one tree under into, for a build that looks
-    # for headers under one directory (OTP's configure, OpenSSL's target): the first
-    # directory searched wins, so it is copied last. Each copy keeps its source's time,
-    # so a build that copies again leaves a precompiled header that clang judges by its
-    # headers' times (BeamAsm's asmjit) valid.
-    def merge_headers(directory:, into:)
-      FileUtils.rm_rf(into)
+    # The headers of include_directories as one tree in sysroot, for a build that looks
+    # for headers under one directory (OTP's configure, OpenSSL's target, libc++, LVGL):
+    # the first directory searched wins, so it is copied last. make's dependency files
+    # leave out system headers, so the tree is named by its content, include-<digest>:
+    # a step keyed on the include path it compiles with follows a changed header through
+    # the path. An existing tree of that name is kept, times included, only while its
+    # content still matches the name, so a tree left half removed is never trusted.
+    # Every other header tree of sysroot is removed, so Musl.headers finds this one.
+    # One merge runs in a sysroot at a time. Returns the tree.
+    def merge_headers(directory:, sysroot:)
+      staging = File.join(sysroot, HEADERS_STAGING)
+      FileUtils.rm_rf(staging)
+      FileUtils.mkdir_p(staging)
       include_directories(directory: directory).reverse.each do |layer|
         Dir.glob('**/*.h', base: layer).each do |path|
-          target = File.join(into, path)
+          target = File.join(staging, path)
           FileUtils.mkdir_p(File.dirname(target))
-          FileUtils.cp(File.join(layer, path), target, preserve: true)
+          FileUtils.cp(File.join(layer, path), target)
         end
       end
-      into
+      name = Musl.headers_name(staging)
+      tree = File.join(sysroot, name)
+      FileUtils.rm_rf(tree) unless File.directory?(tree) && Musl.headers_name(tree) == name
+      File.directory?(tree) ? FileUtils.rm_rf(staging) : File.rename(staging, tree)
+      (Dir.glob("#{HEADERS_PREFIX}*", base: sysroot) - [name]).each { |other| FileUtils.rm_rf(File.join(sysroot, other)) }
+      tree
+    end
+
+    # The name merge_headers gives a header tree holding what directory holds.
+    def self.headers_name(directory) = "#{HEADERS_PREFIX}#{BuildMemo.tree_digest(directory)[0, 16]}"
+
+    # The one header tree merge_headers made in sysroot; raises unless there is exactly one.
+    def self.headers(sysroot)
+      trees = Dir.glob("#{HEADERS_PREFIX}*", base: sysroot)
+      raise Error, "#{sysroot} holds #{trees.size} musl header trees, not one (Musl#merge_headers)" unless trees.size == 1
+
+      File.join(sysroot, trees.first)
     end
 
     private

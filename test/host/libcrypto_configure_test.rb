@@ -11,6 +11,9 @@ require_relative '../../tools/lib/erx/libcrypto'
 # configuration changed. A runner that records the commands it is given stands in
 # for Configure, make and llvm-nm, over a small tree shaped like openssl/.
 class LibcryptoConfigureTest < Minitest::Test
+  # musl's own errno header, which the sysroot's header tree is merged from.
+  ERRNO_HEADER = 'musl/include/bits/errno.h'
+
   # Records each command's name; llvm-nm's log is a listing that keeps Imports' rules.
   class Recorder
     LISTING = <<~LISTING
@@ -45,6 +48,7 @@ class LibcryptoConfigureTest < Minitest::Test
       'util/perl/OpenSSL/Template.pm' => '', 'crypto/sha.c' => '' }.each { |path, text| write(path, text) }
     write('lib/Text/Template.pm', 'package Text::Template;', tree: :template)
     write(Erx::Libcrypto::TARGET_FILE, '', tree: :root)
+    write(ERRNO_HEADER, '#define EAGAIN 35', tree: :root)
     @compiler = File.join(@root, 'llvm/bin/clang')
     write('llvm/bin/clang', 'clang 1', tree: :root)
     @recorder = Recorder.new(@root)
@@ -64,11 +68,14 @@ class LibcryptoConfigureTest < Minitest::Test
     File.write(full, text)
   end
 
-  # Builds, and returns how many times Configure ran over all builds so far.
+  # Merges musl's headers into a sysroot, as a build does (Musl#merge_headers), builds
+  # against them, and returns how many times Configure ran over all builds so far.
   def build_and_count_configures
+    headers = Erx::Musl.new(root: @root, runner: nil, compiler: @compiler)
+                       .merge_headers(directory: File.join(@root, 'musl-build'), sysroot: File.join(@root, 'sysroot'))
     Erx::Libcrypto.new(root: @root, runner: @recorder, compiler: @compiler, source: @source,
                           template: @template)
-                  .build(directory: File.join(@root, 'obj'), sysroot: File.join(@root, 'sysroot'))
+                  .build(directory: File.join(@root, 'obj'), headers: headers)
     @recorder.names.count('openssl-configure')
   end
 
@@ -142,11 +149,18 @@ class LibcryptoConfigureTest < Minitest::Test
   # only a new configuration, which empties the directory, rebuilds an object compiled
   # against an earlier errno or signal number.
   def test_a_changed_sysroot_header_configures_again
-    write('sysroot/include/bits/errno.h', '#define EAGAIN 11', tree: :root)
     assert_equal 1, build_and_count_configures
-    write('sysroot/include/bits/errno.h', '#define EAGAIN 35', tree: :root)
+    write(ERRNO_HEADER, '#define EAGAIN 11', tree: :root)
 
     assert_equal 2, build_and_count_configures
+  end
+
+  def test_a_rewritten_identical_header_keeps_the_configuration
+    assert_equal 1, build_and_count_configures
+    write(ERRNO_HEADER, '#define EAGAIN 35', tree: :root)
+    File.utime(Time.at(0), Time.at(0), File.join(@root, ERRNO_HEADER))
+
+    assert_equal 1, build_and_count_configures
   end
 
   def test_another_compiler_of_the_same_name_configures_again

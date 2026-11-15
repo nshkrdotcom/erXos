@@ -4,6 +4,7 @@
 
 require 'digest'
 require 'etc'
+require 'fileutils'
 require_relative 'error'
 require_relative 'runner'
 require_relative 'bounded_file'
@@ -135,9 +136,10 @@ module Erx
     # (docs/design-programs.md, "Starting a program"). display/lvgl/Makefile compiles
     # LVGL into liblvgl.a with library_flags, the code generation of every task's C
     # (NativeRoot::CODE_FLAGS) and musl's headers, in a directory named by those flags, so
-    # a change of them compiles LVGL again. NativeRoot then compiles erx_lvgl.c (with its
-    # view of LVGL, NativeRoot::LVGL_FLAGS) and the generated ui.txt reader and writer
-    # with the program flags, and links them, with the program's entry and liberx's
+    # a change of them compiles LVGL again; the header tree is named by its content
+    # (NativeRoot.libc_headers), so a changed header changes the flags too. NativeRoot
+    # then compiles erx_lvgl.c (with its view of LVGL, NativeRoot::LVGL_FLAGS) and the
+    # generated ui.txt reader and writer with the program flags, and links them, with the program's entry and liberx's
     # program layer, over liblvgl.a and the caller's archives at task.ld's addresses.
     # call returns NativeRoot#build_task_receipted's program, receipt and inputs, and the
     # archive: a release's packer attributes liblvgl.a whole, under LICENSE with NOTICES
@@ -175,9 +177,10 @@ module Erx
       # headers, which hold what LVGL's LV_STDLIB_CLIB includes, with _BSD_SOURCE, since
       # -std=c17 hides the POSIX functions among them (strnlen), as NativeRoot's libc
       # sources have it.
-      def self.library_flags(root) = [*NativeRoot::CODE_FLAGS, '-isystem', File.join(root, NativeRoot::LIBC_HEADERS), '-D_BSD_SOURCE'].join(' ')
+      def self.library_flags(root) = [*NativeRoot::CODE_FLAGS, '-isystem', File.join(root, NativeRoot.libc_headers(root)), '-D_BSD_SOURCE'].join(' ')
 
       # Where LVGL compiled with flags is kept: a directory of LIBRARY named by their hash.
+      # make_library keeps only the current flags' directory.
       def self.library_directory(root, flags) = File.join(root, LIBRARY, Digest::SHA256.hexdigest(flags)[0, 16])
 
       # archives are the libraries the program links over besides LVGL: musl's libc.a
@@ -210,6 +213,8 @@ module Erx
         flags = self.class.library_flags(@root)
         output = self.class.library_directory(@root, flags)
         archive = File.join(output, 'liblvgl.a')
+        Dir.glob('*', base: File.dirname(output)).reject { |name| name == File.basename(output) }
+           .each { |name| FileUtils.rm_rf(File.join(File.dirname(output), name)) }
         @runner.run(['gmake', "-j#{@jobs}", '-f', File.join(@root, MAKEFILE), "LVGL=#{tree}",
                      "GEN=#{File.join(@root, Generated::OUTPUT)}", "OUT=#{output}", "CC=#{@compiler}",
                      "AR=#{File.join(File.dirname(@compiler), 'llvm-ar')}", "FLAGS=#{flags}", 'SANITIZE=', archive],

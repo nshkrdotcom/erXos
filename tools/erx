@@ -868,9 +868,9 @@ module Erx
       require_relative 'lib/erx/libcrypto'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       compiler = host_environment(runner: runner).fetch('ERX_CLANG')
-      sysroot = Libcrypto.sysroot(root: ROOT, runner: runner, compiler: compiler, jobs: jobs)
+      headers = Libcrypto.headers(root: ROOT, runner: runner, compiler: compiler, jobs: jobs)
       Libcrypto.new(root: ROOT, runner: runner, compiler: compiler)
-             .build(directory: File.join(ROOT, Libcrypto::BASE, 'obj'), sysroot: sysroot, jobs: jobs)
+             .build(directory: File.join(ROOT, Libcrypto::BASE, 'obj'), headers: headers, jobs: jobs)
     end
 
     # The hosted runtime and the release it boots, both of which `make check-runtime-hosted` reads.

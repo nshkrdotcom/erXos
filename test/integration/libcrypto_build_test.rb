@@ -28,7 +28,7 @@ class LibcryptoBuildTest < Minitest::Test
     # Resolved as `tools/erx build openssl` resolves it, so the two share one configuration.
     @compiler = File.realpath(ENV.fetch('ERX_CLANG') { flunk 'set ERX_CLANG to the installed LLVM clang' })
     @runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
-    @sysroot = Erx::Libcrypto.sysroot(root: ROOT, runner: @runner, compiler: @compiler, jobs: JOBS)
+    @headers = Erx::Libcrypto.headers(root: ROOT, runner: @runner, compiler: @compiler, jobs: JOBS)
   end
 
   def libcrypto(source: File.join(ROOT, 'openssl'))
@@ -48,7 +48,7 @@ class LibcryptoBuildTest < Minitest::Test
   end
 
   def test_libcrypto_builds_for_erxos_and_keeps_its_imports
-    archive = libcrypto.build(directory: File.join(ROOT, Erx::Libcrypto::BASE, 'obj'), sysroot: @sysroot, jobs: JOBS)
+    archive = libcrypto.build(directory: File.join(ROOT, Erx::Libcrypto::BASE, 'obj'), headers: @headers, jobs: JOBS)
 
     assert_equal File.join(ROOT, Erx::Libcrypto::BASE, 'obj/libcrypto.a'), archive
     assert_operator File.size(archive), :>, 1024 * 1024
@@ -56,7 +56,7 @@ class LibcryptoBuildTest < Minitest::Test
 
   def test_configure_fails_on_a_tree_without_a_build_info_it_reads
     with_seeded_copy(->(source) { File.delete(File.join(source, 'ssl/build.info')) }) do |source, objects|
-      error = assert_raises(Erx::Error) { libcrypto(source: source).build(directory: objects, sysroot: @sysroot, jobs: JOBS) }
+      error = assert_raises(Erx::Error) { libcrypto(source: source).build(directory: objects, headers: @headers, jobs: JOBS) }
 
       assert_match(/Configure failed/, error.message)
       log = error.message[/log: (\S+)\z/, 1]
@@ -73,7 +73,7 @@ class LibcryptoBuildTest < Minitest::Test
     end
     with_seeded_copy(unedit) do |source, objects|
       error = assert_raises(Erx::Error) do
-        libcrypto(source: source).build(directory: objects, sysroot: @sysroot, jobs: JOBS, target: RAND_UNIX_OBJECT)
+        libcrypto(source: source).build(directory: objects, headers: @headers, jobs: JOBS, target: RAND_UNIX_OBJECT)
       end
 
       assert_includes error.message, 'libdefault-lib-rand_unix.o references getentropy (w)'

@@ -4,7 +4,6 @@
 
 require 'fileutils'
 require 'open3'
-require_relative 'build_memo'
 require_relative 'compiler_rt'
 require_relative 'domain_image_apps'
 require_relative 'error'
@@ -39,15 +38,19 @@ module Erx
     # at too. libbeam.a holds no static NIF table, so each image's link names its own: the
     # system image system_table, OTP's driver_tab.o, which names no NIF of DomainImageApps,
     # and a domain's image crypto's. A list that named no table would fail the link on an
-    # undefined symbol, and one that named two on a duplicate.
-    Built = Data.define(:otp_archives, :libc, :builtins, :otp, :openssl, :system_table, :crypto) do
+    # undefined symbol, and one that named two on a duplicate. headers is the sysroot's
+    # header tree (Musl#merge_headers), which the BeamAsm build compiles against too.
+    Built = Data.define(:otp_archives, :libc, :builtins, :otp, :openssl, :system_table, :crypto, :headers) do
       def system_archives = [system_table, *otp_archives, libc, builtins]
       def domain_archives = [*crypto.archives, *otp_archives, libc, builtins]
     end
 
+    # What build_sysroot made: musl's libc.a, compiler-rt's builtins and musl's header tree.
+    Sysroot = Data.define(:libc, :builtins, :headers)
+
     BASE = 'build/runtime/native'
     # The musl sysroot, which the BeamAsm build (NativeJitRuntime) shares.
-    SYSROOT = "#{BASE}/sysroot".freeze
+    SYSROOT = NativeRoot::LIBC_SYSROOT
 
     def self.output(root:) = flavour_output(root: root, base: BASE, flavour: FLAVOR)
 
@@ -80,7 +83,8 @@ module Erx
       FileUtils.rm_f(self.class.record_path(@output))
       # Also brings build/gen up to date, which the steps below read.
       digest = self.class.source_digest(root: @root, generated: @generated)
-      libc, builtins = build_sysroot(jobs: jobs)
+      sysroot = build_sysroot(jobs: jobs)
+      @headers = sysroot.headers
       @openssl = build_openssl(jobs: jobs)
       build_liberx
       copy_sources
@@ -92,9 +96,9 @@ module Erx
       check_imports
       File.write(self.class.record_path(@output), digest)
       Built.new(otp_archives: [File.join(@output.objects, 'erl_main.o'), File.join(File.dirname(@output.beam), 'libbeam.a'),
-                       *RuntimeSeam.libraries(@output, target: TARGET)].freeze, libc: libc, builtins: builtins,
+                       *RuntimeSeam.libraries(@output, target: TARGET)].freeze, libc: sysroot.libc, builtins: sysroot.builtins,
                 otp: @output.root, openssl: @openssl, system_table: File.join(@output.objects, 'driver_tab.o'),
-                crypto: crypto)
+                crypto: crypto, headers: @headers)
     end
 
     # Takes away everything build made, so the next build reruns musl's and OTP's own.
@@ -103,12 +107,12 @@ module Erx
     private
 
     # Builds musl and compiler-rt's builtins and fills the sysroot with musl's headers and the
-    # libraries the link names; returns libc.a and the builtins archive.
+    # libraries the link names; returns them as a Sysroot.
     def build_sysroot(jobs:)
       musl = Musl.new(root: @root, runner: @runner, compiler: @compiler)
       directory = File.join(@base, 'musl')
       libc = musl.build(directory: directory, jobs: jobs)
-      musl.merge_headers(directory: directory, into: File.join(@root, NativeRoot::LIBC_HEADERS))
+      headers = musl.merge_headers(directory: directory, sysroot: @sysroot)
       lib = File.join(@sysroot, 'lib')
       FileUtils.mkdir_p(lib)
       FileUtils.cp(libc, lib)
@@ -117,7 +121,7 @@ module Erx
       %w[libsigma0.a libl4sys.p.a].each { |name| FileUtils.cp(@fiasco.user_library(name), lib) }
       FileUtils.cp(@fiasco.boot_core_archive, File.join(lib, 'libboot_cores.a'))
       EMPTY_LIBRARIES.each { |name| archive(File.join(lib, "lib#{name}.a"), []) }
-      [libc, builtins]
+      Sysroot.new(libc: libc, builtins: builtins, headers: headers)
     end
 
     # OpenSSL's libcrypto.a, built against this build's musl (Libcrypto), and the directory
@@ -128,7 +132,7 @@ module Erx
     def build_openssl(jobs:)
       directory = File.join(@base, 'openssl')
       archive = Libcrypto.new(root: @root, runner: @runner, compiler: @compiler)
-                         .build(directory: File.join(directory, 'obj'), sysroot: @sysroot, jobs: jobs)
+                         .build(directory: File.join(directory, 'obj'), headers: @headers, jobs: jobs)
       prefix = File.join(directory, 'prefix')
       FileUtils.mkdir_p(File.join(prefix, 'lib'))
       [File.join(@root, 'openssl/include/'), File.join(directory, 'obj/include/')].each do |headers|
@@ -206,6 +210,7 @@ module Erx
         'ERX_LLD' => @linker,
         'ERX_LLVM_BIN' => @tools,
         'ERX_SYSROOT' => @sysroot,
+        'ERX_LIBC_INCLUDE' => @headers,
         'ERX_TREE' => @root,
         'ERX_GEN' => File.join(@root, Generated::OUTPUT),
         'ERX_OPENSSL' => @openssl,
@@ -222,7 +227,7 @@ module Erx
     def target_flags
       text = File.read(File.join(@root, 'otp', XCOMP_FILE))
       flags = text[/^ERX_TARGET_FLAGS="([^"]*)"$/, 1] or raise Error, "#{XCOMP_FILE} sets no ERX_TARGET_FLAGS"
-      values = { 'ERX_SYSROOT' => @sysroot, 'ERX_CLANG_INCLUDE' => File.join(resource_directory, 'include'), 'ERX_TREE' => @root }
+      values = { 'ERX_LIBC_INCLUDE' => @headers, 'ERX_CLANG_INCLUDE' => File.join(resource_directory, 'include'), 'ERX_TREE' => @root }
       flags.gsub(/\$([A-Z_]+)/) do
         name = Regexp.last_match(1)
         values.fetch(name) { raise Error, "ERX_TARGET_FLAGS in #{XCOMP_FILE} names $#{name}, which the build does not expand" }
@@ -242,10 +247,11 @@ module Erx
       end
     end
 
-    # The configure stamp records the sysroot where the hosted build records its SDK,
-    # with its headers by content: OTP's make dependencies leave out system headers, so
-    # a changed musl or ABI header (an errno or signal number) starts the copy again
-    # rather than leaving objects compiled against the old one.
-    def sdk_root = [@sysroot, BuildMemo.tree_digest(File.join(@root, NativeRoot::LIBC_HEADERS))].join("\n")
+    # The configure stamp records the sysroot where the hosted build records its SDK, and
+    # its header tree, whose name follows its content (Musl#merge_headers): OTP's make
+    # dependencies leave out system headers, so a changed musl or ABI header (an errno or
+    # signal number) starts the copy again rather than leaving objects compiled against
+    # the old one.
+    def sdk_root = [@sysroot, @headers].join("\n")
   end
 end
