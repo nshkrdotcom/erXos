@@ -806,10 +806,10 @@ holds one ends the program (Credit, below).
 | Request | Meaning | Reply |
 | --- | --- | --- |
 | `{spawn, Path, Start}` | start a command: `Path` is resolved through the program's namespace to an executable with `rx` ([What a program can start](#what-a-program-can-start)); `Start` is the startup message's map without `pid`, `ppid`, `pgid`, `uid`, `data_area` and `image`, each descriptor written `{pipe, End}`, `{socketpair, End, End}`, `{open, Open}`, `{dup, Fd}` or `null`, naming ends and opens the starter holds | `{ok, Pid}`; `{error, eperm}` without the right to start commands; `{error, Errno}` |
-| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigtstp`, `sigttin`, `sigttou` and `sigcont`, which belong to the session's job control |
+| `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigttin`, `sigttou` and `sigcont`, and for `sigtstp` to any target but the requester, which belong to the session's job control ([The terminal](#the-terminal)) |
 | `{probe, Target}` | `kill` with signal 0: check that `Target`, as `kill` names it, exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `{error, Errno}` otherwise, `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
 | `{waited, Pid, N}` | the program's `wait`, `waitpid` or `waitid` returned the state of its child `Pid` whose count of state changes is `N`, and a `waitid` with `WNOWAIT` sends none ([A program's end](#a-programs-end)); the event executor sends it too for an exit that `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
-| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr`, which stops the program's whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
+| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr` and `SIGTSTP` that the program raises for itself, each of which stops the program's whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
 | `{local, Op}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{seek, Open, Offset, Whence}` on the open's description, `{setfl, Open, Flags}` of the description's status flags, `{chdir, Path}`, and `{access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
 | `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
@@ -1805,7 +1805,7 @@ each has one owner:
 | --- | --- | --- |
 | a fault | the kernel, which stops the thread and posts the record, and the port driver, which ends the program ([A program's end](#a-programs-end)) | nothing: no handler runs, whatever `sigaction` recorded |
 | `SIGKILL` from another, and any end of the image | the target's handler, which stops the anchor | nothing |
-| stopping and continuing | the session's job control, which pauses and resumes the image ([Job control](#job-control)) | `SIGCONT` after a continue; a program's own `SIGSTOP` fails with `EPERM`; `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded in the first tier, as POSIX discards them for a member of an orphaned process group, and in the second tier pause the program through its handler when its process group is not orphaned ([The terminal](#the-terminal)) |
+| stopping and continuing | the session's job control, which pauses and resumes the image ([Job control](#job-control)) | `SIGCONT` after a continue; a program's own `SIGSTOP` fails with `EPERM`; in the first tier, a `SIGTSTP` the program raises for itself under its default action stops its whole job through its handler, as `Ctrl-Z` does, and `SIGTTIN` and `SIGTTOU` under their default action are discarded, as POSIX discards them for a member of an orphaned process group; in the second tier the three pause the program through its handler when its process group is not orphaned ([The terminal](#the-terminal)) |
 
 **State.** `liberx` keeps the dispositions, the process's pending set, and
 for each thread, in the order the threads were created, a pending set for
@@ -1923,12 +1923,13 @@ function of the state and the signal, by the first rule that applies:
    process or for its thread, even when its action is to ignore it, since
    the action may change before it is unblocked (as on Linux), so
    `sigwait` for `SIGCHLD` works under its default action;
-3. a signal whose action is to ignore it is dropped;
+3. a signal whose action is to ignore it is dropped, and so, in the first
+   tier, is `SIGTTIN` or `SIGTTOU` under its default action;
 4. a default action that ends the program runs at once on the raising
    thread, as `erx_space_stop(ERX_CAP_SELF, ERX_EXIT_SIGNAL + N)` for
    the signal numbered `N`, which writes no frame and interrupts nothing;
-5. a caught signal, and in the second tier a stop signal under its default
-   action, stays pending, in the process's set or its thread's, and the
+5. a caught signal, and a stop signal under its default action, which in
+   the first tier can only be `SIGTSTP`, stays pending, in the process's set or its thread's, and the
    thread it goes to is woken: its target, or else the first thread, in
    creation order, that does not block it; for a stop signal that thread
    runs `liberx`'s stop action where it would run a handler ([The
@@ -2420,6 +2421,20 @@ for a write under `TOSTOP`. An Erlang command, which has no signal
 state, stops its job the same way
 ([design-shell.md](design-shell.md#interfaces)).
 
+**Stopping itself.** A first-tier program's own `SIGTSTP` takes the same
+path, as a program of a job of FreeBSD's `sh` stops when it raises it.
+`raise(SIGTSTP)`, and `kill` of it to the program's own process id, with
+a `pid` of 0 or of minus its group, reach the program alone, since the
+handler refuses `sigtstp` to every other target, and under its default
+action the thread that takes it runs `liberx`'s stop action, which sends
+`{stop, sigtstp}`; the handler asks the job table for the stop `Ctrl-Z`
+makes and replies once `fg` or `bg` continues the job. So the whole job
+stops, its other programs with it, `jobs` shows it stopped, and the call
+returns only once the job is continued: a full-screen program that calls
+`endwin` and then `kill(0, SIGTSTP)`, as `less` does, redraws only after
+`fg`. An Erlang command does the same with `erx_cmd:stop/1`
+([design-shell.md](design-shell.md#job-control)).
+
 **Status: `VSTATUS` and `SIGINFO`.** `termios` has FreeBSD's `VSTATUS`
 character, `^T` by default, and its `NOKERNINFO` flag, clear by default.
 With `ISIG`, `ICANON` and `IEXTEN` set, the line discipline turns the
@@ -2518,9 +2533,9 @@ The session's own job control pauses its programs beneath this with its
 own cause, which such a `SIGCONT` lifts too, and its `fg` and `bg`
 continue a job whatever stopped its programs ([Job
 control](#job-control)). A program that never calls these keeps the first
-tier's rule: its job is one group and one session, which counts as
-orphaned, so no `SIGTSTP`, `SIGTTIN` or `SIGTTOU` it raises stops it,
-while a background `tcsetattr` stops its job, as above.
+tier's rule: its job is one group and one session, a `SIGTSTP` it raises
+for itself and a background `tcsetattr` stop the whole job, and a
+`SIGTTIN` or `SIGTTOU` it raises is discarded, as above.
 
 **Full-screen programs.** A program such as `less` or `hexedit` goes raw
 and draws with control sequences, which reach the terminal as it wrote them.
@@ -3210,10 +3225,11 @@ define it.
   its children, and fail with `ESRCH` for any other process; a program's
   children join its job. The group is orphaned, as POSIX defines it, since
   each member's parent is a member or the command server, which is in no
-  job's session, so `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default
-  action are discarded. The terminal alone takes the job as FreeBSD's
-  takes a job of `sh`, which is not orphaned, so a background `tcsetattr`
-  stops the job ([The terminal](#the-terminal)). `waitpid` with a `pid`
+  job's session, so `SIGTTIN` and `SIGTTOU` under their default action
+  are discarded. The terminal and the program's own `SIGTSTP` take the
+  job as FreeBSD takes a job of `sh`, which is not orphaned, so a
+  background `tcsetattr`, `raise(SIGTSTP)` and `kill(0, SIGTSTP)` stop
+  the whole job ([The terminal](#the-terminal)). `waitpid` with a `pid`
   of 0, or of minus the
   caller's group, waits for any child, since every child is in the caller's
   group. `kill` with a `pid` of 0, of minus the caller's group or of -1
@@ -3430,7 +3446,7 @@ test:
 | `system` and `popen` run rc, not sh | erXos ships no POSIX shell |
 | `mprotect` that gives reserved memory access fails with `ENOMEM` when the program's budget cannot cover the pages, and charges at any access, read-only included, where Linux charges a private mapping only when it becomes writable and POSIX names no out-of-memory error for `mprotect` | a readable private page is a real page from the program's reserve, since the kernel shares no zero page, and committed memory never faults for lack of memory (K6); Linux and QNX both allocate at the `mprotect` and refuse with `ENOMEM` |
 | a handler for `SIGSEGV`, `SIGBUS`, `SIGILL`, `SIGTRAP` or `SIGSYS` runs for a signal raised with `raise` or `kill`, never for a fault, which ends the program | a fault ends only the faulting space, from the kernel's record ([A program's end](#a-programs-end)) |
-| in the first tier, a program cannot stop or continue itself or another: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, and `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, and a job's process group is orphaned, for whose members POSIX discards those three; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
+| in the first tier, a program stops only its whole job, and continues nothing: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, `kill` of `SIGTSTP` to another process fails with `EPERM`, a `SIGTSTP` it raises for itself under its default action stops its whole job, and `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, which stops a job whole; a job's process group is orphaned, for whose members POSIX discards `SIGTTIN` and `SIGTTOU`, while the terminal and `SIGTSTP` take the job as FreeBSD takes a job of `sh`; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
 | in the first tier, a job is one process group and session that no program can leave | process groups and sessions that programs create come with pseudo-terminals, in the second tier |
 | in the first tier, `tcsetattr` with `TOSTOP` fails with `EINVAL`, and a background job's write goes through | `TOSTOP`'s rules are about process groups and `SIGTTOU`, which come in the second tier, where POSIX's rules apply |
 | `kill` of a process that is neither the caller's child nor in a `signal` right's scope it holds fails with `ESRCH`, even when it exists | a process id grants nothing, and the error does not say whether it exists |
@@ -3794,7 +3810,7 @@ terminal cases.
   blocked, which is made at once, where a `liberx` that ignores the
   signal state fails it; `cat` typed together with a line in one
   write of the master, after which `cat` reads that line and the shell
-  never runs it, which a console whose read goes past a line's end
+  never runs it, which a console that reads more than one byte for an ask
   fails; a program whose frame is outside the
   grammar, which ends with `SIGSYS`; and each row of the exit status
   table.
@@ -3837,7 +3853,13 @@ terminal cases.
   has ended succeeds until `waitpid` reaps it and fails with `ESRCH`
   after, when the child stops counting against `children`; `kill` of
   `SIGSTOP`, `SIGTSTP` or `SIGCONT` to a child fails with `EPERM`, and
-  `raise(SIGTSTP)` under its default action returns with nothing done;
+  `raise(SIGTTIN)` under its default action returns with nothing done;
+  `kill(0, SIGTSTP)` and `raise(SIGTSTP)` under their default action, in
+  a foreground program with a running child, stop the whole job, which
+  `jobs` shows stopped with the child, and return only after `fg`,
+  seeded with a handler that answers `{stop, sigtstp}` at once, as for a
+  discarded signal, which the test catches when the call returns before
+  the job is continued;
   `raise(SIGABRT)` ends the program with status `sigabrt`; a program whose
   last worker calls `pthread_exit` ends with status 0; `xargs` with more
   than 4,096 short arguments runs; a session whose process ids are spent,
