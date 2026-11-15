@@ -899,6 +899,50 @@ class ManifestDomainsTest < Minitest::Test
     assert_raises(Erx::ABI::SchemaError) { admit(@source + "signer dev\n  key \"#{'a' * 32}\"\n") }
   end
 
+  # The development package key is the build's, never a row (docs/design-packaging.md,
+  # "The SDK"): a source row named development is refused, the context carries the key
+  # only in a development build, as an Ed25519 public key of signer_key_bytes, and a
+  # manifest with no apps row, whose machine takes no packages, packs none.
+  def test_the_development_key_comes_from_a_development_build_alone
+    refused(Erx::Manifest::Invalid, 19, 'signer.name', @source + "signer development\n  key hex:#{'ab' * 32}\n")
+    arguments = ManifestContextFixture.domain_arguments(@codec).merge(platform: @platform)
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest::Context.new(**arguments, build_kind: 'release', development_key: "\x01".b * 32)
+    end
+    assert_equal %w[context development_key], [error.property, error.field]
+    @context = Erx::Manifest::Context.new(**arguments, development_key: "\x01".b * 31)
+    refused(Erx::Manifest::Invalid, 19, 'context.development_key', with_room(@source + self.class.apps, 8))
+    @context = Erx::Manifest::Context.new(**arguments, development_key: "\x01".b * 32)
+    assert_equal 0, @codec.open('manifest', admit.bytes).count('development_key')
+    assert_equal false, admit.report.fetch('development_key')
+  end
+
+  # The manifest packs the apps row, its services, the package and signer rows and the
+  # development key as records the machine reads (abi/manifest.txt), each as the check
+  # admitted it; a manifest with none of them packs empty tables.
+  def test_the_apps_package_and_signer_rows_are_packed
+    with_packages('clock' => 4096, 'quotes' => 4096)
+    arguments = ManifestContextFixture.domain_arguments(@codec)
+    @context = Erx::Manifest::Context.new(**arguments.merge(platform: @platform, artifacts: @context.artifacts,
+                                                            development_key: "\x07".b * 32))
+    source = with_room(@source + self.class.apps(memory: 1 << 20, max: 2) + self.class.package('quotes') +
+                       self.class.package('clock', enable: 'YES') + "signer ops\n  key hex:#{'cd' * 32}\n", 2)
+    admitted = admit(source)
+    assert_equal true, admitted.report.fetch('development_key')
+    view = @codec.open('manifest', admitted.bytes)
+    assert_equal [{ 'memory' => 1 << 20, 'max' => 2, 'reserved' => 0 }],
+                 view.each('apps').map { |row| row.except('services') }
+    assert_equal 0, view.header.fetch('app_services').fetch('count')
+    assert_equal [['clock', 1, "\xab".b * 32], ['quotes', 0, "\xab".b * 32]],
+                 view.each('packages').map { |row| [view.string(row.fetch('name')), row.fetch('flags'), row.fetch('sha256')] }
+    assert_equal [['ops', "\xcd".b * 32]], view.each('signers').map { |row| [view.string(row.fetch('name')), row.fetch('key')] }
+    assert_equal ["\x07".b * 32], view.each('development_key').map { |row| row.fetch('key') }
+
+    @context = Erx::Manifest::Context.new(**arguments.merge(platform: @platform))
+    plain = @codec.open('manifest', admit.bytes)
+    assert_equal [0] * 5, %w[apps app_services packages signers development_key].map { |name| plain.header.fetch(name).fetch('count') }
+  end
+
   # The context with a package artifact for each name => declared memory of packages,
   # as Erx::ImageApps names them.
   def with_packages(packages)

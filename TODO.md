@@ -24,19 +24,23 @@ it; git history is the record of completed work.
   and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and of clause 5
   binds each `package` row to the package artifact the build's file check described (`Erx::ImageApps`,
   `AppPack.describe`), under the row's name, counts the rows within `max` and the enabled ones' declared memory
-  within the `apps` budget, and lists them with their header SHA-256 in the build record. What remains, each with its seeded violation: the rows derived from `apps` (the app
+  within the `apps` budget, and lists them with their header SHA-256 in the build record. The manifest packs the
+  `apps`, `package` and `signer` rows and the build context's development key as records
+  (`abi/manifest.txt`), which `erx_pkg_manifest:system_config/1` reads. What remains, each with its seeded violation: the rows derived from `apps` (the app
   template, booting the domain release's `app` script with
   `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
   `erx_app` depends on `erx_session`,
   its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
   storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
+  its facet rows, the `packages` and `apps` rows), which wait for the
+  storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
   from the start table, and the app session below; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; the rest of clause 5: the enabled packages' session outer budgets in
   the `apps` budget sum, which wait for the app template's limits, an enabled row meeting property 17's
   display and planning clauses, and admission on the host, which needs the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
   facet-row indices, the manifest's reserved names and the image's package names) read from the packed
-  records, one reader for the machine and the packer, which then owns the types `erx_app_admit` declares
-  for them; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
+  records through `erx_pkg_manifest`, which then owns the types `erx_app_admit` declares
+  for them, and which the packer's host check runs on the manifest it packs; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
   scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
   the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
   leaving it out.
@@ -2663,17 +2667,17 @@ it; git history is the record of completed work.
   shows only as the runner's log path. Fix: add each with the SDK package.
 * [High] apps, `tools/erx pack --app DIR [--enable NAME]` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
   `Erx::ImageApps` plans what an image takes for its packages (the file at the release's `pkg/NAME.app`, the
-  `package` rows bound to artifacts the host file check described, and the `development` signer row from the
-  builder's development package key) and the manifest check binds the rows, but nothing calls it yet. What
+  `package` rows bound to artifacts the host file check described) and the manifest check binds and packs
+  the rows, but nothing calls it yet. What
   remains: the command, which packs DIR with the in-tree packer (`AppPack.pack` with an SDK exported into the
   build tree, until the SDK's `host/bin` exports `erx-app`) or takes a package file as given; `ProductionImage`
   taking the plan into `assemble` (the entries in the domain release with a receipt each, the artifacts merged
   into `ProductionImage.artifacts`, the rows appended to the image's copy of the manifest source); the
   package's license judged as an archive's (step 4 of "Adding an app to an image"), which needs a receipt kind
-  for a package that is not the tree's; the `development` signer added to every development image whose
-  manifest has an `apps` row, not only to those `pack --app` builds; `--signer FILE`; the packed records of
-  `apps`, `package` and `signer` in `abi/manifest.txt`, without which the machine sees none of the rows (the
-  package process at boot reads them); and the development manifests' `apps` row.
+  for a package that is not the tree's; every development build (`Pack`'s `Manifest::Context`) handing the
+  public half of the builder's `Erx::PackageKey` as the context's `development_key`, which the check packs
+  beside an `apps` row, not only those `pack --app` builds; `--signer FILE`; and the development manifests'
+  `apps` row.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on

@@ -18,8 +18,9 @@ require_relative '../fixtures/manifest_context'
 # A package added to an image (docs/design-packaging.md, "Adding an app to an image",
 # Erx::ImageApps): examples/dashboard packed with an SDK exported from the tree and a
 # development package key of the test's own, described by the machine's file check on the
-# host, and planned into the image's file at pkg/dashboard.app and its package and
-# development signer rows, which the manifest check binds to the package's artifact.
+# host, and planned into the image's file at pkg/dashboard.app and its package row, which
+# the manifest check binds to the package's artifact, beside the development key the
+# build context carries.
 class ImageAppsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   DASHBOARD = File.join(ROOT, 'examples/dashboard')
@@ -73,16 +74,16 @@ class ImageAppsTest < Minitest::Test
                  [dashboard.name, dashboard.memory, dashboard.sha256]
 
     key = self.class.signer.public_key
-    plan = Erx::ImageApps.plan([dashboard], enable: %w[dashboard], development_key: key)
+    plan = Erx::ImageApps.plan([dashboard], enable: %w[dashboard])
     assert_equal({ 'pkg/dashboard.app' => dashboard.path }, plan.entries)
-    assert_equal "package dashboard\n  input @artifact.package-dashboard\n  enable YES\n" \
-                 "signer development\n  key hex:#{key.unpack1('H*')}\n", plan.rows
+    assert_equal "package dashboard\n  input @artifact.package-dashboard\n  enable YES\n", plan.rows
 
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
     arguments = ManifestContextFixture.domain_arguments(codec)
     context = Erx::Manifest::Context.new(**arguments.merge(platform: platform,
-                                                           artifacts: arguments.fetch(:artifacts).merge(plan.artifacts)))
+                                                           artifacts: arguments.fetch(:artifacts).merge(plan.artifacts),
+                                                           development_key: key))
     # The development manifest with an apps row of one app and the room it takes: a
     # domain in max_domains and its memory in root_memory (property 4).
     board = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
@@ -91,25 +92,22 @@ class ImageAppsTest < Minitest::Test
                                    context: context, planner: PLANS_EVERYTHING)
     assert_equal [{ 'name' => 'dashboard', 'sha256' => dashboard.sha256.unpack1('H*'), 'enabled' => true }],
                  admitted.report.fetch('packages')
-    assert_equal %w[development], admitted.report.fetch('signers')
+    assert_equal [[], true], admitted.report.values_at('signers', 'development_key')
   end
 
-  # The same package and key give the same plan, whatever order the packages come in:
+  # The same packages give the same plan, whatever order the packages come in:
   # what the image takes for them follows from its inputs alone.
   def test_the_plan_follows_from_its_inputs_alone
-    key = "\x01".b * 32
-    one = Erx::ImageApps.plan([package('quotes'), package('clock')], enable: %w[clock], development_key: key)
-    assert_equal one, Erx::ImageApps.plan([package('clock'), package('quotes')], enable: %w[clock], development_key: key)
+    one = Erx::ImageApps.plan([package('quotes'), package('clock')], enable: %w[clock])
+    assert_equal one, Erx::ImageApps.plan([package('clock'), package('quotes')], enable: %w[clock])
     assert_equal %w[pkg/clock.app pkg/quotes.app], one.entries.keys
-    assert_match(/\Apackage clock\n.*  enable YES\npackage quotes\n.*  enable NO\nsigner development\n/m, one.rows)
-    refute_match(/signer/, Erx::ImageApps.plan([package('clock')], enable: [], development_key: nil).rows,
-                 'an image that is not a development one trusts no development key')
+    assert_match(/\Apackage clock\n.*  enable YES\npackage quotes\n.*  enable NO\n\z/m, one.rows)
   end
 
   def test_a_plan_refuses_two_packages_of_a_name_and_an_enable_of_none
-    error = assert_raises(Erx::Error) { Erx::ImageApps.plan([package('clock'), package('clock')], enable: [], development_key: nil) }
+    error = assert_raises(Erx::Error) { Erx::ImageApps.plan([package('clock'), package('clock')], enable: []) }
     assert_match(/two packages of the image are named clock/, error.message)
-    error = assert_raises(Erx::Error) { Erx::ImageApps.plan([package('clock')], enable: %w[doom], development_key: nil) }
+    error = assert_raises(Erx::Error) { Erx::ImageApps.plan([package('clock')], enable: %w[doom]) }
     assert_match(/--enable names doom, which no added package is/, error.message)
   end
 

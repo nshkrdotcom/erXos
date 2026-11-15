@@ -20,11 +20,15 @@ module Erx
   # start row for that template, left off and with its own restart intensity, and the
   # display_domain suite's manifest with its client's grant of the display stating each
   # parameter of the windows interface a facet row may, so the facet table holds parameter
-  # rows.
+  # rows, and the configured domains' with an apps row offering one service, two packages,
+  # a signer and the build's development key, so each of those tables holds rows.
   module ManifestSeeds
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     START_ROW = "start system\n  enable NO\n  restarts 3\n  restart_period_s 60\n"
+    PACKAGE_ROWS = "service shared\n  server system\n  interface files\n" \
+                   "apps\n  memory 1048576\n  max 2\n  services shared\npackage clock\n  input @artifact.package-clock\n  enable YES\n" \
+                   "package quotes\n  input @artifact.package-quotes\nsigner ops\n  key hex:cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
 
     module_function
@@ -56,6 +60,7 @@ module Erx
                                                      'windows-grant' => windows_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
+                                                     'packages' => packages(source, codec, platform),
                                                      'boot-timeout-zero' => boot_timeout(codec, domains.bytes, 0))
     end
 
@@ -69,6 +74,20 @@ module Erx
       context = Manifest::Context.new(**arguments, platform: platform_of(repository, 'qemu-virt'))
       planner = ->(view) { %w[domains introductions sessions].to_h { |key| [key, view.fetch(key == 'domains' ? 'order' : key).map { 0 }] } }
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
+    end
+
+    # The configured domains' manifest with PACKAGE_ROWS, room for the apps row in
+    # max_domains and root_memory, and a development key.
+    def packages(source, codec, platform)
+      arguments = ManifestContextFixture.domain_arguments(codec)
+      artifacts = %w[clock quotes].to_h do |name|
+        ["package-#{name}", { 'kind' => 'package', 'name' => name, 'memory' => 4096, 'sha256' => 'ab' * 32 }]
+      end
+      context = Manifest::Context.new(**arguments, platform: platform, artifacts: arguments.fetch(:artifacts).merge(artifacts),
+                                                   development_key: "\x07".b * 32)
+      roomy = ManifestContextFixture.domain_source(source).sub(/^(  max_domains )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 2}" }
+                                                         .sub(/^(  root_memory )(\d+)$/) { "#{Regexp.last_match(1)}#{Regexp.last_match(2).to_i + 1_048_576}" }
+      Manifest.admit(source: roomy + PACKAGE_ROWS, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

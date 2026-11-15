@@ -1877,12 +1877,12 @@ these exact offsets and sizes.
 
 ### Machine header
 
-The header is 400 bytes with alignment 8. Its fields are:
+The header is 440 bytes with alignment 8. Its fields are:
 
 | Offset | Field | Type and meaning |
 | --- | --- | --- |
 | 0, 4, 6 | `magic`, `version`, `flags` | `u32`, `u16`, `u16`; magic/version above; development at flag bit 0, partial boot at bit 1, the UART console line secure at bit 2 and the host-link line secure at bit 3, all other bits zero |
-| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 400 |
+| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 440 |
 | 16, 24, 32, 40 | `host`, `console`, `hostlink`, `platform` | four string references; system identifier, absolute device-tree path, optional device-tree path and platform identifier |
 | 48, 56, 64 | `root_memory`, `system_baseline`, `system_reservation` | three `u64` byte counts; the root assumption, configured baseline and checked admission reservation |
 | 72, 120 | `system_share`, `users_share` | two shares, for `system` and `users` |
@@ -1895,6 +1895,9 @@ The header is 400 bytes with alignment 8. Its fields are:
 | 376 | `sessions` | `span` of the session templates |
 | 384 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
 | 392 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
+| 400, 408 | `apps`, `app_services` | `span` of the `apps` row ([design-packaging.md](design-packaging.md#the-apps-row)), at most one, and of the service indices its `services` span partitions |
+| 416, 424 | `packages`, `signers` | `span` of the image's package rows, at most `apps_max_limit`, and of the `signer` rows ([design-packaging.md](design-packaging.md#where-a-package-lies)) |
+| 432 | `development_key` | `span` of the build's development package key ([design-packaging.md](design-packaging.md#the-sdk)), at most one; in a development manifest only |
 
 The spans at 208 through 360 are `principals`, `domains`, `limits`,
 `runtime_limits`, `lane_classes`, `units`, `devices`, `windows`,
@@ -1902,7 +1905,8 @@ The spans at 208 through 360 are `principals`, `domains`, `limits`,
 `introductions`, `images`, `extents`, `boot_order`, `liveness`,
 `shell_principals`, `partial_boot` and `strings`, at offsets 208, 216
 and so on. The tables are packed in that order, with `sessions` after
-`domains`, `starts` after `partial_boot` and `displays` after `starts`, each at its first required
+`domains`, `starts` after `partial_boot`, `displays` after `starts`, and `apps`,
+`app_services`, `packages`, `signers` and `development_key` after `displays`, each at its first required
 alignment boundary after the preceding table; `strings` comes last, and its span's count is bytes.
 
 `root_memory` is nonzero and page-aligned. Table capacities are 1 through
@@ -2216,6 +2220,11 @@ the kernel watchdog's period and cannot extend its deadline.
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
 | start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
 | display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
+| apps row, 24 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: reserved u32`; `16: services span` (of `app_services`) |
+| app service, 4 | `0: service u32` (a service index) |
+| package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
+| signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |
+| development key, 32 | `0: key u8[signer_key_bytes]`, an Ed25519 public key |
 
 Image format 1 denotes EROFS protected by the storage contract's
 dm-verity version 1 tree; hash algorithm 1 is SHA-256. Salt length is

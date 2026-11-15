@@ -1130,7 +1130,13 @@ A development image also trusts, as its `development` signer, the public
 half of the development package key of the host that builds it, the key
 with which that host's packer signs by default, so packages the image's
 builder packs install on it and no other developer's development key is
-trusted.
+trusted. The key is no `signer` row: the build hands it to the manifest
+check as a field of its context, which admits it only when the build
+kind is development and packs it as the manifest's `development_key`
+record, which the reader accepts in a development manifest alone. A
+source row naming `development` as a signer is refused, so no board
+source or added row stands in for the builder's key, and a release image
+carries none.
 
 `--signer FILE` adds a `signer` row, so a deployer's machine trusts the
 deployer's own key for packages installed later. The board's manifest
@@ -1631,10 +1637,11 @@ its sessions at `[domains, Id]`, as any row's and any session's.
 **Manifest rows**: `apps`, as in [The `apps` row](#the-apps-row);
 `package`, with `input` naming the package's artifact and `enable`,
 whose header hash the packer records; `signer`, with `key`, written
-`hex:` and 64 hexadecimal digits. Their packed records and the readers'
-bounds are in `abi/manifest.txt`, with the limits `apps_max_limit`,
+`hex:` and 64 hexadecimal digits, under any name but `development`. Their packed records, the
+`development_key` record and the readers' bounds are in `abi/manifest.txt`, with the limits `apps_max_limit`,
 `apps_max_default` (8) and `signer_key_bytes` (32); the facet parameter
-`tree` is in the storage service's schema.
+`tree` is in the storage service's schema. `erx_pkg_manifest:system_config/1` is the one
+Erlang reader of them, through the generated manifest reader.
 
 **The ABI source**: `abi/formats/package.txt`, the header and the packed
 declaration; the limits `app_memory_default`, `app_memory_min`,

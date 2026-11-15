@@ -70,13 +70,16 @@ module Erx
     # never read from configuration text. Its catalog includes the reserved
     # manifest and NOTICES rows before any numeric entry index is assigned. Its
     # device_kinds are the rows of erx/device_kinds.h's two tables, each a hash of role,
-    # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows).
+    # compatible, role_word, peripheral and clocked (DeviceKinds.context_rows). Its
+    # development_key is the public half of the builder's development package key, or
+    # nil: never a manifest row, so no board source can name it, and the check admits it
+    # only in a development build (docs/design-packaging.md, "The SDK").
     class Context
       attr_reader :build_kind, :platform, :catalog, :root_entry, :artifacts,
-                  :provenance, :sizing, :device_kinds, :fingerprint
+                  :provenance, :sizing, :device_kinds, :development_key, :fingerprint
 
       def initialize(build_kind:, platform:, catalog:, root_entry:, artifacts:,
-                     provenance:, device_kinds:, sizing: nil)
+                     provenance:, device_kinds:, sizing: nil, development_key: nil)
         unless %w[development release].include?(build_kind)
           raise Invalid.new('unknown checked build kind', property: 'context', field: 'build_kind')
         end
@@ -84,6 +87,10 @@ module Erx
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
                device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) }
           raise Invalid.new('incomplete checked context', property: 'context', field: 'input')
+        end
+        unless development_key.nil? || (development_key.is_a?(String) && build_kind == 'development')
+          raise Invalid.new('only a development build trusts a development package key', property: 'context',
+                                                                                          field: 'development_key')
         end
         notices = provenance.map do |record|
           unless record.is_a?(Hash)
@@ -107,11 +114,13 @@ module Erx
         @provenance = Snapshot.copy(notices)
         @sizing = Snapshot.copy(sizing)
         @device_kinds = Snapshot.copy(device_kinds)
+        @development_key = development_key&.b&.freeze
         validate_catalog_shape
         @fingerprint = Snapshot.digest('build_kind' => @build_kind, 'platform' => @platform,
                                         'catalog' => @catalog, 'root_entry' => @root_entry,
                                         'artifacts' => @artifacts, 'provenance' => @provenance,
-                                        'sizing' => @sizing, 'device_kinds' => @device_kinds)
+                                        'sizing' => @sizing, 'device_kinds' => @device_kinds,
+                                        'development_key' => @development_key&.unpack1('H*'))
         freeze
       end
 
@@ -437,6 +446,13 @@ module Erx
       # counts the row the same way whether or not the manifest has one.
       AppsRow = Data.define(:memory, :services, :max)
       NO_APPS = AppsRow.new(memory: 0, services: [].freeze, max: 0)
+      # A package row of the image, bound to its package artifact (check_packages): its
+      # app's name, its header's SHA-256 in hexadecimal, whether its row is enabled and
+      # the memory its declaration asks.
+      Package = Data.define(:name, :sha256, :enabled, :memory)
+      # The name the machine gives the build's development package key
+      # (erx_pkg_header:signer/0), which no signer row may take.
+      DEVELOPMENT_SIGNER = 'development'
 
       def initialize(source, codec:, context:, planner:, consumers:)
         @source = source
@@ -1230,9 +1246,12 @@ module Erx
         rows['facets'], rows['facet_parameters'], facet_values = normalize_facets(services.map(&:first), rows)
         rows['starts'] = normalize_starts(services.map(&:first), rows)
         app_services = check_apps(rows)
+        rows['apps'], rows['app_services'] = apps_rows(app_services)
         check_app_start_rows
-        check_signers
+        rows['signers'] = signer_rows
+        rows['development_key'] = @development_key = development_key_rows
         @packages = check_packages
+        rows['packages'] = @packages.map { |package| package_row(package) }
         rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values, app_services)
         edges = boot_edges(rows['facets'], rows['services'])
         rows['boot_order'] = boot_order(rows['domains'], edges)
@@ -1246,10 +1265,10 @@ module Erx
 
       def claims
         { 'mode' => 'stopgap', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
-          'root_image_loadable_bytes' => root_loadable_bytes, 'packages' => @packages,
-          # No packed record carries the package and signer rows to the machine yet.
-          'package_records' => 'unsupported',
-          'signers' => records('signer').map(&:name).sort }.merge(RootStartup.declared(@context.platform))
+          'root_image_loadable_bytes' => root_loadable_bytes,
+          'packages' => @packages.map { |package| package.to_h.except(:memory).transform_keys(&:to_s) },
+          'signers' => records('signer').map(&:name).sort,
+          'development_key' => !@development_key.empty? }.merge(RootStartup.declared(@context.platform))
       end
 
       def check_identity(devices)
@@ -1467,15 +1486,52 @@ module Erx
           records('start').size + @apps.max > rows_max
       end
 
-      # Property 19's sixth clause: every signer row holds an Ed25519 public key of
-      # signer_key_bytes, written hex: and its digits, never quoted. The frontend keeps
-      # the rows' names unique.
-      def check_signers
+      # The packed apps row and its app_services rows: none without an apps row, and
+      # otherwise the row, its services the indices check_apps resolved, ascending.
+      def apps_rows(service_indices)
+        return [[], []] if @apps == NO_APPS
+
+        services = service_indices.sort.map { |index| { 'service' => index } }
+        [[{ 'memory' => @apps.memory, 'max' => @apps.max, 'reserved' => 0,
+            'services' => { 'table' => 'app_services', 'first' => 0, 'count' => services.size } }], services]
+      end
+
+      # Property 19's sixth clause, and the signer rows it packs, sorted by name: every
+      # signer row holds an Ed25519 public key of signer_key_bytes, written hex: and its
+      # digits, never quoted, and none is named development, the name the machine gives
+      # the build's development package key (development_key_rows), so no source row
+      # stands in for it. The frontend keeps the rows' names unique.
+      def signer_rows
         size = @codec.constant('signer_key_bytes')
-        records('signer').each do |record|
+        records('signer').sort_by { |record| record.name.b }.map do |record|
+          invalid("signer #{DEVELOPMENT_SIGNER} is the build's development package key, never a row", 19, 'signer.name') if
+            record.name == DEVELOPMENT_SIGNER
           record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
-          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless text(record, 'key').bytesize == size
+          key = text(record, 'key')
+          invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless key.bytesize == size
+          { 'name' => record.name, 'key' => key.bytes }
         end
+      end
+
+      # The build's development package key, packed as its own record, which only a
+      # development manifest holds (docs/design-packaging.md, "The SDK"; Context admits
+      # it only in a development build): none when the build context carries none or the
+      # manifest has no apps row, whose machine takes no packages and so trusts no key, and
+      # refused when it is not an Ed25519 public key of signer_key_bytes. A build therefore
+      # hands every development check its key, whatever the manifest's mode.
+      def development_key_rows
+        key = @context.development_key
+        return [] if key.nil? || @apps == NO_APPS
+
+        size = @codec.constant('signer_key_bytes')
+        invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
+        [{ 'key' => key.bytes }]
+      end
+
+      # A package row as the manifest packs it (erx_mf_package).
+      def package_row(package)
+        { 'name' => package.name, 'flags' => package.enabled ? @codec.member('mf_package_flags', 'enabled') : 0,
+          'sha256' => [package.sha256].pack('H*').bytes }
       end
 
       # Property 19's fifth clause on the package rows the image builder adds
@@ -1483,8 +1539,7 @@ module Erx
       # input is a package artifact of this pack, which the build's file check decoded
       # under the row's own name; the rows number at most the apps row's max, so none
       # without an apps row; and the declared memory of the enabled ones sums within the
-      # apps budget. Answers the build record's entry of each row, sorted by name: its
-      # name, its header's SHA-256 in hexadecimal and whether it is enabled.
+      # apps budget. Answers each row as a Package, sorted by name.
       def check_packages
         packages = records('package').sort_by { |record| record.name.b }
         invalid("the package rows pass the apps row's max, #{@apps.max}", 19, 'package') if packages.size > @apps.max
@@ -1493,12 +1548,12 @@ module Erx
           invalid("package #{record.name}'s input is the package of #{package['name']}", 19, 'package.input') unless
             package['name'] == record.name
           enabled = record.properties.key?('enable') && start_flags(record).positive?
-          { 'name' => record.name, 'sha256' => package.fetch('sha256'), 'enabled' => enabled, 'memory' => package.fetch('memory') }
+          Package.new(name: record.name, sha256: package.fetch('sha256'), enabled: enabled, memory: package.fetch('memory'))
         end
-        memory = rows.select { |row| row.fetch('enabled') }.sum { |row| row.fetch('memory') }
+        memory = rows.select(&:enabled).sum(&:memory)
         invalid("the enabled packages declare #{memory} bytes, past the apps budget of #{@apps.memory}", 19, 'package.enable') if
           memory > @apps.memory
-        rows.map { |row| row.except('memory').freeze }.freeze
+        rows.freeze
       end
 
       # The parameters an ABI file declares for interface, by key, or nil when no ABI

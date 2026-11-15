@@ -10,10 +10,10 @@ module Erx
   # app to an image"), as the rows and files the image takes: for each package NAME.app,
   # the file at pkg/NAME.app of the release (on the stopgap, the boot image's domain
   # release, "Where a package lies"), a `package NAME` row whose input is the package's
-  # artifact and whose enable is YES only when the builder enables it, and in a
-  # development image the `development` signer row, the public half of the builder's
-  # development package key (Erx::PackageKey), so packages that host packs later install
-  # on the machine and no other developer's key is trusted.
+  # artifact and whose enable is YES only when the builder enables it. A development
+  # image's trust in its builder's development package key (Erx::PackageKey) is no row:
+  # the build hands the key's public half to the manifest check as its context's
+  # development_key, which the check packs as its own record.
   #
   # The board's manifest source is never edited: the rows are appended to the image's
   # copy, and the manifest check (property 19's fifth clause) binds each to its artifact,
@@ -37,7 +37,6 @@ module Erx
 
     RELEASE_DIRECTORY = 'pkg'
     ARTIFACT_KIND = 'package'
-    DEVELOPMENT_SIGNER = 'development'
 
     module_function
 
@@ -48,10 +47,9 @@ module Erx
       Package.new(path: path, name: described.name, memory: described.memory, sha256: described.sha256)
     end
 
-    # The Plan of packages (Package), each row enabled when enable names it, with the
-    # development signer's row when development_key, its 32-byte Ed25519 public key, is
-    # given. An image takes one package of a name, and enable names only packages it takes.
-    def plan(packages, enable:, development_key:)
+    # The Plan of packages (Package), each row enabled when enable names it. An image
+    # takes one package of a name, and enable names only packages it takes.
+    def plan(packages, enable:)
       names = packages.map(&:name)
       twice = names.tally.select { |_name, count| count > 1 }.keys
       raise Error, "two packages of the image are named #{twice.join(', ')}" unless twice.empty?
@@ -61,8 +59,7 @@ module Erx
       sorted = packages.sort_by(&:name)
       Plan.new(entries: sorted.to_h { |package| ["#{RELEASE_DIRECTORY}/#{package.name}.app", package.path] }.freeze,
                artifacts: sorted.to_h { |package| [artifact_name(package.name), artifact(package)] }.freeze,
-               rows: [*sorted.map { |package| package_row(package, enabled: enable.include?(package.name)) },
-                      *(development_key ? [signer_row(DEVELOPMENT_SIGNER, development_key)] : [])].join.freeze)
+               rows: sorted.map { |package| package_row(package, enabled: enable.include?(package.name)) }.join.freeze)
     end
 
     def artifact_name(name) = "#{ARTIFACT_KIND}-#{name}"
@@ -77,8 +74,6 @@ module Erx
       "package #{package.name}\n  input @artifact.#{artifact_name(package.name)}\n  enable #{enabled ? 'YES' : 'NO'}\n"
     end
 
-    def signer_row(name, key) = "signer #{name}\n  key hex:#{key.unpack1('H*')}\n"
-
-    private_class_method :artifact_name, :artifact, :package_row, :signer_row
+    private_class_method :artifact_name, :artifact, :package_row
   end
 end

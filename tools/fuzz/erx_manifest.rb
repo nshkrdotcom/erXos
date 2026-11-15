@@ -26,6 +26,10 @@ module ErxManifestFuzz
   Erx::Generated.ensure(root: ROOT)
   MODULE_SOURCE = File.join(ROOT, 'build/gen/erlang/apps/erx/src/generated/erx_manifest.erl')
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_manifest_fuzz.erl')
+  # The package process's reader of the manifest's package records, which the target runs
+  # on every manifest the generated reader accepts, and the generated header it includes.
+  PACKAGE_READER = File.join(ROOT, 'erlang/apps/erx_starter/src/erx_pkg_manifest.erl')
+  INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   # The C reader's verdict program links the libFuzzer target's own sources, includes and
   # macros (tools/fuzz/manifest_target.rb), with a main of its own beside them.
   TARGET = Erx::PackFuzz.targets.to_h { |target| [target.kind, target] }.fetch('manifest')
@@ -124,7 +128,7 @@ module ErxManifestFuzz
     Dir.mktmpdir('erlang', work) do |directory|
       module_path = File.join(directory, 'erx_manifest.erl')
       File.binwrite(module_path, module_text)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-o', directory, module_path, TARGET_SOURCE,
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', INCLUDE, '-o', directory, module_path, PACKAGE_READER, TARGET_SOURCE,
                                        stdin_data: '')
       raise output unless status.success?
 
