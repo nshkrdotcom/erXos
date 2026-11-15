@@ -485,7 +485,9 @@ at most 1 GiB, and its size is computed with checked arithmetic.
 
 **A window's buffer is the screen's size.** Every buffer a client
 allocates for a window, the first and a second if it keeps two, is at
-the size of the display's screen when the window is made, and its
+the size of the display's screen as the client reads it from `screen`
+before it makes the window ([The window tree](#the-window-tree)), whose
+rectangle the policy may set smaller than the screen's, and its
 holder keeps it until it exits: a resize changes the width and height
 the client draws and presents within it, never the allocation, so a
 resize allocates nothing and nothing is left behind to free. A window's
@@ -496,8 +498,9 @@ by 1080 pixels in `x8r8g8b8`, 8,294,400 bytes, rounded up to 8 MiB,
 and two at 1280 by 800, 4,096,000 bytes each. A client
 whose area has no room for a new window's buffer is refused at `open`,
 which removes the window it made for the buffer
-([The window tree](#the-window-tree)), and a screen that grows after a window was
-made shows the background where that window's buffer does not reach
+([The window tree](#the-window-tree)), and a screen that grows after
+its client read `screen` for a window shows the background where that
+window's buffer does not reach
 ([The window tree](#the-window-tree)) until its client opens a window
 at the new size. A `ctl` or
 `wctl` line is at most 1,024 bytes, and a write of any file at most the
@@ -1867,7 +1870,7 @@ and the directories' listings carry none.
           {ok, [window()], State} | {error, einval}.
 -callback arrange(Windows :: [window()], Screen :: rect(), Session :: binary() | none, State) ->
           {[window()], State}.
--callback decorate(Windows :: [window()], Screen :: rect()) ->
+-callback decorate(Windows :: [window()], Screen :: rect(), State) ->
           [{window_id(), [{rect(), color()}]}].           % borders, or []
 -callback input(input(), Windows :: [window()], Session :: binary() | none, State) ->
           {{to, window_id(), input()} | {wm, term()} | {windows, [window()]} | drop, State}.
@@ -1903,7 +1906,34 @@ into an image of the display domain's own memory, which `erx_screen`
 shows above every window as an overlay. It has no item that
 starts a program, a terminal included: the display domain has no
 authority to start one in a session, and a terminal opens its sibling
-windows itself ([The terminal](#the-terminal)). The **single** policy,
+windows itself ([The terminal](#the-terminal)).
+
+**The current window** is the one the overlapping policy sends key
+events to and whose border it marks. The policy's state holds the
+user's **pick**, a `window_id()` or none, and the current window is
+derived from it at every call: the picked window while it is in the
+table and shown, and none otherwise. Only `input/4` sets the pick, and
+only on the user's own acts: a button's or touch's down on a shown
+window that is not the current one, which the policy takes for itself,
+as Plan 9's rio takes the click that selects a window, answering
+`{windows, Table}` with that window raised and picked, so the click
+reaches no client; and a menu item that names a window, which picks the
+window it shows, moves or resizes. `place/6` and `arrange/4` never
+change the pick, so a client's request moves no keyboard: a `wctl`
+`top` raises its window and no more, `hide` then `show` hides and shows
+it, and a `mkdir` makes a window placed and raised as every new window
+is, current only once the user clicks it, a terminal's sibling windows
+included. While the picked window is hidden, or once it ends, no window
+is current and a key's down goes to no window until the user picks one.
+So the one window that ever takes the keyboard is the user's last pick,
+whatever any client asks for, makes or ends: no window takes it by
+being made, raised or shown, or by outliving another. A pick needs no
+cleanup when its window ends, and the policy has no window's end to
+miss: window ids are never reused ([The window tree](#the-window-tree)),
+so a stale pick names no later window and derives none. `decorate/3`
+derives the current window from the same state to colour its border.
+
+The **single** policy,
 `erx_wm_single`, shows one window at a time, gives it the screen's
 rectangle and draws no decoration. `erx_winfs` passes every `place`,
 `arrange` and `input` the directory of the display's session, or `none`,
@@ -1951,7 +1981,7 @@ decisions](#risks-and-decisions), 14).
 
 After every change of the table, `erx_winfs` hands `erx_screen` the
 **layout**: the shown windows in stacking order, each with its window
-process, its rectangle and its decorations from `decorate/2`. The layout
+process, its rectangle and its decorations from `decorate/3`. The layout
 is derived from the table, so `erx_screen` keeps nothing of it that it
 could not ask for again. A window whose rectangle changed is told so by
 `erx_winfs` and reports the new rectangle in `wctl`; when its size
@@ -3721,12 +3751,15 @@ must add its composition path with its source.
 ### Erlang clients
 
 `erx_win` is the client library for windows, for Erlang processes in any
-domain that holds a display's grant: `open(Display, Options)` makes a
-window in the domain's directory with the caller as its holder,
-allocates its buffer at the screen's size from the domain's pixel area
-([Windows and buffers](#windows-and-buffers)) and returns a handle
-holding the fids of the window's files, the display's channel and the
-buffer; `image/1` answers an `erx_memdraw` image over the buffer at the
+domain that holds a display's grant: `open(Display, Options)` reads
+the display's `screen`, makes a window in the domain's directory with
+the caller as its holder, allocates its buffer at the size `screen`
+answered from the domain's pixel area, removing the window when the
+area has no room, in the order and for the reason [The window
+tree](#the-window-tree) gives ([Windows and
+buffers](#windows-and-buffers)), and returns a handle holding the fids
+of the window's files, the display's channel as `screen` answered it,
+the buffer and the window's rectangle; `image/1` answers an `erx_memdraw` image over the buffer at the
 window's size; `present/2` writes the present for a list of rectangles
 and waits for its answer; `mouse/1` and `kbd/1` read records;
 `resized/1`, after an `r` record, re-reads the window's rectangle and
@@ -3797,7 +3830,8 @@ through the file protocol and declared as the interface `windows` in
 domain service sets for the display's session alone; the `present`
 command of `ctl`; `wctl`'s commands
 `resize -r X0 Y0 X1 Y1`, `move -r X0 Y0 X1 Y1`, `hide`, `show`, `top`,
-which also makes the window take the keyboard, and `bottom`, each one
+which raises the window and gives it no keyboard ([Windows and the
+window system](#windows-and-the-window-system)), and `bottom`, each one
 line; the `mouse` record format of Plan 9 and 9front; the `kbd` record
 format of 9front's kbdfs(8), with the special runes of
 `abi/formats/input.txt`; and the read-only `screen` file. The display
@@ -4140,7 +4174,11 @@ the window and the reason.
   Under the single policy no client takes the screen by opening a
   window first, or by asking: the shown window belongs to the session
   whose grant the domain service marked, and only a start row's keeper
-  makes the domain service mark one.
+  makes the domain service mark one. Under the overlapping policy no
+  client takes the keyboard by asking, by making a window or by
+  outlasting another: keys go only to the window the user last picked
+  with a click or the menu, while it is shown
+  ([Windows and the window system](#windows-and-the-window-system)).
 * **The clipboard** is shared, per display, by every grant on it whose
   facet row turns `snarf` on, whatever its principal: the sessions of
   those rows' templates, their terminals and every program they give
@@ -4180,7 +4218,10 @@ the window and the reason.
   not escaped, as in design-live. A window can draw a convincing copy of
   another window's content, a terminal's included; under the overlapping
   policy the border marks the window that takes the keyboard and the menu
-  names windows by label. Any program writing
+  names windows by label. A client that raises its window under the
+  pointer just before the user clicks there takes that click, and with
+  it the keyboard; the border then marks its window as the current one.
+  Any program writing
   to a terminal can write an input context, as the shell does, and so
   highlight presentations the shell did not ask for; a click on one
   still inserts only the presentation's text, shown in the command line
@@ -4469,7 +4510,19 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   tested over sequences of place requests and input events; a property
   test that the single policy shows at most one window and delivers every
   event to it, and that every rectangle lies within the screen under
-  both; a seeded unchecked move fails it. The menu, drawn as
+  both; a seeded unchecked move fails it. A property test of
+  `erx_wm_rio` over random sequences of two clients' `new`, `top`,
+  `bottom`, `hide`, `show`, `move` and `resize` requests, window ends,
+  clicks, menu choices and key downs checks that each key down goes to
+  the window of the last click or menu pick while that window is shown,
+  and to no window otherwise, and that `decorate/3` marks that window
+  alone; a seeded `place/6` that picks the window it raises for `top`,
+  and a seeded policy that picks the topmost shown window when the pick
+  ends, each fail it. Through the display domain under the overlapping
+  policy, keys typed at a window the user clicked keep reaching it while
+  a second client makes a window, raises it with `top`, and hides and
+  shows it; the second client's `kbd` reads nothing, where a seeded
+  policy that picks each new window fails it. The menu, drawn as
   an overlay, lies above every window and reaches the screen only
   through `erx_screen:overlay/2`.
 * **The input router.** `erx_input` is a pure state machine and is
@@ -4534,7 +4587,11 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   allocation fails fails it; a client at its `windows` quota gets
   `EDQUOT`, and a hundred such refusals leave its pixel area's free
   space as it was, where a seeded `open/2` that allocates first fails
-  it. A `mkdir` of `screen` or `snarf`
+  it. Under the overlapping policy, a window that `new` places smaller
+  than the screen and that is then resized to the whole screen answers,
+  from `resized/1`, an image of the screen's size, where a seeded
+  `open/2` that sizes the buffer by the window's rectangle answers one
+  clipped to the first placement. A `mkdir` of `screen` or `snarf`
   fails with `EEXIST`.
 * **A window over a lent range.** An `erx_ui_lvgl` window at 1920 by
   1080 in the default pixel area of 8 MiB shows the program's first

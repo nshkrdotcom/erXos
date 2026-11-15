@@ -1047,14 +1047,13 @@ it; git history is the record of completed work.
 * [Low] `abi/formats/ui.txt` and the generated readers: a `present` name is checked only as UTF-8 of at most 63
   bytes, while design-abi.md calls it "a presentation name of the inspection schema", which `abi/inspection.txt`
   declares: generate the name table into both readers, as `erx_ui_schema` checks it against `erx_present:marks/0`.
-* [Medium] `erlang/apps/erx_win/src/erx_win.erl`, [The window tree](docs/design-display.md#the-window-tree):
-  the window tree names no file that answers the screen's size, which [Windows and
-  buffers](docs/design-display.md#windows-and-buffers) sizes every buffer by. `erx_win:open/2` takes it from the new
-  window's `wctl` rectangle, which only the single policy sets to the screen's, so under `erx_wm_rio` a buffer would
-  be the window's default size, and the buffer is allocated after the `mkdir`, so a full area answers `enomem`
-  after the `windows` quota instead of before it. Settle in the design where a client reads the screen's size before
-  it makes a window (a window's own `ctl` comes too late; for example a file of the client's directory), then
-  allocate before the `mkdir`.
+* [Medium] `erlang/apps/erx_display/src/erx_winfs.erl` and `erlang/apps/erx_win/src/erx_win.erl`, [The window
+  tree](docs/design-display.md#the-window-tree): the tree serves no `screen` file at a client's root, and
+  `abi/services/windows.txt` names no root file, so `erx_win:open/2` sizes the buffer by the new window's `wctl`
+  rectangle, which only the single policy sets to the screen's; under `erx_wm_rio` a buffer would be the size of the
+  window's first placement. Serve `screen` as the design gives it (`EIO` while there is no screen, `EACCES` when
+  opened for writing, `EEXIST` for a `mkdir` of `screen` or `snarf`), have `open/2` read it before the `mkdir` for
+  the size and the channel, keep the allocation after the `mkdir`, and correct the moduledoc's account of the order.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
   emulator](docs/design-display.md#the-terminal-emulator): the core is built without `key/2`. The oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases
@@ -1176,11 +1175,11 @@ it; git history is the record of completed work.
   license is unverified.
 * [High] `erx_wm_rio` (desktop, not built, so `abi/manifest.txt`'s `mf_display_policy` has no `rio` member and
   the manifest check refuses a `rio` display; landing it adds the member and its clause in `erx_fb_sup:policy/1`; the
-  P7 version is on branch `disp-p7`, commit 5ea13441): rio's rule that
-  the window taking the keyboard is the topmost shown one lets any client take the keyboard from another session's
-  window by a `wctl` `top`, `hide` then `show`, or a `mkdir`, and so read what the user types next. Before the
-  overlapping policy lands, its design keeps the current window in the policy's state and moves it only on the
-  user's actions (a click, the menu), so a client's request only raises; `decorate/2` then needs that state.
+  P7 version is on branch `disp-p7`, commit 5ea13441): that version gives the keyboard to the topmost shown
+  window, so any client takes it from another session's window by a `wctl` `top`, `hide` then `show`, or a
+  `mkdir`, and reads what the user types next. Land the policy with the user's pick of [Windows and the window
+  system](docs/design-display.md#windows-and-the-window-system) instead, set only by `input/4` on a click or a
+  menu choice, and with `erx_wm`'s `decorate/3`, which `erx_wm_single` and `erx_winfs` take up too.
 * [Low] `otp/erts/emulator/nifs/erxos/erx_device_nif.c`: a move of a bound edge line can lose the one delivery taken under the old label just before the old sink was unregistered, while a level
   line fires again at the bind's acknowledgement. A driver of an edge line looks at its device after binding. The PL011's line is level.
 * [Medium] `erlang/apps/erx_blk/src/erx_blk_sd_host.erl` (`issued/2`), the request transfer: it expects command
