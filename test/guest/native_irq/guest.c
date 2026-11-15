@@ -590,6 +590,7 @@ bind_objects(void)
 {
 	const erx_device_spec_t spec = { .peripheral = "pl011", .peripheral_length = 5, .base = UART_PHYS,
 	    .size = ERX_PAGE_SIZE, .line_count = 1, .lines = { UART_LINE } };
+	const erx_device_peripheral_t *const pl011 = erx_device_peripheral_find(spec.peripheral, spec.peripheral_length);
 	erx_device_spec_t too_small = spec;
 	uint32_t device, again;
 	uint64_t group, unused, gone;
@@ -601,7 +602,10 @@ bind_objects(void)
 	if (erx_group_create(0, 0, &gone) != ERX_OK || erx_irq_bind(0, gone, 1) != ERX_EINVAL ||
 	    erx_object_destroy(gone) != ERX_OK)
 		fail("erx: irq: a second group was not a homeless record FAILED\n");
-	too_small.size = ERX_PAGE_SIZE / 2;
+	if (pl011 == NULL)
+		fail("erx: irq: the device table has no pl011 FAILED\n");
+	/* One byte short of the registers' window, as the generated table states it. */
+	too_small.size = pl011->window_size - 1;
 	if (erx_device_open(&too_small, NULL, NULL, &device) != ERX_EINVAL)
 		fail("erx: irq: a window smaller than its registers was not refused FAILED\n");
 	if (erx_device_open(&spec, NULL, NULL, &device) != ERX_OK)

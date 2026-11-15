@@ -21,9 +21,16 @@ module Erx
     MEMORY_MIB = 512
     PROGRAM_PATH = 'boot/native-irq-holder'
     PROGRAM_SOURCES = [*NativeRoot::TASK, 'test/guest/native_irq/program.c'].freeze
-    SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH, 'otp/erts/emulator/nifs/erxos/erx_device_core.c',
-               'otp/erts/emulator/nifs/erxos/erx_device.c',
-               'otp/erts/emulator/nifs/erxos/erx_device_queue.c', 'otp/erts/emulator/nifs/erxos/erx_device_genet.c',
+    # The device NIF's C below ERTS's glue (erx_device_bif.c, erx_device_nif.c): the records,
+    # the queues, the DMA sequencer, the GENET ring's core and the architecture's cache
+    # maintenance. ERTS's build lists the same objects (otp/erts/emulator/Makefile.in). It
+    # reads no C library header: mem.h's primitives come from root_mem.c here. The
+    # architecture's file finds the NIF's headers as ERTS's build lets it, by directory.
+    DEVICE_NIF_DIRECTORY = 'otp/erts/emulator/nifs/erxos'
+    DEVICE_NIF = %w[erx_device.c erx_device_core.c erx_device_queue.c erx_device_dma.c erx_device_genet.c
+                    arch/aarch64/erx_dma_arch.c].map { |name| File.join(DEVICE_NIF_DIRECTORY, name) }.freeze
+    DEVICE_NIF_FLAGS = ['-I', DEVICE_NIF_DIRECTORY].freeze
+    SOURCES = [*NativeRoot::RUNTIME, *NativeRoot::VM, *NativeRoot::SERVICE, *NativeRoot::LAUNCH, *DEVICE_NIF,
                'test/guest/native_irq/guest.c'].freeze
     LABEL_UART = 0x55a0
     # test/guest/native_irq/holder.h's HOLDER_LABEL.
@@ -112,7 +119,7 @@ module Erx
         native = NativeRoot.new(root: @root, source: @source, runner: @runner, compiler: @compiler, linker: @linker, platform: @platform,
                                 fiasco: fiasco)
         program = native.build_task(name: 'native-irq-holder', sources: PROGRAM_SOURCES, directory: File.join(@build, 'program'), flags: [])
-        root_task = native.build(name: 'irq-root', sources: SOURCES, directory: File.join(@build, 'root'), flags: ['-DERX_FIASCO_TEST_HOOKS'])
+        root_task = native.build(name: 'irq-root', sources: SOURCES, directory: File.join(@build, 'root'), flags: ['-DERX_FIASCO_TEST_HOOKS', *DEVICE_NIF_FLAGS])
         BootImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker)
                  .build(directory: File.join(@build, 'image'), stand_in_root: root_task, programs: { PROGRAM_PATH => program })
       end

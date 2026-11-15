@@ -5,9 +5,9 @@
  * The register ring's pure core (erx_device_genet.h).
  */
 
-#include <string.h>
-
 #include "erx_device_genet.h"
+
+#include "liberx/backend/core/mem.h"
 
 #define MASK	(ERX_GENET_RING_SIZE - 1u)
 _Static_assert((ERX_GENET_RING_SIZE & MASK) == 0 && ERX_GENET_RING_SIZE <= 65536u,
@@ -100,7 +100,7 @@ erx_device_genet_registers(const erx_device_peripheral_t *genet, erx_device_gene
 
 	if (genet == NULL || (direction != ERX_DEVICE_GENET_RX && direction != ERX_DEVICE_GENET_TX))
 		return (false);
-	memset(regs, 0, sizeof(*regs));
+	bzero(regs, sizeof(*regs));
 	regs->direction = direction;
 	for (uint32_t at = 0; at < 15; at++)
 		found[at] = named(genet, register_names[direction][at]);
@@ -208,7 +208,7 @@ erx_device_genet_init(erx_device_genet_queue_t *queue, const erx_device_genet_re
 	if (pool_addr >> ERX_DEVICE_GENET_ADDRESS_BITS != 0 ||
 	    bytes > (UINT64_C(1) << ERX_DEVICE_GENET_ADDRESS_BITS) - pool_addr)
 		return (false);
-	memset(queue, 0, sizeof(*queue));
+	bzero(queue, sizeof(*queue));
 	queue->direction = regs->direction;
 	queue->buffer_size = buffer_size;
 	queue->stride = (uint32_t)stride;
