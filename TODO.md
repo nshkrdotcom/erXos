@@ -952,8 +952,7 @@ it; git history is the record of completed work.
     (`erx_pixels:alloc/2` and `lend/2`, `erx_pipe_srv:forward/1`, all without a bound) reads the starter's
     `DOWN` only once it is back in its loop, so it keeps its range, holder entry and hand-offs until the call
     answers; the deadline belongs in `erx_prog_handler:start/1`, which kills the handler and so frees what it
-    holds for every starter, once docs/design-programs.md ("The handler") names it. The shell has no
-    `format_status`, so its crash report would print `unread`, the program's output bytes. In the lease cell
+    holds for every starter, once docs/design-programs.md ("The handler") names it. In the lease cell
     and `erx_ui_lvgl_shell.erl`, a present the program sends after the tree is written can reach the test
     before the apply's answer and be taken as an earlier frame's, which leaves the first-present wait to
     time out; the cell's 240x160 check shows only that a present came.
@@ -7374,6 +7373,13 @@ document's "residual risks accepted" paragraph.
 * [Low] live inspection, `ps` and `top` ([design-live.md](docs/design-live.md)): the `time` and `pcpu` columns of an
   Erlang process show its reductions, labelled as reductions, instead of `-`; real CPU time per process comes
   later as an opt-in scheduler flag.
+* [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):
+  design-desktop-programs.md ("Shipping and starting") puts `erx_desk` in the desktop session's release, and
+  `erx_desk_files_core` calls `erx_ui_schema` and `erx_ui_model`, so `erx_desk` names `erx_ui` in its
+  `applications`. Only the client script, a domain holding a display's grant, holds `erx_ui`, so `erx_desk` ships
+  there and not in the session script, where systools would refuse the boot script. When 8.4 adds `erx_desk_sup`
+  and the commands, settle which script a desktop session boots: the client script, or the session script with
+  `erx_memdraw`, `erx_win` and `erx_ui` added.
 * [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
   [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
   `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names

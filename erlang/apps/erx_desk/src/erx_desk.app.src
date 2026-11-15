@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The desktop programs stats, clock, month and files
-%% (docs/design-desktop-programs.md), in the session's release: each
+%% (docs/design-desktop-programs.md), in the client release beside erx_ui: each
 %% program's pure core, which its window process runs. Its modules:
 %%   erx_desk_stats_core  the core of stats, the machine's load;
 %%   erx_desk_files_core  the core of files, the folder browser.

@@ -129,7 +129,7 @@ module Erx
     #   native domain tests boot it (NativeDomain).
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
                         'session' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_shell',
-                                      'erx_web_line', 'erx_desk', 'erx_session'].freeze,
+                                      'erx_web_line', 'erx_session'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,

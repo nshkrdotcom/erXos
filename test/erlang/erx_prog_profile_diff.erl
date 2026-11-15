@@ -280,7 +280,7 @@ request_valid() ->
      request(probe_max, 15, {probe, 16#7fffffff}),
      reply(kill_ok, kill, 3, ok),
      reply(kill_esrch, kill, 3, {error, esrch}),
-     reply(kill_last_errno, kill, 3, {error, ehwpoison}),
+     reply(kill_last_errno, kill, 3, {error, eintegrity}),
      reply(probe_ok, probe, 5, ok),
      reply(probe_esrch, probe, 5, {error, esrch}),
      request(lopen_least, 0, {file, lopen, <<>>, 0}),

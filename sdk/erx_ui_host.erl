@@ -157,8 +157,8 @@ lvgl_opts(#host{width = W, height = H, buffer = Buffer, launch = {Ruby, Program}
                              [binary, stream, use_stdio, exit_status,
                               {args, ["-e", ?WITH_BUFFER, Buffer, Program]}])
            end,
-    Present = fun(PresentW, PresentH, _Rects) -> Host ! {presented, self(), PresentW, PresentH}, ok end,
-    #{width => W, height => H, chan => ?X8R8G8B8, open => Open, present => Present,
+    Present = fun(0, PresentW, PresentH, _Rects) -> Host ! {presented, self(), PresentW, PresentH}, ok end,
+    #{width => W, height => H, chan => ?X8R8G8B8, program => {port, Open}, present => Present,
       present_text => fun(_Type, _Value) -> error(enotsup) end}.
 
 %% A copy of the buffer's first W by H pixels at a stride of W pixels.

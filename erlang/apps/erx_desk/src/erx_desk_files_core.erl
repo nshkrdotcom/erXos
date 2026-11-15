@@ -440,11 +440,11 @@ folder_of(Folders) -> iolist_to_binary([[<<"/">>, C] || C <- Folders]).
 %% The schema's bounds: a list's items and a list item's bytes, and a
 %% text property's bytes.
 max_items() ->
-    #{type := {list, _Item, Max}} = erx_ui_schema:property(items),
+    #{type := {list, _Item, Max, _None}} = erx_ui_schema:property(items),
     Max.
 
 item_max() ->
-    #{type := {list, {text, Max}, _Items}} = erx_ui_schema:property(items),
+    #{type := {list, {text, Max}, _ListMax, _None}} = erx_ui_schema:property(items),
     Max.
 
 caption_max() ->

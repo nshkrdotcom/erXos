@@ -282,14 +282,6 @@ handle_event(info, _Message, _State, _Data) ->
     %% shell and logs its data.
     keep_state_and_data.
 
-%% A crash report names the shell's state, never the core, whose held
-%% operations carry the application's texts, or the program's unread output.
-format_status(Status) ->
-    maps:map(fun(data, Data) when is_map(Data) -> Data#{core => hidden, unread => hidden};
-                (Key, _Value) when Key =:= queue; Key =:= postponed; Key =:= log -> hidden;
-                (_Key, Value) -> Value
-             end, Status).
-
 more(Bytes, #{unread := Unread} = Data) ->
     Data#{unread := <<Unread/binary, Bytes/binary>>}.
 

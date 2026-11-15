@@ -125,7 +125,7 @@ class ProgProfileTest < Minitest::Test
 
   # An alias is no protocol name: a table naming one disagrees on the alias's reply.
   def test_a_table_naming_an_errno_alias_disagrees
-    seeded = seed(TABLE, "\t{ \"enotsup\", 95 },\n", "\t{ \"enotsup\", 95 },\n\t{ \"eopnotsupp\", 95 },\n")
+    seeded = seed(TABLE, "\t{ \"enotsup\", 45 },\n", "\t{ \"enotsup\", 45 },\n\t{ \"eopnotsupp\", 45 },\n")
     assert(disagreements(File.binread(GRAMMAR), seeded).any? { |row| row.fetch(:expected) == 'range errno' })
   end
 
