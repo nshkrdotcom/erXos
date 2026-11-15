@@ -40,6 +40,7 @@ module Erx
     IMPORTS = %w[
       ctaes
       display/font/fixed
+      display/fonts/inter
       display/libmemdraw
       fiasco/bootstrap
       fiasco/drivers-frst
