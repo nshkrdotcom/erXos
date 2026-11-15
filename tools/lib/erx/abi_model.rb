@@ -157,7 +157,8 @@ module Erx
     module Model
       TOP_LEVEL = %w[abi arch trap reg limit scalar enum flags bytes layout
                      status right type kind cap call reader translation service
-                     projection protocol inspection ui draw input web theme signal realtime fault errno elements].freeze
+                     projection protocol inspection ui draw input web theme signal reserved_signal realtime
+                     fault errno elements].freeze
       TYPE_KINDS = %w[scalar enum flags bytes layout].freeze
       BASE_TYPES = [1, 2, 4, 8].flat_map do |size|
         [false, true].map do |signed|
@@ -194,9 +195,12 @@ module Erx
         declarations = source.declarations
         declarations.each do |declaration|
           declaration.fail!("unknown declaration #{declaration.kind}") unless TOP_LEVEL.include?(declaration.kind)
-          declaration.line.tokens.drop(1).each_with_index do |token, index|
+          tokens = declaration.line.tokens.drop(1)
+          tokens.each_with_index do |token, index|
             next unless token.quoted
-            allowed = %w[status right].include?(declaration.kind) && index == 2
+            # A status's or right's description, and a signal's, which ends its line.
+            allowed = (%w[status right].include?(declaration.kind) && index == 2) ||
+                      (declaration.kind == 'signal' && index == tokens.size - 1)
             declaration.fail!('quoted token is not permitted here') unless allowed
           end
         end
@@ -360,7 +364,8 @@ module Erx
       def unique_definitions(declarations)
         definitions = {}
         declarations.each do |declaration|
-          next if %w[abi arch trap reg cap inspection ui draw input web theme signal realtime fault errno service].include?(declaration.kind)
+          next if %w[abi arch trap reg cap inspection ui draw input web theme signal reserved_signal realtime fault
+                     errno service].include?(declaration.kind)
           name = Syntax.identifier(declaration.args.first, line: declaration.line)
           declaration.fail!("duplicate definition #{name}") if definitions.key?(name) || BASE_TYPES.key?(name)
           definitions[name] = declaration

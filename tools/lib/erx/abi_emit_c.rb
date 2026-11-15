@@ -238,11 +238,11 @@ module Erx
         signals = schema.signals.signals
         return [] if signals.empty?
 
-        names = signals.map { |signal| "\t\t[#{signal.number}] = #{signal_string(signal.name)}," }
+        names = signals.select(&:name).map { |signal| "\t\t[#{signal.number}] = #{signal_string(signal.name)}," }
         actions = signals.map { |signal| "\t\t[#{signal.number}] = #{constant("sig_action_#{signal.action}")}," }
         bound = "\tif (signo < 0 || (size_t)signo >= sizeof(table) / sizeof(table[0]))"
         ['/*', ' * The signal table\'s name of a number without SIG, in upper case (HUP,',
-         ' * RTMIN+1, and THR for a reserved number), or NULL for an unlisted number.', ' */',
+         ' * RTMIN+1, and THR for a reserved number), or NULL for a number the table does not name.', ' */',
          'static inline const char *', 'erx_sig_name(int signo)', '{',
          "\tstatic const char *const table[] = {", *names, "\t};", '', bound,
          "\t\treturn (NULL);", "\treturn (table[signo]);", '}', '',

@@ -7,8 +7,10 @@ require_relative 'abi_source'
 module Erx
   module ABI
     # One signal of the table: its name without SIG in lower case (hup,
-    # rtmin+1), its number, its default action and its alias or nil.
-    SignalEntry = Struct.new(:name, :number, :action, :alias_name, keyword_init: true) do
+    # rtmin+1), or nil for a reserved number that has none, its number, its
+    # default action, its alias or nil, and its description, FreeBSD's
+    # sys_siglist text, for a signal 1 to 31 a program may name, else nil.
+    SignalEntry = Struct.new(:name, :number, :action, :alias_name, :description, keyword_init: true) do
       # A program may name it: listed, and not kept by the C library.
       def nameable? = action != 'reserved'
     end
@@ -19,13 +21,14 @@ module Erx
     # signal that ends a program whose thread faults with that kind.
     FaultSignal = Struct.new(:kind, :value, :signal, keyword_init: true)
 
-    # The signal and realtime lines of abi/signals.txt
+    # The signal, reserved_signal and realtime lines of abi/signals.txt
     # (docs/design-programs.md, "Signal numbers").
     module Signals
       # Each default action with its number in the generated code; 0 is no
       # signal, so a lookup table's unlisted entries read as none.
       ACTIONS = %w[none terminate ignore stop continue reserved].each_with_index.to_h.freeze
       NAME = /\A[a-z][a-z0-9]{0,15}\z/
+      SIGNAL_SHAPE = 'expected signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION"'
       # FreeBSD's _SIG_MAXSIG: signal numbers are 1 to 128.
       MAX_NUMBER = 128
       # The fault_kind member that marks a space's exit record, not a fault.
@@ -35,14 +38,15 @@ module Erx
 
       def validate(by_kind)
         listed = by_kind.fetch('signal', []).map { |declaration| signal(declaration) }
+        unnamed = by_kind.fetch('reserved_signal', []).map { |declaration| reserved_signal(declaration) }
         realtime = by_kind.fetch('realtime', [])
         realtime.drop(1).each { |declaration| declaration.fail!('the signal table takes one realtime line') }
-        signals = (listed + realtime.first(1).flat_map { |declaration| realtime_signals(declaration) })
+        signals = (listed + unnamed + realtime.first(1).flat_map { |declaration| realtime_signals(declaration) })
                   .sort_by(&:number)
         aliases = signals.select(&:alias_name).to_h { |signal| [signal.alias_name, signal.name] }
-        line = (by_kind.fetch('signal', []) + realtime).first
+        line = (by_kind.fetch('signal', []) + by_kind.fetch('reserved_signal', []) + realtime).first
         unique(signals.map(&:number), label: 'signal number', line: line)
-        unique(signals.map(&:name) + signals.filter_map(&:alias_name), label: 'signal name', line: line)
+        unique(signals.filter_map(&:name) + signals.filter_map(&:alias_name), label: 'signal name', line: line)
         SignalTable.new(signals: signals.map(&:freeze).freeze, aliases: aliases.freeze).freeze
       end
 
@@ -100,22 +104,44 @@ module Erx
       def constants(table)
         return {} if table.signals.empty?
 
-        numbers = table.signals.to_h { |signal| [signal.name, signal.number] }
+        numbers = table.signals.select(&:name).to_h { |signal| [signal.name, signal.number] }
         named = numbers.select { |name, _number| name.match?(NAME) }
         aliases = table.aliases.transform_values { |name| numbers.fetch(name) }
         named.merge(aliases).transform_keys { |name| "sig#{name}" }
              .merge(ACTIONS.transform_keys { |action| "sig_action_#{action}" })
       end
 
+      # signal NAME NUMBER ACTION [alias NAME] "DESCRIPTION": the description
+      # ends the line of every signal but a reserved one, which strsignal
+      # does not describe. Model.validate admits a quoted token on a signal
+      # line only last, so a quoted last token is the description and no
+      # other token is quoted.
       def signal(declaration)
         declaration.fail!('signal does not take members') unless declaration.members.empty?
-        name, number, action, keyword, alias_name, *rest = declaration.args
+        words = declaration.line.tokens.drop(1)
+        description = words.pop.value if words.last&.quoted
+        name, number, action, keyword, alias_name, *rest = words.map(&:value)
         unless rest.empty? && (keyword.nil? || (keyword == 'alias' && alias_name))
-          declaration.fail!('expected signal NAME NUMBER ACTION [alias NAME]')
+          declaration.fail!(SIGNAL_SHAPE)
         end
-        SignalEntry.new(name: name_of(name, declaration), number: number_of(number, declaration),
-                        action: action_of(action, declaration),
-                        alias_name: alias_name && name_of(alias_name, declaration))
+        entry = SignalEntry.new(name: name_of(name, declaration), number: number_of(number, declaration),
+                                action: action_of(action, declaration),
+                                alias_name: alias_name && name_of(alias_name, declaration),
+                                description: description)
+        if entry.nameable?
+          declaration.fail!("signal #{entry.name} needs its description") if description.to_s.strip.empty?
+        elsif description
+          declaration.fail!("reserved signal #{entry.name} takes no description")
+        end
+        entry
+      end
+
+      # reserved_signal NUMBER: a number the C library keeps for itself
+      # that has no name.
+      def reserved_signal(declaration)
+        declaration.fail!('reserved_signal does not take members') unless declaration.members.empty?
+        declaration.fail!('expected reserved_signal NUMBER') unless declaration.args.size == 1
+        SignalEntry.new(number: number_of(declaration.args.first, declaration), action: 'reserved')
       end
 
       # realtime FIRST LAST ACTION: rtmin, rtmin+1 up to the middle of the

@@ -10,20 +10,70 @@ require_relative '../../tools/lib/erx/abi'
 require_relative '../../tools/lib/erx/dependencies'
 
 # The signal table of the ABI file (abi/signals.txt) against FreeBSD 15.1's
-# sys/sys/signal.h at deps.lock's freebsd-signal pin, read through the
-# generated header (docs/design-programs.md, "Signal numbers"), and the
-# generated C lookups run over every number around the table's range.
+# sys/sys/signal.h and lib/libc/gen/siglist.c at deps.lock's freebsd-signal
+# and freebsd-siglist pins, the numbers read through the generated header
+# (docs/design-programs.md, "Signal numbers"), and the generated C lookups
+# run over every number around the table's range.
 class AbiSignalsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The one alias erXos adds to FreeBSD's names: SIGPOLL, Linux's name of SIGIO.
   OWN_ALIASES = { 'POLL' => 23 }.freeze
   SIGNAL_DEFINE = /^#define\s+SIG([A-Z0-9]+)\s+(\d+|SIG[A-Z0-9]+)\b/
   GENERATED_DEFINE = /^#define ERX_SIG([A-Z0-9]+) INT32_C\((\d+)\)$/
+  # One entry of siglist.c's arrays: [SIGHUP] =\t"Hangup",
+  SIGLIST_ENTRY = /^\s*\[SIG([A-Z0-9]+)\]\s*=\s*"([^"]*)",$/
   DEADLINE = '60'
   LIMIT = ['gtimeout', '-k', '10', DEADLINE].freeze
 
   def test_signal_names_and_numbers_match_freebsd
     assert_equal freebsd, generated(ROOT)
+  end
+
+  # Each signal of a signal line a program may name has FreeBSD's sys_signame name and
+  # sys_siglist description, and those are exactly the signals 1 to 31.
+  def test_names_and_descriptions_match_freebsd_siglist
+    assert_equal siglist, described(ROOT)
+  end
+
+  # Seeded fault: a description that differs from FreeBSD's by one character
+  # is well formed, so only the comparison with siglist.c refuses it.
+  def test_comparison_catches_a_wrong_description
+    Dir.mktmpdir('erx-abi-signals-') do |root|
+      FileUtils.cp_r(File.join(ROOT, 'abi'), root)
+      path = File.join(root, 'abi/signals.txt')
+      text = File.read(path)
+      seeded = text.sub(/^(signal hup 1 terminate) "Hangup"$/, '\1 "Hang up"')
+      refute_equal text, seeded
+      File.write(path, seeded)
+      table = described(root)
+      assert_equal ['HUP', 'Hang up'], table.fetch(1)
+      refute_equal siglist, table
+    end
+  end
+
+  # Seeded faults: a signal a program may name without a description, a
+  # reserved number with one, a name that comes in quotes, a blank
+  # description, a signal on number 34, which the C library keeps, and a
+  # reserved_signal line with a description, an extra number or a repeat each
+  # fail generation.
+  def test_malformed_signal_lines_fail_generation
+    {
+      ->(text) { text.sub(/^signal int 2 terminate "Interrupt"$/, 'signal int 2 terminate') } =>
+        /signal int needs its description/,
+      ->(text) { text.sub(/^signal librt 33 reserved$/, 'signal librt 33 reserved "Real-time"') } =>
+        /reserved signal librt takes no description/,
+      ->(text) { text.sub(/^signal quit 3 /, 'signal "quit" 3 ') } => /quoted token is not permitted here/,
+      ->(text) { text.sub(/^(signal ill 4 terminate) "Illegal instruction"$/, '\1 " "') } =>
+        /signal ill needs its description/,
+      ->(text) { text + "signal syncall 34 terminate \"Sync call\"\n" } => /duplicate signal number 34/,
+      ->(text) { text.sub(/^reserved_signal 34$/, 'reserved_signal 34 "Sync call"') } =>
+        /quoted token is not permitted here/,
+      ->(text) { text.sub(/^reserved_signal 34$/, 'reserved_signal 34 35') } => /expected reserved_signal NUMBER/,
+      ->(text) { text.sub(/^reserved_signal 34$/, "reserved_signal 34\nreserved_signal 34") } =>
+        /duplicate signal number 34/
+    }.each do |seed, message|
+      assert_seeded_failure('abi/signals.txt', seed, message)
+    end
   end
 
   # Seeded fault: a table that swaps SIGINFO's and SIGUSR1's numbers is well
@@ -76,7 +126,8 @@ class AbiSignalsTest < Minitest::Test
                    named.values_at(1, 17, 29, 32, 33, 65, 66, 95, 96, 126, 34)
       actions = rows.to_h { |row| [Integer(row[0]), Integer(row[2])] }
       expected = { 0 => 'NONE', 1 => 'TERMINATE', 16 => 'IGNORE', 17 => 'STOP', 19 => 'CONTINUE',
-                   23 => 'IGNORE', 32 => 'RESERVED', 64 => 'NONE', 126 => 'TERMINATE', 127 => 'NONE' }
+                   23 => 'IGNORE', 32 => 'RESERVED', 34 => 'RESERVED', 35 => 'NONE', 64 => 'NONE',
+                   126 => 'TERMINATE', 127 => 'NONE' }
       assert_equal expected.transform_values { |action| action_value(action) }, actions.slice(*expected.keys)
     end
   end
@@ -161,6 +212,25 @@ class AbiSignalsTest < Minitest::Test
     end.sort.to_h
   end
 
+  # FreeBSD's sys_signame and sys_siglist by number, signal 0 left out:
+  # each number with its name and its description.
+  def siglist
+    _, path = Erx::Dependencies.new(root: ROOT, runner: nil).archive_for('freebsd-siglist')
+    numbers = freebsd
+    parts = File.read(path).split(/^const char \*const sys_siglist\[NSIG\] = \{$/)
+    assert_equal 2, parts.size, 'siglist.c defines sys_signame, then sys_siglist'
+    names, descriptions = parts.map { |part| part.scan(SIGLIST_ENTRY).to_h }
+    assert_equal names.keys, descriptions.keys
+    names.to_h { |name, text| [numbers.fetch(name), [text, descriptions.fetch(name)]] }.sort.to_h
+  end
+
+  # The described signals of the table beneath root by number: each with its
+  # name without SIG in upper case and its description.
+  def described(root)
+    schema_of(root).signals.signals.select(&:description)
+                   .to_h { |signal| [signal.number, [signal.name.upcase, signal.description]] }
+  end
+
   # The table's names and aliases without SIG, as the generated header numbers them.
   def generated(root)
     header_of(root).scan(GENERATED_DEFINE).to_h { |name, number| [name, Integer(number)] }
@@ -169,9 +239,9 @@ class AbiSignalsTest < Minitest::Test
 
   # The generated erx/abi.h of the ABI files beneath root, from the model and
   # the C emitter alone, so a seeded copy of abi/ needs no other input.
-  def header_of(root)
-    Erx::ABI::CEmitter.header(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root, architecture: 'aarch64')))
-  end
+  def header_of(root) = Erx::ABI::CEmitter.header(schema_of(root))
+
+  def schema_of(root) = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root, architecture: 'aarch64'))
 
   def execute(*argv)
     output, status = Open3.capture2e(*argv, stdin_data: '')

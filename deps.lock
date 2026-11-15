@@ -179,6 +179,16 @@
       "status": "permanent"
     },
     {
+      "id": "freebsd-siglist",
+      "kind": "file",
+      "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",
+      "url": "https://raw.githubusercontent.com/freebsd/freebsd-src/95719d8a895bf8170851e9844d9b4092b1d2b6fe/lib/libc/gen/siglist.c",
+      "sha256": "6f5f8be17c54ab6a2e791159d199284135df5b6292fd27798a2ac0f38afad699",
+      "filename": "siglist.c",
+      "license": "BSD-3-Clause",
+      "status": "permanent"
+    },
+    {
       "id": "freebsd-evdev-utils",
       "kind": "file",
       "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",

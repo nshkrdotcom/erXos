@@ -2091,7 +2091,7 @@ of signal names, `erx_prog:status/1`, the fault table's signal column, and
 the names and numbers of the shell's `kill` builtin and of the Erlang
 `kill` command. The numbers are external values: the table states each
 literally, and the generator's mapping test compares it with FreeBSD
-15.1's `sys/sys/signal.h` and the names in its `lib/libc/gen/siglist.c`,
+15.1's `sys/sys/signal.h` and the names and descriptions in its `lib/libc/gen/siglist.c`,
 fetched at a pinned URL and SHA-256 as a test input
 ([design-abi.md](design-abi.md#numeric-assignment-and-versions)).
 
