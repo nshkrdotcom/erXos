@@ -157,6 +157,40 @@ class OriginTest < Minitest::Test
     assert_match(/recorded as removed is present: gone\.c/, error.message)
   end
 
+  # An inventory without a field the format requires is refused with the
+  # record and the field named, so the tree that needs mending is plain.
+  def test_a_missing_inventory_field_names_the_record_and_the_field
+    write_file('source.c', "/* upstream */\nint value;\n")
+    write_origin
+    replace_inventory { |payload| payload.except('removed') }
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_includes error.message, File.join(@directory, 'ORIGIN.md')
+    assert_includes error.message, 'lacks fields: removed'
+  end
+
+  # An unknown field is counted, not echoed, and a mistyped one is named.
+  def test_an_unknown_or_mistyped_inventory_field_is_refused
+    write_file('source.c', "/* upstream */\nint value;\n")
+    write_origin
+    replace_inventory { |payload| payload.merge("\e]0;x\a" => 1) }
+    error = assert_raises(Erx::Error) { @origin.inventory }
+    assert_includes error.message, 'has 1 unknown field(s)'
+    refute_includes error.message, "\e"
+    replace_inventory { |payload| payload.except("\e]0;x\a").merge('removed' => {}) }
+    error = assert_raises(Erx::Error) { @origin.inventory }
+    assert_includes error.message, 'field removed is not of class Array'
+  end
+
+  # A refusal raised by check itself, outside the inventory reader, names the
+  # record too.
+  def test_a_tree_refusal_names_the_record
+    write_file('source.c', "/* upstream */\nint value;\n")
+    write_origin
+    File.unlink(File.join(@directory, 'source.c'))
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_equal "#{File.join(@directory, 'ORIGIN.md')}: imported source file is missing: source.c", error.message
+  end
+
   # Seeded fault: a removal must name an imported file, so it cannot stand in
   # for an exclusion or hide a file the inventory never listed.
   def test_a_removal_must_name_an_imported_file

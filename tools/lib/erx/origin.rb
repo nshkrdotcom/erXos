@@ -172,7 +172,11 @@ module Erx
       display/lvgl/lvgl
     ].freeze
     INVENTORY_MARKER = "\n```json\n"
-    PAYLOAD_FIELDS = %w[version repository revision archive_sha256 exclusions removed files changes].freeze
+    # Each inventory field and the class of its value; the one list of the
+    # fields, from which the reader names a missing or mistyped one.
+    PAYLOAD_FIELDS = { 'version' => Integer, 'repository' => String, 'revision' => String,
+                       'archive_sha256' => String, 'exclusions' => Array, 'removed' => Array,
+                       'files' => Hash, 'changes' => Hash }.freeze
     MODIFIED_NOTICE = 'Modified by erXos'
 
     def initialize(root:, read_bytes: nil, authorize: nil, known_hash: nil)
@@ -262,17 +266,32 @@ module Erx
       end
       raise Error, "imported files lack their erXos change notice: #{unnoticed.join(', ')}" unless unnoticed.empty?
       payload
+    rescue Error => error
+      raise naming_record(error)
     end
 
     def inventory
       read
+    rescue Error => error
+      raise naming_record(error)
     end
 
     # The inventory's row for a file as imported, which a removed file keeps; nil
     # for a file it does not list.
-    def imported_file(path) = read.fetch('files')[path]
+    def imported_file(path)
+      read.fetch('files')[path]
+    rescue Error => error
+      raise naming_record(error)
+    end
 
     private
+
+    # A refusal from a public reader names the record it concerns, since its
+    # own message gives paths relative to the record's tree; the error keeps
+    # its class and backtrace.
+    def naming_record(error)
+      error.exception("#{File.join(@root, 'ORIGIN.md')}: #{error.message}")
+    end
 
     # A path the import removed for a recorded reason does not come back as
     # erXos's code, whatever its header says.
@@ -345,13 +364,17 @@ module Erx
       raise Error, "invalid origin inventory: #{error.message}"
     end
 
+    # The fields are named from PAYLOAD_FIELDS, never from the input: an
+    # unknown field is counted, so no unchecked text reaches the message.
     def validate_inventory(payload)
-      unless payload.is_a?(Hash) && payload.keys.sort == PAYLOAD_FIELDS.sort &&
-             payload.fetch('version') == 1 && payload.fetch('files').is_a?(Hash) &&
-             payload.fetch('changes').is_a?(Hash) && payload.fetch('exclusions').is_a?(Array) &&
-             payload.fetch('removed').is_a?(Array)
-        raise Error, 'invalid origin inventory fields'
-      end
+      raise Error, 'origin inventory is not an object' unless payload.is_a?(Hash)
+      missing = PAYLOAD_FIELDS.keys - payload.keys
+      raise Error, "origin inventory lacks fields: #{missing.join(', ')}" unless missing.empty?
+      unknown = payload.size - PAYLOAD_FIELDS.size
+      raise Error, "origin inventory has #{unknown} unknown field(s)" unless unknown.zero?
+      mistyped = PAYLOAD_FIELDS.find { |field, type| !payload.fetch(field).is_a?(type) }
+      raise Error, "origin inventory field #{mistyped.first} is not of class #{mistyped.last}" if mistyped
+      raise Error, 'origin inventory version is not 1' unless payload.fetch('version') == 1
       %w[repository revision].each { |field| validate_text(payload.fetch(field)) }
       validate_hash(payload.fetch('archive_sha256'))
       payload.fetch('exclusions').each do |exclusion|

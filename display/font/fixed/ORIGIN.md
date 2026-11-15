@@ -42,6 +42,7 @@ pixels, equals the glyph of the same code point in that `6x13.bdf`.
   "revision": "1f1396913fb5372408f442ed26933f5ae4b399cd",
   "archive_sha256": "13a993b331b95ca33e0e441f47a8da51f30d721ea9d8654d4dba12bb04bfe2f9",
   "exclusions": [],
+  "removed": [],
   "files": {
     "6x13.0000": {
       "license": "LicenseRef-misc-fixed-public-domain",
