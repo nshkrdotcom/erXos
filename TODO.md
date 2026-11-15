@@ -1885,6 +1885,35 @@ it; git history is the record of completed work.
   descriptor the table holds, where FreeBSD's `kern_pread` gives a pipe end `ESPIPE` and `/dev/null` its read of 0 or
   its write of every byte; `FIONREAD` on a pipe end is `ENOTTY`, where FreeBSD's `pipe_ioctl` gives the bytes
   readable; `F_GETOWN` and `F_SETOWN` are `EINVAL`. Answer each from the object's kind in the table.
+* [Medium] programs, the descriptor seam offers a listed set of calls (`musl/src/internal/erxos/syscall.c`,
+  `seam_offered`, and `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`, two lists that must agree):
+  design-programs.md, "The POSIX-lite personality", says every call that names a descriptor reaches the table, but
+  `dup`, `fsync`, `fdatasync`, `ftruncate`, `getdents64`, `preadv`, `pwritev`, `fchmod`, `fchown`, `fstatfs`,
+  `flock` and the `*at` calls with a directory descriptor reach musl's default, `ENOSYS`, not `EBADF`. It fails
+  safe: none reaches the console or the kernel. Make it hold by construction: offer the seam every call, the
+  non-program seams answering false as they do, and have the program's seam hand back one closed list of calls that
+  name no descriptor.
+* [Low] programs, `writev` through the seam (`liberx/backend/fiasco/program_task.c`, `vector_call`) writes each entry
+  separately, so entries that sum to at most `PIPE_BUF` are not one atomic write against another writer of the same
+  pipe; gather them into one pipe write. `lseek` ignores `whence` and `ioctl` its request (`liberx/program/fd.c`), so
+  a bad `whence` answers 0 and `FIONBIO` on a pipe answers `ENOTTY`.
+* [Medium] programs, a spawn's snapshot of the descriptor table (`liberx/program/spawn.c`, `erx_prog_spawn`) takes
+  each slot under its own hold of the table lock, so a `dup2` and `close` in another thread can land between two
+  slots, and marks no slot `FD_CLOEXEC`, since the table keeps no such flag. Once `fcntl` and `O_CLOEXEC` set it, a
+  spawn hands on what exec closes. Take the snapshot in one call of `liberx/program/fd.c`, under one hold of the
+  lock, with each slot's `FD_CLOEXEC`.
+* [Medium] programs, the spawn's send (`liberx/program/spawn.c`, `send_spawn`; docs/design-programs.md, "Starting
+  a program", step 2) must settle, before it is written, what the plan alone cannot: each `addopen` made in action
+  order against the working directory of its turn, which a single walk of the actions must give both the planner
+  and the send, never two; each `addchdir` target checked in that order, as FreeBSD's `chdir` fails a spawn with
+  `ENOENT` or `ENOTDIR`; and argv or env strings that are not UTF-8, or an env entry without `=`, which FreeBSD's
+  `execve` takes but the startup message's grammar (`abi/protocols/prog.txt`, `arg` and `env_var`) refuses, so the
+  planner accepts a spawn the handler or the child then refuses. Either the protocol carries them as bytes or the
+  planner refuses them with a stated errno.
+* [Low] programs, `posix_spawn_file_actions_addfchdir_np` on a descriptor an earlier `addopen` of the same spawn
+  made fails with `ENOTSUP` (`liberx/program/spawn_plan.c`, `fchdir_error`): the plan cannot tell before the open
+  is made whether it is a directory. It fails safe. Let the plan's working directory be such an open, checked by
+  the handler at the spawn, once directory descriptors exist.
 * [Medium] device-tree reader, split DMA translations (`kernel/core/dt.c`, `range_read`): a translation written as
   several adjacent `dma-ranges` entries, as a full 32-bit identity map under a one-cell `#size-cells` must be,
   leaves several windows with RAM behind them, and the device gets `ranges` (no DMA range). It fails safe. Merge

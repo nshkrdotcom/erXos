@@ -31,12 +31,14 @@
 #include <sys/uio.h>
 
 #include "erx/abi.h"
+#include "liberx/backend/fiasco/libc_spawn.h"
 #include "liberx/backend/fiasco/libc_start.h"
 #include "liberx/backend/fiasco/task_start.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/fd.h"
 #include "liberx/program/poll.h"
 #include "liberx/program/signal.h"
+#include "liberx/program/spawn.h"
 #include "liberx/program/program.h"
 
 /* The seam takes every write, so musl's console row is never reached from a program. */
@@ -98,6 +100,12 @@ ppoll_call(struct pollfd *fds, unsigned long nfds, const struct timespec *timeou
 	if (status != 0)
 		return (status);
 	return (erx_prog_poll(fds, (size_t)nfds, deadline));
+}
+
+int
+erx_fiasco_libc_spawn(pid_t *pid, const struct erx_spawn_request *req)
+{
+	return (erx_prog_spawn(pid, req));
 }
 
 /*

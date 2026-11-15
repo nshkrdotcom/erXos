@@ -15,5 +15,11 @@ ERX_SEAM_HEADERS = $(ERX_GEN)/include/erx/abi.h $(wildcard $(ERX_ROOT)/liberx/ba
 $(ERX_SEAM_OBJS): $(ERX_SEAM_HEADERS)
 $(ERX_SEAM_OBJS): CFLAGS_ALL += -I$(ERX_GEN) -I$(ERX_GEN)/include -I$(ERX_ROOT) -I$(ERX_ROOT)/include -isystem $(ERX_COMPILER_INCLUDE)
 
+# posix_spawn and its file actions build the spawn planner's request (liberx/program/spawn_plan.h).
+ERX_SPAWN_OBJS = $(filter obj/src/process/erxos/posix_spawn%,$(ALL_OBJS))
+ERX_SPAWN_HEADERS = $(ERX_SEAM_HEADERS) $(ERX_GEN)/include/erx/prog_profile.h $(wildcard $(ERX_ROOT)/liberx/program/*.h)
+$(ERX_SPAWN_OBJS): $(ERX_SPAWN_HEADERS) $(srcdir)/src/process/erxos/spawn_action.h
+$(ERX_SPAWN_OBJS): CFLAGS_ALL += -I$(ERX_GEN) -I$(ERX_GEN)/include -I$(ERX_ROOT) -I$(ERX_ROOT)/include -isystem $(ERX_COMPILER_INCLUDE)
+
 ERX_OWN_OBJS = $(addsuffix /erxos/%.o,obj/src/internal obj/src/thread obj/src/signal obj/src/process)
 $(filter $(ERX_OWN_OBJS),$(ALL_OBJS)): CFLAGS_ALL += -Wall -Wextra -Werror -Wno-unused-parameter

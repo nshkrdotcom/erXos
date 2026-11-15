@@ -85,7 +85,8 @@ module Erx
     # the pipe core (PIPE). The programs suite's programs are built from it.
     PROGRAM_LAYER = [*%w[liberx/program/program.c liberx/program/channel.c liberx/program/startup.c liberx/program/inbound.c
                          liberx/program/pages.c liberx/program/fd.c liberx/program/fd_plan.c liberx/program/pipe.c liberx/program/wake.c
-                         liberx/program/poll.c liberx/program/signal.c liberx/erx_lane.c
+                         liberx/program/poll.c liberx/program/signal.c liberx/program/spawn.c
+                         liberx/program/spawn_plan.c liberx/erx_lane.c
                          liberx/erx_profile.c build/gen/liberx/generated/prog_profile.c liberx/erx_etf.c
                          kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c], *PIPE].freeze
     PROGRAM = [*(LIBC_TASK - ["#{BACKEND}/libc_task.c"]), "#{BACKEND}/program_task.c", "#{BACKEND}/api_names.c",
@@ -146,7 +147,8 @@ module Erx
                       liberx/backend/fiasco/program_task.c
                       liberx/program/program.c liberx/program/channel.c liberx/program/startup.c
                       liberx/program/fd.c liberx/program/fd_plan.c liberx/program/pipe.c liberx/program/wake.c
-                      liberx/program/poll.c liberx/program/signal.c liberx/erx_profile.c
+                      liberx/program/poll.c liberx/program/signal.c liberx/program/spawn.c
+                      liberx/program/spawn_plan.c liberx/erx_profile.c
                       build/gen/liberx/generated/prog_profile.c test/guest/programs/args.c
                       test/guest/programs/bigargs.c test/guest/programs/note.c test/guest/programs/pipeio.c
                       display/lvgl/erx_lvgl.c build/gen/display/generated/erx_ui_wire.c].freeze

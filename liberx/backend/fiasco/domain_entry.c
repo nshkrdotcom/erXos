@@ -20,6 +20,7 @@
  * standard output and standard error share the thread's line.
  */
 
+#include <errno.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -27,6 +28,7 @@
 #include "erx/abi.h"
 #include "liberx/backend/core/boot_info.h"
 #include "liberx/backend/core/line_gather.h"
+#include "liberx/backend/fiasco/libc_spawn.h"
 #include "liberx/backend/fiasco/libc_start.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/task_start.h"
@@ -69,6 +71,15 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 	(void)args;
 	(void)result;
 	return (false);
+}
+
+/* No processes: a spawn is ENOSYS (libc_spawn.h). */
+int
+erx_fiasco_libc_spawn(pid_t *pid, const struct erx_spawn_request *req)
+{
+	(void)pid;
+	(void)req;
+	return (ENOSYS);
 }
 
 /*

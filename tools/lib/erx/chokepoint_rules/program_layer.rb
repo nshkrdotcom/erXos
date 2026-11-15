@@ -64,7 +64,9 @@ module Erx
                             liberx/program/pipe.c liberx/program/pipe.h
                             liberx/program/wake.c liberx/program/wake.h
                             liberx/program/poll.c liberx/program/poll.h
-                            liberx/program/signal.c liberx/program/signal.h]
+                            liberx/program/signal.c liberx/program/signal.h
+                            liberx/program/spawn.c liberx/program/spawn.h
+                            liberx/program/spawn_plan.c liberx/program/spawn_plan.h]
     )
   end
 end
