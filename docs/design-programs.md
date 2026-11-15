@@ -1312,7 +1312,7 @@ handler that asks keeps serving its program meanwhile (P3):
 | `{await, Tag}` | the shell's job table, once a job's evaluator has ended ([design-shell.md](design-shell.md#job-control)) | answers `{programs_ended, Tag}` once no row carries `Tag`, at once when none does, and otherwise when the `'DOWN'` that removes the last such row arrives |
 | `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
 | `{probe, Scope, Target}` | a program's handler, for a probe whose target is neither its program nor one of its children | answers as `kill` with the same `Scope` and `Target` would, `ok` or `esrch`, and hands nothing to any handler |
-| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
+| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, `Ctrl-C` among them ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
 
 A spawn is an effect, so the pure core decides it and the server
 performs it. On `{handler, Starter}` the core assigns the id and answers
@@ -1758,9 +1758,9 @@ children belong to its job, which the command server records at each spawn
 and fork, and a program created or forked while its starter is paused for
 the job, or started by the shell for a job it has stopped, is paused
 before its first thread starts, so `Ctrl-C` and `Ctrl-Z` reach the whole
-tree: the terminal relay asks each handler of the foreground job to send
-`SIGINT` or to pause its program
-([design-shell.md](design-shell.md#job-control)). `Ctrl-Z` pauses a job
+tree: the shell, which the terminal relay tells of the key, asks each
+handler of the foreground job to send `SIGINT` or to pause its program
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)). `Ctrl-Z` pauses a job
 without sending `SIGTSTP`: the shell keeps the job's `termios` and restores
 it at `fg`, and a second-tier program on a pseudo-terminal
 gets its `SIGTSTP` from the terminal's line discipline instead ([The

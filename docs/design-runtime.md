@@ -2415,7 +2415,8 @@ refused there). A driver is a module with `start_link(Console) -> {ok, Pid, Term
 where `Terminal` says whether a person's terminal is on the line, which it always
 is for a UART. With none, as `user_drv` does, the shell's group is `dumb` and
 `prim_tty`'s output raw, so a pipe gets bytes with no editing or echo. Both drivers
-speak the same messages:
+speak the same messages, and so does a session's terminal relay, the line driver of
+a console of the session role, which alone also sends the last:
 
 | Message | Direction | Meaning |
 | --- | --- | --- |
@@ -2424,6 +2425,7 @@ speak the same messages:
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
 | `{erx_console_size, Columns, Rows}` | to `erx_console` | the line's size is known or has changed; `erx_console` ignores a side outside 1 to 65,535 |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
+| `{erx_console_event, Event}` | to `erx_console` | the relay's line discipline made `Event`, which is `interrupt`, `suspend`, `quit`, `info` or `winch`, from a key or a size report; `erx_console` delivers it to its current group as it delivers the event made from a key ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
 
 `-user erx_console` holds against `-noshell` and `-noinput`, which `erx_console`
 reads: it starts no shell's group and gives `user` the input. A console whose driver

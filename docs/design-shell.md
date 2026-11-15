@@ -789,7 +789,9 @@ own opens, and it never waits on either itself, so a busy
 or hostile program delays none of its work. A command domain holds no open
 of the session's: its stream relay copies bytes
 ([design-programs.md](design-programs.md#what-a-program-can-start)), so a
-command there has no terminal to set:
+command there has no terminal to set. Its messages, and the rule for who
+holds the terminal, are [The terminal relay's
+protocol](#the-terminal-relays-protocol):
 
 * **Input.** Bytes from the master go through the line discipline to what
   reads the tty: the group while the shell prompts, on a raw tty with
@@ -827,7 +829,8 @@ command there has no terminal to set:
 * **Modes across jobs.** The shell sets the tty back to cooked before it
   starts a foreground job, keeps a stopped job's `termios` for its `fg`, and
   takes its own raw setting back when the job ends or stops, as a UNIX shell
-  does. A command that sets the `termios` sets back the one it found when
+  does. Each of these changes is one `foreground` request, which hands the
+  terminal over and sets the new holder's `termios` together. A command that sets the `termios` sets back the one it found when
   it returns or fails, as a FreeBSD program restores its terminal before it
   exits, so the next command of the line starts cooked; the shell's
   restore when the job ends or stops covers a command killed in raw mode,
@@ -910,7 +913,8 @@ table, `stop/1` fails with `enotsup`.
 
 **Reading in the background.** Only the foreground job reads the
 terminal; a background job that reads it waits until it is brought to the
-foreground.
+foreground, its wait parked in the relay
+([The terminal relay's protocol](#the-terminal-relays-protocol)).
 
 **Numbers, names and reports.** Only the shell's own line makes jobs: its
 `&` starts a numbered job, and a line that `Ctrl-Z` stops becomes one. An
@@ -1067,7 +1071,7 @@ load field.
 **The info request.**
 
 * **Programs.** The shell asks each program's handler to send it
-  `SIGINFO`, as the relay asks for `SIGINT`
+  `SIGINFO`, as it asks for `SIGINT` at `Ctrl-C`
   ([design-programs.md](design-programs.md#the-terminal)). A program that
   does not catch it runs on.
 * **Erlang commands opt in**, as a program catches `SIGINFO`. A process
@@ -1149,6 +1153,159 @@ path `Ctrl-T`'s info request takes, with no status line:
 So a program on the session's own tty gets `SIGWINCH` in the first tier,
 as on a pseudo-terminal of the second
 ([design-programs.md](design-programs.md#the-terminal)).
+
+#### The terminal relay's protocol
+
+The relay is a `gen_server` registered as `erx_session_tty`. Its
+construction is one value: **the terminal has one holder at a time,
+either the console or the jobs in the foreground, and the holder's
+`termios` goes with it.** Every reader of the tty belongs to a holder:
+the console's own reader belongs to `console`, and every other reader is
+an open, which belongs to the job that made it. A wait reaches the line
+discipline only while its reader's holder holds the terminal, and the
+shell changes the holder and the `termios` in one request. Each rule that
+would otherwise be a case of its own follows from that value:
+
+* the console reads only while the shell prompts or `erl` runs, so it
+  never takes a line the foreground job is waiting for;
+* a background job's read waits until `fg` brings the job back
+  ([Reading in the background](#job-control));
+* a background job's `tcsetattr` is refused, and its job stops, as
+  `tty/2` says ([Interfaces](#interfaces));
+* the tty is raw for the first prompt because the console holds it from
+  the start;
+* the shell never has to order a `termios` change against a change of
+  who reads.
+
+**Its parties.** The master speaks the six messages of
+[design-live.md](design-live.md#the-tty) ("Between domains"). The console
+of the session role is the relay's line driver and speaks the console's
+driver messages ([design-runtime.md](design-runtime.md), "`erx_stdio`,
+hosted mode's console driver"). Every other party is a process of the
+session's own domain: the program handlers, the Erlang commands through
+`erx_cmd`, and the shell. A process of another domain cannot reach the
+relay. Its messages arrive as `{erx_origin, D, Msg}`, and the relay takes
+those only from its master's domain, so a plain message comes from its
+own domain by construction.
+
+**Requests.** A request is a call, `gen_server:call(erx_session_tty,
+Request, infinity)`, and the relay answers it in the step that takes it.
+The relay calls no one and waits on no one, so no cycle of waits passes
+through it, and a caller waits for one step of the relay at most. The
+request shapes of the program protocol are the relay's own
+([design-programs.md](design-programs.md#the-program-protocol)): a handler
+passes on a program's `{tty, Open, Request}` and `{watch, Open, Events}`
+with the relay's open in place of its own, and passes a report back the
+same way. Reads and writes carry bytes, as 9P2000.L's `read` and `write`
+do. The program protocol carries data-area slots instead, and the handler
+copies between the two.
+
+| Request | Sent by | Answer | What follows the answer |
+| --- | --- | --- | --- |
+| `{open, Job}` | a program's handler, for a terminal descriptor of its program, `Job` being the program's job; `erx_cmd`, in the calling process at its first terminal call, under the caller's own job tag, kept in the caller's dictionary | `{ok, Open}`, `Open` a new reference | the relay monitors the caller and closes the open when the caller ends |
+| `{close, Open}` | a process given the open | `ok` | the open's waits end, and no report for it is sent after the close is taken |
+| `{tty, Open, tcgetattr}` | a process given the open | `{ok, Termios}` | nothing |
+| `{tty, Open, {tcsetattr, Termios}}` | a process given the open | `ok`; `{error, einval}` when `erx_tty:set/2` refuses `Termios` or `TOSTOP` is set; `{error, background}` when the open's job does not hold the terminal | on `ok`, the line discipline's waits are checked again under the new `termios` ([design-live.md](design-live.md#the-tty)) |
+| `{tty, Open, winsize}` | a process given the open | `{ok, {Rows, Columns}}`, the size the master last reported | nothing |
+| `{watch, Open, [Kind]}`, `Kind` being `read`, `in` or `out` | a process given the open | `ok` | one `{ready, Open, [Kind]}` to the caller, when `read_wait`, `poll_wait` or room in the output says so |
+| `{read, Open, Max}`, `Max` from 0 to 4,096 | a process given the open | `{ok, Bytes}`; `{ok, <<>>}` for the end of file, or a raw read whose time ended with nothing; `eagain` when another reader took the bytes or the open's job does not hold the terminal | nothing |
+| `{write, Open, Bytes}` | a process given the open | `{ok, N}`, the count `output/3` took; `eagain` when it took none, or bytes wait ahead of it | nothing |
+| `{status, Line}` | the shell's report process ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)) | `ok`, whether `status/3` takes the line or drops it | nothing |
+| `{foreground, Holder, Termios}`, `Holder` being `console` or a list of job tags | the shell | `{ok, Left}`, `Left` being the `termios` the previous holder left; `{error, einval}` when `erx_tty:set/2` refuses `Termios`, with nothing changed | the waits of the readers that now hold the terminal are armed, and report at once where input waits |
+
+Any other request is answered `{error, einval}`, and a request that names
+an open the relay did not make, or has closed, is answered
+`{error, ebadf}`. `tcgetpgrp`, `tcsetpgrp` and the `{background,
+Orphaned}` answer belong to the second tier
+([design-programs.md](design-programs.md#the-terminal)).
+
+**One watch per kind.** A watch names one kind. A `poll` for input and
+output sends two watches, and a second watch of the same open and kind
+replaces the first, as the line discipline replaces a wait
+([design-live.md](design-live.md#the-tty)). A watch of `read` or `in`
+from an open whose job does not hold the terminal is answered `ok` and
+parked: the relay keeps it, with its caller, outside the line discipline,
+so no `VTIME` timer runs for it. A watch of `out` is never parked, since
+a background job's writes go through in the first tier.
+
+**The ordering rule.** The answer goes before anything the request sets
+off. A watch whose condition already holds is answered `ok` and then
+reported, and a `foreground` is answered before the reports of the waits
+it arms. So a caller always sees the answer to its request first.
+Messages from the relay reach one process in the order it sends them,
+so a caller that closes an open gets every report made for it before
+the close's answer, and none after.
+
+**The foreground rule.**
+
+* `{foreground, console, Cooked}` gives the terminal to the console, with
+  `Cooked` less `ICANON`, `ECHO`, `ICRNL`, `OPOST` and `ISIG`, the
+  setting its line editor needs
+  ([design-live.md](design-live.md#the-tty), "A shell's line editor is a
+  program on a raw tty"). `{foreground, Tags, Termios}` gives it to the
+  jobs `Tags`, with `Termios` as given. `Tags` holds the jobs the job
+  table calls the foreground: the line, and the job the line waits for
+  in `fg`.
+* A change of holder checks `Termios` whole first, and changes nothing if
+  the check fails. It then takes the armed waits of the readers that lose
+  the terminal out of the line discipline, timers included, and parks
+  them. It sets the `termios`, and arms the parked waits of the readers
+  that gain the terminal. Input typed and not yet read stays in the tty
+  and goes to the next holder's reader, as typed-ahead input does on
+  UNIX.
+* The relay starts with the console holding the terminal, in that
+  setting made from the tty's defaults, so the first prompt edits before
+  the shell has sent anything.
+* The shell sends `foreground` at the points where
+  [Modes across jobs](#job-control) changes the mode. Before a line or a
+  job starts in the foreground, it sends `{foreground, [Tag], Cooked}`,
+  with the session's cooked `termios`. At `fg` it sends the line's and
+  the job's tags with the `termios` the job kept. When the foreground
+  job stops, it sends `{foreground, console, Cooked}` and keeps `Left`
+  for the job's `fg`. When the job ends, it sends the same request.
+  While `erl` runs, it sends `{foreground, console, Cooked}` too, since
+  the Erlang shell's group reads through the console. Which `Left` of an
+  ended job becomes the session's cooked `termios` is the open decision
+  below ([Risks and open questions](#risks-and-open-questions)).
+* Only the shell sends `foreground`. Any process of the session's domain
+  could send it, but such a process holds the session's authority anyway
+  (SH1). A command domain cannot reach the relay at all.
+
+**Terminal events go to the console.** The relay compares job tags to
+gate reads, but acts on no job. Each signal and event the line discipline returns goes to
+the relay's console as `{erx_console_event, Event}`:
+
+| The line discipline's action | `Event` |
+| --- | --- |
+| `{signal, sigint}` | `interrupt` |
+| `{signal, sigtstp}` | `suspend` |
+| `{signal, sigquit}` | `quit` |
+| `info` | `info` |
+| `winch` | `winch` |
+
+The console delivers each event to its current group as it delivers the
+event made from a key: `interrupt` as `exit(Group, interrupt)`, and every
+other event as a message the group passes on to its shell. The shell
+alone knows its jobs, and acts through its job table, as
+[`Ctrl-T`](#ctrl-t-status-and-the-info-request) and
+[Window size](#window-size) say for `info` and `winch`. It treats `quit`
+as `kill -s QUIT` of the foreground jobs, with no status line. While the
+console holds the terminal, `ISIG` is clear, so `Ctrl-C`, `Ctrl-Z` and
+`Ctrl-\` reach the console as bytes, which it reads as
+[design-runtime.md](design-runtime.md) says. Unless `NOFLSH` is set, a
+signal comes with the line discipline's `flush_output`, and the relay
+drops what it holds for the master, so `Ctrl-C` discards waiting output
+before the shell has acted.
+
+**Failure.** The relay is its console's line and ends with it, and the
+console of the session role ends when the line hangs up, and every shell
+on it ends too. A call to a relay that has ended exits in the caller,
+whose job ends with the shell. An open whose maker ends is closed at its
+monitor's `'DOWN'`. So a command ended by `Ctrl-C` leaves no wait behind
+it, and no caller has to close an open on every path. After a hangup,
+every armed wait is ready, and every later read that finds no bytes reads
+the end of file ([design-live.md](design-live.md#the-tty)). A parked wait
+gets no report, since its job ends with the session's shell.
 
 ## Interfaces
 
@@ -1252,7 +1409,8 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
   `erx_tty:set/2` checks whole, and `winsize` answers the size the master
   last reported. A `tcsetattr` from a job that is not in the foreground
   stops the job, as `stop/1` does, and is made once `fg` brings the job
-  back, as FreeBSD's terminal makes a background process group that sets
+  back: the relay answers it `{error, background}`, and `tty/2` calls
+  `stop/1` and sends it again when that returns, as FreeBSD's terminal makes a background process group that sets
   it wait for the foreground (`sys/kern/tty.c:570-607`); a job continued
   by `bg` stops again at its next `tcsetattr`. Standard input redirected from a file, a pipe or
   `/dev/null` answers `enotty`, and so does every call in a command
@@ -1492,6 +1650,41 @@ remain independent of catalog generation.
     two spaces before `cmd:`, the leading newline, and the same no-job
     texts. `cp`'s and `sleep`'s own reports match byte for byte once the
     numbers are masked. A one-space separator fails the comparison.
+* **The terminal relay's protocol**
+  ([The terminal relay's protocol](#the-terminal-relays-protocol)). These
+  are EUnit cases of `erx_session_relay` against a fake master and a fake
+  console, run by `test/host/erx_session_relay_test.rb`. Each passing case
+  has a seeded fault that makes it fail:
+  * Order: a watch of `in` made while a byte waits receives `ok` as its
+    first message and the report as its second. Seeded: a relay that
+    sends the report before the answer.
+  * Background: an open of job B watches `read` while `[A]` holds the
+    terminal. A typed line gives B no report, and B's `read` answers
+    `eagain`. After `{foreground, [B], Cooked}` the report comes, and the
+    read returns the line. Seeded: a relay that arms every wait whatever
+    its job, so B is reported before the change.
+  * The console during a job: with `[A]` holding the cooked terminal and
+    A's open watching `read`, a typed line reaches A's read, and the fake
+    console gets no `erx_console_input`. After `{foreground, console,
+    Cooked}` the console reads the next key at once, unechoed. Seeded: a
+    console reader that is never parked, which takes A's line.
+  * The swap: a job's `tcsetattr` with `ECHO` clear, then `{foreground,
+    console, Cooked}`, answers `Left` with `ECHO` clear, and `tcgetattr`
+    shows `Cooked` less the line editor's five flags. A `foreground`
+    whose `termios` `erx_tty:set/2` refuses changes neither the holder
+    nor the mode, which a parked wait that gets no report shows. Seeded:
+    a `Left` that is the new `termios`, and a holder changed before the
+    check, each fail one case.
+  * `tcsetattr` in the background answers `{error, background}`, and
+    `tcgetattr` shows the `termios` unchanged. Seeded: a relay that does
+    not check the open's job.
+  * Opens: a request with a reference the relay did not make answers
+    `{error, ebadf}`. An open whose maker has exited answers
+    `{error, ebadf}` to another process that names it. Seeded: a relay
+    that does not monitor the maker answers that request.
+  * Events: each of the five line-discipline actions reaches the fake
+    console as its `Event` from the table, and the fake console is told
+    of nothing else. Seeded: `sigtstp` mapped to `interrupt`.
 * **A command at the terminal:**
   * `tty/2`: a test command sets the tty raw, reads three keys typed with
     no Return one by one, and ends; the prompt then echoes and edits. With
@@ -1714,6 +1907,24 @@ the info request, as FreeBSD's does not catch `SIGINFO`; `cp`, `rm` and
 
 Open decisions, each with a recommendation:
 
+* **The session's cooked `termios` after a job ends.** The shell gives
+  each new foreground job the session's cooked `termios`
+  ([The terminal relay's protocol](#the-terminal-relays-protocol)), which
+  starts as the tty's defaults. If the `termios` a job leaves is always
+  dropped, `stty status ^T` and every other `stty` setting are lost when
+  `stty` returns, and `stty` does nothing. If it is always kept, a
+  program killed in raw mode leaves the next job raw. FreeBSD's `sh`
+  leaves the choice to libedit, which reads the terminal's setting when
+  it starts to edit a line; its exact rule is unverified until
+  `contrib/libedit/tty.c` is read at the pinned release. Recommended: keep
+  `Left` as the session's cooked `termios` when the job ended by
+  returning or exiting, and drop it when `Ctrl-C`, a signal or `kill`
+  ended the job, after checking libedit's rule at the pin. A command
+  that returns restores its own `termios` already, so only `stty`'s kind
+  of change survives, and so does a program that exits normally while
+  raw. The sentence in [design-live.md](design-live.md#the-tty) that a
+  program which ends in raw mode leaves nothing in the `termios` then
+  holds only for a program that a signal ended.
 * **`pcpu` for a program.** FreeBSD's `%CPU` is a decayed average of
   recent use, which neither the kernel nor the command server keeps.
   `ps` prints a program's CPU time over the time since it started,
