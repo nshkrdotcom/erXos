@@ -1427,12 +1427,13 @@ land after M11 repeat M11's closure over what they add.
    and the session's by the row's keeper. The LVGL program holds its
    pipes and its buffer's pages and nothing else
    ([design-display.md](design-display.md#kiosks-and-glasses)).
-   The two steps are two milestones. The basic kiosk is part 4a: the
-   offline LVGL dashboard, `examples/dashboard` drawn by `erx-lvgl` and
-   checked on the host against its reference picture, with sample data
-   and no package. The full kiosk is part 4b: the same dashboard as a
-   package in `/apps`, booted on QEMU `virt` for the first time, with
-   quotes fetched over HTTPS, so it also waits for 1b-G's network.
+   The kiosk has two milestones. The basic kiosk is the offline LVGL
+   dashboard, `examples/dashboard` with sample data and no remote data,
+   as a package in `/apps` booted on QEMU `virt`: part 4a's host check
+   and part 4b's package and boot. The full kiosk is the same dashboard
+   with live quotes fetched over HTTPS
+   ([design-quotes.md](design-quotes.md)), so it also waits for 1b-G's
+   network.
 5. **Kiosks on boards**, after part 4 and M12's boards. The firmware
    framebuffer driver of the Raspberry Pi comes earlier, with 1b-I's
    stage (d) on the stopgap; this part adds a panel on a serial bus, on
@@ -1937,10 +1938,13 @@ program's own `/dev`
 ([design-files.md](design-files.md)). A USB keyboard
 follows with [track U](#track-u-usb), not as part of the milestone.
 
-**What comes first.** Where work can be chosen, the first two apps and
-what they stand on come before every other item: track A's second part
-(packages added to an image), then the kiosk's two milestones, then
-Doom's. The other items keep running beside them.
+**What comes first.** The highest priority is two basic apps, each a
+package added to an image and booted on QEMU `virt`: the kiosk with no
+remote data (`examples/dashboard` with sample data) and Doom with keys
+from QEMU's virtio keyboard. That is track A's second part and what the
+two apps stand on, then the kiosk's and Doom's full milestones. Work
+runs at full parallelism: every worker these items cannot use takes the
+next available item of the plan.
 
 1. **The start table**, in 1b, after 1b-A, 1b-B's session domain and
    M6's data partition, whose `etc` tree holds `rc.conf`. `start` rows in
@@ -2947,7 +2951,7 @@ unplugged with a key held releases it, and a USB stick's sectors are
 read and written through a drive; on the Pi 4, a USB keyboard behind
 the VL805's internal hub types into the kiosk.
 
-**Parts.** Each is a proposal; (a) needs nothing new below it.
+**Parts.** (a) needs nothing new below it.
 
 * **(a) The cores, on the host.** The descriptor decoder, the bus and
   hub cores, the controller core, the HID parser and fold, the BOT core,
@@ -3151,10 +3155,12 @@ failures and the peak memory of the session's objects, not just touched
 pages. These measurements decide whether the fill and the write-back
 points of the shared mappings meet the named application corpus.
 
-## Track B: Bluetooth (proposed)
+## Track B: Bluetooth
 
-**Status.** Proposed, not scheduled: no milestone depends on it, and
-where it goes in the order is undecided.
+**Place.** In Phase 1b, below the first two apps (Track A, "What comes
+first"): parts (a) to (c) run beside every other item, since 1b-A and
+track H are in place, and part (d) runs beside 1b-I's board work. No
+milestone depends on the track.
 
 **Goal.** A phone app finds an erXos machine, connects to it and talks
 to it over Bluetooth Low Energy, along
@@ -3173,7 +3179,7 @@ an app; the phone pairs by typing the passkey the `pair` file shows,
 the machine reboots, and the phone reads an `authenticated` value again
 without pairing.
 
-**Parts.** Each is a proposal; (a) needs nothing new below it.
+**Parts.** (a) needs nothing new below it.
 
 * **(a) The cores, on the host.** `erx_h4`, the HCI codec and the
   bring-up core, the patch reader, L2CAP and the link core, `erx_att`,
@@ -3751,11 +3757,15 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
   M9, G6, M8, M10, M11 and M12; the rest of track P follows its first
   part, and track Q follows track P and M7; M13 and M14, already on QEMU,
   reach the boards with M12.
-* Within Phase 1b, track A's second part, the kiosk's parts 4a and 4b
-  and Doom's two milestones come first wherever work can be chosen
-  ([Track A](#track-a-apps), "What comes first"). Track U runs below
+* Within Phase 1b, the two basic packaged apps, the offline kiosk and
+  Doom on the virtio keyboard, come first, with track A's second part
+  under them; their full milestones follow; every other item fills the
+  remaining workers ([Track A](#track-a-apps), "What comes first").
+  Track U runs below
   them: its part (a) beside everything, its part (b) after 1b-E, its
-  part (c) beside 1b-I's board work.
+  part (c) beside 1b-I's board work. Track B runs beside track U: its
+  parts (a) to (c) beside everything, its part (d) beside 1b-I's board
+  work, with WiFi, 1b-I's part (f).
 * Track D runs beside the critical paths from the session domain on; no
   milestone needs it. Its first part, the browser over the host link,
   needs no device and comes first; the window stack follows, then the
@@ -3834,5 +3844,5 @@ Each is small, adds its tests, and leaves `make check` green.
 | The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | erXos is a prototype and makes no releases | when erXos makes releases |
 | Graphics, audio | not needed for the thesis | not planned |
 | USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | [Track U](#track-u-usb), in Phase 1b below the first two apps |
-| Bluetooth's later stages: Wi-Fi provisioning from a phone, HID over GATT, classic Bluetooth | track B's first consumer is a phone talking to a peripheral; provisioning needs a Wi-Fi driver no design has, and HID over GATT the central role and the USB design's HID cores ([design-bluetooth.md](design-bluetooth.md#later-stages)) | in that order, each when its consumer is named |
+| Bluetooth's later stages: Wi-Fi provisioning from a phone, HID over GATT, classic Bluetooth | track B's first consumer is a phone talking to a peripheral; provisioning needs 1b-I's WiFi, part (f), and HID over GATT the central role and the USB design's HID cores ([design-bluetooth.md](design-bluetooth.md#later-stages)) | in that order, each when its consumer is named |
 | x86-64 | out of scope | not planned |
