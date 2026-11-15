@@ -58,6 +58,7 @@
 #include "erx/dom.h"
 #include "erx/dom_lib.h"
 #include "liberx/backend/api.h"
+#include "erx_domain_terms.h"
 
 static ErlNifMutex *lib_lock;		/* made once, by the first load */
 static erx_dom_lib_t *lib;		/* set once at load */
@@ -382,77 +383,11 @@ created_term(ErlNifEnv *env, const erx_dom_created_t *created)
 }
 
 /*
- * The services, [{Server, Name, Interface}], Server a configured domain's
- * row or, for a service the system domain serves, the atom system,
- * Interface the abi/services number of the interface it serves (an
- * ERX_SERVICE_* value), and the facet
- * rows, [{Grantee, Name, Server, Limits}], Grantee a configured row, the
- * atom system, or {template, Template} for the sessions made from session
- * template Template, the index a session's origin {session, Template}
- * names, Name the service's name as an atom, Server its server's row
- * or, for a service the system domain serves, the atom system, and Limits
- * the grant's limits by name, each list in manifest order
- * (docs/design-system.md, "Facets a configured domain serves"). The
- * domain service hands only the configured domains' services to its mint
- * core, and reads the system domain's for their interface.
- * A name is a checked identifier of at most 63 bytes from the manifest,
- * never from a request, so the atoms are bounded by the manifest's rows.
- */
-static bool
-served_terms(ErlNifEnv *env, ERL_NIF_TERM *services, ERL_NIF_TERM *grants)
-{
-	ERL_NIF_TERM keys[6], values[6], limits, grantee, name, server;
-	const erx_dom_service_t *service;
-	const erx_dom_facet_t *facet;
-	uint32_t index;
-
-	/* Each list built from the last row back, so its head is the first row. */
-	*services = enif_make_list(env, 0);
-	for (index = lib->view.nservices; index-- > 0;) {
-		service = &lib->view.services[index];
-		server = service->server == ERX_MF_NONE ? atom(env, "system") : enif_make_uint(env, service->server);
-		name = enif_make_atom_len(env, service->name, service->name_len);
-		*services = enif_make_list_cell(env, enif_make_tuple3(env, server, name,
-		    enif_make_uint(env, service->interface)), *services);
-	}
-	*grants = enif_make_list(env, 0);
-	for (index = lib->view.nfacets; index-- > 0;) {
-		facet = &lib->view.facets[index];
-		service = &lib->view.services[facet->service];
-		keys[0] = atom(env, "max_request"), values[0] = enif_make_uint(env, facet->max_request);
-		keys[1] = atom(env, "in_flight"), values[1] = enif_make_uint(env, facet->in_flight);
-		keys[2] = atom(env, "reductions"), values[2] = enif_make_uint64(env, facet->reductions);
-		keys[3] = atom(env, "period_ns"), values[3] = enif_make_uint64(env, facet->period_ns);
-		keys[4] = atom(env, "max_heap_size"), values[4] = enif_make_uint64(env, facet->max_heap_size);
-		keys[5] = atom(env, "queue"), values[5] = enif_make_uint64(env, facet->queue);
-		if (!enif_make_map_from_arrays(env, keys, values, 6, &limits))
-			return (false);
-		switch (facet->grantee_kind) {
-		case ERX_MF_GRANTEE_DOMAIN:
-			grantee = enif_make_uint(env, facet->grantee);
-			break;
-		case ERX_MF_GRANTEE_SESSION:
-			grantee = enif_make_tuple2(env, atom(env, "template"), enif_make_uint(env, facet->grantee));
-			break;
-		case ERX_MF_GRANTEE_SYSTEM:
-			grantee = atom(env, "system");
-			break;
-		default:
-			return (false);
-		}
-		server = service->server == ERX_MF_NONE ? atom(env, "system") : enif_make_uint(env, service->server);
-		name = enif_make_atom_len(env, service->name, service->name_len);
-		*grants = enif_make_list_cell(env, enif_make_tuple4(env, grantee, name, server, limits), *grants);
-	}
-	return (true);
-}
-
-/*
  * What the domain service reads of the manifest's configured domains:
  * {ok, #{host => Host, domains => Rows, services => Services, grants =>
  * Grants}}, Rows in row order, each #{row, place, name, principal, kind,
  * restarts, restart_period_s, boot_timeout_s}, place its place in the boot
- * order, and Services and Grants as served_terms makes them. The view is
+ * order, and Services and Grants as erx_domain_served_terms makes them. The view is
  * fixed at boot, so this reads it without the lock.
  */
 static ERL_NIF_TERM
@@ -493,7 +428,7 @@ configured_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	if (bytes == NULL)
 		return (enif_make_badarg(env));
 	memcpy(bytes, lib->host, lib->host_len);
-	if (!served_terms(env, &services, &grants))
+	if (!erx_domain_served_terms(env, &lib->view, &services, &grants))
 		return (enif_make_badarg(env));
 	keys[0] = atom(env, "host"), values[0] = host;
 	keys[1] = atom(env, "domains"), values[1] = rows;

@@ -605,10 +605,11 @@ module Erx
               line.fail!('parameter requires one checked_by helper') unless marker && marker == bound.size - 2
               helper = Syntax.identifier(bound.last, line: line)
               constraint = bound.take(marker)
-              validate_parameter_constraint(kind, constraint, line)
+              minimum, maximum = validate_parameter_constraint(kind, constraint, line)
               parameters[key] = { number: Model.positive(id, line, maximum: (1 << 32) - 1),
                                   kind: kind, cardinality: cardinality, maximum_count: count,
-                                  bound: constraint.freeze, helper: helper }.freeze
+                                  bound: constraint.freeze, minimum: minimum, maximum: maximum,
+                                  helper: helper }.freeze
             else line.fail!('unknown service metadata member')
             end
           end
@@ -620,6 +621,9 @@ module Erx
         end.freeze
       end
 
+      # A parameter's bound, checked, as its minimum and maximum: an integer kind's
+      # range, 0 and a text or bytes kind's byte maximum, 0 and 1 for a boolean, and 0
+      # and 0 for a reference kind, whose table bounds it.
       def validate_parameter_constraint(kind, constraint, line)
         case kind
         when 'u64', 'i64'
@@ -627,15 +631,18 @@ module Erx
           base = Model::BASE_TYPES.fetch(kind)
           low, high = constraint.drop(1).map { |word| Syntax.integer(word, line: line) }
           line.fail!('parameter range is invalid') unless low <= high && low >= base.minimum && high <= base.maximum
+          [low, high]
         when 'identifier', 'namespace_path', 'bytes'
           line.fail!('byte parameter requires bytes MAX') unless constraint.size == 2 && constraint[0] == 'bytes'
-          Model.positive(constraint[1], line, maximum: 4 * 1024 * 1024)
+          [0, Model.positive(constraint[1], line, maximum: 4 * 1024 * 1024)]
         when 'boolean'
           line.fail!('boolean parameter requires boolean bound') unless constraint == ['boolean']
+          [0, 1]
         else
           table = { 'domain' => 'domains', 'principal' => 'principals', 'device' => 'devices' }.fetch(kind)
           valid = kind == 'domain' ? constraint.size == 4 && constraint[2] == 'system' && %w[yes no].include?(constraint[3]) : constraint.size == 2
           line.fail!('reference parameter has an invalid target') unless valid && constraint[0] == 'target' && constraint[1] == table
+          [0, 0]
         end
       end
     end

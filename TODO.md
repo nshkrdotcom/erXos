@@ -3446,22 +3446,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   image's `domains:` is checked against no manifest row, since the test manifest is the
   development one grown. Build test images' domain boot scripts from their manifest's
   rows, as the production image does.
-* [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_and_place`):
-  facet records are refused (`unsupported`, naming M5) after properties 2, 10 and 11
-  are proved over them, because a facet's operations and parameters resolve against its
-  service's generated declarations and grant checker (design-abi.md, "Services, facets
-  and their parameter schemas"), which the packer does not read; so no admitted
-  manifest has a facet and the boot order is name order. A service's `interface` is a
-  number, not the qualified ABI service name, and the server's release is not checked to
-  supply it. design-stopgap.md lists `facet` among the records the check accepts.
 * [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_facets_supported`):
-  a facet that names an operation or a parameter is refused (`unsupported`, naming M5),
-  because those resolve against its service's generated declarations and grant checker
-  (design-abi.md, "Services, facets and their parameter schemas"), which the packer does
-  not read; the boot view refuses one too, so an admitted facet grants its whole service.
-  A service's `interface` is a number,
-  not the qualified ABI service name, and the server's release is not checked to supply
-  it.
+  a facet that names an operation is refused (`unsupported`, naming M5), because
+  operations resolve against its service's generated declarations (design-abi.md,
+  "Services, facets and their parameter schemas"), which the packer does not read; the
+  boot view refuses one too, so an admitted facet grants every operation of its service.
+  The server's release is not checked to supply the service's interface.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl` (`served/2`): a
   configured domain's facet of a service the system domain serves ends with the process
   behind it, and when that service restarts and names a new process (`erx_facet:serve/2`)

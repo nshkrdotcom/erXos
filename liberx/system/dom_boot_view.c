@@ -32,7 +32,8 @@
  * strings for what the library adds to its own words (boot_strings_fit).
  * The service and facet rows are carried for the domain service
  * (boot_services), each server a configured row or the system domain, and
- * each grantee the system domain, a configured row or a session template.
+ * each grantee the system domain, a configured row or a session template,
+ * with each facet's parameters checked against what its service declares.
  */
 
 #include <stdbool.h>
@@ -76,7 +77,11 @@ static const char *boot_configured(erx_dom_view_t *, const erx_manifest_view_t *
 static const char *boot_templates(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_template_t *);
 static const char *boot_services(erx_dom_view_t *, const erx_manifest_view_t *,
-		    erx_dom_service_t *, erx_dom_facet_t *);
+		    erx_dom_service_t *, erx_dom_facet_t *, erx_dom_parameter_t *);
+static const char *boot_parameter(const erx_mf_parameter_t *, const erx_service_parameter_t *,
+		    const uint8_t *, erx_dom_parameter_t *);
+static const char *boot_facet_parameters(const erx_manifest_view_t *, uint32_t first, uint32_t count,
+		    uint32_t interface, erx_dom_parameter_t *);
 static const char *boot_facet_grantee(const erx_dom_view_t *, const erx_mf_facet_t *,
 		    const erx_dom_service_t *);
 static bool	boot_facet_repeats(const erx_dom_view_t *, const erx_dom_facet_t *, uint32_t);
@@ -91,7 +96,8 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 	    .ntemplates = manifest->header.sessions.count, .nfiles = nfiles,
 	    .ndevices = manifest->header.devices.count,
 	    .nservices = manifest->header.services.count,
-	    .nfacets = manifest->header.facets.count });
+	    .nfacets = manifest->header.facets.count,
+	    .nparameters = manifest->header.facet_parameters.count });
 }
 
 /*
@@ -133,7 +139,8 @@ erx_dom_boot_layout(const erx_dom_boot_sizes_t *sizes, uintptr_t base, erx_dom_b
 	    !BOOT_PLACE(devices, sizes->ndevices) ||
 	    !BOOT_PLACE(device_records, sizes->ndevices) ||
 	    !BOOT_PLACE(services, sizes->nservices) ||
-	    !BOOT_PLACE(facets, sizes->nfacets))
+	    !BOOT_PLACE(facets, sizes->nfacets) ||
+	    !BOOT_PLACE(parameters, sizes->nparameters))
 		return (false);
 #undef BOOT_PLACE
 	*bytes = used;
@@ -734,21 +741,102 @@ boot_facet_grantee(const erx_dom_view_t *view, const erx_mf_facet_t *facet, cons
 }
 
 /*
+ * Why row is not a value of parameter, or NULL with the value in *value:
+ * it is of the declared kind and within the declared bound, and text or
+ * bytes point into strings, the manifest's string table. A
+ * reference kind, which nothing carries to the domain service, is refused,
+ * as the packer refuses one. The reader has checked a boolean's value and
+ * each string against the string table.
+ */
+static const char *
+boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *parameter, const uint8_t *strings,
+    erx_dom_parameter_t *value)
+{
+	bool within;
+
+	if (row->kind != parameter->kind)
+		return ("manifest: a facet parameter is not of its declared kind");
+	*value = (erx_dom_parameter_t){ .declared = parameter, .scalar = row->scalar };
+	switch (row->kind) {
+	case ERX_MF_PARAMETER_U64:
+	case ERX_MF_PARAMETER_BOOLEAN:
+		within = row->scalar >= parameter->minimum && row->scalar <= parameter->maximum;
+		break;
+	case ERX_MF_PARAMETER_I64:
+		within = (int64_t)row->scalar >= (int64_t)parameter->minimum &&
+		    (int64_t)row->scalar <= (int64_t)parameter->maximum;
+		break;
+	case ERX_MF_PARAMETER_IDENTIFIER:
+	case ERX_MF_PARAMETER_NAMESPACE_PATH:
+	case ERX_MF_PARAMETER_BYTES:
+		within = row->bytes.length <= parameter->maximum;
+		value->bytes = strings + row->bytes.offset;
+		value->bytes_len = row->bytes.length;
+		break;
+	default:
+		return ("manifest: a facet parameter is a reference, which the boot does not carry");
+	}
+	return (within ? NULL : "manifest: a facet parameter is outside its declared bound");
+}
+
+/*
+ * Checks a facet's count parameter rows, from row first of the manifest's
+ * parameter table, into parameters[0] to parameters[count - 1], against
+ * what its service's interface declares (erx_service_parameters); the
+ * reason it refuses them, or NULL. The rows follow the declarations'
+ * number order, at most one row a declaration, as the packer writes
+ * them: one walk over the declarations, with a cursor on the first row
+ * not yet matched, checks each row against the declaration of its key
+ * (boot_parameter), refuses a required declaration with no row, and
+ * leaves over only a row that is undeclared, repeated or out of order.
+ */
+static const char *
+boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint32_t count, uint32_t interface,
+    erx_dom_parameter_t *parameters)
+{
+	const uint8_t *strings = manifest->bytes + manifest->header.strings.offset;
+	const erx_service_parameter_t *declared;
+	erx_mf_parameter_t row;
+	const char *reason;
+	size_t ndeclared;
+	uint32_t matched = 0;
+
+	declared = erx_service_parameters(interface, &ndeclared);
+	for (size_t at = 0; at < ndeclared; at++) {
+		if (matched < count && !erx_manifest_facet_parameters_at(manifest, first + matched, &row))
+			return ("manifest: a facet parameter row the reader cannot read");
+		if (matched == count || row.key != declared[at].number) {
+			if (declared[at].required)
+				return ("manifest: a facet leaves out a parameter its service requires");
+			continue;
+		}
+		if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
+			return (reason);
+		matched++;
+	}
+	if (matched != count)
+		return ("manifest: a facet parameter is undeclared, stated twice or out of order");
+	return (NULL);
+}
+
+/*
  * The service and facet rows, which the domain service reads
  * (erx_domain_lib:configured/0), so it reads view->nconfigured, which
  * boot_configured and boot_templates set first. A server is a configured
  * row or ERX_MF_NONE, and a grantee the system domain, a configured row or
  * a session template; a facet is never granted to its service's own
- * server, a grantee takes one facet of a service name, and a facet names no
- * operation or parameter (erx_dom_facet_t). The reader has checked every
- * index and string against its table.
+ * server, a grantee takes one facet of a service name, a facet names no
+ * operation (erx_dom_facet_t), and its parameters are its service's
+ * (boot_facet_parameters). The reader has checked every index and string
+ * against its table.
  */
 static const char *
 boot_services(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_service_t *services,
-    erx_dom_facet_t *facets)
+    erx_dom_facet_t *facets, erx_dom_parameter_t *parameters)
 {
 	erx_mf_service_t service;
 	erx_mf_facet_t facet;
+	uint32_t first;
 	const char *strings, *reason;
 
 	view->services = services;
@@ -776,14 +864,19 @@ boot_services(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom
 			return ("manifest: a facet names no service");
 		if ((reason = boot_facet_grantee(view, &facet, &services[facet.service])) != NULL)
 			return (reason);
-		/* The packer resolved the parameters against the service's declarations; operations it does not resolve. */
 		if (facet.operations.count != 0)
 			return ("manifest: a facet names operations, which the boot cannot check");
+		/* A span's offset is in bytes; the reader checked that the spans partition the table. */
+		first = (facet.parameters.offset - manifest->header.facet_parameters.offset) / ERX_MF_PARAMETER_SIZE;
+		if ((reason = boot_facet_parameters(manifest, first, facet.parameters.count,
+		    services[facet.service].interface, &parameters[first])) != NULL)
+			return (reason);
 		facets[index] = (erx_dom_facet_t){ .grantee_kind = facet.grantee_kind,
 		    .grantee = facet.grantee, .service = facet.service,
 		    .max_request = facet.max_request, .in_flight = facet.in_flight,
 		    .reductions = facet.reductions, .period_ns = facet.period_ns,
-		    .max_heap_size = facet.max_heap_size, .queue = facet.queue };
+		    .max_heap_size = facet.max_heap_size, .queue = facet.queue,
+		    .parameters = &parameters[first], .nparameters = facet.parameters.count };
 		if (boot_facet_repeats(view, facets, index))
 			return ("manifest: a grantee takes two facets of one service name");
 		view->nfacets = index + 1;
@@ -827,7 +920,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
 	    (reason = boot_configured(&lib->view, manifest, tables->configured)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
-	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets)) != NULL)
+	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL)
 		return (reason);
 	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))
 		return ("manifest: native_limits names no limits record");

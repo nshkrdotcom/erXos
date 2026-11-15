@@ -80,6 +80,7 @@ module Erx
         out.concat(enum_name_tables(schema))
         out.concat(signal_tables(schema))
         out.concat(event_tables(schema))
+        out.concat(service_parameter_table(schema)) if schema.types.key?(FACET_LAYOUT)
         out.concat(rights_tables(schema)) if schema.objects.any?
         out.concat(['#endif /* ERX_ABI_H */', ''])
         out.join("\n")
@@ -132,6 +133,58 @@ module Erx
          "\terx_abi_event_arg_t\targs[#{Model::MAX_EVENT_ARGUMENTS}];",
          '} erx_abi_event_t;', '',
          *enums.flat_map { |type| event_lookup(type) }]
+      end
+
+      # The packed facet row, whose limit fields share a grant's limits map with its
+      # parameters (erx_domain_lib:configured/0), so no parameter takes a field's name.
+      FACET_LAYOUT = 'erx_mf_facet'
+
+      # erx_service_parameters(interface, &count): the parameters an abi/services
+      # interface declares, in number order, as the domain library's boot view checks
+      # a facet's packed parameter rows against them and names each
+      # (docs/design-system.md, "Facets a configured domain serves"). A row of the
+      # table is the declaration's number, name, kind (an ERX_MF_PARAMETER_* value),
+      # whether a facet must state it, and its bound: an integer's range, an i64's as
+      # its two's complement bits, or the byte maximum of a text or bytes kind in
+      # maximum. A set declares many values of one key, which the view's one value per
+      # key cannot carry, so a set fails the generation until the view carries one.
+      def service_parameter_table(schema)
+        limits = schema.types.fetch(FACET_LAYOUT).fields.map(&:name)
+        rows = schema.services.sort_by { |service| service.fetch(:number) }.flat_map do |service|
+          service.fetch(:parameters).sort_by { |_key, parameter| parameter.fetch(:number) }.map do |key, parameter|
+            raise SchemaError, "service #{service.fetch(:name)}'s parameter #{key} is a set, which no facet carries" if
+              parameter.fetch(:cardinality) == 'set'
+            raise SchemaError, "service #{service.fetch(:name)}'s parameter #{key} has a facet row field's name" if
+              limits.include?(key)
+            service_parameter_row(service, key, parameter)
+          end
+        end
+        most = schema.services.map { |service| service.fetch(:parameters).size }.max || 0
+        ['/* The most parameters one interface declares, so the most one facet states. */',
+         "#define ERX_SERVICE_PARAMETERS_MAX #{most}", '',
+         '/*', ' * A parameter an abi/services interface declares: its number, as a',
+         ' * facet\'s packed parameter row names it, its name, its kind (an',
+         ' * ERX_MF_PARAMETER_* value), whether a facet must state it, and its bound:',
+         ' * an integer kind\'s range, an i64\'s as two\'s complement bits, or a text',
+         ' * or bytes kind\'s byte maximum in maximum, minimum 0.', ' */',
+         'typedef struct erx_service_parameter {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
+         "\tconst char\t*name;", "\tuint32_t\tkind;", "\tbool\t\trequired;",
+         "\tuint64_t\tminimum, maximum;", '} erx_service_parameter_t;', '',
+         '/* The parameters interface declares, in number order: *count rows from the result. */',
+         'static inline const erx_service_parameter_t *',
+         'erx_service_parameters(uint32_t interface, size_t *count)', '{',
+         "\tstatic const erx_service_parameter_t table[] = {", *rows,
+         "\t\t{ 0, 0, NULL, 0, false, 0, 0 }", "\t};", "\tsize_t first = 0;", '',
+         "\twhile (table[first].name != NULL && table[first].interface != interface)", "\t\tfirst++;",
+         "\tfor (*count = 0; table[first + *count].name != NULL && table[first + *count].interface == interface;)",
+         "\t\t(*count)++;", "\treturn (&table[first]);", '}', '']
+      end
+
+      def service_parameter_row(service, key, parameter)
+        minimum, maximum = parameter.values_at(:minimum, :maximum).map { |value| value & ((1 << 64) - 1) }
+        "\t\t{ #{constant("service_#{service.fetch(:name)}")}, #{parameter.fetch(:number)}, #{c_string(key)}, " \
+          "#{constant("mf_parameter_#{parameter.fetch(:kind)}")}, #{parameter.fetch(:cardinality) == 'one'}, " \
+          "UINT64_C(#{minimum}), UINT64_C(#{maximum}) },"
       end
 
       # erx_status_name(status): the ABI file's name of a status, or NULL

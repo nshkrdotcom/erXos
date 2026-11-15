@@ -526,6 +526,22 @@ class AbiSchemaTest < Minitest::Test
     assert_raises(Erx::ABI::SchemaError) { schema("service first 1\nservice second 1\n") }
   end
 
+  # The table the boot view checks a facet's parameter rows against (erx_service_parameters):
+  # a declaration's row, and the two declarations no facet can carry, a set, and a name a
+  # facet row's limit field takes in the grant's limits.
+  FACET_ROW = "enum mf_parameter_kind u32\n  value u64 1\nlayout erx_mf_facet wire_le 8 8\n  field queue u64 0\n"
+
+  def test_service_parameters_are_tabled_and_a_set_or_a_limit_s_name_is_refused
+    declared = "service shown 3\n  parameter area 2 u64 one range 1 9 checked_by grant\n"
+    header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))
+    assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9) },'
+    assert_includes header, '#define ERX_SERVICE_PARAMETERS_MAX 1'
+    ['  parameter many 2 u64 set 4 range 1 9 checked_by grant',
+     '  parameter queue 2 u64 optional range 1 9 checked_by grant'].each do |line|
+      assert_raises(Erx::ABI::SchemaError) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n#{line}\n")) }
+    end
+  end
+
   def test_wire_layout_cannot_embed_native_storage
     body = <<~ABI
       layout inner native 8 8

@@ -468,14 +468,29 @@ typedef struct erx_dom_service {
 } erx_dom_service_t;
 
 /*
+ * A checked parameter of a facet row: a value of a parameter its service
+ * declares (erx_service_parameters, erx/abi.h), of the declared kind and
+ * within the declared bound. An integer or boolean is in scalar, a
+ * boolean 0 or 1 and an i64 as its two's complement bits; text and bytes
+ * lie in the manifest's strings, which outlive the view.
+ */
+typedef struct erx_dom_parameter {
+	const erx_service_parameter_t *declared;	/* its name, kind and bound */
+	uint64_t	scalar;
+	const uint8_t	*bytes;		/* text or bytes kinds; NULL otherwise */
+	uint32_t	bytes_len;
+} erx_dom_parameter_t;
+
+/*
  * A checked facet row: a grant of a service to its grantee, the system
  * domain, a configured row or a session template, never the service's own
- * server, with the grant's limits. A session template takes facets only of
- * configured domains' services, which their servers grant each session
- * made from it. It names no operation and no parameter: those resolve
- * against the service's generated declarations, which nothing on the boot
- * path reads, so the view refuses a row that names any rather than have
- * the domain service grant every operation.
+ * server, with the grant's limits and its parameters, each stated once, in
+ * number order. A session template takes facets only of configured
+ * domains' services, which their servers grant each session made from it.
+ * It names no operation: operations resolve against the service's
+ * generated declarations, which nothing on the boot path reads, so the
+ * view refuses a row that names any rather than have the domain service
+ * grant every operation.
  */
 typedef struct erx_dom_facet {
 	uint32_t	grantee_kind;	/* ERX_MF_GRANTEE_SYSTEM, _DOMAIN or _SESSION */
@@ -484,6 +499,8 @@ typedef struct erx_dom_facet {
 	uint32_t	max_request;	/* the largest request, in encoded bytes */
 	uint32_t	in_flight;	/* forwards outstanding at once */
 	uint64_t	reductions, period_ns, max_heap_size, queue;
+	const erx_dom_parameter_t *parameters;	/* nparameters, in the view's table */
+	uint32_t	nparameters;
 } erx_dom_facet_t;
 
 /* A checked native program row of a partial-boot manifest. */

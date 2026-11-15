@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative '../lib/erx/display_domain'
 require_relative '../lib/erx/platform'
 require_relative '../../test/fixtures/manifest_context'
 require_relative '../lib/erx/abi'
@@ -16,11 +17,15 @@ module Erx
   # configured domains' with its first row's boot_timeout_s 0, which the reader refuses,
   # the configured domains' with alpha's probe granted to the system principal's
   # session template, so the facet table holds a session grantee, and the same with a
-  # start row for that template, left off and with its own restart intensity.
+  # start row for that template, left off and with its own restart intensity, and the
+  # display_domain suite's manifest with its client's grant of the display stating each
+  # parameter of the windows interface a facet row may, so the facet table holds parameter
+  # rows.
   module ManifestSeeds
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     START_ROW = "start system\n  enable NO\n  restarts 3\n  restart_period_s 60\n"
+    WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter snarf yes\n"
 
     module_function
 
@@ -48,9 +53,22 @@ module Erx
       start = Manifest.admit(source: ManifestContextFixture.domain_source(source) + SESSION_FACET + START_ROW, codec: codec,
                              context: domain_context, planner: ManifestContextFixture.accepting_planner)
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
+                                                     'windows-grant' => windows_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
                                                      'boot-timeout-zero' => boot_timeout(codec, domains.bytes, 0))
+    end
+
+    # The display_domain suite's manifest, its client's grant stating WINDOWS_PARAMETERS, as
+    # the check packs it over the fixture's archive with a planner that places nothing.
+    def windows_grant(repository, codec)
+      platform = Platform.load(root: repository, name: 'qemu-virt')
+      source = DisplayDomain.manifest(platform.site_manifest_source(repository, keep: [DisplayDomain::DOMAIN]))
+                            .sub("  parameter pixels #{DisplayDomain::PIXELS}\n", WINDOWS_PARAMETERS)
+      arguments = ManifestContextFixture.archive_arguments(codec, boots: %w[display network pattern session storage web])
+      context = Manifest::Context.new(**arguments, platform: platform_of(repository, 'qemu-virt'))
+      planner = ->(view) { %w[domains introductions sessions].to_h { |key| [key, view.fetch(key == 'domains' ? 'order' : key).map { 0 }] } }
+      Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

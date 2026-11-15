@@ -212,8 +212,11 @@ and a files service the system domain serves by ?ERX_SERVICE_FILES),
 and the facet rows, each
 its grantee, a configured row, system, or {template, Template} for the
 sessions made from session template Template, the service's name, its server, a
-configured row or system, and the grant's limits (docs/design-system.md,
-"Facets a configured domain serves").
+configured row or system, and the grant's limits: the facet row's
+max_request, in_flight, reductions, period_ns, max_heap_size and queue, and
+each parameter the row states under its abi/services name, an integer as an
+integer, a boolean as true or false, and text or bytes as a binary
+(docs/design-system.md, "Facets a configured domain serves").
 """.
 -spec configured() -> {ok, #{host := binary(), domains := [configured()],
                              services := [{non_neg_integer() | system, atom(), non_neg_integer()}],

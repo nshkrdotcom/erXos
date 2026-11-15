@@ -66,14 +66,81 @@ grantee_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet)
 }
 
 /*
+ * Whether parameter is one of the ndeclared declarations at declared. Each
+ * file that reads erx_service_parameters has its own copy of the table, so
+ * the declaration is matched by its fields, not by its address.
+ */
+static bool
+declares(const erx_service_parameter_t *declared, size_t ndeclared, const erx_service_parameter_t *parameter)
+{
+	for (size_t index = 0; index < ndeclared; index++)
+		if (declared[index].interface == parameter->interface && declared[index].number == parameter->number &&
+		    declared[index].kind == parameter->kind && declared[index].required == parameter->required &&
+		    declared[index].minimum == parameter->minimum && declared[index].maximum == parameter->maximum &&
+		    strcmp(declared[index].name, parameter->name) == 0)
+			return (true);
+	return (false);
+}
+
+/*
+ * Whether the view carries facet row facet_row's parameters as facet's, each
+ * of them: one per row, so none is dropped; each a declaration of the
+ * service's interface, in strictly ascending number order, so none is
+ * stated twice; of a kind the boot carries and within its declared bound;
+ * and with every declaration the interface requires among them.
+ */
+static bool
+parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, const erx_mf_facet_t *facet_row)
+{
+	const erx_service_parameter_t *declared, *parameter;
+	const erx_dom_parameter_t *value;
+	size_t ndeclared, required = 0, stated = 0;
+	bool within;
+
+	declared = erx_service_parameters(dom->services[facet->service].interface, &ndeclared);
+	if (facet->nparameters != facet_row->parameters.count)
+		return (false);
+	for (size_t index = 0; index < ndeclared; index++)
+		required += declared[index].required;
+	for (uint32_t index = 0; index < facet->nparameters; index++) {
+		value = &facet->parameters[index];
+		parameter = value->declared;
+		if (!declares(declared, ndeclared, parameter) ||
+		    (index > 0 && parameter->number <= facet->parameters[index - 1].declared->number))
+			return (false);
+		stated += parameter->required;
+		switch (parameter->kind) {
+		case ERX_MF_PARAMETER_U64:
+		case ERX_MF_PARAMETER_BOOLEAN:
+			within = value->scalar >= parameter->minimum && value->scalar <= parameter->maximum;
+			break;
+		case ERX_MF_PARAMETER_I64:
+			within = (int64_t)value->scalar >= (int64_t)parameter->minimum &&
+			    (int64_t)value->scalar <= (int64_t)parameter->maximum;
+			break;
+		case ERX_MF_PARAMETER_IDENTIFIER:
+		case ERX_MF_PARAMETER_NAMESPACE_PATH:
+		case ERX_MF_PARAMETER_BYTES:
+			within = value->bytes != NULL && value->bytes_len <= parameter->maximum;
+			break;
+		default:
+			within = false;
+		}
+		if (!within)
+			return (false);
+	}
+	return (stated == required);
+}
+
+/*
  * What a view the library admits holds: an entry per device row, each in one
  * unit and on that unit's holder, with a record of its own index; no two units
  * on one register page; each configured row's words with room for both
  * node names; and every service and facet row, each server a configured row
  * or the system domain and each grantee one the boot may grant (grantee_admitted),
- * no grantee taking two facets of one service name, and no facet naming an
- * operation or parameter, which the domain service would otherwise grant
- * unchecked.
+ * no grantee taking two facets of one service name, no facet naming an
+ * operation, which the domain service would otherwise grant unchecked, and
+ * each facet's parameters its service's (parameters_admitted).
  */
 static void
 view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
@@ -96,7 +163,7 @@ view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
 		facet = &dom->facets[index];
 		if (!erx_manifest_facets_at(view, index, &facet_row) || facet_row.operations.count != 0 ||
 		    facet->service >= dom->nservices ||
-		    !grantee_admitted(dom, facet))
+		    !grantee_admitted(dom, facet) || !parameters_admitted(dom, facet, &facet_row))
 			abort();
 		for (uint32_t earlier = 0; earlier < index; earlier++) {
 			a_service = &dom->services[dom->facets[earlier].service];
