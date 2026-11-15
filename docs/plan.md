@@ -140,7 +140,7 @@ names; the table's order is the order.
 | 1b-E M9 on the stopgap | a block transfer runs while the block driver process is killed; the kill ends the storage domain, whose restart resets the device and mounts `/data` again with every synced file present ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)); drivers run in the storage and network domains over virtio-mmio, unconfined | 3,000 lines of C17, 5,000 of Erlang for M9, of which the PCIe enumerator and the MSI frame's driver are its kernel part's | 1b-A | G9's measurements, deciding nothing |
 | Track A, part 2 | an app built outside the tree with the SDK alone, added to an image with `tools/erx pack --app`, boots into its session with exactly the `apps` row's services its declaration names, its code read from its package at `/app` | estimated before it starts | part 1 | |
 | Track A, part 3 | the same package copied into `/apps` on a running machine is admitted there, its image readable through `mount`, starts at `service NAME start` once enabled, survives a reboot, and is removed with `rm`, its data kept | estimated before it starts | part 2, M6's data partition and 1b-E | |
-| 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and sam editing a file | estimated per part before it starts | 1b-C's part 3; part 8 also 1b-D | |
+| 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and 9term running the command shell | estimated per part before it starts | 1b-C's part 3; part 8 also 1b-D | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
@@ -1442,7 +1442,7 @@ land after M11 repeat M11's closure over what they add.
 8. **Plan 9's programs**, in 1b-F, after part 6 and track P's first part
    (1b-D). plan9port's
    `libdraw` with Plan 9's file connection in place of `devdraw`'s pipe,
-   served from the session's export, and sam, imported as
+   served from the session's export, and 9term, imported as
    erXos's code with an origin file
    ([design-display.md](design-display.md#compatibility-and-migration)).
 9. **The web on the network**, after part 2, M10's logins, M11's vault
@@ -1601,9 +1601,9 @@ where a seeded facet call in the emulator is caught by the source check;
 G7's status tests through a widget tree; `erx_ui_schema`'s fuzz target
 over arbitrary terms runs its budget clean.
 
-**Exit criteria, Plan 9's programs.** sam opens, edits and saves a
-file in its window under HVF; the session's draw connections refuse
-no draw message they send.
+**Exit criteria, Plan 9's programs.** 9term runs the command shell in its window
+under HVF; the session's draw connections refuse no draw message they
+send.
 
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for
@@ -2774,7 +2774,7 @@ dynamically linked program loads a library with `dlopen`; two
 programs of one session that map one file `MAP_SHARED` see each other's
 stores at once, and `msync` makes them durable; and on the desktop,
 9term runs the command shell over a pseudo-terminal,
-imported from plan9port beside sam
+imported from plan9port
 ([design-display.md](design-display.md#compatibility-and-migration)).
 
 **Scope.**

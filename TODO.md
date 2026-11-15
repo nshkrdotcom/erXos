@@ -7190,7 +7190,7 @@ document's "residual risks accepted" paragraph.
   already connected at another line is refused
   ([design-live.md](docs/design-live.md#the-console)).
 * [Low] display, plan9port compatibility: check against plan9port's source
-  that sam and 9term allocate no screens and reach the screen image only
+  that 9term allocates no screens and reaches the screen image only
   through `libdraw`'s `getwindow`, as
   [design-display.md](docs/design-display.md#compatibility-and-migration)
   assumes.

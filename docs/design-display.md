@@ -167,7 +167,7 @@ pointer, a keyboard and, on the boards, touch panels, encoders and
 keypads. Three kinds of use ask for it:
 
 * a desktop on QEMU `virt` and the Raspberry Pi, where plan9port's
-  sam and 9term and erXos's own inspector windows run beside terminal
+  9term and erXos's own inspector windows run beside terminal
   windows;
 * a kiosk or a dashboard: one full-screen application, touch input, a
   machine that runs unattended;
@@ -3897,8 +3897,8 @@ its own request messages, in which the draw messages themselves travel
 unchanged as the payload of its draw requests and the mouse, keyboard,
 label, snarf and resize traffic are requests of their own. erXos's port
 of `libdraw` replaces that connection code with Plan 9's own file-based
-one against the files in the program's `/dev`, so sam and 9term
-run without a translating process; the session's draw connection stands
+one against the files in the program's `/dev`, so 9term
+runs without a translating process; the session's draw connection stands
 where plan9port's `devdraw` process does. Plan 9's `getwindow` attaches
 to the window by name and allocates a screen over it and a window on
 that screen to draw in; the port's `getwindow` re-reads `ctl` and takes
@@ -4866,7 +4866,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | --- | --- | --- | --- |
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
-| plan9port's `libdraw`, sam, 9term | draw clients, and oracles of the draw protocol's compatibility | MIT (to be confirmed at import) | permanent; ported as erXos's code with the connection code replaced |
+| plan9port's `libdraw`, 9term | draw clients, and oracles of the draw protocol's compatibility | MIT (to be confirmed at import) | permanent; ported as erXos's code with the connection code replaced |
 | LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
 | a bitmap font as Plan 9 subfonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, and of the menu, in the display's | plan9port's `fixed` fonts (public domain); anti-aliased fonts, such as the Go fonts (BSD-3-Clause) rasterised by a host step, chosen with the first application that needs them | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
@@ -4923,7 +4923,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 
 | Risk | Likelihood | Impact | Mitigation |
 | --- | --- | --- | --- |
-| plan9port's `libdraw` is harder to rebase on the file connection than expected | medium | sam arrives later | the window files match Plan 9's native names and formats, so 9front's `libdraw` is the fallback source of the connection code |
+| plan9port's `libdraw` is harder to rebase on the file connection than expected | medium | 9term arrives later | the window files match Plan 9's native names and formats, so 9front's `libdraw` is the fallback source of the connection code |
 | `libmemdraw` keeps state that is not safe across schedulers | low | races in the NIF | checked at import; the primitives' tables are read-only after `memimageinit`, and within a runtime no image is touched by two processes at once (G2) |
 | 9front's `libmemdraw` needs more of a Plan 9 environment than plan9port's `lib9` gives, so the 9front build does not compile on the host unmodified | medium | the shapes lose their oracle until it does | a header of erXos's own beside the build's recipe supplies what is missing; 9front's `.c` files are never edited, since an edited oracle checks nothing |
 | copies serialised through `erx_screen` limit a desktop with several animating windows | low | dropped frames under load | the watch-list measurement; `erx_screen` gathers waiting presents into one frame |
