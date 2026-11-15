@@ -1063,8 +1063,8 @@ while that a program cannot escape `liberx` does not
   own table, relays file requests over the session's connection and moves
   file bytes through the data area the session supplies
   ([design-programs.md](design-programs.md#the-handler)); the channel
-  protocol and the startup message with their fuzz targets; `derive` in
-  `erx_fs` and the session's export; the descriptor table over pipe ends
+  protocol and the startup message with their fuzz targets; the handler's
+  narrowing of a program's namespace and the session's export; the descriptor table over pipe ends
   and grants; the spawn planner, spawn and wait; the session's terminal
   relay, which owns its tty, with the line discipline `erx_tty`, its
   exhaustive model and its fuzz target
