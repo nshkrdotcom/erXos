@@ -19,7 +19,13 @@ class ErxTtyTest < Minitest::Test
   DEADLINE = '600'
   Fault = Data.define(:text, :broken, :property)
   FAULTS = {
-    vmin_ignored: Fault.new(text: '{Min, _} -> Min', broken: '{_, _} -> 1', property: /early_wakeup/),
+    vmin_ignored: Fault.new(text: '{Min, _} -> min(Min, Count)', broken: '{_, _} -> 1', property: /early_wakeup/),
+    count_ignored: Fault.new(text: '{Min, _} -> min(Min, Count)', broken: '{Min, _} -> Min',
+                             property: /a_short_raw_read_goes_on_at_its_count/),
+    # Input that goes on past a signal key reports a reader the bytes after it.
+    signal_not_stopping: Fault.new(text: '{[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};',
+                                   broken: '', property: /a_signal_key_stops_input_and_returns_the_rest/),
+    eof_as_empty: Fault.new(text: '<<>> -> eof;', broken: '<<>> -> {ok, <<>>};', property: /read_differs/),
     echo_without_echo: Fault.new(text: 'case on(echo, Tty) orelse (Char =:= $\n andalso on(echonl, Tty)) of',
                                  broken: 'case true of', property: /echo_without_echo/),
     onlcr_without_opost: Fault.new(text: 'case {Stopped, on(opost, Tty)} of', broken: 'case {Stopped, true} of',
@@ -30,11 +36,16 @@ class ErxTtyTest < Minitest::Test
                               broken: "echo(Char, [info | Started], Tty1);",
                               property: /vstatus_echoed/),
     # POSIX's reading, a restart at each byte, in place of FreeBSD's one deadline.
-    interbyte_restarted: Fault.new(text: "Ready =/= <<>>, Waiter =:= {read, none} ->\n            start_timer(Open, Tty);",
+    interbyte_restarted: Fault.new(text: "Ready =/= <<>>, element(3, Waiter) =:= none ->\n" \
+                                         "            start_timer(Open, element(2, Waiter), Tty);",
                                    broken: "Ready =/= <<>> ->\n            {Cancelled, Tty1} = unwait(Open, Tty),\n" \
-                                           "            {Started, Tty2} = start_timer(Open, Tty1),\n" \
+                                           "            {Started, Tty2} = start_timer(Open, element(2, Waiter), Tty1),\n" \
                                            "            {Cancelled ++ Started, Tty2};",
-                                   property: /interbyte_deadline/)
+                                   property: /interbyte_deadline/),
+    # An echo that would end exactly at the bound is dropped.
+    echo_short_of_its_bound: Fault.new(text: 'Tty) when byte_size(Bytes) =< Room ->',
+                                       broken: 'Tty) when byte_size(Bytes) < Room ->',
+                                       property: /echo_at_its_bound/)
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
@@ -47,11 +58,19 @@ class ErxTtyTest < Minitest::Test
 
   def test_echo_with_echo_clear_fails = assert_fault_fails(:echo_without_echo)
 
+  def test_a_read_that_ignores_its_count_fails = assert_fault_fails(:count_ignored)
+
+  def test_input_past_a_signal_key_fails = assert_fault_fails(:signal_not_stopping)
+
+  def test_an_end_of_file_read_as_empty_fails = assert_fault_fails(:eof_as_empty)
+
   def test_onlcr_with_opost_clear_fails = assert_fault_fails(:onlcr_without_opost)
 
   def test_vstatus_without_iexten_fails = assert_fault_fails(:vstatus_without_iexten)
 
   def test_an_echoed_vstatus_fails = assert_fault_fails(:vstatus_echoed)
+
+  def test_an_echo_short_of_its_bound_fails = assert_fault_fails(:echo_short_of_its_bound)
 
   def test_a_restarted_interbyte_timer_fails = assert_fault_fails(:interbyte_restarted)
 
@@ -64,7 +83,9 @@ class ErxTtyTest < Minitest::Test
 
     output, status = eunit(source.sub(fault.text, fault.broken))
     refute status.success?, output
-    assert_match fault.property, output
+    # A case fails as "name_test...*failed*"; an exploration property is
+    # the second element of the error term, followed by a comma.
+    assert_match(/#{fault.property.source}\S*(\.\.\.\*failed\*|,)/, output)
   end
 
   # Compiles erx and erx_session with erx_tty as module_text, and the cases,

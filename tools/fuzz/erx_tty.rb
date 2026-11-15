@@ -33,6 +33,19 @@ module ErxTtyFuzz
                                   broken: 'case is_atom(Flag) of', property: 'invalid_accepted'),
     'the character range' => Seed.new(module_file: 'erx_tty.erl', text: 'Value =< 255 -> ok;',
                                       broken: 'Value =< 1 bsl 16 -> ok;', property: 'invalid_accepted'),
+    # An echo that skips emit/3 and the room it keeps.
+    'the echo bound' => Seed.new(module_file: 'erx_tty.erl', text: '            emit(Bytes, Actions, Tty1);',
+                                 broken: '            {[{echo, Bytes} | Actions], Tty1};',
+                                 property: 'echo_over_bound'),
+    # Input that goes on past a signal key.
+    'the stop at a signal key' => Seed.new(module_file: 'erx_tty.erl',
+                                           text: '{[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};',
+                                           broken: '', property: 'went_past_a_signal'),
+    # Echoes joined out of order, which a call of one byte does not show.
+    'joined echoes' => Seed.new(module_file: 'erx_tty.erl',
+                                text: 'merge([{echo, <<A/binary, B/binary>>} | Rest]);',
+                                broken: 'merge([{echo, <<B/binary, A/binary>>} | Rest]);',
+                                property: 'chunked_differs'),
     "the codec's byte range" => Seed.new(module_file: 'erx_abi_termios.erl', text: 'Value =< 16#ff.',
                                          broken: 'Value =< 16#fff.', property: 'codec_invalid_accepted')
   }.freeze

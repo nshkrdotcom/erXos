@@ -2792,11 +2792,18 @@ determinism test of the generated tree.
   POSIX's four `VMIN` and `VTIME` cases and read counts below and above
   `VMIN`. A `read_wait` that ignores its count fails the exploration's
   model. `input/2` returns untaken exactly the bytes after the first key
-  that makes a signal, and passing them back until none is left gives the
-  same state, echo and actions as passing the input a byte at a time,
-  over inputs whose calls each echo less than the 16 KiB bound, past which
-  echo is cut per call; an `input/2` that goes on past the key fails the
-  first check. `erx_tty_modes`' `adopt/2` is checked
+  that makes a signal, which an EUnit case and the fuzz target check; an
+  `input/2` that goes on past the key fails both. With no reader waiting,
+  passing the bytes back until none is left gives the same state and the
+  same actions, neighbouring echoes joined, as
+  passing the input a byte at a time, over inputs that echo no more than
+  one call's 16 KiB bound, past which echo is cut per call; the fuzz target
+  checks it, and echoes joined out of order fail it. A waiting reader is
+  told once per call, after its last key, as FreeBSD's `ttydisc_rint_done`
+  wakes readers once after a run of `ttydisc_rint` calls
+  (`sys/kern/tty_ttydisc.c:1294-1305`), so with `VMIN` 2 and `VTIME` 1 a
+  byte at a time starts and cancels a timer that one call of both bytes
+  never starts. `erx_tty_modes`' `adopt/2` is checked
   exhaustively over the flags of `erx_tty`'s table against libedit's
   masks, with and without `ICANON` in what a job left; an `adopt/2`
   without its masks fails it.

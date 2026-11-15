@@ -6,13 +6,15 @@
 %% decode/1, which reads a program's struct termios (docs/design-live.md,
 %% "The tty" and "Verification and testing"): random termios and structs,
 %% valid and broken one way at a time; random window sizes; and random
-%% bytes in random chunks, up to
-%% past the input bound, under random termios, between random reads, waits
-%% and writes. Whatever arrives, nothing crashes, a valid termios is kept as
+%% bytes in random chunks, up to past the input bound, and runs of VREPRINT
+%% after a long line, under random termios, between random reads, waits and
+%% writes. Whatever arrives, nothing crashes, a valid termios is kept as
 %% given and a broken one refused, what waits stays within 4 KiB, every
 %% action is one of erx_tty's, nothing is echoed without ECHO or ECHONL but
-%% a bell, and in raw mode with no flag that changes or takes bytes, every
-%% byte is read, still waits or was counted as dropped. The seed comes from
+%% a bell, one call echoes at most 16 KiB, input fed back until none is left
+%% does what input a byte at a time does, and in raw mode with no flag that
+%% changes or takes bytes, every byte is read, still waits or was counted
+%% as dropped. The seed comes from
 %% make check-fuzz; a failure is error({fuzz_failure, Property, Detail}).
 
 -module(erx_tty_fuzz).
@@ -20,6 +22,8 @@
 
 -define(ROUNDS, 3000).
 -define(MAX_INPUT, 4096).
+%% The most one input/2 echoes (docs/design-live.md, "The tty").
+-define(MAX_ECHO, 16384).
 %% The tables of the ABI file's termios table.
 -define(IFLAGS, erx_abi_termios:flags(iflag)).
 -define(OFLAGS, erx_abi_termios:flags(oflag)).
@@ -99,22 +103,24 @@ steps(0, _, _, _, _) ->
 steps(N, Termios, Counted, Tty, {Read, In}) ->
     case rand:uniform(4) of
         1 ->
-            Bytes = random_bytes(),
-            {Actions, Tty1} = erx_tty:input(Bytes, Tty),
-            check_input(Actions, Termios, Tty, Tty1, Bytes),
+            Bytes = random_input(Termios),
+            check_chunked(Bytes, Termios, Tty),
+            {Actions, Rest, Tty1} = erx_tty:input(Bytes, Tty),
+            Taken = byte_size(Bytes) - byte_size(Rest),
+            check_input(Actions, Rest, Termios, Tty, Tty1, Bytes),
             check(not Counted orelse
-                      Read + erx_tty:waiting(Tty1) + erx_tty:dropped(Tty1) =:= In + byte_size(Bytes),
+                      Read + erx_tty:waiting(Tty1) + erx_tty:dropped(Tty1) =:= In + Taken,
                   bytes_lost, {Termios, Bytes}),
-            steps(N - 1, Termios, Counted, Tty1, {Read, In + byte_size(Bytes)});
+            steps(N - 1, Termios, Counted, Tty1, {Read, In + Taken});
         2 ->
             {Got, Tty1} = erx_tty:read(r, rand:uniform(5000), Tty),
             Taken = case Got of
                         {ok, Bin} -> byte_size(Bin);
-                        eagain -> 0
+                        _ -> 0
                     end,
             steps(N - 1, Termios, Counted, Tty1, {Read + Taken, In});
         3 ->
-            {Actions, Tty1} = erx_tty:read_wait(pick([r, s]), Tty),
+            {Actions, Tty1} = erx_tty:read_wait(pick([r, s]), rand:uniform(4096), Tty),
             check_actions(Actions),
             steps(N - 1, Termios, Counted, Tty1, {Read, In});
         4 ->
@@ -124,8 +130,19 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
             steps(N - 1, Termios, Counted, Tty1, {Read, In})
     end.
 
-check_input(Actions, Termios, Before, After, Bytes) ->
+%% Input stops only after a signal key, and returns a tail of its bytes.
+check_input(Actions, Rest, Termios, Before, After, Bytes) ->
     check_actions(Actions),
+    Taken = byte_size(Bytes) - byte_size(Rest),
+    check(Taken > 0 orelse Bytes =:= <<>>, input_took_nothing, Bytes),
+    check(binary:part(Bytes, Taken, byte_size(Rest)) =:= Rest,
+          rest_not_a_tail, {Bytes, Rest}),
+    Signals = length([S || {signal, S} <- Actions]),
+    check(Rest =:= <<>> orelse Signals =:= 1, stopped_without_signal,
+          {Termios, Bytes}),
+    Keyed = binary:part(Bytes, 0, Taken - 1),
+    check(Signals =:= 0 orelse not signals(Keyed, Before),
+          went_past_a_signal, {Termios, Bytes}),
     Raw = not has(icanon, Termios),
     check(not Raw orelse erx_tty:waiting(After) =< ?MAX_INPUT, input_over_bound,
           {erx_tty:waiting(After), byte_size(Bytes)}),
@@ -133,7 +150,41 @@ check_input(Actions, Termios, Before, After, Bytes) ->
     Echo = iolist_to_binary([E || {echo, E} <- Actions]),
     Quiet = not has(echo, Termios) andalso not has(echonl, Termios),
     check(not Quiet orelse Echo =:= binary:copy(<<7>>, byte_size(Echo)),
-          echo_without_echo, {Termios, Bytes, Echo}).
+          echo_without_echo, {Termios, Bytes, Echo}),
+    check(byte_size(Echo) =< ?MAX_ECHO, echo_over_bound, {Termios, byte_size(Echo)}).
+
+%% With no reader waiting, input fed back until none is left gives the
+%% state and the actions, neighbouring echoes joined, of input a byte at a
+%% time, while that echoes no more than one call's bound. A waiting reader
+%% is reported once per call, after its last key, so both are cancelled.
+check_chunked(Bytes, Termios, Tty0) ->
+    {_, Tty1} = erx_tty:cancel(r, Tty0),
+    {_, Tty} = erx_tty:cancel(s, Tty1),
+    {BytewiseActions, _} = Bytewise = fed([<<B>> || <<B>> <= Bytes], Tty),
+    Echo = iolist_to_binary([E || {echo, E} <- BytewiseActions]),
+    check(byte_size(Echo) > ?MAX_ECHO orelse fed([Bytes], Tty) =:= Bytewise,
+          chunked_differs, {Termios, Bytes}).
+
+%% Whether Bytes, fed back until none is left, make a signal.
+signals(Bytes, Tty) ->
+    {Actions, _} = fed([Bytes], Tty),
+    lists:keymember(signal, 1, Actions).
+
+%% Each chunk as an owner feeds it, again on what a signal key left untaken.
+fed(Chunks, Tty0) ->
+    {Actions, Tty} = lists:foldl(fun fed_chunk/2, {[], Tty0}, Chunks),
+    {joined(Actions), Tty}.
+
+fed_chunk(<<>>, Acc) ->
+    Acc;
+fed_chunk(Chunk, {Actions, Tty}) ->
+    {More, Rest, Tty1} = erx_tty:input(Chunk, Tty),
+    fed_chunk(Rest, {Actions ++ More, Tty1}).
+
+joined([{echo, A}, {echo, B} | Rest]) ->
+    joined([{echo, <<A/binary, B/binary>>} | Rest]);
+joined([Action | Rest]) -> [Action | joined(Rest)];
+joined([]) -> [].
 
 check_actions(Actions) ->
     lists:foreach(fun(Action) -> check(action(Action), unknown_action, Action) end, Actions).
@@ -216,6 +267,15 @@ within(Encoded, Struct) ->
     Words =:= [] andalso Bytes =:= [].
 
 %%% Helpers
+
+%% Random bytes, or a long line and a run of the termios's VREPRINT, whose
+%% echo with ECHO, ICANON and IEXTEN passes one call's bound many times.
+random_input(#{cc := #{vreprint := Reprint}}) ->
+    case rand:uniform(8) of
+        1 -> <<(binary:copy(<<$a>>, 1000))/binary,
+               (binary:copy(<<Reprint>>, 40))/binary>>;
+        _ -> random_bytes()
+    end.
 
 random_bytes() ->
     Size = pick([1, 2, 8, 64, 1000, 5000]),
