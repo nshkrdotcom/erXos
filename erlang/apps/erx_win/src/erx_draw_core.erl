@@ -52,7 +52,7 @@ operation.
 """.
 -include("generated/erx_abi.hrl").
 
--export([new/1, resize/2, step/2, plan/2, plane/0, max_glyphs/0, admit/3]).
+-export([new/1, resize/2, step/2, plan/2, plane/0, max_glyphs/0, admit/3, ctl/1]).
 -export_type([state/0, quota/0, op/0, glyph/0]).
 
 %% The compose operations of draw(2) that the core names: S, which `l`
@@ -76,6 +76,9 @@ operation.
 -define(SHAPE_AXIS, (1 bsl 14)).
 -define(SHAPE_THICK, (1 bsl 10)).
 
+%% The width of a field of ctl/1's text, before its blank (devdraw's %11d).
+-define(CTL_FIELD, 11).
+
 -type image_id() :: erx_draw_codec:image_id().
 -type point() :: erx_draw_codec:point().
 -type rect() :: erx_draw_codec:rect().
@@ -92,9 +95,10 @@ operation.
                   Left :: -128..127, Width :: byte()}.
 %% Only what a later message reads: the rectangle (r, y, Y and an x's
 %% background), the depth (the codec's framing and the charge), the
-%% replicate bit (c) and the glyph records (l, s, x).
--type image() :: #{r := rect(), depth := 1..32, repl := boolean(),
-                   glyphs := none | {Ascent :: byte(), Records :: binary()}}.
+%% replicate bit (c) and the glyph records (l, s, x); and its channel and clip
+%% rectangle as b or c leaves it, which ctl/1 shows.
+-type image() :: #{r := rect(), depth := 1..32, chan := erx_chan:code(), repl := boolean(),
+                   clip := rect(), glyphs := none | {Ascent :: byte(), Records :: binary()}}.
 -type state() :: #{images := #{image_id() => image()},
                    bytes := non_neg_integer(),  % the sum of charge/1 over the images
                    op := compose(),
@@ -137,7 +141,8 @@ draw(3) knows.
 new(#{r := R, chan := Chan, quota := #{pixels := Pixels, side := Side} = Quota})
   when is_integer(Pixels), Pixels >= 0, is_integer(Side), Side > 0 ->
     {ok, Depth} = erx_chan:depth(Chan),
-    #{images => #{0 => #{r => R, depth => Depth, repl => false, glyphs => none}}, bytes => 0, op => ?SOVERD,
+    #{images => #{0 => #{r => R, depth => Depth, chan => Chan, repl => false, clip => R, glyphs => none}},
+      bytes => 0, op => ?SOVERD,
       quota => Quota}.
 
 -doc """
@@ -147,7 +152,24 @@ The client's images are kept.
 """.
 -spec resize(state(), rect()) -> state().
 resize(#{images := #{0 := Window} = Images} = State, R) ->
-    State#{images := Images#{0 := Window#{r := R, repl := false}}}.
+    State#{images := Images#{0 := Window#{r := R, repl := false, clip := R}}}.
+
+-doc """
+draw(3)'s information on image 0, as a read of the connection's `ctl`
+answers it (docs/design-display.md, "The connection's files"): twelve
+fields, each right-aligned in 11 characters and followed by a blank, 144
+bytes: the connection number, 0, since a program reaches its connection by
+path; the image's id, 0; its channel; its replicate bit; its rectangle;
+and its clip rectangle.
+""".
+-spec ctl(state()) -> <<_:1152>>.
+ctl(#{images := #{0 := #{chan := Chan, repl := Repl, r := {X0, Y0, X1, Y1}, clip := {CX0, CY0, CX1, CY1}}}}) ->
+    Numbers = [integer_to_binary(N) || N <- [repl_bit(Repl), X0, Y0, X1, Y1, CX0, CY0, CX1, CY1]],
+    << <<(binary:copy(<<" ">>, ?CTL_FIELD - byte_size(Field)))/binary, Field/binary, " ">>
+       || Field <- [<<"0">>, <<"0">>, erx_chan:text(Chan) | Numbers] >>.
+
+repl_bit(true) -> 1;
+repl_bit(false) -> 0.
 
 -doc "All of draw(3)'s 32-bit plane, the clip rectangle of an image that clips nowhere.".
 -spec plane() -> rect().
@@ -217,7 +239,8 @@ step(State, {alloc, Id, Screen, _Refresh, Chan, Repl, R, Clipr, Color}) ->
         ok ?= check(supported_chan(Chan, Depth), einval),
         ok ?= check_image_rect(R, quota(State)),
         Clip = alloc_clip(Repl =/= 0, R, Clipr),
-        {ok, Next} ?= replace(State, Id, #{r => R, depth => Depth, repl => Repl =/= 0, glyphs => none}),
+        {ok, Next} ?= replace(State, Id, #{r => R, depth => Depth, chan => Chan, repl => Repl =/= 0,
+                                           clip => Clip, glyphs => none}),
         {ok, Next, [{alloc, Id, Chan, R, Clip, Repl =/= 0, Color}]}
     end;
 step(State, {clip, Dst, Repl, Clipr}) ->
@@ -225,7 +248,7 @@ step(State, {clip, Dst, Repl, Clipr}) ->
         {ok, #{repl := Was} = Image} ?= lookup(State, Dst),
         %% devdraw sets the bit and never clears it.
         Now = Was orelse Repl =/= 0,
-        {ok, Next} ?= replace(State, Dst, Image#{repl := Now}),
+        {ok, Next} ?= replace(State, Dst, Image#{repl := Now, clip := Clipr}),
         {ok, Next, [{clip, Dst, Now, Clipr}]}
     end;
 step(State, {draw, Dst, Src, Mask, R, Sp, Mp}) ->

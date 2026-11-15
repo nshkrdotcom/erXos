@@ -56,10 +56,13 @@ made, and an area with no room answers `{error, enomem}` after the
 -include("generated/erx_abi.hrl").
 
 -export([open/2, info/1, image/1, image_rect/1, chan/1, lease/2, present/2, present/3, mouse/1,
-         kbd/1, resized/1, resize/2, label/2]).
+         kbd/1, resized/1, resize/2, label/2, read_at/4, write_at/4]).
 -export_type([window/0, options/0, buffer/0, info/0]).
 
 -define(O_RDONLY, 0).
+%% The window's files read_at/4 and write_at/4 relay for a program: every one but
+%% ctl, which presents any range of the client's pixel area.
+-define(RELAYED(File), (File =:= kbd orelse File =:= mouse orelse File =:= wctl orelse File =:= label)).
 %% A kbd record is at most a kind byte, the runes of a read's worth and a NUL; a read
 %% of the display's whole queue takes any record it holds.
 -define(KBD_READ, ?ERX_WINDOWS_QUEUE_BYTES).
@@ -177,6 +180,29 @@ to the window, so keeping `Buffer` inside a range is the caller's.
 present(Window, #{offset := Offset, width := Width, height := Height}, Rects)
   when is_integer(Offset), is_integer(Width), is_integer(Height), is_list(Rects) ->
     write(Window, ctl, erx_win_core:present(Offset, Width, Height, Rects)).
+
+-doc """
+A read of `Count` bytes at `Offset` of the window's file `File`, one of
+`kbd`, `mouse`, `wctl` and `label`, on the fid `open/2` opened, answered as
+the display answers it; a program's `/dev` tree relays its program's reads
+so (docs/design-files.md, "A program's window"). No clause takes `ctl`, so
+no relayed request reaches the window's `ctl`.
+""".
+-spec read_at(window(), kbd | mouse | wctl | label, non_neg_integer(), non_neg_integer()) ->
+          {ok, binary()} | {error, atom()}.
+read_at(#{tree := Tree, fids := Fids}, File, Offset, Count) when ?RELAYED(File) ->
+    one(Tree, {read, map_get(File, Fids), Offset, Count}).
+
+-doc """
+A write of `Bytes` at `Offset` of the window's file `File`, `wctl` or
+`label` as the display opens them for writing (or `kbd` and `mouse`, which
+the display refuses), on the fid `open/2` opened: `{ok, Count, Offset1}`
+as the display answers it, or its error.
+""".
+-spec write_at(window(), kbd | mouse | wctl | label, non_neg_integer(), binary()) ->
+          {ok, non_neg_integer(), non_neg_integer()} | {error, atom()}.
+write_at(#{tree := Tree, fids := Fids}, File, Offset, Bytes) when ?RELAYED(File), is_binary(Bytes) ->
+    one(Tree, {write, map_get(File, Fids), Offset, Bytes}).
 
 -doc "Reads one `mouse` record, waiting for one.".
 -spec mouse(window()) -> {ok, erx_win_core:pointer()} | {error, atom()}.

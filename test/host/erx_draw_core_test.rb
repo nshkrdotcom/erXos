@@ -34,7 +34,15 @@ class ErxDrawCoreTest < Minitest::Test
              anchor: 'erx_draw_codec:decode(Bytes, depth_fun(State)),',
              replacement: 'erx_draw_codec:decode(Bytes, depth_fun(new(#{r => {0, 0, 4, 4}, chan => 16#48081828, ' \
                           'quota => #{pixels => 0, side => 1}}))),',
-             catching_case: 'plan_test_')
+             catching_case: 'plan_test_'),
+    Seed.new(fault: 'a ctl field padded to 10 characters',
+             anchor: '-define(CTL_FIELD, 11).',
+             replacement: '-define(CTL_FIELD, 10).',
+             catching_case: 'ctl_test_'),
+    Seed.new(fault: 'a ctl that shows the rectangle as the clip rectangle',
+             anchor: 'clip := {CX0, CY0, CX1, CY1}}}}) ->',
+             replacement: 'r := {CX0, CY0, CX1, CY1}}}}) ->',
+             catching_case: 'ctl_test_')
   ].freeze
 
   def test_core_cases_pass_under_eunit
