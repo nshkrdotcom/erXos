@@ -7189,12 +7189,6 @@ document's "residual risks accepted" paragraph.
   can move from one console line to another; connecting a terminal
   already connected at another line is refused
   ([design-live.md](docs/design-live.md#the-console)).
-* [Low] display, plan9port compatibility: check against plan9port's source
-  that 9term allocates no screens and reaches the screen image only
-  through `libdraw`'s `getwindow`, as
-  [design-display.md](docs/design-display.md#compatibility-and-migration)
-  assumes.
-
 * [Low] POSIX-lite personality, `sysctl(3)` and `sysctl(8)`: build them
   when a ported FreeBSD program first needs them, as a reader of
   `/proc/status` through the program's own namespace that maps

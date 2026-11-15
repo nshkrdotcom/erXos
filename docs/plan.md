@@ -140,7 +140,7 @@ names; the table's order is the order.
 | 1b-E M9 on the stopgap | a block transfer runs while the block driver process is killed; the kill ends the storage domain, whose restart resets the device and mounts `/data` again with every synced file present ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)); drivers run in the storage and network domains over virtio-mmio, unconfined | 3,000 lines of C17, 5,000 of Erlang for M9, of which the PCIe enumerator and the MSI frame's driver are its kernel part's | 1b-A | G9's measurements, deciding nothing |
 | Track A, part 2 | an app built outside the tree with the SDK alone, added to an image with `tools/erx pack --app`, boots into its session with exactly the `apps` row's services its declaration names, its code read from its package at `/app` | estimated before it starts | part 1 | |
 | Track A, part 3 | the same package copied into `/apps` on a running machine is admitted there, its image readable through `mount`, starts at `service NAME start` once enabled, survives a reboot, and is removed with `rm`, its data kept | estimated before it starts | part 2, M6's data partition and 1b-E | |
-| 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and 9term running the command shell | estimated per part before it starts | 1b-C's part 3; part 8 also 1b-D | |
+| 1b-F Track D, parts 6 and 7 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web | estimated per part before it starts | 1b-C's part 3 | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
@@ -1439,12 +1439,6 @@ land after M11 repeat M11's closure over what they add.
    `-erx_args`; the Erlang renderer's QEMU frame time as Gate GD's
    preview, deciding nothing
    ([design-display.md](design-display.md#presentations)).
-8. **Plan 9's programs**, in 1b-F, after part 6 and track P's first part
-   (1b-D). plan9port's
-   `libdraw` with Plan 9's file connection in place of `devdraw`'s pipe,
-   served from the session's export, and 9term, imported as
-   erXos's code with an origin file
-   ([design-display.md](design-display.md#compatibility-and-migration)).
 9. **The web on the network**, after part 2, M10's logins, M11's vault
    and 1b-G's network service with TLS. cowboy over TLS in the web domain;
    `erx_web_login`, its cookies and a session per login; the manifest
@@ -1600,10 +1594,6 @@ types the catalog declares for the command typed; G4's `no_facet` test,
 where a seeded facet call in the emulator is caught by the source check;
 G7's status tests through a widget tree; `erx_ui_schema`'s fuzz target
 over arbitrary terms runs its budget clean.
-
-**Exit criteria, Plan 9's programs.** 9term runs the command shell in its window
-under HVF; the session's draw connections refuse no draw message they
-send.
 
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for
@@ -2772,10 +2762,7 @@ subshells, command substitution and a pipeline; `vi` edits a file and
 `less` pages through a log, each leaving the console as it found it; a
 dynamically linked program loads a library with `dlopen`; two
 programs of one session that map one file `MAP_SHARED` see each other's
-stores at once, and `msync` makes them durable; and on the desktop,
-9term runs the command shell over a pseudo-terminal,
-imported from plan9port
-([design-display.md](design-display.md#compatibility-and-migration)).
+stores at once, and `msync` makes them durable.
 
 **Scope.**
 
@@ -2822,9 +2809,7 @@ imported from plan9port
 
 **Exit criteria.** musl's `libc-test` and the Open POSIX Test Suite pass
 their `fork`, `exec`, `dlopen` and `mmap` cases, or each failure is
-classified; toybox's tests pass for the second tier's applets; 9term
-runs the command shell over a pseudo-terminal in a desktop window under
-HVF; a forked
+classified; toybox's tests pass for the second tier's applets; a forked
 child holds no capability outside its type's pass set and executes only
 code its parent had mapped, and a fork whose copy its session cannot pay
 for fails with `ENOMEM` at the call, the child undone; a child survives
@@ -3430,7 +3415,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
              --> 1b-C track D part 3, the window stack on QEMU
              --> 1b-D track P's first part --> G6 baseline --> toybox's applets (the rest of 1b-B)
              --> 1b-C track D part 4, the QEMU kiosk (on 1b-D's first slice, with 1b-B's sub-space ports and pipes, and track A's part 2)
-             --> 1b-F track D part 6 --> part 7 --> part 8
+             --> 1b-F track D part 6 --> part 7
            1b-H M13 on QEMU (any time; lowest priority)
            1b-I the Pi 4: (a) serial shell on raspi4b after Phase 1, then once on the board (GR)
              --> (b) storage after 1b-E, (c) network after 1b-G, (d) display after 1b-C part 3,
@@ -3449,8 +3434,7 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
 * Phase 1b runs in the order of its visible demos: 1b-A; the session
   domain; 1b-E and 1b-G; 1b-C's parts 1 and 2; 1b-C's part 3; 1b-D,
   with 1b-C's part 4 on its first slice, track A's part 2 and 1b-B's
-  sub-space ports and pipes, then toybox's applets; 1b-F last, part 8
-  after 1b-D. 1b-A comes first because every other item is a domain or
+  sub-space ports and pipes, then toybox's applets; 1b-F last. 1b-A comes first because every other item is a domain or
   runs in one. BeamAsm runs beside 1b-A, and 1b-H whenever capacity is
   idle. 1b-I's serial shell follows Phase 1 on QEMU's `raspi4b`, and
   passes once on the board by hand; each
