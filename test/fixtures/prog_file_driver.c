@@ -452,9 +452,9 @@ erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len, erx
 		erx_prog_obj_t *const got = erx_prog_fd_get(probe);
 		char line[64];
 
-		/* A dup of 0 meanwhile takes the lowest slot the open has not reserved. */
-		snprintf(line, sizeof(line), "probe:%d:%d:%s:%d", erx_prog_fd_close(probe), erx_prog_fd_dup(probe),
-		    got == NULL ? "none" : "object", erx_prog_fd_dup(0));
+		/* A dup of 0 meanwhile takes the lowest slot the open has not reserved; a dup3 onto it is EBUSY. */
+		snprintf(line, sizeof(line), "probe:%d:%d:%s:%d:%d", erx_prog_fd_close(probe), erx_prog_fd_dup(probe),
+		    got == NULL ? "none" : "object", erx_prog_fd_dup(0), erx_prog_fd_dup3(0, probe, 0));
 		log_line(line);
 		if (got != NULL)
 			erx_prog_obj_put(got);
@@ -654,6 +654,11 @@ main(int argc, char **argv)
 			struct stat st;
 
 			printf("%d\n", erx_prog_fd_fstat(fd, &st));
+		} else if (strcmp(word, "fcntl") == 0 && sscanf(line, "%*s %d %31s %255s", &fd, arg, arg2) == 3) {
+			/* fcntl FD getfd|getfl|setfl FLAGS: FLAGS as an open's, rdonly for none. */
+			const int cmd = strcmp(arg, "getfd") == 0 ? F_GETFD : strcmp(arg, "getfl") == 0 ? F_GETFL : F_SETFL;
+
+			printf("%ld\n", erx_prog_fd_fcntl(fd, cmd, flags_of(arg2)));
 		} else if (strcmp(word, "fail") == 0 && sscanf(line, "%*s %llu", &a) == 1) {
 			fail_next = (int)a;
 			printf("ok\n");

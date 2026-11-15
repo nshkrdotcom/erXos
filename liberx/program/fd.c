@@ -737,9 +737,29 @@ slot_cloexec_set(int fd, bool cloexec)
 }
 
 /*
+ * The status flags obj's open fixes for its life: a file's O_APPEND, which
+ * the handler took at the open and which no write request carries, so a
+ * change of it would leave the writes doing what F_GETFL no longer says.
+ */
+static uint32_t
+obj_status_fixed(erx_prog_obj_t *obj)
+{
+	switch (obj->kind) {
+	case ERX_PROG_OBJ_NULL:
+	case ERX_PROG_OBJ_MEM:
+	case ERX_PROG_OBJ_PIPE:
+		return (0);
+	case ERX_PROG_OBJ_FILE:
+		return (O_APPEND);
+	}
+	return (0);
+}
+
+/*
  * Replaces the bits of mask in the status flags of slot fd's open with those
- * of bits, under the table lock, which every change of them takes: 0, or
- * -EBADF for an empty slot.
+ * of bits, under the table lock, which every change of them takes: 0, -EBADF
+ * for an empty slot, or -EINVAL, changing nothing, when the change would
+ * flip a flag the open fixes (obj_status_fixed).
  */
 static int
 status_change(int fd, uint32_t mask, uint32_t bits)
@@ -750,9 +770,11 @@ status_change(int fd, uint32_t mask, uint32_t bits)
 	if (fd_valid(fd) && slots[fd].obj != NULL) {
 		erx_prog_obj_t *const obj = slots[fd].obj;
 		const uint32_t now = __atomic_load_n(&obj->status, __ATOMIC_RELAXED);
+		const uint32_t next = (now & ~mask) | bits;
 
-		__atomic_store_n(&obj->status, (now & ~mask) | bits, __ATOMIC_RELAXED);
-		result = 0;
+		result = ((now ^ next) & obj_status_fixed(obj)) != 0 ? -EINVAL : 0;
+		if (result == 0)
+			__atomic_store_n(&obj->status, next, __ATOMIC_RELAXED);
 	}
 	(void)pthread_mutex_unlock(&table_lock);
 	return (result);

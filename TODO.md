@@ -3047,14 +3047,22 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   The other operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need
   a 64-bit offset or size, which the frame profile cannot spell, since it refuses every `u64` but a
   capability (docs/design-abi.md, "Program protocol").
-* [Medium] erx_program driver, `erx_program_drv.c` (`program_control`): the test that a process other
-  than the one that opened a program's port is refused `einval` by every command, before and after it
-  calls `port_connect/2` on the port, with its seeded failure (docs/design-pipes.md, the install test),
-  is not in the tree; the driver runs only on the target, so it is a guest test.
-* [Medium] erx_program driver, `erx_program_drv.c` (`report`, `room`, the frames `{erx_channel, Port, Frame}`):
-  the driver sends the exit status, the room notice and the program's frames to the port's current owner, so
-  a session process that calls `port_connect/2` on a program's port takes them from the handler, which then
-  never sees the program end. Fix: send each to the opener program_t records, and check the event sink's path.
+* [Medium] liberx program layer, `liberx/program/fd.c` (`status_change`): a file's `O_APPEND` is fixed
+  at its open, and `F_SETFL` that would change it is `EINVAL`, since no request tells the handler's
+  description of the change. musl's `fdopen(fd, "a")` (musl/src/stdio/__fdopen.c) ignores that
+  refusal, so its stream writes at the current offset, not at the end, of a file opened without
+  `O_APPEND`. The design's answer is the description's second opened fid with the other append flag
+  (docs/design-files.md, the `F_SETFL` paragraph; docs/design-programs.md, "Descriptors and files"):
+  a request that carries the change to the description, and `fd.c` sending it. Until then `__fdopen`
+  could fail when its `F_SETFL` is refused, so the stream fails instead of writing in the wrong place.
+* [Medium] programs suite, `tools/lib/erx/programs.rb` (`opener`): the case checks that a second process
+  is refused `einval` by every `port_control` command before and after `port_connect/2` and that the
+  exit status still reaches the opener, but not docs/design-pipes.md's full test: an `install/2` of the
+  handler's own hand-off number from the second process, the handler's install after it, and the
+  seeded failure that compares the caller with the current owner. Its command list `1..7` copies
+  abi/erx_abi.txt's `program_control`. Making `port_connect/2` refuse a program port (a driver flag
+  checked in `set_port_connected`, otp/erts/emulator/beam/io.c) would make owner and opener one
+  process by construction and delete the opener field and this test's reason.
 * [Low] session, `erx_file_remote:open_flags/4`: an `lopen` that writes on an entry that is not `rw`
   answers `erofs` before the path is walked, so a missing file opened to write there is `erofs`, where
   FreeBSD's `vn_open` answers `ENOENT` from the lookup first.
@@ -3085,10 +3093,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (docs/design-programs.md), so only the mode a server records is affected.
 * [Medium] liberx program layer, tests of `liberx/program/file.c`: `test/host/prog_file_test.rb` builds
   `open_plan` against the host's `<fcntl.h>`, never musl's aarch64 values (`O_ACCMODE` holding `O_PATH`,
-  `O_SYNC` holding `O_DSYNC`'s bit, the `O_LARGEFILE` musl's `open` always passes), and `fileio` runs in no
-  case, so a mapping wrong only for the target's values passes every test. A host build of the mapping
-  against the sysroot's `bits/fcntl.h` values, or the `fileio` case, closes it. A failed part after an
-  earlier part moved bytes, and a write answered with 0 bytes, are in no case either.
+  `O_SYNC` holding `O_DSYNC`'s bit, the `O_LARGEFILE` musl's `open` always passes); the programs suite's
+  `fileio` case runs the target's values only for the flags `fileio.c` passes (`O_RDONLY`, `O_WRONLY`,
+  `O_CREAT`, `O_TRUNC`, `O_EXCL` and musl's `O_LARGEFILE`), so a mapping wrong only for the target's
+  value of another flag passes every test. A host build of the mapping against the sysroot's
+  `bits/fcntl.h` values closes it. A failed part after an earlier part moved bytes, and a write
+  answered with 0 bytes, are in no case either.
 * [Low] liberx program layer, request values (`file.c`, `signal.c`, `pipe.c`): each request's value is
   written term by term with `erx_etf_put_*` against the generated profile's types, which a host test's
   stand-in checks with the generated request check; a generated C writer for each request case

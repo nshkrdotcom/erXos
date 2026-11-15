@@ -57,7 +57,7 @@ Decisions every reader of this document needs:
   the program's spaces, a threadless anchor and an image below it, maps
   its image, gives it a channel and pipe ends, and starts its thread; the
   program's requests reach a handler process, signals reach it as reports
-  on its channel, and its end reaches the port's owner as
+  on its channel, and its end reaches the process that opened the port as
   `{exit_status, N}`
   ([Programs as ports](#programs-as-ports)).
 * **Drivers are Erlang processes** over the device NIF, which exposes
@@ -1807,7 +1807,9 @@ A fault record of one of the image's threads ends the program: the
 driver stops the anchor with `ERX_EXIT_SIGNAL` plus the signal the ABI
 file's fault table gives the fault's kind, and keeps the record for the
 shell. The image's exit record, unless it is an exec's switch, reaches
-the owner as `{Port, {exit_status, N}}`, with `N` the status the image
+the process that opened the port, which `port_connect/2` does not change,
+as `{Port, {exit_status, N}}`, as the program's frames and the room notice
+do, with `N` the status the image
 stopped with: a halt's status, or `ERX_EXIT_SIGNAL` plus a signal for a
 signal's default action and for a fault, as `erx_prog:status/1` reads it
 ([design-programs.md](design-programs.md#a-programs-end)). The handler
@@ -3910,7 +3912,7 @@ across them is the conformance suite.
 | A lane's positions or a frame fail their checks | `erx_lane_take`'s checks; the funnel | the ring unread past the bad record | the lane driver closes the port; `erx_connections` reports it; the system domain takes the connection down for both | `noconnection` on everything across the connection in both domains; a log line naming the peer and the reason; the peer is a bug suspect |
 | A peer stops taking frames | the lane is full | the frames in the ring, and the rest in the entry's queue | none needed | once the entry's queue passes ERTS's busy limit, the senders to that peer are suspended, as toward a busy distribution connection, and a `nosuspend` send is refused, its sender told when to try again if it asked with `notify`; in the system domain no sender is suspended, a message past the manifest's `system_queue` is dropped and counted, and any other signal ends the connection |
 | A process stops taking its messages from other domains | its queue quota, where it has one | its undecoded frames up to the quota and one more, then the frame for it and those behind it in the lane they share | none needed | the drain takes nothing more from that lane until the process takes its messages, so the lane's sender waits on a full lane; without a quota, the process's `max_heap_size` ends it, as in stock OTP |
-| A program's channel record is malformed, or a frame on it is beyond the program's credit, a request on a busy slot or a notice that is not due | the funnel in channel mode; the driver's count of the program's credit | the record discarded | the driver ends the program as a fault ends it, and the owner gets `{exit_status, N}` with `ERX_EXIT_SIGNAL` plus `SIGSYS` ([design-programs.md](design-programs.md#the-channel)) | the handler sees the port close; the shell reports the program's end |
+| A program's channel record is malformed, or a frame on it is beyond the program's credit, a request on a busy slot or a notice that is not due | the funnel in channel mode; the driver's count of the program's credit | the record discarded | the driver ends the program as a fault ends it, and the process that opened the port gets `{exit_status, N}` with `ERX_EXIT_SIGNAL` plus `SIGSYS` ([design-programs.md](design-programs.md#the-channel)) | the handler sees the port close; the shell reports the program's end |
 | A device returns a used index, descriptor index or length out of range | `erx_device_queue`'s check in `complete/2` | the queue broken: entries before it returned, every buffer still posted, `post/4` and `complete/2` `{error, broken}` | the driver calls `negotiate/2`, whose reset returns every buffer to its pool; a block driver instead ends, since its windows are each bound to one device process's life ([design-storage.md](design-storage.md#failure-handling-diagnostics-and-debuggability)): a reset by any route breaks the volumes over the device, which remount through their own restart | the driver's log line naming the device; the driver's supervisor may restart it |
 | Capacity changes faster than ERTS adjusts | `acted_seq` behind `cap_seq` | none | none needed | ERTS acts on the latest value; intermediate values are skipped, as level-valued events allow |
 | The JIT's code space is exhausted | the JIT object cannot grow | the module unloaded | the loader | `{error, system_limit}` from the load; a counter in the inspector |

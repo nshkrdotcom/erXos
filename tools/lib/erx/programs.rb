@@ -76,6 +76,9 @@ module Erx
 #   requests (test/guest/programs/pipeio.c). ENFILE at the session's quota is tested on
 #   the host: the quota by test/erlang/erx_pipe_tests.erl, the handler's reply by
 #   erx_prog_handler_core_tests.erl and its errno by test/host/prog_fd_test.rb.
+# * fileio runs test/guest/programs/fileio.c under a handler over the session's /tmp: its
+#   open, write, read, dup and close reach the handler as file requests, the bytes cross
+#   the data area, and it ends with 0.
   # The shell then answers node() again.
   #
   # The programs are file entries, so the backend copies their segments into the space
@@ -330,16 +333,16 @@ module Erx
             {note_burst, Count(0), S}
           end)().
        ERLANG
-       # A frame for an owner that is gone: the port is handed to a process that unlinks
-       # from it and exits, so the port outlives its owner, and only then does the program
-       # run and write a request the credit admits. The driver drops the frame for want of a
-       # reader, and the session goes on to close the port. The credit says when the driver
-       # has taken the request: until then slot 0 is free and a reply on it is refused with
-       # einval, and from then on it is admitted (docs/design-programs.md, "Credit"). A driver
-       # that refused the frame would have ended the program, and a send to an ended program
-       # is einval too, so ok also shows the frame was dropped and the program lives on. The
-       # program never reads the reply. No frame reaches this process, which is not the owner.
-       Case.new(name: 'owner_gone', seconds: 60, answer: '{owner_gone,ok,<<"ok">>,ok,none,true}',
+       # A frame after the owner is gone: the port is handed to a process that unlinks from
+       # it and exits, so the port outlives its owner, and only then does the program run and
+       # write a request the credit admits. The frame still reaches this process, which
+       # opened the port: the driver sends frames to the opener, whom port_connect/2 does not
+       # change. The credit says when the driver has taken the request: until then slot 0 is
+       # free and a reply on it is refused with einval, and from then on it is admitted
+       # (docs/design-programs.md, "Credit"). A driver that refused the frame would have
+       # ended the program, and a send to an ended program is einval too, so ok also shows
+       # the program lives on. The program never reads the reply.
+       Case.new(name: 'owner_gone', seconds: 60, answer: '{owner_gone,ok,<<"ok">>,ok,{erx_prog,1,0,getpid},true}',
                 expression: line(<<~ERLANG)),
          (fun() ->
             P = open_port({spawn_driver, "erx_program 14 0 4096 4 0 0 0 bin/note"}, [binary]),
@@ -388,6 +391,29 @@ module Erx
              receive {P, {exit_status, S}} -> S after #{WAIT_MS} -> timeout end}
           end)().
        ERLANG
+       # Only the opener commands the port: a second process gets einval from every command
+       # before and after it makes itself the port's owner with port_connect/2, and the
+       # program's end still reaches the opener (docs/design-runtime.md, "Programs as ports").
+       Case.new(name: 'opener', seconds: 60, answer: '{opener,[<<"einval">>],[<<"einval">>],ok,268}',
+                expression: line(<<~ERLANG)),
+         (fun() ->
+            P = erx_program:start(#{spec('spin', 44)}),
+            Self = self(),
+            Try = fun() -> lists:usort([port_control(P, C, <<>>) || C <- lists:seq(1, 7)]) end,
+            O = spawn(fun() ->
+                        B0 = Try(),
+                        true = port_connect(P, self()),
+                        unlink(P),
+                        Self ! {other, B0, Try()},
+                        receive done -> ok end
+                      end),
+            {Before, After} = receive {other, B1, A1} -> {B1, A1} after #{WAIT_MS} -> {timeout, timeout} end,
+            Stop = erx_program:stop(P, anchor, 268),
+            S = receive {P, {exit_status, X}} -> X after #{WAIT_MS} -> timeout end,
+            O ! done,
+            {opener, Before, After, Stop, S}
+          end)().
+       ERLANG
        # The handler's stop of a program its grammar refuses: the end reports the status given.
        Case.new(name: 'stop', seconds: 60, answer: '{stop,ok,268}', expression: line(<<~ERLANG)),
          (fun() ->
@@ -418,6 +444,13 @@ Case.new(name: 'pipe', seconds: 120, answer: '{pipe,{exited,42}}', expression: l
      {ok, H, []} = erx_prog_handler:start(#{spec('pipeio', 31, argv: '[<<"pipeio">>, <<"pipe">>]')}),
      Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
      {pipe, Status}
+   end)().
+ERLANG
+Case.new(name: 'fileio', seconds: 120, answer: '{fileio,{exited,0}}', expression: line(<<~ERLANG)),
+  (fun() ->
+     {ok, H, []} = erx_prog_handler:start(#{spec('fileio', 45, argv: '[<<"fileio">>, <<"/tmp/fileio">>]')}),
+     Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
+     {fileio, Status}
    end)().
 ERLANG
        Case.new(name: 'exit42', seconds: 60, answer: '{exit42,42}', expression: line(<<~ERLANG)),

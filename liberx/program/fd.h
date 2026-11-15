@@ -107,7 +107,8 @@ int	erx_prog_fd_dup3(int from, int to, int flags);
  * fcntl of slot fd: F_DUPFD and F_DUPFD_CLOEXEC, a dup to the lowest empty
  * slot at or above arg; F_GETFD and F_SETFD, the slot's FD_CLOEXEC; F_GETFL,
  * the open's access mode and status flags, and F_SETFL, its status flags
- * (fd_plan.h).  A pipe's read end is O_RDONLY and its write end O_WRONLY,
+ * (fd_plan.h), but -EINVAL for a change of a file's O_APPEND, which its open
+ * fixes.  A pipe's read end is O_RDONLY and its write end O_WRONLY,
  * all each allows (FreeBSD's ends are both O_RDWR); null and a mem range are
  * O_RDWR.  The command's answer, or a negative errno: -EINVAL for any other
  * command, and -EBADF for an empty slot.

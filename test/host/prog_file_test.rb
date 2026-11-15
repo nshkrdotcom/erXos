@@ -4,6 +4,7 @@
 # erx-gate: sanitizers
 
 require 'minitest/autorun'
+require 'fcntl'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/generated'
@@ -15,8 +16,10 @@ require_relative '../../tools/lib/erx/generated'
 # lopen, or lcreate with O_CREAT, its flags as 9P2000.L's values and its mode less the
 # umask; a write and a read move their bytes through a data slot, in parts of one slot,
 # stopping at a short part; dup shares the open and its last close clunks it once; an open
-# reserves its slot before its request, so a full table refuses it unsent and a refused open
-# gives its slot back; flags the request cannot carry, bad paths
+# reserves its slot before its request, so a full table refuses it unsent, a refused open
+# gives its slot back, and a dup3 onto the slot meanwhile is EBUSY; an open's O_CLOEXEC
+# marks its slot, F_GETFL reads its access mode and status, and F_SETFL may not change a
+# file's O_APPEND; flags the request cannot carry, bad paths
 # and a dirfd that is no directory are refused before anything is sent; and a read answer
 # past its count is EIO (docs/design-files.md, "Native clients: liberx's file client";
 # docs/design-programs.md, "Descriptors and files" and "Reads and writes"). Every case runs
@@ -36,7 +39,7 @@ class ProgFileTest < Minitest::Test
   TSAN = ['-fsanitize=thread'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
   # The driver's errors are the host's own numbers; the stand-in answers in them too.
-  E = %i[ENOENT EIO EBADF EACCES EEXIST ENOTDIR EINVAL EMFILE EFAULT ENAMETOOLONG ENOSYS]
+  E = %i[ENOENT EIO EBADF EACCES EEXIST ENOTDIR EINVAL EMFILE EFAULT ENAMETOOLONG ENOSYS EBUSY]
       .to_h { |name| [name, -Errno.const_get(name)::Errno] }.freeze
 
   CASES = {
@@ -139,7 +142,22 @@ class ProgFileTest < Minitest::Test
       ['probe 1', 'ok'],
       ['open cwd /f rdonly 0', '1'],
       ['dup 0', '3'],
-      ['log', "lcreate:/f:0x2:0600 probe:#{E[:EBADF]}:#{E[:EBADF]}:none:2 lopen:/f:0"]
+      ['log', "lcreate:/f:0x2:0600 probe:#{E[:EBADF]}:#{E[:EBADF]}:none:2:#{E[:EBUSY]} lopen:/f:0"]
+    ],
+    "an open's O_CLOEXEC, F_GETFL and an O_APPEND that stays the open's" => [
+      ['slots 1', 'ok'],
+      ['open cwd /f rdwr|creat|cloexec 0600', '0'],
+      ['open cwd /f wronly|append 0', '1'],
+      ['fcntl 0 getfd rdonly', Fcntl::FD_CLOEXEC.to_s],
+      ['fcntl 1 getfd rdonly', '0'],
+      ['fcntl 0 getfl rdonly', Fcntl::O_RDWR.to_s],
+      ['fcntl 1 getfl rdonly', (Fcntl::O_WRONLY | Fcntl::O_APPEND).to_s],
+      ['fcntl 1 setfl rdonly', E[:EINVAL].to_s],
+      ['fcntl 0 setfl append', E[:EINVAL].to_s],
+      ['fcntl 1 setfl append|nonblock', '0'],
+      ['fcntl 1 getfl rdonly', (Fcntl::O_WRONLY | Fcntl::O_APPEND | Fcntl::O_NONBLOCK).to_s],
+      ['fcntl 0 getfl rdonly', Fcntl::O_RDWR.to_s],
+      ['log', 'lcreate:/f:0x2:0600 lopen:/f:0x401']
     ],
     'what a file does not offer' => [
       ['slots 1', 'ok'],
@@ -177,6 +195,15 @@ class ProgFileTest < Minitest::Test
        "\treturn (slot->obj == NULL && !slot->reserved);\n", "\treturn (slot->obj == NULL);\n"],
     'a refused open keeps its slot' =>
       ["the handler's errors", FILE_C, "\t\terx_prog_fd_unreserve(fd);\n", ''],
+    'a dup3 onto a reserved slot takes it' =>
+      ['a reserved slot holds nothing and is taken by no dup while its open waits', 'liberx/program/fd_plan.c',
+       'return (slots[req.at].reserved ? -EBUSY : (int)req.at);', 'return ((int)req.at);'],
+    "an open's O_CLOEXEC is dropped" =>
+      ["an open's O_CLOEXEC, F_GETFL and an O_APPEND that stays the open's", FILE_C,
+       'erx_prog_fd_fill(fd, &file->obj, (flags & O_CLOEXEC) != 0);', 'erx_prog_fd_fill(fd, &file->obj, false);'],
+    "a file's O_APPEND may change" =>
+      ["an open's O_CLOEXEC, F_GETFL and an O_APPEND that stays the open's", FD,
+       "\t\treturn (O_APPEND);\n", "\t\treturn (0);\n"],
     'O_EXCL travels without O_CREAT' =>
       ['flags as 9P2000.L values and the mode less the umask', FILE_C, 'if (create && (flags & O_EXCL) != 0)', 'if ((flags & O_EXCL) != 0)']
   }.freeze

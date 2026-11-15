@@ -128,7 +128,7 @@ class ProgFdPlanTest < Minitest::Test
         path = File.join(directory, "#{name.tr(' ', '-').delete("'")}.c")
         File.write(path, source.sub(original, replacement))
         requests, expected = which == :plans ? plan_requests : [CASES.keys, CASES.values]
-        refute_equal expected, run_driver(requests, file => path), "seeded fault not caught: #{name}"
+        refute_equal expected, run_driver(requests, { file => path }, mutant: true), "seeded fault not caught: #{name}"
       end
     end
   end
@@ -138,7 +138,9 @@ class ProgFdPlanTest < Minitest::Test
   def plan_requests = [SIZES.map { |size| "plans #{size}" }, SIZES.flat_map { |size| self.class.plan_lines(size) }]
 
   # Builds the driver from SOURCES, each path of replaced built from its replacement instead.
-  def run_driver(requests, replaced = {})
+  # A mutant's driver may stop at a sanitizer's report, as one that reads past the table
+  # does; its output then stands for its answers, and matches no plan's.
+  def run_driver(requests, replaced = {}, mutant: false)
     Dir.mktmpdir('erx-prog-fd-plan-') do |directory|
       binary = File.join(directory, 'driver')
       input = File.join(directory, 'requests')
@@ -147,7 +149,7 @@ class ProgFdPlanTest < Minitest::Test
       output, status = Open3.capture2e(COMPILER, *FLAGS, '-I', ROOT, *sources, '-o', binary)
       assert status.success?, output
       output, status = Open3.capture2e(binary, input)
-      assert status.success?, output
+      assert status.success? || mutant, output
       output.lines.map(&:chomp)
     end
   end
