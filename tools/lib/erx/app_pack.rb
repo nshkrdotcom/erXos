@@ -62,6 +62,25 @@ module Erx
                  'case erx_pkg_header:check_file({Name, byte_size(Bytes), Bytes}, Authority) of ' \
                  '{ok, _} -> io:format("ok~n"); Refused -> io:format("~0p~n", [Refused]) end, halt().'
 
+    # The file check as an image's package takes it: the package at the first plain
+    # argument under the hash of its own header, whose length the machine's decoder
+    # reads, answering ok with the app's name, its declared memory and that hash, or the
+    # refusal. The hash binds nothing here; what the check proves is that the machine
+    # decodes the file whole, under the name the file is given.
+    FILE_DESCRIBE = '[Path] = init:get_plain_arguments(), {ok, Bytes} = file:read_file(Path), ' \
+                    'Name = list_to_binary(filename:basename(Path)), Length = byte_size(Bytes), ' \
+                    'Answer = case erx_pkg_header:decode(Length, Bytes) of ' \
+                    '{ok, #{header_length := Header}} -> ' \
+                    'erx_pkg_header:check_file({Name, Length, Bytes}, {hash, erx_bytes:sha256(binary:part(Bytes, 0, Header))}); ' \
+                    'Refused -> Refused end, ' \
+                    'case Answer of {ok, #{header := #{name := App, memory := Memory}, sha256 := Sha256}} -> ' \
+                    'io:format("ok ~s ~b ~s~n", [App, Memory, binary:encode_hex(Sha256, lowercase)]); ' \
+                    'Other -> io:format("~0p~n", [Other]) end, halt().'
+
+    # What the file check found in a package of an image: its app's name, its declared
+    # memory and its header's SHA-256, which the image's package row records.
+    Described = Data.define(:name, :memory, :sha256)
+
     module_function
 
     # Packs the app in directory with sdk (Sdk), sealed by signer (Erx::AppPackage::Signer),
@@ -98,13 +117,31 @@ module Erx
 
     # The file check under key, the one trusted signer; raises its refusal.
     def check_file(path, key:, sdk:, runner:)
+      verdict = file_check(FILE_CHECK, [path, key.unpack1('H*')], sdk: sdk, runner: runner)
+      raise Error, "the file check refuses #{File.basename(path)}: #{verdict}" unless verdict == 'ok'
+    end
+
+    # The file check of the package at path as an image takes it (FILE_DESCRIBE); answers
+    # its Described or raises the refusal. The answer comes from a file that may be
+    # someone else's, so it is read as untrusted: an app name, a decimal memory and 64
+    # hexadecimal digits, or a refusal.
+    def describe(path, sdk:, runner:)
+      verdict = file_check(FILE_DESCRIBE, [path], sdk: sdk, runner: runner)
+      _, name, memory, sha256 = verdict.match(/\Aok (\S+) ([0-9]{1,20}) ([0-9a-f]{64})\z/)&.to_a
+      raise Error, "the file check refuses #{File.basename(path)}: #{verdict}" unless name && AppPackage::APPLICATION.match?(name)
+
+      Described.new(name: name, memory: Integer(memory, 10), sha256: [sha256].pack('H*'))
+    end
+
+    # The answer of the host's stock erl evaluating expression, the machine's file check
+    # on the SDK's applications, over arguments.
+    def file_check(expression, arguments, sdk:, runner:)
       Dir.mktmpdir('erx-app-check-') do |work|
         answer = File.join(work, 'answer')
-        runner.run([sdk.erl, '-noshell', '-noinput', '-boot', 'no_dot_erlang', '-pa', sdk.host_ebin, '-pz', *sdk.ebins, '-eval', FILE_CHECK,
-                    '-extra', path, key.unpack1('H*')],
+        runner.run([sdk.erl, '-noshell', '-noinput', '-boot', 'no_dot_erlang', '-pa', sdk.host_ebin, '-pz', *sdk.ebins,
+                    '-eval', expression, '-extra', *arguments],
                    name: 'erx-app-file-check', deadline: DEADLINE, chdir: work, env: Oracle::CLEAN_ERLANG_ENV, stdout: answer)
-        verdict = BoundedFile.read(answer, maximum: 65_536).strip
-        raise Error, "the file check refuses #{File.basename(path)}: #{verdict}" unless verdict == 'ok'
+        BoundedFile.read(answer, maximum: 65_536).strip
       end
     end
 
@@ -224,6 +261,6 @@ module Erx
       :absent
     end
 
-    private_class_method :application_parts, :applications, :build, :files_below, :part_kind, :visible, :kind
+    private_class_method :file_check, :application_parts, :applications, :build, :files_below, :part_kind, :visible, :kind
   end
 end

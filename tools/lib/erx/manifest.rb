@@ -1175,9 +1175,7 @@ module Erx
     class Stopgap < SystemDomainCheck
       REFUSED = {
         'partial_boot' => 'child domains of a partial boot arrive at M5',
-        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings',
-        'package' => 'a package row needs the package file check and admission (docs/design-packaging.md, "Admission"), ' \
-                     'which this check does not run'
+        'liveness' => 'the system domain\'s watchdog pets without reading liveness records, which a later milestone brings'
       }.freeze
 
       private
@@ -1192,7 +1190,7 @@ module Erx
         invalid('a partial boot configures no domains', 12, 'domain') unless records('domain').empty?
         invalid('a partial boot makes no sessions', 14, 'session') unless records('session').empty?
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
-        %w[apps signer].each do |kind|
+        %w[apps package signer].each do |kind|
           invalid('a partial boot takes no packages', 19, kind) unless records(kind).empty?
         end
         %w[service facet introduce liveness display].each do |kind|
@@ -1234,6 +1232,7 @@ module Erx
         app_services = check_apps(rows)
         check_app_start_rows
         check_signers
+        @packages = check_packages
         rows['displays'] = normalize_displays(services.map(&:first), rows, facet_values, app_services)
         edges = boot_edges(rows['facets'], rows['services'])
         rows['boot_order'] = boot_order(rows['domains'], edges)
@@ -1247,7 +1246,10 @@ module Erx
 
       def claims
         { 'mode' => 'stopgap', 'root_startup' => 'declared', 'child_plan_instances' => records('domain').size,
-          'root_image_loadable_bytes' => root_loadable_bytes }.merge(RootStartup.declared(@context.platform))
+          'root_image_loadable_bytes' => root_loadable_bytes, 'packages' => @packages,
+          # No packed record carries the package and signer rows to the machine yet.
+          'package_records' => 'unsupported',
+          'signers' => records('signer').map(&:name).sort }.merge(RootStartup.declared(@context.platform))
       end
 
       def check_identity(devices)
@@ -1474,6 +1476,29 @@ module Erx
           record.line.fail!('key requires hexadecimal bytes, hex:...') if one(record, 'key').quoted
           invalid("signer #{record.name}'s key is not #{size} bytes", 19, 'signer.key') unless text(record, 'key').bytesize == size
         end
+      end
+
+      # Property 19's fifth clause on the package rows the image builder adds
+      # (Erx::ImageApps), as far as the host can judge it without admission: each row's
+      # input is a package artifact of this pack, which the build's file check decoded
+      # under the row's own name; the rows number at most the apps row's max, so none
+      # without an apps row; and the declared memory of the enabled ones sums within the
+      # apps budget. Answers the build record's entry of each row, sorted by name: its
+      # name, its header's SHA-256 in hexadecimal and whether it is enabled.
+      def check_packages
+        packages = records('package').sort_by { |record| record.name.b }
+        invalid("the package rows pass the apps row's max, #{@apps.max}", 19, 'package') if packages.size > @apps.max
+        rows = packages.map do |record|
+          package = artifact(record, 'input', 'package', property: 19, field: 'package.input')
+          invalid("package #{record.name}'s input is the package of #{package['name']}", 19, 'package.input') unless
+            package['name'] == record.name
+          enabled = record.properties.key?('enable') && start_flags(record).positive?
+          { 'name' => record.name, 'sha256' => package.fetch('sha256'), 'enabled' => enabled, 'memory' => package.fetch('memory') }
+        end
+        memory = rows.select { |row| row.fetch('enabled') }.sum { |row| row.fetch('memory') }
+        invalid("the enabled packages declare #{memory} bytes, past the apps budget of #{@apps.memory}", 19, 'package.enable') if
+          memory > @apps.memory
+        rows.map { |row| row.except('memory').freeze }.freeze
       end
 
       # The parameters an ABI file declares for interface, by key, or nil when no ABI
