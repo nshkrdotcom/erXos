@@ -1055,7 +1055,7 @@ the relay hands to `erx_tty`'s `status/3`
 starting with a newline when the tty's output column is not 0. It returns
 nothing when `NOKERNINFO` is set or the tty has less than 256 bytes of
 room. These are FreeBSD's rules (`tty.c:1542-1543`, `tty_info.c:300-309`,
-`tty.c:2067-2072`). It also returns nothing when the room is less than the
+`tty.c:2057-2062`). It also returns nothing when the room is less than the
 whole line, so a line is never cut. A dropped line is not an error, and
 the requests still go out.
 

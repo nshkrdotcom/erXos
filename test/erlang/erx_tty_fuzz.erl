@@ -1,0 +1,190 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The fuzz target of erx_tty's set/2, size/3 and input/2, the line
+%% discipline's readers of untrusted values (docs/design-live.md, "The tty"
+%% and "Verification and testing"): random termios, valid and broken one way
+%% at a time; random window sizes; and random bytes in random chunks, up to
+%% past the input bound, under random termios, between random reads, waits
+%% and writes. Whatever arrives, nothing crashes, a valid termios is kept as
+%% given and a broken one refused, what waits stays within 4 KiB, every
+%% action is one of erx_tty's, nothing is echoed without ECHO or ECHONL but
+%% a bell, and in raw mode with no flag that changes or takes bytes, every
+%% byte is read, still waits or was counted as dropped. The seed comes from
+%% make check-fuzz; a failure is error({fuzz_failure, Property, Detail}).
+
+-module(erx_tty_fuzz).
+-export([run/1]).
+
+-define(ROUNDS, 3000).
+-define(MAX_INPUT, 4096).
+-define(IFLAGS, [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck,
+                 istrip, iutf8, ixany, ixoff, ixon, parmrk]).
+-define(OFLAGS, [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3]).
+-define(CFLAGS, [clocal, cread, cstopb, hupcl, parenb, parodd]).
+-define(LFLAGS, [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon,
+                 iexten, isig, noflsh, nokerninfo, tostop]).
+-define(CHARS, [vdiscard, vdsusp, veof, veol, veol2, verase, verase2, vintr,
+                vkill, vlnext, vmin, vquit, vreprint, vstart, vstatus, vstop,
+                vsusp, vtime, vwerase]).
+%% Flags that change or take received bytes, which the count of bytes leaves out.
+-define(TAKERS, [icrnl, igncr, inlcr, istrip, ixon, parmrk, isig, icanon]).
+
+run([Seed]) ->
+    rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
+    lists:foreach(fun(_) ->
+                          termios_round(),
+                          size_round(),
+                          input_round()
+                  end, lists:seq(1, ?ROUNDS)),
+    io:format("fuzz: ~p rounds ok~n", [?ROUNDS]).
+
+termios_round() ->
+    Tty = erx_tty:new(),
+    Valid = random_termios(),
+    case erx_tty:set(Valid, Tty) of
+        {ok, _, Set} ->
+            Kept = erx_tty:termios(Set),
+            check(Kept =:= normal(Valid), termios_not_kept, {Valid, Kept});
+        {error, einval} ->
+            fail(valid_refused, Valid)
+    end,
+    Broken = broken(Valid),
+    check(erx_tty:set(Broken, Tty) =:= {error, einval}, invalid_accepted, Broken).
+
+size_round() ->
+    Tty = erx_tty:new(),
+    Rows = pick([0, 1, 24, 65535, 65536, -1, 1.0, rows, rand:uniform(70000)]),
+    Columns = pick([0, 1, 80, 65535, 65536, -5, "80", rand:uniform(70000)]),
+    Valid = is_integer(Rows) andalso Rows >= 1 andalso Rows =< 65535 andalso
+        is_integer(Columns) andalso Columns >= 1 andalso Columns =< 65535,
+    case erx_tty:size(Rows, Columns, Tty) of
+        {ok, Actions, Sized} when Valid ->
+            Changed = {Rows, Columns} =/= {24, 80},
+            check(Actions =:= [winch || Changed] andalso
+                      erx_tty:winsize(Sized) =:= {Rows, Columns}, size_not_kept, {Rows, Columns});
+        {error, einval} when not Valid ->
+            ok;
+        Other ->
+            fail(size_checked_wrong, {Rows, Columns, Other})
+    end.
+
+input_round() ->
+    Termios = random_termios(),
+    {ok, _, Tty} = erx_tty:set(Termios, erx_tty:new()),
+    Counted = [] =:= [F || F <- ?TAKERS, has(F, Termios)],
+    steps(rand:uniform(12), Termios, Counted, Tty, {0, 0}).
+
+%% Read and In count the bytes read and received, for the conservation check.
+steps(0, _, _, _, _) ->
+    ok;
+steps(N, Termios, Counted, Tty, {Read, In}) ->
+    case rand:uniform(4) of
+        1 ->
+            Bytes = random_bytes(),
+            {Actions, Tty1} = erx_tty:input(Bytes, Tty),
+            check_input(Actions, Termios, Tty, Tty1, Bytes),
+            check(not Counted orelse
+                      Read + erx_tty:waiting(Tty1) + erx_tty:dropped(Tty1) =:= In + byte_size(Bytes),
+                  bytes_lost, {Termios, Bytes}),
+            steps(N - 1, Termios, Counted, Tty1, {Read, In + byte_size(Bytes)});
+        2 ->
+            {Got, Tty1} = erx_tty:read(r, rand:uniform(5000), Tty),
+            Taken = case Got of
+                        {ok, Bin} -> byte_size(Bin);
+                        eagain -> 0
+                    end,
+            steps(N - 1, Termios, Counted, Tty1, {Read + Taken, In});
+        3 ->
+            {Actions, Tty1} = erx_tty:read_wait(pick([r, s]), Tty),
+            check_actions(Actions),
+            steps(N - 1, Termios, Counted, Tty1, {Read, In});
+        4 ->
+            Room = rand:uniform(300) - 1,
+            {Taken, Out, Tty1} = erx_tty:output(random_bytes(), Room, Tty),
+            check(byte_size(Out) =< Room andalso Taken >= 0, output_over_room, {Room, Out}),
+            steps(N - 1, Termios, Counted, Tty1, {Read, In})
+    end.
+
+check_input(Actions, Termios, Before, After, Bytes) ->
+    check_actions(Actions),
+    Raw = not has(icanon, Termios),
+    check(not Raw orelse erx_tty:waiting(After) =< ?MAX_INPUT, input_over_bound,
+          {erx_tty:waiting(After), byte_size(Bytes)}),
+    check(erx_tty:dropped(After) >= erx_tty:dropped(Before), dropped_went_back, Bytes),
+    Echo = iolist_to_binary([E || {echo, E} <- Actions]),
+    Quiet = not has(echo, Termios) andalso not has(echonl, Termios),
+    check(not Quiet orelse Echo =:= binary:copy(<<7>>, byte_size(Echo)),
+          echo_without_echo, {Termios, Bytes, Echo}).
+
+check_actions(Actions) ->
+    lists:foreach(fun(Action) -> check(action(Action), unknown_action, Action) end, Actions).
+
+action({echo, Bytes}) -> is_binary(Bytes) andalso Bytes =/= <<>>;
+action({signal, S}) -> lists:member(S, [sigint, sigquit, sigtstp]);
+action({ready, _}) -> true;
+action({timer_start, {_, N}, Ms}) -> is_integer(N) andalso Ms >= 100 andalso Ms =< 25500;
+action({timer_cancel, {_, N}}) -> is_integer(N);
+action(A) -> lists:member(A, [info, flush_output, stop_output, start_output]).
+
+%%% Termios, valid and broken
+
+random_termios() ->
+    #{iflag => subset(?IFLAGS), oflag => subset(?OFLAGS), cflag => subset(?CFLAGS),
+      lflag => subset(?LFLAGS), csize => 4 + rand:uniform(4),
+      cc => maps:from_list([{Name, random_char(Name)} || Name <- ?CHARS]),
+      ispeed => pick([0, 9600, 115200, 16#ffffffff]), ospeed => pick([0, 9600, 38400])}.
+
+random_char(Name) when Name =:= vmin; Name =:= vtime -> pick([0, 0, 1, 2, 5, 255]);
+random_char(_) -> pick([255, 3, 4, 10, 13, 17, 19, 20, 21, 23, 127, rand:uniform(256) - 1]).
+
+%% What set/2 keeps: sorted flags, and an input speed of 0 as the output speed.
+normal(#{ispeed := In, ospeed := Out} = Termios) ->
+    Sorted = maps:map(fun(_, V) when is_list(V) -> lists:usort(V); (_, V) -> V end, Termios),
+    Sorted#{ispeed := case In of 0 -> Out; _ -> In end}.
+
+%% A termios broken one way.
+broken(Termios) ->
+    #{cc := Chars} = Termios,
+    Field = pick([iflag, oflag, cflag, lflag]),
+    Flags = maps:get(Field, Termios),
+    case rand:uniform(11) of
+        1 -> Termios#{Field := [bogus | Flags]};
+        2 -> Termios#{Field := [pick(foreign(Field)) | Flags]};
+        3 -> Termios#{Field := Flags ++ improper};
+        4 -> Termios#{cc := Chars#{pick(?CHARS) := pick([256, -1, x, 1.5])}};
+        5 -> Termios#{cc := maps:remove(pick(?CHARS), Chars)};
+        6 -> Termios#{cc := Chars#{vbogus => 1}};
+        7 -> Termios#{csize := pick([4, 9, eight])};
+        8 -> Termios#{pick([ispeed, ospeed]) := pick([-1, 16#100000000, 9600.0])};
+        9 -> maps:remove(pick([iflag, cc, csize, ospeed]), Termios);
+        10 -> Termios#{extra => []};
+        11 -> pick([[], <<>>, {termios}, Chars])
+    end.
+
+foreign(iflag) -> ?OFLAGS ++ ?LFLAGS;
+foreign(oflag) -> ?IFLAGS ++ ?CFLAGS;
+foreign(cflag) -> ?LFLAGS ++ ?OFLAGS;
+foreign(lflag) -> ?IFLAGS ++ ?CFLAGS.
+
+%%% Helpers
+
+random_bytes() ->
+    Size = pick([1, 2, 8, 64, 1000, 5000]),
+    Specials = [3, 4, 10, 13, 17, 19, 20, 21, 23, 127, 255, $\t, $\s, $a, 16#c3, 16#a9],
+    << <<(case rand:uniform(3) of
+              1 -> rand:uniform(256) - 1;
+              _ -> pick(Specials)
+          end)>> || _ <- lists:seq(1, rand:uniform(Size)) >>.
+
+subset(Table) -> [F || F <- Table, rand:uniform(2) =:= 1].
+
+pick(List) -> lists:nth(rand:uniform(length(List)), List).
+
+has(Flag, #{iflag := I, oflag := O, cflag := C, lflag := L}) ->
+    lists:member(Flag, I ++ O ++ C ++ L).
+
+check(true, _, _) -> ok;
+check(false, Property, Detail) -> fail(Property, Detail).
+
+fail(Property, Detail) -> error({fuzz_failure, Property, Detail}).

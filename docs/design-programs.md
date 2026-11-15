@@ -2344,8 +2344,9 @@ the relay serves their reads one at a time. A read under `O_NONBLOCK` is sent
 at once and fails with `EAGAIN` on `eagain`. A blocking read watches
 `{watch, Open, [read]}`, which is the line discipline's `read_wait` and starts
 the timer that `VTIME` asks for. `poll` watches `{watch, Open, [in]}`, which
-starts no timer and reports only when bytes wait, one byte with `VTIME` set and
-otherwise `VMIN` of them, and reports `POLLIN` from that, so a `poll` never
+starts no timer and reports only when bytes wait: a complete line when the
+terminal is cooked and otherwise one byte, whatever `VMIN` says, as FreeBSD's
+`poll` counts the bytes a read could take; it reports `POLLIN` from that, so a `poll` never
 consumes input or starts a read's time.
 `Ctrl-D` at the start of a
 line answers that read with no bytes, the end of file, and later reads go

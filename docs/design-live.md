@@ -542,14 +542,39 @@ on the host:
 * `input(Bytes, Tty)` returns the next state and what to do: bytes to echo, a
   signal for the foreground group, a report that a waiting read can go on. A
   line in cooked mode holds at most 4,095 bytes and its end, and in raw mode at
-  most 4 KiB wait unread; further bytes are dropped and counted, as Linux's
-  line discipline does.
+  most 4 KiB wait unread; further bytes are dropped and counted, with a bell
+  when `IMAXBEL` is set, as FreeBSD's `ttydisc_rint` drops a byte that finds
+  the queue full (`sys/kern/tty_ttydisc.c:1220-1236`). FreeBSD holds back
+  the device instead when a line waits to be read; a master cannot be held
+  back, so the tty drops in that case too. One call's echo is at most
+  16 KiB, and the rest is dropped, as FreeBSD drops echo that finds its
+  output queue full, so a run of `VREPRINT` keys costs no more than its
+  bytes.
 * `read_wait(Open, Tty)`, for a blocking read that starts to wait,
-  `timer(Open, Tty)`, for its timer's end, and `read(Open, Max, Tty)`, for the
-  read itself, return the next state and what to do: bytes for the reader, or
-  none; a report that the read can go on; a timer to start or cancel.
+  `poll_wait(Open, Tty)`, for a `poll` that waits for input,
+  `cancel(Open, Tty)`, for a wait that a signal or a close ends,
+  `timer(Timer, Tty)`, for a timer's end, and `read(Open, Max, Tty)`, for the
+  read itself, return the next state and what to do: bytes for the reader,
+  none for an end of file or a raw read with nothing to wait for, or
+  `eagain` when another reader took the bytes; a report `{ready, Open}`,
+  once per wait, that the read can go on; a timer to start or cancel. Each
+  timer start names a fresh `{Open, Serial}`, so the end of a timer that was
+  cancelled or replaced does nothing. A `poll` is ready at a complete line
+  in cooked mode and at one byte in raw mode, whatever `VMIN` says, since
+  FreeBSD's `poll` counts the bytes a read could take (`ttydisc.h:72`).
 * `set(Termios, Tty)` takes a new `termios`, checking it whole; a flag
-  outside `erx_tty`'s table fails with `EINVAL`.
+  outside `erx_tty`'s table fails with `EINVAL`. The `termios` is an Erlang
+  map of four flag lists, the character size, the special characters by name
+  and the two speeds, and is all a tty holds of it; the program protocol
+  turns a C program's `struct termios` into it and keeps only the bits the
+  table names, as FreeBSD's `tcsetattr` drops the bits it does not support
+  (`sys/kern/tty.c:1760-1764`), so a FreeBSD program that sets one gets
+  success, as POSIX allows, and sees it clear in `tcgetattr`. A change of
+  `ICANON`, `VEOF` or `VEOL` moves what the new mode counts as complete to
+  the readable bytes (`tty.c:1803-1812`), and every waiter waits again under
+  the new rules.
+* `hangup(Tty)`, for the master's `tty_hangup`, makes every waiter ready and
+  every later read that finds no bytes an end of file.
 * `size(Rows, Columns, Tty)` takes a new window size, each from 1 to 65,535,
   and refuses any other. It returns `winch` when the size differs from the
   one the tty holds and nothing when it is the same, so only a change
@@ -561,7 +586,7 @@ on the host:
   as FreeBSD's `tty_signal_pgrp` prints nothing then
   (`sys/kern/tty.c:1542-1543`), and when `Room` is under 256
   bytes, as FreeBSD prints its status line only with that much room
-  (`sys/kern/tty.c:2067-2072`), or too small for the whole line, so a
+  (`sys/kern/tty.c:2057-2062`), or too small for the whole line, so a
   status line is never cut.
 
 The owner carries out what they return and owns the timers, so time reaches the
@@ -589,9 +614,18 @@ event.
   line typed so far is kept, as on FreeBSD
   ([design-shell.md](design-shell.md#ctrl-t-status-and-the-info-request)).
 
-A new tty starts cooked, with `ECHO`, `ISIG`, `ICANON`, `IEXTEN`, `ICRNL`,
-`OPOST` and `ONLCR` set, and `VSTATUS` `^T`, as FreeBSD's defaults have
-them (`sys/sys/ttydefaults.h:46-50`, `:71`).
+* With `IXON`, `VSTOP` stops output and `VSTART` starts it again, and with
+  `IXANY` any key starts it, as FreeBSD's do (`tty_ttydisc.c:1055-1058`,
+  `:1141-1162`). `input/2` returns `stop_output` and `start_output`, and
+  `output/3` takes nothing while output is stopped, so the owner holds every
+  byte for the master, echo among them, until output starts. A signal from
+  a key, `info` and a window-size change start it too, as FreeBSD's
+  `tty_signal_pgrp` does (`tty.c:1538-1540`, `:1645-1648`).
+
+A new tty starts cooked, with FreeBSD's defaults
+(`sys/sys/ttydefaults.h:46-52`, `:102-104`): `ECHO`, `ECHOE`, `ECHOKE`,
+`ECHOCTL`, `ISIG`, `ICANON`, `IEXTEN`, `BRKINT`, `ICRNL`, `IMAXBEL`,
+`IXON`, `IXANY`, `IUTF8`, `OPOST` and `ONLCR` set, and `VSTATUS` `^T`.
 
 **A shell's line editor is a program on a raw tty.** `group`, `edlin` and
 `prim_tty` are to a shell what readline is to `bash`. While the shell
