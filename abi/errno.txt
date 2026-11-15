@@ -1,10 +1,12 @@
 # Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 # SPDX-License-Identifier: BSD-2-Clause
 # The errno table (docs/design-programs.md, "The POSIX-lite personality"):
-# every name erXos's musl defines in <errno.h>, with musl's number
-# (musl/arch/generic/bits/errno.h, the header the build selects for every
-# architecture erXos targets). test/host/abi_errno_test.rb compares the
-# table with that header.
+# every name erXos's musl defines in <errno.h>, with FreeBSD 15.1's number
+# (sys/sys/errno.h). The generator writes musl's bits/errno.h from it, so
+# musl's errno values, and the strerror table indexed by them, are FreeBSD's.
+# test/host/abi_errno_test.rb compares the table with that header at
+# deps.lock's freebsd-errno pin. A name FreeBSD defines and nothing in erXos
+# names is left out, and so is a name only Linux defines.
 #
 #   errno NAME NUMBER [alias NAME]
 #
@@ -22,7 +24,7 @@ errno e2big 7
 errno enoexec 8
 errno ebadf 9
 errno echild 10
-errno eagain 11 alias ewouldblock
+errno edeadlk 11
 errno enomem 12
 errno eacces 13
 errno efault 14
@@ -46,102 +48,53 @@ errno emlink 31
 errno epipe 32
 errno edom 33
 errno erange 34
-errno edeadlk 35 alias edeadlock
-errno enametoolong 36
-errno enolck 37
-errno enosys 38
-errno enotempty 39
-errno eloop 40
-errno enomsg 42
-errno eidrm 43
-errno echrng 44
-errno el2nsync 45
-errno el3hlt 46
-errno el3rst 47
-errno elnrng 48
-errno eunatch 49
-errno enocsi 50
-errno el2hlt 51
-errno ebade 52
-errno ebadr 53
-errno exfull 54
-errno enoano 55
-errno ebadrqc 56
-errno ebadslt 57
-errno ebfont 59
-errno enostr 60
-errno enodata 61
-errno etime 62
-errno enosr 63
-errno enonet 64
-errno enopkg 65
-errno eremote 66
-errno enolink 67
-errno eadv 68
-errno esrmnt 69
-errno ecomm 70
-errno eproto 71
-errno emultihop 72
-errno edotdot 73
-errno ebadmsg 74
-errno eoverflow 75
-errno enotuniq 76
-errno ebadfd 77
-errno eremchg 78
-errno elibacc 79
-errno elibbad 80
-errno elibscn 81
-errno elibmax 82
-errno elibexec 83
-errno eilseq 84
-errno erestart 85
-errno estrpipe 86
-errno eusers 87
-errno enotsock 88
-errno edestaddrreq 89
-errno emsgsize 90
-errno eprototype 91
-errno enoprotoopt 92
-errno eprotonosupport 93
-errno esocktnosupport 94
-# POSIX's ENOTSUP is the name erXos's services answer with; musl defines
-# EOPNOTSUPP first and ENOTSUP as its alias, with one number for both.
-errno enotsup 95 alias eopnotsupp
-errno epfnosupport 96
-errno eafnosupport 97
-errno eaddrinuse 98
-errno eaddrnotavail 99
-errno enetdown 100
-errno enetunreach 101
-errno enetreset 102
-errno econnaborted 103
-errno econnreset 104
-errno enobufs 105
-errno eisconn 106
-errno enotconn 107
-errno eshutdown 108
-errno etoomanyrefs 109
-errno etimedout 110
-errno econnrefused 111
-errno ehostdown 112
-errno ehostunreach 113
-errno ealready 114
-errno einprogress 115
-errno estale 116
-errno euclean 117
-errno enotnam 118
-errno enavail 119
-errno eisnam 120
-errno eremoteio 121
-errno edquot 122
-errno enomedium 123
-errno emediumtype 124
-errno ecanceled 125
-errno enokey 126
-errno ekeyexpired 127
-errno ekeyrevoked 128
-errno ekeyrejected 129
-errno eownerdead 130
-errno enotrecoverable 131
-errno erfkill 132
-errno ehwpoison 133
+errno eagain 35 alias ewouldblock
+errno einprogress 36
+errno ealready 37
+errno enotsock 38
+errno edestaddrreq 39
+errno emsgsize 40
+errno eprototype 41
+errno enoprotoopt 42
+errno eprotonosupport 43
+errno esocktnosupport 44
+errno enotsup 45 alias eopnotsupp
+errno epfnosupport 46
+errno eafnosupport 47
+errno eaddrinuse 48
+errno eaddrnotavail 49
+errno enetdown 50
+errno enetunreach 51
+errno enetreset 52
+errno econnaborted 53
+errno econnreset 54
+errno enobufs 55
+errno eisconn 56
+errno enotconn 57
+errno eshutdown 58
+errno etoomanyrefs 59
+errno etimedout 60
+errno econnrefused 61
+errno eloop 62
+errno enametoolong 63
+errno ehostdown 64
+errno ehostunreach 65
+errno enotempty 66
+errno eusers 68
+errno edquot 69
+errno estale 70
+errno eremote 71
+errno enolck 77
+errno enosys 78
+errno eidrm 82
+errno enomsg 83
+errno eoverflow 84
+errno ecanceled 85
+errno eilseq 86
+errno ebadmsg 89
+errno emultihop 90
+errno enolink 91
+errno eproto 92
+errno enotrecoverable 95
+errno eownerdead 96
+errno eintegrity 97

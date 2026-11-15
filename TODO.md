@@ -7305,7 +7305,29 @@ document's "residual risks accepted" paragraph.
   Reply lines on an inner union's cases (design-abi.md's Extension) need busy to name an inner case;
   specify that with the first request that needs it.
   ones on every architecture erXos targets). The frame grammar's
+  rows of `abi/protocols/9p.txt` carry 9P2000.L's wire numbers, which are Linux's and differ from the errno
+  table's FreeBSD numbers; check that each row names an errno of the table, keeping its own wire number.
+  `enodata` (wire 61) names no errno of the table (the `enoattr` item below). The frame grammar's
   `errno` kind joins with the first reply that carries an error name (P2a).
+* [Medium] build, `tools/lib/erx/native_runtime.rb`, `tools/lib/erx/libcrypto.rb`: a change to the libc numbers
+  generated from `abi/errno.txt` and `abi/signals.txt` (`build/gen/musl/include/bits/`) rebuilds musl
+  (`musl/arch/erxos/arch.mak`) but no ERTS or OpenSSL object of an existing build tree: OTP's `-MM` dependency
+  lists and the configure stamp leave out the sysroot's headers, so a stale object reads `EAGAIN` as 11 while musl
+  returns 35, a wrong answer without an error. Put a digest of the generated headers into the native runtimes'
+  configure stamp (`sdk_root`) and Libcrypto's `configuration_key`, as the BeamAsm build does for libc++'s
+  configuration, with a test that a changed header restarts the copy. Until then, a tree built before a change to
+  those tables removes `build/runtime/native*` before building.
+* [Medium] ABI, `abi/errno.txt`, `test/host/abi_errno_test.rb`: the table leaves out FreeBSD names "nothing in
+  erXos names" by hand (`LEFT_OUT` repeats the list), yet keeps `eusers` and `eremote`, which nothing names, and
+  leaves out `enoattr`, whose concept `erx_littlefs_nif.c` and design-files.md name as `enodata`. Take FreeBSD's
+  whole table but `ELAST`, so `LEFT_OUT` goes, `enoattr` 87 exists, the littlefs NIF answers `enoattr` and the 9P
+  codec maps wire 61 to it, and strerror gains FreeBSD's text for the added names.
+* [Low] origin check, `tools/lib/erx/origin.rb`: a `removed` entry may name a license or notice file
+  (`COPYRIGHT`, `LICENSE*`, `NOTICE*`) or one that rows cite as evidence, which the no-deletion rule protected;
+  refuse such a removal.
+* [Low] ABI, `tools/lib/erx/abi_errno.rb`: an errno name is any `e[a-z0-9]{1,15}`, so a row `errno eof 99` would
+  generate `#define EOF 99` against `<stdio.h>`; and `abi_errno_test.rb`'s `ERRNO_DEFINE` drops a FreeBSD define
+  of another form unnoticed, where the musl comparison counted every define.
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

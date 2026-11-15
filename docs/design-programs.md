@@ -820,8 +820,8 @@ holds one ends the program (Credit, below).
 | `{pipe, Flags}`, `{deposit, Descriptor, Stream}`, `{redeem, Stream, Ticket}`, `{discard, Stream, Ticket}`, `{withdraw, Stream, Ticket}` | make a pipe; and the second tier's passing of a descriptor over a stream, and letting go of a deposit that a `read` skipped or that a `sendmsg` could not publish ([design-pipes.md](design-pipes.md#the-program-protocol)) | as there |
 
 `Errno` is one of the lower-case names of the ABI file's `errno` table,
-which lists every name musl's `errno.h` defines, `etoomanyrefs` and
-`enobufs` among them, and `Signal` one of its signal table's names; a name
+which gives each errno FreeBSD's number, `etoomanyrefs` and `enobufs` among them, and from which
+musl's `bits/errno.h` is generated, and `Signal` one of its signal table's names; a name
 outside them fails the grammar.
 
 **Automatic reaping.** When `SIGCHLD` is ignored or its action has
@@ -3299,8 +3299,8 @@ define it.
   names; there is no default, so a missing mapping fails generation rather
   than becoming `EIO`. A consumer that cannot expose a status declares that
   explicitly. Unknown external codes follow the protocol's specified
-  fallback, and numeric values are checked against the selected musl
-  headers and 9P's Linux numbering
+  fallback, and numeric values are FreeBSD's, checked against FreeBSD's
+  headers, while 9P keeps its Linux wire numbering
   ([design-generation.md](design-generation.md#inspection-and-diagnostics)). No call reports
   success without acting: a facility that is absent fails with a specific
   `errno`, such as `ENOSYS` for creating process groups and sessions in

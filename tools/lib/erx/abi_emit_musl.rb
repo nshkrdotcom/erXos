@@ -8,7 +8,8 @@ require_relative 'abi_signals'
 module Erx
   module ABI
     # erXos's musl's headers of numbers the ABI files state: the signal
-    # numbers of abi/signals.txt (docs/design-programs.md, "Signal numbers").
+    # numbers of abi/signals.txt (docs/design-programs.md, "Signal numbers")
+    # and the errno numbers of abi/errno.txt ("The POSIX-lite personality").
     # They land under build/gen/musl/include, which Erx::Musl searches with
     # musl's own include directories, so musl's sources and every program
     # built on musl read the one table.
@@ -18,9 +19,8 @@ module Erx
       module_function
 
       def outputs(schema)
-        return {} if schema.signals.signals.empty?
-
-        { "#{INCLUDE}/bits/signum.h" => signals(schema.signals) }
+        { "#{INCLUDE}/bits/signum.h" => (signals(schema.signals) unless schema.signals.signals.empty?),
+          "#{INCLUDE}/bits/errno.h" => (errnos(schema.errnos) unless schema.errnos.errnos.empty?) }.compact
       end
 
       # musl's signal numbers, included by bits/signal.h: the constant of
@@ -34,6 +34,16 @@ module Erx
          '/* The C library keeps these for itself: no program may catch or send one. */',
          '#if defined(_BSD_SOURCE) || defined(_GNU_SOURCE)', *defines(reserved), '#endif', '',
          "#define _NSIG #{Signals::MAX_NUMBER}", '', '#endif', ''].join("\n")
+      end
+
+      # musl's errno values, included by errno.h: each errno of the table and
+      # each alias by its C name. strerror's table (musl/src/errno/__strerror.h)
+      # is indexed by them.
+      def errnos(table)
+        [CEmitter::NOTICE, '#ifndef _BITS_ERRNO_H', '#define _BITS_ERRNO_H', '',
+         *table.errnos.map { |entry| "#define #{entry.name.upcase} #{entry.number}" },
+         *table.aliases.map { |alias_name, name| "#define #{alias_name.upcase} #{name.upcase}" }, '',
+         '#endif', ''].join("\n")
       end
 
       # SIG and the name in upper case: a signal's own name defined as its

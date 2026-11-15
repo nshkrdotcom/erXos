@@ -189,6 +189,16 @@
       "status": "permanent"
     },
     {
+      "id": "freebsd-errno",
+      "kind": "file",
+      "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",
+      "url": "https://raw.githubusercontent.com/freebsd/freebsd-src/95719d8a895bf8170851e9844d9b4092b1d2b6fe/sys/sys/errno.h",
+      "sha256": "4e615f248a900c6c240c0c87844fd60a8bdffc8a34259d876d5dfde74bd9e42c",
+      "filename": "errno.h",
+      "license": "BSD-3-Clause",
+      "status": "permanent"
+    },
+    {
       "id": "freebsd-evdev-utils",
       "kind": "file",
       "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",

@@ -18,6 +18,10 @@ Third-party notices remain in their original files.
   ],
   "removed": [
     {
+      "path": "arch/generic/bits/errno.h",
+      "reason": "the bits/errno.h generated from abi/errno.txt gives FreeBSD's numbers"
+    },
+    {
       "path": "src/signal/sigrtmax.c",
       "reason": "SIGRTMAX is a constant of the bits/signum.h generated from abi/signals.txt"
     },

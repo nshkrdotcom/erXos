@@ -121,8 +121,9 @@ protocol error has a mapping or an explicit "not exposed here" result for
 each consumer that needs one. A missing case fails generation; there is
 no catch-all success or `EIO`. Unknown untrusted error codes follow the
 owning protocol's specified diagnostic/fallback rule. POSIX numbers are
-checked against the selected musl headers and 9P's Linux numbering;
-generation never redefines those external interfaces.
+FreeBSD's, checked against FreeBSD's headers, and musl's errno and signal
+headers are generated from the ABI file's tables; 9P keeps its own Linux
+wire numbering, which generation never redefines.
 
 Log and trace emitters accept the fields an event declares, with types,
 units, bounds and sensitivity marks. Per-build projections explicitly
