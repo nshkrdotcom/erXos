@@ -37,7 +37,7 @@ admission reads.
 -type config() :: #{images := [{binary(), <<_:256>>}],
                     signers := [{erx_pkg_header:signer(), <<_:256>>}],
                     max := pos_integer(),
-                    manifest := term()}.
+                    manifest := erx_app_admit:manifest()}.
 
 -doc "Start a lifetime of the package process.".
 -spec start_link(config()) -> gen_server:start_ret().
@@ -82,9 +82,8 @@ effect({delete, File}, _State) ->
     erx_pkg_io:request({delete, self(), File});
 effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
-%% Admission reads the decoded header with the signer the file check named.
-effect({admit, #{header := Header, signer := Signer}}, #{config := #{manifest := Manifest}}) ->
-    erx_app_admit:admit(Header#{signer => Signer}, Manifest, erx_principal:app_registry());
+effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
+    erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
 effect({register, Name, Admitted}, _State) ->
     erx_principal:register_app(Name, Admitted);
 effect({publish, Set}, _State) ->

@@ -6,9 +6,10 @@
 Admission of an app package (docs/design-packaging.md, "Admission"):
 whether a package whose header the file check accepted and authenticated
 may become an app of this machine, and with what. `admit/3` is a pure
-function of that header, the facts of the manifest it reads and the boot's
-registry of app principals, and the first of its six checks that fails is
-the answer, each check a function of the same name:
+function of that header with the signer the file check named, the facts of
+the manifest it reads and the boot's registry of app principals, and the
+first of its six checks that fails is the answer, each check a function of
+the same name:
 
 1. `check_apps`: the manifest has an `apps` row;
 2. `check_built_for_image`: the header's ABI version and architecture are
@@ -30,29 +31,10 @@ principal when the package is committed.
 """.
 
 -export([admit/3]).
--export_type([header/0, signer/0, manifest/0, apps/0, service/0,
+-export_type([manifest/0, apps/0, service/0,
               registry/0, admitted/0, reason/0]).
 
 -include("generated/erx_abi.hrl").
-
--doc """
-Who vouches for a package: `image` for a package of the image, which the
-manifest's `package` row authenticates by its hash; `development` for the
-development key; otherwise the name of the `signer` row whose key signed it.
-""".
--type signer() :: image | development | binary().
-
--doc """
-The fields of a header that admission reads: those `erx_pkg_header:decode/2`
-gives, and the signer the file check named.
-""".
--type header() :: #{name := binary(),
-                    abi_version := non_neg_integer(),
-                    arch := binary(),
-                    memory := non_neg_integer(),
-                    needs := [binary()],
-                    signer := signer(),
-                    _ => _}.
 
 -doc """
 A service of the `apps` row: its name, whether it is a `windows` service,
@@ -83,18 +65,20 @@ domains, services and facet rows; and the names of the image's packages.
 
 -doc "The boot's app principals: each name's entry and signer.".
 -type registry() :: #{binary() => #{entry := non_neg_integer(),
-                                    signer := signer()}}.
+                                    signer := erx_pkg_header:authenticator()}}.
 
 -doc """
 What an admitted package holds: its principal's entry, which admission
 reserves nothing in; the indices of the app template's facet rows its
-session keeps, the `packages` row and one row for each need, ascending; and
+session keeps, the `packages` row and one row for each need, ascending;
 its start row's display, its one `windows` need if it has exactly one and
-`none` otherwise.
+`none` otherwise; and the signer the file check named, which registration
+records in the registry for `check_entry` to compare.
 """.
 -type admitted() :: #{entry := non_neg_integer(),
                       rows := [non_neg_integer()],
-                      display := none | binary()}.
+                      display := none | binary(),
+                      signer := erx_pkg_header:authenticator()}.
 
 -doc "Why a package is refused, each tag refused by one check of the six.".
 -type reason() :: no_apps
@@ -108,20 +92,21 @@ its start row's display, its one `windows` need if it has exactly one and
                 | {not_offered, binary()}.
 
 -doc """
-Admit `Header` against `Manifest` and `Registry`, or refuse it with the
-first check that fails.
+Admit `Checked`, the file check's answer, against `Manifest` and
+`Registry`, or refuse it with the first check that fails. Of `Checked` it
+reads the decoded header and the signer.
 """.
--spec admit(header(), manifest(), registry()) ->
+-spec admit(erx_pkg_header:checked(), manifest(), registry()) ->
     {ok, admitted()} | {error, reason()}.
-admit(Header, Manifest, Registry) ->
+admit(Checked, Manifest, Registry) ->
     try
-        {ok, admitted(Header, Manifest, Registry)}
+        {ok, admitted(Checked, Manifest, Registry)}
     catch
         throw:{?MODULE, Reason} -> {error, Reason}
     end.
 
-admitted(#{name := Name, signer := Signer, memory := Memory,
-           needs := Needs} = Header,
+admitted(#{header := #{name := Name, memory := Memory, needs := Needs} = Header,
+           signer := Signer},
          #{apps := AppsRow} = Manifest, Registry) ->
     #{memory := Budget, max := Max, packages_row := PackagesRow,
       services := Offered} = check_apps(AppsRow),
@@ -133,7 +118,8 @@ admitted(#{name := Name, signer := Signer, memory := Memory,
     #{entry => Entry,
       rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
       display => display([Service || #{name := Service,
-                                       windows := true} <- Kept])}.
+                                       windows := true} <- Kept]),
+      signer => Signer}.
 
 check_apps(none) -> refuse(no_apps);
 check_apps(#{} = Apps) -> Apps.

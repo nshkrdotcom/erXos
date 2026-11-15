@@ -54,10 +54,10 @@ serves no byte of it.
 """.
 -type entry() :: {accepted, <<_:256>>, pos_integer(), pos_integer()} | refused.
 
--type admitted() :: term().
-
+%% `admitted`'s signer is `checked`'s: admission copies it.
 -type published() :: #{name := binary(), place := place(),
-                       checked := erx_pkg_header:checked(), admitted := admitted()}.
+                       checked := erx_pkg_header:checked(),
+                       admitted := erx_app_admit:admitted()}.
 
 -doc """
 One package's state as `/proc/packages` shows it. A package the file check
@@ -66,7 +66,7 @@ refused has no authenticated header, so its declared fields are `unknown`.
 -type package_record() :: #{place := place(),
                     state := admitted | refused,
                     reason := term(),
-                    signer := image | erx_pkg_header:signer() | unknown,
+                    signer := erx_pkg_header:authenticator() | unknown,
                     version := pos_integer() | unknown,
                     memory := non_neg_integer() | unknown,
                     needs := [binary()] | unknown,
@@ -84,7 +84,7 @@ whether that was all of them.
                 | {header, place(), binary()}
                 | {admit, erx_pkg_header:checked()}
                 | {path_entry, place(), binary(), entry()}
-                | {register, binary(), admitted()}
+                | {register, binary(), erx_app_admit:admitted()}
                 | list
                 | {delete, binary()}
                 | {publish, [published()]}

@@ -12,9 +12,9 @@ require_relative '../../tools/fuzz/package_seeds'
 # Runs test/erlang/erx_pkg_tests.erl, the EUnit cases of the package process at boot
 # (docs/design-packaging.md, "Boot and recovery"): the file check, the recovery's plan, the
 # path table and the package process under its supervisor, over a simulated medium, with
-# admission, registration and publication stubbed (test/erlang/erx_pkg_stubs). They compile
-# from source with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC). The
-# package files are written here through the ABI codec (Erx::PackageSeeds): three
+# the real admission and with registration and publication stubbed (test/erlang/erx_pkg_stubs).
+# They compile from source with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC).
+# The package files are written here through the ABI codec (Erx::PackageSeeds): three
 # well-formed packages, dashboard, clock and other, each sealed by a fresh Ed25519 key
 # whose public half is key.bin. erx_bytes is the host stand-in (test/erlang/host_bytes),
 # whose Ed25519 check is stock's crypto.
@@ -23,6 +23,7 @@ class ErxPkgTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   SOURCES = (%w[erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
                 build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
+                erlang/apps/erx_domain/src/erx_app_admit.erl erlang/apps/erx_domain/src/erx_domain_core.erl
                 erlang/apps/erx_domain/src/erx_ident.erl erlang/apps/erx_files/src/erx_fs_version.erl
                 erlang/apps/erx_starter/src/erx_pkg_plan.erl erlang/apps/erx_starter/src/erx_pkg_io.erl
                 erlang/apps/erx_starter/src/erx_pkg.erl erlang/apps/erx_starter/src/erx_pkg_sup.erl

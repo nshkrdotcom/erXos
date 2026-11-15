@@ -4,16 +4,21 @@
 -module(erx_principal).
 -moduledoc """
 A stub of the principal service's app registry for erx_pkg's tests: each
-registration is logged in erx_pkg_test_medium's table under `registered`.
+registration is logged in erx_pkg_test_medium's table under `registered`,
+and the registry holds each logged name's entry and signer.
 """.
 -export([app_registry/0, register_app/2]).
 
-app_registry() -> #{}.
+app_registry() ->
+    maps:from_list([{Name, maps:with([entry, signer], Admitted)}
+                    || {Name, Admitted} <- registrations()]).
 
 register_app(Name, Admitted) ->
-    Log = case ets:lookup(erx_pkg_test_medium, registered) of
-              [{registered, Names}] -> Names;
-              [] -> []
-          end,
-    ets:insert(erx_pkg_test_medium, {registered, Log ++ [{Name, Admitted}]}),
+    ets:insert(erx_pkg_test_medium, {registered, registrations() ++ [{Name, Admitted}]}),
     ok.
+
+registrations() ->
+    case ets:lookup(erx_pkg_test_medium, registered) of
+        [{registered, Log}] -> Log;
+        [] -> []
+    end.

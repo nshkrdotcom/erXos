@@ -24,7 +24,7 @@ header before the signature.
 """.
 
 -export([decode/2, layout/2, check_file/2]).
--export_type([decoded/0, layout/0, start/0, reason/0, authority/0, signer/0, checked/0,
+-export_type([decoded/0, layout/0, start/0, reason/0, authority/0, signer/0, authenticator/0, checked/0,
               check_reason/0]).
 
 -include("generated/erx_abi.hrl").
@@ -115,13 +115,19 @@ key, or `development` for the SDK's development key.
 -type signer() :: binary() | development.
 
 -doc """
+Who authenticates a file the file check accepted: `image` for a package of
+the image, whose header's SHA-256 the manifest's `package` row records,
+otherwise the trusted signer whose seal it carries.
+""".
+-type authenticator() :: image | signer().
+
+-doc """
 A file the file check accepted: its decoded header, the signer that
-authenticates it (`image` for a package of the image, the trusted signer
-whose seal it carries for an installed one), the SHA-256 of the header's
-bytes and the header's extent, the bytes before the image.
+authenticates it, the SHA-256 of the header's bytes and the header's
+extent, the bytes before the image.
 """.
 -type checked() :: #{header := decoded(),
-                     signer := image | signer(),
+                     signer := authenticator(),
                      sha256 := <<_:256>>,
                      extent := pos_integer()}.
 

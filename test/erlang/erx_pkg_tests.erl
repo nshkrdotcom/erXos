@@ -6,15 +6,16 @@
 EUnit cases of the package process at boot (docs/design-packaging.md, "Boot
 and recovery"): the file check, erx_pkg_header:check_file/2; the recovery's
 plan, erx_pkg_plan; the path table, erx_pkg_io; and the package process,
-erx_pkg, under erx_pkg_sup, over a simulated medium with admission,
-registration and publication stubbed. The package files come from
-test/host/erx_pkg_test.rb, in ERX_PKG_FILES: dashboard.bin, clock.bin and
-other.bin, each a well-formed package of that app name sealed by the
-Ed25519 key whose public half is key.bin.
+erx_pkg, under erx_pkg_sup, over a simulated medium with the real
+admission and with registration and publication stubbed. The package files
+come from test/host/erx_pkg_test.rb, in ERX_PKG_FILES: dashboard.bin,
+clock.bin and other.bin, each a well-formed package of that app name sealed
+by the Ed25519 key whose public half is key.bin.
 """.
 -include_lib("eunit/include/eunit.hrl").
 
 -define(SIGNERS, [{development, file("key")}]).
+-define(MIB, 1048576).
 
 file(Name) ->
     {ok, Bytes} = file:read_file(filename:join(os:getenv("ERX_PKG_FILES"), Name ++ ".bin")),
@@ -82,8 +83,19 @@ setup(Options) ->
              Pid -> Pid
          end,
     Config = #{images => [{<<"dashboard.app">>, header_hash(Dashboard)}],
-               signers => ?SIGNERS, max => 8, manifest => #{refuse => [<<"other">>]}},
+               signers => ?SIGNERS, max => 8, manifest => manifest()},
     {Io, Config}.
+
+%% The facts admission reads: an apps row that offers every test package's
+%% needs, display and data, within its budget; a principal named other, so
+%% admission refuses the package of that name; and the image's package
+%% dashboard.
+manifest() ->
+    #{apps => #{memory => 128 * ?MIB, max => 8, packages_row => 0,
+                services => [#{name => <<"display">>, windows => true, row => 1},
+                             #{name => <<"data">>, windows => false, row => 2}]},
+      reserved => [<<"system">>, <<"other">>],
+      packages => [<<"dashboard">>]}.
 
 wait_recovered() ->
     wait_until(fun() -> maps:get(scan, erx_pkg:packages()) =/= unknown end).
@@ -122,19 +134,23 @@ recovery_test() ->
     ?assertMatch(#{{system, <<"dashboard.app">>} := #{state := admitted, signer := image},
                    {installed, <<"clock.app">>} := #{state := admitted, signer := development,
                                                        version := 3},
-                   {installed, <<"other.app">>} := #{state := refused, reason := {abi, 1, 2}},
+                   {installed, <<"other.app">>} := #{state := refused,
+                                                       reason := {name_taken, <<"other">>}},
                    {installed, <<"misnamed.app">>} := #{state := refused, version := unknown,
                                                           reason := {file, {name, _, _}}},
                    {installed, <<"short.app">>} := #{state := refused, needs := unknown}},
                  Records),
     ?assertEqual(5, map_size(Records)),
-    %% The set holds the admitted packages, the image's first; only they register.
+    %% The set holds the admitted packages, the image's first; only they
+    %% register, each in a free entry with the signer the file check named.
     [{Lifetime, Set}] = published(),
     ?assertEqual(whereis(erx_pkg), Lifetime),
     ?assertEqual([{<<"dashboard">>, system}, {<<"clock">>, installed}],
                  [{Name, Place} || #{name := Name, place := Place} <- Set]),
-    ?assertEqual([<<"dashboard">>, <<"clock">>],
-                 [Name || {Name, _} <- ets:lookup_element(erx_pkg_test_medium, registered, 2)]),
+    ?assertEqual([{<<"dashboard">>, 0, image}, {<<"clock">>, 1, development}],
+                 [{Name, Entry, Signer}
+                  || {Name, #{entry := Entry, signer := Signer}}
+                         <- ets:lookup_element(erx_pkg_test_medium, registered, 2)]),
     stop(Sup).
 
 path_table_test() ->

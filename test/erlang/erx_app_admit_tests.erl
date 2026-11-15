@@ -10,6 +10,8 @@ names: each case's first bytes in NAME.bin, and cases.term,
 `{Name, Length, Signer, Context, Expected}` for each. A case decodes its file
 through `erx_pkg_header:decode/2`, names the signer the file check would,
 and admits the header against the manifest and registry `Context` names.
+An admitted package carries that signer, so `Expected` leaves it out and the
+case adds it.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -26,8 +28,17 @@ admission_test_() ->
 check_case(Directory, Name, Length, Signer, Context, Expected) ->
     {ok, Bytes} = file:read_file(filename:join(Directory, Name ++ ".bin")),
     {ok, Decoded} = erx_pkg_header:decode(Length, Bytes),
-    Header = Decoded#{signer => Signer},
-    ?assertEqual(Expected, erx_app_admit:admit(Header, manifest(Context), registry(Context))).
+    Answer = case Expected of
+                 {ok, Admitted} -> {ok, Admitted#{signer => Signer}};
+                 {error, _} -> Expected
+             end,
+    ?assertEqual(Answer, erx_app_admit:admit(checked(Decoded, Signer), manifest(Context),
+                                             registry(Context))).
+
+%% The file check's answer for a header and its signer, with the two fields
+%% admission does not read, the header's SHA-256 and extent, left out.
+checked(Header, Signer) ->
+    #{header => Header, signer => Signer}.
 
 %% The facts of a manifest whose apps row offers two windows services and
 %% one data service to at most four apps sharing 128 MiB, and whose image
@@ -61,7 +72,8 @@ registry(_) ->
 %% identifier), so these headers are written here rather than decoded.
 bad_names_test_() ->
     Header = #{abi_version => ?ERX_ABI_VERSION, arch => ?ERX_ARCH_MACHINE_ARCH_BYTES,
-               memory => 64 * ?MIB, needs => [], signer => development},
+               memory => 64 * ?MIB, needs => []},
     [?_assertEqual({error, {bad_name, Name}},
-                   erx_app_admit:admit(Header#{name => Name}, manifest(base), registry(base)))
+                   erx_app_admit:admit(checked(Header#{name => Name}, development),
+                                       manifest(base), registry(base)))
      || Name <- [<<"Clock">>, <<"a/b">>, <<"a.b">>, <<"-ab">>, <<"_ab">>, <<"a", 1, "b">>, <<>>]].

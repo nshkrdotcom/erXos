@@ -31,8 +31,10 @@ class ErxAppAdmitTest < Minitest::Test
   # The design's seeded faults, and those of the order and the name rule: the subset test of
   # step 6 dropped, which admits a need the row lacks; root no longer kept by session naming;
   # steps 4 and 5 swapped, which answers memory for a name another signer holds; the
-  # identifier rule reduced to its length bound, which admits any byte.
+  # identifier rule reduced to its length bound, which admits any byte; the file check's signer
+  # ignored, the admitted package carrying `development` whatever key signed it.
   FAULTS = {
+    'signer ignored' => Fault.new(file: MODULE, from: '      signer => Signer}.', to: '      signer => development}.'),
     'step 6 dropped' => Fault.new(file: MODULE, from: '[] -> refuse({not_offered, Need})',
                                   to: '[] -> #{row => 0, windows => false}'),
     'root not kept' => Fault.new(file: DOMAIN_CORE, from: "session_reserved(?SYSTEM_PREFIX) ->\n    true;\n", to: ''),
