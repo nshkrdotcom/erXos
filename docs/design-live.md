@@ -665,7 +665,9 @@ writes them to the tty as any writer does. Input goes to the group as `{self(), 
 uses (`lib/ssh/src/ssh_cli.erl:420`). A session's console takes it from
 the tty as libedit does, one byte at a time and only while its group's
 editor waits for a key (`contrib/libedit/read.c:289`, at FreeBSD commit
-`95719d8a`), through an open of the relay. The editor alone decides
+`95719d8a`), through an open of the relay, and gives it to the group as
+the answer `{self(), {read, Ref, Chars}}` to the group's ask, edit 71 of
+[design-runtime.md](design-runtime.md). The editor alone decides
 where a line ends, whatever keys its keymap binds to that, and the
 command shell's group reads for the shell alone, which asks for no line
 before it has acted on the last, so a line typed ahead for the next

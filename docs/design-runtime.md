@@ -2434,9 +2434,11 @@ asked for, as stock's group holds a driver's data. A session's terminal
 relay is the line driver of a console of the session role for output and
 size alone: that console reads its input from the tty through an open of
 the relay, as every reader of the tty does, one byte at a time and only
-for its current group's outstanding ask (edit 71), which it answers once
-the bytes read complete a character, keeping the bytes before that with
-the ask they were read for, so the relay sends it no
+for its current group's outstanding ask (edit 71), each read's answer
+taken as a message in order with the relay's events, and it answers the
+ask with the characters the bytes read complete, holding the bytes of a
+character not yet complete for the group they were read for, so the
+relay sends it no
 `erx_console_input` and no `erx_console_eof`. It names its current group
 to the relay at its start and at each change, with `{console_group,
 Group}`, so that the relay's events name the group they were made for.
@@ -2473,9 +2475,10 @@ sends it as `{erx_tty_event, Group, interrupt}` and `{erx_tty_event,
 Group, suspend}`, `Group` being the group it had named when the key was
 typed. It acts on those as on the two bytes here, but for `Group` rather
 than its current group, and drops one whose group has ended. The bytes
-of a cut character it holds belong to the ask of the group they were
-read for, and every signal for that group drops them, since the signal
-flushed the input typed with them; it has no menu ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+of a cut character it holds belong to the group they were read for,
+across that group's asks; every signal for that group drops them,
+since the signal flushed the input typed with them, and so do the
+group's end of file and its end; it has no menu ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `erx_stdio` is an Erlang process of `erx` over `erx_stdio_nif`. A worker
 thread of the NIF, blocked in `poll`, reads standard input into a buffer and

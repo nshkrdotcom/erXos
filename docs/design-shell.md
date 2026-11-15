@@ -1257,8 +1257,12 @@ domain, so a plain message comes from its own domain by construction.
 
 **Requests.** A request is a call, `gen_server:call(erx_tty_owner,
 Request, infinity)`, and the relay answers it in the step that takes it.
-The relay calls no one and waits on no one, so no cycle of waits passes
-through it, and a caller waits for one step of the relay at most. The
+The console sends its reads with `gen_server:send_request/2` instead and
+takes each answer as a message, in order with the relay's events
+([The console reads on demand](#the-terminal-relays-protocol)); the
+relay takes and answers such a request as it does a call. The relay
+calls no one and waits on no one, so no cycle of waits passes through
+it, and a caller waits for one step of the relay at most. The
 request shapes of the program protocol are the relay's own
 ([design-programs.md](design-programs.md#the-program-protocol)): a handler
 passes on a program's `{tty, Open, Request}` and `{watch, Open, Events}`
@@ -1450,27 +1454,52 @@ holds the session's authority anyway (SH1).
   request waits in the group for the next (`group.erl:259-261`); in the
   command shell's group that is the shell's next line request, at the
   same prompt, since an interrupt or an error there changes no holder.
-* **The answer.** On an ask, the console watches `{read, 1}`, reads one
-  byte at the report, and passes it through its UTF-8 decoder
+* **The read.** On an ask, the console watches `{read, 1}`, and at the
+  report sends `{read, Open, 1}` with `gen_server:send_request/2`, noting
+  the group it reads for. It takes the answer in its main loop with
+  `gen_server:check_response/2`, as it takes the log service's answer
+  (`erlang/apps/erx/src/erx_console.erl:543-555`), and watches again only
+  after that, so it has one watch or one read outstanding, never both.
+  A `gen_server` takes
+  its messages in the order they arrive (`gen_server.erl:2320-2323`), and
+  the relay's events and its answers come from one process, whose signals
+  to one process arrive in the order sent
+  (`system/doc/reference_manual/ref_man_processes.md:507-511`). So the
+  console takes an event the relay made before it took the read ahead of
+  the read's answer, as the keys were typed: a newline typed after
+  `Ctrl-C` reaches the group after the interrupt that discarded the line
+  it would have ended. The console then delivers both to the group in that
+  order, an exit signal and a message from one process, which the group,
+  a `gen_statem`, takes in the order they arrive, as it takes stock's
+  data and interrupt (`lib/kernel/src/group.erl:472`, `:519-525`). The
+  console's other requests stay calls: a call's receive takes its answer
+  past messages queued before it (`gen.erl:253-262`), which reorders
+  nothing, since those answers carry no input.
+* **The answer.** The console passes the byte through its UTF-8 decoder
   ([design-runtime.md](design-runtime.md), "Which input bytes mean
-  something"). The leading bytes of a character belong to the ask they
-  were read for: the console keeps them with that ask and they leave with
-  it, as libedit keeps them in one call of `read_char`, from which an
-  interrupted read returns without them (`read.c:278-345`). When the byte
-  completes a character, the console answers `{Console, {read, Ref,
-  Chars}}` in the same step, `Chars` being what the byte completes, and
-  the ask ends with nothing kept; when it does not, as for the first byte
-  of `é`, the ask stays outstanding with the byte kept, and the console
-  watches again. A read answered `eagain` sends it back to watching, and
-  an end of file is answered `{Console, {read, Ref, eof}}`, which ends the
-  ask and what it kept. Each of the line discipline's signals that names a
-  group, `interrupt`, `suspend` and `quit` alike, drops what that group's
-  ask keeps, since the signal flushed the tty's input typed with it, and
-  leaves the ask outstanding. The console keeps one ask per group, reads
-  only for its current group's, and forgets a group's ask, with what it
-  keeps, when the group ends; so bytes read for one group never join a
-  character of another's. A report that finds its current group without
-  an ask is left alone, and the byte stays in the tty.
+  something") together with the bytes it holds for the group it read
+  for, the leading bytes of a character not yet complete. What the
+  decoder completes goes to that group's ask as `{Console, {read, Ref,
+  Chars}}`, which ends the ask, and what it leaves incomplete stays held
+  for the group's next ask. One byte can do both: after `C3`, an `E2`
+  makes `C3` latin-1 `Ã`, which is answered, and starts `€`, which waits
+  held, as libedit keeps the last byte of an invalid sequence to start
+  the next character (`read.c:325-331`). When the byte completes
+  nothing, as for the first byte of `é`, the ask stays outstanding and
+  the console watches again. A read
+  answered `eagain` sends it back to watching, and an end of file is
+  answered `{Console, {read, Ref, eof}}`, which ends the ask and drops
+  what the console holds for the group. Each of the line discipline's signals that names
+  a group, `interrupt`, `suspend` and `quit` alike, drops what the
+  console holds for that group, since the signal flushed the tty's input
+  typed with it, and leaves the ask outstanding, as libedit's
+  `read_char` keeps a character's bytes only within one read, which a
+  signal interrupts (`read.c:278-345`). The console keeps one ask and one
+  set of held bytes per group, reads only for its current group's ask,
+  delivers an answer to the group it read for, and forgets a group's ask
+  and held bytes when the group ends; so bytes read for one group never
+  join a character of another's. A report that finds its current group
+  without an ask is left alone, and the byte stays in the tty.
 * **A key of several bytes.** An arrow's `ESC [ A` or Delete's
   `ESC [ 3 ~` reaches the group a byte per answer. The editor's answer
   for a key depends on the key's bytes alone, never on where its input
@@ -1502,25 +1531,30 @@ Each property follows:
   with `ECHO` clear, and are not echoed, as FreeBSD's tty echoes a byte
   once, when it arrives, under the setting of that moment.
 * **No input is in flight.** The console takes a byte only by a read
-  answered at once, for the ask of its current group at that moment, and
-  passes it on in the same step, or keeps it with that ask. A command
-  shell's group that has returned a line has no ask outstanding, since
-  the answer that ended the line ended its ask, and no request to make
-  another. So no byte is on its way to a group that has stopped reading,
-  and a change of holder needs no message to the console, no drain and no
-  order between the console's messages and the shell's. Only a group
-  killed while it waits for a key can lose a byte: the one the console
-  read for it before it took the group's end.
-* **Nothing is held.** The console holds, with each ask, the leading
-  bytes of one character at most, and a byte that ends a line completes
-  its character, so after a line's last answer the console holds nothing
-  for that group. The group holds at most the part of the line it is
-  editing. So when the console loses the terminal, which the shell gives
-  away only once its group has returned a line, the console and its
-  group hold none of the input that follows. The Erlang shell's group may
-  keep the rest of a line after an expression it returned, `q().` among
-  them; that rest goes with the Erlang shell when it ends, as with stock
-  OTP.
+  made for the ask of its current group at that moment, and at the read's
+  answer passes the byte on to that group, or holds it for that group. An
+  ask ends only at an answer made from a read's answer, and the console
+  has one read outstanding at most, so a command shell's group that has
+  returned a line has no ask and no read outstanding, and no request to
+  make another ask. So no byte is on its way to a group that has stopped
+  reading, and a change of holder needs no message to the console, no
+  drain and no order between the console's messages and the shell's. Only
+  a group killed while it waits for a key can lose a byte: the one the
+  console read for it before it took the group's end.
+* **Nothing is held.** The console holds for each group the leading
+  bytes of one character at most. A key that ends a line is a character
+  its last byte completes, which leaves nothing incomplete after it, so
+  after a line's last answer the console holds nothing for that group.
+  The one exception needs a `shell_keymap` that ends a line at a
+  character from U+0080 to U+00FF, typed as a byte that belongs to no
+  character and followed by the first byte of another: that byte stays
+  held for the group's next line. The group holds at most the part of the
+  line it is editing. So when the console loses the terminal, which the
+  shell gives away only once its group has returned a line, the console
+  and its group hold none of the input that follows. The Erlang shell's
+  group may keep the rest of a line after an expression it returned,
+  `q().` among them; that rest goes with the Erlang shell when it ends, as
+  with stock OTP.
 * **Keys reach the console whether or not it reads.** The editing
   setting keeps `ISIG`, as libedit's does (`contrib/libedit/tty.c:83`),
   so `Ctrl-C`, `Ctrl-Z` and `Ctrl-\` are the line discipline's signals
@@ -2066,14 +2100,29 @@ remain independent of catalog generation.
   * One answer for one ask: with a test process as the console's group,
     an ask `R` with `ab` typed gets `{Console, {read, R, "a"}}` and
     nothing more until a second ask; `é` typed as two writes of the
-    master, under one ask, gets one answer carrying `é`. With `C3` kept
-    for the ask, `Ctrl-C` and then `A` typed give the answer `A`; with
-    `C3` kept for group `G1`'s ask and `G2` made current, `A` typed under
+    master, under one ask, gets one answer carrying `é`. With `C3` held
+    for the group, `Ctrl-C` and then `A` typed give the answer `A`; with
+    `C3` held for group `G1` and `G2` made current, `A` typed under
     `G2`'s ask gives `G2` the answer `A`. Seeded: a console that keeps
     reading after it answers, which sends `b` without an ask; one that
     ends the ask at every read, which never reads `é`'s second byte, so
-    no answer comes before the deadline; and one that keeps the leading
-    bytes apart from the ask, which answers `ÃA` in both cases.
+    no answer comes before the deadline; and one that holds one set of
+    bytes for every group and keeps it at a signal, which answers `ÃA` in
+    both cases.
+  * A byte that ends one character and starts another: `C3 E2 82 AC`
+    typed as four writes of the master, each under an ask, gives the
+    answer `Ã` at `E2` and the answer `€` at `AC`, and nothing between.
+    Seeded: a console that drops what it holds with each answer, which
+    answers U+0082 at `82` and `¬` at `AC` in place of `€`.
+  * An interrupt queued before a read: the shell reads with `ls` typed
+    and the console's watch armed; the test suspends the console with
+    `erlang:suspend_process/1`, the master types `x`, which makes the
+    relay's report, then `Ctrl-C`, which flushes `x` and makes
+    `{erx_tty_event, G, interrupt}`, then a newline, and the test resumes
+    the console. The shell's request returns `{error, interrupted}`, its
+    next request returns the empty line, and the shell never gets `ls`.
+    Seeded: a console that reads with `gen_server:call/3`, whose receive
+    takes the newline past the queued event, so the shell gets `ls\n`.
   * One ask for a group: a group against a test driver that records
     asks and answers none, after `(1)` typed as three answers: the group
     asks once at the blink, and not again when the blink's timer ends; an
