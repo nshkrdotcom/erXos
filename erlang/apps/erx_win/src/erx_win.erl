@@ -11,8 +11,11 @@ display's tree with the caller as its holder, so the window ends when the
 caller does, and allocates its buffer at the screen's size from the
 domain's pixel area through `erx_pixels`, owned by the caller too. The
 answer is a handle holding the fids of the window's files, the display's
-channel, the buffer and the window's rectangle. The handle is the
-caller's: its fids are owned by the caller, so only the caller uses it.
+channel, the buffer and the window's rectangle. The caller owns the fids,
+so they live as long as the caller does; any process of the domain may
+use the handle meanwhile (docs/design-files.md, "Fid owners"), as a
+renderer linked to the widget server that opened its window does
+(docs/design-display.md, "The widget server").
 
 `image/1` answers an `erx_memdraw` image over the buffer at the window's
 size, clipped to the buffer; `present/2` writes a present of rectangles of
@@ -22,74 +25,127 @@ window's rectangle again and answers an image at the new size over the
 same buffer, clipped to it, allocating nothing; `resize/2` and `label/2`
 write `wctl` and `label`.
 
+**A window over a range it does not own** (docs/design-display.md, "Erlang
+clients"). `open(Display, #{buffer => none})` makes the window and
+allocates nothing, so the window holds no buffer and its end frees none.
+`info/1` answers the window's `peer`, `rect` and `chan`, from which a
+renderer sizes a buffer someone else owns, and `present/3` presents
+rectangles of a named `buffer()`, drawn at its own width and height. The
+display checks such a present against the client's whole pixel area and
+clips the buffer to the window; keeping it inside the range it names is
+the caller's. Of a window with no buffer, `image/1` and `present/2`
+answer `{error, none}`, and `resized/1` answers `none` for the image.
+
 Every request to the display passes `erx_file_remote:exchange/2`, which
 holds it to the file protocol's grammar and each reply to its request, and
 every answer read back passes a reader of `erx_win_core`, so a display's
 bytes reach the caller only as a checked term or `{error, eio}`.
 
-**The screen's size.** The window tree names no file that answers the
-screen's size, so `open/2` takes it from the new window's rectangle, which
-the single policy sets to the screen's (TODO.md, the window tree's
-screen size); for the same reason the buffer is allocated after the
-window is made, and an area with no room answers `{error, enomem}` after
-the `windows` quota rather than before it.
+**The screen's size.** The window tree serves no `screen` file
+(TODO.md, the window tree's `screen`), so `open/2` takes the screen's size
+from the new window's rectangle, which the single policy sets to the
+screen's; for the same reason the buffer is allocated after the window is
+made, and an area with no room answers `{error, enomem}` after the
+`windows` quota rather than before it.
 """.
 
 -include("generated/erx_abi.hrl").
 
--export([open/2, image/1, present/2, mouse/1, kbd/1, resized/1, resize/2, label/2]).
--export_type([window/0, options/0]).
+-export([open/2, info/1, image/1, present/2, present/3, mouse/1, kbd/1, resized/1, resize/2,
+         label/2]).
+-export_type([window/0, options/0, buffer/0, info/0]).
 
 -define(O_RDONLY, 0).
 %% A kbd record is at most a kind byte, the runes of a read's worth and a NUL; a read
 %% of the display's whole queue takes any record it holds.
 -define(KBD_READ, ?ERX_WINDOWS_QUEUE_BYTES).
 
--doc "What `open/2` takes: `name`, the window's directory, else a name of its own.".
--type options() :: #{name => binary()}.
+-doc """
+What `open/2` takes: `name`, the window's directory, else a name of its
+own; `buffer => none` for a window that allocates no buffer.
+""".
+-type options() :: #{name => binary(), buffer => none}.
 
--doc "A window, as `open/2` answers it; its fields are this module's.".
+-doc """
+A buffer in the client's pixel area: the range's offset and the width and
+height its frame is drawn at (docs/design-display.md, "Windows and buffers").
+""".
+-type buffer() :: #{offset := non_neg_integer(), width := 1..?ERX_WINDOWS_SIDE_MAX,
+                    height := 1..?ERX_WINDOWS_SIDE_MAX}.
+
+-doc "What `info/1` answers: the display's peer, the window's rectangle and the channel.".
+-type info() :: #{peer := non_neg_integer(), rect := erx_win_core:rect(),
+                  chan := erx_win_core:chan()}.
+
+-doc """
+A window, as `open/2` answers it; its fields are this module's. `own` is
+the window's own buffer with the area it lies in, or `none` for a window
+opened with `buffer => none`.
+""".
 -opaque window() :: #{tree := {pid(), binary(), rw},
                       peer := non_neg_integer(),
                       name := binary(),
                       fids := #{ctl | mouse | kbd | wctl | label => non_neg_integer()},
                       chan := erx_win_core:chan(),
-                      area := term(),
-                      buffer := #{offset := non_neg_integer(), width := pos_integer(),
-                                  height := pos_integer()},
+                      own := none | #{area := term(), buffer := buffer()},
                       rect := erx_win_core:rect()}.
 
 -doc """
 Makes a window on the display `Display`, the name of its grant in this
 domain's registry, with the caller as holder. `{error, none}` when the
-domain holds no grant of that name or has no pixel area to the display,
-`{error, enomem}` when the area has no room for the buffer, `{error, eio}`
-for an answer of the display outside its format, and the file protocol's
-error of a request it refuses, such as `eexist` for a name in use and
-`edquot` past the grant's `windows`.
+domain holds no grant of that name or, for a window with a buffer, has no
+pixel area to the display, `{error, enomem}` when the area has no room for
+the buffer, `{error, eio}` for an answer of the display outside its
+format, and the file protocol's error of a request it refuses, such as
+`eexist` for a name in use and `edquot` past the grant's `windows`.
 """.
 -spec open(atom(), options()) -> {ok, window()} | {error, atom()}.
 open(Display, Options) when is_atom(Display), is_map(Options) ->
     case erx:cap(Display) of
         undefined -> {error, none};
-        Grant -> open_on({Grant, ?ERX_WINDOWS_TREE_BYTES, rw}, erx:owner(Grant), name(Options))
+        Grant -> open_on({Grant, ?ERX_WINDOWS_TREE_BYTES, rw}, erx:owner(Grant), name(Options),
+                         allocation(Options))
     end.
 
--doc "An image over the window's buffer at the window's size, clipped to the buffer.".
--spec image(window()) -> {ok, erx_memdraw:image()} | {error, einval | enomem}.
-image(#{area := Area, buffer := #{offset := Offset, width := Width, height := Height},
+-doc "The window's display peer, its rectangle as last read and the display's channel.".
+-spec info(window()) -> info().
+info(#{peer := Peer, rect := Rect, chan := Chan}) ->
+    #{peer => Peer, rect => Rect, chan => Chan}.
+
+-doc """
+An image over the window's buffer at the window's size, clipped to the
+buffer; `{error, none}` for a window with no buffer.
+""".
+-spec image(window()) -> {ok, erx_memdraw:image()} | {error, none | einval | enomem}.
+image(#{own := none}) ->
+    {error, none};
+image(#{own := #{area := Area, buffer := #{offset := Offset} = Buffer},
         chan := #{code := Code}, rect := Rect}) ->
-    erx_memdraw:wrap(Area, Offset, erx_win_core:image_rect(Rect, {Width, Height}), Code).
+    erx_memdraw:wrap(Area, Offset, erx_win_core:image_rect(Rect, extent(Buffer)), Code).
 
 -doc """
 Presents the rectangles `Rects` of the window's image, all of it for `[]`,
-and waits for the display's answer.
+and waits for the display's answer: `present/3` over the window's own
+buffer at the window's size, clipped to it. `{error, none}` for a window
+with no buffer.
 """.
 -spec present(window(), [erx_win_core:rect()]) -> ok | {error, atom()}.
-present(#{buffer := #{offset := Offset, width := Width, height := Height}, rect := Rect} = Window,
-        Rects) when is_list(Rects) ->
-    {0, 0, X1, Y1} = erx_win_core:image_rect(Rect, {Width, Height}),
-    write(Window, ctl, erx_win_core:present(Offset, X1, Y1, Rects)).
+present(#{own := none}, Rects) when is_list(Rects) ->
+    {error, none};
+present(#{own := #{buffer := Buffer}, rect := Rect} = Window, Rects) when is_list(Rects) ->
+    {0, 0, Width, Height} = erx_win_core:image_rect(Rect, extent(Buffer)),
+    present(Window, Buffer#{width := Width, height := Height}, Rects).
+
+-doc """
+Presents the rectangles `Rects` of `Buffer`, all of it for `[]`, and waits
+for the display's answer. The display checks the buffer against the
+client's pixel area, not against the range the offset begins, and clips it
+to the window, so keeping `Buffer` inside a range is the caller's.
+""".
+-spec present(window(), buffer(), [erx_win_core:rect()]) -> ok | {error, atom()}.
+present(Window, #{offset := Offset, width := Width, height := Height}, Rects)
+  when is_integer(Offset), is_integer(Width), is_integer(Height), is_list(Rects) ->
+    write(Window, ctl, erx_win_core:present(Offset, Width, Height, Rects)).
 
 -doc "Reads one `mouse` record, waiting for one.".
 -spec mouse(window()) -> {ok, erx_win_core:pointer()} | {error, atom()}.
@@ -103,16 +159,20 @@ kbd(Window) ->
 
 -doc """
 After an `r` record: reads the window's rectangle again and answers the
-window and an image at the new size over the same buffer, clipped to it.
+window and an image at the new size over the same buffer, clipped to it,
+or `none` for a window with no buffer.
 """.
--spec resized(window()) -> {ok, window(), erx_memdraw:image()} | {error, atom()}.
+-spec resized(window()) -> {ok, window(), erx_memdraw:image() | none} | {error, atom()}.
 resized(Window) ->
     maybe
         {ok, #{rect := Rect}} ?= placed(Window),
         Resized = Window#{rect := Rect},
-        {ok, Image} ?= image(Resized),
+        {ok, Image} ?= resized_image(Resized),
         {ok, Resized, Image}
     end.
+
+resized_image(#{own := none}) -> {ok, none};
+resized_image(Window) -> image(Window).
 
 -doc "Asks the window's policy for the rectangle `Rect`; `einval` where it refuses.".
 -spec resize(window(), erx_win_core:rect()) -> ok | {error, atom()}.
@@ -130,18 +190,21 @@ label(Window, Label) when is_binary(Label) ->
 name(#{name := Name}) when is_binary(Name) -> Name;
 name(#{}) -> <<"w", (integer_to_binary(erlang:unique_integer([positive])))/binary>>.
 
+%% Whether the window allocates its own buffer: `alloc` unless the options say `none`.
+allocation(#{buffer := none}) -> none;
+allocation(Options) when not is_map_key(buffer, Options) -> alloc.
+
 %% Attaches the root, makes the window and opens its files, then reads its channel and
 %% place and allocates its buffer. A failure after the window is made removes it, through
 %% a fid walked to the window's directory, which the grant removes only while the name
 %% still names that window, so a refused open never removes a window another process
-%% made under the same name. A buffer once allocated stays the caller's, as every range
-%% of erx_pixels does, so the area is opened first.
-open_on(Tree, Peer, Name) ->
+%% made under the same name.
+open_on(Tree, Peer, Name, Allocation) ->
     Root = fid(),
     case one(Tree, {attach, Root, ?ERX_P9_NOFID, <<>>, ?ERX_WINDOWS_TREE_BYTES, 0}) of
         {ok, _} ->
             Answer = case one(Tree, {mkdir, Root, Name, 8#755, 0}) of
-                         {ok, _} -> opened_window(Tree, Peer, Name, Root);
+                         {ok, _} -> opened_window(Tree, Peer, Name, Root, Allocation);
                          {error, _} = Refused -> Refused
                      end,
             clunk(Tree, [Root]),
@@ -151,7 +214,7 @@ open_on(Tree, Peer, Name) ->
     end.
 
 %% The window's directory was made: open it whole or remove it.
-opened_window(Tree, Peer, Name, Root) ->
+opened_window(Tree, Peer, Name, Root, Allocation) ->
     Dir = fid(),
     Fids = maps:from_list([{File, fid()} || {File, _} <- files()]),
     %% The handle as far as the files: what read_with/4 and placed/1 need.
@@ -160,12 +223,9 @@ opened_window(Tree, Peer, Name, Root) ->
                  ok ?= walked(one(Tree, {walk, Root, Dir, [Name]}), 1),
                  ok ?= open_files(Tree, Dir, Fids),
                  {ok, Chan} ?= read_with(Files, ctl, ?ERX_WINDOWS_LINE_MAX, fun erx_win_core:ctl/1),
-                 {ok, #{rect := {X0, Y0, X1, Y1} = Rect}} ?= placed(Files),
-                 {ok, Bytes} ?= sized(erx_win_core:bytes(X1 - X0, Y1 - Y0, maps:get(depth, Chan))),
-                 {ok, Area, _} ?= erx_area:open(Peer),
-                 {ok, Offset} ?= erx_pixels:alloc(Peer, Bytes),
-                 {ok, Files#{chan => Chan, area => Area, rect => Rect,
-                             buffer => #{offset => Offset, width => X1 - X0, height => Y1 - Y0}}}
+                 {ok, #{rect := Rect}} ?= placed(Files),
+                 {ok, Own} ?= own(Allocation, Peer, Rect, Chan),
+                 {ok, Files#{chan => Chan, own => Own, rect => Rect}}
              end,
     case Answer of
         {ok, _} ->
@@ -176,6 +236,21 @@ opened_window(Tree, Peer, Name, Root) ->
             clunk(Tree, maps:values(Fids)),
             Refused
     end.
+
+%% The window's own buffer at the window's size, allocated from the domain's pixel area,
+%% or none. A range once allocated stays the caller's, as every range of erx_pixels does,
+%% so the area is opened first.
+own(none, _Peer, _Rect, _Chan) ->
+    {ok, none};
+own(alloc, Peer, {X0, Y0, X1, Y1}, #{depth := Depth}) ->
+    maybe
+        {ok, Bytes} ?= sized(erx_win_core:bytes(X1 - X0, Y1 - Y0, Depth)),
+        {ok, Area, _} ?= erx_area:open(Peer),
+        {ok, Offset} ?= erx_pixels:alloc(Peer, Bytes),
+        {ok, #{area => Area, buffer => #{offset => Offset, width => X1 - X0, height => Y1 - Y0}}}
+    end.
+
+extent(#{width := Width, height := Height}) -> {Width, Height}.
 
 %% A window's files as the ABI's windows_file lists them, each with the mode it is
 %% opened in: the display serves mouse and kbd read-only.

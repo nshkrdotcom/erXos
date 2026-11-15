@@ -589,9 +589,6 @@ it; git history is the record of completed work.
   a tick moves a repeat's time one period on from its last, as the design says, so after the window system
   stalls for a while each following tick sends one repeat at once until the repeat catches up with the clock.
   Settle in the design whether a late repeat skips to the next period after the tick.
-* [Medium] `test/erlang/erx_win_tests.erl`: `no_room_test` failed once in five runs of `test/host/erx_win_test.rb`
-  on the host, its `attach` of fid 900 answering `{error, einval}` (line 158); the other four passed. Whether
-  the flake predates the input router is not checked. Find the race and fix it.
 * [Low] `erlang/apps/erx_display/src/erx_window.erl`, [The window tree](docs/design-display.md#the-window-tree):
   a window's set of held keys is keyed by code alone, so when two sources hold one key down to the same window
   the first source's up drops it from the `K` set while the other still holds it. Key it by source and code.
@@ -1130,6 +1127,15 @@ it; git history is the record of completed work.
   `erx_draw_cload_frame`, so the differential test of the codec against it compares `erx_draw_image` with the
   stand-in, not with 9front's decoder. Link `display/libmemdraw/cload.c` behind it and delete the stand-in.
   `cloadmemimage`'s `badrect` bounds are narrower than the stand-in's, so keep the harness's rectangles within them.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`, `erlang/apps/erx_display/src/erx_screen.erl`,
+  `display/memdraw/erx_memdraw.c`, [Windows and buffers](docs/design-display.md#windows-and-buffers): a present
+  in the area's last page is refused. In `test/erlang/erx_win_tests.erl`'s fixture (a 16 KiB stand-in area, an
+  8 by 4 `x8r8g8b8` window), a present at offset 12288 of 8 by 127 pixels, which ends 32 bytes before the area's
+  end, answers `EINVAL`, though `erx_window:check/2` admits it; presents at offset 0 are shown. One known
+  disagreement: `check/2` admits a buffer of exactly `stride * height` bytes up to the area's end, while
+  `erx_memdraw_wrap` also wants the word past the rows that `allocmemimage` keeps. That word does not explain
+  the 127-row case, whose cause is not found. Give the window and the screen one rule for a buffer's extent and
+  add a test at the area's last byte.
 * [Medium] `display/memdraw/erx_memdraw.c`, [the pixel
   primitives](docs/design-display.md#verification-and-testing): the 9front build (unmodified 9front `libmemdraw`
   built for the host, the test tool of design.md's dependency table) does not exist yet, so `erx_memdraw` is checked

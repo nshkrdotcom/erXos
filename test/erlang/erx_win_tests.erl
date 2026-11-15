@@ -14,6 +14,10 @@
 %% resized/1 answers an image at the new size over the same buffer and allocates nothing;
 %% kbd reads a typed rune and label takes a write; the single policy refuses resize/2; an area with no room for
 %% a second buffer answers enomem and leaves no window behind; no grant answers none.
+%% A window opened with buffer => none over a full area allocates nothing, answers its
+%% peer, rectangle and channel, refuses image/1 and present/2, and presents a range of
+%% the area it does not own through present/3, at the range's own size after the screen
+%% shrinks past it; a present/3 past the area's end is refused.
 
 -module(erx_win_tests).
 -include_lib("eunit/include/eunit.hrl").
@@ -123,7 +127,7 @@ open_draw_present_test() ->
     end).
 
 resized_test() ->
-    with(fun(_) ->
+    with(fun(#{image := Screen}) ->
         {ok, Window} = erx_win:open(?SERVICE, #{}),
         {ok, Before} = erx_pixels:alloc(?SESSION, 1),
         %% The screen shrinks: the window's size changes and its next mouse read is r.
@@ -133,6 +137,12 @@ resized_test() ->
         ?assertEqual({ok, <<0:(6 * 32)>>}, erx_memdraw:read(Image, {0, 0, 6, 1})),
         ?assertEqual({error, einval}, erx_memdraw:read(Image, {0, 0, 7, 1})),
         ?assertEqual({0, 0, 6, 3}, maps:get(rect, Resized)),
+        %% present/2 sends the buffer at the window's size, the stride the image is drawn at.
+        {ok, _} = erx_memdraw:load(Image, {5, 2, 6, 3}, <<16#77, 16#88, 16#99, 0>>),
+        ok = erx_win:present(Resized, [{5, 2, 6, 3}]),
+        _ = flushed(),
+        {ok, Pixel} = erx_memdraw:read(Screen, {5, 2, 6, 3}),
+        ?assertEqual(<<16#77, 16#88, 16#99>>, binary:part(Pixel, 0, 3)),
         %% Nothing was allocated between the two probes but the probes themselves.
         {ok, After} = erx_pixels:alloc(?SESSION, 1),
         ?assertEqual(Before + ?PAGE, After)
@@ -155,15 +165,70 @@ no_room_test() ->
         %% Each buffer of the 8 by 4 screen is one page: the last three go to probes.
         [{ok, _} = erx_pixels:alloc(?SESSION, 1) || _ <- [1, 2, 3]],
         ?assertEqual({error, enomem}, erx_win:open(?SERVICE, #{name => <<"second">>})),
-        %% The refused window was removed: its name is free and no walk reaches it.
-        Root = 900,
+        %% The refused window was removed: its name is free and no walk reaches it. The
+        %% fids come from erx_win's own source in this test, so none is one it holds.
+        [Root, First, Second] = [erlang:unique_integer([positive]) || _ <- [1, 2, 3]],
         {ok, _} = call(Grant, {attach, Root, ?NOFID, <<>>, <<"windows">>, 0}),
-        ?assertMatch({ok, [_]}, call(Grant, {walk, Root, Root + 1, [<<"first">>]})),
-        ?assertMatch({error, _}, call(Grant, {walk, Root, Root + 2, [<<"second">>]}))
+        ?assertMatch({ok, [_]}, call(Grant, {walk, Root, First, [<<"first">>]})),
+        ?assertMatch({error, _}, call(Grant, {walk, Root, Second, [<<"second">>]}))
     end).
 
 no_grant_test() ->
     ?assertEqual({error, none}, erx_win:open(no_such_display, #{})).
+
+%% A range allocated by someone else, as a program's handler lends one, and the area
+%% filled behind it: an open that allocated anything would answer enomem.
+lent_range() ->
+    {ok, Range} = erx_pixels:alloc(?SESSION, ?PAGE),
+    [{ok, _} = erx_pixels:alloc(?SESSION, 1) || _ <- [1, 2, 3]],
+    ?assertEqual({error, enomem}, erx_pixels:alloc(?SESSION, 1)),
+    Range.
+
+lent_range_test() ->
+    with(fun(#{image := Screen}) ->
+        Range = lent_range(),
+        {ok, Window} = erx_win:open(?SERVICE, #{buffer => none}),
+        #{peer := ?SESSION, rect := {0, 0, ?WIDTH, ?HEIGHT}, chan := #{text := <<"x8r8g8b8">>,
+                                                                     code := Code}} =
+            erx_win:info(Window),
+        ?assertEqual({error, none}, erx_win:image(Window)),
+        ?assertEqual({error, none}, erx_win:present(Window, [])),
+        {ok, Area, _} = erx_area:open(?SESSION),
+        {ok, Image} = erx_memdraw:wrap(Area, Range, {0, 0, ?WIDTH, ?HEIGHT}, Code),
+        {ok, _} = erx_memdraw:load(Image, {5, 2, 6, 3}, <<16#44, 16#55, 16#66, 0>>),
+        Buffer = #{offset => Range, width => ?WIDTH, height => ?HEIGHT},
+        ok = erx_win:present(Window, Buffer, [{5, 2, 6, 3}]),
+        _ = flushed(),
+        {ok, Pixel} = erx_memdraw:read(Screen, {5, 2, 6, 3}),
+        ?assertEqual(<<16#44, 16#55, 16#66>>, binary:part(Pixel, 0, 3))
+    end).
+
+lent_range_resized_test() ->
+    with(fun(_) ->
+        Range = lent_range(),
+        {ok, Window} = erx_win:open(?SERVICE, #{buffer => none}),
+        _ = erx_winfs:attach({0, 0, 6, 3}, <<"x8r8g8b8">>),
+        ?assertMatch({ok, {resized, _, _, _, _}}, erx_win:mouse(Window)),
+        {ok, Resized, none} = erx_win:resized(Window),
+        ?assertMatch(#{rect := {0, 0, 6, 3}}, erx_win:info(Resized)),
+        %% The range keeps the size it was drawn at; the display clips it to the window.
+        ?assertEqual(ok, erx_win:present(Resized, #{offset => Range, width => ?WIDTH,
+                                                     height => ?HEIGHT}, []))
+    end).
+
+present_outside_area_test() ->
+    with(fun(_) ->
+        {ok, Window} = erx_win:open(?SERVICE, #{buffer => none}),
+        %% A buffer at the area's end and one whose last row passes it are refused. (No
+        %% present in the area's last page is shown: TODO.md, a present in the area's last
+        %% page is refused.)
+        Rows = ?PAGE div (?WIDTH * 4),
+        ?assertEqual({error, einval},
+                     erx_win:present(Window, #{offset => ?AREA, width => ?WIDTH, height => 1}, [])),
+        ?assertEqual({error, einval},
+                     erx_win:present(Window, #{offset => ?AREA - ?PAGE, width => ?WIDTH,
+                                               height => Rows + 1}, []))
+    end).
 
 call(Grant, Request) ->
     Alias = alias([reply]),
