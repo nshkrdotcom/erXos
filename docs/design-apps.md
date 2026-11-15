@@ -850,9 +850,12 @@ process parses nothing.
 Beside the table's process and the keepers' branch, the top supervisor
 holds packaging's two processes
 ([design-packaging.md](design-packaging.md#the-package-lifetime)):
-`erx_pkg_io`, whose end ends the application, and `erx_pkg_sup`, the
-package process's own supervisor, a temporary child that is not
-significant. So a package process that ends past its intensity ends no
+`erx_pkg_io`, whose end ends the application, and after it
+`erx_pkg_sup`, the package process's own supervisor, a temporary child
+that is not significant. The package process's `init` returns at once
+and its recovery runs after it, so even at boot a crash of the recovery
+is a restart under `erx_pkg_sup`, not a failed start of the
+application. So a package process that ends past its intensity ends no
 row, no keeper and no other child: the table keeps the last package set
 it took, and `/apps` answers `eio`.
 

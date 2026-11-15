@@ -392,7 +392,7 @@ clock restart` starts it on the new package. `rm
 | **PK9.** The system domain's atoms, tables and recovery work stay within the build's bounds | an app principal lives for the boot in one of `max` entries, which removal does not free until the next boot; its sessions take pooled names within its `names` quota; at most `max` copies are open at once and each holds its temporary file until its close is decided or its lifetime ends; the directory holds at most `max` installed packages, admitted or refused, so a directory the package process wrote fits the recovery's bound, and recovery reads at most `pkg_scan_max` entries; the package process keeps a header's SHA-256, not its bytes | an unregister that frees an entry within the boot; a slot freed before its file is deleted; an install bound that counts admitted packages alone; a recovery that reads the directory unbounded | a host test that installs and removes `max` + 1 distinct names in one boot and finds the last refused with `apps_full`; the host test of `max` packages left refused by an ABI change; the recovery's fuzz target over listings past the bound |
 | **PK10.** A package of the image and one installed at run time give the same session | both pass the file check, `erx_app_admit:admit/3` and the same session plan; only what authenticates the header differs | a second admission or plan for one of them | the session plan's host test over one header admitted both ways |
 | **PK11.** No effect of an ended package lifetime happens once the next lifetime's recovery has begun | a lifetime is one run of `erx_pkg`; `erx_pkg_io` takes every file operation on `packages` and the start service every publication, each one at a time, finishing the one it began before taking the next, and each refuses an effect whose lifetime has ended; the recovery's first request is taken after every earlier one; copy handles name their lifetime, so they end with it; `erx_pkg_io` is never restarted: its end resets the machine | an executor that takes a request without checking its lifetime; a restarted `erx_pkg_io` while a request of its predecessor may be in flight; a copy handle that outlives its lifetime | the lifetime's host test: a package process killed with two copies writing and a close queued, after which no request of the ended lifetime reaches the simulated storage after the recovery's listing; seeded: an `erx_pkg_io` without the lifetime check |
-| **PK12.** An open of a package of `/apps`, and a mount over one, reads that package's bytes or `eio`, never another package's | the `apps` tree gives each package it publishes or admits a qid path drawn from the system domain's file version counter, which no restart of the tree resets, so no path names a second file while the system domain runs, as every server keeps its paths ([design-files.md](design-files.md#identity-and-version)); an open records the path of the package it opened, and `erx_pkg_io` serves a read only while its path table holds that path for the name, checked as it takes the read; it drops the name's entry as it takes the rename over the name or its deletion, and records a new entry only from the checkpoint request that makes the rename durable, when that checkpoint succeeds, or from the recovery's `record`s, all in its one-at-a-time order, in which the tree's walks and opens also learn their paths; a mount reads only through its one fid, one open of the tree; the session's export names each mount's tree when it is mounted, so a program's file table never joins a file of an old mount to one of a new mount at the same point ([design-files.md](design-files.md#narrowing-for-a-program)) | a qid path drawn from the name, the listing's order or a counter the tree's restart resets; a read that reopens the name instead of checking the open's package; a path taken out after the rename is sent, or checked before the read is taken; a record sent apart from the checkpoint; a path table that a second process writes or copies; a mount that reopens the name; an export tree named by its mount point | the `apps` tree's host tests of an open across an update and across a removal and reinstall, and of an old open's read queued around the rename; the export's host test of a point mounted again with an image whose inode numbers repeat |
+| **PK12.** An open of a package of `/apps`, and a mount over one, reads that package's bytes or `eio`, never another package's | the `apps` tree gives each package it publishes or admits a qid path drawn from the system domain's file version counter, which no restart of the tree resets, so no path names a second file while the system domain runs, as every server keeps its paths ([design-files.md](design-files.md#identity-and-version)); an open records the path of the package it opened, and `erx_pkg_io` serves a read only while its path table holds that path for the name, checked as it takes the read; it drops the name's entry as it takes the rename over the name or its deletion, and records a new entry only from the checkpoint request that makes the rename durable, when that checkpoint succeeds, or from the recovery's `path_entry` requests, all in its one-at-a-time order, in which the tree's walks and opens also learn their paths; a mount reads only through its one fid, one open of the tree; the session's export names each mount's tree when it is mounted, so a program's file table never joins a file of an old mount to one of a new mount at the same point ([design-files.md](design-files.md#narrowing-for-a-program)) | a qid path drawn from the name, the listing's order or a counter the tree's restart resets; a read that reopens the name instead of checking the open's package; a path taken out after the rename is sent, or checked before the read is taken; a `path_entry` request sent apart from the checkpoint; a path table that a second process writes or copies; a mount that reopens the name; an export tree named by its mount point | the `apps` tree's host tests of an open across an update and across a removal and reinstall, and of an old open's read queued around the rename; the export's host test of a point mounted again with an image whose inode numbers repeat |
 
 ## Data model
 
@@ -768,15 +768,14 @@ packages ([Installing, updating and removing](#installing-updating-and-removing)
 An `lopen` of an installed `NAME.app` that is write-only and truncating
 is the same act as that create: it starts a copy of its own, in a slot
 of its own, whose close answers as a create's copy does, so a native
-`cp` over a package updates it as the shell's does. Every other
-writing `lopen`, one without truncation, or that appends or also
-reads, answers `einval`, and an `lopen` of a node whose name holds
-another package since its walk, or none, answers `eio` whatever its
-mode, since the path its walk recorded is not the one `erx_pkg_io`'s
-table holds when the open asks it, as a read of an open of it does
-([Identity](#apps)); neither
-touches the installed package. An `lopen` for reading reads, as any
-open does.
+`cp` over a package updates it as the shell's does. Every other writing
+`lopen`, one without truncation, or that appends or also reads, answers
+`einval`, and an `lopen` of a node whose name holds another package
+since its walk, or none, answers `eio` whatever its mode, since the path
+its walk recorded is not the one `erx_pkg_io`'s table holds when the
+open asks it, as a read of an open of it does ([Identity](#apps));
+neither touches the installed package. An `lopen` for reading reads, as
+any open does.
 
 **Reads.** The `apps` tree's file process for an open sends each read
 to `erx_pkg_io`, naming the qid path of the package the open recorded
@@ -803,31 +802,36 @@ which is the whole boot, since its end resets the machine, however often
 the package process and its tree restart; its version is drawn from the
 same counter, as every server draws one.
 
-`erx_pkg_io` keeps the **path table**, the one record of each listed
+`erx_pkg_io` keeps the **path table**, the one store of each listed
 name's entry: its qid path and, for a package the file check accepted,
 its header's SHA-256 and extent, the bytes before the image. Only
 `erx_pkg_io` changes it, as it takes a request, and the tree's file
 processes learn an entry only by a request in that same order: a
-`readdir`, and the walk, `getattr` or open of a `NAME.app`, which
-records the path and so is what a later read names. The package process
-sends each entry in a `record`: at the recovery, one for every package
-it lists, as the file check judges it; and at a copy's close, inside
-the checkpoint request that makes the rename durable, which records the
-entry only when the checkpoint succeeds. As it takes the rename over a
-name, `erx_pkg_io` keeps the name and drops its entry; as it takes a
-deletion, it drops the name. It empties the table as it takes the first
-request of each lifetime, the recovery's
-([The package lifetime](#the-package-lifetime)).
+`readdir`, and the walk, `getattr` or open of a `NAME.app`, the last of
+which keeps the path that a later read names. The package process sends
+each entry in a `path_entry` request: at the recovery, one for every package
+it lists, as the file check judges it; and at a copy's close, inside the
+checkpoint request that makes the rename durable, which applies the
+entry only when the checkpoint succeeds. As it takes the recovery's
+listing, `erx_pkg_io` holds every listed name without an entry; as it
+takes the rename over a name, it keeps the name and drops its entry; as
+it takes a deletion, it drops the name. It empties the table as it takes
+the first request of each lifetime, the recovery's
+([The package lifetime](#the-package-lifetime)). Two copies of the names
+exist, each authoritative for its own reader: the path table for every
+walk, open and read of the tree, and the package set `erx_pkg` publishes
+for the start service.
 
 So, since `erx_pkg_io` takes one request at a time, a read it took
 before the rename read the old package, and every read it takes after
 the rename answers `eio`. A name held without an entry answers `eio` on
-a walk, a `getattr` and an open, until its record arrives; a name the
-table does not hold answers `enoent`; once the record arrives, a new
-open of the name reaches the new package under its new path. A package
-the file check refused has an entry with no header hash, so it is listed
-with its length, and every read of it answers `eio`. What a client
-already holds stays the old package's bytes: an open's read-ahead buffer
+a walk, a `getattr` and an open, until its `path_entry` request is taken; a
+name the table does not hold answers `enoent`; once the entry is taken,
+a new open of the name reaches the new package under its new path. A
+package the file check refused has an entry with no header hash, so it
+is listed with its length, and every read of it answers `eio`. What a
+client already holds stays the old package's bytes: an open's read-ahead
+buffer
 ([design-files.md](design-files.md#erlang-clients-prim_file-and-erx_file_remote))
 and a mount's cache of checked blocks. So an open reads the package it
 opened or `eio`, no client caches one package's bytes under another's
@@ -1139,7 +1143,7 @@ carried out by two processes, each the one taker of its kind of effect:
   checkpoint request on `packages`, and every `remove_app`, and sends
   each to the storage service itself, and keeps the path table that
   the tree's walks, opens and reads are answered from, which the
-  package process's `record`s fill ([Identity](#apps));
+  package process's `path_entry` requests fill ([Identity](#apps));
 * the start service takes every publication of the package set,
   `erx_starter:packages/2`.
 
@@ -1201,9 +1205,14 @@ top supervisor, and not a significant one
 ([design-apps.md](design-apps.md#concurrency)), so its end past its
 intensity is not restarted and does not end the application.
 `erx_pkg_io` is not under it: it is a child of the top supervisor, as
-above. Past that intensity the package process stays down: the `apps`
-tree answers every request `eio`, and the start service keeps the last
-set it was given and goes on running its rows.
+above, started before `erx_pkg_sup`. `erx_pkg`'s `init` returns at
+once, and the recovery runs after it, in its `handle_continue`, so a
+recovery that crashes is a restart of `erx_pkg` within `erx_pkg_sup`'s
+intensity, never a failed start of the application: a crash that a
+restart can absorb never resets the machine, at boot as later. Past
+that intensity the package process stays down: the `apps` tree answers
+every request `eio`, and the start service keeps the last set it was
+given and goes on running its rows.
 
 ### Installing, updating and removing
 
@@ -1240,7 +1249,7 @@ or not `/apps` holds `clock.app`:
 | 5. it admits the header ([Admission](#admission)); a name the registry holds needs its signer; a name the directory does not hold needs fewer than `max` installed packages there, admitted or refused, or answers `enospc` | the authority check; signer continuity within a boot; the directory never holds more than `max` installed packages, so it always fits the recovery's bound |
 | 6. it makes the temporary file durable | the rename must never publish a name whose bytes are not on the medium |
 | 7. when the name holds an admitted package, it publishes the package set without the app, which answers once the app's sessions have ended | no session runs while its package's name changes (PK7); the old package ran until the new one had passed every check |
-| 8. it renames `tmp.K` to `clock.app`, over the old package if there is one, visible at once, which `erx_pkg_io` takes after dropping the old package's entry from its path table, and makes the directory durable with a checkpoint request that carries the new package's `record`, which `erx_pkg_io` applies only when the checkpoint succeeds | the one commit point: the name holds the old package or the new, whole; the close answers only after it is durable; no read of an old open reads the new package ([Identity](#apps)) |
+| 8. it renames `tmp.K` to `clock.app`, over the old package if there is one, visible at once, which `erx_pkg_io` takes after dropping the old package's entry from its path table, and makes the directory durable with a checkpoint request that carries the new package's `path_entry` request, which `erx_pkg_io` applies only when the checkpoint succeeds | the one commit point: the name holds the old package or the new, whole; the close answers only after it is durable; no read of an old open reads the new package ([Identity](#apps)) |
 | 9. it registers the app's principal with its record, in the entry admission found | the record changes only with a committed package; the principal must exist before its row; the entry is still the one admission found, since only the package process registers and it decides one close at a time |
 | 10. it publishes the package set with the app, and the close answers `ok`; the app's row enters the start table installed, with nothing of `rc.conf` applied and nothing started ([design-apps.md](design-apps.md#the-start-table)) | the start service learns of the app, or of its new package |
 
@@ -1344,7 +1353,7 @@ listing of `packages/` and acts on it:
 3. otherwise, each temporary file `tmp.K` is deleted, and each
    `NAME.app` whose NAME is an identifier gets its length and its first
    `pkg_header_max` bytes read, the file check with `{signers, Keys}` and
-   admission, in name order, a `record` of each package it lists, as
+   admission, in name order, a `path_entry` request for each package it lists, as
    the file check judges it, and the registration of each admitted
    package; a package refused, a name that a system update made a
    manifest name among them, stays on the medium, listed in `/apps`,
@@ -1591,27 +1600,27 @@ authenticated layout or `header`.
 ## Concurrency
 
 The package process, `erx_pkg`, a process of the start service's
-application, owns each package's name, layout, admission and state,
-and publishes the package set from them; each listed package's qid
-path, header hash and header extent are held only in `erx_pkg_io`'s
-path table ([Identity](#apps)). It takes one close, removal or purge at a
-time, in the order they arrive, so two copies of one name closed
-together are decided in turn, and the later one, if it passes, replaces
-the earlier. It
-does no file operation itself: every request on `packages` and every
+application, owns each package's name, layout, admission and state, and
+publishes the package set from them; each listed package's qid path,
+header hash and header extent are held only in `erx_pkg_io`'s path table
+([Identity](#apps)). It takes one close, removal or purge at a time, in
+the order they arrive, so two copies of one name closed together are
+decided in turn, and the later one, if it passes, replaces the earlier.
+It does no file operation itself: every request on `packages` and every
 `remove_app` runs, one at a time, in `erx_pkg_io`, which answers each
 request when it is done, so a slow storage domain delays a close, a
-removal or a read of `/apps`, not the package set's answers or the
-start table. The `apps` tree's file owner for a copy waits for the
-package process's answer before it answers the close, as any tree's
-owner runs a file's requests in turn
-([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
-The package process waits for the start table at each publication, and
-the table never waits for the package process, so the two never wait
-on each other: a purge is awaited by the start service's `ctl` file
-owner, not by the table, and the package process takes it in turn with
-its closes and removals, after the publication of the one it is
-carrying out ([design-apps.md](design-apps.md#concurrency)).
+removal or a walk, `getattr` or read of `/apps`, each of which waits
+behind a slow checkpoint `erx_pkg_io` has begun, but not the package
+set's answers or the start table. The `apps` tree's file owner for a
+copy waits for the package process's answer before it answers the close,
+as any tree's owner runs a file's requests in turn
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). The
+package process waits for the start table at each publication, and the
+table never waits for the package process, so the two never wait on each
+other: a purge is awaited by the start service's `ctl` file owner, not
+by the table, and the package process takes it in turn with its closes
+and removals, after the publication of the one it is carrying out
+([design-apps.md](design-apps.md#concurrency)).
 
 A lifetime's effects are taken only while it is alive, by `erx_pkg_io`
 and the start service, each one at a time
@@ -1836,7 +1845,7 @@ it guards.
 | the `apps` tree's header reads | a header read answers the authenticated bytes; the same header changed on the simulated medium after the check answers `eio` | the hash check removed, which serves the changed header |
 | refused packages | on the simulated medium, a package of another ABI, which admission refuses, and one with a flipped signature byte, which the file check refuses: the first reads, and mounts, as an admitted package; the second is listed with its length, its reads answer `eio`, its mount is refused `eio`, and `rm` removes each | a tree that serves a package the file check refused from the bytes the recovery read, which answers its header |
 | the `apps` tree's names and identity, through the real client | `cp` installs a new name and updates an installed one, and its close's errno reaches `cp`; a write-only, truncating `lopen` of an installed package, as a native `cp` sends it, takes a slot of its own, two such opens at once two slots, and its close publishes the new package or answers the same errno as a create's copy of the same bytes, the old package published and running after a refusal; an `lopen` without truncation, and one of a node replaced since its walk, answer `einval` and `eio` with the installed package unchanged; `rm` sends one `unlinkat`; a create of `ctl`, an appending open and a read-write open answer `einval`; creates and removes in `system/` answer `erofs`; an open held across an update, and one held across a removal and a reinstall of the same image, answer `eio`, and a new open of the name has a qid path that neither earlier package had, also after a restart of the package process between them | an `lopen` passed to the default open, which truncates the installed package in place and fails the old app's next read; a check of the node's name alone, which opens a replaced node; a qid path drawn from the name, which gives the reinstalled package its predecessor's path; a counter of the tree's own, which the restart resets; a read that reopens the name, which serves the new package to the old open |
-| the `apps` tree's identity around a rename | an old open's body read queued at `erx_pkg_io` behind a delayed request, an update's rename queued after it, and the rename's checkpoint delayed apart from the publication: the read taken before the rename answers the old package's bytes, one taken after it answers `eio`, a walk, a `getattr` and an open made while the checkpoint waits answer `eio`, a failed checkpoint records nothing, and after a checkpoint that succeeds a new open reads the new package; at the recovery a new open reads each listed package as soon as its `record` is taken | the path taken out after `erx_pkg_io` sends the rename, or at the publication, which serves the new package's bytes to the old open; a record applied before its checkpoint answers, which serves the new package to an open while the rename is not durable |
+| the `apps` tree's identity around a rename | an old open's body read queued at `erx_pkg_io` behind a delayed request, an update's rename queued after it, and a test hook in the package process that holds the gap between the rename request and its checkpoint request: the read taken before the rename answers the old package's bytes, one taken after it answers `eio`, a walk, a `getattr` and an open made in the gap answer `eio`, a failed checkpoint applies no entry, and after a checkpoint that succeeds a new open reads the new package; at the recovery a listed name answers `eio` until its `path_entry` request is taken, and a new open then reads it | the entry dropped after `erx_pkg_io` sends the rename, or at the publication, which serves the new package's bytes to the old open; an entry applied apart from its checkpoint, which serves the new package to an open made in the gap; a recovery that adds names only with their entries, which answers `enoent` for a listed name |
 | the shell's `mount` over a fixture `apps` tree | the mount lists the image at `DIR` and reads a file as the image holds it; two processes of the session, neither the one that mounted, read below `DIR` at once and both get the image's bytes; an unmount while a read is on its way answers that read `eio` and leaves no fid at the tree; after the package is replaced, a listing and an inline file the cache holds answer the old package's bytes or `eio`, a block not cached answers `eio`, no read answers a byte of the new package, and a second mount reads the new package; a mount of a package whose header the tree answers `eio` is refused and the namespace is unchanged | a mount that reads the header and the image through two opens, which a fixture that replaces the package between them catches with old layout over new bytes; a mount that hands its readers an OTP file descriptor, whose read from the second process raises `not_on_controlling_process`; a mount that reopens the name for each read, which serves the new package's bytes |
 | the session's export across a mount and a remount | a program holds a file of a mount open; the point is unmounted and mounted with another image whose inode numbers repeat; a second program's open of the same path gets a file-table entry of its own and the new bytes | an export that names a tree by its mount point, which joins the second open to the first's entry |
 | `erx_app` over a fixture `/app` | the declared applications start; a fixture app that ships a module of the release's name leaves the release's module loaded, and only the app fails | the app's paths added at the front of the code path, which loads the app's module |
