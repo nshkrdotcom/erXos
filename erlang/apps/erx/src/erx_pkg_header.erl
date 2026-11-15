@@ -35,7 +35,7 @@ the first failure is the answer. `layout/2` is the decoder's layout alone.
 -type layout() :: #{image_offset := non_neg_integer(),
                     image_length := pos_integer(),
                     tree_offset := non_neg_integer(),
-                    tree_length := pos_integer(),
+                    tree_length := non_neg_integer(),
                     salt := binary(),
                     root_hash := binary()}.
 
@@ -65,7 +65,7 @@ that is not the image's; or a file that does not end where the tree does.
 """.
 -type reason() :: {too_large, non_neg_integer()}
                 | {header, erx_pkg_reader:error() | short | padding
-                         | {tree, non_neg_integer(), pos_integer()}}
+                         | {tree, non_neg_integer(), non_neg_integer()}}
                 | {length, non_neg_integer(), pos_integer()}.
 
 -doc """

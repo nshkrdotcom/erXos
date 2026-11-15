@@ -1,0 +1,44 @@
+#!/usr/bin/env ruby
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+# The SDK's packer (docs/design-packaging.md, "Building and packing"):
+#
+#   erx-app pack DIR --key FILE [--output OUT]
+#
+# writes DIR's app as NAME.app in OUT (the current directory by default), signed with
+# FILE's Ed25519 private key (PEM). A usage error exits 2, a refusal 1; a refusal's
+# message, which may name files of DIR, reaches the terminal through the line escaper.
+
+require 'optparse'
+require_relative 'lib/erx/app_pack'
+require_relative 'lib/erx/line_escape'
+require_relative 'lib/erx/runner'
+
+root = File.expand_path('..', __dir__)
+options = { output: Dir.pwd }
+parser = OptionParser.new do |opts|
+  opts.banner = 'usage: erx-app pack DIR --key FILE [--output OUT]'
+  opts.on('--key FILE', 'the Ed25519 private key the package is signed with') { |value| options[:key] = value }
+  opts.on('--output OUT', 'where NAME.app is written') { |value| options[:output] = value }
+end
+
+begin
+  command, directory, *rest = parser.parse(ARGV)
+rescue OptionParser::ParseError => error
+  warn("erx-app: #{error.message}\n#{parser.banner}")
+  exit 2
+end
+unless command == 'pack' && directory && rest.empty? && options[:key]
+  warn(parser.banner)
+  exit 2
+end
+
+begin
+  runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
+  puts Erx::LineEscape.escape(Erx::AppPack.pack(directory: directory, signer: Erx::AppPackage::Signer.read(options[:key]),
+                                                output_directory: options[:output], runner: runner, root: root))
+rescue Erx::Error => error
+  abort("erx-app: #{Erx::LineEscape.escape(error.message)}")
+end

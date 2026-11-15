@@ -23,6 +23,10 @@ limit pkg_program_max u32 255
 limit pkg_args_max u32 32
 limit pkg_args_bytes_max u32 16384
 limit pkg_license_max u32 256
+# What an app's session's own budget holds when its declaration names no memory, and the
+# least a declaration may name (docs/design-packaging.md, "The declaration").
+limit app_memory_default u64 67108864
+limit app_memory_min u64 4194304
 # The bytes of a magic, and of the signer's Ed25519 public key and signature.
 bytes pkg_magic 6 value 455258504b47
 bytes pkg_key 32

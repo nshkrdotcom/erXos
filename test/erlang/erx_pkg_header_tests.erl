@@ -36,14 +36,15 @@ check_case(Directory, Name, Length, Expected) ->
             ?assertEqual(Expected, Layout)
     end.
 
-%% A block holds 128 SHA-256 hashes, so the levels over N blocks take
-%% ceil(N / 128) blocks, then ceil of that over 128, up to one block.
+%% A block holds 128 SHA-256 hashes, so the levels over N > 1 blocks take
+%% ceil(N / 128) blocks, then ceil of that over 128, up to one block; an
+%% image of one block has no level.
 tree_blocks_test_() ->
     [?_assertEqual(Want, erx_verity_tree:blocks(Image))
-     || {Image, Want} <- [{1, 1}, {128, 1}, {129, 3}, {16384, 129},
+     || {Image, Want} <- [{1, 0}, {2, 1}, {128, 1}, {129, 3}, {16384, 129},
                           {16385, 132}, {16#ffffffff, 33818641}]].
 
 tree_levels_test_() ->
     [?_assertEqual(Want, erx_verity_tree:levels(Image))
-     || {Image, Want} <- [{1, [1]}, {129, [2, 1]}, {16385, [129, 2, 1]},
+     || {Image, Want} <- [{1, []}, {2, [1]}, {129, [2, 1]}, {16385, [129, 2, 1]},
                           {16#ffffffff, [33554432, 262144, 2048, 16, 1]}]].

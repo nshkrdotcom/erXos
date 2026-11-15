@@ -615,7 +615,7 @@ A package is one file, `NAME.app`, of three parts, each starting at a
 | --- | --- |
 | header, at most `pkg_header_max`, 64 KiB | the magic `ERXPKG`, the format version, the header's length, the `ERX_ABI_VERSION` and the target architecture (an architecture name of `abi/arch/`) the package was built for, the packed declaration, the image's length in blocks, the hash tree's length, its 32-byte salt and root hash (SHA-256, dm-verity format version 1, as [design-storage.md](design-storage.md#data-model) lays read-only images), the signer's Ed25519 public key, and the Ed25519 signature over every byte of the header before it |
 | image | an uncompressed EROFS image of 4 KiB blocks, whose root holds `lib/APP/ebin` and `lib/APP/priv` for each application, `bin/` for programs and `share/` for data |
-| hash tree | the image's dm-verity tree, over the image's blocks as they lie in the file |
+| hash tree | the image's dm-verity tree, over the image's blocks as they lie in the file, its levels top first; an image of one block has no level, its block's hash being the root hash |
 
 The image uses only the layouts the EROFS reader implements: compact and
 extended inodes, the plain and inline data layouts, regular files,
@@ -1067,7 +1067,7 @@ DIR/share/             data the app reads at /app/share
 DIR/Makefile           optional: builds bin/ with the SDK's make variables
 ```
 
-* `erx-app pack DIR [--key FILE]` compiles each `lib/APP/src` whose
+* `erx-app pack DIR [--key FILE] [--output OUT]` compiles each `lib/APP/src` whose
   sources are newer than their output with the host's stock OTP 29.1.2
   `erlc`, `+deterministic`, against the SDK's public applications, and,
   when `DIR/Makefile` exists, runs `make` there with the SDK's variables.
@@ -1075,11 +1075,15 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   application resource file, `lib/APP/ebin/APP.app`, or that the program
   exists and passes `erx_elf_plan` with the SDK's ABI version, writes the
   image from an mtree manifest with `fsimg`, computes the hash tree with
-  a salt derived from the image's contents, writes the header with the
+  the image's SHA-256 as its salt, writes the header with the
   SDK's ABI version and target, signs it with FILE's key or else the
-  SDK's development key, writes `NAME.app` with its build record beside
-  it, and runs the file check on what it wrote. It follows no link out
-  of `DIR` and refuses any other kind of file. Packing runs the app's own
+  SDK's development key, writes `NAME.app` in `OUT`, the current directory
+  by default, with its build record beside it, and runs the file check on
+  what it wrote. The image holds the files below `bin/`, `share/` and each
+  `lib/APP/ebin` and `lib/APP/priv`, but for names starting with `.`, which
+  it leaves out, so a host's own files (`.DS_Store`, `._NAME`) never enter
+  a package; it refuses a link or any file there that is neither a regular
+  file nor a directory. Packing runs the app's own
   build steps, its parse transforms and its makefile, on the host: pack
   only sources you trust.
 * `erx-app test DIR` runs the app's EUnit and Common Test suites on the

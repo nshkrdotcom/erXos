@@ -27,7 +27,7 @@ module ErxPkgHeaderFuzz
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   DEADLINE_SECONDS = '300'
   # Image sizes and the tree each takes: 128 hashes to a block.
-  IMAGES = { 1 => 1, 3 => 1, 129 => 3 }.freeze
+  IMAGES = { 1 => 0, 3 => 1, 129 => 3 }.freeze
 
   # A fault, the text of erx_pkg_header it replaces and the replacement, and the failure
   # the target must report for it.

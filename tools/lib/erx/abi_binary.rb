@@ -75,9 +75,40 @@ module Erx
         decode_record(type, snapshot, 0, field: type.name, prefix: prefix)
       end
 
+      # The bytes of a whole input that reader name opens, laid out in the reader's order:
+      # the root, then each table and string table from the next multiple of its alignment,
+      # zero padded, as open/2 checks. root holds the root's values but for the offsets and
+      # counts the order fixes and the extent, which are computed here; tables maps each
+      # name of the order to its records' values, or a string table's name to its bytes. A
+      # block, when given, receives the completed root values and returns those encoded,
+      # so a test sample can be wrong in exactly one field. The tables' and the reader's
+      # bounds are not checked here: the caller's own parser holds its values to them.
+      def encode_reader(name, root, tables:)
+        reader = reader(name)
+        fail_decode('unknown_table', 'schema', 0) unless tables.keys.sort == reader.order.sort
+        cursor = reader.root.size
+        values = root
+        parts = reader.order.map do |table_name|
+          table = reader.tables[table_name] || reader.strings.fetch(table_name)
+          content = tables.fetch(table_name)
+          bytes, count = if table[:type]
+                           [content.map { |record| encode_record(table.fetch(:type), record, field: table_name) }.join, content.size]
+                         else
+                           [content.b, content.bytesize]
+                         end
+          padding = (table.fetch(:alignment) - (cursor % table.fetch(:alignment))) % table.fetch(:alignment)
+          values = store_path(store_path(values, table.fetch(:offset_path).fields, cursor + padding),
+                              table.fetch(:count_path).fields, count)
+          cursor += padding + bytes.bytesize
+          ("\0".b * padding) + bytes
+        end
+        values = store_path(values, reader.extent.fields, cursor) if reader.extent
+        values = yield(values) if block_given?
+        (encode_record(reader.root, values, field: 'root') + parts.join).freeze
+      end
+
       def open(name, bytes)
-        reader = @schema.readers.find { |candidate| candidate.name == name.to_s }
-        fail_decode('unknown_reader', 'schema', 0) unless reader
+        reader = reader(name)
         unless bytes.is_a?(String) && bytes.bytesize <= reader.maximum
           fail_decode('length', 'root', 0)
         end
@@ -256,6 +287,15 @@ module Erx
 
       def fetch_path(record, fields)
         fields.reduce(record) { |value, field| value.fetch(field) }
+      end
+
+      # record with the value at fields replaced by value, the records on the way copied.
+      def store_path(record, (field, *rest), value)
+        record.merge(field => rest.empty? ? value : store_path(record.fetch(field, {}), rest, value))
+      end
+
+      def reader(name)
+        @schema.readers.find { |candidate| candidate.name == name.to_s } || fail_decode('unknown_reader', 'schema', 0)
       end
 
       def check_tables(reader, header, bytes)

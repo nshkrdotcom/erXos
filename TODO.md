@@ -2385,11 +2385,19 @@ it; git history is the record of completed work.
   because the header is signed or hash-pinned and the program runs with the app's own grants alone. Fix:
   the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
   application name and a relative path of plain names, with a seeded case each.
-* [Low] apps, `erx_verity_tree`: the layout's levels are derived from the facts record's description of
-  dm-verity's tree (docs/research-boards-storage.md, "dm-verity's hash tree"), which does not say whether
-  an image of one block has one hash level or none; the layout gives it one block. No outside tool checks
-  the layout (the dm-verity item under test). Fix: settle it from a facts record of dm-verity's own
-  documentation, made by a separate agent, and pin the answer with a case.
+* [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer packs what the app's directory
+  already holds. It does not yet compile `lib/APP/src` with `erlc`, run `DIR/Makefile`, check the program
+  with `erx_elf_plan`, sign with the SDK's development key when `--key` is absent, write the build record
+  beside `NAME.app`, or run `erx_pkg_header:check_file/2` on what it wrote (docs/design-packaging.md,
+  "Building and packing"). Each waits on the SDK (its public applications, development key and host
+  `erx_elf_plan`) or on `check_file`'s Ed25519 check. Safe meanwhile: `--key` is required and a missing
+  `ebin/APP.app` or program is refused. Until the packer compiles with `+deterministic`, a prebuilt
+  `.beam` enters the package as given, with whatever host paths its compile information holds. Fix: add
+  each with the SDK package.
+* [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
+  arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
+  check they agree. Fix: take the level lengths from one source when the packer runs the file check on
+  the host OTP.
 * [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl:229-244`, `run_job/3`): the
   grant answers a client's clunk when it hands the clunk to the file's owner and drops the tree's `clunk`
   answer, where design-files.md has every tree's `clunk` answer `ok` or an errno and the grant pass it back
