@@ -663,12 +663,16 @@ manifest ships a server, enabling ntpd without naming one does this.
 ## What /proc shows
 
 `abi/inspection.txt` gains a kind `clock`, visible to every scope, at
-path `time`, so `cat /proc/time/status` reads it. The inspector reads
-`state` from the page through `erx_clock_nif:read/0`, reported by
-`kernel`, whose object the page is; the clock service reports the
-rest. Each attribute names its source and its lifetime: the page
-lives for the boot, and the service's record from the service's start,
-`record_since`, to its next crash or restart.
+path `time`, so `cat /proc/time/status` reads it. Two attributes are
+visible only to the whole-machine scope (`visible all`): `server`, the
+address the client samples, and `source`, the id of the domain whose
+facet sent the sample, both facts of another domain, so a scoped caller
+reads the record without them. The inspector reads `state` from the page
+through `erx_clock_nif:read/0`, reported by `kernel`, whose object the
+page is; the clock service reports the rest. Each attribute names its
+source and its lifetime: the page lives for the boot, and the service's
+record from the service's start, `record_since`, to its next crash or
+restart.
 
 | Attribute | Source, lifetime | Value |
 | --- | --- | --- |

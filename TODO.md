@@ -7137,10 +7137,6 @@ document's "residual risks accepted" paragraph.
   reports them; until then they are `unsupported`. The same package settles the types the review
   questioned: `server` as integers rather than text (design-time's Security), `wall_time` bounded by
   the setter's offset limit, and `record_since` in `ns` like `uptime` rather than the `s` unit.
-* [Medium] clock record visibility, `abi/inspection.txt` kind `clock`: `source` (the domain id
-  whose facet sent the last sample) and `server` are `visible any`, as design-time's whole-kind
-  visibility says, so every scope will read another domain's id once the clock service reports it.
-  Decide whether those two are `visible all` before the service reports them.
 
 * [Low] desktop, a graphical editor: the desktop's editor is Emacs, a larger task than the desktop
   programs of [design-desktop-programs.md](docs/design-desktop-programs.md); until it lands, text is

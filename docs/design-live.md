@@ -1390,13 +1390,13 @@ they tell a domain how busy the others keep the machine; erXos accepts
 that side channel so that every session sees the machine's load, as the
 desktop's `stats` shows it
 ([design-desktop-programs.md](design-desktop-programs.md#stats)).
-The clock's record, `[time]`, is `visible any` whole: whether this boot
-set the clock, and the clock service's last sample and step, the
-domain that sent it and the server it came from, so that every session
-can tell whether its wall time is real
-([design-time.md](design-time.md#what-proc-shows)).
-A CPU's running thread, interrupts and throttled groups stay `visible
-all`.
+The clock's record, `[time]`, is `visible any` but for two attributes:
+whether this boot set the clock, and the clock service's last sample
+and step, so that every session can tell whether its wall time is real
+([design-time.md](design-time.md#what-proc-shows)). The domain that
+sent the sample and the server it came from, `source` and `server`,
+are facts of another domain and stay `visible all`, as a CPU's running
+thread, interrupts and throttled groups do.
 
 **From a process to its source.** A process record carries its current
 location, `{Module, Function, Arity, File, Line}`, and its module's
@@ -2633,8 +2633,8 @@ development flag, the DMA profile, the uptime, the CPUs online, the
 memory total and free, and each CPU's idle time and ready threads, the
 last three of which move with the other domains' activity, a side
 channel accepted so that every session sees the machine's load
-([Scopes](#inspection)), and the clock's record, which names the domain
-that sent the last sample and the server it came from. Pids and domain ids reveal
+([Scopes](#inspection)), and the clock's record without the domain that
+sent the last sample and the server it came from. Pids and domain ids reveal
 creation order. A domain reads only its own release's files from the boot
 image, so the sources a release carries are visible to the domains running
 that release and to the system domain. Each domain's debug-log lines reach

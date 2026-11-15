@@ -186,8 +186,8 @@ inspection 1
     attr offset_ns signed_duration reporters service visible any build all projections shell,host,proc,web
     attr distance_ns duration reporters service visible any build all projections shell,host,proc,web
     attr stratum stratum reporters service visible any build all projections shell,host,proc,web
-    attr server net_address reporters service visible any build all projections shell,host,proc,web
-    attr source domain_id reporters service visible any build all projections shell,host,proc,web
+    attr server net_address reporters service visible all build all projections shell,host,proc,web
+    attr source domain_id reporters service visible all build all projections shell,host,proc,web
     attr step_at wall_time reporters service visible any build all projections shell,host,proc,web
     attr step_ns signed_duration reporters service visible any build all projections shell,host,proc,web
     attr step_error clock_refusal reporters service visible any build all projections shell,host,proc,web

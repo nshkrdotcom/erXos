@@ -5,8 +5,9 @@
 -moduledoc """
 The clock's record, `[time]` (erx_time_records): the time page's state
 for each page, the service's attributes unsupported, and the record seen
-whole by any scope. test/host/erx_inspector_test.rb seeds a swap of
-`boot` and `unset` and a scoped path list without `[time]`.
+by any scope, whole by the whole-machine scope and without `server` and
+`source`, another domain's facts, by any other. test/host/erx_inspector_test.rb
+seeds a swap of `boot` and `unset` and a scoped path list without `[time]`.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -34,10 +35,12 @@ the_services_attributes_are_unsupported_test() ->
     ?assertEqual(lists:sort(Keys), lists:sort(maps:keys(Attrs))),
     ?assertEqual([{service, unsupported}], lists:usort([V || K := V <- Attrs, K =/= state])).
 
-any_scope_reads_the_whole_record_test() ->
-    {ok, Record} = erx_time_records:record(page(true, 0)),
+any_scope_reads_the_record_test() ->
+    {ok, #{attrs := Attrs} = Record} = erx_time_records:record(page(true, 0)),
     ?assertEqual({ok, machine}, erx_inspector:declared_reachable([time], erx_schema:resolve([time]), [5])),
-    ?assertEqual(Record, erx_inspector:scoped(Record, machine, [5])).
+    ?assertEqual(Record#{attrs := maps:without([server, source], Attrs)},
+                 erx_inspector:scoped(Record, machine, [5])),
+    ?assertEqual(Record, erx_inspector:scoped(Record, machine, all)).
 
 a_runtime_without_the_nif_is_unsupported_test() ->
     ?assertEqual({error, unsupported}, erx_time_records:collect()).

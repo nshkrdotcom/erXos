@@ -48,7 +48,7 @@ class ErxInspectorTest < Minitest::Test
     Fault.new(name: 'the clock closed to scoped callers', file: INSPECTOR,
               from: "scoped_machine_path([time]) -> true;\n",
               to: '',
-              tests: 'erx_time_records_tests', caught_by: 'any_scope_reads_the_whole_record_test'),
+              tests: 'erx_time_records_tests', caught_by: 'any_scope_reads_the_record_test'),
     Fault.new(name: 'a down row shown with no reason', file: APP_RECORDS,
               from: 'state(enabled, down) -> {down, unknown};', to: 'state(enabled, down) -> {down, {ok, <<>>}};',
               tests: 'erx_app_records_tests', caught_by: 'a_down_rows_reason_is_unknown_test'),
