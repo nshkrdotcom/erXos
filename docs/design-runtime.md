@@ -470,7 +470,7 @@ of behaviour, however many lines it touches:
 | `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_ptab.h`, `beam/erl_trace.c`, `beam/bif.c`, `beam/beam_bp.c`, `beam/emu/trace_instrs.tab`, `beam/jit/beam_jit_common.cpp`, `beam/atom.names`, `erts/preloaded/src/erlang.erl` | 52. the spawn option `{erx_untraced, true}` keeps a process out of every trace session for its whole life: the new process's trace flags hold `F_ERX_UNTRACED`, and it takes no session's flags at creation, neither new-process tracing nor its parent's `set_on_spawn`, which it does not use up; `erts_sum_all_trace_flags` keeps it as it keeps `sensitive`, so no session's flags take effect, whenever the session opened, and the call-trace breakpoint, meta-trace and return-to paths skip the process as they skip a sensitive one, through one macro, `ERTS_IS_P_TRACE_HIDDEN`; `process_flag(sensitive, _)` leaves it set. Unlike `sensitive` it hides nothing from `process_info` or crash dumps and leaves `save_calls` and `seq_trace`, which is no session, as they are. `erx_trace` spawns its own processes so ([design-live.md](design-live.md#tracing)) |
 | `lib/stdlib/src/shell.erl`, `lib/stdlib/src/edlin_expand.erl` | 53. a function defined at the prompt has each of its calls resolved, and is itself refused, by name and arity, through `edlin_expand:shell_default_or_bif/2`: a shortcut that `shell_default`'s `erx_shortcuts` attribute lists answers `shell_default` at its own arity only, and every other call gets stock's answer by name alone over OTP's exports, which `shell_default_or_bif/1`, and so argument completion, keeps. A call of a quoted name resolves by its atom: stock's shell resolves it by the name's unquoted text, which for `'Foo'(X)` scans to no atom, so its server dies of a `case_clause`, and for `'self%x'(X)` scans to another atom, `self`, so the call goes to `erlang` ([design-live.md](design-live.md#erlang-in-every-domain)) |
 | `lib/kernel/src/inet.erl`, `lib/kernel/src/inet_db.erl` | 54. `inet_backend` takes a third value, `erx`, and it is the default, which `kernel`'s `inet_backend` setting may also name: `gen_tcp_module/2` and `gen_udp_module/2` return `erx_gen_tcp` and `erx_gen_udp` for it, whose sockets are `{'$inet', Module, Pid}` terms that `gen_tcp`, `gen_udp` and `inet` already dispatch on, and `getifaddrs/0` and `gethostname/0` ask the domain's network grant ([design-network-stack.md](design-network-stack.md#the-backend)) |
-| `lib/kernel/src/group.erl` | 55. the driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit signal, so the command shell can stop its foreground job ([design-shell.md](design-shell.md#job-control)); 71. the driver's `take_unread` empties the group's buffer of the input it holds unread and answers `{Group, {unread, Chars}}`, so a session's console gives its tty back what it was given and did not use ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
+| `lib/kernel/src/group.erl` | 55. the driver's `suspend`, which `erx_console` sends for `Ctrl-Z`, reaches the group's shell as `{Group, suspend}`, as an interrupt reaches it as an exit signal, so the command shell can stop its foreground job ([design-shell.md](design-shell.md#job-control)); 71. the group asks its driver for input, `{self(), read, 0}`, each time its line editor waits for more (`more_chars`, and `blink`, whose timer a key cancels), in every state and with a shell or without, where stock asks only in its raw `noshell` state (`group.erl:342`, `:346`); a session's console reads its tty only on such an ask, so the group is never handed a byte past the line it is reading ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
 | `beam/dist.c`, `beam/erl_proc_sig_queue.c`, `beam/erl_monitor_link.c` | 56. A distribution entry that goes down with a reason `{domain_down, D, Info}`, `D` exactly the creation the entry had as it went down, fires every link, monitor and pending spawn it held with that reason, where stock fires `noconnection`; every other reason fires `noconnection` as stock, and the reason reaches `net_kernel:monitor_nodes/2`'s `nodedown_reason` from the cleanup's own copy, as stock passes it. `erts_do_net_exits` checks the reason and copies it once into the connection's record of links and monitors (`ErtsMonLnkDist`) before the record is marked dead. Every link, monitor and pending spawn of the connection holds that record, and the copy is freed with it, so the copy outlives the cleanup's yielding passes and every signal they send. Each exit `link_connection_down` fires carries the record's reason. `monitor_connection_down` still sends each monitor and pending spawn its `DOWN` with the immediate `noconnection`, because a `DOWN` with any other reason travels as a message the peer could have sent, which a pending spawn takes as a missing `spawn_reply`; the receiver, converting that `DOWN` into the `DOWN` message or into the `spawn_request` error reply, takes the record's reason in its place and copies it into the message. `Info` is small, a tag or a tag and a status (`{halt, Status}`, `crash`, `{fault, Kind}`, `stopped`), and only a process of this domain that can end the entry's port chooses it. A record made dead with no connection, as `link/1` and `monitor/2` make on a connection already down, has no reason and fires `noconnection` ([Connections in ERTS](#connections-in-erts)) |
 | `lib/kernel/src/logger.erl`, `lib/kernel/src/error_logger.erl` | 57. `init_default_config/2` makes `erx_log_h` the `default` handler where nothing configures one and the logger's type is a standard device, in place of `logger_std_h`, so every domain's events go to the log sink; `error_logger:tty/1` switches that handler on and off as it does `logger_std_h` on `standard_io`, and never adds a second handler on `standard_io` ([design-live.md](design-live.md#the-console)) |
 | `lib/stdlib/src/gen.erl` | 58. every receive of a call's reply, in `do_call` and in `send_request`'s `wait_response`, `receive_response` and `check_response` with their collection forms, also takes the reply as `{erx_origin, D, {Tag, Reply}}`, the envelope of edit 16; `Tag` holds the call's own alias, which only the callee's domain was handed, so the reply's domain needs no check ([design-domains.md](design-domains.md#the-peer)) |
@@ -2351,8 +2351,10 @@ holding an executor. While another process holds the registered name
 `erx_tty_owner`, the two functions trap (edit 35) to `erx_output:write/2`, in
 `kernel`, which monitors the owner, sends it `{tty_write, From, Ref, Bytes}` and
 waits in `receive` for the answer, the shape of `standard_error`'s `put_chars`
-over `prim_tty:write/3` (`standard_error.erl:200`, `prim_tty.erl:544`). The owner
-depends on the domain:
+over `prim_tty:write/3` (`standard_error.erl:200`, `prim_tty.erl:544`). The
+owner holds no other registered name, since a process can hold only one
+(`register.c:216-218`), and its other callers reach it by this name or by its
+pid. The owner depends on the domain:
 
 | The domain | `erx_tty_owner` | What it does with the bytes |
 | --- | --- | --- |
@@ -2415,9 +2417,7 @@ refused there). A driver is a module with `start_link(Console) -> {ok, Pid, Term
 where `Terminal` says whether a person's terminal is on the line, which it always
 is for a UART. With none, as `user_drv` does, the shell's group is `dumb` and
 `prim_tty`'s output raw, so a pipe gets bytes with no editing or echo. Both drivers
-speak the same messages, and so does a session's terminal relay, the line driver of
-a console of the session role, which alone also uses the last two, to take back what
-the console was given and did not use when the console loses the terminal:
+speak these messages:
 
 | Message | Direction | Meaning |
 | --- | --- | --- |
@@ -2426,8 +2426,16 @@ the console was given and did not use when the console loses the terminal:
 | `{erx_console_input, Bytes}` | to `erx_console` | bytes as read, in order, cut anywhere |
 | `{erx_console_size, Columns, Rows}` | to `erx_console` | the line's size is known or has changed; `erx_console` ignores a side outside 1 to 65,535 |
 | `erx_console_eof` | to `erx_console` | input has ended, after every byte read before it |
-| `erx_console_release` | to `erx_console` | the console no longer holds the terminal; `erx_console` takes from its current group the input the group holds unread, which the group hands over and keeps none of, and answers ([design-shell.md](design-shell.md#the-terminal-relays-protocol)) |
-| `{erx_console_unread, Bytes}` | to the driver | the answer to `erx_console_release`, one for each: the group's unread characters as UTF-8, then the start of a character the console holds, in the order they were read |
+
+They send input as it arrives, since nothing else reads their line, and
+`erx_console` passes it to its current group, which holds what it has not
+asked for, as stock's group holds a driver's data. A session's terminal
+relay is the line driver of a console of the session role for output and
+size alone: that console reads its input from the tty through an open of
+the relay, as every reader of the tty does, and only when its current
+group asks (edit 71), so the relay sends it no `erx_console_input` and no
+`erx_console_eof`. The system console ignores its groups' asks
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `-user erx_console` holds against `-noshell` and `-noinput`, which `erx_console`
 reads: it starts no shell's group and gives `user` the input. A console whose driver
@@ -2453,7 +2461,11 @@ The rest goes to the shell's group as UTF-8, with a character cut across two rea
 held until its end arrives and a byte that belongs to no character read as latin-1,
 as `prim_tty`'s reader does. `erx_console:input/2` is that decision, a pure function
 with a fuzz target. `Ctrl-\` is an ordinary byte on this path, as on any raw
-terminal.
+terminal. A console of the session role takes no byte out: its tty's `ISIG`
+makes `Ctrl-C` and `Ctrl-Z` the line discipline's signals, which the relay
+sends it as `{erx_tty_event, console, interrupt}` and `{erx_tty_event,
+console, suspend}`, and it acts on those as on the two bytes here; it has
+no menu ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 
 `erx_stdio` is an Erlang process of `erx` over `erx_stdio_nif`. A worker
 thread of the NIF, blocked in `poll`, reads standard input into a buffer and

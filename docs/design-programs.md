@@ -809,7 +809,7 @@ holds one ends the program (Credit, below).
 | `{kill, Target, Signal}` | signal one of the requester's own children, the requester itself, or a process its `signal` right reaches, `Target` being a process id; in the second tier, also a process group of the requester's own POSIX session, `{group, Pgid}` ([The terminal](#the-terminal)); `Signal` is a signal's name, never 0. When the requester is among the targets, its own report precedes the reply, so it takes the signal before `kill` returns, as POSIX requires | `ok`; `{error, esrch}` for any other target; `{error, eperm}` in the first tier for `sigstop`, `sigtstp`, `sigttin`, `sigttou` and `sigcont`, which belong to the session's job control |
 | `{probe, Target}` | `kill` with signal 0: check that `Target`, as `kill` names it, exists and that `kill` would reach it, sending nothing | `ok` where `kill` would signal a target; `{error, Errno}` otherwise, `esrch` wherever `kill` answers `esrch`, so a process beyond the requester's reach reads as absent |
 | `{waited, Pid, N}` | the program's `wait`, `waitpid` or `waitid` returned the state of its child `Pid` whose count of state changes is `N`, and a `waitid` with `WNOWAIT` sends none ([A program's end](#a-programs-end)); the event executor sends it too for an exit that `liberx` reaps itself (Automatic reaping, below). When `N` is the record's latest for `Pid`, the handler marks that state taken, and for an exit the child leaves the record and the `children` quota, after which a `kill` of it fails with `esrch`; so a program cannot lift its quota by naming a child that runs | `ok`, also when `N` is not the latest, which changes nothing |
-| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action ([The terminal](#the-terminal)) | `ok` once the program has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
+| `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action; in the first tier, only `SIGTTOU` from a background `tcsetattr`, which stops the program's whole job, as `Ctrl-Z` does ([The terminal](#the-terminal)) | `ok` once the program, or in the first tier its job, has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
 | `{local, Op}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{seek, Open, Offset, Whence}` on the open's description, `{setfl, Open, Flags}` of the description's status flags, `{chdir, Path}`, and `{access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
 | `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
@@ -2395,19 +2395,30 @@ as it does on any UNIX.
 
 **Setting a terminal from the background.** A `tcsetattr` follows
 FreeBSD's rule for a process outside the terminal's foreground group
-(`sys/kern/tty.c:456-476`), which `liberx` applies, since it alone knows
+(`sys/kern/tty.c:421-497`), which `liberx` applies, since it alone knows
 the calling thread's signal state. From a thread that ignores or blocks
 `SIGTTOU` it sends `{tcsetattr, Termios, sigttou_ignored}`, which the relay
 makes whichever job holds the terminal. From any other thread it sends
 `{tcsetattr, Termios}`, which the relay answers `{background, Orphaned}`,
-changing nothing, when the program's job does not hold the terminal; an
-orphaned group's call then fails with `EIO`. In the first tier a job counts
-as orphaned and `Orphaned` is always `true`, so a background program's
-`tcsetattr` fails with `EIO` unless it ignores or blocks `SIGTTOU`. In the
-second tier a group that is not orphaned gets `SIGTTOU`, and `liberx` sends
-the request again once the group is continued, as it does for a write
-under `TOSTOP`. An Erlang command, which has no signal state, stops its job
-instead ([design-shell.md](design-shell.md#interfaces)).
+changing nothing, when the program's job does not hold the terminal. An
+orphaned group's call then fails with `EIO`. A group that is not orphaned
+takes `SIGTTOU`, as FreeBSD's terminal sends it to the group and waits
+until the group is in the foreground (`tty.c:486-497`): under its default
+action `liberx` runs its stop action and sends the request again once
+the program is continued, and a thread that catches it runs its handler,
+after which the call fails with `EINTR`, or is sent again under
+`SA_RESTART`. In the first tier the terminal takes a job as FreeBSD's
+takes a job of `sh`, a group of the shell's session that is not
+orphaned, so `Orphaned` is always `false`, and the stop action stops the
+whole job, as `Ctrl-Z` does: the handler asks the job table for that
+stop and replies once `fg` or `bg` continues the job. So a background
+program that sets its terminal stops, `jobs` shows it stopped, `fg` lets
+the change through, and a job continued by `bg` stops again at its next
+`tcsetattr`. In the second tier the command server's process table
+decides `Orphaned`, and a group that is not orphaned gets `SIGTTOU`, as
+for a write under `TOSTOP`. An Erlang command, which has no signal
+state, stops its job the same way
+([design-shell.md](design-shell.md#interfaces)).
 
 **Status: `VSTATUS` and `SIGINFO`.** `termios` has FreeBSD's `VSTATUS`
 character, `^T` by default, and its `NOKERNINFO` flag, clear by default.
@@ -2508,7 +2519,8 @@ own cause, which such a `SIGCONT` lifts too, and its `fg` and `bg`
 continue a job whatever stopped its programs ([Job
 control](#job-control)). A program that never calls these keeps the first
 tier's rule: its job is one group and one session, which counts as
-orphaned, so no `SIGTSTP`, `SIGTTIN` or `SIGTTOU` of its own stops it.
+orphaned, so no `SIGTSTP`, `SIGTTIN` or `SIGTTOU` it raises stops it,
+while a background `tcsetattr` stops its job, as above.
 
 **Full-screen programs.** A program such as `less` or `hexedit` goes raw
 and draws with control sequences, which reach the terminal as it wrote them.
@@ -3199,7 +3211,10 @@ define it.
   children join its job. The group is orphaned, as POSIX defines it, since
   each member's parent is a member or the command server, which is in no
   job's session, so `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default
-  action are discarded. `waitpid` with a `pid` of 0, or of minus the
+  action are discarded. The terminal alone takes the job as FreeBSD's
+  takes a job of `sh`, which is not orphaned, so a background `tcsetattr`
+  stops the job ([The terminal](#the-terminal)). `waitpid` with a `pid`
+  of 0, or of minus the
   caller's group, waits for any child, since every child is in the caller's
   group. `kill` with a `pid` of 0, of minus the caller's group or of -1
   signals the processes it may signal among those it names, its children,
@@ -3418,7 +3433,6 @@ test:
 | in the first tier, a program cannot stop or continue itself or another: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, and `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, and a job's process group is orphaned, for whose members POSIX discards those three; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
 | in the first tier, a job is one process group and session that no program can leave | process groups and sessions that programs create come with pseudo-terminals, in the second tier |
 | in the first tier, `tcsetattr` with `TOSTOP` fails with `EINVAL`, and a background job's write goes through | `TOSTOP`'s rules are about process groups and `SIGTTOU`, which come in the second tier, where POSIX's rules apply |
-| in the first tier, a background program's `tcsetattr` fails with `EIO` unless the thread ignores or blocks `SIGTTOU`, where under FreeBSD's `sh` the job would stop | a first-tier job counts as orphaned, and FreeBSD's terminal fails an orphaned group's call with `EIO` (`sys/kern/tty.c:470-476`); the second tier stops a group that is not orphaned |
 | `kill` of a process that is neither the caller's child nor in a `signal` right's scope it holds fails with `ESRCH`, even when it exists | a process id grants nothing, and the error does not say whether it exists |
 | `kill` with a `pid` of 0, of minus the caller's group or of -1 reaches the caller's children, the processes of its `signal` right's scope and the caller itself, and no other member of its job, its parent and its siblings included | the same rule: a program reaches only its children and what its `signal` right names, so a job's other members are out of its reach unless that right names them ([The POSIX-lite personality](#the-posix-lite-personality)) |
 | process ids are unique within a session only | a session is the namespace of its process ids |
@@ -3773,12 +3787,14 @@ terminal cases.
   `ECHO` cleared that does not echo, and `Ctrl-D` that ends one `read`
   with 0 while the next reads on; a raw read of one byte with `VMIN` 10
   that returns at the first byte typed, which a `liberx` whose watch
-  carries no count fails; a background program's `tcsetattr` that fails
-  with `EIO` and leaves the `termios` unchanged, and the same call with
-  `SIGTTOU` blocked, which is made, where a `liberx` that ignores the
-  signal state fails the second; `cat` typed together with a line in one
+  carries no count fails; a background program's `tcsetattr` that stops
+  its job, which `jobs` shows stopped with the `termios` unchanged, and
+  is made after `fg`, where a `liberx` that fails the call with `EIO` as
+  for an orphaned group fails the case, and the same call with `SIGTTOU`
+  blocked, which is made at once, where a `liberx` that ignores the
+  signal state fails it; `cat` typed together with a line in one
   write of the master, after which `cat` reads that line and the shell
-  never runs it, which a relay that takes no input back from the console
+  never runs it, which a console whose read goes past a line's end
   fails; a program whose frame is outside the
   grammar, which ends with `SIGSYS`; and each row of the exit status
   table.

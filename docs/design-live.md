@@ -563,11 +563,11 @@ on the host:
   cancelled or replaced does nothing. A `poll` is ready at a complete line
   in cooked mode and at one byte in raw mode, whatever `VMIN` says, since
   FreeBSD's `poll` counts the bytes a read could take (`ttydisc.h:72`).
-* `unread(Bytes, Tty)` puts bytes that a reader took and did not use back
-  ahead of every byte that waits, as if they had never been read, with no
-  echo and no signal; under `ICANON` they join the readable bytes, in
-  which a read looks for a line's end, as after a change of `ICANON`. The
-  session's console is the one reader that gives bytes back
+* `edit_read(Open, Max, Tty)` is `read/3` for a line editor: it ends
+  after the first CR or NL, the bytes that end a line for `edlin`, so the
+  editor never takes a byte of the line that follows, which libedit
+  avoids by reading one byte at a time (`contrib/libedit/read.c:289`, at
+  FreeBSD commit `95719d8a`). The session's console reads with it
   ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 * `set(Termios, Tty)` takes a new `termios`, checking it whole; a flag
   outside `erx_tty`'s table fails with `EINVAL`. The `termios` is an Erlang
@@ -648,15 +648,18 @@ A new tty starts cooked, with FreeBSD's defaults
 `IXON`, `IXANY`, `IUTF8`, `OPOST` and `ONLCR` set, and `VSTATUS` `^T`.
 
 **A shell's line editor is a program on a raw tty.** `group`, `edlin` and
-`prim_tty` are to a shell what readline is to `bash`. While the shell
-prompts, its tty has `ICANON`, `ECHO` and `OPOST` clear, as stock
-OTP sets a real terminal (`erts/emulator/nifs/common/prim_tty_nif.c:1115-1127`,
-so `prim_tty` writes its own CR-LF), and `ISIG` clear, since `ssh_cli` and the
-group take `Ctrl-C` as data. `ICRNL` stays set, which stock OTP clears, as
-libedit keeps it while it edits (`contrib/libedit/tty.c:80`): an Enter typed
-ahead of a command is then a newline in the tty, the end of the command's
-cooked line ([design-shell.md](design-shell.md#the-terminal-relays-protocol)),
-and `edlin` takes `\n` as it takes `\r`
+`prim_tty` are to a shell what readline is to `bash` and libedit to
+FreeBSD's `sh`. While the shell prompts, its tty has `ICANON`, `ECHO` and
+`OPOST` clear, as stock OTP sets a real terminal
+(`erts/emulator/nifs/common/prim_tty_nif.c:1115-1127`, so `prim_tty`
+writes its own CR-LF), and `VMIN` 1 and `VTIME` 0, so a key is read as
+it is typed. `ISIG` and `ICRNL` stay set, which stock OTP clears, as
+libedit keeps them while it edits (`contrib/libedit/tty.c:79-88`):
+`Ctrl-C` and `Ctrl-Z` are then the tty's signals whether or not the
+editor is reading, and an Enter typed ahead of a command is a newline in
+the tty, the end of the command's cooked line
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and
+`edlin` takes `\n` as it takes `\r`
 (`lib/stdlib/src/edlin_key.erl:201-202`). The process that drives the group
 is `erx_console`, whose line driver is the session's terminal relay for a
 session's shell and the UART's driver for the system shell
@@ -665,15 +668,21 @@ session's shell and the UART's driver for the system shell
 (`lib/kernel/src/prim_tty.erl:308`), which needs neither a terminal
 descriptor nor terminfo, and writes the bytes to its driver; the relay
 writes them to the tty as any writer does. Input goes to the group as `{self(), {data, Chars}}`, the protocol `ssh_cli`
-uses (`lib/ssh/src/ssh_cli.erl:420`), and `Ctrl-C` interrupts the shell's
-evaluator as `ssh_cli` turns it into `exit(Group, interrupt)`
-(`lib/ssh/src/ssh_cli.erl:409-411`). Before the shell starts a foreground
-job it sets the tty's `termios` back to cooked, keeps the job's when the job
-stops, and restores its own when the job ends or stops and the job's at `fg`,
-as a UNIX shell does. So a program that ends in raw mode leaves nothing in
-the `termios`; how much of the setting an ended job leaves the next job
-keeps is an open decision
-([design-shell.md](design-shell.md#risks-and-open-questions)). What it left on the terminal itself, an alternate screen, a
+uses (`lib/ssh/src/ssh_cli.erl:420`). A session's console takes it from
+the tty only when its group asks, through an open of the relay, and no
+read of its goes past a line's end, so a line typed ahead for the next
+command stays in the tty for that command
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+`Ctrl-C` interrupts the shell's evaluator as `ssh_cli` turns it into
+`exit(Group, interrupt)` (`lib/ssh/src/ssh_cli.erl:409-411`). A foreground
+job starts with the session's cooked `termios`, a stopped job keeps its
+own for `fg`, and the prompt takes the terminal back when the job ends or
+stops, as a UNIX shell does. Each time it does, the cooked `termios`
+takes in what the job left by libedit's rule, which takes a setting only
+when it is canonical and forces `ECHO`, `ISIG` and `ICRNL` on among other
+flags ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
+So a program that ends in raw mode leaves nothing in the `termios`, and
+`stty status ^X` lasts. What it left on the terminal itself, an alternate screen, a
 hidden cursor or a colour, stays until the operator runs `reset`, as on UNIX.
 
 **The editor's rendering is not the tty's.** A process's `io:put_chars` is
@@ -2762,10 +2771,15 @@ determinism test of the generated tree.
   with the same `termios`, comparing what a reader gets, what is echoed and
   what the master gets. `ONLCR` applied with `OPOST` clear fails both. Its
   `set/2`, `size/3` and `input/2` have a fuzz target. The exploration also drives
-  `read_wait/3`, `timer/2`, `read/3` and `unread/2` as events, over each of
+  `read_wait/3`, `timer/2`, `read/3` and `edit_read/3` as events, over each of
   POSIX's four `VMIN` and `VTIME` cases and read counts below and above
-  `VMIN`. A `read_wait` that ignores its count, and an `unread` that puts
-  its bytes behind what waits, each fail the exploration's model.
+  `VMIN`; `edit_read/3` against a model that takes bytes one at a time
+  until a CR or NL, as libedit does. A `read_wait` that ignores its
+  count, and an `edit_read` that does not stop at a line's end, each fail
+  the exploration's model. `erx_tty_modes`' `adopt/2` is checked
+  exhaustively over the flags of `erx_tty`'s table against libedit's
+  masks, with and without `ICANON` in what a job left; an `adopt/2`
+  without its masks fails it.
 * **Cooked and raw:** a program that reads a line in cooked mode, with
   `VERASE` and `VKILL` typed; one that turns off `ECHO` and reads a password
   that is not echoed; one that goes raw, reads single keys and draws; `Ctrl-Z`
