@@ -140,7 +140,7 @@ names; the table's order is the order.
 | 1b-E M9 on the stopgap | a block transfer runs while the block driver process is killed; the kill ends the storage domain, whose restart resets the device and mounts `/data` again with every synced file present ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)); drivers run in the storage and network domains over virtio-mmio, unconfined | 3,000 lines of C17, 5,000 of Erlang for M9, of which the PCIe enumerator and the MSI frame's driver are its kernel part's | 1b-A | G9's measurements, deciding nothing |
 | Track A, part 2 | an app built outside the tree with the SDK alone, added to an image with `tools/erx pack --app`, boots into its session with exactly the `apps` row's services its declaration names, its code read from its package at `/app` | estimated before it starts | part 1 | |
 | Track A, part 3 | the same package copied into `/apps` on a running machine is admitted there, its image readable through `mount`, starts at `service NAME start` once enabled, survives a reboot, and is removed with `rm`, its data kept | estimated before it starts | part 2, M6's data partition and 1b-E | |
-| 1b-F Track D, parts 6 and 7 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web | estimated per part before it starts | 1b-C's part 3 | |
+| 1b-F Track D, parts 6 to 8 | a QEMU `virt` desktop whose terminal windows run the shell, the same user interface term as on the web, and erXos's own `stats`, `clock`, `month` and `files` in one theme | estimated per part before it starts | 1b-C's part 3 | |
 | 1b-G Networking on QEMU | the network domain carries UDP echo and a TCP bulk transfer to a Linux peer through the packet-path prototype, on QEMU under HVF | estimated in the network service's design document | Phase 1: the network driver and stack run in the system domain, as M6's block driver does, until 1b-E moves them into the network domain | GN-QEMU's baseline, deciding nothing |
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
@@ -1310,6 +1310,11 @@ For the desktop:
 * the overlapping policy `erx_wm_rio`;
 * the terminal's state machine `erx_vt`.
 
+For the desktop programs:
+
+* the cores of `stats`, `clock`, `month` and `files`, the theme's
+  generator, the glyph step and `erx_ui_raster`.
+
 In this track W1 to W8 name design-web's invariants and G1 to G9
 design-display's, not the plan's gates or E-S1's workloads. Parts that
 land after M11 repeat M11's closure over what they add.
@@ -1439,6 +1444,23 @@ land after M11 repeat M11's closure over what they add.
    `-erx_args`; the Erlang renderer's QEMU frame time as Gate GD's
    preview, deciding nothing
    ([design-display.md](design-display.md#presentations)).
+8. **Desktop programs**, in 1b-F, after part 7, which brings the Erlang
+   renderer and the parity test, and part 6, which brings the terminal
+   from which the programs' commands run. The application `erx_desk` in
+   the desktop session's release, with `erx_desk_window` and the pure
+   cores of `stats`, `clock`, `month` and `files`, each an Erlang
+   command that opens one window; the widget format's additions,
+   `role`, `icon`, `icons`, list activation and the `graph` kind with
+   `none` samples, through the validator, the binary form, the readers
+   in Erlang, C and TypeScript, and the Erlang, LVGL and browser
+   renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
+   `erx_theme.h` and `theme.ts` and checking the palette's contrast
+   rules; the glyph step, rasterising Inter 4.1 into 8-bit subfonts and
+   LVGL fonts and erXos's icon set from `display/icons/icons.txt`;
+   `erx_ui_raster`'s coverage masks in the Erlang renderer; the theme in
+   `erx_wm_rio`'s decorations, `erx_wm_menu` and `erx_screen`'s
+   background, with the display entry's `theme` answered in `screen`
+   ([design-desktop-programs.md](design-desktop-programs.md)).
 9. **The web on the network**, after part 2, M10's logins, M11's vault
    and 1b-G's network service with TLS. cowboy over TLS in the web domain;
    `erx_web_login`, its cookies and a session per login; the manifest
@@ -1594,6 +1616,31 @@ types the catalog declares for the command typed; G4's `no_facet` test,
 where a seeded facet call in the emulator is caught by the source check;
 G7's status tests through a widget tree; `erx_ui_schema`'s fuzz target
 over arbitrary terms runs its budget clean.
+
+**Exit criteria, desktop programs.** Each core's host tests of
+[design-desktop-programs.md](design-desktop-programs.md#verification-and-testing)
+pass and each fails on its seeded fault: stats' derivation keeps every
+status (D2), turns a counter that goes down into a gap, keeps one
+sample in flight and drops a stale answer; clock never shows an unset
+clock's reading as a date (D3) and ticks at each minute's start across
+wall steps; month equals `calendar` for every month from 1600 to 2400;
+files acts by index, never by shown text (D4), pages past 256 items and
+reads at most 16 KiB for a preview; every tree from random listings,
+names and records passes `erx_ui_schema` (D5); an idle files window and
+a month without a today issue no tree in a simulated day (D6). Each
+program's frame through `erx_ui_host`, light and dark, equals its
+reference; the attributed-text corpus as file names and a domain name
+draws its tokens; the parity test passes through the Erlang, LVGL and
+browser renderers with the new kinds and properties; the validator
+refuses each malformed addition and the readers' fuzz targets run their
+budgets clean; `erx_ui_raster`'s corners match analytic areas; the glyph
+step's output is byte-identical over two runs; a seeded low-contrast
+colour and a colour with one variant fail the theme's generator (D7);
+the source check that `erx_desk` calls only the public surface and
+`erx:inspect/2` catches its seeded call (D1). In the `display_domain`
+suite, a screenshot of `files` and `month 11 2026` equals the reference
+image under HVF, and stats' window presents at least twice in three
+seconds while clock's presents at most once.
 
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for
@@ -3415,7 +3462,7 @@ Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm besid
              --> 1b-C track D part 3, the window stack on QEMU
              --> 1b-D track P's first part --> G6 baseline --> toybox's applets (the rest of 1b-B)
              --> 1b-C track D part 4, the QEMU kiosk (on 1b-D's first slice, with 1b-B's sub-space ports and pipes, and track A's part 2)
-             --> 1b-F track D part 6 --> part 7
+             --> 1b-F track D part 6 --> part 7 --> part 8, desktop programs
            1b-H M13 on QEMU (any time; lowest priority)
            1b-I the Pi 4: (a) serial shell on raspi4b after Phase 1, then once on the board (GR)
              --> (b) storage after 1b-E, (c) network after 1b-G, (d) display after 1b-C part 3,
