@@ -493,6 +493,14 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   Raspberry Pi 4; the fixes on the table are a table-driven decode of
   several bits at once in `erx_inflate`, and unfiltering in C beside
   `erx_memdraw`, as a per-byte primitive.
+* **[Low] desktop, a graph's stroke mask** (`erx_mask:stroke/4`,
+  [design-desktop-programs.md](design-desktop-programs.md)): 240 random
+  samples in 300x60 at width 1.5 take 22 to 24 ms on the host (stock OTP
+  29.1.2 with the JIT, an Apple M3 Max under load, best of five), a
+  60-sample sparkline in 100x20 3.0 ms; a pixel's time grows with the
+  square of the segments reaching it. Settled by the same graphs' times
+  in the stats renderer on HVF and on the Raspberry Pi 4; the fix on the
+  table is thinning a graph to one sample per pixel column.
 * **[Low] web, the client's first load and the bundle's size,** over the host
   tool and over the network front end. Settled by bytes served and time to the
   first rendered view; the fix on the table is splitting the bundle by route.

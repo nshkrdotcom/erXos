@@ -508,8 +508,17 @@ of a colour through a mask. What is not a rectangle is a mask:
 | icons | the icon's coverage in the icon subfont | by the glyph step, at build |
 | a rounded rectangle's corners | a quarter disc of the radius, exact area coverage | by `erx_mask`, once per radius, kept as an image of the draw connection |
 | a hairline border on a rounded rectangle | a quarter ring of the radius and the hairline's width | the same, once per radius |
-| a section's soft shadow | four blurred quarter discs and one blurred edge row, each a mask; an edge is a one-pixel strip with the replicate bit, drawn along the side | the same, once per radius and shadow |
+| a section's soft shadow | four blurred quarter discs and four blurred edge strips, each a mask; an edge is a one-pixel strip with the replicate bit, drawn along the side | the same, once per radius and shadow |
 | a graph's line and the area below it | the polyline's stroke coverage and the area's coverage, in the graph's rectangle | by `erx_mask`, at each change of the graph |
+
+A shadow's blur approximates CSS's blur radius as `box-shadow` reads
+it: the section's shape convolved with a Gaussian whose standard
+deviation is half the blur, cut off at the blur, so the shadow reaches
+the blur's width beyond the shape and is full the same width inside it.
+A corner part is the square of the radius plus twice the blur around the
+corner, and an edge strip spans twice the blur across its side. The
+section hides the shadow's full interior, which no part draws, so a
+shadow's offset is at most its blur on each axis.
 
 So a rounded section costs two rectangle fills and four corner draws,
 its border four more, and its shadow eight; none touches a pixel
@@ -1172,8 +1181,10 @@ widget server, the schema and the renderer the session runs:
 
 **The raster and glyph steps, on the host.** `erx_mask`'s quarter
 disc of radius 1 to 32 sums, row by row, to the disc's area within one
-part in a thousand, and its stroke of a straight line covers each
-column by the stroke's width; a seeded half-pixel offset fails both.
+part in a thousand, or within half of one coverage step where that is
+larger (radius 1, whose one byte cannot come closer), and its stroke
+of a straight line covers each column by the stroke's width at the
+rows the line crosses; a seeded half-pixel offset fails both.
 The glyph step's coverage of a square glyph is exact, its output is
 byte-identical over two runs, and a role whose tabular figures it cannot
 find is refused; a seeded glyph shifted by one pixel fails the

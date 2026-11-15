@@ -7134,6 +7134,14 @@ document's "residual risks accepted" paragraph.
   edited with `vi` in a terminal ([design-vi.md](docs/design-vi.md)). It needs its own design: an Emacs written in
   Erlang, or GNU Emacs or a BSD-licensed Emacs ported, with the license question settled first.
 
+* [Medium] desktop, the shadow's placement in one place: `erx_mask` makes a shadow's four corners
+  and four strips, but where each is drawn (the corners Blur pixels outside the rectangle's corners,
+  the strips between them with the replicate bit, the rectangle at least 2 (R + Blur) on each side)
+  is prose in its moduledoc that the Erlang renderer and the display domain's menu would each encode.
+  An `erx_mask` function from the rectangle, radius and blur to the parts and their places would be
+  the one source; the theme's generator checks that `shadow`'s offset is at most its blur
+  ([design-desktop-programs.md](docs/design-desktop-programs.md#anti-aliasing-corners-and-depth-coverage-masks)).
+
 * [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
   `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and
   `shadow` row, checked against the same `contrast` rows, and one setting that chooses it. The setting:
