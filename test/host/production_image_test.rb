@@ -327,7 +327,8 @@ class ProductionImageTest < Minitest::Test
     run = Erx::ProductionImage::Run
     points = run.kernel_record_checkpoints(cpus: 4, machine: DEVELOPMENT)
     typed = points.filter_map { |point| point[:type] }.drop_while { |line| line != "erl\r" }
-    calls = %w[machine cpus group budget threads].map { |call| %(io:format("~w~n",[erx_kernel_records:#{call}()]).\r) }
+    calls = %w[machine cpus group budget threads].map { |call| run.kernel_record_line_typed(call) }
+    assert_equal %(io:format("~w~n",[erx_kernel_records:group(erx_kernel_records:system_domain())]).\r), calls[2]
     assert_equal ["erl\r", *calls, run::KERNEL_RECORD_SUMMARY], typed
     selectors = points.select { |point| point.fetch(:name).start_with?('kernel-record-') }
     assert_equal %w[machine cpus group budget threads summary], selectors.map { |point| point.fetch(:name).delete_prefix('kernel-record-') }

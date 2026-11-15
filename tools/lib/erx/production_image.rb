@@ -846,7 +846,7 @@ module Erx
       KERNEL_RECORD_SUMMARY = 'U=fun(R)->lists:sort([{K,V}||K:=V<-maps:get(attrs,R),V=/={kernel,unsupported}]) end,' \
                               'L=fun({S,Rs})->{S,length(Rs),lists:usort(lists:append([U(R)||R<-Rs]))} end,' \
                               'M=erx_kernel_records,io:format("~w~n",[{object_info,U(M:machine()),L(M:cpus()),' \
-                              "U(M:group()),U(M:budget()),L(M:threads())}]).\r"
+                              "U(M:group(M:system_domain())),U(M:budget(M:system_domain())),L(M:threads())}]).\r"
 
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64',
@@ -970,6 +970,13 @@ module Erx
            seconds: EVAL_SECONDS }.freeze].freeze
       end
 
+      # The line typed for one collector: the group and the budget take a domain, and
+      # these records are the system domain's.
+      def self.kernel_record_line_typed(call)
+        argument = %w[group budget].include?(call) ? 'erx_kernel_records:system_domain()' : ''
+        %(io:format("~w~n",[erx_kernel_records:#{call}(#{argument})]).\r)
+      end
+
       # The kernel-object records at the Erlang shell, at the statuses design-stopgap.md's
       # "Reporting kernel objects" table gives. Of the attributes only the kernel could
       # report, just these are ok: the machine's build, boot_value, cpus_online and uptime,
@@ -981,7 +988,7 @@ module Erx
       # types the next collector, the last types the summary, and the summary's line must
       # be exactly that.
       def self.kernel_record_checkpoints(cpus:, machine:)
-        typed = [*KERNEL_RECORD_ANSWERS.keys.map { |call| %(io:format("~w~n",[erx_kernel_records:#{call}()]).\r) },
+        typed = [*KERNEL_RECORD_ANSWERS.keys.map { |call| kernel_record_line_typed(call) },
                  KERNEL_RECORD_SUMMARY]
         answers = KERNEL_RECORD_ANSWERS.zip(typed.drop(1)).map do |(call, start), type|
           { name: "kernel-record-#{call}", pattern: start, seconds: EVAL_SECONDS, type: type }.freeze
