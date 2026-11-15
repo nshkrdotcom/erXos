@@ -16,7 +16,7 @@ It is pure and loads no NIF, so the fuzz target of erx_win_core runs it
 on stock's emulator.
 """.
 
--export([parse/1, depth/1, stride/2, bytes/3]).
+-export([parse/1, depth/1, channels/1, stride/2, bytes/3]).
 -export_type([text/0, code/0, depth/0]).
 
 -doc "A channel descriptor as text.".
@@ -90,6 +90,18 @@ depth(Code, Depth) ->
         true -> depth(Code bsr 8, Depth + Bits);
         false -> {error, einval}
     end.
+
+-doc """
+The channels of code `Code`, which `depth/1` accepts, from the one in the
+low bits up, each its type and bits, as libmemdraw walks them to pack a
+colour.
+""".
+-spec channels(code()) -> [{red | green | blue | grey | alpha | map | ignore, 1..8}].
+channels(0) ->
+    [];
+channels(Code) ->
+    Type = element(((Code bsr 4) band 15) + 1, {red, green, blue, grey, alpha, map, ignore}),
+    [{Type, Code band 15} | channels(Code bsr 8)].
 
 -doc """
 The bytes of one row of a buffer `Width` pixels wide at `Depth` bits a

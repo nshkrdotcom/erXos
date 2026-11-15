@@ -485,8 +485,13 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
 * **[Low] display, decoding a widget's PNG image in the Erlang renderer**
   ([design-display.md](design-display.md#widget-trees)): an `image` node's
   48 KiB of PNG is inflated and unfiltered before its pixels are loaded with
-  `y`. Settled by time per decode of a 48 KiB image on HVF and on the
-  Raspberry Pi 4; the fix on the table is unfiltering in C beside
+  `y`. `erx_inflate` decodes each Huffman code a bit at a time, as puff
+  does, and builds each dynamic block's codes by sorting its lengths, so a
+  hostile stream of dynamic blocks of a few bytes each costs far more than
+  in zlib; `erx_png` unfilters and converts a byte and a pixel at a time.
+  Settled by time per decode of a 48 KiB image on HVF and on the
+  Raspberry Pi 4; the fixes on the table are a table-driven decode of
+  several bits at once in `erx_inflate`, and unfiltering in C beside
   `erx_memdraw`, as a per-byte primitive.
 * **[Low] web, the client's first load and the bundle's size,** over the host
   tool and over the network front end. Settled by bytes served and time to the

@@ -52,7 +52,7 @@ operation.
 """.
 -include("generated/erx_abi.hrl").
 
--export([new/1, resize/2, step/2, plan/2, plane/0, max_glyphs/0]).
+-export([new/1, resize/2, step/2, plan/2, plane/0, max_glyphs/0, admit/3]).
 -export_type([state/0, quota/0, op/0, glyph/0]).
 
 %% The compose operations of draw(2) that the core names: S, which `l`
@@ -465,13 +465,30 @@ replace(#{images := Images, bytes := Bytes, quota := #{pixels := Quota}} = State
 %% An image's charge: its pixel bytes and its glyph records, each rounded
 %% up to 4 KiB. Image 0 is the window's and charged nothing.
 charge(none) -> 0;
-charge(#{r := {_, Y0, _, Y1} = R, depth := Depth, glyphs := Glyphs}) ->
-    Pixels = erx_draw_image:bytes_per_line(R, Depth) * (Y1 - Y0),
+charge(#{r := R, depth := Depth, glyphs := Glyphs}) ->
     Records = case Glyphs of
                   none -> 0;
                   {_, Binary} -> byte_size(Binary)
               end,
-    pages(Pixels) + pages(Records).
+    pixel_charge(R, Depth) + pages(Records).
+
+-doc """
+Whether a connection would allocate an image of rectangle R at Depth bits a
+pixel, as `b` decides it: `ok` when R passes the checks `b` makes of a
+rectangle under Quota's side and its pixels' charge fits Quota's pixels,
+taken as what is left of the quota; `{error, einval}` or `{error, enomem}`
+otherwise. A picture decoder asks it before it decodes anything.
+""".
+-spec admit(rect(), erx_chan:depth(), quota()) -> ok | {error, einval | enomem}.
+admit(R, Depth, #{pixels := Left} = Quota) ->
+    maybe
+        ok ?= check_image_rect(R, Quota),
+        check(pixel_charge(R, Depth) =< Left, enomem)
+    end.
+
+%% The bytes an image is charged for its pixels: its rows, rounded up to 4 KiB.
+pixel_charge({_, Y0, _, Y1} = R, Depth) ->
+    pages(erx_draw_image:bytes_per_line(R, Depth) * (Y1 - Y0)).
 
 pages(Bytes) -> (Bytes + ?PAGE - 1) div ?PAGE * ?PAGE.
 
