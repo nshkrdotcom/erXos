@@ -9,14 +9,15 @@ it is [design-system.md](design-system.md#the-vault); TLS for the web is
 [design-web.md](design-web.md#the-network-front-end). It also says how a
 session or an app makes HTTPS requests, with `ssl`, `inets`' HTTP client
 and the image's trust store ([HTTPS clients](#https-clients)); the first
-app that does is the quotes kiosk of [design-quotes.md](design-quotes.md).
+app that does is the full kiosk's live quotes of
+[design-quotes.md](design-quotes.md).
 
 ## Context
 
 Four uses need cryptography: the web domain's TLS listener, the vault's
 Argon2id, HKDF and AES-256-GCM, SSH, and HTTPS clients in sessions and
-apps, which fetch data from servers on the internet, the quotes kiosk
-first ([design-quotes.md](design-quotes.md)). The architecture already
+apps, which fetch data from servers on the internet, the full kiosk's live
+quotes first ([design-quotes.md](design-quotes.md)). The architecture already
 decides the library: "OTP's `crypto`, `ssl` and `ssh` use OpenSSL 3.5"
 and "a small verifier keeps the full library out of the system domain"
 ([design.md](design.md#decisions)); its dependency row says "in
@@ -683,7 +684,7 @@ no rule that refuses every connection while the clock is unset. No
 client skips the validity check, and nothing sets the clock from a TLS
 peer's time. A client that shows the failure to a person can tell an
 unset clock from the wall clock alone: no machine erXos runs on reads a
-time before 2000 once its clock is set, and the quotes kiosk shows
+time before 2000 once its clock is set, and the live quotes show
 `clock not set` when a certificate is refused as outside its validity
 while the wall clock reads before 2000
 ([design-quotes.md](design-quotes.md#refusals-and-error-results)).
@@ -759,7 +760,7 @@ for the resolver.
   follows a redirect wherever it points, to plain `http` or to another
   host, this machine's listeners included; so the example above turns it
   off, and a client whose answers must come from the host it named
-  follows redirects itself, as the quotes kiosk does, within the same
+  follows redirects itself, as the live quotes do, within the same
   origin ([design-quotes.md](design-quotes.md#one-request)).
 * **Response size.** `inets`' edit bounds what a server can make `httpc`
   hold, head and body, at the one place every byte enters (K8), for a
@@ -905,7 +906,7 @@ which OpenSSL's tests do not.
   decision: OTP's `crypto` is written against OpenSSL, and 3.5 is
   supported until 2030 ([research](research-boards-storage.md#cryptography-libraries)).
 * **An HTTP client of erXos's own**, a few hundred lines of GET over
-  `ssl`. Rejected: its consumers, the quotes kiosk, a command that
+  `ssl`. Rejected: its consumers, the live quotes, a command that
   fetches packages in a person's session
   ([design-packaging.md](design-packaging.md#requirements)) and
   third-party Erlang code written against stock OTP, which the SDK makes

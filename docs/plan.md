@@ -1404,7 +1404,8 @@ land after M11 repeat M11's closure over what they add.
 4. **A kiosk on QEMU `virt`**, in 1b-C, in two steps. Part 4a, after
    part 3, draws the basic kiosk, `examples/dashboard`, with `erx-lvgl`
    on the host and checks the frame against its reference picture, with
-   sample data and no package. Part 4b, after part 4a, parts 2 and 3,
+   sample data and no package; it is offline and never needs the
+   network. Part 4b, after part 4a, parts 2 and 3,
    1b-B's sub-space ports and pipes, the first slice of 1b-D and track
    A's second part, is the first boot of that interface on QEMU `virt`,
    as the kiosk's app, a package added to the image. Part 4b needs LVGL
@@ -1432,8 +1433,8 @@ land after M11 repeat M11's closure over what they add.
    as a package in `/apps` booted on QEMU `virt`: part 4a's host check
    and part 4b's package and boot. The full kiosk is the same dashboard
    with live quotes fetched over HTTPS
-   ([design-quotes.md](design-quotes.md)), so it also waits for 1b-G's
-   network.
+   ([design-quotes.md](design-quotes.md)), built on top of the basic
+   kiosk and never required by it, so it also waits for 1b-G's network.
 5. **Kiosks on boards**, after part 4 and M12's boards. The firmware
    framebuffer driver of the Raspberry Pi comes earlier, with 1b-I's
    stage (d) on the stopgap; this part adds a panel on a serial bus, on

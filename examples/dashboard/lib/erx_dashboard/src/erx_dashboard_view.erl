@@ -13,8 +13,9 @@ test draws and compares with its reference picture.
 The screen is a column: at the top the time, `HH:MM` in the `display`
 role, with the date under it and the time zone, `UTC`, beside it; below,
 the quotes panel, a `section` with the title `Markets`, the board's
-credit and one row per quote: its name over its symbol, its price and
-its change. A
+credit and one row per quote: its name over its status line, or its
+symbol when the source gives no status, its price and its change, each
+`--` when the quote has none. A
 row's key is its quote's symbol, so a board that reorders its quotes
 moves rows instead of rewriting their text. Before the first board the
 panel says it is waiting.
@@ -57,14 +58,21 @@ panel_header(Note) ->
      [{label, #{weight => 2, role => title, text => <<"Markets">>}, []},
       {label, #{weight => 2, role => caption, text => Note}, []}]}.
 
+%% A quote's caption is its status line when its source gives one, its
+%% symbol otherwise; a price or change the quote has none of shows `--`.
 quote_row(#{symbol := Symbol, name := Name, price := Price, change := Change,
-            decimals := Decimals}) ->
+            decimals := Decimals} = Quote) ->
     {row, #{key => Symbol, height => 64},
      [{column, #{weight => 2},
        [{label, #{height => 24, role => heading, text => Name}, []},
-        {label, #{height => 16, role => caption, text => Symbol}, []}]},
-      {label, #{weight => 1, role => title, text => price(Price, Decimals)}, []},
-      {label, #{weight => 1, role => numeric, text => change(Change)}, []}]}.
+        {label, #{height => 16, role => caption,
+                  text => maps:get(status, Quote, Symbol)}, []}]},
+      {label, #{weight => 1, role => title,
+                text => or_none(Price, fun(P) -> price(P, Decimals) end)}, []},
+      {label, #{weight => 1, role => numeric, text => or_none(Change, fun change/1)}, []}]}.
+
+or_none(none, _Format) -> <<"--">>;
+or_none(Number, Format) -> Format(Number).
 
 -doc "The time of day, `HH:MM`, of a wall-clock reading.".
 -spec clock(calendar:datetime()) -> binary().

@@ -1,24 +1,41 @@
-# The quotes kiosk: an app on the HTTPS client
+# Live quotes: the full kiosk's source
 
-`examples/quotes` is an app that shows the prices of Bitcoin, Ether and
-the S&P 500 on a display, fetched over HTTPS from public endpoints that
-need no key. It is built as a third party builds an app, through the SDK
-alone ([design-packaging.md](design-packaging.md#examples)), and it is the
+The kiosk has two milestones. The **basic kiosk**, `examples/dashboard`
+with its default source `erx_dashboard_sample`, shows the clock, the date
+and made-up sample quotes. It has no remote data, works offline and never
+needs the network. The **full kiosk** is the same dashboard with live
+quotes, the subject of this document: its quotes panel shows the prices
+of Bitcoin, Ether and the S&P 500, fetched over HTTPS from public
+endpoints that need no key. The live quotes are the dashboard's own
+modules, `erx_quotes` and the pure modules around it, a quotes source of
+the dashboard's seam `erx_dashboard_source`; the basic kiosk never starts
+`erx_quotes`, and its release needs neither `ssl` nor `inets`. The full
+kiosk is built as a third party builds an app, through the SDK alone
+([design-packaging.md](design-packaging.md#examples)), and it is the
 first consumer of the HTTPS client that
 [design-crypto.md](design-crypto.md#https-clients) makes a capability of
 every session and app: OTP's `ssl` and `httpc` over the `net` grant, with
-the image's trust store. This document says what the app shows, where its
-numbers come from, how it refreshes and backs off, how it shows data it
-could not refresh, how it reads the responses, and how it is tested
-without the internet.
+the image's trust store. This document says what the quotes panel shows,
+where its numbers come from, how they refresh and back off, how they show
+data that could not be refreshed, how the responses are read, and how
+the whole is tested without the internet.
 
-**What it declares.**
+**What the full kiosk declares.** The dashboard is one application,
+`erx_dashboard`, whose `source` environment value names the quotes
+source it starts and whose `quotes_table` names the table's path. The
+basic kiosk's declaration is
 
 ```text
-app quotes
-  needs display net
-  applications erx_quotes
+app dashboard
+  needs display
+  applications erx_dashboard
 ```
+
+with `source` at its default, `erx_dashboard_sample`. The full kiosk is
+the same application directory declared with `needs display net`, with
+`source` set to `erx_quotes` and `quotes_table` to `/app/share/quotes.config`
+(the default), the package carrying the table as `share/quotes.config`
+([Open decisions](#open-decisions) names how a package sets the value).
 
 The central construction is that **every number on the screen is a
 value paired with the monotonic time it was fetched, or nothing, and the
@@ -26,29 +43,35 @@ screen is a pure function of those pairs, the current monotonic time and
 the last failure of each quote.** A failure never replaces or alters a
 value; it only adds a reason. So whether a value is fresh or stale, and
 how old it is, follows from one subtraction, and no path can show a
-value the app did not receive or hide how old it is.
+value `erx_quotes` did not receive or hide how old it is.
 
 Decisions every reader needs:
 
-* **The sources are data.** Which endpoints the app asks, which field of
+* **The sources are data.** Which endpoints `erx_quotes` asks, which field of
   each answer is the price, how the change is computed and what credit
-  the screen gives are rows of `share/quotes.config` in the package. The
+  the screen gives are rows of the table, `share/quotes.config` in the
+  package. The
   code knows two body formats, JSON and CSV, and three change rules; a
   new source is a row, not code ([The source table](#the-source-table)).
 * **Each quote has an ordered list of sources.** A round tries them in
   order until one gives a value; the screen names the source that did.
-* **No byte of a response reaches the screen as text.** The app shows
-  numbers it formats itself, the labels and credits of its own table,
+* **No byte of a response reaches the screen as text.** The dashboard
+  shows numbers it formats itself, the labels and credits of its own table,
   and fixed words for its reasons.
 * **HTTPS only, to the table's hosts only, validated as the system
-  validates.** The table refuses a URL that is not `https`, the app
+  validates.** The table refuses a URL that is not `https`, `erx_quotes`
   follows a redirect only within the origin it asked (the same scheme,
   host and port), and it passes no TLS option, so every connection takes the
   defaults of [design-crypto.md](design-crypto.md#https-clients): the
   image's trust store, the server's host name checked, TLS 1.3 or 1.2.
-* **Nothing is kept across a restart.** A restarted session shows "no
+* **Nothing is kept across a restart.** A restarted dashboard shows "no
   data" until its first answers, so no value outlives the run that
   fetched it.
+* **The dashboard draws; the source owns no window.** `erx_quotes` sends
+  the dashboard a board, and the dashboard's view draws it with the clock
+  and the date.
+* **The basic kiosk is unchanged by any of this.** Sample quotes, the
+  clock and the date work with no network, no table and no trust store.
 
 ## Context
 
@@ -92,6 +115,11 @@ about 90 days, so the trust store holds roots, never leaves
   `ssl`, `public_key`, `crypto`, `asn1` and `inets` in the `app` release,
   `public_key:cacerts_get/0` reading the image's trust store, and
   `httpc` with `max_body_size` bounding every body.
+* **The dashboard and its seam** (`examples/dashboard`):
+  `erx_dashboard` starts the source its `source` value names with
+  `start_link/1` and shows the last `{erx_dashboard_board, Board}` the
+  source sent; `erx_dashboard_source` defines the board; the default
+  source, `erx_dashboard_sample`, is the basic kiosk's.
 * **Apps** of [design-packaging.md](design-packaging.md): the
   declaration, the `apps` row whose `services` are `display data net` on
   both development boards, `erx_app` starting the declared applications
@@ -101,21 +129,21 @@ about 90 days, so the trust store holds roots, never leaves
   the app's session holds a `net` grant, `gen_tcp` and `gen_udp` run over
   it through `erx_net_client`, and `inet_res` resolves names over the
   grant's name servers.
-* **The widget toolkit**: `erx_ui:open/1` and `erx_ui:tree/2`, the widget
-  schema of `abi/formats/ui.txt`, whose kinds include `column`, `row` and
-  `label`, and a renderer that escapes every text property it draws
-  ([design-display.md](design-display.md), G5); `erx_ui_host` stands in
-  for a display on the host.
+* **The widget toolkit**, which the dashboard's view draws with:
+  `erx_ui:open/1` and `erx_ui:tree/2`, the widget schema of
+  `abi/formats/ui.txt`, and a renderer that escapes every text property it
+  draws ([design-display.md](design-display.md), G5); `erx_ui_host` stands
+  in for a display on the host.
 * **The wall clock**, which every domain reads from the time page with
   `os:system_time/1`; on an unset clock it reads 1970 plus the uptime
   ([design-time.md](design-time.md#what-erxos-already-has)). The clock's
-  `state` at `/proc/time/status` is not the app's to read: its session
+  `state` at `/proc/time/status` is not the kiosk's to read: its session
   holds no `inspect` grant, and the declaration has no reason to ask for
   one.
 
 ## Requirements
 
-* **Q-R1.** Each quote shows the last value the app received for it,
+* **Q-R1.** Each quote shows the last value `erx_quotes` received for it,
   with the source that gave it and how long ago it was fetched, or that
   it has none.
 * **Q-R2.** A value older than its quote's stale age is shown as stale,
@@ -124,8 +152,8 @@ about 90 days, so the trust store holds roots, never leaves
   of a closed set of reasons, whether its value is fresh, stale or
   absent, and says "clock not set" when a certificate was refused as
   outside its validity while the wall clock reads before 2000.
-* **Q-R4.** The app asks each source at most once per its quote's period
-  while the source answers, asks no source before the time its last
+* **Q-R4.** `erx_quotes` asks each source at most once per its quote's
+  period while the source answers, asks no source before the time its last
   `Retry-After` named, up to an hour, and backs off exponentially, with
   jitter, while every source of a quote fails.
 * **Q-R5.** Every response is untrusted: its size is bounded before it is
@@ -133,23 +161,31 @@ about 90 days, so the trust store holds roots, never leaves
   malformed one is a reason, never a crash or a value.
 * **Q-R6.** Changing a source, adding one or reordering a quote's sources
   changes the package's table, not the code.
-* **Q-R7.** The app is tested end to end without the internet.
+* **Q-R7.** The full kiosk is tested end to end without the internet.
+* **Q-R8.** The basic kiosk needs no network, no table and no `ssl` or
+  `inets`: the live quotes are reached only by naming `erx_quotes` as the
+  dashboard's `source`.
 
 ## The construction
 
-The app is a pure core and one effect process:
+The live source is a pure core and one effect process. `erx_quotes` is a
+quotes source of the dashboard's seam `erx_dashboard_source`: the
+dashboard's process starts the module the application's `source` value
+names with `start_link/1`, and `erx_quotes` sends it
+`{erx_dashboard_board, Board}` whenever the board changes. The dashboard
+draws the window; `erx_quotes` owns none.
 
 ```text
   erx_quotes (effect process)                         pure modules
   ---------------------------                         ------------
-  file:consult(/app/share/quotes.config) ----------> erx_quotes_config: validate
+  file:consult(quotes_table) ----------------------> erx_quotes_config: validate
   1 s tick, httpc answers, the wall clock ---------> erx_quotes_core: state, rounds,
                                                        backoff, staleness
   httpc:request(get, ...) <------------------------- actions: fetch, render
   httpc's answer ----------------------------------> erx_quotes_http: status, redirect,
                                                        Retry-After, error -> reason
   the body ----------------------------------------> erx_quotes_extract: body -> value
-  erx_ui:tree/2 <----------------------------------- erx_quotes_view: model -> widget tree
+  {erx_dashboard_board, Board} to the dashboard <--- erx_quotes_view: model -> board
 ```
 
 * `erx_quotes_core:tick(State, Now, Jitter)` and
@@ -157,10 +193,17 @@ The app is a pure core and one effect process:
   next state and a list of actions, `{fetch, Quote, Source, Url}` and
   `render`. `Now` is monotonic milliseconds and `Jitter` a number in
   `[0.8, 1.2)` the effect process draws with `rand`, so the core reads no
-  clock and no generator and is tested with exact values.
-* `erx_quotes_view:tree(State, Now)` is the widget tree. It is computed
-  from the pairs and reasons alone, so the rule of Q-R1 and Q-R2 is in one
-  function.
+  clock and no generator and is tested with exact values. `render` makes
+  the effect process compute the board and send it to the dashboard when
+  it differs from the last one it sent.
+* `erx_quotes_view:board(State, Now)` is the board the dashboard draws:
+  the credit and one quote per row of the table. It is computed from the
+  pairs and reasons alone, so the rule of Q-R1 and Q-R2 is in one
+  function, `erx_quotes_view:status/4`.
+* **At start** `erx_quotes` reads and validates the table, starts `ssl`
+  and `inets` itself (`application:ensure_all_started/1`), starts the core
+  with every quote due and ticks it every second. The basic kiosk never
+  starts it, so its release needs neither application.
 
 The special cases this removes:
 
@@ -181,11 +224,16 @@ The special cases this removes:
 
 ### The source table
 
-`share/quotes.config` holds Erlang terms that `file:consult/1` reads;
-`erx_quotes_config:validate/1` checks the whole table before the app
-starts anything, and a table it refuses ends the session with the
-reason, which `/proc/apps` shows. The table is the app's own file, inside
-its package, which the session mounted against the root hash the system
+The table is a file of Erlang terms that `file:consult/1` reads, at the
+path of the application's `quotes_table` value, by default
+`/app/share/quotes.config`. The development table is
+`examples/dashboard/live/quotes.config`, outside `share/` so that the
+basic kiosk's package does not carry it; the full kiosk's package carries
+it as `share/quotes.config`. `erx_quotes_config:validate/1` checks the
+whole table before `erx_quotes` starts anything, and a table it refuses
+stops the dashboard's start with the reason, so the session ends with it,
+which `/proc/apps` shows. The table is the app's own file, inside its
+package, which the session mounted against the root hash the system
 domain authenticated ([design-packaging.md](design-packaging.md#an-apps-session)).
 
 ```erlang
@@ -218,7 +266,7 @@ domain authenticated ([design-packaging.md](design-packaging.md#an-apps-session)
 ```
 
 `kraken_eth` and `coinbase_eth` are the same rows with `ETHUSD`,
-`XETHZUSD` and `ETH-USD`. Which S&P 500 rows the shipped table holds is
+`XETHZUSD` and `ETH-USD`. Which S&P 500 rows the full kiosk's table holds is
 an [open decision](#open-decisions).
 
 | Field | Meaning | Bound |
@@ -250,14 +298,17 @@ holds or compares, `Now` included, is in milliseconds.
                    failed_rounds := non_neg_integer(),
                    next_at  := integer(),
                    trying   := none | {Index :: pos_integer(), FirstReason :: none | reason()}}.
--type source() :: #{not_before := integer()}.
+-type source() :: #{not_before := integer(), held := none | reason()}.
 ```
 
 `value` changes only on a successful outcome, which replaces it whole;
 `failure` is set when a round ends with every source failed and cleared
 when a round succeeds. `trying` is the round in flight: the index of the
 source asked and the first source's reason, if it failed. A source's
-`not_before` is the time its last `Retry-After` named, or 0; it belongs
+`not_before` is the time its last `Retry-After` named; it starts at the time
+the core is started (`new/2`'s `Now`), not at 0, since Erlang's monotonic
+time can be negative. `held` is the reason the source was held back for,
+which a quote that passes the source over takes as its own. Both belong
 to the source, so a source two quotes share is held back for both.
 
 ## Algorithms
@@ -266,8 +317,8 @@ to the source, so a source two quotes share is held back for both.
 
 A quote's round is due when `Now >= next_at` and no round of it is in
 flight. The core asks its first source whose `not_before` has passed;
-a source still held back is passed over with the reason `{status, 429}`
-or `{status, 503}` it was held back for. On a source's outcome:
+a source still held back is passed over with its `held` reason, the
+`{status, 429}` or `{status, 503}` it was held back for. On a source's outcome:
 
 * **a value**: the round ends; `value` is the new pair, `failure` is
   cleared, `failed_rounds` is 0 and `next_at` is `Now + period`;
@@ -285,7 +336,7 @@ source answers again and is not held back.
 
 ### One request
 
-The effect process makes each request with
+`erx_quotes` makes each request with
 
 ```erlang
 httpc:request(get, {Url, [{"user-agent", "erxos-quotes/1"}]},
@@ -303,14 +354,18 @@ makes them bound the response's head and body in every framing
 0, so `httpc` never repeats a request on a `Retry-After` of its own
 accord and the core alone decides when a source is asked again. The
 answer reaches the process as `{http, {RequestId, Result}}`, and
-`erx_quotes_http:classify(Result, Url, Hops)` turns it into one of:
+`erx_quotes_http:classify(Result, Url, Hops, WallSeconds)` turns it into
+one of, where `WallSeconds` is the wall clock, `os:system_time(second)`:
 
-* **`{body, Bytes}`** for status 200;
+* **`{body, Bytes}`** for status 200 with a binary body; a 200 whose body
+  is not a binary is `failed`;
 * **`{follow, Url2}`** for status 301, 302, 303, 307 or 308 with one
   `location` header whose value, resolved against `Url` with
   `uri_string:resolve/2`, has the scheme, host and port of `Url`, while
   `Hops` is below 3; the effect process asks `Url2` within the same
-  round. So every request goes to the origin the table names, the
+  round. A `location` of bytes outside printable ASCII is refused as
+  `redirect` before `uri_string` parses it, since `uri_string` raises on
+  some non-ASCII bytes. So every request goes to the origin the table names, the
   server's certificate is checked against that host, and the credit the
   screen shows stays true. Whether Cboe's first answer, a 307, stays
   within its origin was not seen (unverified); if it does not, the table
@@ -338,7 +393,7 @@ So a quote with a period of 10 s waits about 20, 40, 80 s and so on to
 the quote is held back, a server's `Retry-After` holds back that source
 alone, for up to an hour, while the quote's other sources serve, and
 quotes that failed together do not retry together.
-At most one request per quote is in flight, so the app has at most 8
+At most one request per quote is in flight, so `erx_quotes` has at most 8
 requests open at once.
 
 ### Reading a body
@@ -365,9 +420,12 @@ answers `{error, bad_data}`.
 
 ### What the screen shows
 
-The window is a `column` of one `row` per quote, in the table's order,
-each with `label`s for the quote's label, its price with `decimals`
-digits, its change with a sign and two digits, and a status line:
+The dashboard's quotes panel, under its header, which carries the board's
+credit, `Live quotes`, lists one row per quote in the table's order. Each
+row has the quote's label, its price with `decimals` digits, its change
+with a sign and two digits, and a status line that the dashboard shows
+under the label in place of the quote's symbol, as the board's quote
+carries it (`status` in `erx_dashboard_source`):
 
 | State | Status line |
 | --- | --- |
@@ -377,23 +435,31 @@ digits, its change with a sign and two digits, and a status line:
 | a value, older | `stale, AGE - CREDIT[, NOTE]`, and `: REASON` when the last round failed |
 
 `AGE` is `N s` below two minutes, `N min` below two hours, `N h` below
-two days and `N d` beyond, rounded down. A quote with no value shows
-`--` for its price and change. `REASON` is the word of the
-[reasons table](#refusals-and-error-results). The view sends a new tree
-only when a text changed, which the toolkit diffs against the last one.
+two days and `N d` beyond, rounded down. A quote with no value has price
+and change `none`, which the dashboard shows as `--`. `REASON` is the word
+of the [reasons table](#refusals-and-error-results). `erx_quotes` sends a
+new board only when it differs from the last one it sent, and the
+dashboard hands the toolkit a new tree only when its text changed. The
+board's texts are the table's labels and credits, fixed words and numbers
+`erx_quotes_view` formats, so no byte of a response reaches the screen.
 
 ## Concurrency and failure
 
-* **One process owns the state.** `erx_quotes`, under the app's
-  supervisor, holds the core's state, the window and the table of
-  requests in flight by `RequestId`. An answer whose `RequestId` it does
-  not hold is dropped, so an answer that arrives after a restart changes
-  nothing.
-* **A crash of `erx_quotes`** restarts it with the table read again and
-  every quote back at `waiting`; its requests in flight are abandoned to
-  `httpc`'s timeout. Repeated crashes reach the supervisor's intensity,
-  which ends the app, and its start row's keeper starts the session
-  again within its own intensity ([design-packaging.md](design-packaging.md#starting-an-app)).
+* **One process owns the state.** `erx_quotes` holds the core's state, the
+  last board it sent and the table of requests in flight by `RequestId`.
+  An answer whose `RequestId` it does not hold is dropped, so an answer
+  that arrives after a restart changes nothing.
+* **`erx_quotes` is linked to the dashboard's process**, as the seam
+  `erx_dashboard_source` says, so the two restart together under the
+  dashboard's supervisor. A restart reads the table again and puts every
+  quote back at `waiting`; requests in flight are abandoned to `httpc`'s
+  timeout, and the dashboard shows no board until the first one arrives.
+  Repeated crashes reach the supervisor's intensity, which ends the app,
+  and its start row's keeper starts the session again within its own
+  intensity ([design-packaging.md](design-packaging.md#starting-an-app)).
+* **A refused table or an application that does not start** stops
+  `erx_quotes` with the reason, and the dashboard's start with it, so the
+  session ends with the reason, which `/proc/apps` shows.
 * **`httpc`'s processes** run under `inets`'s supervisor; a handler that
   crashes answers its request with an error, which is a failed source.
 * **The network domain's restart** ends the grant; connections fail with
@@ -434,9 +500,9 @@ it ([design-crypto.md](design-crypto.md#time)). Validation compares
 each certificate's dates with the wall clock; an unset clock reads 1970
 plus the uptime, before the validity of every certificate a public
 authority issues, so `ssl` refuses the sources' chains with
-`certificate_expired` (`pubkey_cert.erl:155-166`) and the app shows
-nothing it fetched. The effect process passes the wall clock,
-`os:system_time(second)`, with each outcome, and the classifier turns
+`certificate_expired` (`pubkey_cert.erl:155-166`) and the screen shows
+nothing it fetched. `erx_quotes` passes the wall clock,
+`os:system_time(second)`, as the fourth argument of `classify`, and the classifier turns
 `certificate_expired` into `clock_unset` when it reads before
 2000-01-01, a time no set clock on a machine erXos runs on shows. Every
 other certificate reason, `unknown_ca` among them, stays `certificate`,
@@ -444,10 +510,10 @@ since the clock does not decide it.
 
 ## Security
 
-* **What the app can reach** is what its `net` grant reaches: every
+* **What the full kiosk can reach** is what its `net` grant reaches: every
   address the network stack routes to, this machine's own listeners
   included, and ports above 1,023 to listen on
-  ([design-crypto.md](design-crypto.md#security)). It asks only the
+  ([design-crypto.md](design-crypto.md#security)). `erx_quotes` asks only the
   origins of its table: it follows no redirect out of the origin it
   asked, so no source can send it to another host, this machine's
   listeners included.
@@ -457,15 +523,17 @@ since the clock does not decide it.
   the screen show a number that did not come over a connection whose
   certificate the trust store vouches for and whose name is the host of
   the table's URL, which is also the host every redirect stays on.
+* **The basic kiosk reaches nothing.** It holds no `net` grant, starts no
+  `ssl` or `inets`, and carries no table.
 * **Plain HTTP is unreachable.** The table refuses an `http` URL and the
   classifier a redirect to one, and `autoredirect` is off, so no value
   arrives over an unauthenticated connection.
 * **A hostile source** can make `httpc` hold at most 64 KiB of body and
   10 KiB and one read of head per request, in any framing, at most 8
-  requests at once, and make the app parse
-  them; it cannot make the app crash, allocate past those bounds, create
+  requests at once, and make `erx_quotes` parse
+  them; it cannot make the dashboard crash, allocate past those bounds, create
   an atom, or put text on the screen.
-* **Text.** The screen's texts are the table's, the app's own words and
+* **Text.** The screen's texts are the table's, the kiosk's own words and
   numbers it formats; the renderer escapes every text property anyway
   (G5). Log lines go through the log service's escaping.
 
@@ -473,40 +541,57 @@ since the clock does not decide it.
 
 The host tests run under stock OTP 29.1.2 with nothing but the SDK on
 their paths, as the landing gate runs every example's
-([design-packaging.md](design-packaging.md#examples)). Each names the
-seeded failure that proves it ran.
+([design-packaging.md](design-packaging.md#examples)), through
+`test/host/erx_quotes_test.rb`. The EUnit suites
+`erx_quotes_config_tests`, `erx_quotes_http_tests`,
+`erx_quotes_extract_tests`, `erx_quotes_core_tests` and
+`erx_quotes_fetch_tests` are in
+`examples/dashboard/lib/erx_dashboard/test/`, beside `erx_quotes_fuzz`.
+Each test below names the seeded failure that proves it ran.
 
 | Test | Passes when | Seeded failure |
 | --- | --- | --- |
-| table | the shipped table validates; one table per bound, one past its edge, is refused with that row and field named; an `http` URL is refused | accepting `period` 4 passes the one-past-the-edge table |
-| rounds | a first source's failure asks the second at once; a second success shows the second's credit; the next round starts at the first; every source failing sets `failure` to the first's reason | starting the next round at the source that last answered fails the third case |
-| held-back sources | the first source answering 429 with `RetryAfter` 3,600,000 ms while the second answers: the next rounds ask only the second until an hour has passed, then the first again; both held back: no request until the earlier `not_before` | keeping `not_before` per quote instead of per source asks the first source ten seconds later |
-| backoff | waits in milliseconds for periods of 10,000 and 60,000 over eight failed rounds with `Jitter` 1.0 are exact, capped at 900,000; a success resets the count | dropping the cap gives 2,560,000 at the eighth round |
-| staleness and ages | a value shows fresh at `3 * period` after its fetch and stale 1 ms later; a failed round while the value is fresh shows its reason beside the fresh value; ages format at 119 s, 120 s, 7,199 s, 7,200 s and two days | comparing `>=` instead of `>` shows the value stale at exactly `3 * period` |
-| no fabrication | over generated event sequences, every price the view shows is the price of some successful outcome for that quote, with that outcome's credit and an age equal to `Now` minus its time | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
-| classify | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; redirects to `http:`, to another host and to another port of the same host are `redirect`; a relative one is followed; a fourth hop is `redirect`; `retry-after` of 0, 1, 3,600, 7,200, 11 digits and a date give none, 1,000, 3,600,000, 3,600,000, none and none; `certificate_expired` with the wall clock at 1970-01-01T00:05 is `clock_unset`, with it in 2026 `certificate`, and `unknown_ca` at 1970 `certificate` | following a redirect without comparing its host turns the other-host case into `follow` |
-| extract | bodies in the shape of each source of [What the sources offer](#what-the-sources-offer), generated by the test, give the price and change they carry; a missing key, a wrong type, a 33-byte decimal, `0`, a negative price and a CSV whose last line has `.` give `bad_data` or the previous line as the rule says | taking the CSV's last line whatever its field turns the `.` case into `bad_data` |
-| frame | `erx_ui_host` with the Erlang renderer draws a fixed state, one quote of each row of the screen table, `clock not set` among them, equal to `examples/quotes/test/reference/quotes` | showing a stale value without `stale` changes the frame |
-| HTTPS on the host | the app's effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`), fetches from an `ssl` server the test runs on the host's loopback with a chain from `public_key:pkix_test_data/1` for `localhost`, with the request expression of [One request](#one-request) unchanged, and shows its value | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big`, and with `max_body_size` moved into the third argument is taken whole |
+| table (`erx_quotes_config_tests`) | the development table, `live/quotes.config`, validates; one table per bound, one past its edge, is refused with that row and field named; an `http` URL is refused | accepting `period` 4 passes the one-past-the-edge table |
+| rounds (`erx_quotes_core_tests`) | a first source's failure asks the second at once; a second success shows the second's credit; the next round starts at the first; every source failing sets `failure` to the first's reason | starting the next round at the source that last answered fails the third case |
+| held-back sources (`erx_quotes_core_tests`) | the first source answering 429 with `RetryAfter` 3,600,000 ms while the second answers: the next rounds ask only the second until an hour has passed, then the first again; both held back: no request until the earlier `not_before` | keeping `not_before` per quote instead of per source asks the first source ten seconds later |
+| backoff (`erx_quotes_core_tests`) | waits in milliseconds for periods of 10,000 and 60,000 over eight failed rounds with `Jitter` 1.0 are exact, capped at 900,000; a success resets the count | dropping the cap gives 2,560,000 at the eighth round |
+| staleness and ages (`erx_quotes_core_tests`) | a value shows fresh at `3 * period` after its fetch and stale 1 ms later; a failed round while the value is fresh shows its reason beside the fresh value; ages format at 119 s, 120 s, 7,199 s, 7,200 s and two days | comparing `>=` instead of `>` shows the value stale at exactly `3 * period` |
+| no fabrication (`erx_quotes_core_tests`) | over generated event sequences, every price the board carries is the price of some successful outcome for that quote, with that outcome's credit and an age equal to `Now` minus its time | keeping the previous price on a failed round with a new `FetchedAt` breaks the age property |
+| classify (`erx_quotes_http_tests`) | each status, redirect and error shape of the reasons table, built as `httpc` and `ssl` answer, maps to its reason; redirects to `http:`, to another host and to another port of the same host are `redirect`; a relative one is followed; a `location` of non-ASCII bytes is `redirect`; a fourth hop is `redirect`; a 200 whose body is not a binary is `failed`; `retry-after` of 0, 1, 3,600, 7,200, 11 digits and a date give none, 1,000, 3,600,000, 3,600,000, none and none; `certificate_expired` with the wall clock at 1970-01-01T00:05 is `clock_unset`, with it in 2026 `certificate`, and `unknown_ca` at 1970 `certificate` | following a redirect without comparing its host turns the other-host case into `follow` |
+| extract (`erx_quotes_extract_tests`) | bodies in the shape of each source of [What the sources offer](#what-the-sources-offer), generated by the test, give the price and change they carry; a missing key, a wrong type, a 33-byte decimal, `0`, a negative price and a CSV whose last line has `.` give `bad_data` or the previous line as the rule says | taking the CSV's last line whatever its field turns the `.` case into `bad_data` |
+| frame | `erx_ui_host` with the Erlang renderer draws the dashboard's tree for a fixed time and a fixed live board, one quote of each row of the screen table, `clock not set` among them, equal to the reference picture `dashboard-live` under `test/display/reference/` | showing a stale value without `stale` changes the frame |
+| HTTPS on the host (`erx_quotes_fetch_tests`) | `erx_quotes`, the effect process, with `public_key`'s `cacerts_path` naming a test root (stock OTP's override, `pubkey_os_cacerts.erl:46`), fetches from an `ssl` server the test runs on the host's loopback with a ECDSA P-256 chain from `public_key:pkix_test_data/1` for `localhost`, with the request expression of [One request](#one-request) unchanged, and shows its value | the server's certificate made for `other.test` shows `certificate rejected`; a 70,000-byte body with its `content-length` shows `answer too big`, and with `max_body_size` moved into the third argument is taken whole |
 
-**The fuzz target.** `erx_quotes_extract_fuzz`, in the example's tests
-and run by the landing gate at a small budget and by `make check-fuzz` at
-its configured one, feeds `erx_quotes_extract:value/2` bodies of up to
-64 KiB for each source of the shipped table: random bytes; generated
-answers of each shape with one field mutated, truncated or moved to a
-bound; nesting 10,000 deep; numbers with 400 digits or exponents of
-`e400`; CSV with no newline, with only a header and with `\r` alone.
-Properties: nothing raises; every accepted price is finite, above 0 and
-below 10^15; an unmutated generated answer gives the price it was built
-with. *Seeded failure:* accepting a JSON number without the bound check
-lets `1.0e300` through and fails the bounds property.
+**The fuzz target.** `erx_quotes_fuzz`, in
+`examples/dashboard/lib/erx_dashboard/test/`, is run by
+`tools/fuzz/erx_quotes.rb` from `tools/erx check-fuzz`, at a small budget
+at the landing gate and at its configured one by `make check-fuzz`. It
+covers the three readers of untrusted input of this document:
 
-**The QEMU cell**, `display_domain/quotes`, needs the display and a
+* **extract:** `erx_quotes_extract:value/2` over bodies of up to 64 KiB
+  for each source of the development table: random bytes; generated
+  answers of each shape with one field mutated, truncated or moved to a
+  bound; nesting 10,000 deep; numbers with 400 digits or exponents of
+  `e400`; CSV with no newline, with only a header and with `\r` alone.
+  Properties: nothing raises; every accepted price is finite, above 0 and
+  below 10^15; an unmutated generated answer gives the price it was built
+  with. *Seeded failure:* accepting a JSON number without the bound check
+  lets `1.0e300` through and fails the bounds property.
+* **classify:** `erx_quotes_http:classify/4` over arbitrary terms and
+  header lists, redirects included. Property: it raises on nothing and
+  answers one of its three shapes.
+* **the table check:** `erx_quotes_config:validate/1` over mutated and
+  random tables. Property: it raises on nothing and answers a table or a
+  refusal.
+
+**The QEMU cell**, `display_domain/quotes`, is part of the full kiosk's
+fourth step of Track D ([plan.md](plan.md)). It needs the display and a
 network device, which it asks for: the display suite's display with
 the network device of `QemuPlan::Nic` on restricted user networking,
 so nothing the guest sends leaves the host. Its image carries:
 
-* `examples/quotes` packed by the SDK with a test table whose sources are
+* `examples/dashboard` packed by the SDK as the full kiosk, with `source`
+  set to `erx_quotes` and a test table whose sources are
   `https://quotes.NIC_DOMAIN:8443/btc` and the like, enabled at boot;
 * a second test app, `quotes_fixture`, needing `net`, whose OTP
   application listens with `ssl` on port 8443 of the guest's address and
@@ -531,7 +616,7 @@ host (`tools/lib/erx/net_device_echo_server.rb`), which cannot carry
 separate TLS connections; the connection runs through the stack's
 loopback path, since the destination is the stack's own address.
 
-The kiosk writes one log line per change of a quote's state, naming the
+`erx_quotes` writes one log line per change of a quote's state, naming the
 state, the price shown and the source or the reason, as `quotes: btc
 fresh 64412.50 kraken_btc` or `quotes: btc stale 64412.50 {status,503}`,
 which the harness reads from the serial line. The cell
@@ -558,12 +643,17 @@ out shows `certificate rejected`.
 
 * **A host-side fixture server through a guest forward.** Rejected for
   the cell: the forward carries every guest connection over one stream.
+* **A separate quotes app.** Rejected: a second app would open its own
+  window beside the dashboard's, or repeat the dashboard's window code.
+  A quotes source of the dashboard's seam keeps one window, one clock
+  and one view, and the basic kiosk is the same application with its
+  default source.
 * **The sources in code, one module per provider.** Rejected: each new
   provider would be code and a new reader; two formats and paths cover
   every source considered.
 * **Showing the source's own timestamp.** Not adopted: the sources give
   times in different forms, some without a zone (Cboe's `timestamp`), and
-  the age of the fetch is what the app knows for certain; the table's
+  the age of the fetch is what `erx_quotes` knows for certain; the table's
   `note` says what the value is, `delayed` or `daily close`.
 * **Keeping the last values across a restart** in the app's directory.
   Not adopted: it needs `data`, and a value read back after a restart has
@@ -587,6 +677,14 @@ out shows `certificate rejected`.
    automated access and display were not readable by the fetcher.
    *Recommendation:* keep them as the table's sources and read both terms
    in a browser before a public showing, as for the S&P 500.
+3. **How the full kiosk's package sets `source` and asks for `net`.** The
+   packaging mechanism for setting an application environment value in a
+   package is not yet designed, and the basic kiosk's declaration asks
+   for `display` alone. *Recommendation:* a full-kiosk declaration of the
+   same application directory, `needs display net`, whose package carries
+   `share/quotes.config` and sets `source` to `erx_quotes`; the basic
+   kiosk's declaration and package stay as they are. The decision is
+   taken with the packaging design, in the QEMU cell's step.
 
 ## References
 
