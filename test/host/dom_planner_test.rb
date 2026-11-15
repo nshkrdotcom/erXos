@@ -35,6 +35,42 @@ class DomPlannerTest < Minitest::Test
              "  capacity_first 0\n  slice_us 1000\n  grace_us 5\n  base 16\n  ceiling 31\n  flags none\n"
   NARROW = UNCAPPED.sub('share wide', 'share narrow').sub('quota_ns uncapped', 'quota_ns 5000000')
 
+  # The library's two host builds, the planner helper and the view driver, made once
+  # per file into one directory: compiling them is most of a test's time, and no
+  # test changes their sources.
+  class << self
+    def helper
+      @planner_helper ||= Erx::PackTools.build(root: ROOT, owner_root: build_directory,
+                                               directory: File.join(build_directory, 'tools'), runner: build_runner,
+                                               compiler: ENV.fetch('ERX_CLANG', 'clang'), tools: ['domains'])
+                                        .fetch('domains')
+    end
+
+    # test/fixtures/dom_view_driver.c over the library, printing the view's catalogue and services.
+    def view_driver
+      @view_driver_path ||= File.join(build_directory, 'dom-view').tap do |output|
+        sources = %w[liberx/system/dom_core.c liberx/system/dom_life.c liberx/system/dom_boot_view.c liberx/erx_lane.c
+                     liberx/backend/core/boot_manifest.c
+                     tools/host/input.c test/fixtures/dom_view_driver.c].map { |path| File.join(ROOT, path) }
+        build_runner.run([ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
+                          '-O1', *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'),
+                          '-I', ROOT, '-I', File.join(ROOT, 'tools/host'), *sources,
+                          Erx::Generated.path('liberx/generated/abi_reader.c', root: ROOT), '-o', output],
+                         name: 'dom-view-build', deadline: 120)
+      end
+    end
+
+    private
+
+    def build_directory
+      @build_directory ||= File.realpath(Dir.mktmpdir('dom-planner-tools-')).tap do |base|
+        Minitest.after_run { FileUtils.remove_entry(base) }
+      end
+    end
+
+    def build_runner = @build_runner ||= Erx::Runner.new(owner_root: build_directory, log_dir: File.join(build_directory, 'logs'))
+  end
+
   def setup
     @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
     platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
@@ -43,9 +79,7 @@ class DomPlannerTest < Minitest::Test
     @source = with_domains('alpha')
     @directory = Dir.mktmpdir('dom-planner-')
     @runner = Erx::Runner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
-    tools = Erx::PackTools.build(root: ROOT, owner_root: @directory, directory: File.join(@directory, 'tools'),
-                                 runner: @runner, compiler: ENV.fetch('ERX_CLANG', 'clang'))
-    @helper = tools.fetch('domains')
+    @helper = self.class.helper
     @planner = Erx::DomainPlanner.new(helper: @helper, runner: @runner)
   end
 
@@ -73,19 +107,9 @@ class DomPlannerTest < Minitest::Test
   # The view's catalogue and services, or its refusal, as test/fixtures/dom_view_driver.c prints them,
   # or with mode framebuffer its framebuffer rows' ranges before and after placement.
   def view_lines(manifest, name, *mode)
-    @view_driver ||= File.join(@directory, 'dom-view').tap do |output|
-      sources = %w[liberx/system/dom_core.c liberx/system/dom_life.c liberx/system/dom_boot_view.c liberx/erx_lane.c
-                   liberx/backend/core/boot_manifest.c
-                   tools/host/input.c test/fixtures/dom_view_driver.c].map { |path| File.join(ROOT, path) }
-      @runner.run([ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', '-D_DARWIN_C_SOURCE', '-Wall', '-Wextra', '-Werror',
-                   '-O1', *Erx::Generated.include_flags(root: ROOT), '-I', File.join(ROOT, 'include'),
-                   '-I', ROOT, '-I', File.join(ROOT, 'tools/host'), *sources,
-                   Erx::Generated.path('liberx/generated/abi_reader.c', root: ROOT), '-o', output],
-                  name: 'dom-view-build', deadline: 120)
-    end
     path = File.join(@directory, "view-#{name}.bin")
     File.binwrite(path, manifest)
-    File.readlines(@runner.run([@view_driver, path, *mode], name: "dom-view-#{name}", deadline: 30).fetch('log'), chomp: true)
+    File.readlines(@runner.run([self.class.view_driver, path, *mode], name: "dom-view-#{name}", deadline: 30).fetch('log'), chomp: true)
   end
 
   # source with the machine's max_connections set to count; raises when the manifest
