@@ -61,11 +61,14 @@ module Erx
       nif(root: root, otp: otp, directory: directory, compiler: compiler, seed: seed)
       codec = File.join(directory, 'erx_draw_codec.erl')
       File.write(codec, ABI::Generator.plan(root: root).files.fetch(ABI::DrawEmitter::ERLANG_PATH))
-      erlc(otp: otp, directory: directory, sources: [codec, *MODULES.map { |path| File.join(root, path) }])
+      erlc(otp: otp, root: root, directory: directory, sources: [codec, *MODULES.map { |path| File.join(root, path) }])
     end
 
-    def erlc(otp:, directory:, sources:)
-      text, status = Open3.capture2e(CLEAN_ENVIRONMENT, File.join(otp, 'bin/erlc'), '-o', directory, *sources,
+    # The generated tree supplies the ABI header that erx_draw_core includes.
+    def erlc(otp:, root:, directory:, sources:)
+      Generated.ensure(root: root)
+      include = File.join(root, 'build/gen/erlang/apps/erx/include')
+      text, status = Open3.capture2e(CLEAN_ENVIRONMENT, File.join(otp, 'bin/erlc'), '-I', include, '-o', directory, *sources,
                                      stdin_data: '')
       raise Error, "erlc failed:\n#{text}" unless status.success?
     end

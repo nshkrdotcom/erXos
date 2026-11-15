@@ -122,7 +122,7 @@ class ErxMemdrawTest < Minitest::Test
     Erx::MemdrawBuild.erlang_cases(root: ROOT, otp: OTP, directory: @directory, compiler: COMPILER, seed: seed)
   end
 
-  def erlc(*sources) = Erx::MemdrawBuild.erlc(otp: OTP, directory: @directory, sources: sources)
+  def erlc(*sources) = Erx::MemdrawBuild.erlc(otp: OTP, root: ROOT, directory: @directory, sources: sources)
 
   def run_cases(mode, rounds, seed: 1)
     Erx::MemdrawBuild.run_cases(otp: OTP, directory: @directory, mode: mode, rounds: rounds, seed: seed)
