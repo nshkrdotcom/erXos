@@ -27,18 +27,24 @@ class RuntimeReleaseTest < Minitest::Test
     attr_accessor :second
   end
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading). The second pack comes
+  # first, once, into a directory of this run's own: packing writes the work
+  # directory beside the hosted release, so it holds the lock exclusively.
+  def run
+    self.class.second ||= File.join(Dir.mktmpdir('erx-second-release'), 'second.pack').tap do |path|
+      Erx::Release.new(root: ROOT, output: OUTPUT, platform: Erx::Platform.development(ROOT)).build(output: path)
+    end
+    Erx::Runtime.reading(root: ROOT) { super }
+  end
+
   def setup
     Erx::Runtime.check_current(root: ROOT)
     @codec = Erx::ABI::Codec.new(Erx::ABI::Generator.plan(root: ROOT).schema)
-    path = File.join(File.dirname(OUTPUT.archive), 'second.pack')
-    self.class.second ||= begin
-      Erx::Release.new(root: ROOT, output: OUTPUT, platform: Erx::Platform.development(ROOT)).build(output: path)
-      path
-    end
     @table = Erx::Release.file_table(archive: OUTPUT.archive, codec: @codec)
   end
 
-  Minitest.after_run { FileUtils.rm_f(second) if second }
+  Minitest.after_run { FileUtils.rm_rf(File.dirname(second)) if second }
 
   def test_the_release_holds_its_applications_and_its_boot_script
     paths = @table.map(&:first)

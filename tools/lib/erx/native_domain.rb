@@ -139,21 +139,26 @@ module Erx
                                 fiasco: fiasco)
         program = native.build_task(name: 'native-domain', sources: PROGRAM_SOURCES, directory: File.join(@build, 'program'), flags: [])
         erts = NativeRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @platform, fiasco: fiasco).build
+        jit = NativeJitRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @platform, fiasco: fiasco)
+                              .build(interpreter: erts)
+        Runtime.reading(root: @root) { link(native, program, erts: erts, jit: jit) }
+      end
+
+      # The image over both runtime builds, which it reads.
+      def link(native, program, erts:, jit:)
         runtime = native.build_domain_runtime_receipted(directory: File.join(@build, 'erts'),
                                                         archives: erts.domain_archives)
         root_task = native.build(name: 'domain-root', sources: ROOT_SOURCES, directory: File.join(@build, 'root'), flags: ROOT_FLAGS)
         programs = { PROGRAM_PATH => program, RELEASE_PATH => File.join(@root, RELEASE_SOURCE),
                      **release(erts), **jit_modules }
-        images = { ERTS_PATH => runtime.fetch(:program), JIT_PATH => jit_runtime(native, fiasco, erts) }
+        images = { ERTS_PATH => runtime.fetch(:program), JIT_PATH => jit_runtime(native, jit) }
         BootImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker)
                  .build(directory: File.join(@build, 'image'), stand_in_root: root_task, programs: programs, images: images,
                         jit: [JIT_PATH])
       end
 
       # The BeamAsm image, over the interpreter build's musl and release.
-      def jit_runtime(native, fiasco, erts)
-        jit = NativeJitRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @platform, fiasco: fiasco)
-                              .build(interpreter: erts)
+      def jit_runtime(native, jit)
         native.build_jit_runtime_receipted(directory: File.join(@build, 'erts-jit'),
                                            archives: jit.domain_archives)
               .fetch(:program)

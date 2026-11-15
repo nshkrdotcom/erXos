@@ -197,6 +197,10 @@ class RuntimeConsoleTest < Minitest::Test
     end
   end
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   # Each step is the keys typed and what the screen then shows, ending at the next prompt.

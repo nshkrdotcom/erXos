@@ -32,6 +32,10 @@ class RuntimeGenetTest < Minitest::Test
              '{module, _} = code:load_binary(list_to_atom(Name), Name, base64:decode(Beam)), Load() end end, ' \
              'ok = Load(), '
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   def test_udp_and_tcp_cross_the_stand_in_genet

@@ -1948,6 +1948,19 @@ it; git history is the record of completed work.
   shared lock on the same file (`FileLock` with `LOCK_SH`), the build could run its caller's link inside the lock,
   or a gate could hold one lock for its whole run. A build whose Ruby process is killed outright (SIGKILL) also
   leaves its make and configure running in the build directory with the lock released.
+* [Medium] runtime readers (`tools/lib/erx/runtime.rb` `Runtime.reading`): each reader of build/runtime takes the
+  shared lock at its own site (`tools/erx`, `OracleHosted#run`, `ProductionImage#assemble`, `NativeDomain`,
+  `Programs`, the hosted tests), so a new reader that forgets it reads unlocked, and only the hosted tests have a
+  source check. A native reader also does not check, inside its read, that the tree still holds the build it
+  follows: flock cannot downgrade atomically, so another run may rebuild, or leave a failed build, between the two.
+  Making `Runtime#build` yield the build to a block under the shared hold, checking the kind's build record there,
+  and keeping the output paths reachable only through it would make both hold by construction. Whether macOS flock
+  lets a stream of overlapping readers starve a waiting build is unverified.
+* [Low] runtime builds (`tools/lib/erx/runtime.rb` `Runtime::LOCK`, `tools/lib/erx/runner.rb`): a build whose Ruby
+  process is killed outright (SIGKILL) leaves its make and configure running in build/runtime with the lock
+  released, so the next build or reader meets them. Every other exit, SIGTERM and SIGINT included, ends each
+  command's process group in `Runner#run`'s ensure. Handing the lock's open file to the build's commands would keep
+  the lock held until the last of them exits.
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network

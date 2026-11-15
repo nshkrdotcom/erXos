@@ -17,6 +17,10 @@ class RuntimeDeviceTest < Minitest::Test
   OUTPUT = Erx::Runtime.output(root: ROOT)
   BUDGET_SECONDS = 60
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   def test_a_register_goes_by_name_and_only_as_the_table_allows

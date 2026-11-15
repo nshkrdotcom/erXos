@@ -76,29 +76,34 @@ module Erx
       @codec = ABI::Codec.new(ABI::Generator.plan(root: @root).schema)
     end
 
-    # Packs the release into output, replacing what a failed run cannot leave behind.
+    # Packs the release into output, replacing what a failed run cannot leave
+    # behind. It writes the hosted release and its work directory beside the
+    # runtime build, so it holds the runtime tree's lock exclusively, as a
+    # build does.
     def build(output: @archive)
-      FileUtils.rm_f(output)
-      FileUtils.rm_rf(@directory)
-      FileUtils.mkdir_p(@directory)
-      OutputDirectory.prepare(root: @root, path: @directory)
-      tools = PackTools.build(root: @root, owner_root: @root, directory: File.join(@directory, 'tools'),
-                              runner: @runner, compiler: @compiler, sanitizers: [])
-      root_task = PackRootFixture.build(root: @root, directory: File.join(@directory, 'root'), codec: @codec,
-                                        runner: @runner, compiler: @compiler, linker: @linker)
-      system_release = ReleaseFiles.new(root: @root, otp: @otp, directory: @directory, runner: @runner, codec: @codec, oracle: @oracle)
-      files = system_release.entries
-      manifest_source = @platform.manifest_source(@root)
-      domains = domain_entries(manifest_source, root_task)
-      entries = [root_entry(root_task), *files, *system_release.directories, *domains]
-      _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
-      catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root)))
-      pack_with(tools, catalog).build(
-        entries: entries, root_path: 'system/root', build_kind: 'development',
-        platform: @platform.record,
-        artifacts: ProductionImage.artifacts(archive_paths(entries), images: images),
-        manifest_source: manifest_source, output: output
-      )
+      Runtime.hold_tree(@root, mode: :exclusive) do
+        FileUtils.rm_f(output)
+        FileUtils.rm_rf(@directory)
+        FileUtils.mkdir_p(@directory)
+        OutputDirectory.prepare(root: @root, path: @directory)
+        tools = PackTools.build(root: @root, owner_root: @root, directory: File.join(@directory, 'tools'),
+                                runner: @runner, compiler: @compiler, sanitizers: [])
+        root_task = PackRootFixture.build(root: @root, directory: File.join(@directory, 'root'), codec: @codec,
+                                          runner: @runner, compiler: @compiler, linker: @linker)
+        system_release = ReleaseFiles.new(root: @root, otp: @otp, directory: @directory, runner: @runner, codec: @codec, oracle: @oracle)
+        files = system_release.entries
+        manifest_source = @platform.manifest_source(@root)
+        domains = domain_entries(manifest_source, root_task)
+        entries = [root_entry(root_task), *files, *system_release.directories, *domains]
+        _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
+        catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root)))
+        pack_with(tools, catalog).build(
+          entries: entries, root_path: 'system/root', build_kind: 'development',
+          platform: @platform.record,
+          artifacts: ProductionImage.artifacts(archive_paths(entries), images: images),
+          manifest_source: manifest_source, output: output
+        )
+      end
     end
 
     private

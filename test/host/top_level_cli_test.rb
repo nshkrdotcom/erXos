@@ -343,6 +343,8 @@ class TopLevelCliTest < Minitest::Test
     assert_equal %w[runtime_console_test.rb runtime_device_test.rb runtime_dirty_io_reductions_test.rb
                     runtime_genet_test.rb runtime_hosted_smoke_test.rb runtime_literal_token_test.rb runtime_prim_file_test.rb runtime_release_test.rb],
                  reads_build.sort
+    # Each reads it holding the runtime tree's lock shared, so a build in the same tree waits.
+    reads_build.each { |name| assert_includes File.read(File.join(root, 'test/integration', name)), 'Erx::Runtime.reading(root: ROOT) { super }', name }
     ordinary = Erx::CLI.integration_tests(root).map { |path| File.basename(path) }
     assert_empty reads_build & ordinary
     assert_equal %w[runtime_event_test.rb], ordinary.grep(/\Aruntime_/)

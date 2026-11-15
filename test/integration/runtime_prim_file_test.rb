@@ -59,6 +59,10 @@ class RuntimePrimFileTest < Minitest::Test
 
   Fixture = Data.define(:directory, :tree, :archive, :release, :stock, :release_status, :stock_status)
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup
     Erx::Runtime.check_current(root: ROOT)
     self.class.fixture ||= build_fixture

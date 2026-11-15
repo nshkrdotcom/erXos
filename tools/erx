@@ -819,10 +819,12 @@ module Erx
     def self.check_runtime_seam(arguments, **)
       raise OptionParser::InvalidArgument, 'unexpected arguments' unless arguments.empty?
 
-      Runtime.check_current(root: ROOT)
       output = Runtime.output(root: ROOT)
-      report = RuntimeSeam.check_objects(objects: RuntimeSeam.objects(output), executable: output.beam, liberx: output.liberx,
-                                         imports_path: File.join(output.root, RuntimeSeam::IMPORTS_FILE))
+      report = Runtime.reading(root: ROOT) do
+        Runtime.check_current(root: ROOT)
+        RuntimeSeam.check_objects(objects: RuntimeSeam.objects(output), executable: output.beam, liberx: output.liberx,
+                                  imports_path: File.join(output.root, RuntimeSeam::IMPORTS_FILE))
+      end
       report.violations.each { |violation| Terminal.puts("#{violation.object}: imports #{violation.name}") }
       Terminal.puts("listed and imported by nothing: #{report.unused.join(' ')}") unless report.unused.empty?
       report.violations.empty? ? 0 : 1
@@ -908,10 +910,13 @@ module Erx
       jit = NativeJitRuntime.new(root: ROOT, runner: runner, compiler: compiler, linker: linker, fiasco: fiasco,
                                  platform: platform)
                             .build(interpreter: interpreter, jobs: jobs)
-      NativeRoot.new(root: ROOT, runner: runner, compiler: compiler, linker: linker, platform: platform, fiasco: fiasco)
-                .build_jit_runtime_receipted(directory: File.join(ROOT, NativeJitRuntime::BASE, 'image'),
-                                             archives: jit.domain_archives)
-                .fetch(:program)
+      native = NativeRoot.new(root: ROOT, runner: runner, compiler: compiler, linker: linker, platform: platform, fiasco: fiasco)
+      # The link writes its image under build/runtime, so it holds the tree's lock as a build does.
+      Runtime.hold_tree(ROOT, mode: :exclusive) do
+        native.build_jit_runtime_receipted(directory: File.join(ROOT, NativeJitRuntime::BASE, 'image'),
+                                           archives: jit.domain_archives)
+              .fetch(:program)
+      end
     end
 
     def self.build(input_arguments)

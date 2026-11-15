@@ -57,6 +57,10 @@ class RuntimeHostedSmokeTest < Minitest::Test
   }.freeze
   RUNS_LINE = /erx: hosted: range table: (runs (\d+) high (\d+) of (\d+) committed_pages (\d+))\n/
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   def test_a_terminal_gets_a_prompt_and_evaluates

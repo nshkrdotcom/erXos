@@ -66,20 +66,22 @@ module Erx
     end
 
     # Runs `suites`, names of the group's suites, on both sides and compares
-    # them.
+    # them, reading the hosted build throughout.
     def run(suites)
-      Runtime.check_current(root: @root)
-      table = @suites.known_differences
-      oracle = Oracle.new(root: @root, runner: @runner)
-      stock, erxos = oracle.with_runtime('jit') do |installation|
-        tree = File.join(@out, 'tree')
-        fill_tree(tree, suites, installation: installation, stock_source: oracle.source_path('jit'))
-        [@suites.run_stock(tree, erl: installation.fetch('erl'), build: installation.fetch('build')), run_erxos(tree)]
+      Runtime.reading(root: @root) do
+        Runtime.check_current(root: @root)
+        table = @suites.known_differences
+        oracle = Oracle.new(root: @root, runner: @runner)
+        stock, erxos = oracle.with_runtime('jit') do |installation|
+          tree = File.join(@out, 'tree')
+          fill_tree(tree, suites, installation: installation, stock_source: oracle.source_path('jit'))
+          [@suites.run_stock(tree, erl: installation.fetch('erl'), build: installation.fetch('build')), run_erxos(tree)]
+        end
+        result = OracleComparison.compare(stock: stock, erxos: erxos, known: table, runtime: 'hosted')
+        report = File.join(@out, 'report.txt')
+        File.write(report, result.report)
+        Outcome.new(result: result, report: report)
       end
-      result = OracleComparison.compare(stock: stock, erxos: erxos, known: table, runtime: 'hosted')
-      report = File.join(@out, 'report.txt')
-      File.write(report, result.report)
-      Outcome.new(result: result, report: report)
     end
 
     # erXos's applications in the tree, as tree paths to the files they copy, each laid

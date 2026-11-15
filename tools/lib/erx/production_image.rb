@@ -424,59 +424,62 @@ module Erx
 
       sources = Runtime.source_digest(root: @root)
       erts = @runtime.build
-      root_task = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: machine.platform,
-                                 fiasco: @fiasco)
-                            .build_system_receipted(directory: File.join(directory, 'root'), archives: erts.system_archives,
-                                                    place: machine.root_address)
-      kernel = assembled_receipt(@fiasco.kernel_path, name: 'kernel', directory: directory)
-      sigma0 = assembled_receipt(@fiasco.sigma0_path, name: 'sigma0', directory: directory)
-      archive = File.join(directory, 'image.erxpack')
-      File.write(self.class.sources_path(archive), sources)
-      made = made_files(directory: directory, platform: machine.platform)
-      system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
-      release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
-      erofs, images = ReleaseMedium.image(entries: release, directory: directory, runner: @runner)
       # Only domains run the BeamAsm image, so an image without them does not build it.
       jit = domains.empty? ? nil : @jit_runtime.build(interpreter: erts)
-      domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
-      report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries, *added.entries],
-                    root_task: root_task, added_archives: [*domain.archives, *added.archives],
-                    images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
-                    imports: IMPORTS.merge(added.imports),
-                    inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
-                             *added.inputs].uniq,
-                    test_code: test_code, machine: machine)
-      single = File.join(directory, 'image.boot')
-      # The single file is written as unchecked and renamed to image.boot only after every
-      # check below has passed, so a refused, failed or interrupted build leaves no
-      # image.boot, its own or an earlier build's, for a later step (tools/build_site.rb) to take.
-      unchecked = "#{single}.unchecked"
-      FileUtils.rm_f(single)
-      BootFile.write(codec: @codec, first_stage: @fiasco.first_stage_path(machine.platform), archive: archive, output: unchecked, output_root: @root)
-      begin
-        machine.check_single_file(File.size(unchecked), load_address: @fiasco.first_stage_address(machine.platform))
-        warn "#{directory}: #{Manifest::RootStartup.room_line(report)}"
-        # image.boot holds every file of the image, the release's included, as packed, so
-        # one look at it finds a file that names the tree (BuildPath). A test image, which
-        # never leaves the build host, is not looked at.
-        host = test_code ? nil : BuildPath.find_in(File.binread(unchecked), root: @root)
-        raise Error, "production image: #{File.basename(single)} holds the build's path #{host}" if host
+      # Both builds come first: what follows reads them, and a build inside the read is refused.
+      Runtime.reading(root: @root) do
+        root_task = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: machine.platform,
+                                   fiasco: @fiasco)
+                              .build_system_receipted(directory: File.join(directory, 'root'), archives: erts.system_archives,
+                                                      place: machine.root_address)
+        kernel = assembled_receipt(@fiasco.kernel_path, name: 'kernel', directory: directory)
+        sigma0 = assembled_receipt(@fiasco.sigma0_path, name: 'sigma0', directory: directory)
+        archive = File.join(directory, 'image.erxpack')
+        File.write(self.class.sources_path(archive), sources)
+        made = made_files(directory: directory, platform: machine.platform)
+        system_release = ReleaseFiles.new(root: @root, otp: erts.otp, directory: File.join(directory, 'release'), runner: @runner, codec: @codec)
+        release = [*system_release.entries, *made_entries(made, release: ReleaseFiles::SYSTEM)]
+        erofs, images = ReleaseMedium.image(entries: release, directory: directory, runner: @runner)
+        domain = domain_parts(domains, erts: erts, jit: jit, archives: erts.domain_archives, made: made, directory: directory)
+        report = pack(entries: [*entries(root_task, kernel, sigma0), *release, *system_release.directories, *domain.entries, *added.entries],
+                      root_task: root_task, added_archives: [*domain.archives, *added.archives],
+                      images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
+                      imports: IMPORTS.merge(added.imports),
+                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
+                               *added.inputs].uniq,
+                      test_code: test_code, machine: machine)
+        single = File.join(directory, 'image.boot')
+        # The single file is written as unchecked and renamed to image.boot only after every
+        # check below has passed, so a refused, failed or interrupted build leaves no
+        # image.boot, its own or an earlier build's, for a later step (tools/build_site.rb) to take.
+        unchecked = "#{single}.unchecked"
+        FileUtils.rm_f(single)
+        BootFile.write(codec: @codec, first_stage: @fiasco.first_stage_path(machine.platform), archive: archive, output: unchecked, output_root: @root)
+        begin
+          machine.check_single_file(File.size(unchecked), load_address: @fiasco.first_stage_address(machine.platform))
+          warn "#{directory}: #{Manifest::RootStartup.room_line(report)}"
+          # image.boot holds every file of the image, the release's included, as packed, so
+          # one look at it finds a file that names the tree (BuildPath). A test image, which
+          # never leaves the build host, is not looked at.
+          host = test_code ? nil : BuildPath.find_in(File.binread(unchecked), root: @root)
+          raise Error, "production image: #{File.basename(single)} holds the build's path #{host}" if host
 
-        header = @codec.decode_layout('erx_pack_header', File.binread(archive, @codec.layout_size('erx_pack_header')))
-        flags = header.fetch('flags')
-        marked = flags.anybits?(@codec.member('pack_flags', 'test_code'))
-        raise Error, 'the archive header disagrees with the test-code mark asked for' unless marked == test_code
-        raise Error, "the archive header disagrees with the build kind #{BUILD_KIND} the build facts name" unless
-          flags.anybits?(@codec.member('pack_flags', 'development')) == (BUILD_KIND == 'development')
+          header = @codec.decode_layout('erx_pack_header', File.binread(archive, @codec.layout_size('erx_pack_header')))
+          flags = header.fetch('flags')
+          marked = flags.anybits?(@codec.member('pack_flags', 'test_code'))
+          raise Error, 'the archive header disagrees with the test-code mark asked for' unless marked == test_code
+          raise Error, "the archive header disagrees with the build kind #{BUILD_KIND} the build facts name" unless
+            flags.anybits?(@codec.member('pack_flags', 'development')) == (BUILD_KIND == 'development')
 
-        File.rename(unchecked, single)
-      ensure
-        FileUtils.rm_f(unchecked)
+          File.rename(unchecked, single)
+        ensure
+          FileUtils.rm_f(unchecked)
+        end
+
+        Built.new(single: single, archive: archive, first_stage: @fiasco.first_stage_path(machine.platform),
+                  index_hash: header.fetch('index_hash').unpack1('H*'), build_id: header.fetch('build_id').unpack1('H*'),
+                  flags: flags, test_code: marked, report: report, release: release, erofs: erofs)
       end
-
-      Built.new(single: single, archive: archive, first_stage: @fiasco.first_stage_path(machine.platform),
-                index_hash: header.fetch('index_hash').unpack1('H*'), build_id: header.fetch('build_id').unpack1('H*'),
-                flags: flags, test_code: marked, report: report, release: release, erofs: erofs)
     end
     private :assemble
 

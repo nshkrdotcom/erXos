@@ -26,6 +26,10 @@ class RuntimeLiteralTokenTest < Minitest::Test
   BUDGET_SECONDS = 60
   COMPILE_SECONDS = 120
 
+  # Each test reads the hosted build, so it runs holding the runtime tree's lock
+  # shared, and a build waits for it (Runtime.reading).
+  def run = Erx::Runtime.reading(root: ROOT) { super }
+
   def setup = Erx::Runtime.check_current(root: ROOT)
 
   def test_a_queued_literal_keeps_its_token_through_the_area_collection

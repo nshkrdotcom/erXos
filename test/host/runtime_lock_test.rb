@@ -11,18 +11,21 @@ require_relative '../../tools/lib/erx/native_jit_runtime'
 
 # Two runtime builds in one tree must not run at once: each configures and
 # makes in the same copy under build/runtime, and two at once delete each
-# other's files. Another process holds the lock here; the build it would race
-# is a stand-in that only records that it ran.
+# other's files; nor may a build run while something reads the tree. Another
+# process holds the lock here; the build it would race is a stand-in that only
+# records that it ran.
 class RuntimeLockTest < Minitest::Test
   DEADLINE = 10
 
-  # A runtime whose build does nothing but say it ran.
+  # A runtime whose build only runs inside, if given, and says it ran.
   class StubRuntime < Erx::Runtime
     attr_reader :built
+    attr_writer :inside
 
     private
 
     def build_locked(jobs:)
+      @inside&.call
       @built = jobs
     end
   end
@@ -65,6 +68,66 @@ class RuntimeLockTest < Minitest::Test
     assert_equal 3, runtime.built
   end
 
+  def test_a_reader_waits_for_a_build
+    @holder = hold_elsewhere(@lock)
+    read = false
+    errors = StringIO.new
+    reader = with_stderr(errors) do
+      thread = Thread.new { Erx::Runtime.reading(root: @root) { read = true } }
+      wait_until { errors.string.include?('waiting') }
+      thread
+    end
+    assert_includes errors.string, "in use by pid #{@holder.pid}"
+    refute read, 'the reader read while a build held the lock'
+
+    @holder.release
+    @holder = nil
+    assert reader.join(DEADLINE), 'the reader did not read once the build was done'
+    assert read
+  end
+
+  def test_a_build_waits_for_a_reader_and_says_so
+    @holder = hold_elsewhere(@lock, mode: :shared)
+    runtime = StubRuntime.new(root: @root, runner: :unused, oracle: :unused)
+    errors = StringIO.new
+    build = with_stderr(errors) do
+      thread = Thread.new { runtime.build(jobs: 3) }
+      wait_until { errors.string.include?('waiting') }
+      thread
+    end
+    assert_includes errors.string, 'in use by shared holders'
+    assert_nil runtime.built, 'the build ran while another process read the tree'
+
+    @holder.release
+    @holder = nil
+    assert build.join(DEADLINE), 'the build did not run once the reader was done'
+    assert_equal 3, runtime.built
+  end
+
+  def test_readers_share_the_lock
+    @holder = hold_elsewhere(@lock, mode: :shared)
+    assert_equal :read, Erx::FileLock.hold(@lock, what: 'the test lock', busy: :refuse, mode: :shared) { :read }
+  end
+
+  # A build may read what it built: the read inside its own hold takes nothing.
+  def test_a_read_inside_a_build_proceeds
+    runtime = StubRuntime.new(root: @root, runner: :unused, oracle: :unused)
+    read = false
+    runtime.inside = -> { Erx::Runtime.reading(root: @root) { read = true } }
+    build = Thread.new { runtime.build(jobs: 3) }
+    assert build.join(DEADLINE), 'the read inside the build waited on the build'
+    assert read
+    assert_equal 3, runtime.built
+  end
+
+  # A build inside a read would wait on the read forever, and is refused.
+  def test_a_build_inside_a_read_is_refused
+    runtime = StubRuntime.new(root: @root, runner: :unused, oracle: :unused)
+    error = assert_raises(Erx::Error) { Erx::Runtime.reading(root: @root) { runtime.build(jobs: 1) } }
+    assert_match(/locked exclusively inside this thread's own hold/, error.message)
+    assert_nil runtime.built
+  end
+
   # The oracle refuses rather than waits, and the refusal names the holder.
   def test_a_refusing_hold_names_the_holder
     @holder = hold_elsewhere(@lock)
@@ -99,14 +162,14 @@ class RuntimeLockTest < Minitest::Test
 
   private
 
-  # Forks a process that takes path's lock and keeps it until released.
-  def hold_elsewhere(path)
+  # Forks a process that takes path's lock in mode and keeps it until released.
+  def hold_elsewhere(path, mode: :exclusive)
     ready_reader, ready_writer = IO.pipe
     release_reader, release_writer = IO.pipe
     pid = fork do
       ready_reader.close
       release_writer.close
-      Erx::FileLock.hold(path, what: 'the holder', busy: :refuse) do
+      Erx::FileLock.hold(path, what: 'the holder', busy: :refuse, mode: mode) do
         ready_writer.write('held')
         ready_writer.close
         release_reader.read

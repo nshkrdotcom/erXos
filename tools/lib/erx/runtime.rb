@@ -201,13 +201,32 @@ module Erx
       HostTestPlan.new(run: paths - not_run.map(&:path), not_run: not_run)
     end
 
-    # Every runtime build and clean, of every kind, holds this lock for its
-    # whole run, so a second one in the same tree waits for the first instead
-    # of configuring over its copy. One lock serves every kind because the
-    # BeamAsm build compiles against the interpreter build's sysroot, which a
-    # concurrent interpreter build would rewrite.
+    # Every runtime build and clean, of every kind, holds this lock
+    # exclusively for its whole run, so a second one in the same tree waits
+    # for the first instead of configuring over its copy. One lock serves
+    # every kind because the BeamAsm build compiles against the interpreter
+    # build's sysroot, which a concurrent interpreter build would rewrite.
+    # Whatever reads build/runtime once a build has returned holds it shared
+    # (Runtime.reading), so a build never removes or relinks what a reader is
+    # reading.
     LOCK_DIRECTORY = 'build/runtime'
     LOCK = "#{LOCK_DIRECTORY}/.lock".freeze
+
+    # Runs the block reading root's runtime build tree, holding its lock
+    # shared, and returns its value: it waits for a build in progress, and a
+    # build waits for it. A reader takes it once, around all it reads, and
+    # writes nothing under build/runtime; whatever writes there holds the lock
+    # exclusively (hold_tree), as Release#build does. Inside a build's own hold
+    # it takes nothing (FileLock), so a build may read what it built; a build
+    # inside it is refused, so a reader builds first and reads after.
+    def self.reading(root:, &) = hold_tree(root, mode: :shared, &)
+
+    # Runs the block holding root's runtime tree lock in mode (FileLock::MODES):
+    # exclusive for Runtime#build and NativeRuntime#clean, shared for reading.
+    def self.hold_tree(root, mode:, &)
+      OutputDirectory.prepare(root: root, path: File.join(root, LOCK_DIRECTORY))
+      FileLock.hold(File.join(root, LOCK), what: "the runtime build tree of #{root}", busy: :wait, mode: mode, &)
+    end
 
     # The one entry to a build of every kind: it passes its arguments to the
     # kind's build_locked and returns its result. Runtime's own build_locked
@@ -216,10 +235,7 @@ module Erx
 
     private
 
-    def with_build_lock(&)
-      OutputDirectory.prepare(root: @root, path: File.join(@root, LOCK_DIRECTORY))
-      FileLock.hold(File.join(@root, LOCK), what: "the runtime build tree of #{@root}", busy: :wait, &)
-    end
+    def with_build_lock(&) = Runtime.hold_tree(@root, mode: :exclusive, &)
 
     # The hosted runtime's build.
     def build_locked(jobs: 4)

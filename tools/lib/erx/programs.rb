@@ -532,9 +532,10 @@ end,
         directory = ProductionImage.clear_directory(root: @root, path: File.join(@build, 'image'))
         # The image's build builds the runtime again; make finds nothing left to do.
         libc = runtime.build.libc
+        programs = Runtime.reading(root: @root) { added(fiasco, libc: libc) }
         ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
                             fiasco: fiasco, runtime: runtime)
-                       .build_test_image(directory: directory, added: added(fiasco, libc: libc),
+                       .build_test_image(directory: directory, added: programs,
                                          domains: [TOOLKIT_BOOT], manifest_source: @manifest)
       end
 
