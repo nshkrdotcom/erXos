@@ -899,10 +899,47 @@ class ManifestDomainsTest < Minitest::Test
     assert_raises(Erx::ABI::SchemaError) { admit(@source + "signer dev\n  key \"#{'a' * 32}\"\n") }
   end
 
-  # A package row is refused until the package file check and admission check it, so
-  # none is admitted unchecked.
-  def test_a_package_row_is_refused_until_its_package_can_be_checked
-    refused(Erx::Manifest::Unsupported, 'unsupported', 'package',
-            with_room(@source + self.class.apps + "package clock\n  input @artifact.clock\n", 8))
+  # The context with a package artifact for each name => declared memory of packages,
+  # as Erx::ImageApps names them.
+  def with_packages(packages)
+    arguments = ManifestContextFixture.domain_arguments(@codec)
+    artifacts = packages.to_h do |name, memory|
+      ["package-#{name}", { 'kind' => 'package', 'name' => name, 'memory' => memory, 'sha256' => 'ab' * 32 }]
+    end
+    @context = Erx::Manifest::Context.new(**arguments.merge(platform: @platform, artifacts: arguments.fetch(:artifacts).merge(artifacts)))
+  end
+
+  def self.package(name, input: "package-#{name}", enable: nil)
+    "package #{name}\n  input @artifact.#{input}\n#{"  enable #{enable}\n" if enable}"
+  end
+
+  # Property 19's fifth clause on the host: each package row is bound to the artifact
+  # the build's file check described, and the build record lists each with its header's
+  # SHA-256, enabled only when its row says YES.
+  def test_a_package_row_is_bound_to_its_package_and_recorded
+    with_packages('clock' => 4096, 'quotes' => 4096)
+    source = with_room(@source + self.class.apps + self.class.package('quotes') + self.class.package('clock', enable: 'YES'), 8)
+    assert_equal [{ 'name' => 'clock', 'sha256' => 'ab' * 32, 'enabled' => true },
+                  { 'name' => 'quotes', 'sha256' => 'ab' * 32, 'enabled' => false }],
+                 admit(source).report.fetch('packages')
+  end
+
+  # Seeds: a row whose input is no package artifact or another app's package, rows past
+  # the apps row's max or with no apps row, and enabled packages whose declared memory
+  # passes the apps budget, which a row left disabled does not count against.
+  def test_a_package_row_is_refused_unless_its_package_fits_the_apps_row
+    with_packages('clock' => 65_536, 'quotes' => 4096)
+    apps = with_room(@source + self.class.apps(max: 1), 1)
+    refused(Erx::Manifest::Invalid, 19, 'package.input', apps + self.class.package('clock', input: 'app'), message: /no package artifact/)
+    refused(Erx::Manifest::Invalid, 19, 'package.input', apps + self.class.package('clock', input: 'package-quotes'),
+            message: /is the package of quotes/)
+    refused(Erx::Manifest::Invalid, 19, 'package', apps + self.class.package('clock') + self.class.package('quotes'),
+            message: /pass the apps row's max, 1/)
+    refused(Erx::Manifest::Invalid, 19, 'package', @source + self.class.package('clock'), message: /max, 0/)
+    roomy = with_room(@source + self.class.apps(memory: 65_536, max: 2), 2)
+    admit(roomy + self.class.package('clock', enable: 'YES') + self.class.package('quotes'))
+    refused(Erx::Manifest::Invalid, 19, 'package.enable',
+            roomy + self.class.package('clock', enable: 'YES') + self.class.package('quotes', enable: 'YES'),
+            message: /declare 69632 bytes, past the apps budget of 65536/)
   end
 end
