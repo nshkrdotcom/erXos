@@ -452,13 +452,27 @@ p.90-93), so the controller never raises line 126, and the host does not
 join the line's owner. The line keeps one member, EMMC2's device
 process, exactly as it has without WiFi.
 
+**One poll.** The status enable, `irpt_mask`, admits the events the
+command wait takes and the card interrupt; status bits set without a
+signal, which is what a poll reads. A poll is EMMC2's delivery
+(`erx_blk_sd.erl:302-316`) without the line's answer: it reads
+`interrupt` once, writes that snapshot's one-to-clear bits back
+(`erx_blk_sd_host:ack_mask/0`), and only then hands the snapshot to the
+command wait, when a command is in flight, and performs the wait's
+actions. So no later poll reads a command complete or a buffer event a
+second time, which the wait would take as a second event and fail the
+command on, and an event the actions cause, the next block's buffer
+event once a block is moved, is set after the write-back and is not
+cleared unseen. The card interrupt is not among the bits written back:
+it is read-only and follows the card's level (the doc of `ack_mask/0`),
+so the same snapshot's card-interrupt bit goes to the card-interrupt
+rule below, whatever else the snapshot carries.
+
 **Transactions.** The host runs a client's transaction list by polling
-the `interrupt` word through each command and each block, and hands each
-word to the core's command wait. The status enable, `irpt_mask`, admits
-the events the wait takes and the card interrupt; status bits set
-without a signal, which is what a poll reads. Every command and every
-data block has the SD driver's deadline of 1 s, which is also the most
-an SDIO register access may take (SDIO 6.2, p.39).
+through each command and each block. Every command, a CMD53 with all its
+blocks, has one deadline: the SD driver's 1 s from its issue
+(`erx_blk_sd.erl:57-59, 231`), which is also the most an SDIO register
+access may take (SDIO 6.2, p.39).
 
 **The card interrupt.** An SDIO interrupt is level-sensitive: a function
 holds it until the host removes its cause, and it reaches the bus only
@@ -466,17 +480,18 @@ while the function's enable and the card's master enable in register
 `04h` are set (SDIO 6.3, p.40). In the 4-bit mode it shares DAT[1], and
 the controller samples it only in the interrupt period (8.1.2, p.59).
 While a client is attached and has rearmed, the host reads `interrupt`
-every `sdio_poll_ms`, 1 ms, between lists, and when it finds the
-card-interrupt bit it clears the bit from `irpt_mask`, so the status no
-longer follows the card's level, and tells its client once. The client
-removes the cause with an access to its function's own registers, as the
-specification requires (8.1.7, p.60), and its `rearm` step sets the bit
-in `irpt_mask` again. OpenBSD's host masks the card interrupt in the same
-place at a firing and sets it again at the acknowledgement
-(`sdhc.c:1386-1389, 803-821`); polling moves only who looks, not the
-masking rule. A client that never rearms loses only its own notices. The
-asynchronous interrupt of version 3.00 is not in the simplified edition
-(8.2, p.60), so its enable, register `16h`, stays clear.
+every `sdio_poll_ms`, 1 ms, between lists, by the same poll, and when
+any poll finds the card-interrupt bit it clears the bit from
+`irpt_mask`, so the status no longer follows the card's level, and tells
+its client once. The client removes the cause with an access to its
+function's own registers, as the specification requires (8.1.7, p.60),
+and its `rearm` step sets the bit in `irpt_mask` again. OpenBSD's host
+masks the card interrupt in the same place at a firing and sets it again
+at the acknowledgement (`sdhc.c:1386-1389, 803-821`); polling moves only
+who looks, not the masking rule. A client that never rearms loses only
+its own notices. The asynchronous interrupt of version 3.00 is not in
+the simplified edition (8.2, p.60), so its enable, register `16h`, stays
+clear.
 
 Every property the shared line needs follows from `irpt_en` being zero,
 and none needs a rule of its own:
@@ -823,10 +838,56 @@ the firmware, on the event channel, about the station's own request.
 **Choosing a network.** The station scans and joins only once a country
 is configured ([The country](#the-country)). A scan's results, with the
 configuration's network blocks and the credential store, give the
-candidates: a BSS whose SSID a block names, whose security the block
-allows and the station supports, and, for a protected network, whose
-SSID has a secret in the store. The station
-joins the candidate of the highest `priority`, then the strongest signal.
+candidates. For each BSS whose SSID a block names, one pure function of
+`erx_wifi_sta` decides the protection of management frames and the AKM,
+or refuses the BSS, from the block's `key_mgmt` and `ieee80211w`, the
+BSS's RSN element and RSNXE, the firmware's `cap` and `mfp` answer, and
+which secrets the store holds for the SSID. PMF comes first:
+
+| Block's `ieee80211w` | The BSS's RSN capabilities | The firmware answers `mfp` | PMF |
+| --- | --- | --- | --- |
+| 2 | MFPC set | yes | required |
+| 2 | MFPC set | no | the BSS refused |
+| 2 | MFPC clear | any | the BSS refused |
+| 1 | MFPR set | yes | required |
+| 1 | MFPR set | no | the BSS refused |
+| 1 | MFPC set, MFPR clear | yes | capable |
+| 1 | MFPC set, MFPR clear | no | none |
+| 1 | MFPC clear | any | none |
+| 0 or absent | MFPR set | any | the BSS refused |
+| 0 or absent | MFPR clear | any | none |
+
+The refusals by the BSS's capabilities are wpa_supplicant's, a BSS
+without MFPC under a block that requires PMF and a BSS that requires it
+under a block that disables it (`events.c:787-802`), and so is the
+default of PMF disabled (`config_ssid.h:514-524`); a firmware that does
+not answer `mfp` protects no management frame, so PMF that the block or
+the BSS requires refuses the BSS there. Then the AKM: of the AKMs the
+block allows, the BSS offers and the station supports, those whose
+own secret the store holds, the PMK for PSK and PSK-SHA256 and PT for
+SAE, and, for SAE, only with `sae_ext` in `cap`, hash-to-element in the RSNXE and PMF
+not `none`, the station takes SAE, then PSK-SHA256, then PSK, the order
+of wpa_supplicant's selection (`wpa_supplicant.c:2140-2169`); none left
+refuses the BSS. An open block takes an open BSS alone. Every refusal is
+counted by its reason, and the station joins the candidate of the
+highest `priority`, then the strongest signal.
+
+The choice is a function of the configuration, the store and the scan
+alone, never of an earlier failure: an SAE exchange or a handshake that
+fails returns the station to `idle`, and the next scan decides by the
+same table, so the station never tries PSK on a BSS because SAE failed
+there. A block that allows SAE alone never joins with PSK, and one that
+requires PMF never joins without it. A block that allows both accepts a
+downgrade: an attacker in range that advertises the SSID with PSK alone
+is a candidate, and although it cannot complete the 4-way handshake
+without the PMK, the station's message 2 carries a MIC under a KCK that
+follows from the PMK, the two nonces and the two addresses ([The 4-way
+handshake](#the-4-way-handshake)), against which the attacker tests
+guesses of the passphrase offline; where the SAE password is the same
+passphrase, a right guess gives it too. That exposure is the price of
+allowing PSK, as it is under wpa_supplicant; a block of `key_mgmt=SAE`
+alone does not pay it.
+
 Joining sets `wpa_auth`, `wsec`, `auth`, `mfp` and, for a protected
 network, the station's RSN element in `wpaie`, then `join` with the BSS's
 address (`bwfm.c:1985-2060`). The station keeps the RSN element and
@@ -1034,12 +1095,25 @@ secret ever becomes an Erlang integer:
   computed in Erlang, and `crypto:sae_commit/5`, which returns PWE, that
   value times PT (`sae_derive_pwe_from_pt_ecc`, `:1158`), the scalar
   `(rand + mask) mod r` and the element, the negation of `mask x PWE`
-  (`:1298-1384`), for `rand` and `mask` drawn below the group's order
-  from `crypto:strong_rand_bytes/1`; sent with status 126,
-  hash-to-element (`ieee802_11_defs.h:233`);
+  (`:1298-1384`), for `rand` and `mask` of 32 bytes each from
+  `crypto:strong_rand_bytes/1`. The function answers `retry` when either
+  is outside 2 to `r - 1` or the scalar is below 2, and `erx_sae` draws
+  both again, as `dragonfly_generate_scalar` draws until `1 < rand, mask
+  < r` and the scalar exceeds 1 (`dragonfly.c:185-218`, called from
+  `sae_derive_commit`, `sae.c:1344-1362`); like it, `erx_sae` gives up at
+  the hundredth draw, which only a broken generator reaches, by ending
+  the station, so the domain restarts. The commit is sent with status
+  126, hash-to-element (`ieee802_11_defs.h:233`);
 * **the peer's commit** parsed and checked (`sae_parse_commit`,
   `:2203-2313`): its group 19, a scalar from 2 to `r - 1`, an element
-  that decodes onto the curve, and neither equal to the station's own;
+  of two coordinates below the prime, and neither equal to the
+  station's own. Whether the element lies on the curve is decided once,
+  by `EC_POINT_oct2point` inside `crypto:sae_key/5`, which raises
+  `badarg` for a point off it. `erx_sae` makes that call in one place,
+  the commit's step, which catches `badarg` from it alone and returns
+  the same drop as a failed parse, counted as `bad_element`; since the
+  parse has already checked every other argument, that `badarg` can
+  only be the peer's element;
   an anti-clogging token request (status 76) sends the commit again with
   the token (`ieee802_11_defs.h:199`; `:1846`);
 * **the keys**: `crypto:sae_key/5`, K's x-coordinate, `rand x (peer
@@ -1057,11 +1131,12 @@ hash-to-element in its RSNXE (bit 5, `ieee802_11_defs.h:632`) is not an
 SAE candidate: hunting-and-pecking derives its element per exchange, in
 answer to the peer, and is out of scope.
 
-**Protected management frames.** The station sets `mfp` from the
-network's RSN capabilities and its block's `ieee80211w`: required when
-either requires it, capable when both allow it, none otherwise (brcmfmac
-`cfg80211.c:2270-2295`), once the firmware answers the `mfp` variable at
-all (`feature.c:332`). An SAE join always negotiates PMF. The IGTK from
+**Protected management frames.** The station sets `mfp` to the PMF of
+[Choosing a network](#the-station)'s table, which refuses a BSS where
+PMF that either side requires cannot be had, as brcmfmac sets it from
+the same two inputs (`cfg80211.c:2270-2295`); whether the firmware
+answers the `mfp` variable at all (`feature.c:332`) is one of the
+table's inputs. An SAE join always negotiates PMF. The IGTK from
 the handshake is installed with `wsec_key` under its key id, with the
 firmware's AES-CCM algorithm code, which brcmfmac also gives an AES-CMAC
 key (`cfg80211.c:2958-2961`), and its packet number as the receive IV;
@@ -1083,7 +1158,9 @@ wpa_supplicant's format:
 * `network={ ... }` blocks with `ssid` (a quoted string or hexadecimal,
   1 to 32 bytes), `scan_ssid`, `key_mgmt` (`NONE`, `WPA-PSK`,
   `WPA-PSK-SHA256` and `SAE`, a space-separated list), `ieee80211w` (0,
-  1 or 2) and `priority`.
+  1 or 2, absent read as 0) and `priority`; a block whose `key_mgmt`
+  allows `SAE` with `ieee80211w` 0 or absent is refused, since SAE never
+  joins without PMF ([Choosing a network](#the-station)).
 
 The file holds no secret. `psk`, `sae_password` and `sae_password_id`
 are refused with the reason `{config, Line, secret_in_file}`, and the log
@@ -1104,10 +1181,12 @@ at most `wifi_networks_max` (16) networks and 4 KiB in all. They are derived
 values, so the passphrase is kept nowhere; each is still the password's
 equivalent for its SSID, and is guarded as the password would be.
 
-The blob is kept through one seam, the one the Bluetooth design gives
-its bonds: `get() -> {ok, Blob} | none` at the station's start, and
-`put(Blob) -> ok | {error, unavailable}` for each change, the blob
-replaced whole:
+The blob is kept through one seam, the vault's state slot's
+([design-system.md](design-system.md#state-slots)), which the
+Bluetooth design's bonds use too: `get() -> {ok, Blob} | none |
+{error, unavailable}` and `put(Blob) -> ok | {error, too_large |
+unavailable}`, the blob replaced whole. Both stores behind it answer
+with exactly these results:
 
 * **the target**: the vault's sealed state slot for the service `wifi`,
   a purpose of the vault whose facet returns the grantee's blob whole,
@@ -1121,7 +1200,10 @@ replaced whole:
 * **a development build, before the vault**: a file, `credentials`, in
   the WiFi domain's own directory on the data partition, replaced whole
   by write, sync and rename, as the SSH domain keeps its host key before
-  the vault ([design-ssh.md](design-ssh.md#host-keys)). It is not sealed:
+  the vault ([design-ssh.md](design-ssh.md#host-keys)); `get` answers
+  `none` when the file does not exist and `unavailable` when it cannot
+  be read, and `put` answers `unavailable` when any step of the
+  replacement fails. It is not sealed:
   a session that holds the data partition's tree, or a copy of the
   medium, reads every network's PMK and PT. That is a security residual
   that blocks release ([TODO.md](../TODO.md)), and the release manifest
@@ -1129,9 +1211,42 @@ replaced whole:
 
 What `get` returns is untrusted wherever the medium can be written:
 `erx_wifi_store` decodes it with every length checked and has a fuzz
-target. A blob that does not decode is reported as `store_unreadable` at
-`/proc` and in the log, and the station runs with no secrets; the next
-change writes a blob of only what that change holds.
+target.
+
+**The station changes only a blob it has read.** It holds the store as
+one of two values: `read`, the blob last read or confirmed with the
+secrets decoded from it, or `unknown`. It starts `unknown` and calls
+`get`:
+
+| `get` answers | The store | The station's secrets | Reason at `/proc` and in the log |
+| --- | --- | --- | --- |
+| `none` | `read`, empty | none | none |
+| `{ok, Blob}` that decodes | `read` | the blob's | none |
+| `{ok, Blob}` that does not decode | `unknown` | none | `store_unreadable` |
+| `{error, unavailable}` | `unknown` | none | `store_unavailable` |
+
+`reconfigure`, and every `secret` or `forget` while the store is
+`unknown`, calls `get` again first, by the same table, except that a
+read that leaves the store `unknown` keeps the secrets the station had;
+a change goes on only from `read`, and otherwise fails the write with
+`eio` and leaves the store as it was. So no ordinary change replaces a
+blob the station could not read: the one write that does not start from
+a read blob is `forget all`, which puts an empty blob whatever the store
+holds, the explicit way past a blob that does not decode.
+
+**Publication.** A `put` that answers `ok` is confirmed: the store holds
+the new blob, and the station's `read` value is it. Any other answer
+leaves the change unconfirmed: the medium may keep the old blob or the
+new, each complete, as for every change to the vault's files that fails
+before its checkpoint answers
+([design-system.md](design-system.md#the-vault), One owner per file),
+and as for a development file whose rename may or may not have reached
+the medium. The station then fails the write with `eio`, keeps joining
+with the secrets it had, and sets the store to `unknown`, so the next
+change reads first and starts from whichever blob the store kept.
+`too_large` takes the same path; the encoder bounds the blob to
+`wifi_networks_max` entries, whose largest encoding fits the vault's
+4 KiB, so meeting it is a bug.
 
 **Giving a secret.** Two `ctl` commands change the blob, each with
 values in `wpa_supplicant.conf`'s own syntax, read by `erx_wpa_conf`'s
@@ -1143,10 +1258,10 @@ value readers:
   ([Keys from secrets](#the-supplicant)), puts the new blob, and answers
   the write once the store has answered `ok`;
 * `forget ssid=VALUE`: the network's entry removed, answered the same
-  way.
+  way; `forget all`: every entry removed, the one change that does not
+  read first (above).
 
-A store that answers `{error, unavailable}` fails the write with `eio`
-and changes nothing. The `ctl` file is root's session's alone, so only
+The `ctl` file is root's session's alone, so only
 root gives or removes a secret, as only root edits FreeBSD's
 `/etc/wpa_supplicant.conf`.
 
@@ -1263,7 +1378,7 @@ each one step of SAE whole, taking and returning binaries:
 -spec sae_pt(Curve, U1, U2) -> PT
           when Curve :: secp256r1, U1 :: binary(), U2 :: binary(),
                PT :: binary().
--spec sae_commit(Curve, PT, Val, Rand, Mask) -> {PWE, Scalar, Element}
+-spec sae_commit(Curve, PT, Val, Rand, Mask) -> {PWE, Scalar, Element} | retry
           when Curve :: secp256r1, PT :: binary(), Val :: binary(),
                Rand :: binary(), Mask :: binary(),
                PWE :: binary(), Scalar :: binary(), Element :: binary().
@@ -1276,12 +1391,16 @@ each one step of SAE whole, taking and returning binaries:
 * `sae_pt` reduces each 48-byte hashed value modulo the prime, maps each
   by the simplified SWU map, and returns the sum of the two points;
 * `sae_commit` returns PWE, `Val x PT`, the scalar `(Rand + Mask) mod r`
-  and the element, the negation of `Mask x PWE`;
+  and the element, the negation of `Mask x PWE`; or `retry`, computing
+  nothing past the check, when `Rand` or `Mask` is outside 2 to `r - 1`
+  or the scalar is below 2, so the range decisions on the two secrets
+  are made in the NIF, never on Erlang integers;
 * `sae_key` returns K's x-coordinate, `Rand x (PeerScalar x PWE +
   PeerElement)`, or `infinity`.
 
 A point is SEC1's uncompressed form, `<<4, X:32/binary, Y:32/binary>>`;
-a scalar is 32 bytes big-endian, from 1 to the group's order less one.
+a scalar is 32 bytes big-endian, from 2 to the group's order less one;
+`sae_commit`'s `Rand` and `Mask` are any 32 bytes.
 Every point enters through `EC_POINT_oct2point`, which refuses one off
 the curve (`c_src/ec.c:739` uses it already), so no operation runs on an
 invalid point; a point not of that form, a scalar out of range, a hashed
@@ -1312,7 +1431,7 @@ and nothing in the network domain calls it.
 | **WF2.** Only `erx_blk_write` issues a command to either SD controller, and no SDIO command writes a medium | the SDIO table in `erx_blk_write`; `sdio_issue/2` and `sd_issue/2` each refuse the other kind's record | a second issuing module; an SD command on the legacy record; a CMD53 on EMMC2 | U4's build check, unchanged; host tests of both refusals |
 | **WF3.** A client never writes a register the host's state depends on, and never issues a CMD53 the wire, the function or the controller cannot carry | `erx_sdio:check/2` refuses the list whole, checking the three limits apart | a CMD52 or CMD53 write that reaches a host-owned CCCR register or a block-size register; a byte-mode CMD53 of more than 512 bytes | the host core's property test over addresses and lengths, seeded below |
 | **WF4.** No data frame passes between the chip and the network domain while the port is closed, and `wlan0`'s link is up exactly while it is open | the chip process gates both directions on the station's port; the link message is the port | a frame forwarded before the keys are in | the exhaustive station test and the fake chip's port test |
-| **WF5.** Passphrases, PMKs, PT and the PTK's KCK and KEK leave the WiFi domain only for its credential store; the installed keys reach the chip through the storage domain | the supplicant is a part of the station; `ether` carries frames, credits and a link state; the store's seam takes one blob | a secret in a message to any domain but the store's | the `ether` schema carries no key field; a build check that the network stack calls no `crypto`, unchanged. The storage domain receives the TK, GTK and IGTK as the bytes of `wsec_key`'s CMD53 writes, in its messages and memory: it is inside those keys' boundary, as the firmware is ([Security](#security)) |
+| **WF5.** Passphrases, PMKs, PT, SAE's values and the PTK's KCK and KEK leave the WiFi domain only as the store's blob, through the system domain's state facet to the vault, or to the development file; the installed keys reach the chip through the storage domain; and no report or dump of the WiFi domain carries a term its processes held | the supplicant is a part of the station; `ether` carries frames, credits and a link state; the store's seam takes one blob; `erx_wifi_report` rewrites every report of OTP's domain to names, classes and arities; the holders are `sensitive` ([Where the secrets live](#security)) | a secret in a message to any domain but along those paths; a PMK in a termination report; a station's stack in a crash dump | the `ether` schema carries no key field; a build check that the network stack calls no `crypto`, unchanged; the diagnostics test below. The system domain, the vault and the storage domain are inside the boundary of what crosses them ([Security](#security)) |
 | **WF6.** Every byte from the chip, the air or the store is parsed once, by a bounds-checked core with a fuzz target, before any decision | the cores of [The chip](#the-chip), [The supplicant](#the-supplicant), `erx_sae` and `erx_wifi_store` | a field read from an unchecked binary | the fuzz targets of [Untrusted input](#untrusted-input) |
 | **WF7.** Every attachment starts from a reset card, and nothing of an ended attachment acts on the next | `attach` runs the bring-up from the controller's reset for all and the card's I/O reset, and makes a fresh `Ref` that every `run` and notice carries | a client that meets the previous client's chip state; a list of the old attachment run on the new | the host test that a second attach after a client's death resets and refuses the old `Ref`, with the fake card |
 | **WF8.** No key is installed from a message whose replay counter, MIC, nonce, key data or RSN element check failed, and only a message authenticated by its MIC raises the replay watermark | the handshakes' checks are the only path to an install action; the watermark moves only in the accepting steps of message 3 and group message 1 | an install after a failed check; a watermark raised by message 1 | the exhaustive station test with forged and replayed messages |
@@ -1353,12 +1472,12 @@ and nothing in the network domain calls it.
 | --- | --- | --- | --- |
 | No card answers CMD5: power, pins or a missing chip | `attach` answers `no_card` | everything else | the WiFi domain logs one line naming the unknown facts and ends; the domain service's restarts bound the retries, then it stays down |
 | A command times out or the card reports an error | the step's result | the attachment, until the client acts | the chip process ends, so the WiFi domain restarts and attaches afresh |
-| A CMD53 runs slowly, up to its 1 s deadline | the SDIO host's poll | EMMC2 and its line, which never wait on the SDIO host | none needed; a deadline is a device error |
+| A CMD53 runs slowly, up to its one deadline, 1 s from its issue | the SDIO host's poll | EMMC2 and its line, which never wait on the SDIO host | none needed; a deadline is a device error |
 | The firmware fails its read-back, does not start or stops answering control | `erx_bwfm_boot`; a 2.5 s control deadline | the storage and network domains | the WiFi domain restarts, reloading the firmware |
 | A frame from the chip fails a check | the core | everything | the frame is dropped and counted; a bad header ends the read-ahead |
 | A handshake or SAE message fails a check | the core | the association, until its deadline | dropped and counted; a deadline or a deauthenticating check returns the station to `idle` |
 | A `wsec_key` is refused | the control reply | the WiFi domain | the station deauthenticates, deletes what it installed and returns to `idle` |
-| The store answers `unavailable`, or returns a blob that does not decode | the station | the configuration and the association in progress | a `secret` or `forget` fails with `eio`; an unreadable blob leaves the station with no secrets, reported |
+| The store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed | the station | the configuration, the association in progress and whatever the store holds | the store is `unknown`: a `secret` or `forget` reads again first and fails with `eio` unless the read succeeds; at the start the station runs with no secrets, reported; `forget all` alone replaces a blob that does not decode ([Credentials](#credentials)) |
 | The SDIO host faults | `erx_sdio_sup` | EMMC2, `/data` and line 126, on which the host never signalled | restarted 3 times in 60 s, then WiFi stays down until the storage domain's next start |
 | The storage domain restarts | the attachment's monitor | the network domain | the WiFi domain ends with its attachment, and its restart waits for the storage domain's facet, as at boot |
 | The WiFi domain restarts | the offer's monitor in the network domain | `genet0` and every connection on it | `wlan0`'s link ends; the new chip process offers again once its firmware runs |
@@ -1382,9 +1501,9 @@ storage domain's or a link's.
 | `sdio` `{error, {0, needs_attach}, []}` | a list after a device error, before the next attach |
 | `ether` `{error, busy}` | a second offer of a name whose link lives |
 | `ether` `{error, badarg}` | an address that is not unicast, an MTU outside 1,280 to 1,500, a credit outside 1 to 256 |
-| `ctl` `einval` | a command that is not one of the seven, `ssid` and `country` without a valid argument, or `secret` and `forget` without a valid SSID and secret |
-| `ctl` `eio` | `scan` or `ssid` while the chip is not running or no country is configured; `secret` or `forget` when the store is unavailable |
-| the station's reasons at `/proc` | `no_country`, `no_sae_ext`, `no_candidate`, `config {Line, Key}`, `config {Line, secret_in_file}`, `store_unreadable`, `join_timeout`, `sae {Status}`, `handshake {Check}`, `install_refused`, `deauth {Reason}` |
+| `ctl` `einval` | a command that is not one of the seven, `ssid` and `country` without a valid argument, `secret` without a valid SSID and secret, or `forget` without a valid SSID or `all` |
+| `ctl` `eio` | `scan` or `ssid` while the chip is not running or no country is configured; `secret` or `forget` when the store stays `unknown` after its read, or when its `put` is unconfirmed; `forget all` when its `put` is unconfirmed |
+| the station's reasons at `/proc` | `no_country`, `no_sae_ext`, `no_candidate`, `config {Line, Key}`, `config {Line, secret_in_file}`, `store_unreadable`, `store_unavailable`, `join_timeout`, `sae {Status}`, `handshake {Check}`, `install_refused`, `deauth {Reason}` |
 
 ## Untrusted input
 
@@ -1439,15 +1558,84 @@ controller's signal, so its client cannot reach the shared line. The
 network domain sees frames within credits and checks their sizes as for
 every medium.
 
-**Where the keys go.** The PMK, PT, KCK and KEK stay in the WiFi domain
-and its store. The keys the station installs, the TK, the GTK and the
-IGTK, go to the chip as the bytes of `wsec_key`'s CMD53 writes, so they
-cross the storage domain: its SDIO host has them in its messages and its
-memory while it writes them, and the storage domain is inside their
-boundary, as the firmware that uses them is. An opaque binary hides
-nothing from the domain that carries it; the storage domain is already
-trusted with the data partition, and keeps no key past the list that
-carried it.
+**Where the secrets live.** A passphrase enters from root's session,
+which holds what it writes to `ctl`. A secret leaves the WiFi domain on
+two paths only. The store's blob, every network's PMK and PT in
+plaintext, passes whole through the system domain, whose state facet
+stands in front of the vault and forwards each `get`'s reply and each
+`put`'s request ([design-system.md](design-system.md#state-slots),
+[design-domains.md](design-domains.md#facets)), and through the vault;
+in a development build it passes instead through the data partition's
+storage service to the medium. The keys the station installs, the TK,
+the GTK and the IGTK, go to the chip as the bytes of `wsec_key`'s CMD53
+writes, so the storage domain's SDIO host has them in its messages and
+memory while a list carries them, and the firmware keeps them. The
+system domain and the vault are inside every machine secret's boundary
+already, and the storage domain inside the data partition's; the blob
+and the keys add nothing to what each of them can read. Within the WiFi
+domain:
+
+| Secret | Held by | Dropped |
+| --- | --- | --- |
+| the passphrase or SAE password | the `ctl` write, in `erx_wifi_fs` and the station | once the station has derived the PMK or PT; no state holds it |
+| a saved PMK and PT | the station's state, decoded from the store's blob; the blob in the store's messages | at the network's `forget`, or the domain's end |
+| SAE's `mask` | the station, for the commit | when `sae_commit/5` returns |
+| SAE's `rand`, PWE | the station's exchange | `rand` once `sae_key/5` returns, PWE at the exchange's end |
+| SAE's K and KCK | the station's exchange | once the peer's confirm is checked |
+| the association's PMK, SAE's or the saved one | the station's association | at link down, leave or failure |
+| the pending PTK and the installed PTK, GTK and IGTK | the key slots | at link down, leave or failure, with the chip's keys |
+| the TK, GTK and IGTK as `wsec_key` bytes | the chip process, until the request's list has run | when the list has run |
+
+Dropping is not erasing. Erlang has no way to clear a term: a dropped
+binary's bytes stay in the domain's memory until the collector or the
+allocator reuses it, as for every term of the SSH domain
+([design-ssh.md](design-ssh.md#edits-to-otps-ssh)). Only the three
+functions of [OTP's `crypto`](#otps-crypto-saes-arithmetic) clear what
+they compute before they return. So the table bounds how long a secret
+is reachable from the domain's processes, not how long its bytes stay
+in memory.
+
+**What diagnostics carry.** Two rules keep secrets out of what the
+domain reports, each by construction rather than by a list of secret
+fields:
+
+* **Reports carry no term.** Every process of the WiFi domain is a
+  `proc_lib` process, as OTP's behaviours are, so every report its end
+  makes is a logger event of OTP's domain: the termination reports of
+  `gen_server` and `gen_statem` (`otp/lib/stdlib/src/gen_server.erl:2785`,
+  `gen_statem.erl:4983`), `proc_lib`'s crash report (`proc_lib.erl:954`),
+  the supervisor's error reports (`supervisor.erl:318-324`) and
+  `gen_server`'s report of a message it has no clause for, which quotes
+  the message (`:2442`). The application's start installs one primary
+  logger filter in its domain, `erx_wifi_report`, which rewrites every
+  event of OTP's domain to the process, its name, the error's class, the
+  reason's leading atom and the stack trace's modules, functions and
+  arities, and drops every other term: arguments, the last message, the
+  queue, the state and the rest of the reason. So no report carries a
+  term a process held, whichever process held it and whatever raised;
+  the network stack trims its records the same way
+  ([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives)).
+  The station's `/proc` paths and its own log lines are built from named
+  fields, none of them a secret. `sys:get_status/1` returns a process's
+  state whole, but only to a caller in the WiFi domain: from another
+  domain every `sys` call times out
+  ([design-domains.md](design-domains.md#operations-on-another-process)).
+* **Dumps omit the holders.** The station, the chip process and
+  `erx_wifi_fs` each set `process_flag(sensitive, true)` at their start,
+  so a crash dump of the domain leaves out their stacks, messages and
+  dictionaries, through which every term they hold is reached
+  (`otp/erts/preloaded/src/erlang.erl:8285-8305`;
+  `otp/erts/emulator/beam/erl_process_dump.c:233`, which skips such a
+  process's section whole), and no trace reaches them. The domain keeps
+  its crash area and its fault records as every configured domain does;
+  it does not take `ERX_DOM_SECRET`, which is the vault's alone and comes
+  with the sealing page
+  ([design-system.md](design-system.md#the-domain-library), the
+  record's `flags`). A fault record's registers may hold bytes of a key
+  in use at the fault. A development build's full crash record of the
+  system domain may hold a blob in transit, as it may hold a passphrase
+  typed at a login
+  ([design-system.md](design-system.md#risks-and-open-questions)).
 
 **The firmware** is a non-free binary run by the chip, hostile input like
 any device's: it reaches the host only through the parsers above, and an
@@ -1551,9 +1739,17 @@ code under test ran.
   polls and rearms, its register actions write `irpt_en` only as zero
   (WF11), a poll that finds the card interrupt clears it from
   `irpt_mask` and yields exactly one notice until the next `rearm`, and a
-  `run` with the previous attachment's `Ref` is refused (WF7). Seeded: an
-  attach that sets the card interrupt in `irpt_en`, and a host that
-  ignores `Ref`, each failing its property.
+  `run` with the previous attachment's `Ref` is refused (WF7). Against a
+  fake controller whose one-to-clear bits stay set until written back, a
+  3-block CMD53 polled many times per event completes with each event
+  taken once, and a snapshot that carries transfer complete and the card
+  interrupt together both completes the command and yields the notice.
+  Seeded: an attach that sets the card interrupt in `irpt_en`; a host
+  that ignores `Ref`; a poll that never writes back, which the many-poll
+  CMD53 fails as a second command complete; and a poll that writes back
+  after the wait's actions, against a fake that raises the next block's
+  buffer event as a block is moved, which the CMD53 fails at its
+  deadline; each fails its property.
 * **`erx_blk_write`'s SDIO table**: every command word it builds has the
   fields of SDIO 5.1 and 5.3, checked against OpenBSD's argument
   encoding (`sdmmc_ioreg.h:27-50`) for a table of steps; `sdio_issue/2`
@@ -1587,8 +1783,13 @@ code under test ran.
 * **`erx_sae`**: PT and PWE against Annex J.10's vectors carried in
   `common_module_tests.c:254-259, 400-497`, then a full exchange between
   two instances, then a recorded hostapd exchange with the station's
-  random values injected. Seeded: the element not negated, failing the
-  exchange's confirm.
+  random values injected; with the entropy seam giving a pair whose
+  scalar is 1 and then a valid pair, the commit sent is the valid pair's;
+  a peer commit whose element is off the curve is dropped and counted as
+  `bad_element`, and the exchange goes on to the peer's genuine commit.
+  Seeded: the element not negated, failing the exchange's confirm; and a
+  commit step that lets `sae_key/5`'s `badarg` escape, which the off-curve
+  case fails as the station's end.
 * **`erx_wifi_sta`, exhaustively.** The station is a protocol state
   machine: every sequence of its events up to a bound is explored, with
   forged, replayed and retransmitted EAPOL and SAE messages among them
@@ -1610,21 +1811,70 @@ code under test ran.
   raised at message 1, which it finds as a genuine handshake shut out;
   and group message 1 checked by message 3's rule, which it finds as a
   genuine rekey refused.
+* **Diagnostics with marked secrets.** On the host, the station, the
+  chip process over the fake chip and `erx_wifi_fs` run with
+  `erx_wifi_report` installed and a logger handler that keeps every
+  formatted event. Every secret is chosen to be found: a passphrase and
+  an SAE password of a marker pattern, a store blob holding marked PMK
+  and PT, and the entropy seam's `rand`, `mask` and nonces, from which
+  the test computes the PTK, GTK and IGTK it then searches for too. The
+  test joins, gives and forgets a secret, sends each holder a message it
+  has no clause for that carries a marked value, ends each with an
+  exception whose reason and arguments carry the marks, and halts the
+  node with a crash dump. No marked value, as bytes or as Erlang prints
+  it, is in any kept event or in the dump. Seeded: the filter left out,
+  which the termination report fails; and the station without the
+  `sensitive` flag, which the dump fails.
+* **The choice of PMF and AKM**, over every combination of its inputs:
+  the block's `key_mgmt` sets and `ieee80211w`, the BSS's AKMs, MFPC and
+  MFPR and hash-to-element bit, `sae_ext` and the `mfp` answer, and
+  which of PMK and PT the store holds. The properties: the AKM chosen is
+  allowed by the block, offered by the BSS and has its own secret; PMF
+  that the block or the BSS requires is never `none`; SAE is never
+  chosen with PMF `none`; a block that allows SAE alone never yields
+  PSK; and the choice is the same before and after any sequence of
+  failed exchanges, which the exhaustive station test checks with an SAE
+  exchange that fails and a rescan. Seeded: a block's `ieee80211w` 2
+  read as 1, which the property finds as a join with no PMF to a BSS
+  without MFPC; a candidate test by the SSID's secret instead of the
+  AKM's, which it finds as SAE chosen with only a PMK stored; and a
+  station that falls back to PSK after a failed SAE exchange, which the
+  station test finds.
 * **`erx_wpa_conf`**: the subset parsed, every refusal with its line, a
-  `psk` line refused as `secret_in_file`. Seeded: an unknown network key
-  ignored, and `psk` taken, each failing its refusal test.
+  `psk` line refused as `secret_in_file`, a block of `key_mgmt=SAE`
+  without `ieee80211w` refused. Seeded: an unknown network key ignored,
+  and `psk` taken, each failing its refusal test.
 * **`erx_wifi_store`**: a blob of 16 networks round-trips; a truncated
   blob, an entry whose length runs past the blob, and a blob over 4 KiB
   are refused whole. Seeded: a decoder that trusts an entry's length,
   which the overrunning entry fails.
+* **The station's store**, against a fake store that answers each call
+  as a test scripts it, and against the development file over a fake
+  data tree that fails a chosen step: a start whose `get` answers
+  `unavailable`, then a `secret` whose read succeeds, puts the stored
+  networks with the new one; a start that reads a blob that does not
+  decode refuses `secret` and `forget` with `eio` and leaves the blob as
+  it was, and `forget all` then replaces it; a `put` whose rename reached
+  the medium but whose answer is `unavailable` fails the write with
+  `eio`, and the next `secret` reads first and keeps the network the
+  failed change added. After every confirmed change and every read, the
+  station's secrets are what the store's `get` returns. Seeded:
+  `unavailable` at the start read as `none`, which the first case finds as a put that
+  drops the stored networks; and a station that keeps its pre-put blob
+  after an unconfirmed `put`, which the rename case finds as the failed
+  change's network gone after the next `secret`.
 * **The crypto edit**: `sae_pt/3` and `sae_commit/5` against Annex
   J.10's PT and PWE; `sae_key/5` of two parties, each fed the other's
   commit, gives both the same K; `sae_commit/5`'s scalar equals
-  `(Rand + Mask) mod r` computed independently in the test; off-curve
-  points, out-of-range scalars and hashed values of the wrong length
-  raise `badarg`. Seeded: the oct2point check skipped, which the
-  off-curve case fails, and the element not negated, which the
-  two-party K fails.
+  `(Rand + Mask) mod r` computed independently in the test;
+  `sae_commit/5` answers `retry` for `Rand` 2 with `Mask` `r - 2`, whose
+  scalar is 0, and with `Mask` `r - 1`, whose scalar is 1, and for a
+  `Rand` of 1 or `r`, and returns a commit for `Rand` 2 with `Mask` 2;
+  off-curve points, out-of-range scalars and hashed values of the wrong
+  length raise `badarg`. Seeded: the oct2point check skipped, which the
+  off-curve case fails; the element not negated, which the two-party K
+  fails; and the scalar's check against 2 removed, which the zero and
+  one cases fail.
 
 **Differential against independent implementations.** wpa_supplicant
 2.12 and hostapd 2.12, run unmodified on the FreeBSD x86-64 test host
@@ -1682,7 +1932,8 @@ WiFi under load. QEMU has no WiFi device for any machine.
 * Erlang: `erx_sdio`, `erx_sdio_card`, `erx_sdio_host` and
   `erx_sdio_sup` in `erx_blk`; `erx_wifi` with `erx_bwfm` and its cores,
   `erx_wifi_station`, `erx_wifi_sta`, `erx_wpa_key`, `erx_wpa_kdf`,
-  `erx_sae`, `erx_wpa_conf`, `erx_wifi_store` and `erx_wifi_fs`;
+  `erx_sae`, `erx_wpa_conf`, `erx_wifi_store`, `erx_wifi_fs` and
+  `erx_wifi_report`;
   `erx_ether` and
   `erx_net_ether` in `erx_net`.
 * The dependency table: the Cypress CYW43455 firmware, NVRAM and CLM
@@ -1760,7 +2011,7 @@ second member, enabling the card interrupt's signal, as OpenBSD's host
 does (`sdhc.c:803-812`). It saves the poll's latency and its wakeups.
 But every round of storage's line would then wait for the SDIO host's
 answer, so the host would owe the line a bounded answer while a CMD53
-may take up to 1 s (SDIO 6.2, p.39), servicing line notices between its
+may run until its 1 s deadline, servicing line notices between its
 polls of a transfer; and a host that ended with the signal enabled and
 the card's level asserted would hold the line for EMMC2's process to
 find empty at every firing, so a surviving process of the storage
@@ -1842,9 +2093,9 @@ reaches GPIO 34 to 39 (*BCM2711 ARM Peripherals*, 5.3, p.77).
    after the checkpoint; the vault parses nothing of the blob and bounds
    its size. The Bluetooth design keeps its bonds in the same purpose,
    through the same `get` and `put` seam with a development file behind
-   it; WiFi takes that seam
-   unchanged, with a blob of at most 4 KiB, Bluetooth's bound, so one
-   mechanism serves both and the decision is settled once for both. The
+   it; WiFi takes the slot's `get` and `put` with the slot's results,
+   with a blob of at most 4 KiB, Bluetooth's bound, so one mechanism
+   serves both and the decision is settled once for both. The
    alternatives the Bluetooth design weighs, a purpose that knows each
    service's records or a seal-and-open purpose over a file the service
    keeps itself, would each need a WiFi variant too. Until the vault has
@@ -1906,9 +2157,13 @@ BSD-3-Clause:
 | --- | --- |
 | `src/common/sae.c` | `1659342bbfd2ed5b0fa496cbe1feb67bbd1fff5bcd7c313724bbb140a90d8bb8` |
 | `src/common/sae.h` | `11a600cf2e26ab6068ae494a3a81453f083d766f5915338902df047bc4251392` |
+| `src/common/dragonfly.c` | `e6bc9cc23f21836069941cb80b9ff3d3b93ac192e3af4abcf041b8b40b425eb2` |
 | `src/common/wpa_common.c` | `215b2e978ef630124f0b04cde551137b26bc29d625a58c2e63582474af81d48a` |
 | `src/common/ieee802_11_defs.h` | `cfb1b7760c209b3b2d2fe60faebb2034a0e7e19574bc3f8a0f7a726eb38629ab` |
 | `src/common/common_module_tests.c` | `e3879a57df7f7406bdd0c95586657a9067661b06f19889f8c03198e2694bde8c` |
+| `wpa_supplicant/wpa_supplicant.c` | `38711194c4e60c05244e863cecff6acd13351a871eac46411662ef3291025364` |
+| `wpa_supplicant/events.c` | `18ced492b8a1057b2ccdbf9893e5fc47e73ec161875eb4ae6bb3d5ffdc2b5596` |
+| `wpa_supplicant/config_ssid.h` | `34b01fa370d19eba854d3a9764493fed32bd4ac6a84e548a130cf0f8b84c6ed5` |
 
 **SD Specifications Part E1, SDIO Simplified Specification version
 3.00**, 2018-07-25, SD Card Association
