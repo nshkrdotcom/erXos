@@ -834,7 +834,7 @@ within about 20 percent of the length, write plain code.
   record checks, the pipe reader page, the pipe protocol frames, the
   line discipline's input and `termios` checks, the tty's messages between
   domains, the per-byte primitives, the host tool's decoder, the draw
-  protocol decoder and its C twin, the image `Y` decoder, the `wctl`
+  protocol decoder and its C twin, the image `Y` decoder, the PNG reader and its inflate, the `wctl`
   grammar, the terminal emulator's control sequences and OSC 8 links, the
   widget tree validator and every `ui.txt` reader, the input event
   validator, virtio-gpu responses and virtio-input events, the touch,

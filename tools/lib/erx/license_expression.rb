@@ -19,6 +19,7 @@ module Erx
     # asn1 directory alone in config/provenance/import-notices.json.
     PERMISSIVE = %w[BSD-2-Clause BSD-3-Clause MIT ISC 0BSD Apache-2.0 Zlib
                     BSL-1.0 Unicode-3.0 Unicode-DFS-2016 LicenseRef-DJB-public-domain
+                    LicenseRef-misc-fixed-public-domain
                     LicenseRef-RSA-PKCS3 LicenseRef-RSA-PKCS5v2-0].freeze
     # Licenses that cover font data only. A caller that states its input's OFL-1.1 content is
     # font data (font_data: true) has them admitted for that input alone, as grants that are
