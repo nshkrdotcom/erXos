@@ -318,6 +318,31 @@ class ProductionImageTest < Minitest::Test
     assert_match erlang.fetch(:pattern), "1> #{eshell}"
   end
 
+  # The tracer's case reads the workload's pid as the shell and the trace print it, <D.N.S>
+  # with the system domain's id, local pids included (docs/design-runtime.md, "Connections
+  # in ERTS"). These are lines of a real transcript; the trace line comes after the line
+  # editor's redraw. A pid of stock OTP's form, or of another domain, is refused.
+  def test_the_tracer_case_reads_the_workload_pid_with_the_system_domain_id
+    run = Erx::ProductionImage::Run
+    trace_in = "    0.389727374 erts in pid=<4.158.0> domain=4 mfa=prim_eval:receive/2 [runtime]\r\n"
+    redraw = "(system@erxos)3> #{"\b" * 17}\e[J"
+    verify = run.trace_checkpoints(machine: DEVELOPMENT).find { |point| point.fetch(:name) == 'trace-workload-in' }.fetch(:verify)
+    verify.call(redraw + trace_in)
+    ['<0.158.0>', '<5.158.0>'].each do |pid|
+      assert_raises(Erx::Error) { verify.call(redraw + trace_in.sub('<4.158.0>', pid)) }
+    end
+
+    serial = ["    0.360240250 kernel unsupported [kernel]\r\n", "{workload,<4.158.0>}\r\n",
+              "    0.389318458 backend wake result=ok slot=5 cpu=unknown thread=11 space=1 [liberx trace]\r\n",
+              "    0.389327750 backend park deadline=18446744073709551615 slot=5 cpu=unknown thread=11 space=1 [liberx trace]\r\n",
+              trace_in,
+              "    0.419028416 backend wake result=ok slot=5 cpu=unknown thread=8 space=1 [liberx trace]\r\n"].join
+    assert_equal [], run.trace_problems(serial)
+    ['<0.158.0>', '<5.158.0>'].each do |pid|
+      assert_includes run.trace_problems(serial.gsub('<4.158.0>', pid)), 'the shell printed no {workload, Pid}'
+    end
+  end
+
   # The kernel records boot types erl at the command shell, each collector in turn at the
   # Erlang shell, and the summary last. No selector takes the echo of its own typed line,
   # nor the shell's redraw of it, both lines of a real transcript, and the summary's line

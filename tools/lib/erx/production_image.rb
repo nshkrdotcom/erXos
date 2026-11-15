@@ -1131,14 +1131,17 @@ module Erx
       # a message sent to the workload, then the workload's first erts in, not late; then
       # the trace is stopped. Each checkpointed trace line is checked whole; the shell's
       # line editor may redraw its prompt and pending input, ending in ESC [J, before a
-      # line another process writes. Run#trace checks the rest on the serial log
-      # (trace_problems).
+      # line another process writes. The workload's pid prints as <D.N.S> with the system
+      # domain's id, 4, as every pid prints on erXos (docs/design-runtime.md,
+      # "Connections in ERTS"). Run#trace checks the rest on the serial log (trace_problems).
       TRACE_START = 'W=spawn(fun F()->receive _->F() after 20->F() end end),' \
                     "{ok,R}=erx:trace(\#{select=>[W],kernel=>true}),{workload,W}.\r"
       TRACE_SEND = "W!hello,sent.\r"
       TRACE_STOP = "erx:trace_stop(R),trace_stopped.\r"
       TRACE_REDRAW = '(?:[^\n]*\e\[J)?'
       TRACE_TIME = "\\A#{TRACE_REDRAW} *[0-9]+\\.[0-9]{9}".freeze
+      TRACE_DOMAIN = 4
+      TRACE_PID = "<#{TRACE_DOMAIN}\\.[0-9]+\\.0>".freeze
       def self.trace_checkpoints(machine:)
         boot = Qemu.boot_transcript(memory_mib: machine.memory_mib).map do |point|
           point.fetch(:name) == 'development-warning' ? point.merge(type: ERL_LINE).freeze : point
@@ -1149,7 +1152,7 @@ module Erx
          console_point('trace-unsupported', / kernel unsupported /n,
                        whole: /#{TRACE_TIME} kernel unsupported \[kernel\]\r*\n\z/n, type: TRACE_SEND),
          console_point('trace-workload-in', / erts in /n,
-                       whole: %r{#{TRACE_TIME} erts in pid=<0\.[0-9]+\.0> domain=4 mfa=[^ ]+ \[runtime\]\r*\n\z}n,
+                       whole: %r{#{TRACE_TIME} erts in pid=#{TRACE_PID} domain=#{TRACE_DOMAIN} mfa=[^ ]+ \[runtime\]\r*\n\z}n,
                        type: TRACE_STOP),
          console_point('trace-stopped', /\A(?:[^\n]*\e\[J)?(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?trace_stopped\r*\n\z/n)].freeze
       end
@@ -1161,7 +1164,7 @@ module Erx
       def self.trace_problems(serial)
         lines = serial.b.lines
         unsupported = lines.count { |line| line.include?(' kernel unsupported [kernel]') }
-        workload = serial.b[/\{workload,(<0\.[0-9]+\.0>)\}/n, 1]
+        workload = serial.b[/\{workload,(#{TRACE_PID})\}/n, 1]
         traced = lines.filter_map { |line| line[/ erts [a-z_]+ pid=(<[0-9.]+>) /n, 1] }.uniq
         on_time_in = / erts in pid=#{Regexp.escape(workload.to_s)} .*\[runtime\]\r*$/n
         [("#{unsupported} unsupported lines, not one" unless unsupported == 1),

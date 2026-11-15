@@ -1897,6 +1897,10 @@ it; git history is the record of completed work.
   identity tests are spelled `.raw == ERX_CAP_NULL` and `a.raw == b.raw`, and pipe.c keeps a file-local `cap_null`;
   have `abi_emit_c.rb` emit a typed null and `erx_cap_is_null` and `erx_cap_same` beside `struct erx_cap`, so `.raw`
   appears only where a handle arrives as an integer (registers, Erlang terms, a service request).
+* [Low] the system domain's id (`include/erx/dom.h` `ERX_DOM_SYSTEM_ID`): written by hand in C and copied into Ruby
+  as `MediumBoot::SYSTEM_DOMAIN_ID` (kept in step by `medium_boot_test.rb`), `CodeCommands::SYSTEM_DOMAIN`,
+  `reload_guest.rb` and `ProductionImage::Run::TRACE_DOMAIN`. Make it a row of `abi/erx_abi.txt`, generate the
+  define, and read it in Ruby through `Erx::ABI`, so no copy can drift.
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network
