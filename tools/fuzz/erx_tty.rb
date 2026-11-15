@@ -7,7 +7,7 @@ require 'optparse'
 require 'tmpdir'
 require_relative '../lib/erx/generated'
 
-# The fuzz target of erx_tty's set/2, size/3 and input/2, the line discipline's
+# The fuzz target of erx_tty's set/2, size/3 and input/3, the line discipline's
 # readers of a program's termios, a master's window size and its bytes, and of
 # erx_abi_termios's decode/1, the program protocol's reader of a struct termios
 # (docs/design-live.md, "The tty"). The two modules are compiled from source,
@@ -37,6 +37,17 @@ module ErxTtyFuzz
     'the echo bound' => Seed.new(module_file: 'erx_tty.erl', text: '            emit(Bytes, Actions, Tty1);',
                                  broken: '            {[{echo, Bytes} | Actions], Tty1};',
                                  property: 'echo_over_bound'),
+    # A bound of each call's own in place of the room the owner gives.
+    'the room across calls' => Seed.new(module_file: 'erx_tty.erl',
+                                       text: 'keys(Bytes, [], Tty0#tty{echo_room = Room})',
+                                       broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096})',
+                                       property: 'echo_over_bound'),
+    # A dropped piece of echo drops the rest of the call's, so how input is
+    # cut into calls changes what is echoed.
+    'the whole-piece drop' => Seed.new(module_file: 'erx_tty.erl',
+                                       text: "emit(_, Actions, Tty) ->\n    {Actions, Tty}.",
+                                       broken: "emit(_, Actions, Tty) ->\n    {Actions, Tty#tty{echo_room = 0}}.",
+                                       property: 'chunked_differs'),
     # Input that goes on past a signal key.
     'the stop at a signal key' => Seed.new(module_file: 'erx_tty.erl',
                                            text: '{[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};',

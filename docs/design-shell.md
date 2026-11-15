@@ -834,7 +834,9 @@ protocol](#the-terminal-relays-protocol):
   order the writes arrive, so one program's output and error streams
   interleave as it wrote them and two programs' as they arrive. The relay
   holds at most 4 KiB for the master, and a write takes only what room there
-  is. A program that writes faster than the terminal, or to a session that is
+  is. The line discipline's echo takes the same room, and is dropped when
+  there is none, as FreeBSD drops echo its output queue cannot take
+  ([design-live.md](design-live.md#the-tty)). A program that writes faster than the terminal, or to a session that is
   not connected, waits for room with no request outstanding, so a signal
   interrupts it as on a UNIX terminal
   ([design-programs.md](design-programs.md#the-terminal)), and nothing piles up
@@ -1813,7 +1815,7 @@ the line discipline's `flush_output`, and the relay drops what it holds
 for the master, so `Ctrl-C` discards waiting output before the shell or
 the console has acted.
 
-**A signal suspends a job's input.** `erx_tty:input/2` stops after a key
+**A signal suspends a job's input.** `erx_tty:input/3` stops after a key
 that makes a signal and returns, beside what to do, the bytes it did not
 take ([design-live.md](design-live.md#the-tty)), as FreeBSD's
 `ttydisc_rint` takes one byte per call and, at a signal's key, flushes,
@@ -1825,8 +1827,8 @@ carries out such a stop in the step that took the input, in this order:
    a job holds the terminal it parks the job's armed `read` and `in`
    waits.
 2. It sends the event as above.
-3. It passes the bytes after the key to `input/2` again, until none is
-   left. They wait in the tty.
+3. It passes the bytes after the key to `input/3` again, with the room
+   the echo left, until none is left. They wait in the tty.
 
 **One count per shell.** A signal's key reaches a command shell by one
 of two routes, and the relay counts it on either. While a job holds the

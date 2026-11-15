@@ -24,9 +24,13 @@ cooked line keeps one byte free for its end, so a line holds at most 4,095
 bytes and its end. A byte that does not fit is dropped and counted, with a
 bell when IMAXBEL is set, as ttydisc_rint drops a byte when nothing can be
 read (tty_ttydisc.c:1220-1236); the relay cannot hold back its master, so
-it drops in every case. One call echoes at most ?MAX_ECHO bytes and drops
-the rest, as FreeBSD drops echo its full output queue cannot take, so a
-chunk of VREPRINT keys cannot make megabytes of echo.
+it drops in every case. Echo goes to the master with a program's output,
+so it takes the room the owner has for the master, which input/3 is given
+as output/3 is: a piece of echo that does not fit what is left is dropped
+whole, as FreeBSD's ttydisc_echo_force puts echo in the output queue
+through ttyoutq_write_nofrag (tty_ttydisc.c:724-760, tty_outq.c:322-334).
+So a master that does not read gets no more echo than that room, however
+its input is cut into calls.
 
 A reader waits before it reads. read_wait/3 and poll_wait/2 register a
 waiter for an open, and the tty reports `{ready, Open}` once, when the
@@ -54,7 +58,7 @@ have nothing to act on, since a master reports no breaks or parity errors
 and takes no flow control.
 """.
 
--export([new/0, termios/1, set/2, winsize/1, size/3, input/2, output/3,
+-export([new/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
          read_wait/3, poll_wait/2, cancel/2, timer/2, read/3, status/3,
          hangup/1, waiting/1, dropped/1]).
 -export_type([tty/0, termios/0, open/0, timer/0, action/0]).
@@ -68,9 +72,6 @@ and takes no flow control.
 %% FreeBSD prints a status line only with this much room
 %% (sys/kern/tty.c:2057-2062).
 -define(STATUS_ROOM, 256).
-%% The most one input/2 echoes; FreeBSD drops echo that finds its output
-%% queue full (ttyoutq_write_nofrag), and this bounds what a chunk can make.
--define(MAX_ECHO, 16384).
 %% Erlang has no escape for BEL.
 -define(BELL, 7).
 
@@ -116,8 +117,8 @@ and takes no flow control.
     serial = 0 :: non_neg_integer(),
     received = 0 :: non_neg_integer(),
     dropped = 0 :: non_neg_integer(),
-    %% The echo left to the input/2 under way, 0 between calls.
-    echo_room = 0 :: integer()
+    %% The room for echo left to the input/3 under way, 0 between calls.
+    echo_room = 0 :: non_neg_integer()
 }).
 
 -opaque tty() :: #tty{}.
@@ -295,7 +296,8 @@ last_end(Line, Tty) ->
 %%% Input
 
 -doc """
-Bytes from the master. Each goes through FreeBSD's steps in ttydisc_rint's
+Bytes from the master, with at most Room bytes of echo to give, the room
+the owner has for the master. Each goes through FreeBSD's steps in ttydisc_rint's
 order (tty_ttydisc.c:1012-1250); then every waiter whose condition now
 holds is ready, and a raw read waiting with VMIN and VTIME above 0 starts
 its timer at its first byte and keeps that deadline. It stops after a key
@@ -303,11 +305,13 @@ that makes a signal and returns the bytes after it untaken, as
 ttydisc_rint signals the foreground group before it takes the next byte
 (tty_ttydisc.c:1124-1133), so the owner acts on the signal before any
 reader is reported a byte typed after the key, and then passes the rest
-to input/2 again.
+to input/3 again, with the room the echo left.
 """.
--spec input(binary(), tty()) -> {[action()], binary(), tty()}.
-input(Bytes, #tty{received = Before} = Tty0) when is_binary(Bytes) ->
-    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = ?MAX_ECHO}),
+-spec input(binary(), non_neg_integer(), tty()) ->
+          {[action()], binary(), tty()}.
+input(Bytes, Room, #tty{received = Before} = Tty0)
+  when is_binary(Bytes), is_integer(Room), Room >= 0 ->
+    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Room}),
     Arrived = Tty1#tty.received > Before,
     {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0}),
     {merge(lists:reverse(Keyed)) ++ Settled, Rest, Tty2}.
@@ -565,8 +569,9 @@ one_character(<<_/utf8>>) -> true;
 one_character(_) -> false.
 
 %% VREPRINT and a newline, then the line again (ttydisc_reprint); nothing
-%% once the echo room is spent, so a run of them costs no more than its bytes.
-reprint(Actions, #tty{echo_room = Room} = Tty) when Room =< 0 ->
+%% once the echo room is spent. With a little room left, each walks the
+%% whole line, as FreeBSD's ttydisc_reprint does (tty_ttydisc.c:786-799).
+reprint(Actions, #tty{echo_room = 0} = Tty) ->
     {Actions, Tty#tty{reprintpos = 0}};
 reprint(Actions, Tty) ->
     {Keyed, Tty1} = case char(vreprint, Tty) of
@@ -621,13 +626,15 @@ echo(Char, Actions, Tty) ->
             {Actions, Tty}
     end.
 
-%% Every echo of a call goes through here: bytes that do not fit what is
-%% left of the call's echo room are dropped, with every echo after them, so
-%% one call echoes at most ?MAX_ECHO bytes whatever its keys render to.
+%% Every echo goes through here: a piece that does not fit what is left of
+%% the room is dropped whole and leaves the room as it was, as
+%% ttyoutq_write_nofrag drops it (tty_outq.c:322-334). The room left is
+%% then a function of what was echoed, so input fed back with the room
+%% its echo left echoes as input a byte at a time does.
 emit(Bytes, Actions, #tty{echo_room = Room} = Tty) when byte_size(Bytes) =< Room ->
     {[{echo, Bytes} | Actions], Tty#tty{echo_room = Room - byte_size(Bytes)}};
 emit(_, Actions, Tty) ->
-    {Actions, Tty#tty{echo_room = 0}}.
+    {Actions, Tty}.
 
 %% One byte for the screen: OPOST's processing for backspace, tab, newline
 %% and carriage return; ECHOCTL's caret notation for another control

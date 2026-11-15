@@ -42,10 +42,19 @@ class ErxTtyTest < Minitest::Test
                                            "            {Started, Tty2} = start_timer(Open, element(2, Waiter), Tty1),\n" \
                                            "            {Cancelled ++ Started, Tty2};",
                                    property: /interbyte_deadline/),
-    # An echo that would end exactly at the bound is dropped.
+    # An echo that would end exactly where the room ends is dropped.
     echo_short_of_its_bound: Fault.new(text: 'Tty) when byte_size(Bytes) =< Room ->',
                                        broken: 'Tty) when byte_size(Bytes) < Room ->',
-                                       property: /echo_at_its_bound/)
+                                       property: /echo_at_its_bound/),
+    # Each call starts with a fresh bound of its own, whatever room the
+    # owner has, so a chunk that a signal key cuts into calls echoes more.
+    echo_bound_per_call: Fault.new(text: 'keys(Bytes, [], Tty0#tty{echo_room = Room})',
+                                   broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096})',
+                                   property: /echo_across_calls_takes_one_room/),
+    # A dropped piece of echo drops every later one in the call too.
+    echo_dropped_after_a_drop: Fault.new(text: "emit(_, Actions, Tty) ->\n    {Actions, Tty}.",
+                                         broken: "emit(_, Actions, Tty) ->\n    {Actions, Tty#tty{echo_room = 0}}.",
+                                         property: /a_piece_that_does_not_fit_is_dropped_alone/)
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
@@ -71,6 +80,10 @@ class ErxTtyTest < Minitest::Test
   def test_an_echoed_vstatus_fails = assert_fault_fails(:vstatus_echoed)
 
   def test_an_echo_short_of_its_bound_fails = assert_fault_fails(:echo_short_of_its_bound)
+
+  def test_an_echo_bound_per_call_fails = assert_fault_fails(:echo_bound_per_call)
+
+  def test_echo_dropped_after_a_drop_fails = assert_fault_fails(:echo_dropped_after_a_drop)
 
   def test_a_restarted_interbyte_timer_fails = assert_fault_fails(:interbyte_restarted)
 

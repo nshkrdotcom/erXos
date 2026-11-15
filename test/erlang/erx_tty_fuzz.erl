@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The fuzz target of erx_tty's set/2, size/3 and input/2, the line
+%% The fuzz target of erx_tty's set/2, size/3 and input/3, the line
 %% discipline's readers of untrusted values, and of erx_abi_termios's
 %% decode/1, which reads a program's struct termios (docs/design-live.md,
 %% "The tty" and "Verification and testing"): random termios and structs,
@@ -11,10 +11,10 @@
 %% writes. Whatever arrives, nothing crashes, a valid termios is kept as
 %% given and a broken one refused, what waits stays within 4 KiB, every
 %% action is one of erx_tty's, nothing is echoed without ECHO or ECHONL but
-%% a bell, one call echoes at most 16 KiB, input fed back until none is left
-%% does what input a byte at a time does, and in raw mode with no flag that
-%% changes or takes bytes, every byte is read, still waits or was counted
-%% as dropped. The seed comes from
+%% a bell, echo fits the room the owner gives, input fed back until none is
+%% left with the room its echo left does what input a byte at a time does,
+%% and in raw mode with no flag that changes or takes bytes, every byte is
+%% read, still waits or was counted as dropped. The seed comes from
 %% make check-fuzz; a failure is error({fuzz_failure, Property, Detail}).
 
 -module(erx_tty_fuzz).
@@ -22,8 +22,6 @@
 
 -define(ROUNDS, 3000).
 -define(MAX_INPUT, 4096).
-%% The most one input/2 echoes (docs/design-live.md, "The tty").
--define(MAX_ECHO, 16384).
 %% The tables of the ABI file's termios table.
 -define(IFLAGS, erx_abi_termios:flags(iflag)).
 -define(OFLAGS, erx_abi_termios:flags(oflag)).
@@ -104,10 +102,11 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
     case rand:uniform(4) of
         1 ->
             Bytes = random_input(Termios),
-            check_chunked(Bytes, Termios, Tty),
-            {Actions, Rest, Tty1} = erx_tty:input(Bytes, Tty),
+            Room = pick([0, 1, 7, 256, 4096, rand:uniform(4097) - 1]),
+            {Actions, Rest, Tty1} = erx_tty:input(Bytes, Room, Tty),
             Taken = byte_size(Bytes) - byte_size(Rest),
-            check_input(Actions, Rest, Termios, Tty, Tty1, Bytes),
+            check_input(Actions, Rest, Room, {Termios, Tty, Tty1}, Bytes),
+            check_chunked(Bytes, Room, Termios, Tty),
             check(not Counted orelse
                       Read + erx_tty:waiting(Tty1) + erx_tty:dropped(Tty1) =:= In + Taken,
                   bytes_lost, {Termios, Bytes}),
@@ -130,9 +129,13 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
             steps(N - 1, Termios, Counted, Tty1, {Read, In})
     end.
 
-%% Input stops only after a signal key, and returns a tail of its bytes.
-check_input(Actions, Rest, Termios, Before, After, Bytes) ->
+%% Input stops only after a signal key, and returns a tail of its bytes;
+%% its echo fits its room.
+check_input(Actions, Rest, Room, {Termios, Before, After}, Bytes) ->
     check_actions(Actions),
+    Echo = iolist_to_binary([E || {echo, E} <- Actions]),
+    check(byte_size(Echo) =< Room, echo_over_bound,
+          {Termios, Room, byte_size(Echo)}),
     Taken = byte_size(Bytes) - byte_size(Rest),
     check(Taken > 0 orelse Bytes =:= <<>>, input_took_nothing, Bytes),
     check(binary:part(Bytes, Taken, byte_size(Rest)) =:= Rest,
@@ -140,46 +143,46 @@ check_input(Actions, Rest, Termios, Before, After, Bytes) ->
     Signals = length([S || {signal, S} <- Actions]),
     check(Rest =:= <<>> orelse Signals =:= 1, stopped_without_signal,
           {Termios, Bytes}),
-    Keyed = binary:part(Bytes, 0, Taken - 1),
-    check(Signals =:= 0 orelse not signals(Keyed, Before),
+    %% Only the last byte taken made a signal.
+    check(Signals =:= 0 orelse
+              not signals(binary:part(Bytes, 0, Taken - 1), Room, Before),
           went_past_a_signal, {Termios, Bytes}),
     Raw = not has(icanon, Termios),
     check(not Raw orelse erx_tty:waiting(After) =< ?MAX_INPUT, input_over_bound,
           {erx_tty:waiting(After), byte_size(Bytes)}),
     check(erx_tty:dropped(After) >= erx_tty:dropped(Before), dropped_went_back, Bytes),
-    Echo = iolist_to_binary([E || {echo, E} <- Actions]),
     Quiet = not has(echo, Termios) andalso not has(echonl, Termios),
     check(not Quiet orelse Echo =:= binary:copy(<<7>>, byte_size(Echo)),
-          echo_without_echo, {Termios, Bytes, Echo}),
-    check(byte_size(Echo) =< ?MAX_ECHO, echo_over_bound, {Termios, byte_size(Echo)}).
+          echo_without_echo, {Termios, Bytes, Echo}).
 
-%% With no reader waiting, input fed back until none is left gives the
-%% state and the actions, neighbouring echoes joined, of input a byte at a
-%% time, while that echoes no more than one call's bound. A waiting reader
+%% With no reader waiting, input fed back until none is left, each time
+%% with the room its echo left, gives the state and the actions,
+%% neighbouring echoes joined, of input a byte at a time. A waiting reader
 %% is reported once per call, after its last key, so both are cancelled.
-check_chunked(Bytes, Termios, Tty0) ->
+check_chunked(Bytes, Room, Termios, Tty0) ->
     {_, Tty1} = erx_tty:cancel(r, Tty0),
     {_, Tty} = erx_tty:cancel(s, Tty1),
-    {BytewiseActions, _} = Bytewise = fed([<<B>> || <<B>> <= Bytes], Tty),
-    Echo = iolist_to_binary([E || {echo, E} <- BytewiseActions]),
-    check(byte_size(Echo) > ?MAX_ECHO orelse fed([Bytes], Tty) =:= Bytewise,
-          chunked_differs, {Termios, Bytes}).
+    check(fed([Bytes], Room, Tty) =:= fed([<<B>> || <<B>> <= Bytes], Room, Tty),
+          chunked_differs, {Termios, Room, Bytes}).
 
 %% Whether Bytes, fed back until none is left, make a signal.
-signals(Bytes, Tty) ->
-    {Actions, _} = fed([Bytes], Tty),
+signals(Bytes, Room, Tty) ->
+    {Actions, _} = fed([Bytes], Room, Tty),
     lists:keymember(signal, 1, Actions).
 
-%% Each chunk as an owner feeds it, again on what a signal key left untaken.
-fed(Chunks, Tty0) ->
-    {Actions, Tty} = lists:foldl(fun fed_chunk/2, {[], Tty0}, Chunks),
+%% Each chunk as an owner feeds it with Room for the master: again on what
+%% a signal key left untaken, with the room the echo left.
+fed(Chunks, Room, Tty0) ->
+    {Actions, _, Tty} = lists:foldl(fun fed_chunk/2, {[], Room, Tty0}, Chunks),
     {joined(Actions), Tty}.
 
 fed_chunk(<<>>, Acc) ->
     Acc;
-fed_chunk(Chunk, {Actions, Tty}) ->
-    {More, Rest, Tty1} = erx_tty:input(Chunk, Tty),
-    fed_chunk(Rest, {Actions ++ More, Tty1}).
+fed_chunk(Chunk, {Actions, Room, Tty}) ->
+    {More, Rest, Tty1} = erx_tty:input(Chunk, Room, Tty),
+    Echoed = byte_size(iolist_to_binary([E || {echo, E} <- More])),
+    check(Echoed =< Room, echo_over_bound, {Chunk, Room, Echoed}),
+    fed_chunk(Rest, {Actions ++ More, Room - Echoed, Tty1}).
 
 joined([{echo, A}, {echo, B} | Rest]) ->
     joined([{echo, <<A/binary, B/binary>>} | Rest]);
