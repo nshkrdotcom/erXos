@@ -700,13 +700,16 @@ a program that draws through Plan 9's draw files rather than into a
 buffer its starter presents. When it reserves the program's grants
 (step 5 of [Starting a program](#starting-a-program)) the handler opens
 the window with `erx_win`, as its holder, so the window ends with the
-handler, starts a draw connection on it, and binds the connection's
+handler, starts a draw connection on it and the grant that serves the
+connection's files, and binds the connection's
 `draw` and `ctl` and the window's `kbd`, `mouse`, `wctl` and `label` at
 `/dev/draw`, `/dev/ctl`, `/dev/kbd` and the rest of the program's
 namespace, beside the session's own `/dev`, as
 [design-display.md](design-display.md#the-window-tree) ("A program's
-`/dev`") says; a later step's failure closes the window with the rest of
-what the start reserved. The window and a buffer are two ways to draw,
+`/dev`") says, each file as an entry of its own
+([design-files.md](design-files.md#a-programs-window)); a later step's
+failure refuses the start, and the window, the connection and the grant
+end with the handler, as below. The window and a buffer are two ways to draw,
 and a spec names at most one of them: one that names both is refused
 with `EINVAL`. A domain without the display's client side, and a
 display the session holds no `windows` grant on, refuse a window with
@@ -736,7 +739,9 @@ before it exits: the buffer's range is the handler's, and the pixel
 allocator frees it at its owner's exit once the lease is back
 ([design-display.md](design-display.md#the-pixel-area)); the window's
 holder is the handler, and the display ends the window when its holder
-ends. Each owner sees the handler's end on its own, in no order with the
+ends; the draw connection ends with its starter, the handler, and the
+grant of its files is linked to the handler
+([design-files.md](design-files.md#a-programs-window)). Each owner sees the handler's end on its own, in no order with the
 `'DOWN'`, so a starter that starts another program at once may find the
 range or the window still held, and its start is then refused with the
 display's errno as any start that does not fit is. Nothing waits for

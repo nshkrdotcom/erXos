@@ -4531,6 +4531,15 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   whatever the module's `read_mode/0` says, and a read that waits for a medium holds up the file's other requests.
   Build the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries) with the
   first tree that answers `helper`.
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which has
+  the client size its reads and writes by `msize`, where `docs/design-files.md`'s operation table gives 65,536 inside
+  the machine. The two size a client's transfers alike today; make the code answer the table's value, or the table
+  say 0, so one statement holds.
+* [Low] programs, `erlang/apps/erx/src/erx_prog_handler_core.erl:46-90`: the handler keeps the starter's entries with
+  their own providers (`{grant, Pid, Tree}`, `{facet, Name, Tree}`) and walks from each grant's root per request, where
+  `docs/design-files.md` ("Namespaces", "Narrowing for a program") and `docs/design-programs.md` (step 5 of "Starting
+  a program") have it clone a fid for each entry and keep `{fid, Fid}` providers. The design's `fid()` also names no
+  grant. Settle which the design means, and change the other.
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
   leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
   draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.
