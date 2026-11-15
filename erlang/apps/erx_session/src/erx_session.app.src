@@ -1,7 +1,7 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% A session's domain (docs/design-live.md, "Sessions"): the session's tty relay,
+%% A session's domain (docs/design-live.md, "Sessions"): the session's ttys,
 %% erx_session_tty, on which the command shell runs, and the pure core of the tty's
 %% side of the messages to its master, erx_tty_link; the fixed tree of the session's
 %% export, erx_session_export (docs/design-files.md, "Narrowing for a program"); and
@@ -16,7 +16,7 @@
   {vsn, "1"},
   {modules, [erx_session_app, erx_session_export, erx_session_sup, erx_session_tty, erx_ssh_dev,
               erx_tty_link]},
-  {registered, [erx_session_sup, erx_session_tty, erx_session_shell]},
+  {registered, [erx_session_sup]},
   {applications, [kernel, stdlib, erx, erx_files, erx_shell]},
   {mod, {erx_session_app, []}},
   {env, []}]}.

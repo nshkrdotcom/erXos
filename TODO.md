@@ -4410,12 +4410,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   signals the first driver's pid. So `erx_console_sup`'s restarts of a hosted console all fail at once and it gives
   up, leaving the hosted runtime without a console. Load the NIF once (`-on_load`) and let a start move the input to
   the new driver.
-* [Medium] session, `erlang/apps/erx_session/src/erx_session_tty.erl`: a restarted session console (its relay is
+* [Medium] session, `erlang/apps/erx_session/src/erx_session_tty.erl`: a restarted console tty of a session (it is
   `transient` under `erx_session_sup`) takes the `user` its predecessor started, since its config leaves `user` at
   `take` (erx_console:start_user/1); that group ends at its dead driver's exit, after which the session domain has
   no `user` and nothing restarts the console. Session domains run `-nouser`, so nothing but the console registers
   `user` there: pass `user => replace`, as the system console's start_link/0 does, with a session QEMU case that
-  kills the relay.
+  kills the console tty. While the session has no `user`, the groups of its other ttys (erx_session_tty:open/1),
+  which hold none of their own, fail at their next prompt, since `shell:prompt_width/1` asks `user` for its encoding.
+* [Medium] session and console, `otp/lib/stdlib/src/shell.erl` `prompt_width/1` (called from `group` and from
+  `prim_tty` inside a session console): every session console asks `io:getopts(user)` for its encoding, since none is
+  registered as `erx_console`, the one exception. On the line's own console that asks its own `user` group, which asks
+  the busy console back and times out after 2 s, so `getopts` returns an error that `proplists:get_value/3` crashes on;
+  on a terminal's tty it waits on the line's console, and fails once the line has hung up or crashed. Have both call
+  sites pass their own encoding to `prompt_width/2` (`prim_tty` holds `unicode`, `group` its `encoding`), extending edit
+  44 of design-runtime.md; then no session console needs `user`, and `user => none` (erx_console.erl) can go.
 * [Medium] runtime, `liberx/backend/fiasco`: the native root does not read the release's manifest: its page takes
   `erx.arg=WORD` alone, with `system_args`, `limits`, `pack_flags` and `release_addr` empty, and no archive holds
   a native root with these release files. `liberx/backend/core/boot_manifest.c` is the reader to link, and
@@ -6574,7 +6582,7 @@ to the corpus and follow rc
 * [Low] Console and lost-output lines (erx_console.erl, erx_tty_master.erl): each empty resend of a tty's next output logs one line under the system domain's own source, so a session that sends `{tty_output, Next, <<>>}` in a loop spends the system domain's 16 KiB/s log budget and drops its records. Charge the line to the session's source, or count losses in the master and log the count at most once an interval.
 * [Medium] Console and a restarted relay (erx_console.erl, erx_tty_master.erl): `erx_session_sup` restarts `erx_session_tty`, whose numbering starts again at 0, so once the master has taken an output the new tty's first output fails the checks and the session is detached for good; `add_session/2` naming a new tty keeps the old master. Reset the master when the tty changes, with a test of a relay's crash.
 * [Low] Facet limits in a create spec (erx_domain_srv.erl, `facet/1`): any positive `max_request` and `in_flight` are taken; every creator is a system-domain process, but nothing intersects them with a ceiling or the creator's own grant, as "attenuated for it" says.
-* [Low] erx_console:terminal/0 (erx_console.erl): the domain's line is a persistent_term each console writes at start, so two consoles in one runtime see the last one, and a stopped session relay leaves its name behind. Deriving the terminal from the caller's group leader would remove the shared state.
+* [Medium] erx_console:terminal/0 (erx_console.erl, erx_shell.erl `start/0`): the domain's line is a persistent_term that the line's console writes at start (the system console, or a session's console tty), and a stopped line leaves its pid behind. `erx_shell:start()` typed at an Erlang shell on another of a session's ttys, such as a terminal's (erx_session_tty:open/1), runs the new command shell on the line, not on the tty it was typed at. Deriving the terminal from the caller's group leader, whose driver is its console, would remove the shared state; settle it before `erx_term` lands.
 
 * [High] Runtime, origins (edits 58-61 of design-runtime, design-domains D18): edit 16
   wraps every message from another domain, and `gen` and `io` take call and io replies

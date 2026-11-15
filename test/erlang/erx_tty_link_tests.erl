@@ -3,7 +3,7 @@
 
 -module(erx_tty_link_tests).
 -moduledoc """
-erx_tty_link, the tty's side of the five messages, walked exhaustively: every
+erx_tty_link, the tty's side of the six messages, walked exhaustively: every
 sequence of up to ?DEPTH events, each a write (small or past the hold), the
 delivery or the loss of the master's oldest message in flight, the oldest
 timer firing, a size or the hangup. The master here takes every output and

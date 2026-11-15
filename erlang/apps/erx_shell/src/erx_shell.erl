@@ -56,8 +56,8 @@ job, and what it changed is dropped with it.
 
 The shell is the first shell of the system domain's console, which
 starts console/0 on its first group at boot and again whenever it ends
-while input may still come, and of a session's tty (erx_session_tty),
-which starts server/1 on the session's terminal in the same way. Its
+while input may still come, and of each of a session's ttys (erx_session_tty),
+which starts server/1 on that tty's terminal in the same way. Its
 terminal is a value (terminal()), whose run_shell runs another shell on a
 group of its own above it: `erl` runs the Erlang shell until that shell
 ends (erx_cmd_erl), and start/0, typed at an Erlang shell, runs another

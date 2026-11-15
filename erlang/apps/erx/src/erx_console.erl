@@ -32,9 +32,10 @@
 %% goes to the line through write/1, past prim_tty, with only a cooked tty's newline
 %% processing.
 %%
-%% A session's tty relay is a console too, of the `session` role (start_link/1, config()):
-%% the same groups on the session's raw tty, registered under a name of its own, with the
-%% tty as its driver (erx_session_tty). It has no `user` group, writes no kernel log, starts
+%% Each of a session's ttys has a console too, of the `session` role (start_link/1,
+%% config()): the same groups on that raw tty, unregistered, with the tty as its driver
+%% (erx_session_tty). Only the domain's line among them holds `user`; none writes
+%% the kernel log; each starts
 %% its first shell again whenever it ends, and at its line's hangup or end it ends every
 %% shell and stops, never halting the runtime. A shell holds its console as a terminal (terminal/1),
 %% so neither the shell nor its commands name the console they run on.
@@ -129,9 +130,12 @@
 %% What a console is started as (start_link/1). `system` is the system domain's console:
 %% it starts `user`, writes the kernel log and the system domain's log records, shows the
 %% slogan and ends the runtime when its line or its input ends. `session` is a session's
-%% tty relay (erx_session_tty): none of that; it starts its first shell again whenever it
-%% ends, and ends every shell and stops when its line hangs up or ends. Name is the name
-%% it registers.
+%% tty (erx_session_tty): none of that; it starts its first shell again whenever it
+%% ends, and ends every shell and stops when its line hangs up or ends. `name` is the
+%% name it registers, if any: a session's ttys register none. `domain_line` says whether it is
+%% its domain's line, which terminal/0 names: a session's console tty is. A
+%% `first_shell` that is a function gets the console's own terminal (terminal/1) and
+%% returns the shell, so the shell of an unregistered console can reach it.
 %% `menu` says whether a typed Ctrl-G opens the Ctrl-G menu, by default for the system
 %% console only: a session's relay reads every BEL as a byte, as a raw tty does.
 %% `owner` is the domain a pid belongs to, erx:owner/1 by default, which a host test
@@ -141,17 +145,20 @@
 %% That is the system console's mode under erx_console_sup: in a runtime started with
 %% `-user erx_console` nothing but the console registers `user` (user_sup starts no
 %% user_drv and no relay), so a registered `user` is its predecessor's. `take`, the
-%% default, keeps it: a session's console takes its domain's, and a console a host
-%% test starts leaves the group of the runtime's own driver (user_drv) alone.
+%% default, keeps it: a session's console tty takes its domain's, and a console a host
+%% test starts leaves the group of the runtime's own driver (user_drv) alone. `none`
+%% neither starts nor takes one: a session's other ttys pass it, so `user` is the line's
+%% and lives as long as the line, whichever of the other ttys end.
 -type config() :: #{role := system | session,
                     menu => boolean(),
                     principal => pos_integer(),
                     owner => fun((pid()) -> non_neg_integer()),
-                    name := atom(),
+                    name => atom(),
+                    domain_line => boolean(),
                     driver := fun((Console :: pid()) -> {ok, pid(), Terminal :: boolean()}),
                     line_owners => fun(() -> {ok, [pid()]} | {error, term()}),
-                    first_shell := first_shell() | shell(),
-                    user => replace | take}.
+                    first_shell := first_shell() | shell() | fun((terminal()) -> shell()),
+                    user => replace | take | none}.
 
 -define(DEFAULT_SIZE, {80, 24}).
 -define(MAX_SIDE, 65535).
@@ -160,7 +167,6 @@
 -define(ESC, 16#1B).
 
 -record(state, {role :: system | session,
-                name :: atom(),
                 first_shell :: first_shell() | shell(),
                 driver :: pid(),
                 %% The owners of the driver's shared lines, started before it: an owner's end is
@@ -169,10 +175,10 @@
                 %% The group the console started with, which the others return the input to:
                 %% the command shell's, or `user` with no shell.
                 base :: pid(),
-                %% The `user` group, which every console has (start_user/1): the
-                %% groups ask it the line's encoding (shell:prompt_width/1), and a session's
+                %% The `user` group (start_user/1), which a console started with `user => none`
+                %% lacks: the groups ask it the line's encoding (shell:prompt_width/1), and a session's
                 %% domain, started with -nouser, has no other.
-                user :: pid(),
+                user :: pid() | undefined,
                 tty :: prim_tty:state(),
                 size :: {pos_integer(), pos_integer()},
                 terminal :: boolean(),
@@ -232,7 +238,7 @@ Returns once the console's `user` group is registered.
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
     gen_server:start_link({local, ?MODULE}, ?MODULE,
-                     #{role => system, name => ?MODULE,
+                     #{role => system, domain_line => true,
                        driver => fun(Console) -> (driver_module()):start_link(Console) end,
                        line_owners => fun() -> line_owners(driver_module()) end,
                        first_shell => first_shell(shell_arguments()),
@@ -240,11 +246,14 @@ start_link() ->
 
 -doc """
 Starts a console as Config says, linked to the caller and registered under Config's
-name: a session's tty relay starts its own this way (erx_session_tty).
+name if it has one: each of a session's ttys starts its own this way, unregistered
+(erx_session_tty).
 """.
 -spec start_link(config()) -> {ok, pid()} | {error, term()}.
-start_link(Config = #{name := Name, first_shell := {_, _, _}}) ->
-    gen_server:start_link({local, Name}, ?MODULE, Config, []).
+start_link(Config = #{name := Name}) ->
+    gen_server:start_link({local, Name}, ?MODULE, Config, []);
+start_link(Config) ->
+    gen_server:start_link(?MODULE, Config, []).
 
 -doc """
 Runs Shell, a shell's start function as group:start/3 takes it, on a group of its
@@ -261,11 +270,11 @@ any other shell's completes nothing.
 run_shell(Shell) ->
     run_shell(?MODULE, Shell).
 
--doc "run_shell/1 on the console registered as Name.".
--spec run_shell(atom(), shell()) -> ok | {error, term()}.
-run_shell(Name, Shell = {Module, Function, Args})
+-doc "run_shell/1 on Console, a console's pid or registered name.".
+-spec run_shell(atom() | pid(), shell()) -> ok | {error, term()}.
+run_shell(Console, Shell = {Module, Function, Args})
   when is_atom(Module), is_atom(Function), is_list(Args) ->
-    gen_server:call(Name, {run_shell, Shell}, infinity).
+    gen_server:call(Console, {run_shell, Shell}, infinity).
 
 -doc """
 Writes Bytes to the console's line as they are, but for each newline, which goes out
@@ -276,24 +285,24 @@ output of a command, which is bytes, never text the console renders.
 write(Bytes) ->
     write(?MODULE, Bytes).
 
--doc "write/1 on the console registered as Name.".
--spec write(atom(), iodata()) -> ok.
-write(Name, Bytes) ->
-    gen_server:call(Name, {write, iolist_to_binary(Bytes)}, infinity).
+-doc "write/1 on Console, a console's pid or registered name.".
+-spec write(atom() | pid(), iodata()) -> ok.
+write(Console, Bytes) ->
+    gen_server:call(Console, {write, iolist_to_binary(Bytes)}, infinity).
 
 -doc """
-The terminal of this domain's line, as a shell holds it: the session's tty in a
-session's domain, the console in the system domain.
+The terminal of this domain's line, as a shell holds it: the session's console tty in
+a session's domain, the console in the system domain.
 """.
 -spec terminal() -> terminal().
 terminal() ->
     terminal(persistent_term:get({?MODULE, line}, ?MODULE)).
 
--doc "The terminal of the console registered as Name.".
--spec terminal(atom()) -> terminal().
-terminal(Name) ->
-    #{write => fun(Bytes) -> write(Name, Bytes) end,
-      run_shell => fun(Shell) -> run_shell(Name, Shell) end}.
+-doc "The terminal of Console, a console's pid or registered name.".
+-spec terminal(atom() | pid()) -> terminal().
+terminal(Console) ->
+    #{write => fun(Bytes) -> write(Console, Bytes) end,
+      run_shell => fun(Shell) -> run_shell(Console, Shell) end}.
 
 -doc """
 What a session's create spec names as its console facet, `console => facet()`: this
@@ -363,10 +372,14 @@ first_group() ->
     gen_server:call(?MODULE, first_group).
 
 -spec init(config()) -> {ok, #state{}}.
-init(Config = #{role := Role, name := Name, driver := Start, first_shell := FirstShell}) ->
+init(Config = #{role := Role, driver := Start, first_shell := First}) ->
     process_flag(trap_exit, true),
     %% A domain has one line, which terminal/0 names.
-    persistent_term:put({?MODULE, line}, Name),
+    [persistent_term:put({?MODULE, line}, self()) || maps:get(domain_line, Config, false)],
+    FirstShell = case First of
+                     Make when is_function(Make, 1) -> Make(terminal(self()));
+                     Given -> Given
+                 end,
     Console = self(),
     {ok, LineOwners} = (maps:get(line_owners, Config, fun() -> {ok, []} end))(),
     {ok, DriverPid, Terminal} = Start(self()),
@@ -383,7 +396,6 @@ init(Config = #{role := Role, name := Name, driver := Start, first_shell := Firs
                                      system -> log_ask();
                                      session -> none
                                  end,
-                           name = Name,
                            first_shell = FirstShell,
                            driver = DriverPid,
                            line_owners = LineOwners,
@@ -467,7 +479,10 @@ erlang_shell_group(_Shells) -> undefined.
 %% start_user/0 does; with one registered, what Mode, the config's `user` (config()),
 %% says. Under `replace` a registered `user` is the predecessor's, which ends with its
 %% console as a group ends at its driver's exit but may not have taken that exit yet: it
-%% is killed and its end awaited, which frees the name.
+%% is killed and its end awaited, which frees the name. Under `none` there is no `user`
+%% group of the console's own.
+start_user(none) ->
+    undefined;
 start_user(Mode) ->
     case {Mode, whereis(user)} of
         {_, undefined} ->

@@ -636,7 +636,10 @@ while the tty is connected at a console line, the UART or the host link's
 ([design-display.md](design-display.md#the-terminal)); or in the second
 tier a program that holds a pseudo-terminal's master;
 so a session's `/dev/tty` and a `/dev/pts/N` are one thing with different
-masters ([design-programs.md](design-programs.md#the-terminal)).
+masters ([design-programs.md](design-programs.md#the-terminal)). Each master
+has a tty of its own: the console's is made as the session starts, and a
+master in the session's domain asks the relay for a new one, as
+`posix_openpt` makes a pseudo-terminal.
 
 The system shell's tty lives in `erx_console` and is simpler. Programs run only
 under a session's domain (V8), so no program opens it and nothing can call
@@ -700,8 +703,10 @@ has at most one output in the console and the driver together. A master
 in another domain is heard only through the envelope of its own domain
 (D18). Once `tty_hangup` holds, the tty drops what it holds and takes every
 later write at once with nothing sent, and the relay ends every shell on
-the tty and then itself, as a UNIX session ends with its terminal's
-hangup.
+the tty and then the tty, as a UNIX session ends with its terminal's
+hangup; the session's other ttys run on. A master in the tty's own domain
+is watched, and its end is the tty's hangup, as a pseudo-terminal master's
+close is.
 
 **Many writers.** Every open may write, in any job and at any time. The owner
 serves writes in arrival order, and each writer's bytes stay in order. A write

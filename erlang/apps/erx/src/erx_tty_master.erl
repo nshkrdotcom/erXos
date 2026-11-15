@@ -3,7 +3,7 @@
 
 -module(erx_tty_master).
 -moduledoc """
-The master's side of the five messages between a session's tty and the console
+The master's side of the six messages between a session's tty and the console
 (docs/design-live.md, "Between domains", "A lost answer does not stop a tty" and
 "A stopped tty"), as a pure state machine, the twin of the tty's own core,
 erx_tty_link: each call takes one event and returns the actions it decides, in

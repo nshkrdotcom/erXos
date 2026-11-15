@@ -8,8 +8,8 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# Runs test/erlang/erx_session_tty_tests.erl, the EUnit cases of the session's tty relay
-# (erx_session_tty) with the command shell on it and a fake master, against the relay,
+# Runs test/erlang/erx_session_tty_tests.erl, the EUnit cases of a session's ttys
+# (erx_session_tty) with the command shell on them and fake masters, against the ttys,
 # erx_console and the erx_shell application compiled from source with warnings as errors
 # on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies). The shell finds
 # its commands through erx_shell's application file, copied beside the beams.
@@ -29,7 +29,7 @@ class ErxSessionTtyTest < Minitest::Test
                                        '-eval', 'halt(case eunit:test(erx_session_tty_tests, [verbose]) of ok -> 0; _ -> 1 end).',
                                        chdir: work, stdin_data: '')
       assert status.success?, output
-      assert_match(/Test passed\.|All \d+ tests passed/, output)
+      assert_match(/Test passed\.|\d+ tests passed/, output)
     end
   end
 end

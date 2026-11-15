@@ -106,7 +106,7 @@ valid({tty_output, N, B}, Outputs) when is_integer(N), is_binary(B), byte_size(B
 valid(_Term, _Outputs) ->
     false.
 
-%% A random term of depth at most Depth, biased toward the five messages' shapes.
+%% A random term of depth at most Depth, biased toward the six messages' shapes.
 term(0) ->
     leaf();
 term(Depth) ->
