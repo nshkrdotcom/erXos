@@ -85,12 +85,13 @@ module Erx
     REFERENCES = 'test/display/reference'
     PATTERN = 'display-pattern'
     # The boot script of the client's session template: the client release's applications
-    # (ReleaseFiles::RELEASE_SCRIPTS, client), the command shell and erx_session, which
-    # the template's -eval starts, and the test-only clients, erx_pattern_test and the
-    # lvgl-lease cell's erx_lvgl_lease_test and the lvgl cell's erx_kiosk_test.
+    # (ReleaseFiles::RELEASE_SCRIPTS, client), what every session boots
+    # (ReleaseFiles::SESSION_BASE), whose erx_session the template's -eval starts, and
+    # the test-only clients, erx_pattern_test, the lvgl-lease cell's erx_lvgl_lease_test
+    # and the lvgl cell's erx_kiosk_test.
     CLIENT_SCRIPT = ReleaseFiles::RELEASE_SCRIPTS.fetch('client')
-    CLIENT_APPLICATIONS = [*CLIENT_SCRIPT, 'erx_shell', 'erx_session', 'erx_pattern_test', 'erx_lvgl_lease_test',
-                           'erx_kiosk_test'].freeze
+    CLIENT_APPLICATIONS = (CLIENT_SCRIPT | ReleaseFiles::SESSION_BASE |
+                           %w[erx_pattern_test erx_lvgl_lease_test erx_kiosk_test]).freeze
     BOOT = ReleaseFiles.domain_boot('pattern', applications: CLIENT_APPLICATIONS, test: true)
     # How long the harness reads the screen after the shell's banner before it fails, and
     # how often.

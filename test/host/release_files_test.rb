@@ -270,17 +270,19 @@ class ReleaseFilesTest < Minitest::Test
   end
 
   # The app script, which the app template boots (docs/design-packaging.md, "The apps
-  # row"), starts the client side of the display and the network client, only loads
-  # asn1, crypto and public_key, holds no ssh and no command shell, and only loads
-  # erx_app, which the template's -eval starts once the ready answer brought the app's
-  # record.
-  def test_the_app_script_boots_the_client_side_and_only_loads_erx_app
+  # row"), boots what every session boots, as the session script does, starts the client
+  # side of the display and the network client, only loads asn1, crypto and public_key,
+  # holds no ssh, and only loads erx_session and erx_app, which the template's -eval
+  # starts once the ready answer brought the app's record, so an app's session has its
+  # command server and pipe server (docs/design-programs.md, "The command server").
+  def test_the_app_script_boots_the_client_side_and_only_loads_erx_session_and_erx_app
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('app')]))
     release = boot_release_file('app')
     %w[asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
-    refute_match(/\{(ssh|erx_shell|erx_session),/, release, 'an app runs no ssh daemon, shell or session tty')
-    assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_net_client,"#{VERSION}"\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/,
-                 release, 'the app script starts the client side and the network client and only loads erx_app')
+    refute_match(/\{ssh,/, release, 'an app runs no ssh daemon')
+    assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_net_client,"#{VERSION}"\},\{erx_shell,"#{VERSION}"\},
+                  \{erx_session,"#{VERSION}",load\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/x,
+                 release, 'the app script starts the client side and the network client and only loads erx_session and erx_app')
   end
 
   # A principal can run OTP's ssh daemon in its own session (docs/design-ssh.md, "Stages",

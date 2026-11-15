@@ -72,6 +72,13 @@ module Erx
     # and erx_files, whose processes erXos's kernel_sup and kernel_safe_sup start in every
     # domain (its watchdog's child, its namespace table, /tmp and /proc).
     DOMAIN_BASE = %w[kernel stdlib erx erx_files].freeze
+    # What every session boots (docs/design-programs.md, "The command server"): the base
+    # every domain boots and erx_session, the session's supervisor, with the command
+    # shell it depends on. erx_session_sup starts the session's pipe server and terminal
+    # relay, and the design places the command server under it too. Every session
+    # template's script takes it whole, the session script and the app script alike, so
+    # no session domain lacks the servers a program needs.
+    SESSION_BASE = [*DOMAIN_BASE, 'erx_shell', 'erx_session'].freeze
     # The applications the system release ships, in release order: an allow-list, so an
     # application reaches the system domain only by being named here: OTP's, the base
     # every domain boots, the applications the system domain runs, and erx_session, which
@@ -99,12 +106,12 @@ module Erx
     #   tests' domains do (MediumBoot, NativeDomain);
     # * session, a principal's session domain (docs/design-domains.md, "Principals,
     #   sessions and quotas"): the network client, whose `grant` key the session
-    #   template's arguments set; the command shell; the session's line to the web domain
-    #   (docs/design-web.md, "Views on the line"), which must be up before init's ready
-    #   report names it, so the script starts it; erx_session (DOMAIN_ONLY); and asn1,
-    #   crypto, public_key and ssh (DOMAIN_IMAGE_ONLY), which it only loads, so that a
-    #   principal can run OTP's ssh daemon in its own session (docs/design-ssh.md,
-    #   "Stages", stage 1) and no session runs ssh's supervisors unasked;
+    #   template's arguments set; the session's line to the web domain (docs/design-web.md,
+    #   "Views on the line"), which must be up before init's ready report names it, so the
+    #   script starts it; and asn1, crypto, public_key and ssh (DOMAIN_IMAGE_ONLY), which
+    #   it only loads, so that a principal can run OTP's ssh daemon in its own session
+    #   (docs/design-ssh.md, "Stages", stage 1) and no session runs ssh's supervisors
+    #   unasked;
     # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
     #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
     #   domain loads the driver of a device the manifest gives the storage domain,
@@ -130,20 +137,24 @@ module Erx
     #   name crypto, so no other domain has it on its code path. No manifest names it
     #   yet; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
-    #   "The apps row"): the client side of the display as client's, the network
-    #   client, asn1, crypto and public_key, which it only loads (with ssl and inets,
-    #   for an app's HTTPS requests, once the runtime builds them), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
-    #   which mounts the app's package at /app and starts what it declares.
+    #   "The apps row"): the client side of the display as client's without the desktop's
+    #   programs (erx_desk), the network client, asn1, crypto and public_key, which it
+    #   only loads (with ssl and inets, for an app's HTTPS requests, once the runtime
+    #   builds them), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
+    #   which mounts the app's package at /app and starts what it declares. Its .app
+    #   file names erx_session,
+    #   since the design starts a native app's program through the session's servers.
+    # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
+    # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
-                        'session' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_shell',
-                                      'erx_web_line', 'erx_session'].freeze,
+                        'session' => [*SESSION_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_web_line'].freeze,
                         'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
-                        'app' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
+                        'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
                                   'erx_net_client', 'erx_app'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime

@@ -414,7 +414,10 @@ board's source does not hold and the build record lists:
   interpreter image, which links `crypto`
   ([design-crypto.md](design-crypto.md#three-runtime-images-and-openssl-in-two-of-them)),
   whose release boots the domain release's `app`
-  script (the base every session boots, the client side of the display,
+  script (the base every session boots, which holds `erx_session` and
+  the command shell it depends on
+  ([design-programs.md](design-programs.md#the-command-server)), the
+  client side of the display,
   `erx_memdraw`, `erx_win` and `erx_ui`, the network client
   `erx_net_client`, OTP's `asn1`, `crypto`, `public_key`, `ssl` and
   `inets`, which it only loads, for an app's HTTPS requests
@@ -1128,7 +1131,9 @@ with a display, and saves screendumps, as Doom's `run.rb boot` did.
 ### Starting an app
 
 `erx_app`, an application of the `app` release, does nothing until the
-ready answer brings the app's record. Then it:
+ready answer brings the app's record. It depends on `erx_session`, whose
+command server starts a native app's program, so it starts only once
+that server serves. Once the record has come, it:
 
 1. mounts `/app` from the record ([An app's session](#an-apps-session));
 2. for an Erlang app, adds each `/app/lib/*/ebin` at the end of the code

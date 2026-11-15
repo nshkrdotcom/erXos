@@ -23,7 +23,9 @@ it; git history is the record of completed work.
   stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
   and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and refuses every
   `package` row. What remains, each with its seeded violation: the rows derived from `apps` (the app
-  template, booting the domain release's `app` script with `-eval ok=application:start(erx_app, permanent)`,
+  template, booting the domain release's `app` script with
+  `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
+  `erx_app` depends on `erx_session`,
   its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
   storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
   from the start table, and the app session below; clause 4, which needs
@@ -3657,6 +3659,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   facet mount that fails, of `/data`, `/apps` or `/machine`, fails the `ok =` match and ends
   the session's start, where the session could start without that path and refuse the
   commands that need it with `enoent`.
+* [Medium] session start, the session templates' `-eval` (`config/manifest/development.txt`,
+  `tools/lib/erx/apps.rb` `TEMPLATE_ARGS`, `tools/lib/erx/display_domain.rb` `CLIENT`):
+  `application:start(erx_session)` starts it `temporary`, where docs/design-programs.md ("The
+  command server") has every session start it permanent, so the command server's end ends the
+  session's domain; as it is, that end leaves a live domain that starts no program. Start it
+  with `application:start(erx_session, permanent)` and check the QEMU session cells.
 * [Medium] the system domain's own grants, `erlang/apps/erx_files/src/erx_fs_grants.erl`
   (`own/1,2`), `erx_machine_fs:start_link/0` and `erx_starter_fs:start_link/1`: the own grant
   is a temporary child of the grants supervisor, so one that ends alone, at its heap bound for
