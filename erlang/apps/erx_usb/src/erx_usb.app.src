@@ -3,12 +3,13 @@
 
 %% The USB stack (docs/design-usb.md). Its pure cores build and are tested on the host:
 %% erx_hid_desc, the HID report descriptor's parser; erx_hid_core, the fold of reports into input
-%% records; erx_usb_desc, the descriptor decoder; erx_usb_claim, the claim table; and erx_usb_hub_core,
-%% a hub function's status pipe and the hub status decoders.
+%% records; erx_usb_desc, the descriptor decoder; erx_usb_claim, the claim table; erx_usb_hub_core,
+%% a hub function's status pipe and the hub status decoders; and erx_usb_bus_core,
+%% the bus process's topology of hubs, ports and devices.
 {application, erx_usb,
  [{description, "erXos USB stack"},
   {vsn, "1"},
-  {modules, [erx_hid_core, erx_hid_desc, erx_usb_claim, erx_usb_desc, erx_usb_hub_core]},
+  {modules, [erx_hid_core, erx_hid_desc, erx_usb_bus_core, erx_usb_claim, erx_usb_desc, erx_usb_hub_core]},
   {registered, []},
   {applications, [kernel, stdlib, erx]},
   {env, []}]}.

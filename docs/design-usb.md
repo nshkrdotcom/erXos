@@ -1279,13 +1279,15 @@ the function, and a medium's windows end with its block service.
 
 ### Ports, hubs and devices: the bus core
 
-`erx_usb_bus_core:step(Event, State) -> {Actions, State}` holds the
-whole topology. Its state is a map of hubs, the root hub among them, each
+`erx_usb_bus_core:step(Event, Now, State) -> {Actions, State}` holds the
+whole topology; `Now` is the time the event is handled at, from which
+the step sets its deadlines. Its state is a map of hubs, the root hub among them, each
 with its ports and its pending change set, and of devices, each with its
 place in the tree (the route of port numbers from the root), its speed,
 its reference, its enumeration state, its configuration and its
-functions, and the **address-zero turn**: the one port, or none, that is
-between the start of its reset and its device's address.
+functions; the **address-zero turn**, the one port, or none, between the
+start of its reset and its device's address, follows from the ports'
+states.
 
 Each port is in one of these states. A **connection change** reported
 for a port in any state first detaches the port's occupant, if it has
@@ -1298,7 +1300,7 @@ only the other ways out:
 
 | Port state | Meaning | Leaves on, besides a connection change |
 | --- | --- | --- |
-| `off` | not powered | power on: `empty`, with its status read once the hub's power-good time has passed |
+| `off` | not powered | the bus core's power-on request, one port of the hub at a time: `empty`; no port of the hub has its status read until the hub's power-good time has passed since the last port's answer |
 | `empty` | powered, nothing connected | |
 | `settling` | connected; waiting FreeBSD's power-up delay, 300 ms | the deadline: `waiting` |
 | `waiting` | settled; waiting for the address-zero turn, in arrival order | the turn: `resetting` |
@@ -1322,7 +1324,11 @@ The **address-zero turn** keeps one device at a time in the default
 state, where every device answers address zero: a port takes the turn
 when it starts its reset and gives it back when the controller has
 assigned its device's address or the attempt has failed, and the next
-`waiting` port takes it. On xHCI the controller sends SET_ADDRESS itself
+`waiting` port takes it. The turn is no field of its own: the port that
+holds it is the one in `resetting`, `recovering`, or `enumerating` before
+its Address Device is answered, and a `waiting` port is granted it only
+when no port is in those states, so a port that leaves them by any path,
+its hub's detach included, has given the turn back. On xHCI the controller sends SET_ADDRESS itself
 during Address Device (xHCI 4.3.4, p. 89); the turn still serializes
 the resets, since two devices reset behind one hub would both answer
 address zero.
@@ -1378,11 +1384,16 @@ event:
    (xHCI 4.3.5, p. 90: the request and the command together configure
    the device).
 9. **Start.** One function process per claimed interface, each with its
-   pipes. A hub's function first powers every port, waits the hub's
-   power-good time, `bPwrOn2PwrGood` times 2 ms plus 20 ms, then reads
-   every port's status, so the bus core starts the next tier only once
-   this hub and its transaction translator are set up, as xHCI asks
-   (4.3, p. 87). A port whose status agrees with the state the bus core
+   pipes. A hub enters the bus core with every port `off`, and the bus
+   core powers it as it powers the root hub: one port-power request at a
+   time on the hub's control pipe, then the hub's power-good time,
+   `bPwrOn2PwrGood` times 2 ms plus 20 ms (`usb_hub.c:1280-1281`), from
+   the last port's answer, then every port's status. FreeBSD waits the
+   time after each port (`usb_hub.c:1470-1513`); once after the last is
+   enough, since every port's own time started earlier. So the bus core
+   starts the next tier only once this hub and its transaction translator
+   are set up, as xHCI asks (4.3, p. 87), and the hub's function only
+   transfers on its status pipe. A port whose status agrees with the state the bus core
    holds for it is left as it is, so a hub function's restart re-reads
    its ports without disturbing the devices behind them.
 
@@ -1403,7 +1414,10 @@ instance starts with its class's reset recovery for that reason
 ([The BOT engine](#the-bot-engine)).
 
 A STALL, a timeout or a malformed answer ends the enumeration as
-FreeBSD's error path does: the device is detached, the port is disabled,
+FreeBSD's error path does: the device is detached, the port is disabled
+at its hub, by ClearPortFeature(PORT_ENABLE) or a root port's enable bit
+(`usb_hub.c:827-832`), and holds the turn until the hub answers, so a
+device left in the default state never meets the next port's reset,
 and the port's inspection record keeps the step and the reason until its
 connection changes (`usb_hub.c:820-839`).
 
@@ -1428,9 +1442,12 @@ endpoint. Its report is a bitmap, bit 0 the hub itself and bit *n* port
 shorter report names every port and the hub, as FreeBSD reads none of
 the report and explores every port on any (`uhub_intr_callback`,
 `usb_hub.c:185-218`, and `uhub_explore`, `usb_hub.c:993-1090`). The function
-sends `{changed, Hub, Bitmap}` to the bus process and posts its next
-transfer only when the bus process answers `{handled, Hub}`; a report
-that names nothing posts the next transfer at once. Its first report, at
+sends `{changed, Hub, Bitmap, Pid}`, `Pid` its own, to the bus process
+and posts its next transfer only when the bus process answers
+`{handled, Hub}`; a report that names nothing posts the next transfer at
+once. The bus core keeps the pid of the report it is handling and
+answers that pid alone, and a restarted function's report replaces its
+predecessor's, so no instance ever takes another's answer. Its first report, at
 start, names the hub and every port, so each instance, a restarted one
 included, has the bus core read every port's status once. The bus core
 merges the bitmap into the hub's pending set, and for each port in it,
@@ -1446,7 +1463,8 @@ low, full, high or SuperSpeed refuses the device (`unsupported speed`);
 the port's status and changes are still read and cleared, so its
 disconnect is seen. The root hub
 works the same way: the controller process turns a port event into
-`{changed, root, [Port]}`, and a root port raises no further event until
+`{port_event, Port}`, and its port operations, register accesses of its
+own, do not fail, so one that does ends the bus with its controller; and a root port raises no further event until
 every one of its change bits is cleared (xHCI 4.19.2, p. 322).
 
 So the work a hub can create is bounded by construction: one bitmap in
@@ -1655,9 +1673,12 @@ nonblocking:
 3. `erx_device:negotiate/2`, the form's reset and install, called again
    on a timer while it answers `{error, ebusy}`
    ([Install](#install));
-4. power every root port, when the controller has port power switches,
-   and read each port's status, so the bus core starts from what is
-   connected.
+4. start the bus process with the root hub's port count; the bus core
+   powers and reads the root ports as it does any hub's, the controller
+   turning the hub's port-power request into `PORTSC`'s port power bit,
+   as FreeBSD's root hub does (`xhci_roothub_exec`, `xhci.c:3685-3687`),
+   with the power-good time of FreeBSD's xHCI root hub descriptor, 10
+   units (`xhci.c:3533`).
 
 **Ports.** The controller process answers the bus core's root-hub
 operations from each port's `PORTSC`. A write to `PORTSC` keeps its
@@ -2813,7 +2834,7 @@ targeted traces carry the longer sequences.
 
 | Test | Passes when | Seeded fault that must fail it |
 | --- | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, and a hub detached during its child's enumeration | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no action names a port that is `off` or `empty` | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, and a hub detached during its child's enumeration | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no reset names a port that is `off` or `empty`; at most one simulated device is enabled and not yet addressed | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
 | `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | the first report names the hub and every port; exactly one transfer posted or one bitmap unhandled until the function stops; every reported set is a non-empty ordset of the hub and ports within the count; bit *n* is port *n* and bits above the count are ignored; a hub port's speed follows the hub's speed | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | Reset Endpoint is issued only for a halted queue; a halt is reset once; EP0 is never in a drop or an add; an aborted control request is answered `timeout` only after Stop Endpoint and a Set TR Dequeue Pointer to the enqueue position, and EP0 then accepts the next request; a failed Address Device behind a translator with a USB Transaction Error is answered only after Disable Slot and CLEAR_TT_BUFFER, and a failed clear answers `tt_clear`; Disable Slot follows only stops that answered; new posts are refused while a reset runs | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a buffer returns only by the event that completes its transfer or by a command after which the controller holds nothing of its ring; a short data stage leaves its transfer posted until the status event; a stop's event at every place of Table 4-2 is accepted and completes nothing: after the completion of the TD it names, at a link inside a TD and between two, inside a control transfer's data stage, at the enqueue position of an idle ring and across the ring's wrap; a second event for one stop breaks the form; the enqueue position is never a link TRB; every ring has its pad; every address a plan writes lies in the record; every decision passes `erx_device_dma_check`; every built context has no streams | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
