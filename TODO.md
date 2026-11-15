@@ -1961,11 +1961,6 @@ it; git history is the record of completed work.
   none. It fails safe, by a stop; `SIG_IGN`, the usual way to get `EPIPE`, works. Keep each thread's mask in the
   program layer and hold a blocked `SIGPIPE` pending, as [Signals in liberx](docs/design-programs.md#signals-in-liberx)
   describes.
-* [Medium] programs, `kill(pid, 0)` ([The program protocol](docs/design-programs.md#the-program-protocol)): add the
-  `{probe, Target}` request to `abi/protocols/prog.txt` beside `kill`, as `case probe process_id` with
-  `reply probe_reply` and `union probe_reply` of `ok` and `error errno`; have `liberx` send it for `kill` with signal
-  0, the handler answer it from its child record and the command server's `{probe, Scope, Target}`, and the grammar
-  refuse a `kill` whose signal is 0, with the tests and seeds design-programs.md names.
 * [Medium] programs, a program's identifiers ([The startup message](docs/design-programs.md#the-startup-message)):
   the musl seam (`musl/src/internal/erxos/syscall.c`, `SYS_getpid` to `SYS_getegid`) answers every program the
   root's fixed 1, 0 and 0. Add `uid` to the startup message in `abi/protocols/prog.txt`, have the handler fill it from
