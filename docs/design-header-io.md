@@ -38,7 +38,9 @@ Decisions every reader needs:
   GPIO page sets the function and pull of every pin, the console's and
   the host link's included, and reads every pin's level. A manifest
   therefore gives the pin controller to no domain, to the system domain,
-  or to a domain that holds only such units, which property 8 of the
+  or to a domain of its own that holds only such units and serves only
+  the trees they back, with no window, facet or introduction, which
+  property 8 of the
   manifest check proves from the header map. The Pi 4's manifests give
   it to no domain, and serve no `/dev/gpio`, until run-time GPIO is built;
   its home then is a trusted domain of its own ([Decisions](#decisions)).
@@ -377,7 +379,11 @@ makes an untrusted holder safe.
 ([design-system.md](design-system.md#the-manifest)) gains a clause
 derived from the header map: a unit whose registers set the function of
 a pin that the map gives to `console` or `hostlink` is held by no domain,
-by the system domain, or by a domain that holds only such units. On the
+by the system domain, or by a domain of its own: the check refuses the
+holder if any row of the manifest names it other than such units, the
+services of the trees they back (`/dev/gpio`) and its place in the boot
+order, so a window, a facet granted to it or an introduction is refused,
+and so is a row of any other kind. On the
 Pi 4 that unit is `gpio`, the unit of the map's pin controller. The unit
 rule groups devices that share a page or a line, and so cannot see a
 control path that crosses pages; the map is where the board states that
@@ -946,8 +952,8 @@ units (property 8); a `gpio` row's `pins` outside the map's `gpio` rows;
 
 * The console's and the host link's pins are reachable only from the
   trusted base: the pin controller's unit is held by no domain, the
-  system domain or a domain holding only such units, which property 8
-  proves from the header map. Its holder, whichever domain that is,
+  system domain or a domain of its own, which no other row of the
+  manifest names, as property 8 proves from the header map. Its holder, whichever domain that is,
   joins the console's trusted base: no placement keeps a compromised
   holder from reading or taking the console's line, and `PINS` and a
   restricted SVD discipline correct driver code without limiting the

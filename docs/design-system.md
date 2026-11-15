@@ -451,8 +451,10 @@ violation fails the build with the property, the record and the field:
    ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain));
    a unit whose registers set the function of a pin that the platform
    record's header map gives to `console` or `hostlink` is held by no
-   domain, by the system domain, or by a domain that holds only such
-   units, since its holder can take or read those lines
+   domain, by the system domain, or by a domain of its own, which no
+   other row of the manifest names: it holds only such units, serves
+   only the trees they back (`/dev/gpio`), and holds no window, facet
+   or introduction, since its holder can take or read those lines
    ([design-header-io.md](design-header-io.md#the-pin-controller-and-the-console)); only
    the storage domain that serves the vault holds the vault's partition,
    and only the vault holds a facet of that domain's tree; only the

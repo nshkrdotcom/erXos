@@ -600,20 +600,69 @@ class ManifestStopgapTest < Minitest::Test
   # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
   # the console"): whoever holds the GPIO page sets the console's pin functions, so the
   # pin controller's unit, gpio, is unplaced (the shipped manifest), held by the system
-  # domain, or held by a domain that holds no other unit. The clause counts units only, as
-  # its text says, so the display domain stands in for that domain here (TODO.md, "Security
-  # residuals").
+  # domain, or held by a domain of its own, which no row names but its units on the GPIO
+  # page, the services of the interfaces they back and the boot order.
   def test_the_pin_controller_unit_is_unplaced_or_held_alone
     admit(pi_source, pi_context)
     admit(pi_source + pi_unit('gpio', 'system'), pi_context)
-    admit(pi_display_holding_nothing + pi_unit('gpio', '@domain.display'), pi_context)
+    admit(pi_source + pi_pins_domain + pi_unit('gpio', '@domain.pins'), pi_context)
   end
 
-  # The seeded violation: the display domain, which holds the framebuffer unit, given the
-  # pin controller's unit too.
+  # A domain of the Pi's manifest, pins, that holds, serves and runs nothing until a test
+  # gives it something.
+  def pi_pins_domain
+    domain = pi_source[/^domain display\n(?:  .*\n)*/]
+    refute_nil domain
+    domain.sub('domain display', 'domain pins')
+  end
+
+  # The display domain, holding no other unit once the framebuffer is the system domain's,
+  # still serves the display service of the windows interface, so it may not hold gpio.
+  def test_a_pin_controller_holder_serving_a_service_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_display_holding_nothing + pi_unit('gpio', '@domain.display'),
+            pi_context, message: /domain display .*a row of services \(display\) names it/)
+  end
+
+  # A domain holding gpio and a partition window, here a FAT window on the SD card, may
+  # not hold gpio.
+  def test_a_pin_controller_holder_with_a_window_is_refused
+    window = "window fat\n  holder @domain.pins\n  device \"/emmc2bus/mmc@7e340000\"\n  role fat\n  partition 1\n" \
+             "  rights read\n  image none\n"
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_pins_domain + window + pi_unit('gpio', '@domain.pins'),
+            pi_context, message: /domain pins .*a row of windows names it/)
+  end
+
+  # A domain holding gpio that is introduced to another, so that the other's processes may
+  # message it, may not hold gpio.
+  def test_a_pin_controller_holder_introduced_to_another_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder',
+            "#{pi_source}#{pi_pins_domain}#{pi_unit('gpio', '@domain.pins')}introduce @domain.pins @domain.display\n",
+            pi_context, message: /domain pins .*a row of introductions names it/)
+  end
+
+  # A domain holding gpio that is granted a facet of another service, here the network
+  # domain's net service, may not hold gpio: the grant is a path in from that service.
+  def test_a_pin_controller_holder_granted_a_facet_is_refused
+    facet = pi_source[/^facet net\n(?:  .*\n)*/]
+    refute_nil facet
+    grant = facet.sub('facet net', 'facet pins_net').sub(/^  grantee .*$/, '  grantee @domain.pins')
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_pins_domain + grant + pi_unit('gpio', '@domain.pins'),
+            pi_context, message: /domain pins .*a row of facets \(pins_net\) names it/)
+  end
+
+  # A session runs from a template, which is no domain row, so no session holds gpio: a
+  # unit naming a session template as its holder is refused before the clause is reached.
+  def test_a_session_holds_no_pin_controller
+    refused(Erx::Manifest::Invalid, 1, 'unit.holder', pi_source + pi_unit('gpio', '@session.system'), pi_context,
+            message: /names neither the system domain nor a configured domain/)
+  end
+
+  # A domain holding gpio and another unit, here i2c, whose registers lie off the GPIO
+  # page, may not hold gpio.
   def test_a_domain_holding_the_pin_controller_and_more_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_unit('gpio', '@domain.display'), pi_context,
-            message: /unit gpio .*display/)
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder',
+            pi_source + pi_pins_domain + pi_unit('gpio', '@domain.pins') + pi_unit('i2c', '@domain.pins'), pi_context,
+            message: /unit gpio .*domain pins .*a row of units \(i2c\) names it/)
   end
 
   # The clause finds the pin controller's units by its register page, not its path: a

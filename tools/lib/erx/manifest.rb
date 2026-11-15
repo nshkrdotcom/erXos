@@ -494,7 +494,6 @@ module Erx
         console = text(machine, 'console')
         hostlink = text(machine, 'hostlink')
         check_uarts(rows, console, hostlink)
-        check_pin_controller(rows, console, hostlink)
         unless enum(machine, 'sealing', 'seal') == @codec.member('seal', 'none')
           invalid('no sealing service exists to hold a sealing secret', 7, 'machine.sealing')
         end
@@ -504,6 +503,7 @@ module Erx
         invalid('duplicate shell principal', 5, 'shell_principals') unless shell.map { |row| row.fetch('principal') }.uniq.size == shell.size
         rows['shell_principals'] = shell.sort_by { |row| row.fetch('principal') }
         check_and_place(rows, root_memory: root_memory, baseline: baseline, max_domains: max_domains)
+        check_pin_controller(rows, console, hostlink)
         system_principal = reference(machine, 'system_principal', 'principal')
         # The system principal's sessions are root_N (erx_domain_core:session_prefix/3),
         # so a principal named root must be the system principal.
@@ -925,10 +925,14 @@ module Erx
       # the console"): whoever holds the pin controller's register page sets the function of
       # every pin, so when the board's header map gives a pin to the console or the host link,
       # a unit with a device-tree row on that page is held by the system domain or by a domain
-      # that holds only such units; an unplaced unit has no row. The units are found by the
-      # page, not by the controller's path, so a second row on the page under another path is
-      # caught too. A record without a map states no pin, and the clause is empty. Console and
-      # host link are the checked platform's (check_uarts).
+      # of its own, which no manifest row names but those units, the services of the interfaces
+      # they back and the boot order (pin_domain_row?); an unplaced unit has no row. A session
+      # template holds nothing, since holder_index resolves every holder through the domain
+      # table. The units are found by the page, not by the controller's path, so a second row
+      # on the page under another path is caught too. A record without a map states no pin,
+      # and the clause is empty. Console and host link are the checked platform's
+      # (check_uarts). It runs once every row is placed, so it sees each one that names the
+      # holder.
       def check_pin_controller(rows, console, hostlink)
         header = @context.platform['header']
         return if header.nil?
@@ -952,13 +956,51 @@ module Erx
           holder = unit.fetch('holder')
           next if holder == @codec.constant('mf_none')
 
-          other = rows.fetch('units').find { |held| held.fetch('holder') == holder && !controlling.call(held) }
+          table, other = domain_references(rows, holder).find { |name, row| !pin_domain_row?(name, row, controlling) }
           next if other.nil?
 
           domain = @indices.fetch('domain').key(holder)
           invalid("unit #{unit.fetch('name')} reaches pin controller #{controller}'s registers, which set the console's " \
-                  "and host link's pins, so its holder domain #{domain} may hold only such units, but holds " \
-                  "#{other.fetch('name')}", 8, 'unit.holder')
+                  "and host link's pins, so its holder domain #{domain} is a domain of its own, but a row of #{table}" \
+                  "#{" (#{other.fetch('name')})" if other.key?('name')} names it", 8, 'unit.holder')
+        end
+      end
+
+      # The interfaces whose trees the pin controller's units back (docs/design-header-io.md,
+      # "Holding and granting": each tree is a service of its holder), resolved against
+      # abi/services, which declares them once run-time GPIO is built.
+      PIN_CONTROLLER_INTERFACES = %w[gpio].freeze
+
+      # Whether a row naming the pin controller's holder is one the clause admits: a unit
+      # on the controller's page, a service of an interface those units back, or the boot
+      # order, which names every domain. Facets of those services name the service, not
+      # the holder, so grants to other domains pass without a row here.
+      def pin_domain_row?(table, row, controlling)
+        case table
+        when 'units' then controlling.call(row)
+        when 'services' then pin_controller_interfaces.include?(row.fetch('interface'))
+        when 'boot_order' then true
+        else false
+        end
+      end
+
+      # PIN_CONTROLLER_INTERFACES' numbers, of those abi/services declares.
+      def pin_controller_interfaces = PIN_CONTROLLER_INTERFACES.filter_map { |name| find_interface(name) }
+
+      # An interface's number, or nil when abi/services declares none of that name.
+      def find_interface(name) = @codec.schema.services.find { |service| service.fetch(:name) == name }&.fetch(:number)
+
+      # Every row that names the domain at index, as [table, row] pairs. The manifest
+      # reader's index rules into the domains table (abi/manifest.txt) list each field that
+      # holds a domain, with the tag that makes it one, so a field the ABI adds is scanned
+      # without an edit here, and a clause that admits only some rows refuses a new one.
+      def domain_references(rows, index)
+        @reader.rules.select { |rule| rule.fetch(:kind) == 'index' && rule.fetch(:table) == 'domains' }.flat_map do |rule|
+          path = rule.fetch(:path)
+          guard = rule[:guard]
+          rows.fetch(path.scope).select do |row|
+            row.dig(*path.fields) == index && (guard.nil? || row.dig(*guard.fetch(:tag).fields) == guard.fetch(:value))
+          end.map { |row| [path.scope, row] }
         end
       end
 
@@ -1317,8 +1359,6 @@ module Erx
 
         find_interface(token.value) || record.line.fail!('interface names no service abi/services declares')
       end
-
-      def find_interface(name) = @codec.schema.services.find { |service| service.fetch(:name) == name }&.fetch(:number)
 
       # An interface a check reasons from, which the ABI must declare.
       def fetch_interface(name) = find_interface(name) || raise(Erx::Error, "abi/services declares no interface #{name}")
