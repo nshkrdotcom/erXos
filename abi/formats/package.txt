@@ -12,6 +12,10 @@ limit pkg_version u16 1
 limit pkg_header_max u32 65536
 # The longest package file.
 limit pkg_bytes_max u64 1073741824
+# The most entries of the data partition's packages/ directory the package process's
+# recovery reads (docs/design-packaging.md, "Boot and recovery"); a directory with more
+# is one nothing of erXos wrote, and the recovery acts on none of it.
+limit pkg_scan_max u32 1024
 # The bounds of the packed declaration (docs/design-packaging.md, "The declaration"):
 # the services it needs, the OTP applications an Erlang app starts, a native
 # program's path under the image's bin/, its arguments (which the packer counts; the

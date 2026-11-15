@@ -34,6 +34,25 @@ it; git history is the record of completed work.
   scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
   the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
   leaving it out.
+* [High] apps, the package process at boot
+  ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
+  the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
+  and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
+  remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
+  supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
+  them; the medium module over the `packages` grant (`erx_file_remote`) and, on the stopgap, the release's
+  `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
+  `unknown`; `erx_starter:packages/2` and the start table's package rows; admission (`erx_app_admit:admit/3`)
+  and registration (`erx_principal:register_app/2`), stubbed in the tests, and the registry argument, which
+  erx_pkg reads as `erx_principal:app_registry/0`, a name the design does not give; the `apps` tree serving
+  `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
+  `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute included; and the system_domain QEMU
+  cell. Also: the recovery runs in one `handle_continue`, so `erx_pkg:packages/0` waits for it to finish and
+  a `/proc/packages` read during it times out (drive one plan step per message instead); the log lines for a
+  refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
+  mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
+  offset and size; the lifetime taken from the caller rather than the request; and whether image header
+  reads wait for the `packages` grant. The missing signature check is a security residual below.
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the
@@ -6518,6 +6537,14 @@ to the corpus and follow rc
   alone, so a tree that names another device's page under one of those strings would have the kernel drive
   that page. On the stopgap the root confirms the RNG200's checked-in platform row against the tree
   (`erx_dt_registers`); release needs the kernel's bindings confirmed against checked-in rows the same way.
+* [High] apps, the file check under `{signers, Keys}`, `erlang/apps/erx/src/erx_pkg_header.erl`
+  (`check_file/2`; [design-packaging.md](docs/design-packaging.md#the-package)): no signature is checked,
+  since no Ed25519 verifier runs on the machine; the check only requires the header's key to be a trusted
+  one, and a key is a public value, so anyone who can write the data partition can make a package accepted
+  by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
+  trusted code only; a release build must refuse every installed package until the verifier runs, and this
+  blocks release.
+
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
   `login_key` admits root's development key on the SSH domain's own

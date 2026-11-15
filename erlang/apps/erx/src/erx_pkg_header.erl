@@ -16,10 +16,12 @@ the header is zero and that the image and the tree lie end to end to the
 file's end, the tree as long as `erx_verity_tree` gives for the image. The
 file's bytes are untrusted: every length is checked before it is used, and
 the first failure is the answer. `layout/2` is the decoder's layout alone.
+`check_file/2` is the file check, the one entry that judges a package file:
+the decoder, then the file's name and the header's authentication.
 """.
 
--export([decode/2, layout/2]).
--export_type([decoded/0, layout/0, reason/0]).
+-export([decode/2, layout/2, check_file/2]).
+-export_type([decoded/0, layout/0, reason/0, authority/0, checked/0, check_reason/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -91,6 +93,72 @@ layout(Length, Bytes) ->
         {ok, #{layout := Layout}} -> {ok, Layout};
         {error, _} = Error -> Error
     end.
+
+-doc """
+How a header is authenticated (docs/design-packaging.md, "The package"):
+`{hash, Sha256}` for a package of the image, the SHA-256 its `package` row
+records; `{signers, Keys}` for an installed package, each trusted key with
+its `signer` row's name, or `development`.
+""".
+-type authority() :: {hash, <<_:256>>} | {signers, [{binary(), <<_:256>>}]}.
+
+-doc """
+A file the file check accepted: its decoded header, the signer that
+authenticates it (`image` for a package of the image, `unchecked` for an
+installed one, whose signature Phase 1 does not verify), the SHA-256 of the
+header's bytes and the header's extent, the bytes before the image.
+""".
+-type checked() :: #{header := decoded(),
+                     signer := image | unchecked,
+                     sha256 := <<_:256>>,
+                     extent := pos_integer()}.
+
+-doc """
+Why the file check refuses a file: the decoder's reason; a file name that
+is not `NAME.app` with NAME the declaration's app name; or a header the
+authority does not authenticate.
+""".
+-type check_reason() :: reason()
+                      | {name, binary(), binary()}
+                      | {untrusted, hash | signer}.
+
+-doc """
+The file check: decode the file `{Name, Length, Bytes}`, `Name` its name in
+the directory and `Bytes` its first bytes, then check that `Name` is
+`NAME.app` for the declaration's app name and that `Authority`
+authenticates the header. Under `{hash, H}` the signer and signature fields
+are not read. Under `{signers, Keys}` the header's key must be one of
+`Keys`; its signature is not verified, since the system domain has no
+Ed25519 verifier until the security closure, so the signer is `unchecked`.
+""".
+-spec check_file({binary(), non_neg_integer(), binary()}, authority()) ->
+    {ok, checked()} | {error, check_reason()}.
+check_file({Name, Length, Bytes}, Authority) when is_binary(Name) ->
+    case decode(Length, Bytes) of
+        {ok, Decoded} ->
+            try
+                {ok, authenticate(Name, Bytes, Decoded, Authority)}
+            catch
+                throw:{?MODULE, Reason} -> {error, Reason}
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+authenticate(Name, Bytes, #{name := App, header_length := HeaderLength,
+                            key := Key, layout := #{image_offset := Extent}} = Decoded,
+             Authority) ->
+    check(Name =:= <<App/binary, ".app">>, {name, Name, App}),
+    Sha256 = erx_bytes:sha256(binary:part(Bytes, 0, HeaderLength)),
+    Signer = case Authority of
+                 {hash, Want} ->
+                     check(Sha256 =:= Want, {untrusted, hash}),
+                     image;
+                 {signers, Keys} ->
+                     check(lists:keymember(Key, 2, Keys), {untrusted, signer}),
+                     unchecked
+             end,
+    #{header => Decoded, signer => Signer, sha256 => Sha256, extent => Extent}.
 
 decode_file(Length, Read) ->
     check(Length =< ?ERX_PKG_BYTES_MAX, {too_large, Length}),
