@@ -41,7 +41,20 @@ module Erx
     # elsewhere that shares a peripheral's file name (timer.h, rtc.h) stays free.
     PERIPHERAL_INCLUDE_PATHS = PERIPHERAL_HEADERS.map { |header| Regexp.escape(header.delete_prefix('include/')) }.freeze
     PERIPHERAL_INCLUDE = %r{#{INCLUDE}[<"](?:#{PERIPHERAL_INCLUDE_PATHS.join('|')})[>"]}i
-    PERIPHERAL_OWNERS = [Chokepoints::Site.new(glob: 'kernel/platform/**/*')].freeze
+    PLATFORM_LAYER = Chokepoints::Site.new(glob: 'kernel/platform/**/*')
+    # The Raspberry Pi 4's header probe, which runs in bootstrap's place on its own card
+    # (tools/lib/erx/header_probe.rb); no image holds it. It includes the mini UART's, the
+    # GPIO controller's and the clock manager's headers, and names only their reads and
+    # field getters, the console's data write and the field values' names: it writes no
+    # other register.
+    PROBE = 'test/raspi4b/header_probe.c'
+    PROBE_PERIPHERALS = 'mini_uart|bcm2711_gpio|cprman'
+    PROBE_HEADERS = Chokepoints::Site.new(glob: PROBE, permits: %r{\A#{INCLUDE}[<"]erx/hw/(?:#{PROBE_PERIPHERALS})\.h[>"]\z}i)
+    PROBE_ACCESSORS = Chokepoints::Site.new(
+      glob: PROBE,
+      permits: /\A(?:erx_(?:#{PROBE_PERIPHERALS})_\w+_(?:read|get)|erx_mini_uart_io_write|
+                   ERX_(?:#{PROBE_PERIPHERALS.upcase})_\w+)\z/x
+    )
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -98,20 +111,21 @@ module Erx
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: 'only the kernel platform layer includes a generated peripheral header',
+          rule: 'only the kernel platform layer and the header probe include a generated peripheral header',
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: PERIPHERAL_OWNERS,
+          sites: [PLATFORM_LAYER, PROBE_HEADERS],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: 'only the generated peripheral headers and the kernel platform layer name their accessors',
+          rule: 'only the generated peripheral headers, the kernel platform layer and the header probe name their accessors',
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
-          sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } + PERIPHERAL_OWNERS,
+          sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
+                 [PLATFORM_LAYER, PROBE_ACCESSORS],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n" }
         ),
         Chokepoints::Forbidden.new(

@@ -14,7 +14,9 @@ module Erx
     # musl's erxos directories. The check is by file: each listed site's comment
     # names the functions in it that hold the keyword, which review keeps to
     # those functions; they leave the stack pointer and the link register to
-    # the compiler, which the stack proof assumes.
+    # the compiler, which the stack proof assumes. The two raspi4b entries,
+    # firmware_fb.c's and header_probe.c's, set the stack pointer; no image
+    # holds either, so the stack proof does not reach them.
     INLINE_ASM_SCOPE = Chokepoints::Scope.new(
       own: true,
       extra: [GLUE, 'otp/erts/emulator/nifs/erxos/**/*', 'otp/erts/emulator/sys/erxos/**/*']
@@ -28,7 +30,7 @@ module Erx
                 "system-register reads, the barrier, counter and cache-maintenance helpers of liberx's " \
                 'backends and the DMA architecture layer, ' \
                 "musl's cancellation-point labels, erx_net's checksum fence, and the test programs and " \
-                "fixtures that plant instructions, and the raspi4b suite's firmware stand-in",
+                "fixtures that plant instructions, the raspi4b suite's firmware stand-in and the header probe",
           design: "#{KERNEL}#chokepoint-checks",
           scope: INLINE_ASM_SCOPE,
           pattern: ASM_KEYWORD,
@@ -59,7 +61,10 @@ module Erx
             Chokepoints::Site.new(glob: 'test/fixtures/stack_graph/*.c'),
             # The raspi4b suite's stand-in for the firmware's framebuffer setup: its entry sets the
             # stack and enters BL31 with the registers as reset leaves them; no image holds it.
-            Chokepoints::Site.new(glob: 'test/raspi4b/firmware_fb.c')
+            Chokepoints::Site.new(glob: 'test/raspi4b/firmware_fb.c'),
+            # The Raspberry Pi 4's header probe, which runs in bootstrap's place on its own card:
+            # header_probe_entry sets the stack and calls header_probe (tools/lib/erx/header_probe.rb).
+            Chokepoints::Site.new(glob: 'test/raspi4b/header_probe.c')
           ],
           seed: { 'liberx/seeded.c' => "void f(void) { __asm__ volatile(\"dmb sy\" ::: \"memory\"); }\n",
                   'otp/erts/emulator/nifs/erxos/erx_device.c' => "void f(void) { __asm volatile(\"dsb sy\"); }\n",
@@ -76,7 +81,7 @@ module Erx
         Chokepoints::Forbidden.new(
           name: 'sysreg-read',
           rule: "generated system-register reads only in the listed files: the reader of the boot CPU's " \
-                'identification registers, which bootstrap calls',
+                "identification registers, which bootstrap calls, and the header probe's counter reads",
           design: "#{KERNEL}#chokepoint-checks",
           scope: Chokepoints::Scope.new(own: true, extra: [*INLINE_ASM_SCOPE.extra, 'fiasco/bootstrap/server/src/erx_*']),
           pattern: Regexp.union(/\berx_sysreg_\w+_read\b/, include_of(SysregHeaders::READS)),
@@ -84,7 +89,12 @@ module Erx
             # The header that defines the reads.
             Chokepoints::Site.new(glob: SysregHeaders::READS),
             # erx_boot_cpu_id_read, which bootstrap calls in kernel mode, and its include.
-            Chokepoints::Site.new(glob: 'kernel/arch/aarch64/cpu_id.c')
+            Chokepoints::Site.new(glob: 'kernel/arch/aarch64/cpu_id.c'),
+            # The header probe's reads of the generic timer's counter and frequency, which time
+            # its phases on its own card, where no kernel runs, and its include of their header.
+            Chokepoints::Site.new(glob: 'test/raspi4b/header_probe.c',
+                                  permits: Regexp.union(/\Aerx_sysreg_cnt(?:pct|frq)_el0_read\z/,
+                                                        /\A#{include_of(SysregHeaders::READS)}\z/))
           ],
           seed: { 'liberx/seeded.c' => "unsigned long f(void) { return erx_sysreg_id_aa64isar0_el1_read(); }\n",
                   'kernel/core/seeded.c' => "#include \"erx/arch/aarch64/sysreg.h\"\n",

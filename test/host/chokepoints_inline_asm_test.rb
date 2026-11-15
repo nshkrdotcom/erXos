@@ -67,6 +67,17 @@ class ChokepointsInlineAsmTest < Minitest::Test
     end
   end
 
+  # The header probe reads the generic timer's counter and frequency and no other system
+  # register.
+  def test_the_header_probe_reads_only_the_counter
+    probe = 'test/raspi4b/header_probe.c'
+    allowed = "#include \"erx/arch/aarch64/sysreg.h\"\n" \
+              "unsigned long f(void) { return erx_sysreg_cntpct_el0_read() / erx_sysreg_cntfrq_el0_read(); }\n"
+    assert_empty evaluate([rule('sysreg-read')], { probe => allowed })
+    refute_empty evaluate([rule('sysreg-read')],
+                          { probe => "unsigned long f(void) { return erx_sysreg_midr_el1_read(); }\n" })
+  end
+
   # A word that only contains the keyword is not it.
   def test_an_identifier_containing_asm_passes
     assert_empty found('liberx/x.c', "int erx_asm_count, asmx, x_asm;\n")

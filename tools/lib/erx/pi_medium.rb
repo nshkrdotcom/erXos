@@ -83,8 +83,9 @@ module Erx
 
     # Writes the card as name in directory, a work directory the caller owns: slot A's
     # FAT of the files staged in files, whose root names are names; the release's EROFS
-    # image at erofs; the data partition's fresh volume, a MediumImage::FilePiece
-    # formatted for data_sectors (DataVolume.format). Returns the card's path.
+    # image at erofs, or none when erofs is nil; the data partition's fresh volume, a
+    # MediumImage::FilePiece formatted for data_sectors (DataVolume.format). Returns the
+    # card's path.
     def write(directory:, name:, files:, names:, erofs:, volume:, runner:, fsimg:)
       Dir.mktmpdir('.pi-medium-', directory) do |work|
         record = File.join(work, 'record.fat')
@@ -128,14 +129,14 @@ module Erx
     end
 
     # The card's pieces by sector: the record volume filling its partition, slot A's
-    # volume from the slot's start, the EROFS image where ReleaseMedium places a slot's
-    # one image, and the data volume's leading blocks.
+    # volume from the slot's start, the EROFS image, if any, where ReleaseMedium places a
+    # slot's one image, and the data volume's leading blocks.
     def pieces(record:, slot:, erofs:, volume:)
       slot_start = MediumImage.constant('slot_a_start')
-      image = ReleaseMedium.image_extent(erofs)
+      image = erofs ? { slot_start + (ReleaseMedium.image_extent(erofs).slot_offset / SECTOR_BYTES) => piece(erofs) } : {}
       { MediumImage.constant('record_start') => piece(record),
         slot_start => piece(slot),
-        slot_start + (image.slot_offset / SECTOR_BYTES) => piece(erofs),
+        **image,
         **DataVolume.pieces(volume) }
     end
 

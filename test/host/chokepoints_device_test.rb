@@ -19,6 +19,26 @@ class ChokepointsDeviceTest < Minitest::Test
     assert_equal %w[device-peripheral-accessors device-peripheral-headers], found.map(&:rule).uniq.sort
   end
 
+  # The header probe names the reads and field getters of its three peripherals, their
+  # value names and the console's data write, and nothing else: a write or a field setter
+  # of any register, or another peripheral's header or accessor, fails there.
+  def test_the_header_probe_writes_no_register_but_the_console
+    rules = [rule('device-peripheral-accessors'), rule('device-peripheral-headers')]
+    probe = 'test/raspi4b/header_probe.c'
+    allowed = <<~C
+      #include "erx/hw/bcm2711_gpio.h"
+      #include "erx/hw/cprman.h"
+      #include "erx/hw/mini_uart.h"
+      x = erx_bcm2711_gpio_gplev0_read(g, &v) + erx_cprman_pwmctl_src_get(v) + ERX_CPRMAN_PWMCTL_SRC_GND;
+      y = erx_mini_uart_lsr_tx_empty_get(v) + erx_mini_uart_io_write(c, 65);
+    C
+    assert_empty evaluate(rules, { probe => allowed })
+    ['erx_bcm2711_gpio_gpfsel0_write(g, 0);', 'erx_cprman_pwmctl_src_set(v, 1, &v);', 'erx_mini_uart_lcr_write(c, 3);',
+     '#include "erx/hw/pl011.h"', 'erx_pl011_dr_read(d, &v);'].each do |text|
+      refute_empty evaluate(rules, { probe => "#{text}\n" }), text
+    end
+  end
+
   # A peripheral header is named by its path below include/, in any case, so a header of the
   # same file name elsewhere is not one.
   def test_only_the_generated_header_path_is_a_peripheral_include

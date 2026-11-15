@@ -194,10 +194,10 @@ module Erx
     # Writes plan into directory, an existing directory under root that holds none of
     # ENTRIES: the files under boot/; the card (PiMedium), whose slot A's FAT32 holds them
     # with each root name that fits 8.3 stored as its own short name, which is all the
-    # boot ROM reads, followed by erofs, the release's EROFS image, and whose data
-    # partition holds volume, a fresh littlefs volume of PiMedium.data_sectors sectors
-    # (DataVolume.format); and record, the inputs' build record, with the SHA-256 of
-    # each file, the EROFS image, the volume and the card added.
+    # boot ROM reads, followed by erofs, the release's EROFS image (nothing when erofs is
+    # nil), and whose data partition holds volume, a fresh littlefs volume of
+    # PiMedium.data_sectors sectors (DataVolume.format); and record, the inputs' build
+    # record, with the SHA-256 of each file, the EROFS image, the volume and the card added.
     def write(root:, directory:, plan:, record:, runner:, fsimg:, erofs:, volume:)
       plan.each_key { |name| raise Error, "boot partition: #{name.inspect} is not a file name of the layout" unless NAME.match?(name) }
       directory = OutputDirectory.check(root: root, path: directory)
@@ -219,8 +219,7 @@ module Erx
         end
         image = PiMedium.write(directory: work, name: IMAGE, files: files, names: plan.keys.map { |name| name.split('/').first }.uniq,
                                erofs: erofs, volume: volume, runner: runner, fsimg: fsimg)
-        pieces = { File.basename(erofs) => Digest::SHA256.file(erofs).hexdigest,
-                   File.basename(volume.path) => Digest::SHA256.file(volume.path).hexdigest }
+        pieces = [erofs, volume.path].compact.to_h { |piece| [File.basename(piece), Digest::SHA256.file(piece).hexdigest] }
         File.write(File.join(work, RECORD), JSON.pretty_generate(receipt(record, image: image, files: written, pieces: pieces)) + "\n")
         ENTRIES.each { |name| File.rename(File.join(work, name), File.join(directory, name)) }
       end
@@ -244,10 +243,11 @@ module Erx
     # deps.lock pins, BL31's own build record (Bl31.record) and its license's place in
     # TF-A's pinned tree, the board tree's pinned source, recipe, overlay sources and
     # tools (the preprocessor and dtc), and the card's tool and arguments. The bootable
-    # file's record is the image's, in the same directory. Paths are relative to root,
-    # and each host tool is named by its version line (tool_version), not by the
-    # identity BL31's own record keys its rebuilds on.
-    def record(root:, runner:, revision:, platform:, firmware:, compiler:, linker:)
+    # file's record is bootable_record when one is given, as the header probe gives its
+    # own (HeaderProbe), and otherwise the image's, in the same directory. Paths are
+    # relative to root, and each host tool is named by its version line (tool_version),
+    # not by the identity BL31's own record keys its rebuilds on.
+    def record(root:, runner:, revision:, platform:, firmware:, compiler:, linker:, bootable_record: nil)
       board = BoardTree.board(platform)
       version = ->(program) { tool_version(program, runner: runner) }
       { 'source' => (revision && { 'commit' => revision.commit, 'dirty' => revision.dirty }),
@@ -261,7 +261,8 @@ module Erx
                                         'overlays' => board.overlays.transform_values { |path| source_reference(root, File.join(root, path)) },
                                         'compiler' => version.(compiler), 'dtc' => version.(BoardTree.dtc_path) },
                       'card' => { 'tool' => Fsimg::VERSION_LINE, 'source' => Fsimg.source_record(root: root),
-                                   'arguments' => PiMedium.arguments } } }
+                                   'arguments' => PiMedium.arguments },
+                      'bootable' => bootable_record }.compact }
     end
 
     # An absolute path's mark in a record: a single slash that starts a string or follows
@@ -328,13 +329,14 @@ module Erx
 
     # Builds BL31 and the board's tree, takes the firmware as deps.lock pins it, verified
     # against its pinned hashes, formats the data partition's volume, and writes the
-    # layout for bootable and erofs, the release's EROFS image, with its build record,
-    # into directory, the production image's.
-    def lay_out(root:, runner:, platform:, build_kind:, bootable:, erofs:, directory:, compiler:, linker:)
+    # layout for bootable and erofs, the release's EROFS image or nil for an empty slot,
+    # with its build record, into directory, the production image's or the header probe
+    # card's. revision names the commit in the device tree's notice and the record, read
+    # once so both name one; bootable_record is the bootable file's own (record).
+    def lay_out(root:, runner:, platform:, build_kind:, bootable:, erofs:, directory:, compiler:, linker:,
+                revision: SourceRevision.read(root: root, runner: runner), bootable_record: nil)
       dependencies = Dependencies.new(root: root, runner: runner)
       pinned = FIRMWARE.map { |id| dependencies.archive_for(id) }
-      # Read once, so the device tree's notice and the card's record name one revision.
-      revision = SourceRevision.read(root: root, runner: runner)
       plan = plan(platform: platform, build_kind: build_kind, bootable: bootable,
                   firmware: pinned.to_h { |source, archive| [source.fetch('filename'), archive] },
                   bl31_license: Bl31.license(root: root, runner: runner),
@@ -342,7 +344,7 @@ module Erx
                   tree: BoardTree.build(root: root, runner: runner, platform: platform, compiler: compiler,
                                         revision: revision))
       record = record(root: root, runner: runner, revision: revision, platform: platform,
-                      firmware: pinned.map(&:first), compiler: compiler, linker: linker)
+                      firmware: pinned.map(&:first), compiler: compiler, linker: linker, bootable_record: bootable_record)
       volume = DataVolume.format(root: root, runner: runner, compiler: compiler, directory: directory,
                                  data_sectors: PiMedium.data_sectors)
       write(root: root, directory: directory, plan: plan, record: record, runner: runner,

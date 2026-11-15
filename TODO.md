@@ -1694,7 +1694,18 @@ it; git history is the record of completed work.
   writes the FSEL encoding (eight values) and the pull encoding (three) once per pin, about 470 of its 612
   lines, and `test_every_gpio_pin_has_its_function_select_and_pull` in `test/host/hardware_test.rb` keeps the
   58 copies in step. CMSIS-SVD's field `dim`/`dimIndex` (`FSEL%s`, indexes 10 to 19 and so on) or an
-  `enumeratedValues` `derivedFrom` in the profile would state each once and delete that test.
+  `enumeratedValues` `derivedFrom` in the profile would state each once and delete that test. The header probe
+  (`test/raspi4b/header_probe.c`) pays too: a 62-row table naming each pin's getter, and FSEL0's and PULL0's
+  value names standing for every pin's; a field array would let it index the fields.
+* [Low] header probe, `test/raspi4b/header_probe.c`: the GPIO block's and the clock manager's bases are the
+  probe's own constants, cited to BCM2711 ARM Peripherals 5.2 and 5.4.2, because the platform record has no
+  `gpio` or `clocks` unit (docs/design-header-io.md, "Placement: units and domains"); once the GPIO package
+  adds them, `HeaderProbe.defines` passes the bases from the record as it passes the console's.
+* [Medium] header map, docs/design-header-io.md "Verification", checklist item 1: the tree's facts (the header
+  blocks' nodes with compatible strings, bases, lines and status; BSC5's base; whether BSC2 and BSC7 are listed;
+  the oscillator's rate) are left to "the header map's own checks" through `erx_dt`, but the header map reader's
+  contract and its verification rows name no such check, nor whether it runs at build time or at boot. Until the
+  design names it, nothing settles those facts.
 * [Low] hardware generator, read-write fields the hardware also changes: `plain_update?` takes the SPI
   master's `CS` (`hw/svd/bcm2711_spi/bcm2711_spi.svd`) as safe to read, modify and write back, but its `TA`
   is cleared by the DMA controller's frame-end pulse (BCM2711 ARM Peripherals, Table 160), so a field write

@@ -207,6 +207,11 @@ class BootPartitionTest < Minitest::Test
     assert_equal({ 'commit' => commit, 'dirty' => true }, record.fetch('source'))
     assert_nil Erx::BootPartition.record(root: ROOT, runner: runner, revision: nil, platform: PI, firmware: firmware,
                                          compiler: RbConfig.ruby, linker: RbConfig.ruby).fetch('source')
+    refute record.fetch('inputs').key?('bootable'), "the image's bootable file has its own record beside it"
+    probe = { 'program' => 'header probe', 'source' => { 'path' => 'test/raspi4b/header_probe.c' } }
+    assert_equal probe, Erx::BootPartition.record(root: ROOT, runner: runner, revision: revision, platform: PI,
+                                                  firmware: firmware, compiler: RbConfig.ruby, linker: RbConfig.ruby,
+                                                  bootable_record: probe).fetch('inputs').fetch('bootable')
     refute_includes JSON.generate(record), Dir.home, "the record names no path in the user's home"
     assert_equal 'tools/lib/erx/boot_partition.rb', record.fetch('producer').fetch('path')
     record = record.fetch('inputs')
@@ -226,6 +231,22 @@ class BootPartitionTest < Minitest::Test
                  tree.fetch('overlays').fetch('uart3'))
     assert_equal Erx::Fsimg::VERSION_LINE, record.fetch('card').fetch('tool')
     assert_equal({ 'kernel8.img' => 4 << 20 }, record.fetch('card').fetch('arguments').fetch('slot').fetch('place'))
+  end
+
+  # A card with no release, as the header probe's is, leaves slot A's image area empty and
+  # names no EROFS image in its record.
+  def test_an_empty_slot_holds_no_image
+    Dir.mktmpdir do |root|
+      output = File.join(root, 'image')
+      Dir.mkdir(output)
+      written = write(root, output, plan(root), erofs: nil)
+      slot_start = Erx::MediumImage.constant('slot_a_start') * Erx::MediumImage::SECTOR_BYTES
+      empty = File.binread(written.path, EROFS.bytesize, slot_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
+      assert_equal EROFS.bytesize, empty.count("\0")
+      components = JSON.parse(File.read(written.record)).fetch('components').map { |part| part.fetch('path') }
+      assert_includes components, 'data.lfs'
+      refute(components.any? { |name| name.end_with?('.erofs') })
+    end
   end
 
   # Seeded faults: an absolute path anywhere in a record, as a value, a key or inside a
@@ -304,11 +325,11 @@ class BootPartitionTest < Minitest::Test
   EROFS = ('erofs' * 1000).b.ljust(8192, "\0").freeze
   VOLUME = ('littlefs' * 100).b.freeze
 
-  def write(root, output, plan)
+  def write(root, output, plan, erofs: true)
     runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'logs'))
     pieces = File.join(root, 'pieces')
     FileUtils.mkdir_p(pieces)
-    erofs = File.join(pieces, 'release.erofs').tap { |path| File.binwrite(path, EROFS) }
+    erofs &&= File.join(pieces, 'release.erofs').tap { |path| File.binwrite(path, EROFS) }
     volume = File.join(pieces, 'data.lfs').tap { |path| File.binwrite(path, VOLUME) }
     Erx::BootPartition.write(root: root, directory: output, plan: plan, record: { 'inputs' => 'given' }, runner: runner,
                              fsimg: FSIMG, erofs: erofs, volume: Erx::MediumImage::FilePiece.new(path: volume, length: VOLUME.bytesize))

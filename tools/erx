@@ -568,13 +568,23 @@ module Erx
     # (ProductionImage.pack_platform), QEMU virt's by default or with --platform NAME
     # that board's; with --medium, also the medium that holds it: the release medium for
     # QEMU (ReleaseMedium), or a board's boot partition and SD card image (BootPartition).
+    # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
+    # a card of its own that needs no Fiasco and no image; it is a medium already, so it
+    # takes no --medium.
     def self.pack(arguments)
       medium = false
-      platform = platform_option(arguments) { |flags| flags.on('--medium') { medium = true } }
+      probe = nil
+      platform = platform_option(arguments) do |flags|
+        flags.on('--medium') { medium = true }
+        flags.on('--probe NAME', %w[header]) { |name| probe = name }
+      end
       no_arguments(arguments)
+      raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
+
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
+      return pack_probe(runner: runner, environment: environment, platform: platform) if probe
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium)
       built, written = medium ? result : [result, nil]
@@ -590,6 +600,16 @@ module Erx
         end
         Terminal.puts("release medium: #{written.path}; EROFS image: #{written.erofs}; #{extents.join('; ')}")
       end
+      0
+    end
+
+    # The header probe card for platform (HeaderProbe.pack).
+    def self.pack_probe(runner:, environment:, platform:)
+      require_relative 'lib/erx/header_probe'
+      written = HeaderProbe.pack(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
+                                 linker: environment.fetch('ERX_LLD'), platform: platform)
+      Terminal.puts("header probe card: boot partition: #{written.files}; SD card image: #{written.path}; " \
+                    "build record: #{written.record}")
       0
     end
 
@@ -761,7 +781,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | pack --probe header --platform raspi4b | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 

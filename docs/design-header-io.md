@@ -76,7 +76,7 @@ Raspberry Pi's documentation:
 | I2C (BSC) | BSC0 `0x7e205000`, BSC1 `0x7e804000`, BSC3 `0x7e205600`, BSC4 `0x7e205800`, BSC5 `0x7e205a80`, BSC6 `0x7e205c00`; eight registers C, S, DLEN, A, FIFO, DIV, DEL, CLKT; a 16-byte FIFO; DLEN 16 bits (DS 3.2) | VC IRQ 53, "OR of all I2C", record line 149; the OR takes I2C0 to I2C7, the HDMI masters BSC2 and BSC7 included (DS 6.2.4, Figure 6) | BSC2 and BSC7 "are dedicated for use by the HDMI interfaces and should not be accessed" (DS 3.2); SCL = core clock / CDIV, CDIV rounded down to even (DS 3.2, Table 30) |
 | SPI | SPI0 `0x7e204000`, SPI3 `0x7e204600`, SPI4 `0x7e204800`, SPI5 `0x7e204a00`, SPI6 `0x7e204c00`; CS, FIFO, CLK, DLEN, LTOH, DC (DS 9.5, Table 159) | VC IRQ 54, "OR of all SPI", record line 150 (DS 6.2.4) | SCLK = core clock / CDIV, CDIV even (DS 9.5); the polled procedure is DS 9.6.1; the FIFO takes 64 bytes (DS 9.6.2). PACTL_CS, which says which I2C or SPI master raised its line, lies in this page at `0x7e204e00` (DS 6.2.4) |
 | PWM | PWM0 `0x7e20c000`, PWM1 `0x7e20c800`, one page; two channels each; in M/S mode a channel is high for DAT of every RNG cycles of `clk_pwm` (DS 8.1, 8.4, 8.6) | none (DS Table 102) | `clk_pwm` is "nominally 100MHz, but can be varied by the clock manager" (DS 8.1) |
-| Clock manager (CPRMAN) | `0x7e101000`; the datasheet documents only the general-purpose clocks, with the password `0x5a` in bits 31:24, BUSY bit 7, ENAB bit 4, MASH bits 10:9, SRC bits 3:0 (`1` the oscillator) and DIVI bits 23:12 of the divisor (DS 5.4, Tables 99 and 100) | | the PWM clock's control and divisor are at offsets `0xa0` and `0xa4`, in the same format (FreeBSD `bcm2835_clkman.h:36`, `bcm2835_clkman.c:70-72`) |
+| Clock manager (CPRMAN) | `0x7e101000`; the datasheet documents only the general-purpose clocks, with the password `0x5a` in bits 31:24, BUSY bit 7, ENAB bit 4, MASH bits 10:9, SRC bits 3:0 (`1` the oscillator) and DIVI bits 23:12 of the divisor (DS 5.4, Tables 99 and 100) | | the PWM clock's control and divisor are at offsets `0xa0` and `0xa4`, in the same format (FreeBSD `bcm2835_clkman.h:36`, `bcm2835_clkman.c:71-74`) |
 
 Record line numbers follow the platform record's convention: the
 VideoCore peripheral IRQ plus 96, as the mini UART's line 125 is AUX, VC
@@ -337,10 +337,11 @@ CMSIS-SVD source written from the datasheet: `i2c` (`hw/svd/bsc`) and
 `spi` (`hw/svd/bcm2711_spi`); `gpio` (`hw/svd/bcm2711_gpio`) with the
 GPIO package; `pwm` (`hw/svd/pwm`) and, if its clock needs a write,
 `clock` (`hw/svd/cprman`, naming only the PWM clock's two registers)
-with PWM. The compatible strings are the board's tree's, which the board
-probe lists; FreeBSD matches `brcm,bcm2711-gpio`, `brcm,bcm2835-i2c`,
-`brcm,bcm2835-spi`, `brcm,bcm2835-pwm` and `brcm,bcm2711-cprman`, which
-is what the rows expect until the probe says otherwise.
+with PWM. The compatible strings are the board's tree's, which the
+header map's checks read through `erx_dt`; FreeBSD matches
+`brcm,bcm2711-gpio`, `brcm,bcm2835-i2c`, `brcm,bcm2835-spi`,
+`brcm,bcm2835-pwm` and `brcm,bcm2711-cprman`, which is what the rows
+expect until the board's tree says otherwise.
 
 ### The pin controller and the console
 
@@ -1031,15 +1032,24 @@ named, never passed by default.
 **The board checklist**, run by hand on the 4 GB board, as 1b-I's other
 checks are ([plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap)):
 
-1. **Probe at boot** (the root holds every page on the stopgap, so it
-   reads them once and logs them): the device-tree nodes of GPIO, every
-   BSC, every SPI, both PWMs and the clock manager with their paths,
-   compatible strings, bases, lines and status, which settles the kind
-   rows, BSC5's base (the datasheet's `0x7e205a80`) and whether BSC2 and
-   BSC7 are listed; GPFSEL0 to GPFSEL2, PUP_PDN_CNTRL_REG0 and REG1 and
-   the bank-0 edge enables at boot and after a minute; the PWM clock's
-   control and divisor, which say whether the firmware leaves `clk_pwm`
-   running; the oscillator's rate.
+1. **Probe at boot**: the header probe card
+   ([research-rpi4-header-probe.md](research-rpi4-header-probe.md)), a
+   card of its own, is the development card with a probe program as its
+   `kernel8.img`, which runs in bootstrap's place on the same firmware,
+   `config.txt`, tree and BL31. The probe reads GPFSEL0 to GPFSEL2,
+   PUP_PDN_CNTRL_REG0 and REG1 and the bank-0 edge and level detect
+   enables at boot and after a minute, and the PWM clock's control and
+   divisor, which say
+   whether the firmware leaves `clk_pwm` running. It reads registers
+   only, through the accessors generated from `hw/svd/bcm2711_gpio` and
+   `hw/svd/cprman`, and so sees the pins as the firmware leaves them,
+   not what erXos's own stack does to them afterwards. The tree's facts
+   are not the probe's: the nodes of GPIO, every BSC, every SPI, both
+   PWMs and the clock manager with their compatible strings, bases,
+   lines and status, which settle the kind rows, BSC5's base (the
+   datasheet's `0x7e205a80`), whether BSC2 and BSC7 are listed, and the
+   oscillator's rate are read from the board's tree through `erx_dt`,
+   the one tree reader, by the header map's own checks.
 2. **GPLEV and the console**: the probe samples GPLEV0 for a few seconds
    while keys are typed at the console and logs whether bit 15 changes.
    That records whether the pin controller's holder could read the

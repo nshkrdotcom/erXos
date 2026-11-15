@@ -350,14 +350,17 @@ class HardwareTest < Minitest::Test
 
   # The header's controllers as BCM2711 ARM Peripherals (release 4) lays them out, written
   # here from its tables rather than read from the SVDs: each register's offset (Tables 24,
-  # 159 and 63) and the fields a driver steers by, as [register, field, bit offset, width].
+  # 159 and 63; the clock manager's PWM offsets are FreeBSD's bcm2835_clkman.h and .c, in
+  # Tables 99 and 100's format) and the fields a driver steers by, as [register, field, bit
+  # offset, width].
   HEADER_REGISTERS = {
     'BSC' => { 'C' => 0x00, 'S' => 0x04, 'DLEN' => 0x08, 'A' => 0x0c, 'FIFO' => 0x10, 'DIV' => 0x14,
                'DEL' => 0x18, 'CLKT' => 0x1c },
     'BCM2711_SPI' => { 'CS' => 0x00, 'FIFO' => 0x04, 'CLK' => 0x08, 'DLEN' => 0x0c, 'LTOH' => 0x10, 'DC' => 0x14 },
     'BCM2711_GPIO' => { 'GPFSEL0' => 0x00, 'GPFSEL5' => 0x14, 'GPSET0' => 0x1c, 'GPCLR0' => 0x28, 'GPLEV0' => 0x34,
                         'GPEDS0' => 0x40, 'GPREN0' => 0x4c, 'GPFEN0' => 0x58, 'GPHEN0' => 0x64, 'GPLEN0' => 0x70,
-                        'GPAREN0' => 0x7c, 'GPAFEN1' => 0x8c, 'PUP_PDN0' => 0xe4, 'PUP_PDN3' => 0xf0 }
+                        'GPAREN0' => 0x7c, 'GPAFEN1' => 0x8c, 'PUP_PDN0' => 0xe4, 'PUP_PDN3' => 0xf0 },
+    'CPRMAN' => { 'PWMCTL' => 0xa0, 'PWMDIV' => 0xa4 }
   }.freeze
   HEADER_FIELDS = {
     'BSC' => [%w[C I2CEN 15 1], %w[C ST 7 1], %w[C CLEAR 4 2], %w[C READ 0 1], %w[S CLKT 9 1], %w[S ERR 8 1],
@@ -365,10 +368,14 @@ class HardwareTest < Minitest::Test
     'BCM2711_SPI' => [%w[CS RXF 20 1], %w[CS DONE 16 1], %w[CS TA 7 1], %w[CS CLEAR 4 2], %w[CS CPOL 3 1],
                       %w[CS CPHA 2 1], %w[CS CS 0 2], %w[CLK CDIV 0 16]],
     'BCM2711_GPIO' => [%w[GPFSEL0 FSEL9 27 3], %w[GPFSEL2 FSEL27 21 3], %w[GPFSEL5 FSEL57 21 3], %w[GPSET1 SET 0 26],
-                       %w[PUP_PDN0 PULL15 30 2], %w[PUP_PDN1 PULL16 0 2], %w[PUP_PDN3 PULL57 18 2]]
+                       %w[PUP_PDN0 PULL15 30 2], %w[PUP_PDN1 PULL16 0 2], %w[PUP_PDN3 PULL57 18 2]],
+    'CPRMAN' => [%w[PWMCTL SRC 0 4], %w[PWMCTL ENAB 4 1], %w[PWMCTL KILL 5 1], %w[PWMCTL BUSY 7 1], %w[PWMCTL FLIP 8 1],
+                 %w[PWMCTL MASH 9 2], %w[PWMCTL PASSWD 24 8], %w[PWMDIV DIVF 0 12], %w[PWMDIV DIVI 12 12],
+                 %w[PWMDIV PASSWD 24 8]]
   }.freeze
   HEADER_SVDS = { 'BSC' => 'hw/svd/bsc/bsc.svd', 'BCM2711_SPI' => 'hw/svd/bcm2711_spi/bcm2711_spi.svd',
-                  'BCM2711_GPIO' => 'hw/svd/bcm2711_gpio/bcm2711_gpio.svd' }.freeze
+                  'BCM2711_GPIO' => 'hw/svd/bcm2711_gpio/bcm2711_gpio.svd',
+                  'CPRMAN' => 'hw/svd/cprman/cprman.svd' }.freeze
 
   def header_device(name) = Erx::Hardware.parse_svd(File.binread(File.join(@repository, HEADER_SVDS.fetch(name))))
 
