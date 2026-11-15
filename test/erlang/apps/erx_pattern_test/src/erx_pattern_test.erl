@@ -16,7 +16,9 @@ display shows the pattern (docs/design-display.md, "Erlang clients" and
 
 show/0 logs `erx_pattern_test: started`, then opens the window, retrying
 while the session holds no grant of the display or no pixel area to it,
-both of which arrive after the session starts, as `{error, none}`. It fills
+both of which arrive after the session starts, as `{error, none}`, or while
+the area has no room for the window's buffer, `{error, enomem}`, which the
+lvgl-lease cell's rounds in the same session may hold for a while. It fills
 the window with the rectangles of pattern/0, in order, presents the whole
 window and logs one notice, which the console prints under the session's
 name:
@@ -26,10 +28,10 @@ name:
 or `erx_pattern_test: {error, Step, Reason}` naming the step that failed:
 `display` when the session has no default display (Reason `unset`), `open`
 when the window was refused or the wait of ?POLLS polls ran out (Reason
-`none`). Once presented, it reads the window's input, which the
-harness types through QMP: the first typed rune among the next ?KBD_READS
-records of its `kbd` file, then the first record of its `mouse` file, each
-logged as one notice,
+the last refusal, `none` or `enomem`). Once presented, it reads the
+window's input, which the harness types through QMP: the first typed rune
+among the next ?KBD_READS records of its `kbd` file, then the first record
+of its `mouse` file, each logged as one notice,
 
     erx_pattern_test: kbd {typed,97}
     erx_pattern_test: mouse {0,0,0}
@@ -126,13 +128,14 @@ default_display() ->
         Name -> {ok, list_to_atom(Name)}
     end.
 
-%% Ends: each retry lowers the finite count.
-opened(_Display, 0) ->
-    {error, none};
+%% Ends: each retry lowers the finite count, and the last answers.
 opened(Display, N) ->
     case erx_win:open(Display, #{name => <<"pattern">>}) of
-        {error, none} -> timer:sleep(?POLL_MS), opened(Display, N - 1);
-        Answer -> Answer
+        {error, Wait} when N > 1, (Wait =:= none orelse Wait =:= enomem) ->
+            timer:sleep(?POLL_MS),
+            opened(Display, N - 1);
+        Answer ->
+            Answer
     end.
 
 drawn(_Image, []) ->

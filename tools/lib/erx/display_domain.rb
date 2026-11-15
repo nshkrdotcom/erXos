@@ -41,14 +41,22 @@ module Erx
   # in the client, the window's buffer or the driver, gives another digest. Each fails
   # the cell. A domain that ends after the picture came is not seen: QEMU keeps the last
   # scanout.
+  #
+  # The same session runs erx_lvgl_lease_test beside it: the LVGL renderer drives the real
+  # erx-lvgl through the program's handler over a buffer lent from the session's pixel
+  # area, in rounds that lend more than the whole area. Its one outcome line must be
+  # "passed" (check_lease_lines); that is the boot's second cell, lvgl-lease (cells). That
+  # cell fails on its own outcome, and the boot's cell passes whatever it is; a boot that
+  # fails before the lease's wait fails the suite, both cells with it.
   module DisplayDomain
     REFERENCES = 'test/display/reference'
     PATTERN = 'display-pattern'
     # The boot script of the client's session template: the client release's applications
     # (ReleaseFiles::RELEASE_SCRIPTS, client), the command shell and erx_session, which
-    # the template's -eval starts, and the test-only client, erx_pattern_test.
+    # the template's -eval starts, and the test-only clients, erx_pattern_test and the
+    # lvgl-lease cell's erx_lvgl_lease_test.
     CLIENT_SCRIPT = ReleaseFiles::RELEASE_SCRIPTS.fetch('client')
-    CLIENT_APPLICATIONS = [*CLIENT_SCRIPT, 'erx_shell', 'erx_session', 'erx_pattern_test'].freeze
+    CLIENT_APPLICATIONS = [*CLIENT_SCRIPT, 'erx_shell', 'erx_session', 'erx_pattern_test', 'erx_lvgl_lease_test'].freeze
     BOOT = ReleaseFiles.domain_boot('pattern', applications: CLIENT_APPLICATIONS, test: true)
     # How long the harness reads the screen after the shell's banner before it fails, and
     # how often.
@@ -214,10 +222,30 @@ module Erx
       client&.close
     end
 
+    # The lvgl-lease client's outcome lines of a boot's serial log
+    # (erx_lvgl_lease_test:run/0): one "passed" and no other, or Error naming them.
+    LEASE_LINE = /erx_lvgl_lease_test: (?!started)[^\r\n]*/n
+    LEASE_PASSED = 'erx_lvgl_lease_test: passed'
+    # How long the harness waits for that line once the input's lines came.
+    LEASE_WAIT_SECONDS = 240
+    def check_lease_lines(log)
+      lines = log.b.scan(LEASE_LINE)
+      return if lines == [LEASE_PASSED]
+
+      raise Error, "the lvgl-lease client logged #{lines.size} outcomes, not one passed: #{lines.first(4).inspect}"
+    end
+
+    # The suite's cells, from the cells of its boots: each boot's own, and its lvgl-lease
+    # cell.
+    LEASE_CELL = '-lvgl-lease'
+    def cells(boots) = boots.flat_map { |cell| [cell, "#{cell}#{LEASE_CELL}"] }
+
     # The production checkpoints to the command shell, whose banner starts the screen's
     # reads, then the driver's and the client's lines of the serial log at serial, then the
-    # input typed and its lines. points must end at the command shell.
-    def checkpoints(points, socket:, references:, serial:)
+    # input typed and its lines, then the serial log once the lvgl-lease client's line came,
+    # or once LEASE_WAIT_SECONDS passed, handed to lease. points must end at the command
+    # shell.
+    def checkpoints(points, socket:, references:, serial:, lease:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = points.last
@@ -229,13 +257,16 @@ module Erx
         type_input(socket)
         typed = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(INPUT_READ_LINE).size >= INPUT_READ.size }
         check_input_lines(typed)
+        lease.call(await_log(serial, wait_seconds: LEASE_WAIT_SECONDS) { |text| text.match?(LEASE_LINE) })
       end
-      [*points[0...-1], shell.merge(seconds: shell.fetch(:seconds) + WAIT_SECONDS + (2 * CLIENT_WAIT_SECONDS) + 15,
-                                           verify: screen).freeze].freeze
+      seconds = shell.fetch(:seconds) + WAIT_SECONDS + (2 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS + 15
+      [*points[0...-1], shell.merge(seconds: seconds, verify: screen).freeze].freeze
     end
 
     # Boots the image under HVF at each CPU count, where placement puts each cell.
-    # Returns { "<accel>-<n>cpu" => 'passed' }; any disagreement raises.
+    # Returns { "<accel>-<n>cpu" => 'passed', "<accel>-<n>cpu-lvgl-lease" => status }, the
+    # lease cell's 'passed', or 'failed' with its reason in notes; any other disagreement
+    # raises.
     class Run
       def initialize(root:, runner: Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs')),
                      compiler: ENV.fetch('ERX_CLANG', ''), linker: ENV.fetch('ERX_LLD', ''), qemu: 'qemu-system-aarch64',
@@ -247,7 +278,11 @@ module Erx
         @qemu = qemu
         @machine = MediumBoot.machine(platform)
         @manifest = DisplayDomain.manifest(platform.site_manifest_source(@root, keep: [DOMAIN]))
+        @notes = []
       end
+
+      # Why each failed lease cell failed.
+      def notes = @notes.dup.freeze
 
       # Packs the test image, which carries the client's boot script (BOOT), once, then boots
       # it at each CPU count.
@@ -260,22 +295,30 @@ module Erx
                                     fiasco: fiasco)
                                .build_test_image(directory: directory, added: nothing, machine: @machine, domains: [BOOT],
                                                  manifest_source: @manifest)
-        placement.each(accels: [QemuCells::LOCAL_ACCELERATOR], cpus: cpus) do |accel, count, remote|
+        booted = placement.each(accels: [QemuCells::LOCAL_ACCELERATOR], cpus: cpus) do |accel, count, remote|
           ["#{accel}-#{count}cpu", show(accel, count, remote, built)]
         end
+        booted.flat_map { |cell, lease| [[cell, 'passed'], ["#{cell}#{LEASE_CELL}", lease]] }.to_h
       end
 
       private
 
-      # One boot to the command shell, then the screen's reads. The run's directory is made
-      # afresh and owner-only here, so the QMP socket QEMU creates in it and the dumps beside
-      # it are the harness's alone. A remote placement reaches Qemu#run, which refuses a
-      # boot with a display there.
+      # One boot to the command shell, then the screen's reads; returns the lease cell's
+      # status. The run's directory is made afresh and owner-only here, so the QMP socket
+      # QEMU creates in it and the dumps beside it are the harness's alone. A remote
+      # placement reaches Qemu#run, which refuses a boot with a display there.
       def show(accel, count, remote, built)
         path = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/display-domain', "#{accel}-#{count}cpu"))
         boot = OutputDirectory.prepare(root: @root, path: path, mode: 0o700)
         socket = File.join(boot, 'qmp.sock')
         display = QemuPlan::Display.new(qmp_socket: socket)
+        lease = 'failed'
+        check_lease = lambda do |log|
+          DisplayDomain.check_lease_lines(log)
+          lease = 'passed'
+        rescue Error => e
+          @notes << "#{accel}-#{count}cpu#{LEASE_CELL}: #{e.message}"
+        end
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib,
                                                          test_image: true)
@@ -283,8 +326,8 @@ module Erx
             .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                  memory_mib: @machine.memory_mib, directory: boot, display: display,
                  checkpoints: DisplayDomain.checkpoints(points, socket: socket, references: File.join(@root, REFERENCES),
-                                                        serial: File.join(boot, 'serial.log')))
-        'passed'
+                                                        serial: File.join(boot, 'serial.log'), lease: check_lease))
+        lease
       end
     end
   end

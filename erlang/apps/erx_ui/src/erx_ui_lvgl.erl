@@ -49,7 +49,15 @@ only while erx_ui_lvgl_core:reads_window/1 holds: in any other state they
 stay queued, postponed, until the open report is answered, so the core
 holds at most one apply's operations. stop/1 stops the program and ends
 the shell without consulting the core, so the program's end then is no
-fault. A fault ends the shell, and with it an apply/2 that waits.
+fault. A fault ends the shell, and with it an apply/2 that waits. An
+apply that comes while a report is open returns once the report is
+answered, so the process that answers the window's presents must not be
+the one waiting in apply/2.
+
+start/3 waits at most ?START_MS for the program's start, the pipes, the
+buffer's lend and the handler's answer included; past it the shell is
+killed, and with it what the start made, and start/3 raises
+`{badmatch, {error, timeout}}`, as it raises any refusal.
 
 On erXos a write waits at most ?WRITE_MS for room in the program's input,
 erx_pipe_srv:write/3's timeout, so a program that stops reading is a
@@ -63,6 +71,8 @@ and with it every call (a residual, TODO.md).
 -export([start/3, apply/2, stop/1, window/2, resize/3, shown/1]).
 -export([init/1, callback_mode/0, handle_event/4]).
 
+%% How long start/3 waits for the shell's init, the program's start.
+-define(START_MS, 30000).
 %% How long a write waits for room in the program's input before the
 %% program counts as stalled.
 -define(WRITE_MS, 10000).
@@ -85,7 +95,7 @@ and with it every call (a residual, TODO.md).
 -doc "Starts the renderer of a window and its program, linked to the widget server, the caller.".
 -spec start(erx_ui_renderer:target(), pid(), opts()) -> {ok, pid()}.
 start(_Target, Server, Opts) ->
-    {ok, _Shell} = gen_statem:start_link(?MODULE, Opts#{ui => Server}, []).
+    {ok, _Shell} = gen_statem:start_link(?MODULE, Opts#{ui => Server}, [{timeout, ?START_MS}]).
 
 -doc "Applies a tree's operations; returns once they are written to the program.".
 -spec apply([erx_ui_model:diff_op()], pid()) -> {ok, pid()}.

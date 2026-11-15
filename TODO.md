@@ -920,13 +920,37 @@ it; git history is the record of completed work.
     fails a waiting `apply/2` only by the shell's exit. A program that stops reading its input blocks the shell in
     `port_command/2`, and with it `apply/2`, `close/1`, the window's input and the program's exit, a residual until
     writes are bounded (`nosuspend` and a busy event for the core, or a `close/1` that kills the program itself).
+    (`erlang/apps/erx_ui/src/erx_ui_lvgl.erl`) performs `erx_ui_lvgl_core`'s actions over the program's pipes on
+    erXos, started with `erx_prog_handler:start/1` and a lent buffer (the display suite's lvgl-lease cell), and
+    over a port on the host (`test/host/erx_ui_lvgl_test.rb`). Left: `present`, `window/2` and `resize/3` bound to
+    a window over the lent buffer (`erx_win` with a buffer it does not own), and the program's pid from the
+    command server, which the caller's spec names for now; the fault log names the window and the report's byte
+    position, which the design asks for and the shell does not count yet. A window grown past its buffer is
+    refused by the program and ends the UI as `renderer_down`, so the restart allocates a buffer at the new
+    screen's size; the shell does not clamp. An `apply/2` that comes while a report is open returns only once
+    the report is answered, and `erx_ui_server` calls `Renderer:apply/2` synchronously, so that binding must
+    answer the window's presents from a process other than the one waiting in `apply/2` (the lvgl-lease cell
+    and `test/erlang/erx_ui_lvgl_shell.erl` apply from a process of their own); a binding that does not
+    deadlocks at the program's first report. A fault fails a waiting `apply/2` only by the shell's exit. On the
+    host a program that stops reading its input blocks the shell in `port_command/2`, and with it every call;
+    erXos's writes are bounded by `erx_pipe_srv:write/3`'s deadline. The reader passes on every read of the
+    program's output, so a program that floods events grows the shell's mailbox, as a port's data does.
+    [Medium] `start/3`'s 30 s deadline kills the shell, but a handler blocked in its start actions
+    (`erx_pixels:alloc/2` and `lend/2`, `erx_pipe_srv:forward/1`, all without a bound) reads the starter's
+    `DOWN` only once it is back in its loop, so it keeps its range, holder entry and hand-offs until the call
+    answers; the deadline belongs in `erx_prog_handler:start/1`, which kills the handler and so frees what it
+    holds for every starter, once docs/design-programs.md ("The handler") names it. The shell has no
+    `format_status`, so its crash report would print `unread`, the program's output bytes. In the lease cell
+    and `erx_ui_lvgl_shell.erl`, a present the program sends after the tree is written can reach the test
+    before the apply's answer and be taken as an earlier frame's, which leaves the first-present wait to
+    time out; the cell's 240x160 check shows only that a present came.
   * **Programs** ([The startup message](docs/design-programs.md#the-startup-message)): the profile, `liberx`'s
     decoder, its fuzz targets and the descriptor table (`erx_prog_fd_mmap`, `erx_prog_fd_fstat`) take the `mem`
     descriptor; `erx_program:start/1` takes a window buffer's lease, the driver maps it at the buffer place, and
-    musl's descriptor seam routes a program's descriptor calls to the table. Left: a programs-suite case on erXos
-    that lends a real buffer, so the driver's `LEASE_MAP`, a program's `fstat` and `mmap` of fd 3, a `MAP_FIXED`
-    over it and the order of the anchor's destroy, the lease's return and `{erx_area_returned, N}` run on the
-    target (only the take's refusal does, the `no_lease` case of `tools/lib/erx/programs.rb`); and `fstat`'s modes
+    musl's descriptor seam routes a program's descriptor calls to the table; the display suite's lvgl-lease cell
+    runs `erx-lvgl` over real lent buffers, so the driver's `LEASE_MAP`, a program's `fstat` and `mmap` of fd 3
+    and the lease's return run on the target. Left: a `MAP_FIXED` over fd 3's mapping and the order of the
+    anchor's destroy, the lease's return and `{erx_area_returned, N}`, checked on the target; and `fstat`'s modes
     (a pipe end a FIFO of 0600, a mem range a regular file of 0600) checked against FreeBSD's `pipe_stat` and
     `shm_stat`, unverified, and a pipe end's size, 0 where FreeBSD reports the bytes readable.
   * **Input from another domain** ([The display device](docs/design-display.md#the-display-device)): the
@@ -1875,6 +1899,17 @@ it; git history is the record of completed work.
   ([design-display.md](docs/design-display.md), "A program's window buffer"). The case moves to the display
   suite with `erx_ui_lvgl`'s `open` on erXos (the `erx_ui_lvgl` item above), where the display server hands out
   the window buffer's lease and the read-end pipe, and sees `erx-lvgl` wait in `poll` for the screen record.
+* [Medium] programs, `PROT_EXEC` in a program's `mmap` or `mprotect` (`musl/src/internal/erxos/syscall.c`, `mmap_call`
+  and `mprotect_call`; `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`): design-programs.md, "The
+  POSIX-lite personality", says it fails with `ENOTSUP`, since only the loader maps code, but the descriptor seam takes
+  only descriptor mmaps, `munmap` and the range check of `MAP_FIXED`, so an anonymous mapping or a protection change of
+  anonymous memory reaches musl's own rows, which refuse only write and execute together (a protection change that
+  meets a mapping, the window buffer's included, is refused by `liberx/backend/core/vm_table.c` already). Have the
+  program's seam refuse `PROT_EXEC` in both with `ENOTSUP`, with a check in the programs suite's `args` program.
+* [Low] programs, the programs suite's `lvgl` case (`tools/lib/erx/programs.rb`) checks only that `erx-lvgl`
+  (`display/lvgl/erx_lvgl.c`) reaches main's map of descriptor 3 and ends with status 1. The display suite's
+  lvgl-lease cell runs `erx-lvgl` over its pipes and a lent buffer through `erx_ui_lvgl` (the `erx_ui_lvgl` item
+  above), which covers that and more, so the programs suite's case can go.
 * [Medium] programs, `rt_sigprocmask` keeps no mask (`musl/src/internal/erxos/syscall.c`, `sigprocmask_call`),
   and the startup message's `sigmask` is dropped (`liberx/program/program.c`): the seam accepts any mask and reads
   every mask back as empty, so a program that blocks `SIGPIPE` under `SIG_DFL` and

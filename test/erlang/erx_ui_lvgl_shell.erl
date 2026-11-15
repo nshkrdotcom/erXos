@@ -12,7 +12,11 @@ when the case says.
 
 run/1 returns what test/host/erx_ui_lvgl_test.rb checks:
 
-* `first`: the first present's size, after apply/2 returned.
+* `first`: the first present's size, after apply/2 returned. The apply
+  runs in a process of its own while this one answers every present:
+  the program may report its first screen before it reads the tree, and
+  an apply that comes while a report is open returns only once the
+  report is answered (erx_ui_lvgl_core).
 * `held`: the hits that came while that present was unanswered and a
   click was sent, none, since the shell takes the window's input only
   while no report is open; `hit`, the click's hit once it is answered.
@@ -39,7 +43,7 @@ run(Paths) ->
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, 4 * ?WIDTH * ?HEIGHT)),
     Shell = start(Paths, Buffer),
-    {ok, Shell} = erx_ui_lvgl:apply(tree(), Shell),
+    {ok, Shell} = applied(Shell),
     {present, Shell, W, H, _Rects} = next_present(),
     click(Shell),
     Held = hits(?HOLD_MS),
@@ -48,7 +52,7 @@ run(Paths) ->
     erx_ui_lvgl:resize(Shell, 2 * ?WIDTH, 2 * ?HEIGHT),
     Grown = until_down(Shell),
     Shell2 = start(Paths, Buffer),
-    {ok, Shell2} = erx_ui_lvgl:apply(tree(), Shell2),
+    {ok, Shell2} = applied(Shell2),
     {present, Shell2, _, _, _} = next_present(),
     erx_ui_lvgl:shown(Shell2),
     ok = erx_ui_lvgl:stop(Shell2),
@@ -62,7 +66,7 @@ run(Paths) ->
 %% already closed. The UI still ends as renderer_down, by the exit status.
 killed(Paths, Buffer) ->
     Shell = start(Paths, Buffer),
-    {ok, Shell} = erx_ui_lvgl:apply(tree(), Shell),
+    {ok, Shell} = applied(Shell),
     {present, Shell, _, _, _} = next_present(),
     erx_ui_lvgl:shown(Shell),
     {_State, #{program := {port, Port}}} = sys:get_state(Shell),
@@ -100,6 +104,21 @@ tree() ->
 click(Shell) ->
     erx_ui_lvgl:window(Shell, {input, {pointer, ?WIDTH div 2, ?BUTTON_Y, 1}}),
     erx_ui_lvgl:window(Shell, {input, {pointer, ?WIDTH div 2, ?BUTTON_Y, 0}}).
+
+%% The tree applied from a process of its own, with every present
+%% answered until the apply returns.
+applied(Shell) ->
+    Test = self(),
+    Applier = spawn_link(fun() -> Test ! {applied, self(), erx_ui_lvgl:apply(tree(), Shell)} end),
+    answer_until_applied(Shell, Applier).
+
+answer_until_applied(Shell, Applier) ->
+    receive
+        {present, Shell, _, _, _} -> erx_ui_lvgl:shown(Shell), answer_until_applied(Shell, Applier);
+        {applied, Applier, Answer} -> receive {'EXIT', Applier, normal} -> Answer end;
+        {'EXIT', Shell, Why} -> error({down, Why})
+    after ?WAIT_MS -> error(apply_hung)
+    end.
 
 next_present() ->
     receive {present, _, _, _, _} = Present -> Present after ?WAIT_MS -> error(no_present) end.

@@ -58,6 +58,24 @@ class DisplayDomainTest < Minitest::Test
     assert_match(/^  release @artifact\.pattern$/, Suite::CLIENT)
     assert Suite::BOOT.test
     assert_includes Suite::BOOT.applications, 'erx_pattern_test'
+    assert_includes Suite::BOOT.applications, 'erx_lvgl_lease_test'
+  end
+
+  # Each boot's cell has its lvgl-lease cell beside it.
+  def test_each_boot_carries_its_lvgl_lease_cell
+    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl-lease], Suite.cells(%w[hvf-1cpu])
+  end
+
+  # One passed passes; a failed round, a second outcome after the session was started
+  # again, or no outcome at all fails. The started line is not an outcome.
+  def test_the_lease_lines_are_one_passed
+    started = "space 3: notice: erx_lvgl_lease_test: started\r\n"
+    passed = "space 3: notice: erx_lvgl_lease_test: passed\r\n"
+    Suite.check_lease_lines("boot\r\n#{started}space 3: notice: erx_pattern_test: presented\r\n#{passed}")
+    ["boot\r\n#{started}", "#{started}space 3: notice: erx_lvgl_lease_test: {error,4,start_refused}\r\n",
+     "#{started}#{passed}#{started}#{passed}"].each do |log|
+      assert_raises(Erx::Error) { Suite.check_lease_lines(log) }
+    end
   end
 
   # The manifest check admits the suite's manifest, properties 4 and 18 among its own,
@@ -117,10 +135,15 @@ end
 
   def test_the_screen_is_read_at_the_shell
     points = [{ name: 'boot' }.freeze, { name: 'release-shell', seconds: 60 }.freeze]
-    shell = Suite.checkpoints(points, socket: '/nonexistent/qmp.sock', references: '/nonexistent', serial: '/nonexistent/serial.log').last
+    lease = ->(_log) {}
+    shell = Suite.checkpoints(points, socket: '/nonexistent/qmp.sock', references: '/nonexistent',
+                                      serial: '/nonexistent/serial.log', lease: lease).last
     assert_equal 'release-shell', shell.fetch(:name)
-    assert_equal 60 + Suite::WAIT_SECONDS + (2 * Suite::CLIENT_WAIT_SECONDS) + 15, shell.fetch(:seconds)
+    assert_equal 60 + Suite::WAIT_SECONDS + (2 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS + 15,
+                 shell.fetch(:seconds)
     assert shell.fetch(:verify).respond_to?(:call)
-    assert_raises(Erx::Error) { Suite.checkpoints([{ name: 'boot' }.freeze], socket: '/x', references: '/y', serial: '/z') }
+    assert_raises(Erx::Error) do
+      Suite.checkpoints([{ name: 'boot' }.freeze], socket: '/x', references: '/y', serial: '/z', lease: lease)
+    end
   end
 end

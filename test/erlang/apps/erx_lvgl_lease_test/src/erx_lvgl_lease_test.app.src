@@ -1,0 +1,10 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+{application, erx_lvgl_lease_test,
+ [{description, "erXos test: a display's session that runs erx-lvgl over a lent buffer"},
+  {vsn, "1"},
+  {modules, [erx_lvgl_lease_test, erx_lvgl_lease_test_app]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx, erx_win, erx_ui]},
+  {mod, {erx_lvgl_lease_test_app, []}}]}.
