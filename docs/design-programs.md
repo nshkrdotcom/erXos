@@ -441,6 +441,11 @@ carries what a sub-space needs:
 %%            | {mem, Page :: 1..16#ffffffff, Pages :: 1..16#ffffffff}
 %%                                  % memory the session mapped into the
 %%                                  % program while building it
+%%            | {relayed, read | write | read_write}
+%%            | {relayed, write, tty}
+%%                                  % only in a run's Start: a stream the
+%%                                  % stream relay copies, by the mode its
+%%                                  % end or open allows; tty: the terminal
 %%            | null
 %% Open = 0..16#ffff           % an entry of the program's open table in its handler
 %% PipeEnd, EndValues = a pipe end's numbers and the values in the program's
@@ -507,7 +512,18 @@ rounded length computed with checked arithmetic, passes 2^64, fail with
 `EINVAL` as for any `munmap`, and only then is the range compared with
 the mem range. It names a mapping of this one
 sub-space, so a spawn's `Start` cannot name one, `fork` does not copy
-it and `erx_exec` closes it. `uid` is the number of the principal the session runs for, which the
+it and `erx_exec` closes it. A `relayed` descriptor is valid only in the
+`Start` of a run that a stream relay asks of a command domain's run
+server ([What a program can start](#what-a-program-can-start),
+[design-runtime.md](design-runtime.md#native-programs)), and every
+descriptor of that `Start` is `relayed` or `null`: it names a stream
+the stream relay copies over its connection, by the mode the relay's
+own end or open allows, and with `tty` a stream that is the session's
+terminal, whose open is always write-only. The `descriptor` union of
+the ABI file `abi/protocols/prog.txt` gains the two forms; a program's
+startup message, which its handler writes, never holds one, and the run
+server's validator refuses a run's `Start` that holds any descriptor
+but these and `null`. `uid` is the number of the principal the session runs for, which the
 handler takes from the session's `principal` environment variable, set
 to that number when the session is planned; `liberx` keeps it in its
 record of the program's start, and `getuid`, `getgid` and their
@@ -813,7 +829,7 @@ holds one ends the program (Credit, below).
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
 | `{local, Op}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{seek, Open, Offset, Whence}` on the open's description, `{setfl, Open, Flags}` of the description's status flags, `{chdir, Path}`, and `{access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
 | `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
-| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
+| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, `{error, ebadf}` for the watch of a read while the handler's open of it is write-only, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later; `{error, ebadf}` at once, and no report, for the watch of a read on a terminal while the handler's open of it is write-only |
 | `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
 | `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
 | `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
@@ -1505,7 +1521,11 @@ the path into one of four images:
   allows, `{relayed, read}`, `{relayed, write}` or `{relayed,
   read_write}`, or `null` ([design-runtime.md](design-runtime.md#native-programs)):
   a pipe's read end `read`, its write end `write`, a file open its access
-  mode, and the terminal `write`. The command's `erx_cmd` answers a read
+  mode, and the terminal `{relayed, write, tty}`, the `tty` telling the
+  command that the stream is a terminal, so that `erx_cmd:isatty/2` is
+  true for it and a command that shows names, as `ls` does, hides the
+  characters that do not print as it does at the session's own
+  terminal ([design-shell.md](design-shell.md#pipelines)). The command's `erx_cmd` answers a read
   of a stream named `write` itself, sending nothing, and ends the command
   with status `ebadf`, as the terminal relay answers a read on a
   write-only open, so a command there that reads a standard input that is
@@ -1769,11 +1789,14 @@ composes them and the image runs only when no cause remains. A
 continue lifts both from its target, as POSIX's `SIGCONT` continues a
 process however it was stopped: an authorized `SIGCONT` makes the
 program's handler lift the `signal` cause and tells the job table, which
-lifts the `job` cause and shows the job running, in the step that gives
-the stop's kept answers
+lifts the `job` cause from that program alone and shows the job running,
+in the step that gives the stop's kept answers
 ([design-shell.md](design-shell.md#job-control)), as a UNIX shell does once
-one of a stopped job's processes runs; `fg` and `bg` lift the `job` cause
-from every program of the job and send each `SIGCONT`. Each reaches only
+one of a stopped job's processes runs, while the job's other members stay
+held; `fg`, `bg` and the shell's `kill -s CONT %N` lift the `job` cause
+from every program of the job and send each `SIGCONT`, whatever the job
+table shows of the job, lifting a cause that a program does not hold
+being no change. Each reaches only
 its target, so an outer job's `fg` continues no program of another job,
 and no continue lifts a hold that is not job control's, such as a `fork`'s
 copy's, which is a hold of its own. The causes belong to the program,

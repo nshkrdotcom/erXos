@@ -143,10 +143,12 @@ The shell's state is a few Erlang terms in the session's domain:
 -type job() :: #{id := pos_integer(),         % %N
                  stages := [pid()],           % the job's Erlang processes
                  tag := erx_job:tag(),        % carried by its Erlang processes
+                 termios := erx_tty:termios() | none,
+                                              % what the job left when a stop last
+                                              % took the terminal from it, for its fg
                  state := foreground | background | stopped()}.
--type stopped() :: {stopped, erx_tty:termios(), [{pid(), reference()}]}.
-                                              % the termios the job left, and each
-                                              % requester its stop owes a reply,
+-type stopped() :: {stopped, [{pid(), reference()}]}.
+                                              % each requester its stop owes a reply,
                                               % with the reference the reply carries
 ```
 
@@ -461,7 +463,11 @@ unchanged ([The tty](design-live.md#the-tty)). Where FreeBSD's command
 looks at whether its output is a terminal, as `ls` does to choose columns
 and to hide characters that do not print, the Erlang command asks
 `erx_cmd:isatty/2`; nothing else in a command depends on what is at the
-other end. So Erlang commands, programs, files and the terminal combine
+other end. The answer is the same in the session's domain and in a
+command domain, whose startup message names a stream that is the
+terminal `{relayed, write, tty}`
+([design-programs.md](design-programs.md#what-a-program-can-start)), so
+a script's `ls` hides a hostile file name's escape sequences there too. So Erlang commands, programs, files and the terminal combine
 in any order with one meaning, and no stage renders, frames or reparses
 another's output.
 
@@ -785,7 +791,9 @@ A command for `system` is rc, not sh. The common translations:
 `&` runs a pipeline in the background; `jobs` lists the jobs, `fg` and
 `bg` take a job's number, `Ctrl-Z` stops the foreground job, `Ctrl-C`
 interrupts it, `Ctrl-T` reports on it ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)),
-and `kill %N` ends a job, with `SIGTERM` unless a signal is named.
+and `kill %N` sends a job `SIGTERM`, or the signal it names, which ends
+the job only when that signal's default action is to terminate ("`kill`
+of a job", below).
 
 **The terminal relay** is the process of the session's domain that owns
 the session's tty ([design-live.md](design-live.md#the-tty)) and serves
@@ -914,19 +922,61 @@ tag's processes. It also reaches members that wait in `receive`: it marks
 the job ending and then wakes each member it finds among the runtime's
 processes, and each spawn checks its job after the new process exists, so
 a process spawned while the search runs is either found by it or ended by
-its spawner. `kill %N` of a paused job resumes it after the signal, as a
-UNIX shell continues a stopped job it signals.
+its spawner.
+
+**`kill` of a job** acts by the default action of the signal it sends,
+as the signal table of [design-programs.md](design-programs.md#signal-numbers)
+gives it, so no signal is listed here. FreeBSD's `sh` sends the signal
+to the job's process group and leaves the rest to what each process
+does with it (`bin/sh/jobs.c:719-736`, at commit `95719d8a`); erXos
+makes the job table do what that leaves the processes doing:
+
+* A signal whose action is to terminate, `SIGTERM` by default and among
+  others `SIGHUP`, `SIGINT`, `SIGKILL` and `SIGUSR1`, ends the job, as
+  above. Of a stopped job it then resumes the programs, so each takes
+  the signal. Here erXos differs from FreeBSD, whose kernel runs a
+  stopped process only for `SIGKILL` and leaves any other signal pending
+  until the process is continued (`sys/kern/kern_sig.c:2419-2432`,
+  `:2500-2515`), so that `sh`'s `kill %1` of a stopped job leaves it
+  stopped: ending a job ends its Erlang members at once, and a program
+  left paused would have no job left to continue it.
+* `SIGCONT` continues the whole job as `bg` does, below, and leaves it
+  in the background, as `sh`'s `bg` continues a job by sending its
+  process group `SIGCONT` (`bin/sh/jobs.c:287-303`).
+* A stop signal, `SIGTSTP`, `SIGSTOP`, `SIGTTIN` or `SIGTTOU`, stops the
+  job as `Ctrl-Z` does, except that the terminal stays with its holder;
+  a job already stopped is left as it is, as FreeBSD's kernel discards
+  a stop signal sent to a stopped process (`kern_sig.c:2482-2497`).
+* A signal whose action is to ignore it ends nothing. `SIGINFO` delivers
+  the info request ([`Ctrl-T`](#ctrl-t-status-and-the-info-request))
+  and `SIGWINCH` the window-size delivery
+  ([Window size](#window-size)), each with its effect on the job's
+  programs and on the Erlang processes that opted in; `SIGURG`,
+  `SIGCHLD` and `SIGIO` go to each of the job's programs through its
+  handler, and its Erlang processes take nothing, as a signal reaches an
+  Erlang command only as an event it opted into.
+
+A signal that neither ends nor continues a stopped job leaves it
+stopped; a program of it takes the signal, and an Erlang process its
+event, once it runs again, as FreeBSD leaves a signal pending on a
+stopped process (`kern_sig.c:2500-2515`).
 
 **Stopping and continuing.** Stopping a job pauses its programs, through
 the port driver's pause of each program's image, and marks its tag
 stopped; a program that a paused member starts or forks, or that the
-shell starts for the stopped job, starts paused. `fg` and `bg` clear the
-mark, resume the programs and then have each program's handler send it
-`SIGCONT`. A `SIGCONT` that reaches one program of a stopped job from
-elsewhere, under the `kill` rules, resumes that program and makes the job
-table show the job running in the background, while its other members
-stay stopped until `fg` or `bg`, as a UNIX job's other processes do
-([design-programs.md](design-programs.md#job-control)). On the stopgap,
+shell starts for the stopped job, starts paused. `fg`, `bg` and
+`kill -s CONT %N` continue the whole job: they clear the mark, lift the
+`job` cause from every program of the job and then have each program's
+handler send it `SIGCONT`. A `SIGCONT` that reaches one program of a
+stopped job from elsewhere, under the `kill` rules, lifts the `job`
+cause from that program alone and makes the job table show the job
+running in the background, while its other members, its Erlang
+processes among them, stay held until `fg` or `bg`, as a UNIX job's
+other processes stay stopped
+([design-programs.md](design-programs.md#job-control)). So `fg` and
+`bg` do the same whatever the entry shows: clearing a mark that is not
+set and lifting a cause a program does not hold change nothing, and the
+table needs no state for a job that is partly held. On the stopgap,
 which pauses no space, stopping a job stops only its Erlang commands: the
 shell reports those stopped and names the job's programs, which run on, so
 the job table never shows a running program as stopped
@@ -937,13 +987,17 @@ foreground, in the background or stopped, and only a stopped entry holds the ans
 to each process that asked for the stop with `erx_cmd:stop/1`, and one to
 each program's handler that asked for it with `{stop, sigtstp}` or
 `{stop, sigttou}` ([design-programs.md](design-programs.md#the-terminal),
-"Stopping itself"), beside the job's `termios`, which the shell keeps for
-the job's `fg`. One step of the table's core takes an entry out of
+"Stopping itself"). One step of the table's core takes an entry out of
 stopped, whichever request causes it, among them `fg`, `bg`,
 `kill -s CONT %N`, the resume that follows the signal of `kill %N`, and
 a handler's report that a `SIGCONT` from elsewhere continued one of the
-job's programs. That step makes its resume and then gives every kept
-answer. The answers exist only inside the stopped entry, so no way of
+job's programs. That step makes the request's resume, the whole job's
+or, for the report, that one program's, and then gives every kept
+answer. Apart from its state, an entry keeps the `termios` the job left
+when a stop last took the terminal from it, or none when no stop has,
+as for a job started with `&` that has not stopped; `fg` gives the job
+that `termios`, or the cooked one when it keeps none ("The holder
+follows the job table", below), whichever state the entry is in. The answers exist only inside the stopped entry, so no way of
 continuing a job can leave one behind, and the step keeps no list of
 the ways: a new way of continuing a job is one more caller of it. A job that ends while stopped drops
 its answers with its entry, and its requesters end with it. A requester
@@ -1283,7 +1337,7 @@ that would otherwise be a case of its own follows from that value:
   since it all waits in the tty, and the tty's 4 KiB bound on unread
   input bounds all of it ([design-live.md](design-live.md#the-tty)); the
   console's group holds no more than the line it is editing, at most
-  65,536 characters, past which a typed character is dropped with a bell
+  65,536 codepoints, past which a typed character is dropped with a bell
   as the tty drops a byte that finds its queue full
   ([design-runtime.md](design-runtime.md), edit 72);
 * a background job's read waits until `fg` brings the job back
@@ -1324,7 +1378,11 @@ process of another domain cannot reach the relay. Its messages arrive as
 domain, so a plain message comes from its own domain by construction.
 
 **Requests.** A request is a call, `gen_server:call(erx_tty_owner,
-Request, infinity)`, and the relay answers it in the step that takes it.
+Request, infinity)`, made by a client function of `erx_session_relay`,
+the one module of the session's own code that names `erx_tty_owner`
+(the runtime's writers aside), which a build check proves ("Only
+`erx_cmd`'s and the console's opens read", below), and the relay
+answers it in the step that takes it.
 The relay
 calls no one and waits on no one, so no cycle of waits passes through
 it, and a caller waits for one step of the relay at most. The
@@ -1451,8 +1509,12 @@ the close's answer, and none after.
   shell's group reads through the console. So the shell sends
   `foreground`, each with its `Signals`:
   * before a line starts, `{foreground, Line, cooked, Signals}`;
-  * at `fg`, `{foreground, Job, Kept, Signals}`, with the `termios` the
-    job kept;
+  * at `fg`, `{foreground, Job, Kept, Signals}`, `Kept` being the
+    `termios` the job's entry keeps, whether the entry is stopped or in
+    the background, and `{foreground, Job, cooked, Signals}` when it
+    keeps none, as for a job started with `&` that has not stopped,
+    which began under the cooked `termios` its line held
+    ([Job control](#job-control), "A stop keeps its answers");
   * when the job `fg` waits for stops or ends, `{foreground, Line,
     cooked, Signals}`, so the rest of the line reads the terminal, as
     FreeBSD's `sh` takes the terminal back for itself when the job its
@@ -1468,7 +1530,8 @@ the close's answer, and none after.
     ended `F`, the bullet of that change applies instead, and when the
     console holds the terminal the shell sends nothing.
 
-  At each stop the shell keeps `Left` for the job's `fg`. Its own
+  At each stop that takes the terminal from a job the shell keeps `Left`
+  in the job's entry for its `fg`. Its own
   requests are never refused, since `cooked` and a kept `termios` are
   the relay's own, it sends `current` only for the job it gave the
   terminal, and it counts no signal the relay has not counted. So a
@@ -1939,17 +2002,31 @@ which three rules give:
   a command domain's startup message names its terminal stream `write`,
   and `erx_cmd` there ends a command that reads it with status `ebadf`
   ([design-programs.md](design-programs.md#what-a-program-can-start)).
-  The console belongs to no job, so no mark ends it. A build check over
-  the BEAM files of the image's Erlang applications, with the compiler's
-  call graph, fails on a call of `erx_session_relay:open_reader/1` from
-  any module but `erx_cmd` and `erx_console`
+  The console belongs to no job, so no mark ends it. A build check runs
+  xref over the BEAM files of the image's Erlang applications, with the
+  machinery that computes the modules `/tmp`'s serving processes may
+  call (`tools/lib/erx/serving_set.rb`), and fails on either of two sites.
+  One is a call of `erx_session_relay:open_reader/1` from any module but
+  `erx_cmd` and `erx_console`. The other is the atom `erx_tty_owner`,
+  the relay's registered name, in any module but `erx_session_relay`,
+  whose client functions make every request to the relay, `erx_output`,
+  the runtime's writers' one sender of `tty_write` and `tty_drain`,
+  which every owner serves, and the two modules that hold the name in
+  other domains, `erx_console` in the system domain and `erx_log_h`,
+  whose proxy holds it in a domain with no terminal
+  ([design-runtime.md](design-runtime.md#the-console-and-standard-io)).
+  A registered name is an argument, not a call, so xref's call graph
+  does not show it; the check reads, in the same run, the atom table of
+  each BEAM file, where any use of the name as a literal appears. So a
+  handler that builds the open request itself and sends it by name is
+  a site, as one that calls `open_reader/1` is
   ([design.md](design.md#chokepoint-checks)). Test modules are not among
   those files, so the relay's own cases, which open for reading from the
-  test process, are not sites; the check's test adds a seeded handler
-  module to the files it reads. It is a guard against a slip, not the
-  boundary: a module that builds the open request itself, or names
-  `open_reader` through a computed `apply/3`, passes it, and the mode is
-  what keeps a write-only open from reading. A program's terminal reads,
+  test process, are not sites; the check's test compiles a seeded
+  handler module into the files it reads. It is a guard against a slip,
+  not the boundary: a module that makes the name or the function at run
+  time, through `list_to_atom/1` or a computed `apply/3`, passes it,
+  and the mode is what keeps a write-only open from reading. A program's terminal reads,
   and through them a command domain's, need a handshake in which each
   handler answers the shell once its program has taken the signal, and
   the shell sends `current` only after every answer; that handshake is
@@ -2068,7 +2145,9 @@ are a command's only reads of its standard input, and `io:get_line/1`,
 ([Pipelines](#pipelines)), and `erx_cmd:columns/1` and `erx_cmd:rows/1`
 give the terminal's width and height, `COLUMNS` and `LINES` first, as
 FreeBSD's `ls`, `ps` and termcap read them, then the size the session's
-tty holds when a standard stream is the terminal, else `unknown`.
+tty holds when a standard stream is the terminal, else `unknown`; in a
+command domain, which no terminal call leaves, only `COLUMNS` and
+`LINES` ([design-runtime.md](design-runtime.md#native-programs)).
 `erx_cmd:catch_events/1` opts the calling process in to `Ctrl-T`'s info
 request and to size reports, and `erx_cmd:requested/1` takes the reports
 of one kind pending for it
@@ -2547,10 +2626,14 @@ remain independent of catalog generation.
     `ls\n`. Seeded: a relay that ignores the mode, whose write-only open
     reads `ls\n`.
   * The readers: the chokepoint check that only `erx_cmd` and
-    `erx_console` call `open_reader/1` passes on the image's BEAM files.
-    Seeded, in `test/host/chokepoints_test.rb` as every rule's seed is:
-    a program handler module that calls `open_reader/1`, which the check
-    reports.
+    `erx_console` call `open_reader/1`, and that `erx_tty_owner` appears
+    only in `erx_session_relay`, `erx_output`, `erx_console` and
+    `erx_log_h`, passes on the image's BEAM files. Seeded, in
+    `test/host/chokepoints_test.rb` as every rule's seed is, each a
+    program handler module compiled into the BEAM files xref reads: one
+    that calls `open_reader/1`, and one that sends `{open, Job, read}`
+    with `gen_server:call(erx_tty_owner, _, infinity)`, each of which the
+    check reports.
   * The runtime's writers: with output stopped by `VSTOP`, a
     `tty_write` is not answered; after `VSTART` it is answered once its
     bytes are held. A `tty_drain` is answered only when the fake master
@@ -2698,12 +2781,27 @@ remain independent of catalog generation.
     given to the command shell's group through the fake console a
     character per answer, leave the group, by `process_info(G, memory)`
     after `erlang:garbage_collect(G)`, within 64 KiB of its size after
-    70,000 such characters; the line then holds the first 65,536 characters, a bell
-    was asked for each character after them, and Return gives the
-    shell's `line too long`. The measure is the whole group, not the
-    editor's continuation alone, so it also catches a copy of the line
-    kept anywhere else in the group. Seeded: edit 72 without its seventh
-    part, under which the group grows with the characters.
+    70,000 such characters; the line then holds the first 65,536
+    codepoints, a bell was asked for each character after them, Return
+    gives the shell's `line too long`, and the group's reductions, by
+    `process_info(G, reductions)`, per character over the last 100,000
+    characters are within four times those per character over the first
+    1,000, typed into a short line. The measure is the
+    whole group, not the editor's continuation alone, so it also catches
+    a copy of the line kept anywhere else in the group. Seeded: edit 72
+    without its seventh part, under which the group grows with the
+    characters; and a seventh part that takes the count from the line at
+    each key, whose reductions for the last characters grow with the
+    line.
+  * A cluster that never ends: `a` and then 100,000 U+0301 COMBINING
+    ACUTE ACCENT, given a character per answer, leave the line holding
+    `a` and 31 marks, one cluster of 32 codepoints, with a bell for
+    each mark after them; a following `b` is inserted, and Return gives
+    the line `a`, the 31 marks and `b`. Seeded: a seventh part that
+    counts `edlin`'s elements, under which the line holds all 100,001
+    codepoints in one element and the group grows with the marks; and
+    one without the cluster bound, under which the cluster grows to the
+    line's 65,536 codepoints.
   * A late event: with the command shell's group `P` current again after
     an Erlang shell's group `E` has ended, `{erx_tty_event, E,
     interrupt}` reaches no group, and the command shell's line goes on;
@@ -2763,17 +2861,43 @@ remain independent of catalog generation.
     table that delivers every `winch`, which gives nine.
   * `stop/1`: a stop asked by a command's process `P` of job A gives the
     stop's effects and the `foreground` of A's stop, and no answer to
-    `P`. Each way of continuing A then gives the resume and only after
-    it the answer to `P`, one case each: `fg` of A, `bg` of A,
-    `kill -s CONT %N` of A, and a handler's report that a `SIGCONT`
-    continued one of A's programs. A handler's `{stop, sigtstp}` for a
-    program of A is answered in the same step as `P`. `kill %N` of the
-    stopped A gives A's end and then the resume and the answer; and a
-    shell that ends while A is stopped gives no answer. Seeded, each
-    failing its cases: a table that answers `P` when it marks the tag,
-    which fails the first case; and one that answers only at `fg` and
-    `bg`, which fails the `CONT` and `SIGCONT` cases, where `P` would
-    run on with its call never returning.
+    `P`. Each of `fg` of A, `bg` of A and `kill -s CONT %N` of A then
+    gives the whole job's resume, the mark cleared and the `job` cause
+    lifted from each of A's two programs, and only after it the answer
+    to `P`, one case each. A handler's report that a `SIGCONT`
+    continued program `Q` of A gives the lifting of `Q`'s `job` cause
+    alone: the mark stays, A's other program stays held, `jobs` shows A
+    running, and `P`'s call returns only after a later `bg` of A, which
+    clears the mark and lifts the other program's cause. A handler's
+    `{stop, sigtstp}` for a program of A is answered in the same step as
+    `P`. `kill %N` of the stopped A gives A's end and then the resume
+    and the answer; and a shell that ends while A is stopped gives no
+    answer. Seeded, each failing its cases: a table that answers `P`
+    when it marks the tag, which fails the first case; one that answers
+    only at `fg` and `bg`, which fails the `CONT` case, where `P` runs
+    on with its call never returning, and the `SIGCONT` case, where the
+    answer is dropped with the stopped state and `P`'s call does not
+    return after the `bg`; one whose `SIGCONT` report continues the
+    whole job, which fails the `SIGCONT` case; and one whose `bg` acts
+    only on a stopped entry, which leaves the other program held after
+    the `bg`.
+  * `fg`'s `termios`: `fg` of a job that `Ctrl-Z` stopped after setting
+    `ECHO` clear sends `{foreground, A, Kept, Signals}` with `ECHO`
+    clear, both straight from stopped and after `bg` of it; `fg` of a
+    job started with `&` that never stopped sends `{foreground, B,
+    cooked, Signals}`. Seeded: a table that drops the `termios` when the
+    entry leaves stopped, which sends `cooked` after the `bg`.
+  * `kill` of a job, by default action, against a fake port driver and
+    fake handlers: `kill %N` and `kill -s HUP %N` of a stopped job end
+    it, its programs signalled and then resumed; `kill -s CONT %N`
+    continues it whole, as the `stop/1` case above checks;
+    `kill -s TSTP %N` of a running background job stops it, the terminal
+    staying with the line, and of a stopped job changes nothing;
+    `kill -s INFO %N` of a stopped job leaves it stopped, its programs'
+    handlers sending `SIGINFO` and no member ended. Seeded: a builtin
+    that ends the job for every named signal, which ends the job at
+    `INFO` and `TSTP`; and one that resumes a stopped job after every
+    signal, which runs it at `INFO`.
   * Signals not received: a `foreground` answer `{ok, Left, 2}` taken
     while the shell has counted 1 gives one check; a second such answer
     before the check comes gives none; the check with the count still 1
@@ -2889,6 +3013,15 @@ remain independent of catalog generation.
     newline and a bidirectional override; `ls` at a terminal shows tokens
     and through `cat` the bytes, `ps` shows the field escape both ways.
     Bypassing either escape fails.
+  * Names from a command domain: a program at the session's terminal
+    starts `ls` as an Erlang command in a command domain, over a
+    directory holding a file name with `ESC ] 8 ;` and `ESC [ 2 J`; the
+    fake master receives the tokens `ls` shows at a terminal and no
+    byte 0x1b, and `ls` writes its columns at the width `COLUMNS` gives.
+    A `cat` started there with the terminal as its standard input still
+    ends with `ebadf` at its first read. Seeded: a stream relay that names the terminal `{relayed,
+    write}`, without `tty`, under which the fake master receives the
+    raw escape bytes.
   * Between Erlang stages: `cat` of a 1 GiB file into `grep -q .` ends
     `cat` with `sigpipe` once `grep` has stopped; a
     writer of 1 MiB to a reader that never reads holds at most 64 KiB in

@@ -538,13 +538,25 @@ the first three rules, and `edlin` the other four:
    `ESC` and NL arriving together it asks for the redraw and then the
    inserts of `b` and `a`, and arriving apart for the inserts of `a` and
    `b` and then the redraw.
-7. A line holds at most 65,536 characters, all its lines together, the
-   bound `erx_cmd:read_line/1` puts on a command's line: an operation
-   whose result would hold more is answered as `beep` is
-   (`edlin.erl:640-641`), leaving the line as it was. Every change to the
-   line is an operation of `do_op/3` (`:426-643`), which `edit/5` calls
-   for each key (`:342`, `:413`), and the bound is checked around that call,
-   so no operation is listed.
+7. A line holds at most 65,536 codepoints, all its lines together, and
+   a grapheme cluster of it at most 32: an operation whose result would
+   hold more is answered as `beep` is (`edlin.erl:640-641`), leaving the
+   line as it was. The unit is the codepoint, not the element of
+   `edlin`'s line. An element is a grapheme cluster, into which an insert
+   merges a combining character with `string:to_graphemes([Bef, C])`
+   (`:428-439`), so a count of elements would take `a` followed by a
+   megabyte of U+0301 as one, and each merge costs time in the length of
+   the cluster it joins; the cluster bound keeps that merge within 32
+   codepoints. The count is kept in the editor's continuation beside the
+   line, not taken again from the line at each key: an insert, the
+   operation of each typed character, adds the one codepoint it inserts, so
+   it costs the same time however long the line is, and any other
+   operation counts the line it returns with `cp_len/1` (`:903-908`), in
+   time bounded by the line's own bound; a continuation made from a
+   whole line, at the start and from history, counts it once. Every
+   change to the line is an operation of `do_op/3` (`:426-643`), which
+   `edit/5` calls for each key (`:342`, `:413`), and both bounds are
+   checked around that call, so no operation is listed.
    A character typed past the bound is dropped with a bell, as FreeBSD's
    `ttydisc_rint` drops a byte that finds the input queue full and rings
    the bell under `IMAXBEL` (`sys/kern/tty_ttydisc.c:1220-1236`), and
@@ -552,9 +564,12 @@ the first three rules, and `edlin` the other four:
    ([design-live.md](design-live.md#the-tty)). Stock grows the line with
    every character, so a paste or a peer that sends megabytes with no
    newline grows the group without end. The bound is above rc's 4 KiB
-   unit, so a line the editor cut never runs as rc's: its parser refuses
-   it as `line too long`
+   unit, since a codepoint takes at least a byte, so a line the editor
+   cut never runs as rc's: its parser refuses it as `line too long`
    ([design-shell.md](design-shell.md#failure-handling-diagnostics-and-debuggability)).
+   It is the editor's own bound and is not tied to the 64 KiB in bytes
+   that `erx_cmd:read_line/1` puts on a line a command reads from its
+   standard input, which the editor's line never reaches.
    A heap limit on the group would bound it too, but would end the
    session's console, and every shell on it, at a paste, where a
    terminal drops what does not fit and goes on.
@@ -3622,9 +3637,11 @@ message reaches it as an unknown one and is dropped:
   program's startup message
   ([design-programs.md](design-programs.md#the-startup-message)) with its
   streams relayed: each descriptor is `{relayed, read}`, `{relayed,
-  write}`, `{relayed, read_write}` or `null`, the mode the stream relay's
-  own end or open allows, which the ABI file declares beside the startup
-  message and the validator checks. `Relay` must be a pid of `D` by
+  write}`, `{relayed, read_write}`, `{relayed, write, tty}` or `null`,
+  the mode the stream relay's own end or open allows, and `tty` when
+  that open is of the session's terminal, which the ABI file declares
+  beside the startup message and the validator checks
+  ([design-programs.md](design-programs.md#the-startup-message)). `Relay` must be a pid of `D` by
   `erx:owner/1`, since the answers go to it. The server makes a new alias for the run,
   spawns the run with `erx_job:spawn/1`, so under a new tag that neither
   the server nor any other run carries ([Scheduling](#scheduling)),
@@ -3637,9 +3654,16 @@ message reaches it as an unknown one and is dropped:
   answers it itself and ends the command with status `ebadf`, which is
   how a command there that reads a terminal on its standard input ends,
   the stream relay's open of the terminal being a write-only one
-  ([design-programs.md](design-programs.md#what-a-program-can-start)). No
-  stream there is the terminal to `erx_cmd:isatty/2`, since no terminal
-  call reaches the terminal from a command domain. A
+  ([design-programs.md](design-programs.md#what-a-program-can-start)). A
+  stream named `{relayed, write, tty}` is the terminal to
+  `erx_cmd:isatty/2`, so a command there that shows names, as `ls`
+  does, hides the characters that do not print as it does at the
+  session's own terminal and sends no file name's escape sequences to
+  the operator's terminal; `erx_cmd:columns/1` and `erx_cmd:rows/1` there
+  answer `COLUMNS` and `LINES` from `Start`'s environment, else
+  `unknown`, and the terminal calls `erx_cmd:tty/2` and `watch/1` answer
+  `{error, enotty}`, since no terminal call reaches the terminal from a
+  command domain. A
   `Start` the validator refuses, which only a bug in the session can
   produce, is answered `{erx_run_refused, Reason}` and runs nothing.
 * `{erx_job, Action}`, taken only at a run's alias, so only from the one

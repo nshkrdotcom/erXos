@@ -7414,7 +7414,7 @@ document's "residual risks accepted" paragraph.
   key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
   has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
   the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
-  chokepoint's list), the stream relay names a terminal stream `read_write` and copies its input, the handler's
+  chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
   the group keeps every line its editor returns, so a long session, or a paste or peer that sends many lines, grows
