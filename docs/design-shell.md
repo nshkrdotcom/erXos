@@ -338,7 +338,7 @@ shell and for `erx:` functions that run commands:
    names through `inet_res`
    ([design-network-stack.md](design-network-stack.md)); `reboot` and
    `halt`, which follow FreeBSD's reboot(8), need the `machine` grant and
-   in a session write one end to `/machine/ctl`
+   write one end to `/machine/ctl`
    ([design-system.md](design-system.md#a-sessions-request)); and erXos's own `i`, `domains`, `source`, `trace`,
    `attach`, `bind`, `mount` and `unmount`, which have no FreeBSD
    counterpart;
@@ -1192,7 +1192,18 @@ are not inspector queries: `ps` and the `Ctrl-T` line read them in the
 session's runtime, with or without the facet. The system domain's session, handed none,
 reads at scope `all` in its own runtime and holds, for each service of
 the system domain that runs in that domain, the value `local`: the
-service is the domain's own. It never holds
+service is the domain's own, and the entry only meets the command's
+`-erx_needs`. A command reaches a `files` service by one path in every
+session, the system shell's included, and never looks at the value of
+its entry: each `files` service of the system domain mounts one grant
+of its tree, bound to the system domain, in the system domain's own
+namespace, at the point where a session mounts its facet of the
+service, as `/proc` and `/dev` are mounted there. Both mounts take the
+point from one table of `erx_ns`, its places (`erx_ns:mount_facets/1`
+for a session's facets, `erx_ns:mount_own/2` for the system domain's own
+grants). So `reboot`
+writes `/machine/ctl` and `service` writes the start service's `ctl`
+in the system shell as in root's session. It never holds
 `net`, since the system domain holds no `net` grant
 ([design-system.md](design-system.md#the-manifest), property 15), so
 the network utilities run in a session that holds it, root's at the
@@ -1270,7 +1281,8 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
 
 No other source of authority exists for a
 command: the system domain's services are reached only through facets in
-the context.
+the context and through the trees its session's namespace mounts, a
+grant's in a session and the system domain's own in the system shell.
 
 A context's pids are names. A command domain holds its grants and facets
 before its startup message, each a process the system domain made for

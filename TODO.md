@@ -3301,22 +3301,31 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   session_domain suite's reboot boot covers root's session, whose grant names root, and a
   session without the grant is covered only by the shell's `no_facet` case in
   `erx_cmd_reboot_tests`.
-* [Low] session start, `erlang/apps/erx_session/src/erx_session_app.erl` (`mount_machine/1`):
-  a `/machine` mount that fails, a grant that ended before the session started included,
-  fails the `ok =` match and ends the session's start, where the session could start without
-  `/machine` and refuse `reboot` and `halt` with `enoent`. `/apps`'s mount has the same shape.
+* [Low] session start, `erlang/apps/erx_session/src/erx_session_app.erl` (`start/2`): a
+  facet mount that fails, of `/data`, `/apps` or `/machine`, fails the `ok =` match and ends
+  the session's start, where the session could start without that path and refuse the
+  commands that need it with `enoent`.
+* [Medium] the system domain's own grants, `erlang/apps/erx_files/src/erx_fs_grants.erl`
+  (`own/1,2`), `erx_machine_fs:start_link/0` and `erx_starter_fs:start_link/1`: the own grant
+  is a temporary child of the grants supervisor, so one that ends alone, at its heap bound for
+  instance, leaves the system shell's `/machine` or `/apps` answering `eio` until the grants
+  supervisor itself restarts, where docs/design-system.md ("A session's request", Failure)
+  has it started again and remounted, as `erx_devfs` and `erx_lfs_sup` keep theirs. Each
+  service also repeats the four serving steps (start the grants, `erx_facet:serve/2`, the own
+  grant, `erx_ns:mount_own/2`). One function that serves a system domain's files service under
+  a supervisor of its own, the grants beside a permanent own-grant child that mounts itself,
+  fixes both and lets `own/1,2` go.
+* [Medium] host link trees, `erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`
+  (`tree_grant/3`): the link serves any grant entry of the system domain's table whose tree a
+  configuration's `files_trees` names, so with the own mounts a configuration that names
+  `machine` or `apps` would hand the host the right to end the machine as root and to start
+  and stop apps. No default names them (`default_trees/1`); make the served set an explicit
+  list of trees designed for the host, or refuse those two.
 * [Low] the machine grant's principal, `erlang/apps/erx_domain/src/erx_domain_srv.erl`
   (`machine_principal/3`): the configured domains `storage` and `display` run under the
   system principal, as root's sessions do, so a `machine` row granted to one of them would
   log its end as `by root`. Only root's template holds the row, so no such grant exists; a
   row that names one needs a principal of its own for the domain first.
-* [Medium] the system shell's `local` entries, `erlang/apps/erx_shell/src/erx_shell_runner.erl`
-  (`facets/3`), `erx_cmd_reboot` and `erx_cmd_service`: each command of a files service carries
-  two routes, the grant's path and a direct call for `local`, and a new one that forgets the
-  second fails in the system shell with `enoent`. By construction the system shell would mount
-  each tree its domain serves, through a grant of `erx_fs_grants` to the system domain itself,
-  and every command would have one path; that changes design-shell.md "Interfaces" and goes
-  to the design first.
 * [Medium] SH1 check, `tools/lib/erx/command_needs.rb` (`SERVICES`): the hand-kept table lists
   `net`, `apps` and `machine`, the services whose facets commands declare, though
   design-shell.md says the check proves SH1 for every service; a command naming a module of

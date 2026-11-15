@@ -1362,10 +1362,15 @@ to the term at each resolution). A domain mounts a facet only where the
 manifest grants it one: the domain service names, in a domain's ready
 answer, the facets of configured domains the manifest grants the
 domain, which arrive later by installation, and the domain mounts each
-that has a mount point, `data` at `/data`, read-write on
-the tree `data` (`erx_ns:mount_facets/1`, which a session's `erx_session`
-and the system domain's domain service, once it has read the manifest,
-call). A domain the manifest grants no `data` facet has no `/data` mount,
+facet it is granted or holds that has a mount point, `data` at `/data`,
+read-write on the tree `data`, and each `files` service of the system
+domain at the point its design names (`erx_ns:mount_facets/1`, which a
+session's `erx_session` and the system domain's domain service, once it
+has read the manifest, call). The system domain mounts its own grant of
+each `files` service it serves at the same point
+(`erx_ns:mount_own/2`; [design-shell.md](design-shell.md#interfaces)),
+so a session's mount and the system domain's take the point from one
+table of `erx_ns`. A domain the manifest grants no `data` facet has no `/data` mount,
 so the path falls through to the root's own entry, an empty directory of
 the release slice, read-only, as FreeBSD shows the directory beneath a
 mount point with nothing mounted on it: `ls /data` lists nothing and a

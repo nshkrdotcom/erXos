@@ -152,9 +152,21 @@ errno_test() ->
                             {{error, {failed, enospc}}, {error, eio}},
                             {{error, {failed, {exit, noproc}}}, {error, eio}}]].
 
-%% The system shell's `service`, whose apps entry is local, gets the answer a ctl write
-%% gives: a bad line is einval before the start service is asked, and a start service
-%% that is not running answers eio.
-control_answers_as_a_ctl_write_test() ->
-    ?assertEqual({error, einval}, erx_starter_fs:control(<<"bogus\n">>)),
-    ?assertEqual({error, eio}, erx_starter_fs:control(<<"stop kiosk\n">>)).
+%% The system shell's `service` writes /apps/ctl as a session's does: serving the tree
+%% names its grants the apps service and mounts one grant of them, bound to the system
+%% domain, at /apps in the domain's own namespace (docs/design-shell.md, "Interfaces").
+%% The grant is a child of the grants, so it ends with them.
+serving_mounts_the_own_grant_test() ->
+    persistent_term:erase(erx_ns),
+    {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
+    {ok, Grants} = erx_starter_fs:start_link(#{rc_conf => fun() -> <<>> end, command => fun(_) -> ok end}),
+    try
+        ?assert(lists:member(apps, erx_facet:served())),
+        [#{point := [<<"apps">>], provider := {grant, Own, <<"apps">>}, rights := rw}] =
+            [Entry || #{point := [<<"apps">>]} = Entry <- erx_ns_prim_stub:erx_mounts()],
+        ?assertEqual([Own], [Pid || {_, Pid, _, _} <- supervisor:which_children(Grants)])
+    after
+        [begin unlink(Pid), exit(Pid, kill) end || Pid <- [Grants, Ns]],
+        persistent_term:erase(erx_ns),
+        persistent_term:erase({erx, serves})
+    end.

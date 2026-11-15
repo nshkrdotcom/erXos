@@ -171,6 +171,10 @@ setup(Prepare, Namespace, Manifest) ->
     ok = file:make_dir(Dir),
     ok = Prepare(Dir),
     Setup = self(),
+    %% The namespace the apps tree mounts its own grant in.
+    persistent_term:erase(erx_ns),
+    {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
+    unlink(Ns),
     Stub = spawn(fun() -> register(erx_domain_srv, self()), stub(#{refuse => [], hold => [], held => [], next => 1, test => none, kept => [],
                                                                       namespace => Namespace, display => none}) end),
     ok = wait_until(fun() -> whereis(erx_domain_srv) =:= Stub end),
@@ -180,15 +184,19 @@ setup(Prepare, Namespace, Manifest) ->
                            receive stop -> exit(shutdown) end
                    end),
     Sup = receive {sup, Pid} -> Pid after ?WAIT_MS -> error(no_sup) end,
-    #{stub => Stub, holder => Holder, sup => Sup, dir => Dir}.
+    #{stub => Stub, holder => Holder, sup => Sup, dir => Dir, ns => Ns}.
 
-cleanup(#{stub := Stub, holder := Holder, sup := Sup, dir := Dir}) ->
+cleanup(#{stub := Stub, holder := Holder, sup := Sup, dir := Dir, ns := Ns}) ->
     Ref = monitor(process, Sup),
     Holder ! stop,
     receive {'DOWN', Ref, _, _, _} -> ok after ?WAIT_MS -> error(sup_stuck) end,
     StubRef = monitor(process, Stub),
     exit(Stub, kill),
     receive {'DOWN', StubRef, _, _, _} -> ok end,
+    NsRef = monitor(process, Ns),
+    exit(Ns, kill),
+    receive {'DOWN', NsRef, _, _, _} -> ok end,
+    persistent_term:erase(erx_ns),
     ok = file:del_dir_r(Dir),
     flush().
 

@@ -4,11 +4,12 @@
 -module(erx_cmd_reboot_tests).
 -moduledoc """
 EUnit cases of the command shell's `reboot` and `halt` (erx_cmd_reboot):
-the request each name and flag set parses to, how each machine entry asks
-for it, the usage errors FreeBSD's command gives, each under its own
-name's usage line, the shell's no_facet for a session without the
-machine grant, and a refused write's diagnostic. No case ends anything:
-the host has no /machine, so a grant's write is refused.
+the request each name and flag set parses to, the line each end writes,
+what an accepted end does in each runtime, the usage errors FreeBSD's
+command gives, each under its own name's usage line, the shell's
+no_facet for a session without the machine grant, and a refused write's
+diagnostic. No case ends anything: the host has no /machine, so every
+write is refused.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -54,11 +55,15 @@ parse_test_() ->
      ?_assertEqual({error, usage}, erx_cmd_reboot:parse(<<"halt">>, [<<"now">>])),
      ?_assertEqual({error, usage}, erx_cmd_reboot:parse(<<"reboot">>, [<<"-q">>, <<"now">>]))].
 
-route_test_() ->
-    [?_assertEqual({write, <<"/machine/ctl">>, <<"reset\n">>}, erx_cmd_reboot:route(grant, reset)),
-     ?_assertEqual({write, <<"/machine/ctl">>, <<"off\n">>}, erx_cmd_reboot:route(grant, off)),
-     ?_assertEqual({local, reset}, erx_cmd_reboot:route(local, reset)),
-     ?_assertEqual({local, off}, erx_cmd_reboot:route(local, off))].
+%% Every shell writes the end's line to /machine/ctl; once the end is accepted only the
+%% system domain's shell, which the end ends too, waits for it.
+line_test_() ->
+    [?_assertEqual(<<"reset\n">>, erx_cmd_reboot:line(reset)),
+     ?_assertEqual(<<"off\n">>, erx_cmd_reboot:line(off))].
+
+accepted_test_() ->
+    [?_assertEqual(wait, erx_cmd_reboot:accepted(true)),
+     ?_assertEqual(exit, erx_cmd_reboot:accepted(false))].
 
 %% A session without the grant: the shell refuses before the command starts.
 no_facet_test_() ->

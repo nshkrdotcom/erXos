@@ -28,19 +28,18 @@ buffer cache for the command to sync. Each is a usage error.
 
 Authority. Both commands need the `machine` facet, so a session whose
 template holds no `machine` grant refuses them with the shell's
-`no_facet` before they start. In a session the entry is the grant, and
-the command writes `reset\n` or `off\n` to `/machine/ctl`, the tree the
-grant mounts; in the system domain's command shell the entry is `local`,
-and the command calls the coordinator's entry, erx_machine:request/2,
-through the tree's erx_machine_fs:control/2, with the system principal,
-so both routes answer the same errnos. In a session the command exits 0
-once the end has begun; in the system shell, which the end ends too, it
-waits for the end once the coordinator accepted it, as FreeBSD's reboot
-waits for init, so the shell prints no prompt over the end's last line. A refusal prints the
-errno's text, as reboot(8)'s `err(1, NULL)` does, and exits 1.
+`no_facet` before they start. Every shell writes `reset\n` or `off\n` to
+`/machine/ctl`: in a session the path reaches the session's grant, and
+in the system domain's command shell the system domain's own grant, made
+with the system principal (docs/design-shell.md, "Interfaces"). In a
+session the command exits 0 once the end has begun; in the system shell,
+which the end ends too, it waits for the end once the coordinator
+accepted it, as FreeBSD's reboot waits for init, so the shell prints no
+prompt over the end's last line. A refusal prints the errno's text, as
+reboot(8)'s `err(1, NULL)` does, and exits 1.
 
-The decisions are pure, parse/2 and route/2, and run/2 does the
-effects.
+The decisions are pure, parse/2, line/1 and accepted/1, and run/2 does
+the effects.
 """.
 -behaviour(erx_cmd).
 
@@ -49,7 +48,7 @@ effects.
 -erx_needs([machine]).
 
 -export([run/2]).
--export([parse/2, route/2]).
+-export([parse/2, line/1, accepted/1]).
 -export_type(['end'/0]).
 
 -doc "The machine's end a command asks for: a reset or a power-off.".
@@ -61,8 +60,7 @@ effects.
 run(Args, #{name := Name} = Ctx) ->
     case parse(Name, Args) of
         {ok, End} ->
-            {ok, Entry} = erx_cmd:facet(Ctx, machine),
-            answer(act(route(Entry, End), Ctx), Ctx);
+            answer(write_ctl(erx_cmd:path(Ctx, ?CTL), line(End)), Ctx);
         {error, usage} = Usage ->
             Usage
     end.
@@ -83,37 +81,35 @@ end_of(<<"halt">>, _PowerOff) -> off;
 end_of(_Reboot, true) -> off;
 end_of(_Reboot, false) -> reset.
 
--doc """
-How a command whose `machine` entry is Entry asks for End: in the system
-domain's command shell, whose entry is `local`, through the coordinator's
-entry, and anywhere else by writing the end's line to `/machine/ctl`.
-""".
--spec route(local | term(), 'end'()) -> {local, 'end'()} | {write, binary(), binary()}.
-route(local, End) -> {local, End};
-route(_Grant, End) -> {write, ?CTL, <<(atom_to_binary(End))/binary, $\n>>}.
+-doc "The line a write to `/machine/ctl` asks for End with.".
+-spec line('end'()) -> binary().
+line(End) -> <<(atom_to_binary(End))/binary, $\n>>.
 
-%% The effects: the coordinator's answer as the tree gives it, or the ctl write's.
-act({local, End}, _Ctx) ->
-    case erx_machine_fs:control(End, system) of
-        ok -> wait_for_end();
-        {error, _} = Refused -> Refused
-    end;
-act({write, Path, Line}, Ctx) ->
-    case file:open(erx_cmd:path(Ctx, Path), [write, raw, binary]) of
+-doc """
+What a command does once the coordinator accepted its end, in the system
+domain (System true) or in any other runtime: the system shell, which the
+end ends too, waits for it, as FreeBSD's reboot waits for init to end the
+system, so the shell prints no prompt over the end's last line; a
+session's command exits 0.
+""".
+-spec accepted(boolean()) -> wait | exit.
+accepted(true) -> wait;
+accepted(false) -> exit.
+
+%% The effect: one write of Line to the ctl file.
+write_ctl(Path, Line) ->
+    case file:open(Path, [write, raw, binary]) of
         {ok, Fd} ->
             try file:write(Fd, Line) after file:close(Fd) end;
         {error, _} = Error ->
             Error
     end.
 
-%% In the system domain the end ends this shell too, so once the coordinator accepted it
-%% the command waits for it, as FreeBSD's reboot waits for init to end the system, and
-%% the shell prints no prompt over the end's last line. It never returns.
-wait_for_end() ->
-    receive after infinity -> ok end.
-
 answer(ok, _Ctx) ->
-    ok;
+    case accepted(erx_inspector:is_system_runtime()) of
+        wait -> receive after infinity -> ok end;
+        exit -> ok
+    end;
 answer({error, Reason}, #{name := Name} = Ctx) ->
     erx_cmd:say(Ctx, [Name, <<": ">>, erx_cmd:format_error(Reason), $\n]),
     {error, {reported, <<"1">>}}.

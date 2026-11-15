@@ -5,14 +5,18 @@
 -moduledoc """
 The `apps` tree (docs/design-apps.md, "Interfaces"): the `erx_fs` callback
 module the start service serves `ctl` and `rc.conf` with, which a session whose
-template holds the `apps` grant mounts at `/apps`.
+template holds the `apps` grant mounts at `/apps`, and the system domain mounts
+there its own grant of it.
 
 * **Serving.** start_link/0 starts the tree's grants (erx_fs_grants) and names
   them the process behind the system domain's `apps` service
   (erx_facet:serve/2). The domain service asks it, in each grantee's ready
   answer, for one erx_fs grant bound to that domain and ending with it, so a
   session reaches the tree only through a grant the manifest gave its template
-  (docs/design-system.md, "Facets of the system domain's services").
+  (docs/design-system.md, "Facets of the system domain's services"). One more
+  grant, for the system domain itself, is mounted at `/apps` in the system
+  domain's namespace (erx_ns:mount_own/2), so the system shell's `service`
+  writes the path a session's does (docs/design-shell.md, "Interfaces").
 * **rc.conf.** Read-only: an open takes the text the start service's table
   is made from (erx_starter:rc_conf/0) once, and reads see that text until the
   clunk. Every node is owned by uid 0 and has size 0, as a `/proc` file does.
@@ -33,7 +37,7 @@ which a test stands in for, and the log line of a refused write.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/0, start_link/1, control/1, errno/1]).
+-export([start_link/0, start_link/1, errno/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
          statfs/1, clunk/2, read_mode/0]).
 
@@ -46,8 +50,9 @@ which a test stands in for, and the log line of a refused write.
 -type errno() :: einval | ebusy | eperm | eagain | eio.
 
 -doc """
-Starts the tree's grants, linked to the caller, erx_starter_sup, and names them
-the process behind the `apps` service.
+Starts the tree's grants, linked to the caller, erx_starter_sup, names them the
+process behind the `apps` service, and mounts the system domain's own grant at
+`/apps`.
 """.
 -spec start_link() -> {ok, pid()}.
 start_link() ->
@@ -61,18 +66,9 @@ service, `rc_conf` and `command`.
 start_link(Args) when is_map(Args) ->
     {ok, Grants} = erx_fs_grants:start_link(?MODULE, Args),
     ok = erx_facet:serve(?SERVICE, Grants),
+    {ok, Own} = erx_fs_grants:own(Grants),
+    ok = erx_ns:mount_own(?SERVICE, Own),
     {ok, Grants}.
-
--doc """
-The answer to the command line Bytes, as a write of it to ctl gives it: `ok`
-once the start service carried it out, or the errno of its refusal (errno/1),
-whose reason goes to the log. The system domain's `service` command calls it
-for its `local` entry (docs/design-shell.md, "Interfaces"), where it has no
-tree mounted to write.
-""".
--spec control(binary()) -> ok | {error, errno()}.
-control(Bytes) when is_binary(Bytes) ->
-    errno(command(Bytes, defaults())).
 
 -doc """
 The errno a ctl write answers for the start service's Answer

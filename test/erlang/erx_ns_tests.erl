@@ -31,6 +31,8 @@ ns_test_() ->
       fun a_facet_mount_reads_the_registry_at_use/0,
       fun a_facet_grant_that_ends_leaves_the_table_and_survives_a_restart/0,
       fun facets_mount_only_where_granted/0,
+      fun the_system_domain_trees_mount_at_their_places/0,
+      fun an_own_tree_mounts_its_grant_at_its_place/0,
       fun facet_mount_refusals/0]}.
 
 start() ->
@@ -261,6 +263,29 @@ facets_mount_only_where_granted() ->
     ?assertEqual([?RELEASE], at_use()),
     ?assertEqual(ok, erx_ns:mount_facets([echo, data])),
     ?assertEqual([?RELEASE, #{point => [<<"data">>], provider => ended, root => [], rights => rw}], at_use()).
+
+%% The system domain's files services, apps and machine, have their places too: a
+%% session that holds their facets mounts each where the system domain mounts its own
+%% grant of it (docs/design-shell.md, "Interfaces").
+the_system_domain_trees_mount_at_their_places() ->
+    ?assertEqual(ok, erx_ns:mount_facets([apps, inspect, machine])),
+    ?assertEqual([?RELEASE, #{point => [<<"apps">>], provider => ended, root => [], rights => rw},
+                  #{point => [<<"machine">>], provider => ended, root => [], rights => rw}], at_use()).
+
+%% A tree the domain serves itself mounts its own grant at the place of the facet of its
+%% name, and a second mount, an instance restarted after the first one's grant ended,
+%% replaces the entry the first left there. A name with no place is refused.
+an_own_tree_mounts_its_grant_at_its_place() ->
+    First = grant(),
+    ?assertEqual(ok, erx_ns:mount_own(machine, First)),
+    ?assertEqual([?RELEASE, #{point => [<<"machine">>], provider => {grant, First, <<"machine">>}, root => [],
+                              rights => rw}], settled()),
+    First ! stop,
+    Second = grant(),
+    ?assertEqual(ok, erx_ns:mount_own(machine, Second)),
+    ?assertEqual([?RELEASE, #{point => [<<"machine">>], provider => {grant, Second, <<"machine">>}, root => [],
+                              rights => rw}], settled()),
+    ?assertError({badmatch, none}, erx_ns:mount_own(echo, Second)).
 
 %% A facet is named by an atom, and its mount takes a grant's options; a pid of another
 %% domain is never mounted directly, only through a facet.

@@ -177,6 +177,10 @@ service_end_shuts_the_supervisor_down_test_() ->
 %% module does where no domain library was built, so the service runs with none.
 service_end_shuts_down(End) ->
     load_no_library(),
+    %% The namespace the machine tree mounts its own grant in.
+    persistent_term:erase(erx_ns),
+    {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
+    unlink(Ns),
     {ok, Sup} = erx_domain_sup:start_link(),
     unlink(Sup),
     SupDown = monitor(process, Sup),
@@ -186,7 +190,8 @@ service_end_shuts_down(End) ->
     Why = receive {'DOWN', SupDown, process, Sup, Reason} -> Reason after 2000 -> still_up end,
     %% A restarted service is registered again. Clean up before asserting.
     Restarted = whereis(erx_domain_srv),
-    erx_domain_fake_lib:kill_and_await([Pid || Pid <- [Sup, Restarted], is_pid(Pid)]),
+    erx_domain_fake_lib:kill_and_await([Pid || Pid <- [Sup, Restarted, Ns], is_pid(Pid)]),
+    persistent_term:erase(erx_ns),
     ?assertEqual({shutdown, undefined}, {Why, Restarted}).
 
 load_no_library() ->

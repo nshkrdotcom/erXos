@@ -7,29 +7,23 @@
 
 -export([start/2, stop/1]).
 
-%% /data first, only for a session whose template the manifest grants data, which the
-%% ready answer names (erx:granted/0) before the application starts: the storage
+%% Each facet the session holds or its template is granted that has a place in the
+%% namespace (erx_ns:mount_facets/1), mounted before the application starts its
+%% supervisor. /data only for a session whose template the manifest grants data, which
+%% the ready answer names (erx:granted/0) before the application starts: the storage
 %% domain's tree through the session's data facet, which each lookup reads afresh, so a
 %% grant installed later or re-granted after the storage domain restarts needs no
 %% remount. A session without the grant has no /data mount and finds the root's empty
 %% /data directory (docs/design-files.md, "A facet's mount").
 %%
-%% Then /apps, the start service's tree (docs/design-apps.md, "Interfaces"), only for a
-%% session whose template the manifest grants apps: a session without the grant has no
-%% /apps at all. The grant is in the ready answer, before the application starts.
+%% /apps, the start service's tree (docs/design-apps.md, "Interfaces"), and /machine,
+%% the domain service's machine tree (docs/design-system.md, "A session's request"),
+%% only for a session whose template the manifest grants them: their grants are in the
+%% ready answer, before the application starts (erx:caps/0), and a session without one
+%% has no such path at all.
 start(_Type, _Args) ->
-    ok = erx_ns:mount_facets(erx:granted()),
-    ok = mount_apps(erx:cap(apps)),
-    ok = mount_machine(erx:cap(machine)),
+    ok = erx_ns:mount_facets(lists:usort(erx:granted() ++ maps:keys(erx:caps()))),
     erx_session_sup:start_link().
-
-mount_apps(undefined) -> ok;
-mount_apps(_Grant) -> erx_ns:mount({facet, apps}, <<"/apps">>, [{tree, <<"apps">>}, rw]).
-
-%% /machine, the domain service's machine tree (docs/design-system.md, "A session's
-%% request"), as /apps: only a session whose template holds the machine grant has it.
-mount_machine(undefined) -> ok;
-mount_machine(_Grant) -> erx_ns:mount({facet, machine}, <<"/machine">>, [{tree, <<"machine">>}, rw]).
 
 stop(_State) ->
     ok.

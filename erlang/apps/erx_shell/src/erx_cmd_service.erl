@@ -11,9 +11,9 @@ The command reads the table from the inspector, `[apps]` and `[apps,
 Name]` (`/proc/apps`), and changes it only by writing one line to
 `/apps/ctl` for each act, so it holds no authority of its own: the
 session's `apps` grant is what lets it act, and the start service checks
-every line it writes. In the system domain's command shell the entry is
-`local`, and each line goes to the start service's own answer to it,
-erx_starter_fs:control/1, which a write of it gives.
+every line it writes. In the system domain's command shell the path
+reaches the system domain's own grant of the tree, which the start
+service mounts there (docs/design-shell.md, "Interfaces").
 
 * `service -e` writes the configured domains in boot order, then each
   row that is enabled and not refused, one name a line. While rc.conf is
@@ -133,18 +133,11 @@ carry_out([{status, ok} | _], _Ctx) ->
 carry_out([{status, failed} | _], _Ctx) ->
     {error, {reported, <<"1">>}}.
 
-%% One act of Line: its answer is the command's. With the `apps` grant it is a write
-%% of Line to the ctl file; in the system domain's command shell, whose entry is
-%% `local` and which mounts no apps tree, the start service's own answer to the line,
-%% as the tree gives it (docs/design-shell.md, "Interfaces").
+%% One write of Line to the ctl file: its answer is the command's. The path reaches
+%% the session's grant, or in the system domain's command shell the system domain's
+%% own (docs/design-shell.md, "Interfaces").
 write_ctl(Ctx, Line) ->
-    case erx_cmd:facet(Ctx, apps) of
-        {ok, local} -> erx_starter_fs:control(Line);
-        {ok, _Grant} -> write_file(erx_cmd:path(Ctx, ?CTL), Line)
-    end.
-
-write_file(Path, Line) ->
-    case file:open(Path, [write, raw, binary]) of
+    case file:open(erx_cmd:path(Ctx, ?CTL), [write, raw, binary]) of
         {ok, Fd} ->
             try file:write(Fd, Line) after file:close(Fd) end;
         {error, _} = Error ->

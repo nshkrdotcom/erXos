@@ -687,10 +687,11 @@ installed and removed, and what that does to its data, is
 
 **Commands**, Erlang commands of the command shell
 ([design-shell.md](design-shell.md#commands)), each declaring
-`-erx_needs([start])`. In the system domain's command shell the entry
-is `local` ([design-shell.md](design-shell.md#interfaces)), which mounts
-no tree, and a line the table below writes to `ctl` goes instead to the
-start service's own answer to it, the one a write of it gives:
+`-erx_needs([start])`. A line the table below writes to `ctl` takes one
+path in every session: in the system domain's command shell the tree is
+the system domain's own grant of it, which the start service mounts in
+that domain's namespace at the point where a session mounts its grant
+([design-shell.md](design-shell.md#interfaces)):
 
 | Command | Does |
 | --- | --- |

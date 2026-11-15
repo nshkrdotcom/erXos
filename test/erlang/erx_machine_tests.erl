@@ -78,19 +78,21 @@ coordinator_test() ->
 next() ->
     receive Message -> Message after 100 -> none end.
 
-%% The system shell's route, control/2, answers as a ctl write does: ok, then ebusy, and
-%% eio with no coordinator.
-control_test() ->
-    Self = self(),
-    {ok, Pid} = erx_machine:start_link(#{stop => fun(End) -> Self ! {stopped, End}, ok end}),
-    Ref = monitor(process, Pid),
+%% The system domain reaches its own tree by the path a session does: serving the tree
+%% names its grants the machine service and mounts one grant of them, bound to the
+%% system domain, at /machine in the domain's own namespace (docs/design-shell.md,
+%% "Interfaces"). The grant is a child of the grants, so it ends with them.
+serving_mounts_the_own_grant_test() ->
+    persistent_term:erase(erx_ns),
+    {ok, Ns} = erx_ns:start_link(erx_ns_prim_stub),
+    {ok, Grants} = erx_machine_fs:start_link(),
     try
-        ?assertEqual(ok, erx_machine_fs:control(off, system)),
-        ?assertEqual({stopped, off}, next()),
-        ?assertEqual({error, ebusy}, erx_machine_fs:control(reset, system))
+        ?assert(lists:member(machine, erx_facet:served())),
+        [#{point := [<<"machine">>], provider := {grant, Own, <<"machine">>}, rights := rw}] =
+            [Entry || #{point := [<<"machine">>]} = Entry <- erx_ns_prim_stub:erx_mounts()],
+        ?assertEqual([Own], [Pid || {_, Pid, _, _} <- supervisor:which_children(Grants)])
     after
-        unlink(Pid),
-        exit(Pid, kill)
-    end,
-    receive {'DOWN', Ref, process, Pid, _} -> ok end,
-    ?assertEqual({error, eio}, erx_machine_fs:control(reset, system)).
+        [begin unlink(Pid), exit(Pid, kill) end || Pid <- [Grants, Ns]],
+        persistent_term:erase(erx_ns),
+        persistent_term:erase({erx, serves})
+    end.

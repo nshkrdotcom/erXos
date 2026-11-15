@@ -50,7 +50,8 @@
 
 -behaviour(gen_server).
 
--export([start_link/0, start_link/1, mount/3, mount_facets/1, unmount/1, bind/2, bind/3, tmp_limit/0, change/2]).
+-export([start_link/0, start_link/1, mount/3, mount_facets/1, mount_own/2, unmount/1, bind/2, bind/3, tmp_limit/0,
+         change/2]).
 -export([image_log/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export_type([entry/0, table/0]).
@@ -104,25 +105,48 @@ mount({erofs, Window}, To, Options) ->
 mount(Pid, To, Options) ->
     request(fun() -> {mount, text(To), Pid, Options} end).
 
-%% Mounts each facet of Names, the facets of configured domains the manifest grants the
-%% domain (erx:granted/0, or the manifest itself in the system domain), where it
-%% belongs: data, the storage domain's tree, at /data, read-write on its tree data. A
-%% name with no place here mounts nothing, and a facet the domain is not granted is
-%% never mounted, so its path falls through to the root's own entry
-%% (docs/design-files.md, "A facet's mount"). Stops at the first refusal and returns it.
+%% Mounts each facet of Names, the facets the domain holds or the manifest grants it
+%% (erx:caps/0 and erx:granted/0, or the manifest itself in the system domain), at its
+%% place (place/1). A name with no place mounts nothing, and a facet the domain neither
+%% holds nor is granted is never mounted, so its path falls through to the root's own
+%% entry (docs/design-files.md, "A facet's mount"). Stops at the first refusal and
+%% returns it.
 -spec mount_facets([atom()]) -> ok | {error, reason()}.
 mount_facets([]) ->
     ok;
 mount_facets([Name | Rest]) ->
-    case mount_facet(Name) of
+    case mount_facet(place(Name), Name) of
         ok -> mount_facets(Rest);
         Refused -> Refused
     end.
 
-%% Each mount point here is also an empty directory of every release, so an unmounted
-%% one lists as empty: ReleaseFiles::MOUNT_POINTS (tools/lib/erx/release_files.rb).
-mount_facet(data) -> mount({facet, data}, <<"/data">>, [{tree, <<"data">>}, rw]);
-mount_facet(_Name) -> ok.
+mount_facet(none, _Name) -> ok;
+mount_facet({Point, Options}, Name) -> mount({facet, Name}, Point, Options).
+
+%% Mounts Grant, a grant of the tree Name that this domain serves for its own domain
+%% (erx_fs_grants:own/1,2), at Name's place, where a domain that holds the facet Name mounts it, after removing
+%% any entry an earlier instance of the tree left there (docs/design-shell.md,
+%% "Interfaces"). So the system domain reaches each files service it serves by the path
+%% its sessions do. A Name with no place fails to match: a tree that serves itself has
+%% one.
+-spec mount_own(atom(), pid()) -> ok | {error, reason()}.
+mount_own(Name, Grant) when is_pid(Grant) ->
+    {Point, Options} = place(Name),
+    _ = unmount(Point),
+    mount(Grant, Point, Options).
+
+%% Where the tree of each service Name mounts, read-write on the tree of its own name:
+%% data, the storage domain's tree, at /data; the system domain's files services, the
+%% start service's apps and the domain service's machine, at /apps and /machine
+%% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request").
+%% /data is also an empty directory of every release, so a domain not granted data
+%% lists it as empty (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a
+%% domain that holds no apps or machine facet has no such path, enoent.
+-spec place(atom()) -> {binary(), [option()]} | none.
+place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
+place(apps) -> {<<"/apps">>, [{tree, <<"apps">>}, rw]};
+place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
+place(_Name) -> none.
 
 %% Removes the entry at exactly To.
 -spec unmount(file:name_all()) -> ok | {error, reason()}.

@@ -2045,7 +2045,9 @@ leaves the system domain. In a session, `init:reboot/0` and
 of `files`, as `apps` is
 ([design-apps.md](design-apps.md#interfaces)). The domain service's
 application serves it with `erx_fs`, beside the coordinator, and a
-session that holds the grant mounts it at `/machine`:
+session that holds the grant mounts it at `/machine`, where the system
+domain mounts its own grant of it
+([design-shell.md](design-shell.md#interfaces)):
 
 | File | Read | Write |
 | --- | --- | --- |
@@ -2149,19 +2151,20 @@ reaches it.
 
 **The commands.** `reboot` and `halt` are Erlang commands of the command
 shell ([design-shell.md](design-shell.md#commands)) and declare
-`-erx_needs([machine])`. Their one decision takes the arguments and the
-command's `machine` entry:
-
-* in a session the entry is the grant, and the command writes `reset\n`
-  or `off\n` to `/machine/ctl`. It exits 0 when the write succeeds. When
-  the write is refused it prints `reboot: ` (or `halt: `) and the
-  errno's text, as reboot(8)'s `err(1, NULL)` does, and exits 1;
-* in the system domain's command shell the entry is `local`
-  ([design-shell.md](design-shell.md#interfaces)), and the command calls
-  the coordinator's entry with the system principal. The end ends that
-  shell too, so once the entry accepts the end the command waits for it,
-  as FreeBSD's reboot waits for init, and the shell prints no prompt
-  over the end's last line; a `busy` answer is refused as `ebusy`.
+`-erx_needs([machine])`. Their one decision takes the arguments, and
+each writes the end's line, `reset\n` or `off\n`, to `/machine/ctl`. In a
+session the path reaches the session's grant. In the system domain's
+command shell it reaches the system domain's own grant of the tree,
+started with the system principal, which the domain service mounts at
+`/machine` in the system domain's namespace when it serves the tree
+([design-shell.md](design-shell.md#interfaces)). When the write is
+refused the command prints `reboot: ` (or `halt: `) and the errno's
+text, as reboot(8)'s `err(1, NULL)` does, and exits 1. When it succeeds
+the command exits 0 in a session. In the system domain's command shell,
+which the end ends too, it waits for the end instead, as FreeBSD's
+reboot waits for init, so the shell prints no prompt over the end's
+last line; the command tells the two apart by the runtime it runs in
+(`erx_inspector:is_system_runtime/0`).
 
 A session without the grant refuses either command with the shell's
 standard `no_facet` before it starts, as for any command whose facet is
@@ -2203,7 +2206,10 @@ grant has ended ([design-files.md](design-files.md#building-binding-and-mounting
 The domain service mints a system domain service's grant for a session
 only in its ready answer and does not mint it again, so that session can
 no longer end the machine; a fresh session, from a new login, gets a new
-grant. The coordinator is a process of the domain service, whose end
+grant. The system domain's own grant is kept by the tree's supervisor:
+one that ends is started again and mounted in place of the ended one,
+and until then the system shell's `/machine` answers `eio`. The
+coordinator is a process of the domain service, whose end
 ends the machine ([System services](#system-services)). So `eio` is the
 answer to a write whose coordinator ended during the call, and the
 machine then ends by the crash path anyway.
@@ -2259,11 +2265,11 @@ does not change. No `abi/services` file is added: `abi/services/files.txt`
 declares the interface, and the facet table check (FacetNames) takes the
 row from these two manifest records, whose comment cites this section. The
 name `machine` appears in code in five places, each a name the table
-then holds: the commands' `-erx_needs`, `reboot`'s lookup of its entry
-(`erx_cmd:facet(Ctx, machine)`), the session's mount of its
-`erx:cap(machine)` grant, the mint's clause in `erx_domain_srv` that
-gives the grant its principal, and the tree's `erx_facet:serve(machine,
-Pid)`.
+then holds: the commands' `-erx_needs`, the tree's place in `erx_ns`,
+where a session mounts its facet and the system domain its own grant,
+the mint's clause in `erx_domain_srv` that gives the grant its
+principal, the tree's `erx_facet:serve(machine, Pid)`, and its
+`erx_ns:mount_own(machine, Grant)`.
 
 **Verification.** Host tests, and one case of a native guest, each with
 its seeded fault:
@@ -2290,10 +2296,16 @@ its seeded fault:
   the one it computed for the grantee fails the `clock` case, and one
   that gives the system domain's services to every template fails
   root's.
-* **The commands' decision.** With a grant, `reboot` and `reboot -q`
-  write `reset\n`, and `halt` and `halt -p` write `off\n`, to
-  `/machine/ctl`; with `local` they call the entry. An unknown option is
-  a usage error. Seed: `halt` mapped to `reset` fails.
+* **The commands' decision.** `reboot` and `reboot -q` write `reset\n`,
+  and `halt` and `halt -p` write `off\n`, to `/machine/ctl`; after an
+  accepted end the command waits in the system domain and exits 0
+  anywhere else. An unknown option is a usage error. Seeds: `halt`
+  mapped to `reset` fails, and so does a command that waits outside the
+  system domain.
+* **The system domain's own mount.** Serving the tree names its grants
+  the `machine` service and mounts one grant of them at `/machine` in the
+  system domain's namespace, which a second start replaces. Seed: a
+  start that leaves the own grant unmounted fails.
 * **The stopgap's root check**, a case of the native task guest
   (`test/guest/native_task`), since the Fiasco backend's service has no
   host build: a task's `erx_machine_end(res, ERX_END_RESET)` returns

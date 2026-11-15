@@ -100,7 +100,9 @@ new(Terminal = #{write := Write}) ->
 The facets a session's commands get: the domain's own (erx:caps/0), and in the
 system domain the value `local` for each service of the system domain that runs
 there (erx_facet:served/0), which is the domain's own (docs/design-shell.md,
-"Interfaces").
+"Interfaces"). The value only meets a command's `-erx_needs`: a command reaches
+a files service by the path its tree is mounted at, in the system domain the
+service's own grant (erx_ns:mount_own/2), and never reads the value.
 """.
 -spec facets() -> #{atom() => term()}.
 facets() ->

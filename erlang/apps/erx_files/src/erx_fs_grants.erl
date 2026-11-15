@@ -28,7 +28,7 @@ Of a facet row's limits a grant applies three (grant_options/1):
 
 -behaviour(supervisor).
 
--export([start_link/1, start_link/2, grant/3, grant/4, grant_options/1]).
+-export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1]).
 %% The supervisor's callback and its child's start.
 -export([init/1, start_grant/3]).
 
@@ -83,6 +83,25 @@ grant(Grants, Limits, #{client := Client, ends_with := _, exports := _} = Bindin
         {ok, Options} -> supervisor:start_child(Grants, [maps:merge(Options, Binding)]);
         {error, _} = Refused -> Refused
     end.
+
+-doc """
+One grant under Grants, a supervisor start_link/2 started, for the server's own
+domain, with erx_fs's own bounds: the grant a system domain's files service
+mounts in that domain's own namespace (erx_ns:mount_own/2). It is exported to
+no one, ends with Grants and, a temporary child as every grant is, is not
+restarted when it ends alone (TODO.md).
+""".
+-spec own(pid()) -> {ok, pid()}.
+own(Grants) ->
+    supervisor:start_child(Grants, [#{}]).
+
+-doc """
+As own/1, for a supervisor start_link/1 started, whose grant's tree starts
+from Args.
+""".
+-spec own(pid(), term()) -> {ok, pid()}.
+own(Grants, Args) ->
+    supervisor:start_child(Grants, [Args, #{}]).
 
 -doc """
 The erx_fs options a facet row's Limits give a grant, or `{error, einval}` for a

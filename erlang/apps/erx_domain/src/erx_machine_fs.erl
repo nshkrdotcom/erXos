@@ -6,14 +6,18 @@
 The `machine` tree (docs/design-system.md, "A session's request"): the
 `erx_fs` callback module the domain service serves `/machine/ctl` with,
 which a session whose template holds the `machine` grant mounts at
-`/machine`.
+`/machine`, and the system domain mounts there its own grant of it.
 
 * **Serving.** start_link/0 starts the tree's grants (erx_fs_grants) and
   names them the process behind the system domain's `machine` service
   (erx_facet:serve/2). The domain service asks it, in each grantee's ready
   answer, for one erx_fs grant bound to that session and ending with it,
   and starts the grant with the grantee's principal name as the grant's
-  own argument, which it computes at the mint.
+  own argument, which it computes at the mint. One more grant, for the
+  system domain itself and with the system principal, is mounted at
+  `/machine` in the system domain's namespace (erx_ns:mount_own/2), so
+  the system shell's `reboot` and `halt` write the path a session's do
+  (docs/design-shell.md, "Interfaces").
 * **ctl.** Write-only, mode `0200`; an open for reading is refused with
   `eacces`. A write is one end, whatever its offset: parse/1 takes `reset`
   or `off` with at most one trailing newline and refuses any other bytes
@@ -34,7 +38,7 @@ coordinator, which a test stands in for.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/0, parse/1, control/2, errno/1]).
+-export([start_link/0, parse/1, errno/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
          statfs/1, clunk/2, read_mode/0]).
 
@@ -47,13 +51,16 @@ coordinator, which a test stands in for.
 -type errno() :: einval | ebusy | eio.
 
 -doc """
-Starts the tree's grants, linked to the caller, erx_domain_sup, and names
-them the process behind the `machine` service.
+Starts the tree's grants, linked to the caller, erx_domain_sup, names them
+the process behind the `machine` service, and mounts the system domain's
+own grant at `/machine`.
 """.
 -spec start_link() -> {ok, pid()}.
 start_link() ->
     {ok, Grants} = erx_fs_grants:start_link(?MODULE),
     ok = erx_facet:serve(?SERVICE, Grants),
+    {ok, Own} = erx_fs_grants:own(Grants, system),
+    ok = erx_ns:mount_own(?SERVICE, Own),
     {ok, Grants}.
 
 -doc """
@@ -67,17 +74,6 @@ parse(<<"reset\n">>) -> {ok, reset};
 parse(<<"off">>) -> {ok, off};
 parse(<<"off\n">>) -> {ok, off};
 parse(Bytes) when is_binary(Bytes) -> {error, einval}.
-
--doc """
-The answer to a request for End by Principal, as a ctl write of a grant
-started with Principal gives it: `ok` once the coordinator accepted it, or
-the errno of its refusal (errno/1). The system domain's `reboot` and `halt`
-call it with the system principal for their `local` entry
-(docs/design-shell.md, "Interfaces"), where they have no tree mounted.
-""".
--spec control(erx_machine:'end'(), system | binary()) -> ok | {error, errno()}.
-control(End, Principal) ->
-    errno(request(End, #{principal => Principal, request => fun erx_machine:request/2})).
 
 -doc """
 The errno a ctl write answers for the coordinator's Answer: none for `ok`,
