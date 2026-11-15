@@ -968,8 +968,7 @@ it; git history is the record of completed work.
     server opens with `buffer => none`, with a presenter process and mouse and kbd readers linked to the server.
     Left: `erx_ui_server:init/1` answers every renderer start failure as `renderer_down`, so a caller cannot
     tell a full pixel area (`enomem`) from a crash and the display suite's lvgl client retries every refusal;
-    the program's pid from the command server, which `erx_ui_lvgl` numbers from a
-    base and the runtime's unique integers for now, unique within the runtime and not the session; the wheel's
+    the wheel's
     buttons, which `erx_ui_lvgl_core:input/2` drops. The window-bound path (presents through `erx_win:present/3`
     from the shell, the window readers, `await_reading/1`, the `r` record's resize) has no host test, since it
     needs a display; the display suite's lvgl cell is its test. A pointer is made window-relative with the rectangle the mouse
@@ -1010,9 +1009,9 @@ it; git history is the record of completed work.
     Ruby on the path.
     time out; the cell's 240x160 check shows only that a present came. The display suite's lvgl-confine cell
     checks only the store past the buffer: the design's other two checks, that the session's process table lists
-    the program and that its pipes are the session's, wait for a reader of each, since no command server keeps a
-    process table of programs (`ps` lists the runtime's Erlang processes) and no inspection path names a pipe
-    end's holder.
+    the program and that its pipes are the session's, wait for a reader of each, since `ps` lists the runtime's
+    Erlang processes rather than the command server's table (`erx_command_srv:read/2`) and no inspection path
+    names a pipe end's holder.
   * **Programs** ([The startup message](docs/design-programs.md#the-startup-message)): the profile, `liberx`'s
     decoder, its fuzz targets and the descriptor table (`erx_prog_fd_mmap`, `erx_prog_fd_fstat`) take the `mem`
     descriptor; `erx_program:start/1` takes a window buffer's lease, the driver maps it at the buffer place, and
@@ -2930,11 +2929,26 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] session domain, programs: a program's anchor is a sub-space of the session,
   but nothing yet ends a session's programs with the session domain. Until something does, no test ends a
   session while one of its programs runs.
-* [Low] ERTS, `sys/erxos/erx_program_drv.c`: the driver does not refuse a spec whose pid a live
-  program already has, and nothing reads a program's pid yet. The command server that names pids
-  owns their uniqueness (docs/design-programs.md, a program's start, step 5) and makes it hold by
-  never giving a pid twice; until it exists, a test's spec names the pid. The gate worker's 64 registrations
-  (two a program) bound a session to 32 programs at once, each start past that refused with `elimit`.
+* [Medium] session, process ids beside the command server (`erx_program:start/1`, `tools/lib/erx/programs.rb`
+  `spec/2`): the command server gives a pid at most once (docs/design-programs.md, "The command server"), but
+  any session process may still call `erx_program:start/1`, the driver's seam below the handler, with a pid
+  of its choosing, and the driver does not refuse one a live program already has. The programs suite's driver
+  cases do so with pids 2 to 45 in the session whose server gives the suite's handler cases 2 to 4; it holds
+  only because none of those three is an id a driver case gives pipe ends, an exception list. Reserve each
+  driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker, and add the
+  chokepoint check that only `erx_prog_handler` calls `erx_program:start/1` outside the tests.
+* [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
+  by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
+  generated limit.
+* [Low] ERTS, `sys/erxos/erx_program_drv.c`: the gate worker's 64 registrations (two a program) bound a
+  session to 32 programs at once, each start past that refused with `elimit`.
+* [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,
+  so a session process that sends one forged drops a live row (its job's await answered early, a kill of it
+  `esrch`; the id is still never given again); keeping each row's monitor reference and matching it would
+  count only real ends. A `{erx_job, _}`, `{erx_signal, _, _}` or `{erx_read, _, _}` that reaches a handler
+  before its start waits in its mailbox and is then dropped with the handler's other unknown messages, so a
+  job paused in that window runs its program; the handler's side of those messages
+  (the `erx_prog_handler` item below) should take them from the start on.
 * [Medium] stopgap, `sys/erxos/erx_program_drv.c` (`PROGRAM_IMAGE_CAP_LIMIT`) and
   `liberx/backend/fiasco/object.c` (`erx_fiasco_object_task_open`): a program's image is made with a
   table of `caps_max` capabilities, so it holds every copy of its pipe hand-offs, and the Fiasco
@@ -3112,16 +3126,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   integer kind's bound cannot be a limit less one; an exclusive bound (`below @prog_data_slots_max`)
   in tools/lib/erx/abi_protocol.rb would make it one fact.
 * [Medium] session, `erx_prog_handler`: the handler starts a program for a session process with its pipe
-  ends and a window's buffer, forwards its notices and reports, and tells the starter its end; what
-  remains is the command server that assigns process ids and spawns every handler, so that no handler
-  carries its starter's job tag (start/1 spawns the handler in its caller and takes `pid`, `ppid` and `pgid` from its
-  caller, so nothing yet keeps a pid from being given twice over a session's life: a pid reused while the
-  pipe server still holds the ends of the program that last had it, or reused once that program's holder
-  entry is gone but before the pipe server has read its gone, names those ends as the new program's, so
-  the old program's reports reach the new one and the old one's gone, read late, takes the new one's ends
-  away; start/1 refuses a pid whose holder
-  entry still exists with `einval`, which narrows but does not close the window), the program's requests
-  other than `kill` and `probe`, a program as a starter (step 3's checks of its table), and the
+  ends and a window's buffer, forwards its notices and reports, and tells the starter its end; the command
+  server (`erx_command_srv`) assigns its process id and spawns it. What remains: the program's requests
+  other than `kill` and `probe`, a program as a starter (step 3's checks of its table), the handler's side of
+  the server's messages to a row's handler (`{erx_job, Action}`, carried out with the `job` cause,
+  `{erx_signal, Signal, Sender}`, and `{erx_read, Alias, Keys}`, which no handler answers yet, so
+  `erx_command_srv:read/2` gives every handler's value as `missing` after its whole wait), and the
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
   takes and installs directly.
@@ -3348,9 +3358,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `SYS_kill` to `seam_offered` and `erx_fiasco_libc_fd`, and a `programs` QEMU case of a kill
   and a probe round trip.
 * [Medium] session, `erx_prog_handler_core` (`kill`, `probe`): a program reaches itself alone.
-  The handler keeps no child record and the program holds no `signal` right, and there is no
-  command server to answer `{kill, Scope, Target, Signal, Sender}` and `{probe, Scope, Target}`,
-  so every other target is `esrch` (docs/design-programs.md, "The program protocol"). A kill of
+  The handler keeps no child record and the program holds no `signal` right, and it asks the
+  command server neither `{kill, Scope, Target, Signal, Sender}` nor `{probe, Scope, Target}`,
+  nor acts on the `{erx_signal, Signal, Sender}` the server sends a row's handler, so every other
+  target is `esrch` (docs/design-programs.md, "The program protocol"). A kill of
   itself with a signal other than `sigkill` and the job-control ones is `enosys`: the protocol has
   no `{signal, Signal, Sender}` report, and `liberx` raises none. Add the report to
   `abi/protocols/prog.txt` with its raise in the event executor, then answer such a kill by
@@ -5960,8 +5971,11 @@ to the corpus and follow rc
   sets its own escapes its job's stop and end, one whose leader code in
   the job re-points to the job's is stopped and killed with it, and work
   done by servers outside the job is not the job's. Each pass looks at
-  every process of the runtime. Replace it with the job tag
-  (`erlang/apps/erx_shell/src/erx_shell.erl`).
+  every process of the runtime. `erx_prog_handler:start/1` likewise
+  records a program in its caller's group leader's job at the command
+  server, where the design reads the caller's tag with `erx_job:tag/0`.
+  Replace both with the job tag (`erlang/apps/erx_shell/src/erx_shell.erl`,
+  `erlang/apps/erx/src/erx_prog_handler.erl`).
 * [Medium] shell, a script's processes when its evaluator is killed:
   `erx_shell_script:run/2` runs a source in an evaluator process with a
   heap limit, and when the limit kills it the stages, commands and pipes

@@ -212,7 +212,7 @@ session code and the program's own driver.
 
 -define(IS_FD(N), (is_integer(N) andalso N >= 0 andalso N < ?ERX_PROG_FDS_MAX)).
 -define(IS_POS(N), (is_integer(N) andalso N > 0)).
--define(IS_PID(P), (is_integer(P) andalso P >= 2 andalso P =< 16#7fffffff)).
+-define(IS_PID(P), (is_integer(P) andalso P >= 2 andalso P =< ?ERX_PROG_PID_MAX)).
 -define(IS_HAND(H), (tuple_size(H) =:= 3 andalso element(1, H) =:= pipe_hand andalso ?IS_POS(element(2, H)))).
 %% A stop by the session reads as signaled SIGKILL (docs/design-programs.md,
 %% "A program's end").

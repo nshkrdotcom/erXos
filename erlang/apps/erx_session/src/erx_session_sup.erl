@@ -4,7 +4,11 @@
 -module(erx_session_sup).
 -moduledoc """
 The session's supervisor. Its children are the session's pipe server
-(erx_pipe_srv), which a crash restarts for later pipes; the session's console
+(erx_pipe_srv), which a crash restarts for later pipes; the session's command
+server (erx_command_srv), which assigns process ids and spawns every program's
+handler, and which nothing restarts, since a new one could give an id again: a
+significant child, its end ends the supervisor and with it the session
+(docs/design-programs.md, "The command server"); the session's console
 tty (erx_session_tty:start_link/0), which ends normally only when its line has
 hung up, with every shell on it, and then nothing restarts it; a tty for each
 master of the session that opens one (erx_session_tty:open/1), which nothing
@@ -36,6 +40,12 @@ init([]) ->
               restart => permanent,
               type => worker,
               modules => [erx_pipe_srv, erx_pipe]},
+    Commands = #{id => erx_command_srv,
+                 start => {erx_command_srv, start_link, []},
+                 restart => temporary,
+                 significant => true,
+                 type => worker,
+                 modules => [erx_command_srv, erx_command_core]},
     {Table, _Problems} = erx_shell_namespace:from_applications([erx_shell]),
     Args = export_args(os:getenv(binary_to_list(?ERX_PRINCIPAL_KEY_BYTES)), node(),
                        erx_shell_namespace:commands(Table)),
@@ -44,7 +54,8 @@ init([]) ->
                  restart => permanent,
                  type => worker,
                  modules => [erx_fs, erx_session_export]} || Rights <- [rx, rw]],
-    {ok, {#{strategy => one_for_one, intensity => 5, period => 10}, [Pipes, Tty | Exports]}}.
+    {ok, {#{strategy => one_for_one, intensity => 5, period => 10, auto_shutdown => any_significant},
+          [Pipes, Commands, Tty | Exports]}}.
 
 -doc """
 What the session's export starts from (erx_session_export:args/0): its

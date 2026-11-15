@@ -37,6 +37,8 @@
              erx_build,
              erx_bytes,
              erx_clock_nif,
+             erx_command_core,
+             erx_command_srv,
              erx_connections,
              erx_console,
              erx_console_keys,

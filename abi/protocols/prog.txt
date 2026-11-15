@@ -74,6 +74,7 @@
 # inside another kind.
 
 limit prog_frame_max u32 196608
+limit prog_pid_max u32 2147483647
 limit prog_args_max u32 131072
 limit prog_path_max u32 4096
 limit prog_fds_max u32 1024
@@ -106,8 +107,8 @@ limit prog_mem_bytes u64 1073741824
 protocol erx_prog
   version 1
   reader c
-  integer process_id u32 in 2 0x7fffffff
-  integer parent_id u32 in 1 0x7fffffff
+  integer process_id u32 in 2 @prog_pid_max
+  integer parent_id u32 in 1 @prog_pid_max
   integer fd u16 in 0 1023
   integer dup_target u16 in 0 1023 refers fds
   capability cap

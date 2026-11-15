@@ -1307,23 +1307,25 @@ handler that asks keeps serving its program meanwhile (P3):
 
 | Call | Made by | What the server does |
 | --- | --- | --- |
-| `{handler, Starter}`, `Starter` being `{program, Pid}` or `{process, Tag}` | a starter's handler, for a program's spawn or fork (step 5), and `start/1` in a session process | assigns the next process id; spawns the program's handler, not linked to the server, with the caller as the process whose start it waits for and the process id, parent, job and group above; makes the row with that handler; monitors it; answers `{ok, Handler, Pid}`, or `{error, eagain}` once 2^31 - 1 has been assigned |
+| `{handler, Starter, Key}`, `Starter` being `{program, Pid}` or `{process, Tag}` and `Key` a reference the caller made | a starter's handler, for a program's spawn or fork (step 5), and `start/1` in a session process | assigns the next process id; spawns the program's handler, not linked to the server, with the caller as the process whose start it waits for, `Key` as the key that start carries, and the process id, parent, job and group above; makes the row with that handler; monitors it; answers `{ok, Handler, Pid}`, or `{error, eagain}` once 2^31 - 1 has been assigned |
 | `{reserve, Starter}`, `Starter` as above | a command's stream relay | assigns the next process id; makes the row with the caller as the handler and the parent, job and group above; monitors the caller; answers `{ok, Pid, Pgid}`, or `{error, eagain}` as above |
 | `programs()` | `read/2`, below | answers the rows |
 | `{await, Tag}` | the shell's job table, once a job's evaluator has ended ([design-shell.md](design-shell.md#job-control)) | answers `{programs_ended, Tag}` once no row carries `Tag`, at once when none does, and otherwise when the `'DOWN'` that removes the last such row arrives |
-| `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
-| `{probe, Scope, Target}` | a program's handler, for a probe whose target is neither its program nor one of its children | answers as `kill` with the same `Scope` and `Target` would, `ok` or `esrch`, and hands nothing to any handler |
+| `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `{error, esrch}` when no row is in scope, pid 1 included |
+| `{probe, Scope, Target}` | a program's handler, for a probe whose target is neither its program nor one of its children | answers as `kill` with the same `Scope` and `Target` would, `ok` or `{error, esrch}`, and hands nothing to any handler |
 | `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
 
 A spawn is an effect, so the pure core decides it and the server
-performs it. On `{handler, Starter}` the core assigns the id and answers
-`{spawn_handler, Id, Init}`, `Init` being the caller, the id, the
-parent, the job and the group; the server spawns the handler with
-`Init` and, before it takes its next message, steps
-`{spawned, Id, Handler}`, on which the core makes the row and answers
-the actions that monitor the handler and reply to the caller. The
-handler's **start**, which the caller then sends it, is `{start,
-Start}`, everything the handler builds the program from: for a spawn
+performs it. On `{handler, Starter, Key}` the core assigns the id and
+answers `{spawn_handler, From, Init}`, `From` the call to answer and
+`Init` being the caller, `Key`, the id, the parent, the job and the
+group; the server spawns the handler with `Init` and, before it takes
+its next message, steps `{spawned, From, Init, Handler}`, on which the
+core makes the row and answers the actions that monitor the handler and
+reply to the caller. The handler's **start**, which the caller then
+sends it, is `{start, Key, Start}`; the handler takes no start without
+the key, which only the caller holds, though every session process can
+learn the handler's pid from `programs()`. `Start` is everything the handler builds the program from: for a spawn
 or a fork, the request as steps 3 and 4 checked and resolved it, with
 the image, `argv`, `env`, `cwd`, the signal mask and ignored signals,
 the file mode creation mask and each descriptor as the end or open its
@@ -1355,16 +1357,16 @@ and the pipe server, which names a program by its process id, and a
 parent's `waitpid` would then take one program for another. So its end
 ends the session, and every program with it (P9).
 
-**How `ps` and `/proc` read it.** `erx_command_srv:read(Keys, Deadline)`
+**How `ps` and `/proc` read it.** `erx_command_srv:read(Keys, Wait)`
 runs in the caller: it takes `programs()`, asks each row's handler for
-`Keys` at once, and waits for the answers until `Deadline`. A handler
+`Keys` at once, and waits `Wait` milliseconds for the answers. A handler
 answers from its record and its port, whose driver reads the sub-space's
 state and charges and the group's CPU time with the session's own
 capabilities; it never asks its program. A row whose handler ends
 meanwhile, or does not answer in time, has each value `missing`, which
 `ps` prints as `-`. `ps`, `top` and the `Ctrl-T` line read the session's
 programs so, in its own runtime and with no facet, with
-`inspect_agent_wait`, 500 ms, as the deadline
+`inspect_agent_wait`, 500 ms, as the wait
 ([design-live.md](design-live.md#the-command-shell)). The session's
 inspection agent answers `[domains, Self, programs]` and `[domains,
 Self, programs, N]`, `N` a process id, the same way, with the record's

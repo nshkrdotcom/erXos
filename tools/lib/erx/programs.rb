@@ -113,8 +113,15 @@ module Erx
 
     # erx_program:start/1's spec for the program bin/<name> as pid, its own process group,
     # with the rest of what its startup message carries; each keyword is an Erlang term.
-    def spec(name, pid, argv: "[<<\"#{name}\">>]", env: '[]', cwd: '<<"/">>', umask: '8#022', sigmask: '[]', fds: '[]')
-      "\#{image => <<\"bin/#{name}\">>, pid => #{pid}, ppid => 1, pgid => #{pid}, argv => #{argv}, env => #{env}, " \
+    def spec(name, pid, **rest) = start_spec(name, "pid => #{pid}, ppid => 1, pgid => #{pid}, ", **rest)
+
+    # erx_prog_handler:start/1's spec for the program bin/<name>, which names no process
+    # id, parent or group: the session's command server gives them.
+    def handler_spec(name, **rest) = start_spec(name, '', **rest)
+
+    def start_spec(name, ids, argv: "[<<\"#{name}\">>]", env: '[]', cwd: '<<"/">>', umask: '8#022', sigmask: '[]',
+                   fds: '[]')
+      "\#{#{ids}image => <<\"bin/#{name}\">>, argv => #{argv}, env => #{env}, " \
         "cwd => #{cwd}, spawn => false, sigmask => #{sigmask}, sigignore => [], umask => #{umask}, fds => #{fds}}"
     end
 
@@ -185,7 +192,7 @@ module Erx
        Case.new(name: 'handler', seconds: 60, answer: '{handler,{exited,42},eof}', expression: line(<<~ERLANG)),
          (fun() ->
             {ok, R, W} = erx_pipe_srv:pipe(),
-            {ok, H, []} = erx_prog_handler:start((#{spec('exit42', 40)})\#{fds => [{3, {pipe, W}}]}),
+            {ok, H, []} = erx_prog_handler:start((#{handler_spec('exit42')})\#{fds => [{3, {pipe, W}}]}),
             ok = erx_pipe_srv:close(W),
             Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
             {handler, Status, erx_pipe_srv:read(R, 16, #{WAIT_MS})}
@@ -437,14 +444,14 @@ module Erx
 end,
 Case.new(name: 'pipe', seconds: 120, answer: '{pipe,{exited,42}}', expression: line(<<~ERLANG)),
   (fun() ->
-     {ok, H, []} = erx_prog_handler:start(#{spec('pipeio', 31, argv: '[<<"pipeio">>, <<"pipe">>]')}),
+     {ok, H, []} = erx_prog_handler:start(#{handler_spec('pipeio', argv: '[<<"pipeio">>, <<"pipe">>]')}),
      Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
      {pipe, Status}
    end)().
 ERLANG
 Case.new(name: 'fileio', seconds: 120, answer: '{fileio,{exited,0}}', expression: line(<<~ERLANG)),
   (fun() ->
-     {ok, H, []} = erx_prog_handler:start(#{spec('fileio', 45, argv: '[<<"fileio">>, <<"/tmp/fileio">>]')}),
+     {ok, H, []} = erx_prog_handler:start(#{handler_spec('fileio', argv: '[<<"fileio">>, <<"/tmp/fileio">>]')}),
      Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
      {fileio, Status}
    end)().
