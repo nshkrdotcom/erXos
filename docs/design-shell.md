@@ -1360,6 +1360,20 @@ that would otherwise be a case of its own follows from that value:
 * the shell never has to order a `termios` change against a change of
   who reads.
 
+**Its core.** The relay's decisions are one pure state machine,
+`erx_session_relay_core`, beside the `erx_session_relay` server, which hands
+it every request and message and carries out the actions it returns once it
+has answered the request. The core holds the line discipline's state and
+`erx_tty_link`'s, the tty's side of the master's messages
+([design-live.md](design-live.md#the-tty)), and gives `input/3` the room it
+derives from what `erx_tty_link` holds, so no part of the relay counts echo
+or held bytes. A signal's `flush_output` empties what `erx_tty_link` holds
+but the output outstanding at the master, and drops the writers' messages
+not yet through `output/3`, which are answered then. After every step that
+can change who may read, every `read` and `in` wait is armed in the line
+discipline exactly when its open may read and parked otherwise, so no rule
+lists the steps that park or arm.
+
 **Its parties.**
 
 * The master speaks the six messages of
@@ -1412,11 +1426,11 @@ instead, and the handler copies between the two.
 | `{tty, Open, {tcsetattr, Termios, sigttou_ignored}}` | a program's handler, for a thread that ignores or blocks `SIGTTOU` ([design-programs.md](design-programs.md#the-terminal)) | as `{tcsetattr, Termios}`, but never `{background, Orphaned}`: the change is made whichever holder holds the terminal | as for `{tcsetattr, Termios}` |
 | `{tty, Open, winsize}` | a process given the open | `{ok, {Rows, Columns}}`, the size the master last reported | nothing |
 | `{watch, Open, [Kind]}`, `Kind` being `{read, Count}`, `in` or `out`, `Count` from 1 to 4,096 the bytes the read will ask for | a process given the open | `ok`; `{error, ebadf}` for `{read, Count}` on a write-only open | one `{ready, Open, [Kind], N}` to the caller, `N` the relay's signal number when it sends the report ([A reader the signal ends](#the-terminal-relays-protocol)), when `read_wait`, `poll_wait` or room in the output says so; a read's wait is ready at `Count` bytes when `Count` is fewer than `VMIN`, as FreeBSD's read returns once its buffer is full (`sys/kern/tty_ttydisc.c:290`, `:331`, `:384`) |
-| `{tty_read, Open, Max, N}`, `Max` from 0 to 4,096, `N` the number of the report the reader received | a process given the open | `{error, ebadf}` on a write-only open, whatever `N`; otherwise `{ok, Bytes}`; `eof` for the end of file, `Ctrl-D` at the start of a cooked line or any read that finds no bytes after a hangup; `{ok, <<>>}` for a raw read whose time ended with nothing; `eagain` when another reader took the bytes, the open may not read, or `N` is not the relay's signal number | nothing |
+| `{tty_read, Open, Max, N}`, `Max` from 0 to 4,096, `N` the number of the report the reader received | a process given the open | `{error, ebadf}` on a write-only open, whatever `N`; otherwise `{ok, Bytes}`; `eof` for the end of file, `Ctrl-D` at the start of a cooked line or any read that finds no bytes after a hangup; `{ok, <<>>}` for a raw read whose time ended with nothing; `eagain` when another reader took the bytes, the open may not read, or `N` is not the relay's signal number; a read of 0 bytes that passes those checks is answered `{ok, <<>>}` and waits for nothing | nothing |
 | `{write, Open, Bytes}` | a process given the open | `{ok, N}`, the count `output/3` took; `eagain` when it took none, or bytes wait ahead of it | nothing |
 | `{console_group, Group}` | the console of the session role, at its start and in each step that changes its current group | `ok` | the events made while the console holds the terminal carry `Group` from this step on, and its `interrupt` and `suspend` count for `Group` ([Terminal events](#the-terminal-relays-protocol)) |
 | `{status, Line}` | the shell's report process ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)) | `ok`, whether `status/3` takes the line or drops it | nothing |
-| `{foreground, console, Signals}`, `{foreground, Tag, cooked, Signals}`, `{foreground, Tag, Termios, Signals}` or `{foreground, Tag, current, Signals}`, `Tag` being a job's tag and `Signals` being `{Group, Seen}`: the shell's own group and the number of signals the shell has carried out, 0 before the first | the shell | `{ok, Left, Sent}`, `Left` being the `termios` the previous holder left and `Sent` the number of signals made for `Group` ([One count per shell](#the-terminal-relays-protocol)); `{error, einval}` when `erx_tty:set/2` refuses `Termios`, `current` names a job that does not hold the terminal, or `Seen` is above the count of signals made for `Group`, with nothing changed | where the new holder's opens may read, their parked waits are armed and report at once where input waits; while the job `Tag` holds, the caller is the process its events go to and its signals count for `Group` |
+| `{foreground, console, Signals}`, `{foreground, Tag, cooked, Signals}`, `{foreground, Tag, Termios, Signals}` or `{foreground, Tag, current, Signals}`, `Tag` being a job's tag and `Signals` being `{Group, Seen}`: the shell's own group and the number of signals the shell has carried out, 0 before the first | the shell | `{ok, Left, Sent}`, `Left` being the `termios` the previous holder left and `Sent` the number of signals made for `Group` ([One count per shell](#the-terminal-relays-protocol)); `{error, einval}` when `erx_tty:set/2` refuses `Termios`, `current` names a job that does not hold the terminal, or `Seen` is above the count of signals made for `Group`, with nothing changed; with `current`, which changes neither the holder nor the `termios`, `Left` is the `termios` of the moment | where the new holder's opens may read, their parked waits are armed and report at once where input waits; while the job `Tag` holds, the caller is the process its events go to and its signals count for `Group` |
 
 Any other request is answered `{error, einval}`, and a request that names
 an open the relay did not make, or has closed, is answered
@@ -1447,7 +1461,8 @@ first, as the line discipline replaces a wait
 from an open that may not read is answered `ok` and parked: the relay
 keeps it, with its caller, outside the line discipline, so no `VTIME`
 timer runs for it. A watch of `out` is never parked, since a background
-job's writes go through in the first tier.
+job's writes go through in the first tier. It is reported once room is free
+for the master, no writer's message waits and output is not stopped.
 
 **The ordering rule.** The answer goes before anything the request sets
 off. A watch whose condition already holds is answered `ok` and then
@@ -1829,12 +1844,17 @@ carries out such a stop in the step that took the input, in this order:
    waits.
 2. It sends the event as above.
 3. It passes the bytes after the key to `input/3` again, with the room
-   `input/3` returned, until none is left. They wait in the tty. That room
+   `input/3` returned, which is the room it derives from what
+   `erx_tty_link` holds once the actions are carried out, until none is left. They wait in the tty. That room
    is what the echo left, of the whole room less the output the master
    has not taken when the signal's `flush_output` emptied the rest of
    what the relay holds for the master
    ([design-live.md](design-live.md#the-tty)), so the relay counts no
    echo itself.
+
+With `NOFLSH` set, `input/3` can report a wait in the same call after the
+signal, for bytes typed before the key; a wait that step 1 parked gets no
+report from it.
 
 **One count per shell.** A signal's key reaches a command shell by one
 of two routes, and the relay counts it on either. While a job holds the
@@ -1853,8 +1873,9 @@ the `Group` of the `foreground` that gave the holder the terminal; an
 event names. A `quit`, `info` or `winch` made while the console holds,
 which the console passes to no group, and an event for `none`, count for
 no group. Both numbers start at 0 the first time the relay meets a group,
-in a `console_group` or a `foreground`; the relay monitors the group from
-then on and forgets its numbers when it ends. A command shell has a group
+in a `console_group` or a `foreground`, so a `foreground` naming a group
+the relay has not met passes only with `Seen` 0; the relay monitors the
+group from then on and forgets its numbers when it ends. A command shell has a group
 of its own, which ends with it (`group.erl:538-543`), so a shell started
 from a shell starts at 0, and one shell's signals never touch another
 shell's numbers. An Erlang shell's group gets numbers that no

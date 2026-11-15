@@ -36,10 +36,16 @@ is reported only when it changes, and the hangup once, after which every
 write is done at once and its bytes dropped, as a hung-up line's are.
 Input is passed on as it came. Each receiver check is the one the design's
 table gives; a message that fails it is dropped and counted.
+
+The line discipline's actions on output reach it as calls: flush/1 drops
+what it holds but the outstanding output, which the master already has,
+and stop/1 and start/1 hold output back and let it go again, as VSTOP and
+VSTART do. room/1 is the room the line discipline is given, derived from
+what it holds, so its owner counts nothing itself.
 """.
 
--export([new/0, write/3, master/2, timeout/2]).
--export([held/1, waiting/1, counts/1]).
+-export([new/0, write/3, master/2, timeout/2, flush/1, stop/1, start/1]).
+-export([held/1, room/1, stopped/1, waiting/1, counts/1]).
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
 
@@ -79,6 +85,8 @@ table gives; a message that fails it is dropped and counted.
           unowned = 0 :: non_neg_integer(),
           size = none :: none | {pos_integer(), pos_integer()},
           hung_up = false :: boolean(),
+          %% Output stopped by VSTOP: held bytes wait and none is sent.
+          stopped = false :: boolean(),
           counts = #{output_dropped => 0, input_dropped => 0, size_refused => 0}
             :: #{atom() => non_neg_integer()}}).
 
@@ -144,10 +152,40 @@ timeout(N, L = #link{outstanding = {N, _Size}, hung_up = false}) ->
 timeout(_N, L) ->
     {[], L}.
 
+-doc """
+A flush: the bytes held and not yet sent are dropped, and every writer
+waiting is done, its bytes dropped with them. The outstanding output stays,
+since the master has it.
+""".
+-spec flush(link()) -> {[action()], link()}.
+flush(L = #link{waiting = Waiting}) ->
+    Done = lists:append([done(Writer) || {Writer, _Left} <- queue:to_list(Waiting)]),
+    {Done, L#link{held = <<>>, waiting = queue:new(), unowned = 0}}.
+
+-doc "Output stops: what is held waits until start/1.".
+-spec stop(link()) -> link().
+stop(L) -> L#link{stopped = true}.
+
+-doc "Output starts again, and what is held is sent.".
+-spec start(link()) -> {[action()], link()}.
+start(L) -> send(L#link{stopped = false}).
+
+-doc """
+The room for the line discipline, as erx_tty's room(): what is free of the
+4 KiB, and the outstanding output, which a flush cannot drop.
+""".
+-spec room(link()) -> erx_tty:room().
+room(L = #link{outstanding = Outstanding}) ->
+    {?MAX_HELD - held(L), outstanding_size(Outstanding)}.
+
 -doc "The bytes held, the outstanding output among them; never more than 4 KiB.".
 -spec held(link()) -> non_neg_integer().
 held(#link{outstanding = Outstanding, held = Held}) ->
     outstanding_size(Outstanding) + byte_size(Held).
+
+-doc "Whether output is stopped.".
+-spec stopped(link()) -> boolean().
+stopped(#link{stopped = Stopped}) -> Stopped.
 
 -doc "The number of writers waiting.".
 -spec waiting(link()) -> non_neg_integer().
@@ -167,7 +205,8 @@ send(L0) ->
     {Sent, L2} = start_output(L1),
     {Done ++ Sent, L2}.
 
-start_output(L = #link{outstanding = none, held = Held, next = N}) when Held =/= <<>> ->
+start_output(L = #link{outstanding = none, held = Held, next = N, stopped = false})
+  when Held =/= <<>> ->
     {[{output, N, Held}, {resend_after, N}],
      L#link{outstanding = {N, byte_size(Held)}, held = <<>>, next = N + 1}};
 start_output(L) ->

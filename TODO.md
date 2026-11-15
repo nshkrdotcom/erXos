@@ -4495,6 +4495,21 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
+* [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`,
+  `erx_tty_link.erl`): (1) `erx_tty_link` sends to the master inside a step, on `write/3` and `start/1`, so a
+  signal key's `start_output` and the echo before its `flush_output` send held bytes the flush should drop
+  (`^S`, writes, `^C` shows up to 4 KiB of stopped output; `abc^C` in one input sends `abc` first), and the
+  echo after it can exceed the room; make the link's calls only fill and send once per step from `settle/1`,
+  as FreeBSD wakes the device once in `ttydisc_rint_done`, with a seeded case. (2) An `out` watch is reported
+  at any free byte, though `output/3` never splits a rendering, so a newline under `ONLCR` with 1 byte free
+  is `eagain` and a poll loop spins until the master takes output; report at a low-water mark after reading
+  FreeBSD's `ttydev_poll`. (3) The drain row's "no master is connected" has no state behind it in the core or
+  the link. (4) `erx_tty_link`'s exhaustive test and fuzz target do not cover `flush/1`, `stop/1`, `start/1`
+  and `room/1`. (5) Output stopped is held twice, in `erx_tty` and `erx_tty_link`; give it one owner (FreeBSD
+  lets writes fill the queue while stopped). (6) After a hangup while stopped, writes never complete.
+  (7) `reconcile/1` runs only in `watch/4`; running it in `settle/1` would make arming and parking hold for
+  every step by construction. (8) The exploration checks safety only, and its alphabets leave out close,
+  hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
