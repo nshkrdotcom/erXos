@@ -96,15 +96,9 @@ typedef struct erx_spawn_request {
 	erx_prog_sigset_t	  mask;		/* the calling thread's */
 } erx_spawn_request_t;
 
-/* One slot of the starter's descriptor table: its object, NULL when empty, and FD_CLOEXEC. */
-typedef struct erx_spawn_slot {
-	erx_prog_obj_t	*obj;
-	bool			 cloexec;
-} erx_spawn_slot_t;
-
 /* What the starter holds when it plans. */
 typedef struct erx_spawn_starter {
-	const erx_spawn_slot_t	*table;		/* ERX_PROG_FDS_MAX slots */
+	const erx_prog_slot_t	*table;		/* ERX_PROG_FDS_MAX slots, as erx_prog_fd_snapshot gives them */
 	erx_prog_sigset_t	 ignored;	/* the signals at SIG_IGN, never SIGKILL or SIGSTOP */
 	uint16_t		 umask;
 	const char		*cwd;		/* absolute and normalised, as the startup message's */

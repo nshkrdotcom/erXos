@@ -102,10 +102,15 @@ ppoll_call(struct pollfd *fds, unsigned long nfds, const struct timespec *timeou
 	return (erx_prog_poll(fds, (size_t)nfds, deadline));
 }
 
-int
-erx_fiasco_libc_spawn(pid_t *pid, const struct erx_spawn_request *req)
+bool
+erx_fiasco_libc_spawn(const struct erx_spawn_request *req, long *result)
 {
-	return (erx_prog_spawn(pid, req));
+	pid_t pid;
+	int error;
+
+	error = erx_prog_spawn(&pid, req);
+	*result = error != 0 ? -error : pid;
+	return (true);
 }
 
 /*

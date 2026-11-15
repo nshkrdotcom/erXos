@@ -13,7 +13,6 @@
  * reads one, enters through domain_entry.c instead.
  */
 
-#include <errno.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -41,13 +40,13 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 	return (false);
 }
 
-/* No processes: a spawn is ENOSYS (libc_spawn.h). */
-int
-erx_fiasco_libc_spawn(pid_t *pid, const struct erx_spawn_request *req)
+/* No processes: musl's posix_spawn answers ENOSYS (libc_spawn.h). */
+bool
+erx_fiasco_libc_spawn(const struct erx_spawn_request *req, long *result)
 {
-	(void)pid;
 	(void)req;
-	return (ENOSYS);
+	(void)result;
+	return (false);
 }
 
 int64_t

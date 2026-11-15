@@ -8,10 +8,12 @@
  * spawn is a request to the program's handler, never a fork, so musl's
  * child and its pipe are gone.  This decodes the attributes and the
  * calling thread's mask into the spawn planner's request and hands it to
- * the entry's seam (libc_spawn.h), which plans and sends it in a program
- * and answers ENOSYS in a runtime, which has no processes.
+ * the entry's seam (libc_spawn.h), which plans and sends it in a program;
+ * an entry that starts no processes takes no spawn, and this answers
+ * ENOSYS.
  */
 
+#include <errno.h>
 #include <pthread.h>
 #include <signal.h>
 #include <spawn.h>
@@ -44,6 +46,7 @@ posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_fi
 		.actions = fa != NULL ? fa->__actions : NULL,
 	};
 	sigset_t mask;
+	long result;
 
 	pthread_sigmask(SIG_BLOCK, NULL, &mask);
 	req.mask = sigset_of(&mask);
@@ -55,5 +58,11 @@ posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_fi
 		req.attr.sets_group_session_or_policy = (flags & (POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSID |
 		    POSIX_SPAWN_SETSCHEDULER | POSIX_SPAWN_SETSCHEDPARAM)) != 0;
 	}
-	return (erx_fiasco_libc_spawn(pid, &req));
+	if (!erx_fiasco_libc_spawn(&req, &result))
+		return (ENOSYS);
+	if (result < 0)
+		return ((int)-result);
+	if (pid != NULL)
+		*pid = (pid_t)result;
+	return (0);
 }

@@ -297,7 +297,7 @@ erx_spawn_plan(const erx_spawn_request_t *req, const erx_spawn_starter_t *starte
 	if ((error = path_join(starter->cwd, "", plan->cwd)) != 0)
 		return (error);
 	for (size_t fd = 0; fd < ERX_PROG_FDS_MAX; fd++) {
-		const erx_spawn_slot_t *slot = &starter->table[fd];
+		const erx_prog_slot_t *slot = &starter->table[fd];
 
 		plan->fds[fd] = slot->obj != NULL ?
 		    (erx_spawn_fd_t){ .kind = ERX_SPAWN_FD_HELD, .held = slot->obj } :

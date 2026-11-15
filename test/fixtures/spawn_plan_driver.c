@@ -26,7 +26,7 @@
 static erx_prog_obj_t null_obj = { .kind = ERX_PROG_OBJ_NULL };
 static erx_prog_obj_t pipe_a = { .kind = ERX_PROG_OBJ_PIPE };
 static erx_prog_obj_t mem_obj = { .kind = ERX_PROG_OBJ_MEM };
-static erx_spawn_slot_t table[ERX_PROG_FDS_MAX];
+static erx_prog_slot_t table[ERX_PROG_FDS_MAX];
 static erx_spawn_plan_t plan;
 static char *const no_strings[] = { NULL };
 
@@ -76,11 +76,11 @@ examples(void)
 	char *const past[] = { big, big, big + BIG, NULL };
 
 	fill_texts();
-	table[0] = (erx_spawn_slot_t){ .obj = &null_obj };
-	table[1] = (erx_spawn_slot_t){ .obj = &pipe_a };
-	table[3] = (erx_spawn_slot_t){ .obj = &pipe_a, .cloexec = true };
-	table[4] = (erx_spawn_slot_t){ .obj = &pipe_a, .cloexec = true };
-	table[6] = (erx_spawn_slot_t){ .obj = &mem_obj };
+	table[0] = (erx_prog_slot_t){ .obj = &null_obj };
+	table[1] = (erx_prog_slot_t){ .obj = &pipe_a };
+	table[3] = (erx_prog_slot_t){ .obj = &pipe_a, .cloexec = true };
+	table[4] = (erx_prog_slot_t){ .obj = &pipe_a, .cloexec = true };
+	table[6] = (erx_prog_slot_t){ .obj = &mem_obj };
 
 	req = request(NULL);
 	example("FD_CLOEXEC and a mem range close, the rest pass",

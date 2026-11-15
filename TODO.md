@@ -1885,23 +1885,6 @@ it; git history is the record of completed work.
   descriptor the table holds, where FreeBSD's `kern_pread` gives a pipe end `ESPIPE` and `/dev/null` its read of 0 or
   its write of every byte; `FIONREAD` on a pipe end is `ENOTTY`, where FreeBSD's `pipe_ioctl` gives the bytes
   readable; `F_GETOWN` and `F_SETOWN` are `EINVAL`. Answer each from the object's kind in the table.
-* [Medium] programs, the descriptor seam offers a listed set of calls (`musl/src/internal/erxos/syscall.c`,
-  `seam_offered`, and `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`, two lists that must agree):
-  design-programs.md, "The POSIX-lite personality", says every call that names a descriptor reaches the table, but
-  `dup`, `fsync`, `fdatasync`, `ftruncate`, `getdents64`, `preadv`, `pwritev`, `fchmod`, `fchown`, `fstatfs`,
-  `flock` and the `*at` calls with a directory descriptor reach musl's default, `ENOSYS`, not `EBADF`. It fails
-  safe: none reaches the console or the kernel. Make it hold by construction: offer the seam every call, the
-  non-program seams answering false as they do, and have the program's seam hand back one closed list of calls that
-  name no descriptor.
-* [Low] programs, `writev` through the seam (`liberx/backend/fiasco/program_task.c`, `vector_call`) writes each entry
-  separately, so entries that sum to at most `PIPE_BUF` are not one atomic write against another writer of the same
-  pipe; gather them into one pipe write. `lseek` ignores `whence` and `ioctl` its request (`liberx/program/fd.c`), so
-  a bad `whence` answers 0 and `FIONBIO` on a pipe answers `ENOTTY`.
-* [Medium] programs, a spawn's snapshot of the descriptor table (`liberx/program/spawn.c`, `erx_prog_spawn`) takes
-  each slot under its own hold of the table lock, so a `dup2` and `close` in another thread can land between two
-  slots, and marks no slot `FD_CLOEXEC`, since the table keeps no such flag. Once `fcntl` and `O_CLOEXEC` set it, a
-  spawn hands on what exec closes. Take the snapshot in one call of `liberx/program/fd.c`, under one hold of the
-  lock, with each slot's `FD_CLOEXEC`.
 * [Medium] programs, the spawn's send (`liberx/program/spawn.c`, `send_spawn`; docs/design-programs.md, "Starting
   a program", step 2) must settle, before it is written, what the plan alone cannot: each `addopen` made in action
   order against the working directory of its turn, which a single walk of the actions must give both the planner
@@ -4231,6 +4214,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] tools, `tools/lib/erx/release.rb`: `boot_file` puts paths into an Erlang expression, so a checkout path holding `"` or `\` breaks or changes it. Pass them with `-extra`.
 * [Medium] tools, `tools/lib/erx/production_image.rb`, `Run.record_words`: it predicts the root's device records with a second copy of `devices_read` (`liberx/backend/core/boot_manifest.c`), reading `include/erx/device_kinds.h` by pattern, and counts no record for a framebuffer row the system domain holds, whose record depends on the firmware's tree. Take the count from the root's own record walk over the manifest (the host build `boot_manifest_test.rb` runs prints the records) and delete the copy.
 * [Low] tools, `tools/lib/erx/boot_image.rb`: `BootImage#build` removes its directory before `OutputDirectory.prepare` checks the path, so a `build/` that links out of the tree has the linked directory removed. Clear it through a check first, as `ProductionImage.clear_directory` does, with a test like `production_image_test.rb`'s link test.
+* [Low] tools, `tools/lib/erx/boot_image.rb`: it requires `test/fixtures/structural_pack.rb`, which loads the sanitizer environment, so requiring `erx/native_task` from host tooling raises unless `ERX_CLANG` names a clang with `llvm-symbolizer` beside it. Move what the image build needs out of the test fixture into `tools/lib/erx`.
 * [Medium] runtime, `liberx/backend/fiasco/runtime_entry.c`, `device_give`: the root's own give and the domain library's (`liberx/system/dom_apply.c`, `apply_give_step` and `apply_given_words`) each build a device's objects and its `-erx_record given` record from the manifest row, and the register pages are computed three times (`erx_boot_device_window`, `dom_boot_view.c`'s `boot_pages`, the NIF's `erx_device_window_pages`); they agree today, but nothing compares them. Give the record one producer: build the root's records from the library's catalogue entries (a system give in the library, with the view built before the boot arguments), and keep one pure page function in a shared core header.
 * [Medium] runtime, `liberx/backend/core/boot_manifest.c`: `peer_held` and `peer_held_total` stay zero on the page, and the projection is hand-written where the design generates it. No reader yet.
 * [Medium] runtime, `liberx/backend/core/boot_info.c` and `liberx/system/dom_core.c`: a startup

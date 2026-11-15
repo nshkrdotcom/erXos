@@ -31,7 +31,8 @@ class ProgFdTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   FD = 'liberx/program/fd.c'
   PIPE = 'liberx/program/pipe.c'
-  SOURCES = [FD, 'liberx/program/fd_plan.c', PIPE, 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
+  SPAWN = 'liberx/program/spawn.c'
+  SOURCES = [FD, 'liberx/program/fd_plan.c', PIPE, 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', SPAWN, 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
              'liberx/erx_pipe_core.c', 'liberx/erx_pipe_check.c', 'liberx/erx_pipe_run.c',
              'liberx/erx_profile.c', 'liberx/erx_etf.c', 'kernel/crypto/blake3/blake3.c',
              'kernel/crypto/blake3/blake3_portable.c', 'build/gen/liberx/generated/prog_profile.c',
@@ -48,6 +49,7 @@ class ProgFdTest < Minitest::Test
   EACCES = Errno::EACCES::Errno
   ENODEV = Errno::ENODEV::Errno
   ESPIPE = Errno::ESPIPE::Errno
+  ENOSYS = Errno::ENOSYS::Errno
   ENOTTY = Errno::ENOTTY::Errno
   EAGAIN = Errno::EAGAIN::Errno
   CLOEXEC = Fcntl::FD_CLOEXEC.to_s
@@ -315,6 +317,12 @@ class ProgFdTest < Minitest::Test
     # with it: the write end's last close still sends {closed} once.
     'snapshot' => [*SET_UP, ['fcntl 1 setfd cloexec', '0'], ['dup 1', '3'], ['snapshot', '0:0 1:1 2:0 3:0'],
                    ['close 1', '0'], ['close 3', '0'], ['notices', 'closed:7:2']],
+    # posix_spawn plans over that snapshot (liberx/program/spawn.c): the planner sees the
+    # FD_CLOEXEC fcntl set, which closes the slot in the child, and not on its dup; the
+    # send answers ENOSYS, and the references go with the spawn.
+    'spawn plans over the snapshot' =>
+      [*SET_UP, ['fcntl 1 setfd cloexec', '0'], ['dup 1', '3'], ['posix_spawn', "0:0 1:1 2:0 3:0 #{ENOSYS}"],
+       ['close 1', '0'], ['close 3', '0'], ['notices', 'closed:7:2']],
     # Entries that sum to PIPE_BUF bytes are still one record, as a write of as many is.
     'writev of PIPE_BUF bytes' => [*SET_UP, ["fdwritev 1 #{'a' * 2048} #{'b' * 2048}", '4096'], ['wpos 1', RECORD_4096],
                                    ["fdwrite 1 #{'c' * 4096}", '4096'], ['wpos 1', (2 * RECORD_4096.to_i).to_s]],
@@ -328,6 +336,11 @@ class ProgFdTest < Minitest::Test
   MUTANTS = {
     'a snapshot drops FD_CLOEXEC' => ['snapshot', FD, "\t\ttable[fd] = slots[fd];\n", "\t\ttable[fd] = (erx_prog_slot_t){ .obj = slots[fd].obj };\n"],
     'a snapshot takes no reference' => ['snapshot', FD, "\t\tif (slots[fd].obj != NULL)\n\t\t\tobj_hold(slots[fd].obj);\n", ""],
+    'a spawn hands on FD_CLOEXEC' =>
+      ['spawn plans over the snapshot', SPAWN, "\terx_prog_fd_snapshot(work->table);\n",
+       "\terx_prog_fd_snapshot(work->table);\n\tfor (int fd = 0; fd < (int)ERX_PROG_FDS_MAX; fd++)\n\t\twork->table[fd].cloexec = false;\n"],
+    'a spawn keeps its references' =>
+      ['spawn plans over the snapshot', SPAWN, "\t\t\terx_prog_obj_put(work->table[fd].obj);\n", "\t\t\tcontinue;\n"],
     'a writev of a few bytes writes each entry' => ['writev gathers', FD, 'if (sum <= sizeof(gathered))', 'if (false)'],
     'a writev of PIPE_BUF bytes writes each entry' => ['writev of PIPE_BUF bytes', FD, 'if (sum <= sizeof(gathered))', 'if (sum < sizeof(gathered))'],
     'a dup copies FD_CLOEXEC' => ['descriptor calls', FD, '.cloexec = req.cloexec };', '.cloexec = slots[req.from].cloexec || req.cloexec };'],

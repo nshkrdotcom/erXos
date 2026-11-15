@@ -168,7 +168,7 @@ has(const erx_prog_sigset_t *set, int signo)
 /* One case: the starter, the request, and the storage both point into. */
 typedef struct spawn_case {
 	erx_prog_obj_t		 pool[POOL];
-	erx_spawn_slot_t	 table[ERX_PROG_FDS_MAX];
+	erx_prog_slot_t		 table[ERX_PROG_FDS_MAX];
 	erx_spawn_action_t	*actions[ACTIONS_MAX];
 	size_t			 nactions;
 	char			*argv[4];
@@ -208,7 +208,7 @@ decode(cursor_t *in, spawn_case_t *c)
 		const uint8_t object = take(in);
 
 		if (fd >= 0 && fd < (int)ERX_PROG_FDS_MAX)
-			c->table[fd] = (erx_spawn_slot_t){ .obj = &c->pool[(object & 0x7f) % POOL],
+			c->table[fd] = (erx_prog_slot_t){ .obj = &c->pool[(object & 0x7f) % POOL],
 			    .cloexec = (object & 0x80) != 0 };
 	}
 	if ((flags & 0x20) != 0)
@@ -467,7 +467,7 @@ run_case(const uint8_t *data, size_t size)
 	static spawn_case_t c;
 	static model_t m;
 	static erx_spawn_plan_t plan;
-	static erx_spawn_slot_t table_before[ERX_PROG_FDS_MAX];
+	static erx_prog_slot_t table_before[ERX_PROG_FDS_MAX];
 	erx_spawn_action_t *actions_before[ACTIONS_MAX];
 	size_t sizes[ACTIONS_MAX];
 	cursor_t in = { data, size };

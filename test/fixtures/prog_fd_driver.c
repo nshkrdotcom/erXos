@@ -48,6 +48,9 @@
  *   wpos FD                the write end FD holds: its write position
  *   snapshot               erx_prog_fd_snapshot: FD:CLOEXEC for each held slot, each
  *                          reference dropped after
+ *   posix_spawn            erx_prog_spawn of /bin/x: FD:CLOEXEC for each held slot of
+ *                          the table it hands the planner (erx_spawn_plan), then its
+ *                          status
  *   reserve PAGES          read-write memory wherever the host puts it, which a
  *                          release may free: "reserved". Later lines name it:
  *                          @P is its first page, in eight hex digits, and
@@ -106,7 +109,9 @@
 #include "liberx/program/inbound.h"
 #include "liberx/program/pipe.h"
 #include "liberx/program/poll.h"
+#include "liberx/program/program.h"
 #include "liberx/program/signal.h"
+#include "liberx/program/spawn.h"
 #include "liberx/program/startup.h"
 #include "liberx/program/wake.h"
 
@@ -1187,22 +1192,69 @@ do_fdwritev(int fd, char *texts)
 	printf("%zd\n", erx_prog_fd_writev(fd, iov, count));
 }
 
-/* snapshot: each held slot as FD:CLOEXEC, its reference dropped once printed. */
+/* Each held slot of table as FD:CLOEXEC, a space between two, with no newline. */
 static void
-do_snapshot(void)
+print_slots(const erx_prog_slot_t table[ERX_PROG_FDS_MAX])
 {
-	static erx_prog_slot_t table[ERX_PROG_FDS_MAX];
 	const char *sep = "";
 
-	erx_prog_fd_snapshot(table);
 	for (uint32_t fd = 0; fd < ERX_PROG_FDS_MAX; fd++) {
 		if (table[fd].obj == NULL)
 			continue;
 		printf("%s%" PRIu32 ":%d", sep, fd, table[fd].cloexec ? 1 : 0);
 		sep = " ";
-		erx_prog_obj_put(table[fd].obj);
 	}
+}
+
+/* snapshot: the snapshot's slots (print_slots), each reference dropped once printed. */
+static void
+do_snapshot(void)
+{
+	static erx_prog_slot_t table[ERX_PROG_FDS_MAX];
+
+	erx_prog_fd_snapshot(table);
+	print_slots(table);
 	printf("\n");
+	for (uint32_t fd = 0; fd < ERX_PROG_FDS_MAX; fd++)
+		if (table[fd].obj != NULL)
+			erx_prog_obj_put(table[fd].obj);
+}
+
+/* The program's start as spawn.c reads it. */
+const erx_prog_self_t *
+erx_prog_self(void)
+{
+	static const erx_prog_self_t self = { .umask = 022, .cwd = "/" };
+
+	return (&self);
+}
+
+/*
+ * The planner spawn.c calls (liberx/program/spawn_plan.h), whose own tests are
+ * test/host/spawn_plan_test.rb: prints the starter's table (print_slots) and
+ * accepts the spawn with an all-zero plan, which names no descriptor
+ * (ERX_SPAWN_FD_NONE), so spawn.c goes on to its send.
+ */
+int
+erx_spawn_plan(const erx_spawn_request_t *req, const erx_spawn_starter_t *starter, erx_spawn_plan_t *plan)
+{
+	(void)req;
+	print_slots(starter->table);
+	memset(plan, 0, sizeof(*plan));
+	return (0);
+}
+
+/* posix_spawn: the planner's table (erx_spawn_plan above), then erx_prog_spawn's status, on one line. */
+static void
+do_posix_spawn(void)
+{
+	char *const none[] = { NULL };
+	const erx_spawn_request_t req = { .path = "/bin/x", .argv = none, .envp = none };
+	pid_t pid;
+	int status;
+
+	status = erx_prog_spawn(&pid, &req);
+	printf(" %d\n", status);
 }
 
 int
@@ -1280,6 +1332,8 @@ main(int argc, char **argv)
 			do_fdwritev(fd, line + a_at);
 		} else if (strcmp(word, "snapshot") == 0) {
 			do_snapshot();
+		} else if (strcmp(word, "posix_spawn") == 0) {
+			do_posix_spawn();
 		} else if (strcmp(word, "wpos") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
 			erx_prog_obj_t *const obj = erx_prog_fd_get(fd);
 

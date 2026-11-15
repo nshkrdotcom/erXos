@@ -24,7 +24,7 @@
 
 /* What a spawn plans in: the table's snapshot and the plan, a run of pages of its own. */
 typedef struct spawn_work {
-	erx_spawn_slot_t	table[ERX_PROG_FDS_MAX];
+	erx_prog_slot_t		table[ERX_PROG_FDS_MAX];
 	erx_spawn_plan_t	plan;
 } spawn_work_t;
 
@@ -59,9 +59,7 @@ erx_prog_spawn(pid_t *pid, const erx_spawn_request_t *req)
 
 	if (work == NULL)
 		return (ENOMEM);
-	/* The table keeps no FD_CLOEXEC (fd.h), so no descriptor has it. */
-	for (int fd = 0; fd < (int)ERX_PROG_FDS_MAX; fd++)
-		work->table[fd] = (erx_spawn_slot_t){ .obj = erx_prog_fd_get(fd), .cloexec = false };
+	erx_prog_fd_snapshot(work->table);
 	starter = (erx_spawn_starter_t){ .table = work->table, .ignored = ignored_signals(),
 	    .umask = self->umask, .cwd = self->cwd };
 	error = erx_spawn_plan(req, &starter, &work->plan);

@@ -133,11 +133,14 @@ module Erx
                       'liberx/backend/core/refused.c', 'liberx/backend/core/object_info.c', 'kernel/core/log.c', "#{BACKEND}/api_names.c",
                       "#{BACKEND}/task_refused.c", 'liberx/backend/core/dom_lib_none.c', "#{BACKEND}/release_task.c", 'liberx/release_fs.c', 'liberx/system/dom_dump.c',
                       'kernel/crypto/blake3/blake3.c', 'kernel/crypto/blake3/blake3_portable.c', *CONNECTION, *PIPE].freeze
-    # The sources that read musl's headers, which NativeRuntime's sysroot holds: the boot page builder,
-    # the domain library, the native_domain root and string functions that link it, a
-    # program's entry, whose descriptor seam answers in errno values, and its layer, and the
-    # programs suite's programs that read what it keeps or call the seam, and erx-lvgl's own
-    # (Lvgl::Program).
+    # The sources that read musl's headers, which only NativeRuntime's sysroot holds:
+    # - the boot page builder and the domain library;
+    # - the native_domain root and the string functions that link it;
+    # - a program's entry (program_task.c), whose descriptor seam answers in errno values;
+    # - liberx's program layer, which that entry calls;
+    # - the programs suite's programs that read what the layer keeps or call its seam;
+    # - erx-lvgl's own (Lvgl::Program).
+    # libc-test and the native_musl suite compile none of them, so they build without the runtime.
     LIBC_SOURCES = %w[liberx/backend/core/boot_info.c liberx/system/dom_core.c liberx/system/dom_life.c
                       liberx/system/dom_apply.c liberx/system/dom_boot.c liberx/system/dom_boot_view.c liberx/system/dom_install.c liberx/system/dom_dump.c
                       liberx/erx_lane.c liberx/erx_funnel.c
