@@ -1347,13 +1347,14 @@ whose port the driver runs, named by the pid of the port's open command,
 and `Caller` is its owner; a hand-off for another program is refused
 before the take touches the port's hold. `Caller` is the process that
 made the call: at a start, the process opening the port,
-which `driver_connected` names while the start runs; for `install/2`, the
-process calling `port_control`, which `driver_caller` names, and the
-driver refuses the install unless that process is also the port's owner,
-`driver_connected`. The port is not enough: ERTS lets any process of the
-runtime call `port_control` on a port it names, checking no owner
-(`erl_bif_port.c`, `lookup_port`), and records that process for the
-driver as the port's caller (`io.c`, `erts_port_control`). The driver then
+which `driver_connected` names at the open and the driver records; for
+`install/2`, that same process: the driver refuses every `port_control`
+from any other caller (`driver_caller`). The port is not enough: ERTS
+lets any process of the runtime call `port_control` on a port it names,
+checking no owner (`erl_bif_port.c`, `lookup_port`), and records that
+process for the driver as the port's caller (`io.c`, `erts_port_control`);
+and `port_connect/2` lets any process make itself the port's owner, so
+the current owner, `driver_connected`, is not enough either. The driver then
 passes each copy into the image with its rights; binds the doorbell, if
 the hand-off has one, to the program's group with the hand-off's label,
 as it binds the channel's doorbell with `prog_channel_label`; lets the
@@ -1943,10 +1944,13 @@ readers, which any pipe has.
   and the pipe server's close of an object then closes its capability.
   The seeded failure drops the owner comparison from the take, and the
   test of a take for another owner fails. A hosted test in which a second
-  process calls `install/2` on a handler's port with the number of the
-  handler's hand-off gets `einval`, and the handler's own install then
-  succeeds; the seeded failure checks the port's owner in place of the
-  caller, and the second process's install succeeds. `copies/1`'s host
+  process calls each of the program port's commands on a handler's port,
+  `install/2` with the number of the handler's hand-off among them, gets
+  `einval` from each, before and after it makes itself the port's owner
+  with `port_connect/2`, and the handler's own install then succeeds; the
+  seeded failure compares the caller with the port's current owner in
+  place of the process that opened it, and the second process's install
+  after its `port_connect/2` succeeds. `copies/1`'s host
   test finds `MAP` on every memory copy and `DUP`, `GIVE` and `DESTROY` on
   none; the seeded failure drops `MAP` from a lane's copies.
   `erx_program:start/1` refuses

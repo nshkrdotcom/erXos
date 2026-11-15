@@ -36,10 +36,9 @@
  * values the copies took, in the hand-off's order. A start whose take fails partway lets go
  * what it took and fails whole.
  *
- * A take answers a hand-off only for the program the open command names and only to its
- * owner: the process opening the port at a start, and at an INSTALL the process calling
- * port_control, which must also be the port's owner, since ERTS lets any process of the
- * runtime call port_control on a port it names.
+ * A take answers a hand-off only for the program the open command names and only to the
+ * port's opener, the process that opened it (program_t's opener), at a start and at an
+ * INSTALL alike.
  *
  * A take also takes the port's hold on the program's holder entry, and the port keeps
  * whether one of its takes did (held). Only then does the release let the hold go, after
@@ -156,6 +155,12 @@ static const uint32_t channel_sides[CHANNEL_SIDES] = {
 
 typedef struct {
 	ErlDrvPort		port;
+	/*
+	 * The process that opened the port, driver_connected at the open: the one process
+	 * program_control serves and every take is for, whatever port_connect/2 later makes the
+	 * port's owner.
+	 */
+	ErlDrvTermData		opener;
 	erx_program_spec_t	spec;
 	uint8_t			image_path[ERX_PACK_PATH_MAX];
 	int			start_error;	/* the start's run's answer */
@@ -633,8 +638,7 @@ hand_take(program_t *program, uint64_t number, ERL_NIF_TERM caller)
 
 /*
  * HANDS_TAKE: takes each hand-off the open command names for the program its pid names, as
- * the process opening the port, driver_connected while the start runs, and makes room for
- * the value of each of their copies. ERX_EINVAL for a hand-off the NIF refuses, the same
+ * the port's opener, and makes room for the value of each of their copies. ERX_EINVAL for a hand-off the NIF refuses, the same
  * number twice among them, or one it answers with more copies than any hand-off holds;
  * ERX_ENOMEM. A step that fails makes nothing, so this one lets go what it took, and the
  * port's hold, itself, and records no copies.
@@ -642,7 +646,7 @@ hand_take(program_t *program, uint64_t number, ERL_NIF_TERM caller)
 static int
 hands_take(program_t *program)
 {
-	const ERL_NIF_TERM opener = (ERL_NIF_TERM)driver_connected(program->port);
+	const ERL_NIF_TERM opener = (ERL_NIF_TERM)program->opener;
 	size_t copies = 0;
 	int status = ERX_OK;
 
@@ -719,7 +723,7 @@ lease_take(program_t *program)
 {
 	if (program->spec.lease == 0)
 		return (ERX_OK);
-	program->lease = erx_area_lease_take(program->spec.lease, (ERL_NIF_TERM)driver_connected(program->port),
+	program->lease = erx_area_lease_take(program->spec.lease, (ERL_NIF_TERM)program->opener,
 	    program->spec.lease_pages);
 	return (program->lease == NULL ? ERX_EINVAL : ERX_OK);
 }
@@ -1184,6 +1188,7 @@ program_start(ErlDrvPort port, char *command, SysDriverOpts *opts)
 		return (ERL_DRV_ERROR_GENERAL);
 	memset(program, 0, sizeof(*program));
 	program->port = port;
+	program->opener = driver_connected(port);
 	if (!program_open_parse(command, program)) {
 		driver_free(program);
 		return (ERL_DRV_ERROR_BADARG);
@@ -1493,12 +1498,11 @@ pass_or_stop(program_t *program, const erx_pipe_hand_t *hand, uint64_t copies[])
 }
 
 /*
- * INSTALL: takes hand-off number for the running program as the process calling
- * port_control, which must be the port's owner, binds its doorbell to the program's group,
- * passes its copies into the image, and lets it go whatever those answered. Its refusals
- * come in the order that keeps them clean. First every one that touches nothing:
- * ERX_EINVAL for a start that failed, a caller that is not the owner, a hand-off the NIF
- * refuses, or one whose copies are not the count expected, the {hand, I} its descriptor
+ * INSTALL: takes hand-off number for the running program as the port's opener, binds its
+ * doorbell to the program's group, passes its copies into the image, and lets it go whatever
+ * those answered. Its refusals come in the order that keeps them clean. First every one that
+ * touches nothing: ERX_EINVAL for a start that failed, a hand-off the NIF refuses, or one
+ * whose copies are not the count expected, the {hand, I} its descriptor
  * holds; ERX_EDEAD once the program is ending; ERX_ENOMEM for the answer or the values'
  * room. Then the bind's, which leaves the image as it was, since no copy has gone yet.
  * Last the pass's, which stops the program (pass_or_stop). Nothing can fail after the
@@ -1509,18 +1513,17 @@ pass_or_stop(program_t *program, const erx_pipe_hand_t *hand, uint64_t copies[])
 static int
 hand_install(program_t *program, uint64_t number, uint64_t expected, ErlDrvBinary **ok)
 {
-	const ErlDrvTermData caller = driver_caller(program->port);
 	erx_pipe_hand_t *hand;
 	uint64_t *copies = NULL;
 	uint32_t count;
 	int status = ERX_OK;
 
 	*ok = NULL;
-	if (program->start_error != ERX_OK || caller != driver_connected(program->port))
+	if (program->start_error != ERX_OK)
 		return (ERX_EINVAL);
 	if (!erx_program_end_installs(&program->end))
 		return (ERX_EDEAD);
-	hand = hand_take(program, number, (ERL_NIF_TERM)caller);
+	hand = hand_take(program, number, (ERL_NIF_TERM)program->opener);
 	if (hand == NULL)
 		return (ERX_EINVAL);
 	count = erx_pipe_hand_count(hand);
@@ -1554,11 +1557,9 @@ hand_install(program_t *program, uint64_t number, uint64_t expected, ErlDrvBinar
 
 /*
  * The first of count bytes in the session's mapping of the program's data area at slot, for
- * the handler's copy out of it (DATA_READ) or into it (DATA_WRITE), in *at. Only the port's
- * owner, the program's handler, copies, since ERTS lets any process call port_control on a
- * port it names. ERX_EINVAL for another caller, a start that failed, or a slot or a count
- * the core refuses (erx_program_data_span), so a copy never leaves the slot it names;
- * ERX_EDEAD once the release has unmapped the area.
+ * the handler's copy out of it (DATA_READ) or into it (DATA_WRITE), in *at. ERX_EINVAL for
+ * a start that failed, or a slot or a count the core refuses (erx_program_data_span), so a
+ * copy never leaves the slot it names; ERX_EDEAD once the release has unmapped the area.
  */
 static int
 data_slot(program_t *program, uint64_t slot, uint64_t count, uint8_t **at)
@@ -1566,7 +1567,7 @@ data_slot(program_t *program, uint64_t slot, uint64_t count, uint8_t **at)
 	uint64_t offset;
 	int status;
 
-	if (program->start_error != ERX_OK || driver_caller(program->port) != driver_connected(program->port))
+	if (program->start_error != ERX_OK)
 		return (ERX_EINVAL);
 	if (program->data_addr == 0)
 		return (ERX_EDEAD);
@@ -1577,10 +1578,13 @@ data_slot(program_t *program, uint64_t slot, uint64_t count, uint8_t **at)
 }
 
 /*
- * The owner's commands. STARTED reads the start's answer, which feeds the end, and
- * the end closes the port here when the program already ended; the answer is built first,
- * since that close frees program. SEND, RUN and STOP act only on a
- * program whose start succeeded; the end decides whether each is admitted. A STOP's status
+ * The opener's commands. ERTS lets any process of the runtime call port_control on a port it
+ * names, and port_connect/2 lets any process make itself the port's owner, so every caller
+ * but the opener is refused einval before the command is read, and every command is the
+ * opener's alone. STARTED reads the start's answer, which feeds the end,
+ * and the end closes the port here when the program already ended; the answer is built
+ * first, since that close frees program. SEND, RUN and STOP act only on a program whose
+ * start succeeded; the end decides whether each is admitted. A STOP's status
  * is the one the program's end reports, from 0 to 2^32 - 1. DATA_READ's slot and count, and
  * DATA_WRITE's slot, are 64-bit words; DATA_WRITE's bytes follow its slot, and DATA_READ
  * answers "ok" and the slot's first count bytes.
@@ -1597,6 +1601,8 @@ program_control(ErlDrvData data, unsigned int command, char *buf, ErlDrvSizeT le
 	int status;
 
 	(void)rlen;
+	if (driver_caller(program->port) != program->opener)
+		return (answer(ERX_EINVAL, NULL, 0, rbuf));
 	switch (command) {
 	case ERX_PROGRAM_CONTROL_STARTED:
 		if (len != 0 || (values = started_values(program, &values_len)) == NULL)

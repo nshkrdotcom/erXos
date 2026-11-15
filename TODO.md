@@ -3055,10 +3055,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   The other operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need
   a 64-bit offset or size, which the frame profile cannot spell, since it refuses every `u64` but a
   capability (docs/design-abi.md, "Program protocol").
-* [Low] erx_program driver, `erx_program_drv.c` (`program_control`): only `INSTALL` and the two data
-  copies check that the caller is the port's owner; `SEND`, `RUN` and `STOP` do not, so any process of
-  the session that names the port can write the program a frame or stop it. One check at the entry of
-  `program_control` would make every owner's command owner-only by construction.
+* [Medium] erx_program driver, `erx_program_drv.c` (`program_control`): the test that a process other
+  than the one that opened a program's port is refused `einval` by every command, before and after it
+  calls `port_connect/2` on the port, with its seeded failure (docs/design-pipes.md, the install test),
+  is not in the tree; the driver runs only on the target, so it is a guest test.
+* [Medium] erx_program driver, `erx_program_drv.c` (`report`, `room`, the frames `{erx_channel, Port, Frame}`):
+  the driver sends the exit status, the room notice and the program's frames to the port's current owner, so
+  a session process that calls `port_connect/2` on a program's port takes them from the handler, which then
+  never sees the program end. Fix: send each to the opener program_t records, and check the event sink's path.
 * [Low] session, `erx_file_remote:open_flags/4`: an `lopen` that writes on an entry that is not `rw`
   answers `erofs` before the path is walked, so a missing file opened to write there is `erofs`, where
   FreeBSD's `vn_open` answers `ENOENT` from the lookup first.

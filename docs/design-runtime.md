@@ -1706,22 +1706,24 @@ they cannot diverge. A request on a busy slot, or a notice that is not due, is a
 outside the grammar and ends the program with `SIGSYS`
 ([design-programs.md](design-programs.md#the-program-protocol)), so the
 handler receives at most one message of a program for each credit,
-whatever the program writes. The handler acts with the session's
+whatever the program writes. The program driver answers every `port_control` command only from
+the process that opened the port, the handler, and refuses any other
+caller `einval` before it reads the command, since ERTS lets any
+process call `port_control` on a port it names and `port_connect/2`
+lets any process make itself the port's owner. The handler acts with the session's
 authority after checking the program's own table, and installs
 what the program's table gains with `erx_program:install(Port, Caps)`,
 which goes through the session's capability to the image the port
 serves and fails with `ERX_EDEAD` once that image has stopped; for a
 pipe end `Caps` is a hand-off, `{pipe_hand, Number, Term}`, which the
-driver takes only when the process calling `port_control`, which
-`driver_caller` names, is both the port's owner and the hand-off's,
-since ERTS lets any process call `port_control` on a port it names,
+driver takes only for the handler when it is also the hand-off's owner,
 and installs and binds as the start does, answering
 `{ok, Term}` with each `{hand, I}` replaced by its value
 ([design-programs.md](design-programs.md#the-handler)). File data never
 crosses the channel per byte: it moves through the program's data area,
 which the handler fills and drains with `erx_program:data_write/3` and
 `data_read/3`, each a copy into or out of one slot through the session's
-mapping, which the driver takes only from the port's owner and only within
+mapping, which the driver takes only within
 the slot it names and the program's `slots`
 ([design-programs.md](design-programs.md#descriptors-and-files)). A
 program's shared mapping of a file is the session's memory object for
