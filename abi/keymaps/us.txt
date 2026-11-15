@@ -14,12 +14,14 @@
 # turns the keypad into arrows with Num Lock off. As the design's layout gives them,
 # Caps Lock is the caps lock, where 9front makes it Control; the right Alt is Alt, where
 # 9front makes it AltGr; the right Meta key types Kmod4 like the left, and Pause types
-# Kbreak, where kbdfs maps neither.
+# Kbreak, where kbdfs maps neither; and at ctl Space types Space and 2 types 2, where
+# kbdfs gives nothing and DC2, so that erx_vt sees them and sends NUL, which no kbd
+# record can carry, as FreeBSD's console does.
 keymap us
 #        code            none    shift   ctl     altgr   shiftaltgr
 key      KEY_ESC         Kesc    Kesc    Kesc    Kesc    Kesc
 key      KEY_1           1       !       U+0011  1       !
-key      KEY_2           2       @       U+0012  2       @
+key      KEY_2           2       @       2       2       @
 key      KEY_3           3       U+0023  U+0013  3       U+0023
 key      KEY_4           4       $       U+0014  4       $
 key      KEY_5           5       %       U+0015  5       %
@@ -69,7 +71,7 @@ key      KEY_COMMA       ,       <       U+000C  ,       <
 key      KEY_DOT         .       >       U+000E  .       >
 key      KEY_SLASH       /       ?       U+000F  /       ?
 key      KEY_KPASTERISK  *       *       U+000A  *       *
-key      KEY_SPACE       U+0020  U+0020  U+0000  U+0020  U+0020
+key      KEY_SPACE       U+0020  U+0020  U+0020  U+0020  U+0020
 key      KEY_F1          Kf1     Kf1     Kf1     Kf1     Kf1
 key      KEY_F2          Kf2     Kf2     Kf2     Kf2     Kf2
 key      KEY_F3          Kf3     Kf3     Kf3     Kf3     Kf3

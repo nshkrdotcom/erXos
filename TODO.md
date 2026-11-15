@@ -1127,7 +1127,7 @@ it; git history is the record of completed work.
   a connection ends only with its window's holder; a window ended otherwise (its directory removed, its display
   lost) leaves it running, each present failing with `EIO`. End it when a present answers that the window is gone.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
-  emulator](docs/design-display.md#the-terminal-emulator): the core is built without `key/2`. The oracle test
+  emulator](docs/design-display.md#the-terminal-emulator): the oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases
   and the open details of `test/vt/corpus.rb`: the exhaustive enumeration, the streams generated from the
   tables' grammar, the `prim_tty` and toybox recordings, `vttest`'s core (pin `vttest` 20251205, SHA-256
@@ -1139,18 +1139,21 @@ it; git history is the record of completed work.
   so what DL and a resize save, and the scrollback's charge per row, are checked only by the EUnit cases.
   The terminal generator writes the width table for Erlang and `include/erx/vt_width.h`, not musl's
   `wcwidth` tables or `erx_width`.
-* [Low] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal emulator](docs/design-display.md#the-terminal-emulator):
-  when `key/2` is written, Control-Space and Control-2 send NUL, as FreeBSD's console does (release/15.1.0,
-  `sys/dev/kbd/kbdtables.h` lines 48 and 102, `share/vt/keymaps/us.kbd` lines 8 and 62), with a case for each;
-  the keymap's `ctl` layer cannot give NUL, since U+0000 there means the key types nothing and a `kbd` record
-  ends at a NUL.
-* [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, `full_reset/1`, `soft_reset/1` and `resize/3`: what RIS,
-  DECSTR and a resize keep is a list of `#vt{}` fields at each site, so a new field (the link grammar's state,
-  `key/2`'s) must be remembered at each. Nest what RIS resets (grids, cursor, pen, modes, margins, tabs,
-  character sets, saved cursors, links) in a record of its own beside what lives as long as the terminal
-  (scrollback, counters, decoder and parser states, the next link id), so RIS replaces the inner record with
-  `new/2`'s and lists nothing. Also from the core's review: the `Wrapped` flag is set on a bottom row below the
-  region that autowrap then overwrites, and ECH to the row's end leaves it set.
+* [Low] `abi/keymaps/us.txt`, [Input events](docs/design-display.md#input-events) and [Keys and
+  paste](docs/design-display.md#keys-and-paste): the `ctl` layer of every key other than the letters, `[`, `\`
+  and `]` follows 9front's low-five-bits rule, not FreeBSD's console, and `erx_vt:key/2` sends it as typed. For
+  example Control-minus types CR where FreeBSD gives US (release/15.1.0 `sys/dev/kbd/kbdtables.h` line 57),
+  Control-1 XON and Control-3 XOFF where it gives nothing (lines 47 and 49), Control-6 SYN where it gives RS
+  (line 52), Control-semicolon ESC, and the keypad's minus, `*` and 2 type CR, LF and DC2, so Control-keypad-2
+  differs from Control-2's NUL. Take the `ctl` layer of the non-letter keys from `kbdtables.h`, with the keymap
+  test's table; FreeBSD's Control-keypad-2 types `2`, which `key/2` would send as NUL, and Control-Shift-Space
+  types Space where `key/2` sends NUL (`share/vt/keymaps/us.kbd` line 62), so decide those two in the design.
+* [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [Keys and paste](docs/design-display.md#keys-and-paste):
+  Shift-Tab sends HT, as the design says, where FreeBSD's console gives `btab` (`kbdtables.h` row `0f`) and
+  xterm sends `CSI Z` ("XTerm Control Sequences", Patch #411, line 2374), so back-tab in programs that read it
+  does not work. Make Tab's rune with Shift send `CSI Z` in the design and `key/2`, with a case, and check
+  FreeBSD's `btab` bytes against its source. Also settle whether DCH, which blanks a row's last cells, clears
+  the row's `Wrapped` flag as ECH and EL do, with an oracle case.
 * [Medium] `abi/formats/ui.txt` validity and `erlang/apps/erx_ui/src/erx_ui_model.erl`, [Widget
   trees](docs/design-display.md#widget-trees): no rule bounds one node's children below the grant's `ui_nodes`, which
   has no value yet. `delta/2`'s longest kept run and its index bookkeeping, and `apply_ops/2`'s insert and move, are

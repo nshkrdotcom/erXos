@@ -27,7 +27,9 @@ class ErxVtTest < Minitest::Test
                                   property: /scroll_up_and_down/),
     overflow_keeps_link: Mutant.new(text: 'osc(link_overflow, VT) -> count(link, VT#vt{link = none});',
                                     broken: 'osc(link_overflow, VT) -> count(link, VT);',
-                                    property: /an_overflowed_link_still_ends_the_open_one/)
+                                    property: /an_overflowed_link_still_ends_the_open_one/),
+    no_nul_key: Mutant.new(text: "typed(Rune, true) when Rune =:= $\\s; Rune =:= $2 -> <<0>>;\n", broken: '',
+                           property: /control_space_and_control_2_send_nul/)
   }.freeze
 
   def test_the_cases_pass_under_eunit
@@ -41,6 +43,8 @@ class ErxVtTest < Minitest::Test
   def test_saving_a_lower_region_fails_the_scroll_case = assert_mutant_fails(:region_saves_rows)
 
   def test_an_overflowed_link_that_stays_open_fails_its_case = assert_mutant_fails(:overflow_keeps_link)
+
+  def test_keys_that_send_no_nul_fail_the_nul_case = assert_mutant_fails(:no_nul_key)
 
   private
 

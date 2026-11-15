@@ -226,8 +226,9 @@ class KeymapTest < Minitest::Test
   # The US layout by evdev code (FreeBSD's input-event-codes.h) and 9front's runes
   # (sys/include/keyboard.h), written out from 9front's US map in kbdfs.c: a key that
   # types a character types it unshifted and shifted, and at ctl its low five bits
-  # (Space and the grave accent nothing), and the keypad's slash, an escaped key there,
-  # types itself at ctl; letters are the keys Caps Lock shifts. The altgr layers repeat
+  # (the grave accent nothing), and the keypad's slash, an escaped key there, types
+  # itself at ctl, as 2 and Space do by the design's departure for erx_vt's NUL; letters
+  # are the keys Caps Lock shifts. The altgr layers repeat
   # none and shift. Every other key types its special rune at all five layers. The rows
   # where the layout departs from kbdfs.c (listed in us.txt's header) follow the design,
   # so for those the table checks the generator and the design's choice, not 9front.
@@ -236,7 +237,7 @@ class KeymapTest < Minitest::Test
     TYPING = [[2, '1!2@3#4$5%6^7&8*9(0)-_=+'], [16, 'qQwWeErRtTyYuUiIoOpP[{]}'],
               [30, %q(aAsSdDfFgGhHjJkKlL;:'"`~)], [43, '\\|zZxXcCvVbBnNmM,<.>/?'], [55, '**'],
               [57, '  '], [71, '778899--445566++11223300..'], [98, '//']].freeze
-    CTL_ITSELF = [98].freeze
+    CTL_ITSELF = [3, 57, 98].freeze
     SPECIAL = { 1 => 0x1b, 14 => 0x08, 15 => 0x09, 28 => 0x0a, 96 => 0x0a, 111 => 0x7f,
                 59 => 0xf001, 60 => 0xf002, 61 => 0xf003, 62 => 0xf004, 63 => 0xf005, 64 => 0xf006,
                 65 => 0xf007, 66 => 0xf008, 67 => 0xf009, 68 => 0xf00a, 87 => 0xf00b, 88 => 0xf00c,
@@ -253,7 +254,7 @@ class KeymapTest < Minitest::Test
         pairs.chars.each_slice(2).with_index.map do |(none, shift), index|
           code = first + index
           ctl = if CTL_ITSELF.include?(code) then none.ord
-                elsif ['`', ' '].include?(none) then 0
+                elsif none == '`' then 0
                 else none.ord & 0x1f
                 end
           "#{code} key #{none.ord} #{shift.ord} #{ctl} #{none.ord} #{shift.ord} #{none.match?(/[a-z]/)}"

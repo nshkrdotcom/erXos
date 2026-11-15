@@ -7,6 +7,7 @@
 %% the design's invariants.
 -module(erx_vt_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(BEL, 7).
 -define(CAN, 16#18).
@@ -521,6 +522,19 @@ deferred_wrap_test() ->
     ?assertEqual({2, 2}, at(Wrapped)),
     ?assertMatch({true, _}, element(1, erx_vt:grid(Wrapped))).
 
+%% On the last row below the region the cursor cannot leave the row, so
+%% autowrap overwrites it and the row does not continue.
+a_wrap_that_stays_on_its_row_does_not_continue_test() ->
+    VT = run("\e[1;3r\e[5;1H0123456789x"),
+    ?assertEqual({5, 2}, at(VT)),
+    ?assertEqual(<<"x123456789">>, text(VT, 5)),
+    ?assertMatch({false, _}, element(5, erx_vt:grid(VT))).
+
+erasing_characters_to_the_row_end_ends_its_wrap_test() ->
+    VT = run("0123456789x\e[1;9H\e[2X"),
+    ?assertMatch({false, _}, element(1, erx_vt:grid(VT))),
+    ?assertMatch({true, _}, element(1, erx_vt:grid(run("0123456789x\e[1;8H\e[2X")))).
+
 wide_characters_test() ->
     Wide = run(["012345678", utf8([16#4E2D])]),
     ?assertEqual(<<"012345678 ">>, text(Wide, 1)),
@@ -557,6 +571,118 @@ resize_test() ->
     Wide = erx_vt:resize(run(""), 20, 5),
     ?assertEqual({1, 17}, at(element(1, feed(Wide, "\t\t")))),
     ?assertError(function_clause, erx_vt:resize(VT, 1, 5)).
+
+%%% Keys
+
+%% Every set of the modifiers a k record can hold, AltGr among them, which
+%% changes no key's bytes, with the xterm parameter of each.
+modifier_sets() ->
+    [{lists:append([[?ERX_INPUT_RUNE_KSHIFT || S =:= 1], [?ERX_INPUT_RUNE_KALT || A =:= 1],
+                    [?ERX_INPUT_RUNE_KCTL || C =:= 1], [?ERX_INPUT_RUNE_KALTGR || G =:= 1]]),
+      1 + S * 1 + A * 2 + C * 4}
+     || S <- [0, 1], A <- [0, 1], C <- [0, 1], G <- [0, 1]].
+
+%% xterm's PC-style keys (XTerm Control Sequences, Patch #411, "PC-Style
+%% Function Keys"): the bytes with no modifier, with DECCKM reset and set,
+%% and the form a modifier parameter fills.
+sequence_keys() ->
+    [{kup, "\e[A", "\eOA", "\e[1;~bA"}, {kdown, "\e[B", "\eOB", "\e[1;~bB"},
+     {kright, "\e[C", "\eOC", "\e[1;~bC"}, {kleft, "\e[D", "\eOD", "\e[1;~bD"},
+     {khome, "\e[H", "\eOH", "\e[1;~bH"}, {kend, "\e[F", "\eOF", "\e[1;~bF"},
+     {kf1, "\eOP", "\eOP", "\e[1;~bP"}, {kf2, "\eOQ", "\eOQ", "\e[1;~bQ"},
+     {kf3, "\eOR", "\eOR", "\e[1;~bR"}, {kf4, "\eOS", "\eOS", "\e[1;~bS"},
+     {kins, "\e[2~", "\e[2~", "\e[2;~b~~"}, {kdel, "\e[3~", "\e[3~", "\e[3;~b~~"},
+     {kpgup, "\e[5~", "\e[5~", "\e[5;~b~~"}, {kpgdown, "\e[6~", "\e[6~", "\e[6;~b~~"},
+     {kf5, "\e[15~", "\e[15~", "\e[15;~b~~"}, {kf6, "\e[17~", "\e[17~", "\e[17;~b~~"},
+     {kf7, "\e[18~", "\e[18~", "\e[18;~b~~"}, {kf8, "\e[19~", "\e[19~", "\e[19;~b~~"},
+     {kf9, "\e[20~", "\e[20~", "\e[20;~b~~"}, {kf10, "\e[21~", "\e[21~", "\e[21;~b~~"},
+     {kf11, "\e[23~", "\e[23~", "\e[23;~b~~"}, {kf12, "\e[24~", "\e[24~", "\e[24;~b~~"}].
+
+%% The special runes that send nothing: every special rune past ASCII
+%% that is no key of a sequence.
+silent_runes() -> [kprint, kscroll, kbreak, kshift, kctl, kalt, kaltgr, kmod4, kcaps, knum].
+
+rune(Name) -> proplists:get_value(Name, ?ERX_INPUT_RUNE_MEMBERS).
+
+every_special_rune_is_a_key_of_a_sequence_silent_or_ascii_test() ->
+    Named = [Name || {Name, _, _, _} <- sequence_keys()] ++ silent_runes() ++ [kbs, kesc],
+    ?assertEqual(lists:sort([Name || {Name, _} <- ?ERX_INPUT_RUNE_MEMBERS]), lists:sort(Named)).
+
+the_keys_of_sequences_test() ->
+    Normal = erx_vt:new(10, 5),
+    Application = run("\e[?1h"),
+    [begin
+         Rune = rune(Name),
+         {Expected, ExpectedApplication} =
+             case M of
+                 1 -> {list_to_binary(Plain), list_to_binary(Cursor)};
+                 _ -> {iolist_to_binary(io_lib:format(Modified, [M])),
+                       iolist_to_binary(io_lib:format(Modified, [M]))}
+             end,
+         ?assertEqual({Name, Held, Expected}, {Name, Held, erx_vt:key(Normal, {Rune, Held})}),
+         ?assertEqual({Name, Held, ExpectedApplication}, {Name, Held, erx_vt:key(Application, {Rune, Held})})
+     end || {Name, Plain, Cursor, Modified} <- sequence_keys(), {Held, M} <- modifier_sets()].
+
+silent_runes_send_nothing_test() ->
+    VT = erx_vt:new(10, 5),
+    [?assertEqual({Name, <<>>}, {Name, erx_vt:key(VT, {rune(Name), Held})})
+     || Name <- silent_runes(), {Held, _} <- modifier_sets()].
+
+%% Every ASCII rune but DEL, Delete's, and a rune past ASCII, under every
+%% modifier set: itself, with the design's four exceptions, after ESC with
+%% Alt; DECCKM changes none of them.
+typed_runes_test() ->
+    Normal = erx_vt:new(10, 5),
+    Application = run("\e[?1h"),
+    [begin
+         Control = (M - 1) band 4 =/= 0,
+         Bytes = case {Rune, Control} of
+                     {16#08, false} -> <<16#7F>>;
+                     {$\n, false} -> <<$\r>>;
+                     {$\s, true} -> <<0>>;
+                     {$2, true} -> <<0>>;
+                     _ -> <<Rune/utf8>>
+                 end,
+         Expected = case (M - 1) band 2 of 2 -> <<16#1B, Bytes/binary>>; 0 -> Bytes end,
+         ?assertEqual({Rune, Held, Expected}, {Rune, Held, erx_vt:key(Normal, {Rune, Held})}),
+         ?assertEqual({Rune, Held, Expected}, {Rune, Held, erx_vt:key(Application, {Rune, Held})})
+     end || Rune <- lists:seq(0, 16#7E) ++ [16#E9, 16#20AC, 16#1F600], {Held, M} <- modifier_sets()].
+
+%% FreeBSD's console sends NUL for both (release/15.1.0 sys/dev/kbd/kbdtables.h
+%% lines 48 and 102); a kbd record cannot carry one, so erx_vt makes it.
+control_space_and_control_2_send_nul_test() ->
+    VT = erx_vt:new(10, 5),
+    Control = ?ERX_INPUT_RUNE_KCTL,
+    ?assertEqual(<<0>>, erx_vt:key(VT, {$\s, [Control]})),
+    ?assertEqual(<<0>>, erx_vt:key(VT, {$2, [Control]})),
+    ?assertEqual(<<0>>, erx_vt:key(VT, {$2, [?ERX_INPUT_RUNE_KSHIFT, Control]})),
+    ?assertEqual(<<16#1B, 0>>, erx_vt:key(VT, {$\s, [?ERX_INPUT_RUNE_KALT, Control]})),
+    ?assertEqual(<<" ">>, erx_vt:key(VT, {$\s, []})),
+    ?assertEqual(<<"2">>, erx_vt:key(VT, {$2, [?ERX_INPUT_RUNE_KSHIFT]})).
+
+%% A value outside Unicode's scalar values is no rune a kbd record carries.
+key_refuses_what_is_no_rune_test() ->
+    VT = erx_vt:new(10, 5),
+    [?assertError(function_clause, erx_vt:key(VT, {Bad, []})) || Bad <- [-1, 16#D800, 16#DFFF, 16#110000]].
+
+backspace_return_and_their_control_forms_test() ->
+    VT = erx_vt:new(10, 5),
+    Control = ?ERX_INPUT_RUNE_KCTL,
+    ?assertEqual(<<16#7F>>, erx_vt:key(VT, {?ERX_INPUT_RUNE_KBS, []})),
+    ?assertEqual(<<16#08>>, erx_vt:key(VT, {?ERX_INPUT_RUNE_KBS, [Control]})),
+    ?assertEqual(<<$\r>>, erx_vt:key(VT, {$\n, [?ERX_INPUT_RUNE_KSHIFT]})),
+    ?assertEqual(<<$\n>>, erx_vt:key(VT, {$\n, [Control]})),
+    ?assertEqual(<<16#1B, 16#1B>>, erx_vt:key(VT, {?ERX_INPUT_RUNE_KESC, [?ERX_INPUT_RUNE_KALT]})),
+    ?assertEqual(<<"\t">>, erx_vt:key(VT, {$\t, [?ERX_INPUT_RUNE_KSHIFT]})),
+    %% The held set holds other keys' runes too; only the modifiers count.
+    ?assertEqual(<<"a">>, erx_vt:key(VT, {$a, [$a, $b, ?ERX_INPUT_RUNE_KCAPS]})).
+
+%% DECKPAM changes no key's bytes: the keypad types the runes of the keys
+%% it repeats.
+the_keypad_mode_changes_no_key_test() ->
+    Keypad = run("\e="),
+    [?assertEqual(erx_vt:key(erx_vt:new(10, 5), Key), erx_vt:key(Keypad, Key))
+     || Key <- [{$5, []}, {$\n, []}, {$+, []}, {?ERX_INPUT_RUNE_KUP, []}]].
 
 paste_test() ->
     Plain = erx_vt:new(10, 5),

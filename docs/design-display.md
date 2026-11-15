@@ -1338,7 +1338,10 @@ The columns of a `key` row are the layers of 9front's keyboard map,
 and without its `mod4` layers. Each entry is a printable ASCII character
 other than `#`, a code point as `U+` and four to six hexadecimal digits,
 or a special rune's name; `U+0000` means the key types nothing at that
-layer, as a zero does in 9front's map. A trailing `caps` marks a key
+layer, as a zero does in 9front's map. A layout's `ctl` layer may type
+a printable rune: the US layout's Space and `2` type themselves there,
+so that `erx_vt` sees them and sends NUL ([Keys and
+paste](#keys-and-paste)), and every client sees the same. A trailing `caps` marks a key
 that Caps Lock shifts. A `modifier` row names a key's rune and the
 modifier it holds, one of `shift`, `ctl`, `alt` and `altgr`; a `lock`
 row the rune and the lock its down toggles, `caps` alone; a `button` row
@@ -3100,15 +3103,20 @@ window still reaches this one ([The window tree](#the-window-tree)).
 The bytes follow from the rune and those modifiers alone, never from
 which key typed the rune, so two keys that type one rune under the same
 modifiers send the same bytes: Backspace types `Kbs`, 0x08 in
-`keyboard.h`, and so does Control-H at the `ctl` layer. From the modes
-in the state it sends printable keys as UTF-8, Return as CR, `Kbs` as
+`keyboard.h`, and so does Control-H at the `ctl` layer. AltGr chooses
+a layer and changes no bytes. From DECCKM in the state it sends
+printable keys as UTF-8, Return's U+000A as CR without Control and as
+LF with it, as FreeBSD's console sends Control-Return and Control-J
+(`sys/dev/kbd/kbdtables.h`, lines 73 and 81), `Kbs` as
 DEL (FreeBSD's default `VERASE`) without Control and as BS with it, so
 Control-H and Control-Backspace both send BS, Control-Space and
 Control-2 as NUL, as FreeBSD's console does (`sys/dev/kbd/kbdtables.h`,
 lines 48 and 102; `share/vt/keymaps/us.kbd`, lines 8 and 62), since a
-`kbd` record, which a NUL ends, cannot carry one and the keymap's `ctl`
-layer types nothing for Space, Tab as HT, any other
-control character as the keymap's `ctl` layer typed it, and Alt with a
+`kbd` record, which a NUL ends, cannot carry one: the keymap's `ctl`
+layer types Space and `2` for those keys, and `erx_vt` turns them into
+NUL. It sends Tab as HT, any other
+control character as the keymap's `ctl` layer typed it, a special rune
+of no key below, a modifier's or a lock's, as nothing, and Alt with a
 key as ESC before it; the arrows as `CSI A` to
 `CSI D`, or `ESC O A` to `ESC O D` with DECCKM set, Home and End as
 `CSI H` and `CSI F`, or their `ESC O` forms with DECCKM, Insert, Delete,
@@ -3116,8 +3124,12 @@ Page Up and Page Down as `CSI 2 ~`, `CSI 3 ~`, `CSI 5 ~` and `CSI 6 ~`,
 F1 to F4 as `ESC O P` to `ESC O S`, F5 to F12 as `CSI 15 ~` to
 `CSI 24 ~` with xterm's gaps, and a modifier on any of these in xterm's
 form, `CSI 1 ; M X` or `CSI N ; M ~` with `M` one more than the sum of
-Shift 1, Alt 2 and Control 4. The keypad sends its `ESC O` forms with
-DECKPAM set.
+Shift 1, Alt 2 and Control 4 (E. Moy, S. Gildea, T. Dickey, "XTerm
+Control Sequences", Patch #411, "PC-Style Function Keys"). DECKPAM
+changes no key's bytes: the keypad's keys type runes that other keys
+type too ([Input events](#input-events)), and the bytes do not depend
+on which key typed a rune, so the keypad sends what those runes send, as
+xterm's keypad does when Num Lock overrides the application mode.
 
 `erx_vt:paste(State, Bytes)` returns the bytes of a paste or a
 presentation click: the bytes unchanged, or with bracketed paste set,
@@ -5416,10 +5428,15 @@ Decisions:
   (`fc9c4946818cefcec359ad3a619d448c4cafffa4f8f9571894516fb980b26142`)
   and `sys/dev/evdev/evdev_private.h`
   (`90763a96ea404d39ad7ee8e5a34f38d246a9c1908354bb95c46121332a91d65f`),
-  and for `erx_vt`'s NUL, `sys/dev/kbd/kbdtables.h`
+  and for `erx_vt`'s NUL and LF, `sys/dev/kbd/kbdtables.h`
   (`0f817d7706aac3d5d07577d32aaf90572c08b782ec4a00cdae547f48c0723991`)
   and `share/vt/keymaps/us.kbd`
   (`d8042fbc1b74a059aeae0ac7689c91d5e962993250fa1c46ceb1e8d2f6acd524`).
+* `erx_vt:key/2`'s sequences were checked against "XTerm Control
+  Sequences" as updated for XTerm Patch #411 (2026/08/23), in its text
+  form at https://invisible-island.net/xterm/ctlseqs/ctlseqs.txt
+  (`364c1c1987c85b1c1135e57a93e9008054f46d09a338de8dcc66ea9a7c613709`),
+  section "PC-Style Function Keys", lines 2457-2586.
 * The draw messages were checked against 9front's `sys/man/3/draw`,
   `sys/src/9/port/devdraw.c`, `sys/src/libmemdraw/load.c` and
   `cload.c` and `sys/src/libdraw/badrect.c` at commit `2859ae04`, and

@@ -17,6 +17,9 @@ actions. act/2 carries out an action on the grid state, naming the
 operation from the design's closed tables; a sequence outside them is
 parsed to its end, dropped and counted by kind in `ignored/1`.
 
+key/2 and paste/2 go the other way: the bytes a key or a paste sends to
+the tty, from what was typed or pasted and the modes.
+
 The bytes are a program's output and so untrusted. Every stage keeps
 bounded state between calls: three pending UTF-8 bytes, 16 parameters
 of at most 65,535, two intermediates, an OSC string of 4 KiB, six code
@@ -31,13 +34,19 @@ every `wide_tail` follows one, the margins are ordered, and every bound
 above holds.
 """.
 
--export([new/2, feed/2, resize/3, paste/2, link_at/3]).
+-include("generated/erx_abi.hrl").
+
+-export([new/2, feed/2, resize/3, key/2, paste/2, link_at/3]).
 -export([size/1, grid/1, cursor/1, modes/1, context/1, scrollback/1, ignored/1, check/1, dump/1]).
--export_type([state/0, effect/0, cell/0, row/0]).
+-export_type([state/0, effect/0, key/0, cell/0, row/0]).
 
 -type effect() :: {reply, binary()}     % bytes for the tty's input
                 | bell
                 | {title, binary()}.    % OSC 0 or 2 text, UTF-8
+%% The rune of a kbd record's `c` and the runes of the window's last `k`
+%% record, among them the modifiers held (docs/design-display.md, "Keys
+%% and paste").
+-type key() :: {Rune :: char(), Held :: [char()]}.
 -type cell() :: {Chars :: [char(), ...], Width :: 1 | 2, attrs(), link_id()}
               | wide_tail.              % right half of a width-2 cell
 -type attrs() :: {[flag()], Fg :: colour(), Bg :: colour()}.
@@ -102,14 +111,29 @@ above holds.
     charsets = {us, us, g0} :: {charset(), charset(), g0 | g1}
 }).
 
+%% What lives as long as the terminal and RIS keeps: the scrollback and
+%% its charge, the counters, the decoder's and the parser's states between
+%% code points, the next link id, and this call's effects, which a RIS in
+%% the middle of a call must not drop.
+-record(lifetime, {
+    scrollback = queue:new() :: queue:queue(row()),
+    scrollback_cells = 0 :: non_neg_integer(),
+    ignored = #{} :: #{atom() => pos_integer()},
+    utf8 = <<>> :: binary(),
+    parser = #parser{} :: #parser{},
+    next_link = 1 :: pos_integer(),
+    out = [] :: [effect()]                     % this call's effects, reversed
+}).
+
+%% The terminal: its size, its lifetime state, and the screen, which is
+%% every other field and which RIS resets to new/2's.
 -record(vt, {
     cols :: ?MIN_COLS..?MAX_COLS,
     rows :: 1..?MAX_ROWS,
+    lifetime = #lifetime{} :: #lifetime{},
     main :: grid(),
     alt :: grid(),
     shown = main :: main | alt,
-    scrollback = queue:new() :: queue:queue(row()),
-    scrollback_cells = 0 :: non_neg_integer(),
     cursor = {1, 1, false} :: position(),
     pen = ?DEFAULT_ATTRS :: attrs(),
     link = none :: link_id(),
@@ -119,16 +143,11 @@ above holds.
     charsets = {us, us, g0} :: {charset(), charset(), g0 | g1},
     saved = {#saved{}, #saved{}} :: {#saved{}, #saved{}},   % main's, alt's
     links = #{} :: #{pos_integer() => {binary(), binary()}},
-    next_link = 1 :: pos_integer(),
     context = [] :: [binary()],
-    utf8 = <<>> :: binary(),
-    parser = #parser{} :: #parser{},
     %% The cell a width-0 code point joins: the grid, the cell's row and
     %% column, and the cursor and row as printing left them. It joins only
     %% while the row is unchanged and no action has moved the cursor.
-    last = none :: none | {main | alt, pos_integer(), pos_integer(), position(), row()},
-    ignored = #{} :: #{atom() => pos_integer()},
-    out = [] :: [effect()]                     % this call's effects, reversed
+    last = none :: none | {main | alt, pos_integer(), pos_integer(), position(), row()}
 }).
 
 -opaque state() :: #vt{}.
@@ -145,9 +164,10 @@ new(Cols, Rows) when is_integer(Cols), Cols >= ?MIN_COLS, Cols =< ?MAX_COLS,
 
 -doc "Runs Bytes through the terminal, returning its next state and its effects in order.".
 -spec feed(state(), binary()) -> {state(), [effect()]}.
-feed(#vt{utf8 = Pending} = VT, Bytes) when is_binary(Bytes) ->
-    Done = decode(<<Pending/binary, Bytes/binary>>, VT#vt{utf8 = <<>>, out = []}),
-    {Done#vt{out = []}, lists:reverse(Done#vt.out)}.
+feed(#vt{lifetime = #lifetime{utf8 = Pending} = L0} = VT0, Bytes) when is_binary(Bytes) ->
+    Start = VT0#vt{lifetime = L0#lifetime{utf8 = <<>>, out = []}},
+    #vt{lifetime = L} = VT = decode(<<Pending/binary, Bytes/binary>>, Start),
+    {VT#vt{lifetime = L#lifetime{out = []}}, lists:reverse(L#lifetime.out)}.
 
 -doc """
 The terminal at a new size: rows keep their contents without reflowing.
@@ -193,6 +213,30 @@ paste(#vt{modes = #modes{paste = true}}, Bytes) when is_binary(Bytes) ->
     <<"\e[200~", (strip_paste_end(Bytes))/binary, "\e[201~">>.
 
 -doc """
+The bytes a key sends: from its rune, the Shift, Alt and Control runes
+among those held, and DECCKM, never from which key typed the rune.
+
+A key of a sequence (the arrows, Home, End, Insert, Delete, Page Up,
+Page Down and F1 to F12) sends xterm's form, its modifiers as a
+parameter. Any other rune sends itself in UTF-8, after ESC when Alt is
+held, but for four rules: Backspace's rune is DEL and the newline's CR
+unless Control is held; Space and `2` with Control are NUL, which no
+kbd record carries; and a special rune of no key here, a modifier's or
+a lock's among them, sends nothing.
+""".
+-spec key(state(), key()) -> binary().
+key(#vt{modes = #modes{cursor_keys = Application}}, {Rune, Held})
+  when is_integer(Rune), Rune >= 0, Rune =< 16#10FFFF, not (Rune >= 16#D800 andalso Rune =< 16#DFFF),
+       is_list(Held) ->
+    Shift = lists:member(?ERX_INPUT_RUNE_KSHIFT, Held),
+    Alt = lists:member(?ERX_INPUT_RUNE_KALT, Held),
+    Control = lists:member(?ERX_INPUT_RUNE_KCTL, Held),
+    case sequence_key(Rune) of
+        none -> alt_prefix(Alt, typed(Rune, Control));
+        Key -> sequence(Key, xterm_modifiers(Shift, Alt, Control), Application)
+    end.
+
+-doc """
 The type and text of the link under the cell at Row and Column, the
 right half of a width-2 cell being its left half's, or `none`, also for
 a place outside the grid such as the window's margin.
@@ -229,11 +273,11 @@ modes(#vt{modes = M, shown = Shown}) ->
 
 -doc "The scrollback's rows, oldest first, each without its trailing blank default cells.".
 -spec scrollback(state()) -> [row()].
-scrollback(#vt{scrollback = Queue}) -> queue:to_list(Queue).
+scrollback(#vt{lifetime = #lifetime{scrollback = Queue}}) -> queue:to_list(Queue).
 
 -doc "How many sequences of each kind were parsed and dropped.".
 -spec ignored(state()) -> #{atom() => pos_integer()}.
-ignored(#vt{ignored = Ignored}) -> Ignored.
+ignored(#vt{lifetime = #lifetime{ignored = Ignored}}) -> Ignored.
 
 -doc "The presentation types of the input context, which links of those types highlight.".
 -spec context(state()) -> [binary()].
@@ -299,18 +343,19 @@ check(VT) ->
         [First | _] -> {error, First}
     end.
 
-invariants(#vt{cols = Cols, rows = Rows, cursor = {Row, Col, _}, margins = {Top, Bottom}} = VT) ->
+invariants(#vt{cols = Cols, rows = Rows, cursor = {Row, Col, _}, margins = {Top, Bottom},
+               lifetime = L} = VT) ->
     [{cursor_outside_grid, Row >= 1 andalso Row =< Rows andalso Col >= 1 andalso Col =< Cols},
      {margins_unordered, 1 =< Top andalso Top < Bottom andalso Bottom =< Rows
                              orelse Rows =:= 1 andalso Top =:= 1 andalso Bottom =:= 1},
      {grid_shape, grid_shaped(VT#vt.main, Cols, Rows) andalso grid_shaped(VT#vt.alt, Cols, Rows)},
      {wide_cell_unpaired, grid_paired(VT#vt.main) andalso grid_paired(VT#vt.alt)},
      {cell_over_bound, cells_bounded(VT#vt.main) andalso cells_bounded(VT#vt.alt)},
-     {scrollback_over_bound, VT#vt.scrollback_cells =< ?MAX_SCROLLBACK andalso
-                                 VT#vt.scrollback_cells =:= lists:sum([charge(R) || R <- scrollback(VT)])},
+     {scrollback_over_bound, L#lifetime.scrollback_cells =< ?MAX_SCROLLBACK andalso
+                                 L#lifetime.scrollback_cells =:= lists:sum([charge(R) || R <- scrollback(VT)])},
      {links_over_bound, map_size(VT#vt.links) =< ?MAX_LINKS},
-     {utf8_over_bound, byte_size(VT#vt.utf8) =< 3},
-     {parser_over_bound, parser_bounded(VT#vt.parser)}].
+     {utf8_over_bound, byte_size(L#lifetime.utf8) =< 3},
+     {parser_over_bound, parser_bounded(L#lifetime.parser)}].
 
 %%% Stage 1: UTF-8 decoding
 
@@ -321,7 +366,7 @@ decode(<<>>, VT) ->
 decode(Bytes, VT) ->
     case next_point(Bytes) of
         {Point, Rest} -> decode(Rest, step(Point, VT));
-        more -> VT#vt{utf8 = Bytes}
+        more -> VT#vt{lifetime = (VT#vt.lifetime)#lifetime{utf8 = Bytes}}
     end.
 
 %% Unicode's table 3-7 of well-formed sequences: the lead byte gives the
@@ -352,9 +397,9 @@ continuation(Rest, _Left, _Low, _High, _Value, _Taken) ->
 
 %%% Stage 2: the DEC parser
 
-step(Point, #vt{parser = P0} = VT) ->
+step(Point, #vt{lifetime = #lifetime{parser = P0} = L} = VT) ->
     {P, Actions} = parse(P0, Point),
-    lists:foldl(fun act/2, VT#vt{parser = P}, Actions).
+    lists:foldl(fun act/2, VT#vt{lifetime = L#lifetime{parser = P}}, Actions).
 
 %% CAN and SUB cancel any sequence, a string's text with it; ESC begins a
 %% new sequence from any state, ending a string; a C1 control acts from any
@@ -476,10 +521,11 @@ operate({csi, Private, Inter, Params, Final}, VT) -> csi(Private, Inter, Params,
 operate({osc, Text}, VT) -> osc(Text, VT);
 operate({ignored, Kind}, VT) -> count(Kind, VT).
 
-count(Kind, #vt{ignored = Ignored} = VT) ->
-    VT#vt{ignored = maps:update_with(Kind, fun(N) -> N + 1 end, 1, Ignored)}.
+count(Kind, #vt{lifetime = #lifetime{ignored = Ignored} = L} = VT) ->
+    VT#vt{lifetime = L#lifetime{ignored = maps:update_with(Kind, fun(N) -> N + 1 end, 1, Ignored)}}.
 
-emit(Effect, #vt{out = Out} = VT) -> VT#vt{out = [Effect | Out]}.
+emit(Effect, #vt{lifetime = #lifetime{out = Out} = L} = VT) ->
+    VT#vt{lifetime = L#lifetime{out = [Effect | Out]}}.
 
 %% C0 and C1 controls.
 control(16#07, VT) -> emit(bell, VT);
@@ -550,7 +596,13 @@ csi($S, Ps, #vt{margins = {Top, Bottom}} = VT) when length(Ps) =< 1 ->
     scroll_up(VT, Top, Bottom, arg(Ps, 1), save);
 csi($T, Ps, #vt{margins = {Top, Bottom}} = VT) when length(Ps) =< 1 ->
     scroll_down(VT, Top, Bottom, arg(Ps, 1));
-csi($X, Ps, VT) -> edit_row(VT, fun(L, C, B) -> erase_cells(L, C, C + arg(Ps, 1) - 1, B) end);
+csi($X, Ps, #vt{cursor = {_, Col, _}, cols = Cols} = VT) ->
+    Last = Col + arg(Ps, 1) - 1,
+    Erased = edit_row(VT, fun(L, C, B) -> erase_cells(L, C, Last, B) end),
+    case Last >= Cols of
+        true -> unwrap(Erased);
+        false -> Erased
+    end;
 csi($a, Ps, VT) -> cursor_right(arg(Ps, 1), VT);
 csi($e, Ps, VT) -> cursor_down(arg(Ps, 1), VT);
 csi($c, Ps, VT) when Ps =:= []; Ps =:= [0] -> emit({reply, <<"\e[?1;2c">>}, VT);
@@ -705,9 +757,9 @@ plain_text(Text) -> lists:all(fun(B) -> B >= 16#20 andalso B =< 16#7E end, binar
 
 %% Ids increase from 1 and RIS keeps the next one, so the table holds a
 %% run of consecutive ids and the oldest is the one 256 below the new one.
-open_link(Type, Text, #vt{links = Links, next_link = Id} = VT) ->
+open_link(Type, Text, #vt{links = Links, lifetime = #lifetime{next_link = Id} = L} = VT) ->
     Kept = maps:remove(Id - ?MAX_LINKS, Links),
-    VT#vt{links = Kept#{Id => {Type, Text}}, next_link = Id + 1, link = Id}.
+    VT#vt{links = Kept#{Id => {Type, Text}}, lifetime = L#lifetime{next_link = Id + 1}, link = Id}.
 
 link_params(Params) -> lists:all(fun(B) -> B >= 16#20 andalso B =< 16#7E andalso B =/= $; end,
                                  binary_to_list(Params)).
@@ -780,10 +832,14 @@ place(Point, Width, VT0) ->
     (put_row(VT3, Row, Line))#vt{cursor = Cursor, last = {VT3#vt.shown, Row, Col, Cursor, Line}}.
 
 %% With the wrap pending, the next character goes to the next row's first
-%% column, and the row it left records that it continued.
+%% column, and the row it left records that it continued. On the last row
+%% below the region the index neither moves nor scrolls, so the character
+%% goes to the same row's first column and the row continues nowhere.
 wrap_pending(#vt{cursor = {_, _, true}, modes = #modes{autowrap = true}} = VT) -> wrap(VT);
 wrap_pending(VT) -> VT.
 
+wrap(#vt{cursor = {Row, _, _}, rows = Row, margins = {_, Bottom}} = VT) when Row =/= Bottom ->
+    carriage_return(VT);
 wrap(#vt{cursor = {Row, _, _}} = VT) ->
     {_, Cells} = row(VT, Row),
     carriage_return(index(put_row(VT, Row, {true, Cells}))).
@@ -881,14 +937,12 @@ restore_cursor(#vt{shown = Shown, saved = {Main, Alt}, modes = M, margins = {Top
     VT#vt{cursor = {Kept, Col, Pending andalso M#modes.autowrap}, pen = S#saved.pen,
           charsets = S#saved.charsets, modes = M#modes{origin = S#saved.origin}}.
 
-%% RIS: the state of new/2 at the current size, keeping the scrollback and
-%% the counters. The link table empties and link ids keep increasing, so
-%% the scrollback's links become plain text.
-full_reset(#vt{cols = Cols, rows = Rows} = VT) ->
-    Fresh = new(Cols, Rows),
-    Fresh#vt{scrollback = VT#vt.scrollback, scrollback_cells = VT#vt.scrollback_cells,
-             next_link = VT#vt.next_link, ignored = VT#vt.ignored, out = VT#vt.out,
-             utf8 = VT#vt.utf8, parser = VT#vt.parser}.
+%% RIS: the screen of new/2 at the current size beside the terminal's
+%% lifetime state, which keeps the scrollback and the counters. The link
+%% table empties and link ids keep increasing, so the scrollback's links
+%% become plain text.
+full_reset(#vt{cols = Cols, rows = Rows, lifetime = Lifetime}) ->
+    (new(Cols, Rows))#vt{lifetime = Lifetime}.
 
 %% DECSTR: modes, pen, margins, character sets and saved cursors to their
 %% initial values; the grids, the grid shown and the cursor's place kept.
@@ -918,7 +972,7 @@ erase_display(1, #vt{cursor = {Row, _, _}} = VT) ->
 erase_display(2, #vt{rows = Rows} = VT) ->
     clear_wrap(blank_rows(VT, 1, Rows));
 erase_display(3, VT) ->
-    VT#vt{scrollback = queue:new(), scrollback_cells = 0};
+    VT#vt{lifetime = (VT#vt.lifetime)#lifetime{scrollback = queue:new(), scrollback_cells = 0}};
 erase_display(_, VT) ->
     count(csi, VT).
 
@@ -1020,18 +1074,18 @@ split_rows(Grid, Top, Bottom) ->
 %% Rows enter without their trailing blank default cells, each charged at
 %% least one cell so that the bound also bounds the rows, and the oldest
 %% leave until the bound holds.
-push_scrollback(Rows, VT) ->
-    lists:foldl(fun push_row/2, VT, Rows).
+push_scrollback(Rows, #vt{lifetime = L} = VT) ->
+    VT#vt{lifetime = lists:foldl(fun push_row/2, L, Rows)}.
 
-push_row({Wrapped, Cells}, #vt{scrollback = Queue, scrollback_cells = Count} = VT) ->
+push_row({Wrapped, Cells}, #lifetime{scrollback = Queue, scrollback_cells = Count} = L) ->
     Row = {Wrapped, list_to_tuple(trim(tuple_to_list(Cells)))},
-    drop_oldest(VT#vt{scrollback = queue:in(Row, Queue), scrollback_cells = Count + charge(Row)}).
+    drop_oldest(L#lifetime{scrollback = queue:in(Row, Queue), scrollback_cells = Count + charge(Row)}).
 
-drop_oldest(#vt{scrollback_cells = Count, scrollback = Queue} = VT) when Count > ?MAX_SCROLLBACK ->
+drop_oldest(#lifetime{scrollback_cells = Count, scrollback = Queue} = L) when Count > ?MAX_SCROLLBACK ->
     {{value, Row}, Rest} = queue:out(Queue),
-    drop_oldest(VT#vt{scrollback = Rest, scrollback_cells = Count - charge(Row)});
-drop_oldest(VT) ->
-    VT.
+    drop_oldest(L#lifetime{scrollback = Rest, scrollback_cells = Count - charge(Row)});
+drop_oldest(L) ->
+    L.
 
 charge({_, Cells}) -> max(tuple_size(Cells), 1).
 
@@ -1064,6 +1118,76 @@ fit_row(Cells, Cols) ->
     list_to_tuple(tuple_to_list(Cells) ++ lists:duplicate(Cols - tuple_size(Cells), ?BLANK)).
 
 row_of(#saved{position = {Row, _, _}}) -> Row.
+
+%%% Keys
+
+%% The keys that send a sequence, in the three forms of xterm's "PC-Style
+%% Function Keys": a cursor key sends CSI and its final, or SS3 and its
+%% final with DECCKM set; F1 to F4 send SS3 and their finals; the editing
+%% keys and F5 to F12 send CSI, their number and `~`, the numbers having
+%% xterm's gaps.
+sequence_key(?ERX_INPUT_RUNE_KUP) -> {cursor, $A};
+sequence_key(?ERX_INPUT_RUNE_KDOWN) -> {cursor, $B};
+sequence_key(?ERX_INPUT_RUNE_KRIGHT) -> {cursor, $C};
+sequence_key(?ERX_INPUT_RUNE_KLEFT) -> {cursor, $D};
+sequence_key(?ERX_INPUT_RUNE_KHOME) -> {cursor, $H};
+sequence_key(?ERX_INPUT_RUNE_KEND) -> {cursor, $F};
+sequence_key(?ERX_INPUT_RUNE_KF1) -> {ss3, $P};
+sequence_key(?ERX_INPUT_RUNE_KF2) -> {ss3, $Q};
+sequence_key(?ERX_INPUT_RUNE_KF3) -> {ss3, $R};
+sequence_key(?ERX_INPUT_RUNE_KF4) -> {ss3, $S};
+sequence_key(?ERX_INPUT_RUNE_KINS) -> {tilde, 2};
+sequence_key(?ERX_INPUT_RUNE_KDEL) -> {tilde, 3};
+sequence_key(?ERX_INPUT_RUNE_KPGUP) -> {tilde, 5};
+sequence_key(?ERX_INPUT_RUNE_KPGDOWN) -> {tilde, 6};
+sequence_key(?ERX_INPUT_RUNE_KF5) -> {tilde, 15};
+sequence_key(?ERX_INPUT_RUNE_KF6) -> {tilde, 17};
+sequence_key(?ERX_INPUT_RUNE_KF7) -> {tilde, 18};
+sequence_key(?ERX_INPUT_RUNE_KF8) -> {tilde, 19};
+sequence_key(?ERX_INPUT_RUNE_KF9) -> {tilde, 20};
+sequence_key(?ERX_INPUT_RUNE_KF10) -> {tilde, 21};
+sequence_key(?ERX_INPUT_RUNE_KF11) -> {tilde, 23};
+sequence_key(?ERX_INPUT_RUNE_KF12) -> {tilde, 24};
+sequence_key(_Rune) -> none.
+
+%% With modifiers M, more than 1, a cursor key or F1 to F4 sends
+%% CSI 1 ; M and its final, whatever DECCKM, and a key of the `~` form
+%% sends CSI, its number, `;`, M and `~`.
+sequence({cursor, Final}, 1, false) -> <<"\e[", Final>>;
+sequence({cursor, Final}, 1, true) -> <<"\eO", Final>>;
+sequence({ss3, Final}, 1, _Application) -> <<"\eO", Final>>;
+sequence({tilde, N}, 1, _Application) -> <<"\e[", (integer_to_binary(N))/binary, "~">>;
+sequence({tilde, N}, M, _Application) ->
+    <<"\e[", (integer_to_binary(N))/binary, ";", (integer_to_binary(M))/binary, "~">>;
+sequence({Kind, Final}, M, _Application) when Kind =:= cursor; Kind =:= ss3 ->
+    <<"\e[1;", (integer_to_binary(M))/binary, Final>>.
+
+%% xterm's modifier parameter: one more than the sum of Shift 1, Alt 2
+%% and Control 4, so 1 when none is held.
+xterm_modifiers(Shift, Alt, Control) ->
+    1 + held(Shift, 1) + held(Alt, 2) + held(Control, 4).
+
+held(true, Value) -> Value;
+held(false, _Value) -> 0.
+
+%% A rune that sends no sequence. Without Control, Backspace's Kbs is DEL
+%% and the Return key's LF is CR; with Control, as Control-H and Control-J
+%% type them, both are sent as typed. Space and `2` with Control are NUL.
+%% A rune past ASCII sends itself in UTF-8 unless it is a special rune,
+%% which sends nothing here; Kbs, Kesc and Kdel are ASCII, and Kdel is a
+%% sequence key.
+typed(?ERX_INPUT_RUNE_KBS, false) -> <<16#7F>>;
+typed($\n, false) -> <<$\r>>;
+typed(Rune, true) when Rune =:= $\s; Rune =:= $2 -> <<0>>;
+typed(Rune, _Control) when Rune > 16#7F ->
+    case lists:keymember(Rune, 2, ?ERX_INPUT_RUNE_MEMBERS) of
+        true -> <<>>;
+        false -> <<Rune/utf8>>
+    end;
+typed(Rune, _Control) -> <<Rune>>.
+
+alt_prefix(true, <<_, _/binary>> = Bytes) -> <<16#1B, Bytes/binary>>;
+alt_prefix(_Alt, Bytes) -> Bytes.
 
 %%% Paste
 
