@@ -61,7 +61,9 @@ names the client chose; a window's directory lists `ctl`, `mouse`, `kbd`,
 `{file, Id, Proc, File}`, made by this module from the table, never from
 client bytes: a name is looked up, never turned into an atom. `wctl`
 writes come here; every other file is its window process's
-(erx_window). A window that has ended answers `EIO`.
+(erx_window). A window that has ended answers `EIO`. It is a made tree:
+its attributes, its statfs and its listings, each taken by a directory's
+open, are erx_fs_node's.
 """.
 
 -behaviour(erx_fs).
@@ -569,18 +571,8 @@ walk({file, _, _, _}, _Name, _Fs) ->
     {error, enotdir}.
 
 -doc false.
-getattr(Node, _Fs) ->
-    {Kind, Mode} = case Node of
-                       {file, _, _, File} -> {?ERX_P9_S_IFREG, file_mode(File)};
-                       _ -> {?ERX_P9_S_IFDIR, 8#700}
-                   end,
-    {ok, #{valid => ?ERX_P9_GETATTR_MASK_MODE bor ?ERX_P9_GETATTR_MASK_NLINK
-                        bor ?ERX_P9_GETATTR_MASK_SIZE,
-           qid => qid(Node), mode => Kind bor Mode, uid => 0, gid => 0, nlink => 1,
-           rdev => 0, size => 0, blksize => 4096, blocks => 0,
-           atime_sec => 0, atime_nsec => 0, mtime_sec => 0, mtime_nsec => 0,
-           ctime_sec => 0, ctime_nsec => 0, btime_sec => 0, btime_nsec => 0,
-           gen => 0, data_version => 0}}.
+getattr({file, _, _, File} = Node, _Fs) -> erx_fs_node:attr(qid(Node), file, file_mode(File));
+getattr(Node, _Fs) -> erx_fs_node:attr(qid(Node), dir, 8#700).
 
 file_mode(File) ->
     case lists:member(File, ?READ_ONLY) of
@@ -588,45 +580,46 @@ file_mode(File) ->
         false -> 8#600
     end.
 
+%% A directory opens for reading only, as FreeBSD's open of one for writing fails with
+%% EISDIR, and its open takes its listing (erx_fs_node:listing/1): the client's windows
+%% at the root, a window's files in its directory.
 -doc false.
 open({file, _, _, File} = Node, Flags, _Fs) ->
     case lists:member(File, ?READ_ONLY) andalso Flags band ?ERX_P9_O_ACCMODE =/= 0 of
         true -> {error, eacces};
         false -> {ok, Node}
     end;
-open(Node, _Flags, _Fs) ->
-    {ok, {dir, Node}}.
+open(Dir, Flags, Fs) ->
+    case Flags band ?ERX_P9_O_ACCMODE of
+        0 -> listing(Dir, Fs);
+        _ -> {error, eisdir}
+    end.
+
+listing(root, #{winfs := Winfs, client := Client}) ->
+    case call(Winfs, {list, Client}) of
+        {ok, Windows} ->
+            {ok, erx_fs_node:listing([{qid({window, Id, Proc}), ?ERX_P9_DT_DIR, Name}
+                                      || {Id, Name, Proc} <- Windows])};
+        {error, _} = Error ->
+            Error
+    end;
+listing({window, Id, Proc}, _Fs) ->
+    {ok, erx_fs_node:listing([{qid({file, Id, Proc, File}), ?ERX_P9_DT_REG, Name}
+                              || {Name, File, _} <- files()])}.
 
 -doc false.
 read({file, _Id, Proc, File}, Offset, Count, _Fs) ->
     call(Proc, {read, File, Offset, Count});
-read({dir, _}, _Offset, _Count, _Fs) ->
+read({entries, _}, _Offset, _Count, _Fs) ->
     {error, eisdir}.
 
 -doc false.
-readdir({dir, root}, Offset, Max, #{winfs := Winfs, client := Client}) ->
-    case call(Winfs, {list, Client}) of
-        {ok, Windows} ->
-            entries([{qid({window, Id, Proc}), ?ERX_P9_DT_DIR, Name} || {Id, Name, Proc} <- Windows],
-                    Offset, Max);
-        {error, _} = Error ->
-            Error
-    end;
-readdir({dir, {window, Id, Proc}}, Offset, Max, _Fs) ->
-    entries([{qid({file, Id, Proc, File}), ?ERX_P9_DT_REG, Name} || {Name, File, _} <- files()],
-            Offset, Max);
-readdir(_Handle, _Offset, _Max, _Fs) ->
-    {error, enotdir}.
-
-%% A listing's offset is the count of entries before it.
-entries(All, Offset, Max) ->
-    Numbered = lists:zip(lists:seq(1, length(All)), All),
-    {ok, [{Qid, N, Type, Name} || {N, {Qid, Type, Name}} <- lists:sublist(Numbered, Offset + 1, Max)]}.
+readdir(Handle, Offset, Max, _Fs) ->
+    erx_fs_node:readdir(Handle, Offset, Max).
 
 -doc false.
 statfs(_Fs) ->
-    {ok, #{type => 0, bsize => ?ERX_PAGE_SIZE, blocks => 0, bfree => 0, bavail => 0, files => 0,
-           ffree => 0, fsid => 0, namelen => 255}}.
+    erx_fs_node:statfs(?ERX_P9_MAGIC_RAMFS).
 
 -doc false.
 clunk(_Handle, _Fs) ->
@@ -637,7 +630,7 @@ write({file, Id, _Proc, wctl}, Offset, Data, #{winfs := Winfs, client := Client}
     written(call(Winfs, {wctl, Client, Id, Data}), Offset, Data);
 write({file, _Id, Proc, File}, Offset, Data, _Fs) ->
     written(call(Proc, {write, File, Offset, Data}), Offset, Data);
-write({dir, _}, _Offset, _Data, _Fs) ->
+write({entries, _}, _Offset, _Data, _Fs) ->
     {error, eisdir}.
 
 written(ok, Offset, Data) -> {ok, byte_size(Data), Offset + byte_size(Data)};

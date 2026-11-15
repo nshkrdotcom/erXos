@@ -135,11 +135,11 @@ open(Node, Flags, Fs) ->
     end.
 
 snapshot(root, Devices, _Fs) ->
-    {ok, {entries, entries([{erx_devfs_core:name(Device), {device, Index}}
-                            || #{index := Index} = Device <- erx_devfs_core:shown(Devices)])}};
+    {ok, listing([{erx_devfs_core:name(Device), {device, Index}}
+                  || #{index := Index} = Device <- erx_devfs_core:shown(Devices)])};
 snapshot({device, Index}, Devices, #{rights := Rights}) ->
     case device(Index, Devices) of
-        {ok, _Device} -> {ok, {entries, entries(files(Rights, Index))}};
+        {ok, _Device} -> {ok, listing(files(Rights, Index))};
         error -> {error, enoent}
     end;
 snapshot({status, Index}, Devices, _Fs) ->
@@ -152,8 +152,8 @@ snapshot({status, Index}, Devices, _Fs) ->
 files(rw, Index) -> [{<<"ctl">>, {ctl, Index}}, {<<"status">>, {status, Index}}];
 files(ro, Index) -> [{<<"status">>, {status, Index}}].
 
-entries(Named) ->
-    [{qid(Node), Offset, dirent_type(Node), Name} || {Offset, {Name, Node}} <- lists:enumerate(1, Named)].
+listing(Named) ->
+    erx_fs_node:listing([{qid(Node), dirent_type(Node), Name} || {Name, Node} <- Named]).
 
 -doc false.
 read({bytes, Bytes}, Offset, _Count, _Fs) when Offset >= byte_size(Bytes) ->

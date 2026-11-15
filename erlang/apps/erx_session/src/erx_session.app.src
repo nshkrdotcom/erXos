@@ -5,6 +5,10 @@
 %% erx_session_tty, on which the command shell runs, and the pure core of the tty's
 %% side of the messages to its master, erx_tty_link; and erx_ssh_dev, which starts
 %% OTP's ssh daemon in a development session (docs/design-ssh.md, "Stages").
+%%
+%% Its applications are those that must run before it starts. ssh, with
+%% public_key, is not one: erx_ssh_dev starts it when it starts the daemon, so a
+%% session that starts none runs no ssh supervisor.
 {application, erx_session,
  [{description, "erXos session"},
   {vsn, "1"},

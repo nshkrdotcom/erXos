@@ -5,14 +5,14 @@
 -moduledoc """
 What the made trees share: trees of the erx_fs behaviour whose nodes their
 servers make from state they read rather than keep on a medium, `/proc`,
-`/dev`, `/apps` and `/machine`
+`/dev`, `/apps`, `/machine` and a display's window tree
 (docs/design-files.md#serving-the-erx_fs-behaviour).
 
 * **Attributes.** Every node is owned by uid 0 and has size 0 and no times,
   as a `/proc` file does; a directory has two links and a file one.
-* **A listing** is the entries the directory's open took, and an entry's
-  offset is its place in the listing, so a read from Offset continues after
-  the entry that carried it.
+* **A listing** is the entries the directory's open took, made by
+  listing/1, and an entry's offset is its place in the listing, so a read
+  from Offset continues after the entry that carried it.
 * **A ctl file opens through a create.** prim_file opens every file it
   writes through a create, so a create of an existing ctl opens it for
   writing, as the tree's open does, unless it must make a new file
@@ -24,7 +24,7 @@ functions of what it hands them.
 
 -include("generated/erx_abi.hrl").
 
--export([attr/3, statfs/1, readdir/3, open_by_create/4]).
+-export([attr/3, statfs/1, listing/1, readdir/3, open_by_create/4]).
 
 -define(GETATTR_VALID, (?ERX_P9_GETATTR_MASK_MODE bor ?ERX_P9_GETATTR_MASK_NLINK
                         bor ?ERX_P9_GETATTR_MASK_UID bor ?ERX_P9_GETATTR_MASK_GID
@@ -54,8 +54,16 @@ statfs(Magic) ->
            files => 0, ffree => 0, fsid => 0, namelen => 255}}.
 
 -doc """
-Up to Max entries of a listing from Offset, for a Handle that an open of a
-directory answered as `{entries, Entries}`; any other handle is no directory.
+The handle of a directory's open that lists Entries, each a qid, a dirent
+type and a name, in that order.
+""".
+-spec listing([{erx_fs:qid(), 0..255, binary()}]) -> {entries, [erx_fs:dirent()]}.
+listing(Entries) ->
+    {entries, [{Qid, Offset, Type, Name} || {Offset, {Qid, Type, Name}} <- lists:enumerate(1, Entries)]}.
+
+-doc """
+Up to Max entries of a listing from Offset, for a Handle that listing/1
+made; any other handle is no directory.
 """.
 -spec readdir(term(), non_neg_integer(), pos_integer()) -> {ok, [erx_fs:dirent()]} | {error, enotdir}.
 readdir({entries, Entries}, Offset, Max) ->

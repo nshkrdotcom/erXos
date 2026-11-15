@@ -14,13 +14,15 @@ module Erx
   # other module of the command shell's application, erx_shell, names no such module at
   # all, since neither the shell nor its helpers have authority of their own.
   #
-  # A service's modules are its applications' modules, read from the listing, each of
-  # which counts wherever its name stands as an atom: in a call, a remote fun or type,
-  # an -import or an apply. The OTP modules and functions through which any domain
-  # reaches the service count as Module:Function: for the network stack, the socket
-  # modules, net and the resolver, whose sockets erXos's inet backend opens through the
-  # stack (docs/design-network-stack.md, "The backend"), and inet's functions that
-  # resolve names or read the interfaces. Comments, strings and quoted atoms are left
+  # A service's modules are the modules of its sources, path globs read from the
+  # listing: the network stack's applications, the start service's application behind
+  # `apps`, and the machine tree with its coordinator, the two modules of the domain
+  # service behind `machine`. Each counts wherever its name stands as an atom: in a
+  # call, a remote fun or type, an -import or an apply. The OTP modules and functions
+  # through which any domain reaches the service count as Module:Function: for the
+  # network stack, the socket modules, net and the resolver, whose sockets erXos's
+  # inet backend opens through the stack (docs/design-network-stack.md, "The
+  # backend"), and inet's functions that resolve names or read the interfaces. Comments, strings and quoted atoms are left
   # out, so 'erx_net':f() and an OTP function named through apply get past it, as do a
   # name built from pieces and a call a command makes through a helper of another
   # application: like the other text rules it catches a slip. It is no boundary either:
@@ -30,12 +32,15 @@ module Erx
     SHELL = 'erlang/apps/erx_shell/src'
     SCOPE = %w[erlang/apps/*/src/*.erl].freeze
     GLOB_FLAGS = File::FNM_PATHNAME | File::FNM_EXTGLOB
-    Service = Data.define(:applications, :modules, :functions)
+    Service = Data.define(:sources, :modules, :functions)
     SERVICES = {
-      'net' => Service.new(applications: %w[erlang/apps/erx_net erlang/apps/erx_net_client],
+      'net' => Service.new(sources: %w[erlang/apps/erx_net/**/*.erl erlang/apps/erx_net_client/**/*.erl],
                            modules: %w[gen_tcp gen_udp gen_sctp socket net inet_res],
                            functions: %w[inet:getaddr inet:getaddrs inet:gethostbyname inet:gethostbyaddr
-                                         inet:getifaddrs])
+                                         inet:getifaddrs]),
+      'apps' => Service.new(sources: %w[erlang/apps/erx_starter/**/*.erl], modules: [], functions: []),
+      'machine' => Service.new(sources: %w[erlang/apps/erx_domain/src/erx_machine{,_fs}.erl], modules: [],
+                               functions: [])
     }.freeze
     COMMAND = /^-erx_command\s*\(/
     # -erx_needs([a, b]) or -erx_needs(a), as the compiler keeps either.
@@ -44,7 +49,7 @@ module Erx
     CALL = /(?<![A-Za-z0-9_@?])(?<module>[a-z][A-Za-z0-9_@]*)\s*:\s*(?<function>[a-z][A-Za-z0-9_@]*)/
     # Where a module names a service: the service's facet, the line and the name.
     Reach = Data.define(:facet, :line, :name)
-    # Each service's facet by the names that reach it: its applications' modules as
+    # Each service's facet by the names that reach it: its sources' modules as
     # atoms, and the OTP names as Module or Module:Function before a call.
     Names = Data.define(:atoms, :calls)
 
@@ -59,15 +64,15 @@ module Erx
     # Whether the check reads path: a module it checks, or one of a service's.
     def reads?(path) = covers?(path) || !service_of(path).nil?
 
-    # The facet of the service whose application holds the module at path, nil for none.
+    # The facet of the service whose sources hold the module at path, nil for none.
     def service_of(path)
       return nil unless File.extname(path) == '.erl'
 
-      SERVICES.find { |_, service| service.applications.any? { |root| path.start_with?("#{root}/") } }&.first
+      SERVICES.find { |_, service| service.sources.any? { |glob| File.fnmatch?(glob, path, GLOB_FLAGS) } }&.first
     end
 
     # The violations among files, a map of path to source text. The services' modules
-    # come from the same map, so it holds their applications' sources too.
+    # come from the same map, so it holds their sources too.
     def violations(files)
       names = names_of(files.keys)
       files.select { |path, _| covers?(path) }.flat_map do |path, text|

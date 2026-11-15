@@ -9,6 +9,14 @@
 %% stages where and sort and the file utilities such as cat and wc; and its interactive
 %% layer, which runs the shell on the console. It starts nothing of its own:
 %% erx_shell_script:run/2 runs a source in a process of the caller's.
+%%
+%% Its applications are those its modules call. Three are optional, since a
+%% release ships them only where the shell may reach them: erx_net_client,
+%% whose sockets ifconfig, ping and host open, in a session's release; and
+%% erx_domain and erx_starter, whose trees reboot, halt and service reach
+%% directly in the system shell (docs/design-shell.md, "Interfaces"). Only
+%% application:start/1 starts it: ensure_all_started would start each optional
+%% application it can load, the domain service among them.
 {application, erx_shell,
  [{description, "erXos command shell"},
   {vsn, "1"},
@@ -51,5 +59,6 @@
              erx_shell_runner,
              erx_shell_script]},
   {registered, []},
-  {applications, [kernel, stdlib, erx]},
+  {applications, [kernel, stdlib, erx, erx_net_client, erx_domain, erx_starter]},
+  {optional_applications, [erx_net_client, erx_domain, erx_starter]},
   {env, []}]}.

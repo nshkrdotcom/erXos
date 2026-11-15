@@ -75,4 +75,29 @@ class CommandNeedsTest < Minitest::Test
                  found(stack.merge('erlang/apps/erx_shell/src/seeded.erl' => helper))
     assert_empty found(stack.merge('erlang/apps/erx/src/seeded.erl' => helper))
   end
+
+  # The system domain's own services count as the network stack does: reboot without its
+  # machine declaration fails, as does a helper of erx_shell that names the start
+  # service's tree, while a module of the domain service beside the machine tree's two
+  # is no reach of machine.
+  def test_the_machine_and_apps_services_count
+    files = tree
+    reboot = 'erlang/apps/erx_shell/src/erx_cmd_reboot.erl'
+    seeded = files.fetch(reboot).sub(/^-erx_needs\(\[machine\]\)\.\n/, '')
+    refute_equal files.fetch(reboot), seeded
+    violations = Erx::CommandNeeds.violations(files.merge(reboot => seeded))
+    assert_equal [reboot], violations.map(&:path)
+    assert_match(/names erx_machine_fs, of the machine service, without -erx_needs\(\[machine\]\)/,
+                 violations.first.to_s)
+    helper = "-module(seeded).\nf() -> erx_starter_fs:control(<<>>).\n"
+    starter = { 'erlang/apps/erx_starter/src/erx_starter_fs.erl' => '' }
+    assert_equal [['erlang/apps/erx_shell/src/seeded.erl', 2]],
+                 found(starter.merge('erlang/apps/erx_shell/src/seeded.erl' => helper))
+    coordinator = { 'erlang/apps/erx_domain/src/erx_machine.erl' => '' }
+    assert_equal [['erlang/apps/erx_shell/src/seeded.erl', 2]],
+                 found(coordinator.merge('erlang/apps/erx_shell/src/seeded.erl' =>
+                                           "-module(seeded).\nf() -> erx_machine:request(reboot, system).\n"))
+    domain = { 'erlang/apps/erx_domain/src/erx_domain.erl' => '' }
+    assert_empty found(domain.merge('erlang/apps/erx_shell/src/seeded.erl' => "-module(seeded).\nf() -> erx_domain:f().\n"))
+  end
 end

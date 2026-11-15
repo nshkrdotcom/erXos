@@ -3231,13 +3231,23 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   and every command would have one path; that changes design-shell.md "Interfaces" and goes
   to the design first.
 * [Medium] SH1 check, `tools/lib/erx/command_needs.rb` (`SERVICES`): the hand-kept table lists
-  only `net`, so a shell module that is no command and names `erx_machine_fs` or
-  `erx_starter_fs` passes, though design-shell.md says the check proves SH1 for every service.
-  Derive the table from the manifest's `service` rows and the applications that serve them.
-* [Low] made trees, `erlang/apps/erx_display/src/erx_winfs.erl`: the window tree keeps its own
-  attributes and statfs (a valid mask of mode, nlink and size, directories with one link,
-  `blksize` 4096 and statfs type 0) rather than `erx_fs_node`'s; moving it changes what a
-  client sees of the window tree, so it wants its own change and test.
+  `net`, `apps` and `machine`, the services whose facets commands declare, though
+  design-shell.md says the check proves SH1 for every service; a command naming a module of
+  `inspect`, `log`, `data`, `display`, `web` or a driver's control service passes, and a new
+  service is covered only once someone adds its row. Derive the table instead: the manifest's
+  `service` rows name a server domain and an interface, not the modules behind them, so the
+  derivation needs one declared fact per service naming its server's modules. `inspect` and
+  `log` also need their server modules told apart from the client modules of `erx` that every
+  domain runs and the shell calls: `erx_inspector` is called by the commands `top` and
+  `service` and by `erx_render` and `erx_shell_runner`, which are no commands, so listing all
+  of `erx` under `inspect` would refuse the shell itself.
+* [Low] tooling, `tools/lib/erx/erlang_apps.rb` (`APPLICATIONS`) and `release_files.rb`
+  (`SYSTEM_APPLICATIONS`): the application order is kept by hand "in dependency order", and
+  nothing checks it against the `.app.src` files' `applications`; systools quietly reorders a
+  release that breaks it, so an application listed too early pulls its dependencies ahead of
+  the applications before it in the system boot (as `erx_shell`, before `erx_code`, would pull
+  `erx_domain` and `erx_starter` ahead of `erx_code` and `erx_hostlink`). Check that the order
+  is a topological order of the `.app.src` dependency graph in `make check`.
 * [Medium] domain library NIFs, `erlang/apps/erx` and `test/guest/native_domain`: no test
   reaches the module's paths with a library present: a real create's decoding refusals (an
   unknown key, a u32 overflow, strings beyond the boot page), the lock, the fault thread's

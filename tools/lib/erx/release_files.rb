@@ -75,8 +75,8 @@ module Erx
     # every domain boots, the applications the system domain runs, and erx_session, which
     # it ships and never starts (DOMAIN_ONLY). Every other application is a domain boot
     # script's alone (RELEASE_SCRIPTS), and one in neither fails the load (check_released).
-    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_uart erx_shell erx_code
-                             erx_hostlink erx_domain erx_starter erx_session].freeze
+    SYSTEM_APPLICATIONS = %w[kernel stdlib compiler runtime_tools erx erx_files erx_uart erx_code erx_hostlink
+                             erx_domain erx_starter erx_shell erx_session].freeze
     raise Error, "SYSTEM_APPLICATIONS names what the runtime does not build: #{SYSTEM_APPLICATIONS - APPLICATIONS}" unless
       (SYSTEM_APPLICATIONS - APPLICATIONS).empty?
     raise Error, 'SYSTEM_APPLICATIONS is not in release order (APPLICATIONS)' unless

@@ -132,8 +132,7 @@ taken(TakeSnapshot) ->
 snapshot({dir, Path}, Inspect) ->
     Lookup = fun(Question) -> ask(Question, Inspect) end,
     Entries = erx_procfs_core:listing(Path, listing_answer(Path, Inspect), Lookup),
-    {ok, {entries, [{qid(Child), Index, dirent_type(Child), Name}
-                    || {Index, {Name, Child}} <- lists:enumerate(1, Entries)]}};
+    {ok, erx_fs_node:listing([{qid(Child), dirent_type(Child), Name} || {Name, Child} <- Entries])};
 snapshot({status, Path}, Inspect) ->
     Answer = Inspect(Path, #{}),
     case erx_procfs_core:named(Answer) of

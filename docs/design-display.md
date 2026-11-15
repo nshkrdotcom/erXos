@@ -895,6 +895,10 @@ client's directory, so the client sees:
 /snarf      the display's clipboard, read and write; present only when the grant carries snarf
 ```
 
+The tree is a made tree ([Serving](design-files.md#serving-the-erx_fs-behaviour),
+"Made trees"): its attributes and statfs are those all such trees answer, and a
+directory's listing is the windows or files it held when it was opened.
+
 A window is made by `mkdir` of a name of the client's choosing in its
 directory; the window takes the next `window_id()` within the display,
 and the name is the client's, as any directory's is. Ids are never

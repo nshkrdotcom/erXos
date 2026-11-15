@@ -1389,7 +1389,9 @@ server's statfs at the entry's root (`erx_file_remote:statfs/2`), whose
 `abi/protocols/9p.txt` for erXos's servers. `mount` prints a member's
 name, which the ABI file gives as FreeBSD's name where FreeBSD has the
 file system (`tmpfs`, `procfs`, `devfs`), the project's own otherwise
-(`littlefs`, `erofs`), and `ramfs` for the start service's tree, after
+(`littlefs`, `erofs`), and `ramfs` for the made trees with no type of
+their own (the start service's tree, `/machine` and a display's window
+tree), after
 the Linux number it answers; a number no member names prints in hex,
 and a server that does not answer, or an ended grant, prints `-`. The
 options are FreeBSD's words in their order (`MNTOPT_NAMES`,
@@ -1723,6 +1725,15 @@ other client's request can come between its parts:
   per-fid bound and its pool; a server whose per-fid state is large sets a
   smaller bound of its own, as `/proc` holds at most 256 snapshots for a
   grant ([design-live.md](design-live.md#the-proc-tree)).
+* **Made trees.** A tree whose server makes its nodes from state it
+  reads rather than keeps on a medium (`/proc`, `/dev`, `/apps`,
+  `/machine` and a display's window tree) takes what such trees share
+  from `erx_fs_node`: every node owned by uid 0 with size 0 and no
+  times, a directory with two links and a file with one; a directory
+  whose listing is the entries its open took, each entry's offset its
+  place in that listing,
+  so a listing never skips or repeats an entry the tree added or removed
+  meanwhile; and a statfs that holds no blocks.
 * **Flush.** A flush tells the callback's work, when it runs in a helper,
   to stop, and is answered after the flushed request's reply or after the
   owner has abandoned it ([Flush](#flush)).

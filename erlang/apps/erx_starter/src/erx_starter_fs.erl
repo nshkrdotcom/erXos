@@ -133,8 +133,8 @@ open(Node, Flags, Fs) ->
     end.
 
 snapshot(root, _Fs) ->
-    {ok, {entries, [{qid(Node), Offset, dirent_type(Node), Name}
-                    || {Offset, {Name, Node}} <- lists:enumerate(1, [{<<"ctl">>, ctl}, {<<"rc.conf">>, rc_conf}])]}};
+    {ok, erx_fs_node:listing([{qid(Node), dirent_type(Node), Name}
+                              || {Name, Node} <- [{<<"ctl">>, ctl}, {<<"rc.conf">>, rc_conf}]])};
 snapshot(rc_conf, #{rc_conf := RcConf}) ->
     %% The table's process may be restarting; the open fails and ends nothing here.
     try RcConf() of

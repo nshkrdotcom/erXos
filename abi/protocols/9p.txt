@@ -96,12 +96,13 @@ limit p9_dt_reg u8 8
 limit p9_dt_lnk u8 10
 # The type each of erXos's file servers answers in statfs, a different one
 # for each kind of tree, which 9P2000.L leaves to the server: Linux's
-# RAMFS_MAGIC (the start service's tree), TMPFS_MAGIC (/tmp), PROC_SUPER_MAGIC
+# RAMFS_MAGIC (the made trees with no type of their own: the start service's
+# tree, /machine and a display's window tree), TMPFS_MAGIC (/tmp), PROC_SUPER_MAGIC
 # and DEVFS_SUPER_MAGIC, and for littlefs "lefs", the last four bytes of its
 # superblock magic "littlefs", read as a little-endian word. Each member's
 # name is the name the shell's `mount` prints for its type
 # (erx_cmd_mount:type_name/1): FreeBSD's where FreeBSD has the file system,
-# the project's own otherwise, and for the start service's tree ramfs, after
+# the project's own otherwise, and for those made trees ramfs, after
 # the Linux number it answers.
 enum p9_magic u32
   value ramfs 0x858458f6

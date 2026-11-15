@@ -124,7 +124,7 @@ open(ctl, Flags, _Fs) ->
     end;
 open(root, Flags, _Fs) ->
     case Flags band ?ERX_P9_O_ACCMODE of
-        0 -> {ok, {entries, [{qid(ctl), 1, ?ERX_P9_DT_REG, <<"ctl">>}]}};
+        0 -> {ok, erx_fs_node:listing([{qid(ctl), ?ERX_P9_DT_REG, <<"ctl">>}])};
         _ -> {error, eisdir}
     end.
 

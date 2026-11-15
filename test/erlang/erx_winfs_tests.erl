@@ -372,7 +372,46 @@ the_window_system_provides_the_configured_service_test() ->
     _ = persistent_term:erase({erx, provides}),
     ok.
 
-%% The window tree answers statfs with the block size the other file servers answer,
-%% the page size of the ABI file.
-statfs_answers_the_page_size_test() ->
-    ?assertMatch({ok, #{bsize := ?ERX_PAGE_SIZE}}, erx_winfs:statfs(undefined)).
+%% The window tree is a made tree (erx_fs_node): every attribute valid, a directory
+%% with two links and a file with one, the made trees' statfs, a directory that opens
+%% for reading only, and a listing that is what the directory's open took, so a window
+%% made after the open is listed only by the next open.
+the_window_tree_answers_as_the_made_trees_do_test_() ->
+    {timeout, 60, fun made_tree/0}.
+
+made_tree() ->
+    World = start(answer),
+    Session = mint(?SESSION, #{session => true, windows => 2}),
+    Root = 1,
+    {ok, _} = mkdir(Session, <<"first">>),
+    Before = open_root(Session, 2),
+    {ok, _} = mkdir(Session, <<"second">>),
+    ?assertEqual([{1, <<"first">>}], listed(Session, Before, 0)),
+    After = open_root(Session, 3),
+    ?assertEqual([{1, <<"first">>}, {2, <<"second">>}], listed(Session, After, 0)),
+    ?assertEqual([{2, <<"second">>}], listed(Session, After, 1)),
+    {ok, _} = call(Session, {walk, Root, 4, []}),
+    ?assertEqual({error, eisdir}, call(Session, {lopen, 4, ?O_RDWR})),
+    {ok, Dir} = call(Session, {getattr, Root, 0}),
+    ?assertMatch(#{nlink := 2, uid := 0, size := 0}, Dir),
+    ?assertEqual(?ERX_P9_S_IFDIR bor 8#700, maps:get(mode, Dir)),
+    Mouse = 5,
+    {ok, _} = call(Session, {walk, Root, Mouse, [<<"first">>, <<"mouse">>]}),
+    {ok, File} = call(Session, {getattr, Mouse, 0}),
+    ?assertMatch(#{nlink := 1}, File),
+    ?assertEqual(?ERX_P9_S_IFREG bor 8#400, maps:get(mode, File)),
+    ?assertEqual(maps:get(valid, File), maps:get(valid, Dir)),
+    ?assertNotEqual(0, maps:get(valid, Dir) band ?ERX_P9_GETATTR_MASK_UID),
+    ?assertMatch({ok, #{type := ?ERX_P9_MAGIC_RAMFS, bsize := ?ERX_PAGE_SIZE}}, call(Session, {statfs, Root})),
+    stop(World).
+
+%% Opens the client's directory for reading as Fid.
+open_root(Grant, Fid) ->
+    {ok, _} = call(Grant, {walk, 1, Fid, []}),
+    ok = element(1, call(Grant, {lopen, Fid, ?O_RDONLY})),
+    Fid.
+
+%% The offsets and names of Fid's listing from Offset.
+listed(Grant, Fid, Offset) ->
+    {ok, Entries} = call(Grant, {readdir, Fid, Offset, 4096}),
+    [{At, Name} || {_, At, _, Name} <- Entries].

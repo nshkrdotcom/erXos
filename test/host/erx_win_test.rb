@@ -24,7 +24,7 @@ class ErxWinTest < Minitest::Test
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
                erx_wm_single erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl]
-  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
+  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
   CLIENT = %w[erx_win_core erx_pixels erx_pixels_core].map { |name| "erlang/apps/erx_win/src/#{name}.erl" }
   MODULES = (%w[erlang/apps/erx_memdraw/src/erx_memdraw.erl erlang/apps/erx_memdraw/src/erx_chan.erl
                 build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl otp/erts/preloaded/src/erx_file_remote.erl
