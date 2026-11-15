@@ -154,7 +154,7 @@ names; the table's order is the order.
 | Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; catchable signals the stopgap's vCPU row or M7 | GP |
 | M8 Cooperation earns its place | the ladder from plain threads to full cooperation, measured on seven workloads, with each feature kept or dropped by its numbers | 4,000 lines of C17 and C | G6 | G8 |
 | M10 Users without a container runtime | two users, two domains, one runs out of memory or CPU alone | 4,000 lines of Erlang | M8, M9's kernel part | |
-| Track Q The second tier | toybox's `sh` runs a script with subshells, `vi` edits a file and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's | track P, M7 | GQ |
+| Track Q The second tier | toybox's `sh` runs a script with subshells and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's | track P, M7 | GQ |
 | M11 Security closure | a release build without the development banner, on erXos's kernel, with an Erlang driver behind an IOMMU window; one flipped byte of an EROFS image fails only the reads of its block | hardening | M10 | |
 | M12 Storage, networking, boards | a Raspberry Pi 4 boots erXos from its SD card, keeps its files through power cuts, and takes a system update whose trial survives a power cut | estimated in the subsystems' design documents | M11 | G12, GN-board |
 | Track D, parts 5 and 9 | a Raspberry Pi 4 kiosk; the web front end on the network | estimated per part before it starts | part 5: part 4 and M12; part 9: part 2, M10, M11 and 1b-G | GD, with part 5 |
@@ -1086,7 +1086,15 @@ while that a program cannot escape `liberx` does not
   spawn, and the pipes are first tested from Erlang
   ([design-shell.md](design-shell.md#pipelines));
 * toybox 0.8.15 and `wak` imported as erXos's code and built applet by
-  applet, each with toybox's own tests in a test domain.
+  applet, each with toybox's own tests in a test domain;
+* `vi`, the screen editor ([design-vi.md](design-vi.md)), an estimated
+  2,500 lines of Erlang: it follows the session domain and its terminal
+  relay with `erx_tty`, and needs no program, pipe or toybox applet, so it
+  lands before them. It brings the command shell's terminal calls,
+  `erx_cmd:tty/2`, `watch/1`, the terminal form of `read/1`, `stop/1`
+  and the size report, which the relay, the job table and the shell's
+  delivery of `winch` serve
+  ([design-shell.md](design-shell.md#interfaces)).
 
 **Exit criteria, the shell (Phase 1).** The shell's corpus agrees with
 plan9port's rc, every difference classified and pinned by a test; job
@@ -1095,6 +1103,16 @@ deep; the parser and `grep`'s pattern translator run their fuzz budgets
 clean; `ps`, `ls`, `grep`, `sort` and `wc` agree with FreeBSD 15.1's over
 their corpus in the oracle guest, every difference classified and pinned
 by a test.
+
+**Exit criteria, vi (1b-B).** In a session over the host link's
+`console` line, `vi` edits a file, writes it with `:wq` and leaves the
+prompt cooked; it follows a size change, stops on `^Z` and redraws after
+`fg`; a `vi` killed mid-edit leaves the prompt working. Its key-script
+corpus writes the same files as nvi on the FreeBSD 15.1 oracle guest,
+every difference listed in [design-vi.md](design-vi.md) and pinned by a
+test; its key parser passes its exhaustive test; its output check finds
+only printable text and its own sequences over the fuzz corpus; and its
+three fuzz targets run their budgets clean.
 
 **Exit criteria, programs (1b-B).** Toybox's tests pass for every
 applet built, or each failure is classified; a pipe's end of stream
@@ -2810,8 +2828,8 @@ full-screen programs run
 ([design-programs.md](design-programs.md#the-second-tier)).
 
 **Demo.** In a terminal session, toybox's `sh` runs a script with
-subshells, command substitution and a pipeline; `vi` edits a file and
-`less` pages through a log, each leaving the console as it found it; a
+subshells, command substitution and a pipeline; `less` pages through a
+log, leaving the console as it found it; a
 dynamically linked program loads a library with `dlopen`; two
 programs of one session that map one file `MAP_SHARED` see each other's
 stores at once, and `msync` makes them durable.
@@ -2856,7 +2874,9 @@ stores at once, and `msync` makes them durable.
 * pseudo-terminals that a program holds, over the session's line
   discipline, process groups and sessions, and `SIGWINCH`
   ([design-programs.md](design-programs.md#the-terminal));
-* toybox's applets that need these: `sh`, `vi`, `less`, `login`, `setsid`;
+* toybox's applets that need these: `sh`, `less`, `login`, `setsid`
+  (toybox's `vi` is not built, since the Erlang command `vi` takes the
+  name, [design-vi.md](design-vi.md));
 * descriptors passed with `SCM_RIGHTS` over `socketpair`.
 
 **Exit criteria.** musl's `libc-test` and the Open POSIX Test Suite pass
@@ -2883,8 +2903,8 @@ wholly past the file's end reads zeros, where Linux raises `SIGBUS`, a
 documented difference with a test; a storage service killed under a
 shared mapping leaves `msync` and the last `close` failing with `EIO`,
 and the last `munmap` returns `EIO` on a failed write-back though the
-mapping is gone; `vi` and `less` draw on a pseudo-terminal, and the
-shell's prompt works when they end or stop.
+mapping is gone; `less` draws on a pseudo-terminal, and the
+shell's prompt works when it ends or stops.
 
 **Gate GQ.** Measures `fork` of 10, 100 and 1,000 MiB of committed memory
 under HVF against `fork` on Linux in a guest (`tools/erx bench fork`), and
@@ -3460,6 +3480,7 @@ Phase 1:   M0 --> M1 --> M3 --> M4 --> M6 --> track S (shell)
 Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm beside 1b-A):
            1b-A domains on the stopgap
              --> session domain (1b-B's first slice) --> 1b-C track D part 1 (GW) --> part 2
+             --> session domain and its terminal relay --> vi (track S)
              --> 1b-E M9 on the stopgap --> track A part 3, installing at run time (on 1b-E's storage domain)
            track A part 1, the start table (on the session domain and M6's data partition)
              --> track A part 2, packages added to an image (the SDK, the apps row, erx_app, examples/)

@@ -76,7 +76,7 @@ erXos gives UNIX programs a POSIX-ish interface,
 so that they need not be ported to Erlang, without Linux binary
 compatibility or a Linux virtual machine, and grows it toward what QNX
 offers: shared libraries first static, then dynamic, `fork`, and terminals
-on which full-screen programs such as `vi`, `less` and `top` run. Users run
+on which full-screen programs such as `less` and `hexedit` run. Users run
 toybox's applets and their own tools from the command shell; ported
 programs run commands of their own, Erlang commands among them; and every
 one of them is code of unknown provenance relative to the session that runs
@@ -2196,7 +2196,7 @@ one multicall program over the POSIX-lite personality. Its library's process
 helpers, which use `vfork` and `exec`, are rewritten over `posix_spawn` in
 erXos's tree, so `env`, `timeout`, `watch`, `xargs` and `find -exec` start
 programs. Its applets that need a terminal, `fork` or process groups, such
-as `sh`, `vi`, `less`, `login` and `setsid`, build in the second tier
+as `sh`, `less`, `login` and `setsid`, build in the second tier
 ([The second tier](#the-second-tier)); those that need priorities (`nice`)
 or their children's resource use (`time`), and its Linux-specific applets
 (`ps`, `top`, `kill`, `pgrep`, `pkill`, `free`, `uptime`, `mount`,
@@ -2269,7 +2269,9 @@ and waits while the job is in the background, as on UNIX. A terminal's
 to the relay ([The program protocol](#the-program-protocol)). `tcgetattr` and
 `tcsetattr` read and set the tty's `termios`, so a program can turn off `ECHO`
 for a password prompt, or go raw and draw with control sequences. `TIOCGWINSZ`
-answers from the size the master reports. A program opens `/dev/tty` through
+answers from the size the master reports, and when that size changes each
+program of the foreground job gets `SIGWINCH` through its handler, as the shell
+delivers it ([design-shell.md](design-shell.md#window-size)). A program opens `/dev/tty` through
 its namespace, so a narrowed program without the export's `/dev` has no
 terminal beyond the streams it was started with.
 
@@ -2388,9 +2390,9 @@ processes do, so a ported shell runs job control in a pseudo-terminal:
   the program after it is continued; when POSIX discards the signal, one
   of those three in an orphaned group or one reported before a later
   `SIGCONT`, it answers at once. So a `kill` or a `raise` that stops the
-  caller's own program returns only once the program is continued: `vi`
-  and `less`, which call `endwin` and then `kill(0, SIGTSTP)`, redraw only
-  after `fg`.
+  caller's own program returns only once the program is continued: a
+  full-screen program that calls `endwin` and then `kill(0, SIGTSTP)`, as
+  `less` does, redraws only after `fg`.
 * **Continuing.** A `SIGCONT` that the `kill` rules let through ([The
   program protocol](#the-program-protocol)) lifts the `signal` cause, and
   through the job table the `job` cause, before the program's report of
@@ -2415,7 +2417,7 @@ control](#job-control)). A program that never calls these keeps the first
 tier's rule: its job is one group and one session, which counts as
 orphaned, so no `SIGTSTP`, `SIGTTIN` or `SIGTTOU` of its own stops it.
 
-**Full-screen programs.** A program such as `vi`, `less` or `top` goes raw
+**Full-screen programs.** A program such as `less` or `hexedit` goes raw
 and draws with control sequences, which reach the terminal as it wrote them.
 It needs nothing else from the console.
 
@@ -3915,8 +3917,8 @@ terminal cases.
   `EIO` in an orphaned group; a `SIGSTOP` of a child, which the parent's `waitpid` with
   `WUNTRACED` reports; `^C` that sends `SIGINT` to the foreground group
   only; a background group's read that gets `SIGTTIN`; a resize that sends
-  `SIGWINCH`; a master's close that sends `SIGHUP`; and a recompiled `vi`
-  and `less` that draw on a pseudo-terminal.
+  `SIGWINCH`; a master's close that sends `SIGHUP`; and a recompiled `less`
+  that draws on a pseudo-terminal.
 * **Fuzz targets.** The startup and fork messages' decoders, in `liberx`
   and in the command image; the program protocol's, in `liberx` and in the
   handler; and `erx_elf_plan`, built from the same sources for the host

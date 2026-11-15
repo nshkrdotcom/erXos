@@ -3156,9 +3156,11 @@ The corpus:
   and zero-width code points between the sequences, from a recorded seed;
 * `prim_tty`'s output for a scripted editing session: lines longer than
   the screen, wide characters, tabs, the expansion's status line;
-* the output of toybox's applets that drive a terminal (`top`, `vi`,
-  `hexedit`, `watch`, `more`, `ls --color`, `grep --color`), recorded on
-  erXos;
+* the output of toybox's applets that drive a terminal (`hexedit`,
+  `watch`, `more`, `ls --color`, `grep --color`), recorded on erXos;
+* `vi`'s output for a scripted editing session over a file with long
+  lines, tabs, wide characters and controls
+  ([design-vi.md](design-vi.md#drawing)), recorded on erXos;
 * `vttest`'s core, recorded live: a Ruby driver runs `vttest` on a host
   pseudo-terminal with the libvterm harness as its terminal, answers each
   pause with Return, and records `vttest`'s bytes, the pauses and

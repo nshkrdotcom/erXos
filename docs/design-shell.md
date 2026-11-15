@@ -327,7 +327,9 @@ shell and for `erx:` functions that run commands:
    `pwd`, `mkdir`, `rm`, `mv`, `cp`, `grep`, `sort`, `wc`, `uname`,
    `dmesg`, `true` and `false`, which follow FreeBSD's utilities of the same names
    ([Text commands](#text-commands)), so toybox's applets of those names
-   are never built; the network utilities `ifconfig [-a] [interface]`,
+   are never built; the screen editor `vi`, which behaves like FreeBSD's
+   nvi in its basics ([design-vi.md](design-vi.md)), so toybox's `vi` is
+   never built either; the network utilities `ifconfig [-a] [interface]`,
    `ping` and `host`, which follow FreeBSD's ifconfig(8), ping(8) and
    host(1) over erXos's own stack, reading interfaces through
    `erx_net:interfaces/0`, echo replies through `erx_icmp_sock` and
@@ -430,7 +432,14 @@ does not interpret what flows. Only the transport differs:
   the session knows them all
   ([design-pipes.md](design-pipes.md#making-a-pipe));
 * a redirection hands a stage a file the shell opened, and a stream with
-  neither a pipe nor a redirection is the session's terminal.
+  neither a pipe nor a redirection is the session's terminal: an open of
+  the session's tty, which the terminal relay serves for an Erlang
+  command as it serves a program's ([Job control](#job-control)), so a
+  command reads the terminal, sets its modes and asks its size as a
+  program does ([Interfaces](#interfaces)). The system shell's terminal
+  is the console's, which runs no line discipline
+  ([design-live.md](design-live.md#the-tty)): there a command's output
+  streams are the console's writes and its standard input is empty.
 
 A command's output is bytes, as a program's is, and the tty passes it
 unchanged ([The tty](design-live.md#the-tty)). Where FreeBSD's command
@@ -746,12 +755,18 @@ and `kill %N` ends a job, with `SIGTERM` unless a signal is named.
 the session's tty ([design-live.md](design-live.md#the-tty)) and serves
 the session's `/dev/tty`: the opens that the session's programs hold on it,
 their standard streams among them
-([design-programs.md](design-programs.md#the-terminal)). It holds the
+([design-programs.md](design-programs.md#the-terminal)), and the opens that
+are the terminal streams of the Erlang commands the session's own domain
+runs. It holds the
 `termios`, runs the line discipline, drives the group of the session's shell
 and talks to the tty's master. It is the only process that reads terminal
-input for programs, it takes requests only through the programs' handlers,
-which never wait on a program, and it never waits on one itself, so a busy
-or hostile program delays none of its work:
+input for programs and commands, it takes requests only through the
+programs' handlers, which never wait on a program, and from the commands'
+own opens, and it never waits on either itself, so a busy
+or hostile program delays none of its work. A command domain holds no open
+of the session's: its stream relay copies bytes
+([design-programs.md](design-programs.md#what-a-program-can-start)), so a
+command there has no terminal to set:
 
 * **Input.** Bytes from the master go through the line discipline to what
   reads the tty: the group while the shell prompts, on a raw tty with
@@ -782,10 +797,16 @@ or hostile program delays none of its work:
   relay holds at that
   moment, as a terminal flushes its output on an interrupt; `Ctrl-Z` stops
   the job.
+* **Size.** When the master reports a size that differs from the one the
+  tty holds, the line discipline returns `winch`, and the relay passes it
+  to the shell, which delivers it to the foreground job
+  ([Window size](#window-size)).
 * **Modes across jobs.** The shell sets the tty back to cooked before it
   starts a foreground job, keeps a stopped job's `termios` for its `fg`, and
   takes its own raw setting back when the job ends or stops, as a UNIX shell
-  does.
+  does. A job's `termios` is whatever its programs and Erlang commands set,
+  so a command that ends or crashes in raw mode leaves nothing in the
+  `termios` either.
 
 **Jobs and their tags.** A job is the set of its stages and of every
 program they started, which the command server records at each spawn
@@ -851,6 +872,16 @@ which pauses no space, stopping a job stops only its Erlang commands: the
 shell reports those stopped and names the job's programs, which run on, so
 the job table never shows a running program as stopped
 ([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
+
+**A command stops its own job** with `erx_cmd:stop/1`, as a program
+raises `SIGTSTP`: a command that has cleared `ISIG` reads `Ctrl-Z` as a
+key, and `vi` does this on it. The call asks the job table for the stop
+`Ctrl-Z` makes, and the shell answers once the job's tag is marked
+stopped. The calling process is then set aside at the scheduler with the
+rest of its job, so it takes the answer, and the call returns, only after
+`fg` or `bg` clears the mark. The shell keeps the job's `termios` for its
+`fg` as for any stopped job. In a command domain, which reaches no job
+table, `stop/1` fails with `enotsup`.
 
 **Reading in the background.** Only the foreground job reads the
 terminal; a background job that reads it waits until it is brought to the
@@ -1015,12 +1046,14 @@ load field.
   ([design-programs.md](design-programs.md#the-terminal)). A program that
   does not catch it runs on.
 * **Erlang commands opt in**, as a program catches `SIGINFO`. A process
-  calls `erx_cmd:catch_info()`, which sets the key `'$erx_info'` in its
-  own dictionary. The shell reads that key in the same `process_info/2`
-  call that reads the member's values. It sends `{erx_cmd, info}` to each
-  member that set the key, and sends nothing to any other member. A
+  calls `erx_cmd:catch_events(Events)`, with `Events` a list of `info`
+  and `winch` ([Window size](#window-size)), which sets the key
+  `'$erx_events'` in its own dictionary to that list. The shell reads
+  that key in the same `process_info/2` call that reads the member's
+  values. It sends `{erx_cmd, info}` to each member whose list holds
+  `info`, and sends nothing to any other member. A
   spawned helper inherits nothing: each process that wants requests opts
-  in. `erx_cmd:info_requested()` takes every pending request without
+  in. `erx_cmd:requested(info)` takes every pending request without
   waiting and returns whether there was one, so requests coalesce as a
   pending signal does. A process that waits in `receive` matches
   `{erx_cmd, info}` itself. The request does not go to the job's group
@@ -1053,6 +1086,40 @@ command shell's group passes `info` to the shell, unless the input request
 it is serving is the shell's own, in which case `Ctrl-T` is `edlin`'s key.
 The Erlang shell's group gets it as the key. The console's output column
 is unknown, so the line always starts with a newline there.
+
+#### Window size
+
+A full-screen command or program redraws when its terminal's size
+changes, as FreeBSD's programs do on `SIGWINCH`. The change takes the
+path `Ctrl-T`'s info request takes, with no status line:
+
+* **Seen once.** The master reports a size as `{tty_size, Rows, Columns}`
+  ([design-live.md](design-live.md#the-tty)). `erx_tty:size/3` returns
+  `winch` only when the size differs from the one the tty holds, so a
+  repeated report of the same size, such as the resend of a lost answer,
+  sends nothing.
+* **Delivered to the foreground job.** The relay passes `winch` to the
+  shell's group and the group to the shell, as it passes `info`. The job
+  table answers `{winch, Tags}` for the jobs in the foreground, as it
+  answers `{info, Tags}`, and the shell, in a short-lived process,
+  delivers it: each program's handler sends the program `SIGWINCH`, whose
+  default action is to ignore it, and each Erlang process whose
+  `'$erx_events'` holds `winch` gets `{erx_cmd, winch}`. No foreground
+  job means nothing is sent.
+* **Bursts merge.** The shell runs one delivery at a time. A `winch` that
+  arrives while one runs marks one more delivery to follow it, and further
+  ones change nothing, so a window dragged to a new size gives at most two
+  deliveries. Neither the signal nor the message carries the size: a
+  receiver asks for it (`erx_cmd:tty/2` with `winsize`, or `TIOCGWINSZ`),
+  so a merged report loses nothing, and `erx_cmd:requested(winch)` takes
+  the reports that wait.
+* **A stopped job** gets no report, since it is not in the foreground; it
+  asks the size when it is continued, as `vi` does
+  ([design-vi.md](design-vi.md#the-command-at-the-edge)).
+
+So a program on the session's own tty gets `SIGWINCH` in the first tier,
+as on a pseudo-terminal of the second
+([design-programs.md](design-programs.md#the-terminal)).
 
 ## Interfaces
 
@@ -1110,15 +1177,59 @@ domain, whose release ships no service's modules. `ps` lists the
 session's own table and `dmesg` reads its namespace's `/proc`, so
 neither declares a facet.
 `erx_cmd:write/2` writes bytes to standard output, waiting while 64 KiB
-are in flight to a neighbouring Erlang stage or while a pipe has no room;
+are in flight to a neighbouring Erlang stage, while a pipe has no room or
+while the tty has none ([design-live.md](design-live.md#the-tty));
 `erx_cmd:read/1` takes the next bytes or `eof` from standard input, and
 `erx_cmd:read_line/1` the next line, at most 64 KiB, or `eof`;
 `erx_cmd:isatty/2` says whether a standard stream is the terminal
-([Pipelines](#pipelines)), and `erx_cmd:columns/1` gives the terminal's width,
-`COLUMNS` first, as FreeBSD's `ls` and `ps` read it. `erx_cmd:catch_info/0` opts the calling process
-in to `Ctrl-T`'s info request, and `erx_cmd:info_requested/0` takes the
-requests pending for it
-([`Ctrl-T`](#ctrl-t-status-and-the-info-request)). No other source of authority exists for a
+([Pipelines](#pipelines)), and `erx_cmd:columns/1` and `erx_cmd:rows/1`
+give the terminal's width and height, `COLUMNS` and `LINES` first, as
+FreeBSD's `ls`, `ps` and termcap read them, then the size the session's
+tty holds when a standard stream is the terminal, else `unknown`.
+`erx_cmd:catch_events/1` opts the calling process in to `Ctrl-T`'s info
+request and to size reports, and `erx_cmd:requested/1` takes the reports
+of one kind pending for it
+([`Ctrl-T`](#ctrl-t-status-and-the-info-request), [Window
+size](#window-size)).
+
+A command's terminal is its standard input when that is an open of the
+session's tty ([Pipelines](#pipelines)), and three calls reach it:
+
+```erlang
+-spec tty(ctx(), tcgetattr | {tcsetattr, erx_tty:termios()} | winsize) ->
+          {ok, erx_tty:termios()} | ok | {ok, {Rows, Columns}} |
+          {error, enotty}.
+-spec watch(ctx()) -> ok | {error, enotty}.
+-spec stop(ctx()) -> ok | {error, enotsup}.
+```
+
+* `tty/2` sends the relay the `{tty, Open, Request}` a program's handler
+  sends for a program ([design-programs.md](design-programs.md#the-terminal)):
+  `tcgetattr` and `tcsetattr` read and set the tty's `termios`, which
+  `erx_tty:set/2` checks whole, and `winsize` answers the size the master
+  last reported. Standard input redirected from a file, a pipe or
+  `/dev/null` answers `enotty`, and so does every call in a command
+  domain, whose stream relay only copies bytes, and in the system shell,
+  whose console has no tty: a call never reaches the session's terminal
+  through a stream that is not it.
+* `read/1` on the terminal reads as `liberx` reads for a program: it asks
+  the relay for one ready report, the line discipline's `read_wait`, and
+  once the report comes sends the read, which the relay answers at once
+  through `read/3`; with `VTIME` set, the line discipline's `timer` ends
+  the wait. `VMIN` and `VTIME` mean what `erx_tty` makes them mean
+  ([design-live.md](design-live.md#the-tty)). In cooked mode a line is
+  read, and `Ctrl-D` at the start of a line gives `eof`. In raw mode a
+  timed read that ends with no bytes returns `<<>>`, never `eof`. A read
+  that another reader of the job beat to the bytes waits for the next
+  report.
+* `watch/1` asks for that ready report and returns at once; the report
+  arrives as the message `{erx_cmd, ready}`, after which `read/1` returns
+  without waiting. So a command's one `receive` takes keys, size reports
+  and its own timers together, as `vi`'s does
+  ([design-vi.md](design-vi.md#the-command-at-the-edge)).
+* `stop/1` stops the command's own job ([Job control](#job-control)).
+
+No other source of authority exists for a
 command: the system domain's services are reached only through facets in
 the context.
 
@@ -1309,7 +1420,7 @@ remain independent of catalog generation.
   * Erlang commands: `cp` of a large file from a test server that delays
     each piece. `Ctrl-T` shows the line naming `cp`, then `cp`'s
     `from -> to  N%`, in that order. A helper process that did not opt in
-    keeps an empty queue. A `cp` that does not call `catch_info`, and a
+    keeps an empty queue. A `cp` that does not call `catch_events`, and a
     report that sends the requests before it writes the line, each fail.
   * Programs: FreeBSD's `sleep`, built as a test program, shows the line
     naming `sleep` and its process id, then its own report. A program that
@@ -1329,6 +1440,34 @@ remain independent of catalog generation.
     two spaces before `cmd:`, the leading newline, and the same no-job
     texts. `cp`'s and `sleep`'s own reports match byte for byte once the
     numbers are masked. A one-space separator fails the comparison.
+* **A command at the terminal:**
+  * `tty/2`: a test command sets the tty raw, reads three keys typed with
+    no Return one by one, and ends; the prompt then echoes and edits. With
+    the shell's restore of its own `termios` removed, the prompt test
+    fails. The same command with standard input from a file, from a pipe
+    and from `/dev/null`, under `within`, and in the system shell gets
+    `enotty` and the tty's `termios` is unchanged; a `tty/2` that falls
+    back to the session's tty for a redirected stream fails the file case.
+  * `read/1`: with `VMIN` 0 and `VTIME` 1 and no input, a read returns
+    `<<>>` after about 100 ms and the command reads on; returning `eof`
+    fails it. In cooked mode, a typed line, then `Ctrl-D` at the start of
+    a line, gives the line and then `eof`. A command that calls `watch/1`
+    and then sleeps gets `{erx_cmd, ready}` once for typed input and its
+    `read/1` returns at once.
+  * Window size: with a command in the foreground that opted in to
+    `winch`, ten size reports from the master in a burst give it one or
+    two `{erx_cmd, winch}` messages and `winsize` then answers the last
+    size; the same size reported again gives none. A command that did not
+    opt in gets nothing; a C test program in the foreground gets
+    `SIGWINCH` once per delivery; with nothing in the foreground nothing
+    is sent. Seeded: `size/3` that returns `winch` for an unchanged size,
+    which fails the repeat case; a shell that delivers every `winch`,
+    which fails the burst case.
+  * `stop/1`: a test command clears `ISIG`, calls `stop/1` on `Ctrl-Z`
+    and records when the call returns. `jobs` shows it stopped, the
+    prompt works with the tty cooked, and the call returns only after
+    `fg`, with the command's raw `termios` back. A `stop/1` that returns
+    before `fg` fails it.
 * **`rc` as a program:** `system` and `popen` from a C program, with
   `$status` mapped to wait statuses for an empty status, a number, a
   signal's name and an error's text, and for pipelines of one, two and

@@ -551,7 +551,10 @@ on the host:
 * `set(Termios, Tty)` takes a new `termios`, checking it whole; a flag
   outside `erx_tty`'s table fails with `EINVAL`.
 * `size(Rows, Columns, Tty)` takes a new window size, each from 1 to 65,535,
-  and refuses any other.
+  and refuses any other. It returns `winch` when the size differs from the
+  one the tty holds and nothing when it is the same, so only a change
+  reaches the foreground job
+  ([design-shell.md](design-shell.md#window-size)).
 * `status(Line, Room, Tty)` returns the bytes of a status line for the
   master. They start with a newline when the output column, which
   `output/3` keeps, is not 0. It returns nothing when `NOKERNINFO` is set,
@@ -625,7 +628,8 @@ uses `erlang:display_string/2`.
 
 **Where a tty lives.** A session's ttys live in the session's domain, in its
 terminal relay ([Job control](design-shell.md#job-control)), which answers
-every `{tty, Open, Request}` of its programs. A tty's master is `erx_console`
+every `{tty, Open, Request}` of its programs and of the Erlang commands of
+the session's own domain. A tty's master is `erx_console`
 while the tty is connected at a console line, the UART or the host link's
 `console` line ([The console](#the-console)); a terminal on a display,
 `erx_term`, a process of the session
@@ -714,6 +718,13 @@ wait that way, since a program's outstanding request holds up its signals
 with no request outstanding, and then sends a write that is answered at once,
 with the count taken ([Writing a
 terminal](design-programs.md#the-terminal)).
+
+An Erlang command reads the tty as a program does, because its outstanding
+read must not block its `receive` either: it asks for one ready report, the
+line discipline's `read_wait`, takes the report as a message, and then sends
+a read that `read/3` answers at once, so one `receive` of the command takes
+its keys, its size reports and its own timers
+([Interfaces](design-shell.md#interfaces)).
 
 **A stopped tty.** A tty whose master takes no more output is stopped, as a
 line held by XOFF is: the owner holds at most 4 KiB, counted after `output/3`,
@@ -1267,9 +1278,11 @@ cursor so that nothing scrolls on a terminal of five lines or more:
 `LINES` when it is a positive number, as FreeBSD's termcap takes it,
 else the height the terminal reports, else 24. Each line is cut one column short of the terminal's width, as
 FreeBSD's screen is (`usr.bin/top/screen.c`), and never inside a UTF-8
-sequence. `top` takes no keys: FreeBSD's interactive commands, `q` among
-them, read the keyboard in the line discipline's non-canonical mode,
-which an Erlang command does not set, so `Ctrl-C` is how it ends.
+sequence. `top` takes no keys, so `Ctrl-C` ends it as it ends any
+command. FreeBSD's interactive commands, `q` among them, read the keyboard
+in the line discipline's non-canonical mode, which an Erlang command sets
+through `erx_cmd:tty/2` as `vi` does
+([design-vi.md](design-vi.md)); `top` does not offer them.
 
 With `-b` or `-n`, or when its output is not a terminal, `top` writes
 `count` displays, one by default, each after the first following a blank

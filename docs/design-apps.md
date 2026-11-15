@@ -359,8 +359,7 @@ the session's export answers its own names there, `/etc/passwd`,
 `/etc/group`, `/dev/null`, `/dev/zero`, `/dev/urandom` and `/dev/tty`,
 and passes every other name to the session's grant, within the roots
 and rights the program's namespace was narrowed to, so a native
-program's `vi /etc/rc.conf` edits the file and its listing of `/etc`
-shows both
+program rewrites `/etc/rc.conf` and its listing of `/etc` shows both
 ([design-files.md](design-files.md#narrowing-for-a-program)).
 
 **When the file is read.** The start service reads `rc.conf` at boot,
@@ -1045,7 +1044,7 @@ variable left out of the reserve, which admits the third.
   after a reboot leaves the row `refused` with its reason at
   `/proc/apps`; a line written into `/etc/rc.conf` with an editor
   changes nothing until the row's own `service` command; a native
-  `vi /etc/rc.conf` from the administrator's session edits the file,
+  program run from the administrator's session rewrites `/etc/rc.conf`,
   and a native program's listing of `/etc` shows `rc.conf` beside
   `passwd`; seeded: the merge's
   grant check removed, which starts a session that shows nothing;
