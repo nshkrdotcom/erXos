@@ -29,12 +29,11 @@ reads a path, the code server included.
          sendfile/8]).
 
 -include("file.hrl").
+-include("generated/erx_abi.hrl").
 
 %% The cells of the atomics array.
 -define(OFFSET, 1).
 -define(CLOSED, 2).
-%% The largest offset position/2 sets, an off_t's.
--define(OFFSET_MAX, ((1 bsl 63) - 1)).
 %% The bytes read_line/1 reads at a time while it looks for the end of a line, stock's
 %% least read of read_line.
 -define(LINE_READ, 256).
@@ -183,8 +182,8 @@ without_cr(Line) when byte_size(Line) >= 2 ->
 without_cr(Line) ->
     Line.
 
-%% Sets the offset, from the start, the offset or the end; einval for an offset that
-%% would fall before the start or past an off_t.
+%% Sets the offset, from the start, the offset or the end, by FreeBSD's seek rule
+%% (erx_file_remote:seek_to/2); an offset that is no off_t is badarg, as stock answers it.
 -spec position(#file_descriptor{}, term()) -> {ok, non_neg_integer()} | {error, posix() | badarg}.
 position(Fd, At) ->
     on_open(Fd, fun(File) -> moved(File, At) end).
@@ -193,13 +192,13 @@ moved(File, Mark) when Mark =:= bof; Mark =:= cur; Mark =:= eof ->
     moved(File, {Mark, 0});
 moved(File, Offset) when is_integer(Offset) ->
     moved(File, {bof, Offset});
-moved(#{cells := Cells} = File, {Mark, Offset}) when is_integer(Offset) ->
-    case base(File, Mark) of
-        {ok, Base} when Base + Offset >= 0, Base + Offset =< ?OFFSET_MAX ->
-            atomics:put(Cells, ?OFFSET, Base + Offset),
-            {ok, Base + Offset};
-        {ok, _} -> {error, einval};
-        Error -> Error
+moved(#{cells := Cells} = File, {Mark, Offset})
+  when is_integer(Offset), Offset >= -?ERX_OFF_MAX - 1, Offset =< ?ERX_OFF_MAX ->
+    maybe
+        {ok, Base} ?= base(File, Mark),
+        {ok, To} ?= erx_file_remote:seek_to(Base, Offset),
+        atomics:put(Cells, ?OFFSET, To),
+        {ok, To}
     end;
 moved(_, _) ->
     {error, badarg}.

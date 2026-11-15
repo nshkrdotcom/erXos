@@ -249,17 +249,6 @@ seek_answers_the_offset_reached_test_() ->
      %% An offset past off_t from the description is never sent as one.
      ?_assertEqual({error, eio}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, 1 bsl 63}})))].
 
-%% Where a seek moves an offset, as FreeBSD's vn_seek moves a regular file's: a sum past
-%% off_t is eoverflow, a negative one einval.
-seek_to_follows_freebsd_test_() ->
-    Max = (1 bsl 63) - 1,
-    [?_assertEqual({ok, 15}, erx_prog_handler_core:seek_to(10, 5)),
-     ?_assertEqual({ok, 0}, erx_prog_handler_core:seek_to(10, -10)),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:seek_to(10, -11)),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:seek_to(0, -(1 bsl 63))),
-     ?_assertEqual({ok, Max}, erx_prog_handler_core:seek_to(Max - 1, 1)),
-     ?_assertEqual({error, eoverflow}, erx_prog_handler_core:seek_to(Max, 1)),
-     ?_assertEqual({error, eoverflow}, erx_prog_handler_core:seek_to(1, Max))].
 
 %% The program was started with 4 slots: slot 4 is past them.
 data_slot_past_the_program_slots_is_einval_test_() ->

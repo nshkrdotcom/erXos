@@ -387,7 +387,7 @@ serve_pwrite(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
 	r->u.ok.io_done = n;
 }
 
-/* A seek, as the description moves its offset (erx_prog_handler_core:seek_to/2). */
+/* A seek, as the description moves its offset (erx_file_remote:seek_to/2). */
 static void
 serve_seek(const erx_prog_request_t *q, erx_prog_seek_reply_t *r)
 {

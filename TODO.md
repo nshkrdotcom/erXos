@@ -3047,16 +3047,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   times are `time_t`, a signed 64-bit value the frame profile spells only as an `offset`, so it needs a
   declared kind of its own first (docs/design-abi.md, "Program protocol"), and a file's `fstat` answers
   `ENOSYS` until then. No QEMU case runs a program's `lseek`, `pread` or `pwrite` end to end yet.
-* [Medium] programs, FreeBSD's seek rule (a sum past `OFF_MAX` is `EOVERFLOW`, a negative one `EINVAL`, as
-  `vn_seek` in sys/kern/vfs_vnops.c answers) is written three times: `erx_prog_handler_core:seek_to/2`, which a
-  file's description applies, `erx_prog_seek_plan` (`liberx/program/fd_plan.c`) for `/dev/null`'s offset, and the
-  file client's stand-in (`test/fixtures/prog_file_driver.c`, `serve_seek`); and `erx_file_remote:moved/2`, under
-  `file:position/2`, answers `einval` for an overflow where the description answers `eoverflow`, and its `eof`
-  base checks the server's size where the description's does not. Put the rule in `moved/2` (stock OTP passes
-  `lseek`'s own errno on FreeBSD), have the description call `file:position(File, {Whence, Offset})`, delete
-  `seek_to/2`, and decide whether null's offset moves to a description too. No host test runs the real
-  description's `pread`, `pwrite` or seek; the handler's suites stand it in. `OFF_MAX` is also spelled in the
-  core, `erx_file_remote`, the Ruby generator and `prog.txt`; generate it once.
+* [Low] programs, FreeBSD's seek rule (a sum past `OFF_MAX` is `EOVERFLOW`, a negative one `EINVAL`, as
+  `vn_seek` in sys/kern/vfs_vnops.c answers) has one Erlang home, `erx_file_remote:seek_to/2`, which both
+  backends' `file:position/2` and so a program's file description follow, but it is spelled again in C:
+  the release file system's `efile_seek` (`otp/erts/emulator/nifs/erxos/erx_prim_file.c`), which no host test
+  reaches, and on the program's side `erx_prog_seek_plan` (`liberx/program/fd_plan.c`) for `/dev/null`'s offset, and the file
+  client's stand-in (`test/fixtures/prog_file_driver.c`, `serve_seek`). Decide whether null's offset moves
+  to a description too. No host test runs the real description's `pread`, `pwrite` or seek; the handler's
+  suites stand it in. The two backends also each keep `moved/2`'s whence handling and its `badarg` guard for an
+  offset outside off_t; one function taking the eof size and the offset cell would hold the whole decision,
+  and `erx_file_remote`'s guard has no test through `file:position/2` (the EROFS copy has one) [Medium].
 * [Low] programs, `liberx/program/file.c`: a `pwrite` whose end passes `OFF_MAX` is sent, and the server may
   write part of it before `erx_file_remote` answers `eio`, where FreeBSD's `ffs_write` refuses it whole with
   `EFBIG`; `lseek`'s `SEEK_DATA` and `SEEK_HOLE` answer `EINVAL` without a request, where FreeBSD's `vn_seek`

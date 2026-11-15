@@ -66,6 +66,8 @@
 -export([close/1, read/2, read_line/1, pread/2, pread/3, write/2, pwrite/2, pwrite/3,
          position/2, truncate/1, sync/1, datasync/1, advise/4, allocate/3,
          read_handle_info/2, copy/3, sendfile/8, ipread_s32bu_p32bu/3]).
+%% FreeBSD's seek rule, which every open file of erXos's own backends follows.
+-export([seek_to/2]).
 
 -include("file.hrl").
 -include("generated/erx_abi.hrl").
@@ -101,8 +103,6 @@
 -define(OFFSET, 1).
 -define(CLOSED, 2).
 -define(CELLS, 2).
-%% The largest offset, a file's size included, as off_t holds it.
--define(OFFSET_MAX, 16#7fffffffffffffff).
 -define(U64_MAX, 16#ffffffffffffffff).
 %% Stock prim_file's read-ahead for a bare read_ahead option, and the least one read of
 %% read_line asks for.
@@ -615,7 +615,7 @@ emptied(Fd, Act) ->
 %% answers, sending nothing.
 read_at(#{access := write}, _, _) ->
     {error, ebadf};
-read_at(_, Offset, _) when Offset < 0; Offset > ?OFFSET_MAX ->
+read_at(_, Offset, _) when Offset < 0; Offset > ?ERX_OFF_MAX ->
     {error, einval};
 read_at(File, Offset, Size) ->
     case read_in_units(File, Offset, min(Size, ?READ_MAX), []) of
@@ -626,7 +626,7 @@ read_at(File, Offset, Size) ->
 %% Parts holds the replies so far, newest first, each a whole request's count. A reply
 %% longer than its request, which no server of erXos sends, answers eio; a request whose
 %% offset would pass 2^63 - 1 is not sent, and what was read is answered.
-read_in_units(_, Offset, Size, Parts) when Size =:= 0; Offset > ?OFFSET_MAX ->
+read_in_units(_, Offset, Size, Parts) when Size =:= 0; Offset > ?ERX_OFF_MAX ->
     {ok, iolist_to_binary(lists:reverse(Parts, []))};
 read_in_units(#{grant := Grant, fid := Fid, unit := Unit} = File, Offset, Size, Parts) ->
     Count = min(Size, Unit),
@@ -683,7 +683,7 @@ ipread_s32bu_p32bu(_, _, _) ->
     {error, badarg}.
 
 read_pointer_block(_, Offset, MaxSize)
-  when Offset < 0; Offset > ?OFFSET_MAX; MaxSize >= 1 bsl 31; MaxSize < -?OFFSET_MAX - 1 ->
+  when Offset < 0; Offset > ?ERX_OFF_MAX; MaxSize >= 1 bsl 31; MaxSize < -?ERX_OFF_MAX - 1 ->
     {error, einval};
 read_pointer_block(File, Offset, MaxSize) ->
     case read_at(File, Offset, 8) of
@@ -835,7 +835,7 @@ write_each(_, _, _) ->
 %% as stock answers, sending nothing.
 written(#{access := read}, _, _, _) ->
     {error, ebadf};
-written(_, Offset, _, _) when Offset < 0; Offset > ?OFFSET_MAX ->
+written(_, Offset, _, _) when Offset < 0; Offset > ?ERX_OFF_MAX ->
     {error, einval};
 written(File, Offset, Bytes, Moved) ->
     try iolist_to_binary(Bytes) of
@@ -875,7 +875,7 @@ offset_after(File, Sent, Count, At) ->
         {unknown, #{append := true}} -> size_of(File)
     end.
 
-checked_offset(Offset) when Offset =< ?OFFSET_MAX -> {ok, Offset};
+checked_offset(Offset) when Offset =< ?ERX_OFF_MAX -> {ok, Offset};
 checked_offset(_) -> {error, eio}.
 
 size_of(#{grant := Grant, fid := Fid}) ->
@@ -884,9 +884,9 @@ size_of(#{grant := Grant, fid := Fid}) ->
         [{error, _} = Error] -> Error
     end.
 
-%% Moves the offset as stock's seek does: from the start, the offset or the file's end,
-%% to a place from 0 to 2^63 - 1, else einval.
--spec position(#file_descriptor{}, term()) -> {ok, non_neg_integer()} | {error, posix()}.
+%% Moves the offset from the start, the offset or the file's end as seek_to/2 does; an
+%% offset that is no off_t is badarg, as stock answers it.
+-spec position(#file_descriptor{}, term()) -> {ok, non_neg_integer()} | {error, posix() | badarg}.
 position(Fd, At) ->
     emptied(Fd, fun(File) -> moved(File, At) end).
 
@@ -894,13 +894,13 @@ moved(File, Mark) when Mark =:= bof; Mark =:= cur; Mark =:= eof ->
     moved(File, {Mark, 0});
 moved(File, Offset) when is_integer(Offset) ->
     moved(File, {bof, Offset});
-moved(#{cells := Cells} = File, {Mark, Offset}) when is_integer(Offset) ->
-    case {base(File, Mark), Offset} of
-        {{ok, Base}, _} when Base + Offset >= 0, Base + Offset =< ?OFFSET_MAX ->
-            atomics:put(Cells, ?OFFSET, Base + Offset),
-            {ok, Base + Offset};
-        {{ok, _}, _} -> {error, einval};
-        {Error, _} -> Error
+moved(#{cells := Cells} = File, {Mark, Offset})
+  when is_integer(Offset), Offset >= -?ERX_OFF_MAX - 1, Offset =< ?ERX_OFF_MAX ->
+    maybe
+        {ok, Base} ?= base(File, Mark),
+        {ok, To} ?= seek_to(Base, Offset),
+        atomics:put(Cells, ?OFFSET, To),
+        {ok, To}
     end;
 moved(_, _) ->
     {error, badarg}.
@@ -909,6 +909,16 @@ base(_, bof) -> {ok, 0};
 base(#{cells := Cells}, cur) -> {ok, atomics:get(Cells, ?OFFSET)};
 base(File, eof) -> size_of(File);
 base(_, _) -> {error, badarg}.
+
+%% The offset a seek reaches from `Base`, the start, the offset or the file's
+%% size, by `Offset`, as FreeBSD's vn_seek moves a regular file's
+%% (sys/kern/vfs_vnops.c at release/15.1.0) and stock OTP answers on the
+%% development host: a sum past off_t is `eoverflow`, and a negative one
+%% `einval`, which lseek's return could not tell from an error.
+-spec seek_to(0..?ERX_OFF_MAX, integer()) -> {ok, 0..?ERX_OFF_MAX} | {error, eoverflow | einval}.
+seek_to(Base, Offset) when Base + Offset > ?ERX_OFF_MAX -> {error, eoverflow};
+seek_to(Base, Offset) when Base + Offset < 0 -> {error, einval};
+seek_to(Base, Offset) -> {ok, Base + Offset}.
 
 %% Sets the size to the offset. Through a file not opened for writing, einval, as FreeBSD's
 %% kern_ftruncate answers, sending nothing.
@@ -946,8 +956,8 @@ advise(Fd, Offset, Length, Advice) ->
 advised(Offset, Length, _) when not is_number(Offset); not is_number(Length) ->
     {error, badarg};
 advised(Offset, Length, Advice)
-  when is_integer(Offset), Offset >= 0, Offset =< ?OFFSET_MAX,
-       is_integer(Length), Length >= 0, Length =< ?OFFSET_MAX ->
+  when is_integer(Offset), Offset >= 0, Offset =< ?ERX_OFF_MAX,
+       is_integer(Length), Length >= 0, Length =< ?ERX_OFF_MAX ->
     case known_advice(Advice) of
         true -> ok;
         false -> {error, einval}

@@ -39,25 +39,29 @@ class ErxFileRemoteReplyTest < Minitest::Test
   # hands out fresh fids.
   FID = "fid() ->\n    prim_file:erx_fid().\n"
   STAND_IN_FID = "fid() ->\n    erlang:unique_integer([positive]).\n"
-  # Seeded faults of a native program's open: the text replaced, its replacement and the
-  # case that must fail.
-  OpenFault = Data.define(:name, :from, :to, :caught_by)
-  OPEN_FAULTS = [
-    OpenFault.new(name: "an lopen's eloop under O_NOFOLLOW answered as it is",
+  # Seeded faults of a native program's open and of the seek rule: the text replaced, its
+  # replacement and the case that must fail.
+  TextFault = Data.define(:name, :from, :to, :caught_by)
+  TEXT_FAULTS = [
+    TextFault.new(name: "an lopen's eloop under O_NOFOLLOW answered as it is",
                   from: 'unfollowed({error, eloop}, Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> {error, emlink};',
                   to: 'unfollowed({error, eloop}, Flags) when Flags < 0 -> {error, emlink};',
                   caught_by: 'nofollow_refuses_a_last_link_test_'),
-    OpenFault.new(name: 'an lopen under O_NOFOLLOW that follows a last link',
+    TextFault.new(name: 'an lopen under O_NOFOLLOW that follows a last link',
                   from: 'last_mode(true) -> nofollow;', to: 'last_mode(true) -> follow;',
                   caught_by: 'nofollow_refuses_a_last_link_test_'),
-    OpenFault.new(name: "an lcreate under O_NOFOLLOW that follows a last link",
+    TextFault.new(name: "an lcreate under O_NOFOLLOW that follows a last link",
                   from: 'unfollowing(Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> emlink;',
                   to: 'unfollowing(Flags) when Flags < 0 -> emlink;',
                   caught_by: 'nofollow_refuses_a_last_link_test_'),
-    OpenFault.new(name: 'O_DIRECTORY dropped',
+    TextFault.new(name: 'O_DIRECTORY dropped',
                   from: 'directory => Flags band ?ERX_P9_O_DIRECTORY =/= 0, type_check => false',
                   to: 'directory => false, type_check => false',
-                  caught_by: 'directory_opens_only_a_directory_test_')
+                  caught_by: 'directory_opens_only_a_directory_test_'),
+    TextFault.new(name: 'a seek past off_t admitted',
+                  from: 'seek_to(Base, Offset) when Base + Offset > ?ERX_OFF_MAX -> {error, eoverflow};',
+                  to: 'seek_to(Base, Offset) when Base + Offset > ?ERX_OFF_MAX + 1 -> {error, eoverflow};',
+                  caught_by: 'seek_to_follows_freebsd_test_')
   ].freeze
 
   def test_the_cases_pass
@@ -76,8 +80,8 @@ class ErxFileRemoteReplyTest < Minitest::Test
     end
   end
 
-  OPEN_FAULTS.each_with_index do |fault, index|
-    define_method(:"test_seeded_open_fault_#{index}_is_caught") do
+  TEXT_FAULTS.each_with_index do |fault, index|
+    define_method(:"test_seeded_text_fault_#{index}_is_caught") do
       source = File.read(File.join(ROOT, CLIENT))
       assert_equal 1, source.scan(fault.from).size, "#{fault.name}: the text not found once"
       output, status = eunit(source.sub(fault.from) { fault.to })

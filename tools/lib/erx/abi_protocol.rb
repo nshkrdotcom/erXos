@@ -61,9 +61,10 @@ module Erx
       # The limit (abi/kernel.txt) naming the null capability, which a
       # capability kind excludes.
       CAP_NULL = 'cap_null'
-      # An offset's bounds, FreeBSD's off_t: OFF_MIN and OFF_MAX.
-      OFFSET_MIN = -(1 << 63)
-      OFFSET_MAX = (1 << 63) - 1
+      # The limit (abi/protocols/prog.txt) naming FreeBSD's OFF_MAX, an offset
+      # kind's bound; an offset's C value is int64_t, so it is INT64_MAX.
+      OFF_MAX = 'off_max'
+      INT64_MAX = (1 << 63) - 1
       LENGTHS = { 'u16' => 65_535, 'u32' => 65_536 }.freeze
       # Names become Erlang atoms and functions: no reserved word, no dot, and no
       # kind whose check would clash with a BIF or a helper of the generated module.
@@ -283,19 +284,22 @@ module Erx
 
       # "offset NAME [in MIN MAX]": a file offset (docs/design-abi.md,
       # "Program protocol"), FreeBSD's off_t: a signed 64-bit integer, from 0
-      # to OFFSET_MAX unless the range given reaches below 0, as lseek's
+      # to OFF_MAX unless the range given reaches below 0, as lseek's
       # offset relative to its whence does. Its base, i64, is its own: no
       # integer kind spells it, so a frame protocol's every 64-bit kind is
       # told apart by its declaration, a capability or an offset, and the C
       # check reads an offset as int64_t, never as erx_cap_t.
       def offset_kind(words, line, constants)
+        line.fail!("an offset needs the limit #{OFF_MAX}") unless constants.key?(OFF_MAX)
+        off_max = constants.fetch(OFF_MAX).value
+        line.fail!("the limit #{OFF_MAX} is int64_t's maximum, an offset's C value") unless off_max == INT64_MAX
         range = case words
-                in [] then [0, OFFSET_MAX]
+                in [] then [0, off_max]
                 in ['in', low, high] then [low, high].map { |word| Model.numeric(word, constants, line) }
                 else line.fail!('an offset takes no option but in MIN MAX')
                 end
-        unless range.all? { |value| value.between?(OFFSET_MIN, OFFSET_MAX) }
-          line.fail!("an offset's range lies within #{OFFSET_MIN}..#{OFFSET_MAX}")
+        unless range.all? { |value| value.between?(-off_max - 1, off_max) }
+          line.fail!("an offset's range lies within #{-off_max - 1}..#{off_max}")
         end
         line.fail!('an offset range has MIN above MAX') if range.first > range.last
         min, max = range.map { |value| { value: value, constant: nil }.freeze }

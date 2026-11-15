@@ -77,8 +77,8 @@ FreeBSD's `vn_open_cred` looks up `O_CREAT | O_DIRECTORY`.
 A `read`, `pread`, `write`, `pwrite`, `seek` or `clunk` of an open not in
 the table is `ebadf`, and a data slot past the program's slots is `einval`.
 A `pread` or `pwrite` names its own offset and a `seek` moves the
-description's, which the description does (seek_to/2). A read's answer longer
-than the request's count is `eio` and is never copied; otherwise its
+description's, which the description does through file:position/2. A
+read's answer longer than the request's count is `eio` and is never copied; otherwise its
 bytes are copied into the slot, and the copy's answer is the reply's. A `clunk` takes the open
 out of the table at once, and its description closes after the requests
 it holds. An error the protocol has no name for is `eio`.
@@ -105,7 +105,7 @@ session code and the program's own driver.
 
 -include("generated/erx_abi.hrl").
 
--export([new/3, step/2, phase/1, seek_to/2]).
+-export([new/3, step/2, phase/1]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
@@ -231,8 +231,6 @@ session code and the program's own driver.
 %% 9P2000.L's open flags a program may send (abi/protocols/9p.txt).
 -define(OPEN_FLAGS, (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC bor ?ERX_P9_O_EXCL bor ?ERX_P9_O_APPEND
                      bor ?ERX_P9_O_SYNC bor ?ERX_P9_O_DIRECTORY bor ?ERX_P9_O_NOFOLLOW)).
-%% FreeBSD's OFF_MAX, the largest off_t: a seek's offset reached and the protocol's bound.
--define(OFF_MAX, 16#7fffffffffffffff).
 -define(EXCL_DIRECTORY, (?ERX_P9_O_EXCL bor ?ERX_P9_O_DIRECTORY)).
 
 -doc """
@@ -528,7 +526,7 @@ done(C, Slot, {copy, Case, _, _}, eof) ->
     file_reply(C, Case, Slot, {ok, 0});
 done(C, Slot, {count, Case, Count}, ok) ->
     file_reply(C, Case, Slot, {ok, Count});
-done(C, Slot, local_seek, {ok, Offset}) when Offset >= 0, Offset =< ?OFF_MAX ->
+done(C, Slot, local_seek, {ok, Offset}) when Offset >= 0, Offset =< ?ERX_OFF_MAX ->
     file_reply(C, local_seek, Slot, {ok, Offset});
 done(C, Slot, local_seek, {ok, _Past}) ->
     file_reply(C, local_seek, Slot, {error, eio});
@@ -537,16 +535,6 @@ done(C, Slot, file_clunk, ok) ->
 done(C, Slot, Waiting, {error, Errno}) ->
     file_reply(C, case_of(Waiting), Slot, {error, Errno}).
 
--doc """
-The offset a seek reaches from `Base`, the start, the description's offset
-or the file's size, by `Offset`, as FreeBSD's vn_seek moves a regular
-file's (sys/kern/vfs_vnops.c): a sum past off_t is `eoverflow` and a
-negative one `einval`, which lseek's return could not tell from an error.
-""".
--spec seek_to(non_neg_integer(), integer()) -> {ok, non_neg_integer()} | {error, eoverflow | einval}.
-seek_to(Base, Offset) when Base + Offset > ?OFF_MAX -> {error, eoverflow};
-seek_to(Base, Offset) when Base + Offset < 0 -> {error, einval};
-seek_to(Base, Offset) -> {ok, Base + Offset}.
 
 case_of({copy, Case, _, _}) -> Case;
 case_of({count, Case, _}) -> Case;

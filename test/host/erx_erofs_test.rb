@@ -18,7 +18,8 @@ class ErxErofsTest < Minitest::Test
   # The generated sources and headers named here are in build/gen.
   Erx::Generated.ensure(root: ROOT)
   SOURCES = %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_erofs.erl
-               otp/erts/preloaded/src/erx_erofs_file.erl test/erlang/erx_erofs_tests.erl].map { |path| File.join(ROOT, path) }.freeze
+               otp/erts/preloaded/src/erx_erofs_file.erl otp/erts/preloaded/src/erx_file_remote.erl
+               build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_erofs_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDES = %w[build/gen/erlang/apps/erx/include otp/lib/kernel/include].flat_map { |dir| ['-I', File.join(ROOT, dir)] }.freeze
   FIXTURES = File.join(ROOT, 'test/fixtures/erofs')
 

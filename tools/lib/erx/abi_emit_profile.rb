@@ -347,7 +347,7 @@ module Erx
       def offset_members(kind)
         bound = lambda do |number|
           value = number.fetch(:value)
-          value == Protocols::OFFSET_MIN ? '(uint64_t)INT64_MIN' : "(uint64_t)INT64_C(#{value})"
+          value == -(1 << 63) ? '(uint64_t)INT64_MIN' : "(uint64_t)INT64_C(#{value})"
         end
         ['.form = ERX_PROFILE_INTEGER', '.sign = true',
          ".min = #{bound.call(kind.fetch(:min))}", ".max = #{bound.call(kind.fetch(:max))}"].join(",\n\t    ")

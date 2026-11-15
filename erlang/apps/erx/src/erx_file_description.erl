@@ -80,7 +80,8 @@ pwrite(Description, Slot, Offset, Bytes) ->
 -doc """
 Moves the description's offset by `Offset` from the file's start, the
 offset or the file's end (`Whence` `bof`, `cur` or `eof`), as FreeBSD's
-lseek moves a regular file's (erx_prog_handler_core:seek_to/2), for
+lseek moves a regular file's (file:position/2, whose backends follow
+erx_file_remote:seek_to/2), for
 reply slot `Slot`; a refused move leaves the offset where it was.
 """.
 -spec seek(pid(), non_neg_integer(), integer(), bof | cur | eof) -> ok.
@@ -120,7 +121,7 @@ serve(Handler, File) ->
             Handler ! {erx_file_done, Slot, file:pwrite(File, Offset, Bytes)},
             serve(Handler, File);
         {seek, Slot, Offset, Whence} ->
-            Handler ! {erx_file_done, Slot, seek(File, Offset, Whence)},
+            Handler ! {erx_file_done, Slot, file:position(File, {Whence, Offset})},
             serve(Handler, File);
         {clunk, Slot} ->
             Handler ! {erx_file_done, Slot, file:close(File)};
@@ -128,21 +129,3 @@ serve(Handler, File) ->
             _ = file:close(File)
     end.
 
-%% The offset a seek reaches from its base, the start, the offset or the
-%% size, and the move there.
-seek(File, Offset, Whence) ->
-    maybe
-        {ok, Base} ?= base(File, Whence),
-        {ok, To} ?= erx_prog_handler_core:seek_to(Base, Offset),
-        file:position(File, {bof, To})
-    end.
-
-base(_File, bof) ->
-    {ok, 0};
-base(File, cur) ->
-    file:position(File, cur);
-base(File, eof) ->
-    maybe
-        {ok, #file_info{size = Size}} ?= file:read_file_info(File, [{time, posix}]),
-        {ok, Size}
-    end.

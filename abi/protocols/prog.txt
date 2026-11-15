@@ -83,6 +83,9 @@
 # inside another kind.
 
 limit prog_frame_max u32 196608
+# FreeBSD's OFF_MAX, the largest off_t: an offset kind's bound, and a file's
+# offset and size wherever erXos's Erlang holds one (erx_file_remote).
+limit off_max u64 0x7fffffffffffffff
 limit prog_args_max u32 131072
 limit prog_path_max u32 4096
 limit prog_fds_max u32 1024
