@@ -15,7 +15,7 @@ module Erx
   module NsPlaces
     SOURCE = 'erlang/apps/erx/src/erx_ns.erl'
     HEAD = /^place\(/
-    CLAUSE = %r{^place\((?<name>[a-z][a-z0-9_]*)\) -> \{<<"(?<point>/[a-z][a-z0-9_]*)">>, }
+    CLAUSE = %r{^place\((?<name>[a-z][a-z0-9_]*)\) -> \{<<"(?<point>(?:/[a-z][a-z0-9_]*)+)">>, }
     CATCH_ALL = /^place\(_[A-Za-z0-9_]*\) -> none\.$/
 
     class Error < Erx::Error; end
