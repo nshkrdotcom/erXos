@@ -220,7 +220,10 @@ Eshell V17.1.1 (type help(). for help)
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle
   time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot or set.
+  unset, boot or set. The domains listing at `/proc` shows each domain a
+  caller's scope covers, with a record of its name, principal, state and
+  run queue; another domain's group and budget read as unsupported on the
+  stopgap, which answers for the system domain's own only.
 * A host link lets `tools/erx load`, `watch` and `files` replace modules in
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.
@@ -241,12 +244,17 @@ Eshell V17.1.1 (type help(). for help)
   passes a change of its line's size to the foreground jobs that asked
   for it.
 * Each terminal master in a session has a tty of its own, and its close
-  hangs up that tty's shells.
+  hangs up that tty's shells. The line discipline that will serve them,
+  `erx_tty` (cooked editing, signals for the foreground group, `termios`
+  modes and timers, after FreeBSD's), is a pure core with host tests, and
+  no tty runs it yet.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The shell does not start programs yet. The file tree a program will see (`/bin`, `/dev`
   with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
+* musl's errno and signal numbers are FreeBSD's, generated from the ABI's
+  tables, and `strerror`'s texts are checked against FreeBSD's.
 
 **Files and storage**
 
@@ -297,7 +305,18 @@ Eshell V17.1.1 (type help(). for help)
   release holds `erx_ui`. A session starts it through its program
   handler, and on QEMU a display-suite cell runs the LVGL renderer over
   the real `erx-lvgl` drawing into a buffer lent from the display's pixel
-  area.
+  area. `erx_ui:open` on a display starts the widget server with that
+  renderer, and display-suite cells check the frame against the host's
+  render, damage reports, a client confined to its buffer and the
+  program's restart. `erx_ui_host` runs an app's interface on the
+  development host under stock OTP.
+* The widget format carries type roles, areas, icons, a current item and a
+  graph kind, with coverage masks for corners, shadows and graphs. The
+  desktop's file list and statistics have pure cores with host tests.
+* `examples/dashboard`, the basic kiosk's app (a clock, the date and
+  sample quotes), is drawn by `erx-lvgl` and checked on the host against
+  its reference picture. It has no package and no QEMU boot yet; the
+  first boot comes with its package.
 
 **Web demo and checks**
 
