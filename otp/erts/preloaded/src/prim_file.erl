@@ -42,7 +42,7 @@
 
 %% erXos: the namespace's table, for erx_ns, and the runtime's fid counter, for
 %% erx_file_remote.
--export([erx_table/0, erx_mounts/0, erx_fid/0, erx_tmp_limit/0]).
+-export([erx_table/0, erx_mounts/0, erx_fid/0, erx_tmp_limit/0, erx_open_at/5]).
 
 -export([read_link/1, read_link_all/1,
          read_link_info/1, read_link_info/2,
@@ -676,12 +676,42 @@ erx_resolve(Encoded, Op, Flags, Table) ->
     Text = binary:part(Encoded, 0, byte_size(Encoded) - 1),
     {ok, Cwd} = get_cwd_nif(),
     case erx_path:cwd(Cwd) of
-        {ok, Place} ->
-            erx_path:resolve(Text, Op, Flags, Table, Place,
-                             #{walk => fun erx_walk/2, read_link => fun erx_link_text/2});
-        error ->
-            {error, eio}
+        {ok, Place} -> erx_resolve_from(Text, Op, Flags, Table, Place);
+        error -> {error, eio}
     end.
+
+%% A resolution of Text from the working directory Place.
+erx_resolve_from(Text, Op, Flags, Table, Place) ->
+    erx_path:resolve(Text, Op, Flags, Table, Place,
+                     #{walk => fun erx_walk/2, read_link => fun erx_link_text/2}).
+
+%% erXos: a native program's open (design-programs.md, Descriptors and files), resolved
+%% over the program's narrowed Table from its working directory Cwd, a place, never over
+%% the runtime's own. Flags are 9P2000.L's open flags as the program gave them. Mode none
+%% opens an existing file (lopen), following a last link; a file mode creates the file or
+%% opens the one there (lcreate), an exclusive one never through a last link. On a grant
+%% the flags and mode go to the server as given (erx_file_remote:open_flags/4). The
+%% release and an EROFS image are read-only: an open there that writes answers erofs, an
+%% lcreate at an existing name on an image what an image answers, and an open that reads
+%% opens the file to read. The open file's process is the caller.
+erx_open_at(Path, Flags, Mode, Table, Cwd) ->
+    Exclusive = Flags band ?ERX_P9_O_EXCL =/= 0,
+    Writes = Mode =/= none orelse Flags band (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC) =/= 0,
+    Read = [read, binary],
+    ReadOnly = fun(_Open) when Writes -> {error, erofs};
+                  (Open) -> Open()
+               end,
+    Ops = #{release => fun(Names) -> ReadOnly(fun() -> opened(open_nif(Names, Read), Read) end) end,
+            remote => fun(Grant, Where) -> erx_file_remote:open_flags(Grant, Where, Flags, Mode) end,
+            image => fun(Fs, Names) -> ReadOnly(fun() -> erx_erofs_file:open(Fs, Names, Read) end) end,
+            image_exists => erx_open_exists([exclusive || Exclusive]),
+            top => erx_open_top([exclusive || Exclusive])},
+    {Op, Follow} = case {Mode, Exclusive} of
+                       {none, _} -> {lookup, ?ERX_FOLLOW};
+                       {_, true} -> {create, ?ERX_NOFOLLOW};
+                       {_, false} -> {create, ?ERX_FOLLOW}
+                   end,
+    element(2, erx_run_at(erx_resolve_from(Path, Op, Follow, Table, Cwd), erx_mode(Follow), Ops)).
 
 %% The action an operation ran at, each walk that stopped handed to its resumption, and
 %% the operation's answer there.

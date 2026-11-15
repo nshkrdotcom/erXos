@@ -48,6 +48,7 @@
              erx_domain_lib,
              erx_driver_ctl,
              erx_facet,
+             erx_file_description,
              erx_hold,
              erx_input_codec,
              erx_inspect_agent,

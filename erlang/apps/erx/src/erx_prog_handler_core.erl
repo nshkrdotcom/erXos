@@ -58,8 +58,25 @@ beyond its reach. A probe of itself is `ok`. A kill of itself with
 or continue signal, which belong to the session's job control, it is
 `eperm`; with any other signal it is `enosys`, since the protocol has no
 report that carries a signal to a program (TODO.md), and a kill answered
-`ok` must have signaled. The file requests are not served yet, and each is
-answered `enosys` on its own slot (TODO.md).
+`ok` must have signaled.
+
+**Files** (docs/design-programs.md, "Descriptors and files"). The core
+holds the program's namespace, narrowed from its starter's
+(docs/design-files.md, "Narrowing for a program"), its working directory,
+its open table, from each open to the open-file description that serves
+it, and its pending file requests by reply slot. A request is relayed as
+an action and its answer comes back as an event, so the handler goes on
+taking the program's other frames, a kill included, while a file request
+waits. An `lopen` or `lcreate` with a flag bit outside 9P2000.L's open
+flags, or the access mode 3, is `einval`; one past `ERX_PROG_FDS_MAX`
+opens, those pending included, is `emfile`; otherwise it is resolved and
+opened over the narrowed namespace alone, and its answer is a new open.
+A `read`, `write` or `clunk` of an open not in the table is `ebadf`, and a
+data slot past the program's slots is `einval`. A read's answer longer
+than the request's count is `eio` and is never copied; otherwise its
+bytes are copied into the slot, and the copy's answer is the reply's. A `clunk` takes the open
+out of the table at once, and its description closes after the requests
+it holds. An error the protocol has no name for is `eio`.
 
 Every other event the core does not expect in its phase leaves the state
 as it was and does nothing: the handler's mailbox is reached only by
@@ -68,8 +85,8 @@ session code and the program's own driver.
 
 -include("generated/erx_abi.hrl").
 
--export([new/2, step/2, phase/1]).
--export_type([core/0, event/0, action/0, starter_fd/0]).
+-export([new/3, step/2, phase/1]).
+-export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
 %% window's buffer of Bytes in the area of the display domain Peer, which
@@ -94,7 +111,25 @@ session code and the program's own driver.
                | stop
                | {exit_status, integer()}
                | port_closed
+               | {file_opened, slot(), {ok, description()} | {error, atom()}}
+               | {file_done, slot(), {ok, binary()} | eof | ok | {error, atom()}}
+               | {file_copied, slot(), ok | {error, atom()}}
                | ignored.
+
+%% What the starter hands for the program's files: its namespace table
+%% (prim_file:erx_mounts/0), the narrowing, `all` for the whole table or each
+%% absolute path the program reaches with its rights there, the program's
+%% working directory, and its data area's slots.
+-type files() :: #{table := erx_path:table(), within := all | [{binary(), ro | rw | rx}],
+                   cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX}.
+-type slot() :: non_neg_integer().
+%% An open-file description, a session process the effect side made.
+-type description() :: pid().
+%% A pending file request: the reply case it answers, and for a read or a
+%% write its count, and for a read the data slot its bytes go to.
+-type pending() :: file_lopen | file_lcreate | file_clunk
+                 | {file_read, pos_integer(), slot()} | {file_copied, non_neg_integer()}
+                 | {file_write, pos_integer()}.
 
 -type action() :: holder
                 | {inherit, term()}
@@ -109,6 +144,12 @@ session code and the program's own driver.
                 | {forward, tuple()}
                 | {stop, non_neg_integer()}
                 | {tell_starter, integer()}
+                | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
+                   erx_path:table(), erx_path:place()}
+                | {read, description(), slot(), pos_integer()}
+                | {write, description(), slot(), slot(), pos_integer()}
+                | {copy_in, slot(), slot(), binary()}
+                | {clunk, description(), slot()}
                 | exit.
 
 %% What waits to reach the program, oldest first: a frame to send, or a
@@ -130,7 +171,13 @@ session code and the program's own driver.
                %% frame was lost, and nothing more is sent to the program.
                out = false :: false | sending | owed | lost,
                %% A stop was asked once; a second asks nothing more.
-               stopping = false :: boolean()}).
+               stopping = false :: boolean(),
+               %% The program's narrowed namespace and working directory.
+               table = [] :: erx_path:table(),
+               cwd = [] :: erx_path:place(),
+               slots = 1 :: 1..?ERX_PROG_DATA_SLOTS_MAX,
+               opens = #{} :: #{0..65535 => description()},
+               pending = #{} :: #{slot() => pending()}}).
 -opaque core() :: #core{}.
 
 -define(IS_FD(N), (is_integer(N) andalso N >= 0 andalso N < ?ERX_PROG_FDS_MAX)).
@@ -142,21 +189,87 @@ session code and the program's own driver.
 %% A program whose frame the grammar refuses ends signaled SIGSYS
 %% (docs/design-programs.md, "Credit").
 -define(REFUSED_STATUS, (?ERX_EXIT_SIGNAL + ?ERX_SIGSYS)).
+%% 9P2000.L's open flags a program may send (abi/protocols/9p.txt).
+-define(OPEN_FLAGS, (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC bor ?ERX_P9_O_EXCL bor ?ERX_P9_O_APPEND
+                     bor ?ERX_P9_O_SYNC)).
 
 -doc """
 A handler for program `Pid` that starts it with the starter's
-descriptors `Fds`, and its first action, or `{error, einval}` for a
-`Pid` outside 2..2^31-1, a descriptor of another form, a number named
-twice, or more than one buffer, which the program may have only one of.
+descriptors `Fds` and serves its files as `Files` says, and its first
+action; or `{error, einval}` for a `Pid` outside 2..2^31-1, a descriptor
+of another form, a number named twice, more than one buffer, which the
+program may have only one of, a working directory that is not an
+absolute path of plain names, slots outside 1..`ERX_PROG_DATA_SLOTS_MAX`,
+or a narrowing path named twice or not absolute; `{error, enoent}` for a
+narrowing path that no entry of the table holds; or `{error, eacces}` for
+rights the starter does not hold there.
 """.
--spec new(term(), term()) -> {ok, core(), [action()]} | {error, einval}.
-new(Pid, Fds) when ?IS_PID(Pid), is_list(Fds) ->
-    case valid_fds(Fds) of
-        true -> {ok, #core{pid = Pid, todo = Fds}, [holder]};
-        false -> {error, einval}
+-spec new(term(), term(), files()) -> {ok, core(), [action()]} | {error, einval | enoent | eacces}.
+new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots})
+  when ?IS_PID(Pid), is_list(Fds), is_integer(Slots), Slots >= 1, Slots =< ?ERX_PROG_DATA_SLOTS_MAX ->
+    case {valid_fds(Fds), erx_path:cwd(Cwd), narrowed(Table, Within)} of
+        {false, _, _} -> {error, einval};
+        {_, error, _} -> {error, einval};
+        {_, _, {error, _} = Refused} -> Refused;
+        {true, {ok, Place}, {ok, Narrowed}} ->
+            {ok, #core{pid = Pid, todo = Fds, table = Narrowed, cwd = Place, slots = Slots}, [holder]}
     end;
-new(_Pid, _Fds) ->
+new(_Pid, _Fds, _Files) ->
     {error, einval}.
+
+%% The program's namespace (docs/design-files.md, "Narrowing for a
+%% program"): the starter's whole table, or for each path the starter names
+%% an entry at that path, on the provider of the starter's entry that holds
+%% it, rooted where the path lies there, with the rights asked, the
+%% starter's own there or read-only; and each of the starter's entries
+%% below the path, read-only when read-only was asked, so the program sees
+%% at every path below it what the starter sees. Nothing above a narrowed
+%% path stays, so the paths above it read as the empty root.
+narrowed(Table, all) ->
+    {ok, Table};
+narrowed(Table, Within) when is_list(Within) ->
+    Groups = [narrowed_entries(Table, Path) || Path <- Within],
+    Entries = lists:append([Group || Group <- Groups, is_list(Group)]),
+    Points = [Point || #{point := Point} <- Entries],
+    case {[Refused || {error, Refused} <- Groups], length(lists:usort(Points)) =:= length(Points)} of
+        {[Refused | _], _} -> {error, Refused};
+        {[], false} -> {error, einval};
+        {[], true} -> {ok, Entries}
+    end;
+narrowed(_Table, _Within) ->
+    {error, einval}.
+
+narrowed_entries(Table, {Path, Rights}) when Rights =:= ro; Rights =:= rw; Rights =:= rx ->
+    case erx_path:cwd(Path) of
+        {ok, Place} -> narrowed_at(deepest_entry(Table, Place), Place, Rights, Table);
+        error -> {error, einval}
+    end;
+narrowed_entries(_Table, _Path) ->
+    {error, einval}.
+
+%% The deepest entry whose point Place lies at or under, as a resolution
+%% picks it, or none.
+deepest_entry(Table, Place) ->
+    case [Entry || #{point := Point} = Entry <- Table, lists:prefix(Point, Place)] of
+        [] -> none;
+        Holding -> lists:last(lists:sort(fun shallower/2, Holding))
+    end.
+
+shallower(#{point := A}, #{point := B}) -> length(A) =< length(B).
+
+narrowed_at(none, _Place, _Rights, _Table) ->
+    {error, enoent};
+narrowed_at(#{point := Point, root := Root, rights := Own} = Entry, Place, Rights, Table)
+  when Rights =:= Own; Rights =:= ro ->
+    Below = [Mount#{rights := below_rights(Rights, Mount)}
+             || #{point := Under} = Mount <- Table, Under =/= Place, lists:prefix(Place, Under)],
+    [Entry#{point := Place, root := Root ++ lists:nthtail(length(Point), Place), rights := Rights}
+     | Below];
+narrowed_at(_Entry, _Place, _Rights, _Table) ->
+    {error, eacces}.
+
+below_rights(ro, _Mount) -> ro;
+below_rights(_Own, #{rights := Rights}) -> Rights.
 
 -doc "The handler's phase: `reserving`, `running` or `ended`.".
 -spec phase(core()) -> reserving | running | ended.
@@ -225,6 +338,26 @@ step(#core{phase = running} = C, port_closed) ->
     %% The port closed with no status: a record of the end may be lost, and
     %% the starter is told nothing the handler did not read.
     {C#core{phase = ended, queue = queue:new()}, [exit]};
+step(#core{phase = running, pending = Pending} = C, {file_opened, Slot, Result}) ->
+    case maps:take(Slot, Pending) of
+        {Case, Rest} when Case =:= file_lopen; Case =:= file_lcreate ->
+            opened(C#core{pending = Rest}, Slot, Case, Result);
+        _ ->
+            {C, []}
+    end;
+step(#core{phase = running, pending = Pending} = C, {file_done, Slot, Result}) ->
+    case maps:take(Slot, Pending) of
+        {{file_read, _, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
+        {{file_write, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
+        {file_clunk, Rest} -> done(C#core{pending = Rest}, Slot, file_clunk, Result);
+        _ -> {C, []}
+    end;
+step(#core{phase = running, pending = Pending} = C, {file_copied, Slot, Result}) ->
+    case {maps:take(Slot, Pending), Result} of
+        {{{file_copied, Done}, Rest}, ok} -> file_reply(C#core{pending = Rest}, file_read, Slot, {ok, Done});
+        {{{file_copied, _}, Rest}, {error, Errno}} -> file_reply(C#core{pending = Rest}, file_read, Slot, {error, Errno});
+        _ -> {C, []}
+    end;
 step(C, _Event) ->
     {C, []}.
 
@@ -247,17 +380,89 @@ from_program(C, {erx_prog, _, Slot, {probe, Target}}) ->
         none -> reply(C, probe, Slot, {error, esrch});
         self -> reply(C, probe, Slot, ok)
     end;
-from_program(C, {erx_prog, _, Slot, Request}) when element(1, Request) =:= file ->
-    %% The file requests are not served yet: each is answered enosys on its
-    %% own slot, so a program learns the call is unsupported (TODO.md).
-    reply(C, file_case(element(2, Request)), Slot, {error, enosys}).
+from_program(C, {erx_prog, _, Slot, {file, lopen, Path, Flags}}) ->
+    open(C, Slot, file_lopen, Path, Flags, none);
+from_program(C, {erx_prog, _, Slot, {file, lcreate, Path, Flags, Mode}}) ->
+    open(C, Slot, file_lcreate, Path, Flags, Mode);
+from_program(C, {erx_prog, _, Slot, {file, read, Open, Count, Data}}) ->
+    on_open(C, Slot, file_read, Open, Data,
+            fun(Desc) -> {{file_read, Count, Data}, {read, Desc, Slot, Count}} end);
+from_program(C, {erx_prog, _, Slot, {file, write, Open, Count, Data}}) ->
+    on_open(C, Slot, file_write, Open, Data,
+            fun(Desc) -> {{file_write, Count}, {write, Desc, Slot, Data, Count}} end);
+from_program(#core{opens = Opens} = C, {erx_prog, _, Slot, {file, clunk, Open}}) ->
+    case maps:take(Open, Opens) of
+        {Desc, Rest} -> relay(C#core{opens = Rest}, Slot, file_clunk, {clunk, Desc, Slot});
+        error -> file_reply(C, file_clunk, Slot, {error, ebadf})
+    end.
 
-%% The request case of a file operation, which names its reply.
-file_case(lopen) -> file_lopen;
-file_case(lcreate) -> file_lcreate;
-file_case(read) -> file_read;
-file_case(write) -> file_write;
-file_case(clunk) -> file_clunk.
+%% An lopen or an lcreate, relayed to be resolved over the program's
+%% namespace from its working directory, or refused.
+open(#core{opens = Opens, pending = Pending, table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) ->
+    Opening = length([P || P <- maps:values(Pending), P =:= file_lopen orelse P =:= file_lcreate]),
+    if
+        Flags band bnot ?OPEN_FLAGS =/= 0; Flags band ?ERX_P9_O_ACCMODE =:= ?ERX_P9_O_ACCMODE ->
+            file_reply(C, Case, Slot, {error, einval});
+        map_size(Opens) + Opening >= ?ERX_PROG_FDS_MAX ->
+            file_reply(C, Case, Slot, {error, emfile});
+        true ->
+            relay(C, Slot, Case, {open, Slot, Path, Flags, Mode, Table, Cwd})
+    end.
+
+%% A read or a write of Open through data slot Data, relayed to the open's
+%% description as Relay says, or refused.
+on_open(#core{opens = Opens, slots = Slots} = C, Slot, Case, Open, Data, Relay) ->
+    case maps:find(Open, Opens) of
+        error ->
+            file_reply(C, Case, Slot, {error, ebadf});
+        {ok, _} when Data >= Slots ->
+            file_reply(C, Case, Slot, {error, einval});
+        {ok, Desc} ->
+            {Waiting, Action} = Relay(Desc),
+            relay(C, Slot, Waiting, Action)
+    end.
+
+%% A request handed on, its slot waiting for the answer.
+relay(#core{pending = Pending} = C, Slot, Waiting, Action) ->
+    {C#core{pending = Pending#{Slot => Waiting}}, [Action]}.
+
+%% An open's answer: the lowest open number free names the description.
+opened(#core{opens = Opens} = C, Slot, Case, {ok, Desc}) ->
+    Open = hd([N || N <- lists:seq(0, ?ERX_PROG_FDS_MAX - 1), not is_map_key(N, Opens)]),
+    file_reply(C#core{opens = Opens#{Open => Desc}}, Case, Slot, {ok, Open});
+opened(C, Slot, Case, {error, Errno}) ->
+    file_reply(C, Case, Slot, {error, Errno}).
+
+%% A read's, a write's or a clunk's answer. A read's bytes are copied into
+%% the data slot, and the copy's answer, file_copied, gives the reply that
+%% names their count; never more bytes than the request asked for are
+%% copied, which no grammar can hold a reply to.
+done(C, Slot, {file_read, Count, Data}, {ok, Bytes}) when byte_size(Bytes) =< Count ->
+    relay(C, Slot, {file_copied, byte_size(Bytes)}, {copy_in, Slot, Data, Bytes});
+done(C, Slot, {file_read, _, _}, {ok, _TooMany}) ->
+    file_reply(C, file_read, Slot, {error, eio});
+done(C, Slot, {file_read, _, _}, eof) ->
+    file_reply(C, file_read, Slot, {ok, 0});
+done(C, Slot, {file_write, Count}, ok) ->
+    file_reply(C, file_write, Slot, {ok, Count});
+done(C, Slot, file_clunk, ok) ->
+    file_reply(C, file_clunk, Slot, ok);
+done(C, Slot, Waiting, {error, Errno}) ->
+    file_reply(C, case_of(Waiting), Slot, {error, Errno}).
+
+case_of({Case, _, _}) -> Case;
+case_of({Case, _}) -> Case;
+case_of(Case) -> Case.
+
+%% A file request's reply. Its error comes from a file server or the
+%% release, whose names the protocol may lack; one it lacks is eio.
+file_reply(C, Case, Slot, {error, Errno}) ->
+    case erx_prog_grammar:build_reply(Case, Slot, {error, Errno}) of
+        {ok, _} -> reply(C, Case, Slot, {error, Errno});
+        {error, _} -> reply(C, Case, Slot, {error, eio})
+    end;
+file_reply(C, Case, Slot, Value) ->
+    reply(C, Case, Slot, Value).
 
 %% A kill of the program itself. A signal whose default action in the
 %% signal table is stop or continue belongs to the session's job control.

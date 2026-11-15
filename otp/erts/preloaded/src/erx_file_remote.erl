@@ -61,7 +61,7 @@
 -export([exchange/2]).
 -export([read_file_info/3, read_link/2, list_dir/2, write_file_info/3, make_dir/2,
          del_dir/2, delete/2, rename/3, make_link/3, make_symlink/3]).
--export([open/3, read_file/2, set_cwd/2, identity/2, statfs/2]).
+-export([open/3, open_flags/4, read_file/2, set_cwd/2, identity/2, statfs/2]).
 %% An open file's operations, which file dispatches to by its descriptor's module.
 -export([close/1, read/2, read_line/1, pread/2, pread/3, write/2, pwrite/2, pwrite/3,
          position/2, truncate/1, sync/1, datasync/1, advise/4, allocate/3,
@@ -368,6 +368,34 @@ open(Grant, {parent, Dir, Name}, Modes) ->
             created(Grant, Dir, Name, exclusive(Flags), Open)
     end.
 
+%% A native program's open (design-programs.md, Descriptors and files), with 9P2000.L's
+%% open Flags as the program gave them and, for an lcreate, its file Mode, its umask
+%% already applied. Mode none opens the target with lopen; a mode opens the parent as
+%% open/3 does one that writes. An lopen that writes, with an access mode that writes
+%% or O_TRUNC, on an entry that is not rw is erofs. Neither checks the file's type: a
+%% directory opened to read opens, as open(2) opens one, and the server refuses what its
+%% file cannot do.
+-spec open_flags(grant(), where(), non_neg_integer(), none | non_neg_integer()) ->
+          {ok, #file_descriptor{}} | {error, posix()} | resume().
+open_flags({_, _, Rights} = Grant, {target, Names}, Flags, none) ->
+    case Rights =/= rw andalso Flags band (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC) =/= 0 of
+        true -> {error, erofs};
+        false -> described(kept(Grant, {Names, follow}, fun(Fid) -> {lopen, Fid, Flags} end), Grant,
+                           flags_mode(Flags, none))
+    end;
+open_flags(Grant, {parent, Dir, Name}, Flags, Mode) when is_integer(Mode) ->
+    created(Grant, Dir, Name, exclusive(Flags), flags_mode(Flags, Mode)).
+
+%% What a program's flags ask, in open_mode/1's terms.
+flags_mode(Flags, Mode) ->
+    Access = case Flags band ?ERX_P9_O_ACCMODE of
+                 0 -> read;
+                 ?ERX_P9_O_WRONLY -> write;
+                 ?ERX_P9_O_RDWR -> read_write
+             end,
+    #{access => Access, flags => Flags, append => Flags band ?ERX_P9_O_APPEND =/= 0,
+      directory => false, type_check => false, ahead => 0, mode => Mode}.
+
 %% What the modes ask, as stock's efile_translate_modelist and get_flags read them:
 %% append and exclusive write, an open that neither reads nor writes reads, and only a
 %% write without read or append truncates.
@@ -385,7 +413,7 @@ open_mode(Modes) ->
         bor flag(has(exclusive, Modes), ?ERX_P9_O_EXCL)
         bor flag(has(sync, Modes), ?ERX_P9_O_SYNC),
     #{access => Access, flags => Flags, append => Append, directory => has(directory, Modes),
-      type_check => not has(skip_type_check, Modes), ahead => ahead(Modes)}.
+      type_check => not has(skip_type_check, Modes), ahead => ahead(Modes), mode => 8#666 band bnot ?UMASK}.
 
 %% How far a read reads ahead, as stock's build_fd_data reads the modes: the last
 %% read_ahead option, 64 KiB for a bare one, none without one. A size that is not a
@@ -410,8 +438,8 @@ has(Mode, [Mode | _]) -> true;
 has(Mode, [_ | Modes]) -> has(Mode, Modes);
 has(_, _) -> false.
 
-created({_, _, rw} = Grant, Dir, Name, Exclusive, #{flags := Flags} = Open) ->
-    Create = fun(DirFid) -> {lcreate, DirFid, Name, Flags, 8#666 band bnot ?UMASK, 0} end,
+created({_, _, rw} = Grant, Dir, Name, Exclusive, #{flags := Flags, mode := Mode} = Open) ->
+    Create = fun(DirFid) -> {lcreate, DirFid, Name, Flags, Mode, 0} end,
     case {kept(Grant, {Dir, directory}, Create), Exclusive} of
         {{error, eloop}, false} -> {resume, 1, {[directory || _ <- Dir] ++ [link], ok}};
         {{error, eloop}, true} -> {error, eexist};

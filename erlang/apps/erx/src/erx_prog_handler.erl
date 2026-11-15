@@ -53,6 +53,17 @@ needs to know monitors the handler.
 
 The handler monitors the pipe server and, when it goes, sends the program
 `pipe_server_lost` (docs/design-pipes.md, "The pipe server").
+
+The handler serves the program's file requests over its starter's
+namespace, the runtime's mounts (prim_file:erx_mounts/0) as they stand at
+the start, narrowed by the spec's `within`: absent, the whole table; or
+a list of `{Path, Rights}`, each an absolute path the program reaches
+with `Rights`, `ro` or the starter's own there, and nothing else
+(docs/design-files.md, "Narrowing for a program"). A relative path
+resolves from the spec's `cwd`. Each open is an open-file description,
+an erx_file_description process the handler links, and the bytes of a
+read or a write cross the program's data area through the program
+driver (erx_program:data_read/3 and data_write/3).
 """.
 
 -export([start/1, start/2, stop/1]).
@@ -132,9 +143,11 @@ stop(Handler) when is_pid(Handler) ->
 
 init(Starter, Ref, #{pid := Pid} = Spec) ->
     erlang:monitor(process, Starter),
-    case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, [])) of
+    Files = #{table => erx_file_description:table(), within => maps:get(within, Spec, all),
+              cwd => maps:get(cwd, Spec, undefined), slots => erx_program:slots(Spec)},
+    case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, []), Files) of
         {ok, Core, Actions} ->
-            H = #h{core = Core, starter = Starter, spec = maps:remove(fds, Spec),
+            H = #h{core = Core, starter = Starter, spec = maps:without([fds, within], Spec),
                    reply = {Starter, Ref}, pipes = watch_pipes()},
             loop(perform(Actions, H));
         {error, _} = Refused ->
@@ -156,6 +169,8 @@ loop(#h{core = Core, port = Port, closed = Closed, starter = Starter, spec = #{p
                         {erx_prog_stop, Starter} -> stop;
                         {'DOWN', _, process, Starter, _} -> stop;
                         {'DOWN', Pipes, process, _, _} -> pipes_lost;
+                        {erx_file_opened, Slot, Result} -> {file_opened, Slot, Result};
+                        {erx_file_done, Slot, Result} -> {file_done, Slot, Result};
                         %% Nothing else is for the handler; it must not pile up.
                         _Other -> ignored
                     end,
@@ -233,6 +248,27 @@ act({stop, Status}, #h{port = Port} = H) ->
     H;
 act({tell_starter, Status}, #h{starter = Starter} = H) ->
     Starter ! {erx_prog_exit, self(), erx_prog:status(Status)},
+    H;
+act({open, Slot, Path, Flags, Mode, Table, Cwd}, H) ->
+    _ = erx_file_description:open(Slot, Path, Flags, Mode, Table, Cwd),
+    H;
+act({read, Description, Slot, Count}, H) ->
+    ok = erx_file_description:read(Description, Slot, Count),
+    H;
+act({write, Description, Slot, Data, Count}, #h{port = Port} = H) ->
+    %% The bytes are taken from the data slot before the write is queued.
+    case driver(Port, fun() -> erx_program:data_read(Port, Data, Count) end, {error, edead}) of
+        {ok, Bytes} ->
+            ok = erx_file_description:write(Description, Slot, Bytes),
+            H;
+        {error, Errno} ->
+            {event, {file_done, Slot, {error, Errno}}, H}
+    end;
+act({copy_in, Slot, Data, Bytes}, #h{port = Port} = H) ->
+    Copied = driver(Port, fun() -> erx_program:data_write(Port, Data, Bytes) end, {error, edead}),
+    {event, {file_copied, Slot, Copied}, H};
+act({clunk, Description, Slot}, H) ->
+    ok = erx_file_description:clunk(Description, Slot),
     H;
 act(exit, H) ->
     H.

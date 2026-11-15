@@ -27,17 +27,18 @@ order they were queued, and that nothing follows the end.
 %% The status of a stop for a refused frame, 256 + SIGSYS, and of a SIGKILL.
 -define(REFUSED, 268).
 -define(KILLED, 265).
+-define(TABLE, [#{point => [], provider => release, root => [], rights => ro}]).
 
 new_refuses_bad_specs_test_() ->
-    [?_assertEqual({error, einval}, erx_prog_handler_core:new(1, [])),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [{0, {pipe, a}}, {0, {pipe, b}}])),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [{1024, {pipe, a}}])),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [{3, {buffer, 1, 4096}}, {4, {buffer, 1, 4096}}])),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [{3, {mem, 1, 1}}])),
-     ?_assertMatch({ok, _, [holder]}, erx_prog_handler_core:new(?PID, []))].
+    [?_assertEqual({error, einval}, new(1, [])),
+     ?_assertEqual({error, einval}, new(?PID, [{0, {pipe, a}}, {0, {pipe, b}}])),
+     ?_assertEqual({error, einval}, new(?PID, [{1024, {pipe, a}}])),
+     ?_assertEqual({error, einval}, new(?PID, [{3, {buffer, 1, 4096}}, {4, {buffer, 1, 4096}}])),
+     ?_assertEqual({error, einval}, new(?PID, [{3, {mem, 1, 1}}])),
+     ?_assertMatch({ok, _, [holder]}, new(?PID, []))].
 
 reserves_in_order_then_starts_test() ->
-    {ok, C0, [holder]} = erx_prog_handler_core:new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
+    {ok, C0, [holder]} = new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
     {C1, [{inherit, r}]} = erx_prog_handler_core:step(C0, {holder, ok}),
     {C2, [{lend, 5, 8192}]} = erx_prog_handler_core:step(C1, {reserved, ?HAND(1)}),
     {C3, [{inherit, w}]} = erx_prog_handler_core:step(C2, {reserved, {mem, 77, 2, 4096}}),
@@ -47,7 +48,7 @@ reserves_in_order_then_starts_test() ->
     ?assertEqual(running, erx_prog_handler_core:phase(C5)).
 
 refused_start_undoes_everything_test() ->
-    {ok, C0, _} = erx_prog_handler_core:new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
+    {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
     C3 = run(C0, [{holder, ok}, {reserved, ?HAND(1)}, {reserved, {mem, 77, 2, 4096}}, {reserved, ?HAND(2)}]),
     {C4, Actions} = erx_prog_handler_core:step(C3, {refused, enomem}),
     ?assertEqual([{hand_drop, 1}, {hand_drop, 2}, {unlend, 77}, holder_drop, {answer, {error, enomem}}, exit],
@@ -55,7 +56,7 @@ refused_start_undoes_everything_test() ->
     ?assertEqual(ended, erx_prog_handler_core:phase(C4)).
 
 refused_reservation_undoes_what_came_before_test_() ->
-    {ok, C0, _} = erx_prog_handler_core:new(?PID, [{0, {pipe, r}}, {1, {pipe, w}}]),
+    {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {1, {pipe, w}}]),
     C1 = run(C0, [{holder, ok}, {reserved, ?HAND(1)}]),
     {_, Actions} = erx_prog_handler_core:step(C1, {refused, ebadf}),
     {_, Refused} = erx_prog_handler_core:step(run(C0, []), {holder, {error, eexist}}),
@@ -66,7 +67,7 @@ refused_reservation_undoes_what_came_before_test_() ->
      ?_assertEqual([{answer, {error, enomem}}, exit], NoMemory)].
 
 reports_wait_for_the_start_test() ->
-    {ok, C0, _} = erx_prog_handler_core:new(?PID, [{0, {pipe, r}}]),
+    {ok, C0, _} = new(?PID, [{0, {pipe, r}}]),
     C1 = run(C0, [{holder, ok}, {report, {pipe_lost, 9, 1}}, {reserved, ?HAND(1)}]),
     {_, Actions} = erx_prog_handler_core:step(C1, started),
     ?assertEqual([{answer, {ok, []}}, {send, {erx_prog, 1, {pipe_lost, 9, 1}}}], Actions).
@@ -121,12 +122,112 @@ kill_of_itself_with_another_signal_is_enosys_test() ->
     ?assertMatch({_, [?ANSWER(15, {error, enosys})]},
                  erx_prog_handler_core:step(running(), ?ASK(15, {kill, ?PID, sigterm}))).
 
-%% The file requests are not served yet: each is answered enosys on its own
-%% slot, and the handler goes on running (TODO.md).
-file_requests_are_enosys_test_() ->
-    [?_assertMatch({_, [?ANSWER(7, {error, enosys})]}, erx_prog_handler_core:step(running(), ?ASK(7, Request)))
-     || Request <- [{file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"f">>, 1, 8#644},
-                    {file, read, 3, 65536, 15}, {file, write, 3, 1, 0}, {file, clunk, 3}]].
+%% Files: an open is relayed with the narrowed table and the working
+%% directory, and its answer becomes the lowest free open; a read, a write
+%% and a clunk go to the open's description; each answer comes back on the
+%% request's own slot.
+open_is_relayed_then_answered_with_an_open_test_() ->
+    {C1, Relayed} = erx_prog_handler_core:step(running(), ?ASK(7, {file, lopen, <<"doom.wad">>, 0})),
+    {C2, Answered} = erx_prog_handler_core:step(C1, {file_opened, 7, {ok, desc}}),
+    {_, Second} = erx_prog_handler_core:step(sent(C2), ?ASK(8, {file, lcreate, <<"f">>, 1, 8#644})),
+    [?_assertEqual([{open, 7, <<"doom.wad">>, 0, none, ?TABLE, [<<"data">>]}], Relayed),
+     ?_assertEqual([?ANSWER(7, {ok, 0})], Answered),
+     ?_assertEqual([{open, 8, <<"f">>, 1, 8#644, ?TABLE, [<<"data">>]}], Second)].
+
+refused_open_answers_its_errno_test_() ->
+    {C1, _} = erx_prog_handler_core:step(running(), ?ASK(7, {file, lopen, <<"x">>, 0})),
+    [?_assertMatch({_, [?ANSWER(7, {error, enoent})]},
+                   erx_prog_handler_core:step(C1, {file_opened, 7, {error, enoent}})),
+     %% An error the protocol has no name for is eio.
+     ?_assertMatch({_, [?ANSWER(7, {error, eio})]},
+                   erx_prog_handler_core:step(C1, {file_opened, 7, {error, no_such_errno}}))].
+
+unknown_open_flags_are_einval_test_() ->
+    [?_assertMatch({_, [?ANSWER(7, {error, einval})]}, erx_prog_handler_core:step(running(), ?ASK(7, Request)))
+     || Request <- [{file, lopen, <<"x">>, 16#40}, {file, lopen, <<"x">>, 3},
+                    {file, lcreate, <<"x">>, 16#10000, 8#644}]].
+
+opens_past_the_descriptor_bound_are_emfile_test() ->
+    Full = lists:foldl(fun(N, C) -> opened(C, 7, N) end, running(), lists:seq(1, 1024)),
+    ?assertMatch({_, [?ANSWER(7, {error, emfile})]},
+                 erx_prog_handler_core:step(Full, ?ASK(7, {file, lopen, <<"x">>, 0}))).
+
+read_copies_then_answers_its_count_test() ->
+    C = opened(running(), 7, desc),
+    {C1, Relayed} = erx_prog_handler_core:step(C, ?ASK(3, {file, read, 0, 4, 2})),
+    {C2, Copy} = erx_prog_handler_core:step(C1, {file_done, 3, {ok, <<"wad!">>}}),
+    {_, Answer} = erx_prog_handler_core:step(C2, {file_copied, 3, ok}),
+    ?assertEqual([{read, desc, 3, 4}], Relayed),
+    ?assertEqual([{copy_in, 3, 2, <<"wad!">>}], Copy),
+    ?assertEqual([?ANSWER(3, {ok, 4})], Answer).
+
+read_at_the_end_answers_zero_test() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, read, 0, 4, 2})),
+    ?assertEqual({ok, 0}, answer(erx_prog_handler_core:step(C1, {file_done, 3, eof}))).
+
+%% A read's answer longer than its count is never copied.
+read_longer_than_its_count_is_eio_test() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, read, 0, 4, 2})),
+    ?assertMatch({_, [?ANSWER(3, {error, eio})]},
+                 erx_prog_handler_core:step(C1, {file_done, 3, {ok, <<"five!">>}})).
+
+failed_copy_answers_its_errno_test() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, read, 0, 4, 2})),
+    {C2, _} = erx_prog_handler_core:step(C1, {file_done, 3, {ok, <<"ab">>}}),
+    ?assertEqual({error, enosys}, answer(erx_prog_handler_core:step(C2, {file_copied, 3, {error, enosys}}))).
+
+write_answers_its_count_test() ->
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, write, 0, 9, 1})),
+    ?assertEqual([{write, desc, 3, 1, 9}], Relayed),
+    ?assertEqual({ok, 9}, answer(erx_prog_handler_core:step(C1, {file_done, 3, ok}))).
+
+clunk_takes_the_open_out_at_once_test() ->
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, clunk, 0})),
+    {C2, Answer} = erx_prog_handler_core:step(C1, {file_done, 3, ok}),
+    ?assertEqual([{clunk, desc, 3}], Relayed),
+    ?assertEqual([?ANSWER(3, ok)], Answer),
+    ?assertEqual({error, ebadf}, answer(erx_prog_handler_core:step(sent(C2), ?ASK(4, {file, read, 0, 1, 0})))).
+
+unknown_open_is_ebadf_test_() ->
+    [?_assertMatch({_, [?ANSWER(3, {error, ebadf})]},
+                   erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, Request)))
+     || Request <- [{file, read, 1, 4, 0}, {file, write, 1, 4, 0}, {file, clunk, 1}]].
+
+%% The program was started with 4 slots: slot 4 is past them.
+data_slot_past_the_program_slots_is_einval_test_() ->
+    [?_assertMatch({_, [?ANSWER(3, {error, einval})]},
+                   erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, Request)))
+     || Request <- [{file, read, 0, 4, 4}, {file, write, 0, 4, 15}]].
+
+%% A kill reaches the program while a file request waits.
+kill_while_a_file_request_waits_test() ->
+    {C1, _} = erx_prog_handler_core:step(running(), ?ASK(7, {file, lopen, <<"x">>, 0})),
+    ?assertMatch({_, [{stop, ?KILLED}, ?ANSWER(3, ok)]},
+                 erx_prog_handler_core:step(C1, ?ASK(3, {kill, ?PID, sigkill}))).
+
+%% Narrowing: each path an entry of its own, rooted where the path lies on
+%% the starter's deepest entry holding it, with its rights or read-only.
+narrowing_test_() ->
+    Table = [#{point => [], provider => release, root => [], rights => ro},
+             #{point => [<<"data">>], provider => {grant, self(), <<"t">>}, root => [<<"r">>], rights => rw}],
+    Narrow = fun(Within) -> files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := Table, within := Within})) end,
+    [?_assertEqual([#{point => [<<"data">>, <<"logs">>], provider => {grant, self(), <<"t">>},
+                      root => [<<"r">>, <<"logs">>], rights => ro}],
+                   Narrow([{<<"/data/logs">>, ro}])),
+     ?_assertEqual([(lists:last(Table))#{point := [<<"data">>]}], Narrow([{<<"/data">>, rw}])),
+     %% A mount below a narrowed path stays, read-only when that was asked.
+     ?_assertEqual([#{point => [<<"data">>], provider => {grant, self(), <<"t">>}, root => [<<"r">>], rights => ro},
+                    #{point => [<<"data">>, <<"logs">>], provider => {grant, self(), <<"l">>}, root => [], rights => ro}],
+                   files_of(erx_prog_handler_core:new(?PID, [], (files())#{
+                       table := Table ++ [#{point => [<<"data">>, <<"logs">>], provider => {grant, self(), <<"l">>},
+                                            root => [], rights => rw}],
+                       within := [{<<"/data">>, ro}]}))),
+     ?_assertEqual({error, eacces}, Narrow([{<<"/bin">>, rw}])),
+     ?_assertEqual({error, eacces}, Narrow([{<<"/data">>, rx}])),
+     ?_assertEqual({error, einval}, Narrow([{<<"data">>, ro}])),
+     ?_assertEqual({error, einval}, Narrow([{<<"/data/../etc">>, ro}])),
+     ?_assertEqual({error, einval}, Narrow([{<<"/data">>, ro}, {<<"/data">>, ro}])),
+     ?_assertEqual({error, enoent}, files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := [], within := [{<<"/x">>, ro}]})))].
 
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
@@ -177,11 +278,16 @@ refused_send_stops_the_program_test() ->
     ?assertMatch({_, []}, erx_prog_handler_core:step(C3, {report, {pipe_lost, 9, 3}})).
 
 %% Every sequence of up to DEPTH running-phase events, the driver's answers
-%% included wherever they may come.
--define(DEPTH, 7).
+%% included wherever they may come, and an open, its answer, a read of the
+%% first open and the read's two answers among them.
+-define(DEPTH, 6).
 
-exhaustive_running_walk_test() ->
-    Count = walk(running(), #{out => none, queued => [], sent => [], next => 1, ended => false}, ?DEPTH, 0),
+exhaustive_running_walk_test_() ->
+    {timeout, 300, fun exhaustive_running_walk/0}.
+
+exhaustive_running_walk() ->
+    Count = walk(running(), #{out => none, queued => [], sent => [], next => 1, ended => false,
+                              pending => #{}, opens => []}, ?DEPTH, 0),
     ?assert(Count > 10000).
 
 walk(_C, _M, 0, Count) ->
@@ -197,7 +303,30 @@ walk(C, M, Depth, Count) ->
 %% checked; a probe of the program itself queues its reply among them.
 events(#{next := N}) ->
     [{report, {pipe_lost, 9, N}}, {sent, ok}, {sent, busy}, room, stop, {exit_status, 0},
-     {frame, {erx_prog, 1, {closed, 9, 1}}}, ?ASK(N rem 16, {probe, ?PID})].
+     {frame, {erx_prog, 1, {closed, 9, 1}}}, ?ASK(N rem 16, {probe, ?PID}),
+     ?ASK(14, {file, lopen, <<"x">>, 0}), {file_opened, 14, {ok, desc}}, ?ASK(13, {file, read, 0, 4, 0}),
+     {file_done, 13, {ok, <<"ab">>}}, {file_copied, 13, ok}].
+
+%% The files of the model: an open waits on slot 14 and becomes the lowest
+%% free open; a read of open 0 on slot 13 is ebadf until it exists, then
+%% waits, is copied, and answers the copied count.
+file_model(?ASK(14, {file, lopen, _, _}), #{pending := P} = M) ->
+    M#{pending := P#{14 => open}};
+file_model({file_opened, 14, {ok, _}}, #{pending := #{14 := open} = P, opens := Opens} = M) ->
+    Open = hd([N || N <- lists:seq(0, 1023), not lists:member(N, Opens)]),
+    M#{pending := maps:remove(14, P), opens := [Open | Opens],
+       queued := maps:get(queued, M) ++ [{erx_prog, 1, 14, {ok, Open}}]};
+file_model(?ASK(13, {file, read, 0, _, _}), #{pending := P, opens := Opens} = M) ->
+    case lists:member(0, Opens) of
+        true -> M#{pending := P#{13 => read}};
+        false -> M#{queued := maps:get(queued, M) ++ [{erx_prog, 1, 13, {error, ebadf}}]}
+    end;
+file_model({file_done, 13, _}, #{pending := #{13 := read} = P} = M) ->
+    M#{pending := P#{13 := copied}};
+file_model({file_copied, 13, ok}, #{pending := #{13 := copied} = P} = M) ->
+    M#{pending := maps:remove(13, P), queued := maps:get(queued, M) ++ [{erx_prog, 1, 13, {ok, 2}}]};
+file_model(_Event, M) ->
+    M.
 
 %% The model: each report and each reply is queued; a send takes the oldest
 %% unsent; at most one send is out; after the end nothing happens.
@@ -209,6 +338,11 @@ check(Event, Actions, M0) ->
              {{report, {pipe_lost, _, N} = Report}, _} ->
                  M0#{queued := maps:get(queued, M0) ++ [{erx_prog, 1, Report}], next := N + 1};
              {?ASK(Slot, {probe, _}), _} -> M0#{queued := maps:get(queued, M0) ++ [{erx_prog, 1, Slot, ok}]};
+             {?ASK(_, {file, _, _, _}), _} -> file_model(Event, M0);
+             {?ASK(_, {file, _, _, _, _}), _} -> file_model(Event, M0);
+             {{file_opened, _, _}, _} -> file_model(Event, M0);
+             {{file_done, _, _}, _} -> file_model(Event, M0);
+             {{file_copied, _, _}, _} -> file_model(Event, M0);
              {{sent, ok}, sending} ->
                  [_ | Rest] = maps:get(queued, M0),
                  M0#{out := none, queued := Rest};
@@ -228,8 +362,37 @@ check(Event, Actions, M0) ->
                 end, M1, Actions).
 
 running() ->
-    {ok, C0, _} = erx_prog_handler_core:new(?PID, []),
+    {ok, C0, _} = new(?PID, []),
     run(C0, [{holder, ok}, started]).
 
 run(C, Events) ->
     lists:foldl(fun(E, Acc) -> element(1, erx_prog_handler_core:step(Acc, E)) end, C, Events).
+
+%% A handler's core with the test's files: the whole table, from /data, 4 slots.
+new(Pid, Fds) ->
+    erx_prog_handler_core:new(Pid, Fds, files()).
+
+files() ->
+    #{table => ?TABLE, within => all, cwd => <<"/data">>, slots => 4}.
+
+%% The narrowed table a core holds, read from the open it relays.
+files_of({ok, C0, _}) ->
+    {_, [{open, _, _, _, _, Table, _}]} =
+        erx_prog_handler_core:step(run(C0, [{holder, ok}, started]), ?ASK(7, {file, lopen, <<"x">>, 0})),
+    Table;
+files_of({error, _} = Refused) ->
+    Refused.
+
+%% C with one more open, whose description is Desc, its answer sent.
+opened(C, Slot, Desc) ->
+    {C1, _} = erx_prog_handler_core:step(C, ?ASK(Slot, {file, lopen, <<"x">>, 0})),
+    {C2, [?ANSWER(Slot, {ok, _})]} = erx_prog_handler_core:step(C1, {file_opened, Slot, {ok, Desc}}),
+    sent(C2).
+
+%% C once the frame out was taken.
+sent(C) ->
+    element(1, erx_prog_handler_core:step(C, {sent, ok})).
+
+%% The reply a step sent.
+answer({_, [{send, {erx_prog, 1, _Slot, Reply}}]}) ->
+    Reply.

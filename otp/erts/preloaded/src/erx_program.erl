@@ -26,7 +26,7 @@ the startup message with the program protocol's generated grammar
 frame it sends gives the program's credit, and reads how each step ended.
 """.
 
--export([start/1, send/2, install/2, stop/3]).
+-export([start/1, send/2, install/2, stop/3, slots/1, data_read/3, data_write/3]).
 
 %% The driver's port_control commands (?ERX_PROGRAM_CONTROL_*), the reply slot
 %% of a send that answers no request (?ERX_PROGRAM_SEND_NO_REPLY) and each
@@ -275,6 +275,29 @@ stop(Port, anchor, Status) when is_integer(Status), Status >= 0, Status =< 16#ff
         <<"ok">> -> ok;
         <<$e, _/binary>> = Refused -> {error, binary_to_atom(Refused)}
     end.
+
+-doc "The data area's slots a start of `Spec` makes: its `slots`, 4 by default.".
+-spec slots(map()) -> term().
+slots(Spec) -> maps:get(slots, Spec, ?DEFAULT_SLOTS).
+
+-doc """
+The first `Count` bytes of the program's data area slot `Slot`, for a write the
+program asked (docs/design-programs.md, "Reads and writes"). The driver does
+not yet map the data area into the session, so every call answers
+`{error, enosys}` (TODO.md).
+""".
+-spec data_read(port(), non_neg_integer(), pos_integer()) -> {ok, binary()} | {error, atom()}.
+data_read(Port, Slot, Count) when is_port(Port), is_integer(Slot), is_integer(Count) ->
+    {error, enosys}.
+
+-doc """
+Copies `Bytes` into the program's data area slot `Slot`, for a read the program
+asked. As data_read/3, every call answers `{error, enosys}` until the driver
+maps the data area (TODO.md).
+""".
+-spec data_write(port(), non_neg_integer(), binary()) -> ok | {error, atom()}.
+data_write(Port, Slot, Bytes) when is_port(Port), is_integer(Slot), is_binary(Bytes) ->
+    {error, enosys}.
 
 %% What a frame gives the program's credit (docs/design-programs.md, Credit): the
 %% reply slot it answers, ?ERX_PROGRAM_SEND_NO_REPLY for none, and the notices it makes due, a

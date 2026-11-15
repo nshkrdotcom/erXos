@@ -3041,17 +3041,39 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `{discard}`, `{withdraw}` and the collector of deposits no reader can reach
   (docs/design-pipes.md, "The second tier" and "Deposits"), and `holder()` has no
   `{deposit, Ticket}`. `test/erlang/erx_pipe_explore.erl` gains their events with them.
-* [High] session, `erx_prog_handler`: the program protocol carries the file requests `lopen`, `lcreate`,
-  `read`, `write` and `clunk` (abi/protocols/prog.txt), but the handler answers each `enosys`. Serving
-  them (docs/design-programs.md, "Descriptors and files"; docs/design-files.md, "Narrowing for a
-  program") needs the program's narrowed namespace in the handler, open-file descriptions as session
-  processes over `erx_file_remote`, a resolution entry of `prim_file` over a given table and working
-  directory, an `erx_file_remote` open that takes 9P2000.L flags and a create mode as given, and the
-  program driver mapping the data area into the session with a bounded copy into and out of a slot.
-  The read reply's count must be held to the request's, which the grammar cannot state. The other
-  operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need a 64-bit
-  offset or size, which the frame profile cannot spell, since it refuses every `u64` but a capability
-  (docs/design-abi.md, "Program protocol").
+* [High] session, `erx_prog_handler` (file requests): the handler serves `lopen`, `lcreate`, `read`,
+  `write` and `clunk` over the program's narrowed namespace through `erx_file_description`, but every
+  read and write answers `enosys`, since `erx_program:data_read/3` and `data_write/3` do: the program
+  driver creates the data area (`ERX_PROGRAM_DATA_CREATE`) and does not yet map it into the session.
+  It needs a map and an unmap step in erx_program_core.c's plan, and two port control commands that
+  copy out of and into one slot, bounded to the slot and the count, with a seeded fault for a count past
+  the data area. No program sends a file request yet: `liberx` has no file client
+  (docs/design-files.md, "Native clients"), so the programs QEMU suite has no C test program that opens,
+  reads, writes and closes a file. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
+  host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
+  The other operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need
+  a 64-bit offset or size, which the frame profile cannot spell, since it refuses every `u64` but a
+  capability (docs/design-abi.md, "Program protocol").
+* [Low] session, `erx_file_remote:open_flags/4`: an `lopen` that writes on an entry that is not `rw`
+  answers `erofs` before the path is walked, so a missing file opened to write there is `erofs`, where
+  FreeBSD's `vn_open` answers `ENOENT` from the lookup first.
+* [Medium] session, `erx_prog_handler_core` (narrowing): a narrowed entry is a path re-walked at each
+  open, not a fid the handler walks at the start (docs/design-files.md, "Narrowing for a program"), so
+  a narrowing to a missing directory is refused only at each open, and a rename of the narrowed
+  directory at the server moves what the program reaches; a description holds one opened fid, not the
+  design's unopened and opened pair.
+* [Medium] session, `erx_prog_handler` tests: the effect suite runs no file request past an open's
+  refusal (its `erx_file_description` stand-in answers `enoent`), so the read, write, copy and clunk
+  actions and the description's loop run in no test; and the core's exhaustive walk checks only the
+  frames sent, not the relayed actions, and leaves out write, clunk, error answers and an answer of the
+  wrong kind on a waiting slot.
+* [Low] session, `erx_prog_handler` (files): while `erx_program:data_write/3` answers `enosys`, a read
+  advances the description's offset and then fails; the release refuses every `lcreate` with `erofs`,
+  an exclusive one at an existing name included, where an image answers `eexist`; an open at a
+  directory of the empty root answers `eio`; a start whose `cwd` the startup grammar accepts but
+  `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`; and `O_DIRECTORY`, `O_NOFOLLOW`,
+  `O_NONBLOCK` and `O_CLOEXEC` are refused `einval`, so `liberx`'s file client must translate or strip
+  them.
 * [Low] ABI, abi/protocols/prog.txt: `data_slot`'s bound writes out `prog_data_slots_max - 1`, since an
   integer kind's bound cannot be a limit less one; an exclusive bound (`below @prog_data_slots_max`)
   in tools/lib/erx/abi_protocol.rb would make it one fact.

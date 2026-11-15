@@ -19,7 +19,7 @@ class ErxProgHandlerTest < Minitest::Test
   APPLICATIONS = %w[erx].freeze
   TESTS = %w[test/erlang/erx_pipe_fake_nif.erl test/erlang/erx_prog_handler_fakes.erl
              test/erlang/stand_in/erx_program.erl test/erlang/stand_in/erx_pixels.erl
-             test/erlang/stand_in/erx_pipe_nif.erl build/gen/otp/erts/preloaded/src/erx_prog.erl
+             test/erlang/stand_in/erx_pipe_nif.erl test/erlang/stand_in/erx_file_description.erl build/gen/otp/erts/preloaded/src/erx_prog.erl otp/erts/preloaded/src/erx_path.erl
              build/gen/otp/erts/preloaded/src/erx_prog_grammar.erl
              test/erlang/erx_prog_handler_core_tests.erl test/erlang/erx_prog_handler_tests.erl].freeze
   SUITES = %w[erx_prog_handler_core_tests erx_prog_handler_tests].freeze
@@ -36,6 +36,20 @@ class ErxProgHandlerTest < Minitest::Test
   # and the EUnit case that must catch it.
   Mutant = Data.define(:file, :original, :replacement, :caught_by)
   MUTANTS = {
+    'a narrowing that drops the starter mounts below the narrowed path' =>
+      Mutant.new(file: CORE, original: "     | Below];", replacement: "     | []];", caught_by: 'narrowing_test_'),
+    'a narrowed path that keeps the starter entry root, so the program reaches above it' =>
+      Mutant.new(file: CORE, original: 'root := Root ++ lists:nthtail(length(Point), Place)', replacement: 'root := Root',
+                 caught_by: 'narrowing_test_'),
+    'a narrowing that grants rights the starter lacks' =>
+      Mutant.new(file: CORE, original: "  when Rights =:= Own; Rights =:= ro ->\n    Below",
+                 replacement: "  when is_atom(Own) ->\n    Below", caught_by: 'narrowing_test_'),
+    'a read answer longer than its count copied into the slot' =>
+      Mutant.new(file: CORE, original: '{ok, Bytes}) when byte_size(Bytes) =< Count ->', replacement: '{ok, Bytes}) when is_integer(Count) ->',
+                 caught_by: 'read_longer_than_its_count_is_eio'),
+    'a data slot past the program slots admitted' =>
+      Mutant.new(file: CORE, original: '{ok, _} when Data >= Slots ->', replacement: '{ok, _} when Data > Slots ->',
+                 caught_by: 'data_slot_past_the_program_slots_is_einval'),
     'a refused start that keeps its hand-offs' =>
       Mutant.new(file: CORE, original: '[{hand_drop, Number} || {_, {pipe_hand, Number, _}} <- Made] ++',
                  replacement: '[] ++', caught_by: 'refused_start_undoes_everything'),
