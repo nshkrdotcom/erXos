@@ -42,8 +42,13 @@
 # "sum NAME", each counting its length and its NUL. A list has "max N" and
 # "ascending"; a map's "field" keys must be present and its "optional"
 # keys may be; a union's "case ATOM [=ATOM...] [KIND...]" is its atom, or
-# a tuple of its atom, its literal atoms and its fields. "boolean" and
-# "signal" are built in. "capability NAME" declares a capability handle:
+# a tuple of its atom, its literal atoms and its fields; a "reply KIND"
+# line after a request's case names the union of its replies. "boolean",
+# "signal" and "errno" are built in: a signal's protocol name from
+# abi/signals.txt and an error's from abi/errno.txt, each read as its
+# number. "frame NAME to TAG slot reply REQUEST" is the reply frame, whose
+# value is the reply the request on its slot takes, REQUEST naming the
+# slotted frame from the program. "capability NAME" declares a capability handle:
 # a u64 other than cap_null; no two capabilities of a frame are equal.
 # A handle is 64 bits, so every other u64 kind or field fails, as does an
 # integer excepting cap_null. For a union a frame to the program carries,
@@ -163,7 +168,14 @@ protocol erx_prog
     field data_area data_area
     field fds fds
     optional image image
+  union kill_reply
+    case ok
+    case error errno
+  # kill's Signal is a signal's name; kill(pid, 0), which only checks that
+  # the target exists, is no request of this table.
   union request
+    case kill process_id signal
+    reply kill_reply
   union notice
     case closed pipe_id end_id
     case drained pipe_id end_id wend
@@ -176,5 +188,6 @@ protocol erx_prog
     case pipe_server_lost
   frame start to erx_start start
   frame request from erx_prog slot request
+  frame reply to erx_prog slot reply request
   frame notice from erx_prog notice
   frame report to erx_prog report

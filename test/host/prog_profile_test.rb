@@ -107,6 +107,34 @@ class ProgProfileTest < Minitest::Test
     assert(rows.any? { |row| row.fetch(:expected) == 'malformed start' })
   end
 
+  # A reply's kind comes from its own slot's request: a check that reads another slot's
+  # takes a reply on an idle slot, and the replies' mutations must catch it.
+  def test_a_check_reading_another_slots_request_disagrees_on_a_reply
+    seeded = seed(CHECK, 'reply_kind(w, f, busy, *slot, &kind)', 'reply_kind(w, f, busy, 3, &kind)')
+    assert(disagreements(File.binread(GRAMMAR), seeded).any? do |row|
+      row.fetch(:frame) == 'reply' && row.fetch(:expected) == 'range slot'
+    end)
+  end
+
+  def test_a_grammar_taking_a_reply_on_an_idle_slot_disagrees
+    grammar = File.binread(GRAMMAR)
+    seeded = grammar.sub("_ -> {error, {range, slot}}\n    end", "_ -> reply_value(kill, Value, Acc)\n    end")
+    refute_equal grammar, seeded
+    assert(disagreements(seeded).any? { |row| row.fetch(:frame) == 'reply' && row.fetch(:expected) == 'range slot' })
+  end
+
+  # An alias is no protocol name: a table naming one disagrees on the alias's reply.
+  def test_a_table_naming_an_errno_alias_disagrees
+    seeded = seed(TABLE, "\t{ \"enotsup\", 95 },\n", "\t{ \"enotsup\", 95 },\n\t{ \"eopnotsupp\", 95 },\n")
+    assert(disagreements(File.binread(GRAMMAR), seeded).any? { |row| row.fetch(:expected) == 'range errno' })
+  end
+
+  # check_to_program tells a reply from a report by its envelope.
+  def test_a_check_to_program_blind_to_the_envelope_disagrees
+    seeded = seed(CHECK, "\t\t\treturn (frames[i]);", "\t\t\treturn (frames[0]);")
+    assert(disagreements(File.binread(GRAMMAR), seeded).any? { |row| row.fetch(:frame) == 'to_program' })
+  end
+
   def test_text_views_one_byte_short_fail_the_round_trip
     seeded = seed(CHECK, '.len = len }', '.len = len > 0 ? len - 1 : 0 }')
     assert(disagreements(File.binread(GRAMMAR), seeded).any? { |row| row.fetch(:erlang) == 'accepted differs' })
@@ -159,7 +187,7 @@ class ProgProfileTest < Minitest::Test
   def test_the_generated_mutations_reach_past_the_hand_written_ones
     hand = corpus(File.binread(GRAMMAR)).fetch(:hand).to_set
     assert_operator MUTATIONS.map(&:verdict).uniq.count { |verdict| !hand.include?(verdict) }, :>, 0
-    assert_equal ['argv length', 'env length', 'request', 'signals length', 'writers length'],
+    assert_equal ['argv length', 'env length', 'signals length', 'writers length'],
                  SKIPPED.map { |line| line.split(':').first }.sort
   end
 
@@ -174,6 +202,9 @@ class ProgProfileTest < Minitest::Test
   end
 
   def fixture_requests = ProgProfileFrames::ALL.map { |fixture| "start full #{fixture.bytes.unpack1('H*')}" }
+
+  # A driver request for a mutation or a seed: its frame, full scratch, a reply's busy slots and its bytes.
+  def request_line(item) = [item.frame, 'full', *item.busy, item.bytes.unpack1('H*')].join(' ')
 
   # The names of the fixtures whose C answer is not the verdict and fields written for them.
   def fixture_mismatches(sources = {})
@@ -204,9 +235,9 @@ class ProgProfileTest < Minitest::Test
     corpus = corpus(grammar)
     answers = c_answers(corpus.fetch(:requests), sources)
     judge = corpus.fetch(:requests).zip(answers).map do |request, answer|
-      frame, _, hex = request.split
+      frame, _, *words = request.split
       rewrite = answer.split[2] if answer.split[1] == 'accepted' && answer.split[2].match?(/\A\h+\z/)
-      [frame, hex, rewrite].compact.join(' ')
+      [frame, *words, rewrite].compact.join(' ')
     end
     verdicts = erlang_verdicts(judge, grammar)
     corpus.fetch(:expected).zip(answers, verdicts).map do |expected, answer, verdict|
@@ -228,8 +259,7 @@ class ProgProfileTest < Minitest::Test
       seeds = ProgProfileFrames::SEEDS
       hand = File.readlines(File.join(dir, 'expected'), chomp: true) + ProgProfileFrames::ALL.map(&:verdict)
       { requests: File.readlines(File.join(dir, 'requests'), chomp: true) + fixture_requests +
-          MUTATIONS.map { |mutation| "#{mutation.frame} full #{mutation.bytes.unpack1('H*')}" } +
-          seeds.map { |seed| "#{seed.frame} full #{seed.bytes.unpack1('H*')}" },
+          MUTATIONS.map { |mutation| request_line(mutation) } + seeds.map { |seed| request_line(seed) },
         expected: hand + MUTATIONS.map(&:verdict) + seeds.map(&:verdict), hand: hand }
     end
   end

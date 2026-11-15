@@ -37,6 +37,8 @@
 /* A map's keys or a union's cases: each takes a bit of a level's mask. */
 #define ERX_PROFILE_KEYS_MAX	64
 #define ERX_PROFILE_NONE	UINT16_MAX
+/* The slots a request takes and its reply answers, 0 to ERX_PROFILE_SLOTS - 1. */
+#define ERX_PROFILE_SLOTS	16
 
 typedef struct erx_profile erx_profile_t;
 typedef struct erx_profile_case erx_profile_case_t;
@@ -46,7 +48,8 @@ typedef struct erx_profile_kind erx_profile_kind_t;
 typedef struct erx_profile_list erx_profile_list_t;
 typedef struct erx_profile_refers erx_profile_refers_t;
 typedef struct erx_profile_refusal erx_profile_refusal_t;
-typedef struct erx_profile_signal erx_profile_signal_t;
+typedef struct erx_profile_table erx_profile_table_t;
+typedef struct erx_profile_named erx_profile_named_t;
 typedef struct erx_profile_text erx_profile_text_t;
 typedef struct erx_profile_total erx_profile_total_t;
 
@@ -86,7 +89,7 @@ typedef enum erx_profile_form {
 	ERX_PROFILE_UNION,	/* a struct: which, then a case's fields */
 	ERX_PROFILE_ATOMS,	/* a union of cases without fields: a uint16_t */
 	ERX_PROFILE_BOOLEAN,
-	ERX_PROFILE_SIGNAL,	/* an int32_t, the signal's number */
+	ERX_PROFILE_NAMED,	/* an atom of a table, as its number: an int32_t */
 } erx_profile_form_t;
 
 /* A text's rules, checked in this order after its length. */
@@ -116,6 +119,7 @@ struct erx_profile_case {
 	uint16_t		 natoms;
 	uint16_t		 nfields;
 	uint16_t		 offset;	/* of the case's struct in the union's */
+	uint16_t		 reply;		/* a request case's reply kind, or NONE */
 };
 
 /*
@@ -123,7 +127,8 @@ struct erx_profile_case {
  * values when nvalues is not 0, never except when has_except; a text at
  * most text_max bytes with its rules, adding its length and one to the
  * total sum; a list at most list_max elements of element; a tuple or map
- * its fields; a union its cases.  unique, refers and target are the
+ * its fields; a union its cases; a named number the rows of the profile's
+ * table of index table.  unique, refers and target are the
  * frame-wide rules: refers indexes the profile's refers rules, and target
  * names the one whose keys this list's elements give.
  */
@@ -146,6 +151,7 @@ struct erx_profile_kind {
 	uint16_t		 sum;
 	uint16_t		 refers;
 	uint16_t		 target;
+	uint16_t		 table;
 	uint8_t			 rules;
 	bool			 has_except;
 	bool			 unique;
@@ -165,16 +171,28 @@ struct erx_profile_total {
 	uint16_t		 name;
 };
 
-struct erx_profile_signal {
+/* A row of a named number's table: an atom's protocol name and its number. */
+struct erx_profile_named {
 	const char		*name;
 	int32_t			 number;
 };
 
-/* A frame: {Tag, Version, Value}, or {Tag, Version, Slot, Value} with slot. */
+/* The rows of one named number, a signal's or an errno's. */
+struct erx_profile_table {
+	const erx_profile_named_t *rows;
+	uint16_t		 nrows;
+};
+
+/*
+ * A frame: {Tag, Version, Value}, or {Tag, Version, Slot, Value} with slot.
+ * A reply frame has no kind but a request, the frame whose union's case on
+ * the reply's slot gives the reply's kind; other frames' request is NONE.
+ */
 struct erx_profile_frame {
 	const char		*tag;
 	uint16_t		 name;
 	uint16_t		 kind;
+	uint16_t		 request;
 	bool			 slot;
 };
 
@@ -187,7 +205,7 @@ struct erx_profile {
 	const char *const	*names;
 	const erx_profile_refers_t *refers;
 	const erx_profile_total_t *totals;
-	const erx_profile_signal_t *signals;
+	const erx_profile_table_t *tables;
 	const erx_profile_frame_t *frames;
 	uint64_t		 version;
 	uint32_t		 frame_max;
@@ -195,7 +213,7 @@ struct erx_profile {
 	uint16_t		 nnames;
 	uint16_t		 nrefers;
 	uint16_t		 ntotals;
-	uint16_t		 nsignals;
+	uint16_t		 ntables;
 	uint16_t		 nframes;
 	uint16_t		 slot_kind;
 	uint16_t		 unique_kind;	/* NONE when no kind is unique */
@@ -231,11 +249,25 @@ size_t	erx_profile_scratch_bytes(const erx_profile_t *profile, size_t len);
  * erx_profile_scratch_bytes promises it refuses with ERX_PROFILE_SCRATCH
  * and writes none of it.  On acceptance it fills *out, the frame's
  * struct, and *slot for a frame with a slot; on refusal *out and *slot are
- * unspecified.
+ * unspecified.  A reply frame reads busy, the request case each slot holds
+ * (an index of its request frame's union's cases, or NONE when the slot is
+ * idle): a reply on a slot that holds none, or holds no case of the union,
+ * is refused as a range of the slot, and *out is the value of the case's
+ * reply kind.  Other frames read no busy, which may be NULL.
  */
 bool	erx_profile_check(const erx_profile_t *profile, uint16_t frame,
 	    const uint8_t *bytes, size_t len, void *scratch, size_t scratch_len,
-	    uint8_t *slot, void *out, erx_profile_refusal_t *refusal);
+	    const uint16_t *busy, uint8_t *slot, void *out,
+	    erx_profile_refusal_t *refusal);
+
+/*
+ * The frame of frames[0, nframes), nframes at least 1, whose envelope the
+ * bytes begin with, the outer tuple's arity and tag; frames[0] when they
+ * begin with none, so that its check names the refusal.
+ */
+uint16_t erx_profile_select(const erx_profile_t *profile,
+	    const uint16_t *frames, size_t nframes, const uint8_t *bytes,
+	    size_t len);
 
 /*
  * Reads the next element of an accepted list into *element, the C value of

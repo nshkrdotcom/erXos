@@ -5,18 +5,22 @@
 require_relative '../../test/fixtures/prog_profile_frames'
 
 # liberx's erx_prog check, and the start-up plan over it (liberx/program/startup.c), over
-# hostile frames. Inputs in tools/fuzz/erx_prog_fuzz.c's format: a byte whose bits 0-1 choose
-# the frame (0 start, 1 request, 2 notice, 3 report) and whose bits 2-4 offset the scratch,
-# then the frame. Seeds: the hand-encoded start frames of test/fixtures/prog_profile_frames.rb
-# that fit the fuzz bound (every encoding, a capability past 2^63 - 1, wrappers past the
-# depth, lists in segments), a start frame with a pipe's two ends, a request frame, a frame
-# of each notice and report, and a start frame with no descriptor and a cwd of
-# prog_path_max bytes, which the plan copies whole.
+# hostile frames. Inputs in tools/fuzz/erx_prog_fuzz.c's format: a byte whose bits 0-2 choose
+# the frame (0 start, 1 request, 2 notice, 3 report, 4 a frame to the program after its
+# startup message), whose bits 3-5 offset the scratch and whose bits 6-7 choose the busy
+# slots (1, every slot holding a kill), then the frame. Seeds: the hand-encoded start frames
+# of test/fixtures/prog_profile_frames.rb that fit the fuzz bound (every encoding, a
+# capability past 2^63 - 1, wrappers past the depth, lists in segments), a start frame with
+# a pipe's two ends, the request frames, a frame of each notice and report, each reply as a
+# frame to the program, and a start frame with no descriptor and a cwd of prog_path_max
+# bytes, which the plan copies whole.
 frames = ProgProfileFrames
 fixtures = frames::ALL.select { |fixture| fixture.bytes.bytesize < 32_768 }
 etf = frames::Etf
 cwd_at_max = frames.start(frames::BASE_PAIRS.merge(fds: etf::NIL, cwd: etf.binary('/' + ('c' * 4095))))
-choice = { 'start' => "\x00".b, 'request' => "\x01".b, 'notice' => "\x02".b, 'report' => "\x03".b }.freeze
+# A reply seed's busy slots are the fuzz target's every-slot-a-kill pattern, so its slot holds a kill.
+choice = { 'start' => "\x00".b, 'request' => "\x01".b, 'notice' => "\x02".b, 'report' => "\x03".b,
+           'reply' => [4 | (1 << 6)].pack('C') }.freeze
 Erx::PackFuzz.declare_target(
   sources: %w[liberx/program/startup.c liberx/erx_profile.c liberx/erx_etf.c kernel/crypto/blake3/blake3.c
               kernel/crypto/blake3/blake3_portable.c build/gen/liberx/generated/prog_profile.c],

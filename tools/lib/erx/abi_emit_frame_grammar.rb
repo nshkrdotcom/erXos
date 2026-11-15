@@ -8,9 +8,11 @@ require_relative 'abi_emit_erlang'
 module Erx
   module ABI
     # Emits the Erlang grammar of a frame protocol (docs/design-abi.md,
-    # "Program protocol"): check_FRAME/1 for each frame, check_from_program/1
-    # and check_to_program/2, each answering ok or {error, {Reason, Kind}},
-    # and a builder per frame. Each kind becomes k_KIND(Value, Acc), which
+    # "Program protocol"): check_FRAME/1 for each frame (check_FRAME/2 for a
+    # reply frame, taking Busy, the request case each busy slot holds),
+    # check_from_program/1 and check_to_program/2 over the channel's frames,
+    # those tagged with the protocol's own name, each answering ok or
+    # {error, {Reason, Kind}}, and a builder per frame. Each kind becomes k_KIND(Value, Acc), which
     # answers {ok, Acc} or the refusal; Acc carries what the frame-wide rules
     # need (the sums of each total, the unique values seen, the values each
     # refers names and the keys it may name), judged once the walk ends. The
@@ -22,13 +24,11 @@ module Erx
       OUTPUT_DIRECTORY = 'otp/erts/preloaded/src'
       BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff }.freeze
       PLAIN_ATOM = /\A[a-z][a-zA-Z0-9_@]*\z/
-      SLOT_MAX = 15
 
-      def initialize(protocol, signals:, frame_max:)
+      def initialize(protocol, frame_max:)
         @protocol = protocol
         @kinds = protocol.fetch(:kinds)
         @frames = protocol.fetch(:frames)
-        @signals = signals
         @frame_max = frame_max
         @targets = protocol.fetch(:refers).to_h { |item| [item.fetch(:list), item] }
       end
@@ -57,8 +57,8 @@ module Erx
       end
 
       def exports
-        checks = @frames.map { |frame| "check_#{frame.fetch(:name)}/1" }
-        builds = @frames.map { |frame| "build_#{frame.fetch(:name)}/#{frame.fetch(:slot) ? 2 : 1}" }
+        checks = @frames.map { |frame| "check_#{frame.fetch(:name)}/#{reply?(frame) ? 2 : 1}" }
+        builds = @frames.map { |frame| "build_#{frame.fetch(:name)}/#{[frame.fetch(:slot), reply?(frame)].count(true) + 1}" }
         "-export([#{(checks + %w[check_from_program/1 check_to_program/2] + builds).join(', ')}])."
       end
 
@@ -72,44 +72,70 @@ module Erx
         (defines + ["-define(VERSION, #{@protocol.fetch(:version)})."]).join("\n")
       end
 
+      def reply?(frame) = frame.key?(:replies)
+
       # The envelope {Tag, Version, [Slot,] Value}: another shape or tag is
-      # shape, another version version, both of the frame's own name.
+      # shape, another version version, both of the frame's own name. A reply
+      # frame's check takes Busy too, a map from each busy slot to the request
+      # case it holds, and judges its value by that case's reply kind.
       def frames
         @frames.map do |frame|
           frame_name = frame.fetch(:name)
           tag = atom(frame.fetch(:tag))
+          busy = reply?(frame) ? ['Busy'] : []
+          ignored = reply?(frame) ? ['_'] : []
           head = frame.fetch(:slot) ? "{#{tag}, ?VERSION, Slot, Value}" : "{#{tag}, ?VERSION, Value}"
-          body = "finish(k_#{frame.fetch(:kind)}(Value, acc()))"
-          body = "case k_slot(Slot, acc()) of\n        {ok, Acc} -> finish(k_#{frame.fetch(:kind)}(Value, Acc));\n" \
+          value = ->(acc) { reply?(frame) ? "#{frame_name}_value(Busy, Slot, Value, #{acc})" : "k_#{frame.fetch(:kind)}(Value, #{acc})" }
+          body = "finish(#{value.call('acc()')})"
+          body = "case k_slot(Slot, acc()) of\n        {ok, Acc} -> finish(#{value.call('Acc')});\n" \
                  "        Error -> Error\n    end" if frame.fetch(:slot)
           other = frame.fetch(:slot) ? "{#{tag}, _, _, _}" : "{#{tag}, _, _}"
-          "%% The #{frame_name} frame, #{frame.fetch(:direction)} the program.\n" \
-            "-spec check_#{frame_name}(term()) -> ok | {error, {atom(), atom()}}.\n" \
-            "check_#{frame_name}(#{head}) ->\n    #{body};\n" \
-            "check_#{frame_name}(#{other}) ->\n    {error, {version, #{atom(frame_name)}}};\n" \
-            "check_#{frame_name}(_) ->\n    {error, {shape, #{atom(frame_name)}}}."
+          check = "%% The #{frame_name} frame, #{frame.fetch(:direction)} the program.\n" \
+                  "-spec check_#{frame_name}(#{(['term()'] * (1 + busy.size)).join(', ')}) -> ok | {error, {atom(), atom()}}.\n" \
+                  "check_#{frame_name}(#{[head, *busy].join(', ')}) ->\n    #{body};\n" \
+                  "check_#{frame_name}(#{[other, *ignored].join(', ')}) ->\n    {error, {version, #{atom(frame_name)}}};\n" \
+                  "check_#{frame_name}(#{['_', *ignored].join(', ')}) ->\n    {error, {shape, #{atom(frame_name)}}}."
+          reply?(frame) ? "#{check}\n\n#{reply_value(frame)}" : check
         end.join("\n\n")
       end
 
-      # A frame of each direction goes to the check its tag and arity select;
-      # any other term is refused by the direction's first frame.
+      # FRAME_value(Busy, Slot, Value, Acc): Value judged as the reply the
+      # request case Busy holds on Slot takes. A slot Busy holds no case on is
+      # idle, and a reply on it is refused as a range of slot.
+      def reply_value(frame)
+        function = "#{frame.fetch(:name)}_value"
+        clauses = frame.fetch(:replies).map do |request, reply|
+          "#{function}(#{atom(request)}, Value, Acc) ->\n    k_#{reply}(Value, Acc)"
+        end
+        "#{function}(Busy, Slot, Value, Acc) ->\n    case Busy of\n" \
+          "        \#{Slot := Request} -> #{function}(Request, Value, Acc);\n" \
+          "        _ -> {error, {range, slot}}\n    end.\n\n" +
+          (clauses + ["#{function}(_, _, _) ->\n    {error, {range, slot}}"]).join(";\n") + '.'
+      end
+
+      # A channel's frame of each direction, one tagged with the protocol's
+      # own name, goes to the check its tag and arity select; any other term
+      # is refused by the direction's first such frame. A frame of another
+      # tag, the startup message, has its own check alone.
       def dispatch
         %w[from to].map do |direction|
           function = direction == 'from' ? 'check_from_program' : 'check_to_program'
-          arguments = direction == 'from' ? 'Frame' : 'Frame, _Busy'
-          frames = @frames.select { |frame| frame.fetch(:direction) == direction }
+          frames = @frames.select { |frame| frame.fetch(:direction) == direction && frame.fetch(:tag) == name }
+          # The to direction's dispatch takes Busy, which only a reply frame's check reads.
+          busy = ->(frame) { direction == 'to' ? [frame && reply?(frame) ? 'Busy' : '_'] : [] }
+          call = ->(frame) { "check_#{frame.fetch(:name)}(#{['Frame', *(reply?(frame) ? ['Busy'] : [])].join(', ')})" }
           clauses = frames.map do |frame|
-            arity = frame.fetch(:slot) ? 4 : 3
-            "#{function}(#{arguments.sub('Frame', "{#{atom(frame.fetch(:tag))}#{', _' * (arity - 1)}} = Frame")}) ->\n" \
-              "    check_#{frame.fetch(:name)}(Frame)"
+            envelope = "{#{atom(frame.fetch(:tag))}#{', _' * (frame.fetch(:slot) ? 3 : 2)}} = Frame"
+            "#{function}(#{[envelope, *busy.call(frame)].join(', ')}) ->\n    #{call.call(frame)}"
           end
-          fallback = frames.empty? ? '{error, {shape, frame}}' : "check_#{frames.first.fetch(:name)}(Frame)"
+          first = frames.first
+          fallback = first ? call.call(first) : '{error, {shape, frame}}'
           # One frame takes every term, so its clause is the fallback alone.
           clauses = [] if frames.size == 1
-          note = direction == 'to' ? "\n%% Busy is the request each busy slot holds; the protocol has no reply yet, so it is unused." : ''
+          note = direction == 'to' ? "\n%% Busy maps each busy slot to the request case it holds." : ''
           "%% A frame #{direction} the program.#{note}\n" \
             "-spec #{function}(#{direction == 'from' ? 'term()' : 'term(), term()'}) -> ok | {error, {atom(), atom()}}.\n" +
-            (clauses + ["#{function}(#{arguments}) ->\n    #{fallback}"]).join(";\n") + '.'
+            (clauses + ["#{function}(#{['Frame', *busy.call(first)].join(', ')}) ->\n    #{fallback}"]).join(";\n") + '.'
         end.join("\n\n")
       end
 
@@ -128,33 +154,46 @@ module Erx
           "finish(Error) ->\n    Error."
       end
 
+      # A reply frame's builder takes first the request case its slot holds.
       def builders
         @frames.map do |frame|
           frame_name = frame.fetch(:name)
           tag = atom(frame.fetch(:tag))
-          args = frame.fetch(:slot) ? 'Slot, Value' : 'Value'
-          value = sorts?(frame.fetch(:kind)) ? "sort_#{frame.fetch(:kind)}(Value)" : 'Value'
-          term = frame.fetch(:slot) ? "{#{tag}, ?VERSION, Slot, #{value}}" : "{#{tag}, ?VERSION, #{value}}"
+          args = [*(reply?(frame) ? ['Request'] : []), *(frame.fetch(:slot) ? ['Slot'] : []), 'Value']
+          term = frame.fetch(:slot) ? "{#{tag}, ?VERSION, Slot, #{sorted(frame)}}" : "{#{tag}, ?VERSION, #{sorted(frame)}}"
+          check = reply?(frame) ? "check_#{frame_name}(Frame, \#{Slot => Request})" : "check_#{frame_name}(Frame)"
           "%% The #{frame_name} frame of Value, its ascending lists sorted (a repeated key is kept, so\n" \
             "%% the check refuses it), or the refusal: the check's, or size past #{literal(@frame_max)} bytes.\n" \
-            "-spec build_#{frame_name}(#{frame.fetch(:slot) ? 'term(), ' : ''}term()) -> {ok, tuple()} | {error, {atom(), atom()}}.\n" \
-            "build_#{frame_name}(#{args}) ->\n    Frame = #{term},\n" \
-            "    case check_#{frame_name}(Frame) of\n" \
+            "-spec build_#{frame_name}(#{(['term()'] * args.size).join(', ')}) -> {ok, tuple()} | {error, {atom(), atom()}}.\n" \
+            "build_#{frame_name}(#{args.join(', ')}) ->\n    Frame = #{term},\n" \
+            "    case #{check} of\n" \
             "        ok ->\n            case byte_size(term_to_binary(Frame)) =< #{literal(@frame_max)} of\n" \
             "                true -> {ok, Frame};\n                false -> {error, {size, #{atom(frame_name)}}}\n" \
             "            end;\n        Error ->\n            Error\n    end."
         end.join("\n\n")
       end
 
+      # Value with the ascending lists of the frame's kind sorted; for a reply
+      # frame, of the reply kind its request case takes.
+      def sorted(frame)
+        return sorts?(frame.fetch(:kind)) ? "sort_#{frame.fetch(:kind)}(Value)" : 'Value' unless reply?(frame)
+
+        sorting = frame.fetch(:replies).select { |_, reply| sorts?(reply) }
+        return 'Value' if sorting.empty?
+
+        arms = sorting.map { |request, reply| "#{atom(request)} -> sort_#{reply}(Value)" } + ['_ -> Value']
+        "case Request of #{arms.join('; ')} end"
+      end
+
       def kind_checks
-        builtins = %w[boolean signal].select { |builtin| used?(builtin) }
+        builtins = Protocols::FRAME_BUILTINS.select { |builtin| used?(builtin) }
         bases = BASE_MAX.keys.select { |base| used?(base) }
         slot = @frames.any? { |frame| frame.fetch(:slot) }
         parts = @kinds.map { |kind_name, kind| "%% #{kind_name}\n#{kind_check(kind_name, kind)}" }
         parts += bases.map { |base| "k_#{base}(V, Acc) when is_integer(V) ->\n    range(V >= 0 andalso V =< #{BASE_MAX.fetch(base)}, #{base}, Acc);\nk_#{base}(_, _) ->\n    {error, {shape, #{base}}}." }
-        parts << "k_slot(V, Acc) when is_integer(V) ->\n    range(V >= 0 andalso V =< #{SLOT_MAX}, slot, Acc);\nk_slot(_, _) ->\n    {error, {shape, slot}}." if slot
+        parts << "k_slot(V, Acc) when is_integer(V) ->\n    range(V >= 0 andalso V =< #{Protocols::Profile::SLOTS - 1}, slot, Acc);\nk_slot(_, _) ->\n    {error, {shape, slot}}." if slot
         parts << "k_boolean(V, Acc) when is_boolean(V) ->\n    {ok, Acc};\nk_boolean(_, _) ->\n    {error, {shape, boolean}}." if builtins.include?('boolean')
-        parts << signal_check if builtins.include?('signal')
+        parts += @protocol.fetch(:named).map { |word, rows| named_check(word, rows) }
         parts.join("\n\n")
       end
 
@@ -162,7 +201,7 @@ module Erx
         @kinds.values.any? do |kind|
           [*kind.fetch(:elements, []), kind[:element], *kind.fetch(:fields, []).map(&:last),
            *kind.fetch(:cases, []).flat_map { |item| item.fetch(:fields) }].include?(kind_name)
-        end || @frames.any? { |frame| frame.fetch(:kind) == kind_name }
+        end || @frames.any? { |frame| Protocols::Profile.frame_kinds(frame).include?(kind_name) }
       end
 
       def kind_check(kind_name, kind)
@@ -240,12 +279,12 @@ module Erx
                     "k_#{kind_name}(_, _) ->\n    {error, {shape, #{atom(kind_name)}}}"]).join(";\n") + '.'
       end
 
-      def signal_check
-        names = @signals.map { |signal| atom("sig#{signal.name}") }
-        "%% A signal by its protocol name, the names erx_abi_signals lists.\n" \
-          "k_signal(V, Acc) when is_atom(V) ->\n    range(is_signal(V), signal, Acc);\n" \
-          "k_signal(_, _) ->\n    {error, {shape, signal}}.\n\n" +
-          (names.map { |item| "is_signal(#{item}) -> true" } + ['is_signal(_) -> false']).join(";\n") + '.'
+      # A named number by its protocol name, the names its table's generated module lists.
+      def named_check(word, rows)
+        "%% A #{word} by its protocol name, the names #{Protocols::NAMED_NUMBERS.fetch(word).module} lists.\n" \
+          "k_#{word}(V, Acc) when is_atom(V) ->\n    range(is_#{word}(V), #{word}, Acc);\n" \
+          "k_#{word}(_, _) ->\n    {error, {shape, #{word}}}.\n\n" +
+          (rows.map { |row_name, _| "is_#{word}(#{atom(row_name)}) -> true" } + ["is_#{word}(_) -> false"]).join(";\n") + '.'
       end
 
       # sort_KIND(Value) for each kind that holds an ascending list: the value

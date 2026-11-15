@@ -32,10 +32,9 @@ module Erx
                         'dotdot' => '".."' }.freeze
 
       def self.outputs(schema)
-        signals = schema.signals.signals.select(&:nameable?)
         schema.protocols.to_h do |protocol|
           emitter = if protocol.key?(:frames)
-                      FrameGrammarEmitter.new(protocol, signals: signals, frame_max: protocol.fetch(:frame_max))
+                      FrameGrammarEmitter.new(protocol, frame_max: protocol.fetch(:frame_max))
                     else
                       new(protocol)
                     end

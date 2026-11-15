@@ -19,15 +19,34 @@ module Erx
       REFUSALS = %w[nul slash empty dot dotdot].freeze
       MEASURES = %w[value bytes length packed].freeze
       RELATIONS = %w[le le_nonempty].freeze
-MAX_FIELDS = 32
-MAX_CASES = 32
-# Built-in kinds of a frame protocol: true or false, and a signal's protocol
-# name from abi/signals.txt (docs/design-abi.md, "Program protocol").
-FRAME_BUILTINS = %w[boolean signal].freeze
-# The words after an integer's base that start an option, which end a list of values.
-INTEGER_OPTIONS = %w[max in values or except unique refers local].freeze
-# A list of a frame protocol may hold up to 2^24 elements; a frame's own bound holds it far below.
-LIST_MAX = 1 << 24
+      MAX_FIELDS = 32
+      MAX_CASES = 32
+      # A named number of a frame protocol: an atom of an ABI table, read as
+      # its number (docs/design-abi.md, "Program protocol"). rows forms each
+      # protocol name and its number from the validated tables, so the
+      # generator alone knows a table's prefix and which of its rows a
+      # protocol may name; module is the generated Erlang module that lists
+      # the same names; member is the word's C member name, where the word
+      # itself is taken in C (errno is <errno.h>'s macro).
+      NamedNumber = Data.define(:rows, :module, :member)
+      # Each named number by its declaration word.
+      NAMED_NUMBERS = {
+        'signal' => NamedNumber.new(
+          rows: ->(signals:, errnos:) { signals.signals.select(&:nameable?).map { |row| ["sig#{row.name}", row.number] } },
+          module: 'erx_abi_signals', member: 'signal'
+        ),
+        # An alias is a C name only, never a protocol name: enotsup, not eopnotsupp.
+        'errno' => NamedNumber.new(
+          rows: ->(signals:, errnos:) { errnos.errnos.map { |row| [row.name, row.number] } },
+          module: 'erx_abi_errno', member: 'errnum'
+        )
+      }.freeze
+      # Built-in kinds of a frame protocol: true or false, and each named number.
+      FRAME_BUILTINS = ['boolean', *NAMED_NUMBERS.keys].freeze
+      # The words after an integer's base that start an option, which end a list of values.
+      INTEGER_OPTIONS = %w[max in values or except unique refers local].freeze
+      # A list of a frame protocol may hold up to 2^24 elements; a frame's own bound holds it far below.
+      LIST_MAX = 1 << 24
       # The kind by which a request names a node. Each request field of this kind
       # ends in one of FID_ATTRIBUTES, what its fid names: "directory" a directory,
       # "node" any node, "new" a fid the request makes name a node (walk's may be
@@ -47,20 +66,26 @@ LIST_MAX = 1 << 24
       # kind whose check would clash with a BIF or a helper of the generated module.
       ERLANG_RESERVED = %w[after and andalso band begin bnot bor bsl bsr bxor case catch cond div else end
                            fun if let maybe not of or orelse receive rem try when xor].freeze
-      RESERVED_KINDS = %w[atom binary bitstring boolean float function integer list list_of map number
-                          pid port record reference signal tuple utf8].freeze
+      RESERVED_KINDS = [*%w[atom binary bitstring float function integer list list_of map number
+                            pid port record reference tuple utf8], *FRAME_BUILTINS].freeze
 
       module_function
 
-      def validate(declarations, constants)
+      # named: each named number's rows, as named_rows gives them.
+      def validate(declarations, constants, named:)
         names = {}
         declarations.map do |declaration|
           Model.arity(declaration.line, 2)
           name = atom_name(declaration.args[0], line: declaration.line)
           declaration.fail!('duplicate protocol') if names.key?(name)
           names[name] = true
-          protocol(declaration, name, constants)
+          protocol(declaration, name, constants, named)
         end.freeze
+      end
+
+      # Each named number's [protocol name, number] rows, from the schema's tables.
+      def named_rows(signals:, errnos:)
+        NAMED_NUMBERS.transform_values { |named| named.rows.call(signals: signals, errnos: errnos).freeze }.freeze
       end
 
       # A protocol is one of two shapes: the file protocol's operations, each a
@@ -68,7 +93,7 @@ LIST_MAX = 1 << 24
       # {Tag, Version, Value} or {Tag, Version, Slot, Value} (docs/design-abi.md,
       # "Program protocol"). Both declare their kinds in the one language below;
       # the members that describe 9P2000.L's bytes fail in a frame protocol.
-      def protocol(declaration, name, constants)
+      def protocol(declaration, name, constants, named)
         errors = nil
         error_type = nil
         kinds = {}
@@ -113,7 +138,7 @@ LIST_MAX = 1 << 24
           end
         end
         return Profile.frames(declaration, name: name, kinds: kinds, frames: frames, totals: totals,
-                                           version: version, reader: reader, constants: constants,
+                                           version: version, reader: reader, constants: constants, named: named,
                                            nine_p: errors || !operations.empty?) unless frames.empty?
 
         declaration.fail!('only a frame protocol takes version, reader or total') if version || reader || !totals.empty?
@@ -167,11 +192,14 @@ LIST_MAX = 1 << 24
       end
 
       # Each "case ATOM [=ATOM...] [KIND...]": the atoms that select it, the
-      # case's own first, and the kinds of its fields.
+      # case's own first, and the kinds of its fields; and the "reply KIND"
+      # line after a request's case, naming the union of its replies, or nil.
+      # Which unions take reply lines is the frames' to say (Profile.reply_rules!).
       def union_kind(words, children, line, kinds)
         line.fail!('a union takes no options') unless words.empty?
-        line.fail!("a union has at most #{MAX_CASES} cases") if children.size > MAX_CASES
-        cases = children.map do |child|
+        groups = children.slice_before { |child| child.words.first == 'case' }.to_a
+        line.fail!("a union has at most #{MAX_CASES} cases") if groups.size > MAX_CASES
+        cases = groups.map do |child, *replies|
           keyword, first, *rest = child.words
           child.fail!('expected case ATOM [=ATOM...] [KIND...]') unless keyword == 'case' && first
           literals = rest.take_while { |word| word.start_with?('=') }
@@ -180,9 +208,16 @@ LIST_MAX = 1 << 24
           atoms = [first, *literals.map { |word| word.delete_prefix('=') }].map { |word| atom_name(word, line: child) }
           child.fail!('a case has at most 32 elements') if atoms.size + fields.size > MAX_FIELDS
           { atoms: atoms.freeze, fields: fields.map { |word| known_kind(word, child, kinds) }.freeze,
-            c_name: atoms.join('_') }.freeze
+            c_name: atoms.join('_'), reply: case_reply(replies, kinds) }.freeze
         end
         { form: 'union', cases: cases.freeze }.freeze
+      end
+
+      # The kind of a case's one "reply KIND" line, or nil when it has none.
+      def case_reply(replies, kinds)
+        replies.each { |reply| reply.fail!('expected reply KIND') unless reply.words.size == 2 && reply.words.first == 'reply' }
+        replies.drop(1).first&.fail!('a case has at most one reply line')
+        replies.first && known_kind(replies.first.words[1], replies.first, kinds)
       end
 
       # u8, u16, u32 or u64, then the options: one of "max N", "in MIN MAX",
@@ -296,16 +331,23 @@ LIST_MAX = 1 << 24
         result.freeze
       end
 
-      # frame NAME to|from TAG [slot] KIND
+      # "frame NAME to|from TAG [slot] KIND", or a reply frame, "frame NAME
+      # to TAG slot reply REQUEST": its value is the reply its slot's request,
+      # a frame named REQUEST, takes. A reply frame has no kind of its own;
+      # Profile.reply_rules! gives it each request case's reply kind.
       def frame(line, words, kinds)
         name, direction, tag, *rest = words
         slot = rest.first == 'slot'
         rest = rest.drop(1) if slot
-        unless %w[to from].include?(direction) && tag && rest.size == 1
-          line.fail!('expected frame NAME to|from TAG [slot] KIND')
+        unless %w[to from].include?(direction) && tag && (rest.size == 1 || (rest.size == 2 && rest.first == 'reply'))
+          line.fail!('expected frame NAME to|from TAG [slot] KIND or frame NAME to TAG slot reply REQUEST')
         end
-        { name: atom_name(name, line: line), direction: direction, tag: atom_name(tag, line: line), slot: slot,
-          kind: known_kind(rest.first, line, kinds), line: line }.freeze
+        common = { name: atom_name(name, line: line), direction: direction, tag: atom_name(tag, line: line), slot: slot,
+                   line: line }
+        return common.merge(kind: known_kind(rest.first, line, kinds)).freeze if rest.size == 1
+
+        line.fail!('a reply frame is to the program, on a slot') unless direction == 'to' && slot
+        common.merge(kind: nil, request: atom_name(rest.last, line: line)).freeze
       end
 
       def operation(line, words, children, kinds, constants)

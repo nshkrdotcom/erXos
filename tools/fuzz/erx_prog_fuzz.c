@@ -5,9 +5,13 @@
 
 /*
  * liberx's erx_prog check over hostile frames (docs/design-abi.md#program-protocol).
- * The first input byte chooses the frame: bits 0-1 a start (0), request (1),
- * notice (2) or report (3) frame; bits 2-4 the scratch's offset from an
- * aligned address.
+ * The first input byte chooses the frame: bits 0-2 a start (0), request (1),
+ * notice (2) or report (3) frame, or a frame to the program after its
+ * startup message (4), checked by erx_prog_check_to_program; bits 3-5 the
+ * scratch's offset from an aligned address; bits 6-7 the busy slots a
+ * reply is judged by: none (0), every slot holding a kill (1), the even
+ * slots holding one (2), or slot 0 holding one and the others ids that
+ * name no request case (3).
  * The rest is the frame's bytes.
  *
  * For every input the harness checks the frame twice: with all the scratch
@@ -21,7 +25,10 @@
  * field of it lies within its kind's range: pipe and end numbers from 1, a
  * read end's index to 63, a lane size of 16 or 64 KiB, capabilities other
  * than the null one and distinct within the frame, and an end state open or
- * gone, and a mem range's first page and count from 1.
+ * gone, and a mem range's first page and count from 1.  An accepted request
+ * holds a kill of a process id from 2 and a signal of the signal table; an
+ * accepted reply came on a slot that holds a kill, and holds ok or an
+ * errno of the errno table.
  *
  * The start-up plan of liberx/program/startup.h runs on every start frame
  * and must agree with the check: a refused frame is refused with status 127
@@ -374,8 +381,82 @@ enum frame_kind {
 	FRAME_START,
 	FRAME_REQUEST,
 	FRAME_NOTICE,
-	FRAME_REPORT
+	FRAME_REPORT,
+	FRAME_TO_PROGRAM
 };
+
+/* Whether number is a row of the named number word's table. */
+static bool
+named(const char *word, int32_t number)
+{
+	const erx_profile_table_t *table;
+	unsigned k, i;
+
+	for (k = 0; k < erx_prog_profile.nkinds; k++) {
+		if (erx_prog_profile.kinds[k].form != ERX_PROFILE_NAMED ||
+		    strcmp(erx_prog_profile.kinds[k].name, word) != 0)
+			continue;
+		table = &erx_prog_profile.tables[erx_prog_profile.kinds[k].table];
+		for (i = 0; i < table->nrows; i++) {
+			if (table->rows[i].number == number)
+				return (true);
+		}
+	}
+	return (false);
+}
+
+static void
+read_request(const erx_prog_request_t *r)
+{
+	if (r->which != ERX_PROG_REQUEST_KILL || r->u.kill.process_id < 2 ||
+	    r->u.kill.process_id > 0x7fffffffu ||
+	    !named("signal", r->u.kill.signal))
+		abort();
+}
+
+/* A reply accepted on slot, which busy must hold a kill on. */
+static void
+read_reply(const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t slot,
+    const erx_prog_reply_t *r)
+{
+	if (slot >= ERX_PROFILE_SLOTS || busy[slot] != ERX_PROG_REQUEST_KILL ||
+	    r->request != ERX_PROG_REQUEST_KILL)
+		abort();
+	switch (r->u.kill.which) {
+	case ERX_PROG_KILL_REPLY_OK:
+		return;
+	case ERX_PROG_KILL_REPLY_ERROR:
+		if (!named("errno", r->u.kill.u.error.errnum))
+			abort();
+		return;
+	}
+	abort();
+}
+
+/* The busy slots of pattern, bits 6-7 of the first byte. */
+static void
+busy_slots(unsigned pattern, uint16_t busy[ERX_PROFILE_SLOTS])
+{
+	unsigned slot;
+
+	for (slot = 0; slot < ERX_PROFILE_SLOTS; slot++) {
+		switch (pattern) {
+		case 1:
+			busy[slot] = ERX_PROG_REQUEST_KILL;
+			break;
+		case 2:
+			busy[slot] = slot % 2 == 0 ? ERX_PROG_REQUEST_KILL :
+			    ERX_PROFILE_NONE;
+			break;
+		case 3:
+			busy[slot] = slot == 0 ? ERX_PROG_REQUEST_KILL :
+			    (uint16_t)(ERX_PROG_REQUEST_KILL + slot);
+			break;
+		default:
+			busy[slot] = ERX_PROFILE_NONE;
+		}
+	}
+}
 
 static void
 read_notice(const erx_prog_notice_t *n)
@@ -445,11 +526,13 @@ read_report(const erx_prog_report_t *r)
  */
 static bool
 check(enum frame_kind kind, const uint8_t *frame, size_t len, size_t offset,
-    size_t scratch_len, erx_prog_start_t *start, erx_profile_refusal_t *refusal)
+    size_t scratch_len, const uint16_t busy[ERX_PROFILE_SLOTS],
+    erx_prog_start_t *start, erx_profile_refusal_t *refusal)
 {
 	erx_prog_notice_t notice;
 	erx_prog_report_t report;
-	uint16_t operation;
+	erx_prog_request_t request;
+	erx_prog_to_program_t to;
 	uint8_t slot;
 	uint8_t *scratch;
 	bool ok;
@@ -464,7 +547,21 @@ check(enum frame_kind kind, const uint8_t *frame, size_t len, size_t offset,
 		break;
 	case FRAME_REQUEST:
 		ok = erx_prog_check_request(frame, len, scratch + offset,
-		    scratch_len, &slot, &operation, refusal);
+		    scratch_len, &slot, &request, refusal);
+		if (ok && slot >= ERX_PROFILE_SLOTS)
+			abort();
+		if (ok)
+			read_request(&request);
+		break;
+	case FRAME_TO_PROGRAM:
+		ok = erx_prog_check_to_program(frame, len, scratch + offset,
+		    scratch_len, busy, &to, refusal);
+		if (ok && to.frame == ERX_PROG_FRAME_REPLY)
+			read_reply(busy, to.slot, &to.u.reply);
+		else if (ok && to.frame == ERX_PROG_FRAME_REPORT)
+			read_report(&to.u.report);
+		else if (ok)
+			abort();
 		break;
 	case FRAME_NOTICE:
 		ok = erx_prog_check_notice(frame, len, scratch + offset,
@@ -493,21 +590,23 @@ int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
 	erx_profile_refusal_t full_refusal, short_refusal;
+	uint16_t busy[ERX_PROFILE_SLOTS];
 	erx_prog_start_t start;
 	size_t need, len, offset;
 	enum frame_kind kind;
 	bool full;
 
-	if (size < 1)
+	if (size < 1 || (data[0] & 7) > FRAME_TO_PROGRAM)
 		return (0);
-	kind = (enum frame_kind)(data[0] & 3);
-	offset = (data[0] >> 2) & 7;
+	kind = (enum frame_kind)(data[0] & 7);
+	offset = (data[0] >> 3) & 7;
+	busy_slots(data[0] >> 6, busy);
 	frame_start = data + 1;
 	frame_len = len = size - 1;
 	need = erx_prog_scratch_bytes(len);
 	if (need == SIZE_MAX)
 		abort();
-	full = check(kind, frame_start, len, offset, need, &start,
+	full = check(kind, frame_start, len, offset, need, busy, &start,
 	    &full_refusal);
 	if (!full && full_refusal.reason == ERX_PROFILE_SCRATCH)
 		abort();
@@ -515,7 +614,7 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		read_start(&start);
 	if (kind == FRAME_START)
 		plan_start(frame_start, len, need, full, &start, &full_refusal);
-	if (check(kind, frame_start, len, offset, need - 1, &start,
+	if (check(kind, frame_start, len, offset, need - 1, busy, &start,
 	    &short_refusal) || (short_refusal.reason != ERX_PROFILE_SCRATCH &&
 	    short_refusal.reason != ERX_PROFILE_SIZE))
 		abort();

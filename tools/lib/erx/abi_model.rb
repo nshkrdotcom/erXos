@@ -213,7 +213,7 @@ module Erx
         translations = validate_translations(by_kind.fetch('translation', []), types)
         services = validate_services(by_kind.fetch('service', []))
         projections = validate_projections(by_kind.fetch('projection', []), types)
-        protocols = validate_protocols(by_kind.fetch('protocol', []), constants)
+        protocols = validate_protocols(by_kind.fetch('protocol', []), constants, signals: signals, errnos: errnos)
         inspection = validate_inspection(by_kind, types, rights, objects)
         ui = validate_ui(by_kind, types)
         draw = validate_draw(by_kind)
@@ -1115,9 +1115,9 @@ module Erx
         Contracts.services(declarations)
       end
 
-      def validate_protocols(declarations, constants)
+      def validate_protocols(declarations, constants, signals:, errnos:)
         require_relative 'abi_protocol'
-        Protocols.validate(declarations, constants)
+        Protocols.validate(declarations, constants, named: Protocols.named_rows(signals: signals, errnos: errnos))
       end
 
       def validate_signals(by_kind)

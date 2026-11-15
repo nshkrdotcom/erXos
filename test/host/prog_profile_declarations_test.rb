@@ -56,7 +56,27 @@ class ProgProfileDeclarationsTest < Minitest::Test
       /kind probe: a frame protocol's u64 is a capability/,
     "  capability cap2 unique\n  tuple probe cap2" => /a capability takes no options/,
     "  capability cap2\n  tuple probe cap2" => /a protocol has at most one unique kind/,
-    "#{TOTALS}\n  tuple probe #{(1..9).map { |n| "x#{n}" }.join(' ')}" => /at most 8 totals/
+    "#{TOTALS}\n  tuple probe #{(1..9).map { |n| "x#{n}" }.join(' ')}" => /at most 8 totals/,
+    # Each slotted frame to the program is a reply to a slotted frame from it, whose every
+    # case names its reply, and only such a request union takes reply lines.
+    "  frame probe to erx_probe slot report\n" => /a slotted frame to the program is a reply frame/,
+    "  frame probe to erx_probe slot reply notice\n" => /names a slotted frame from the program, not notice/,
+    "  frame probe from erx_probe slot reply request\n" => /a reply frame is to the program, on a slot/,
+    "  frame access to erx_probe slot reply request\n" => /a reply frame's name names no kind/,
+    "  union asks\n    case ask fd\n  frame ask from erx_probe slot asks\n  frame answer to erx_probe slot reply ask\n" =>
+      /case ask of asks has no reply line/,
+    "  union asks\n    case ask fd\n    reply kill_reply\n    reply kill_reply\n  frame ask from erx_probe slot asks\n" \
+    "  frame answer to erx_probe slot reply ask\n" => /a case has at most one reply line/,
+    "  union probe\n    case a fd\n    reply kill_reply" => /union probe: only a request union a reply frame answers takes reply lines/,
+    "  union probe\n    reply kill_reply\n    case a fd" => /expected case ATOM/,
+    "  union probe\n    case a fd\n    reply" => /expected reply KIND/,
+    # A reply kind is a union, so the capability walk sees every handle a reply holds.
+    "  tuple granted cap fd\n  union asks\n    case ask fd\n    reply granted\n  frame ask from erx_probe slot asks\n" \
+    "  frame answer to erx_probe slot reply ask\n" => /case ask's reply granted is no union/,
+    "  union asks\n    case ask fd\n    reply cap\n  frame ask from erx_probe slot asks\n" \
+    "  frame answer to erx_probe slot reply ask\n" => /case ask's reply cap is no union/,
+    "  tuple asks fd\n  frame ask from erx_probe slot asks\n  frame answer to erx_probe slot reply ask\n" =>
+      /request ask's kind asks is no union/
   }.freeze
 
   def test_the_unedited_table_is_valid

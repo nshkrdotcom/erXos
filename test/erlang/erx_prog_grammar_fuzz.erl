@@ -2,11 +2,12 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% Terms near the program protocol's grammar through erx_prog_grammar
-%% (docs/design-abi.md#program-protocol): valid start frames, notices and reports
-%% with one subterm replaced, random terms as frames of either direction, and start
-%% frames whose cwd is drawn near its bound and its rules. Whatever arrives, every
-%% check answers ok or {error, {Reason, Kind}} and never raises; a notice or a
-%% report draws the same answer from its direction's dispatch as from its own check;
+%% (docs/design-abi.md#program-protocol): valid start frames, notices, reports, kill
+%% requests and their replies with one subterm replaced, replies under random busy
+%% slots, random terms as frames of either direction, and start frames whose cwd is
+%% drawn near its bound and its rules. Whatever arrives, every check answers ok or
+%% {error, {Reason, Kind}} and never raises; a notice, a report or a reply draws the
+%% same answer from its direction's dispatch as from its own check;
 %% a frame a builder returns passes its check; no round makes an atom; and each cwd
 %% is judged as reference_cwd/1, which shares no code with the grammar, judges it.
 %% The seed comes from make check-fuzz.
@@ -36,6 +37,9 @@ rounds(N) ->
                           start_round(mutated(start())),
                           start_round(random_term(?DEPTH)),
                           request_round(random_term(?DEPTH), random_term(?DEPTH)),
+                          request_round(rand:uniform(17) - 1, mutated({kill, 2, sigint})),
+                          reply_round(rand:uniform(17) - 1, random_busy(), mutated(pick(replies()))),
+                          reply_round(random_term(1), random_term(1), random_term(?DEPTH)),
                           notice_round(mutated(pick(notices()))),
                           notice_round(random_term(?DEPTH)),
                           report_round(mutated(pick(reports()))),
@@ -46,7 +50,8 @@ rounds(N) ->
 start_round(Value) ->
     Frame = {erx_start, 1, Value},
     answer(?G:check_start(Frame)),
-    answer(?G:check_to_program(Frame, [])),
+    %% The startup message is no frame of the channel's dispatch.
+    {error, {shape, _}} = ?G:check_to_program(Frame, #{}),
     answer(?G:check_start(Value)),
     case ?G:build_start(Value) of
         {ok, Built} -> ok = ?G:check_start(Built);
@@ -77,10 +82,35 @@ report_round(Value) ->
     Frame = {erx_prog, 1, Value},
     Verdict = ?G:check_report(Frame),
     answer(Verdict),
-    Verdict = ?G:check_to_program(Frame, []),
+    Verdict = ?G:check_to_program(Frame, #{}),
     case ?G:build_report(Value) of
         {ok, Built} -> ok = ?G:check_report(Built);
         Refused -> answer(Refused)
+    end.
+
+%% A reply goes through the dispatch of frames to the program to its own check, Busy
+%% being any term; a reply built for a request passes the check with that request busy.
+reply_round(Slot, Busy, Value) ->
+    Frame = {erx_prog, 1, Slot, Value},
+    Verdict = ?G:check_reply(Frame, Busy),
+    answer(Verdict),
+    Verdict = ?G:check_to_program(Frame, Busy),
+    case ?G:build_reply(kill, Slot, Value) of
+        {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => kill});
+        Refused -> answer(Refused)
+    end.
+
+%% A reply of each case of each request's reply.
+replies() ->
+    [ok, {error, esrch}, {error, eperm}].
+
+%% Busy slots: none, some holding kill, or a term of another shape.
+random_busy() ->
+    case rand:uniform(4) of
+        1 -> #{};
+        2 -> maps:from_list([{rand:uniform(16) - 1, kill} || _ <- lists:seq(1, rand:uniform(4))]);
+        3 -> #{rand:uniform(16) - 1 => random_atom()};
+        4 -> random_term(1)
     end.
 
 %% A start frame's verdict on a cwd matches the reference's, and a refusal names cwd.
@@ -217,6 +247,6 @@ random_atom() ->
     pick([read, write, read_write, pipe, socketpair, file, tty, dir, socket, dup, mem, null, object, open, gone,
           true, false, erx_start, erx_prog, sigint, sigterm, sigkill, pid, cwd, fds, wend, readers, writers,
           closed, drained, pipe_writer, pipe_writer_gone, pipe_reader, pipe_reader_gone, pipe_lost,
-          pipe_server_lost, erlang, ok, undefined, error]).
+          pipe_server_lost, erlang, ok, undefined, error, kill, esrch, eperm, enotsup, eopnotsupp]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).

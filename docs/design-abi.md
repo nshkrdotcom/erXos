@@ -1110,6 +1110,7 @@ before its check has accepted all of it.
 | `version N` | the version every frame carries as its second element |
 | `reader c` | the generator also emits the C check and accessors; the members that describe 9P2000.L's bytes (`length`, `packed`, `local`, `errors`, `operation`, `writes`, `check`) fail in such a protocol |
 | `frame NAME to\|from TAG [slot] KIND` | a frame to the program or from it: `{TAG, Version, Value}`, or `{TAG, Version, Slot, Value}` with `slot`, `Slot` from 0 to 15 |
+| `frame NAME to TAG slot reply REQUEST` | the reply frame, `{TAG, Version, Slot, Value}`: `REQUEST` names the slotted frame from the program, and `Value` is of the reply kind of the request case `Slot` holds; a reply on an idle slot is refused as `range` of `slot`. Every slotted frame to the program is a reply frame |
 | `integer NAME BASE [in MIN MAX \| values N...] [except N] [unique] [refers LIST]` | an integer of `u8`, `u16`, `u32` or `u64` within the range or among the values given; `unique`: no two values of the kind in one frame are equal, for a kind that is never itself a list's element; `refers LIST`: the value is the first field of an element of the frame's `LIST` that holds no `refers` value itself |
 | `capability NAME` | a capability handle: a `u64` other than `cap_null`, unique as an integer marked `unique` is. The capability walk below, and every reader that must know a value is a capability, reads this declaration. A handle is 64 bits, so a frame protocol refuses every other `u64`, an `integer` kind or a bare field, and every protocol refuses an `integer` excepting `cap_null`: a handle has no other spelling to escape the walk. A protocol has at most one unique kind, so it declares one capability kind and uses it wherever a capability appears; a file protocol takes none |
 | `text NAME max N [utf8] [refuse nul] [assign] [path] [sum TOTAL]` | a binary of at most N bytes; `utf8`, valid UTF-8 as RFC 3629 defines it; `refuse nul`, no zero byte; `assign`, at least one byte before its first `=`; `path`, absolute and normalised: a leading `/`, no empty, `.` or `..` component, and a trailing `/` only in `/` itself; `sum TOTAL`, its length plus one counts towards `TOTAL` |
@@ -1118,7 +1119,8 @@ before its check has accepted all of it.
 | `list NAME KIND max N [ascending]` | a proper list of at most N elements; `ascending`, strictly increasing in Erlang's term order of each element, or of its first field when it is a tuple, which is an integer or an atom |
 | `map NAME`, with `field NAME KIND` and `optional NAME KIND` beneath | a map whose keys are the atoms named: each `field` present, each `optional` present or absent, no other key |
 | `union NAME`, with `case ATOM [=ATOM...] [KIND...]` beneath | a case without fields is its atom; one with fields is a tuple of its atom, its literal atoms (`=ATOM`) and its fields; a tuple's arity and leading atoms select its case, whose C name joins its atoms with `_` |
-| `boolean`, `signal` | built in: `true` or `false`; a signal's protocol name ([design-programs.md](design-programs.md#signal-numbers)), the atom `sig` followed by its name in `abi/signals.txt`, as `sigint` or `'sigrtmin+1'`, for each signal a program may name and never an alias or a reserved number, the names `erx_abi_signals` lists, whose C value is the signal's number |
+| `reply KIND`, beneath a case after its `case` line | the union of the replies to that request case, which generation refuses unless it is a union, so the capability walk reads its cases. Each case of the union a reply frame's request carries has exactly one; no other union has one |
+| `boolean`, `signal`, `errno` | built in: `true` or `false`; and the named numbers, each an atom of an ABI table read as its number, an `int32_t` in C: a signal's protocol name ([design-programs.md](design-programs.md#signal-numbers)), the atom `sig` followed by its name in `abi/signals.txt`, as `sigint` or `'sigrtmin+1'`, for each signal a program may name and never an alias or a reserved number, the names `erx_abi_signals` lists; an error's, its name in `abi/errno.txt`, as `enotsup`, never an alias such as `eopnotsupp`, the names `erx_abi_errno` lists. The generator forms each table's protocol names (`Protocols::NAMED_NUMBERS`), and the C check reads them from the profile's `tables`, one per named number, which each named kind indexes |
 
 A bound is a number or a limit's name. A descriptor number, a signal of a
 set, a read end's index and a write end's number appear at most once
@@ -1195,13 +1197,19 @@ protocol erx_prog
     ...
     field fds fds
     optional image image
+  union kill_reply
+    case ok
+    case error errno
   union request
+    case kill process_id signal
+    reply kill_reply
   frame start to erx_start start
   frame request from erx_prog slot request
+  frame reply to erx_prog slot reply request
 ```
 
-`request` has no case until a package adds one, so every request frame
-is refused. A pipe's number, an end's number and a write end's number,
+A request's reply is typed by the request on its slot, so two requests
+may reply with cases of the same atom and arity. A pipe's number, an end's number and a write end's number,
 `pos_integer()` in the programs and pipes designs, are `u32` from 1, as
 the pipe server's C layouts hold them
 ([design-pipes.md](design-pipes.md#the-pipe-servers-records)), and a read
@@ -1266,9 +1274,31 @@ check aligns its arrays inside it, and with less than it needs refuses
 with `scratch` and writes nothing past `scratch_len`. The check
 is pure: it reads only its arguments and writes only the scratch and its
 two outputs, so it builds and is tested on the host. A frame to the
-program is checked by `erx_prog_check_to_program`, which takes the
-request each slot holds, as the file protocol's `decode_reply/2` takes
-its request; a reply on a slot that holds none is refused.
+program after its startup message, a frame tagged `erx_prog`, is checked
+by `erx_prog_check_to_program`, which takes the request each slot holds,
+as the file protocol's `decode_reply/2` takes its request, tells a
+report from a reply by its envelope, and fills which frame it is, its
+slot and its value:
+
+```c
+bool	erx_prog_check_reply(const uint8_t *frame, size_t len,
+	    void *scratch, size_t scratch_len,
+	    const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t *slot,
+	    erx_prog_reply_t *reply, erx_profile_refusal_t *refusal);
+bool	erx_prog_check_to_program(const uint8_t *frame, size_t len,
+	    void *scratch, size_t scratch_len,
+	    const uint16_t busy[ERX_PROFILE_SLOTS],
+	    erx_prog_to_program_t *to_program, erx_profile_refusal_t *refusal);
+```
+
+`busy[S]` is the request case slot `S` holds, its generated enumeration
+(`ERX_PROG_REQUEST_KILL`), or `ERX_PROFILE_NONE`. The check validates the
+envelope and the slot, refuses a reply on an idle slot, or one whose
+entry names no case, as `range` of `slot`, then checks the value against
+the reply union of that slot's request; `reply->request` names the case.
+A send the handler cannot complete, which `erx_program:send/2` answers
+`busy`, leaves the slot's request in place. The startup message has its
+own check alone, so a later startup message is refused.
 
 On acceptance the check fills the frame's struct. Every scalar is read
 into it: an integer as the C type of its base, a `boolean`
@@ -1296,8 +1326,10 @@ build.
 
 **The Erlang grammar.** `tools/lib/erx/abi_emit_protocol.rb` emits
 `erx_prog_grammar` as it emits `erx_9p_grammar`, preloaded, calling only
-BIFs: `check_start/1`, `check_from_program/1` and `check_to_program/2`,
-whose second argument is the request each busy slot holds, each answering
+BIFs: `check_start/1`, `check_from_program/1` and `check_to_program/2`
+over the channel's frames, those tagged `erx_prog`, and
+`check_reply/2`, whose second argument, `Busy`, is a map from each busy
+slot to the request case it holds (`#{3 => kill}`), each answering
 `ok` or `{error, {Reason, Kind}}`, total over any term, making no atom and
 walking no list past its maximum; and a builder per frame, which sorts
 each `ascending` list with `lists:sort/1`, keeping a repeated key so the
@@ -1360,7 +1392,8 @@ code under test ran:
   `test/fixtures/prog_profile_mutations.rb` generates from the
   protocol's model, one for each rule of each kind at the kind's last
   value in each base value of a frame (the start message and one notice
-  or report of each case), each meeting that rule first in stream order,
+  or report of each case, a request of each case and each case of its
+  reply on a busy slot), each meeting that rule first in stream order,
   with the frame-wide rules, a map key repeated in each map and each
   frame truncated (a list maximum no frame within the bound reaches
   first, and a kind no base value holds, are named as skipped); hand-written boundary mutations (one
@@ -1381,7 +1414,11 @@ code under test ran:
   maximum raised by one, the generated C table accepting a read end's
   index of 64 and the grammar accepting a lane size other than 16 and
   64 KiB, each in a report, the grammar with its `ascending` test removed,
-  and the Erlang side ignoring `Used`, must each fail the test.
+  and the Erlang side ignoring `Used`, must each fail the test; so must
+  the C check reading the reply kind of another slot's request, the grammar
+  taking a reply on an idle slot, the generated C table naming the alias
+  `eopnotsupp` and `erx_prog_check_to_program` choosing the first frame
+  whatever the envelope.
 * **The round trip.** A host tool reads each accepted frame through
   every generated accessor and writes it again with `erx_etf`'s writer;
   its decoding equals the Erlang term exactly. Seeded: each text view one
@@ -1423,13 +1460,15 @@ code under test ran:
 
 **Extension.** Each request with its reply, report and notice joins
 `prog.txt` with the package that first uses it: a request as a case of
-`request` with a `reply` line naming its reply union, a report and a
+`request` with a `reply` line naming its reply union (when the replies
+differ by an inner case, the inner union's cases carry the `reply` lines,
+which join with the first request that needs them), a report and a
 notice as cases of `report` and `notice`, under `frame report to
 erx_prog report` and `frame notice from erx_prog notice`, both
 `{erx_prog, 1, Value}` without a slot; the `exec` and
 `fork` keys of the startup message join with `exec` and `fork`. Error
-names join with the first reply that carries one, from the ABI file's
-errno table, as signal names come from its signal table. A new member
+names come from the ABI file's errno table, through the `errno` kind, as
+signal names come from its signal table. A new member
 of the declaration language, or a use of one that generation refuses,
 such as a `unique` list element, joins only with the first frame that
 needs it, with its C and Erlang checks, a boundary mutation and a seeded

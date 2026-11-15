@@ -15,18 +15,20 @@
 -define(FRAME_MAX, 196608).
 -define(ARGS_MAX, 131072).
 
-%% Writes Dir/requests ("FRAME full HEX" lines) and Dir/expected (accept, or
-%% REASON KIND for a single-rule mutation).
+%% Writes Dir/requests ("FRAME full [BUSY] HEX" lines, BUSY for a reply or to_program
+%% frame: its busy slots as SLOT:CASE pairs joined by commas, or "-") and Dir/expected
+%% (accept, or REASON KIND for a single-rule mutation).
 corpus([Dir]) ->
-    Cases = valid() ++ pipe_valid() ++ mutations() ++ pipe_mutations(),
-    Lines = [{Frame, Bytes, Expected} || {Frame, Bytes, Expected} <- lists:map(fun encode/1, Cases)],
+    Cases = valid() ++ pipe_valid() ++ request_valid() ++ mutations() ++ pipe_mutations() ++ request_mutations(),
+    Lines = lists:map(fun encode/1, Cases),
     ok = file:write_file(filename:join(Dir, "requests"),
-                         [[atom_to_list(Frame), " full ", hex(Bytes), "\n"] || {Frame, Bytes, _} <- Lines]),
+                         [[atom_to_list(Frame), " full ", busy_word(Frame, Busy), hex(Bytes), "\n"]
+                          || {Frame, Busy, Bytes, _} <- Lines]),
     ok = file:write_file(filename:join(Dir, "expected"),
-                         [[Expected, "\n"] || {_, _, Expected} <- Lines]),
+                         [[Expected, "\n"] || {_, _, _, Expected} <- Lines]),
     halt(0).
 
-%% Reads Dir/judge ("FRAME HEX [CHEX]" lines) and writes Dir/verdicts: this side's verdict,
+%% Reads Dir/judge ("FRAME [BUSY] HEX [CHEX]" lines) and writes Dir/verdicts: this side's verdict,
 %% then "same" when CHEX, the C driver's rewrite of an accepted frame, decodes to the
 %% same term, or "differs".
 judge(Dir) ->
@@ -44,9 +46,14 @@ judge([Dir], Used) ->
     ok = file:write_file(filename:join(Dir, "verdicts"), [[V, "\n"] || V <- Verdicts]),
     halt(0).
 
-verdict([Frame, Hex | Rewrite]) ->
+verdict([FrameName | Words]) ->
+    Frame = binary_to_atom(FrameName),
+    {Busy, [Hex | Rewrite]} = case takes_busy(Frame) of
+                                  true -> {busy(hd(Words)), tl(Words)};
+                                  false -> {#{}, Words}
+                              end,
     Bytes = binary:decode_hex(Hex),
-    Verdict = side(binary_to_atom(Frame), Bytes),
+    Verdict = side(Frame, Busy, Bytes),
     case {Verdict, Rewrite} of
         {"accepted", [C]} ->
             Same = (catch binary_to_term(binary:decode_hex(C))) =:= binary_to_term(Bytes),
@@ -55,21 +62,39 @@ verdict([Frame, Hex | Rewrite]) ->
             Verdict
     end.
 
-side(Frame, Bytes) when byte_size(Bytes) > ?FRAME_MAX ->
+takes_busy(Frame) -> Frame =:= reply orelse Frame =:= to_program.
+
+%% A BUSY word as the map check_reply/2 and check_to_program/2 take.
+busy(<<"-">>) ->
+    #{};
+busy(Word) ->
+    maps:from_list([{binary_to_integer(Slot), binary_to_atom(Case)}
+                    || Pair <- binary:split(Word, <<",">>, [global]), [Slot, Case] <- [binary:split(Pair, <<":">>)]]).
+
+busy_word(Frame, Busy) ->
+    case takes_busy(Frame) of
+        true when map_size(Busy) =:= 0 -> "- ";
+        true -> [lists:join(",", [[integer_to_list(Slot), ":", atom_to_list(Case)] || {Slot, Case} <- maps:to_list(Busy)]), " "];
+        false -> ""
+    end.
+
+side(Frame, _, Bytes) when byte_size(Bytes) > ?FRAME_MAX ->
     refused(size, Frame);
-side(Frame, Bytes) ->
+side(Frame, Busy, Bytes) ->
     Strict = get(used) =/= false,
     try binary_to_term(Bytes, [safe, used]) of
-        {Term, Used} when Used =:= byte_size(Bytes); not Strict -> answer(check(Frame, Term));
+        {Term, Used} when Used =:= byte_size(Bytes); not Strict -> answer(check(Frame, Term, Busy));
         _ -> refused(malformed, Frame)
     catch
         error:badarg -> refused(malformed, Frame)
     end.
 
-check(start, Term) -> erx_prog_grammar:check_start(Term);
-check(request, Term) -> erx_prog_grammar:check_request(Term);
-check(notice, Term) -> erx_prog_grammar:check_notice(Term);
-check(report, Term) -> erx_prog_grammar:check_report(Term).
+check(start, Term, _) -> erx_prog_grammar:check_start(Term);
+check(request, Term, _) -> erx_prog_grammar:check_request(Term);
+check(notice, Term, _) -> erx_prog_grammar:check_notice(Term);
+check(report, Term, _) -> erx_prog_grammar:check_report(Term);
+check(reply, Term, Busy) -> erx_prog_grammar:check_reply(Term, Busy);
+check(to_program, Term, Busy) -> erx_prog_grammar:check_to_program(Term, Busy).
 
 answer(ok) -> "accepted";
 answer({error, {Reason, Kind}}) -> refused(Reason, Kind).
@@ -78,8 +103,12 @@ refused(Reason, Kind) -> lists:flatten(["refused ", atom_to_list(Reason), " ", a
 
 encode({Name, {frame, Frame, Term}, Expected}) ->
     encode({Name, {bytes, Frame, term_to_binary(Term)}, Expected});
-encode({_Name, {bytes, Frame, Bytes}, Expected}) ->
-    {Frame, Bytes, Expected};
+encode({Name, {frame, Frame, Busy, Term}, Expected}) ->
+    encode({Name, {bytes, Frame, Busy, term_to_binary(Term)}, Expected});
+encode({Name, {bytes, Frame, Bytes}, Expected}) ->
+    encode({Name, {bytes, Frame, #{}, Bytes}, Expected});
+encode({_Name, {bytes, Frame, Busy, Bytes}, Expected}) ->
+    {Frame, Busy, Bytes, Expected};
 encode({Name, {value, Value}, Expected}) ->
     %% A mutation is built unchecked, its lists sorted as a builder would, so it breaks its one rule.
     {ok, Sorted} = sorted(Value),
@@ -235,3 +264,49 @@ pipe_mutations() ->
      {report_notice_case, {frame, report, {erx_prog, 1, {closed, 1, 1}}}, "no_case report"},
      {report_version, {frame, report, {erx_prog, 0, pipe_server_lost}}, "version report"},
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
+
+%% The busy slots of the replies: slot 3 holds a kill.
+-define(BUSY, #{3 => kill}).
+
+%% Requests and their replies, each through its builder, and frames to the program
+%% through check_to_program/2's dispatch: a report, and a reply on a busy slot.
+request_valid() ->
+    {ok, Report} = erx_prog_grammar:build_report(pipe_server_lost),
+    {ok, Reply} = erx_prog_grammar:build_reply(kill, 3, {error, esrch}),
+    [request(kill_least, 0, {kill, 2, sighup}),
+     request(kill_max, 15, {kill, 16#7fffffff, 'sigrtmax'}),
+     reply(kill_ok, 3, ok),
+     reply(kill_esrch, 3, {error, esrch}),
+     reply(kill_last_errno, 3, {error, ehwpoison}),
+     {to_program_report, {frame, to_program, ?BUSY, Report}, "accept"},
+     {to_program_reply, {frame, to_program, ?BUSY, Reply}, "accept"}].
+
+request(Name, Slot, Value) ->
+    {ok, Frame} = erx_prog_grammar:build_request(Slot, Value),
+    {Name, {frame, request, Frame}, "accept"}.
+
+reply(Name, Slot, Value) ->
+    {ok, Frame} = erx_prog_grammar:build_reply(kill, Slot, Value),
+    {Name, {frame, reply, ?BUSY, Frame}, "accept"}.
+
+%% One mutation for each rule of the requests and replies: a reply's slot must be busy
+%% and its value the reply the request on that slot takes; an alias names no errno.
+request_mutations() ->
+    [{kill_signal_zero, {frame, request, {erx_prog, 1, 0, {kill, 2, 0}}}, "shape signal"},
+     {kill_signal_unknown, {frame, request, {erx_prog, 1, 0, {kill, 2, sigfoo}}}, "range signal"},
+     {kill_pid_one, {frame, request, {erx_prog, 1, 0, {kill, 1, sigint}}}, "range process_id"},
+     {kill_arity, {frame, request, {erx_prog, 1, 0, {kill, 2}}}, "no_case request"},
+     {reply_idle_slot, {frame, reply, ?BUSY, {erx_prog, 1, 4, ok}}, "range slot"},
+     {reply_nothing_busy, {frame, reply, #{}, {erx_prog, 1, 3, ok}}, "range slot"},
+     {reply_slot_past, {frame, reply, ?BUSY, {erx_prog, 1, 16, ok}}, "range slot"},
+     {reply_slot_shape, {frame, reply, ?BUSY, {erx_prog, 1, kill, ok}}, "shape slot"},
+     {reply_no_case, {frame, reply, ?BUSY, {erx_prog, 1, 3, {ok, 1}}}, "no_case kill_reply"},
+     {reply_atom_case, {frame, reply, ?BUSY, {erx_prog, 1, 3, error}}, "no_case kill_reply"},
+     {reply_errno_alias, {frame, reply, ?BUSY, {erx_prog, 1, 3, {error, eopnotsupp}}}, "range errno"},
+     {reply_errno_shape, {frame, reply, ?BUSY, {erx_prog, 1, 3, {error, 95}}}, "shape errno"},
+     {reply_version, {frame, reply, ?BUSY, {erx_prog, 2, 3, ok}}, "version reply"},
+     {reply_without_slot, {frame, reply, ?BUSY, {erx_prog, 1, ok}}, "shape reply"},
+     {reply_tag, {frame, reply, ?BUSY, {erx_start, 1, 3, ok}}, "shape reply"},
+     {to_program_idle, {frame, to_program, #{}, {erx_prog, 1, 3, ok}}, "range slot"},
+     {to_program_start, {frame, to_program, ?BUSY, {erx_start, 1, pipe_server_lost}}, "shape reply"},
+     {to_program_report_case, {frame, to_program, ?BUSY, {erx_prog, 1, {pipe_lost, 0, 1}}}, "range pipe_id"}].

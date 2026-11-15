@@ -3,6 +3,7 @@
 # frozen_string_literal: true
 
 require_relative 'prog_profile_frames'
+require_relative '../../tools/lib/erx/abi_protocol'
 
 # The differential test's mutations generated from the program protocol's model
 # (docs/design-abi.md#program-protocol): for each base value of BASES, each kind it holds
@@ -19,8 +20,9 @@ module ProgProfileMutations
   Tuple = ProgProfileFrames::Tuple
   Etf = ProgProfileFrames::Etf
 
-  # name: a String; frame: the frame's name; bytes: the frame; verdict: "REASON KIND".
-  Mutation = Data.define(:name, :frame, :bytes, :verdict)
+  # name: a String; frame: the frame's name; bytes: the frame; verdict: "REASON KIND";
+  # busy: a reply frame's busy slots as the driver reads them ("3:kill"), or nil.
+  Mutation = Data.define(:name, :frame, :bytes, :verdict, :busy)
   # A map written with its pairs in this order, which may repeat a key, as no Hash can.
   Pairs = Data.define(:pairs)
 
@@ -48,15 +50,18 @@ module ProgProfileMutations
     image: t(:object, 0xffff_ffff_ffff_ff00)
   }.freeze
 
-  # Each frame's base values: [frame, value], start's BASE and one value of each case of
-  # the notices and reports (docs/design-pipes.md#the-program-protocol).
+  # Each frame's base values: [frame, value] or, for a reply, [frame, value, busy] with the
+  # request case its slot holds; start's BASE, one value of each case of the notices and
+  # reports (docs/design-pipes.md#the-program-protocol), and of each request and its reply.
   BASES = [
     ['start', BASE],
     ['notice', t(:closed, 1, 2)], ['notice', t(:drained, 1, 2, 3)],
     ['report', t(:pipe_writer, 1, 2, 3, 101, 102, 16_384, 103, :open)],
     ['report', t(:pipe_writer_gone, 1, 2, 3)], ['report', t(:pipe_reader, 1, 2, 63, 101, :gone)],
     ['report', t(:pipe_reader_gone, 1, 2, 0)], ['report', t(:pipe_lost, 1, 2)],
-    ['report', :pipe_server_lost]
+    ['report', :pipe_server_lost],
+    ['request', t(:kill, 2, :sigint)],
+    ['reply', :ok, '3:kill'], ['reply', t(:error, :eperm), '3:kill']
   ].freeze
 
   module_function
@@ -65,7 +70,7 @@ module ProgProfileMutations
   # One generator walks each base; the start base alone carries the refers and total
   # rules, and the first base of each frame gives that frame's truncation.
   def from(protocol)
-    generators = BASES.map { |frame, base| Generator.new(protocol, frame: frame, base: base) }
+    generators = BASES.map { |frame, base, busy| Generator.new(protocol, frame: frame, base: base, busy: busy) }
     held = generators.flat_map(&:kinds_held).uniq
     unreached = (protocol.fetch(:kinds).keys - held).map do |kind|
       Generator::Skip.new(why: "#{kind}: no base holds a value of it")
@@ -76,8 +81,8 @@ module ProgProfileMutations
     results.partition { |result| result.is_a?(Mutation) }.then { |mutations, skips| [mutations, skips.map(&:why)] }
   end
 
-  # The frame of value with tag, at the protocol's version 1.
-  def frame(value, tag: :erx_start) = Etf.frame(encode(t(tag, 1, value)))
+  # The frame of value with tag, at the protocol's version 1, on slot when it is one.
+  def frame(value, tag: :erx_start, slot: nil) = Etf.frame(encode(t(tag, 1, *slot, value)))
 
   def encode(value)
     case value
@@ -105,21 +110,28 @@ module ProgProfileMutations
 
     attr_reader :frame
 
-    # frame: the frame's name in the protocol; base: a value of that frame every rule accepts.
-    def initialize(protocol, frame:, base:)
+    # frame: the frame's name in the protocol; base: a value of that frame every rule accepts;
+    # busy: for a reply frame, "SLOT:CASE", the request case its slot holds.
+    def initialize(protocol, frame:, base:, busy: nil)
       @protocol = protocol
       @kinds = protocol.fetch(:kinds)
       @frame_max = protocol.dig(:frame_max, :value)
-      @tag = protocol.fetch(:frames).find { |item| item.fetch(:name) == frame }.fetch(:tag).to_sym
+      model = protocol.fetch(:frames).find { |item| item.fetch(:name) == frame }
+      @tag = model.fetch(:tag).to_sym
       @frame = frame
       @base = base
+      @busy = busy
+      slot, request = busy&.split(':')
+      # A request takes slot 0; a reply the busy slot, its value of the kind its request case replies with.
+      @slot = (slot || 0).to_i if model.fetch(:slot)
+      root = request ? model.fetch(:replies).to_h.fetch(request) : model.fetch(:kind)
       # Mutation names carry the union case of a notice or report base.
       @label = case base
                in Tuple then "#{frame}_#{base.items.first}"
                in Symbol then "#{frame}_#{base}"
                else frame
                end
-      @places = places(frame, base, [])
+      @places = places(root, base, [])
     end
 
     def kinds_held = @places.map(&:kind).uniq
@@ -135,8 +147,9 @@ module ProgProfileMutations
 
     # Bytes no term of the wire grammar: the frame cut short by a byte.
     def wire_faults
-      bytes = ProgProfileMutations.frame(@base, tag: @tag)
-      [Mutation.new(name: "#{@frame}_truncated", frame: @frame, bytes: bytes[0...-1], verdict: "malformed #{@frame}")]
+      bytes = ProgProfileMutations.frame(@base, tag: @tag, slot: @slot)
+      [Mutation.new(name: "#{@frame}_truncated", frame: @frame, bytes: bytes[0...-1], verdict: "malformed #{@frame}",
+                    busy: @busy)]
     end
 
     private
@@ -190,7 +203,7 @@ module ProgProfileMutations
 
     def mutation(name, value, verdict)
       Mutation.new(name: "#{@label}_#{name}", frame: @frame,
-                   bytes: ProgProfileMutations.frame(value, tag: @tag), verdict: verdict)
+                   bytes: ProgProfileMutations.frame(value, tag: @tag, slot: @slot), verdict: verdict, busy: @busy)
     end
 
     # One mutation for each rule of kind, each replacing its value at its place.
@@ -210,7 +223,7 @@ module ProgProfileMutations
     # for a rule no frame within the bound breaks alone.
     def rules(kind, value)
       model = @kinds[kind]
-      case model&.fetch(:form) || kind
+      case model&.fetch(:form) || (Erx::ABI::Protocols::NAMED_NUMBERS.key?(kind) ? 'named' : kind)
       when 'integer' then integer_rules(model)
       when 'text' then text_rules(model)
       when 'list' then list_rules(kind, model, value)
@@ -218,7 +231,7 @@ module ProgProfileMutations
       when 'map' then map_rules(model, value)
       when 'union' then [[:no_case, :erlang, 'no_case'], [:shape, 1, 'shape']]
       when 'boolean' then [[:shape, :undefined, 'shape']]
-      when 'signal' then [[:unknown, :erlang, 'range'], [:shape, 1, 'shape']]
+      when 'named' then [[:unknown, :erlang, 'range'], [:shape, 1, 'shape']]
       else []
       end
     end
@@ -278,7 +291,7 @@ module ProgProfileMutations
               end
       numbers = (FRESH..).each
       items = items.map { |item| fresh(model.fetch(:element), item, numbers) }
-      size = ProgProfileMutations.frame(put(@base, place(kind).path, items), tag: @tag).bytesize
+      size = ProgProfileMutations.frame(put(@base, place(kind).path, items), tag: @tag, slot: @slot).bytesize
       size > @frame_max ? Skip.new(why: "#{size} bytes, past the frame bound") : items
     end
 

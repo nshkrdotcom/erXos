@@ -190,9 +190,11 @@ module ProgProfileFrames
          at_frame_max(:at_frame_max, 0), at_frame_max(:past_frame_max, 1)].freeze
 
   # A frame of the C fuzz target's seeds beyond ALL (tools/fuzz/erx_prog_target.rb), which
-  # the differential corpus holds too. frame: "start", "request", "notice" or "report";
-  # verdict as Fixture's.
-  Seed = Data.define(:name, :frame, :bytes, :verdict)
+  # the differential corpus holds too. frame: "start", "request", "reply", "notice" or
+  # "report"; verdict as Fixture's; busy: a reply's busy slots as the driver reads them, or nil.
+  Seed = Data.define(:name, :frame, :bytes, :verdict, :busy) do
+    def initialize(busy: nil, **fields) = super
+  end
 
   # A start frame's descriptors: a pipe's write end and its read end.
   def self.pipes
@@ -220,6 +222,14 @@ module ProgProfileFrames
            Seed.new(name: 'request', frame: 'request',
                     bytes: frame(tuple(atom('erx_prog'), small(1), small(0), atom('ok'))),
                     verdict: 'no_case request'),
+           Seed.new(name: 'request-kill', frame: 'request',
+                    bytes: frame(tuple(atom('erx_prog'), small(1), small(15), tuple(atom('kill'), int(0x7fff_ffff),
+                                                                                    atom('sigrtmin+1')))),
+                    verdict: 'accept'),
+           *[['ok', atom('ok')], ['error', tuple(atom('error'), atom('enotsup'))]].map do |name, value|
+             Seed.new(name: "reply-#{name}", frame: 'reply', bytes: frame(tuple(atom('erx_prog'), small(1), small(0), value)),
+                      verdict: 'accept', busy: '0:kill')
+           end,
            *prog_seeds('notice', [['closed', tuple(atom('closed'), small(1), int(70_000))],
                                   ['drained', tuple(atom('drained'), small(1), small(2), small(3))]]),
            *prog_seeds('report', [['writer', tuple(atom('pipe_writer'), small(1), small(2), small(3),

@@ -31,6 +31,8 @@ class ErxProgramGrantsTest < Minitest::Test
   # The unions of the frames to the program that have a case naming a pipe end: a startup
   # message's descriptor, inside its fds, and a report, which is the report frame's term.
   WALKED = %w[descriptor report].freeze
+  # The slot each reply sample answers.
+  REPLY_SLOT = 3
 
   # A sample term: a tuple or a list of terms. An Integer is an integer, a Symbol an
   # atom and a Hash a map.
@@ -70,7 +72,8 @@ class ErxProgramGrantsTest < Minitest::Test
   end
 
   def test_every_kind_a_frame_to_the_program_carries_has_its_grants
-    roots = @protocol.fetch(:frames).select { |frame| frame[:direction] == 'to' }.map { |frame| frame[:kind] }
+    roots = @protocol.fetch(:frames).select { |frame| frame[:direction] == 'to' }
+                     .flat_map { |frame| Erx::ABI::Protocols::Profile.frame_kinds(frame) }
     assert_equal WALKED.sort, pipe_unions(roots).sort, 'the walk builds frames for every union that names a pipe end'
     samples = WALKED.flat_map { |union| union_samples(union) }
     pipe_cases = samples.select { |sample| names_pipe_end?(sample) }.map(&:name).uniq
@@ -80,7 +83,21 @@ class ErxProgramGrantsTest < Minitest::Test
     assert_equal want, grants(samples)
   end
 
+  # A reply names no pipe end (pipe_unions holds no reply kind), so each case of each reply
+  # kind grants nothing and answers its slot.
+  def test_a_reply_answers_its_slot_and_grants_nothing
+    samples = replies.flat_map { |union| union_samples(union) }
+    refute_empty samples
+    assert_equal(samples.map { |sample| [sample.name, render(Tuple.new(items: [REPLY_SLOT, List.new(items: [])]))] },
+                 grants(samples))
+  end
+
   private
+
+  # The reply kinds of the reply frames, each once.
+  def replies
+    @protocol.fetch(:frames).select { |frame| frame.key?(:replies) }.flat_map { |frame| frame.fetch(:replies).map(&:last) }.uniq
+  end
 
   # The unions reachable from roots, each kind once, that have a case naming a pipe end.
   def pipe_unions(roots)
@@ -139,6 +156,9 @@ class ErxProgramGrantsTest < Minitest::Test
   # Every sample of kind: one for each case of a union inside it, and a list holding
   # every sample of its element. Each integer is a number no other integer has.
   def variants(name)
+    # A named number, a signal or an errno, by its first protocol name.
+    return [@protocol.fetch(:named).fetch(name).first.first.to_sym] if @protocol.fetch(:named).key?(name)
+
     kind = @kinds.fetch(name)
     case kind[:form]
     when 'integer' then [number(kind)]
@@ -174,8 +194,10 @@ class ErxProgramGrantsTest < Minitest::Test
   # Each sample's name and what grants/1 answered for its frame, or its failure.
   def grants(samples)
     frames = samples.map do |sample|
-      frame = sample.union == 'descriptor' ? "{erx_start,1,\#{fds => [{0,#{render(sample.term)}}]}}" :
-                                             "{erx_prog,1,#{render(sample.term)}}"
+      frame = if sample.union == 'descriptor' then "{erx_start,1,\#{fds => [{0,#{render(sample.term)}}]}}"
+              elsif replies.include?(sample.union) then "{erx_prog,1,#{REPLY_SLOT},#{render(sample.term)}}"
+              else "{erx_prog,1,#{render(sample.term)}}"
+              end
       "{\"#{sample.name}\",#{frame}}"
     end
     erlang = <<~ERLANG

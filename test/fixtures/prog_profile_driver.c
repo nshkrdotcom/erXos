@@ -6,16 +6,19 @@
 /*
 * The host driver of liberx's erx_prog C check
 * (test/host/prog_profile_test.rb).  Each line of the requests file is
-* "FRAME SCRATCH HEX": FRAME start, request, notice or report, SCRATCH full
-* or half of what erx_prog_scratch_bytes promises, HEX the frame's bytes.
+* "FRAME SCRATCH [BUSY] HEX": FRAME start, request, notice, report, reply
+* or to_program (erx_prog_check_to_program), SCRATCH full or half of what
+* erx_prog_scratch_bytes promises, BUSY, for reply and to_program only,
+* the busy slots as SLOT:CASE pairs joined by commas, CASE a request's C
+* name, or "-" for none, and HEX the frame's bytes.
 * Each answer line is "WIRE VERDICT": WIRE is "wire" when erx_etf_next
 * reads the bytes as items to their end and "nowire" otherwise (the
 * differential test's Erlang side refuses those as malformed); VERDICT is
-* "refused REASON KIND OFFSET", or for an accepted start, notice or report
-* frame "accepted HEX", the frame written again from the struct and every
-* accessor with erx_etf's writer, which the test decodes and compares with
-* the frame's own term, or "accepted crossed" when argv's next reads the
-* frame's fds view. */
+* "refused REASON KIND OFFSET", or for an accepted frame "accepted HEX",
+* the frame written again from the struct and every accessor with
+* erx_etf's writer, which the test decodes and compares with the frame's
+* own term, or "accepted crossed" when argv's next reads the frame's fds
+* view. */
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -54,21 +57,36 @@ put_text(erx_etf_writer_t *w, erx_profile_text_t t)
 	erx_etf_put_binary(w, t.bytes, t.len);
 }
 
+/* A named number's protocol name, from the table of its kind word ("?" for none). */
+static void
+put_named(erx_etf_writer_t *w, const char *word, int32_t number)
+{
+	const erx_profile_table_t *table;
+	const char *name;
+	unsigned k, i;
+
+	name = "?";
+	for (k = 0; k < erx_prog_profile.nkinds; k++) {
+		if (erx_prog_profile.kinds[k].form != ERX_PROFILE_NAMED ||
+		    strcmp(erx_prog_profile.kinds[k].name, word) != 0)
+			continue;
+		table = &erx_prog_profile.tables[erx_prog_profile.kinds[k].table];
+		for (i = 0; i < table->nrows; i++) {
+			if (table->rows[i].number == number)
+				name = table->rows[i].name;
+		}
+	}
+	put_atom(w, name);
+}
+
 static void
 put_signals(erx_etf_writer_t *w, erx_prog_signals_iter_t it)
 {
 	int32_t number;
-	unsigned i;
 
 	erx_etf_put_list(w, it.view.left);
-	while (erx_prog_signals_next(&it, &number)) {
-		for (i = 0; i < erx_prog_profile.nsignals; i++) {
-			if (erx_prog_profile.signals[i].number == number)
-				break;
-		}
-		put_atom(w, i < erx_prog_profile.nsignals ?
-		    erx_prog_profile.signals[i].name : "?");
-	}
+	while (erx_prog_signals_next(&it, &number))
+		put_named(w, "signal", number);
 	erx_etf_put_nil(w);
 }
 
@@ -430,6 +448,104 @@ put_report(const erx_prog_report_t *r, uint8_t *out, size_t cap, size_t *len)
 	return (erx_etf_writer_done(&w, len));
 }
 
+/* A frame {erx_prog, 1, Slot, Value} begun: the writer stands at Value. */
+static void
+put_slot_head(erx_etf_writer_t *w, uint8_t *out, size_t cap, uint8_t slot)
+{
+	erx_etf_writer_init(w, out, cap);
+	erx_etf_put_tuple(w, 4);
+	put_atom(w, "erx_prog");
+	put_u64(w, 1);
+	put_u64(w, slot);
+}
+
+/* The request frame again, from its struct. */
+static bool
+put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
+    size_t cap, size_t *len)
+{
+	erx_etf_writer_t w;
+
+	put_slot_head(&w, out, cap, slot);
+	switch (r->which) {
+	case ERX_PROG_REQUEST_KILL:
+		erx_etf_put_tuple(&w, 3);
+		put_atom(&w, "kill");
+		put_u64(&w, r->u.kill.process_id);
+		put_named(&w, "signal", r->u.kill.signal);
+		break;
+	default:
+		return (false);
+	}
+	return (erx_etf_writer_done(&w, len));
+}
+
+static void
+put_kill_reply(erx_etf_writer_t *w, const erx_prog_kill_reply_t *r)
+{
+	if (r->which == ERX_PROG_KILL_REPLY_OK) {
+		put_atom(w, "ok");
+		return;
+	}
+	erx_etf_put_tuple(w, 2);
+	put_atom(w, "error");
+	put_named(w, "errno", r->u.error.errnum);
+}
+
+/* The reply frame again, from its slot and struct. */
+static bool
+put_reply(uint8_t slot, const erx_prog_reply_t *r, uint8_t *out, size_t cap,
+    size_t *len)
+{
+	erx_etf_writer_t w;
+
+	put_slot_head(&w, out, cap, slot);
+	switch (r->request) {
+	case ERX_PROG_REQUEST_KILL:
+		put_kill_reply(&w, &r->u.kill);
+		break;
+	default:
+		return (false);
+	}
+	return (erx_etf_writer_done(&w, len));
+}
+
+/*
+ * The busy slots of a BUSY word, "-" or SLOT:CASE pairs joined by commas:
+ * each named slot holds the request case of that C name, every other none.
+ */
+static bool
+parse_busy(char *word, uint16_t busy[ERX_PROFILE_SLOTS])
+{
+	const erx_profile_kind_t *request;
+	char *pair, *name, *end;
+	unsigned long slot;
+	uint16_t c;
+
+	request = &erx_prog_profile.kinds[
+	    erx_prog_profile.frames[ERX_PROG_FRAME_REQUEST].kind];
+	for (slot = 0; slot < ERX_PROFILE_SLOTS; slot++)
+		busy[slot] = ERX_PROFILE_NONE;
+	if (strcmp(word, "-") == 0)
+		return (true);
+	for (pair = strtok(word, ","); pair != NULL; pair = strtok(NULL, ",")) {
+		slot = strtoul(pair, &end, 10);
+		if (*end != ':' || slot >= ERX_PROFILE_SLOTS)
+			return (false);
+		name = end + 1;
+		/* A case of one atom: the request cases have no literal atoms. */
+		for (c = 0; c < request->ncases; c++) {
+			if (request->cases[c].natoms == 1 &&
+			    strcmp(request->cases[c].atoms[0], name) == 0)
+				break;
+		}
+		if (c == request->ncases)
+			return (false);
+		busy[slot] = c;
+	}
+	return (true);
+}
+
 static bool
 wire(const uint8_t *b, size_t len)
 {
@@ -467,16 +583,19 @@ main(int argc, char **argv)
 {
 	static char line[LINE_MAX_BYTES];
 	static uint8_t frame[LINE_MAX_BYTES / 2], out[OUT_MAX];
-	char kind[16], scratch_mode[8], *hex;
+	char kind[16], scratch_mode[8], busy_word[256], *hex;
 	erx_profile_refusal_t refusal;
-	uint16_t request;
+	uint16_t busy[ERX_PROFILE_SLOTS];
+	erx_prog_request_t request;
 	erx_prog_start_t start;
 	erx_prog_notice_t notice;
 	erx_prog_report_t report;
+	erx_prog_reply_t reply;
+	erx_prog_to_program_t to;
 	FILE *in, *answers;
 	size_t len, need, have, out_len, i;
 	uint8_t *scratch, slot;
-	bool ok;
+	bool ok, busy_given;
 
 	if (argc != 3 || (in = fopen(argv[1], "r")) == NULL ||
 	    (answers = fopen(argv[2], "w")) == NULL)
@@ -485,6 +604,11 @@ main(int argc, char **argv)
 		line[strcspn(line, "\n")] = '\0';
 		hex = strrchr(line, ' ');
 		if (hex == NULL || sscanf(line, "%15s %7s", kind, scratch_mode) != 2)
+			return (2);
+		busy_given = strcmp(kind, "reply") == 0 ||
+		    strcmp(kind, "to_program") == 0;
+		if (busy_given && (sscanf(line, "%*s %*s %255s", busy_word) != 1 ||
+		    !parse_busy(busy_word, busy)))
 			return (2);
 		len = unhex(hex + 1, frame, sizeof(frame));
 		if (len == SIZE_MAX)
@@ -507,6 +631,12 @@ main(int argc, char **argv)
 		else if (strcmp(kind, "report") == 0)
 			ok = erx_prog_check_report(frame, len, scratch + 3, have,
 			    &report, &refusal);
+		else if (strcmp(kind, "reply") == 0)
+			ok = erx_prog_check_reply(frame, len, scratch + 3, have,
+			    busy, &slot, &reply, &refusal);
+		else if (strcmp(kind, "to_program") == 0)
+			ok = erx_prog_check_to_program(frame, len, scratch + 3,
+			    have, busy, &to, &refusal);
 		else
 			ok = erx_prog_check_request(frame, len, scratch + 3, have,
 			    &slot, &request, &refusal);
@@ -528,8 +658,16 @@ main(int argc, char **argv)
 			ok = put_notice(&notice, out, sizeof(out), &out_len);
 		else if (strcmp(kind, "report") == 0)
 			ok = put_report(&report, out, sizeof(out), &out_len);
+		else if (strcmp(kind, "reply") == 0)
+			ok = put_reply(slot, &reply, out, sizeof(out), &out_len);
+		else if (strcmp(kind, "to_program") == 0)
+			ok = to.frame == ERX_PROG_FRAME_REPLY ?
+			    put_reply(to.slot, &to.u.reply, out, sizeof(out),
+			    &out_len) :
+			    put_report(&to.u.report, out, sizeof(out), &out_len);
 		else
-			ok = false;
+			ok = put_request(slot, &request, out, sizeof(out),
+			    &out_len);
 		if (!ok) {
 			fprintf(answers, "accepted -\n");
 			continue;

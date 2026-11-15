@@ -539,6 +539,7 @@ static bool
 begin(walk_t *w, uint16_t kind, uint8_t *store)
 {
 	const erx_profile_kind_t *k;
+	const erx_profile_table_t *table;
 	erx_etf_item_t item;
 	uint64_t v;
 	int32_t number;
@@ -566,16 +567,17 @@ begin(walk_t *w, uint16_t kind, uint8_t *store)
 		w->done_key = (key_t){ .atom = item.u.data.bytes,
 		    .len = item.u.data.len, .is_atom = true, .valid = true };
 		return (complete(w));
-	case ERX_PROFILE_SIGNAL:
+	case ERX_PROFILE_NAMED:
 		if (item.kind != ERX_ETF_ATOM)
 			return (refuse(w, ERX_PROFILE_SHAPE, kind));
-		for (i = 0; i < w->p->nsignals; i++) {
-			if (atom_is(&item, w->p->signals[i].name))
+		table = &w->p->tables[k->table];
+		for (i = 0; i < table->nrows; i++) {
+			if (atom_is(&item, table->rows[i].name))
 				break;
 		}
-		if (i == w->p->nsignals)
+		if (i == table->nrows)
 			return (refuse(w, ERX_PROFILE_RANGE, kind));
-		number = w->p->signals[i].number;
+		number = table->rows[i].number;
 		store_value(store, &number, sizeof(number));
 		w->done_key = (key_t){ .atom = item.u.data.bytes,
 		    .len = item.u.data.len, .is_atom = true, .valid = true };
@@ -908,20 +910,53 @@ frame_rules(walk_t *w)
 	return (true);
 }
 
-/* The envelope {Tag, Version, [Slot,] Value}, then the value. */
+/* The envelope's tuple and its tag, as a frame of arity and tag would begin. */
 static bool
-walk_frame(walk_t *w, const erx_profile_frame_t *f, uint8_t *slot, void *out)
+envelope_is(const erx_profile_frame_t *f, const erx_etf_item_t *tuple,
+    const erx_etf_item_t *tag)
 {
-	erx_etf_item_t item;
+	return (tuple->kind == ERX_ETF_TUPLE &&
+	    tuple->count == (f->slot ? 4u : 3u) && atom_is(tag, f->tag));
+}
+
+/*
+ * The kind of a reply frame's value: the reply kind of the request case
+ * busy holds on the slot just read, refused as a range of the slot when
+ * the slot is idle or busy names no case of the request's union.
+ */
+static bool
+reply_kind(walk_t *w, const erx_profile_frame_t *f, const uint16_t *busy,
+    uint8_t slot, uint16_t *kind)
+{
+	const erx_profile_kind_t *request;
+
+	request = &w->p->kinds[w->p->frames[f->request].kind];
+	if (busy[slot] >= request->ncases)
+		return (refuse(w, ERX_PROFILE_RANGE, w->p->slot_kind));
+	*kind = request->cases[busy[slot]].reply;
+	return (true);
+}
+
+/*
+ * The envelope {Tag, Version, [Slot,] Value}, then the value.  The arity
+ * is judged before the tag is read, as envelope_is cannot, so a refusal
+ * names the item that broke it.
+ */
+static bool
+walk_frame(walk_t *w, const erx_profile_frame_t *f, const uint16_t *busy,
+    uint8_t *slot, void *out)
+{
+	erx_etf_item_t tuple, tag, item;
+	uint16_t kind;
 	uint64_t v;
 
-	if (!read_term(w, &item))
+	if (!read_term(w, &tuple))
 		return (false);
-	if (item.kind != ERX_ETF_TUPLE || item.count != (f->slot ? 4u : 3u))
+	if (tuple.kind != ERX_ETF_TUPLE || tuple.count != (f->slot ? 4u : 3u))
 		return (refuse(w, ERX_PROFILE_SHAPE, f->name));
-	if (!read_term(w, &item))
+	if (!read_term(w, &tag))
 		return (false);
-	if (!atom_is(&item, f->tag))
+	if (!atom_is(&tag, f->tag))
 		return (refuse(w, ERX_PROFILE_SHAPE, f->name));
 	if (!read_term(w, &item))
 		return (false);
@@ -930,13 +965,39 @@ walk_frame(walk_t *w, const erx_profile_frame_t *f, uint8_t *slot, void *out)
 		return (refuse(w, ERX_PROFILE_VERSION, f->name));
 	if (f->slot && !walk_term(w, w->p->slot_kind, slot))
 		return (false);
-	return (walk_term(w, f->kind, out));
+	kind = f->kind;
+	if (f->request != ERX_PROFILE_NONE &&
+	    !reply_kind(w, f, busy, *slot, &kind))
+		return (false);
+	return (walk_term(w, kind, out));
+}
+
+uint16_t
+erx_profile_select(const erx_profile_t *p, const uint16_t *frames,
+    size_t nframes, const uint8_t *bytes, size_t len)
+{
+	erx_profile_refusal_t refusal;
+	erx_etf_item_t tuple, tag;
+	size_t i;
+	walk_t w;
+
+	memset(&w, 0, sizeof(w));
+	w.p = p;
+	w.refusal = &refusal;
+	if (!erx_etf_reader_init(&w.rd, bytes, len) || !read_term(&w, &tuple) ||
+	    tuple.kind != ERX_ETF_TUPLE || !read_term(&w, &tag))
+		return (frames[0]);
+	for (i = 0; i < nframes; i++) {
+		if (envelope_is(&p->frames[frames[i]], &tuple, &tag))
+			return (frames[i]);
+	}
+	return (frames[0]);
 }
 
 bool
 erx_profile_check(const erx_profile_t *p, uint16_t frame, const uint8_t *bytes,
-    size_t len, void *scratch, size_t scratch_len, uint8_t *slot, void *out,
-    erx_profile_refusal_t *refusal)
+    size_t len, void *scratch, size_t scratch_len, const uint16_t *busy,
+    uint8_t *slot, void *out, erx_profile_refusal_t *refusal)
 {
 	const erx_profile_frame_t *f;
 	erx_etf_reason_t reason;
@@ -970,7 +1031,7 @@ erx_profile_check(const erx_profile_t *p, uint16_t frame, const uint8_t *bytes,
 		refusal->reason = ERX_PROFILE_MALFORMED;
 		return (false);
 	}
-	if (!walk_frame(&w, f, slot, out))
+	if (!walk_frame(&w, f, busy, slot, out))
 		return (false);
 	w.item = w.rd.pos;
 	if (erx_etf_next(&w.rd, &item, &reason) != ERX_ETF_STEP_END)

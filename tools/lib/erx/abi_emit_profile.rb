@@ -22,21 +22,21 @@ module Erx
     class ProfileEmitter
       INTEGER_TYPES = { 'u8' => 'uint8_t', 'u16' => 'uint16_t', 'u32' => 'uint32_t', 'u64' => 'uint64_t' }.freeze
       BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff }.freeze
-      SLOT_MAX = 15
 
       def self.outputs(schema)
         schema.protocols.select { |protocol| protocol[:reader] == 'c' }.each_with_object({}) do |protocol, files|
-          emitter = new(protocol, signals: schema.signals.signals.select(&:nameable?))
+          emitter = new(protocol)
           files["include/erx/#{emitter.short}_profile.h"] = emitter.header
           files["liberx/generated/#{emitter.short}_profile.c"] = emitter.source
         end.freeze
       end
 
-      def initialize(protocol, signals:)
+      def initialize(protocol)
         @protocol = protocol
         @kinds = protocol.fetch(:kinds)
-        @signals = signals
-        builtins = %w[boolean signal u8 u16 u32 u64].select { |name| referenced.include?(name) }
+        @frames = protocol.fetch(:frames)
+        @named = protocol.fetch(:named)
+        builtins = [*Protocols::FRAME_BUILTINS, *INTEGER_TYPES.keys].select { |name| referenced.include?(name) }
         builtins << 'slot' if protocol.fetch(:frames).any? { |frame| frame.fetch(:slot) }
         @order = @kinds.keys + builtins
         @names = @order + protocol.fetch(:totals).keys + protocol.fetch(:frames).map { |frame| frame.fetch(:name) }
@@ -49,14 +49,15 @@ module Erx
         [banner,
          '', "#ifndef #{guard}", "#define #{guard}", '',
          "/* The #{@protocol.fetch(:name)} frame profile's C check (docs/design-abi.md#program-protocol). */",
-         '', '#include <erx/profile.h>', '', enums, types, prototypes, cap_prototypes, '', "#endif /* !#{guard} */", ''].join("\n")
+         '', '#include <erx/profile.h>', '', frame_enum, enums, types, frame_types, prototypes, cap_prototypes, '',
+         "#endif /* !#{guard} */", ''].join("\n")
       end
 
       def source
         [banner,
          '', '#include <stddef.h>', '#include <stdint.h>', '', "#include <erx/#{short}_profile.h>", '',
-         values_tables, fields_tables, cases_tables, kinds_table, names_table, rules_tables, signals_table,
-         frames_table, profile, bounds, functions, cap_functions].join("\n")
+         "#define\tNELEM(a)\t(sizeof(a) / sizeof((a)[0]))\n", values_tables, fields_tables, cases_tables, kinds_table, names_table, rules_tables, named_tables,
+         frames_table, profile, bounds, functions, to_program_function, cap_functions].join("\n")
       end
 
       private
@@ -72,22 +73,29 @@ module Erx
       def prefix = "erx_#{short}"
 
       def referenced
-        @referenced ||= @kinds.values.flat_map do |kind|
-          [*kind.fetch(:elements, []), kind[:element], *kind.fetch(:fields, []).map(&:last),
-           *kind.fetch(:cases, []).flat_map { |item| item.fetch(:fields) }]
-        end.compact + @protocol.fetch(:frames).map { |frame| frame.fetch(:kind) }
+        @referenced ||= @kinds.values.flat_map { |kind| Protocols::Profile.inner_kinds(kind) } +
+                        @frames.flat_map { |frame| Protocols::Profile.frame_kinds(frame) }
       end
 
       def index(name) = @order.index(name) || raise(SchemaError, "no kind #{name}")
 
       def atoms_only?(kind) = kind.fetch(:cases).all? { |item| item.fetch(:fields).empty? }
 
+      def reply?(frame) = frame.key?(:replies)
+
+      # The frames to the program the channel carries after its startup
+      # message, those tagged with the protocol's own name, which
+      # P_check_to_program tells apart by their envelopes.
+      def to_program = @frames.select { |frame| frame.fetch(:direction) == 'to' && frame.fetch(:tag) == @protocol.fetch(:name) }
+
+      def frame_constant(frame) = "#{prefix}_frame_#{frame.fetch(:name)}".upcase
+
       # The C type of a value of kind name.
       def c_type(name)
         kind = @kinds[name]
         return INTEGER_TYPES.fetch(name) if INTEGER_TYPES.key?(name)
         return 'bool' if name == 'boolean'
-        return 'int32_t' if name == 'signal'
+        return 'int32_t' if @named.key?(name)
         return 'uint8_t' if name == 'slot'
 
         case kind.fetch(:form)
@@ -99,15 +107,44 @@ module Erx
         end
       end
 
-      # Member names for a tuple's or a case's fields: each kind's name, with
-      # _1, _2 ... when a kind repeats.
+      # Member names for a tuple's or a case's fields: each kind's name, a
+      # named number's member name (Protocols::NAMED_NUMBERS), with _1, _2 ...
+      # when a kind repeats.
       def member_names(kinds)
-        kinds.map.with_index do |kind, position|
-          kinds.count(kind) > 1 ? "#{kind}_#{kinds.first(position + 1).count(kind)}" : kind
+        names = kinds.map { |kind| Protocols::NAMED_NUMBERS[kind]&.member || kind }
+        names.map.with_index do |name, position|
+          names.count(name) > 1 ? "#{name}_#{names.first(position + 1).count(name)}" : name
         end
       end
 
       def enum_name(union, atoms) = "#{prefix}_#{union}_#{atoms.join('_')}".upcase
+
+      # Each frame's index in the table, the frame argument of erx_profile_check.
+      def frame_enum
+        constants = @frames.each_with_index.map { |frame, position| "\t#{frame_constant(frame)} = #{position}," }
+        "/* The frames, by their index in the table. */\nenum {\n#{constants.join("\n")}\n};\n"
+      end
+
+      # A reply frame's struct, the request case it answers and that case's
+      # reply, and for the frames to the program after the startup message
+      # the struct P_check_to_program fills: which frame, a reply's slot and
+      # the frame's value.
+      def frame_types
+        replies = @frames.select { |frame| reply?(frame) }.map do |frame|
+          members = frame.fetch(:replies).map { |request, reply| "\t\t#{c_type(reply)}\t#{request};" }
+          "/* A #{frame.fetch(:name)} frame's value: the reply to the #{frame.fetch(:union)} case its slot holds. */\n" \
+            "typedef struct #{prefix}_#{frame.fetch(:name)} {\n\tuint16_t\trequest;\t/* the case, #{prefix.upcase}_#{frame.fetch(:union).upcase}_... */\n" \
+            "\tunion {\n#{members.join("\n")}\n\t} u;\n} #{prefix}_#{frame.fetch(:name)}_t;\n"
+        end
+        members = to_program.map { |frame| "\t\t#{frame_type(frame)}\t#{frame.fetch(:name)};" }
+        to = "/* A frame to the program after its startup message: which frame, its slot, its value. */\n" \
+             "typedef struct #{prefix}_to_program {\n\tuint16_t\tframe;\t/* #{prefix.upcase}_FRAME_... */\n" \
+             "\tuint8_t\t\tslot;\t/* a slotted frame's */\n\tunion {\n#{members.join("\n")}\n\t} u;\n} #{prefix}_to_program_t;\n"
+        [*replies, *(to_program.empty? ? [] : [to])].join("\n")
+      end
+
+      # The C type of a frame's value.
+      def frame_type(frame) = reply?(frame) ? "#{prefix}_#{frame.fetch(:name)}_t" : c_type(frame.fetch(:kind))
 
       def enums
         @kinds.select { |_, kind| kind.fetch(:form) == 'union' && !kind.fetch(:cases).empty? }.map do |name, kind|
@@ -148,12 +185,25 @@ module Erx
         "typedef struct #{prefix}_#{name} {\n#{members.join("\n")}\n} #{prefix}_#{name}_t;\n"
       end
 
+      # A frame check's parameters after the scratch: a reply frame's busy,
+      # the request case each slot holds or ERX_PROFILE_NONE, a slotted
+      # frame's slot, and the frame's value.
+      def check_parameters(frame)
+        [*(reply?(frame) ? ['const uint16_t busy[ERX_PROFILE_SLOTS]'] : []),
+         *(frame.fetch(:slot) ? ['uint8_t *slot'] : []), "#{frame_type(frame)} *#{frame.fetch(:name)}"].join(', ')
+      end
+
       def prototypes
-        frames = @protocol.fetch(:frames).map do |frame|
-          slot = frame.fetch(:slot) ? 'uint8_t *slot, ' : ''
+        frames = @frames.map do |frame|
           "bool\t#{prefix}_check_#{frame.fetch(:name)}(const uint8_t *frame, size_t len,\n" \
-            "\t    void *scratch, size_t scratch_len, #{slot}#{c_type(frame.fetch(:kind))} *#{frame.fetch(:name)},\n" \
+            "\t    void *scratch, size_t scratch_len, #{check_parameters(frame)},\n" \
             "\t    erx_profile_refusal_t *refusal);"
+        end
+        unless to_program.empty?
+          frames << "/* A frame to the program after its startup message, told apart by its envelope. */\n" \
+                    "bool\t#{prefix}_check_to_program(const uint8_t *frame, size_t len,\n" \
+                    "\t    void *scratch, size_t scratch_len, const uint16_t busy[ERX_PROFILE_SLOTS],\n" \
+                    "\t    #{prefix}_to_program_t *to_program, erx_profile_refusal_t *refusal);"
         end
         lists = @kinds.select { |_, kind| kind.fetch(:form) == 'list' }.map do |name, kind|
           "bool\t#{prefix}_#{name}_next(#{c_type(name)} *it, #{c_type(kind.fetch(:element))} *element);"
@@ -211,8 +261,9 @@ module Erx
           rows = kind.fetch(:cases).map do |item|
             fields = item.fetch(:fields).empty? ? 'NULL' : "#{name}_#{item.fetch(:c_name)}_fields"
             offset = item.fetch(:fields).empty? || atoms_only?(kind) ? '0' : "offsetof(#{prefix}_#{name}_t, u.#{item.fetch(:c_name)})"
+            reply = item.fetch(:reply) ? index(item.fetch(:reply)) : 'ERX_PROFILE_NONE'
             "\t{ .atoms = #{name}_#{item.fetch(:c_name)}_atoms, .fields = #{fields}, .natoms = #{item.fetch(:atoms).size}, " \
-              ".nfields = #{item.fetch(:fields).size}, .offset = #{offset} },"
+              ".nfields = #{item.fetch(:fields).size}, .offset = #{offset}, .reply = #{reply} },"
           end
           "#{atoms.join("\n")}\nstatic const erx_profile_case_t #{name}_cases[] = {\n#{rows.join("\n")}\n};\n"
         end.join("\n")
@@ -231,8 +282,8 @@ module Erx
                  ".refers = #{rule.call(@protocol.fetch(:refers).index { |item| item.fetch(:kind) == name })}, " \
                  ".target = #{rule.call(@protocol.fetch(:refers).index { |item| item.fetch(:list) == name })}"
         return "{ #{common}, .form = ERX_PROFILE_BOOLEAN }" if name == 'boolean'
-        return "{ #{common}, .form = ERX_PROFILE_SIGNAL }" if name == 'signal'
-        return "{ #{common}, .form = ERX_PROFILE_INTEGER, .min = 0, .max = #{SLOT_MAX} }" if name == 'slot'
+        return "{ #{common}, .form = ERX_PROFILE_NAMED, .table = #{@named.keys.index(name)} }" if @named.key?(name)
+        return "{ #{common}, .form = ERX_PROFILE_INTEGER, .min = 0, .max = ERX_PROFILE_SLOTS - 1 }" if name == 'slot'
         return "{ #{common}, .form = ERX_PROFILE_INTEGER, .min = 0, .max = UINT64_C(#{BASE_MAX.fetch(name)}) }" unless kind
 
         fields = "{\n\t    #{common.gsub(', .', ",\n\t    .")}"
@@ -291,18 +342,25 @@ module Erx
           (totals.empty? ? '' : "static const erx_profile_total_t totals[] = {\n#{totals.join("\n")}\n};\n")
       end
 
-      def signals_table
-        return '' unless @order.include?('signal')
+      # Each named number's rows, by the protocol names the model formed, and
+      # the tables a named kind's table indexes, in the model's order.
+      def named_tables
+        return '' if @named.empty?
 
-        rows = @signals.map { |signal| "\t{ \"sig#{signal.name}\", #{signal.number} }," }
-        "/* The signals a program may name, by their protocol names. */\n" \
-          "static const erx_profile_signal_t signals[] = {\n#{rows.join("\n")}\n};\n"
+        rows = @named.map do |word, items|
+          "/* Each #{word} a frame may name, by its protocol name, and its number. */\n" \
+            "static const erx_profile_named_t #{word}_rows[] = {\n#{items.map { |item, number| "\t{ \"#{item}\", #{number} }," }.join("\n")}\n};\n"
+        end
+        tables = @named.keys.map { |word| "\t{ .rows = #{word}_rows, .nrows = NELEM(#{word}_rows) }," }
+        "#{rows.join("\n")}\nstatic const erx_profile_table_t tables[] = {\n#{tables.join("\n")}\n};\n"
       end
 
       def frames_table
-        rows = @protocol.fetch(:frames).map do |frame|
-          "\t{ .tag = \"#{frame.fetch(:tag)}\", .name = #{@names.index(frame.fetch(:name))}, " \
-            ".kind = #{index(frame.fetch(:kind))}, .slot = #{frame.fetch(:slot)} },"
+        rows = @frames.map do |frame|
+          kind = reply?(frame) ? 'ERX_PROFILE_NONE' : index(frame.fetch(:kind))
+          request = reply?(frame) ? frame_constant(@frames.find { |item| item.fetch(:name) == frame.fetch(:request) }) : 'ERX_PROFILE_NONE'
+          "\t[#{frame_constant(frame)}] = { .tag = \"#{frame.fetch(:tag)}\", .name = #{@names.index(frame.fetch(:name))}, " \
+            ".kind = #{kind}, .request = #{request}, .slot = #{frame.fetch(:slot)} },"
         end
         "static const erx_profile_frame_t frames[] = {\n#{rows.join("\n")}\n};\n"
       end
@@ -312,12 +370,12 @@ module Erx
         count = ->(table, items) { items.empty? ? ['NULL', 0] : [table, items.size] }
         refers, nrefers = count.call('refers', @protocol.fetch(:refers))
         totals, ntotals = count.call('totals', @protocol.fetch(:totals).to_a)
-        signals, nsignals = @order.include?('signal') ? ['signals', @signals.size] : ['NULL', 0]
+        tables, ntables = count.call('tables', @named.to_a)
         "const erx_profile_t #{prefix}_profile = {\n" \
           "\t.kinds = kinds, .names = names, .refers = #{refers}, .totals = #{totals},\n" \
-          "\t.signals = #{signals}, .frames = frames, .version = #{@protocol.fetch(:version)},\n" \
+          "\t.tables = #{tables}, .frames = frames, .version = #{@protocol.fetch(:version)},\n" \
           "\t.frame_max = #{@protocol.dig(:frame_max, :value)}, .nkinds = #{@order.size}, .nnames = #{@names.size},\n" \
-          "\t.nrefers = #{nrefers}, .ntotals = #{ntotals}, .nsignals = #{nsignals},\n" \
+          "\t.nrefers = #{nrefers}, .ntotals = #{ntotals}, .ntables = #{ntables},\n" \
           "\t.nframes = #{@protocol.fetch(:frames).size}, .slot_kind = #{@order.index('slot') || 'ERX_PROFILE_NONE'},\n" \
           "\t.unique_kind = #{unique}, .depth = #{@protocol.fetch(:depth)},\n};\n"
       end
@@ -336,8 +394,8 @@ module Erx
           end
         end
         lists = @kinds.select { |_, kind| kind.fetch(:form) == 'list' }.keys
-        ["#define\tNELEM(a)\t(sizeof(a) / sizeof((a)[0]))", '',
-         assertion("ERX_PROFILE_DEPTH_MAX == #{model::DEPTH_MAX}", 'the generator bounds depth as erx/profile.h does'),
+        [assertion("ERX_PROFILE_DEPTH_MAX == #{model::DEPTH_MAX}", 'the generator bounds depth as erx/profile.h does'),
+         assertion("ERX_PROFILE_SLOTS == #{model::SLOTS}", 'the generator counts slots as erx/profile.h does'),
          assertion("ERX_PROFILE_TOTALS_MAX == #{model::TOTALS_MAX}", 'the generator bounds totals as erx/profile.h does'),
          assertion("#{@protocol.fetch(:depth)} <= ERX_PROFILE_DEPTH_MAX", "#{short}'s kinds nest within the check's stack"),
          *(@protocol.fetch(:totals).empty? ? [] : [assertion('NELEM(totals) <= ERX_PROFILE_TOTALS_MAX', "#{short}'s totals fit the check's sums")]),
@@ -390,13 +448,45 @@ module Erx
 
       def assertion(condition, message) = "_Static_assert(#{condition},\n    \"#{message}\");"
 
+      # P_check_to_program: the frame the envelope selects (erx_profile_select),
+      # then that frame's own check into its member of the struct.
+      def to_program_function
+        return '' if to_program.empty?
+
+        arms = to_program.map do |frame|
+          name = frame.fetch(:name)
+          arguments = [*(reply?(frame) ? ['busy'] : []), *(frame.fetch(:slot) ? ['&to_program->slot'] : []),
+                       "&to_program->u.#{name}"].join(', ')
+          "\tcase #{frame_constant(frame)}:\n\t\treturn (#{prefix}_check_#{name}(frame, len, scratch, scratch_len,\n" \
+            "\t\t    #{arguments}, refusal));"
+        end
+        "bool\n#{prefix}_check_to_program(const uint8_t *frame, size_t len, void *scratch,\n" \
+          "    size_t scratch_len, const uint16_t busy[ERX_PROFILE_SLOTS],\n" \
+          "    #{prefix}_to_program_t *to_program, erx_profile_refusal_t *refusal)\n{\n" \
+          "\tstatic const uint16_t to_frames[] = { #{to_program.map { |frame| frame_constant(frame) }.join(', ')} };\n\n" \
+          "\tto_program->frame = erx_profile_select(&#{prefix}_profile, to_frames,\n\t    NELEM(to_frames), frame, len);\n" \
+          "\tto_program->slot = 0;\n" \
+          "\tswitch (to_program->frame) {\n#{arms.join("\n")}\n\t}\n" \
+          "\t/* erx_profile_select answers one of to_frames. */\n\t*refusal = (erx_profile_refusal_t){ .reason = ERX_PROFILE_SHAPE,\n" \
+          "\t    .kind = ERX_PROFILE_NONE };\n\treturn (false);\n}\n"
+      end
+
+      # Each frame's check over erx_profile_check. A reply frame's value is
+      # the reply struct's union, and the request case its slot holds is
+      # named once the check accepts it.
       def functions
-        frames = @protocol.fetch(:frames).each_with_index.map do |frame, position|
-          slot = frame.fetch(:slot) ? 'uint8_t *slot, ' : ''
-          "bool\n#{prefix}_check_#{frame.fetch(:name)}(const uint8_t *frame, size_t len, void *scratch,\n" \
-            "    size_t scratch_len, #{slot}#{c_type(frame.fetch(:kind))} *#{frame.fetch(:name)}, erx_profile_refusal_t *refusal)\n{\n" \
-            "\treturn (erx_profile_check(&#{prefix}_profile, #{position}, frame, len, scratch,\n" \
-            "\t    scratch_len, #{frame.fetch(:slot) ? 'slot' : 'NULL'}, #{frame.fetch(:name)}, refusal));\n}\n"
+        frames = @frames.map do |frame|
+          name = frame.fetch(:name)
+          call = "erx_profile_check(&#{prefix}_profile, #{frame_constant(frame)}, frame, len, scratch,\n" \
+                 "\t    scratch_len, #{reply?(frame) ? 'busy' : 'NULL'}, #{frame.fetch(:slot) ? 'slot' : 'NULL'}, " \
+                 "#{reply?(frame) ? "&#{name}->u" : name}, refusal)"
+          body = if reply?(frame)
+                   "\tif (!#{call})\n\t\treturn (false);\n\t#{name}->request = busy[*slot];\n\treturn (true);\n"
+                 else
+                   "\treturn (#{call});\n"
+                 end
+          "bool\n#{prefix}_check_#{name}(const uint8_t *frame, size_t len, void *scratch,\n" \
+            "    size_t scratch_len, #{check_parameters(frame)}, erx_profile_refusal_t *refusal)\n{\n#{body}}\n"
         end
         lists = @kinds.select { |_, kind| kind.fetch(:form) == 'list' }.map do |name, kind|
           "bool\n#{prefix}_#{name}_next(#{c_type(name)} *it, #{c_type(kind.fetch(:element))} *element)\n{\n" \

@@ -15,6 +15,8 @@ module Erx
       # only render.
       module Profile
         DEPTH_MAX = 16
+        # ERX_PROFILE_SLOTS of erx/profile.h: the slots a request takes, 0 to SLOTS - 1.
+        SLOTS = 16
         REFERS_RANGE_MAX = 4096
         # ERX_PROFILE_TOTALS_MAX of erx/profile.h.
         TOTALS_MAX = 8
@@ -50,11 +52,12 @@ module Erx
           end
         end
 
-        def frames(declaration, name:, kinds:, frames:, totals:, version:, reader:, constants:, nine_p:)
+        def frames(declaration, name:, kinds:, frames:, totals:, version:, reader:, constants:, named:, nine_p:)
           declaration.fail!('a frame protocol requires version N') unless version
           declaration.fail!(NINE_P_ONLY) if nine_p || nine_p_kinds?(kinds)
           frame_rules!(declaration, frames)
-          used = Protocols.used_kinds(kinds, frames.map { |frame| frame.fetch(:kind) })
+          frames = reply_rules!(declaration, frames, kinds)
+          used = Protocols.used_kinds(kinds, frames.flat_map { |frame| frame_kinds(frame) })
           unused = kinds.keys - used
           declaration.fail!("unused kinds #{unused.join(' ')}") unless unused.empty?
           kinds.each { |kind_name, kind| kind_rules!(declaration, kind_name, kind, kinds, totals) }
@@ -63,7 +66,7 @@ module Erx
           declaration.fail!("unused totals #{(totals.keys - summed).join(' ')}") unless (totals.keys - summed).empty?
           frame_limit = "#{name.delete_prefix('erx_')}_frame_max"
           declaration.fail!("a frame protocol needs the limit #{frame_limit}") unless constants.key?(frame_limit)
-          depth = frames.map { |frame| depth(frame.fetch(:kind), kinds) }.max
+          depth = frames.flat_map { |frame| frame_kinds(frame) }.map { |kind| depth(kind, kinds) }.max
           declaration.fail!("kinds nest #{depth} deep, past #{DEPTH_MAX}") if depth > DEPTH_MAX
           unique = kinds.select { |_, kind| kind[:unique] }.keys
           declaration.fail!('a protocol has at most one unique kind') if unique.size > 1
@@ -77,7 +80,52 @@ module Erx
             frames: frames.map { |frame| frame.except(:line).freeze }.freeze,
             frame_max: { value: constants.fetch(frame_limit).value, constant: frame_limit }.freeze,
             depth: depth, unique: unique.first, refers: refers.freeze,
-            capabilities: capabilities }.freeze
+            capabilities: capabilities, named: named.select { |word, _| referenced?(word, kinds, frames) } }.freeze
+        end
+
+        # The kinds a frame's value may take: its kind, or for a reply frame
+        # the reply kind of each case of its request's union.
+        def frame_kinds(frame) = frame.fetch(:kind) ? [frame.fetch(:kind)] : frame.fetch(:replies).map(&:last)
+
+        # The replies (docs/design-abi.md, "Program protocol"): each slotted
+        # frame to the program is a reply frame naming a slotted frame from the
+        # program, its request, whose union's every case has a reply line;
+        # no other union has one. Each reply frame gains replies, the
+        # [case C name, reply kind] of each case, in the union's order, which
+        # is the order of the C request ids.
+        def reply_rules!(declaration, frames, kinds)
+          frames = frames.map do |frame|
+            next frame unless frame.fetch(:direction) == 'to' && frame.fetch(:slot)
+
+            fail = ->(message) { frame.fetch(:line).fail!("frame #{frame.fetch(:name)}: #{message}") }
+            fail.call('a slotted frame to the program is a reply frame: frame NAME to TAG slot reply REQUEST') unless frame.key?(:request)
+            fail.call('a reply frame\'s name names no kind') if kinds.key?(frame.fetch(:name))
+            request = frames.find { |item| item.fetch(:name) == frame.fetch(:request) }
+            unless request && request.fetch(:direction) == 'from' && request.fetch(:slot)
+              fail.call("a reply frame names a slotted frame from the program, not #{frame.fetch(:request)}")
+            end
+            union = request.fetch(:kind)
+            fail.call("request #{request.fetch(:name)}'s kind #{union} is no union") unless kinds.dig(union, :form) == 'union'
+            missing = kinds.fetch(union).fetch(:cases).find { |item| item.fetch(:reply).nil? }
+            fail.call("case #{missing.fetch(:c_name)} of #{union} has no reply line") if missing
+            # A reply kind is a union, whose cases the capability walk reads, so no handle escapes it.
+            plain = kinds.fetch(union).fetch(:cases).find { |item| kinds.dig(item.fetch(:reply), :form) != 'union' }
+            fail.call("case #{plain.fetch(:c_name)}'s reply #{plain.fetch(:reply)} is no union") if plain
+            replies = kinds.fetch(union).fetch(:cases).map { |item| [item.fetch(:c_name), item.fetch(:reply)].freeze }
+            frame.merge(union: union, replies: replies.freeze).freeze
+          end
+          answered = frames.filter_map { |frame| frame[:union] }
+          stray = kinds.find do |kind_name, kind|
+            kind.fetch(:form) == 'union' && !answered.include?(kind_name) && kind.fetch(:cases).any? { |item| item.fetch(:reply) }
+          end
+          declaration.fail!("union #{stray.first}: only a request union a reply frame answers takes reply lines") if stray
+          frames
+        end
+
+        # Whether a kind or a frame names the kind word.
+        def referenced?(word, kinds, frames)
+          kinds.values.any? { |kind| inner_kinds(kind).include?(word) } ||
+            frames.any? { |frame| frame_kinds(frame).include?(word) }
         end
 
         # A capability is a value of a kind declared "capability NAME"
@@ -111,7 +159,7 @@ module Erx
         # another kind is refused rather than left for the walk to miss.
         def capability_fields(declaration, kinds, frames)
           to_program = frames.select { |frame| frame.fetch(:direction) == 'to' }
-          to_program.map { |frame| frame.fetch(:kind) }.uniq.filter_map do |union|
+          to_program.flat_map { |frame| frame_kinds(frame) }.uniq.filter_map do |union|
             next unless kinds.dig(union, :form) == 'union'
 
             cases = kinds.fetch(union).fetch(:cases).to_h do |item|
@@ -191,7 +239,7 @@ module Erx
           element = list.fetch(:element)
           element = kinds.dig(element, :elements)&.first || element if kinds.dig(element, :form) == 'tuple'
           kind = kinds[element]
-          return element if %w[boolean signal].include?(element) || BASE_KINDS.include?(element) && element != 'alias'
+          return element if FRAME_BUILTINS.include?(element) || BASE_KINDS.include?(element) && element != 'alias'
           return element if kind && kind.fetch(:form) == 'integer'
           return element if kind && kind.fetch(:form) == 'union' && kind.fetch(:cases).all? { |item| item.fetch(:fields).empty? }
 
@@ -209,7 +257,7 @@ module Erx
           fail.call("the key ranges over more than #{REFERS_RANGE_MAX} values") if key_high - key_low + 1 > REFERS_RANGE_MAX
           low, high = bounds(kind_name, kinds)
           fail.call('its range is not within the key\'s') unless low >= key_low && high <= key_high
-          if frames.any? { |frame| occurrences(frame.fetch(:kind), kind.fetch(:refers), kinds) > 1 }
+          if frames.flat_map { |frame| frame_kinds(frame) }.any? { |root| occurrences(root, kind.fetch(:refers), kinds) > 1 }
             fail.call("#{kind[:refers]} can occur twice in one frame")
           end
           { kind: kind_name, list: kind.fetch(:refers), key: key, low: key_low, range: key_high - key_low + 1 }.freeze

@@ -6995,8 +6995,23 @@ document's "residual risks accepted" paragraph.
   generator's check that every status has an errno, seeded with a status without one. The `error ATOM NUMBER`
   rows of `abi/protocols/9p.txt` state names and numbers the errno table also states, unchecked against it;
   they name an errno of the table and take its number from it (9P2000.L's Linux numbers are musl's generic
-  ones on every architecture erXos targets). The frame grammar's
-  `errno` kind joins with the first reply that carries an error name (P2a).
+  ones on every architecture erXos targets).
+* [Medium] ABI, frame grammar replies (`abi/protocols/prog.txt`, `tools/lib/erx/abi_profile.rb`,
+  `tools/lib/erx/abi_emit_profile.rb`, [design-abi.md](docs/design-abi.md#program-protocol)): review findings
+  left open. A reply union holding capabilities gets its own walk, but there is no walk of a whole reply
+  or of `erx_prog_to_program_t`, so a C consumer switches on `reply->request` to pick one; generate
+  `P_reply_caps` and `P_to_program_caps` with the first reply that holds a capability. The startup
+  message is told from the channel's frames by its tag alone (a frame tagged other than the protocol's
+  name leaves the dispatch unnoticed); declare the startup frame and fail generation on any other tag.
+  The slot count (`Profile::SLOTS`, `ERX_PROFILE_SLOTS`) is not derived from `prog_data_slots_max`, which
+  `prog.txt` calls the slots a request may name; derive one from the other. `erx_abi_signals` and
+  `erx_abi_errno` (`abi_emit_erlang.rb`) form the protocol names again instead of reading
+  `Protocols::NAMED_NUMBERS`. Names that collide only at compile time (a kind or frame named
+  `to_program`, a union named `frame`, a request case named `errno`) want a generator diagnostic.
+  The differential cannot state a busy entry naming no case (only the C fuzz target covers it), and its
+  Erlang side names a malformed `to_program` frame by the corpus token, not the frame C selects.
+  Reply lines on an inner union's cases (design-abi.md's Extension) need busy to name an inner case;
+  specify that with the first request that needs it.
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.
