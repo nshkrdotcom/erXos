@@ -30,7 +30,11 @@ as output/3 is: a piece of echo that does not fit what is left is dropped
 whole, as FreeBSD's ttydisc_echo_force puts echo in the output queue
 through ttyoutq_write_nofrag (tty_ttydisc.c:724-760, tty_outq.c:322-334).
 So a master that does not read gets no more echo than that room, however
-its input is cut into calls.
+its input is cut into calls. The owner holds at most ?MASTER_ROOM bytes for
+the master, master_room/0, and a signal's flush_output empties them but
+for the output the master has not taken, so a signal key gives echo that
+room back before its own echo, as ttydisc_rint flushes before it echoes
+the key (tty_ttydisc.c:1128-1130).
 
 A reader waits before it reads. read_wait/3 and poll_wait/2 register a
 waiter for an open, and the tty reports `{ready, Open}` once, when the
@@ -58,13 +62,16 @@ have nothing to act on, since a master reports no breaks or parity errors
 and takes no flow control.
 """.
 
--export([new/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
+-export([new/0, master_room/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
          read_wait/3, poll_wait/2, cancel/2, timer/2, read/3, status/3,
          hangup/1, waiting/1, dropped/1]).
--export_type([tty/0, termios/0, open/0, timer/0, action/0]).
+-export_type([tty/0, termios/0, open/0, timer/0, room/0, action/0]).
 
 %% Bytes held: complete lines unread and the line being edited.
 -define(MAX_INPUT, 4096).
+%% Bytes the owner holds for the master at most (docs/design-shell.md,
+%% "Output").
+-define(MASTER_ROOM, 4096).
 %% FreeBSD's _POSIX_VDISABLE (sys/sys/_termios.h:77).
 -define(VDISABLE, 16#ff).
 -define(MAX_SPEED, 16#ffffffff).
@@ -84,6 +91,12 @@ and takes no flow control.
 -type open() :: term().
 -doc "A read's timer: the open it times and a serial no other timer has.".
 -type timer() :: {open(), non_neg_integer()}.
+-doc """
+The room the owner has for the master, `{Free, Kept}`: what is free of
+master_room() now, and what it holds that a flush cannot drop, the output
+already sent to the master and not yet taken.
+""".
+-type room() :: {non_neg_integer(), non_neg_integer()}.
 -type action() :: {echo, binary()}               % bytes for the master
                 | {signal, sigint | sigquit | sigtstp} % for the foreground group
                 | info                           % VSTATUS: the foreground job's status
@@ -118,7 +131,10 @@ and takes no flow control.
     received = 0 :: non_neg_integer(),
     dropped = 0 :: non_neg_integer(),
     %% The room for echo left to the input/3 under way, 0 between calls.
-    echo_room = 0 :: non_neg_integer()
+    echo_room = 0 :: non_neg_integer(),
+    %% What the owner holds for the master that a flush cannot drop, for
+    %% the input/3 under way, 0 between calls.
+    echo_kept = 0 :: non_neg_integer()
 }).
 
 -opaque tty() :: #tty{}.
@@ -146,6 +162,13 @@ new() ->
                              vlnext => $\^V, vdiscard => $\^O, vmin => 1,
                              vtime => 0, vstatus => $\^T},
                      ispeed => 9600, ospeed => 9600}}.
+
+-doc """
+All the room the owner has for the master: the bytes it holds for the
+master at most, and the room a signal's flush_output leaves.
+""".
+-spec master_room() -> pos_integer().
+master_room() -> ?MASTER_ROOM.
 
 -doc "The tty's termios, for tcgetattr.".
 -spec termios(tty()) -> termios().
@@ -305,16 +328,20 @@ that makes a signal and returns the bytes after it untaken, as
 ttydisc_rint signals the foreground group before it takes the next byte
 (tty_ttydisc.c:1124-1133), so the owner acts on the signal before any
 reader is reported a byte typed after the key, and then passes the rest
-to input/3 again, with the room the echo left.
+to input/3 again, with the room it returns. That room is what the echo
+left of Room, or after a flush_output of master_room() less what the
+owner keeps, since the flush empties the rest of what it holds.
 """.
--spec input(binary(), non_neg_integer(), tty()) ->
-          {[action()], binary(), tty()}.
-input(Bytes, Room, #tty{received = Before} = Tty0)
-  when is_binary(Bytes), is_integer(Room), Room >= 0 ->
-    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Room}),
+-spec input(binary(), room(), tty()) -> {[action()], binary(), room(), tty()}.
+input(Bytes, {Free, Kept}, #tty{received = Before} = Tty0)
+  when is_binary(Bytes), is_integer(Free), Free >= 0, is_integer(Kept), Kept >= 0,
+       Free + Kept =< ?MASTER_ROOM ->
+    {Keyed, Rest, Tty1} = keys(Bytes, [], Tty0#tty{echo_room = Free, echo_kept = Kept}),
     Arrived = Tty1#tty.received > Before,
-    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0}),
-    {merge(lists:reverse(Keyed)) ++ Settled, Rest, Tty2}.
+    %% The echo room lives only within a call: it is read from Tty1 and
+    %% cleared in the tty returned.
+    {Settled, Tty2} = settle(Arrived, Tty1#tty{echo_room = 0, echo_kept = 0}),
+    {merge(lists:reverse(Keyed)) ++ Settled, Rest, {Tty1#tty.echo_room, Kept}, Tty2}.
 
 %% The keys up to and including the first that makes a signal.
 keys(<<Byte, Rest/binary>>, Actions0, Tty0) ->
@@ -374,11 +401,15 @@ start(Actions, #tty{stopped = true} = Tty) ->
 start(Actions, Tty) ->
     {Actions, Tty}.
 
+%% The owner drops what it holds for the master at flush_output, all but
+%% what it has sent and the master has not taken, so echo has the rest of
+%% the whole room.
 flush(Actions, Tty) ->
     case on(noflsh, Tty) of
         true -> {Actions, Tty};
         false -> {[flush_output | Actions],
-                  Tty#tty{ready = <<>>, line = <<>>, reprintpos = 0}}
+                  Tty#tty{ready = <<>>, line = <<>>, reprintpos = 0,
+                          echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}
     end.
 
 %% IXON: VSTOP stops output and VSTART starts it; with both the same
@@ -568,20 +599,42 @@ utf8_tail(Bytes) ->
 one_character(<<_/utf8>>) -> true;
 one_character(_) -> false.
 
-%% VREPRINT and a newline, then the line again (ttydisc_reprint); nothing
-%% once the echo room is spent. With a little room left, each walks the
-%% whole line, as FreeBSD's ttydisc_reprint does (tty_ttydisc.c:786-799).
-reprint(Actions, #tty{echo_room = 0} = Tty) ->
-    {Actions, Tty#tty{reprintpos = 0}};
+%% VREPRINT and a newline, then the line again, as FreeBSD's
+%% ttydisc_reprint (tty_ttydisc.c:786-799), but the walk ends at its first
+%% piece that does not fit the room. FreeBSD echoes every piece and its
+%% output queue drops each that does not fit, so each VREPRINT costs the
+%% whole line; a master that reads nothing and sends VREPRINT over and
+%% over, with a little room left, then costs the owner a walk of the line
+%% per key. Ending the walk there bounds each VREPRINT by the room it
+%% fills, but for pieces that render to nothing. What reaches the master
+%% differs from FreeBSD's only in the smaller pieces that would still fit
+%% after the first that does not, and those make no sense on the screen
+%% without it. With ECHO clear no character of a cooked line echoes (it
+%% holds no newline), so the line is not walked.
 reprint(Actions, Tty) ->
-    {Keyed, Tty1} = case char(vreprint, Tty) of
-                        ?VDISABLE -> {Actions, Tty};
-                        Reprint -> echo(Reprint, Actions, Tty)
-                    end,
-    {Ended, Tty2} = echo($\n, Keyed, Tty1),
-    lists:foldl(fun(Char, {Acc, T}) -> echo(Char, Acc, T) end,
-                {Ended, Tty2#tty{reprintpos = 0}},
-                binary_to_list(Tty2#tty.line)).
+    Keys = case char(vreprint, Tty) of
+               ?VDISABLE -> [$\n];
+               Reprint -> [Reprint, $\n]
+           end,
+    {Fit, Ended, Tty1} = retype(Keys, Actions, Tty),
+    Line = case Fit andalso on(echo, Tty) of
+               true -> binary_to_list(Tty1#tty.line);
+               false -> []
+           end,
+    {_, Retyped, Tty2} = retype(Line, Ended, Tty1#tty{reprintpos = 0}),
+    {Retyped, Tty2}.
+
+%% Echoes Chars in order up to the first piece that does not fit, which
+%% moves the column as any dropped echo does, and says whether all fit.
+%% The column then leaves out the rest of the line, which was not shown.
+retype([], Actions, Tty) ->
+    {true, Actions, Tty};
+retype([Char | Rest], Actions, Tty) ->
+    {Bytes, Tty1} = echoed(Char, Tty),
+    case put_echo(Bytes, Actions, Tty1) of
+        {true, Echoed, Tty2} -> retype(Rest, Echoed, Tty2);
+        {false, _, _} = Cut -> Cut
+    end.
 
 %% Where the column was before the line's last character: the column of
 %% the last write plus the width of what was echoed since.
@@ -616,25 +669,34 @@ alnum(Char) ->
 
 %%% Echo and output rendering (tty_ttydisc.c:452-536, :725-776)
 
-%% ECHO echoes every byte; ECHONL alone echoes a newline.
 echo(Char, Actions, Tty) ->
+    {Bytes, Tty1} = echoed(Char, Tty),
+    emit(Bytes, Actions, Tty1).
+
+%% What echo makes of Char: ECHO echoes every byte, ECHONL alone a newline.
+echoed(Char, Tty) ->
     case on(echo, Tty) orelse (Char =:= $\n andalso on(echonl, Tty)) of
-        true ->
-            {Bytes, Tty1} = render(Char, Tty),
-            emit(Bytes, Actions, Tty1);
-        false ->
-            {Actions, Tty}
+        true -> render(Char, Tty);
+        false -> {<<>>, Tty}
     end.
 
 %% Every echo goes through here: a piece that does not fit what is left of
 %% the room is dropped whole and leaves the room as it was, as
 %% ttyoutq_write_nofrag drops it (tty_outq.c:322-334). The room left is
 %% then a function of what was echoed, so input fed back with the room
-%% its echo left echoes as input a byte at a time does.
-emit(Bytes, Actions, #tty{echo_room = Room} = Tty) when byte_size(Bytes) =< Room ->
-    {[{echo, Bytes} | Actions], Tty#tty{echo_room = Room - byte_size(Bytes)}};
-emit(_, Actions, Tty) ->
-    {Actions, Tty}.
+%% its echo left echoes as input a byte at a time does. An empty piece
+%% fits and adds nothing.
+emit(Bytes, Actions, Tty) ->
+    {_, Actions1, Tty1} = put_echo(Bytes, Actions, Tty),
+    {Actions1, Tty1}.
+
+%% emit/3 that also says whether the piece fit.
+put_echo(<<>>, Actions, Tty) ->
+    {true, Actions, Tty};
+put_echo(Bytes, Actions, #tty{echo_room = Room} = Tty) when byte_size(Bytes) =< Room ->
+    {true, [{echo, Bytes} | Actions], Tty#tty{echo_room = Room - byte_size(Bytes)}};
+put_echo(_, Actions, Tty) ->
+    {false, Actions, Tty}.
 
 %% One byte for the screen: OPOST's processing for backspace, tab, newline
 %% and carriage return; ECHOCTL's caret notation for another control

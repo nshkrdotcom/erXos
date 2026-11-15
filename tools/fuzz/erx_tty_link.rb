@@ -16,6 +16,8 @@ module ErxTtyLinkFuzz
   ROOT = File.expand_path('../..', __dir__)
   MODULE_SOURCE = File.join(ROOT, 'erlang/apps/erx_session/src/erx_tty_link.erl')
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_tty_link_fuzz.erl')
+  # erx_tty_link takes its room from erx_tty:master_room/0.
+  TTY_SOURCE = File.join(ROOT, 'erlang/apps/erx_session/src/erx_tty.erl')
   # A broken guarantee: the text that keeps it, what replaces it, and the property that must
   # then fail, as the target names it.
   Seed = Data.define(:text, :broken, :property)
@@ -59,7 +61,7 @@ module ErxTtyLinkFuzz
       module_path = File.join(work, 'erx_tty_link.erl')
       File.binwrite(module_path, module_text)
       output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-o', work,
-                                       module_path, TARGET_SOURCE, stdin_data: '')
+                                       module_path, TTY_SOURCE, TARGET_SOURCE, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,

@@ -833,7 +833,8 @@ protocol](#the-terminal-relays-protocol):
   discipline's output and to the master as `{tty_output, N, Bytes}`, in the
   order the writes arrive, so one program's output and error streams
   interleave as it wrote them and two programs' as they arrive. The relay
-  holds at most 4 KiB for the master, and a write takes only what room there
+  holds at most 4 KiB for the master, `erx_tty:master_room/0`, the line
+  discipline's one record of it, and a write takes only what room there
   is. The line discipline's echo takes the same room, and is dropped when
   there is none, as FreeBSD drops echo its output queue cannot take
   ([design-live.md](design-live.md#the-tty)). A program that writes faster than the terminal, or to a session that is
@@ -1828,7 +1829,12 @@ carries out such a stop in the step that took the input, in this order:
    waits.
 2. It sends the event as above.
 3. It passes the bytes after the key to `input/3` again, with the room
-   the echo left, until none is left. They wait in the tty.
+   `input/3` returned, until none is left. They wait in the tty. That room
+   is what the echo left, of the whole room less the output the master
+   has not taken when the signal's `flush_output` emptied the rest of
+   what the relay holds for the master
+   ([design-live.md](design-live.md#the-tty)), so the relay counts no
+   echo itself.
 
 **One count per shell.** A signal's key reaches a command shell by one
 of two routes, and the relay counts it on either. While a job holds the

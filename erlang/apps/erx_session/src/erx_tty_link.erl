@@ -43,8 +43,9 @@ table gives; a message that fails it is dropped and counted.
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
 
-%% At most this many bytes are held, the outstanding output among them.
--define(MAX_HELD, 4096).
+%% At most this many bytes are held, the outstanding output among them: the
+%% room the line discipline gives echo.
+-define(MAX_HELD, erx_tty:master_room()).
 %% At most this many bytes wait in writes nobody waits on.
 -define(MAX_WAITING, 65536).
 -define(MAX_INPUT, 4096).

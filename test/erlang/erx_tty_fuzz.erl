@@ -102,10 +102,11 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
     case rand:uniform(4) of
         1 ->
             Bytes = random_input(Termios),
-            Room = pick([0, 1, 7, 256, 4096, rand:uniform(4097) - 1]),
-            {Actions, Rest, Tty1} = erx_tty:input(Bytes, Room, Tty),
+            Kept = pick([0, 0, 1, 4000, 4096, rand:uniform(4097) - 1]),
+            Room = {min(4096 - Kept, pick([0, 1, 7, 256, 4096, rand:uniform(4097) - 1])), Kept},
+            {Actions, Rest, Left, Tty1} = erx_tty:input(Bytes, Room, Tty),
             Taken = byte_size(Bytes) - byte_size(Rest),
-            check_input(Actions, Rest, Room, {Termios, Tty, Tty1}, Bytes),
+            check_input(Actions, Rest, {Room, Left}, {Termios, Tty, Tty1}, Bytes),
             check_chunked(Bytes, Room, Termios, Tty),
             check(not Counted orelse
                       Read + erx_tty:waiting(Tty1) + erx_tty:dropped(Tty1) =:= In + Taken,
@@ -131,11 +132,10 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
 
 %% Input stops only after a signal key, and returns a tail of its bytes;
 %% its echo fits its room.
-check_input(Actions, Rest, Room, {Termios, Before, After}, Bytes) ->
+check_input(Actions, Rest, {Room, Left}, {Termios, Before, After}, Bytes) ->
     check_actions(Actions),
     Echo = iolist_to_binary([E || {echo, E} <- Actions]),
-    check(byte_size(Echo) =< Room, echo_over_bound,
-          {Termios, Room, byte_size(Echo)}),
+    check_room(Actions, Room, Left, {Termios, Bytes}),
     Taken = byte_size(Bytes) - byte_size(Rest),
     check(Taken > 0 orelse Bytes =:= <<>>, input_took_nothing, Bytes),
     check(binary:part(Bytes, Taken, byte_size(Rest)) =:= Rest,
@@ -155,6 +155,26 @@ check_input(Actions, Rest, Room, {Termios, Before, After}, Bytes) ->
     check(not Quiet orelse Echo =:= binary:copy(<<7>>, byte_size(Echo)),
           echo_without_echo, {Termios, Bytes, Echo}).
 
+%% The echo before a flush_output fits Room, the echo after it the whole
+%% room the flush gives back, and the room returned is what the last of
+%% them left.
+%% The room is checked first, so a fault that breaks both fails one
+%% property whatever the seed.
+check_room(Actions, {Free, Kept} = Room, Left, Detail) ->
+    {Before, After} = lists:splitwith(fun(A) -> A =/= flush_output end, Actions),
+    Segments = case After of
+                   [] -> [{Before, Free}];
+                   [flush_output | Flushed] ->
+                       [{Before, Free}, {Flushed, erx_tty:master_room() - Kept}]
+               end,
+    {Last, LastRoom} = lists:last(Segments),
+    check(Left =:= {LastRoom - echoed(Last), Kept}, room_left_wrong, {Detail, Room, Left}),
+    [check(echoed(Echo) =< Within, echo_over_bound, {Detail, Room, Within, echoed(Echo)})
+     || {Echo, Within} <- Segments],
+    ok.
+
+echoed(Actions) -> byte_size(iolist_to_binary([E || {echo, E} <- Actions])).
+
 %% With no reader waiting, input fed back until none is left, each time
 %% with the room its echo left, gives the state and the actions,
 %% neighbouring echoes joined, of input a byte at a time. A waiting reader
@@ -171,7 +191,7 @@ signals(Bytes, Room, Tty) ->
     lists:keymember(signal, 1, Actions).
 
 %% Each chunk as an owner feeds it with Room for the master: again on what
-%% a signal key left untaken, with the room the echo left.
+%% a signal key left untaken, with the room input/3 returned.
 fed(Chunks, Room, Tty0) ->
     {Actions, _, Tty} = lists:foldl(fun fed_chunk/2, {[], Room, Tty0}, Chunks),
     {joined(Actions), Tty}.
@@ -179,10 +199,9 @@ fed(Chunks, Room, Tty0) ->
 fed_chunk(<<>>, Acc) ->
     Acc;
 fed_chunk(Chunk, {Actions, Room, Tty}) ->
-    {More, Rest, Tty1} = erx_tty:input(Chunk, Room, Tty),
-    Echoed = byte_size(iolist_to_binary([E || {echo, E} <- More])),
-    check(Echoed =< Room, echo_over_bound, {Chunk, Room, Echoed}),
-    fed_chunk(Rest, {Actions ++ More, Room - Echoed, Tty1}).
+    {More, Rest, Left, Tty1} = erx_tty:input(Chunk, Room, Tty),
+    check_room(More, Room, Left, Chunk),
+    fed_chunk(Rest, {Actions ++ More, Left, Tty1}).
 
 joined([{echo, A}, {echo, B} | Rest]) ->
     joined([{echo, <<A/binary, B/binary>>} | Rest]);

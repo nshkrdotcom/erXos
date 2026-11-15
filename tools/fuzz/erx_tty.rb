@@ -34,20 +34,29 @@ module ErxTtyFuzz
     'the character range' => Seed.new(module_file: 'erx_tty.erl', text: 'Value =< 255 -> ok;',
                                       broken: 'Value =< 1 bsl 16 -> ok;', property: 'invalid_accepted'),
     # An echo that skips emit/3 and the room it keeps.
-    'the echo bound' => Seed.new(module_file: 'erx_tty.erl', text: '            emit(Bytes, Actions, Tty1);',
-                                 broken: '            {[{echo, Bytes} | Actions], Tty1};',
-                                 property: 'echo_over_bound'),
+    'the echo bound' => Seed.new(module_file: 'erx_tty.erl', text: "    emit(Bytes, Actions, Tty1).\n",
+                                 broken: "    {[{echo, Bytes} | Actions], Tty1}.\n",
+                                 property: 'room_left_wrong'),
     # A bound of each call's own in place of the room the owner gives.
     'the room across calls' => Seed.new(module_file: 'erx_tty.erl',
-                                       text: 'keys(Bytes, [], Tty0#tty{echo_room = Room})',
-                                       broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096})',
-                                       property: 'echo_over_bound'),
-    # A dropped piece of echo drops the rest of the call's, so how input is
-    # cut into calls changes what is echoed.
+                                       text: 'keys(Bytes, [], Tty0#tty{echo_room = Free,',
+                                       broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096,',
+                                       property: 'room_left_wrong'),
+    # A piece of echo one byte over what is left of the room.
+    'the room bound' => Seed.new(module_file: 'erx_tty.erl', text: 'Tty) when byte_size(Bytes) =< Room ->',
+                                 broken: 'Tty) when byte_size(Bytes) =< Room + 1 ->',
+                                 property: 'echo_over_bound'),
+    # A dropped piece of echo drops the rest of the call's, so the room
+    # returned is not what the echo left.
     'the whole-piece drop' => Seed.new(module_file: 'erx_tty.erl',
-                                       text: "emit(_, Actions, Tty) ->\n    {Actions, Tty}.",
-                                       broken: "emit(_, Actions, Tty) ->\n    {Actions, Tty#tty{echo_room = 0}}.",
-                                       property: 'chunked_differs'),
+                                       text: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty}.",
+                                       broken: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty#tty{echo_room = 0}}.",
+                                       property: 'room_left_wrong'),
+    # A flush that leaves the room as it was, where the owner has dropped
+    # all it held for the master.
+    'the room a flush gives back' => Seed.new(module_file: 'erx_tty.erl', text: 'echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}',
+                                              broken: 'echo_room = Tty#tty.echo_room}}',
+                                              property: 'room_left_wrong'),
     # Input that goes on past a signal key.
     'the stop at a signal key' => Seed.new(module_file: 'erx_tty.erl',
                                            text: '{[{signal, _} | _] = Actions, Tty} -> {Actions, Rest, Tty};',

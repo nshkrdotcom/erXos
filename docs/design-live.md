@@ -539,16 +539,18 @@ on the host:
   POSIX's output flags. With `OPOST` clear the bytes are its input. A CR-LF is
   never split, so 4 KiB of newlines with 4 KiB of room takes 2 KiB. This is the
   only thing that ever happens to a program's output.
-* `input(Bytes, Room, Tty)` returns the next state, what to do and the bytes
-  it did not take: bytes to echo, a signal for the foreground group, a
-  report that a waiting read can go on. `Room` is the room the owner has
-  for the master. It stops after a key that makes a signal and
+* `input(Bytes, Room, Tty)` returns what to do (bytes to echo, a signal
+  for the foreground group, a report that a waiting read can go on), the
+  bytes it did not take, the room left and the next state. `Room` is the
+  room the owner has for the master, `{Free, Kept}`: what is free of it,
+  and what it holds that a flush cannot drop, the output it has sent and
+  the master has not taken. It stops after a key that makes a signal and
   returns the bytes after it untaken, as FreeBSD's `ttydisc_rint` signals the
   foreground group before it takes the next byte
   (`sys/kern/tty_ttydisc.c:1124-1133`), so the owner acts on the signal before
   any reader can be reported the bytes typed after the key
   ([design-shell.md](design-shell.md#the-terminal-relays-protocol)), and then
-  passes them to `input/3` again, with the room its echo left. A
+  passes them to `input/3` again, with the room it returned. A
   line in cooked mode holds at most 4,095 bytes and its end, and in raw mode at
   most 4 KiB wait unread; further bytes are dropped and counted, with a bell
   when `IMAXBEL` is set, as FreeBSD's `ttydisc_rint` drops a byte that finds
@@ -564,8 +566,27 @@ on the host:
   `sys/kern/tty_outq.c:322-334`) while a program's write waits for room
   (`sys/kern/tty_ttydisc.c:628-645`). A master that does not read so gets
   no more echo than the room, however many calls a signal key cuts its
-  input into, and a `VREPRINT` once the room is spent retypes nothing;
-  with a little room left it walks the line, as FreeBSD's does.
+  input into. The tty knows the whole room, the 4 KiB the owner holds for
+  the master at most, the output outstanding at the master among them
+  (`master_room/0`, the one record of it), and a signal's `flush_output`,
+  which empties what the owner holds but `Kept`, gives echo the rest of
+  the whole room back before the key is echoed, in FreeBSD's order:
+  `ttydisc_rint` flushes the queues and then echoes the key
+  (`sys/kern/tty_ttydisc.c:1128-1130`). So the room `input/3` returns is
+  what the echo left of `Free`, or of the whole room less `Kept` after a
+  flush, and no owner counts echo itself.
+  A `VREPRINT` retypes `VREPRINT`, a newline and the line, as FreeBSD's
+  `ttydisc_reprint` does (`sys/kern/tty_ttydisc.c:786-799`), but its walk
+  ends at the first piece that does not fit. FreeBSD tries every piece
+  and its queue drops each that does not fit, so each `VREPRINT` walks the
+  whole line; a master that reads nothing and sends `VREPRINT` over and
+  over at a little room would cost the owner a walk of the line per key.
+  Ending the walk there bounds what a `VREPRINT` renders by the room it
+  fills, but for pieces that render to nothing, and with `ECHO` clear,
+  when nothing of a cooked line echoes, the line is not walked. The
+  bytes differ from FreeBSD's only by the smaller pieces that would
+  still fit after the first that does not, which make no sense on the
+  screen without it.
 * `read_wait(Open, Count, Tty)`, for a blocking read of `Count` bytes that
   starts to wait,
   `poll_wait(Open, Tty)`, for a `poll` that waits for input,
@@ -2802,13 +2823,20 @@ determinism test of the generated tree.
   model. `input/3` returns untaken exactly the bytes after the first key
   that makes a signal, which an EUnit case and the fuzz target check; an
   `input/3` that goes on past the key fails both. With no reader waiting,
-  passing the bytes back until none is left, each time with the room its
-  echo left, gives the same state and the same actions, neighbouring
+  passing the bytes back until none is left, each time with the room
+  `input/3` returned, gives the same state and the same actions, neighbouring
   echoes joined, as passing the input a byte at a time; the fuzz target
-  checks it over random rooms, and echoes joined out of order, or a
-  dropped piece of echo that drops the rest of its call, fail it. Repeated
-  `VREPRINT` and `VINTR` with `NOFLSH`, fed back as the relay feeds it,
-  echo no more than the room; a bound of each call's own fails that case. A waiting reader is
+  checks it over random rooms, and echoes joined out of order fail it. It
+  checks of every call that the room returned is what the echo left, and
+  a dropped piece of echo that drops the rest of its call fails that.
+  Repeated `VREPRINT` and `VINTR` with `NOFLSH`, fed back as the relay feeds it,
+  echo no more than the room; a bound of each call's own fails that case.
+  A signal key at room 0 echoes after its flush and returns the whole room
+  less that echo and the output the master has not taken, which the fuzz
+  target checks of every call; a flush that keeps the room fails both, and
+  one that also gives back the output not taken fails the case. A `VREPRINT` with room for the line up to a
+  `^A` echoes nothing after it; FreeBSD's walk past the drop fails that
+  case. A waiting reader is
   told once per call, after its last key, as FreeBSD's `ttydisc_rint_done`
   wakes readers once after a run of `ttydisc_rint` calls
   (`sys/kern/tty_ttydisc.c:1294-1305`), so with `VMIN` 2 and `VTIME` 1 a

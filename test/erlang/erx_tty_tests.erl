@@ -15,6 +15,7 @@
 
 %% The room the relay has for the master when it holds nothing for it.
 -define(ROOM, 4096).
+-define(FREE, {?ROOM, 0}).
 
 %%% Cases
 
@@ -45,19 +46,19 @@ veof_ends_a_line_and_alone_is_end_of_file_test() ->
 
 a_signal_key_stops_input_and_returns_the_rest_test() ->
     Tty = erx_tty:new(),
-    {Actions, <<"ls\n">>, Tty1} = erx_tty:input(<<"ab", 3, "ls\n">>, ?ROOM, Tty),
+    {Actions, <<"ls\n">>, _, Tty1} = erx_tty:input(<<"ab", 3, "ls\n">>, ?FREE, Tty),
     ?assertEqual([{echo, <<"ab">>}, flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
     ?assertEqual(0, erx_tty:waiting(Tty1)),
-    {[{echo, <<"ls\r\n">>}], <<>>, Tty2} = erx_tty:input(<<"ls\n">>, ?ROOM, Tty1),
+    {[{echo, <<"ls\r\n">>}], <<>>, _, Tty2} = erx_tty:input(<<"ls\n">>, ?FREE, Tty1),
     ?assertMatch({{ok, <<"ls\n">>}, _}, erx_tty:read(r, 64, Tty2)),
     %% A waiting read is not reported the bytes after the key.
     {[], Waiting} = erx_tty:read_wait(r, 4096, Tty),
-    {[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<"x\n">>, _} =
-        erx_tty:input(<<3, "x\n">>, ?ROOM, Waiting),
+    {[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<"x\n">>, _, _} =
+        erx_tty:input(<<3, "x\n">>, ?FREE, Waiting),
     %% VSTATUS is no signal, and input goes on past it.
-    {[info, {echo, <<"x">>}], <<>>, _} = erx_tty:input(<<20, "x">>, ?ROOM, Tty),
+    {[info, {echo, <<"x">>}], <<>>, _, _} = erx_tty:input(<<20, "x">>, ?FREE, Tty),
     %% Without ISIG the key is data.
-    {_, <<>>, Raw} = erx_tty:input(<<3, "y">>, ?ROOM, raw(1, 0)),
+    {_, <<>>, _, Raw} = erx_tty:input(<<3, "y">>, ?FREE, raw(1, 0)),
     ?assertMatch({{ok, <<3, "y">>}, _}, erx_tty:read(r, 64, Raw)).
 
 a_short_raw_read_goes_on_at_its_count_test() ->
@@ -118,6 +119,42 @@ ixon_stops_and_starts_output_test() ->
     {[start_output, info], _} = input(<<20>>, Strict),
     {ok, [start_output, winch], _} = erx_tty:size(30, 100, Strict).
 
+%% A signal's flush empties what the owner holds for the master, so the
+%% key's echo and the bytes after it have the whole room again, whatever
+%% was left before, as ttydisc_rint flushes before it echoes the key
+%% (tty_ttydisc.c:1128-1130), all but the output the master has not taken.
+%% With NOFLSH nothing is flushed, and the room stays as the echo left it.
+a_flush_gives_the_room_back_test() ->
+    Full = erx_tty:master_room(),
+    {Actions, <<"x">>, Left, Tty} = erx_tty:input(<<"ab", 3, "x">>, {0, 0}, erx_tty:new()),
+    ?assertEqual([flush_output, {echo, <<"^C">>}, {signal, sigint}], Actions),
+    ?assertEqual({Full - 2, 0}, Left),
+    ?assertMatch({[{echo, <<"x">>}], <<>>, _, _}, erx_tty:input(<<"x">>, Left, Tty)),
+    Kept = with([noflsh], [], erx_tty:new()),
+    ?assertMatch({[{signal, sigint}], <<>>, {0, 0}, _}, erx_tty:input(<<"ab", 3>>, {0, 0}, Kept)),
+    ?assertMatch({[{echo, <<"a">>}, {signal, sigint}], <<>>, {0, 0}, _},
+                 erx_tty:input(<<"a", 3>>, {1, 0}, Kept)),
+    %% Output sent and not taken stays: the flush gives back the rest.
+    ?assertMatch({[flush_output, {echo, <<"^C">>}, {signal, sigint}], <<>>, {94, 4000}, _},
+                 erx_tty:input(<<3>>, {0, 4000}, erx_tty:new())),
+    ?assertMatch({[flush_output, {signal, sigint}], <<>>, {1, 4095}, _},
+                 erx_tty:input(<<3>>, {0, 4095}, erx_tty:new())).
+
+%% The retyped line ends at its first piece that does not fit: with room
+%% for "^R", CR-LF, "a" and one byte more, ^A's two bytes end the walk,
+%% and the "b" after it, which FreeBSD's queue would still take, is not
+%% echoed.
+a_reprint_ends_at_its_first_dropped_piece_test() ->
+    {_, Typed} = input(<<"a", 1, "b">>, erx_tty:new()),
+    ?assertMatch({[{echo, <<"^R\r\na">>}], <<>>, {1, 0}, _}, erx_tty:input(<<18>>, {6, 0}, Typed)),
+    ?assertMatch({[{echo, <<"^R\r\na^Ab">>}], <<>>, {0, 0}, _}, erx_tty:input(<<18>>, {8, 0}, Typed)),
+    %% With ECHO clear nothing echoes, and the line is not walked: 4 KiB of
+    %% VREPRINT after a full line makes no action, within a bound on
+    %% heap and work that a walk of the line per key, or an action per
+    %% character, passes: the case takes 0.7 M reductions.
+    {_, Quiet} = input(binary:copy(<<"a">>, 4095), with([], [echo], erx_tty:new())),
+    ?assertMatch({[], _}, bounded(fun() -> input(binary:copy(<<18>>, 4096), Quiet) end)).
+
 %% 2,048 bytes of the line, then 2,052 for each VREPRINT ("^R", CR-LF and
 %% the line): the first cut where the room ends, and nothing after it.
 echo_takes_only_its_room_test() ->
@@ -146,18 +183,20 @@ echo_across_calls_takes_one_room_test() ->
 a_piece_that_does_not_fit_is_dropped_alone_test() ->
     ?assertMatch({[{echo, <<"a">>}], _}, input(<<1, "a">>, 1, erx_tty:new())).
 
-%% A full line of 4,095 bytes, four bells for the bytes that do not fit and
-%% 4,095 visual erases of 3 bytes fill 16 KiB of room exactly; the next
-%% byte is stored but not echoed.
+%% A full line of 4,095 bytes, then four bells for the bytes that do not
+%% fit and 1,364 visual erases of 3 bytes fill the whole room exactly; the
+%% next byte is stored but not echoed.
 echo_at_its_bound_test() ->
-    Keys = <<(binary:copy(<<"a">>, 4099))/binary, (binary:copy(<<127>>, 4095))/binary, "b">>,
-    {Actions, Tty} = input(Keys, 16384, erx_tty:new()),
+    {_, Full} = input(binary:copy(<<"a">>, 4095), erx_tty:new()),
+    Keys = <<"aaaa", (binary:copy(<<127>>, 1364))/binary, "b">>,
+    {Actions, Tty} = input(Keys, Full),
     Echo = echoed(Actions),
-    ?assertEqual(16384, byte_size(Echo)),
-    ?assertEqual(<<7, 7, 7, 7, "\b \b">>, binary:part(Echo, 4095, 7)),
-    ?assertEqual(<<"\b \b">>, binary:part(Echo, 16381, 3)),
+    ?assertEqual(?ROOM, byte_size(Echo)),
+    ?assertEqual(<<7, 7, 7, 7, "\b \b">>, binary:part(Echo, 0, 7)),
+    ?assertEqual(<<"\b \b">>, binary:part(Echo, ?ROOM - 3, 3)),
     {_, Ended} = input(<<"\n">>, Tty),
-    ?assertMatch({{ok, <<"b\n">>}, _}, erx_tty:read(r, 64, Ended)).
+    {{ok, Line}, _} = erx_tty:read(r, 8192, Ended),
+    ?assertEqual(<<(binary:copy(<<"a">>, 2731))/binary, "b\n">>, Line).
 
 input_beyond_its_bound_is_dropped_and_counted_test() ->
     {Actions, Raw} = input(binary:copy(<<"a">>, 5000), raw(1, 0)),
@@ -249,20 +288,37 @@ hangup_readies_every_waiter_test() ->
     eof = element(1, erx_tty:read(r, 64, element(3, erx_tty:set(erx_tty:termios(raw(0, 0)), H)))).
 
 %% All of Bytes, as an owner feeds them with Room for the master: input/3
-%% again on what a signal key left untaken, with the room the echo left,
+%% again on what a signal key left untaken, with the room it returned,
 %% the actions joined in order.
 input(Bytes, Tty) -> input(Bytes, ?ROOM, Tty).
 
+input(Bytes, Room, Tty) when is_integer(Room) ->
+    input(Bytes, {Room, 0}, Tty);
 input(Bytes, Room, Tty) ->
     case erx_tty:input(Bytes, Room, Tty) of
-        {Actions, <<>>, Tty1} -> {Actions, Tty1};
-        {Actions, Rest, Tty1} ->
-            Left = Room - byte_size(echoed(Actions)),
+        {Actions, <<>>, _, Tty1} -> {Actions, Tty1};
+        {Actions, Rest, Left, Tty1} ->
             {More, Tty2} = input(Rest, Left, Tty1),
             {Actions ++ More, Tty2}
     end.
 
 echoed(Actions) -> iolist_to_binary([Bytes || {echo, Bytes} <- Actions]).
+
+%% Fun's value, from a process killed past a heap of 1 Mi words, and an
+% error if it took 10 M reductions or more.
+bounded(Fun) ->
+    Measured = fun() ->
+                       {reductions, Before} = process_info(self(), reductions),
+                       Value = Fun(),
+                       {reductions, After} = process_info(self(), reductions),
+                       exit({value, Value, After - Before})
+               end,
+    {Pid, Ref} = spawn_opt(Measured,
+                           [monitor, {max_heap_size, #{size => 1 bsl 20, kill => true}}]),
+    receive
+        {'DOWN', Ref, process, Pid, {value, Value, Work}} when Work < 10000000 -> Value;
+        {'DOWN', Ref, process, Pid, Reason} -> error({over_bound, Reason})
+    end.
 
 %%% Exploration
 
@@ -311,7 +367,7 @@ events(#model{armed = Armed, stale = Stale}, Keys) ->
         [{timer, Timer} || Timer <- lists:sublist(Stale, 1)].
 
 step({input, <<Key>> = Bytes}, #model{tty = Tty, spec = Spec} = M, Path) ->
-    {Actions, Rest, Tty1} = erx_tty:input(Bytes, ?ROOM, Tty),
+    {Actions, Rest, _, Tty1} = erx_tty:input(Bytes, ?FREE, Tty),
     property(Rest =:= <<>>, one_byte_left_untaken, Path),
     Spec1 = spec_key(Key, Spec, erx_tty:termios(Tty)),
     check_keyed(Key, Actions, erx_tty:termios(Tty), Spec#spec.stopped, Path),

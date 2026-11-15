@@ -48,13 +48,29 @@ class ErxTtyTest < Minitest::Test
                                        property: /echo_at_its_bound/),
     # Each call starts with a fresh bound of its own, whatever room the
     # owner has, so a chunk that a signal key cuts into calls echoes more.
-    echo_bound_per_call: Fault.new(text: 'keys(Bytes, [], Tty0#tty{echo_room = Room})',
-                                   broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096})',
+    echo_bound_per_call: Fault.new(text: 'keys(Bytes, [], Tty0#tty{echo_room = Free,',
+                                   broken: 'keys(Bytes, [], Tty0#tty{echo_room = 4096,',
                                    property: /echo_across_calls_takes_one_room/),
     # A dropped piece of echo drops every later one in the call too.
-    echo_dropped_after_a_drop: Fault.new(text: "emit(_, Actions, Tty) ->\n    {Actions, Tty}.",
-                                         broken: "emit(_, Actions, Tty) ->\n    {Actions, Tty#tty{echo_room = 0}}.",
-                                         property: /a_piece_that_does_not_fit_is_dropped_alone/)
+    echo_dropped_after_a_drop: Fault.new(text: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty}.",
+                                         broken: "put_echo(_, Actions, Tty) ->\n    {false, Actions, Tty#tty{echo_room = 0}}.",
+                                         property: /a_piece_that_does_not_fit_is_dropped_alone/),
+    # A flush that leaves the room as it was, so a signal key at room 0
+    # echoes nothing though the owner has dropped all it held.
+    flush_keeps_the_room: Fault.new(text: 'echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}',
+                                    broken: 'echo_room = Tty#tty.echo_room}}',
+                                    property: /a_flush_gives_the_room_back/),
+    # A flush that gives back output the master has not taken.
+    flush_drops_the_kept: Fault.new(text: 'echo_room = ?MASTER_ROOM - Tty#tty.echo_kept}}', broken: 'echo_room = ?MASTER_ROOM}}',
+                                    property: /a_flush_gives_the_room_back/),
+    # A cooked line walked with ECHO clear, every piece empty.
+    reprint_walks_quietly: Fault.new(text: 'Line = case Fit andalso on(echo, Tty) of',
+                                     broken: 'Line = case Fit of',
+                                     property: /a_reprint_ends_at_its_first_dropped_piece/),
+    # FreeBSD's walk: every piece of the retyped line is tried.
+    reprint_walks_on: Fault.new(text: '{false, _, _} = Cut -> Cut',
+                                broken: '{false, Echoed, Tty2} -> retype(Rest, Echoed, Tty2)',
+                                property: /a_reprint_ends_at_its_first_dropped_piece/)
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
@@ -82,6 +98,14 @@ class ErxTtyTest < Minitest::Test
   def test_an_echo_short_of_its_bound_fails = assert_fault_fails(:echo_short_of_its_bound)
 
   def test_an_echo_bound_per_call_fails = assert_fault_fails(:echo_bound_per_call)
+
+  def test_a_flush_that_keeps_the_room_fails = assert_fault_fails(:flush_keeps_the_room)
+
+  def test_a_flush_that_drops_the_kept_fails = assert_fault_fails(:flush_drops_the_kept)
+
+  def test_a_quiet_reprint_that_walks_the_line_fails = assert_fault_fails(:reprint_walks_quietly)
+
+  def test_a_reprint_that_walks_past_a_drop_fails = assert_fault_fails(:reprint_walks_on)
 
   def test_echo_dropped_after_a_drop_fails = assert_fault_fails(:echo_dropped_after_a_drop)
 
