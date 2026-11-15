@@ -430,9 +430,9 @@ Reader declarations bind layout members to their containing byte span:
   device-tree path, namespace path, UTF-8 text, opaque bytes,
   NUL-separated arguments, and NUL-separated environment entries. Empty
   is a distinct declared option.
-* `order TABLE... STRING_TABLE` requires the header followed by those
-  tables in that order, each at the first boundary of its declared
-  alignment, followed by the string table. Padding is zero. An empty
+* `order TABLE...` requires the header followed by the named record and
+  string tables in that order, each at the first boundary of its declared
+  alignment, the last ending the input. Padding is zero. An empty
   table has its canonical current offset and a zero count.
 * `extent FIELD` requires an unsigned root length field to equal the
   complete input byte length.
@@ -490,6 +490,16 @@ remain binaries, and readers never create atoms. Ruby readers return
 immutable records or raise a typed error under `Erx::Error`. C readers
 use explicit little-endian loads into typed values, without packed
 structure casts, unaligned dereferences or host-endian assumptions.
+
+A reader whose input is the front of a larger file, such as a package's
+header ([design-packaging.md](design-packaging.md#the-package)), declares
+an `extent`, and its Erlang module also exports `open_prefix/1`: it
+decodes the root to read the extent field, cuts the binary to that
+length or to the bytes there are, and opens that as `open/1` does, so
+the unchecked root never reaches the caller and a field naming more
+bytes than there are is refused as `open/1` refuses it. C reaches the
+same through the root layout's decoder and Ruby through `decode_layout`
+with `prefix: true`.
 
 ### Inspection schema
 

@@ -36,6 +36,10 @@ limit erofs_s_iflnk u16 0xa000
 limit erofs_xattr_entry_size u32 4
 # The most blocks one erx_verity:read/3 call returns.
 limit verity_read_blocks_max u32 16
+# A dm-verity hash (SHA-256) and the salt prepended to each block it hashes
+# (docs/design-storage.md, "Data model").
+bytes verity_hash 32
+bytes verity_salt 32
 layout erx_erofs_super_block wire_le 8 128
   field magic u32 0
   field checksum u32 4

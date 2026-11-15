@@ -2377,6 +2377,19 @@ it; git history is the record of completed work.
   ([design-packaging.md](docs/design-packaging.md#other-subsystems)). Fix: `cp` opens the target itself and
   copies in the 64 KiB pieces design-shell.md's info report describes, checking `file:close/1`'s answer; a
   test with a tree whose close answers `eio`.
+* [Low] apps, `erx_pkg_header` ([design-packaging.md](docs/design-packaging.md#the-declaration)): the
+  generated reader checks the declaration's strings by the ABI's string classes, which are wider than the
+  declaration's grammar: a need named twice, more than `pkg_args_max` arguments, an application name with
+  `-` or a leading digit, and a program path that is not plain names under `bin/` (`/system/bin/sh`,
+  `../x`) all decode. The packer refuses them on the host; the machine does not. Leaving them open is safe
+  because the header is signed or hash-pinned and the program runs with the app's own grants alone. Fix:
+  the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
+  application name and a relative path of plain names, with a seeded case each.
+* [Low] apps, `erx_verity_tree`: the layout's levels are derived from the facts record's description of
+  dm-verity's tree (docs/research-boards-storage.md, "dm-verity's hash tree"), which does not say whether
+  an image of one block has one hash level or none; the layout gives it one block. No outside tool checks
+  the layout (the dm-verity item under test). Fix: settle it from a facts record of dm-verity's own
+  documentation, made by a separate agent, and pin the answer with a case.
 * [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl:229-244`, `run_job/3`): the
   grant answers a client's clunk when it hands the clunk to the file's owner and drops the tree's `clunk`
   answer, where design-files.md has every tree's `clunk` answer `ok` or an errno and the grant pass it back
@@ -4324,7 +4337,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
 * [Medium] runtime, `erx_verity`: blocks pass through unchecked until the image's hash tree is written and
-  checked in `checked/1` (M11); there is no cache, neither of checked blocks nor the reader's ETS table
+  checked in `checked/1` (M11), which takes each level's place from `erx_verity_tree:levels/1`, a module
+  that then moves from `erlang/apps/erx` into the preloaded set beside `erx_verity`; there is no cache, neither of checked blocks nor the reader's ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only
   to the reader's mount log function.

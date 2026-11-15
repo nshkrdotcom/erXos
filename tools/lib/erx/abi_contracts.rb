@@ -200,7 +200,6 @@ module Erx
         unless order.sort == expected_order.sort && order.uniq.size == order.size
           declaration.fail!('table order must name every table exactly once')
         end
-        declaration.fail!('record tables must precede string tables') unless order.take(tables.size).sort == tables.keys.sort
         rules.each do |rule|
           next unless rule.fetch(:kind) == 'choice'
           unless rule.fetch(:cases).keys.sort == rule.fetch(:enum).members.values.sort

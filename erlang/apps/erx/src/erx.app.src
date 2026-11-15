@@ -6,8 +6,9 @@
 %% handler, the kernel log, the namespace, the watchdog's petter, a driver's view
 %% of its device and its device record, the hold on a header pin, chip select or PWM
 %% channel, the decisions of a shared interrupt line's owner, the inspector and its
-%% collectors, the tracer and its ring reader, the pipe
-%% server's decisions, erx's shell functions, and the modules tools/gen_abi.rb and
+%% collectors, the tracer and its ring reader, the pipe server's decisions, erx's
+%% shell functions, the package decoder and its hash tree layout, and the modules
+%% tools/gen_abi.rb and
 %% tools/gen_terminal.rb generate, the 9P2000.L codec erx_9p and the input records'
 %% codec erx_input_codec among them.
 %%
@@ -67,6 +68,8 @@
              erx_pipe,
              erx_pipe_nif,
              erx_pipe_srv,
+             erx_pkg_header,
+             erx_pkg_reader,
              erx_present,
              erx_process_records,
              erx_prog_handler,
@@ -84,6 +87,7 @@
              erx_trace_ring,
              erx_tracer,
              erx_tty_master,
+             erx_verity_tree,
              erx_virtio,
              erx_watchdog,
              erx_web_proto]},

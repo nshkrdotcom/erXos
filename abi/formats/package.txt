@@ -1,0 +1,87 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# An app's package, NAME.app (docs/design-packaging.md, "The package"): a header, then
+# the app's EROFS image, then the image's dm-verity hash tree, each part starting at an
+# EROFS block boundary. This file lays the header; erx_pkg_header:decode/2 reads it
+# through the reader below and then checks where the parts lie. Every field is
+# little-endian, and every offset is from the start of the file.
+limit pkg_version u16 1
+# The most bytes of a header, which is also how many bytes of a file the system
+# domain reads to judge it; a multiple of the EROFS block size, so the block
+# boundary after any header lies within the bytes read of a file that long.
+limit pkg_header_max u32 65536
+# The longest package file.
+limit pkg_bytes_max u64 1073741824
+# The bounds of the packed declaration (docs/design-packaging.md, "The declaration"):
+# the services it needs, the OTP applications an Erlang app starts, a native
+# program's path under the image's bin/, its arguments (which the packer counts; the
+# reader bounds them only together, as NUL-terminated strings), and the SPDX license
+# expression.
+limit pkg_needs_max u32 16
+limit pkg_applications_max u32 16
+limit pkg_program_max u32 255
+limit pkg_args_max u32 32
+limit pkg_args_bytes_max u32 16384
+limit pkg_license_max u32 256
+# The bytes of a magic, and of the signer's Ed25519 public key and signature.
+bytes pkg_magic 6 value 455258504b47
+bytes pkg_key 32
+bytes pkg_signature 64
+# How an app starts: an Erlang app starts its OTP applications, a native app its
+# program. A declaration has exactly one of the two.
+enum pkg_kind u32
+  value erlang 1
+  value native 2
+
+# The header's fixed part. The strings it names lie in its string table; the needs
+# and applications are tables of string references. The image starts at the first
+# block boundary at or after header_length and is image_blocks EROFS blocks long; the
+# hash tree follows it and is tree_blocks blocks long. The seal, the signer's key and
+# the signature over every byte of the header before the signature, ends the header.
+layout erx_pkg_header wire_le 8 176
+  field magic pkg_magic 0
+  field version u16 6
+  field header_length u32 8
+  field abi_version u32 12
+  field kind pkg_kind 16
+  field app_version u32 20
+  field memory u64 24
+  field image_blocks u32 32
+  field tree_blocks u32 36
+  field salt verity_salt 40
+  field root_hash verity_hash 72
+  field arch erx_mf_str 104
+  field name erx_mf_str 112
+  field license erx_mf_str 120
+  field program erx_mf_str 128
+  field args erx_mf_str 136
+  field needs erx_mf_span 144
+  field applications erx_mf_span 152
+  field strings erx_mf_span 160
+  field seal erx_mf_span 168
+layout erx_pkg_seal wire_le 1 96
+  field key pkg_key 0
+  field signature pkg_signature 32
+
+reader pkg_reader erx_pkg_header @pkg_header_max
+  extent root.header_length
+  value root.version @pkg_version
+  range root.app_version 1 0xffffffff
+  range root.image_blocks 1 0xffffffff
+  choice root.kind pkg_kind root.applications.count,root.program.offset,root.program.length,root.args.offset,root.args.length
+    case erlang root.applications.count
+    case native root.program.offset,root.program.length,root.args.offset,root.args.length
+  range root.applications.count 1 @pkg_applications_max when root.kind erlang
+  value root.seal.count 1
+  table needs erx_mf_str root.needs.offset root.needs.count @pkg_needs_max 4
+  table applications erx_mf_str root.applications.offset root.applications.count @pkg_applications_max 4
+  table seal erx_pkg_seal root.seal.offset root.seal.count 1 1
+  string_table strings root.strings.offset root.strings.count @pkg_header_max
+  order needs applications strings seal
+  string root.arch.offset root.arch.length strings identifier 63
+  string root.name.offset root.name.length strings identifier 63
+  string root.license.offset root.license.length strings utf8 @pkg_license_max empty yes
+  string root.program.offset root.program.length strings utf8 @pkg_program_max when root.kind native
+  string root.args.offset root.args.length strings args @pkg_args_bytes_max empty yes
+  string needs[].offset needs[].length strings identifier 63
+  string applications[].offset applications[].length strings identifier 63

@@ -574,12 +574,12 @@ app doom
 | Field | Value | Default and bound |
 | --- | --- | --- |
 | `app NAME` | the app's name, which is its principal's | required; an app name ([Admission](#admission)) |
-| `applications` | the OTP applications `erx_app` starts | at most 16 names of the form `[a-z][a-z0-9_]*`, 63 bytes each |
-| `program` | a path under `bin/` of the image, then its arguments | the path at most 255 bytes of plain names; at most `pkg_args_max`, 32, arguments, 16 KiB together |
+| `applications` | the OTP applications `erx_app` starts | at most `pkg_applications_max`, 16, names of the form `[a-z][a-z0-9_]*`, 63 bytes each |
+| `program` | a path under `bin/` of the image, then its arguments | the path at most `pkg_program_max`, 255, bytes of plain names; at most `pkg_args_max`, 32, arguments, `pkg_args_bytes_max`, 16 KiB, together |
 | `needs` | the services of the `apps` row it takes | none; at most `pkg_needs_max`, 16, identifiers, none twice |
 | `memory` | what its session's own budget holds, in bytes | `app_memory_default`, 64 MiB; at least `app_memory_min`, 4 MiB |
 | `version` | a decimal number the inspector shows, which decides nothing | 1; 1 to 2^32 - 1 |
-| `license` | the package's SPDX license expression | none, which no image erXos distributes takes; at most 256 bytes, in the grammar `LicenseExpression` reads |
+| `license` | the package's SPDX license expression | none, which no image erXos distributes takes; at most `pkg_license_max`, 256, bytes, in the grammar `LicenseExpression` reads |
 
 A declaration has exactly one of `applications` and `program`. An Erlang
 app that needs a native helper starts it itself with
@@ -613,7 +613,7 @@ A package is one file, `NAME.app`, of three parts, each starting at a
 
 | Part | Holds |
 | --- | --- |
-| header, at most `pkg_header_max`, 64 KiB | the magic `ERXPKG`, the format version, the header's length, the `ERX_ABI_VERSION` and the target architecture (an architecture name of `abi/arch/`) the package was built for, the packed declaration, the image's length in blocks, the hash tree's length, salt and root hash (SHA-256, dm-verity format version 1, as [design-storage.md](design-storage.md#data-model) lays read-only images), the signer's Ed25519 public key, and the Ed25519 signature over every byte of the header before it |
+| header, at most `pkg_header_max`, 64 KiB | the magic `ERXPKG`, the format version, the header's length, the `ERX_ABI_VERSION` and the target architecture (an architecture name of `abi/arch/`) the package was built for, the packed declaration, the image's length in blocks, the hash tree's length, its 32-byte salt and root hash (SHA-256, dm-verity format version 1, as [design-storage.md](design-storage.md#data-model) lays read-only images), the signer's Ed25519 public key, and the Ed25519 signature over every byte of the header before it |
 | image | an uncompressed EROFS image of 4 KiB blocks, whose root holds `lib/APP/ebin` and `lib/APP/priv` for each application, `bin/` for programs and `share/` for data |
 | hash tree | the image's dm-verity tree, over the image's blocks as they lie in the file |
 
@@ -635,16 +635,21 @@ into a package. The image names no device, socket or link leaving it.
 **The decoder**, `erx_pkg_header:decode(Length, Bytes)`, is the one
 parser of a package file's structure, whatever the file's origin and
 whoever authenticated it. `Length` is the file's length and `Bytes` its
-first bytes, so that `byte_size(Bytes)` is `min(Length,
-pkg_header_max)`. It checks, with checked
-arithmetic throughout, the first failure answering:
+first bytes, at least `min(Length, pkg_header_max)` of them; the decoder
+reads that many, copied, so a caller that hands it more keeps none of the
+rest alive. It checks, with checked arithmetic throughout, the first
+failure answering:
 
-1. the length is at most `pkg_bytes_max`, 1 GiB: `{too_large, L}`;
+1. the length is at most `pkg_bytes_max`, 1 GiB: `{too_large, L}`; and
+   `Bytes` holds `min(Length, pkg_header_max)` bytes, which a read cut
+   short does not: `{header, short}`, the tag of step 3's file cut short
+   of its boundary, since either way the bytes before the image are not
+   all there;
 2. the header, through the generated reader: its magic, its version and
    its length, at most `pkg_header_max` and within `Bytes`, every field
    and the packed declaration inside that length, and the signer's key
    and the signature ending it, as `abi/formats/package.txt` lays them:
-   `{header, Reason}`;
+   `{header, Reason}`, `Reason` the reader's error;
 3. the next 4 KiB boundary at or after the header's end lies within
    `Bytes`, `{header, short}`, which it does for every file at least
    that long, since `pkg_header_max` is a multiple of 4 KiB; and
@@ -652,10 +657,17 @@ arithmetic throughout, the first failure answering:
    byte before the image is fixed by the header: `{header, padding}`;
 4. the parts lie end to end: the image from that boundary, for its
    length in blocks, and the hash tree from the image's end, of the
-   length `erx_verity`'s tree layout gives for the image's block count,
-   which the decoder computes and the header's tree length must equal:
-   `{header, {tree, Have, Want}}`; and the file ends exactly where the
-   tree does: `{length, Have, Want}`.
+   length in blocks that `erx_verity_tree:blocks/1`, the tree's layout,
+   gives for the image's block count, which the header's tree length must
+   equal: `{header, {tree, Have, Want}}`; and the file ends exactly where
+   the tree does: `{length, Have, Want}`, `Have` the file's length.
+
+The tree's layout, `erx_verity_tree`, is pure arithmetic in a module of
+its own, preloaded beside the hash check rather than inside it: it gives
+the blocks of each level, the decoder their sum and `erx_verity`'s check
+of each block their places, from one source, while no module but the
+EROFS reader names `erx_verity`
+([design-storage.md](design-storage.md#reading-erofs-images)).
 
 It answers `{ok, Decoded}`, the header's fields and the layout of its
 image (the image's offset and length, the hash tree's offset, length and
@@ -1581,10 +1593,13 @@ facet parameter `tree` is in the storage service's schema.
 
 **The ABI source**: `abi/formats/package.txt`, the header and the packed
 declaration; the limits `apps_max_limit`, `app_memory_default`,
-`app_memory_min`, `pkg_header_max`, `pkg_needs_max`, `pkg_args_max`,
+`app_memory_min`, `pkg_version`, `pkg_header_max`, `pkg_needs_max`,
+`pkg_applications_max`, `pkg_program_max`, `pkg_args_max`,
+`pkg_args_bytes_max`, `pkg_license_max`,
 `pkg_bytes_max` and `pkg_scan_max`.
 
 **Erlang**: `erx_pkg_header:decode/2`, `check_file/2` and `layout/2`,
+`erx_verity_tree:blocks/1`,
 `erx_app_admit:admit/3`, `erx_pkg_plan:install/3`, `remove/2` and
 `recover/2`, `erx_principal:register_app/2`; in a session, `erx_app`,
 and `erx_ns:mount/3` with an image `{file, Path, Layout}`, `Layout` an

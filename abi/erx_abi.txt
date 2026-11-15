@@ -31,6 +31,7 @@ include protocols/prog.txt
 include protocols/hostlink.txt
 include formats/ui.txt
 include formats/draw.txt
+include formats/package.txt
 include protocols/web.txt
 
 limit page_size u32 4096

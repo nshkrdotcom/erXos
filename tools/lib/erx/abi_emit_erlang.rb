@@ -73,10 +73,10 @@ module Erx
               lines << "-define(#{sequence_prefix}_TERMINAL, #{sequence.fetch(:terminal)})."
               lines << "-define(#{sequence_prefix}_EXHAUSTION, ?#{Names.macro(status.name)})."
             end
-          elsif type.is_a?(BytesType) && type.fixed
+          elsif type.is_a?(BytesType)
             prefix = Names.macro(type.name)
             lines << "-define(#{prefix}_SIZE, #{type.size})."
-            lines << "-define(#{prefix}_BYTES, #{literal(type.fixed)})."
+            lines << "-define(#{prefix}_BYTES, #{literal(type.fixed)})." if type.fixed
           elsif type.is_a?(EnumType) && !type.flags
             lines << enum_members(schema, type)
           end
@@ -283,9 +283,11 @@ module Erx
           end
         end
         module_name = Names.c(specification.name)
+        prefix_export = specification.extent ? ['-export([open_prefix/1]).'] : []
         lines = [NOTICE, "-module(#{module_name}).",
                  '-moduledoc "Bounded structural reader over immutable ABI bytes; policy admission is separate.".',
                  '-export([read/1, open/1, header/1, count/2, fetch/3, string/2, fold/4, fuzz/1]).',
+                 *prefix_export,
                  '-export_type([view/0, error/0]).', '',
                  '-record(view, {schema = ?MODULE :: module(), bytes :: binary()}).',
                  '-opaque view() :: #view{}.',
@@ -298,6 +300,7 @@ module Erx
           named_types.each { |type| lines.concat(type_specification(type)) }
         end
         lines << RUNTIME
+        lines << PREFIX_RUNTIME if specification.extent
         lines << 'reader_spec() ->'
         lines << indent(literal(reader_data(specification), depth: 1), 4) + '.'
         lines << ''
@@ -510,6 +513,32 @@ module Erx
           raise SchemaError, "unsupported generated Erlang literal #{value.class}"
         end
       end
+
+      # The entry of a reader whose input is the front of a longer binary, such as a
+      # file's header: emitted for a reader that declares an extent, which names the
+      # input's length. The root it decodes to find that length never leaves it.
+      PREFIX_RUNTIME = <<~'ERLANG'.freeze
+        -doc """
+        Validate the input at the front of a longer binary: the root's extent
+        field names its length, and the bytes up to it, or as many as there
+        are, are opened as open/1 opens them.
+        """.
+        -spec open_prefix(binary()) -> {ok, view()} | {error, error()}.
+        open_prefix(Bytes) when is_binary(Bytes) ->
+            Reader = reader_spec(),
+            Root = attempt(fun() ->
+                decode(maps:get(root, Reader), Bytes, 0, <<"root">>)
+            end),
+            case Root of
+                {ok, Header} ->
+                    Length = path_value(maps:get(extent, Reader), Header, Header),
+                    open(binary:part(Bytes, 0, min(Length, byte_size(Bytes))));
+                {error, _} = Error ->
+                    Error
+            end;
+        open_prefix(_) ->
+            {error, error_value(length, <<"root">>, 0)}.
+      ERLANG
 
       RUNTIME = <<~'ERLANG'.freeze
         -doc "Validate the complete file and retain its immutable bytes.".
