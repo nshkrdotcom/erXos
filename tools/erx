@@ -431,6 +431,8 @@ module Erx
                    name: 'fuzz-erx-hid-core', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_desc.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-usb-desc', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_usb_hub_core.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-usb-hub-core', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_virtio_net_frame.rb'), '--seed',
                     options.fetch(:seed).to_s],
                    name: 'fuzz-erx-virtio-net-frame', deadline: 300, chdir: ROOT, env: environment)

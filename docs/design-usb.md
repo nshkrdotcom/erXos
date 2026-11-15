@@ -1424,13 +1424,25 @@ and no list of steps needs a removal case of its own.
 A hub function keeps one status-change transfer posted on its interrupt
 endpoint. Its report is a bitmap, bit 0 the hub itself and bit *n* port
 *n*, at least as long as the hub's port count needs and decoded by
-`erx_usb_hub_core`; bits above the port count are ignored. The function
+`erx_usb_hub_core`; bits above the port count are ignored, and a
+shorter report ends the function like a failed transfer. The function
 sends `{changed, Hub, Bitmap}` to the bus process and posts its next
-transfer only when the bus process answers `{handled, Hub}`. The bus core
+transfer only when the bus process answers `{handled, Hub}`; a report
+that names nothing posts the next transfer at once. Its first report, at
+start, names the hub and every port, so each instance, a restarted one
+included, has the bus core read every port's status once. The bus core
 merges the bitmap into the hub's pending set, and for each port in it,
 one at a time, reads GET_STATUS, clears every change bit it read and
 acts on what the status says; for bit 0 it reads and clears the hub's
-own status. When the set is empty it answers `handled`. The root hub
+own status. When the set is empty it answers `handled`. A hub port's
+GET_STATUS gives the speed of the device on it by the hub's own speed,
+as FreeBSD's `uhub_reattach_port` reads it (`usb_hub.c:738-752`): on a
+high-speed hub the high-speed bit, then the low-speed bit, else full
+speed; on a full-speed hub the low-speed bit, else full speed. A root
+port's words carry its PORTSC speed ID instead, and an ID other than
+low, full, high or SuperSpeed refuses the device (`unsupported speed`);
+the port's status and changes are still read and cleared, so its
+disconnect is seen. The root hub
 works the same way: the controller process turns a port event into
 `{changed, root, [Port]}`, and a root port raises no further event until
 every one of its change bits is cleared (xHCI 4.19.2, p. 322).
@@ -2800,6 +2812,7 @@ targeted traces carry the longer sequences.
 | Test | Passes when | Seeded fault that must fail it |
 | --- | --- | --- |
 | `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, and a hub detached during its child's enumeration | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no action names a port that is `off` or `empty` | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
+| `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | the first report names the hub and every port; exactly one transfer posted or one bitmap unhandled until the function stops; every reported set is a non-empty ordset of the hub and ports within the count; bit *n* is port *n* and bits above the count are ignored; a hub port's speed follows the hub's speed | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | Reset Endpoint is issued only for a halted queue; a halt is reset once; EP0 is never in a drop or an add; an aborted control request is answered `timeout` only after Stop Endpoint and a Set TR Dequeue Pointer to the enqueue position, and EP0 then accepts the next request; a failed Address Device behind a translator with a USB Transaction Error is answered only after Disable Slot and CLEAR_TT_BUFFER, and a failed clear answers `tt_clear`; Disable Slot follows only stops that answered; new posts are refused while a reset runs | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a buffer returns only by the event that completes its transfer or by a command after which the controller holds nothing of its ring; a short data stage leaves its transfer posted until the status event; a stop's event at every place of Table 4-2 is accepted and completes nothing: after the completion of the TD it names, at a link inside a TD and between two, inside a control transfer's data stage, at the enqueue position of an idle ring and across the ring's wrap; a second event for one stop breaks the form; the enqueue position is never a link TRB; every ring has its pad; every address a plan writes lies in the record; every decision passes `erx_device_dma_check`; every built context has no streams | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the model never sees a chain whose later TRBs or buffer bytes are not yet written | the first TRB's cycle word written with the other TRBs |
