@@ -6757,6 +6757,11 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Low] desktop, a graphical editor: the desktop's editor is Emacs, a larger task than the desktop
+  programs of [design-desktop-programs.md](docs/design-desktop-programs.md); until it lands, text is
+  edited with toybox's `vi` in a terminal (track Q). It needs its own design: an Emacs written in
+  Erlang, or GNU Emacs or a BSD-licensed Emacs ported, with the license question settled first.
+
 * [Medium] platform (Raspberry Pi 4), hardware watchdog on the stopgap: a board that runs unattended has no
   hardware watchdog behind a hang of Fiasco or of the root's watchdog thread, because the watchdog the
   firmware starts from `kernel_watchdog_timeout` needs a reload that only erXos's kernel makes
