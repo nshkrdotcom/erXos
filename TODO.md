@@ -7396,6 +7396,33 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
+  (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist, but no
+  QEMU cell boots it. Part 4a runs it in a manifest principal's session with no package, which needs a
+  test image's session release to hold `erx_dashboard`, while
+  [design-packaging.md](docs/design-packaging.md#examples) says no list of erXos's names an example and
+  builds one only through the SDK. Decide how part 4a's image takes the example (or move its QEMU check to
+  part 4b's package), then add the display suite's cell. design-packaging.md's verification row for
+  `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
+  and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
+  check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
+  for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
+  has the dashboard fetch quotes in part 4b while design-quotes.md gives that to `examples/quotes`; the
+  dashboard's board (`erx_dashboard_source`) carries no fetch time, so a live source needs design-quotes'
+  per-quote value and age first.
+
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`, `set_role`): a node with no `role` shows LVGL's own face
+  and colour, while ui.txt makes `body` the default, which an explicit `role => body` shows in the theme's
+  `text` colour; applying `body` to every node that takes a role means re-recording the LVGL references.
+
+* [Low] `examples/dashboard`: the clock shows the wall clock even while `/proc/time`'s `state` is `unset`
+  ([design-time.md](docs/design-time.md)), so an unset clock shows a 1970 date as if it were the time; it
+  should show the clock as not set.
+
+* [Low] `erx-lvgl` (`display/lvgl/erx_lvgl.c`): a type role takes the smallest of LVGL's built-in Montserrat
+  faces at least its size, not the theme's Inter at its exact size, weight and tabular figures; `icon` and
+  the `graph` kind are not drawn.
+
 * [Medium] clock record, `abi/inspection.txt` kind `clock`: design-time gives the service's `sample_at`,
   `step_at`, `step_ns`, `offset_ns`, `distance_ns`, `stratum` and `server` the value `none` before a
   sample, but the schema has no integer or text form for "a value or none", and the status `unknown`
