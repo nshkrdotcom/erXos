@@ -13,8 +13,9 @@ event this client logs.
 
 start_link/0 starts the client's process under the application's
 supervisor. The process logs `erx_kiosk_test: started`, then waits for the
-pattern client's window to end (erx_pattern_test, registered while it
-holds its window), so that the session's only window is this one, which
+pattern client's window to end, polling erx_pattern_test:closed/0, which
+stays true once the window has ended, so a window that lived between two
+polls is not missed. Then the session's only window is this one, which
 the single policy shows. It opens the UI, retrying every refusal for a
 while: the session's pixel area may have no room for the program's buffer
 while the lvgl-lease cell's rounds hold it, and the widget server answers
@@ -24,8 +25,9 @@ the UI tree/0 and logs
     erx_kiosk_test: shown
 
 or `erx_kiosk_test: {error, Step, Reason}` naming the step that failed
-(`pattern` when the pattern client never presented, `open` with the last
-refusal, `tree`), and ends. Once shown, it logs each event of the UI,
+(`pattern` with `not_closed` when the pattern window had not ended by
+the last poll, `open` with the last refusal, `tree`), and ends. Once
+shown, it logs each event of the UI,
 
     erx_kiosk_test: event pressed
 
@@ -83,19 +85,17 @@ events(Window) ->
             logger:notice("erx_kiosk_test: ~0p", [{server_down, Reason}])
     end.
 
-%% Waits for the pattern client's holder to register and then to end. Each
-%% poll lowers the finite count; the holder ends once the harness's input
-%% has reached it.
+%% Waits for the pattern window's end. Each poll lowers the finite count;
+%% the window ends once the harness's input has reached it.
 pattern_closed(0) ->
-    {error, never_presented};
+    {error, not_closed};
 pattern_closed(N) ->
-    case whereis(erx_pattern_test) of
-        undefined ->
+    case erx_pattern_test:closed() of
+        true ->
+            ok;
+        false ->
             timer:sleep(?POLL_MS),
-            pattern_closed(N - 1);
-        Holder ->
-            Ref = monitor(process, Holder),
-            receive {'DOWN', Ref, process, Holder, _} -> ok end
+            pattern_closed(N - 1)
     end.
 
 %% Ends: each retry lowers the finite count, and the last answers. Each

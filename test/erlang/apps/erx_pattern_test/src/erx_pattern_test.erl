@@ -38,18 +38,20 @@ of its `mouse` file, each logged as one notice,
     erx_pattern_test: mouse {0,0,0}
 
 the mouse record's position and buttons, or one notice naming the read that
-failed. The window's holder is a process of its own, registered as
-`erx_pattern_test` once the window is presented; it ends after the input's
-notices, which ends the window, and logs
+failed. The window's holder is a process of its own; it ends after the
+input's notices, which ends the window, and logs
 
     erx_pattern_test: closed
 
-first, so the display's session holds no window and the lvgl cell's
-client, erx_kiosk_test, which waits for that end, opens the only one. The
-application's process waits for ever.
+first. The application's process then registers itself as
+`erx_pattern_test` and waits for ever, so closed/0 is true from the
+window's end on, however briefly the window lived: the lvgl cell's
+client, erx_kiosk_test, polls closed/0 and opens the session's only
+window once it is true. A holder that did not present, or that crashed,
+leaves it false.
 """.
 
--export([show/0, pattern/0]).
+-export([show/0, closed/0, pattern/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -84,20 +86,36 @@ pattern() ->
 -spec show() -> no_return().
 show() ->
     logger:notice("erx_pattern_test: started"),
-    _ = spawn(fun hold/0),
-    receive after infinity -> ok end.
+    {_Holder, Ref} = spawn_monitor(fun() -> exit(hold()) end),
+    receive {'DOWN', Ref, process, _, Outcome} -> ended(Outcome) end.
 
-%% The window's holder: the window ends when this process does.
+-doc """
+Whether the pattern window was presented, read and has ended: once true,
+true for good.
+""".
+-spec closed() -> boolean().
+closed() ->
+    whereis(?MODULE) =/= undefined.
+
+%% The window's holder: the window ends when this process does, which
+%% it does with `closed` once the window was presented and read.
 hold() ->
     case presented() of
         {ok, Window} ->
-            true = register(erx_pattern_test, self()),
             logger:notice("erx_pattern_test: presented"),
             read_input(Window),
-            logger:notice("erx_pattern_test: closed");
+            logger:notice("erx_pattern_test: closed"),
+            closed;
         Failed ->
-            logger:notice("erx_pattern_test: ~0p", [Failed])
+            logger:notice("erx_pattern_test: ~0p", [Failed]),
+            failed
     end.
+
+%% The holder's end: a closed window is recorded by this process's name
+%% for as long as it waits, which is for ever, so closed/0 cannot miss it.
+ended(Outcome) ->
+    _ = [true = register(?MODULE, self()) || Outcome =:= closed],
+    receive after infinity -> ok end.
 
 presented() ->
     maybe
