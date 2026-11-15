@@ -705,11 +705,9 @@ to keep:
      device has finished its reset and does not touch its queues until
      the driver initializes it again; this binds a device whose
      `Version` reads 2 (section 4.2.2.1), the only one `erx_device`
-     drives (`abi/formats/virtio.txt`), and QEMU v11.1.3 runs the
-     device's reset inside the status write itself
-     (`hw/virtio/virtio-mmio.c`, lines 72-83 and 423-442); whether that
-     reset waits out requests a backend has in flight on another thread
-     is unverified;
+     drives (`abi/formats/virtio.txt`); whether QEMU's model finishes
+     requests a backend has in flight before the read gives 0 is
+     unverified, and the left-running test is what checks it;
    * GENET's DMA status with the block's and the ring's bits set, which
      is unverified: no specification of GENET has been read, and the
      meaning of those bits comes from Linux's driver through the [GENET
