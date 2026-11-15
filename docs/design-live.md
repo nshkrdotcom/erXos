@@ -591,7 +591,9 @@ on the host:
 
 The owner carries out what they return and owns the timers, so time reaches the
 machine only as `timer`, and the exploration on the host drives it event by
-event.
+event. The owner names a wait by its open and its kind, `{Open, read}` or
+`{Open, in}`, so a blocking read and a `poll` of one open, from two threads of a
+program, are two waiters, and neither replaces the other.
 
 **Cooked and raw** mean what they mean on UNIX, as flags of `termios`:
 
@@ -601,8 +603,14 @@ event.
 * **Raw**, `ICANON` clear: a read gets bytes as `VMIN` and `VTIME` ask for,
   by POSIX's four cases:
   * `VMIN` above 0, `VTIME` 0: the read can go on at `VMIN` bytes;
-  * `VMIN` and `VTIME` above 0: at `VMIN` bytes, or when a timer that each byte
-    restarts, and the first byte starts, ends;
+  * `VMIN` and `VTIME` above 0: at `VMIN` bytes, or when a timer that the
+    first byte starts ends. Later bytes do not restart it: FreeBSD sets one
+    deadline after the first byte (`ttydisc_read_raw_interbyte_timer`,
+    `tty_ttydisc.c:360-405`, with `:306-320`), where POSIX's interbyte
+    wording reads as a restart at each byte. macOS's tty is expected to
+    restart it (not yet verified against its source), so a comparison with a
+    host pseudo-terminal on macOS treats this case as a documented
+    difference and tests FreeBSD's rule;
   * `VMIN` 0, `VTIME` above 0: at the first byte, or when a timer that
     `read_wait` starts ends, and the read then returns no bytes;
   * both 0: at once, with whatever waits.

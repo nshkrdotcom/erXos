@@ -2,9 +2,11 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% The fuzz target of erx_tty's set/2, size/3 and input/2, the line
-%% discipline's readers of untrusted values (docs/design-live.md, "The tty"
-%% and "Verification and testing"): random termios, valid and broken one way
-%% at a time; random window sizes; and random bytes in random chunks, up to
+%% discipline's readers of untrusted values, and of erx_abi_termios's
+%% decode/1, which reads a program's struct termios (docs/design-live.md,
+%% "The tty" and "Verification and testing"): random termios and structs,
+%% valid and broken one way at a time; random window sizes; and random
+%% bytes in random chunks, up to
 %% past the input bound, under random termios, between random reads, waits
 %% and writes. Whatever arrives, nothing crashes, a valid termios is kept as
 %% given and a broken one refused, what waits stays within 4 KiB, every
@@ -18,15 +20,12 @@
 
 -define(ROUNDS, 3000).
 -define(MAX_INPUT, 4096).
--define(IFLAGS, [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck,
-                 istrip, iutf8, ixany, ixoff, ixon, parmrk]).
--define(OFLAGS, [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3]).
--define(CFLAGS, [clocal, cread, cstopb, hupcl, parenb, parodd]).
--define(LFLAGS, [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon,
-                 iexten, isig, noflsh, nokerninfo, tostop]).
--define(CHARS, [vdiscard, vdsusp, veof, veol, veol2, verase, verase2, vintr,
-                vkill, vlnext, vmin, vquit, vreprint, vstart, vstatus, vstop,
-                vsusp, vtime, vwerase]).
+%% The tables of the ABI file's termios table.
+-define(IFLAGS, erx_abi_termios:flags(iflag)).
+-define(OFLAGS, erx_abi_termios:flags(oflag)).
+-define(CFLAGS, erx_abi_termios:flags(cflag)).
+-define(LFLAGS, erx_abi_termios:flags(lflag)).
+-define(CHARS, erx_abi_termios:chars()).
 %% Flags that change or take received bytes, which the count of bytes leaves out.
 -define(TAKERS, [icrnl, igncr, inlcr, istrip, ixon, parmrk, isig, icanon]).
 
@@ -34,6 +33,7 @@ run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     lists:foreach(fun(_) ->
                           termios_round(),
+                          struct_round(),
                           size_round(),
                           input_round()
                   end, lists:seq(1, ?ROUNDS)),
@@ -51,6 +51,24 @@ termios_round() ->
     end,
     Broken = broken(Valid),
     check(erx_tty:set(Broken, Tty) =:= {error, einval}, invalid_accepted, Broken).
+
+%% A C program's struct termios through erx_abi_termios, the program
+%% protocol's codec: a valid one decodes to a termios set/2 keeps, which
+%% encodes back to the struct less what the table does not name and decodes
+%% to itself again; a broken one is refused.
+struct_round() ->
+    Struct = random_struct(),
+    case erx_abi_termios:decode(Struct) of
+        {ok, Termios} ->
+            check(element(1, erx_tty:set(Termios, erx_tty:new())) =:= ok, decoded_refused, Struct),
+            Encoded = erx_abi_termios:encode(Termios),
+            check(within(Encoded, Struct), codec_added, {Struct, Encoded}),
+            check(erx_abi_termios:decode(Encoded) =:= {ok, Termios}, codec_round_trip, Struct);
+        {error, einval} ->
+            fail(struct_refused, Struct)
+    end,
+    Broken = broken_struct(Struct),
+    check(erx_abi_termios:decode(Broken) =:= {error, einval}, codec_invalid_accepted, Broken).
 
 size_round() ->
     Tty = erx_tty:new(),
@@ -166,6 +184,36 @@ foreign(iflag) -> ?OFLAGS ++ ?LFLAGS;
 foreign(oflag) -> ?IFLAGS ++ ?CFLAGS;
 foreign(cflag) -> ?LFLAGS ++ ?OFLAGS;
 foreign(lflag) -> ?IFLAGS ++ ?CFLAGS.
+
+%%% Struct termios, valid and broken
+
+random_struct() ->
+    Word = fun() -> pick([0, 16#ffffffff, rand:uniform(1 bsl 32) - 1]) end,
+    #{iflag => Word(), oflag => Word(), cflag => Word(), lflag => Word(),
+      cc => [rand:uniform(256) - 1 || _ <- lists:seq(1, 20)],
+      ispeed => pick([0, 9600, 16#ffffffff]), ospeed => pick([0, 38400])}.
+
+%% A struct broken one way.
+broken_struct(#{cc := Cc} = Struct) ->
+    case rand:uniform(8) of
+        1 -> Struct#{pick([iflag, oflag, cflag, lflag, ispeed, ospeed]) := pick([-1, 1 bsl 32, 1.0, x])};
+        2 -> Struct#{cc := pick([tl(Cc), [0 | Cc], []])};
+        3 -> Struct#{cc := [pick([256, -1, x]) | tl(Cc)]};
+        4 -> Struct#{cc := lists:droplast(Cc) ++ 0};
+        5 -> maps:remove(pick([iflag, cc, ospeed]), Struct);
+        6 -> Struct#{extra => 0};
+        7 -> Struct#{cc := list_to_binary(Cc)};
+        8 -> pick([[], <<>>, {termios}, Cc])
+    end.
+
+%% Every bit of each word of Encoded is set in Struct, and every byte of
+%% c_cc is Struct's or _POSIX_VDISABLE.
+within(Encoded, Struct) ->
+    Words = [W || W <- [iflag, oflag, cflag, lflag, ispeed, ospeed],
+                  maps:get(W, Encoded) band bnot maps:get(W, Struct) =/= 0],
+    Bytes = [{E, S} || {E, S} <- lists:zip(maps:get(cc, Encoded), maps:get(cc, Struct)),
+                       E =/= S, E =/= 16#ff],
+    Words =:= [] andalso Bytes =:= [].
 
 %%% Helpers
 

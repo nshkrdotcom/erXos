@@ -1,0 +1,91 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The termios table (docs/design-live.md, "The tty"): every flag and special
+# character a tty's termios may hold, with the bit or index a C program's
+# struct termios gives it. Names and numbers are FreeBSD 15.1's
+# (sys/sys/_termios.h); test/host/abi_termios_test.rb compares them with the
+# header at deps.lock's freebsd-termios pin. The sets are FreeBSD's supported
+# ones (sys/kern/tty.c:88-96) less what erx_tty does not keep: ECHOPRT,
+# FLUSHO, CIGNORE and the modem flow-control flags of c_cflag.
+#
+#   termios FIELD
+#     flag NAME BIT
+#     size NAME MASK FIRST
+#   termios cc COUNT UNNAMED
+#     char NAME INDEX
+#
+# FIELD is iflag, oflag, cflag or lflag, a 32-bit word of struct termios.
+# flag names one bit of it. size names a field of contiguous bits under MASK
+# whose value 0 reads as FIRST: CSIZE's CS5 to CS8 are csize 5 to 8. cc is
+# c_cc, COUNT bytes (NCCS); char names the byte at INDEX, and a byte no char
+# names is written UNNAMED (_POSIX_VDISABLE) and ignored when read. A bit or
+# byte the table does not name is dropped when a program's termios is read,
+# as FreeBSD's tcsetattr drops the bits it does not support
+# (sys/kern/tty.c:1760-1764).
+termios iflag
+  flag ignbrk 0x00000001
+  flag brkint 0x00000002
+  flag ignpar 0x00000004
+  flag parmrk 0x00000008
+  flag inpck 0x00000010
+  flag istrip 0x00000020
+  flag inlcr 0x00000040
+  flag igncr 0x00000080
+  flag icrnl 0x00000100
+  flag ixon 0x00000200
+  flag ixoff 0x00000400
+  flag ixany 0x00000800
+  flag imaxbel 0x00002000
+  flag iutf8 0x00004000
+termios oflag
+  flag opost 0x00000001
+  flag onlcr 0x00000002
+  flag tab3 0x00000004
+  flag onoeot 0x00000008
+  flag ocrnl 0x00000010
+  flag onocr 0x00000020
+  flag onlret 0x00000040
+termios cflag
+  size csize 0x00000300 5
+  flag cstopb 0x00000400
+  flag cread 0x00000800
+  flag parenb 0x00001000
+  flag parodd 0x00002000
+  flag hupcl 0x00004000
+  flag clocal 0x00008000
+termios lflag
+  flag echoke 0x00000001
+  flag echoe 0x00000002
+  flag echok 0x00000004
+  flag echo 0x00000008
+  flag echonl 0x00000010
+  flag echoctl 0x00000040
+  flag isig 0x00000080
+  flag icanon 0x00000100
+  flag altwerase 0x00000200
+  flag iexten 0x00000400
+  # erx_tty keeps TOSTOP; the terminal relay refuses it until process
+  # groups come (docs/design-programs.md, "The terminal").
+  flag tostop 0x00400000
+  flag nokerninfo 0x02000000
+  flag noflsh 0x80000000
+termios cc 20 0xff
+  char veof 0
+  char veol 1
+  char veol2 2
+  char verase 3
+  char vwerase 4
+  char vkill 5
+  char vreprint 6
+  char verase2 7
+  char vintr 8
+  char vquit 9
+  char vsusp 10
+  char vdsusp 11
+  char vstart 12
+  char vstop 13
+  char vlnext 14
+  char vdiscard 15
+  char vmin 16
+  char vtime 17
+  char vstatus 18

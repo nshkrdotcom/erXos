@@ -70,33 +70,11 @@ and takes no flow control.
 -define(MAX_ECHO, 16384).
 -define(BELL, 7).
 
-%% The tables: every flag and character a termios may hold, FreeBSD's
-%% supported sets (sys/kern/tty.c:88-96) less those named in the moduledoc.
--define(IFLAGS, [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck,
-                 istrip, iutf8, ixany, ixoff, ixon, parmrk]).
--define(OFLAGS, [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3]).
--define(CFLAGS, [clocal, cread, cstopb, hupcl, parenb, parodd]).
--define(LFLAGS, [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon,
-                 iexten, isig, noflsh, nokerninfo, tostop]).
--define(CHARS, [vdiscard, vdsusp, veof, veol, veol2, verase, verase2, vintr,
-                vkill, vlnext, vmin, vquit, vreprint, vstart, vstatus, vstop,
-                vsusp, vtime, vwerase]).
-
--type iflag() :: brkint | icrnl | ignbrk | igncr | ignpar | imaxbel | inlcr |
-                 inpck | istrip | iutf8 | ixany | ixoff | ixon | parmrk.
--type oflag() :: ocrnl | onlcr | onlret | onocr | onoeot | opost | tab3.
--type cflag() :: clocal | cread | cstopb | hupcl | parenb | parodd.
--type lflag() :: altwerase | echo | echoctl | echoe | echok | echoke | echonl |
-                 icanon | iexten | isig | noflsh | nokerninfo | tostop.
--type char_name() :: vdiscard | vdsusp | veof | veol | veol2 | verase |
-                     verase2 | vintr | vkill | vlnext | vmin | vquit |
-                     vreprint | vstart | vstatus | vstop | vsusp | vtime |
-                     vwerase.
--type speed() :: 0..?MAX_SPEED.
--type termios() :: #{iflag := [iflag()], oflag := [oflag()],
-                     cflag := [cflag()], lflag := [lflag()],
-                     csize := 5..8, cc := #{char_name() => byte()},
-                     ispeed := speed(), ospeed := speed()}.
+%% The termios map and its tables, every flag and character a termios may
+%% hold, are the ABI file's termios table (abi/termios.txt), which
+%% erx_abi_termios gives: FreeBSD's supported sets (sys/kern/tty.c:88-96)
+%% less those named in the moduledoc.
+-type termios() :: erx_abi_termios:termios().
 -doc "Whatever names a reader: the relay's open.".
 -type open() :: term().
 -doc "A read's timer: the open it times and a serial no other timer has.".
@@ -238,13 +216,14 @@ checked(#{iflag := I, oflag := O, cflag := C, lflag := L, csize := Size,
              0 -> Out;
              Speed -> Speed
          end,
-    #{iflag => flags(I, ?IFLAGS), oflag => flags(O, ?OFLAGS),
-      cflag => flags(C, ?CFLAGS), lflag => flags(L, ?LFLAGS),
+    #{iflag => flags(I, iflag), oflag => flags(O, oflag),
+      cflag => flags(C, cflag), lflag => flags(L, lflag),
       csize => Size, cc => chars(Chars), ispeed => In, ospeed => Out};
 checked(_) ->
     throw(einval).
 
-flags(List, Table) -> flags(List, Table, []).
+%% The flags of a word of termios, each one the table names.
+flags(List, Word) -> flags(List, erx_abi_termios:flags(Word), []).
 
 flags([], _, Acc) ->
     lists:usort(Acc);
@@ -256,7 +235,9 @@ flags([Flag | Rest], Table, Acc) ->
 flags(_, _, _) ->
     throw(einval).
 
-chars(Chars) when is_map(Chars), map_size(Chars) =:= length(?CHARS) ->
+chars(Chars) when is_map(Chars) ->
+    Names = erx_abi_termios:chars(),
+    map_size(Chars) =:= length(Names) orelse throw(einval),
     lists:foreach(fun(Name) ->
                           case Chars of
                               #{Name := Value} when is_integer(Value),
@@ -264,7 +245,7 @@ chars(Chars) when is_map(Chars), map_size(Chars) =:= length(?CHARS) ->
                                                     Value =< 255 -> ok;
                               _ -> throw(einval)
                           end
-                  end, ?CHARS),
+                  end, Names),
     Chars;
 chars(_) ->
     throw(einval).
@@ -310,8 +291,8 @@ last_end(Line, Tty) ->
 -doc """
 Bytes from the master. Each goes through FreeBSD's steps in ttydisc_rint's
 order (tty_ttydisc.c:1012-1250); then every waiter whose condition now
-holds is ready, and a raw read waiting with VMIN and VTIME above 0 restarts
-its timer on the bytes that arrived.
+holds is ready, and a raw read waiting with VMIN and VTIME above 0 starts
+its timer at its first byte and keeps that deadline.
 """.
 -spec input(binary(), tty()) -> {[action()], tty()}.
 input(Bytes, #tty{received = Before} = Tty0) when is_binary(Bytes) ->
@@ -913,8 +894,10 @@ wanted(read, Tty) ->
     end.
 
 %% After input: each waiter whose condition holds is ready. A raw read with
-%% VMIN and VTIME above 0 that still waits restarts its timer when bytes
-%% arrived, and stops it when a flush left nothing.
+%% VMIN and VTIME above 0 that still waits starts its timer when its first
+%% byte arrives, and keeps that one deadline as more bytes arrive, as
+%% FreeBSD's ttydisc_read_raw_interbyte_timer sets it once after the first
+%% byte (tty_ttydisc.c:360-405, :306-320); a flush that left nothing stops it.
 settle(Arrived, #tty{waiters = Waiters} = Tty0) ->
     lists:foldl(fun({Open, Waiter}, {Actions, Tty}) ->
                         {More, Tty1} = settle(Open, Waiter, Arrived, Tty),
@@ -929,10 +912,8 @@ settle(Open, Waiter, Arrived, #tty{ready = Ready} = Tty) ->
         true ->
             {Cancelled, Tty1} = unwait(Open, Tty),
             {Cancelled ++ [{ready, Open}], Tty1};
-        false when Interbyte, Arrived, Ready =/= <<>> ->
-            {Cancelled, Tty1} = unwait(Open, Tty),
-            {Started, Tty2} = start_timer(Open, Tty1),
-            {Cancelled ++ Started, Tty2};
+        false when Interbyte, Arrived, Ready =/= <<>>, Waiter =:= {read, none} ->
+            start_timer(Open, Tty);
         false when Interbyte, Ready =:= <<>>, Waiter =/= {read, none} ->
             {Cancelled, Tty1} = unwait(Open, Tty),
             Untimed = (Tty1#tty.waiters)#{Open => {read, none}},

@@ -161,12 +161,14 @@ vmin_and_vtime_test() ->
     {[], W2} = erx_tty:input(<<"a">>, W1),
     {[{ready, r}], W3} = erx_tty:input(<<"b">>, W2),
     {{ok, <<"ab">>}, _} = erx_tty:read(r, 64, W3),
-    %% VMIN 2, VTIME 1: the first byte starts a timer, each byte restarts it.
-    {[], T1} = erx_tty:read_wait(r, raw(2, 1)),
-    {[{timer_start, Timer1, 100}], T2} = erx_tty:input(<<"a">>, T1),
+    %% VMIN 3, VTIME 1: the first byte starts a timer, and later bytes keep
+    %% its deadline, as FreeBSD's interbyte timer does.
+    {[], T0} = erx_tty:read_wait(r, raw(3, 1)),
+    {[{timer_start, Timer1, 100}], T1} = erx_tty:input(<<"a">>, T0),
+    {[], T2} = erx_tty:input(<<"b">>, T1),
     {[], T2} = erx_tty:timer({r, 999}, T2),
     {[{ready, r}], T3} = erx_tty:timer(Timer1, T2),
-    {{ok, <<"a">>}, _} = erx_tty:read(r, 64, T3),
+    {{ok, <<"ab">>}, _} = erx_tty:read(r, 64, T3),
     %% VMIN 0, VTIME 1: the wait starts the timer; its end gives no bytes.
     {[{timer_start, Timer2, 100}], E1} = erx_tty:read_wait(r, raw(0, 1)),
     {[{ready, r}], E2} = erx_tty:timer(Timer2, E1),
@@ -233,7 +235,7 @@ step({input, <<Key>> = Bytes}, #model{tty = Tty, spec = Spec} = M, Path) ->
     Spec1 = spec_key(Key, Spec, erx_tty:termios(Tty)),
     check_keyed(Key, Actions, erx_tty:termios(Tty), Spec#spec.stopped, Path),
     M1 = acted(Actions, input, M#model{tty = Tty1, spec = Spec1}, Path),
-    check_interbyte(Spec, M1, Actions, Path),
+    check_interbyte(M, M1, Actions, Path),
     M1;
 step({read_wait, Open}, #model{tty = Tty} = M, Path) ->
     {Actions, Tty1} = erx_tty:read_wait(Open, Tty),
@@ -350,12 +352,19 @@ check_keyed(Key, Actions, Termios, Stopped, Path) ->
     property(not (Stopped andalso Signals =/= []) orelse lists:member(start_output, Actions),
              signal_left_output_stopped, Path).
 
-%% Bytes that arrive for a raw read with VMIN and VTIME above 0 restart its timer.
-check_interbyte(#spec{ready = Before}, #model{waiting = Waiting, spec = Spec} = M, Actions, Path) ->
+%% Bytes that arrive for a raw read with VMIN and VTIME above 0 start its
+%% timer when it has none and leave a running one alone: one deadline after
+%% the first byte, as FreeBSD's interbyte timer sets it.
+check_interbyte(#model{spec = #spec{ready = Before}, armed = Armed},
+                #model{waiting = Waiting, spec = Spec} = M, Actions, Path) ->
     #{cc := #{vmin := Min, vtime := Time}} = Termios = erx_tty:termios(M#model.tty),
     Arrived = not has(icanon, Termios) andalso length(Spec#spec.ready) > length(Before),
-    [property(lists:any(fun({timer_start, {O, _}, _}) -> O =:= Open; (_) -> false end, Actions),
-              interbyte_restart, Path)
+    Started = fun(Open) -> lists:any(fun({timer_start, {O, _}, _}) -> O =:= Open;
+                                        (_) -> false
+                                     end, Actions)
+              end,
+    [property(Started(Open) =/= lists:member(Open, maps:values(Armed)),
+              interbyte_deadline, Path)
      || Arrived, Min > 0, Time > 0, {Open, read} <- maps:to_list(Waiting)],
     ok.
 
@@ -533,19 +542,12 @@ cc(Name, Char, #{cc := Chars}) ->
 with(Set, Cleared, Tty) ->
     Termios = erx_tty:termios(Tty),
     Changed = maps:map(fun(Field, Flags) when is_list(Flags) ->
-                               Known = table(Field),
+                               Known = erx_abi_termios:flags(Field),
                                (Flags -- Cleared) ++ [F || F <- Set, lists:member(F, Known)];
                           (_, Value) -> Value
                        end, Termios),
     {ok, _, Tty1} = erx_tty:set(Changed, Tty),
     Tty1.
-
-table(iflag) -> [brkint, icrnl, ignbrk, igncr, ignpar, imaxbel, inlcr, inpck, istrip, iutf8,
-                 ixany, ixoff, ixon, parmrk];
-table(oflag) -> [ocrnl, onlcr, onlret, onocr, onoeot, opost, tab3];
-table(cflag) -> [clocal, cread, cstopb, hupcl, parenb, parodd];
-table(lflag) -> [altwerase, echo, echoctl, echoe, echok, echoke, echonl, icanon, iexten, isig,
-                 noflsh, nokerninfo, tostop].
 
 %% As cfmakeraw leaves a tty, with VMIN and VTIME.
 raw(Min, Time) ->

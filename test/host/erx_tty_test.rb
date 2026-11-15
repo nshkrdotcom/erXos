@@ -28,7 +28,13 @@ class ErxTtyTest < Minitest::Test
                                       broken: 'case on(icanon, Tty) andalso', property: /vstatus/),
     vstatus_echoed: Fault.new(text: "{[info | Started], Tty1};",
                               broken: "echo(Char, [info | Started], Tty1);",
-                              property: /vstatus_echoed/)
+                              property: /vstatus_echoed/),
+    # POSIX's reading, a restart at each byte, in place of FreeBSD's one deadline.
+    interbyte_restarted: Fault.new(text: "Ready =/= <<>>, Waiter =:= {read, none} ->\n            start_timer(Open, Tty);",
+                                   broken: "Ready =/= <<>> ->\n            {Cancelled, Tty1} = unwait(Open, Tty),\n" \
+                                           "            {Started, Tty2} = start_timer(Open, Tty1),\n" \
+                                           "            {Cancelled ++ Started, Tty2};",
+                                   property: /interbyte_deadline/)
   }.freeze
 
   def test_the_cases_and_the_exploration_pass
@@ -46,6 +52,8 @@ class ErxTtyTest < Minitest::Test
   def test_vstatus_without_iexten_fails = assert_fault_fails(:vstatus_without_iexten)
 
   def test_an_echoed_vstatus_fails = assert_fault_fails(:vstatus_echoed)
+
+  def test_a_restarted_interbyte_timer_fails = assert_fault_fails(:interbyte_restarted)
 
   private
 

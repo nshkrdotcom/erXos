@@ -26,6 +26,7 @@ include formats/f2fs.txt
 include kernel.txt
 include signals.txt
 include errno.txt
+include termios.txt
 include protocols/9p.txt
 include protocols/prog.txt
 include protocols/hostlink.txt
