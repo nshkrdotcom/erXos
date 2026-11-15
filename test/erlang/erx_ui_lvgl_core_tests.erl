@@ -22,8 +22,9 @@
 %%   program in the order they came, nothing waits while idle, and an apply
 %%   is answered only after its operations were written, at once when idle
 %%   and at the answer to the open report otherwise;
-%% * a report read while one is open, a refused record and the program's
-%%   exit stop it, and an event is passed on as a hit in any state.
+%% * a report read while one is open, a refused record, the program's
+%%   exit, the loss of its pipes and a write it left without room stop it,
+%%   and an event is passed on as a hit in any state.
 %%
 %% The two events the shell never sends, `shown` with no present
 %% outstanding and an apply before the last is answered, raise in every
@@ -101,7 +102,9 @@ events(#shell{serial = N}) ->
      shown,
      {refused, {bad_tag, 1}},
      {exit, 1},
-     {lost, epipe}].
+     {exit, {signaled, sigkill}},
+     {lost, epipe},
+     stalled].
 
 %% Steps the core with Event and checks the result. An event the shell
 %% never sends must raise.
@@ -129,6 +132,7 @@ expected_stop({damage, _, _, _}, #shell{present = {_, _, _}}) -> report_before_p
 expected_stop({refused, _} = Reason, _Shell) -> Reason;
 expected_stop({exit, _} = Reason, _Shell) -> Reason;
 expected_stop({lost, _} = Reason, _Shell) -> Reason;
+expected_stop(stalled, _Shell) -> stalled;
 expected_stop(_Event, _Shell) -> none.
 
 %% What the shell learns from the event itself, before the actions.

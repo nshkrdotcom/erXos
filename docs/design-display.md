@@ -3356,7 +3356,13 @@ actions `erx_ui_lvgl` performs. It turns the window's
 rectangle leaves the size it names, which the reader refuses, or one
 that arrives before the last was answered, is a fault of the program: `erx_ui_lvgl` stops
 it, logs the report's position, and ends the UI with `{ui_down,
-Window, renderer_down}`. The
+Window, renderer_down}`. So is a program that leaves its standard input
+full: `erx_ui_lvgl` writes with `erx_pipe_srv:write/3` and a deadline,
+and a write that finds no room before it is a stall, so no call on the
+renderer waits longer on a program that stopped reading. Its standard
+output is read by a process linked to `erx_ui_lvgl` that holds the read
+end, handed to it with `erx_pipe_srv:inherit/2`, and passes each read on
+as a port passes its data, so `erx_ui_lvgl` waits on its mailbox alone. The
 program's fonts are LVGL's, and it is built with animations and blinking
 cursors off. Between records it blocks in `poll` on its standard input
 with the deadline `lv_timer_handler` returns, or with none when no LVGL

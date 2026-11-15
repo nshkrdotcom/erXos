@@ -65,7 +65,7 @@ killed(Paths, Buffer) ->
     {ok, Shell} = erx_ui_lvgl:apply(tree(), Shell),
     {present, Shell, _, _, _} = next_present(),
     erx_ui_lvgl:shown(Shell),
-    {_State, #{port := Port}} = sys:get_state(Shell),
+    {_State, #{program := {port, Port}}} = sys:get_state(Shell),
     {os_pid, Pid} = erlang:port_info(Port, os_pid),
     ok = sys:suspend(Shell),
     click(Shell),
@@ -80,10 +80,10 @@ start(#{program := Program, ruby := Ruby, launcher := Launcher}, Buffer) ->
                    open_port({spawn_executable, Ruby},
                              [binary, stream, use_stdio, exit_status, {args, [Launcher, Buffer, Program]}])
            end,
-    Present = fun(W, H, Rects) -> Test ! {present, self(), W, H, Rects}, ok end,
+    Present = fun(0, W, H, Rects) -> Test ! {present, self(), W, H, Rects}, ok end,
     {ok, Shell} = erx_ui_lvgl:start({window, test}, Test,
                                     #{width => ?WIDTH, height => ?HEIGHT, chan => ?X8R8G8B8,
-                                      open => Open, present => Present,
+                                      program => {port, Open}, present => Present,
                                       present_text => fun(_Type, _Value) -> error(no_presentations) end}),
     Shell.
 

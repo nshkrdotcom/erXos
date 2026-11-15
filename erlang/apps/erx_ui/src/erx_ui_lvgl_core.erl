@@ -33,9 +33,10 @@ rows have.
   still shown at the size it was judged at, clipped by the display as a
   present for a stale size is; the screen record invalidates the
   program's whole screen, so its next report covers the new size.
-* A report read while one is open, a record the reader refuses, and the
-  program's exit stop the program (erx_ui_lvgl ends the UI with
-  `{ui_down, Window, renderer_down}`).
+* A report read while one is open, a record the reader refuses, the
+  program's exit, the loss of its pipes, and a write the program leaves
+  without room past erx_ui_lvgl's deadline stop the program (erx_ui_lvgl
+  ends the UI with `{ui_down, Window, renderer_down}`).
 * An event the program reports is passed to the widget server as a hit,
   in any state.
 
@@ -50,7 +51,7 @@ bugs, raised as errors.
 """.
 
 -export([start/3, step/2, size/1, reads_window/1]).
--export_type([state/0, event/0, action/0, stop_reason/0, rect/0]).
+-export_type([state/0, event/0, action/0, stop_reason/0, exit_status/0, rect/0]).
 
 -type size() :: {Width :: 1..65535, Height :: 1..65535}.
 -type rect() :: {X :: 0..65535, Y :: 0..65535, Width :: 1..65535, Height :: 1..65535}.
@@ -70,8 +71,10 @@ What happens to the renderer. `apply` and `window` come from the widget
 server and the window, `resize` from the window, `damage`, `event` and
 `refused` from the generated reader of the program's output, `shown`
 from the display's answer to a present, `exit` from the program's
-end, and `lost` from the end of its pipes without an exit status, such
-as a write that found the program gone.
+end, its exit status as the port or the program's handler gives it,
+`lost` from the end of its pipes without an exit status, such as a write
+that found the program gone, and `stalled` from a write the program
+left without room until its deadline.
 """.
 -type event() :: {apply, [erx_ui_model:diff_op()], token()}
                | {window, {input, term()} | repaint}
@@ -80,8 +83,9 @@ as a write that found the program gone.
                | {event, erx_ui_model:node_id(), atom(), term()}
                | shown
                | {refused, term()}
-               | {exit, non_neg_integer()}
-               | {lost, term()}.
+               | {exit, exit_status()}
+               | {lost, term()}
+               | stalled.
 
 -doc """
 What erx_ui_lvgl does: write records to the program's standard input,
@@ -95,8 +99,11 @@ answer an apply by its token, or hand the widget server a hit as
                 | {hit, erx_ui_model:node_id(), atom(), term()}.
 
 -doc "Why the program is stopped, for the log; the UI ends as `renderer_down`.".
--type stop_reason() :: report_before_presented | {refused, term()} | {exit, non_neg_integer()}
-                     | {lost, term()}.
+-type stop_reason() :: report_before_presented | {refused, term()} | {exit, exit_status()}
+                     | {lost, term()} | stalled.
+
+-doc "A port's exit status on the host, or the program's end as its handler reports it on erXos.".
+-type exit_status() :: non_neg_integer() | {exited, 0..255} | {signaled, atom()}.
 
 -doc """
 The renderer of a window of `Width` by `Height` in channel `Chan`, and
@@ -150,7 +157,9 @@ step({refused, Reason}, _State) ->
 step({exit, Status}, _State) ->
     {stop, {exit, Status}};
 step({lost, Reason}, _State) ->
-    {stop, {lost, Reason}}.
+    {stop, {lost, Reason}};
+step(stalled, _State) ->
+    {stop, stalled}.
 
 open({idle, Size}) -> {open, Size, [], none}.
 
