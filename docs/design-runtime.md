@@ -423,7 +423,7 @@ of behaviour, however many lines it touches:
 | File | Edit |
 | --- | --- |
 | `beam/erl_process.c` | 1. `scheduler_wait` parks with `erx_park` instead of the thread event or the poll set; 2. `wake_scheduler` and the enqueue paths wake with `erx_executor_wake`; 3. the safe point in `erts_schedule` runs the adapter's plan (ready list, capacity, urgency); 4. the pick of the next process reads its job tag; 5. schedulers are created as executors, pinned to the run, and `+S` is derived from the grant |
-| `beam/erl_process.h`, `beam/erl_process.c` | 6. `Process` carries a job tag, taken from its parent at `erl_create_process`, which the BIF `erx_job:tag/0` reads for the calling process |
+| `beam/erl_process.h`, `beam/erl_process.c` | 6. `Process` carries a job tag, taken from its parent at `erl_create_process` or, under the BIF `erx_job:spawn/1`, made new; the BIFs `erx_job:tag/0`, which reads the calling process's tag, and `erx_job:mark/2`, which sets a tag's mark |
 | `beam/erl_lock_count.c` and the run-queue, process and carrier lock paths | 7. `defer` raised and lowered around the scheduler's and allocator's critical sections, under `ERX_GROUP_DEFER` |
 | `beam/external.c` | 8. encoding one of the domain's own pids or aliases for a connection, a control term's sender included, gives the peer `send` on it where it holds nothing yet, and past the table's bound writes nothing and counts the failure for `erx_dist:exports_refused/0`; 9. the distribution decoder takes a safe-mode flag, set in the system domain, which creates no atom and reports a refused atom apart from a malformed term |
 | `beam/dist.c` | 10. in the system domain, a message to a peer whose entry's queue, the frames of `async_dist` senders included, is past the manifest's `system_queue` is dropped and counted on the receiver instead of suspending the sender, and any other signal that does not fit ends the connection; 11. an entry counts toward `peer_held` each link and monitor a peer's process holds with a local one and each signal ERTS queues for the peer on behalf of no process, answers a new `LINK` or `MONITOR_P` past it with `system_limit`, and ends the connection when a signal does not fit; 12. `erts_net_message` drops and counts a message whose decoded size, as the funnel measured it, is past its target's `max_request`, the request limit a facet sets on itself |
@@ -874,13 +874,20 @@ ERTS's scheduler is the second level, kept whole except at these points:
   whose queued processes would otherwise wait for their executor's next
   turn on a CPU.
 * **Job tags.** Every process carries a job tag, which it takes from the
-  process that spawns it, at its creation, and never changes; a process
-  reads its own with `erx_job:tag/0`, a BIF, which is how
+  process that spawns it, at its creation, and never changes, except
+  that `erx_job:spawn(Fun)`, a BIF, starts its process under a new tag
+  and returns `{Pid, Tag}`: the runtime makes the tag from a 64-bit
+  counter of its own that never repeats, so only the new process and
+  the processes it spawns ever carry it. The shell starts each job this way
+  ([design-shell.md](design-shell.md#job-control)) and program mode each
+  run ([Native programs](#native-programs)). A process reads its own tag
+  with `erx_job:tag/0`, a BIF, which is how
   `erx_prog_handler:start/1` names its caller's job
   ([design-programs.md](design-programs.md#the-handler)), and no call
-  reads another process's; the
-  session's job table marks a tag stopped or ending
-  ([design-shell.md](design-shell.md#job-control)). The one place where a
+  reads another process's. `erx_job:mark(Tag, Mark)`, `Mark` being
+  `running`, `stopped` or `{ending, Reason}`, sets the tag's mark: the
+  session marks its jobs' tags, and program mode's run server its
+  runs'. The one place where a
   scheduler picks the next process to run reads the picked process's
   tag: a process of a stopped job goes onto its tag's set-aside list,
   linked through the process structure, instead of running, and a
@@ -3484,19 +3491,48 @@ running the command shell's release in a command domain that the system
 domain creates for the session and introduces to it
 ([design-programs.md](design-programs.md#what-a-program-can-start)).
 In program mode the runtime boots no system services and no shell of its
-own: it takes the first `erx_start` message that arrives from the handler
-its arguments name, over their connection, and ignores any other sender's;
-decodes it with the generated validator; builds the namespace, facets and
-standard streams the message names; and runs either `rc` with a script
-or one Erlang command with exactly those capabilities in its context,
-then halts with the status the command or `rc`'s `$status` gives. While
-it runs, it takes `{erx_job, Action}`, declared and validated beside
-`erx_start`, from the stream relay that `erx_start` names for its
-streams and from no other sender, and acts on the run's job tag as the
-session acts on a job of Erlang commands: `pause` marks the tag
-stopped, `resume` clears the mark, and `{signal, S}` with an ending
-signal ends the run with `S`'s name as its status
-([design-programs.md](design-programs.md#what-a-program-can-start)). The
+own. Its one permanent process, the **run server**, serves the command
+domain until the domain ends, which happens when the program's handler
+exits ([design-programs.md](design-programs.md#what-a-program-can-start));
+the runtime never halts by itself, and a crash of the run server halts it
+and so ends the domain. Every message the run server acts on comes from
+the session's domain, the domain of the handler its arguments name, so it
+takes the envelope `{erx_origin, D, Msg}` off only when `D` is that
+domain, and only for its own two shapes, which the program protocol's ABI
+file declares beside the startup message and the generated validator
+checks ([design-domains.md](design-domains.md#the-peer), D18); any other
+message reaches it as an unknown one and is dropped:
+
+* `{erx_start, 1, Start, Relay}`, which the stream relay `Relay` sends for
+  each Erlang command or `rc` script the program starts. `Start` is the
+  program's startup message
+  ([design-programs.md](design-programs.md#the-startup-message)) with its
+  streams relayed, and `Relay` must be a pid of `D` by `erx:owner/1`,
+  since the answers go to it. The server makes a new alias for the run,
+  spawns the run with `erx_job:spawn/1`, so under a new tag that neither
+  the server nor any other run carries ([Scheduling](#scheduling)),
+  monitors it, and answers `Relay` `{erx_run, Alias, Run}`, `Run` the
+  run's pid. The run builds the namespace, facets and standard streams
+  `Start` names and runs either `rc` with a script or one Erlang command
+  with exactly those capabilities in its context, and exits with its
+  status as its reason: the command's result or `rc`'s `$status`. A
+  `Start` the validator refuses, which only a bug in the session can
+  produce, is answered `{erx_run_refused, Reason}` and runs nothing.
+* `{erx_job, Action}`, taken only at a run's alias, so only from the one
+  process that alias was handed to, that run's relay, and only for that
+  run: `pause` marks the run's tag `stopped`, `resume` marks it
+  `running`, and `{signal, S}` with an ending signal marks it `{ending,
+  S}`, so the run exits with `S`'s name as its reason. At any other name
+  `erx_job` is an unknown message.
+
+The relay monitors `Run` and makes the reason of its `'DOWN'` the
+command's exit status, so a run that a crash of the run server cuts
+short gives the reason the domain's end gave its `'DOWN'`. When a run ends, the server marks its tag `{ending,
+run_ended}`, so no process the run spawned outlives it, and drops its
+alias, after which a late `erx_job` for it is an unknown message. Runs
+are independent: two `popen`s of one program give two runs at once, each
+under its own tag and alias, so a job action for one never reaches the
+other. The
 interpreter image keeps a command domain out of the JIT spaces, so a
 command domain makes no code, as no program does.
 

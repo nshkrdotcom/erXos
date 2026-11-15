@@ -201,13 +201,12 @@ what a terminal needs added:
   a line at a time under `$prompt(1)`, `% ` by default; a unit that only
   more lines can complete reads on under `$prompt(2)`, empty by default. A
   whole unit runs in an evaluator process of its own, so `Ctrl-C` ends it
-  and its Erlang commands, and the shell reads on, once the line's job is
-  over, with the variables it had before it and `$status` saying the line
-  was interrupted; `Ctrl-C`
+  and every Erlang process it started, and the shell reads on, once the
+  line's job is over, with the variables it had before it and `$status`
+  saying the line was interrupted; `Ctrl-C`
   while a line is typed drops the unit read so far. A foreground line is
-  a job, which is over when its last stage has ended, and a stage that
-  names a program ends only with its program
-  ([Job control](#job-control)). A unit that does not
+  a job, which is over when its evaluator and its programs have all
+  ended ([Job control](#job-control)). A unit that does not
   parse is reported, sets `$status` as in a script and is skipped; `exit`
   and the end of input, `Ctrl-D`, end the shell.
 * **One evaluator per stage.** A pipeline's stage, a command substitution
@@ -778,8 +777,9 @@ or hostile program delays none of its work:
   comes with process groups, in the second tier, and follows POSIX there.
 * **Interrupts.** With `ISIG`, `Ctrl-C` and `Ctrl-Z` reach the relay's
   line discipline as input. `Ctrl-C` asks the handler of every program of
-  the foreground job to send it `SIGINT`, ends the job's Erlang commands
-  with reason `interrupt`, and discards the output the relay holds at that
+  the foreground job to send it `SIGINT`, ends the job's Erlang processes
+  by marking its tag `{ending, interrupt}`, and discards the output the
+  relay holds at that
   moment, as a terminal flushes its output on an interrupt; `Ctrl-Z` stops
   the job.
 * **Modes across jobs.** The shell sets the tty back to cooked before it
@@ -793,7 +793,10 @@ program they started, which the command server records at each spawn
 processes are those that carry its **job tag**, a runtime attribute that
 every process takes from the process that spawns it, at its creation, and
 never changes, so a stage's helpers belong to its job however they are
-spawned; the group leader, which a process may change, stays only the
+spawned. The shell makes the tag when it starts the job's evaluator with
+`erx_job:spawn/1`, which starts a process under a tag no other process
+carries ([design-runtime.md](design-runtime.md#scheduling)); the group
+leader, which a process may change, stays only the
 route of its input and output. A program's handler is not among them:
 the command server spawns it, outside every job, and the job reaches
 the program through the server's row
@@ -805,19 +808,26 @@ so a process spawned at any moment is stopped or ended with its job, and
 no list of members is kept or raced
 ([design-runtime.md](design-runtime.md)).
 
-**When a job is over.** A job is over when its last stage has ended, as
-a UNIX shell waits for every process of a job's process group. A stage
-that names a program waits for its program's end, the `'DOWN'` of its
-handler, and ends with it, and the program's tree ends with the program
-([design-programs.md](design-programs.md#a-programs-end)), so no
-program of a job outlives it and the shell needs no count of the
-command server's rows. `Ctrl-C` ends the job's Erlang commands at once
-but no stage that names a program: that stage's program takes `SIGINT`
+**When a job is over.** A job is over when its evaluator has ended and
+so has every program of the job, as a UNIX shell waits for every
+process of a job's pipeline. The shell monitors the evaluator, and once
+that has ended it asks the command server `{await, Tag}`, which answers
+when no row of the job's tag remains
+([design-programs.md](design-programs.md#the-command-server)). So the
+wait for a job's programs is held outside its tag: an evaluator that
+waits for a program carries the tag and ends with it, but the program's
+row lasts until the program ends, kept by the command server, which
+belongs to no job, and the program's tree ends with the program
+([design-programs.md](design-programs.md#a-programs-end)). `Ctrl-C`
+therefore needs no exception: marking the tag ending ends every Erlang
+process of the job at once, the evaluators that wait for programs and
+any helpers they spawned among them, while each program takes `SIGINT`
 from its handler and ends or not as it chooses. Until the job is over
 it keeps its place: a foreground job keeps the terminal and the shell
 prints no prompt, so a program that catches `SIGINT`, as an editor
 does, goes on in the foreground as on UNIX, and `jobs` shows a
-background job running while any of its stages lives.
+background job running while its evaluator or any of its programs
+lives.
 
 **Ending a job** signals its programs through their handlers and ends its
 tag's processes. It also reaches members that wait in `receive`: it marks
@@ -1263,7 +1273,11 @@ remain independent of catalog generation.
   which `Ctrl-C` leaves running in the foreground with no prompt until
   it exits, after which the prompt returns, where a seeded shell that
   reads on when the evaluator ends prints the prompt while the program
-  still runs; `kill %1` of a
+  still runs; that program piped into an Erlang command whose helper,
+  spawned unlinked, appends a line to a file each 10 ms, where `Ctrl-C`
+  stops the file growing at once while the program runs on, and a seeded
+  `Ctrl-C` that ends only the stages' evaluators by exit signal lets it
+  grow; `kill %1` of a
   stopped job; a program that catches `SIGCONT` and sees it after `fg`;
   and a `SIGCONT` that another program of the POSIX session sends to a
   member of a stopped job, after which `jobs` shows the job running and

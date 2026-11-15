@@ -1231,7 +1231,8 @@ files](#shared-libraries-and-mappings-of-files)):
   its handler, and an Erlang command that a program runs in its command
   domain by the stream relay that carries the command's streams ([What a
   program can start](#what-a-program-can-start)); below, both are the
-  row's handler.
+  row's handler;
+* the job tags the shell's job table awaits, each with its awaiter.
 
 A row's process id, parent and job are fixed when it is made, and the
 program record keeps them as the reservation gave them. A program's
@@ -1269,6 +1270,7 @@ handler that asks keeps serving its program meanwhile (P3):
 | `{handler, Starter}`, `Starter` being `{program, Pid}` or `{process, Tag}` | a starter's handler, for a program's spawn or fork (step 5), and `start/1` in a session process | assigns the next process id; spawns the program's handler, not linked to the server, with the caller as the process whose start it waits for and the process id, parent, job and group above; makes the row with that handler; monitors it; answers `{ok, Handler, Pid}`, or `{error, eagain}` once 2^31 - 1 has been assigned |
 | `{reserve, Starter}`, `Starter` as above | a command's stream relay | assigns the next process id; makes the row with the caller as the handler and the parent, job and group above; monitors the caller; answers `{ok, Pid, Pgid}`, or `{error, eagain}` as above |
 | `programs()` | `read/2`, below | answers the rows |
+| `{await, Tag}` | the shell's job table, once a job's evaluator has ended ([design-shell.md](design-shell.md#job-control)) | answers `{programs_ended, Tag}` once no row carries `Tag`, at once when none does, and otherwise when the `'DOWN'` that removes the last such row arrives |
 | `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
 | `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag: a program's handler carries it out with the `job` cause ([Job control](#job-control)), and a command's stream relay as [What a program can start](#what-a-program-can-start) says |
 
@@ -1441,19 +1443,33 @@ the path into one of four images:
   ends and opens the program handed the command and copies bytes between
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
+  The relay starts its command as a run of the command domain's run
+  server: it sends `{erx_start, 1, Start, Relay}`, `Start` the startup
+  message the handler built for the command and `Relay` itself, and
+  takes the answer, `{erx_run, Alias, Run}`, the run's alias and pid,
+  which it monitors ([design-runtime.md](design-runtime.md#native-programs)).
   The relay is its command's row's handler, so the job's actions reach
-  it, and it carries them out on the command as the session carries
-  them out on a job of Erlang commands
-  ([design-shell.md](design-shell.md#job-control)): on `pause` it stops
-  copying and sends the command domain `{erx_job, pause}`, which marks
-  the command's job tag there stopped; on `resume` it sends `{erx_job,
-  resume}`, which clears the mark, and copies again; and `{signal, S}`
-  it takes as `pause` for `SIGSTOP` and `SIGTSTP` and as `resume` for
-  `SIGCONT`, sends as `{erx_job, {signal, S}}` for an ending signal,
-  `SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGKILL` or `SIGTERM`, which ends the
-  run with `S`'s name as its status, and ignores otherwise. The
-  command runtime takes these only from the relay its `erx_start` names
-  for its streams ([design-runtime.md](design-runtime.md#native-programs)).
+  it, and it carries them out on the run as the session carries them out
+  on a job of Erlang commands
+  ([design-shell.md](design-shell.md#job-control)), by sending
+  `{erx_job, Action}` to `Alias`, the one name at which the run server
+  takes it: on `pause` it stops copying and sends `{erx_job, pause}`,
+  which marks the run's job tag there stopped; on `resume` it sends
+  `{erx_job, resume}`, which marks it running, and copies again; and
+  `{signal, S}` it takes as `pause` for `SIGSTOP` and `SIGTSTP` and as
+  `resume` for `SIGCONT`, sends as `{erx_job, {signal, S}}` for an
+  ending signal, `SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGKILL` or `SIGTERM`,
+  which ends the run with `S`'s name as its status, and ignores
+  otherwise. An action that reaches the relay before the answer waits in
+  it until the answer comes. After an ending signal the relay copies, a
+  paused relay again, until the run's `'DOWN'`: whatever the command
+  domain sent before the run ended crosses the one connection ahead of
+  the `'DOWN'`, so what the command wrote before it ended reaches its
+  reader, as a killed program's writes stay in its pipe. At the
+  `'DOWN'` the relay closes the command's ends and opens and makes the
+  `'DOWN'`'s reason the command's exit status; a refusal,
+  `{erx_run_refused, Reason}`, gives status 127 instead, as a frame
+  outside the grammar does a program.
   The programs a command of that domain starts, as `rc -c 'a | b'` does, are
   sub-spaces of the session like any other, anchored under the program
   whose command domain it is, with pipes of their own between them.
@@ -3332,7 +3348,7 @@ test:
 | A shared mapping fails after its mapping open is made: the server's refusal, the mapping quota, a fill, the install or `erx_vm_map` | the mapper, the handler or `liberx` | the mapping open, until it closes | the mapper closes the mapping open on a failure of its own; `liberx` closes what arrived and the mapping open on a failure after the handler answered | `mmap` fails with its error; no open or quota remains |
 | `erx_exec` cannot load an executable: a plan `erx_elf_plan` refuses, a library that cannot be found or mapped | `erx_exec` | nothing of the executable | the program ends | status 127, the reason on its standard error |
 | A file object cannot be made: a file without `rx` for code, a read that fails or times out, a file that keeps changing, the session's `file_objects` or the budget charged | the filler or the command server | nothing: the object is freed when its last capability closes | the command server closes its capability | `EACCES`, `EIO`, `ETXTBSY` or `ENOMEM` from `posix_spawn`, `dlopen`, `mmap` or `exec` |
-| A command domain's Erlang command needs a facet the program did not hand it | the command, from its context | nothing | the command domain ends | the command fails with `no_facet`, its status the program's wait status |
+| A command domain's Erlang command needs a facet the program did not hand it | the command, from its context | nothing | the run ends; the command domain serves the program's other runs | the command fails with `no_facet`, its status the program's wait status |
 | `fork` cannot copy: the session's or the child's budget | the copier's `erx_space_copy`, which charges as it copies | nothing: the child is undone | the port driver | `fork` returns -1 with `ENOMEM` |
 | `exec` fails | before `{exec}` answers `ok`: `liberx`'s check, the handler's or the port driver's; after: the commit or the new image's start | before: the old image, running and whole; after: nothing of the old image | after: the program ends, as at any end | before: `exec` returns -1 with its `errno`; after: status 127 |
 | A program ends in any way | the image's exit or fault record, at the session's fault gate, which reaches its handler as the port's exit status | nothing of it; its children stopped (P9) | the handler and the port driver ([A program's end](#a-programs-end)) | its parent's `wait` returns the status of [A program's end](#a-programs-end) |
@@ -3609,6 +3625,19 @@ terminal cases.
   the file grow, and `Ctrl-C` of such a job, after which the command's
   run ends with status `sigint` and the program reads that status, where
   a seeded relay that drops `{signal, sigint}` leaves the file growing;
+  `Ctrl-C` of such a job while the program has stopped reading the
+  command's output, after which the program reads every byte whose write
+  returned in the command, a count the command appends to its file,
+  where a seeded relay that stops copying at the ending signal gives
+  fewer; a program that runs two Erlang commands at once with `popen`,
+  the first of which spawns a helper appending to a file each 10 ms and
+  returns status 3 while the second goes on writing, and then runs a
+  third, all in one command domain, after which the program reads status
+  3, the helper's file stops growing, the second command's output keeps
+  growing and the third runs, where a seeded run server that halts after
+  a run fails the third, one that does not mark an ended run's tag lets
+  the helper's file grow, and one that marks every run's tag stops the
+  second command;
   a `SIGCONT` from a second-tier
   program of the same POSIX session to a program of a job that `Ctrl-Z`
   stopped, which resumes that program alone, makes `jobs` show the job
