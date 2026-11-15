@@ -60,7 +60,22 @@ class ErxWmTest < Minitest::Test
     click_delivered: Mutant.new(file: 'erx_wm_rio.erl',
                                 text: '_Other -> {{windows, raised(Id, Windows)}, State#{pick := Id}}',
                                 broken: '_Other -> {{to, Id, Input}, State#{pick := Id}}',
-                                property: /click_reached_a_client/)
+                                property: /click_reached_a_client/),
+    # A chosen command is cancelled by Escape and by the right button before it takes effect.
+    escape_ignored: Mutant.new(file: 'erx_wm_rio.erl',
+                               text: "        {ok, Next} -> {drop, State\#{mode := Next}};\n" \
+                                     '        none -> {to_current(Input, Windows, State), State}',
+                               broken: '        _ -> {to_current(Input, Windows, State), State}',
+                               property: /escape_not_cancelled|mode_diverged,escape,/),
+    right_press_names: Mutant.new(file: 'erx_wm_rio.erl',
+                                  text: "        {?MENU_BUTTON, {ok, Next}} -> {drop, State\#{mode := Next}};\n",
+                                  broken: '',
+                                  property: /right_press_not_cancelled/),
+    # A move's or resize's release takes effect.
+    drag_dropped: Mutant.new(file: 'erx_wm_rio.erl',
+                             text: '{swept(Gesture, Id, From, To, Windows, Screen), State#{mode := idle}};',
+                             broken: '{drop, State#{mode := idle}};',
+                             property: /drag_not_taken/)
   }.freeze
 
   def test_policy_and_wctl_cases_pass_under_eunit
@@ -85,6 +100,12 @@ class ErxWmTest < Minitest::Test
     assert_mutant_fails(:topmost_fallback)
 
   def test_a_selecting_click_delivered_fails_the_overlapping_keyboard_run = assert_mutant_fails(:click_delivered)
+
+  def test_escape_that_does_not_cancel_a_command_fails_the_overlapping_run = assert_mutant_fails(:escape_ignored)
+
+  def test_a_right_press_that_names_a_window_fails_the_overlapping_run = assert_mutant_fails(:right_press_names)
+
+  def test_a_move_whose_release_does_nothing_fails_the_overlapping_run = assert_mutant_fails(:drag_dropped)
 
   private
 

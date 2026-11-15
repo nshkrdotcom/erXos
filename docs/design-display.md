@@ -1906,7 +1906,7 @@ client reads: `ctl`, `wctl`, `label`, the records of `mouse` and `kbd`
 and the directories' listings carry none.
 
 `erx_wm` is a pure policy module behind one behaviour, called only by
-`erx_winfs` and, for `input/4`, by its routing core `erx_input`:
+`erx_winfs` and, for `input/5`, by its routing core `erx_input`:
 
 ```erlang
 -callback init(Config :: map()) -> State.
@@ -1918,8 +1918,11 @@ and the directories' listings carry none.
           {[window()], State}.
 -callback decorate(Windows :: [window()], Screen :: rect(), State) ->
           [{window_id(), [{rect(), color()}]}].           % borders, or []
--callback input(input(), Windows :: [window()], Session :: binary() | none, State) ->
-          {{to, window_id(), input()} | {wm, term()} | {windows, [window()]} | drop, State}.
+-callback input(input(), Windows :: [window()], Screen :: rect(), Session :: binary() | none, State) ->
+          {{to, window_id(), input()} | {wm, term()} | {delete, window_id()}
+           | {windows, [window()]} | drop, State}.
+-callback menu(Windows :: [window()], State) ->
+          [{resize | move | delete | hide | {show, window_id()}, rect()}] | none.
 ```
 
 The table a policy sees and returns is in stacking order, topmost
@@ -1929,8 +1932,10 @@ set. `erx_winfs` calls `arrange/4` after every change it makes itself,
 a window's end or a change of the screen's size, so the table always
 holds the policy's answer. The policy's state, from the manifest's configuration, which names no session, is threaded
 by `erx_winfs` and by its routing core, `erx_input`, which alone calls
-`input/4`: the overlapping policy keeps, for example, the buttons last
-seen and the drag in progress. `input/4` is asked only about what
+`input/5`, passing it the screen the router holds: the overlapping
+policy keeps, for example, the drag in progress, and places its menu on
+that screen, so it keeps no copy of the screen of its own. `input/5` is
+asked only about what
 starts something: a key's down, and, while no button or touch is held,
 a pointer event, a touch's down and a wheel step. A key's repeats and
 up go where its down went, and every pointer event, touch and wheel
@@ -1939,6 +1944,14 @@ last one's up, goes where the gesture's first down went; a gesture the
 policy took for itself, such as its menu, is asked of the policy to its
 end ([The input router](#the-input-router)). `{windows, Table}` answers an
 event that rearranges the table, such as a click that raises a window.
+`{wm, Term}` takes the event, and the rest of its gesture when it
+begins one, for the policy and asks `erx_winfs` for nothing; `{delete, W}` takes the gesture too and asks
+`erx_winfs` to end window `W`, which it does as a removal of the
+window's directory does. `menu/2`, like `decorate/3`, is a function of
+the table and the policy's state: `erx_winfs` derives the menu from
+them after every message, as it derives the layout, and hands it to the
+menu's drawer when it differs from the one last handed, so the menu
+reaches its drawer through no answer of `input/5`.
 
 The **overlapping** policy, `erx_wm_rio`, keeps windows in a stacking
 order, places a new window where the user drags a rectangle or at a
@@ -1947,8 +1960,11 @@ window that takes the keyboard, sends pointer events to the window under
 the pointer and key events to the current window, and reserves the right
 button outside any window for its menu: resize, move, delete, hide, and
 the hidden windows by label. A command names its window by the next
-press; a delete is answered `{wm, {delete, W}}`, which `erx_winfs`
-performs by ending `W` as a removal of its directory does. The menu is the display's own and no
+press; a delete is answered `{delete, W}`. A chosen command is
+cancelled before it takes effect by the Escape key's down or a press of
+the right button: while it waits for the naming press, which a right
+press therefore never is, and, for a move or a resize, during the
+naming press's gesture, whose release then changes nothing. The menu is the display's own and no
 client's: `erx_wm_menu` draws it, each label through the line escape,
 into an image of the display domain's own memory, which `erx_screen`
 shows above every window as an overlay. It has no item that
@@ -1972,7 +1988,7 @@ no font reader (G9).
 events to and whose border it marks. The policy's state holds the
 user's **pick**, a `window_id()` or none, and the current window is
 derived from it at every call: the picked window while it is in the
-table and shown, and none otherwise. Only `input/4` sets the pick, and
+table and shown, and none otherwise. Only `input/5` sets the pick, and
 only on the user's own acts: a button's or touch's down on a shown
 window that is not the current one, which the policy takes for itself,
 as Plan 9's rio takes the click that selects a window, answering
@@ -2081,8 +2097,8 @@ tick with its own clock as it takes it, so the step reads no clock.
             | {screen, erx_wm:rect()}.                 % the screen, or its new rectangle
 -type view() :: #{windows := [erx_wm:window()], session := erx_wm:session(),
                   policy := module(), policy_state := term()}.
--type out() :: {to, window_id(), input()} | {wm, term()} | {windows, [erx_wm:window()]}
-             | {wake, At :: integer() | none}.
+-type out() :: {to, window_id(), input()} | {wm, term()} | {delete, window_id()}
+             | {windows, [erx_wm:window()]} | {wake, At :: integer() | none}.
 ```
 
 Its state, made by `new/1` from the manifest entry's layout, repeat
@@ -2136,15 +2152,15 @@ The step's rules, by input:
 * **A gesture** begins at the down of a button or touch while no source
   holds either, and ends at the event after which none is held. The
   policy routes its first event, and its answer fixes the destination:
-  `{to, W, _}` the window `W`, `{wm, _}` the policy, and `{windows, _}`
-  or `drop` nowhere, so a click the policy answers with a new table,
+  `{to, W, _}` the window `W`, `{wm, _}` and `{delete, _}` the policy,
+  and `{windows, _}` or `drop` nowhere, so a click the policy answers with a new table,
   such as one that raises a window, gives no window any of that
   gesture. Every later pointer event and wheel step of the gesture goes
   to that destination: to the window as `{to, W, Event}`, except that
   while `W` is hidden only an event that lets go a button or touch `W`
   saw pressed reaches it, carrying only the buttons `W` saw that are
   still held, so a hidden window never hears of a press made after it
-  was hidden; to the policy as a question of `input/4`, whose
+  was hidden; to the policy as a question of `input/5`, whose
   `{to, _, _}` answer is dropped and counted, so no window receives the
   rest of a gesture whose start it did not; or nowhere. Between
   gestures the policy routes each pointer event and wheel step.
@@ -2157,7 +2173,7 @@ The step's rules, by input:
   records with no `c`, and it never repeats. When
   the down makes the keys held, over every source, include every key of
   the reserved chord, the answer is `{wm, chord}`; otherwise the
-  policy's `input/4` routes it. Either way the step records where the
+  policy's `input/5` routes it. Either way the step records where the
   down went, `{to, W, _}` as the window `W` and anything else as none.
   A down that went to a window and types a rune becomes that window's
   repeating key, in place of the one before, at its time plus the delay;
@@ -5122,7 +5138,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
 | Only `erx_screen` writes the screen image, makes images over clients' pixel areas, and calls `erx_display:flush_request/3` and `erx_display:power_request/2` | the writes and the images: an xref check over the display release; the calls: `display-driver-callers` (tools/lib/erx/chokepoint_rules/display.rb), over the Erlang sources of `otp/` and `erlang/`: outside `erx_screen`, neither function is named as a call target, as a remote call, a fun, an apply, a module and function pair, a call through a module in a variable or a macro, an import from `erx_display` or a macro defined as it |
 | Calls run window to `erx_screen` to driver: `erx_screen` makes no call to a window, and the driver none to `erx_screen` or a window | the same xref check, over calls and `gen_server:call` targets |
 | Only the display driver's process calls `erx_device`'s functions on the display device | the same xref check; and `device-callers` admits the display drivers' application, `erx_fb`, among the driver applications, while `device-posters` admits `erx_virtio_gpu` alone of it to call `erx_device:post/4` |
-| Only `erx_winfs` and its routing core `erx_input` call `erx_wm`'s callbacks: `erx_input` alone calls `input/4` and `erx_keymap`, and `erx_winfs` alone the others | the same xref check |
+| Only `erx_winfs` and its routing core `erx_input` call `erx_wm`'s callbacks: `erx_input` alone calls `input/5` and `erx_keymap`, and `erx_winfs` alone the others | the same xref check |
 | The display release holds no draw decoder, picture or font reader, widget module or renderer, and starts no program | an xref check that the display release contains none of `erx_draw_core`, `erx_draw_codec`, `erx_draw_image`, `erx_font`, `erx_png`, `erx_inflate`, any module of the client applications `erx_win` and `erx_ui`, and calls no function that starts a port or a sub-space; a seeded dependency on each fails it |
 | Only `erx_winctl` reads a `ctl` line, and only `erx_wctl` a `wctl` line | a source check over the display release |
 | Only the generated `erx_draw_codec` decodes draw bytes, and only the generated reader decodes the native renderer's events and reports | the generated tree's determinism test, and a source check that no other module reads those bytes |

@@ -32,6 +32,7 @@
 -define(SEQUENCES, 400).
 -define(STEPS, 60).
 -define(APP, <<"app">>).
+-define(SCREEN, {0, 0, 1024, 768}).
 
 %% Properties
 
@@ -91,8 +92,8 @@ step({wctl, Id, Request}, World = #{policy := Policy, table := Table,
         {error, einval} ->
             World
     end;
-step({input, Input}, World = #{policy := Policy, table := Table, state := State}) ->
-    {Route, Next} = Policy:input(Input, Table, ?APP, State),
+step({input, Input}, World = #{policy := Policy, table := Table, screen := Screen, state := State}) ->
+    {Route, Next} = Policy:input(Input, Table, Screen, ?APP, State),
     routed(Input, Route, World#{state := Next}).
 
 %% Asks the policy to arrange a table erx_winfs changed itself.
@@ -274,10 +275,10 @@ single_next_oldest_takes_over_when_the_shown_ends_test() ->
     {Table, State} = made(erx_wm_single, #{}, [<<"other">>, ?APP, ?APP]),
     Ended = [W || W = #{id := Id} <- Table, Id =/= 2],
     ?assertEqual(3, erx_wm_single:shown(?APP, Ended)),
-    ?assertMatch({{to, 3, _}, _}, erx_wm_single:input(key(down, 30), Ended, ?APP, State)),
+    ?assertMatch({{to, 3, _}, _}, erx_wm_single:input(key(down, 30), Ended, ?SCREEN, ?APP, State)),
     Gone = [W || W = #{id := 1} <- Ended],
     ?assertEqual(none, erx_wm_single:shown(?APP, Gone)),
-    ?assertMatch({drop, _}, erx_wm_single:input(key(down, 30), Gone, ?APP, State)).
+    ?assertMatch({drop, _}, erx_wm_single:input(key(down, 30), Gone, ?SCREEN, ?APP, State)).
 
 single_refuses_every_wctl_request_test() ->
     {Table, State} = made(erx_wm_single, #{}, [?APP]),
@@ -286,8 +287,8 @@ single_refuses_every_wctl_request_test() ->
 
 single_without_chord_withholds_nothing_test() ->
     {Table, State} = made(erx_wm_single, #{}, [?APP]),
-    {{to, 1, _}, S1} = erx_wm_single:input(key(down, 1), Table, ?APP, State),
-    ?assertMatch({{to, 1, _}, _}, erx_wm_single:input(key(down, 2), Table, ?APP, S1)).
+    {{to, 1, _}, S1} = erx_wm_single:input(key(down, 1), Table, ?SCREEN, ?APP, State),
+    ?assertMatch({{to, 1, _}, _}, erx_wm_single:input(key(down, 2), Table, ?SCREEN, ?APP, S1)).
 
 bad_configuration_is_refused_test() ->
     ?assertError(badarg, erx_wm_single:init(not_a_map)),
@@ -303,9 +304,9 @@ single_follows_the_session_it_is_passed_test() ->
     {None, State} = erx_wm_single:arrange(Table, screen(), none, State),
     ?assertEqual([], erx_wm:shown(None)),
     ?assertEqual(none, erx_wm_single:shown(none, None)),
-    ?assertMatch({drop, _}, erx_wm_single:input(key(down, 30), None, none, State)),
+    ?assertMatch({drop, _}, erx_wm_single:input(key(down, 30), None, ?SCREEN, none, State)),
     {ForB, State} = erx_wm_single:arrange(Table, screen(), <<"b">>, State),
     ?assertMatch([#{id := 2}], erx_wm:shown(ForB)),
     {ForA, State} = erx_wm_single:arrange(ForB, screen(), <<"a">>, State),
     ?assertMatch([#{id := 1}], erx_wm:shown(ForA)),
-    ?assertMatch({{to, 1, _}, _}, erx_wm_single:input(key(down, 30), ForA, <<"a">>, State)).
+    ?assertMatch({{to, 1, _}, _}, erx_wm_single:input(key(down, 30), ForA, ?SCREEN, <<"a">>, State)).

@@ -13,7 +13,7 @@ are shown alike; the policy takes no session into account.
 
 **The current window** is derived, never stored: the state keeps the
 user's pick, and the current window is the picked window while it is in
-the table and shown, and none otherwise (current/2). Only input/4 sets
+the table and shown, and none otherwise (current/2). Only input/5 sets
 the pick, and only on the user's own acts: a press on a shown window
 that is not current, and a menu choice that shows, moves or resizes a
 window. place/6 and arrange/4 never touch it, so no client gains the
@@ -46,7 +46,7 @@ screen: `resize`, `move`, `delete`, `hide` and then each hidden window,
 topmost first, as `{show, Id}`. Releasing the button over `{show, Id}`
 shows, raises and picks that window. Releasing it over one of the four
 commands waits for the next press, which names the window it acts on:
-`hide` hides it, `delete` answers `{wm, {delete, Id}}`, which erx_winfs
+`hide` hides it, `delete` answers `{delete, Id}`, which erx_winfs
 performs by ending the window, and `move` and `resize` pick it and take
 the press's gesture, whose release raises the window, while it is still
 shown, and moves it by the pointer's travel or gives it the rectangle
@@ -55,18 +55,21 @@ menu opens and kept until it closes, so no client's request changes
 what lies under the release. A press that names no window, a release
 over no item, and a release where the menu was pressed do nothing.
 
-The state keeps the screen as place/6 and arrange/4 last passed it,
-which erx_winfs calls after every change of the screen, since input/4
-is not passed it and the menu is placed on it.
+**Cancel.** A chosen command is cancelled before it takes effect by the
+Escape key's down or a press of the right button: while it waits for
+the naming press, which a right press therefore never is, and, for
+`move` and `resize`, during the naming press's gesture, whose release
+then changes nothing. The pick a naming press made stays.
 """.
 
 -behaviour(erx_wm).
 
--export([init/1, place/6, arrange/4, decorate/3, input/4, current/2, menu/2]).
--export_type([state/0, item/0]).
+-export([init/1, place/6, arrange/4, decorate/3, input/5, current/2, menu/2]).
+-export_type([state/0]).
 
--doc "A menu item: one of the four commands, or a hidden window to show.".
--type item() :: command() | {show, erx_wm:window_id()}.
+-include("generated/erx_abi.hrl").
+
+-type item() :: erx_wm:menu_item().
 -type command() :: resize | move | delete | hide.
 -type point() :: {erx_wm:coord(), erx_wm:coord()}.
 
@@ -74,20 +77,20 @@ is not passed it and the menu is placed on it.
 What the policy is doing between input events: nothing; showing the
 menu opened at a point; waiting for the press that names the window a
 command acts on; holding the gesture that moves or resizes a window,
-from the point it was pressed at; or holding the rest of the gesture
-whose press named the window to delete, until its release.
+from the point it was pressed at; or holding, until its release, the
+rest of a gesture whose act is done or cancelled: the press that named
+the window to delete, or a move or resize cancelled.
 """.
 -type mode() :: idle
               | {menu, point(), [{item(), erx_wm:rect()}]}
               | {choose, command()}
               | {move | resize, erx_wm:window_id(), point()}
-              | deleting.
+              | spent.
 
 -doc "The policy's state, threaded by erx_winfs and erx_input.".
 -type state() :: #{pick := erx_wm:window_id() | none,
                    cascade := 0..9,
-                   mode := mode(),
-                   screen := erx_wm:rect() | none}.
+                   mode := mode()}.
 
 -define(MIN_DX, 100).
 %% rio's goodrect asks for the border, a pixel inside it on each side and a line of the
@@ -106,7 +109,7 @@ whose press named the window to delete, until its release.
 -doc "The policy's initial state; a configuration with any key raises `badarg`.".
 -spec init(map()) -> state().
 init(Config) when Config =:= #{} ->
-    #{pick => none, cascade => 0, mode => idle, screen => none};
+    #{pick => none, cascade => 0, mode => idle};
 init(Config) ->
     error(badarg, [Config]).
 
@@ -116,7 +119,7 @@ init(Config) ->
           {ok, [erx_wm:window()], state()} | {error, einval}.
 place(Request, Id, Windows, Screen, _Session, State) ->
     case {nonempty(Screen), erx_wm:fetch(Id, Windows)} of
-        {true, {ok, Window}} -> request(Request, Window, Windows, Screen, State#{screen := Screen});
+        {true, {ok, Window}} -> request(Request, Window, Windows, Screen, State);
         _ -> {error, einval}
     end.
 
@@ -124,7 +127,7 @@ place(Request, Id, Windows, Screen, _Session, State) ->
 -spec arrange([erx_wm:window()], erx_wm:rect(), erx_wm:session(), state()) ->
           {[erx_wm:window()], state()}.
 arrange(Windows, Screen, _Session, State) ->
-    {[W#{rect := fitted(Rect, Screen)} || W = #{rect := Rect} <- Windows], State#{screen := Screen}}.
+    {[W#{rect := fitted(Rect, Screen)} || W = #{rect := Rect} <- Windows], State}.
 
 -doc """
 Each shown window's border, one hairline inside its rectangle, in the
@@ -138,15 +141,25 @@ decorate(Windows, _Screen, State) ->
      || #{id := Id, rect := Rect} <- erx_wm:shown(Windows)].
 
 -doc "Routes one input event the router asks about; see the moduledoc.".
--spec input(erx_wm:input(), [erx_wm:window()], erx_wm:session(), state()) ->
+-spec input(erx_wm:input(), [erx_wm:window()], erx_wm:rect(), erx_wm:session(), state()) ->
           {erx_wm:route(), state()}.
-input(#{event := {pointer, X, Y, Buttons}} = Input, Windows, _Session, #{mode := Mode} = State) ->
-    pointer(Mode, {X, Y}, Buttons, Input, Windows, State);
-input(#{event := {key, _, _, _, _, _}} = Input, Windows, _Session, State) ->
+input(#{event := {pointer, X, Y, Buttons}} = Input, Windows, Screen, _Session, #{mode := Mode} = State) ->
+    case {Buttons band ?MENU_BUTTON, cancelled(Mode)} of
+        {?MENU_BUTTON, {ok, Next}} -> {drop, State#{mode := Next}};
+        _ -> pointer(Mode, {X, Y}, Buttons, Input, Windows, Screen, State)
+    end;
+input(#{event := {key, down, _, _, ?ERX_INPUT_RUNE_KESC, _}} = Input, Windows, _Screen, _Session,
+      #{mode := Mode} = State) ->
+    %% The Escape key by its unshifted rune, so a control chord that types ESC cancels nothing.
+    case cancelled(Mode) of
+        {ok, Next} -> {drop, State#{mode := Next}};
+        none -> {to_current(Input, Windows, State), State}
+    end;
+input(#{event := {key, _, _, _, _, _}} = Input, Windows, _Screen, _Session, State) ->
     {to_current(Input, Windows, State), State};
-input(#{event := {wheel, _}} = Input, Windows, _Session, State) ->
+input(#{event := {wheel, _}} = Input, Windows, _Screen, _Session, State) ->
     {to_current(Input, Windows, State), State};
-input(#{event := {touch, _, _, _, _}}, _Windows, _Session, State) ->
+input(#{event := {touch, _, _, _, _}}, _Windows, _Screen, _Session, State) ->
     %% The router makes a touch a pointer with button 1, so none is asked.
     {drop, State}.
 
@@ -269,32 +282,38 @@ color(_Id, _Current) -> erx_theme:color(line).
 %% that the router asks about with no gesture running; the events the router asks about
 %% with buttons held during a gesture are the policy's own gesture, the menu's or a
 %% move's or resize's, whose release is the event with no button held.
-pointer(idle, Point, 0, Input, Windows, State) ->
+pointer(idle, Point, 0, Input, Windows, _Screen, State) ->
     {to_under(Point, Input, Windows), State};
-pointer(idle, Point, Buttons, Input, Windows, State) ->
-    press(under(Point, Windows), Point, Buttons, Input, Windows, State);
-pointer({menu, Press, Items}, Point, 0, _Input, Windows, State) ->
+pointer(idle, Point, Buttons, Input, Windows, Screen, State) ->
+    press(under(Point, Windows), Point, Buttons, Input, Windows, Screen, State);
+pointer({menu, Press, Items}, Point, 0, _Input, Windows, _Screen, State) ->
     chosen(item(Press, Point, Items), Windows, State#{mode := idle});
-pointer({choose, _}, Point, 0, Input, Windows, State) ->
+pointer({choose, _}, Point, 0, Input, Windows, _Screen, State) ->
     %% Motion while the policy waits for the press that names a window.
     {to_under(Point, Input, Windows), State};
-pointer({choose, Command}, Point, _Buttons, _Input, Windows, State) ->
+pointer({choose, Command}, Point, _Buttons, _Input, Windows, _Screen, State) ->
     named(Command, under(Point, Windows), Point, Windows, State#{mode := idle});
-pointer({Gesture, Id, From}, To, 0, _Input, Windows, State) when Gesture =:= move; Gesture =:= resize ->
-    {swept(Gesture, Id, From, To, Windows, State), State#{mode := idle}};
-pointer(deleting, _Point, 0, _Input, _Windows, State) ->
+pointer({Gesture, Id, From}, To, 0, _Input, Windows, Screen, State) when Gesture =:= move; Gesture =:= resize ->
+    {swept(Gesture, Id, From, To, Windows, Screen), State#{mode := idle}};
+pointer(spent, _Point, 0, _Input, _Windows, _Screen, State) ->
     {drop, State#{mode := idle}};
-pointer(_HeldGesture, _Point, _Buttons, _Input, _Windows, State) ->
+pointer(_HeldGesture, _Point, _Buttons, _Input, _Windows, _Screen, State) ->
     {drop, State}.
+
+%% The mode a cancel leaves, Escape's down or a right press, when a chosen command has not
+%% taken effect: no command waits, and a held move or resize spends the rest of its
+%% gesture; none in every other mode.
+cancelled({choose, _}) -> {ok, idle};
+cancelled({Gesture, _Id, _From}) when Gesture =:= move; Gesture =:= resize -> {ok, spent};
+cancelled(_Mode) -> none.
 
 %% A press with no gesture of the policy's running: delivered on the current window, a
 %% pick of any other shown window, the menu outside every window.
-press(none, Point, Buttons, _Input, Windows, #{screen := Screen} = State)
-  when Buttons band ?MENU_BUTTON =/= 0 ->
+press(none, Point, Buttons, _Input, Windows, Screen, State) when Buttons band ?MENU_BUTTON =/= 0 ->
     {{wm, menu}, State#{mode := {menu, Point, laid_out(Point, Windows, Screen)}}};
-press(none, _Point, _Buttons, _Input, _Windows, State) ->
+press(none, _Point, _Buttons, _Input, _Windows, _Screen, State) ->
     {drop, State};
-press(Id, _Point, _Buttons, Input, Windows, State) ->
+press(Id, _Point, _Buttons, Input, Windows, _Screen, State) ->
     case current(Windows, State) of
         Id -> {{to, Id, Input}, State};
         _Other -> {{windows, raised(Id, Windows)}, State#{pick := Id}}
@@ -320,25 +339,25 @@ named(hide, Id, _Point, Windows, State) ->
     {ok, Window} = erx_wm:fetch(Id, Windows),
     {{windows, replace(Window#{state := hidden}, Windows)}, State};
 named(delete, Id, _Point, _Windows, State) ->
-    {{wm, {delete, Id}}, State#{mode := deleting}};
+    {{delete, Id}, State#{mode := spent}};
 named(Gesture, Id, Point, _Windows, State) when Gesture =:= move; Gesture =:= resize ->
     {{wm, Gesture}, State#{pick := Id, mode := {Gesture, Id, Point}}}.
 
 %% A move's or resize's release: the window raised, moved by the pointer's travel or
 %% given the rectangle swept, when it is still shown and the result is good.
-swept(Gesture, Id, From, To, Windows, State) ->
+swept(Gesture, Id, From, To, Windows, Screen) ->
     case erx_wm:fetch(Id, Windows) of
         {ok, #{state := shown} = Window} ->
-            {windows, raise(resized(Gesture, Window, From, To, State), Windows)};
+            {windows, raise(resized(Gesture, Window, From, To, Screen), Windows)};
         _ -> drop
     end.
 
-resized(move, #{rect := {X0, Y0, _, _}} = Window, {FX, FY}, {TX, TY}, #{screen := Screen}) ->
+resized(move, #{rect := {X0, Y0, _, _}} = Window, {FX, FY}, {TX, TY}, Screen) ->
     case moved(Window, {X0 + TX - FX, Y0 + TY - FY}, Screen) of
         {ok, Rect} -> Window#{rect := Rect};
         error -> Window
     end;
-resized(resize, Window, {FX, FY}, {TX, TY}, #{screen := Screen}) ->
+resized(resize, Window, {FX, FY}, {TX, TY}, Screen) ->
     Rect = {min(FX, TX), min(FY, TY), max(FX, TX) + 1, max(FY, TY) + 1},
     case good_rect(Rect, Screen) of
         true -> Window#{rect := Rect};

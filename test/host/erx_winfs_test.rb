@@ -20,8 +20,9 @@ class ErxWinfsTest < Minitest::Test
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
   GRAMMAR = 'build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl'
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
-               erx_wm_single erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
-            %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl]
+               erx_wm_single erx_wm_rio erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
+            %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl
+               build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl]
   FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
   MODULES = (['erlang/apps/erx_memdraw/src/erx_memdraw.erl', 'erlang/apps/erx_memdraw/src/erx_chan.erl', GRAMMAR] + DISPLAY + FILES +
              ['erlang/apps/erx/src/erx_facet.erl', 'erlang/apps/erx_fb/src/erx_fb_sup.erl', 'test/erlang/erx_winfs_tests.erl']).freeze
@@ -32,6 +33,13 @@ class ErxWinfsTest < Minitest::Test
     debug(_Message) -> ok.
   ERLANG
   DEADLINE_SECONDS = '300'
+  WINFS = 'erlang/apps/erx_display/src/erx_winfs.erl'
+  # The seeded fault: the layout handed to the screen only after a message that changed the
+  # table, so a pick that changes none leaves the border where it was.
+  PRESENT = '    Presented = present(Next),'
+  TABLE_ONLY = '    Presented = case Next#winfs.windows =:= State#winfs.windows of ' \
+               'true -> Next; false -> present(Next) end,'
+  CLICK_CASE = '{generator, erx_winfs_tests, the_overlapping_policy_s_click_moves_the_border_and_the_keyboard_together_test_}'
 
   def setup
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)
@@ -43,18 +51,43 @@ class ErxWinfsTest < Minitest::Test
   end
 
   def test_window_system_cases
-    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: @directory, compiler: COMPILER)
-    File.write(File.join(@directory, 'erx_log.erl'), LOG_STUB)
-    sources = MODULES.map { |path| File.join(ROOT, path) } + [File.join(@directory, 'erx_log.erl')]
-    text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
-                                   '-I', INCLUDE, '-o', @directory, *sources, stdin_data: '')
-    assert status.success?, text
-    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@directory))
-    text, status = Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, File.join(OTP, 'bin/erl'),
-                                   '-noshell', '-pa', @directory, '-eval',
-                                   'case eunit:test(erx_winfs_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.',
-                                   chdir: @directory, stdin_data: '')
+    text, status = eunit('erx_winfs_tests')
     assert status.success?, text
     assert_match(/All \d+ tests passed/, text)
+  end
+
+  # docs/design-display.md, "Verification and testing", the window system: an erx_winfs that
+  # hands over the layout only when the table changes fails the click case.
+  def test_a_layout_handed_over_only_on_a_table_change_fails_the_click_case
+    source = File.read(File.join(ROOT, WINFS))
+    raise "#{WINFS} no longer holds #{PRESENT.inspect}" unless source.include?(PRESENT)
+
+    text, status = eunit(CLICK_CASE, replaced: { WINFS => source.sub(PRESENT, TABLE_ONLY) })
+    refute status.success?, text
+    assert_match(/click_picks/, text)
+  end
+
+  private
+
+  # Compiles the modules, with each path of Replaced compiled from its text instead, and
+  # runs the EUnit Tests.
+  def eunit(tests, replaced: {})
+    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: @directory, compiler: COMPILER)
+    File.write(File.join(@directory, 'erx_log.erl'), LOG_STUB)
+    sources = MODULES.map do |path|
+      next File.join(ROOT, path) unless replaced.key?(path)
+
+      File.join(@directory, File.basename(path)).tap { |copy| File.write(copy, replaced.fetch(path)) }
+    end
+    sources << File.join(@directory, 'erx_log.erl')
+    text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
+                                   '-I', INCLUDE, '-I', File.join(ROOT, 'erlang/apps/erx_display/src'),
+                                   '-o', @directory, *sources, stdin_data: '')
+    assert status.success?, text
+    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@directory))
+    Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, File.join(OTP, 'bin/erl'),
+                    '-noshell', '-pa', @directory, '-eval',
+                    "case eunit:test(#{tests}, [verbose]) of ok -> halt(0); _ -> halt(1) end.",
+                    chdir: @directory, stdin_data: '')
   end
 end

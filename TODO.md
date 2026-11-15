@@ -1304,30 +1304,30 @@ it; git history is the record of completed work.
   license is unverified.
 * [Medium] `erlang/apps/erx_display/src/erx_wm_rio.erl`: the menu works but nothing draws it: `erx_wm_menu`
   and `erx_screen:overlay/2` are not built, so a right press on the background opens an invisible column of
-  items (`erx_wm_rio:menu/2` gives each item's rectangle for the drawer). Whether the drawer should be handed the
-  menu as `erx_winfs` hands the layout, derived from the policy's state after every message, rather than by the
-  `{wm, menu}` answer, is a question for [Windows and the window
-  system](docs/design-display.md#windows-and-the-window-system). The policy keeps the screen in its state, as
-  `place/6` and `arrange/4` last passed it, because `input/4` is not passed it and the menu is placed on it: a
-  third copy of the screen beside `erx_winfs`'s and `erx_input`'s, kept current only because `erx_winfs` arranges
-  after every change of the screen. Pass the screen to `input/4` from `erx_input`'s view instead and drop the copy.
-  A command chosen from the menu waits for the next press with no way to cancel it; the design should say what
-  cancels it. The command answer `{wm, {delete, Id}}` is one shape inside the open `{wm, term()}`; a route
-  `{delete, Id}` of its own in `erx_wm:route()` would let the behaviour state it.
-* [Medium] `test/erlang/erx_wm_rio_tests.erl`: the exhaustive run makes each menu choice and click one act, so no
-  client request, window end or key down happens while the policy holds a menu, a waiting command or a move;
-  split those acts into press, release and naming press and run the checks in every mode. Every call passes the
-  session `none`.
+  items, and `erx_winfs` does not yet derive `menu/2` after every message and hand it to the drawer as
+  [Windows and the window system](docs/design-display.md#windows-and-the-window-system) says. The menu's labels
+  are the `body` role's glyphs, whose generated module waits on plan items 8.11 and 8.12 (FreeType,
+  `erx-raster`, Inter and `Erx::Glyphs`).
 * [Low] `erlang/apps/erx_display/src/erx_wm_rio.erl` (security residual): a client learns where the pointer is
   while it crosses its window and can raise or move its window under it with `wctl`, so the user's next click
-  picks that window, as under rio.
-* [Medium] `test/host/display_domain_test.rb`, `test/erlang/erx_winfs_tests.erl`: the overlapping policy's tests
-  through the window system are not written: keys typed at a clicked window keep reaching it while a second
-  client makes, raises, hides and shows a window, with a seeded policy that picks each new window; and a click on
-  a topmost window that is not current moves the border and the next key together, with a seeded `erx_winfs` that
-  hands over the layout only when the table changes ([Verification and
-  testing](docs/design-display.md#verification-and-testing), the window system). The suite has no cell under
-  `rio`; the policy's own exhaustive run is in `test/erlang/erx_wm_rio_tests.erl`.
+  picks that window, as under rio. The same race steers a menu command's naming press, which acts on the window
+  under the press when it comes: a client that hides or moves its window, or opens a new one, just before the
+  press can turn the user's `delete` aimed at it onto another session's window beneath, which then ends.
+* [Low] `erlang/apps/erx_display/src/erx_wm_rio.erl`: open points of the menu. A move's or resize's naming press
+  picks without raising, and a cancel keeps the pick, so the keyboard may go to a covered window; Escape while
+  the menu is held goes to the current window and leaves the menu open, which the design does not state; the
+  menu's rectangles, fixed at its press, can lie off a screen re-attached smaller while it is held, against
+  `erx_wm`'s rule that every rectangle lies within the screen; and the four commands are spelled in
+  `erx_wm:menu_item()`, rio's `command()` and `?COMMANDS`.
+* [Low] `erlang/apps/erx_display/src/erx_input.erl`, `erx_winfs.erl`: `destination/1` ends in a catch-all, so a
+  new route that should give the policy its gesture would silently go nowhere; and the screen has two copies,
+  `erx_winfs`'s `screen_rect` and `erx_input`'s, with different checks: an attach of an empty rectangle is taken
+  by `erx_winfs` and refused by `erx_input`, leaving the policy's input on the old screen.
+* [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
+  keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
+  each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
+  system). The same sequence runs on the host in `test/erlang/erx_winfs_tests.erl`'s click case, and the
+  policy's own exhaustive run is in `test/erlang/erx_wm_rio_tests.erl`.
 * [Low] `otp/erts/emulator/nifs/erxos/erx_device_nif.c`: a move of a bound edge line can lose the one delivery taken under the old label just before the old sink was unregistered, while a level
   line fires again at the bind's acknowledgement. A driver of an edge line looks at its device after binding. The PL011's line is level.
 * [Medium] `erlang/apps/erx_blk/src/erx_blk_sd_host.erl` (`issued/2`), the request transfer: it expects command

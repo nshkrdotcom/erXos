@@ -76,8 +76,12 @@ serve(Test, Info, Mode) ->
     end,
     serve(Test, Info, Mode).
 
-%% The window system, then the screen over the driver model, as erx_fb_sup starts them.
+%% The window system under the single policy, then the screen over the driver model, as
+%% erx_fb_sup starts them.
 start(Mode) ->
+    start(Mode, {erx_wm_single, #{}}).
+
+start(Mode, Policy) ->
     _ = [kill(Pid) || Name <- [erx_screen, erx_winfs, ?DRIVER], Pid <- [whereis(Name)], is_pid(Pid)],
     ok = forget_flushes(),
     Test = self(),
@@ -85,7 +89,7 @@ start(Mode) ->
     {ok, Winfs} = erx_winfs:start_link(#{service => ?SERVICE, system => ?SYSTEM, exports => ?MODULE,
                                          minted => fun(Tag, Reply) -> Test ! {minted, Tag, Reply} end,
                                          area => fun area_of/1, clients => own, provide => false,
-                                         policy => {erx_wm_single, #{}}}),
+                                         policy => Policy}),
     {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
     true = unlink(Winfs),
     true = unlink(Screen),
@@ -241,6 +245,77 @@ shown_soon(Grant, Fid, Tries) ->
         <<"visible">> -> ok;
         _ -> timer:sleep(20), shown_soon(Grant, Fid, Tries - 1)
     end.
+
+%% The overlapping policy ------------------------------------------------------
+
+the_overlapping_policy_s_click_moves_the_border_and_the_keyboard_together_test_() ->
+    {timeout, 60, fun click_picks/0}.
+
+%% A click on the topmost window, which raises nothing and so changes no table, picks it:
+%% the layout handed to the screen marks its border in the theme's accent, and the next key
+%% reaches it. Keys keep reaching it while the other client makes, raises and hides
+%% windows, and none reaches that client's windows.
+click_picks() ->
+    World = start(answer, {erx_wm_rio, #{}}),
+    Session = mint(?SESSION, #{session => true, windows => 2}),
+    Other = mint(?OTHER, #{windows => 2}),
+    {ok, _} = mkdir(Session, <<"a">>),
+    {ok, _} = mkdir(Other, <<"b">>),
+    Corner = corner(Other, open(Other, 2, <<"b">>, <<"wctl">>, ?O_RDONLY)),
+    ok = drain_flushes(),
+    ?assertEqual(rgb(erx_theme:color(line)), pixel(World, Corner)),
+    Kbd = open(Other, 3, <<"b">>, <<"kbd">>, ?O_RDONLY),
+    Typed = call_async(Other, {read, Kbd, 0, 64}),
+    %% No window is current until the user picks one.
+    ok = type_a(),
+    ok = unanswered(Typed),
+    %% The pointer starts at the screen's centre, inside b.
+    ok = erx_winfs:input(<<"mouse">>, {key, down, ?ERX_EVDEV_BTN_LEFT}),
+    ok = erx_winfs:input(<<"mouse">>, {key, up, ?ERX_EVDEV_BTN_LEFT}),
+    _ = flushed(),
+    ?assertEqual(rgb(erx_theme:color(accent)), pixel(World, Corner)),
+    ok = type_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, answered(Typed)),
+    {ok, _} = mkdir(Session, <<"c">>),
+    AKbd = call_async(Session, {read, open(Session, 2, <<"a">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    CKbd = call_async(Session, {read, open(Session, 3, <<"c">>, <<"kbd">>, ?O_RDONLY), 0, 64}),
+    AWctl = open(Session, 4, <<"a">>, <<"wctl">>, ?O_RDWR),
+    ok = element(1, write(Session, AWctl, <<"top\n">>)),
+    ok = element(1, write(Session, AWctl, <<"hide\n">>)),
+    ok = element(1, write(Session, AWctl, <<"show\n">>)),
+    ok = type_a(),
+    ok = typed_soon(Other, Kbd, 10),
+    ok = unanswered(AKbd),
+    ok = unanswered(CKbd),
+    stop(World).
+
+%% KEY_A typed: its down, then its up.
+type_a() ->
+    ok = key_a(),
+    erx_winfs:input(<<"kbd">>, {key, up, 30}).
+
+%% Reads the window's kbd until a down of KEY_A arrives.
+typed_soon(_Grant, _Fid, 0) ->
+    error(never_typed);
+typed_soon(Grant, Fid, Tries) ->
+    case read(Grant, Fid) of
+        {ok, <<"ka", 0, _/binary>>} -> ok;
+        {ok, _Other} -> typed_soon(Grant, Fid, Tries - 1)
+    end.
+
+%% The top left corner of the window whose wctl Fid is: its first two numbers.
+corner(Grant, Fid) ->
+    {ok, Text} = read(Grant, Fid),
+    [X, Y | _] = string:lexemes(Text, " "),
+    {binary_to_integer(X), binary_to_integer(Y)}.
+
+%% The screen's pixel at {X, Y}, x8r8g8b8 stored little-endian, as 16#RRGGBB.
+pixel(#{image := Image}, {X, Y}) ->
+    {ok, <<B, G, R, _>>} = erx_memdraw:read(Image, {X, Y, X + 1, Y + 1}),
+    (R bsl 16) bor (G bsl 8) bor B.
+
+%% A theme colour, 16#RRGGBBAA, as 16#RRGGBB.
+rgb(Colour) -> Colour bsr 8.
 
 %% G3 ------------------------------------------------------------------------
 

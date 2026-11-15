@@ -425,6 +425,19 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   per write. Settled by input latency at the window during a 1 MiB copy
   in 4 KiB writes, on HVF; the fix on the table is a buffer kept as a
   list of chunks, joined at a read.
+* **[Low] display, the layout derived after every message in `erx_winfs`**
+  ([design-display.md](design-display.md#windows-and-the-window-system)):
+  `present/1` (`erlang/apps/erx_display/src/erx_winfs.erl`) asks the
+  policy's `decorate/3` and builds the layout of every shown window after
+  each message, an input record, a 9P request or a mint alike, and
+  compares it with the last one handed, so that a pick that changes no
+  table still moves the border; with W windows that is O(W) work and a
+  comparison per message, on the process that routes input. Settled by
+  the time of one `present/1` with 64 windows under `erx_wm_rio`, and by
+  pointer-motion latency at a window while 64 windows are open, against
+  the same tree whose `present/1` returns at once, on HVF; the fix on the
+  table is to derive the layout only after a message that called the
+  policy or changed the table.
 * **[Medium] display, pixel areas reserved and unused**
   ([design-display.md](design-display.md#the-pixel-area)): an area is
   charged whole when its connection is made. Settled by the bytes

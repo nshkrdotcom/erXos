@@ -47,8 +47,8 @@ routed, so each source has at most one record waiting here. Each record,
 a source's end and a timer's tick is stamped with this process's
 monotonic clock in milliseconds and stepped by the router's core,
 erx_input, which alone asks the policy about input; this process
-performs its answers: an event cast to a window process, a new table
-committed, the one repeat timer replaced. It monitors each source from
+performs its answers: an event cast to a window process, a window
+ended, a new table committed, the one repeat timer replaced. It monitors each source from
 its first record, so a source's end releases what it held, and tells the
 screen of each record first, for its idle clock.
 
@@ -505,7 +505,7 @@ perform({to, Id, Event}, #winfs{windows = Windows} = State) ->
     State;
 perform({windows, Table}, State) ->
     commit(Table, State);
-perform({wm, {delete, Id}}, State) ->
+perform({delete, Id}, State) ->
     arrange(end_window(Id, State));
 perform({wm, _Term}, State) ->
     State;
