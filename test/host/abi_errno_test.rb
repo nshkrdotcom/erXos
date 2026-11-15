@@ -18,15 +18,11 @@ require_relative '../fixtures/generated_tree'
 class AbiErrnoTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   ERRNO_DEFINE = /^#define\s+(E[A-Z0-9]+)\s+(\d+|E[A-Z0-9]+)\b/
-  # FreeBSD's names the table leaves out, as nothing in erXos names them, and
-  # ELAST, the largest number, which is no error.
-  LEFT_OUT = %w[EPROCLIM EBADRPC ERPCMISMATCH EPROGUNAVAIL EPROGMISMATCH EPROCUNAVAIL EFTYPE EAUTH ENEEDAUTH
-                ENOATTR EDOOFUS ENOTCAPABLE ECAPMODE ELAST].freeze
   DEADLINE = '60'
   LIMIT = ['gtimeout', '-k', '10', DEADLINE].freeze
 
   def test_errno_names_and_numbers_match_freebsd
-    assert_equal freebsd.except(*LEFT_OUT), table(ROOT)
+    assert_equal freebsd, table(ROOT)
   end
 
   # Seeded fault: a table that swaps two numbers is well formed, so only the
@@ -35,7 +31,7 @@ class AbiErrnoTest < Minitest::Test
     swap = ->(text) { text.sub(/^errno eisdir 21$/, 'errno eisdir 22').sub(/^errno einval 22$/, 'errno einval 21') }
     seeded = seeded_root(swap) { |root| table(root) }
     assert_equal [22, 21], seeded.values_at('EISDIR', 'EINVAL')
-    refute_equal freebsd.except(*LEFT_OUT), seeded
+    refute_equal freebsd, seeded
   end
 
   # musl's <errno.h>, compiled through the include directories erXos's musl
@@ -77,10 +73,11 @@ class AbiErrnoTest < Minitest::Test
 
   private
 
-  # FreeBSD's errno names, each alias resolved to its number.
+  # FreeBSD's errno names, each alias resolved to its number, but ELAST, which
+  # names the largest errno number rather than an error.
   def freebsd
     _, path = Erx::Dependencies.new(root: ROOT, runner: nil).archive_for('freebsd-errno')
-    resolved(File.read(path).scan(ERRNO_DEFINE).to_h)
+    resolved(File.read(path).scan(ERRNO_DEFINE).to_h).except('ELAST')
   end
 
   # musl's <errno.h> as erXos's musl compiles it, preprocessed with the

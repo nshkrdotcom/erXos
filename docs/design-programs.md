@@ -3290,7 +3290,7 @@ define it.
   fails with `ENOSYS`, since a parent does not learn its children's
   usage. `nice` and `setpriority` fail with `EPERM`: a program's share of
   CPU is its session's to set ([Job control](#job-control)).
-* **Errors and absent calls.** One table in `abi/erx_abi.txt` lists every
+* **Errors and absent calls.** One table in `abi/errno.txt` lists every
   `errno` name musl's `errno.h` defines, `ETOOMANYREFS` and `ENOBUFS`
   among them, and declares directed mappings for every kernel status and
   every error atom of the file and program protocols. A mapping names its

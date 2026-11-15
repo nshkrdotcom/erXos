@@ -1886,6 +1886,11 @@ it; git history is the record of completed work.
   and the configure stamp does not cover OpenSSL's options or headers, so a change to `Libcrypto::OPTIONS`, `openssl/include` or
   `erl_nif.h` leaves them compiled against the old headers. Fold a digest of the OpenSSL prefix into the stamp, as
   `NativeJitRuntime#sdk_root` does for libc++, and give the prefix's header copy `--delete`.
+* [Medium] musl, strerror (`musl/src/errno/__strerror.h`, `test/host/abi_errno_test.rb`): the 17 texts taken
+  from FreeBSD's `lib/libc/gen/errlst.c` are a hand-kept copy that no test compares, while the signal table's
+  descriptions are checked against a pinned `siglist.c`. Pin `errlst.c` in deps.lock (`freebsd-errlst`), name it
+  in design.md's dependency row beside `sys/sys/errno.h`, and compare each FreeBSD-sourced text with it, or give
+  `errno` rows a description column and generate them.
 * [Low] LVGL, rebuild (`tools/lib/erx/lvgl.rb`, `make_library`): `display/lvgl/Makefile`'s `-MMD` leaves out musl's
   headers, which `library_flags` names with `-isystem`, and `library_directory` is keyed on the flags alone, so a changed
   errno, signal or other musl header leaves `liblvgl.a`'s objects compiled against the old one. Key the objects on
@@ -7312,13 +7317,12 @@ document's "residual risks accepted" paragraph.
   ones on every architecture erXos targets). The frame grammar's
   rows of `abi/protocols/9p.txt` carry 9P2000.L's wire numbers, which are Linux's and differ from the errno
   table's FreeBSD numbers; check that each row names an errno of the table, keeping its own wire number.
-  `enodata` (wire 61) names no errno of the table (the `enoattr` item below). The frame grammar's
+  `enodata` (wire 61), which `erx_littlefs_nif.c` answers for a missing attribute and design-files.md lists, is
+  9P2000.L's name for FreeBSD's `enoattr` (87) and names no errno of the table: the check makes that row name
+  `enoattr`, keeping wire 61, and the littlefs NIF answer it, and design-files.md's "Errors" list changes with
+  them; OTP's `file:posix()` holds neither atom, so that list's claim that each atom is one of `file:posix()`
+  changes too. The frame grammar's
   `errno` kind joins with the first reply that carries an error name (P2a).
-* [Medium] ABI, `abi/errno.txt`, `test/host/abi_errno_test.rb`: the table leaves out FreeBSD names "nothing in
-  erXos names" by hand (`LEFT_OUT` repeats the list), yet keeps `eusers` and `eremote`, which nothing names, and
-  leaves out `enoattr`, whose concept `erx_littlefs_nif.c` and design-files.md name as `enodata`. Take FreeBSD's
-  whole table but `ELAST`, so `LEFT_OUT` goes, `enoattr` 87 exists, the littlefs NIF answers `enoattr` and the 9P
-  codec maps wire 61 to it, and strerror gains FreeBSD's text for the added names.
 * [Low] origin check, `tools/lib/erx/origin.rb`: a `removed` entry may name a license or notice file
   (`COPYRIGHT`, `LICENSE*`, `NOTICE*`) or one that rows cite as evidence, which the no-deletion rule protected;
   refuse such a removal.

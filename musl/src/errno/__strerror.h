@@ -1,4 +1,4 @@
-/* Modified by erXos: no entry for an errno abi/errno.txt leaves out, and FreeBSD's text for four it adds. */
+/* Modified by erXos: no entry for an errno abi/errno.txt leaves out, and FreeBSD's text for each errno musl did not describe. */
 /* The first entry is a catch-all for codes not enumerated here.
  * This file is included multiple times to declare and define a structure
  * with these messages, and then to define a lookup table translating
@@ -96,8 +96,22 @@ E(ESTALE,       "Stale file handle")
 E(EDQUOT,       "Quota exceeded")
 E(EMULTIHOP,    "Multihop attempted")
 
-/* Added by erXos: FreeBSD's text for the errnos of abi/errno.txt that musl did not describe. */
+/* Added by erXos: FreeBSD's text (lib/libc/gen/errlst.c at the commit of deps.lock's freebsd-errno pin)
+   for the errnos of abi/errno.txt that musl did not describe. */
 E(ETOOMANYREFS, "Too many references: can't splice")
 E(EUSERS,       "Too many users")
 E(EREMOTE,      "Too many levels of remote in path")
 E(EINTEGRITY,   "Integrity check failed")
+E(EPROCLIM,     "Too many processes")
+E(EBADRPC,      "RPC struct is bad")
+E(ERPCMISMATCH, "RPC version wrong")
+E(EPROGUNAVAIL, "RPC prog. not avail")
+E(EPROGMISMATCH, "Program version wrong")
+E(EPROCUNAVAIL, "Bad procedure for program")
+E(EFTYPE,       "Inappropriate file type or format")
+E(EAUTH,        "Authentication error")
+E(ENEEDAUTH,    "Need authenticator")
+E(ENOATTR,      "Attribute not found")
+E(EDOOFUS,      "Programming error")
+E(ENOTCAPABLE,  "Capabilities insufficient")
+E(ECAPMODE,     "Not permitted in capability mode")

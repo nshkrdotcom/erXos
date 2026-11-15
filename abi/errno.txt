@@ -4,9 +4,10 @@
 # every name erXos's musl defines in <errno.h>, with FreeBSD 15.1's number
 # (sys/sys/errno.h). The generator writes musl's bits/errno.h from it, so
 # musl's errno values, and the strerror table indexed by them, are FreeBSD's.
-# test/host/abi_errno_test.rb compares the table with that header at
-# deps.lock's freebsd-errno pin. A name FreeBSD defines and nothing in erXos
-# names is left out, and so is a name only Linux defines.
+# The table holds every name that header defines but ELAST, which names
+# the largest errno number rather than an error;
+# test/host/abi_errno_test.rb compares it with the header at deps.lock's
+# freebsd-errno pin.
 #
 #   errno NAME NUMBER [alias NAME]
 #
@@ -80,21 +81,34 @@ errno enametoolong 63
 errno ehostdown 64
 errno ehostunreach 65
 errno enotempty 66
+errno eproclim 67
 errno eusers 68
 errno edquot 69
 errno estale 70
 errno eremote 71
+errno ebadrpc 72
+errno erpcmismatch 73
+errno eprogunavail 74
+errno eprogmismatch 75
+errno eprocunavail 76
 errno enolck 77
 errno enosys 78
+errno eftype 79
+errno eauth 80
+errno eneedauth 81
 errno eidrm 82
 errno enomsg 83
 errno eoverflow 84
 errno ecanceled 85
 errno eilseq 86
+errno enoattr 87
+errno edoofus 88
 errno ebadmsg 89
 errno emultihop 90
 errno enolink 91
 errno eproto 92
+errno enotcapable 93
+errno ecapmode 94
 errno enotrecoverable 95
 errno eownerdead 96
 errno eintegrity 97

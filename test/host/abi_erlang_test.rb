@@ -155,12 +155,12 @@ class AbiErlangTest < Minitest::Test
   def test_generated_errno_maps_names_and_numbers
     @runner.run([File.join(@oracle, 'erlc'), '-Werror', '-o', @directory,
                  File.join(@directory, 'erx_abi_errno.erl')], name: 'erlc-errno', deadline: 60, env: @environment)
-    script = 'io:format("~w~n", [[erx_abi_errno:name(N) || N <- [0, 1, 35, 67, 45, 59, 97, 98]]]), ' \
+    script = 'io:format("~w~n", [[erx_abi_errno:name(N) || N <- [0, 1, 35, 87, 45, 59, 97, 98]]]), ' \
              'io:format("~w~n", [[erx_abi_errno:number(A) || A <- [einval, ewouldblock, eopnotsupp, enotsup, ' \
              'sigint, eio2]]]), halt().'
     record = @runner.run([File.join(@oracle, 'erl'), '+S', '1:1', '+SDcpu', '1', '+SDio', '1', '-noshell',
                           '-noinput', '-pa', @directory, '-eval', script], name: 'errno', deadline: 60, env: @environment)
-    expected = "[unknown,eperm,eagain,unknown,enotsup,etoomanyrefs,eintegrity,unknown]\n" \
+    expected = "[unknown,eperm,eagain,enoattr,enotsup,etoomanyrefs,eintegrity,unknown]\n" \
                "[22,unknown,unknown,45,unknown,unknown]\n"
     assert_equal expected, File.binread(record.fetch('log'))
   end
