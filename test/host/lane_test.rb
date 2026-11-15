@@ -42,6 +42,7 @@ class LaneTest < Minitest::Test
     'the copy ignores the wrap' => ['erx_shm_copy(lane_data(reader), reader->size,',
                                     'erx_shm_copy(lane_data(reader), reader->size * 2,'],
     'wake already crossed' => ['lane_grain_down(reader->pos) + 1);', 'lane_grain_down(reader->pos));'],
+    'a fresh reader does not wait' => ['erx_lane_rpage_wake_store(lane_rpage(reader), 1);', '(void)0;'],
     'the copy ignores the buffer' => ['n = lane_min(lane_min(avail, reader->body_left), max);',
                                       'n = lane_min(lane_min(avail, reader->body_left), max + 64);'],
     'an unaligned wpos accepted' => ['if ((wpos & (LANE_GRAIN - 1)) != 0)', 'if (0)'],
@@ -107,7 +108,7 @@ class LaneTest < Minitest::Test
   end
 
   def test_positions_and_lengths_at_their_limits
-    assert_equal({ 'cases' => 46 }, counters(run_mode(driver, 'limits').fetch('limits')))
+    assert_equal({ 'cases' => 48 }, counters(run_mode(driver, 'limits').fetch('limits')))
   end
 
   def test_seeded_failures_are_caught

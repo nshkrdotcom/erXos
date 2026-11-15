@@ -227,6 +227,12 @@ erx_lane_reader_init(erx_lane_reader_t *reader, const void *peer_side,
 		.size = size,
 		.phase = ERX_LANE_BETWEEN
 	};
+	/*
+	 * The reader waits for the first record from the start, as an armed
+	 * take at position 0 would, so a producer that starts after this store
+	 * rings at its first record.
+	 */
+	erx_lane_rpage_wake_store(lane_rpage(reader), 1);
 	return (true);
 }
 

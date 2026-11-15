@@ -752,7 +752,11 @@ two fences close the window in which each side reads the other's old value:
 at least one of them sees the other's store, so no wait is lost. A party
 that moves its position without crossing the published value rings nothing,
 so a busy lane costs no kernel call at all; a party that publishes a
-position already crossed is never rung and is not waiting. Triggers that
+position already crossed is never rung and is not waiting. Setting up
+a reader publishes `wake = 1`, as an armed take at position 0 does, so a
+consumer set up before its producer runs is rung at the first record
+without having taken first; one whose producer may already have
+published takes once before it first waits. Triggers that
 come before a wait count once, and a trigger never waits
 ([design-kernel.md](design-kernel.md#messages-gates-and-irq-objects)), so a
 peer that rings needlessly costs the waiter at most one wake for each of its

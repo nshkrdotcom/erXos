@@ -117,12 +117,16 @@ struct erx_lane_reader {
 };
 
 /*
- * Prepares a reader for a lane that starts empty.  peer_side and own_side
+ * Prepares a reader for a lane that starts at position 0.  peer_side and own_side
  * are the page-aligned mappings of the producer's side and the consumer's
  * side; size is the data area's size, from the system domain's word and
  * never from a page the producer writes.  Fails, touching nothing, on a
  * NULL or misaligned side or a size that is not a power of two from
- * ERX_LANE_MIN to ERX_LANE_MAX.
+ * ERX_LANE_MIN to ERX_LANE_MAX.  It publishes wake = 1 in the reader page,
+ * as an armed take at position 0 does, so a reader set up before its
+ * producer runs is rung at the first record whether or not it has taken.
+ * A reader whose producer may already have published takes once before
+ * it first waits.
  */
 bool erx_lane_reader_init(erx_lane_reader_t *, const void *, void *,
     uint64_t);

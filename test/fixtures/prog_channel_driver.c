@@ -12,6 +12,8 @@
  * count the sleeps they start.  argv[1] names one case, which prints
  * "ok CASE" and exits 0, or prints "FAIL CASE: why" and exits 1:
  *   whole	one frame is written whole, as one frame record
+ *   first	the first frame rings the session, which has not read the
+ *		lane yet: a fresh lane's reader waits for its first record
  *   wait	a send without room for its whole frame writes nothing and
  *		sleeps; a room announcement that brought too little sends it back to
  *		sleep; the reader's freeing of the room wakes it and the frame
@@ -223,6 +225,21 @@ case_whole(void)
 	check_frame(buf, len, 1, 1, 100);
 	if (record_read(buf, sizeof(buf), sizeof(buf), &len))
 		fail("more than one record was written");
+}
+
+static void
+case_first(void)
+{
+	static unsigned char buf[ERX_PROGRAM_LANE];
+	uint32_t len;
+
+	if (send_one(1, 1, 100) != ERX_OK)
+		fail("the send failed");
+	if (atomic_load(&rings) != 1)
+		fail("the first frame did not ring the session");
+	if (!record_read(buf, sizeof(buf), sizeof(buf), &len))
+		fail("nothing was written");
+	check_frame(buf, len, 1, 1, 100);
 }
 
 static _Atomic int wait_status = 1;
@@ -742,7 +759,7 @@ main(int argc, char **argv)
 		const char	*name;
 		void		(*run)(void);
 	} cases[] = {
-		{ "whole", case_whole }, { "wait", case_wait }, { "waiters", case_waiters },
+		{ "whole", case_whole }, { "first", case_first }, { "wait", case_wait }, { "waiters", case_waiters },
 		{ "two", case_two }, { "large", case_large }, { "kill", case_kill },
 		{ "probe", case_probe }, { "local", case_local }, { "slots", case_slots },
 		{ "keep", case_keep },

@@ -483,8 +483,17 @@ explore_one(uint64_t base)
 	memset(&start, 0, sizeof(start));
 	place(&start.reader, SMALL, base);
 	start.wpos = start.rpos = start.mpos = base;
+	/*
+	 * From what init left: an awake consumer that takes first, and where
+	 * init's wake lies ahead, at a fresh lane, one parked from the start.
+	 */
+	erx_lane_rpage_wake_load(rpage(), &start.wake);
 	table_gen++;
 	push(&stack, &start);
+	if (start.wake > base) {
+		start.cons_parked = true;
+		push(&stack, &start);
+	}
 	while (stack.n > 0) {
 		const world_t cur = stack.items[--stack.n];
 		bool stuck;
@@ -692,7 +701,11 @@ limits(void)
 	uint64_t need, wake;
 	unsigned long cases = 0;
 
-	/* Init refuses every size off the range and every misaligned side. */
+	/*
+	 * Init refuses, touching nothing, every size off the range and every
+	 * misaligned side.
+	 */
+	erx_lane_rpage_wake_store(rpage(), 0);
 	for (size_t i = 0; i < sizeof(bad_sizes) / sizeof(bad_sizes[0]); i++)
 		CHECK(!erx_lane_reader_init(&reader, peer_mem, own_mem,
 		    bad_sizes[i]), "bad size accepted", bad_sizes[i], 0);
@@ -702,10 +715,17 @@ limits(void)
 	    "misaligned own side", 16, 0);
 	CHECK(!erx_lane_reader_init(&reader, NULL, own_mem, LANE_SIZE),
 	    "null side", 0, 0);
+	erx_lane_rpage_wake_load(rpage(), &wake);
+	CHECK(wake == 0, "a refused init wrote wake", wake, 0);
 	CHECK(erx_lane_reader_init(&reader, peer_mem, own_mem, ERX_LANE_MIN) &&
 	    erx_lane_reader_init(&reader, peer_mem, own_mem, ERX_LANE_MAX),
 	    "bounds of the size range refused", ERX_LANE_MIN, ERX_LANE_MAX);
-	cases += 11;
+	/* A fresh reader waits for the first record: init publishes wake = 1. */
+	CHECK(erx_lane_reader_init(&reader, peer_mem, own_mem, LANE_SIZE),
+	    "init refused", LANE_SIZE, 0);
+	erx_lane_rpage_wake_load(rpage(), &wake);
+	CHECK(wake == 1, "a fresh reader's wake", wake, 0);
+	cases += 13;
 
 	/* wpos off its bounds, each from a fresh lane at 0 and near the top. */
 	static const uint64_t bases[] = { 0, LANE_SIZE - 16, top - 2 * LANE_SIZE };
@@ -1059,7 +1079,8 @@ writer_scenario(const uint32_t *lens, unsigned n, uint64_t base,
 	erx_lane_put_status_t pst;
 	uint64_t rec_at = base, seen = 0;
 	unsigned put_rec = 0, take_rec = 0;
-	bool cons_parked = false, prod_parked = false, armed_next = false;
+	/* A fresh lane's reader waits for the first record (erx_lane_reader_init). */
+	bool cons_parked = base == 0, prod_parked = false, armed_next = false;
 	unsigned prod_steps = 1 + sched % 2, cons_steps = 1 + sched / 2;
 
 	place(&reader, LANE_SIZE, base);
