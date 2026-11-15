@@ -200,11 +200,6 @@ module Erx
                  'Counts = erx_net_grant:counts(G), {ok, Specs} = erx_device_record:find(net, virtio_net), ' \
                  '{maps:get(units, C, 0) > 0, maps:get(refused, Counts), maps:get(unknown, Counts), ' \
                  "[Co || \#{memory := _, coherent := Co} <- Specs]} end, 10000) end.\r"
-    # The one edit of the development manifest: the network row runs BeamAsm, as a
-    # service domain does by default (docs/design-runtime.md, "BeamAsm"), so the TCP
-    # line times the stack on the runtime a throughput figure assumes; the development
-    # manifest runs it on the interpreter for a faster boot.
-    BEAMASM_EDIT = /^(domain network\n(?:  .*\n)*?  runtime )@artifact\.emu$/
     # A tree the suite boots on: its cell's suffix, and whether the network device's
     # record is coherent on it. The coherent tree is QEMU's own; the other is QEMU's with
     # the device's transport not marked dma-coherent (Run#noncoherent_tree).
@@ -234,11 +229,12 @@ module Erx
       { name: 'nic-device-tree', pattern: /\A#{Regexp.escape(line)}\r*\n\z/n, seconds: SHELL_SECONDS }.freeze
     end
 
-    # The development manifest source with BEAMASM_EDIT, which must match exactly once.
+    # The development manifest source with its one edit: the network row runs BeamAsm, as
+    # a service domain does by default (docs/design-runtime.md, "BeamAsm"), so the TCP
+    # line times the stack on the runtime a throughput figure assumes; the development
+    # manifest runs it on the interpreter for a faster boot.
     def manifest(source)
-      raise Error, "the manifest does not have exactly one match of #{BEAMASM_EDIT.source}" unless source.scan(BEAMASM_EDIT).size == 1
-
-      source.sub(BEAMASM_EDIT) { "#{Regexp.last_match(1)}@artifact.jit" }
+      Manifest::Edit.repoint(source, record: 'domain network', field: 'runtime', from: '@artifact.emu', to: '@artifact.jit')
     end
 
     # What the shell shows after the exchange, whose result mac reads the guest's

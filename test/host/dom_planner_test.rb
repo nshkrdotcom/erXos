@@ -160,9 +160,15 @@ class DomPlannerTest < Minitest::Test
   def test_the_library_plans_the_net_device_suites_beamasm_network_row
     source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
     edited = Erx::NetDevice.manifest(source)
-    assert_equal '@artifact.jit', edited[/^domain network\n(?:  .*\n)*?  runtime (\S+)$/, 1]
-    assert_equal '@artifact.emu', edited[/^domain storage\n(?:  .*\n)*?  runtime (\S+)$/, 1]
-    assert_equal source.lines.size, edited.lines.size
+    before, after = [source, edited].map do |text|
+      read = Erx::Manifest::Frontend.read(text)
+      [read.machine, *read.records.values.flatten].to_h { |record| [record.header, record.to_h.except(:line)] }
+    end
+    assert_equal ['domain network'], before.keys.reject { |header| before[header] == after[header] }
+    assert_equal before.keys, after.keys
+    runtimes = Erx::Manifest::Frontend.read(edited).records.fetch('domain').to_h { |row| [row.name, row.reference('runtime')] }
+    assert_equal '@artifact.jit', runtimes.fetch('network')
+    assert_equal '@artifact.emu', runtimes.fetch('storage')
     context = Erx::Manifest::Context.new(**ManifestContextFixture.arguments(@codec)
                                                                 .merge(platform: Erx::ProductionImage::Machine.development(PLATFORM).record))
     admitted = Erx::Manifest.admit(source: edited, codec: @codec, context: context, planner: @planner)

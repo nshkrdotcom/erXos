@@ -68,6 +68,56 @@ class ManifestEditTest < Minitest::Test
     assert_raises(Erx::Error) { Edit.grow("#{SOURCE}machine\n  root_memory 1\n", { %w[machine root_memory] => 1 }) }
   end
 
+  # A reference is pointed elsewhere only from the one it was: the network row's runtime,
+  # and nothing else, changes; a row that no longer reads from is refused.
+  def test_repoint_moves_one_reference_from_the_one_it_was
+    jit = Edit.repoint(SOURCE, record: 'domain network', field: 'runtime', from: '@artifact.emu', to: '@artifact.jit')
+    changed = records(SOURCE).reject { |key, held| records(jit)[key] == held }.keys
+    assert_equal [%w[domain network]], changed
+    assert_equal [['@artifact.jit', false]], records(jit).dig(%w[domain network], 0, 'runtime')
+    [['domain network', 'runtime', '@artifact.emu'], ['domain network', 'absent', '@artifact.emu'],
+     ['domain absent', 'runtime', '@artifact.emu'], ['unit display', 'placement', '"display"']].each do |record, field, from|
+      assert_raises(Erx::Error, "#{record} #{field}") { Edit.repoint(jit, record: record, field: field, from: from, to: '@x.y') }
+    end
+  end
+
+  # Named records are taken out and nothing else: no budget moves. A record that is not
+  # there, one a record left in names, or the machine, which is never taken, is refused.
+  def test_without_takes_only_the_named_records
+    gone = Edit.without(SOURCE, ['facet network_ctl', 'service network_ctl'])
+    assert_equal [%w[facet network_ctl], %w[service network_ctl]], (records(SOURCE).keys - records(gone).keys).sort
+    assert_equal records(SOURCE).slice(*records(gone).keys), records(gone)
+    error = assert_raises(Erx::Error) { Edit.without(SOURCE, ['service network_ctl']) }
+    assert_match(/facet network_ctl names a record the edit takes out, @service.network_ctl/, error.message)
+    assert_raises(Erx::Error) { Edit.without(SOURCE, ['service absent']) }
+    assert_raises(Erx::Error) { Edit.without(SOURCE, ['machine']) }
+  end
+
+  # The session templates go with the facets granted to them, and nothing else does.
+  def test_without_sessions_takes_the_templates_and_their_facets
+    gone = Edit.without_sessions(SOURCE)
+    taken = records(SOURCE).keys - records(gone).keys
+    refute_empty taken
+    assert_equal %w[facet session], taken.map(&:first).uniq.sort
+    session_facets = Frontend.read(SOURCE).records.fetch('facet').select { |facet| facet.reference('grantee').start_with?('@session.') }
+    assert_equal session_facets.map { |facet| ['facet', facet.name] }.sort, taken.select { |kind, _| kind == 'facet' }.sort
+    assert_equal records(SOURCE).slice(*records(gone).keys), records(gone)
+    error = assert_raises(Erx::Error) { Edit.without_sessions("#{SOURCE}start system\n  display @session.system\n") }
+    assert_match(/start system names a record/, error.message)
+  end
+
+  # A part of a manifest, which is no manifest alone, is read record by record, each
+  # pointing at its own file and line.
+  def test_a_part_is_read_record_by_record
+    part = File.binread(File.join(ROOT, VIRT.manifest_path))
+    read = Frontend.records(part, path: VIRT.manifest_path)
+    machine = read.find { |record| record.kind == 'machine' }
+    assert_equal VIRT.manifest_path, machine.line.path
+    assert_equal "machine\n", part.lines[machine.line.number - 1]
+    assert_raises(Erx::Manifest::Invalid) { Frontend.read(part) }
+    assert_raises(Erx::Error) { Frontend.records("facet f\n  grantee system\n", path: 'part.txt') }
+  end
+
   # Taking the display domain out takes its records and those only it named, keeps the
   # share and runtime limits other records still name, and gives back its room: its
   # budgets from the principal and root_memory, its unit's DMA memory (4 and 3) from

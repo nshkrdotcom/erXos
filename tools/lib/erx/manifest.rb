@@ -6,18 +6,10 @@ require 'digest'
 require_relative 'abi_binary'
 require_relative 'device_kinds'
 require_relative 'generated_abi'
+require_relative 'manifest_frontend'
 
 module Erx
   module Manifest
-    class Invalid < Erx::Error
-      attr_reader :property, :field
-
-      def initialize(message, property:, field:)
-        @property = property
-        @field = field.freeze
-        super("manifest #{property} #{field}: #{message}")
-      end
-    end
     class Unsupported < Invalid; end
 
     module Snapshot
@@ -160,137 +152,6 @@ module Erx
       end
     end
 
-    Record = Struct.new(:kind, :name, :properties, :parameters, :line, keyword_init: true)
-    Source = Struct.new(:version, :machine, :records, keyword_init: true)
-
-    module Frontend
-      FIELDS = {
-        'machine' => %w[flags host console hostlink platform root_memory system_baseline system_share users_share system_principal max_domains max_connections system_lane system_queue peer_held system_reserve sealing system_runtime_limits native_limits system_args],
-        'share' => %w[quota_ns period_ns cpuset capacity_mcpu capacity_first slice_us grace_us base ceiling flags],
-        'principal' => %w[memory grant domains names default_limits ceiling_limits],
-        'runtime_limits' => %w[max_frame max_message_heap funnel_depth exports tmp overlay atoms foreign_atoms processes],
-        'limits' => %w[memory outer grant spaces lane connections crash flags runtime_limits peer_held peer_held_total],
-        'lane_class' => %w[lane],
-        'domain' => %w[principal limits kind flags runtime release restarts restart_period_s boot_timeout_s args env],
-        'session' => %w[limits runtime release args env],
-        'unit' => %w[placement holder],
-        'window' => %w[holder device role partition rights image],
-        'service' => %w[name server interface],
-        'facet' => %w[name grantee service operations max_request in_flight reductions period_ns max_heap_size queue],
-        'image' => %w[device input salt],
-        'partial_boot' => %w[image],
-        'start' => %w[enable display restarts restart_period_s],
-        'display' => %w[policy idle_dim_s idle_off_s]
-      }.freeze
-      OPTIONAL = { 'machine' => %w[system_args], 'domain' => %w[boot_timeout_s args env], 'session' => %w[args env], 'service' => %w[name],
-                   'facet' => %w[name queue], 'image' => %w[salt],
-                   'start' => %w[enable display restarts restart_period_s] }.freeze
-      DIRECTIVES = { 'introduce' => 2, 'liveness' => 1, 'shell_principal' => 1 }.freeze
-      IDENTIFIER = /\A[a-z0-9][a-z0-9_-]{0,62}\z/.freeze
-      module_function
-
-      # The manifest bytes declare, refused unless it is version.
-      def parse(bytes, version:) = read(bytes, version: version)
-
-      # The manifest bytes declare. With version, a header naming another is refused
-      # before any record is read; without, the header names it: what a harness edits
-      # (Manifest::Edit) before the edited text is admitted, which checks it (parse).
-      def read(bytes, version: nil)
-        declarations = ABI::Syntax.parse(bytes, path: 'config/manifest')
-        headers = declarations.select { |item| item.kind == 'manifest' }
-        header = headers.first if headers.size == 1 && headers.first.args.size == 1 && headers.first.members.empty?
-        declared = header && ABI::Syntax.integer(header.args.first, line: header.line)
-        unless declared && (version.nil? || declared == version)
-          raise Invalid.new('one supported manifest version is required', property: 'source', field: 'version')
-        end
-        records = Hash.new { |hash, key| hash[key] = [] }
-        declarations.each do |declaration|
-          next if declaration.kind == 'manifest'
-          kind = declaration.kind
-          if DIRECTIVES.key?(kind)
-            unless declaration.args.size == DIRECTIVES.fetch(kind) && declaration.members.empty?
-              declaration.fail!('invalid manifest directive')
-            end
-            records[kind] << Record.new(kind: kind, name: nil,
-                                        properties: { 'targets' => declaration.line.tokens.drop(1).freeze }.freeze,
-                                        parameters: [].freeze, line: declaration.line).freeze
-            next
-          end
-          fields = FIELDS[kind] || declaration.fail!('unknown manifest declaration')
-          if kind == 'machine'
-            declaration.fail!('machine has no source alias') unless declaration.args.empty?
-            name = nil
-          else
-            declaration.fail!('named declaration needs one identifier') unless declaration.args.size == 1 && declaration.args.first.match?(IDENTIFIER)
-            name = declaration.args.first
-          end
-          properties = {}
-          parameters = []
-          declaration.members.each do |line|
-            line.fail!('manifest properties have two-space indentation') unless line.indent == 2
-            key = line.words.first
-            if kind == 'facet' && key == 'parameter'
-              line.fail!('parameter needs a key and value') unless line.tokens.size == 3
-              parameters << line.tokens.drop(1).freeze
-              next
-            end
-            line.fail!('unknown or duplicate manifest property') unless fields.include?(key) && !properties.key?(key)
-            properties[key] = line.tokens.drop(1).freeze
-          end
-          required = fields - OPTIONAL.fetch(kind, [])
-          declaration.fail!('missing required manifest property') unless (required - properties.keys).empty?
-          records[kind] << Record.new(kind: kind, name: name, properties: properties.freeze,
-                                      parameters: parameters.freeze, line: declaration.line).freeze
-        end
-        raise Invalid.new('one machine declaration is required', property: 'source', field: 'machine') unless records['machine'].size == 1
-        records.each do |kind, list|
-          next if kind == 'machine' || DIRECTIVES.key?(kind)
-          unless list.map(&:name).uniq.size == list.size
-            raise Invalid.new('duplicate source alias', property: 'source', field: kind)
-          end
-        end
-        machine = records.delete('machine').first
-        Source.new(version: declared, machine: machine,
-                   records: records.to_h.transform_values { |list| list.freeze }.freeze).freeze
-      end
-
-      # The manifest text of source, which read reads back to the same records: the
-      # header, the machine, then every other record, kind by kind in the order read
-      # found them, each with its properties and then its facet parameters. Comments are
-      # not kept; the encoder sorts every table, so the order of records is not the
-      # manifest's either.
-      def render(source)
-        ["manifest #{source.version}\n", record_text(source.machine),
-         *source.records.values.flatten.map { |record| record_text(record) }].join
-      end
-
-      def record_text(record)
-        return "#{[record.kind, *record.properties.fetch('targets').map { |token| token_text(token) }].join(' ')}\n" if
-          DIRECTIVES.key?(record.kind)
-
-        members = [*record.properties.map { |key, tokens| [key, *tokens] },
-                   *record.parameters.map { |tokens| ['parameter', *tokens] }]
-        lines = [[record.kind, record.name].compact.join(' '),
-                 *members.map { |key, *tokens| "  #{[key, *tokens.map { |token| token_text(token) }].join(' ')}" }]
-        "#{lines.join("\n")}\n"
-      end
-
-      # A token as ABI::Syntax reads it back: a quoted one with its quote and backslash
-      # escaped, and any byte outside printable ASCII as \xNN.
-      def token_text(token)
-        return token.value unless token.quoted
-
-        escaped = token.value.each_byte.map do |byte|
-          case byte
-          when 34, 92 then "\\#{byte.chr}"
-          when 32..126 then byte.chr
-          else format('\\x%02x', byte)
-          end
-        end
-        "\"#{escaped.join}\""
-      end
-      private_class_method :record_text, :token_text
-    end
 
     # Structural fixtures exercise canonical bytes without claiming that an
     # initial-root startup or a machine configuration has been admitted.

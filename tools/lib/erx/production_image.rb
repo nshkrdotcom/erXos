@@ -247,20 +247,15 @@ module Erx
       end
     end
 
-    # source with no session template: each `session` record, to the next record, and
-    # each facet granted to a session template, which names a template no longer there.
-    # The production image keeps its template, so the console logs root in at boot and
-    # the UART's first prompt is root's session; a harness whose cells type at the system
-    # shell, and every test image (Machine#manifest), boots without one.
-    SESSION_RECORD = /^session [a-z0-9_]+\n(?:  .*\n)*/
-    def self.without_sessions(source)
-      source.gsub(SESSION_RECORD, '')
-            .gsub(/^facet [a-z0-9_]+\n(?:  .*\n)*/) { |record| record.match?(/^  grantee @session\./) ? '' : record }
-    end
+    # source with no session template (Manifest::Edit.without_sessions). The production
+    # image keeps its template, so the console logs root in at boot and the UART's first
+    # prompt is root's session; a harness whose cells type at the system shell, and every
+    # test image (Machine#manifest), boots without one.
+    def self.without_sessions(source) = Manifest::Edit.without_sessions(source)
 
     # source's session templates, each record whole and in order: what without_sessions
     # takes out, for a test image that boots with them (SystemDomain::Regrant).
-    def self.sessions(source) = source.scan(SESSION_RECORD).join
+    def self.sessions(source) = Manifest::Frontend.records_text(Manifest::Frontend.read(source).records.fetch('session', []))
 
     # The development manifest without its session template, for the harnesses that type
     # at the system shell.
@@ -753,11 +748,13 @@ module Erx
       # the system domain holds is not counted: its record depends on whether the firmware's
       # tree placed the framebuffer, which the manifest does not say (TODO.md).
       def self.record_words(root, source, hostlink:)
-        platform = Platform.load(root: root, name: source[/^\s*platform "([^"]+)"$/, 1].to_s)
+        manifest = Manifest::Frontend.read(source)
+        platform = Platform.load(root: root, name: manifest.machine.string('platform'))
         kinds = DeviceKinds.given(root).map { |kind| [kind.role, kind.compatible] }
-        hostlink_path = hostlink ? source[/^\s*hostlink "([^"]+)"$/, 1] : nil
-        placements = source.scan(/^unit \w+\n((?:  .*\n)*?)  holder (\S+)$/)
-                           .filter_map { |body, holder| body[/^  placement "([^"]+)"$/, 1] if holder == 'system' }
+        hostlink_path = hostlink ? manifest.machine.string('hostlink') : nil
+        placements = manifest.records.fetch('unit', []).filter_map do |unit|
+          unit.string('placement') if unit.reference('holder') == 'system'
+        end
         platform.record.fetch('units').select { |unit| placements.include?(unit.fetch('key')) }
                 .flat_map { |unit| unit.fetch('devices') }
                 .sum do |device|
@@ -877,12 +874,14 @@ module Erx
       # ENTROPY line the root prints first.
       def self.checkpoints(built, root:, watchdog:, cpus:, extra_arguments: 0, manifest_source:,
                            memory_mib:, hostlink: nil, test_image: false, entropy: :either)
-        source = manifest_source
-        memory, baseline = %w[root_memory system_baseline].map { |key| source[/^\s*#{key} (\d+)$/, 1] }
-        units = source.scan(/^unit /).size
-        records = record_words(root, source, hostlink: hostlink != QemuPlan::NO_HOSTLINK)
-        arguments = arguments_always(root) + records + source[/^\s*system_args "(.*)"$/, 1].split.size + extra_arguments
-        count = schedulers(source, cpus: cpus)
+        source = Manifest::Frontend.read(manifest_source)
+        memory, baseline = %w[root_memory system_baseline].map { |key| source.machine.decimal(key) }
+        units = source.records.fetch('unit', []).size
+        records = record_words(root, manifest_source, hostlink: hostlink != QemuPlan::NO_HOSTLINK)
+        # system_args is optional: an absent field gives the runtime no words, as the checker reads it.
+        system_words = source.machine.properties.key?('system_args') ? source.machine.string('system_args').split.size : 0
+        arguments = arguments_always(root) + records + system_words + extra_arguments
+        count = schedulers(manifest_source, cpus: cpus)
         raise Error, 'a production boot refuses a test image' if built.test_code && !test_image
         raise Error, 'a test boot takes a test image' if test_image && !built.test_code
 
@@ -902,7 +901,7 @@ module Erx
 
       # Schedulers are one per CPU of the system's share on this machine.
       def self.schedulers(manifest_source, cpus:)
-        share = manifest_source[/^share system\n(?:  .*\n)*?  cpuset (\d+)$/, 1].to_i
+        share = Manifest::Edit.value(manifest_source, record: 'share system', field: 'cpuset')
         (share & ((1 << cpus) - 1)).to_s(2).count('1')
       end
 
@@ -1495,43 +1494,31 @@ module Erx
       # narrow cells, which boot without a network device, do not use. The manifest check
       # and the library's planner judge the result whole.
       def self.narrow_manifest(root, platform:)
-        source = NARROW_DROPPED.reduce(ProductionImage.sessionless_manifest(root, platform: platform)) do |text, row|
-          raise Error, "the narrow manifest finds no #{row.source[1, 30]} row" unless text.scan(row).size == 1
-
-          text.sub(row, '')
-        end
-        source.gsub(/^share [a-z0-9_-]+\n(?:  .*\n)*/) { |record| narrow_share(record) }
+        source = Manifest::Edit.without(ProductionImage.sessionless_manifest(root, platform: platform), NARROW_DROPPED)
+        shares = Manifest::Frontend.read(source).records.fetch('share', [])
+        Manifest::Edit.set(source, shares.map { |share| narrow_share(share) }.reduce({}, :merge))
       end
 
       # The network domain's rows, its net unit and its services' facets, which the narrow
       # manifest leaves out; the sessionless source has no session facet of net.
-      NARROW_DROPPED = [/^runtime_limits network\n(?:  .*\n)*/, /^limits network\n(?:  .*\n)*/,
-                        /^domain network\n(?:  .*\n)*/, /^unit net\n(?:  .*\n)*/, /^service net\n(?:  .*\n)*/,
-                        /^service network_ctl\n(?:  .*\n)*/, /^facet network_ctl\n(?:  .*\n)*/].freeze
+      NARROW_DROPPED = ['runtime_limits network', 'limits network', 'domain network', 'unit net', 'service net',
+                        'service network_ctl', 'facet network_ctl'].freeze
 
-      # One share record of the narrow manifest: its cpuset keeps only NARROW_CPUSET's CPUs,
-      # its quota_ns is capped at period_ns per remaining CPU and its capacity_mcpu at 1000
-      # per remaining CPU, since the library gives a share whose quota its cpuset cannot spend
-      # no rate, and plans no domain under it. A share with none of those CPUs is refused:
-      # cpuset 0 would mean every CPU.
-      def self.narrow_share(record)
-        cpuset = share_field(record, 'cpuset') & NARROW_CPUSET
-        raise Error, "the narrow manifest leaves #{record.lines.first.chomp} no CPU" if cpuset.zero?
+      # What the narrow manifest sets in share, one of its share records
+      # (Manifest::Edit.set): its cpuset keeps only NARROW_CPUSET's CPUs, its quota_ns is
+      # capped at period_ns per remaining CPU and its capacity_mcpu at 1000 per remaining
+      # CPU, since the library gives a share whose quota its cpuset cannot spend no rate,
+      # and plans no domain under it. A share with none of those CPUs is refused: cpuset 0
+      # would mean every CPU.
+      def self.narrow_share(share)
+        cpuset = share.decimal('cpuset') & NARROW_CPUSET
+        raise Error, "the narrow manifest leaves #{share.header} no CPU" if cpuset.zero?
 
         cpus = cpuset.to_s(2).count('1')
-        record.sub(/^  cpuset \d+$/, "  cpuset #{cpuset}")
-              .sub(/^  quota_ns \d+$/) { "  quota_ns #{[share_field(record, 'quota_ns'), share_field(record, 'period_ns') * cpus].min}" }
-              .sub(/^  capacity_mcpu \d+$/) { "  capacity_mcpu #{[share_field(record, 'capacity_mcpu'), cpus * 1000].min}" }
+        { [share.header, 'cpuset'] => cpuset,
+          [share.header, 'quota_ns'] => [share.decimal('quota_ns'), share.decimal('period_ns') * cpus].min,
+          [share.header, 'capacity_mcpu'] => [share.decimal('capacity_mcpu'), cpus * 1000].min }
       end
-
-      # A share record's numeric field; a record without it is refused.
-      def self.share_field(record, name)
-        value = record[/^  #{name} (\d+)$/, 1]
-        raise Error, "the narrow manifest finds no numeric #{name} in #{record.lines.first.chomp}" unless value
-
-        Integer(value, 10)
-      end
-      private_class_method :share_field
 
       def boot_narrow(accel, count, built)
         points = Run.checkpoints(built, root: @root, watchdog: watchdog_pattern(accel), cpus: count,

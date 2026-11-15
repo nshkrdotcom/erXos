@@ -606,17 +606,12 @@ it; git history is the record of completed work.
   from a bound that does not change between restarts and show any mode that fits it. The driver also acknowledges a
   configuration-change interrupt without reading `events_read` or writing `events_clear` (virtio 1.2, 5.7.4.2),
   so a change of display size is not followed.
-* [High] the Raspberry Pi 4's display domain row (`config/manifest/development.txt` and `raspi4b-development.txt`;
-  [design-stopgap.md](docs/design-stopgap.md#device-records)): the Pi's platform record carries the
-  `framebuffer` unit, which the board's development manifest gives the system domain, and no display domain
-  drives it, since no driver of the firmware's framebuffer exists. QEMU virt's development manifest has the
-  row: the display domain holds the virtio-gpu unit on the `display` share's 100 mcpu, taken from the web
-  share, with 24 MiB, the `display_domain` suite's unmeasured figure; size both from a measurement of the
-  domain driving a screen. No boot of the development image attaches a gpu (`tools/erx boot` included), so the
-  domain runs there without a screen, and no session is granted the display. The display domain holds its
-  keyboard and tablet only once the unit is the transport page (security residuals,
-  `boot_devices`); QEMU virt's four transport pages are the spare's, the display's, the network device's and
-  the disks'.
+* [Medium] QEMU virt's display domain row (`config/manifest/development.txt` and `qemu-virt-development.txt`;
+  [design-display.md](docs/design-display.md#the-display-device)): the display domain holds the `display` unit
+  (the transport page of the virtio-gpu, keyboard and tablet transports and five spare ones), on the `display` share's 100 mcpu with 24 MiB, the
+  `display_domain` suite's unmeasured figures; size both from a measurement of the domain driving a screen. No
+  boot of the development image attaches a gpu (`tools/erx boot` included), so the domain runs there without a
+  screen, and no session is granted the display.
 * [Medium] the Raspberry Pi 4's display domain row (`config/manifest/development.txt` and `raspi4b-development.txt`;
   [design-display.md](docs/design-display.md#the-display-device)): the display domain holds the `framebuffer`
   unit and drives it with `erx_firmware_fb`, on QEMU virt's figures, the `display` share's 100 mcpu and
@@ -631,6 +626,26 @@ it; git history is the record of completed work.
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
   (`board_tree.rb`) would make the window's isolation hold by construction.
+* [Low] `tools/lib/erx/device_give.rb` and `system_domain.rb`, `ARGS_LINE`, `RESTARTS_LINE`, `CONNECTIONS_LINE`
+  and `PEER_ROW`: each harness's row is `MediumBoot::DOMAIN_ROW` changed by regular expressions on its text,
+  outside `Manifest::Edit`, which edits only a whole manifest (it needs the machine record). Build the rows from
+  one row builder whose fields are named, or let `Manifest::Edit` edit a record of a part
+  (`Manifest::Frontend.records`), and delete the patterns.
+* [Medium] `tools/lib/erx/manifest_edit.rb`, `removed`: a removal is refused when a record left in names a
+  taken one by an `@kind.name` token, but not when it names one by name alone: a `display NAME` record names
+  its service, and a `start NAME` row a principal that must keep a session template, so `without` of a
+  service or `without_sessions` under a start row returns text the admission check refuses rather than an
+  edit refused. `without_domain` handles display records through its own list. Give `Record` one "the
+  records this record names" function covering the name-keyed links the checker knows
+  (`tools/lib/erx/manifest.rb`, `service_name`, the start rows' principal), have `removed` and
+  `with_unused_definitions` derive from it, and delete `without_domain`'s display list.
+* [Medium] `tools/lib/erx/manifest_frontend.rb`, `Record#decimal`, `string` and `reference`: a field's value
+  is decoded in three places with different rules: these, the manifest checker's `number`, `text` and
+  `reference` (`manifest.rb`, which take `0x` numbers and `hex:` bytes), and `FacetNames.field`. A harness
+  edit or reader refuses a manifest the packer admits (`cpuset 0x3`). Move the checker's decoders onto
+  `Record` and have the checker, `Manifest::Edit` and `FacetNames` call them. `Edit.repoint` also writes
+  its `to` unchecked, and the printer writes an unquoted token verbatim, so a value with a space or newline
+  would not read back as one word; refuse such a token where the printer writes it.
 * [Medium] `erlang/apps/erx_display/src/erx_screen.erl`: the overlay and the idle policy, whose times are the display
   domain's `display_idle_dim_s` and `display_idle_off_s` variables, are not built; the screen receives the input notice
   from `erx_winfs` and ignores it, so no idle clock runs

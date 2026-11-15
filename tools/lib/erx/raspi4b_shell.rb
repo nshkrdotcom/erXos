@@ -263,7 +263,7 @@ module Erx
       end
     end
 
-    def configured_domains = @platform.manifest_source(@root).scan(/^domain (\S+)$/n).flatten
+    def configured_domains = Manifest::Frontend.read(@platform.manifest_source(@root)).records.fetch('domain', []).map(&:name)
 
     # tcg-4cpu: the shell's boot with the stand-in for the firmware's framebuffer setup
     # (Raspi4bFirmwareFb) and QMP on a socket in the boot's own owner-only directory. Once the

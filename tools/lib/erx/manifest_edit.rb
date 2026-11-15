@@ -7,18 +7,18 @@ require_relative 'manifest'
 
 module Erx
   module Manifest
-    # How a harness changes a manifest: a number of a named record read, grown or set, or
-    # a configured domain taken out with the records only it uses (without_domain). Each
-    # reads the text with the manifest's own reader (Frontend.read), changes the records
-    # it read, and writes them with its one printer (Frontend.render), so an edit reaches
-    # a field only through its record and the result is a manifest the reader takes, but
-    # its comments are gone. A record is named by its first line, "machine",
-    # "principal system" or "limits display"; one that is not there, a field it does not
-    # have, or a value that is not one decimal number is refused, so an edit is never
-    # silently lost.
+    # How a harness changes a manifest: a number of a named record read, grown or set, a
+    # reference pointed elsewhere, named records taken out (without), the session
+    # templates taken out (without_sessions), or a configured domain taken out with the
+    # records only it uses (without_domain). Each reads the text with the manifest's own
+    # reader (Frontend.read), changes the records it read, and writes them with its one
+    # printer (Frontend.render), so an edit reaches a field only through its record and
+    # the result is a manifest the reader takes, but its comments are gone. A record is
+    # named by its first line, "machine", "principal system" or "limits display"; one
+    # that is not there, a field it does not have, or a value of another form than the
+    # edit's is refused, and so is a removal that leaves a record naming one it took, so
+    # an edit is never silently lost.
     module Edit
-      DECIMAL = /\A[0-9]+\z/.freeze
-
       module_function
 
       # text with each [record, field] of growth grown by its number; a negative number
@@ -29,7 +29,38 @@ module Erx
       def set(text, values) = Frontend.render(changed(Frontend.read(text), values) { |_value, given| given })
 
       # The number of field in the record named record.
-      def value(text, record:, field:) = decimal(named(Frontend.read(text), record), field)
+      def value(text, record:, field:) = named(Frontend.read(text), record).decimal(field)
+
+      # text with field of the record named record, which must be the one reference
+      # from, made the reference to: an edit of a row that no longer reads from is
+      # refused rather than applied to whatever it reads now.
+      def repoint(text, record:, field:, from:, to:)
+        source = Frontend.read(text)
+        found = named(source, record)
+        raise Error, "the manifest's #{record} #{field} is #{found.reference(field)}, not #{from}" unless
+          found.reference(field) == from
+
+        token = ABI::Token.new(value: to.dup.freeze, quoted: false).freeze
+        Frontend.render(replaced(source, found, with_field(found, field, token)))
+      end
+
+      # text without the records records names, each by its first line ("domain network",
+      # "unit net"); nothing else changes, so what they took of a budget stays counted.
+      def without(text, records)
+        source = Frontend.read(text)
+        Frontend.render(removed(source, records.map { |name| named(source, name) }))
+      end
+
+      # text with no session template: every session record, and every facet granted to
+      # one, which would name a template no longer there.
+      def without_sessions(text)
+        source = Frontend.read(text)
+        sessions = source.records.fetch('session', [])
+        facets = source.records.fetch('facet', []).select do |facet|
+          sessions.any? { |session| facet.reference('grantee') == reference_of(session) }
+        end
+        Frontend.render(removed(source, sessions + facets))
+      end
 
       # text without the configured domain called name, as if it had never been written in.
       #
@@ -55,30 +86,23 @@ module Erx
         source = Frontend.read(text)
         all = source.records.values.flatten
         domain = defined_by(all, "@domain.#{name}")
-        principal = defined_by(all, reference(domain, 'principal'))
-        limits = defined_by(all, reference(domain, 'limits'))
+        principal = defined_by(all, domain.reference('principal'))
+        limits = defined_by(all, domain.reference('limits'))
         held = all.select { |record| %w[unit service].include?(record.kind) && names?(record, reference_of(domain)) }
         services = held.select { |record| record.kind == 'service' }
         facets = all.select { |record| record.kind == 'facet' && services.any? { |service| names?(record, reference_of(service)) } }
         displays = all.select { |record| record.kind == 'display' && services.any? { |service| service.name == record.name } }
-        foreign = facets.find { |facet| reference(facet, 'grantee') != 'system' }
+        foreign = facets.find { |facet| facet.reference('grantee') != 'system' }
         raise Error, "domain #{name}'s service is granted by facet #{foreign.name}, not to the system domain alone" if foreign
 
-        definitions = [limits, defined_by(all, reference(limits, 'grant')), defined_by(all, reference(limits, 'runtime_limits'))]
-        removed = with_unused_definitions([source.machine, *all], [domain, *held, *facets, *displays], definitions)
-        kept = all.reject { |record| removed.any? { |gone| gone.equal?(record) } }
-        # The machine names records too (system_share, native_limits, ...), and is never taken.
-        dangling = [source.machine, *kept].find { |record| removed.any? { |gone| names?(record, reference_of(gone)) } }
-        raise Error, "the manifest's #{header(dangling)} names a record domain #{name} takes with it" if dangling
+        definitions = [limits, defined_by(all, limits.reference('grant')), defined_by(all, limits.reference('runtime_limits'))]
+        remaining = removed(source, with_unused_definitions([source.machine, *all], [domain, *held, *facets, *displays], definitions))
 
-        budget = %w[memory outer].sum { |field| decimal(limits, field) }
+        budget = %w[memory outer].sum { |field| limits.decimal(field) }
         dma = held.select { |record| record.kind == 'unit' }.sum { |unit| unit_dma(unit, units) }
-        principal_header = header(principal)
-        changes = { [principal_header, 'memory'] => -budget, [principal_header, 'domains'] => -1,
+        changes = { [principal.header, 'memory'] => -budget, [principal.header, 'domains'] => -1,
                     %w[machine root_memory] => -(budget + dma), %w[machine max_domains] => -1,
                     %w[machine max_connections] => -1 }
-        remaining = Source.new(version: source.version, machine: source.machine,
-                               records: kept.group_by(&:kind).transform_values(&:freeze).freeze).freeze
         Frontend.render(changed(remaining, changes) { |value, added| value + added })
       end
 
@@ -87,12 +111,17 @@ module Erx
       def changed(source, changes)
         changes.reduce(source) do |current, ((name, field), change)|
           record = named(current, name)
-          result = yield decimal(record, field), change
+          result = yield record.decimal(field), change
           raise Error, "the manifest's #{name} #{field} would be #{result}" unless result.is_a?(Integer) && !result.negative?
 
           token = ABI::Token.new(value: result.to_s.freeze, quoted: false).freeze
-          replaced(current, record, Record.new(**record.to_h, properties: record.properties.merge(field => [token].freeze).freeze).freeze)
+          replaced(current, record, with_field(record, field, token))
         end
+      end
+
+      # record with field holding token alone.
+      def with_field(record, field, token)
+        Record.new(**record.to_h, properties: record.properties.merge(field => [token].freeze).freeze).freeze
       end
 
       # source with record, which it holds, replaced by replacement in its place.
@@ -103,6 +132,21 @@ module Erx
           each.equal?(record) ? replacement : each
         end.freeze)
         Source.new(**source.to_h, records: records.freeze).freeze
+      end
+
+      # source without gone, records it holds, refused when a record left in names one of
+      # them. The machine names records too (system_share, native_limits, ...), and is
+      # never taken.
+      def removed(source, gone)
+        raise Error, "the manifest's machine record cannot be taken out" if gone.any? { |record| record.equal?(source.machine) }
+
+        kept = source.records.values.flatten.reject { |record| gone.any? { |each| each.equal?(record) } }
+        [source.machine, *kept].each do |record|
+          taken = gone.find { |each| names?(record, reference_of(each)) }
+          raise Error, "the manifest's #{record.header} names a record the edit takes out, #{reference_of(taken)}" if taken
+        end
+        Source.new(version: source.version, machine: source.machine,
+                   records: kept.group_by(&:kind).transform_values(&:freeze).freeze).freeze
       end
 
       # The record of source whose first line is name ("machine", "principal system").
@@ -126,9 +170,6 @@ module Erx
         end
       end
 
-      # The record's first line, its kind then its name or a directive's arguments.
-      def header(record) = [record.kind, record.name || record.properties['targets']&.map(&:value)&.join(' ')].compact.join(' ')
-
       # How a record names this one in a field: @kind.name.
       def reference_of(record) = "@#{record.kind}.#{record.name}"
 
@@ -138,17 +179,9 @@ module Erx
         [*record.properties.values, *record.parameters].flatten.any? { |token| !token.quoted && token.value == reference }
       end
 
-      # The one unquoted token of field in record, as a string.
-      def reference(record, field)
-        tokens = record.properties.fetch(field, [])
-        raise Error, "the manifest's #{header(record)} #{field} is not one reference" unless tokens.size == 1 && !tokens.first.quoted
-
-        tokens.first.value
-      end
-
       # The DMA memory of the platform unit unit is placed on, in bytes.
       def unit_dma(unit, units)
-        key = record_string(unit, 'placement')
+        key = unit.string('placement')
         platform_unit = units.find { |row| row.is_a?(Hash) && row['key'] == key && row['devices'].is_a?(Array) } or
           raise Error, "the manifest's unit #{unit.name} is placed on #{key.inspect}, which the platform has no unit of"
         platform_unit.fetch('devices').sum do |device|
@@ -158,25 +191,8 @@ module Erx
           bytes
         end
       end
-
-      # The one quoted token of field in record.
-      def record_string(record, field)
-        tokens = record.properties.fetch(field, [])
-        raise Error, "the manifest's #{header(record)} #{field} is not one string" unless tokens.size == 1 && tokens.first.quoted
-
-        tokens.first.value
-      end
-
-      # The decimal number of field in record.
-      def decimal(record, field)
-        tokens = record.properties.fetch(field) { raise Error, "the manifest's #{header(record)} record has no #{field} field" }
-        raise Error, "the manifest's #{header(record)} #{field} is not a decimal number" unless
-          tokens.size == 1 && !tokens.first.quoted && tokens.first.value.match?(DECIMAL)
-
-        Integer(tokens.first.value, 10)
-      end
-      private_class_method :changed, :replaced, :named, :defined_by, :with_unused_definitions, :header, :reference_of,
-                           :names?, :reference, :unit_dma, :record_string, :decimal
+      private_class_method :changed, :with_field, :replaced, :removed, :named, :defined_by, :with_unused_definitions,
+                           :reference_of, :names?, :unit_dma
     end
   end
 end

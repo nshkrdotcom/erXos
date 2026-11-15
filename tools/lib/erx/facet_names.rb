@@ -7,6 +7,7 @@ require 'set'
 require_relative 'erlang_text'
 require_relative 'error'
 require_relative 'generation_plan'
+require_relative 'manifest_frontend'
 require_relative 'ns_writers'
 
 module Erx
@@ -214,20 +215,16 @@ module Erx
         interfaces_of(path, text)
       end
       records = files.select { |path, _| File.fnmatch?(MANIFESTS, path, GLOB_FLAGS) }.sort.flat_map do |path, text|
-        records_of(path, text)
+        Manifest::Frontend.records(text, path: path)
       end
-      services = records.select { |record| record.fetch(:kind) == 'service' }.to_h do |record|
-        [record.fetch(:alias), record]
-      end
+      services = records.select { |record| record.kind == 'service' }.to_h { |record| [record.name, record] }
       unknown = services.values.reject { |record| interface_of(record, interfaces) }.map do |record|
-        Violation.new(path: record.fetch(:path), line: record.fetch(:line),
-                      detail: "service #{record.fetch(:alias)}'s interface #{record.fetch(:props)['interface']} " \
+        Violation.new(path: record.line.path, line: record.line.number,
+                      detail: "service #{record.name}'s interface #{field(record, 'interface')} " \
                               'is no interface abi/services declares')
       end
-      facets = records.select { |record| record.fetch(:kind) == 'facet' }.map do |record|
-        facet_of(record, services, interfaces)
-      end
-      public_services = services.values.to_h { |record| [record.fetch(:props).fetch('name', record.fetch(:alias)), record] }
+      facets = records.select { |record| record.kind == 'facet' }.map { |record| facet_of(record, services, interfaces) }
+      public_services = services.values.to_h { |record| [public_name(record), record] }
       [Table.new(interfaces: interfaces, facets: facets, services: public_services), unknown]
     end
 
@@ -242,36 +239,25 @@ module Erx
       end
     end
 
-    # The manifest's service and facet records: a record starts in the first column,
-    # its properties are indented, and a comment starts with #.
-    def records_of(path, text)
-      text.each_line.with_index(1).each_with_object([]) do |(line, number), records|
-        next if line.strip.empty? || line.lstrip.start_with?('#')
+    # The words of field in a manifest record (Manifest::Frontend.records), or nil when
+    # it has none.
+    def field(record, key) = record.properties[key]&.map(&:value)&.join(' ')
 
-        if line.start_with?(' ')
-          key, value = line.strip.split(/\s+/, 2)
-          records.last&.fetch(:props)&.store(key, value.to_s.delete_prefix('"').delete_suffix('"'))
-        else
-          kind, name = line.split
-          records << { kind: kind, alias: name, path: path, line: number, props: {} }
-        end
-      end.select { |record| %w[service facet].include?(record.fetch(:kind)) }
-    end
+    # The name a manifest record's grantees hold it under: its name field, else its own.
+    def public_name(record) = field(record, 'name') || record.name
 
     # The interface a manifest service names, by name or by number, or nil.
     def interface_of(record, interfaces)
-      token = record.fetch(:props)['interface']
+      token = field(record, 'interface')
       interfaces.find { |interface| interface.name == token || interface.number.to_s == token }
     end
 
     def facet_of(record, services, interfaces)
-      props = record.fetch(:props)
-      service = services[props['service'].to_s.delete_prefix('@service.')]
-      Facet.new(name: service && service.fetch(:props).fetch('name', service.fetch(:alias)),
-                label: props.fetch('name', record.fetch(:alias)),
-                server: service&.fetch(:props)&.fetch('server', 'system'),
+      service = services[field(record, 'service').delete_prefix('@service.')]
+      Facet.new(name: service && public_name(service), label: public_name(record),
+                server: service && field(service, 'server'),
                 interface: service && interface_of(service, interfaces)&.name,
-                grantee: props['grantee'], path: record.fetch(:path), line: record.fetch(:line))
+                grantee: field(record, 'grantee'), path: record.line.path, line: record.line.number)
     end
 
     # The design citations of the interfaces: each must name a heading of its document.

@@ -31,10 +31,15 @@ class FacetNamesTest < Minitest::Test
      read.call(paths.select { |path| Erx::FacetNames.design_doc?(path) })]
   end
 
+  # The fields every manifest facet row carries besides its grantee and service, which
+  # the manifest's reader requires and the table does not read.
+  FACET_LIMITS = "  operations none\n  max_request 256\n  in_flight 1\n  reductions 100000\n" \
+                 "  period_ns 1000000000\n  max_heap_size 65536\n"
+
   # A small table: one interface citing one heading, one service of it and its facet.
   def table(interface: "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n",
             manifest: "service seeded\n  server @domain.a\n  interface seeded\nfacet seeded\n  grantee system\n" \
-                      "  service @service.seeded\n")
+                      "  service @service.seeded\n#{FACET_LIMITS}")
     [{ INTERFACE => interface, MANIFEST => manifest }, { DOC => "# Seeded\n\n## The `seeded` service\n" }]
   end
 

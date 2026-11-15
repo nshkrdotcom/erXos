@@ -761,7 +761,8 @@ class ProductionImageTest < Minitest::Test
     assert_match(/^share system\n(?:  .*\n)*?  cpuset 3$/, narrow)
     assert_match(/^share users\n(?:  .*\n)*?  cpuset 3$/, narrow)
     assert_match(/^share system\n  quota_ns 20000000$/, narrow)
-    assert_raises(Erx::Error) { Erx::ProductionImage::Run.narrow_share("share far\n  quota_ns 5000000\n  period_ns 10000000\n  cpuset 12\n") }
+    far = Erx::Manifest::Frontend.read(Erx::Manifest::Edit.set(narrow, { ['share system', 'cpuset'] => 12 }))
+    assert_raises(Erx::Error) { Erx::ProductionImage::Run.narrow_share(far.records.fetch('share').find { |share| share.name == 'system' }) }
     verify = checkpoint_verifier("erts-executors", manifest_source: narrow)
     verify.call("erx: erts: 2 schedulers and 2 dirty CPU schedulers hold executor slots\n")
     assert_raises(Erx::Error) { verify.call("erx: erts: 4 schedulers and 4 dirty CPU schedulers hold executor slots\n") }
