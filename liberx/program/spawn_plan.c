@@ -164,6 +164,7 @@ fchdir_error(const erx_spawn_fd_t *fd)
 	case ERX_PROG_OBJ_NULL:
 	case ERX_PROG_OBJ_PIPE:
 	case ERX_PROG_OBJ_MEM:
+	case ERX_PROG_OBJ_FILE:
 		return (ENOTDIR);
 	}
 	return (ENOTDIR);
@@ -232,6 +233,7 @@ exec_close(erx_spawn_plan_t *plan, const bool cloexec[ERX_PROG_FDS_MAX])
 		switch (slot->held->kind) {
 		case ERX_PROG_OBJ_NULL:
 		case ERX_PROG_OBJ_PIPE:
+		case ERX_PROG_OBJ_FILE:
 			break;
 		case ERX_PROG_OBJ_MEM:
 			slot->kind = ERX_SPAWN_FD_NONE;

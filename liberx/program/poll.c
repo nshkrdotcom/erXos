@@ -87,10 +87,13 @@ ready_of(const poll_slot_t *slot, int fd, short events)
 		return (erx_pipe_poll(erx_pipe_end_of(slot->obj)));
 	case ERX_PROG_OBJ_NULL:
 	case ERX_PROG_OBJ_MEM:
+	case ERX_PROG_OBJ_FILE:
 		/*
 		 * Null and a mem range never wait, as FreeBSD's null device and shared
 		 * memory answer through poll_no_poll (sys/kern/kern_conf.c no_poll,
-		 * sys/kern/uipc_shm.c invfo_poll).
+		 * sys/kern/uipc_shm.c invfo_poll).  A file is always ready too: its
+		 * reads and writes are requests that no poll watches (FreeBSD's
+		 * answer for a regular file is unverified, TODO.md).
 		 */
 		return ((events & ~POLL_STANDARD) != 0 ? POLLNVAL : (POLLIN | POLLOUT));
 	}

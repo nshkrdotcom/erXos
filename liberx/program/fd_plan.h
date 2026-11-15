@@ -21,10 +21,16 @@
 
 struct erx_prog_obj;
 
-/* A slot of the table: the object it holds a reference to, NULL when empty, and its FD_CLOEXEC. */
+/*
+ * A slot of the table: the object it holds a reference to, NULL when empty
+ * or reserved, its FD_CLOEXEC, and whether an open has reserved it while it
+ * makes its object (fd.h, erx_prog_fd_reserve), which no other open, dup or
+ * pipe takes.
+ */
 typedef struct erx_prog_slot {
 	struct erx_prog_obj	*obj;
 	bool			 cloexec;
+	bool			 reserved;
 } erx_prog_slot_t;
 
 typedef enum erx_prog_dup_mode {
@@ -45,8 +51,9 @@ typedef struct erx_prog_dup {
  * -EINVAL first for an AT slot equal to from, as dup3 refuses it; -EBADF
  * for a from that is negative or empty, and for an AT slot outside the
  * table; -EINVAL for a LOWEST bound outside the table, as F_DUPFD refuses it;
- * -EMFILE when no slot at or above a LOWEST bound is empty.  The slot an AT
- * dup fills may hold an object, which the dup closes.
+ * -EMFILE when no slot at or above a LOWEST bound is empty; -EBUSY for an AT
+ * slot an open has reserved.  The slot an AT dup fills may hold an object,
+ * which the dup closes.
  */
 int	erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t req);
 
@@ -55,6 +62,9 @@ int	erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_du
  * two ends: 0, or -EMFILE, at[] untouched, when fewer than two are empty.
  */
 int	erx_prog_pair_plan(const erx_prog_slot_t *slots, uint32_t nslots, int at[2]);
+
+/* The lowest empty slot of a table of nslots slots, for an open to reserve, or -EMFILE. */
+int	erx_prog_reserve_plan(const erx_prog_slot_t *slots, uint32_t nslots);
 
 /* dup3(old, to, flags) as a dup: 0 and *req, or -EINVAL for flags other than O_CLOEXEC. */
 int	erx_prog_dup3_req(int old, int to, int flags, erx_prog_dup_t *req);

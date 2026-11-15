@@ -22,6 +22,24 @@ slot_held(const erx_prog_slot_t *slots, uint32_t nslots, long fd)
 	return (fd >= 0 && fd < (long)nslots && slots[fd].obj != NULL);
 }
 
+/* An empty slot: one that holds no object and that no open has reserved. */
+static bool
+slot_empty(const erx_prog_slot_t *slot)
+{
+	return (slot->obj == NULL && !slot->reserved);
+}
+
+/* The lowest empty slot at or above from, or -EMFILE. */
+static int
+lowest_empty(const erx_prog_slot_t *slots, uint32_t nslots, uint32_t from)
+{
+	for (uint32_t at = from; at < nslots; at++) {
+		if (slot_empty(&slots[at]))
+			return ((int)at);
+	}
+	return (-EMFILE);
+}
+
 int
 erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t req)
 {
@@ -36,17 +54,15 @@ erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t 
 	case ERX_PROG_DUP_AT:
 		if (!inside)
 			return (-EBADF);
-		return (slot_held(slots, nslots, req.from) ? (int)req.at : -EBADF);
+		if (!slot_held(slots, nslots, req.from))
+			return (-EBADF);
+		return (slots[req.at].reserved ? -EBUSY : (int)req.at);
 	case ERX_PROG_DUP_LOWEST:
 		if (!inside)
 			return (-EINVAL);
 		if (!slot_held(slots, nslots, req.from))
 			return (-EBADF);
-		for (uint32_t at = (uint32_t)req.at; at < nslots; at++) {
-			if (slots[at].obj == NULL)
-				return ((int)at);
-		}
-		return (-EMFILE);
+		return (lowest_empty(slots, nslots, (uint32_t)req.at));
 	}
 	return (-EINVAL);
 }
@@ -54,18 +70,20 @@ erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t 
 int
 erx_prog_pair_plan(const erx_prog_slot_t *slots, uint32_t nslots, int at[2])
 {
-	int found[2];
-	uint32_t have = 0;
+	const int first = lowest_empty(slots, nslots, 0);
+	const int second = first < 0 ? first : lowest_empty(slots, nslots, (uint32_t)first + 1);
 
-	for (uint32_t slot = 0; slot < nslots && have < 2; slot++) {
-		if (slots[slot].obj == NULL)
-			found[have++] = (int)slot;
-	}
-	if (have < 2)
+	if (second < 0)
 		return (-EMFILE);
-	at[0] = found[0];
-	at[1] = found[1];
+	at[0] = first;
+	at[1] = second;
 	return (0);
+}
+
+int
+erx_prog_reserve_plan(const erx_prog_slot_t *slots, uint32_t nslots)
+{
+	return (lowest_empty(slots, nslots, 0));
 }
 
 int

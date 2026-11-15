@@ -36,6 +36,7 @@
 #include "liberx/backend/fiasco/task_start.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/fd.h"
+#include "liberx/program/file.h"
 #include "liberx/program/pipe.h"
 #include "liberx/program/poll.h"
 #include "liberx/program/signal.h"
@@ -199,6 +200,9 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 	case SYS_writev:
 		*result = erx_prog_fd_writev(fd, (const struct iovec *)args[1], (int)args[2]);
 		return (true);
+	case SYS_openat:
+		*result = erx_prog_file_openat(fd, (const char *)args[1], (int)args[2], (mode_t)args[3]);
+		return (true);
 	case SYS_close:
 		*result = erx_prog_fd_close(fd);
 		return (true);
@@ -292,7 +296,6 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 	case SYS_mq_getsetattr:
 		*result = erx_prog_fd_held_or(fd, -ENOSYS);
 		return (true);
-	case SYS_openat:
 	case SYS_openat2:
 	case SYS_mkdirat:
 	case SYS_mknodat:
@@ -319,7 +322,7 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 		*result = at_unoffered(fd, (const char *)args[1], (int)args[2], (const char *)args[3]);
 		return (true);
 	default:
-		/* pselect6 and pipe2 among them: the table offers neither. */
+		/* pselect6 among them: the table does not offer it. */
 		*result = -ENOSYS;
 		return (true);
 	}

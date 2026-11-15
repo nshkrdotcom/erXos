@@ -32,7 +32,7 @@ class ProgFdTest < Minitest::Test
   FD = 'liberx/program/fd.c'
   PIPE = 'liberx/program/pipe.c'
   SPAWN = 'liberx/program/spawn.c'
-  SOURCES = [FD, 'liberx/program/fd_plan.c', PIPE, 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', SPAWN, 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
+  SOURCES = [FD, 'liberx/program/fd_plan.c', PIPE, 'liberx/program/file.c', 'liberx/program/data.c', 'liberx/program/wake.c', 'liberx/program/poll.c', 'liberx/program/signal.c', SPAWN, 'liberx/program/pages.c', 'liberx/program/inbound.c', 'liberx/program/startup.c',
              'liberx/erx_pipe_core.c', 'liberx/erx_pipe_check.c', 'liberx/erx_pipe_run.c',
              'liberx/erx_profile.c', 'liberx/erx_etf.c', 'kernel/crypto/blake3/blake3.c',
              'kernel/crypto/blake3/blake3_portable.c', 'build/gen/liberx/generated/prog_profile.c',

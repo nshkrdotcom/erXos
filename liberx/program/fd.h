@@ -42,7 +42,8 @@ struct erx_pipe_end;
 typedef enum erx_prog_obj_kind {
 	ERX_PROG_OBJ_NULL,	/* null, an open of /dev/null with an offset of its own (fd.c) */
 	ERX_PROG_OBJ_PIPE,	/* a pipe end, the head of an erx_pipe_end_t */
-	ERX_PROG_OBJ_MEM	/* a mem range the session mapped into the program (fd.c) */
+	ERX_PROG_OBJ_MEM,	/* a mem range the session mapped into the program (fd.c) */
+	ERX_PROG_OBJ_FILE	/* an open of the handler's, the head of an erx_prog_file_t (file.h) */
 } erx_prog_obj_kind_t;
 
 /*
@@ -118,6 +119,18 @@ long	erx_prog_fd_fcntl(int fd, int cmd, long arg);
  * cloexec, and their slots into fds[]: 0, or -EMFILE with nothing put.
  */
 int	erx_prog_fd_install_pair(erx_prog_obj_t *const objs[2], bool cloexec, int fds[2]);
+/*
+ * An open's slot (docs/design-programs.md, "Descriptors and files"): the
+ * lowest empty slot, reserved while the open makes its object, or -EMFILE.
+ * A reserved slot is taken by no other open, dup or pipe, holds no object,
+ * so every call on its number finds none, and a dup3 onto it is -EBUSY.
+ * The open then fills it with its new object, which no slot or call holds
+ * yet, with FD_CLOEXEC as cloexec gives it, or gives it back; filling or
+ * giving back a slot that is not reserved stops the program.
+ */
+int	erx_prog_fd_reserve(void);
+void	erx_prog_fd_fill(int fd, erx_prog_obj_t *obj, bool cloexec);
+void	erx_prog_fd_unreserve(int fd);
 /* Empties slot fd and drops its reference: 0 or -EBADF. */
 int	erx_prog_fd_close(int fd);
 /*
@@ -125,7 +138,8 @@ int	erx_prog_fd_close(int fd);
  * count or a negative errno, -EBADF for an empty slot and -EINVAL for a
  * len above SSIZE_MAX, as FreeBSD refuses it.  null reads as the end of
  * the stream and takes every byte written, as /dev/null does.  A mem range
- * is no stream: both fail with -ESPIPE.
+ * is no stream: both fail with -ESPIPE.  A file reads and writes through
+ * its handler (file.h).
  */
 ssize_t	erx_prog_fd_read(int fd, void *buf, size_t len);
 ssize_t	erx_prog_fd_write(int fd, const void *buf, size_t len);
@@ -159,15 +173,17 @@ int	erx_prog_fd_mmap(int fd, size_t len, int prot, int flags, off_t offset, void
  * fstat of slot fd: 0, or -EBADF for an empty slot.  null is a character
  * device of mode 0666, a pipe end a FIFO of mode 0600 and size 0, and a mem
  * range a regular file of mode 0600 whose size is its bytes (their parity
- * with FreeBSD is unverified, TODO.md).  Every other field is 0.
+ * with FreeBSD is unverified, TODO.md).  Every other field is 0.  A file's
+ * attributes need a request the protocol does not offer: -ENOSYS.
  */
 int	erx_prog_fd_fstat(int fd, struct stat *st);
 
 /*
  * lseek of slot fd: null's new offset, which only an lseek moves, as
  * FreeBSD's /dev/null keeps one (erx_prog_seek_plan, with no contents to
- * end at), -ESPIPE for a pipe end or a mem range, whatever whence, and
- * -EBADF for an empty slot.
+ * end at), -ESPIPE for a pipe end or a mem range, whatever whence, -ENOSYS
+ * for a file, whose description's offset the protocol offers no request to
+ * move, and -EBADF for an empty slot.
  */
 off_t	erx_prog_fd_lseek(int fd, off_t offset, int whence);
 /*

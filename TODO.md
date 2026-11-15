@@ -2105,14 +2105,6 @@ it; git history is the record of completed work.
   the session's `principal` environment variable, keep it in `erx_prog_self_t` (`liberx/program/program.h`), and in a
   program answer `getpid` and `getppid` from the record's `pid` and `ppid` and `getuid`, `geteuid`, `getgid` and
   `getegid` from its `uid`.
-* [Medium] programs, the descriptor seam offers a listed set of calls (`musl/src/internal/erxos/syscall.c`,
-  `seam_offered`, and `liberx/backend/fiasco/program_task.c`, `erx_fiasco_libc_fd`, two lists that must agree):
-  design-programs.md, "The POSIX-lite personality", says every call that names a descriptor reaches the table, but
-  `dup`, `fsync`, `fdatasync`, `ftruncate`, `getdents64`, `preadv`, `pwritev`, `fchmod`, `fchown`, `fstatfs`,
-  `flock` and the `*at` calls with a directory descriptor reach musl's default, `ENOSYS`, not `EBADF`. It fails
-  safe: none reaches the console or the kernel. Make it hold by construction: offer the seam every call, the
-  non-program seams answering false as they do, and have the program's seam hand back one closed list of calls that
-  name no descriptor.
 * [Low] programs, `writev` through the seam (`liberx/backend/fiasco/program_task.c`, `vector_call`) writes each entry
   separately, so entries that sum to at most `PIPE_BUF` are not one atomic write against another writer of the same
   pipe; gather them into one pipe write. `lseek` ignores `whence` and `ioctl` its request (`liberx/program/fd.c`), so
@@ -3079,9 +3071,29 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erx_prog_handler` (files): the release refuses every `lcreate` with `erofs`,
   an exclusive one at an existing name included, where an image answers `eexist`; an open at a
   directory of the empty root answers `eio`; a start whose `cwd` the startup grammar accepts but
-  `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`; and `O_DIRECTORY`, `O_NOFOLLOW`,
-  `O_NONBLOCK` and `O_CLOEXEC` are refused `einval`, so `liberx`'s file client must translate or strip
-  them.
+  `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`; and `O_DIRECTORY`, `O_NOFOLLOW` and
+  `O_NONBLOCK` have no 9P2000.L value in abi/protocols/9p.txt, so `liberx`'s file client refuses them
+  `EINVAL` before sending, as the handler would (it keeps `O_CLOEXEC` to the descriptor table and never
+  sends it). A regular file's `O_NONBLOCK` changes nothing on UNIX, so refusing it breaks programs that
+  pass it; whether the request carries it, or `liberx` drops it, is open.
+* [Low] liberx program layer, `liberx/program/file.c` and `fd.c`: the startup plan refuses a
+  `{file, Open, Access}` descriptor, so a file reaches a program only through its own `open`; a clunk's
+  error at a file's last close reaches no caller; `O_DSYNC` asks
+  for 9P2000.L's sync, the one sync value the ABI offers; and poll answers a file ready at once, whose
+  parity with FreeBSD's regular files is unverified. `umask()` is not offered, so an `lcreate`'s mode is
+  less the startup message's umask for the program's life; modes gate no access on erXos
+  (docs/design-programs.md), so only the mode a server records is affected.
+* [Medium] liberx program layer, tests of `liberx/program/file.c`: `test/host/prog_file_test.rb` builds
+  `open_plan` against the host's `<fcntl.h>`, never musl's aarch64 values (`O_ACCMODE` holding `O_PATH`,
+  `O_SYNC` holding `O_DSYNC`'s bit, the `O_LARGEFILE` musl's `open` always passes), and `fileio` runs in no
+  case, so a mapping wrong only for the target's values passes every test. A host build of the mapping
+  against the sysroot's `bits/fcntl.h` values, or the `fileio` case, closes it. A failed part after an
+  earlier part moved bytes, and a write answered with 0 bytes, are in no case either.
+* [Low] liberx program layer, request values (`file.c`, `signal.c`, `pipe.c`): each request's value is
+  written term by term with `erx_etf_put_*` against the generated profile's types, which a host test's
+  stand-in checks with the generated request check; a generated C writer for each request case
+  (tools/lib/erx/abi_emit_profile.rb) would make a value that disagrees with abi/protocols/prog.txt
+  fail to build instead.
 * [Low] ABI, abi/protocols/prog.txt: `data_slot`'s bound writes out `prog_data_slots_max - 1`, since an
   integer kind's bound cannot be a limit less one; an exclusive bound (`below @prog_data_slots_max`)
   in tools/lib/erx/abi_protocol.rb would make it one fact.
@@ -3244,8 +3256,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   message with a descriptor other than `null` or a pipe's read or write end ends the program with
   status 127 before `main`, because liberx sets up no socketpair, file, tty, directory, socket or
   `dup` yet. Each case replaces the refusal with its set-up when the file descriptors arrive
-  (docs/design-programs.md, "Descriptors and files"). The table's slots keep no `FD_CLOEXEC` yet,
-  which `exec` and `fcntl`'s `F_SETFD` need.
+  (docs/design-programs.md, "Descriptors and files").
 * [Medium] liberx program layer, `tools/fuzz/erx_prog_target.rb` and
   `test/fixtures/prog_profile_frames.rb`: no seed holds a socketpair, file, directory or socket
   descriptor, so a plan that wrongly accepts one of them passes `test/host/erx_prog_fuzz_test.rb`,

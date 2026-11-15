@@ -87,7 +87,7 @@ module Erx
     # them there as the toolkit's program, which every release that holds erx_ui carries
     # (ProductionImage.toolkit_parts); the image carries the client script, TOOLKIT_BOOT,
     # for it, which no domain of the suite boots.
-    PROGRAMS = %w[exit42 fault spin args bigargs note pipeio].to_h { |name| [name, "test/guest/programs/#{name}.c"] }.freeze
+    PROGRAMS = %w[exit42 fault spin args bigargs note pipeio fileio].to_h { |name| [name, "test/guest/programs/#{name}.c"] }.freeze
     TOOLKIT_BOOT = ProductionImage.domain_boot('client')
     # How many rounds many runs: more than the 32 programs the gate worker's 64
     # registrations hold at once, for each way a program ends.

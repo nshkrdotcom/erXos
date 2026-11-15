@@ -8,7 +8,7 @@
  * the list of live objects are table_lock's.  A pipe end, the one kind a
  * report names, is linked into the list with its first reference and
  * unlinked with its last, under the lock, so the executor finds only ends
- * some slot or call still holds; null and a mem range never join it.  The
+ * some slot or call still holds; null, a mem range and a file never join it.  The
  * object's own release runs after the lock is let go: a pipe end's waits
  * out an executor that found it before the unlink by taking the end's lock
  * (pipe.c), and sends its notices without the table lock held.
@@ -38,6 +38,7 @@
 #include "liberx/backend/api.h"
 #include "liberx/program/fd.h"
 #include "liberx/program/fd_plan.h"
+#include "liberx/program/file.h"
 #include "liberx/program/pages.h"
 #include "liberx/program/pipe.h"
 #include "liberx/program/signal.h"
@@ -120,6 +121,9 @@ obj_hold(erx_prog_obj_t *obj)
 		if (obj->refs++ == 0)
 			mem_held = mem_of(obj);
 		return;
+	case ERX_PROG_OBJ_FILE:
+		obj->refs++;
+		return;
 	}
 }
 
@@ -132,6 +136,7 @@ obj_drop(erx_prog_obj_t *obj)
 {
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
+	case ERX_PROG_OBJ_FILE:
 		return (--obj->refs == 0);
 	case ERX_PROG_OBJ_PIPE:
 		if (--obj->refs != 0)
@@ -166,6 +171,9 @@ obj_release(erx_prog_obj_t *obj)
 		return;
 	case ERX_PROG_OBJ_MEM:
 		erx_prog_pages_give(obj, sizeof(erx_prog_mem_t));
+		return;
+	case ERX_PROG_OBJ_FILE:
+		erx_prog_file_release(erx_prog_file_of(obj));
 		return;
 	}
 }
@@ -361,6 +369,47 @@ erx_prog_fd_install_pair(erx_prog_obj_t *const objs[2], bool cloexec, int fds[2]
 }
 
 int
+erx_prog_fd_reserve(void)
+{
+	int result;
+
+	table_take();
+	if ((result = erx_prog_reserve_plan(slots, ERX_PROG_FDS_MAX)) >= 0)
+		slots[result] = (erx_prog_slot_t){ .obj = NULL, .reserved = true };
+	(void)pthread_mutex_unlock(&table_lock);
+	return (result);
+}
+
+/* Whether slot fd is reserved.  The caller holds table_lock. */
+static bool
+slot_reserved(int fd)
+{
+	return (fd_valid(fd) && slots[fd].reserved);
+}
+
+void
+erx_prog_fd_fill(int fd, erx_prog_obj_t *obj, bool cloexec)
+{
+	table_take();
+	/* Only the open that reserved the slot fills it; anything else is a bug that must not clobber a slot. */
+	if (!slot_reserved(fd))
+		__builtin_trap();
+	obj_hold(obj);
+	slots[fd] = (erx_prog_slot_t){ .obj = obj, .cloexec = cloexec };
+	(void)pthread_mutex_unlock(&table_lock);
+}
+
+void
+erx_prog_fd_unreserve(int fd)
+{
+	table_take();
+	if (!slot_reserved(fd))
+		__builtin_trap();
+	slots[fd] = (erx_prog_slot_t){ .obj = NULL };
+	(void)pthread_mutex_unlock(&table_lock);
+}
+
+int
 erx_prog_fd_close(int fd)
 {
 	erx_prog_obj_t *obj = NULL;
@@ -398,6 +447,9 @@ erx_prog_fd_read(int fd, void *buf, size_t len)
 	case ERX_PROG_OBJ_MEM:
 		result = -ESPIPE;
 		break;
+	case ERX_PROG_OBJ_FILE:
+		result = len == 0 ? 0 : erx_prog_file_read(erx_prog_file_of(obj), buf, len);
+		break;
 	}
 	erx_prog_obj_put(obj);
 	return (result);
@@ -414,6 +466,8 @@ obj_write(erx_prog_obj_t *obj, const void *buf, size_t len)
 		return (erx_pipe_write(erx_pipe_end_of(obj), buf, len));
 	case ERX_PROG_OBJ_MEM:
 		return (-ESPIPE);
+	case ERX_PROG_OBJ_FILE:
+		return (len == 0 ? 0 : erx_prog_file_write(erx_prog_file_of(obj), buf, len));
 	}
 	return (-ESPIPE);
 }
@@ -584,6 +638,7 @@ erx_prog_fd_mmap(int fd, size_t len, int prot, int flags, off_t offset, void **a
 	switch (obj->kind) {
 	case ERX_PROG_OBJ_NULL:
 	case ERX_PROG_OBJ_PIPE:
+	case ERX_PROG_OBJ_FILE:
 		break;
 	case ERX_PROG_OBJ_MEM:
 		result = mem_map_check(mem_of(obj), len, prot, flags, offset);
@@ -599,6 +654,7 @@ int
 erx_prog_fd_fstat(int fd, struct stat *st)
 {
 	erx_prog_obj_t *obj;
+	int result = 0;
 
 	if ((obj = erx_prog_fd_get(fd)) == NULL)
 		return (-EBADF);
@@ -614,9 +670,12 @@ erx_prog_fd_fstat(int fd, struct stat *st)
 		st->st_mode = S_IFREG | 0600;
 		st->st_size = (off_t)mem_of(obj)->bytes;
 		break;
+	case ERX_PROG_OBJ_FILE:
+		result = -ENOSYS;
+		break;
 	}
 	erx_prog_obj_put(obj);
-	return (0);
+	return (result);
 }
 
 off_t
@@ -640,6 +699,9 @@ erx_prog_fd_lseek(int fd, off_t offset, int whence)
 		break;
 	case ERX_PROG_OBJ_PIPE:
 	case ERX_PROG_OBJ_MEM:
+		break;
+	case ERX_PROG_OBJ_FILE:
+		result = -ENOSYS;
 		break;
 	}
 	erx_prog_obj_put(obj);
@@ -706,6 +768,8 @@ obj_access(erx_prog_obj_t *obj)
 		return (O_RDWR);
 	case ERX_PROG_OBJ_PIPE:
 		return (erx_pipe_end_of(obj)->kind == ERX_PIPE_READ ? O_RDONLY : O_WRONLY);
+	case ERX_PROG_OBJ_FILE:
+		return (erx_prog_file_of(obj)->access);
 	}
 	return (O_RDWR);
 }
@@ -837,6 +901,7 @@ erx_prog_fd_find_end(uint32_t pipe, uint32_t end)
 				found = erx_pipe_end_of(obj);
 			break;
 		case ERX_PROG_OBJ_MEM:
+		case ERX_PROG_OBJ_FILE:
 			break;
 		}
 	}
@@ -861,6 +926,7 @@ erx_prog_fd_each_end(void (*fn)(erx_pipe_end_t *))
 			erx_pipe_end_unlock(erx_pipe_end_of(obj));
 			break;
 		case ERX_PROG_OBJ_MEM:
+		case ERX_PROG_OBJ_FILE:
 			break;
 		}
 	}

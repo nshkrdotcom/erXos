@@ -97,12 +97,12 @@ class ProgFdPlanTest < Minitest::Test
     'a dup onto the slot it copies is let through' =>
       [:plans, PLAN, "\tif (req.mode == ERX_PROG_DUP_AT && req.at == req.from)\n\t\treturn (-EINVAL);\n", ''],
     'F_DUPFD searches below its bound' =>
-      [:plans, PLAN, 'for (uint32_t at = (uint32_t)req.at; at < nslots; at++)', 'for (uint32_t at = 0; at < nslots; at++)'],
+      [:plans, PLAN, 'lowest_empty(slots, nslots, (uint32_t)req.at)', 'lowest_empty(slots, nslots, 0)'],
     'the last slot is never taken' =>
       [:plans, PLAN, '; at < nslots; at++)', '; at + 1 < nslots; at++)'],
-    'pipe2 takes held slots' =>
-      [:plans, PLAN, "if (slots[slot].obj == NULL)\n\t\t\tfound", "if (slots[slot].obj == NULL || true)\n\t\t\tfound"],
-    'pipe2 settles for one empty slot' => [:plans, PLAN, 'if (have < 2)', 'if (have < 1)'],
+    'pipe2 takes one slot for both ends' =>
+      [:plans, PLAN, 'lowest_empty(slots, nslots, (uint32_t)first + 1)', 'lowest_empty(slots, nslots, (uint32_t)first)'],
+    'pipe2 settles for one empty slot' => [:plans, PLAN, 'if (second < 0)', 'if (first < 0)'],
     'dup3 into a slot past the table' =>
       [:plans, PLAN, "\t\tif (!inside)\n\t\t\treturn (-EBADF);\n", ''],
     'dup3 takes any flag' => [:cases, PLAN, "\tif ((flags & ~O_CLOEXEC) != 0)\n\t\treturn (-EINVAL);\n", ''],
