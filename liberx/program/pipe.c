@@ -27,6 +27,7 @@
  */
 
 #include <errno.h>
+#include <fcntl.h>
 #include <poll.h>
 #include <pthread.h>
 #include <stdbool.h>
@@ -104,13 +105,14 @@ bell_ring(erx_cap_t bell)
 }
 
 /*
- * Sends the handler {erx_prog, 1, {Tag, Pipe, End}}, or with wend
- * {erx_prog, 1, {Tag, Pipe, End, Wend}}, through the channel's send, which
+ * Sends the handler {erx_prog, 1, {Tag, Pipe, End}} for the end pipe and end
+ * name, or with wend {erx_prog, 1, {Tag, Pipe, End, Wend}}, through the
+ * channel's send, which
  * may wait for room.  A send the session refuses changes nothing the end
  * can mend: the handler learns the end is gone from the program's end.
  */
 static void
-notice_send(const char *tag, const erx_pipe_end_t *e, const uint32_t *wend)
+notice_send(const char *tag, uint32_t pipe, uint32_t end, const uint32_t *wend)
 {
 	uint8_t frame[64];
 	erx_etf_writer_t writer;
@@ -123,8 +125,8 @@ notice_send(const char *tag, const erx_pipe_end_t *e, const uint32_t *wend)
 	erx_etf_put_integer(&writer, 1);
 	erx_etf_put_tuple(&writer, wend != NULL ? 4 : 3);
 	erx_etf_put_atom(&writer, tag, strlen(tag));
-	erx_etf_put_integer(&writer, e->pipe);
-	erx_etf_put_integer(&writer, e->end);
+	erx_etf_put_integer(&writer, pipe);
+	erx_etf_put_integer(&writer, end);
 	if (wend != NULL)
 		erx_etf_put_integer(&writer, *wend);
 	if (!erx_etf_writer_done(&writer, &len))
@@ -795,7 +797,7 @@ drained_send(erx_pipe_end_t *e)
 		erx_pipe_end_unlock(e);
 		if (!found)
 			return;
-		notice_send("drained", e, &wend);
+		notice_send("drained", e->pipe, e->end, &wend);
 	}
 }
 
@@ -965,11 +967,128 @@ erx_pipe_release(erx_pipe_end_t *e)
 		for (uint32_t at = 0; at < e->u.r.st.nlanes; at++) {
 			if (e->u.r.lanes[at].owed) {
 				e->u.r.lanes[at].owed = false;
-				notice_send("drained", e, &e->u.r.st.lanes[at].wend);
+				notice_send("drained", e->pipe, e->end, &e->u.r.st.lanes[at].wend);
 			}
 		}
 		break;
 	}
-	notice_send("closed", e, NULL);
+	notice_send("closed", e->pipe, e->end, NULL);
 	end_free(e);
+}
+
+/* ---------------------------------------------------------------------
+ * Making a pipe */
+
+/* pipe's value {pipe, Flags}: at most 64 bytes, its flags ascending as the profile lists them. */
+#define PIPE_VALUE_MAX	64
+
+/* What pipe2's reply leaves: the slots of its ends, or the errno. */
+typedef struct pipe_made {
+	int	flags;
+	int	fds[2];
+	int	result;
+} pipe_made_t;
+
+/* The pipe end a descriptor names, or NULL for a descriptor that names none. */
+static const erx_prog_pipe_end_t *
+descriptor_end(const erx_prog_descriptor_t *d)
+{
+	switch (d->which) {
+	case ERX_PROG_DESCRIPTOR_PIPE_READ:
+		return (&d->u.pipe_read.pipe_end);
+	case ERX_PROG_DESCRIPTOR_PIPE_WRITE:
+		return (&d->u.pipe_write.pipe_end);
+	}
+	return (NULL);
+}
+
+/*
+ * Opens the end d names, of either kind, with O_NONBLOCK in its status flags
+ * when flags has it: ERX_OK and *out, or erx_pipe_open's ERX_ENOMEM or
+ * ERX_EINVAL.
+ */
+static int
+end_make(const erx_prog_descriptor_t *d, int flags, erx_pipe_end_t **out)
+{
+	const int status = erx_pipe_open(d, out);
+
+	if (status == ERX_OK && (flags & O_NONBLOCK) != 0)
+		(*out)->obj.status = O_NONBLOCK;
+	return (status);
+}
+
+/*
+ * The requester's callback on pipe's reply, run while its slot keeps the
+ * frame the descriptors' lists view: opens both ends and installs them, or
+ * closes every end the reply named and leaves the errno.
+ */
+static void
+pipe_made(const erx_prog_reply_t *reply, void *arg)
+{
+	pipe_made_t *const made = arg;
+	const erx_prog_pipe_reply_t *const r = &reply->u.pipe;
+	const erx_prog_descriptor_t *const named[2] = { &r->u.ok.descriptor_1, &r->u.ok.descriptor_2 };
+	erx_pipe_end_t *ends[2];
+	int status[2];
+
+	/* The ABI's errno table numbers each error as musl's errno.h does. */
+	if (r->which == ERX_PROG_PIPE_REPLY_ERROR) {
+		made->result = -r->u.error.errnum;
+		return;
+	}
+	for (int at = 0; at < 2; at++)
+		status[at] = end_make(named[at], made->flags, &ends[at]);
+	/* Opened ends of the wrong kinds are released below, which closes their capabilities. */
+	if (status[0] == ERX_OK && status[1] == ERX_OK && ends[0]->kind == ERX_PIPE_READ &&
+	    ends[1]->kind == ERX_PIPE_WRITE) {
+		erx_prog_obj_t *const objs[2] = { &ends[0]->obj, &ends[1]->obj };
+
+		made->result = erx_prog_fd_install_pair(objs, (made->flags & O_CLOEXEC) != 0, made->fds);
+		if (made->result == 0)
+			return;
+	} else {
+		made->result = status[0] == ERX_ENOMEM || status[1] == ERX_ENOMEM ? -ENOMEM : -EIO;
+	}
+	/* Every failure, an open's, the kinds' or the install's, ends here. */
+	for (int at = 0; at < 2; at++) {
+		const erx_prog_pipe_end_t *const end = descriptor_end(named[at]);
+
+		if (status[at] == ERX_OK)
+			erx_pipe_release(ends[at]);
+		else if (end != NULL)
+			notice_send("closed", end->pipe_id, end->end_id, NULL);
+	}
+}
+
+int
+erx_prog_pipe2(int fds[2], int flags)
+{
+	pipe_made_t made = { .flags = flags };
+	uint8_t value[PIPE_VALUE_MAX];
+	erx_etf_writer_t writer;
+	size_t len;
+
+	if ((flags & ~(O_CLOEXEC | O_NONBLOCK)) != 0)
+		return (-EINVAL);
+	if (fds == NULL)
+		return (-EFAULT);
+	erx_etf_writer_init(&writer, value, sizeof(value));
+	erx_etf_put_tuple(&writer, 2);
+	erx_etf_put_atom(&writer, "pipe", strlen("pipe"));
+	if (flags != 0)
+		erx_etf_put_list(&writer, (uint32_t)__builtin_popcount((unsigned)flags));
+	if ((flags & O_CLOEXEC) != 0)
+		erx_etf_put_atom(&writer, "cloexec", strlen("cloexec"));
+	if ((flags & O_NONBLOCK) != 0)
+		erx_etf_put_atom(&writer, "nonblock", strlen("nonblock"));
+	erx_etf_put_nil(&writer);
+	if (!erx_etf_writer_done(&writer, &len))
+		return (-EIO);
+	if (erx_prog_channel_request(ERX_PROG_REQUEST_PIPE, value, len, pipe_made, &made) != ERX_OK)
+		return (-EIO);
+	if (made.result == 0) {
+		fds[0] = made.fds[0];
+		fds[1] = made.fds[1];
+	}
+	return (made.result);
 }

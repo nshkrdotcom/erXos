@@ -72,6 +72,10 @@ module Erx
 #   SIGPIPE ignored the write fails with EPIPE, and under its default action the write ends
 #   the program with ERX_EXIT_SIGNAL plus SIGPIPE, 269; dup, dup2, dup3, fcntl and the
 #   generic ioctls answer on the end and its dups as FreeBSD does.
+# * pipe fills the session's quota of pipes from the shell, closes two of them and, once
+#   the pipe server has taken the closes, runs pipeio under a handler, whose pipe and
+#   pipe2 make pipes on the program's requests (test/guest/programs/pipeio.c); the shell
+#   then closes the pipes it kept.
   # The shell then answers node() again.
   #
   # The programs are file entries, so the backend copies their segments into the space
@@ -409,6 +413,19 @@ module Erx
      end)().
   ERLANG
 end,
+Case.new(name: 'pipe', seconds: 120, answer: '{pipe,{exited,42}}', expression: line(<<~ERLANG)),
+  (fun() ->
+     Fill = fun F(Kept) -> case erx_pipe_srv:pipe() of {ok, R, W} -> F([{R, W} | Kept]); {error, enfile} -> Kept end end,
+     Close = fun({R, W}) -> ok = erx_pipe_srv:close(R), ok = erx_pipe_srv:close(W) end,
+     [A, B | Kept] = Fill([]),
+     lists:foreach(Close, [A, B]),
+     _ = sys:get_state(erx_pipe_srv),
+     {ok, H, []} = erx_prog_handler:start(#{spec('pipeio', 31, argv: '[<<"pipeio">>, <<"pipe">>]')}),
+     Status = receive {erx_prog_exit, H, S} -> S after #{WAIT_MS} -> timeout end,
+     lists:foreach(Close, Kept),
+     {pipe, Status}
+   end)().
+ERLANG
        Case.new(name: 'exit42', seconds: 60, answer: '{exit42,42}', expression: line(<<~ERLANG)),
          (fun() ->
             P = erx_program:start(#{spec('exit42', 2)}),

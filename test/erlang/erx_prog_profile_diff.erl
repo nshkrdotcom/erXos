@@ -347,6 +347,8 @@ request_mutations() ->
      {kill_signal_unknown, {frame, request, {erx_prog, 1, 0, {kill, 2, sigfoo}}}, "range signal"},
      {kill_pid_one, {frame, request, {erx_prog, 1, 0, {kill, 1, sigint}}}, "range process_id"},
      {kill_arity, {frame, request, {erx_prog, 1, 0, {kill, 2}}}, "no_case request"},
+     {pipe_flag_repeated, {frame, request, {erx_prog, 1, 0, {pipe, [cloexec, cloexec]}}}, "order pipe_flags"},
+     {pipe_flags_out_of_order, {frame, request, {erx_prog, 1, 0, {pipe, [nonblock, cloexec]}}}, "order pipe_flags"},
      {probe_pid_one, {frame, request, {erx_prog, 1, 0, {probe, 1}}}, "range process_id"},
      {probe_signal, {frame, request, {erx_prog, 1, 0, {probe, 2, 0}}}, "no_case request"},
      {probe_atom, {frame, request, {erx_prog, 1, 0, probe}}, "no_case request"},

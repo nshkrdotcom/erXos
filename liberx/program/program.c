@@ -67,8 +67,7 @@ static erx_prog_inbound_t record_kind;
 static uint8_t *record_body;
 static size_t record_len;
 static size_t record_have;
-/* One later frame at a time, and the profile check's scratch for it, taken before main. */
-static uint8_t later[ERX_PROG_REPORT_MAX];
+/* The profile check's scratch for a later frame, taken before main; the channel keeps the frame's buffer. */
 static uint8_t *later_scratch;
 static uint64_t later_scratch_len;
 /* Written by the executor before VERDICT_GO, read by the first thread after it. */
@@ -193,7 +192,7 @@ later_apply(void)
 {
 	erx_prog_to_program_t got;
 
-	if (!erx_prog_channel_frame(later, record_len, later_scratch, later_scratch_len, &got))
+	if (!erx_prog_channel_frame(record_len, later_scratch, later_scratch_len, &got))
 		stop(ERX_PROG_STATUS_REFUSED);
 	if (got.frame == ERX_PROG_FRAME_REPORT)
 		erx_pipe_report(&got.u.report);
@@ -211,7 +210,7 @@ record_open(const erx_lane_part_t *part)
 		record_body = message;
 		break;
 	case ERX_PROG_INBOUND_FRAME:
-		record_body = later;
+		record_body = erx_prog_channel_buffer();
 		break;
 	case ERX_PROG_INBOUND_REFUSE:
 		stop(ERX_PROG_STATUS_REFUSED);

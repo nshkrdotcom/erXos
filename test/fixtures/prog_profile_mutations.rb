@@ -285,10 +285,18 @@ module ProgProfileMutations
 
     def list_rules(kind, model, value)
       rules = [[:shape, 1, 'shape'], [:length, longest(kind, model, value), 'length']]
-      if model.fetch(:ascending) && !value.empty?
-        rules << [:order, value + [fresh(model.fetch(:element), value.last, (FRESH..).each)], 'order']
-      end
+      rules << [:order, repeated(model, value), 'order'] if model.fetch(:ascending) && !value.empty?
       rules
+    end
+
+    # The list with an element repeated, within its maximum, so only its order breaks: a copy
+    # of its last appended, or at its maximum its last replaced by a copy of the one before.
+    def repeated(model, value)
+      copy = ->(item) { fresh(model.fetch(:element), item, (FRESH..).each) }
+      return value + [copy.call(value.last)] if value.size < model.dig(:max, :value)
+      return Skip.new(why: 'no two elements to repeat') if value.size < 2
+
+      value[0...-1] + [copy.call(value[-2])]
     end
 
     # The list one element past its maximum, its first max elements in order: an

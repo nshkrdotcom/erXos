@@ -447,12 +447,13 @@ erx_space_stop(uint64_t space, int64_t status)
 /* No descriptor call makes a request; signal.c's kill, linked in, would. */
 int
 erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
-    erx_prog_reply_t *reply)
+    erx_prog_reply_fn_t *fn, void *arg)
 {
 	(void)request;
 	(void)value;
 	(void)len;
-	(void)reply;
+	(void)fn;
+	(void)arg;
 	abort();
 }
 

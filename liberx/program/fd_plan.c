@@ -52,6 +52,23 @@ erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t 
 }
 
 int
+erx_prog_pair_plan(const erx_prog_slot_t *slots, uint32_t nslots, int at[2])
+{
+	int found[2];
+	uint32_t have = 0;
+
+	for (uint32_t slot = 0; slot < nslots && have < 2; slot++) {
+		if (slots[slot].obj == NULL)
+			found[have++] = (int)slot;
+	}
+	if (have < 2)
+		return (-EMFILE);
+	at[0] = found[0];
+	at[1] = found[1];
+	return (0);
+}
+
+int
 erx_prog_dup3_req(int old, int to, int flags, erx_prog_dup_t *req)
 {
 	if ((flags & ~O_CLOEXEC) != 0)

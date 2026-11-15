@@ -16,7 +16,8 @@ require_relative '../../tools/lib/erx/generated'
 # the ring is refused with ERX_ERANGE. A kill is a request on a reply slot that waits for its
 # reply, which only its own slot's reply ends, and a kill of signal 0 a probe on one; a kill with
 # no target in the request table is answered without one; with every worker slot held a
-# request waits for a free one. Every case runs under the address and undefined sanitizers,
+# request waits for a free one; a reply's frame stays with its slot while its requester's callback
+# runs. Every case runs under the address and undefined sanitizers,
 # and the threaded cases under the thread sanitizer too (docs/design-programs.md, "The
 # channel" and "The program protocol"). Each seeded fault must fail its case.
 class ProgChannelTest < Minitest::Test
@@ -33,8 +34,8 @@ class ProgChannelTest < Minitest::Test
     thread: ['-fsanitize=thread']
   }.freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  CASES = %w[whole wait waiters two large kill probe local slots].freeze
-  THREADED = %w[wait waiters two kill probe slots].freeze
+  CASES = %w[whole wait waiters two large kill probe local slots keep].freeze
+  THREADED = %w[wait waiters two kill probe slots keep].freeze
 
   # A seeded fault, the case that catches it, and the edit that plants it.
   MUTANTS = {
@@ -46,7 +47,9 @@ class ProgChannelTest < Minitest::Test
        "\t(void)pthread_mutex_unlock(&lock);\n\treturn (status);"],
     'a requester returns before its reply' => ['kill', "\t\treply_wait(slot);\n", "\t\t(void)reply_wait;\n"],
     'a reply is read on a slot its request did not take' =>
-      ['kill', "read = erx_prog_inbound_read(&slots,", "slots.busy[0] = slots.busy[1] = ERX_PROG_REQUEST_KILL;\n\tread = erx_prog_inbound_read(&slots,"]
+      ['kill', "read = erx_prog_inbound_read(&slots,", "slots.busy[0] = slots.busy[1] = ERX_PROG_REQUEST_KILL;\n\tread = erx_prog_inbound_read(&slots,"],
+    'a reply frame is overwritten while its requester holds it' =>
+      ['keep', "\t\tspare = slot_frame[got->slot];\n\t\tslot_frame[got->slot] = kept;\n", "\t\t(void)kept;\n"]
   }.freeze
 
   def test_each_case_under_the_address_and_undefined_sanitizers

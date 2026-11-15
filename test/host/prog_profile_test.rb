@@ -200,7 +200,7 @@ class ProgProfileTest < Minitest::Test
   def test_the_generated_mutations_reach_past_the_hand_written_ones
     hand = corpus(File.binread(GRAMMAR)).fetch(:hand).to_set
     assert_operator MUTATIONS.map(&:verdict).uniq.count { |verdict| !hand.include?(verdict) }, :>, 0
-    assert_equal ['argv length', 'env length', 'signals length', 'writers length'],
+    assert_equal ['argv length', 'env length', 'pipe_flags length', 'signals length', 'writers length'],
                  SKIPPED.map { |line| line.split(':').first }.sort
   end
 

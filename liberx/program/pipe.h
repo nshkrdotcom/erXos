@@ -189,10 +189,27 @@ void	erx_pipe_end_unlock(erx_pipe_end_t *e);
 bool	erx_pipe_end_held(void);
 
 /*
- * The end's last reference went and the table let go of it: ends a wait
+ * The end's last reference went and the table let go of it, or pipe2 lets
+ * go of an end the table never held: ends a wait
  * its last read left, lets go of every mapping and capability, sends each
  * {drained} it owes and then {closed}, and frees the end.
  */
 void	erx_pipe_release(erx_pipe_end_t *e);
+
+/*
+ * pipe2(fds, flags) (docs/design-pipes.md, "Making a pipe"): asks the
+ * handler for a pipe with {pipe, Flags}, opens the read and the write end
+ * its reply names, with O_NONBLOCK in each open's status flags when flags
+ * has it, and puts them into the two lowest empty slots, fds[0] the read
+ * end's, with FD_CLOEXEC when flags has O_CLOEXEC.  0, or a negative
+ * errno with fds untouched: -EINVAL for flags other than O_CLOEXEC and
+ * O_NONBLOCK; the reply's error; -ENOMEM when an end cannot be made;
+ * -EMFILE when the table has no two empty slots; -EIO when the channel
+ * fails or the reply names no read end and write end, and -EFAULT for a
+ * NULL fds.  On a failure after the reply every end it named is let go: an
+ * opened one is released, and the handler is told of one never opened with
+ * its {closed}.
+ */
+int	erx_prog_pipe2(int fds[2], int flags);
 
 #endif /* !LIBERX_PROGRAM_PIPE_H */

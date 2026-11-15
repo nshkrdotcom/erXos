@@ -50,6 +50,12 @@ typedef struct erx_prog_dup {
  */
 int	erx_prog_dup_plan(const erx_prog_slot_t *slots, uint32_t nslots, erx_prog_dup_t req);
 
+/*
+ * The two lowest empty slots of a table of nslots slots, at[0] below at[1], for pipe2's
+ * two ends: 0, or -EMFILE, at[] untouched, when fewer than two are empty.
+ */
+int	erx_prog_pair_plan(const erx_prog_slot_t *slots, uint32_t nslots, int at[2]);
+
 /* dup3(old, to, flags) as a dup: 0 and *req, or -EINVAL for flags other than O_CLOEXEC. */
 int	erx_prog_dup3_req(int old, int to, int flags, erx_prog_dup_t *req);
 

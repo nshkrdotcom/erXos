@@ -344,6 +344,23 @@ erx_prog_fd_dup3(int from, int to, int flags)
 }
 
 int
+erx_prog_fd_install_pair(erx_prog_obj_t *const objs[2], bool cloexec, int fds[2])
+{
+	int result;
+
+	table_take();
+	result = erx_prog_pair_plan(slots, ERX_PROG_FDS_MAX, fds);
+	if (result == 0) {
+		for (int at = 0; at < 2; at++) {
+			obj_hold(objs[at]);
+			slots[fds[at]] = (erx_prog_slot_t){ .obj = objs[at], .cloexec = cloexec };
+		}
+	}
+	(void)pthread_mutex_unlock(&table_lock);
+	return (result);
+}
+
+int
 erx_prog_fd_close(int fd)
 {
 	erx_prog_obj_t *obj = NULL;

@@ -27,7 +27,9 @@
  * the reply in a closed wait, the request in flight being its obligation; the executor reads every frame after the
  * startup message through erx_prog_channel_frame, which puts a reply in
  * its slot and wakes its requester, so a reply reaches only the request on
- * its slot.
+ * its slot.  A reply's lists are views into its frame, so each slot keeps
+ * the buffer its reply was copied into until its requester lets go of it,
+ * and the executor copies the next frame into a spare buffer.
  */
 
 #include <stdbool.h>
@@ -62,25 +64,42 @@ int	erx_prog_channel_send(const erx_lane_iov_t *iov, size_t iovcnt);
  */
 void	erx_prog_channel_room(void);
 /*
+ * What a requester does with its reply, run while it still holds the slot,
+ * so the reply's lists, views into its frame (erx_profile_list_t), stay
+ * valid until it returns.  arg is the requester's.  fn may send, but never
+ * makes a request: with every worker slot held by such a callback, none
+ * would get a slot.
+ */
+typedef void erx_prog_reply_fn_t(const erx_prog_reply_t *reply, void *arg);
+
+/*
  * Makes a request of case request (ERX_PROG_REQUEST_...), whose value
  * value[0, len) is one term as erx_etf_writer writes it, its version byte
  * first: takes a free worker slot, waiting for one while all are held,
- * sends the request on it through erx_prog_channel_send and waits for the
- * reply, which it copies into *reply.  ERX_OK with *reply; the send's
- * ERX_ERANGE or ERX_EDEAD, with no reply.  The slot is free again either
- * way.  A reply holds no view into its frame: replies with texts or lists
- * need the frame kept with the slot.  The executor never makes a request.
+ * sends the request on it through erx_prog_channel_send, waits for the
+ * reply and runs fn(reply, arg) on it, holding the slot and not the
+ * channel's lock, so fn may send.  ERX_OK once fn ran; the send's
+ * ERX_ERANGE or ERX_EDEAD, with fn not run.  The slot is free again
+ * either way.  The executor never makes a request.
  */
 int	erx_prog_channel_request(uint16_t request, const uint8_t *value,
-	    size_t len, erx_prog_reply_t *reply);
+	    size_t len, erx_prog_reply_fn_t *fn, void *arg);
 /*
- * The executor's read of a whole frame after the startup message,
- * frame[0, len), with scratch_len bytes of scratch (erx_prog_inbound_read):
- * a reply goes into its slot, whose requester it wakes, and a report into
- * *got for the executor to apply.  False when the profile refuses the
- * frame, a reply on a slot that awaits none among them.
+ * The executor's: the buffer of ERX_PROG_REPORT_MAX bytes to copy the next
+ * frame after the startup message into, before erx_prog_channel_frame reads
+ * it.  It changes after each reply, whose frame stays with its slot.
  */
-bool	erx_prog_channel_frame(const uint8_t *frame, size_t len, void *scratch,
-	    size_t scratch_len, erx_prog_to_program_t *got);
+uint8_t *erx_prog_channel_buffer(void);
+/*
+ * The executor's read of a whole frame after the startup message, the
+ * first len bytes of erx_prog_channel_buffer's buffer, with scratch_len
+ * bytes of scratch (erx_prog_inbound_read): a reply goes into its slot,
+ * which keeps the buffer, and wakes its requester; a report goes into *got
+ * for the executor to apply before it copies the next frame.  False when
+ * the profile refuses the frame, a reply on a slot that awaits none among
+ * them.
+ */
+bool	erx_prog_channel_frame(size_t len, void *scratch, size_t scratch_len,
+	    erx_prog_to_program_t *got);
 
 #endif /* !LIBERX_PROGRAM_CHANNEL_H */

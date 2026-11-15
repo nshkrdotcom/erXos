@@ -199,7 +199,7 @@ protocol erx_prog
   union pipe_flag
     case cloexec
     case nonblock
-  list pipe_flags pipe_flag max 2
+  list pipe_flags pipe_flag max 2 ascending
   union pipe_reply
     case ok descriptor descriptor
     case error errno

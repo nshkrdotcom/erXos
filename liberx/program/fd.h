@@ -112,6 +112,12 @@ int	erx_prog_fd_dup3(int from, int to, int flags);
  * command, and -EBADF for an empty slot.
  */
 long	erx_prog_fd_fcntl(int fd, int cmd, long arg);
+/*
+ * pipe2's install: puts objs[0] and objs[1], each with a new reference,
+ * into the two lowest empty slots, both or neither, with FD_CLOEXEC set to
+ * cloexec, and their slots into fds[]: 0, or -EMFILE with nothing put.
+ */
+int	erx_prog_fd_install_pair(erx_prog_obj_t *const objs[2], bool cloexec, int fds[2]);
 /* Empties slot fd and drops its reference: 0 or -EBADF. */
 int	erx_prog_fd_close(int fd);
 /*

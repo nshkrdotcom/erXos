@@ -13,7 +13,9 @@
  *   plans N                every dup over a table of N slots: one line
  *                          "MODE HELD FROM AT ANSWER" for each mode (lowest,
  *                          at), each set of held slots (HELD, a bit a slot),
- *                          each FROM from -1 to N and each AT from -2 to N+1
+ *                          each FROM from -1 to N and each AT from -2 to N+1;
+ *                          then "pair HELD ANSWER", the two slots pipe2 takes
+ *                          for each set of held slots, or the errno
  *   dup3 OLD TO FLAGS      erx_prog_dup3_req: "ok FROM AT CLOEXEC" or the errno
  *   fcntl FD CMD ARG       erx_prog_fcntl_req: "OP ..." or the errno
  *   status ARG             erx_prog_status_set: the flags kept, or the errno
@@ -151,6 +153,19 @@ do_plans(uint32_t nslots)
 				}
 			}
 		}
+	}
+	for (uint32_t held = 0; held < (1U << nslots); held++) {
+		int pair[2];
+		int answer;
+
+		for (uint32_t at = 0; at < nslots; at++)
+			slots[at] = (erx_prog_slot_t){ .obj = (held >> at & 1) != 0 ? (void *)&object : NULL };
+		answer = erx_prog_pair_plan(slots, nslots, pair);
+		printf("pair %" PRIu32 " ", held);
+		if (answer == 0)
+			printf("%d %d\n", pair[0], pair[1]);
+		else
+			print_errno(answer);
 	}
 }
 

@@ -3325,6 +3325,22 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   no `{signal, Signal, Sender}` report, and `liberx` raises none. Add the report to
   `abi/protocols/prog.txt` with its raise in the event executor, then answer such a kill by
   queueing the report ahead of the reply.
+* [Medium] programs, `liberx/program/pipe.c` (`pipe_made`): a pipe reply's end that `erx_pipe_open` refuses
+  partway (an ENOMEM mapping the lock page or reserving lanes) keeps the capabilities of the writers it
+  had not reached in the program's table, a few slots for each failed `pipe2`; and the program owes the
+  session, for an end it never opened, only `{closed}`, a hand-written copy of what
+  `erx_program:descriptor_grants/1` counts (no `{drained}` for a gone writer, nothing for a
+  `socketpair`). Generate `erx_prog_descriptor_caps` and the notices a refused descriptor owes from the
+  protocol table, as `erx_prog_report_caps` is, and close and send them on every refusal.
+* [Medium] programs, `liberx/program/pipe.c` and `channel.c`: a `pipe_lost` or `pipe_server_lost` report the
+  executor reads between a pipe reply and its requester's install finds the new ends in no table and is
+  dropped, so those ends never learn they are lost; design-programs.md has startup ends set up before
+  any report that may name them. Have the executor open a pipe reply's ends and link them into the live
+  list before it reads the next frame, leaving the requester only the install or the release.
+* [Medium] programs, `test/fixtures/prog_fd_driver.c`: `pipe_made`'s failure paths (EMFILE releasing both
+  ends with two `{closed}`, one end refused, swapped kinds) run in no test; have the driver's
+  `erx_prog_channel_request` stand-in call the callback with crafted replies over a nearly full table,
+  with a seeded fault that drops the release loop.
 * [Low] session, `erx_prog_handler_core` (`pipe`): when the driver refuses the write end's install
   after the read end's, the handler closes both ends at the pipe server, but the read end's copies
   and its doorbell's bind stay in the program's table, untold to the program, until it ends; on the

@@ -54,6 +54,16 @@ static erx_prog_waitq_t room_waiters;
 static erx_prog_slots_t slots;
 static erx_prog_waitq_t reply_waiters[ERX_PROFILE_SLOTS];	/* a slot's requester */
 static erx_prog_waitq_t slot_waiters;				/* workers without a slot */
+/*
+ * The frames after the startup message: each slot's, holding the frame of
+ * its reply while it is answered, and the executor's spare, which the next
+ * frame is copied into; a reply's read swaps the spare with its slot's, so
+ * the buffers stay a permutation and the spare is never a held reply's.
+ * The pointers are under lock; the spare's bytes are the executor's alone.
+ */
+static uint8_t frames[ERX_PROFILE_SLOTS + 1][ERX_PROG_REPORT_MAX];
+static uint8_t *slot_frame[ERX_PROFILE_SLOTS];
+static uint8_t *spare;
 
 /* A request's envelope before its value, the version byte and {erx_prog, Version, Slot,: 17 bytes. */
 #define ENVELOPE_MAX	32
@@ -63,6 +73,9 @@ erx_prog_channel_open(void *own_side, const void *peer_side, uint64_t bell)
 {
 	doorbell = bell;
 	erx_prog_slots_init(&slots);
+	for (unsigned at = 0; at < ERX_PROFILE_SLOTS; at++)
+		slot_frame[at] = frames[at];
+	spare = frames[ERX_PROFILE_SLOTS];
 	return (erx_lane_writer_init(&outbound, own_side, peer_side, ERX_PROGRAM_LANE));
 }
 
@@ -173,7 +186,7 @@ reply_wait(unsigned slot)
 
 int
 erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
-    erx_prog_reply_t *reply)
+    erx_prog_reply_fn_t *fn, void *arg)
 {
 	const erx_profile_frame_t *const frame = &erx_prog_profile.frames[ERX_PROG_FRAME_REQUEST];
 	uint8_t envelope[ENVELOPE_MAX];
@@ -202,7 +215,10 @@ erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
 	(void)pthread_mutex_lock(&lock);
 	if (status == ERX_OK) {
 		reply_wait(slot);
-		*reply = slots.replies[slot];
+		/* The answered slot is the requester's: no reply lands on it, and the spare is never its buffer. */
+		(void)pthread_mutex_unlock(&lock);
+		fn(&slots.replies[slot], arg);
+		(void)pthread_mutex_lock(&lock);
 	}
 	erx_prog_slot_release(&slots, slot);
 	erx_prog_waitq_wake(&slot_waiters);
@@ -210,16 +226,32 @@ erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
 	return (status);
 }
 
+uint8_t *
+erx_prog_channel_buffer(void)
+{
+	uint8_t *buffer;
+
+	(void)pthread_mutex_lock(&lock);
+	buffer = spare;
+	(void)pthread_mutex_unlock(&lock);
+	return (buffer);
+}
+
 bool
-erx_prog_channel_frame(const uint8_t *frame, size_t len, void *scratch,
-    size_t scratch_len, erx_prog_to_program_t *got)
+erx_prog_channel_frame(size_t len, void *scratch, size_t scratch_len,
+    erx_prog_to_program_t *got)
 {
 	bool read;
 
 	(void)pthread_mutex_lock(&lock);
-	read = erx_prog_inbound_read(&slots, frame, len, scratch, scratch_len, got);
-	if (read && got->frame == ERX_PROG_FRAME_REPLY)
+	read = erx_prog_inbound_read(&slots, spare, len, scratch, scratch_len, got);
+	if (read && got->frame == ERX_PROG_FRAME_REPLY) {
+		uint8_t *const kept = spare;
+
+		spare = slot_frame[got->slot];
+		slot_frame[got->slot] = kept;
 		erx_prog_waitq_wake(&reply_waiters[got->slot]);
+	}
 	(void)pthread_mutex_unlock(&lock);
 	return (read);
 }

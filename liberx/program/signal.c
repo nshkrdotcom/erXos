@@ -106,6 +106,13 @@ erx_prog_sig_raise(int signo)
 		(void)erx_umtx_wait((uint64_t)(uintptr_t)&never, 0, ERX_WAIT_FOREVER);
 }
 
+/* kill's and probe's replies hold no view into their frame: the requester keeps a copy. */
+static void
+reply_copy(const erx_prog_reply_t *reply, void *arg)
+{
+	*(erx_prog_reply_t *)arg = *reply;
+}
+
 int
 erx_prog_kill(int pid, int signo)
 {
@@ -138,7 +145,7 @@ erx_prog_kill(int pid, int signo)
 	}
 	if (!erx_etf_writer_done(&writer, &len))
 		return (-EIO);
-	if (erx_prog_channel_request(request, value, len, &reply) != ERX_OK)
+	if (erx_prog_channel_request(request, value, len, reply_copy, &reply) != ERX_OK)
 		return (-EIO);
 	/* The ABI's errno table numbers each error as musl's errno.h does. */
 	if (request == ERX_PROG_REQUEST_PROBE)

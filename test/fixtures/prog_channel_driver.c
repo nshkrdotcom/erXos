@@ -37,6 +37,9 @@
  *   slots	with every worker slot held, one more kill waits for a slot
  *		and takes the one a reply frees; no request uses the
  *		executor's slot or a held one
+ *   keep	while a requester's callback runs on its reply, the frame's
+ *		buffer stays with its slot: the executor copies the next
+ *		frames, another slot's reply among them, into other buffers
  * The driver plays the executor too, handing replies to
  * erx_prog_channel_frame.  Every case ends within its deadline: alarm stops
  * a driver whose send never returns.
@@ -561,7 +564,8 @@ reply_give(uint8_t slot, const char *error)
 	}
 	if (!erx_etf_writer_done(&writer, &len) || erx_prog_scratch_bytes(len) > sizeof(scratch))
 		fail("a reply the driver cannot build");
-	if (!erx_prog_channel_frame(frame, len, scratch, sizeof(scratch), &got))
+	memcpy(erx_prog_channel_buffer(), frame, len);
+	if (!erx_prog_channel_frame(len, scratch, sizeof(scratch), &got))
 		return (false);
 	if (got.frame != ERX_PROG_FRAME_REPLY || got.slot != slot)
 		fail("a reply read as another frame");
@@ -679,6 +683,58 @@ case_slots(void)
 		(void)killer_join(&k[at]);
 }
 
+/* A requester whose callback holds its reply until the case lets it go. */
+static _Atomic bool holding, let_go;
+
+static void
+reply_hold(const erx_prog_reply_t *reply, void *arg)
+{
+	(void)reply;
+	(void)arg;
+	atomic_store(&holding, true);
+	while (!atomic_load(&let_go))
+		pause_briefly();
+}
+
+static void *
+holder_main(void *unused)
+{
+	static const uint8_t value[] = { 131, 104, 2, 119, 5, 'p', 'r', 'o', 'b', 'e', 97, 42 };
+
+	(void)unused;
+	if (erx_prog_channel_request(ERX_PROG_REQUEST_PROBE, value, sizeof(value), reply_hold, NULL) != ERX_OK)
+		fail("the held request was not answered");
+	return (NULL);
+}
+
+static void
+case_keep(void)
+{
+	pthread_t holder;
+	killer_t k;
+	uint8_t slot;
+	const uint8_t *held;
+
+	if (pthread_create(&holder, NULL, holder_main, NULL) != 0)
+		fail("pthread_create");
+	(void)request_read(&slot);
+	held = erx_prog_channel_buffer();
+	if (!reply_give(slot, NULL))
+		fail("the held request's reply was refused");
+	while (!atomic_load(&holding))
+		pause_briefly();
+	if (erx_prog_channel_buffer() == held)
+		fail("the next frame goes into the buffer of a held reply");
+	killer_start(&k, 42, 0);
+	(void)request_read(&slot);
+	if (!reply_give(slot, NULL) || killer_join(&k) != 0)
+		fail("a second request was not answered while the first held its reply");
+	if (erx_prog_channel_buffer() == held)
+		fail("a later frame goes into the buffer of a held reply");
+	atomic_store(&let_go, true);
+	pthread_join(holder, NULL);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -689,6 +745,7 @@ main(int argc, char **argv)
 		{ "whole", case_whole }, { "wait", case_wait }, { "waiters", case_waiters },
 		{ "two", case_two }, { "large", case_large }, { "kill", case_kill },
 		{ "probe", case_probe }, { "local", case_local }, { "slots", case_slots },
+		{ "keep", case_keep },
 	};
 	const uint64_t bytes = erx_lane_side_bytes(ERX_PROGRAM_LANE);
 

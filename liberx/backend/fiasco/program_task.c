@@ -36,6 +36,7 @@
 #include "liberx/backend/fiasco/task_start.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/fd.h"
+#include "liberx/program/pipe.h"
 #include "liberx/program/poll.h"
 #include "liberx/program/signal.h"
 #include "liberx/program/spawn.h"
@@ -206,6 +207,10 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 		return (true);
 	case SYS_dup3:
 		*result = erx_prog_fd_dup3(fd, (int)args[1], (int)args[2]);
+		return (true);
+	case SYS_pipe2:
+		/* musl's pipe() is pipe2(fd, 0) where the architecture has no pipe call (src/unistd/pipe.c). */
+		*result = erx_prog_pipe2((int *)args[0], (int)args[1]);
 		return (true);
 	case SYS_fcntl:
 		*result = erx_prog_fd_fcntl(fd, (int)args[1], args[2]);
