@@ -220,6 +220,50 @@ reports_and_refusals_test_() ->
                           iolist_to_binary([O || {out, O} <- Shown]))
      end}.
 
+%% A command that stops its own job with erx_cmd:stop/1 is reported stopped,
+%% the prompt comes back, and the call returns only after `fg`: `continued`
+%% follows the command `fg` shows. With no job table the call fails.
+stop_own_job_test_() ->
+    {timeout, 30,
+     fun() ->
+             Shown = session([{line, <<"tstp\n">>},
+                              {line, <<"jobs\n">>},
+                              {interrupt, 1, <<"fg\n">>},
+                              eof]),
+             Out = iolist_to_binary([O || {out, O} <- Shown]),
+             ?assertEqual(<<"[1] + Suspended               tstp\n",
+                            "[1] + Suspended               tstp\n",
+                            "tstp\n",
+                            "continued\n",
+                            "^C\n">>, Out),
+             ?assertEqual({error, enotsup}, erx_cmd:stop(#{}))
+     end}.
+
+%% A burst of size changes reaches the process of the foreground line that
+%% asked for them as one or two messages, and nothing reaches its helper,
+%% which did not ask.
+winch_test_() ->
+    {timeout, 30,
+     fun() ->
+             true = register(winch_counter, self()),
+             try
+                 _ = session([{winch, 10, <<"winch\n">>}, eof]),
+                 Got = collect_winch([]),
+                 Winched = [M || {winched, M} <- Got],
+                 ?assertEqual([], [S || {stray, _} = S <- Got]),
+                 ?assert(length(Winched) >= 1 andalso length(Winched) =< 2, Got),
+                 ?assert(lists:all(fun(M) -> M =:= {erx_cmd, winch} end, Winched))
+             after
+                 unregister(winch_counter)
+             end
+     end}.
+
+collect_winch(Got) ->
+    receive
+        {Kind, _} = M when Kind =:= winched; Kind =:= stray -> collect_winch([M | Got])
+    after 0 -> lists:reverse(Got)
+    end.
+
 %% Waits until each named process runs, and returns `generations` once each
 %% was started by the one before it.
 started(Names) ->
@@ -334,12 +378,19 @@ serve(Shell, Script, Shown) ->
             %% shell, and so does the terminal's stop, which erx_console sends.
             [erlang:send_after(300, self(), {interrupt, Count}) || {interrupt, Count, _} <- [Step]],
             [erlang:send_after(300, self(), suspend) || {suspend, _} <- [Step]],
+            %% A burst of size changes, as erx_console sends them through the
+            %% group, and then the interrupt that ends the line.
+            [erlang:send_after(300, self(), {winch, Count}) || {winch, Count, _} <- [Step]],
+            [erlang:send_after(1000, self(), {interrupt, 1}) || {winch, _, _} <- [Step]],
             serve(Shell, Rest, Shown2);
         {interrupt, Count} ->
             [exit(Shell, interrupt) || _ <- lists:seq(1, Count)],
             serve(Shell, Script, Shown);
         suspend ->
             Shell ! {self(), suspend},
+            serve(Shell, Script, Shown);
+        {winch, Count} ->
+            [Shell ! {self(), winch} || _ <- lists:seq(1, Count)],
             serve(Shell, Script, Shown);
         {'EXIT', Shell, normal} ->
             lists:reverse(Shown)
@@ -348,6 +399,7 @@ serve(Shell, Script, Shown) ->
 answer({line, Bytes}) -> unicode:characters_to_list(Bytes);
 answer({interrupt, _Count, Bytes}) -> unicode:characters_to_list(Bytes);
 answer({suspend, Bytes}) -> unicode:characters_to_list(Bytes);
+answer({winch, _Count, Bytes}) -> unicode:characters_to_list(Bytes);
 answer(interrupted) -> {error, interrupted};
 answer(eof) -> eof.
 

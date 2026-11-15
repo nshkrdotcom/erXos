@@ -17,7 +17,8 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: the driver's suspend (Ctrl-Z) reaches the shell.
+%% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
+%% (winch) reach the shell.
 %%
 %% %CopyrightEnd%
 %%
@@ -252,9 +253,11 @@ server(info, {io_request,From,ReplyAs,Req} = IOReq, Data) when is_pid(From), ?IS
      if Data#state.dumb orelse not Data#state.echo -> dumb; true -> xterm end,
      Data#state{ input = #input_state{ from = From, reply_as = ReplyAs } },
      {next_event, internal, Req} };
-server(info, {Drv, suspend}, #state{ driver = Drv, shell = Shell }) ->
-    %% erXos: Ctrl-Z while no line is read, as while the shell runs one.
-    [Shell ! {self(), suspend} || is_pid(Shell)],
+server(info, {Drv, Event}, #state{ driver = Drv, shell = Shell })
+  when Event =:= suspend; Event =:= winch ->
+    %% erXos: Ctrl-Z or a size change while no line is read, as while the
+    %% shell runs one.
+    [Shell ! {self(), Event} || is_pid(Shell)],
     keep_state_and_data;
 server(info, {Drv, _}, #state{ driver = Drv }) ->
     %% We postpone any Drv event sent to us as they are handled in xterm or dumb states
@@ -525,11 +528,13 @@ handle_info(_State, {'EXIT', Drv, interrupt}, #state{ driver = Drv }  = Data) ->
     io_reply(Data, {error, interrupted}),
     pop_state(Data#state{ buf = [] });
 
-handle_info(_State, {Drv, suspend}, #state{ driver = Drv, shell = Shell }) ->
+handle_info(_State, {Drv, Event}, #state{ driver = Drv, shell = Shell })
+  when Event =:= suspend; Event =:= winch ->
     %% erXos: the terminal's Ctrl-Z, which stops the foreground job of the
-    %% command shell. The shell alone knows its jobs, so the group passes it on,
-    %% as it passes Ctrl-C on as an interrupt.
-    [Shell ! {self(), suspend} || is_pid(Shell)],
+    %% command shell, and a change of the terminal's size, which reaches the
+    %% foreground job's processes that asked for it. The shell alone knows its
+    %% jobs, so the group passes both on, as it passes Ctrl-C on as an interrupt.
+    [Shell ! {self(), Event} || is_pid(Shell)],
     keep_state_and_data;
 handle_info(_State, {'EXIT',Drv,_R}, #state{ driver = Drv } = Data) ->
     [ exit(Data#state.shell, kill)

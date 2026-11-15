@@ -43,12 +43,21 @@ isatty/2, and the terminal's width and height, columns/1 and rows/1. A
 write that cannot be done, such as one to a pipe whose reader has ended,
 and a line over 64 KiB, end the command at once with that error as its
 status, as `SIGPIPE` ends a program.
+
+Events reach a command's process as messages, as signals reach a program,
+and only once it has asked for them with catch_events/1: `{erx_cmd, winch}`
+is a change of the terminal's size, which goes to the foreground job alone,
+and `{erx_cmd, info}` is `Ctrl-T`'s info request, which the shell does not
+send yet. Neither carries data: requested/1 takes those that wait, and the
+receiver asks for what it needs. A command stops its own job with stop/1,
+as a program that reads `Ctrl-Z` as a key raises `SIGTSTP`.
 """.
 
 -export([write/2, say/2, report/3, read/1, read_line/1, isatty/2, columns/1, rows/1,
          facet/2, path/2, cwd/1, env/2, getopt/2, format_error/1]).
+-export([catch_events/1, requested/1, asked_for/2, stop/1]).
 
--export_type([ctx/0, stream/0]).
+-export_type([ctx/0, stream/0, event/0]).
 
 -callback run(Args :: [binary()], Ctx :: ctx()) ->
     ok | {error, usage} | {error, {reported, term()}} | {error, term()}.
@@ -66,8 +75,18 @@ status, as `SIGPIPE` ends a program.
                  stdout := stream(),
                  stderr := stream(),
                  facets := #{atom() => term()},
+%% The interactive shell's job table, which stop/1 asks.
+job_control => erx_shell:job_control(),
                  %% The terminal's run_shell, at an interactive shell only.
                  run_shell => fun((erx_console:shell()) -> ok | {error, term()})}.
+
+%% An event a process may ask for: `Ctrl-T`'s info request, or a change of
+%% the terminal's size.
+-type event() :: info | winch.
+
+%% The key of the calling process's dictionary that names the events it asked
+%% for, which the shell reads with process_info/2 when it delivers one.
+-define(EVENTS_KEY, '$erx_events').
 
 -doc "Writes bytes to standard output.".
 -spec write(ctx(), iodata()) -> ok.
@@ -107,7 +126,7 @@ read_line(#{stdin := {pipe, Pipe}}) ->
     case erx_shell_pipe:get(Pipe) of
         {line, Line} -> Line;
         eof -> eof;
-        {error, line_too_long} -> stop(line_too_long)
+        {error, line_too_long} -> fail(line_too_long)
     end;
 read_line(#{stdin := Other}) ->
     no_input(Other).
@@ -115,8 +134,8 @@ read_line(#{stdin := Other}) ->
 %% Every input the shell hands a command is a pipe (erx_shell_pipe), and
 %% nothing else is read.
 no_input(null) -> eof;
-no_input(closed) -> stop(ebadf);
-no_input(_Stream) -> stop(enotsup).
+no_input(closed) -> fail(ebadf);
+no_input(_Stream) -> fail(enotsup).
 
 -doc "Whether a standard stream is the session's terminal.".
 -spec isatty(ctx(), stdin | stdout | stderr) -> boolean().
@@ -149,10 +168,18 @@ terminal_size(Ctx, Variable, Reported) ->
         [Text] when byte_size(Text) =< 9 ->
             case string:to_integer(Text) of
                 {Size, <<>>} when Size > 0 -> Size;
-                _ -> reported(Reported)
+                _ -> reported(Ctx, Reported)
             end;
         _ ->
-            reported(Reported)
+            reported(Ctx, Reported)
+    end.
+
+%% The size the terminal holds, asked through the group leader, which is the
+%% terminal's, only when a standard stream is the terminal.
+reported(Ctx, Reported) ->
+    case lists:any(fun(Stream) -> isatty(Ctx, Stream) end, [stdin, stdout, stderr]) of
+        true -> reported(Reported);
+        false -> unknown
     end.
 
 reported(Reported) ->
@@ -160,6 +187,53 @@ reported(Reported) ->
         {ok, Size} when is_integer(Size), Size > 0 -> Size;
         _ -> unknown
     end.
+
+-doc """
+Asks for Events, and for no others, for the calling process alone: a
+process it spawns asks for its own. The list replaces the one asked for
+before, and `[]` asks for none.
+""".
+-spec catch_events([event()]) -> ok.
+catch_events(Events) when is_list(Events) ->
+    true = lists:all(fun(Event) -> Event =:= info orelse Event =:= winch end, Events),
+    _ = put(?EVENTS_KEY, lists:usort(Events)),
+    ok.
+
+-doc """
+Takes every `{erx_cmd, Event}` that waits for the calling process, without
+waiting, and says whether there was one, so a burst of events reads as one,
+as a pending signal does.
+""".
+-spec requested(event()) -> boolean().
+requested(Event) when Event =:= info; Event =:= winch ->
+    requested(Event, false).
+
+requested(Event, Seen) ->
+    receive
+        {erx_cmd, Event} -> requested(Event, true)
+    after 0 -> Seen
+    end.
+
+-doc """
+Whether Pid has asked for Event, for the shell that delivers it. A process
+that has ended has not.
+""".
+-spec asked_for(pid(), event()) -> boolean().
+asked_for(Pid, Event) ->
+    case process_info(Pid, {dictionary, ?EVENTS_KEY}) of
+        {{dictionary, ?EVENTS_KEY}, Events} when is_list(Events) -> lists:member(Event, Events);
+        _ -> false
+    end.
+
+-doc """
+Stops the command's own job, as a program raises `SIGTSTP`, and returns
+once the job is continued by `fg` or `bg` (docs/design-shell.md, "Job
+control"). With no job table to ask, as in a script, it fails with
+`enotsup`.
+""".
+-spec stop(ctx()) -> ok | {error, enotsup}.
+stop(#{job_control := Shell}) -> erx_shell:stop_own(Shell);
+stop(#{}) -> {error, enotsup}.
 
 -doc "The facet of that name in the context, or `{error, no_facet}`.".
 -spec facet(ctx(), atom()) -> {ok, term()} | {error, no_facet}.
@@ -246,11 +320,11 @@ put_bytes({pipe, Pipe}, Bytes) -> written(erx_shell_pipe:put(Pipe, Bytes));
 put_bytes({dev, Device}, Bytes) -> written(file:write(Device, Bytes));
 put_bytes({tty, Write}, Bytes) -> written(Write(Bytes));
 put_bytes(null, _Bytes) -> ok;
-put_bytes(closed, _Bytes) -> stop(ebadf).
+put_bytes(closed, _Bytes) -> fail(ebadf).
 
 written(ok) -> ok;
-written({error, Reason}) -> stop(Reason).
+written({error, Reason}) -> fail(Reason).
 
 %% Ends the command with Reason as its status; the shell's runner catches
 %% it around run/2.
-stop(Reason) -> throw({erx_cmd_stop, Reason}).
+fail(Reason) -> throw({erx_cmd_stop, Reason}).

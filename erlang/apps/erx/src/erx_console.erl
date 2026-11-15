@@ -590,11 +590,15 @@ info(erx_console_eof, State = #state{pending = Pending}) ->
     %% What began a character will never end it, so it reads as stock reads a bad byte.
     [deliver({data, latin1(Pending)}, State) || Pending =/= <<>>],
     {noreply, gets_input(State#state{pending = <<>>, input_ended = true})};
-info({erx_console_size, Columns, Rows}, State = #state{tty = TTY})
+info({erx_console_size, Columns, Rows}, State = #state{tty = TTY, size = Held})
   when is_integer(Columns), is_integer(Rows),
        Columns >= 1, Columns =< ?MAX_SIDE, Rows >= 1, Rows =< ?MAX_SIDE ->
-    {noreply, session_size(State#state{tty = prim_tty:update_geometry(TTY, Columns, Rows),
-                                       size = {Columns, Rows}})};
+    State1 = State#state{tty = prim_tty:update_geometry(TTY, Columns, Rows), size = {Columns, Rows}},
+    %% Only a size that differs from the one held is a change, so a repeated
+    %% report sends the shell nothing (docs/design-shell.md, "Window size"); a line
+    %% handed to a session passes the size on to it instead.
+    [deliver(winch, State1) || {Columns, Rows} =/= Held, State1#state.line =:= system],
+    {noreply, session_size(State1)};
 info({erx_console_size, _Columns, _Rows}, State) ->
     {noreply, State};
 info(erx_console_log_ask, State = #state{log = idle}) ->
@@ -1267,12 +1271,13 @@ deliver({data, Utf8}, State) ->
 deliver(interrupt, State) ->
     %% As ssh_cli does: the group turns this into an interrupt of the shell's evaluator.
     exit(current(State), interrupt);
-deliver(suspend, State = #state{shells = Shells}) ->
-    %% Ctrl-Z stops a command shell's foreground job: the group passes it on to its
-    %% shell, which alone knows its jobs. The Erlang shell has none, and never sees it.
+deliver(Event, State = #state{shells = Shells}) when Event =:= suspend; Event =:= winch ->
+    %% Ctrl-Z stops a command shell's foreground job, and a size change reaches the
+    %% foreground job's processes that asked for it: the group passes either on to its
+    %% shell, which alone knows its jobs. The Erlang shell has none, and never sees them.
     case Shells of
         [{_Group, _Caller, {shell, start, _}} | _] -> ok;
-        _ -> current(State) ! {self(), suspend}
+        _ -> current(State) ! {self(), Event}
     end.
 
 %% -- Output ---------------------------------------------------------------------------

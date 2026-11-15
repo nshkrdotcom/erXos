@@ -60,6 +60,7 @@ events(J, Depth) ->
     [{start_line, T} || T <- Free, Line =:= none]
         ++ [{start_background, T} || T <- Free]
         ++ [suspend, interrupt, reap, list]
+        ++ [{stop_own, T, {own, Depth}} || T <- ?TAGS]
         ++ [{ended, T, R} || T <- ?TAGS, R <- [{exited, <<>>}, {exited, <<"1">>}, failed]]
         ++ [{fg, S, {w, Depth}} || S <- Specs]
         ++ [{bg, S} || S <- Specs]
@@ -77,6 +78,7 @@ apply_event({start_background, T}, J) ->
     {_Id, E, J1} = erx_shell_jobs:start_background(T, <<"bg">>, J),
     {E, J1};
 apply_event(suspend, J) -> erx_shell_jobs:suspend(J);
+apply_event({stop_own, T, W}, J) -> erx_shell_jobs:stop_own(T, W, J);
 apply_event(interrupt, J) -> erx_shell_jobs:interrupt(J);
 apply_event(reap, J) -> erx_shell_jobs:reap(J);
 apply_event(list, J) ->
@@ -120,6 +122,10 @@ check_effect({answer, _W, {ok, Status}}, V0 = #{fg := Fg}, #{fg := Fg1}) ->
     ?assertNotEqual(none, Fg),
     ?assertEqual(none, Fg1),
     ?assertMatch({_, running, true}, maps:get(Fg, maps:get(jobs, V0)));
+check_effect({answer, {own, _}, ok}, _V0, _V1) ->
+    ok;
+check_effect({answer, {own, _}, {error, enotsup}}, _V0, _V1) ->
+    ok;
 check_effect({say, Bytes}, _V0, _V1) ->
     ?assert(is_binary(iolist_to_binary(Bytes))).
 
@@ -132,6 +138,22 @@ check_event(suspend, #{line := Line, fg := Fg}, Effects, V1) when Line =/= none 
         _ -> ?assertMatch(#{line := Line, fg := none}, V1)
     end,
     ?assertMatch([{stop, _} | _], Effects);
+check_event({stop_own, T, W}, V0 = #{fg := Fg}, Effects, V1) ->
+    %% The caller's own job stops, and the caller is answered last; a job
+    %% already stopped stays so and the caller is answered; a tag the table
+    %% does not hold as a live job, or the line waiting in `fg`, changes
+    %% nothing and is refused.
+    Run = run_of(T, V0),
+    case (is_line(T, V0) andalso Fg =:= none) orelse Run =:= running of
+        true ->
+            ?assertMatch([{stop, T} | _], Effects),
+            ?assertEqual({answer, W, ok}, lists:last(Effects)),
+            ?assertEqual(stopped, run_of(T, V1));
+        false when Run =:= stopped ->
+            ?assertEqual({[{answer, W, ok}], V0}, {Effects, V1});
+        false ->
+            ?assertEqual({[{answer, W, {error, enotsup}}], V0}, {Effects, V1})
+    end;
 check_event({ended, T, _R}, V0, Effects, V1) ->
     case is_line(T, V0) orelse run_of(T, V0) =/= none of
         true -> ?assertEqual(1, length([E || E = {release, T1, _} <- Effects, T1 =:= T]));

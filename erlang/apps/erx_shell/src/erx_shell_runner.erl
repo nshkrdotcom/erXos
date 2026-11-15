@@ -221,7 +221,7 @@ command(#{name := Name, module := Module, usage := Usage, needs := Needs},
     Ctx0 = #{name => Name, cwd => Cwd, env => Vars,
             stdin => stream(0, S), stdout => stream(1, S), stderr => stream(2, S),
             facets => Facets},
-    Ctx = maps:merge(Ctx0, maps:with([run_shell], S)),
+    Ctx = maps:merge(Ctx0, maps:merge(maps:with([run_shell], S), job_control(S))),
     case [Need || Need <- Needs, not is_map_key(Need, Facets)] of
         [] ->
             outcome(isolated(fun() -> invoke(Module, Args, Ctx) end), Usage, Ctx);
@@ -229,6 +229,11 @@ command(#{name := Name, module := Module, usage := Usage, needs := Needs},
             safe_say(Ctx, [Name, <<": no_facet\n">>]),
             <<"no_facet">>
     end.
+
+%% The job table a command's stop/1 asks, wherever in the line it runs: a
+%% command stops only its own job, which the shell knows from the caller.
+job_control(#{job_control := {Shell, _Where}}) -> #{job_control => Shell};
+job_control(#{}) -> #{}.
 
 %% What run/2 gave, or how it stopped: a write it could not do, or a crash.
 invoke(Module, Args, Ctx) ->

@@ -72,11 +72,19 @@ unit's output on the line as bytes, unchanged but for the terminal's own
 newline processing, and returns once they are written; the shell adds
 `job_control`, which the runner passes to background/2 and builtin/3.
 erx_shell_runner, the runner of the session's domain, is the default.
+
+The terminal's size changes reach the foreground job as `Ctrl-Z` does,
+through the group (docs/design-shell.md, "Window size"): the shell sends
+`{erx_cmd, winch}` to each process of the jobs in the foreground that asked
+for it with erx_cmd:catch_events/1. One delivery runs at a time, in a
+process of its own, and a change that comes while one runs marks one more
+to follow, so one delivery runs and at most one waits however fast the
+changes come, and each delivery sends a process one message.
 """.
 
 -export([start/0, start/1, server/1, console/0]).
 -export([after_parse/3, prompt/2, reader/1]).
--export([background/2, builtin/3]).
+-export([background/2, builtin/3, stop_own/1]).
 
 -export_type([options/0, terminal/0, reader/0, job_control/0]).
 
@@ -113,6 +121,9 @@ erx_shell_runner, the runner of the session's domain, is the default.
             reading = none :: none | reference(),
             %% The running line's text, which names the jobs it starts.
             text = <<>> :: binary(),
+            %% The delivery of a size change that runs, by its monitor, and
+            %% whether another change came while it ran.
+            delivery = none :: none | {reference(), Again :: boolean()},
             stop = false :: boolean()}).
 
 %% Whether more input may come.
@@ -292,9 +303,14 @@ read(S = #s{jobs = Jobs, group = Group, sh = Sh, reader = R}) ->
     Group ! {io_request, self(), Ref, {get_line, unicode, chars(Prompt)}},
     S1#s{reading = Ref}.
 
-%% Waits for the next event: the line read, the group's interrupt or stop,
+%% Waits for the next event: the line read, the group's interrupt, stop or
+%% size change, the end of a size change's delivery,
 %% a job's request, or the end of a job's first process.
-wait(S = #s{group = Group, reading = Reading, firsts = Firsts}) ->
+wait(S = #s{group = Group, reading = Reading, firsts = Firsts, delivery = Delivery}) ->
+    Delivering = case Delivery of
+                     none -> none;
+                     {Monitor, _Again} -> Monitor
+                 end,
     receive
         {io_reply, Reading, Reply} when Reading =/= none ->
             next(got_line(Reply, S#s{reading = none}));
@@ -307,6 +323,10 @@ wait(S = #s{group = Group, reading = Reading, firsts = Firsts}) ->
             next(table(erx_shell_jobs:interrupt(S#s.jobs), S));
         {Group, suspend} ->
             next(table(erx_shell_jobs:suspend(S#s.jobs), S));
+        {Group, winch} ->
+            next(size_changed(S));
+        {'DOWN', Delivering, process, _Pid, _Reason} ->
+            next(delivered(S));
         {?MODULE, From, Ref, Request} when is_pid(From), is_reference(Ref) ->
             next(request(Request, {From, Ref}, S));
         {'DOWN', Ref, process, _Pid, Reason} when is_map_key(Ref, Firsts) ->
@@ -443,6 +463,14 @@ request(Request, Waiter = {From, _Ref}, S) ->
             answer(Waiter, {error, <<"malformed request">>}, S);
         true when element(1, Request) =:= jobs; element(1, Request) =:= signal ->
             serve(Request, Waiter, S);
+        true when Request =:= {stop} ->
+            %% The job stopped is the one whose leader leads the process the
+            %% request names as its sender, as a command's stop/1 names itself.
+            Tag = case process_info(From, group_leader) of
+                      {group_leader, Leader} -> Leader;
+                      undefined -> none
+                  end,
+            table(erx_shell_jobs:stop_own(Tag, Waiter, S#s.jobs), S);
         true ->
             case from_line(From, S) of
                 true -> serve(Request, Waiter, S);
@@ -480,6 +508,31 @@ serve({signal, Signal, Spec}, Waiter, S = #s{jobs = Jobs}) ->
 answer({From, Ref}, Reply, S) ->
     From ! {Ref, Reply},
     S.
+
+%%% Size changes
+
+%% A size change: delivered at once, or after the delivery that runs.
+size_changed(S = #s{delivery = none}) -> S#s{delivery = {deliver_winch(S), false}};
+size_changed(S = #s{delivery = {Ref, _Again}}) -> S#s{delivery = {Ref, true}}.
+
+%% The delivery that ran has ended: the next one starts if a change came
+%% meanwhile.
+delivered(S = #s{delivery = {_Ref, true}}) -> S#s{delivery = {deliver_winch(S), false}};
+delivered(S = #s{delivery = {_Ref, false}}) -> S#s{delivery = none}.
+
+%% Sends `{erx_cmd, winch}` to each process of the jobs in the foreground
+%% that asked for it, from a process of its own, since each process's
+%% dictionary is read with a signal it must answer; the shell sees the
+%% delivery's end through its monitor.
+deliver_winch(S = #s{jobs = Jobs}) ->
+    Tags = erx_shell_jobs:foreground_tags(Jobs),
+    Firsts = lists:append([firsts_of(Tag, S) || Tag <- Tags]),
+    {_Pid, Ref} = spawn_monitor(
+                    fun() ->
+                            Members = lists:usort(Firsts ++ lists:append([led_by(Tag) || Tag <- Tags])),
+                            [Pid ! {erx_cmd, winch} || Pid <- Members, erx_cmd:asked_for(Pid, winch)]
+                    end),
+    Ref.
 
 %%% The effects of the job table
 
@@ -691,6 +744,18 @@ usage(<<"jobs">>) -> {<<"usage">>, [], <<"usage: jobs\n">>};
 usage(<<"fg">>) -> {<<"usage">>, [], <<"usage: fg [%job]\n">>};
 usage(<<"bg">>) -> {<<"usage">>, [], <<"usage: bg [%job]\n">>};
 usage(<<"kill">>) -> {<<"usage">>, [], <<"usage: kill [-s signal | -signal] %job ...\n       kill -l\n">>}.
+
+-doc """
+Stops the job of the calling process, for erx_cmd:stop/1, and returns once
+the job is continued; `{error, enotsup}` when the shell holds no job of the
+caller to stop.
+""".
+-spec stop_own(job_control()) -> ok | {error, enotsup}.
+stop_own(Shell) ->
+    case call(Shell, {stop}) of
+        ok -> ok;
+        {error, _Reason} -> {error, enotsup}
+    end.
 
 %% Asks the shell and waits for its answer, which for `fg` comes when the
 %% job ends or stops.

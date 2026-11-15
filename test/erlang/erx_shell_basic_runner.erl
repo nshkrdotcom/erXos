@@ -12,7 +12,11 @@ Its commands are `echo` (with `-n`), `true` and `false`; `start NAME`,
 which starts a process registered as NAME that starts another registered
 as NAME_child, both of which wait forever, and returns; and `hang`, which
 waits forever; and `spin NAME`, which registers itself as NAME and waits
-forever. Descriptors 1 and 2 are the terminal, written as bytes.
+forever; `tstp`, which stops its own job with erx_cmd:stop/1, writes
+`continued` once that returns and waits forever; and `winch`, which asks
+for size changes and tells the process registered as winch_counter of each
+it and a helper of its own receive. Descriptors 1 and 2 are the terminal,
+written as bytes.
 Globbing finds nothing, so a pattern stays as written. A background
 block runs as erx_shell_runner runs one: on the shell's own line it is a
 job of its own (erx_shell:background/2), and inside a job it runs apart
@@ -64,7 +68,7 @@ request({glob, _Pattern}, Terminal) ->
     {[], Terminal};
 request({whatis, Name}, Terminal) ->
     case lists:member(Name, [<<"echo">>, <<"true">>, <<"false">>, <<"start">>, <<"hang">>,
-                             <<"spin">> | ?JOB_BUILTINS]) of
+                             <<"spin">>, <<"tstp">>, <<"winch">> | ?JOB_BUILTINS]) of
         true -> {{found, Name}, Terminal};
         false -> {not_found, Terminal}
     end;
@@ -93,6 +97,19 @@ command(<<"start">>, [Name], _Terminal) ->
                       wait()
               end),
     receive Name -> <<>> end;
+command(<<"tstp">>, [], #{job_control := {Shell, _Where}, write := Write}) ->
+    %% Stops its own job through erx_cmd:stop/1, says when that returns,
+    %% and then waits forever.
+    ok = erx_cmd:stop(#{job_control => Shell}),
+    ok = Write(<<"continued\n">>),
+    wait();
+command(<<"winch">>, [], _Terminal) ->
+    %% Asks for size changes and tells the process registered as
+    %% winch_counter of each, and of anything its helper, which did not
+    %% ask, receives.
+    ok = erx_cmd:catch_events([winch]),
+    _ = spawn(fun() -> forward(stray) end),
+    forward(winched);
 command(<<"hang">>, [], _Terminal) ->
     wait();
 command(<<"spin">>, [Name], _Terminal) ->
@@ -103,6 +120,10 @@ command(_Name, _Args, Terminal) ->
     %% and this runner has no escaper to show it through.
     ok = write(<<"rc: command not found\n">>, Terminal),
     <<"not found">>.
+
+forward(Kind) ->
+    receive Message -> winch_counter ! {Kind, Message} end,
+    forward(Kind).
 
 write(Bytes, #{write := Write}) ->
     Write(Bytes).

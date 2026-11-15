@@ -40,7 +40,8 @@ Effects, each carried out by erx_shell:
 * `{finish_line, Tag}`: the line ended in the foreground, so the shell takes
   its outcome;
 * `{say, Bytes}` writes to the terminal;
-* `{answer, Waiter, Reply}` answers the line waiting in `fg`.
+* `{answer, Waiter, Reply}` answers the line waiting in `fg`, or the
+  process that asked to stop its own job.
 
 Job specifications and `kill`'s arguments are untrusted text: they are
 matched against fixed binaries and bounded digit strings, and no atom is
@@ -49,6 +50,7 @@ made from them.
 
 -export([new/0, line/1, start_line/3, start_background/3, suspend/1, interrupt/1,
          ended/3, foreground/3, background/2, signal/3, reap/1, list/1]).
+-export([stop_own/3, foreground_tags/1]).
 -export([parse_spec/1, parse_kill/1, signal_names/0, valid_request/1, line_tag/1]).
 -export([invariant/1, view/1]).
 
@@ -67,7 +69,8 @@ made from them.
 -type result() :: {exited, binary()} | failed.
 -type effect() :: {stop, tag()} | {resume, tag()} | {terminate, tag()}
                 | {release, tag(), keep | kill} | {finish_line, tag()}
-                | {say, iodata()} | {answer, waiter(), {ok, binary()}}.
+                | {say, iodata()}
+| {answer, waiter(), {ok, binary()} | ok | {error, enotsup}}.
 
 -record(job, {tag :: tag(),
               text :: binary(),
@@ -140,13 +143,42 @@ nothing, as `Ctrl-Z` at a UNIX shell's prompt does.
 -spec suspend(jobs()) -> {[effect()], jobs()}.
 suspend(J = #jobs{fg = Id}) when Id =/= none ->
     stop_job(Id, <<"sigtstp">>, <<"^Z\n">>, J);
-suspend(J = #jobs{line = #line{tag = Tag, text = Text}, table = Table}) ->
-    Id = free_id(Table),
-    J1 = to_front(Id, J#jobs{line = none,
-                             table = Table#{Id => #job{tag = Tag, text = Text, run = stopped}}}),
-    {[{stop, Tag}, {say, [<<"^Z\n">>, report(Id, J1)]}], J1};
+suspend(J = #jobs{line = #line{}}) ->
+    stop_line(<<"^Z\n">>, J);
 suspend(J = #jobs{line = none}) ->
     {[], J}.
+
+-doc """
+A process of the job tagged Tag stops its own job, as a program raises
+`SIGTSTP`: the job stops as `Ctrl-Z` or `kill -TSTP` stops it, with no
+`^Z` echoed, since no key was typed, and Waiter, the process that asked,
+is answered after the stop, so it takes the answer once the job is
+continued. The line waiting in `fg` for a job cannot stop itself apart
+from that job, and a tag the table does not hold has no job to stop: both
+are answered `{error, enotsup}`. A job already stopped, as by `Ctrl-Z`
+while the request waited, stays stopped, and Waiter, paused with it, takes
+its `ok` once the job is continued.
+""".
+-spec stop_own(tag(), waiter(), jobs()) -> {[effect()], jobs()}.
+stop_own(Tag, W, J = #jobs{line = #line{tag = Tag}, fg = none}) ->
+    answered(W, stop_line(<<>>, J));
+stop_own(Tag, W, J) ->
+    case find(Tag, J) of
+        {Id, #job{run = running}} -> answered(W, stop_job(Id, <<"sigtstp">>, <<>>, J));
+        {_Id, #job{run = stopped}} -> {[{answer, W, ok}], J};
+        _ -> {[{answer, W, {error, enotsup}}], J}
+    end.
+
+answered(W, {Effects, J}) -> {Effects ++ [{answer, W, ok}], J}.
+
+-doc """
+The tags of the jobs in the foreground: the line's, and the job's it waits
+for in `fg`; none with no line.
+""".
+-spec foreground_tags(jobs()) -> [tag()].
+foreground_tags(#jobs{line = none}) -> [];
+foreground_tags(#jobs{line = #line{tag = Tag}, fg = none}) -> [Tag];
+foreground_tags(J = #jobs{line = #line{tag = Tag}, fg = Id}) -> [Tag, tag(Id, J)].
 
 -doc """
 `Ctrl-C`: ends what is in the foreground, the job the line waits for and
@@ -335,8 +367,8 @@ signal_names() ->
 
 -doc """
 Whether Request has the shape of a request erx_shell takes from a runner:
-`{background, Run}`, `{jobs}`, `{fg, Spec}`, `{bg, Spec}` or `{signal,
-Signal, Spec}`, with a specification parse_spec/1 could give and a signal
+`{background, Run}`, `{jobs}`, `{fg, Spec}`, `{bg, Spec}`, `{signal,
+Signal, Spec}` or `{stop}`, with a specification parse_spec/1 could give and a signal
 of the table. Any process can send the shell a request, so the shell
 checks each before the table sees it.
 """.
@@ -346,6 +378,7 @@ valid_request({jobs}) -> true;
 valid_request({fg, Spec}) -> valid_spec(Spec);
 valid_request({bg, Spec}) -> valid_spec(Spec);
 valid_request({signal, Signal, Spec}) -> valid_signal(Signal) andalso valid_spec(Spec);
+valid_request({stop}) -> true;
 valid_request(_Other) -> false.
 
 valid_spec(current) -> true;
@@ -397,6 +430,13 @@ stop_job(Id, Status, Echo, J = #jobs{fg = Fg}) ->
              _ -> J1
          end,
     {[{stop, Tag}, {say, [Echo, report(Id, J2)]} | Answer], J2}.
+
+%% Stops the line in the foreground, which becomes a numbered job.
+stop_line(Echo, J = #jobs{line = #line{tag = Tag, text = Text}, table = Table}) ->
+    Id = free_id(Table),
+    J1 = to_front(Id, J#jobs{line = none,
+                             table = Table#{Id => #job{tag = Tag, text = Text, run = stopped}}}),
+    {[{stop, Tag}, {say, [Echo, report(Id, J1)]}], J1}.
 
 %% Runs Act on the job Spec names, if it is not done.
 with_live_job(Spec, J, Act) ->
