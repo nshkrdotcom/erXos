@@ -1251,7 +1251,7 @@ top supervisor, and not a significant one
 intensity is not restarted and does not end the application.
 `erx_pkg_io` is not under it: it is a child of the top supervisor, as
 above, started before `erx_pkg_sup`. `erx_pkg`'s `init` returns at
-once, and the recovery runs after it, in its `handle_continue`, so a
+once, and the recovery runs after it, one action per message, so a
 recovery that crashes is a restart of `erx_pkg` within `erx_pkg_sup`'s
 intensity, never a failed start of the application: a crash that a
 restart can absorb never resets the machine, at boot as later. Past
@@ -1646,7 +1646,8 @@ declaration; the limits `app_memory_default`, `app_memory_min`,
 **Erlang**: `erx_pkg_header:decode/2`, `check_file/2` and `layout/2`,
 `erx_verity_tree:blocks/1`,
 `erx_app_admit:admit/3`, `erx_pkg_plan:install/3`, `remove/2` and
-`recover/2`, `erx_principal:register_app/2`; in a session, `erx_app`,
+`recover/2`, `erx_principal:register_app/2` and `app_registry/0`, the
+boot's registry of app principals that admission reads; in a session, `erx_app`,
 and `erx_ns:mount/3` with an image `{file, Path, Layout}`, `Layout` an
 authenticated layout or `header`.
 

@@ -72,12 +72,14 @@ What an admitted package holds: its principal's entry, which admission
 reserves nothing in; the indices of the app template's facet rows its
 session keeps, the `packages` row and one row for each need, ascending;
 its start row's display, its one `windows` need if it has exactly one and
-`none` otherwise; and the signer the file check named, which registration
-records in the registry for `check_entry` to compare.
+`none` otherwise; its declared memory, which registration records and each
+of its sessions' plans takes; and the signer the file check named, which
+registration records in the registry for `check_entry` to compare.
 """.
 -type admitted() :: #{entry := non_neg_integer(),
                       rows := [non_neg_integer()],
                       display := none | binary(),
+                      memory := pos_integer(),
                       signer := erx_pkg_header:authenticator()}.
 
 -doc "Why a package is refused, each tag refused by one check of the six.".
@@ -119,6 +121,7 @@ admitted(#{header := #{name := Name, memory := Memory, needs := Needs} = Header,
       rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
       display => display([Service || #{name := Service,
                                        windows := true} <- Kept]),
+      memory => Memory,
       signer => Signer}.
 
 check_apps(none) -> refuse(no_apps);

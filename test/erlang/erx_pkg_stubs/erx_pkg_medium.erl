@@ -5,8 +5,8 @@
 -moduledoc """
 The test build's erx_pkg_medium, a simulated medium: the packages in a
 public ETS table, `{{Place, File}, Bytes}`, with the listing's answer under `listing`
-(the names are the installed files unless it is set), a failing deletion
-under `fail_delete`, and every deletion logged under `deleted`.
+(the names are the installed files unless it is set), every read's answer
+under `pread_answer` when it is set, each read delayed by `pread_delay` ms, a failing deletion under `fail_delete`, and every deletion logged under `deleted`.
 """.
 -behaviour(erx_pkg_io).
 
@@ -38,6 +38,13 @@ size(Place, File) ->
     end.
 
 pread(Place, File, Offset, Size) ->
+    _ = [timer:sleep(Ms) || {pread_delay, Ms} <- ets:lookup(?MODULE, pread_delay)],
+    case ets:lookup(?MODULE, pread_answer) of
+        [{pread_answer, Answer}] -> Answer;
+        [] -> stored(Place, File, Offset, Size)
+    end.
+
+stored(Place, File, Offset, Size) ->
     case ets:lookup(?MODULE, {Place, File}) of
         [{_, Bytes}] when Offset =< byte_size(Bytes) ->
             {ok, binary:part(Bytes, Offset, min(Size, byte_size(Bytes) - Offset))};

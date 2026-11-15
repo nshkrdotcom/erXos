@@ -39,26 +39,31 @@ it; git history is the record of completed work.
   leaving it out.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
-  the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
-  and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
-  remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
-  supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
-  them; `erx_pkg_medium`, the medium over the `packages` grant (`erx_file_remote`), declaring
-  `-behaviour(erx_pkg_io)` so the test stub and it meet one contract and, on the stopgap, the release's
-  `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
-  `unknown`; `erx_starter:packages/2` and the start table's package rows; registration
-  (`erx_principal:register_app/2`), stubbed in the tests, and the registry argument, which
-  erx_pkg reads as `erx_principal:app_registry/0`, a name the design does not give; the `apps` tree serving
-  `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
-  `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute included; and the system_domain QEMU
-  cell. Also: the recovery runs in one `handle_continue`, so `erx_pkg:packages/0` waits for it to finish and
-  a `/proc/packages` read during it times out (drive one plan step per message instead); the log lines for a
-  refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
-  mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
-  offset and size; the lifetime taken from the caller rather than the request; and whether image header
-  reads wait for the `packages` grant. Registration's record holds the declared memory, which the `register`
-  action does not pass (`admitted()` carries the entry and signer, not the memory); add it before
-  `register_app/2` is built.
+  the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
+  every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
+  the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
+  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. What remains:
+  the config, `erx_pkg:system_config/0`, answers `none`, since the packed manifest holds no `apps`, `package`
+  or `signer` record (the property 19 item above), so no boot runs the package process; once those records
+  exist it reads them, the development key among the signers in a development build. The principal
+  service's app registry, `erx_principal:register_app/2` and `app_registry/0`, does not exist (no
+  `erx_principal` module is in the tree), nor the domain library's app entries it registers into (the
+  app's session item below); its record takes admission's answer, which carries the declared memory.
+  `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
+  boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
+  otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
+  last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
+  recovery leaves `unknown` (the first set then holds the image's packages only, and the installed ones come
+  in a later set, with no record, which `rc.conf` does not enable at that boot: a design question); the
+  `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
+  and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
+  included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
+  form; the lifetime taken from the caller rather than the request; and whether image header reads wait for
+  the `packages` grant. A failed listing (`eio`, a storage domain's answer included) stops the lifetime as
+  a failed change does, so past erx_pkg_sup's intensity the image's packages are never published; a
+  listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
+  directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
+  bounded read at a time (Phase 1: the storage domain is trusted).
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
   (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
