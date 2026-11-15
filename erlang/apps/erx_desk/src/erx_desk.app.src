@@ -1,0 +1,14 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The desktop programs stats, clock, month and files
+%% (docs/design-desktop-programs.md), in the session's release: each
+%% program's pure core, which its window process runs. stats' core is
+%% erx_desk_stats_core.
+{application, erx_desk,
+ [{description, "erXos desktop programs"},
+  {vsn, "1"},
+  {modules, [erx_desk_stats_core]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx]},
+  {env, []}]}.

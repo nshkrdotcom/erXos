@@ -7266,6 +7266,19 @@ document's "residual risks accepted" paragraph.
 * [Low] live inspection, `ps` and `top` ([design-live.md](docs/design-live.md)): the `time` and `pcpu` columns of an
   Erlang process show its reductions, labelled as reductions, instead of `-`; real CPU time per process comes
   later as an opt-in scheduler flag.
+* [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
+  [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
+  `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names
+  nothing, and every domain's frames show that error. Declared with no collector, it answers `unsupported`, as
+  the design says. The core reads that record's `frames` attribute, a count of frames accepted on each lane;
+  design-live puts the per-lane counts on `[domains, Id, connections, Peer]`, so the declaration settles which
+  record stats reads.
+* [Medium] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`, `domains/3`): a partial domain
+  listing keeps the rows it does not name and never asks for them again, and the inspector's listing stays
+  partial while there are more domains than a page, so a domain that ends unlisted keeps an `unknown` row and its
+  rings for the window's life. Asking `[domains, Id]` for each kept row would let its `{error, scope}` end it.
+* [Low] desktop, stats (`erx_desk_stats_core.erl`, `machine/4`): a machine record whose `memory_free` exceeds
+  `memory_total`, two reporters apart, gives a negative used share instead of a gap.
 * [Low] shell, `ping` (`erlang/apps/erx_shell/src/erx_cmd_ping.erl`): it does not compare a reply's data
   with what it sent, so FreeBSD's `wrong data byte` report of a corrupted reply is missing; the
   checksum check in `erx_icmp4_wire` still drops a reply corrupted on the wire.

@@ -363,7 +363,8 @@ command shell; and the system services and their clients: `erx_domain`,
 the domain service, which only the system release ships; `erx_code`, the
 code service; `erx_hostlink`, the host link; `erx_net`, the TCP/IP stack;
 `erx_net_client`, its socket backends; `erx_web_line`, a session's line to
-the web domain, which only the domain release ships; and `erx_session`,
+the web domain, which only the domain release ships; `erx_desk`, the
+desktop programs, which the session script boots; and `erx_session`,
 a session's domain. Every domain release ships `kernel`, `stdlib`, `erx` and
 `erx_files` at the least.
 

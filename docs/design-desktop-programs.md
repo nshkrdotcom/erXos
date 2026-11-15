@@ -725,9 +725,9 @@ derived samples. A rate or a share is derived from two readings:
   reporter does: no value and a gap, never a negative rate;
 * a share whose denominator is zero, which the schema allows for a
   group's `capacity_mcpu`, a budget's `cap`, and the machine's
-  `memory_total` and `cpus_online`: no value and a gap, and the number
-  reads "no grant", "no cap", "no total" or "no CPUs", which are facts
-  of the record, not estimates.
+  `memory_total` and CPU count, the CPUs `[cpus]` lists: no value and
+  a gap, and the number reads "no grant", "no cap", "no total" or "no
+  CPUs", which are facts of the record, not estimates.
 
 The ring holds only `ok` values: a derived sample that is `partial`, or
 has no value, enters the ring as `none`, a gap, so an earlier partial
@@ -746,8 +746,8 @@ largest value rounded up to 1, 2 or 5 times a power of ten, at least
 The inspector's status travels into the tree as the `attr()` of each
 number's `text` property, and the renderer shows its token
 (design-display's G7). A path the inspector answers with `{error,
-unsupported}`, as `[domains, Id, connections]` does until the schema
-declares it, makes that column `unsupported` for every domain, which is
+unsupported}`, as `[domains, Id, connections]` does while its path has
+no collector, makes that column `unsupported` for every domain, which is
 the truth on that build.
 
 A domain listed in one sample and gone from the next ends its row; a

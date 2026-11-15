@@ -134,7 +134,7 @@ class ReleaseFilesTest < Minitest::Test
   def test_the_system_release_ships_no_domain_only_application
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
-    only = %w[asn1 crypto public_key ssh erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_win erx_ui erx_web erx_net
+    only = %w[asn1 crypto public_key ssh erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_win erx_ui erx_desk erx_web erx_net
               erx_net_client erx_web_line]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
@@ -259,14 +259,16 @@ class ReleaseFilesTest < Minitest::Test
   end
 
   # The session script (ReleaseFiles::RELEASE_SCRIPTS) boots the command
-  # shell, the web line and erx_session beside what every domain boots through, and
+  # shell, the web line, the desktop programs and erx_session beside what every domain boots through, and
   # starts the shell and the line, which init's ready report names, but only loads
   # erx_session, which the session template's -eval starts once init holds the domain's
   # facets.
   def test_the_session_script_boots_the_shell_and_erx_session
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('session')]))
+    release = boot_release_file('session')
     assert_match(/\{erx_shell,"#{VERSION}"\},\{erx_web_line,"#{VERSION}"\},\{erx_session,"#{VERSION}",load\}\]\}\.\n\z/,
-                 boot_release_file('session'), 'the session script starts the line and only loads erx_session')
+                 release, 'the session script starts the line and only loads erx_session')
+    assert_includes release, "{erx_desk,\"#{VERSION}\"}"
   end
 
   # A principal can run OTP's ssh daemon in its own session (docs/design-ssh.md, "Stages",
