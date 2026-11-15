@@ -78,7 +78,8 @@ module Erx
 #   erx_prog_handler_core_tests.erl and its errno by test/host/prog_fd_test.rb.
 # * fileio runs test/guest/programs/fileio.c under a handler over the session's /tmp: its
 #   open, write, read, dup and close reach the handler as file requests, the bytes cross
-#   the data area, and it ends with 0.
+#   the data area; it then reads the file back with fstat, lseek, read and pread, checking
+#   its size and bytes, and it ends with 0.
   # The shell then answers node() again.
   #
   # The programs are file entries, so the backend copies their segments into the space

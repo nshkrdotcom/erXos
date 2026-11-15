@@ -14,8 +14,12 @@
  * parts; reads both back in order through a second open, finds the end of
  * the file, checks that a dup shares the open's offset, and that musl's
  * fdopen "a" fails with EINVAL on an open whose O_APPEND it cannot set, since
- * an open fixes a file's O_APPEND, but takes an open made with it.  It ends
- * with 0, or with a code of its own for the first step that does not agree.
+ * an open fixes a file's O_APPEND, but takes an open made with it.  Last it
+ * reads the file as a game reads its data file: fstat for the size and the
+ * type, lseek to the end and back, a read at a seek's offset, a pread in
+ * two parts that leaves the offset, and a pread at the end that reads
+ * nothing.  It ends with 0, or with a code of its own for the first step
+ * that does not agree.
  */
 
 #include <errno.h>
@@ -24,14 +28,24 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 int	main(int, char **);
 
 static const char text[] = "hello, file\n";
 
-/* Three slots of 64 KiB and a part of one. */
-#define BLOCK	(3 * 65536 + 1000)
+/* The file is the text without its NUL, then the block. */
+#define TEXT_LEN	(sizeof(text) - 1)
+/* A data slot's bytes: a read of more goes in parts, counted from its start. */
+#define SLOT	65536
+/* Three slots and a part of one. */
+#define BLOCK	(3 * SLOT + 1000)
+/* Where in the block the last read and the pread start; both stay within it. */
+#define READ_AT		70000
+#define PREAD_AT	120000
+_Static_assert(READ_AT + 1000 <= BLOCK && PREAD_AT + SLOT + 3 <= BLOCK,
+    "the reads stay within the block");
 
 static uint8_t block[BLOCK];
 static uint8_t back[BLOCK];
@@ -63,7 +77,9 @@ int
 main(int argc, char **argv)
 {
 	char small[sizeof(text)];
+	struct stat st;
 	FILE *stream;
+	const off_t size = (off_t)(TEXT_LEN + BLOCK);
 	int fd, copy;
 
 	if (argc != 2)
@@ -118,5 +134,29 @@ main(int argc, char **argv)
 	stream = fdopen(fd, "a");
 	if (stream == NULL || fclose(stream) != 0)
 		return (18);
+
+	/* The file whole, as a game reads its data file. */
+	fd = open(argv[1], O_RDONLY);
+	if (fd < 0)
+		return (19);
+	if (fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || st.st_size != size)
+		return (20);
+	if (lseek(fd, 0, SEEK_END) != size)
+		return (21);
+	if (lseek(fd, (off_t)(TEXT_LEN + READ_AT), SEEK_SET) != (off_t)(TEXT_LEN + READ_AT))
+		return (22);
+	if (!read_all(fd, back, 1000) || memcmp(back, block + READ_AT, 1000) != 0)
+		return (23);
+	/* Two parts, a whole slot and 3 bytes. */
+	if (pread(fd, back, SLOT + 3, (off_t)(TEXT_LEN + PREAD_AT)) != SLOT + 3 ||
+	    memcmp(back, block + PREAD_AT, SLOT + 3) != 0)
+		return (24);
+	/* The pread left the offset where the read put it. */
+	if (lseek(fd, 0, SEEK_CUR) != (off_t)(TEXT_LEN + READ_AT + 1000))
+		return (25);
+	if (pread(fd, back, 4, size) != 0)
+		return (26);
+	if (close(fd) != 0)
+		return (27);
 	return (0);
 }

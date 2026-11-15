@@ -3043,8 +3043,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   copy after the program ended. The handler's stand-in `erx_program:data_read/3` answers `enosys`, so
   its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
   host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
-  The other operations of the `{file, ...}` row wait too. No QEMU case runs a program's `lseek`,
-  `pread`, `pwrite` or `fstat` end to end yet.
+  The other operations of the `{file, ...}` row wait too. No QEMU case runs a program's `pwrite` end to
+  end yet (the programs suite's `fileio` runs `lseek`, `pread` and `fstat`).
 * [Low] programs, `fstat` of a file (`liberx/program/file.c` `erx_prog_file_getattr`; abi/protocols/prog.txt
   `stat`): `st_ino`, `st_dev` and `st_rdev` are not carried and read 0. `ino` and `rdev` need an unsigned
   64-bit kind the frame profile does not have (`integer ... u64` is refused in a frame protocol, which keeps
