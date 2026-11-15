@@ -36,7 +36,8 @@ state is a bug of the caller and fails with a badmatch.
 """.
 
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
-         restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3]).
+         restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3,
+         names_quota/0]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0]).
 
@@ -112,6 +113,10 @@ admit(Name, Principal, Origin, #{names := Names, bound := Bound} = State) ->
             Binding = #{principal => Principal, node => Node, holder => none},
             take(Name, Binding, Principal, Origin, State#{bound := Bound#{Principal => Count + 1}})
     end.
+
+-doc "How many names each principal binds, its app principals included.".
+-spec names_quota() -> pos_integer().
+names_quota() -> ?NAMES_QUOTA.
 
 -doc """
 The prefix of Principal's session names (docs/design-apps.md, "Starting a

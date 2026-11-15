@@ -27,7 +27,10 @@ it; git history is the record of completed work.
   wait for the domain release's `app` script, the storage service's `tree` parameter and its enforcement, a
   server of `packages`, and the `apps` service freed from the start table; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
-  package file check and admission; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
+  package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
+  facet-row indices, the manifest's reserved names and the image's package names) read from the packed
+  records, one reader for the machine and the packer, which then owns the types `erx_app_admit` declares
+  for them; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
   scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
   the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
   leaving it out.

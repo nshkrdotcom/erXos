@@ -24,7 +24,8 @@ limit pkg_args_max u32 32
 limit pkg_args_bytes_max u32 16384
 limit pkg_license_max u32 256
 # What an app's session's own budget holds when its declaration names no memory, and the
-# least a declaration may name (docs/design-packaging.md, "The declaration").
+# least a declaration may name (docs/design-packaging.md, "The declaration"), which
+# admission (erx_app_admit) also checks against the apps row's budget.
 limit app_memory_default u64 67108864
 limit app_memory_min u64 4194304
 # The bytes of a magic, and of the signer's Ed25519 public key and signature.

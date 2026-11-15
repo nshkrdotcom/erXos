@@ -1023,11 +1023,17 @@ runs after a reboot is exactly its package's.
 ### Admission
 
 `erx_app_admit:admit(Header, Manifest, Registry)` is a pure function of
-a header the file check accepted, the manifest as `erx_manifest` reads
-it, and the boot's registry of app principals. It answers `{ok,
-Admitted}`, the principal's entry (the name's existing one or a free
-one, which it reserves nothing in), the indices of the facet rows kept
-and the start row, or `{error, Reason}`, the first of these that fails:
+a header the file check accepted, with the signer it named; what it
+reads of the manifest through `erx_manifest`: the `apps` row with the
+indices of the app template's `packages` row and of the facet row of
+each of its services, the names of the manifest's principals,
+configured domains, services and facet rows, and the names of the
+image's packages; and the boot's registry of app principals, each
+name's entry and signer. It answers `{ok, Admitted}`, the principal's
+entry (the name's existing one or a free one, which it reserves nothing
+in), the indices of the facet rows kept, the `packages` row and one for
+each need, and the start row's display, or `{error, Reason}`, the first
+of these that fails:
 
 1. the manifest has an `apps` row: `no_apps`;
 2. the header's ABI version and architecture are the image's: `{abi,
