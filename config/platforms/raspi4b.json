@@ -608,6 +608,28 @@
           "placement_key": "spi"
         }
       ]
+    },
+    {
+      "key": "rng",
+      "devices": [
+        {
+          "selector": "dt",
+          "role": "ordinary",
+          "path": "/soc/rng@7e104000",
+          "bridge": "",
+          "base": 4262477824,
+          "size": 40,
+          "line": 0,
+          "compatible": "brcm,bcm2711-rng200",
+          "bus": 0,
+          "device": 0,
+          "function": 0,
+          "dma": "none",
+          "flags": 0,
+          "dma_memory": 0,
+          "placement_key": "rng"
+        }
+      ]
     }
   ]
 }

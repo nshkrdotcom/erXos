@@ -1953,9 +1953,12 @@ bus/function fields are zero, and `base`, `size` and `line` are the
 device's register window and interrupt from its node: `base` and `size`
 are the physical address and length of the node's first `reg` entry, and
 `line` is its first interrupt, numbered as the platform's interrupt
-controller numbers the lines a device raises. The platform record carries
-all three for every device-tree device, and the production image suite
-checks them against the device tree QEMU builds. A framebuffer row is the
+controller numbers the lines a device raises. Line 0 is no line: a node
+that raises no interrupt, as the Raspberry Pi 4's RNG200 does, has `line`
+0 and shares no line with any device. The platform record carries
+all three for every device-tree device; the production image suite
+checks QEMU virt's against the device tree QEMU builds, and the board
+tree's test the Pi 4's against the board's tree. A framebuffer row is the
 exception: its path names the node under which the firmware adds its
 framebuffer, `/chosen`, its `line` is zero, and its page-aligned `base`
 and `size` are the window the framebuffer must lie in, which the
@@ -1981,8 +1984,8 @@ most 255, device at most 31 and function at most 7; its `base` and
 `line`, except at a place a closed bridge's platform record lists,
 where it is the INTx line the bridge's `interrupt-map` routes for that
 place's pin ([design-pcie.md](design-pcie.md#the-closed-bus)). Role values are
-ordinary 1, UART 2, configuration space 3, network 4, block 5, TPM 6 and
-framebuffer 7.
+ordinary 1, UART 2, configuration space 3, network 4, block 5, TPM 6,
+GPU 7, framebuffer 8 and input 9 (`abi/manifest.txt`).
 These classification values are platform-declared facts for manifest
 checks, not a kernel driver dispatch. `compatible` and `placement_key`
 are nonempty UTF-8 strings without NUL or control characters, with the

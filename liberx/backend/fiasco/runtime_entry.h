@@ -20,12 +20,13 @@ typedef struct erx_pack_view erx_pack_view_t;
  * Accepts the firmware's device tree into *tree, once, before the root's service and
  * generator are up (docs/design-device-tree.md, "Facts into records"), and fills *seeds
  * from it: its /chosen seeds (erx_dt_seeds) and, when /chosen carries neither, the read
- * of the board's random generator (erx_fiasco_rng200_read). The caller erases *seeds.
- * Returns NULL, or why the root cannot boot: the handoff carries no tree, or the reader
- * refused it. A root built without a program reads no tree: root_no_program.c leaves
+ * of the board's random generator that manifest gives the system domain
+ * (erx_fiasco_rng200_read). The caller erases *seeds. Returns NULL, or why the root cannot
+ * boot: the handoff carries no tree, the reader refused it, or the generator's row names
+ * no node path. A root built without a program reads no tree: root_no_program.c leaves
  * *tree alone and gives no seeds.
  */
-const char	*erx_fiasco_program_tree(erx_dt_t *tree, erx_fiasco_seeds_t *seeds);
+const char	*erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds);
 
 /*
  * What the root task runs once it is up: it joins tree's facts to the manifest's devices,

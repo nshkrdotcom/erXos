@@ -7,10 +7,11 @@
  * The device-tree reader, kernel/core/dt.c, over arbitrary bytes, handed
  * over in a buffer of exactly their length so that a read past them is an
  * AddressSanitizer report. An accepted view goes to erx_dt_device for
- * fixed paths and to erx_dt_framebuffer, and every answer must keep the
- * reader's promises: memory ranges within the bound and ordered, no DMA
- * facts beside a status other than ok, and a framebuffer whose pages lie in
- * its window and whose rows fit its length.
+ * fixed paths, to erx_dt_framebuffer and to erx_dt_registers, and every
+ * answer must keep the reader's promises: memory ranges within the bound and
+ * ordered, no DMA facts beside a status other than ok, a framebuffer whose
+ * pages lie in its window and whose rows fit its length, and no register
+ * window confirmed for an empty row.
  */
 
 #include <stddef.h>
@@ -81,18 +82,17 @@ seeds_check(const erx_dt_t *tree)
 	}
 }
 
-/* A register window the reader gives is non-empty and does not wrap. */
+/*
+ * The reader confirms the RNG200's row, the Pi 4's, or refuses it; a row with an empty
+ * window, which no range the reader takes equals, it never confirms.
+ */
 static void
 registers_check(const erx_dt_t *tree)
 {
-	erx_dt_window_t window;
+	static const char path[] = "/soc/rng@7e104000", compatible[] = "brcm,bcm2711-rng200";
 
-	if (erx_dt_registers(tree, "brcm,bcm2711-rng200", &window) != ERX_DT_REGS_OK) {
-		if (window.base != 0 || window.size != 0)
-			abort();
-		return;
-	}
-	if (window.size == 0 || window.base + (window.size - 1) < window.base)
+	(void)erx_dt_registers(tree, path, compatible, (erx_dt_window_t){ 0xfe104000, 0x28 });
+	if (erx_dt_registers(tree, path, compatible, (erx_dt_window_t){ 0xfe104000, 0 }) == ERX_DT_REGS_OK)
 		abort();
 }
 

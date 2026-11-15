@@ -114,7 +114,7 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	 * The tree comes first, so the generator mixes its seeds in before anything draws
 	 * from it; their bytes are erased once the generator holds them.
 	 */
-	reason = erx_fiasco_program_tree(&root_tree, &seeds);
+	reason = erx_fiasco_program_tree(&root_tree, manifest, &seeds);
 	if (reason == NULL)
 		reason = erx_fiasco_root_up((const void *)(uintptr_t)handoff->image.start,
 		    (size_t)handoff->image.size, dma_bytes, &seeds);

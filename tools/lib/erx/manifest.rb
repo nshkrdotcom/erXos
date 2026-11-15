@@ -899,6 +899,12 @@ module Erx
         missing = fields.reject { |field| device[field].is_a?(Integer) }
         invalid("device-tree device lacks #{missing.join(', ')}", 'context', 'platform.devices') unless missing.empty?
         invalid('device-tree device has an empty window', 'context', 'platform.devices') if device.fetch('size').zero?
+        # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"), so only a
+        # row no driver binds a line for, of the ordinary role, which no device kind has, or a
+        # framebuffer's, carries it.
+        if device.fetch('line').zero? && ![device_role('ordinary'), device_role('framebuffer')].include?(device.fetch('role'))
+          invalid('a driven device-tree device names no interrupt line', 'context', 'platform.devices')
+        end
         unless device_path?(device['path'])
           invalid("device-tree device's path is not a node path of at most #{@codec.constant('device_path_max')} bytes",
                   'context', 'platform.devices')

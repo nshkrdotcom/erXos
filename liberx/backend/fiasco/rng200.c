@@ -21,21 +21,21 @@ static bool	rng200_map(erx_dt_window_t, erx_mmio_t *);
 static bool	rng200_start(erx_mmio_t);
 
 erx_fiasco_board_seed_t
-erx_fiasco_rng200_read(const erx_dt_t *tree, erx_rng200_read_t *read)
+erx_fiasco_rng200_read(const erx_dt_t *tree, const char *path, erx_dt_window_t window, erx_rng200_read_t *read)
 {
 	erx_rng200_action_t action;
 	uint32_t count, word = 0, take;
-	erx_dt_window_t window;
 	erx_mmio_t device;
 
 	*read = (erx_rng200_read_t){ .words = 0 };
 	/* With no counter frequency the clock stands still, and the wait would never end. */
 	if (erx_fiasco_counter_hz() == 0)
 		return (ERX_FIASCO_BOARD_UNREADABLE);
-	switch (erx_dt_registers(tree, ERX_RNG200_COMPATIBLE, &window)) {
+	switch (erx_dt_registers(tree, path, ERX_RNG200_COMPATIBLE, window)) {
 	case ERX_DT_REGS_NONE:
 		return (ERX_FIASCO_BOARD_NONE);
 	case ERX_DT_REGS_MALFORMED:
+	case ERX_DT_REGS_OTHER:
 		return (ERX_FIASCO_BOARD_UNREADABLE);
 	case ERX_DT_REGS_OK:
 		break;

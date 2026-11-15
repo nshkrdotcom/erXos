@@ -1428,7 +1428,11 @@ release, at address 0 and starts CPU 0 there (`cpu-num=0`); puts the
 bootable file at the address BL31 enters; and puts the device tree where
 BL31 expects it: the card's tree, with `config.txt`'s overlays applied
 and the memory node written on the host, which is all the firmware does
-to it. The card's `serial0` alias, which BL31 points
+to it, and with the nodes of the devices the model does not answer at
+disabled (`unmodelled` in `tools/lib/erx/board_tree.rb`): the RNG200's,
+`/soc/rng@7e104000`, since a read at its registers on the model never
+completes, so the root finds no generator there and seeds from the
+counter alone. The card's `serial0` alias, which BL31 points
 `/chosen/stdout-path` at, is the card's own, so the model picks the
 console's UART from the very tree the board does. The chain is the board's: BL31 at EL3 enters the bootable file
 at EL2 (`SPSR` `0x3c9`, MMU off, the device tree's address in `x0`), the

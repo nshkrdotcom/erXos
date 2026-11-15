@@ -58,6 +58,7 @@ static const char	*tree_facts(const erx_dt_t *);
 static const char	*device_memory(const erx_dom_device_entry_t *, uint64_t *, const char **);
 static const char	*framebuffer_facts(erx_dom_device_entry_t *, const erx_dt_t *);
 static const char	*framebuffer_give(const erx_dom_device_entry_t *, char *, size_t, size_t *);
+static bool		 tree_path_set(erx_boot_words_t);
 
 /* The system domain's one domain library and the tables its view lies in (library_view). */
 static erx_dom_lib_t library;
@@ -333,9 +334,46 @@ seeds_none(const erx_dt_seeds_t *seeds)
 	return (true);
 }
 
+/*
+ * Puts a manifest row's device-tree path into tree_path, NUL-terminated, as the reader takes
+ * it; false for a path that is not a node path or does not fit.
+ */
+static bool
+tree_path_set(erx_boot_words_t path)
+{
+	if (path.length == 0 || path.length >= sizeof(tree_path) ||
+	    !erx_boot_node_path_valid((const uint8_t *)path.bytes, path.length))
+		return (false);
+	for (size_t at = 0; at < path.length; at++)
+		tree_path[at] = path.bytes[at];
+	tree_path[path.length] = '\0';
+	return (true);
+}
+
+/*
+ * The board's random generator, read when /chosen carries no seed: the RNG200 of a unit the
+ * manifest gives the system domain (erx_boot_held_row), at the window its row states, which
+ * the tree must confirm before the root maps it (erx_fiasco_rng200_read). A manifest that
+ * gives the system domain no RNG200 leaves the board out. Returns NULL, or why the root
+ * cannot boot: the row's path is not a node path.
+ */
+static const char *
+board_seed(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds)
+{
+	erx_boot_row_t row;
+
+	seeds->board = ERX_FIASCO_BOARD_NONE;
+	if (!seeds_none(&seeds->chosen) || !erx_boot_held_row(manifest, ERX_RNG200_COMPATIBLE, &row))
+		return (NULL);
+	if (!tree_path_set(row.path))
+		return ("the RNG200's record: its device-tree path is not a node path");
+	seeds->board = erx_fiasco_rng200_read(tree, tree_path, row.window, &seeds->board_read);
+	return (NULL);
+}
+
 /* Accepts the tree and reads its seeds (runtime_entry.h); a refusal names the reader's fixed reason. */
 const char *
-erx_fiasco_program_tree(erx_dt_t *tree, erx_fiasco_seeds_t *seeds)
+erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_seeds_t *seeds)
 {
 	static const char refused[] = "the device tree: ";
 	static char line[sizeof(refused) + ERX_BOOT_STDOUT_PATH_MAX];
@@ -347,10 +385,7 @@ erx_fiasco_program_tree(erx_dt_t *tree, erx_fiasco_seeds_t *seeds)
 		return ("the device tree: the handoff carries none");
 	if ((reason = erx_dt_accept(bytes, size, tree)) == NULL) {
 		erx_dt_seeds(tree, &seeds->chosen);
-		seeds->board = ERX_FIASCO_BOARD_NONE;
-		if (seeds_none(&seeds->chosen))
-			seeds->board = erx_fiasco_rng200_read(tree, &seeds->board_read);
-		return (NULL);
+		return (board_seed(tree, manifest, seeds));
 	}
 	while (reason[length] != '\0')
 		length++;
@@ -390,12 +425,8 @@ tree_facts(const erx_dt_t *tree)
 		}
 		entry->asked = entry->role_word != NULL && erx_boot_row_asks(row_memory, network);
 		if (entry->asked) {
-			if (path.length == 0 || path.length >= sizeof(tree_path) ||
-			    !erx_boot_node_path_valid((const uint8_t *)path.bytes, path.length))
+			if (!tree_path_set(path))
 				return ("a device record: its device-tree path is not a node path");
-			for (size_t at = 0; at < path.length; at++)
-				tree_path[at] = path.bytes[at];
-			tree_path[path.length] = '\0';
 			erx_dt_device(tree, tree_path, ERX_DT_ROW_NODE, &entry->facts);
 		}
 		entry->memory = erx_boot_dma_memory(entry->asked ? &entry->facts : NULL, row_memory);
@@ -423,12 +454,8 @@ framebuffer_facts(erx_dom_device_entry_t *entry, const erx_dt_t *tree)
 	erx_dt_framebuffer_t fb;
 	size_t length;
 
-	if (path.length == 0 || path.length >= sizeof(tree_path) ||
-	    !erx_boot_node_path_valid((const uint8_t *)path.bytes, path.length))
+	if (!tree_path_set(path))
 		return ("a framebuffer record: its device-tree path is not a node path");
-	for (size_t at = 0; at < path.length; at++)
-		tree_path[at] = path.bytes[at];
-	tree_path[path.length] = '\0';
 	erx_dt_framebuffer(tree, tree_path, ERX_FRAMEBUFFER_COMPATIBLE, window, &fb);
 	(void)erx_dom_view_framebuffer(entry, &fb, fb.status == ERX_DT_FB_OK ? erx_dt_fb_format_name(fb.format) : NULL);
 	if ((length = erx_boot_framebuffer_line(path, &entry->framebuffer, entry->format, tree_line,

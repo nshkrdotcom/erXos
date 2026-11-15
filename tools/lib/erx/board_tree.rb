@@ -30,29 +30,33 @@ module Erx
   #   the edit makes it so, and the build refuses a record whose console is not it;
   # * each overlay config.txt names, compiled from erXos's source in hw/dts;
   # * the model's tree: what the firmware makes of the card's files, since no firmware
-  #   runs under QEMU: the board's tree with the overlays applied and the memory node
-  #   written from the platform record, and nothing else, so BL31 picks the console's
-  #   UART on the model from the same aliases as on the board.
+  #   runs under QEMU: the board's tree with the overlays applied, the memory node
+  #   written from the platform record and the nodes of devices the model does not
+  #   answer at disabled (Board#unmodelled), and nothing else, so BL31 picks the
+  #   console's UART on the model from the same aliases as on the board.
   #
   # The source is run through the C preprocessor, as Linux's build does but keeping
   # comments (-C), the notice prepended and the alias edit appended; dtc compiles it
   # with symbols (-@) so overlays apply; fdtoverlay
-  # applies them and fdtput writes the memory node.
+  # applies them and fdtput writes the memory node and disables the unmodelled nodes.
   module BoardTree
     SOURCE_ID = 'linux-dts'
     OUTPUT = 'build/board-tree'
     DEADLINE = 60
 
     # source: the board's tree in the Linux tree; file: the name the firmware loads it
-    # by; memory: the memory node the firmware fills; aliases: the serial aliases the
-    # board's tree carries in place of Linux's; overlays: config.txt's dtoverlay names
-    # and erXos's source of each. The Pi's aliases swap Linux's two: serial0 is the mini
-    # UART, the console on GPIO 14 and 15, and serial1 the PL011 UART0, which the board
-    # wires to its Bluetooth chip.
-    Board = Data.define(:source, :file, :memory, :aliases, :overlays)
+    # by; memory: the memory node the firmware fills; unmodelled: the nodes of devices
+    # QEMU's model of the board does not answer at, which the model's tree disables;
+    # aliases: the serial aliases the board's tree carries in place of Linux's; overlays:
+    # config.txt's dtoverlay names and erXos's source of each. The Pi's aliases swap
+    # Linux's two: serial0 is the mini UART, the console on GPIO 14 and 15, and serial1 the
+    # PL011 UART0, which the board wires to its Bluetooth chip.
+    Board = Data.define(:source, :file, :memory, :unmodelled, :aliases, :overlays)
     BOARDS = {
       'raspi4b' => Board.new(source: 'arch/arm/boot/dts/broadcom/bcm2711-rpi-4-b.dts', file: 'bcm2711-rpi-4-b.dtb',
                              memory: '/memory@0',
+                             # QEMU's model never completes a read at the RNG200's registers.
+                             unmodelled: ['/soc/rng@7e104000'].freeze,
                              aliases: { 'serial0' => '/soc/serial@7e215040', 'serial1' => '/soc/serial@7e201000' }.freeze,
                              overlays: { 'uart3' => 'hw/dts/raspi4b-uart3.dtso' }.freeze)
     }.freeze
@@ -135,8 +139,9 @@ module Erx
     # compatible strings, reg cells, GIC interrupts cells and its bus's #address-cells and
     # #size-cells; ranges maps each bus's path to its ranges, each [bus address, CPU
     # address, size], which turn the node's bus address into the CPU's, as the record
-    # states it. The record's line is the node's first interrupt: a device with more, as
-    # GENET's second line is, gives its driver the first alone, and no unit holds the rest.
+    # states it. The record's line is the node's first interrupt, 0 for a node with none: a
+    # device with more, as GENET's second line is, gives its driver the first alone, and no
+    # unit holds the rest.
     def device_problems(platform, nodes:, ranges:)
       devices = platform.record.fetch('units').flat_map { |unit| unit.fetch('devices') }
       devices.select { |device| device.fetch('selector') == 'dt' }.filter_map do |device|
@@ -158,18 +163,21 @@ module Erx
     end
 
     # A node's base on the CPU, size and line, or nil when its cells are not one bus
-    # address and size, each in its bus's cells, and GIC interrupts inside a range.
+    # address and size, each in its bus's cells, inside a range, and GIC interrupts or
+    # none. A node with no interrupts, as the RNG200's, raises none, and the record states
+    # its line as 0 (docs/design-abi.md, "Devices and partition windows").
     def window(node, ranges)
       reg = node.fetch(:reg)
       address_cells = node.fetch(:address_cells)
       interrupts = node.fetch(:interrupts)
       type, number, = interrupts
-      return nil unless reg.size == address_cells + node.fetch(:size_cells) && !interrupts.empty? &&
-                        (interrupts.size % 3).zero? && GIC_FIRST_LINE.key?(type)
+      return nil unless reg.size == address_cells + node.fetch(:size_cells) &&
+                        (interrupts.empty? || ((interrupts.size % 3).zero? && GIC_FIRST_LINE.key?(type)))
 
       bus, size = [reg.take(address_cells), reg.drop(address_cells)].map { |cells| number_of(cells) }
       range = ranges.find { |first, _, length| bus >= first && bus + size <= first + length }
-      range && { base: range[1] + (bus - range[0]), size: size, line: GIC_FIRST_LINE.fetch(type) + number }
+      line = interrupts.empty? ? 0 : GIC_FIRST_LINE.fetch(type) + number
+      range && { base: range[1] + (bus - range[0]), size: size, line: line }
     end
 
     # The number a run of 32-bit cells holds, most significant first.
@@ -201,6 +209,7 @@ module Erx
         cells = %w[#address-cells #size-cells].map { |name| compile.cell(model, '/', name) }
         compile.run(['fdtput', '-t', 'u', model, board.memory, 'reg',
                      *memory_cells(platform, address_cells: cells[0], size_cells: cells[1]).map(&:to_s)], 'fdtput-memory')
+        board.unmodelled.each { |node| compile.run(['fdtput', '-t', 's', model, node, 'status', 'disabled'], 'fdtput-unmodelled') }
         raise Error, "board tree output is a symbolic link: #{destination}" if File.symlink?(destination)
 
         FileUtils.rm_rf(destination)

@@ -2002,10 +2002,20 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   turn it off, so an end by `ERX_END_OFF`, a missed pet's included, lasts until its power is cycled by hand.
 * **Entropy.** When `/chosen` holds neither `rng-seed` nor `kaslr-seed`, the root reads 32 bytes from the board's RNG200
   random generator, waiting at most 100 ms, and seeds its generator from them, as the kernel's platform layer does on
-  erXos's kernel ([Entropy sources](design-platforms.md#entropy-sources)). It finds the generator by its compatible
-  string in the tree, maps the register page through sigma0 and starts the generator if it is stopped
+  erXos's kernel ([Entropy sources](design-platforms.md#entropy-sources)). Where the generator is comes from one
+  checked-in source, its row in the platform record (`config/platforms/raspi4b.json`, unit `rng`, the base and size
+  `/soc/rng@7e104000` names, CPU address `0xfe104000` and `0x28` bytes; BCM2711 ARM Peripherals release 4 states the
+  bus-to-CPU mapping, section 1.2.4, page 6, but describes no RNG200 registers, so the window is the device tree's,
+  checked against the board's tree by the board tree's test), which reaches the root as a unit the manifest gives the
+  system domain; the device is of no kind, so no record or window goes to any runtime. The firmware's tree only
+  confirms it: the root maps the row's window only when the tree's enabled node at the row's path, of compatible
+  `brcm,bcm2711-rng200`, names exactly that window (`erx_dt_registers`), as the framebuffer row's window bounds the
+  framebuffer the tree places, so a tree cannot move the read onto another device's page. A manifest that gives the
+  system domain no `rng` unit keeps the root off the generator. The root maps the register page through sigma0 and
+  starts the generator if it is stopped
   (`liberx/backend/fiasco/rng200.c` over `kernel/core/rng200.c`). The banner names the source, or why it gave nothing
-  ([the call table](#the-call-table)): a read that times out or a node with no window leaves the counter alone. The RNG200's registers and read sequence come from a clean-room facts record of the RNG200.
+  ([the call table](#the-call-table)): a read that times out, or a tree whose node names another window or none,
+  leaves the counter alone. The RNG200's registers and read sequence come from a clean-room facts record of the RNG200.
 * **The card.** `sdcard.img` is the medium of `abi/medium.txt`, as QEMU `virt`'s medium is, laid out as
   [Slots and the boot-selection record](design-platforms.md#slots-and-the-boot-selection-record) describes: the
   record's partition, an 8 MiB FAT16 whose data area begins with `autoboot.txt`, one cluster at

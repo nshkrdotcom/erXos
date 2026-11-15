@@ -10,6 +10,7 @@
 #include <stddef.h>
 
 #include "erx/abi.h"
+#include "erx/abi_reader.h"
 #include "erx/core/dt.h"
 #include "erx/boot_words.h"
 #include "liberx/backend/api.h"
@@ -103,6 +104,25 @@ typedef struct erx_boot_manifest {
  */
 bool	erx_boot_manifest_read(const uint8_t *bytes, size_t length, bool hostlink, erx_boot_manifest_t *result,
 	    const char **reason);
+
+/*
+ * A device the root reads itself at boot, with no driver and no record: a device-tree row
+ * of a unit the system domain holds, its path into the manifest's bytes and its register
+ * window as the platform record states it, which the firmware's tree only confirms
+ * (erx_dt_registers). The Raspberry Pi 4's RNG200 is the one such device
+ * (docs/design-stopgap.md, "The Raspberry Pi 4").
+ */
+typedef struct erx_boot_row {
+	erx_boot_words_t	path;
+	erx_dt_window_t		window;
+} erx_boot_row_t;
+
+/*
+ * Fills *row from the first device-tree row of a unit the system domain holds whose
+ * compatible string is compatible; false, writing nothing, when the manifest has none, so
+ * a manifest that does not give the system domain the device keeps the root off it.
+ */
+bool	erx_boot_held_row(const erx_manifest_view_t *view, const char *compatible, erx_boot_row_t *row);
 
 /*
  * Whether the manifest's console is the UART /chosen/stdout-path names

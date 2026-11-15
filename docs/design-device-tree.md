@@ -410,6 +410,19 @@ other failure is `malformed`. On `ok` it returns the base, the length of
 `reg`, the width, height, stride and the format's index in its table;
 on `outside` it returns the base and length too, for the line.
 
+**A device the root reads itself.** `erx_dt_registers(tree, path,
+compatible, window)` confirms a row the root maps without a driver, the
+Raspberry Pi 4's RNG200: the node at the row's path must be enabled,
+hold the row's compatible string, and have as its first `reg` entry, read
+with its parent's cell counts and translated through each bus's `ranges`
+to the root, exactly the row's window. A node that is absent, disabled or
+of another compatible string gives `none`; a range that is empty, wraps,
+is not translated whole and in one piece, or meets the view's RAM gives
+`malformed`; any other range gives `other`. The reader returns no
+address: the window is the row's, so the tree can withhold the read but
+never move it onto another device's page, as the framebuffer's window
+bounds where the tree may place the framebuffer.
+
 **The seeds.** `erx_dt_seeds(tree, &seeds)` copies `/chosen`'s
 `rng-seed` and `kaslr-seed`, each up to 1024 bytes, one BLAKE3 chunk, so
 it mixes as one part; a longer one gives its first 1024. A property that
@@ -572,7 +585,7 @@ ran.
   fixture gives 1024 zero bytes as a seed.
 * **The fuzz target**, `tools/fuzz/dt_fuzz.c`, landing with the reader:
   arbitrary bytes into `erx_dt_accept`, and an accepted view into
-  `erx_dt_device` for fixed paths, `erx_dt_framebuffer` and `erx_dt_seeds`, under ASan and
+  `erx_dt_device` for fixed paths, `erx_dt_framebuffer`, `erx_dt_registers` and `erx_dt_seeds`, under ASan and
   UBSan, with the platforms' trees, the fixtures and a truncated and a
   nested tree as its corpus, each handed over in a buffer of exactly its
   length. Seeds: acceptance that calls `fdt_check_header` before
@@ -601,6 +614,13 @@ ran.
   length for the line. Seeds: the window test made over the unrounded
   `reg` range, and the crossing fixture is `ok`; the window test removed,
   and the register-window fixture is `ok`.
+* **The register row's authority.** Reader tests over fixture nodes: the
+  RNG200's node at its row's path naming another device's page is
+  `other`, and a node of the same compatible string at another path is
+  `none`; a row whose base or size differs from the node's is `other`; the
+  card's tree confirms the Pi 4's row and the model's tree, which
+  disables the node, gives `none`. Seed: the base comparison removed, and
+  the other-page fixture is `ok`.
 * **The live tree on QEMU.** The `net_device` suite
   (`tools/lib/erx/net_device.rb`) boots twice. Its stock cell takes the
   tree QEMU writes and expects the network device's line to say

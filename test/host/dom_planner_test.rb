@@ -515,6 +515,19 @@ class DomPlannerTest < Minitest::Test
     end
   end
 
+  # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"): two rows of no
+  # kind whose nodes raise no interrupt, as the Raspberry Pi 4's RNG200 does, share none, so
+  # they may sit in two units, on pages of their own.
+  def test_units_whose_devices_have_no_line_share_none
+    platform = JSON.parse(JSON.generate(@context.platform))
+    base = device_of(platform, 'block').fetch('base')
+    { 'net' => 0x1000, 'spare' => 0x2000 }.each do |key, offset|
+      device_of(platform, key).merge!('base' => base + offset, 'line' => 0, 'role' => 'ordinary', 'dma' => 'none', 'dma_memory' => 0)
+    end
+    @context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec).merge(platform: platform))
+    admit("#{@source}unit spare\n  placement \"spare\"\n  holder @domain.alpha\n")
+  end
+
   # A unit of two devices on pages of their own that share a line, as the Raspberry Pi
   # 4's two SD controllers do: the system domain may hold it, and so may a configured
   # row, since the row's creation makes one IRQ object for the line, in the first

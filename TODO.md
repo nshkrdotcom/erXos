@@ -6407,6 +6407,11 @@ to the corpus and follow rc
   window (`erx_dt_framebuffer`); the RNG200 has no such row or platform fact yet. A development build runs
   trusted code from one boot medium, which holds the tree; release needs the window from one checked-in
   source, checked as the framebuffer's is.
+* [Medium] kernel design, `docs/design-platforms.md` "Data model": erXos's kernel binds the devices of
+  `hw/kernel_devices.txt` (the RNG200, the watchdog, the mailbox) by compatible string from the device tree
+  alone, so a tree that names another device's page under one of those strings would have the kernel drive
+  that page. On the stopgap the root confirms the RNG200's checked-in platform row against the tree
+  (`erx_dt_registers`); release needs the kernel's bindings confirmed against checked-in rows the same way.
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
   `login_key` admits root's development key on the SSH domain's own
@@ -7123,13 +7128,17 @@ document's "residual risks accepted" paragraph.
   ([design-platforms.md](docs/design-platforms.md#the-watchdog)); a reload from the root would rebuild a
   kernel mechanism in user mode. Residual until M12: the unattended board's `config.txt` sets the line
   once erXos's kernel runs there.
+* [Medium] stopgap, root task, `liberx/backend/fiasco/rng200.c` and every device read of the root: a device read
+  that never completes stops the root silently. On QEMU's `raspi4b` model the first read of the RNG200's CTRL
+  never returned, while the mini UART's page, mapped the same way at the same point, read; the root stopped before
+  its entropy line, with nothing on the console to say where, and the `raspi4b` suite timed out at
+  `release-slogan`. The model's tree disables the RNG200's node (`unmodelled` in `tools/lib/erx/board_tree.rb`),
+  so the root does not read there, but a board whose device does not answer would stop the same way. A
+  cheap diagnostic is a console line before the root's first read of a device it maps itself, so the last line
+  names the device.
 * [Medium] platform (Raspberry Pi 4), RNG200, `liberx/backend/fiasco/rng200.c`: the root's read is written from
-  the clean-room facts record alone and has run only on QEMU's `raspi4b` model, where it blocks the boot:
-  the root maps the generator's page, but its first read there (CTRL) never returns, while the mini UART's page,
-  mapped the same way at the same point, reads, so the root stops silently before its entropy line and the
-  `raspi4b` suite times out at `release-slogan`. The model tree (`tools/lib/erx/board_tree.rb`) names an RNG200
-  the model does not answer for; disabling that node there is the likely fix, and a root that stops silently on
-  a device read that faults is a gap of its own. A probe on a
+  the clean-room facts record alone and has run on no RNG200: QEMU's `raspi4b` model has none, and its tree
+  disables the node. A probe on a
   real Pi 4, read from the entropy line, settles what the record leaves open: whether the firmware writes
   `/chosen/rng-seed` or `kaslr-seed` at all, which skips the read; whether the generator, started only by setting
   CTRL bit 0, with no warm-up and no soft reset, gives FIFO_COUNT eight words within the 100 ms bound; whether

@@ -18,15 +18,19 @@
 
 /* What the board's random generator gave. The root reads it only when /chosen carried no seed. */
 typedef enum erx_fiasco_board_seed {
-	/* Not read: /chosen carried a seed, or the tree names no generator. */
+	/*
+	 * Not read: /chosen carried a seed, the manifest gives the system domain no
+	 * generator, or the tree has no enabled generator at its row's path.
+	 */
 	ERX_FIASCO_BOARD_NONE,
 	/* Its ERX_RNG200_SEED_BYTES went in. */
 	ERX_FIASCO_BOARD_READ,
 	/* It gave fewer words than that within its wait. */
 	ERX_FIASCO_BOARD_TIMED_OUT,
 	/*
-	 * Its node gives no window the root can map, it is stopped with CTRL bits the root
-	 * cannot write back, or its bytes could not be mixed.
+	 * Its node names a malformed window or one other than its row's
+	 * (erx_dt_registers), it is stopped with CTRL bits the root cannot write back, or
+	 * its bytes could not be mixed.
 	 */
 	ERX_FIASCO_BOARD_UNREADABLE
 } erx_fiasco_board_seed_t;

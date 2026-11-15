@@ -133,8 +133,9 @@ unit_first_device(const erx_manifest_view_t *view, const erx_mf_unit_t *unit, ui
  * the line shared (docs/design-shared-devices.md, "Lines inside a domain"). This is the
  * relation of the domain library's boot view, boot_lines_meet in
  * liberx/system/dom_boot_view.c, over the manifest's own entries: each device-tree entry
- * names exactly one line, except a framebuffer row, whose line field is 0 but which names
- * none (erx/dom.h); a PCIe function names none. The boot view refuses a manifest
+ * names exactly its line, except that line 0 is no line, carried by a row whose node raises
+ * no interrupt, a framebuffer's or the RNG200's (docs/design-abi.md, "Devices and partition
+ * windows"); a PCIe function names none. The boot view refuses a manifest
  * that puts devices sharing a line in two units, so another device of the manifest that
  * names the line is another device of the same unit. erx_manifest_open checked every
  * entry, so every read succeeds.
@@ -144,9 +145,9 @@ line_shared(const erx_manifest_view_t *view, uint32_t self, uint32_t line)
 {
 	erx_mf_device_t other;
 
-	for (uint32_t at = 0; at < view->header.devices.count; at++) {
+	for (uint32_t at = 0; line != 0 && at < view->header.devices.count; at++) {
 		if (at != self && erx_manifest_devices_at(view, at, &other) && other.selector == ERX_MF_SELECTOR_DT &&
-		    other.role != ERX_MF_DEVICE_ROLE_FRAMEBUFFER && other.line == line)
+		    other.line == line)
 			return (true);
 	}
 	return (false);
@@ -225,6 +226,30 @@ console_read(const erx_manifest_view_t *view)
 		    .line = device.line, .line_shared = line_shared(view, at, device.line), .clock = device.clock });
 	}
 	return ((erx_boot_console_t){ 0 });
+}
+
+/* The manifest's holder of a unit is a domain reference, ERX_MF_NONE for the system domain. */
+bool
+erx_boot_held_row(const erx_manifest_view_t *view, const char *compatible, erx_boot_row_t *row)
+{
+	erx_mf_device_t device;
+	erx_mf_unit_t unit;
+	uint32_t first;
+
+	for (uint32_t at = 0; at < view->header.units.count; at++) {
+		if (!erx_manifest_units_at(view, at, &unit) || !unit_first_device(view, &unit, &first) ||
+		    unit.holder != ERX_MF_NONE)
+			continue;
+		for (uint32_t index = first; index < first + unit.devices.count; index++) {
+			if (!erx_manifest_devices_at(view, index, &device) || device.selector != ERX_MF_SELECTOR_DT ||
+			    !string_is(view, &device.compatible, compatible))
+				continue;
+			*row = (erx_boot_row_t){ .path = { (const char *)string_at(view, &device.path), device.path.length },
+			    .window = { device.base, device.size } };
+			return (true);
+		}
+	}
+	return (false);
 }
 
 bool

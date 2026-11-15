@@ -600,30 +600,25 @@ regs_translate(const void *fdt, const int path[ERX_DT_DEPTH_MAX + 1], int depth,
 }
 
 erx_dt_regs_status_t
-erx_dt_registers(const erx_dt_t *tree, const char *compatible, erx_dt_window_t *window)
+erx_dt_registers(const erx_dt_t *tree, const char *path, const char *compatible, erx_dt_window_t window)
 {
-	const void *fdt = tree == NULL ? NULL : tree->bytes;
+	const void *fdt = tree->bytes;
 	dt_window_t pieces[ERX_DT_WINDOWS_MAX];
-	int path[ERX_DT_DEPTH_MAX + 1];
+	int nodes[ERX_DT_DEPTH_MAX + 1];
 	const uint8_t *reg;
 	uint64_t base, size, last;
 	uint32_t count;
 	int node, depth, ac, sc, len;
 
-	window->base = 0;
-	window->size = 0;
-	if (fdt == NULL || compatible == NULL)
+	node = node_find(tree, path);
+	if (node < 0 || compatible == NULL || !node_enabled(fdt, node) ||
+	    fdt_node_check_compatible(fdt, node, compatible) != 0)
 		return (ERX_DT_REGS_NONE);
-	node = fdt_node_offset_by_compatible(fdt, -1, compatible);
-	while (node >= 0 && !node_enabled(fdt, node))
-		node = fdt_node_offset_by_compatible(fdt, node, compatible);
-	if (node < 0)
-		return (ERX_DT_REGS_NONE);
-	depth = ancestry(fdt, node, path);
+	depth = ancestry(fdt, node, nodes);
 	if (depth < 1)
 		return (ERX_DT_REGS_MALFORMED);
-	ac = fdt_address_cells(fdt, path[depth - 1]);
-	sc = fdt_size_cells(fdt, path[depth - 1]);
+	ac = fdt_address_cells(fdt, nodes[depth - 1]);
+	sc = fdt_size_cells(fdt, nodes[depth - 1]);
 	if (!cells_valid(ac) || !cells_valid(sc))
 		return (ERX_DT_REGS_MALFORMED);
 	reg = fdt_getprop(fdt, node, "reg", &len);
@@ -635,11 +630,12 @@ erx_dt_registers(const erx_dt_t *tree, const char *compatible, erx_dt_window_t *
 		return (ERX_DT_REGS_MALFORMED);
 	pieces[0] = (dt_window_t){ .bus = base, .last = last, .at = base };
 	count = 1;
-	if (!regs_translate(fdt, path, depth, pieces, &count) || count != 1 || pieces[0].bus != base ||
+	if (!regs_translate(fdt, nodes, depth, pieces, &count) || count != 1 || pieces[0].bus != base ||
 	    pieces[0].last != last || memory_meets(tree, pieces[0].at, window_at_last(&pieces[0])))
 		return (ERX_DT_REGS_MALFORMED);
-	window->base = pieces[0].at;
-	window->size = size;
+	/* The tree only confirms the row: a window anywhere else is another device's, or none's. */
+	if (pieces[0].at != window.base || size != window.size)
+		return (ERX_DT_REGS_OTHER);
 	return (ERX_DT_REGS_OK);
 }
 

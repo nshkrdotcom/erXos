@@ -125,12 +125,20 @@ class DtTest < Minitest::Test
     'regs-twice' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000 0x7e000000 0x0 0xfe000000 0x1800000', body: RNG.call)),
     'regs-in-ram' => tree(SOC.call(ranges: '0x7e000000 0x0 0x0 0x1800000', body: RNG.call)),
     'regs-disabled' => tree(RNG.call(reg: '0x0 0xfe104000 0x28', status: 'disabled')),
-    # The first node disabled, the second enabled.
-    'regs-second' => tree(RNG.call(reg: '0x0 0xfe104000 0x28', status: 'disabled') +
-                          RNG.call(reg: '0x0 0xfe105000 0x28').sub('rng@7e104000', 'rng@7e105000')),
+    'regs-other-compatible' => tree(RNG.call(reg: '0x0 0xfe104000 0x28').sub(RNG_COMPATIBLE, 'brcm,bcm2835-rng')),
     'regs-empty' => tree(RNG.call(reg: '0x0 0xfe104000 0x0')),
-    'regs-short' => tree(RNG.call(reg: '0x0 0xfe104000'))
+    'regs-short' => tree(RNG.call(reg: '0x0 0xfe104000')),
+    # A tree that names another device's page, the GPIO controller's, under the RNG200's
+    # compatible string: at the row's path, and at a path of its own.
+    'regs-other-page' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000', body: RNG.call(reg: '0x7e200000 0x28'))),
+    'regs-elsewhere' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000',
+                                      body: RNG.call(reg: '0x7e200000 0x28').sub('rng@7e104000', 'rng@7e200000')))
   }.freeze
+
+  # The RNG200's row in the Pi 4's platform record: its path, compatible string and window;
+  # and the same window at the root, for the fixtures with no soc bus.
+  RNG_ROW = "/soc/rng@7e104000 #{RNG_COMPATIBLE} 0xfe104000 0x28"
+  ROOT_RNG_ROW = "/rng@7e104000 #{RNG_COMPATIBLE} 0xfe104000 0x28"
 
   # The framebuffer row's window in the fixtures, above their RAM; one whose end is not
   # a page boundary; one over the RAM below.
@@ -187,17 +195,20 @@ class DtTest < Minitest::Test
        "fb /chosen simple-framebuffer #{CROSSING_WINDOW}", 'fb outside 0x7e000000 0x3ff801 0x0 0 - 0'],
     "the buses' ranges passed over" =>
       ['for (level = depth - 1; level > 0; level--)', 'for (level = depth - 1; level > depth - 1; level--)', 'regs-translated',
-       "regs #{RNG_COMPATIBLE}", 'regs ok 0xfe104000 0x28'],
+       "regs #{RNG_ROW}", 'regs ok'],
     'a bus with no ranges taken as the identity' =>
       ["if (ranges == NULL)\n\t\t\treturn (false);\n\t\tif (len == 0)", 'if (ranges == NULL || len == 0)', 'regs-no-ranges',
-       "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+       "regs #{RNG_ROW}", 'regs malformed'],
     "the window's start left untested" =>
-      ['count != 1 || pieces[0].bus != base ||', 'count != 1 ||', 'regs-tail', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+      ['count != 1 || pieces[0].bus != base ||', 'count != 1 ||', 'regs-tail', "regs #{RNG_ROW}", 'regs malformed'],
     'the window taken from the first of two pieces' =>
-      ['count != 1 || pieces[0].bus != base ||', 'pieces[0].bus != base ||', 'regs-twice', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+      ['count != 1 || pieces[0].bus != base ||', 'pieces[0].bus != base ||', 'regs-twice', "regs #{RNG_ROW}", 'regs malformed'],
     "the register window's RAM test removed" =>
       ['pieces[0].last != last || memory_meets(tree, pieces[0].at, window_at_last(&pieces[0])))', 'pieces[0].last != last)',
-       'regs-in-ram', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0']
+       'regs-in-ram', "regs #{RNG_ROW}", 'regs malformed'],
+    "the row's base left unchecked" =>
+      ['if (pieces[0].at != window.base || size != window.size)', 'if (size != window.size)', 'regs-other-page', "regs #{RNG_ROW}",
+       'regs other']
   }.freeze
 
   def setup
@@ -270,7 +281,8 @@ class DtTest < Minitest::Test
 
   def test_raspberry_pi_4_trees
     runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
-    built = Erx::BoardTree.build(root: ROOT, runner: runner, platform: Erx::Platform.load(root: ROOT, name: 'raspi4b'),
+    platform = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    built = Erx::BoardTree.build(root: ROOT, runner: runner, platform: platform,
                                  compiler: ENV.fetch('ERX_CLANG', 'clang'), revision: nil)
     queries = ['device /emmc2bus/mmc@7e340000 node', 'device /scb/ethernet@7d580000 node', 'device /scb/pcie@7d500000 pcie']
     # The model's tree has the memory node the firmware fills.
@@ -283,8 +295,14 @@ class DtTest < Minitest::Test
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
                   'device cells coherent 0 range 0x0 0x0 0x0 mac none'], answers(built.board, queries)
-    # Both trees place the RNG200 at 0x7e104000 on the soc bus, CPU address 0xfe104000.
-    [built.model, built.board].each { |tree| assert_equal 'regs ok 0xfe104000 0x28', answers(tree, ["regs #{RNG_COMPATIBLE}"])[1] }
+    # The card's tree places the RNG200 where its row in the platform record says, 0x7e104000
+    # on the soc bus, CPU address 0xfe104000; the model's tree disables it, since QEMU's model
+    # does not answer there (Erx::BoardTree).
+    row = platform.record.fetch('units').flat_map { |unit| unit.fetch('devices') }
+                  .find { |device| device.fetch('compatible') == RNG_COMPATIBLE }
+    query = "regs #{row.values_at('path', 'compatible', 'base', 'size').join(' ')}"
+    assert_equal 'regs ok', answers(built.board, [query])[1]
+    assert_equal 'regs none', answers(built.model, [query])[1]
   end
 
   def test_coherence_marks
@@ -376,21 +394,31 @@ class DtTest < Minitest::Test
 
   def test_register_windows
     {
-      'regs-identity' => 'regs ok 0xfe104000 0x28',
-      'regs-translated' => 'regs ok 0xfe104000 0x28',
-      'regs-empty-ranges' => 'regs ok 0xfe104000 0x28',
-      'regs-second' => 'regs ok 0xfe105000 0x28',
-      'regs-no-ranges' => 'regs malformed 0x0 0x0',
-      'regs-split' => 'regs malformed 0x0 0x0',
-      'regs-partial' => 'regs malformed 0x0 0x0',
-      'regs-tail' => 'regs malformed 0x0 0x0',
-      'regs-twice' => 'regs malformed 0x0 0x0',
-      'regs-in-ram' => 'regs malformed 0x0 0x0',
-      'regs-empty' => 'regs malformed 0x0 0x0',
-      'regs-short' => 'regs malformed 0x0 0x0',
-      'regs-disabled' => 'regs none 0x0 0x0',
-      'own-mark' => 'regs none 0x0 0x0'
-    }.each { |name, expected| assert_equal expected, fixture_answers(name, ["regs #{RNG_COMPATIBLE}"])[1], name }
+      'regs-identity' => [ROOT_RNG_ROW, 'regs ok'],
+      'regs-translated' => [RNG_ROW, 'regs ok'],
+      'regs-empty-ranges' => [RNG_ROW, 'regs ok'],
+      'regs-no-ranges' => [RNG_ROW, 'regs malformed'],
+      'regs-split' => [RNG_ROW, 'regs malformed'],
+      'regs-partial' => [RNG_ROW, 'regs malformed'],
+      'regs-tail' => [RNG_ROW, 'regs malformed'],
+      'regs-twice' => [RNG_ROW, 'regs malformed'],
+      'regs-in-ram' => [RNG_ROW, 'regs malformed'],
+      'regs-empty' => [ROOT_RNG_ROW, 'regs malformed'],
+      'regs-short' => [ROOT_RNG_ROW, 'regs malformed'],
+      'regs-disabled' => [ROOT_RNG_ROW, 'regs none'],
+      'regs-other-compatible' => [ROOT_RNG_ROW, 'regs none'],
+      'own-mark' => [ROOT_RNG_ROW, 'regs none']
+    }.each { |name, (row, expected)| assert_equal expected, fixture_answers(name, ["regs #{row}"])[1], name }
+    # A row whose window starts or ends elsewhere than the node's is not confirmed.
+    assert_equal 'regs other', fixture_answers('regs-translated', ["regs /soc/rng@7e104000 #{RNG_COMPATIBLE} 0xfe105000 0x28"])[1]
+    assert_equal 'regs other', fixture_answers('regs-translated', ["regs /soc/rng@7e104000 #{RNG_COMPATIBLE} 0xfe104000 0x1000"])[1]
+  end
+
+  # The root maps only the window its row names: a tree that names another device's page
+  # under the RNG200's compatible string is refused, at the row's path or elsewhere.
+  def test_register_window_is_the_rows
+    assert_equal 'regs other', fixture_answers('regs-other-page', ["regs #{RNG_ROW}"])[1]
+    assert_equal 'regs none', fixture_answers('regs-elsewhere', ["regs #{RNG_ROW}"])[1]
   end
 
   MUTANTS.each do |name, (original, replacement, fixture_name, query, expected)|

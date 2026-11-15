@@ -340,6 +340,28 @@ class BootManifestTest < Minitest::Test
     refute_match(/^framebuffer /, output)
   end
 
+  # The RNG200's row reaches the root from the platform record only through a unit the
+  # manifest gives the system domain (erx_boot_held_row): the shipped Pi manifest gives it,
+  # with the record's path and window; the unit given to another domain, or a board without
+  # the row, gives the root none, so it reads no generator. It is of no kind, so it makes no
+  # device record.
+  def test_the_rng200_row_reaches_the_root_only_from_a_unit_the_system_domain_holds
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+    row = "unit rng\n  placement \"rng\"\n  holder system\n"
+    assert_includes pi, row
+    output, status = read(admitted(pi, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "held_row /soc/rng@7e104000 #{0xfe104000} 40\n"
+    refute_match(/^device .* #{0xfe104000} /, output)
+    output, status = read(admitted(pi.sub(row, row.sub('holder system', 'holder @domain.storage')), platform: 'raspi4b'),
+                          stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "held_row none\n"
+    output, status = read(admitted)
+    assert status.success?, output
+    assert_includes output, "held_row none\n"
+  end
+
   def dma(role, memory, status, coherent, cpu, bus, last, mac, first, size)
     arguments = [role, memory, status, coherent, cpu, bus, last, mac, first, size].map(&:to_s)
     output, status_ = Open3.capture2e(@driver, 'dma', *arguments)
@@ -459,19 +481,20 @@ class BootManifestTest < Minitest::Test
     assert_includes output, "console_wordsexact 0 short 0\n"
   end
 
-  # A framebuffer row names no line, though its line field is 0 (erx/dom.h, the view gives
-  # it none), so a device on line 0 beside the Pi's framebuffer row has its line to itself.
-  # The row is on the system domain's page only in pi_framebuffer_held_by_system's copy.
-  # The Pi's mini UART is moved to line 0 off the auxiliary SPI controllers' 125.
-  def test_a_framebuffer_row_shares_no_line
+  # Line 0 is no line (docs/design-abi.md, "Devices and partition windows"): the Pi's
+  # framebuffer row, here on the system domain's page (pi_framebuffer_held_by_system), and
+  # its RNG200's carry it beside the console, whose line stays its own unit's; a driven
+  # device given line 0, the mini UART, would bind no line, and the check refuses it.
+  def test_line_zero_is_no_line
+    output, status = read(admitted(pi_framebuffer_held_by_system, platform: 'raspi4b'), stdout_path: '/soc/serial@7e215040')
+    assert status.success?, output
+    assert_includes output, "framebuffer #{0x3b40_0000} "
+    assert_match(/^console_uart mini_uart #{0xfe215040} 64 125 shared \d+\n/, output)
     record = platform_record('raspi4b')
     record.fetch('units').find { |unit| unit.fetch('key') == 'console-uart' }.fetch('devices')
           .find { |device| device.fetch('path') == '/soc/serial@7e215040' }['line'] = 0
-    output, status = read(admitted(pi_framebuffer_held_by_system, platform: 'raspi4b', record: record),
-                          stdout_path: '/soc/serial@7e215040')
-    assert status.success?, output
-    assert_includes output, "framebuffer #{0x3b40_0000} "
-    assert_match(/^console_uart mini_uart #{0xfe215040} 64 0 direct \d+\n/, output)
+    error = assert_raises(Erx::Manifest::Invalid) { admitted(pi_framebuffer_held_by_system, platform: 'raspi4b', record: record) }
+    assert_includes error.message, 'names no interrupt line'
   end
 
   # window: the row's window, by default every page but the last.

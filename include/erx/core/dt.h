@@ -126,7 +126,8 @@ struct erx_dt_framebuffer {
 typedef enum erx_dt_regs_status {
 	ERX_DT_REGS_OK,
 	ERX_DT_REGS_NONE,
-	ERX_DT_REGS_MALFORMED
+	ERX_DT_REGS_MALFORMED,
+	ERX_DT_REGS_OTHER
 } erx_dt_regs_status_t;
 
 /*
@@ -172,16 +173,21 @@ void		 erx_dt_framebuffer(const erx_dt_t *tree, const char *path, const char *co
 		    erx_dt_window_t window, erx_dt_framebuffer_t *fb);
 
 /*
- * Fills *window with the CPU addresses of the first register range of the
- * first enabled node whose compatible list holds compatible, its reg read
- * with its parent's cell counts and translated through each bus's ranges
- * up to the root (docs/design-platforms.md, "The devices the kernel
- * drives"). ERX_DT_REGS_NONE: no such node. ERX_DT_REGS_MALFORMED: the
- * range is empty, wraps, is not translated whole and in one piece (a bus
- * with no ranges translates nothing), or meets the tree's RAM. *window is
- * zero unless ERX_DT_REGS_OK.
+ * Whether the tree places a device where its platform row says it is
+ * (docs/design-device-tree.md, "Facts into records"): the node at path, an
+ * absolute node path, enabled and with compatible in its compatible list,
+ * has as its first register range, read with its parent's cell counts and
+ * translated to CPU addresses through each bus's ranges up to the root
+ * (docs/design-platforms.md, "The devices the kernel drives"), exactly the
+ * row's window. The row is the one source of where the device is; the tree
+ * only confirms it, so a caller maps window on ERX_DT_REGS_OK alone.
+ * ERX_DT_REGS_NONE: no such node, or one disabled or of another compatible.
+ * ERX_DT_REGS_MALFORMED: the range is empty, wraps, is not translated whole
+ * and in one piece (a bus with no ranges translates nothing), or meets the
+ * tree's RAM. ERX_DT_REGS_OTHER: a range other than window.
  */
-erx_dt_regs_status_t erx_dt_registers(const erx_dt_t *tree, const char *compatible, erx_dt_window_t *window);
+erx_dt_regs_status_t erx_dt_registers(const erx_dt_t *tree, const char *path, const char *compatible,
+		    erx_dt_window_t window);
 
 /*
  * Fills *seeds from /chosen. A seed is absent when /chosen or its property

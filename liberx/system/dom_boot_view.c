@@ -265,7 +265,10 @@ boot_pages_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b
 	    x.base < y.base + y.size && y.base < x.base + x.size);
 }
 
-/* Whether two entries name one interrupt line; an entry with no line, a PCIe function's, shares none. */
+/*
+ * Whether two entries name one interrupt line; an entry with no line, a PCIe function's, a
+ * framebuffer's or a device-tree row's whose line is 0, shares none.
+ */
 static bool
 boot_lines_meet(const erx_dom_device_entry_t *a, const erx_dom_device_entry_t *b)
 {
@@ -407,7 +410,8 @@ boot_devices(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_
 			entry->offset = device.base - entry->ranges[0].base;
 			entry->size = device.size;
 			entry->clock = device.clock;
-			entry->nlines = 1;
+			/* Line 0 is no line: the node raises no interrupt (docs/design-abi.md). */
+			entry->nlines = device.line != 0 ? 1 : 0;
 			entry->lines[0] = device.line;
 			/* The reader checked the path against the string table. */
 			entry->path = (const char *)manifest->bytes + manifest->header.strings.offset + device.path.offset;

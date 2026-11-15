@@ -207,10 +207,18 @@ main(int argc, char **argv)
 		erx_manifest_view_t view;
 		uint64_t total;
 
+		erx_boot_row_t row;
+
 		if (erx_manifest_open(bytes, length, &view, &error) && erx_boot_manifest_dma_total(&view, &total))
 			printf("dma_total %llu\n", (unsigned long long)total);
 		else
 			printf("dma_total refused\n");
+		/* The device the root reads itself, the RNG200 (erx_boot_held_row). */
+		if (erx_manifest_open(bytes, length, &view, &error) && erx_boot_held_row(&view, "brcm,bcm2711-rng200", &row))
+			printf("held_row %.*s %llu %llu\n", (int)row.path.length, row.path.bytes,
+			    (unsigned long long)row.window.base, (unsigned long long)row.window.size);
+		else
+			printf("held_row none\n");
 	}
 	printf("devices %zu\n", manifest.device_count);
 	for (size_t at = 0; at < manifest.device_count; at++) {

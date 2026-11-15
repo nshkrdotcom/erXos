@@ -57,6 +57,10 @@ class BoardTreeTest < Minitest::Test
       assert_equal '/soc/serial@7e201000', fdtget(built.public_send(tree), '/aliases', 'serial1'), tree
       assert_equal 'serial1:115200n8', fdtget(built.public_send(tree), '/chosen', 'stdout-path'), tree
     end
+    # QEMU's model does not answer at the RNG200's registers, so the model's tree disables
+    # its node; the board's leaves it as Linux's source has it, with no status.
+    assert_equal 'disabled', fdtget(built.model, '/soc/rng@7e104000', 'status')
+    assert_equal [], cells_or_none(built.board, '/soc/rng@7e104000', 'status')
     # The board's tree ships as Linux's source compiles it, which the firmware overlays;
     # the model's has config.txt's overlay applied.
     assert_equal 'disabled', fdtget(built.board, '/soc/serial@7e201600', 'status')
@@ -103,7 +107,7 @@ class BoardTreeTest < Minitest::Test
     end
     nodes = paths.to_h do |path|
       [path, { compatible: fdtget(built.board, path, 'compatible').split, reg: cells(built.board, path, 'reg'),
-               interrupts: cells(built.board, path, 'interrupts'), **buses.fetch(File.dirname(path)) }]
+               interrupts: cells_or_none(built.board, path, 'interrupts'), **buses.fetch(File.dirname(path)) }]
     end
     root_cells = cells(built.board, '/', '#address-cells').first
     ranges = buses.to_h do |bus, shape|
@@ -145,6 +149,8 @@ class BoardTreeTest < Minitest::Test
     assert_nil Erx::BoardTree.window(genet.merge(reg: [1, 0x7d580000, 0x10000]), ranges)
     assert_nil Erx::BoardTree.window(genet.merge(reg: [0x7d580000, 0x10000]), ranges)
     assert_nil Erx::BoardTree.window(genet.merge(interrupts: [0, 157, 4, 0]), ranges)
+    # A node with no interrupts raises none, and its record's line is 0.
+    assert_equal({ base: 0xfd580000, size: 0x10000, line: 0 }, Erx::BoardTree.window(genet.merge(interrupts: []), ranges))
   end
 
   private
@@ -157,6 +163,15 @@ class BoardTreeTest < Minitest::Test
 
   def cells(tree, node, property)
     text, status = Open3.capture2e('fdtget', '-t', 'u', tree, node, property, stdin_data: '')
+    assert status.success?, text
+    text.split.map { |cell| Integer(cell, 10) }
+  end
+
+  # A property's cells, none for a node without it, as the RNG200's has no interrupts.
+  def cells_or_none(tree, node, property)
+    text, status = Open3.capture2e('fdtget', '-t', 'u', tree, node, property, stdin_data: '')
+    return [] if !status.success? && text.include?('FDT_ERR_NOTFOUND')
+
     assert status.success?, text
     text.split.map { |cell| Integer(cell, 10) }
   end
