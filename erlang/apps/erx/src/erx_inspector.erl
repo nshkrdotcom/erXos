@@ -28,7 +28,7 @@ whose scope the system domain fixed when it minted it
   domain in the scope, and a path outside the scope gets the answer of a
   path that names nothing, `{error, scope}`, so a scoped caller cannot
   learn whether it exists. Of the machine's paths a scoped caller reaches
-  only the machine's record, the CPUs and the processes.
+  only the machine's record, the CPUs, the processes and the clock.
 * Of a record it may reach, the caller sees the attributes whose
   visibility class its scope admits (scoped/3): `any` always, `owner`
   with scope `all` or its owner's domain in the scope, `all` with scope
@@ -264,8 +264,9 @@ reachable(Path, Scope) ->
 %% The machine's paths a scoped caller reaches (docs/design-live.md,
 %% "Scopes"): the machine's record and each CPU's, of which scoped/3 keeps
 %% only the attributes the schema marks `visible any`, the CPUs' listing,
-%% the processes, listing only its own domains', and the clock
-%% (docs/design-time.md, "What /proc shows").
+%% the processes, listing only its own domains', and the clock, of which
+%% scoped/3 drops the `visible all` server and source (docs/design-time.md,
+%% "What /proc shows").
 scoped_machine_path([]) -> true;
 scoped_machine_path([cpus]) -> true;
 scoped_machine_path([cpus, _Index]) -> true;

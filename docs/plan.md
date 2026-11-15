@@ -1725,9 +1725,10 @@ What part 8 builds on, outside its packages:
    a seeded `visible all` left on `[cpus]` fails; `erx:inspect/2` answers
    what `erx_inspector:inspect/2` does. QEMU: none.
 3. **8.3 The `[time]` record.** The kind `clock` at path `time`,
-   `visible any`, with the time page's attributes collected in the
-   system domain, `state` among them, and the clock service's attributes
-   `unsupported` until that service reports them; `/proc/time/status`.
+   `visible any` but for `server` and `source`, `visible all`, with the
+   time page's attributes collected in the system domain, `state` among
+   them, and the clock service's attributes `unsupported` until that
+   service reports them; `/proc/time/status`.
    Start: [design-time.md](design-time.md#what-proc-shows), the attribute
    table; `abi/inspection.txt`; `erx_inspector.erl:317`. Depends on:
    nothing; lands after 8.2, builds in parallel.

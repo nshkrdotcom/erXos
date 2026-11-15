@@ -458,7 +458,7 @@ table({Effects, Jobs}, S) ->
     effects(Effects, S#s{jobs = Jobs}).
 
 %% A request of the running line or of a job (background/2, builtin/3).
-%% Any process may send one, so the shell checks it whole: starting and
+%% Any process of this node may send one, so the shell checks it whole: starting and
 %% moving jobs is the line's alone, and a malformed request is refused.
 request(Request, Waiter = {From, _Ref}, S) ->
     case erx_shell_jobs:valid_request(Request) of

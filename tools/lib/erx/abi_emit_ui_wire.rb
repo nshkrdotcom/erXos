@@ -392,7 +392,7 @@ module Erx
         "plain(#{name}, #{value}, #{texts}) ->\n    #{body}"
       end
 
-      # What element/4 writes for a list's element type.
+      # What element/5 writes for a list's element type.
       def element_type(type)
         case type.form
         when 'integer' then "{integer, #{type.minimum}, #{type.maximum}}"
