@@ -37,12 +37,13 @@
 #include <erx/abi.h>
 
 #include "liberx/program/spawn_plan.h"
+#include "tools/fuzz/spawn_plan_fuzz.h"
 
 int	LLVMFuzzerTestOneInput(const uint8_t *, size_t);
 
 #define POOL		7	/* the null object, five pipe ends and a mem range */
 #define ACTIONS_MAX	32
-#define BIG		65535	/* two such strings with their NULs are ERX_PROG_ARGS_MAX */
+#define BIG		SPAWN_PLAN_FUZZ_BIG
 
 typedef struct cursor {
 	const uint8_t	*at;
@@ -460,9 +461,9 @@ check_plan(const spawn_case_t *c, const model_t *m, const erx_spawn_plan_t *plan
 	check_signals(c, plan);
 }
 
-/* Checks one case: its verdict, 0 or the error both refused with. */
-static int
-run_case(const uint8_t *data, size_t size)
+/* Checks one case (tools/fuzz/spawn_plan_fuzz.h). */
+int
+spawn_plan_fuzz_case(const uint8_t *data, size_t size)
 {
 	static spawn_case_t c;
 	static model_t m;
@@ -504,6 +505,6 @@ run_case(const uint8_t *data, size_t size)
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
-	(void)run_case(data, size);
+	(void)spawn_plan_fuzz_case(data, size);
 	return (0);
 }

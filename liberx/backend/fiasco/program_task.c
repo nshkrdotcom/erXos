@@ -31,7 +31,7 @@
 #include <sys/uio.h>
 
 #include "erx/abi.h"
-#include "liberx/backend/fiasco/libc_spawn.h"
+#include "liberx/libc_spawn.h"
 #include "liberx/backend/fiasco/libc_start.h"
 #include "liberx/backend/fiasco/task_start.h"
 #include "liberx/backend/api.h"
@@ -103,7 +103,7 @@ ppoll_call(struct pollfd *fds, unsigned long nfds, const struct timespec *timeou
 }
 
 bool
-erx_fiasco_libc_spawn(const struct erx_spawn_request *req, long *result)
+erx_libc_spawn(const struct erx_spawn_request *req, long *result)
 {
 	pid_t pid;
 	int error;

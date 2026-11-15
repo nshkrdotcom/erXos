@@ -20,7 +20,7 @@ class SpawnPlanTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   PLANNER = 'liberx/program/spawn_plan.c'
-  SOURCES = [PLANNER, 'test/fixtures/spawn_plan_driver.c'].freeze
+  SOURCES = [PLANNER, 'tools/fuzz/spawn_plan_fuzz.c', 'test/fixtures/spawn_plan_driver.c'].freeze
   FLAGS = ['-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g',
            '-fsanitize=address,undefined', '-fno-sanitize-recover=undefined'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')

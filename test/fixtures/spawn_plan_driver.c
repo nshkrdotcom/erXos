@@ -10,18 +10,26 @@
  *	plans hand-built spawns whose outcome FreeBSD's posix_spawn fixes and
  *	prints "ok NAME" for each that plans as it should;
  *   spawn_plan_driver random SEED COUNT
- *	runs tools/fuzz/spawn_plan_fuzz.c's checks over COUNT inputs drawn
- *	from SEED, which abort on a broken case, then prints how many plans
- *	each verdict ended, "accepted N" and "errno N COUNT".
+ *	runs tools/fuzz/spawn_plan_fuzz.c's checks, linked beside this
+ *	driver, over COUNT inputs drawn from SEED, which abort on a broken
+ *	case, then prints how many plans each verdict ended, "accepted N"
+ *	and "errno N COUNT".
  */
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdbool.h>
+#include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 
-#include "../../tools/fuzz/spawn_plan_fuzz.c"
+#include <erx/abi.h>
+
+#include "liberx/program/spawn_plan.h"
+#include "tools/fuzz/spawn_plan_fuzz.h"
+
+#define BIG	SPAWN_PLAN_FUZZ_BIG
 
 static erx_prog_obj_t null_obj = { .kind = ERX_PROG_OBJ_NULL };
 static erx_prog_obj_t pipe_a = { .kind = ERX_PROG_OBJ_PIPE };
@@ -29,6 +37,20 @@ static erx_prog_obj_t mem_obj = { .kind = ERX_PROG_OBJ_MEM };
 static erx_prog_slot_t table[ERX_PROG_FDS_MAX];
 static erx_spawn_plan_t plan;
 static char *const no_strings[] = { NULL };
+static char big[BIG + 1];		/* BIG 'a's */
+
+static void
+check(bool held)
+{
+	if (!held)
+		abort();
+}
+
+static bool
+has(const erx_prog_sigset_t *set, int signo)
+{
+	return ((set->bits[(signo - 1) / 64] >> ((signo - 1) % 64)) & 1);
+}
 
 static erx_spawn_action_t *
 action(erx_spawn_op_t op, int fd, int src, const char *path, int oflag, erx_spawn_action_t *next)
@@ -75,7 +97,7 @@ examples(void)
 	char *const two_big[] = { big, big, NULL };
 	char *const past[] = { big, big, big + BIG, NULL };
 
-	fill_texts();
+	memset(big, 'a', BIG);
 	table[0] = (erx_prog_slot_t){ .obj = &null_obj };
 	table[1] = (erx_prog_slot_t){ .obj = &pipe_a };
 	table[3] = (erx_prog_slot_t){ .obj = &pipe_a, .cloexec = true };
@@ -165,7 +187,7 @@ random_cases(uint64_t seed, unsigned long count)
 		const size_t len = next_random(&state) % sizeof(input);
 		for (size_t j = 0; j < len; j++)
 			input[j] = (uint8_t)next_random(&state);
-		const int verdict = run_case(input, len);
+		const int verdict = spawn_plan_fuzz_case(input, len);
 
 		if (verdict == 0)
 			accepted++;

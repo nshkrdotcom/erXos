@@ -28,7 +28,8 @@ module Erx
 
     module_function
 
-    def deep_copy(value) = JSON.parse(JSON.generate(value))
+    # A mutable copy of a plain JSON value, nested containers included.
+    def deep_copy(value) = Marshal.load(Marshal.dump(value))
 
     # A path into the record's header and devices: [key, ...] down to a leaf or a container.
     def paths(value, prefix = [])

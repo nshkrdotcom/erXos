@@ -17,7 +17,7 @@
 #include <stdint.h>
 
 #include "erx/abi.h"
-#include "liberx/backend/fiasco/libc_spawn.h"
+#include "liberx/libc_spawn.h"
 #include "liberx/backend/fiasco/libc_start.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/task_start.h"
@@ -42,7 +42,7 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 
 /* No processes: musl's posix_spawn answers ENOSYS (libc_spawn.h). */
 bool
-erx_fiasco_libc_spawn(const struct erx_spawn_request *req, long *result)
+erx_libc_spawn(const struct erx_spawn_request *req, long *result)
 {
 	(void)req;
 	(void)result;

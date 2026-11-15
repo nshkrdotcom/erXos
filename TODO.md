@@ -1917,6 +1917,10 @@ it; git history is the record of completed work.
   anonymous memory reaches musl's own rows, which refuse only write and execute together (a protection change that
   meets a mapping, the window buffer's included, is refused by `liberx/backend/core/vm_table.c` already). Have the
   program's seam refuse `PROT_EXEC` in both with `ENOTSUP`, with a check in the programs suite's `args` program.
+* [Low] programs, the bit layout of `erx_prog_sigset_t` (`liberx/program/startup.h`) is written out by hand at
+  each use: `liberx/program/spawn_plan.c`, `signal.c`, `spawn.c`, `startup.c`, and the spawn planner's fuzz harness
+  and driver (`tools/fuzz/spawn_plan_fuzz.c`, `test/fixtures/spawn_plan_driver.c`). Give the type member and add
+  helpers beside it and use them everywhere, so a change to the layout is one edit.
 * [Low] programs, the programs suite's `lvgl` case (`tools/lib/erx/programs.rb`) checks only that `erx-lvgl`
   (`display/lvgl/erx_lvgl.c`) reaches main's map of descriptor 3 and ends with status 1. The display suite's
   lvgl-lease cell runs `erx-lvgl` over its pipes and a lent buffer through `erx_ui_lvgl` (the `erx_ui_lvgl` item

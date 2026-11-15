@@ -78,7 +78,7 @@ module Erx
         liberx/backend/fiasco/libc_start.c
         liberx/backend/fiasco/libc_root_start.c
         liberx/backend/fiasco/libc_root_write.c
-        liberx/backend/fiasco/libc_spawn.h
+        liberx/libc_spawn.h
         liberx/backend/fiasco/libc_start.h
         liberx/backend/fiasco/libc_task.c
         liberx/backend/fiasco/program_task.c

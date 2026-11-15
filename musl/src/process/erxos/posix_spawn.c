@@ -19,7 +19,7 @@
 #include <spawn.h>
 #include <unistd.h>
 
-#include "liberx/backend/fiasco/libc_spawn.h"
+#include "liberx/libc_spawn.h"
 #include "liberx/program/spawn_plan.h"
 
 /* musl's signal numbers are the ABI's (abi/signals.txt). */
@@ -58,7 +58,7 @@ posix_spawn(pid_t *restrict pid, const char *restrict path, const posix_spawn_fi
 		req.attr.sets_group_session_or_policy = (flags & (POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_SETSID |
 		    POSIX_SPAWN_SETSCHEDULER | POSIX_SPAWN_SETSCHEDPARAM)) != 0;
 	}
-	if (!erx_fiasco_libc_spawn(&req, &result))
+	if (!erx_libc_spawn(&req, &result))
 		return (ENOSYS);
 	if (result < 0)
 		return ((int)-result);
