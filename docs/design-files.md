@@ -1527,17 +1527,29 @@ A file passed to another program of the session, as `xargs` hands its
 standard streams to the programs it starts, is its open-file description,
 which the handler records in the receiving program's open table; a
 directory passed is its description too. No program reaches another's
-files unless it was handed them. Every description in a program's open
-table was opened through a program's table, the program's own or that
-of the program that passed it on: a spawn, a fork and a passed
-descriptor name only opens of the sender's own table (step 3 of
+files unless it was handed them. Every file-backed description in a
+program's open table, a directory's included, was opened through a
+program's table, the program's own or that of a program that passed it
+on, directly or by an `openat` from a directory description that was
+itself opened so: a spawn, a fork and a passed descriptor name only
+opens of the sender's own table (step 3 of
 [Starting a program](design-programs.md#starting-a-program),
 [Passing descriptors](design-programs.md#passing-descriptors)), and a
 session process hands a program pipe ends and a buffer, never a
 description ([design-programs.md](design-programs.md#the-handler), "A
-session process's program"). So what a program's table cannot reach, no
-description it holds reaches either, and an `openat` from a directory
-it holds walks only below a place some program's table reached. A program's end closes its share of
+session process's program"). A `socket` or an `accept` makes a
+description without a lookup in any table
+([design-programs.md](design-programs.md#descriptors-and-files)); it
+holds no fid, so it names no file. So what no program's table reaches,
+no description any program holds reaches either, and an `openat` from a
+directory it holds walks only below a place some program's table
+reached. That is a property of all programs' tables together, not of
+one program's: a passed descriptor reaches the receiver whatever its own
+table holds ([design-programs.md](design-programs.md#passing-descriptors)),
+so keeping a file from one program takes both a namespace narrowed away
+from it and withholding every descriptor of it; what no table of any
+program reaches, such as a window's `ctl`, no program reaches by either
+route. A program's end closes its share of
 every description
 ([design-programs.md](design-programs.md#a-programs-end)); its table
 holds no fid, so nothing else is clunked.
@@ -1572,7 +1584,7 @@ through its table and its open table, both kept by its handler
   program](#narrowing-for-a-program)), so whatever mounts and binds of a
   display its starter's table holds, the program's holds none, below
   `/dev` or anywhere else;
-* every description in a program's open table was opened through a
+* every file-backed description in a program's open table was opened through a
   program's table ([Narrowing for a program](#narrowing-for-a-program)),
   so none is on a window tree, a directory's included: no starter can
   hand a program an open of a window's `ctl`, or of a window's directory
@@ -1585,9 +1597,12 @@ through its table and its open table, both kept by its handler
   never enter the program's open table, whose open of `/dev/kbd` is an
   open of the tree's file.
 
-The rule needs no check of a description: a description is made only
-by an open through a program's table and moves only from one program's
-open table to another's, so the namespace rule covers it. The display does not draw this line itself, and cannot: its
+The rule needs no check of a description: a file-backed description is
+made only by an open through a program's table, or an `openat` from a
+directory description made so, and moves only from one program's open
+table to another's, so the namespace rule, which holds for every
+program's table, covers it; a socket's description holds no fid and
+names no file. The display does not draw this line itself, and cannot: its
 client is the session, whose pixel area holds every buffer of the
 session's, and a range is owned in the session by whoever allocated it,
 not by a window, as a starter presents a buffer its program's handler
@@ -1753,7 +1768,12 @@ child does ([Narrowing for a program](#narrowing-for-a-program)); the
 `/dev` entry is one entry among them, on the tree `export`, so a child
 whose namespace keeps `/dev` shares its parent's window and draw
 connection by path, as it shares them through the descriptors it
-inherited, and one spawned narrowed away from `/dev` has neither. The
+inherited. One spawned narrowed away from `/dev` reaches neither by
+path, but still reaches every open of the `/dev` tree's files its parent
+passes it as a descriptor, as any passed file reaches its receiver
+([design-programs.md](design-programs.md#passing-descriptors)); a parent
+that would keep its window from a child narrows the child away from
+`/dev` and passes it none of those descriptors. The
 two programs' writes to `/dev/draw` meet in the one connection, which
 takes them one at a time, as two Plan 9 processes sharing a draw
 connection's files do. Nothing outlives what it uses: the tree's grant,
