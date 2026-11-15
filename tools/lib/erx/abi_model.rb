@@ -151,6 +151,14 @@ module Erx
       UINT64_MAX = (1 << 64) - 1
       MAX_LAYOUT_SIZE = 16 * 1024 * 1024
       MAX_TYPE_DEPTH = 64
+      # A layout's storage: wire_le, read in place by C on the wire and by
+      # Erlang at its offsets; shared, memory two parties use at once;
+      # native, one party's own; and packed_le, whose fields sit at any byte
+      # offset and which only Erlang reads and writes, by bit-syntax matching
+      # (docs/design-abi.md, "Packed layouts").
+      PACKED = 'packed_le'
+      STORAGES = ['wire_le', 'shared', 'native', PACKED].freeze
+      PACKED_MEMBERS = %w[field padding].freeze
       # The most arg words an event uses; the C table's argument array
       # has this many slots, and each carrier's args array at least as
       # many words as its enum's longest args line.
@@ -569,7 +577,7 @@ module Erx
       def build_layout(declaration, types, constants)
         arity(declaration.line, 5)
         name, storage, alignment, size = declaration.args
-        declaration.fail!('unknown layout storage') unless %w[wire_le shared native].include?(storage)
+        declaration.fail!('unknown layout storage') unless STORAGES.include?(storage)
         alignment = power_of_two(alignment, declaration.line)
         size = positive(size, declaration.line, maximum: MAX_LAYOUT_SIZE)
         declaration.fail!('layout size is not aligned') unless (size % alignment).zero?
@@ -583,6 +591,11 @@ module Erx
         names = []
         declaration.members.each do |line|
           keyword, *words = line.words
+          # Every member but a field or padding is refused in a packed layout,
+          # whatever its kind, so a member kind added here stays out of one.
+          if storage == PACKED && (line.indent == 4 || !PACKED_MEMBERS.include?(keyword))
+            line.fail!('a packed layout holds only fields and padding')
+          end
           if line.indent == 4
             line.fail!('nested member must be bits below a field') unless keyword == 'bits' && current_field
             current_field.fetch(:bits) << validate_bits(line, current_field.fetch(:type))
@@ -645,7 +658,8 @@ module Erx
           else line.fail!("unknown layout member #{keyword}")
           end
         end
-        validate_layout_extents(fields, padding, size: size, alignment: alignment, line: declaration.line)
+        validate_packed(declaration, fields, alignment: alignment) if storage == PACKED
+        validate_layout_extents(fields, padding, size: size, alignment: alignment, packed: storage == PACKED, line: declaration.line)
         completed = attach_metadata(fields, metadata, storage: storage)
         if tail
           count_field = completed.find { |field| field.name == tail.count_field }
@@ -735,13 +749,30 @@ module Erx
         path
       end
 
-      def validate_layout_extents(fields, padding, size:, alignment:, line:)
+      # A packed layout is a record of the medium and nothing more: alignment
+      # 1, only fields and padding (build_layout refuses every other member),
+      # and fields of unsigned integers, bytes without a fixed value and packed
+      # layouts, alone or in arrays, so that its bit-syntax reader and writer
+      # (PackedEmitter) are fixed by the widths alone.
+      def validate_packed(declaration, fields, alignment:)
+        declaration.fail!('a packed layout has alignment 1') unless alignment == 1
+        fields.each do |field|
+          type = field.fetch(:type)
+          next if type.is_a?(IntegerType) && !type.signed
+          next if type.is_a?(BytesType) && !type.fixed
+          next if type.is_a?(Layout)
+
+          field.fetch(:line).fail!('a packed field is an unsigned integer, bytes or a packed layout')
+        end
+      end
+
+      def validate_layout_extents(fields, padding, size:, alignment:, packed:, line:)
         names = fields.map { |field| field.fetch(:name) }
         line.fail!('duplicate layout field') unless names.uniq.size == names.size
         extents = fields.map do |field|
           type = field.fetch(:type)
           offset = field.fetch(:offset)
-          unless (offset % type.alignment).zero? && alignment >= type.alignment
+          unless packed || ((offset % type.alignment).zero? && alignment >= type.alignment)
             field.fetch(:line).fail!('misaligned field')
           end
           [offset, type.size * (field.fetch(:count) || 1)]

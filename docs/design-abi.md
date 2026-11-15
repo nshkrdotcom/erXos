@@ -88,7 +88,7 @@ The declaration forms are:
 | `enum NAME TYPE` | indented `value NAME INTEGER` members; every value explicit and distinct |
 | `flags NAME TYPE` | indented `bit NAME POSITION` members; every position explicit and distinct |
 | `bytes NAME LENGTH` | a fixed byte count, with an optional `value HEX_BYTES` constraint |
-| `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared` or `native`; alignment and fixed prefix size are explicit |
+| `layout NAME STORAGE ALIGN SIZE` | ordered fields; `STORAGE` is `wire_le`, `shared`, `native` or `packed_le` ([Packed layouts](#packed-layouts)); alignment and fixed prefix size are explicit |
 | `variant NAME PREFIX TAG_FIELD TAG_ENUM MAX_BYTES` | a fixed prefix containing the tag and indented `case TAG BODY_LAYOUT` members; each body begins after the prefix |
 | `status NAME INTEGER DESCRIPTION` | a signed 32-bit result; zero is success and every error is negative |
 | `signal NAME NUMBER ACTION [alias NAME]` | a signal of the [signal table](design-programs.md#signal-numbers), in `signals.txt`: its name without `SIG` in lower case, a distinct number 1 through 128, and its default action, `terminate`, `ignore`, `stop` or `continue`, or `reserved` for a number the C library keeps; the generator gives each name and alias the constant `ERX_SIG` and its name in upper case, `erx/abi.h` the lookups `erx_sig_name`, `erx_sig_action` and `erx_sig_valid`, and `erx_abi_signals` the protocol names of the signals a program may name |
@@ -257,6 +257,30 @@ fields are always omitted, and a release projection cannot show a
 `development` field. A projection's consumer still performs its scope
 and sink-escaping checks. This closes projection selection without
 adding a service-execution language.
+
+### Packed layouts
+
+A layout of storage `packed_le` is a record of a medium whose fields sit
+at any byte offset, little-endian: F2FS's superblock has a 64-bit
+`block_count` at offset 36 ([design-f2fs.md](design-f2fs.md#reading-the-medium)).
+Its fields still cover it exactly and the model still checks every
+declared offset against the widths before it; only the alignment rule is
+lifted, so a packed layout declares alignment 1. It holds nothing but
+fields and padding: no tail, sequence, bit ranges, metadata or `names`
+line, and no private owner; each field is an unsigned integer, a `bytes`
+type without a fixed value or another packed layout, alone or in a fixed
+array, and only a packed layout embeds one. C reads no record in place
+whose fields may be misaligned, so `include/erx/abi.h` declares nothing
+for a packed layout, and every other storage keeps the alignment rule:
+a layout C reads can never be packed. Erlang alone reads and writes it,
+by bit-syntax matching: `erx_abi.hrl` gives its size and offsets as for
+any layout, and the generated module `erx_abi_packed` gives `decode/2`, a
+layout's bytes, exactly its size, to a map of its fields, and `encode/2`,
+the map back to bytes, refusing a value wider than its field. An integer
+field is an integer, a byte array or a `bytes` field a binary, a packed
+layout a map, and any other array a list. Neither function checks a value
+against more than its width: the bounds are its reader's, such as
+`erx_f2fs_codec`'s.
 
 ### Kernel calls and bindings
 

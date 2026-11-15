@@ -1,0 +1,163 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# F2FS's on-disk format as Linux reads and writes it with 4096-byte blocks
+# (docs/design-f2fs.md, "Reading the medium"): the facts erx_f2fs_codec reads
+# the superblock and the checkpoint pack with. Every field and value is from
+# the F2FS facts record, part 1, cited as [F n] beside it. Every integer is
+# little-endian, and the records are packed: a field may sit at any byte
+# offset, so each layout is packed_le, which only Erlang reads, by bit-syntax
+# matching.
+limit f2fs_magic u32 0xf2f52010
+# Each superblock copy starts this far into block 0 and into block 1 [F 7].
+limit f2fs_super_offset u32 1024
+# Blocks of 4096 bytes and segments of 512 blocks are all Linux mounts on a
+# 4 KiB-page host [F 2, F 3]; a sector is at least 512 bytes [F 54].
+limit f2fs_log_block_size u32 12
+limit f2fs_log_blocks_per_seg u32 9
+limit f2fs_log_sector_size_min u32 9
+# The bounds of segment_count [F 54].
+limit f2fs_segment_count_min u32 9
+limit f2fs_segment_count_max u32 8388608
+# The cold and hot file-name extensions together, each in an 8-byte slot
+# of extension_list [F 11, F 54].
+limit f2fs_extensions_max u32 64
+# The reserved inode numbers: the node inode, the meta inode and the root
+# directory [F 6].
+limit f2fs_node_ino u32 1
+limit f2fs_meta_ino u32 2
+limit f2fs_root_ino u32 3
+# The feature word's bits [F 10].
+limit f2fs_feature_encrypt u32 0x1
+limit f2fs_feature_blkzoned u32 0x2
+limit f2fs_feature_atomic_write u32 0x4
+limit f2fs_feature_extra_attr u32 0x8
+limit f2fs_feature_prjquota u32 0x10
+limit f2fs_feature_inode_chksum u32 0x20
+limit f2fs_feature_flexible_inline_xattr u32 0x40
+limit f2fs_feature_quota_ino u32 0x80
+limit f2fs_feature_inode_crtime u32 0x100
+limit f2fs_feature_lost_found u32 0x200
+limit f2fs_feature_verity u32 0x400
+limit f2fs_feature_sb_chksum u32 0x800
+limit f2fs_feature_casefold u32 0x1000
+limit f2fs_feature_compression u32 0x2000
+limit f2fs_feature_ro u32 0x4000
+limit f2fs_feature_device_alias u32 0x8000
+limit f2fs_feature_packed_ssa u32 0x10000
+# A checkpoint pack is its header block, P payload blocks, its orphan and
+# summary blocks and a copy of the header as its last block, all within one
+# segment; the summaries take at most 3 data and 3 node blocks [F 20, F 54].
+limit f2fs_cp_fixed_blocks u32 2
+limit f2fs_cp_summary_blocks_max u32 6
+# The checkpoint flags [F 25].
+limit f2fs_cp_umount u32 0x1
+limit f2fs_cp_orphan_present u32 0x2
+limit f2fs_cp_compact_sum u32 0x4
+limit f2fs_cp_error u32 0x8
+limit f2fs_cp_fsck u32 0x10
+limit f2fs_cp_fastboot u32 0x20
+limit f2fs_cp_crc_recovery u32 0x40
+limit f2fs_cp_nat_bits u32 0x80
+limit f2fs_cp_trimmed u32 0x100
+limit f2fs_cp_nocrc_recovery u32 0x200
+limit f2fs_cp_large_nat_bitmap u32 0x400
+limit f2fs_cp_quota_need_fsck u32 0x800
+limit f2fs_cp_disabled u32 0x1000
+limit f2fs_cp_disabled_quick u32 0x2000
+limit f2fs_cp_resizefs u32 0x4000
+# The inode numbers one orphan block holds [F 26].
+limit f2fs_orphans_per_block u32 1020
+# A cold or hot file-name extension, NUL-terminated in its slot [F 11].
+bytes erx_f2fs_extension 8
+# One entry of the superblock's device list: a path, empty for a volume of
+# one device, and the device's segments [F 9, F 54].
+layout erx_f2fs_device packed_le 1 68
+  field path u8 0 count 64
+  field total_segments u32 64
+# The superblock [F 9]: 3072 bytes, one copy at f2fs_super_offset of block 0
+# and one of block 1.
+layout erx_f2fs_super_block packed_le 1 3072
+  field magic u32 0
+  field major_ver u16 4
+  field minor_ver u16 6
+  field log_sectorsize u32 8
+  field log_sectors_per_block u32 12
+  field log_blocksize u32 16
+  field log_blocks_per_seg u32 20
+  field segs_per_sec u32 24
+  field secs_per_zone u32 28
+  field checksum_offset u32 32
+  field block_count u64 36
+  field section_count u32 44
+  field segment_count u32 48
+  field segment_count_ckpt u32 52
+  field segment_count_sit u32 56
+  field segment_count_nat u32 60
+  field segment_count_ssa u32 64
+  field segment_count_main u32 68
+  field segment0_blkaddr u32 72
+  field cp_blkaddr u32 76
+  field sit_blkaddr u32 80
+  field nat_blkaddr u32 84
+  field ssa_blkaddr u32 88
+  field main_blkaddr u32 92
+  field root_ino u32 96
+  field node_ino u32 100
+  field meta_ino u32 104
+  field uuid u8 108 count 16
+  # 512 UTF-16 code units, little-endian.
+  field volume_name u8 124 count 1024
+  field extension_count u32 1148
+  field extension_list erx_f2fs_extension 1152 count @f2fs_extensions_max
+  field cp_payload u32 1664
+  field version u8 1668 count 256
+  field init_version u8 1924 count 256
+  field feature u32 2180
+  field encryption_level u8 2184
+  field encrypt_pw_salt u8 2185 count 16
+  field devs erx_f2fs_device 2201 count 8
+  field qf_ino u32 2745 count 3
+  field hot_ext_count u8 2757
+  field s_encoding u16 2758
+  field s_encoding_flags u16 2760
+  field s_stop_reason u8 2762 count 32
+  field s_errors u8 2794 count 16
+  padding 2810 258
+  field crc u32 3068
+# The fixed part of a checkpoint pack's header block [F 21]; the version
+# bitmaps follow it, and the checksum is at checksum_offset [F 23, F 51].
+# The node and data logs' arrays have 8 entries, of which Linux uses 3;
+# alloc_type is per log, data hot, warm and cold, then node hot, warm and
+# cold.
+layout erx_f2fs_checkpoint packed_le 1 192
+  field checkpoint_ver u64 0
+  field user_block_count u64 8
+  field valid_block_count u64 16
+  field rsvd_segment_count u32 24
+  field overprov_segment_count u32 28
+  field free_segment_count u32 32
+  field cur_node_segno u32 36 count 8
+  field cur_node_blkoff u16 68 count 8
+  field cur_data_segno u32 84 count 8
+  field cur_data_blkoff u16 116 count 8
+  field ckpt_flags u32 132
+  field cp_pack_total_block_count u32 136
+  field cp_pack_start_sum u32 140
+  field valid_node_count u32 144
+  field valid_inode_count u32 148
+  field next_free_nid u32 152
+  field sit_ver_bitmap_bytesize u32 156
+  field nat_ver_bitmap_bytesize u32 160
+  field checksum_offset u32 164
+  field elapsed_time u64 168
+  field alloc_type u8 176 count 16
+# An orphan block of the checkpoint pack [F 26]: entry_count of its inode
+# numbers are used. Linux checks neither check_sum nor the block's place,
+# blk_addr of blk_count.
+layout erx_f2fs_orphan_block packed_le 1 4096
+  field ino u32 0 count @f2fs_orphans_per_block
+  padding 4080 4
+  field blk_addr u16 4084
+  field blk_count u16 4086
+  field entry_count u32 4088
+  field check_sum u32 4092

@@ -356,7 +356,13 @@ module Erx
       # A private layout leaves include/erx/abi.h with an incomplete type:
       # its tag, and the size and alignment a caller needs to allocate one;
       # private_headers emits the rest.
+      #
+      # A packed layout leaves it with nothing: C reads no record in place
+      # whose fields may sit at any byte offset (docs/design-abi.md, "Packed
+      # layouts").
       def layout_declaration(layout)
+        return [] if layout.storage == Model::PACKED
+
         tag = name(layout.name)
         extent = layout_extent(layout)
         typedef = "typedef struct #{tag} #{tag}_t;"
