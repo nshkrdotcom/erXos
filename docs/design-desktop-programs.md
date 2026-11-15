@@ -245,9 +245,9 @@ timer's tick. Effects form a closed set:
 | Effect | Performed as | Answer, as an input |
 | --- | --- | --- |
 | `{inspect, Tag, Path}` | a worker calls `erx:inspect(Path, #{timeout => 1000})` | `{inspected, Tag, Result}` |
-| `{list, Tag, Dir}` | a worker, its heap capped ([Bounds](#bounds)), calls `file:list_dir_all/1` | `{listed, Tag, Result}` |
-| `{stat, Tag, Dir, Names}` | a worker calls `file:read_link_info/1` on each of at most 256 names | `{stated, Tag, Result}` |
-| `{read, Tag, Path, Bytes}` | a worker opens the file and reads at most `Bytes` | `{read, Tag, Result}` |
+| `{list, Tag, Dir}` | a worker, its heap capped ([Bounds](#bounds)), calls `file:list_dir_all/1` | `{listed, Tag, Result}`, each name a binary |
+| `{stat, Tag, Dir, Names}` | a worker calls `file:read_link_info/2` with `[{time, posix}]` on each of at most 256 names | `{stated, Tag, Results}`, one result per name, in order |
+| `{read, Tag, Path, Bytes}` | a worker opens the file and reads at most `Bytes` | `{read, Tag, Result}`, `file:read/2`'s result; a folder answers `{error, eisdir}` |
 | `{tick_after, Ms}` | `erlang:start_timer/3` with the relative delay `Ms`, cancelling the timer before | `{tick, Now}`, `Now` the wall clock read when the timer fires |
 | `{snarf, Bytes}` | a write of `/clipboard` through the session's display grant | `{snarfed, ok \| {error, Errno}}` |
 | `{cancel, Tag}` | the worker of `Tag` is unlinked and killed | none |
@@ -886,7 +886,9 @@ session's namespace, a `list` of the current folder with an icon per
 item, and an info `section` for the selected item with, for text, a
 preview. A `toolbar` holds back and forward, the path as a row of
 buttons, one per folder from the root, the current folder's carrying
-`current`, and refresh and copy path.
+`current`, and refresh and copy path. A path deeper than 16 folders
+shows the root's button, an ellipsis and the last 16, so the toolbar's
+children stay within the schema's bound.
 
 ### What it reads and does
 
@@ -915,7 +917,10 @@ buttons, one per folder from the root, the current folder's carrying
   read stopped at 16 KiB, a character the limit cut short at the end is
   dropped, not counted as malformed. A malformed sequence anywhere else,
   a short sequence at the end of a file read whole included, makes the
-  file not text. Opening a text file shows the bytes read as its
+  file not text. A read that fills the 16 KiB counts as stopped, so a
+  file of exactly 16 KiB is judged as one cut there. A link to a folder,
+  or an item whose information has not arrived, is read as a file is,
+  and the read's `eisdir` opens it as a folder. Opening a text file shows the bytes read as its
   preview in the info section. Any other file shows its information,
   and the info section
   says that the desktop has no viewer for it. Nothing is started: files
@@ -948,14 +953,20 @@ replaced by an ellipsis so both ends stay visible.
 Every action names its item by its index in the core's listing, never
 by the shown text, so two names that show alike open their own files.
 An index means an item only within one listing and one page, so the
-list node's `key` is `{listing, Generation, Page}`, `Generation` a
+list node's `key` names both, the binary `listing Generation Page`
+(a key is an integer, an atom or a binary,
+[Widget format](design-abi.md#widget-format)), `Generation` a
 counter the core advances at every listing it takes in. A refresh, a
 new folder or a turned page changes the key, the toolkit numbers the
 list as a new node ([design-display.md](design-display.md#widget-trees)),
 and an event a renderer reports on the old node, a late double click
 included, is dropped by the widget server as an event on a node no
-longer in the tree. An index the core receives therefore always indexes
-the page it shows.
+longer in the tree. The list's event terms carry the same key,
+`{select, Key}` and `{open, Key}`, and the core drops one whose key is
+not the listing it shows, which an event the server fired just before
+the window took in a new listing is. An index the core acts on
+therefore always indexes the page it shows. The path and sidebar
+buttons' terms carry the folder they open, not a position.
 
 A preview's text is the file's bytes shown under the file's name, so
 it is attributed text: the core splits it into lines, cuts each to the

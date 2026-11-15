@@ -1854,11 +1854,15 @@ What part 8 builds on, outside its packages:
     least twice in three seconds, where a seeded stats that never
     samples fails.
 19. **8.19 The files core.** Kinds, sorting, paging, acting by index,
-    the text test and the preview, on the host. Depends on: nothing.
+    the text test and the preview, on the host, with its tree on the
+    widget format as it is. Depends on: nothing.
     Tests: design-desktop-programs' files rows, D4 and D5, each with its
     seed. QEMU: none.
 20. **8.20 files.** The files window and command, the listing worker's
-    heap cap, `stat` and `read` effects and copy path. Start:
+    heap cap, `stat` and `read` effects and copy path, and the core's
+    tree with 8.7's additions: the list's `on_submit` for opening,
+    `icons` from the core's kinds, `area` on the three columns and the
+    toolbar, and `current` on the current folder's path button. Start:
     `otp/erts/preloaded/src/erlang.erl:8109`, `max_heap_size`. Depends
     on: 8.4, 8.7, 8.19. Tests: files' bounds and the window's lifetime,
     each with its seed. QEMU: `files` on a folder of the suite's image

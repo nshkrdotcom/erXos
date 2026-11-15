@@ -119,7 +119,8 @@ module Erx
     # * client, a domain that holds a display's grant: the pixel primitives, the client
     #   side, erx_win, and the widget toolkit, erx_ui, which it starts, so its allocator of
     #   pixel areas and its widget servers run there and in neither the system domain nor
-    #   the display domain (G9, DisplayRelease).
+    #   the display domain (G9, DisplayRelease), and the desktop's programs, erx_desk
+    #   (docs/design-desktop-programs.md), which draw through it.
     #   No manifest names it yet: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
@@ -133,7 +134,7 @@ module Erx
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
-                        'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui'].freeze,
+                        'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime

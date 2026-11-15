@@ -3,12 +3,13 @@
 
 %% The desktop programs stats, clock, month and files
 %% (docs/design-desktop-programs.md), in the session's release: each
-%% program's pure core, which its window process runs. stats' core is
-%% erx_desk_stats_core.
+%% program's pure core, which its window process runs. Its modules:
+%%   erx_desk_stats_core  the core of stats, the machine's load;
+%%   erx_desk_files_core  the core of files, the folder browser.
 {application, erx_desk,
  [{description, "erXos desktop programs"},
   {vsn, "1"},
-  {modules, [erx_desk_stats_core]},
+  {modules, [erx_desk_files_core, erx_desk_stats_core]},
   {registered, []},
-  {applications, [kernel, stdlib, erx]},
+  {applications, [kernel, stdlib, erx, erx_ui]},
   {env, []}]}.
