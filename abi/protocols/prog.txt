@@ -18,9 +18,9 @@
 #   a read end's index is 0 to pipe_rix_max, and a write end's list of
 #   read ends holds at most pipe_readers_max of them and a read end's,
 #   the others, at most pipe_rix_max.
-# * A read end's list of write ends holds at most 8,192 entries, more than
-#   a frame of prog_frame_max bytes can carry, so the frame bound is the
-#   one that holds it.
+# * A read end's list of write ends holds at most pipes_quota entries: each
+#   is a lane of its session's pipes, which the pipe server holds to that
+#   quota (docs/design-pipes.md, Limits).
 # * The data area's Slots, its count of 64 KiB slots, is 1 to 16, the
 #   slots a request may name.
 # * An open is any u16, an entry of the program's open table.
@@ -150,7 +150,7 @@ protocol erx_prog
     case open cap
     case gone
   tuple writer wend cap cap lane_size writer_state
-  list writers writer max 8192 ascending
+  list writers writer max @pipes_quota ascending
   map write_end
     field wend wend
     field ring cap

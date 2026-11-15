@@ -62,6 +62,9 @@ class ProgFdTest < Minitest::Test
   def self.int(value) = value < 256 ? E.small(value) : E.int(value)
   def self.pairs(map) = E.map(map.map { |key, value| [E.atom(key.to_s), value] })
   def self.report(*items) = E.frame(E.tuple(E.atom('erx_prog'), E.small(1), E.tuple(*items))).unpack1('H*')
+  # A pipe request's error reply on slot 0, the slot the driver's channel makes busy.
+  def self.pipe_error(errno) =
+    E.frame(E.tuple(E.atom('erx_prog'), E.small(1), E.small(0), E.tuple(E.atom('error'), E.atom(errno)))).unpack1('H*')
 
   # Pipe 7: its write end 2 at fd 1 (ring 101, reader page 102, read end 0's doorbell 103), and
   # its read end 1 at fd 0 (lock page 104, write end 1's lane as 105 and 106, the same objects
@@ -141,6 +144,13 @@ class ProgFdTest < Minitest::Test
   }.freeze
 
   CASES = {
+    # pipe2's error reply is its errno, named in the reply by the ABI's errno table: the
+    # session's quota, enfile, is ENFILE and its budget, enomem, ENOMEM; nothing is installed.
+    'pipe2 errors' => [["reply #{pipe_error('enfile')}", 'armed'],
+                       ['pipe2 0', (-Errno::ENFILE::Errno).to_s],
+                       ["reply #{pipe_error('enomem')}", 'armed'],
+                       ["pipe2 #{fl(Fcntl::O_NONBLOCK)}", (-Errno::ENOMEM::Errno).to_s],
+                       ['caps', 'none']],
     'set-up' => [*SET_UP, ['state 0', READ_STATE], ['state 1', WRITE_STATE],
                  ['write 1 hello', '5'], ['read 0 64', '5 hello'], ['caps', 'none']],
     'dup and close' => [*SET_UP, ['dup 1', '3'], ['close 1', '0'], ['notices', 'none'],
@@ -334,6 +344,8 @@ class ProgFdTest < Minitest::Test
 
   # A seeded fault, the case that must catch it, and the edit that plants it.
   MUTANTS = {
+    'pipe2 loses an error reply\'s errno' => ['pipe2 errors', PIPE, "\t\tmade->result = -r->u.error.errnum;\n",
+                                              "\t\tmade->result = -EIO;\n"],
     'a snapshot drops FD_CLOEXEC' => ['snapshot', FD, "\t\ttable[fd] = slots[fd];\n", "\t\ttable[fd] = (erx_prog_slot_t){ .obj = slots[fd].obj };\n"],
     'a snapshot takes no reference' => ['snapshot', FD, "\t\tif (slots[fd].obj != NULL)\n\t\t\tobj_hold(slots[fd].obj);\n", ""],
     'a spawn hands on FD_CLOEXEC' =>

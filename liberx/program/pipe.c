@@ -387,7 +387,7 @@ read_open(erx_pipe_end_t *e, const erx_prog_read_end_t *v)
 		return (ERX_ENOMEM);
 	r->st.known = v->wends;
 	r->st.batches = ERX_PIPE_BATCHES;
-	/* The check bounds the list by 8,192 writers, so the count cannot wrap. */
+	/* The check bounds the list by ERX_PIPES_QUOTA writers, so the count cannot wrap. */
 	while (erx_prog_writers_next(&count, &writer))
 		nwriters++;
 	if (!lanes_reserve(r, nwriters))

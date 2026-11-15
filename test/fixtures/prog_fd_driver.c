@@ -28,6 +28,8 @@
  *   failmap N              the Nth erx_vm_map from now fails
  *   start HEX              plan the startup message and set the table up
  *   report HEX             read a report and apply it, as the executor does
+ *   reply HEX              arm the reply frame the next request takes
+ *   pipe2 FLAGS            erx_prog_pipe2 with FLAGS: "ok READ WRITE" or the error
  *   locked FD HEX          apply a report while a worker holds FD's end lock
  *   dup FD | close FD      the table's operations
  *   hold FD | drop         take and drop one counted reference
@@ -444,17 +446,40 @@ erx_space_stop(uint64_t space, int64_t status)
 	_exit(0);
 }
 
-/* No descriptor call makes a request; signal.c's kill, linked in, would. */
+/* The reply frame the next request takes, which a "reply" request arms. */
+static uint8_t *armed_reply;
+static size_t armed_len;
+
+/*
+ * The channel's request: the armed reply, checked by the generated reply
+ * check with slot 0 busy on this request, given to the requester's callback
+ * as the channel does.  A request with no reply armed fails the run.
+ */
 int
 erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
     erx_prog_reply_fn_t *fn, void *arg)
 {
-	(void)request;
+	static uint8_t scratch[4096];
+	uint16_t busy[ERX_PROFILE_SLOTS];
+	erx_profile_refusal_t refusal;
+	erx_prog_reply_t reply;
+	uint8_t slot;
+
 	(void)value;
 	(void)len;
-	(void)fn;
-	(void)arg;
-	abort();
+	if (armed_reply == NULL)
+		fail("a request with no reply armed");
+	for (size_t at = 0; at < ERX_PROFILE_SLOTS; at++)
+		busy[at] = ERX_PROFILE_NONE;
+	busy[0] = request;
+	if (erx_prog_scratch_bytes(armed_len) > sizeof(scratch) ||
+	    !erx_prog_check_reply(armed_reply, armed_len, scratch, sizeof(scratch), busy, &slot, &reply,
+	    &refusal))
+		fail("the armed reply is refused");
+	fn(&reply, arg);
+	free(armed_reply);
+	armed_reply = NULL;
+	return (ERX_OK);
 }
 
 /* The channel's send: each frame checked by the generated notice check, then kept as a line. */
@@ -1290,6 +1315,18 @@ main(int argc, char **argv)
 			do_start(arg);
 		} else if (strcmp(word, "report") == 0 && sscanf(line, "%*s %s", arg) == 1) {
 			do_report(arg);
+		} else if (strcmp(word, "reply") == 0 && sscanf(line, "%*s %s", arg) == 1) {
+			free(armed_reply);
+			armed_len = unhex(arg, &armed_reply);
+			printf("armed\n");
+		} else if (strcmp(word, "pipe2") == 0 && sscanf(line, "%*s %llu", &a) == 1) {
+			int fds[2];
+			int status = erx_prog_pipe2(fds, (int)a);
+
+			if (status == 0)
+				printf("ok %d %d\n", fds[0], fds[1]);
+			else
+				printf("%d\n", status);
 		} else if (strcmp(word, "locked") == 0 && sscanf(line, "%*s %d %s", &fd, arg) == 2) {
 			do_locked(fd, arg);
 		} else if (strcmp(word, "dup") == 0 && sscanf(line, "%*s %d", &fd) == 1) {

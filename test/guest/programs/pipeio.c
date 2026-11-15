@@ -17,11 +17,10 @@
  *   with SIGPIPE ignored a writev and a write on the end fail with EPIPE;
  * - sigdfl: the write raises SIGPIPE under its default action, which ends the program
  *   by the signal before the write returns.
- * - pipe, given no descriptor 3 and a session with two pipes left of its quota: a pipe's
- *   bytes come back through it, its read end reads the end of the stream once its write
- *   end is closed, pipe2 with O_CLOEXEC sets FD_CLOEXEC on both ends, with O_NONBLOCK an
- *   empty read fails with EAGAIN and with any other flag pipe2 fails with EINVAL; then
- *   pipe makes the two pipes left and fails with ENFILE at the session's quota.
+ * - pipe, given no descriptor 3: a pipe's bytes come back through it, its read end reads
+ *   the end of the stream once its write end is closed, pipe2 with O_CLOEXEC sets
+ *   FD_CLOEXEC on both ends, with O_NONBLOCK an empty read fails with EAGAIN and with any
+ *   other flag pipe2 fails with EINVAL.
  *
  * main returns 42 when every check of its mode held, else the number of the first that
  * failed, so the case's answer names it.
@@ -147,7 +146,7 @@ static int
 pipe_checks(void)
 {
 	char buf[8];
-	int p[2], q[2], r[2];
+	int p[2];
 
 	if (pipe(p) != 0 || p[0] == p[1] || write(p[1], "ping", 4) != 4 || read(p[0], buf, sizeof(buf)) != 4 ||
 	    memcmp(buf, "ping", 4) != 0)
@@ -162,10 +161,6 @@ pipe_checks(void)
 		return (4);
 	if (pipe2(p, O_APPEND) != -1 || errno != EINVAL)
 		return (5);
-	if (pipe(p) != 0 || pipe(q) != 0)
-		return (6);
-	if (pipe(r) != -1 || errno != ENFILE)
-		return (7);
 	return (42);
 }
 

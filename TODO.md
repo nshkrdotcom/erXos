@@ -3202,11 +3202,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the fix it keeps each holder's copies pending until a separate install event and checks
   `names_only_live` at the install, which shows the race on the unfixed tree.
 * [Low] session, `erx_pipe:new/1` (`quota`): the `pipes` quota is a parameter, at most and by
-  default `abi/erx_abi.txt`'s `pipes_quota` lanes, until `erx_policy` sets it with M10's principals.
-  It counts lanes, so a pipe whose write ends have all gone and drained keeps its lock page and its
-  read ends' doorbells outside it, bounded only by its holders' ends; and nothing checks that
-  `pipes_quota` stays within the startup grammar's `writers` list (8,192), past which a read end's
-  descriptor would outgrow it. Settle both when `erx_policy` sets the quota.
+  default `abi/erx_abi.txt`'s `pipes_quota` lanes, a fixed value that `erx_policy` replaces with
+  each principal's own quota at M10. It counts lanes, so a pipe whose write ends have all gone and
+  drained keeps its lock page and its read ends' doorbells outside it, bounded only by its holders'
+  ends; settle that when `erx_policy` sets the quota.
+* [Medium] security residual (Phase 1), session, `erx_pipe:new/1` (`quota`): one program can
+  exhaust its session's memory budget through `pipe` and `pipe2` before the quota stops it, since
+  `pipes_quota` lanes at up to 76 KiB each (`docs/design-pipes.md`, "The objects of a pipe") hold
+  more than a session template's budget, and so starve the session's own runtime; `pipe` then fails
+  with `ENOMEM`, which `docs/design-pipes.md`'s "Making a pipe" allows. `erx_policy`'s per-session
+  quota at M10, sized from the session's budget, settles it.
 * [Low] session, `test/erlang/erx_pipe_explore.erl`: the exploration of `erx_pipe:step/2` is bounded by
   depth, 7 at the landing gate and 8 at `tools/erx check-fuzz`, not run to completion: a complete run
   with a quota of one lane, numbers up to 3 and two read ends did not finish in 3 minutes. A state key
