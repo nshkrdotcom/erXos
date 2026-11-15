@@ -1450,8 +1450,8 @@ land after M11 repeat M11's closure over what they add.
    the desktop session's release, with `erx_desk_window` and the pure
    cores of `stats`, `clock`, `month` and `files`, each an Erlang
    command that opens one window; the widget format's additions,
-   `role`, `icon`, `icons`, list activation and the `graph` kind with
-   `none` samples, through the validator, the binary form, the readers
+   `role`, `area`, `icon`, `icons`, `current`, list activation and the
+   `graph` kind with `none` samples, through the validator, the binary form, the readers
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
    `erx_theme.h` and `theme.ts` and checking the palette's contrast
@@ -1620,13 +1620,18 @@ over arbitrary terms runs its budget clean.
 **Exit criteria, desktop programs.** Each core's host tests of
 [design-desktop-programs.md](design-desktop-programs.md#verification-and-testing)
 pass and each fails on its seeded fault: stats' derivation keeps every
-status (D2), turns a counter that goes down into a gap, keeps one
-sample in flight and drops a stale answer; clock never shows an unset
-clock's reading as a date (D3) and ticks at each minute's start across
-wall steps; month equals `calendar` for every month from 1600 to 2400;
-files acts by index, never by shown text (D4), pages past 256 items and
-reads at most 16 KiB for a preview; every tree from random listings,
-names and records passes `erx_ui_schema` (D5); an idle files window and
+status (D2), keeps no partial sample as exact, turns a counter that
+goes down or a zero denominator into a gap, shows `scope` for what a
+scoped facet does not see, keeps one sample in flight and drops a
+stale answer; clock never shows an unset clock's reading as a date
+(D3), ticks at each minute's start and shows a wall step by the first
+tick after it; month equals `calendar` for every month from 1600 to
+2400; files acts by index, never by shown text (D4), drops an event
+from a replaced listing, pages past 256 items asking information for
+one page, refuses a folder past its listing worker's heap cap (D8) and
+reads at most 16 KiB for a preview; no worker outlives its window
+(D9); every tree from random listings, names and records passes
+`erx_ui_schema` (D5); an idle files window and
 a month without a today issue no tree in a simulated day (D6). Each
 program's frame through `erx_ui_host`, light and dark, equals its
 reference; the attributed-text corpus as file names and a domain name
