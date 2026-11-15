@@ -792,7 +792,11 @@ processes are those that carry its **job tag**, a runtime attribute that
 every process takes from the process that spawns it, at its creation, and
 never changes, so a stage's helpers belong to its job however they are
 spawned; the group leader, which a process may change, stays only the
-route of its input and output. The runtime acts on a tag at the one point
+route of its input and output. A program's handler is not among them:
+the command server spawns it, outside every job, and the job reaches
+the program through the server's row
+([design-programs.md](design-programs.md#the-handler)), so a stopped
+job's handlers still carry out its pause and answer for its programs. The runtime acts on a tag at the one point
 where its schedulers pick a process to run: a process of a stopped job is
 set aside there instead of running, and one of an ending job exits there,
 so a process spawned at any moment is stopped or ended with its job, and
