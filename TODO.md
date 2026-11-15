@@ -2596,6 +2596,19 @@ it; git history is the record of completed work.
   because the header is signed or hash-pinned and the program runs with the app's own grants alone. Fix:
   the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
   application name and a relative path of plain names, with a seeded case each.
+* [Medium] apps, the SDK (`tools/lib/erx/sdk.rb`, `tools/erx sdk export`): the export writes `SDK.txt` and
+  `erlang/` (the public applications and `public.txt`) only. Not yet written: `sysroot/<arch>` (musl's
+  headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
+  `share/erxos/development.key`, `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
+  its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
+  which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
+  of the advisors' review: while it runs it is the node's default display, `erx_ui:open/1` takes a window
+  (size, channel, `open`, `present`) from the registered host and starts the server through start/1's path,
+  `present` copies the frame before `shown`, and `renderer => erlang` answers `enotsup` until `erx_ui_erlang`
+  exists; design-display.md ("The widget server", "Choosing a display") and design-packaging.md (two opens on
+  one host) gain those sentences first. The design's public table names `erx_draw`, which the tree does not
+  have; `sdk/public.txt` lists `erx_win` alone. Fix: build each with the next SDK packages, ahead of
+  `examples/dashboard`.
 * [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer packs what the app's directory
   already holds. It does not yet compile `lib/APP/src` with `erlc`, run `DIR/Makefile`, check the program
   with `erx_elf_plan`, sign with the SDK's development key when `--key` is absent, write the build record

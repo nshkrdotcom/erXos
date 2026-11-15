@@ -10,6 +10,7 @@ require_relative 'erlang_apps'
 require_relative 'dependencies'
 require_relative 'area_mappers'
 require_relative 'erofs_reads'
+require_relative 'example_lists'
 require_relative 'web_sinks'
 require_relative 'generated'
 require_relative 'net_checks'
@@ -174,6 +175,7 @@ module Erx
       check_named_only(own_sources)
       check_area_mappers(listed)
       check_erofs_reads(listed)
+      check_example_lists(listed)
       check_net(listed)
       check_command_needs(listed)
       check_facet_names(listed)
@@ -368,6 +370,16 @@ module Erx
       sources = listed.select { |relative| ErofsReads.covers?(relative) && File.file?(File.join(@root, relative)) }
       violations = ErofsReads.violations(sources.to_h { |relative| [relative, File.binread(File.join(@root, relative))] })
       raise Error, violations.join("\n") unless violations.empty?
+    end
+
+    # No list of the build names an example (ExampleLists).
+    def check_example_lists(listed)
+      files = listed.select { |relative| ExampleLists.covers?(relative) && File.file?(File.join(@root, relative)) }
+      violations = ExampleLists.violations(files.to_h { |relative| [relative, File.binread(File.join(@root, relative))] },
+                                           applications: ExampleLists.applications(root: @root))
+      return if violations.empty?
+
+      raise Error, violations.map { |path, number, name| "#{path}:#{number}: names the example #{name}" }.join("\n")
     end
 
     # erx_net's atoms, sequence-wrap and FreeBSD notice rules, and the grant-key

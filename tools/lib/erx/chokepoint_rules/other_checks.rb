@@ -27,6 +27,11 @@ module Erx
           design: "#{KERNEL}#chokepoint-checks", check: 'StackProof', test: 'test/host/stack_proof_test.rb'
         ),
         Chokepoints::Elsewhere.new(
+          name: 'examples-unlisted', rule: "no file of the build's tools, the board manifests or the test fixtures names " \
+                                           "the examples directory or an example's application",
+          design: 'docs/design-packaging.md#examples', check: 'ExampleLists, in Checks', test: 'test/host/sdk_test.rb'
+        ),
+        Chokepoints::Elsewhere.new(
           name: 'erofs-reads', rule: 'the EROFS reader reaches an image only through erx_verity:read/3, and only erx_verity ' \
                                      'reaches the window behind it',
           design: 'docs/design-storage.md#reading-erofs-images', check: 'ErofsReads, in Checks',

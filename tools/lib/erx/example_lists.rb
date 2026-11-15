@@ -1,0 +1,33 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+module Erx
+  # No list of the build names an example (docs/design-packaging.md, "Examples"): an app
+  # under examples/ is built only as a third party builds one, through the SDK, so no file
+  # of the build's tools, the board manifests or the host tests' build fixtures (where
+  # ErlangBuild lists the applications tests compile) names a path under examples/ or an
+  # example's application, a directory examples/*/lib/APP. Checks runs it over the tree's
+  # listing; this file is the one that names the directory, to say what it scans for.
+  module ExampleLists
+    DIRECTORY = 'examples/'
+    SCOPES = %w[tools/lib/erx/ config/manifest/ test/fixtures/].freeze
+    SELF = 'tools/lib/erx/example_lists.rb'
+
+    def self.covers?(relative) = relative != SELF && SCOPES.any? { relative.start_with?(it) }
+
+    # The examples' application names, from the directories below root/examples.
+    def self.applications(root:)
+      Dir.glob("#{DIRECTORY}*/lib/*/", base: root).map { File.basename(it) }.uniq.sort
+    end
+
+    # Each [path, line number, name] where files, a map from relative path to text, name
+    # the examples directory or one of applications.
+    def self.violations(files, applications:)
+      pattern = Regexp.union(DIRECTORY, *applications.map { /\b#{Regexp.escape(it)}\b/ })
+      files.sort.flat_map do |path, text|
+        text.each_line.with_index(1).filter_map { |line, number| [path, number, line[pattern]] if line.match?(pattern) }
+      end
+    end
+  end
+end

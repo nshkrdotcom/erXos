@@ -181,6 +181,14 @@ module Erx
                        directories: ServingSet.directories(otp: otp), root: @root)
     end
 
+    # Compiles the applications named, each with every one it depends on among them
+    # compiled first, into otp/lib/<application>/ebin: the SDK's public applications
+    # (Erx::Sdk), the same beams build gives the image.
+    def build_applications(applications, otp:)
+      APPLICATIONS.select { |application| applications.include?(application) }
+                  .each { |application| build_application(application, otp: otp) }
+    end
+
     private
 
     def build_application(application, otp:)

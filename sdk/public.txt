@@ -1,0 +1,12 @@
+# The SDK's public Erlang functions (docs/design-packaging.md, "The SDK",
+# "What is public"): what an app's own modules may call among erXos's.
+# Stock OTP 29.1.2 is public as well and is not listed. Each line is
+# MODULE:FUNCTION/ARITY, or MODULE alone for every function the module
+# exports; tools/erx sdk export writes the SDK's erlang/public.txt with
+# each module line expanded to its exports, one MODULE:FUNCTION/ARITY a
+# line, sorted.
+erx_prog_handler:start/1
+erx_ui:close/1
+erx_ui:open/1
+erx_ui:tree/2
+erx_win
