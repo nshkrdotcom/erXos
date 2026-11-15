@@ -741,7 +741,7 @@ set_close_under(handle_set_t *set, erx_dom_obj_t budget)
 	for (uint32_t index = 0; index < set->count; index++) {
 		if (set->made[index] == ERX_CAP_NULL || !set_under(set, (erx_dom_obj_t)(set->first + index), budget))
 			continue;
-		(void)erx_cap_close(set->made[index]);
+		(void)erx_cap_close((erx_cap_t){ .raw = set->made[index] });
 		set->made[index] = ERX_CAP_NULL;
 	}
 }
@@ -788,7 +788,7 @@ apply_undo(apply_t *apply, uint32_t applied)
 			if (gone[index] >= ERX_DOM_OBJ_MADE_COUNT || state->made[gone[index]] == ERX_CAP_NULL)
 				continue;
 			(void)erx_object_destroy(state->made[gone[index]]);
-			(void)erx_cap_close(state->made[gone[index]]);
+			(void)erx_cap_close((erx_cap_t){ .raw = state->made[gone[index]] });
 			state->made[gone[index]] = ERX_CAP_NULL;
 		}
 		for (uint32_t d = 0; d < give->ndevices; d++)
@@ -882,7 +882,7 @@ lib_devices_end(erx_dom_lib_t *lib, uint32_t id)
 			if (caps[at]->raw == ERX_CAP_NULL)
 				continue;
 			(void)erx_object_destroy(caps[at]->raw);
-			(void)erx_cap_close(caps[at]->raw);
+			(void)erx_cap_close(*caps[at]);
 			*caps[at] = (erx_cap_t){ .raw = ERX_CAP_NULL };
 		}
 		record->holder = 0;
@@ -1183,7 +1183,7 @@ teardown_apply(erx_dom_lib_t *lib, const erx_dom_teardown_t *teardown)
 	for (uint32_t index = 0; index < teardown->nremains; index++) {
 		outer = &lib->remains_held[teardown->remains[index]];
 		(void)erx_object_destroy(*outer);
-		(void)erx_cap_close(*outer);
+		(void)erx_cap_close((erx_cap_t){ .raw = *outer });
 		*outer = ERX_CAP_NULL;
 	}
 	return (ERX_OK);

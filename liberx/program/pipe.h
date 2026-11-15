@@ -47,8 +47,8 @@ typedef enum erx_pipe_kind {
 typedef struct erx_pipe_wend {
 	erx_pipe_wstate_t	 st;		/* readers and lost the reports keep */
 	erx_pipe_wmap_t		 map;		/* the ring read-write, its reader page read-only */
-	uint64_t		 ring;
-	uint64_t		 rpage;
+	erx_cap_t		 ring;
+	erx_cap_t		 rpage;
 } erx_pipe_wend_t;
 
 /*
@@ -58,9 +58,9 @@ typedef struct erx_pipe_wend {
  * the handler its {drained}; the read end counts its owed lanes in owing.
  */
 typedef struct erx_pipe_lane {
-	uint64_t		 ring;
-	uint64_t		 rpage;
-	uint64_t		 bell;		/* the writer's doorbell while it is open */
+	erx_cap_t		 ring;
+	erx_cap_t		 rpage;
+	erx_cap_t		 bell;		/* the writer's doorbell while it is open */
 	bool			 owed;
 } erx_pipe_lane_t;
 
@@ -72,7 +72,7 @@ typedef struct erx_pipe_lane {
 typedef struct erx_pipe_rend {
 	erx_pipe_rstate_t	 st;
 	erx_pipe_lock_t		*lockpage;
-	uint64_t		 lock;
+	erx_cap_t		 lock;
 	erx_pipe_rmap_t		*maps;
 	erx_pipe_lane_t		*lanes;
 	uint32_t		 room;
@@ -93,7 +93,7 @@ typedef struct erx_pipe_end {
 	erx_pipe_kind_t		 kind;
 	uint32_t		 pipe;
 	uint32_t		 end;
-	uint64_t		 peers[ERX_PIPE_READERS_MAX];
+	erx_cap_t		 peers[ERX_PIPE_READERS_MAX];
 	erx_prog_waitq_t	 waiters;
 	union {
 		erx_pipe_wend_t	 w;

@@ -17,6 +17,8 @@
 
 #include <stdint.h>
 
+#include <erx/abi.h>
+
 /* bytes rounded up to whole pages, or 0 when the rounding overflows. */
 uint64_t	erx_prog_page_round(uint64_t bytes);
 /* A run of fresh committed pages covering bytes, or NULL. */
@@ -24,6 +26,6 @@ void	*erx_prog_pages_take(uint64_t bytes);
 /* Gives back a run erx_prog_pages_take made for bytes, or a mapping erx_prog_object_map made. */
 void	 erx_prog_pages_give(const void *run, uint64_t bytes);
 /* The first bytes of the memory object mem, mapped at fresh addresses with prot, or NULL. */
-void	*erx_prog_object_map(uint64_t mem, uint64_t bytes, uint32_t prot);
+void	*erx_prog_object_map(erx_cap_t mem, uint64_t bytes, uint32_t prot);
 
 #endif /* !LIBERX_PROGRAM_PAGES_H */

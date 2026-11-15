@@ -428,7 +428,7 @@ typedef struct erx_pipe_end {
 	erx_pipe_kind_t	 kind;		/* ERX_PIPE_READ or ERX_PIPE_WRITE */
 	uint32_t	 pipe;		/* the pipe server's names */
 	uint32_t	 end;
-	uint64_t	 peers[ERX_PIPE_READERS_MAX];
+	erx_cap_t	 peers[ERX_PIPE_READERS_MAX];
 					/* the trigger right on each read end's
 					 * doorbell, by index: every read
 					 * end's for a write end, the other

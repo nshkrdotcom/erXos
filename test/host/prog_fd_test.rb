@@ -373,7 +373,7 @@ class ProgFdTest < Minitest::Test
     'a failed write end gives its ring back by the size it never set' =>
       ['failed set-up', PIPE, "\tw->st.size = v->size;\n", ''],
     'a repeated report closes a doorbell the end holds' =>
-      ['repeated reports', PIPE, "\tif (e->peers[rix] != bell)\n\t\tcap_close(&e->peers[rix]);",
+      ['repeated reports', PIPE, "\tif (e->peers[rix].raw != bell.raw)\n\t\tcap_close(&e->peers[rix]);",
        "\tcap_close(&e->peers[rix]);"],
     'the release unmaps without ending the wait' =>
       ['release ends the wait', PIPE, "\t\t\terx_pipe_rstart(&e->u.r.st, 0);\n",

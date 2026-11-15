@@ -1386,6 +1386,18 @@ bool	erx_prog_fds_next(erx_prog_fds_iter_t *it,
 const char *erx_prog_kind_name(uint16_t kind);
 ```
 
+A value of the kind declared `capability` is `erx_cap_t` in these
+structs and in the capability walk's array: the strong scalar wrapper
+`include/erx/abi.h` makes of `scalar cap`, a struct of one member that
+converts to and from no integer. liberx's capability calls take
+`erx_cap_t`, so a handle passes from a frame to a call unchanged, and a
+handle held as an integer of any width, or a field read into one, fails
+to build wherever it is used as a capability. An integer is made a
+handle by an explicit `(erx_cap_t){ .raw = value }`, written at a
+boundary where handles arrive as integers, such as the registers a
+program starts with; the struct refuses an accidental integer, not a
+deliberate one.
+
 For each union a frame to the program carries whose cases hold capabilities, values of
 the kind declared `capability`, it also emits the most
 capabilities one case holds and the walk that names them, for the

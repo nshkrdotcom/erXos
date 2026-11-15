@@ -25,6 +25,13 @@
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/vm.h"
 
+/* Closes a handle an integer-typed call returned (erx_cap_close takes erx_cap_t). */
+static int
+handle_close(uint64_t handle)
+{
+	return (erx_cap_close((erx_cap_t){ .raw = handle }));
+}
+
 bool	function_api_case_generations(void);
 bool	function_api_case_stale_handle(void);
 bool	function_api_case_dup_and_close(void);
@@ -59,8 +66,8 @@ function_api_case_generations(void)
 	    erx_mem_create(0, 2 * PAGE, 0, &next) != ERX_OK)
 		return (false);
 	return (map_two_pages(first) == ERX_ESTALE && map_two_pages(aged) == ERX_ESTALE &&
-	    erx_cap_close(first) == ERX_OK && erx_cap_close(aged) == ERX_OK && erx_object_destroy(next) == ERX_OK &&
-	    erx_cap_close(next) == ERX_OK);
+	    handle_close(first) == ERX_OK && handle_close(aged) == ERX_OK && erx_object_destroy(next) == ERX_OK &&
+	    handle_close(next) == ERX_OK);
 }
 
 /* A handle to a destroyed object is ERX_ESTALE, and stays so once its record holds a new object. */
@@ -77,8 +84,8 @@ function_api_case_stale_handle(void)
 	if (erx_mem_create(0, 2 * PAGE, 0, &successor) != ERX_OK)
 		return (false);
 	return (map_two_pages(gone) == ERX_ESTALE && erx_object_destroy(gone) == ERX_ESTALE &&
-	    erx_cap_close(gone) == ERX_OK && erx_cap_close(gone) == ERX_EINVAL && erx_object_destroy(gone) == ERX_EINVAL &&
-	    erx_object_destroy(successor) == ERX_OK && erx_cap_close(successor) == ERX_OK);
+	    handle_close(gone) == ERX_OK && handle_close(gone) == ERX_EINVAL && erx_object_destroy(gone) == ERX_EINVAL &&
+	    erx_object_destroy(successor) == ERX_OK && handle_close(successor) == ERX_OK);
 }
 
 /*
@@ -96,11 +103,11 @@ function_api_case_dup_and_close(void)
 	if (erx_mem_create(0, 2 * PAGE, 0, &mem) != ERX_OK || erx_cap_dup(mem, &copy) != ERX_OK || copy == mem ||
 	    erx_vm_free_pages() >= before)
 		return (false);
-	if (erx_cap_close(mem) != ERX_OK || erx_cap_dup(copy, &probe) != ERX_OK || erx_cap_close(probe) != ERX_OK ||
-	    erx_cap_close(mem) != ERX_EINVAL ||
-	    erx_cap_close(0) != ERX_EINVAL || erx_cap_dup(0, &mem) != ERX_EINVAL)
+	if (handle_close(mem) != ERX_OK || erx_cap_dup(copy, &probe) != ERX_OK || handle_close(probe) != ERX_OK ||
+	    handle_close(mem) != ERX_EINVAL ||
+	    handle_close(0) != ERX_EINVAL || erx_cap_dup(0, &mem) != ERX_EINVAL)
 		return (false);
-	if (erx_cap_close(copy) != ERX_OK || erx_vm_free_pages() != before)
+	if (handle_close(copy) != ERX_OK || erx_vm_free_pages() != before)
 		return (false);
 	/* An object holds its range table's record pages as well as its data page: cost counts both. */
 	cost = erx_vm_free_pages();
@@ -112,7 +119,7 @@ function_api_case_dup_and_close(void)
 		return (false);
 	*(volatile uint64_t *)(uintptr_t)addr = 0x5eed;
 	held = erx_vm_free_pages();
-	if (erx_cap_close(mapped) != ERX_OK || *(volatile uint64_t *)(uintptr_t)addr != 0x5eed || erx_vm_free_pages() != held ||
+	if (handle_close(mapped) != ERX_OK || *(volatile uint64_t *)(uintptr_t)addr != 0x5eed || erx_vm_free_pages() != held ||
 	    erx_vm_release(ERX_CAP_SELF, addr, PAGE) != ERX_OK || erx_vm_free_pages() != held + cost)
 		return (false);
 	/* The destroy revokes the mapping, so nothing reads the page after it; the release then finds no mapping. */
@@ -122,5 +129,5 @@ function_api_case_dup_and_close(void)
 	held = erx_vm_free_pages();
 	return (erx_object_destroy(mapped) == ERX_OK && erx_vm_free_pages() == held + cost &&
 	    erx_vm_map(ERX_CAP_SELF, addr, PAGE, mapped, 0, ERX_PROT_RW) == ERX_ESTALE &&
-	    erx_vm_release(ERX_CAP_SELF, addr, PAGE) == ERX_OK && erx_cap_close(mapped) == ERX_OK);
+	    erx_vm_release(ERX_CAP_SELF, addr, PAGE) == ERX_OK && handle_close(mapped) == ERX_OK);
 }

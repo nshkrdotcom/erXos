@@ -1940,7 +1940,7 @@ crash_read(uint32_t id)
 	}
 	if (addr != 0)
 		passed = erx_vm_release(ERX_CAP_SELF, addr, ERX_CRASH_SIZE) == ERX_OK && passed;
-	return (erx_cap_close(mem) == ERX_OK && passed);
+	return (erx_cap_close((erx_cap_t){ .raw = mem }) == ERX_OK && passed);
 }
 
 /*

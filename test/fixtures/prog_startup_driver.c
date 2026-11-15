@@ -140,9 +140,9 @@ plan(const uint8_t *frame, size_t len)
 	    (unsigned long long)out.sigignore.bits[1],
 	    (unsigned long long)out.sigignore.bits[0]);
 	printf(" data_area=%llu data_slots=%u",
-	    (unsigned long long)out.data_area, out.data_slots);
+	    (unsigned long long)out.data_area.raw, out.data_slots);
 	if (out.has_image)
-		printf(" image=%llu", (unsigned long long)out.image);
+		printf(" image=%llu", (unsigned long long)out.image.raw);
 	printf(" argc=%u argv_bytes=%zu envc=%u env_bytes=%zu cwd=",
 	    out.argc, out.argv_bytes, out.envc, out.env_bytes);
 	put_hex((const uint8_t *)out.cwd, out.cwd_len);

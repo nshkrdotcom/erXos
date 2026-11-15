@@ -767,7 +767,7 @@ crash_copy_up(void)
 			(void)erx_vm_release(ERX_CAP_SELF, addr, ERX_CRASH_SIZE);
 	}
 	if (status != ERX_OK) {
-		(void)erx_cap_close(mem);
+		(void)erx_cap_close((erx_cap_t){ .raw = mem });
 		return (status);
 	}
 	crash_copy = mem;

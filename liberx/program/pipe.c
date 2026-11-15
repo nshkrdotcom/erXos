@@ -83,21 +83,24 @@ erx_pipe_end_held(void)
 /* ---------------------------------------------------------------------
  * Capabilities, doorbells and notices */
 
+/* ERX_CAP_NULL as an erx_cap_t: the handle that names no capability. */
+static const erx_cap_t cap_null = { .raw = ERX_CAP_NULL };
+
 /* Closes the capability in *cap once; the slot is ERX_CAP_NULL from then on. */
 static void
-cap_close(uint64_t *cap)
+cap_close(erx_cap_t *cap)
 {
-	if (*cap != ERX_CAP_NULL)
+	if (cap->raw != ERX_CAP_NULL)
 		(void)erx_cap_close(*cap);
-	*cap = ERX_CAP_NULL;
+	*cap = cap_null;
 }
 
 /* A ring of a doorbell whose end has gone fails, which is harmless. */
 static void
-bell_ring(uint64_t bell)
+bell_ring(erx_cap_t bell)
 {
-	if (bell != ERX_CAP_NULL)
-		(void)erx_irq_trigger(bell);
+	if (bell.raw != ERX_CAP_NULL)
+		(void)erx_irq_trigger(bell.raw);
 }
 
 /*
@@ -206,8 +209,8 @@ lane_find(const erx_pipe_rend_t *r, uint32_t wend)
  * the lane cannot be held; the caller closes the capabilities then.
  */
 static bool
-lane_add(erx_pipe_rend_t *r, uint32_t wend, uint64_t ring, uint64_t rpage, uint32_t size,
-    uint64_t bell)
+lane_add(erx_pipe_rend_t *r, uint32_t wend, erx_cap_t ring, erx_cap_t rpage, uint32_t size,
+    erx_cap_t bell)
 {
 	const uint64_t ring_bytes = (uint64_t)ERX_PIPE_RING_DATA + size;
 	unsigned char *ring_map;
@@ -224,7 +227,7 @@ lane_add(erx_pipe_rend_t *r, uint32_t wend, uint64_t ring, uint64_t rpage, uint3
 	}
 	at = r->st.nlanes;
 	r->st.lanes[at] = (erx_pipe_rlane_t){ .wend = wend, .size = size,
-	    .writer = bell != ERX_CAP_NULL ? ERX_PIPE_WRITER_OPEN : ERX_PIPE_WRITER_GONE };
+	    .writer = bell.raw != ERX_CAP_NULL ? ERX_PIPE_WRITER_OPEN : ERX_PIPE_WRITER_GONE };
 	r->maps[at] = (erx_pipe_rmap_t){ (const erx_lane_hdr_t *)(void *)ring_map,
 	    ring_map + ERX_PIPE_RING_DATA, rpage_map };
 	r->lanes[at] = (erx_pipe_lane_t){ .ring = ring, .rpage = rpage, .bell = bell };
@@ -315,12 +318,12 @@ end_fx(erx_pipe_end_t *e)
 
 /* Keeps a read end's doorbell at index rix; false for an index past the bound. */
 static bool
-peer_keep(erx_pipe_end_t *e, uint8_t rix, uint64_t bell)
+peer_keep(erx_pipe_end_t *e, uint8_t rix, erx_cap_t bell)
 {
 	if (rix >= ERX_PIPE_READERS_MAX)
 		return (false);
 	/* A repeated report may carry the value the end holds already: keep it, close nothing. */
-	if (e->peers[rix] != bell)
+	if (e->peers[rix].raw != bell.raw)
 		cap_close(&e->peers[rix]);
 	e->peers[rix] = bell;
 	return (true);
@@ -339,7 +342,7 @@ write_open(erx_pipe_end_t *e, const erx_prog_write_end_t *v)
 	w->ring = v->ring;
 	w->rpage = v->rpage;
 	while (erx_prog_write_readers_next(&readers, &reader)) {
-		const bool known = reader.rix < ERX_PIPE_READERS_MAX && e->peers[reader.rix] != ERX_CAP_NULL;
+		const bool known = reader.rix < ERX_PIPE_READERS_MAX && e->peers[reader.rix].raw != ERX_CAP_NULL;
 
 		if (!peer_keep(e, reader.rix, reader.cap)) {
 			cap_close(&reader.cap);
@@ -389,9 +392,9 @@ read_open(erx_pipe_end_t *e, const erx_prog_read_end_t *v)
 		return (ERX_ENOMEM);
 	while (erx_prog_writers_next(&writers, &writer)) {
 		/* {Wend, Ring, RPage, Size, {open, Bell} | gone} */
-		uint64_t ring = writer.cap_1, rpage = writer.cap_2;
-		uint64_t bell = writer.writer_state.which == ERX_PROG_WRITER_STATE_OPEN ?
-		    writer.writer_state.u.open.cap : ERX_CAP_NULL;
+		erx_cap_t ring = writer.cap_1, rpage = writer.cap_2;
+		erx_cap_t bell = writer.writer_state.which == ERX_PROG_WRITER_STATE_OPEN ?
+		    writer.writer_state.u.open.cap : cap_null;
 		/* The check's writers are strictly ascending, so a wend repeats only in a malformed list. */
 		const int status = lane_find(r, writer.wend) != r->st.nlanes ? ERX_EINVAL :
 		    !lane_add(r, writer.wend, ring, rpage, writer.lane_size, bell) ? ERX_ENOMEM : ERX_OK;
@@ -524,9 +527,10 @@ end_lose(erx_pipe_end_t *e)
 
 /* Closes a capability a report carried unless the lane holds it already, as a repeated report's are. */
 static void
-cap_close_unless_held(uint64_t *cap, const erx_pipe_lane_t *held)
+cap_close_unless_held(erx_cap_t *cap, const erx_pipe_lane_t *held)
 {
-	if (held == NULL || (*cap != held->ring && *cap != held->rpage && *cap != held->bell))
+	if (held == NULL || (cap->raw != held->ring.raw && cap->raw != held->rpage.raw &&
+	    cap->raw != held->bell.raw))
 		cap_close(cap);
 }
 
@@ -543,8 +547,8 @@ cap_close_unless_held(uint64_t *cap, const erx_pipe_lane_t *held)
 static void
 writer_join(erx_pipe_end_t *e, const erx_prog_report_t *report)
 {
-	uint64_t ring = report->u.pipe_writer.cap_1, rpage = report->u.pipe_writer.cap_2;
-	uint64_t bell = report->u.pipe_writer.cap_3;
+	erx_cap_t ring = report->u.pipe_writer.cap_1, rpage = report->u.pipe_writer.cap_2;
+	erx_cap_t bell = report->u.pipe_writer.cap_3;
 	const uint32_t wend = report->u.pipe_writer.wend;
 	const bool open = report->u.pipe_writer.end_state == ERX_PROG_END_STATE_OPEN;
 	const erx_pipe_lane_t *held = NULL;
@@ -558,7 +562,7 @@ writer_join(erx_pipe_end_t *e, const erx_prog_report_t *report)
 		if ((at = lane_find(&e->u.r, wend)) != e->u.r.st.nlanes)
 			held = &e->u.r.lanes[at];
 		else if (lane_add(&e->u.r, wend, ring, rpage, report->u.pipe_writer.lane_size,
-		    open ? bell : ERX_CAP_NULL))
+		    open ? bell : cap_null))
 			kept = true;
 		else
 			end_lose(e);
@@ -605,7 +609,7 @@ writer_gone(erx_pipe_end_t *e, uint32_t wend)
 static void
 reader_join(erx_pipe_end_t *e, const erx_prog_report_t *report)
 {
-	uint64_t bell = report->u.pipe_reader.cap;
+	erx_cap_t bell = report->u.pipe_reader.cap;
 	const uint8_t rix = report->u.pipe_reader.rix;
 	bool known;
 
@@ -615,7 +619,7 @@ reader_join(erx_pipe_end_t *e, const erx_prog_report_t *report)
 		cap_close(&bell);
 		return;
 	}
-	known = e->peers[rix] != ERX_CAP_NULL;
+	known = e->peers[rix].raw != ERX_CAP_NULL;
 	(void)peer_keep(e, rix, bell);
 	switch (e->kind) {
 	case ERX_PIPE_WRITE:
@@ -632,7 +636,7 @@ reader_join(erx_pipe_end_t *e, const erx_prog_report_t *report)
 static void
 reader_gone(erx_pipe_end_t *e, uint8_t rix)
 {
-	if (rix >= ERX_PIPE_READERS_MAX || e->peers[rix] == ERX_CAP_NULL)
+	if (rix >= ERX_PIPE_READERS_MAX || e->peers[rix].raw == ERX_CAP_NULL)
 		return;
 	switch (e->kind) {
 	case ERX_PIPE_WRITE:
@@ -717,7 +721,7 @@ report_apply(erx_pipe_end_t *e, const erx_prog_report_t *report)
 void
 erx_pipe_report(const erx_prog_report_t *report)
 {
-	uint64_t caps[ERX_PROG_REPORT_CAPS];
+	erx_cap_t caps[ERX_PROG_REPORT_CAPS];
 	erx_pipe_end_t *e;
 	uint32_t pipe, end;
 	size_t ncaps;

@@ -52,6 +52,12 @@ put_u64(erx_etf_writer_t *w, uint64_t v)
 }
 
 static void
+put_cap(erx_etf_writer_t *w, erx_cap_t cap)
+{
+	put_u64(w, cap.raw);
+}
+
+static void
 put_text(erx_etf_writer_t *w, erx_profile_text_t t)
 {
 	erx_etf_put_binary(w, t.bytes, t.len);
@@ -125,7 +131,7 @@ put_reader(erx_etf_writer_t *w, const erx_prog_reader_t *r)
 {
 	erx_etf_put_tuple(w, 2);
 	put_u64(w, r->rix);
-	put_u64(w, r->cap);
+	put_cap(w, r->cap);
 }
 
 static void
@@ -157,9 +163,9 @@ put_write_end(erx_etf_writer_t *w, const erx_prog_write_end_t *e)
 	put_atom(w, "wend");
 	put_u64(w, e->wend);
 	put_atom(w, "ring");
-	put_u64(w, e->ring);
+	put_cap(w, e->ring);
 	put_atom(w, "rpage");
-	put_u64(w, e->rpage);
+	put_cap(w, e->rpage);
 	put_atom(w, "size");
 	put_u64(w, e->size);
 	put_atom(w, "readers");
@@ -176,7 +182,7 @@ put_read_end(erx_etf_writer_t *w, const erx_prog_read_end_t *e)
 	put_atom(w, "rix");
 	put_u64(w, e->rix);
 	put_atom(w, "lock");
-	put_u64(w, e->lock);
+	put_cap(w, e->lock);
 	put_atom(w, "wends");
 	put_u64(w, e->wends);
 	put_atom(w, "writers");
@@ -185,13 +191,13 @@ put_read_end(erx_etf_writer_t *w, const erx_prog_read_end_t *e)
 	while (erx_prog_writers_next(&it, &wr)) {
 		erx_etf_put_tuple(w, 5);
 		put_u64(w, wr.wend);
-		put_u64(w, wr.cap_1);
-		put_u64(w, wr.cap_2);
+		put_cap(w, wr.cap_1);
+		put_cap(w, wr.cap_2);
 		put_u64(w, wr.lane_size);
 		if (wr.writer_state.which == ERX_PROG_WRITER_STATE_OPEN) {
 			erx_etf_put_tuple(w, 2);
 			put_atom(w, "open");
-			put_u64(w, wr.writer_state.u.open.cap);
+			put_cap(w, wr.writer_state.u.open.cap);
 		} else {
 			put_atom(w, "gone");
 		}
@@ -327,7 +333,7 @@ put_start(const erx_prog_start_t *s, uint8_t *out, size_t cap, size_t *len)
 	put_u64(&w, s->umask);
 	put_atom(&w, "data_area");
 	erx_etf_put_tuple(&w, 2);
-	put_u64(&w, s->data_area.cap);
+	put_cap(&w, s->data_area.cap);
 	put_u64(&w, s->data_area.data_slots);
 	put_atom(&w, "fds");
 	fds = s->fds;
@@ -342,7 +348,7 @@ put_start(const erx_prog_start_t *s, uint8_t *out, size_t cap, size_t *len)
 		put_atom(&w, "image");
 		erx_etf_put_tuple(&w, 2);
 		put_atom(&w, "object");
-		put_u64(&w, s->image.u.object.cap);
+		put_cap(&w, s->image.u.object.cap);
 	}
 	return (erx_etf_writer_done(&w, len));
 }
@@ -404,10 +410,10 @@ put_report(const erx_prog_report_t *r, uint8_t *out, size_t cap, size_t *len)
 		put_u64(&w, r->u.pipe_writer.pipe_id);
 		put_u64(&w, r->u.pipe_writer.end_id);
 		put_u64(&w, r->u.pipe_writer.wend);
-		put_u64(&w, r->u.pipe_writer.cap_1);
-		put_u64(&w, r->u.pipe_writer.cap_2);
+		put_cap(&w, r->u.pipe_writer.cap_1);
+		put_cap(&w, r->u.pipe_writer.cap_2);
 		put_u64(&w, r->u.pipe_writer.lane_size);
-		put_u64(&w, r->u.pipe_writer.cap_3);
+		put_cap(&w, r->u.pipe_writer.cap_3);
 		put_end_state(&w, r->u.pipe_writer.end_state);
 		break;
 	case ERX_PROG_REPORT_PIPE_WRITER_GONE:
@@ -423,7 +429,7 @@ put_report(const erx_prog_report_t *r, uint8_t *out, size_t cap, size_t *len)
 		put_u64(&w, r->u.pipe_reader.pipe_id);
 		put_u64(&w, r->u.pipe_reader.end_id);
 		put_u64(&w, r->u.pipe_reader.rix);
-		put_u64(&w, r->u.pipe_reader.cap);
+		put_cap(&w, r->u.pipe_reader.cap);
 		put_end_state(&w, r->u.pipe_reader.end_state);
 		break;
 	case ERX_PROG_REPORT_PIPE_READER_GONE:

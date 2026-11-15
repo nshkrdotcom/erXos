@@ -55,7 +55,7 @@ erx_jit_memory_map(size_t size, void **rx, void **rw)
 	status = erx_vm_map(ERX_CAP_SELF, rx_addr, size, mem, 0, ERX_PROT_RX);
     if (status == ERX_OK)
 	status = erx_vm_map(ERX_CAP_SELF, rw_addr, size, mem, 0, ERX_PROT_RW);
-    closed = erx_cap_close(mem);
+    closed = erx_cap_close((erx_cap_t){ .raw = mem });
     if (status == ERX_OK && closed != ERX_OK)
 	status = closed;
     if (status != ERX_OK) {

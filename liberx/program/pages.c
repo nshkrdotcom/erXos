@@ -44,14 +44,14 @@ erx_prog_pages_give(const void *run, uint64_t bytes)
 }
 
 void *
-erx_prog_object_map(uint64_t mem, uint64_t bytes, uint32_t prot)
+erx_prog_object_map(erx_cap_t mem, uint64_t bytes, uint32_t prot)
 {
 	const uint64_t size = erx_prog_page_round(bytes);
 	uint64_t addr = 0;
 
 	if (size == 0 || erx_vm_reserve(ERX_CAP_SELF, 0, size, 0, &addr) != ERX_OK)
 		return (NULL);
-	if (erx_vm_map(ERX_CAP_SELF, addr, size, mem, 0, prot) != ERX_OK) {
+	if (erx_vm_map(ERX_CAP_SELF, addr, size, mem.raw, 0, prot) != ERX_OK) {
 		(void)erx_vm_release(ERX_CAP_SELF, addr, size);
 		return (NULL);
 	}

@@ -37,7 +37,7 @@ erx_boot_tree(const void **bytes, size_t *size)
 }
 
 int
-erx_cap_close(uint64_t cap)
+erx_cap_close(erx_cap_t cap)
 {
 	(void)cap;
 	return (ERX_ENOTSUP);

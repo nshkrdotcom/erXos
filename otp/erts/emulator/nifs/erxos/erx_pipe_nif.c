@@ -182,7 +182,7 @@ obj_close_locked(pipe_obj_t *obj)
 			erx_event_unregister(obj->label);
 	}
 	unmap_object(&obj->map, obj->size);
-	(void)erx_cap_close(obj->cap);
+	(void)erx_cap_close((erx_cap_t){ .raw = obj->cap });
 }
 
 static void
@@ -281,7 +281,7 @@ mem_new(pipe_obj_kind_t kind, uint64_t size, pipe_obj_t **obj)
 	if (erx_mem_create(ERX_CAP_NULL, size, 0, &cap) != ERX_OK)
 		return (false);
 	if ((*obj = obj_new(kind, cap, size)) == NULL) {
-		(void)erx_cap_close(cap);
+		(void)erx_cap_close((erx_cap_t){ .raw = cap });
 		return (false);
 	}
 	return (true);
@@ -392,7 +392,7 @@ make_bell(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	if (erx_irq_create(ERX_CAP_NULL, 0, ERX_IRQ_SOFT, 0, &cap) != ERX_OK)
 		return (error_term(env, atom_enomem));
 	if ((bell = obj_new(OBJ_BELL, cap, 0)) == NULL) {
-		(void)erx_cap_close(cap);
+		(void)erx_cap_close((erx_cap_t){ .raw = cap });
 		return (error_term(env, atom_enomem));
 	}
 	if (program)
@@ -400,7 +400,7 @@ make_bell(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	message = enif_make_tuple3(env, atom_ready, argv[1], argv[2]);
 	if (erx_event_register_process(&pid, message, &bell->label) != ERX_OK) {
 		bell->closed = true;
-		(void)erx_cap_close(cap);
+		(void)erx_cap_close((erx_cap_t){ .raw = cap });
 		enif_release_resource(bell);
 		return (error_term(env, atom_enomem));
 	}

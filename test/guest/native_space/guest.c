@@ -38,6 +38,13 @@
 #include "liberx/backend/fiasco/vm.h"
 #include "test/guest/native_space/modes.h"
 
+/* Closes a handle an integer-typed call returned (erx_cap_close takes erx_cap_t). */
+static int
+handle_close(uint64_t handle)
+{
+	return (erx_cap_close((erx_cap_t){ .raw = handle }));
+}
+
 #define PROGRAM		"boot/native-space"
 /* The same program packed as an image entry, as a domain runtime is. */
 #define IMAGE_PROGRAM	"boot/native-space-image"
@@ -220,7 +227,7 @@ case_between_tasks(void)
 	reader_cost = reader_from - erx_fiasco_vm_free_pages();
 	passed = passed && task_make(&writer, SHARED_ADDR, SHARED_PAGES) &&
 	    erx_vm_map(writer, SHARED_ADDR, SHARED_PAGES * PAGE, mem, 0, ERX_PROT_RW) == ERX_OK &&
-	    erx_cap_close(mem) == ERX_OK;
+	    handle_close(mem) == ERX_OK;
 	writer_status = task_finish(writer, MODE_WRITER);
 	say_count("writer_status", (uint64_t)writer_status);
 	passed = passed && writer_status == 0;
@@ -263,7 +270,7 @@ case_bounds(void)
 	    erx_fiasco_vm_free_pages() == committed &&
 	    erx_vm_release(space, SHARED_ADDR, 2 * PAGE) == ERX_OK;
 	task_drop(space);
-	passed = passed && erx_cap_close(mem) == ERX_OK && erx_fiasco_vm_free_pages() == before;
+	passed = passed && handle_close(mem) == ERX_OK && erx_fiasco_vm_free_pages() == before;
 	say_case("bounds", passed);
 }
 
@@ -327,8 +334,8 @@ case_revoke(void)
 		    erx_fiasco_task_join_until(spaces[slot], erx_fiasco_clock_ns() + WAIT_NS, &status) == ERX_OK &&
 		    status == REVOKE_STATUS;
 	}
-	passed = passed && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK && erx_cap_close(mem) == ERX_OK &&
-	    erx_cap_close(signal) == ERX_OK && erx_object_destroy(gate) == ERX_OK && erx_cap_close(gate) == ERX_OK &&
+	passed = passed && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK && handle_close(mem) == ERX_OK &&
+	    handle_close(signal) == ERX_OK && erx_object_destroy(gate) == ERX_OK && handle_close(gate) == ERX_OK &&
 	    erx_fiasco_vm_free_pages() == before;
 	say_case("revoke", passed);
 }
@@ -363,7 +370,7 @@ case_gate_refusals(void)
 		passed = passed && erx_space_stop(space, 0) == ERX_OK && erx_fiasco_task_join(space, &status) == ERX_OK &&
 		    erx_ipc_wait(erx_fiasco_clock_ns() + SHORT_NS, &tag, &label) == ERX_ETIMEDOUT;
 	}
-	passed = passed && erx_cap_close(mem) == ERX_OK && erx_cap_close(gate) == ERX_OK;
+	passed = passed && handle_close(mem) == ERX_OK && handle_close(gate) == ERX_OK;
 	say_case("gate_refusals", passed);
 }
 
@@ -397,7 +404,7 @@ case_gate_queue(void)
 	    erx_fiasco_task_join(first, &status) == ERX_OK && status == 7 &&
 	    erx_fiasco_task_join(third, &status) == ERX_OK && status == 8 &&
 	    erx_gate_bind(other, ERX_CAP_SELF_THREAD, 0) == ERX_ESTALE;
-	passed = passed && erx_cap_close(other) == ERX_OK && erx_cap_close(gate) == ERX_OK &&
+	passed = passed && handle_close(other) == ERX_OK && handle_close(gate) == ERX_OK &&
 	    erx_fiasco_vm_free_pages() == before;
 	say_case("gate_queue", passed);
 }
@@ -438,7 +445,7 @@ case_created(void)
 		task_drop(other);
 	say_count("created_status", (uint64_t)status);
 	say_count("created_other_status", (uint64_t)other_status);
-	passed = (slice == 0 || erx_cap_close(slice) == ERX_OK) && passed;
+	passed = (slice == 0 || handle_close(slice) == ERX_OK) && passed;
 	say_case("created", passed && status == 0 && other_status == FIRST_STATUS &&
 	    erx_fiasco_vm_free_pages() == before);
 }
@@ -452,7 +459,7 @@ case_space_refusals(void)
 
 	passed = passed && erx_space_create(0, mem, ERX_CAP_NULL, 0, 0, TASK_CAP_LIMIT, &refused) == ERX_ETYPE &&
 	    erx_space_create(0, ERX_CAP_SELF, mem, 0, 0, TASK_CAP_LIMIT, &refused) == ERX_ETYPE;
-	passed = erx_cap_close(mem) == ERX_OK && passed;
+	passed = handle_close(mem) == ERX_OK && passed;
 	say_case("space_refusals", passed);
 }
 
@@ -467,10 +474,10 @@ case_released(void)
 	const uint64_t before = erx_fiasco_vm_free_pages();
 	uint64_t gate, space, label;
 	bool passed = erx_gate_create(0, &gate) == ERX_OK && erx_gate_bind(gate, ERX_CAP_SELF_THREAD, 0) == ERX_OK &&
-	    task_make_gated(&space, gate, RELEASE_LABEL) && erx_cap_close(space) == ERX_OK &&
+	    task_make_gated(&space, gate, RELEASE_LABEL) && handle_close(space) == ERX_OK &&
 	    erx_ipc_wait(erx_fiasco_clock_ns() + SHORT_NS, &tag, &label) == ERX_ETIMEDOUT;
 
-	passed = passed && erx_cap_close(gate) == ERX_OK && erx_fiasco_vm_free_pages() == before;
+	passed = passed && handle_close(gate) == ERX_OK && erx_fiasco_vm_free_pages() == before;
 	say_case("released", passed);
 }
 
@@ -581,8 +588,8 @@ case_budget_calls(void)
 	    erx_object_info(budget, ERX_INFO_BUDGET, 0, &report, sizeof(report)) == ERX_ENOTSUP &&
 	    erx_object_info(ERX_CAP_SELF, ERX_INFO_BUDGET, 0, &report, sizeof(report)) == ERX_OK && report.reported == 0 &&
 	    report.used != 0;
-	passed = passed && erx_cap_close(budget) == ERX_OK && erx_object_destroy(carved) == ERX_ESTALE &&
-	    erx_object_destroy(mem) == ERX_ESTALE && erx_cap_close(carved) == ERX_OK && erx_cap_close(mem) == ERX_OK;
+	passed = passed && handle_close(budget) == ERX_OK && erx_object_destroy(carved) == ERX_ESTALE &&
+	    erx_object_destroy(mem) == ERX_ESTALE && handle_close(carved) == ERX_OK && handle_close(mem) == ERX_OK;
 	say_case("budget_calls", passed && erx_fiasco_vm_free_pages() == before);
 }
 
@@ -625,11 +632,11 @@ case_budget_destroy(void)
 	    erx_object_destroy(shared) == ERX_ESTALE && erx_object_destroy(side) == ERX_ESTALE &&
 	    erx_object_destroy(link) == ERX_ESTALE && erx_object_destroy(deep) == ERX_ESTALE &&
 	    erx_object_destroy(deep_side) == ERX_ESTALE && erx_object_destroy(own) == ERX_ESTALE;
-	passed = passed && erx_cap_close(space) == ERX_OK && erx_cap_close(gate) == ERX_OK && erx_cap_close(shared) == ERX_OK &&
-	    erx_cap_close(side) == ERX_OK && erx_cap_close(link) == ERX_OK &&
-	    erx_cap_close(deep) == ERX_OK && erx_cap_close(deep_side) == ERX_OK && erx_cap_close(own) == ERX_OK &&
-	    erx_cap_close(outer) == ERX_OK && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK &&
-	    erx_cap_close(signal) == ERX_OK;
+	passed = passed && handle_close(space) == ERX_OK && handle_close(gate) == ERX_OK && handle_close(shared) == ERX_OK &&
+	    handle_close(side) == ERX_OK && handle_close(link) == ERX_OK &&
+	    handle_close(deep) == ERX_OK && handle_close(deep_side) == ERX_OK && handle_close(own) == ERX_OK &&
+	    handle_close(outer) == ERX_OK && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK &&
+	    handle_close(signal) == ERX_OK;
 	say_count("budget_free_pages", erx_fiasco_vm_free_pages());
 	say_case("budget_destroy", passed && erx_fiasco_vm_free_pages() == before);
 }
@@ -720,7 +727,7 @@ case_passing(void)
 	item_put(0, mem, ERX_HR_READ | ERX_HR_MAP, false);
 	item_put(1, moved, write | ERX_HR_DESTROY, true);
 	passed = passed && erx_cap_pass(ERX_CAP_SELF, task, 2) == ERX_OK && item_passed(0, ERX_HR_READ | ERX_HR_MAP) &&
-	    item_passed(1, write) && item_word(0, 1) != item_word(1, 1) && erx_cap_close(moved) == ERX_EINVAL;
+	    item_passed(1, write) && item_word(0, 1) != item_word(1, 1) && handle_close(moved) == ERX_EINVAL;
 	held = item_word(0, 1);
 
 	for (size_t item = 0; item < ERX_MSG_CAPS; item++)
@@ -739,14 +746,14 @@ case_passing(void)
 	    erx_cap_pass(task, task, 1) == ERX_ENOTSUP && erx_cap_pass(ERX_CAP_SELF, ERX_CAP_SELF, 1) == ERX_ENOTSUP &&
 	    erx_cap_pass(ERX_CAP_SELF, task, ERX_MSG_CAPS + 1) == ERX_EINVAL;
 
-	passed = erx_cap_close(mem) == ERX_OK && passed;
+	passed = handle_close(mem) == ERX_OK && passed;
 	if (task != 0)
 		status = task_finish(task, MODE_HOLDER | held << SLOT_SHIFT);
 	if (small != 0)
 		task_drop(small);
 	say_count("holder_status", (uint64_t)status);
 	passed = passed && status == 0;
-	passed = erx_cap_close(gate) == ERX_OK && passed && erx_fiasco_vm_free_pages() == before;
+	passed = handle_close(gate) == ERX_OK && passed && erx_fiasco_vm_free_pages() == before;
 	say_case("passing", passed);
 }
 
@@ -837,7 +844,7 @@ case_made(void)
 	}
 	say_count("made_status", (uint64_t)status);
 	passed = passed && status == 0 && erx_object_destroy(domain) == ERX_ESTALE;
-	passed = erx_cap_close(slice) == ERX_OK && passed;
+	passed = handle_close(slice) == ERX_OK && passed;
 	say_case("made", passed && erx_fiasco_vm_free_pages() == before);
 }
 
@@ -868,8 +875,8 @@ case_budget_held(void)
 	item_put(0, budget, ERX_HR_ALLOC | ERX_HR_DESTROY, true);
 	item_put(1, group, ERX_HR_ATTACH | ERX_HR_SIGNAL, true);
 	passed = passed && erx_cap_pass(ERX_CAP_SELF, space, 2) == ERX_OK && item_typed(0, ERX_K_BUDGET, ERX_HR_ALLOC) &&
-	    item_typed(1, ERX_K_GROUP, ERX_HR_ATTACH | ERX_HR_SIGNAL) && erx_cap_close(budget) == ERX_EINVAL &&
-	    erx_cap_close(group) == ERX_EINVAL;
+	    item_typed(1, ERX_K_GROUP, ERX_HR_ATTACH | ERX_HR_SIGNAL) && handle_close(budget) == ERX_EINVAL &&
+	    handle_close(group) == ERX_EINVAL;
 	erx_fiasco_launch_set_registers(program_pc, FIRST_TAG << SLOT_SHIFT | MODE_FIRST);
 	passed = passed && erx_thread_create(0, space, 0, ERX_THREAD_CLASS_WORKER, &thread) == ERX_OK &&
 	    erx_thread_start(thread) == ERX_OK;
@@ -877,10 +884,10 @@ case_budget_held(void)
 	/* The space's stop and the budget's end are one request, so the object stays until both are done. */
 	deadline = erx_fiasco_clock_ns() + WAIT_NS;
 	while (passed && erx_cap_dup(mem, &copy) == ERX_OK)
-		passed = erx_cap_close(copy) == ERX_OK && erx_fiasco_clock_ns() < deadline;
+		passed = handle_close(copy) == ERX_OK && erx_fiasco_clock_ns() < deadline;
 	passed = passed && erx_object_destroy(mem) == ERX_ESTALE && erx_object_destroy(space) == ERX_ESTALE &&
 	    !record_wait(erx_fiasco_clock_ns() + SETTLE_NS, &record, &label);
-	passed = erx_cap_close(mem) == ERX_OK && erx_cap_close(space) == ERX_OK && erx_cap_close(gate) == ERX_OK && passed;
+	passed = handle_close(mem) == ERX_OK && handle_close(space) == ERX_OK && handle_close(gate) == ERX_OK && passed;
 	say_count("held_free_pages", erx_fiasco_vm_free_pages());
 	say_case("budget_held", passed && erx_fiasco_vm_free_pages() == before);
 }
@@ -915,7 +922,7 @@ case_slices(uint32_t first)
 		task_drop(space);
 	say_count("release_status", (uint64_t)status);
 	passed = passed && status == 0;
-	passed = (slice == 0 || erx_cap_close(slice) == ERX_OK) && (mem == 0 || erx_cap_close(mem) == ERX_OK) && passed;
+	passed = (slice == 0 || handle_close(slice) == ERX_OK) && (mem == 0 || handle_close(mem) == ERX_OK) && passed;
 	say_case("slices", passed && erx_fiasco_vm_free_pages() == before);
 }
 
@@ -961,8 +968,8 @@ case_copy(uint32_t first)
 	if (dst_addr != 0)
 		passed = erx_vm_release(ERX_CAP_SELF, dst_addr, size) == ERX_OK && passed;
 	passed = passed && erx_object_destroy(src) == ERX_OK && erx_mem_copy(dst, 0, src, 0, sizeof(uint64_t)) == ERX_ESTALE;
-	passed = (src == 0 || erx_cap_close(src) == ERX_OK) && (dst == 0 || erx_cap_close(dst) == ERX_OK) &&
-	    (slice == 0 || erx_cap_close(slice) == ERX_OK) && passed;
+	passed = (src == 0 || handle_close(src) == ERX_OK) && (dst == 0 || handle_close(dst) == ERX_OK) &&
+	    (slice == 0 || handle_close(slice) == ERX_OK) && passed;
 	say_case("copy", passed && erx_fiasco_vm_free_pages() == before);
 }
 
@@ -988,11 +995,11 @@ warm_up(void)
 
 	if (erx_mem_create(0, PAGE, 0, &mem) != ERX_OK || erx_vm_reserve(ERX_CAP_SELF, 0, PAGE, 0, &addr) != ERX_OK ||
 	    erx_vm_map(ERX_CAP_SELF, addr, PAGE, mem, 0, ERX_PROT_RW) != ERX_OK ||
-	    erx_vm_release(ERX_CAP_SELF, addr, PAGE) != ERX_OK || erx_cap_close(mem) != ERX_OK)
+	    erx_vm_release(ERX_CAP_SELF, addr, PAGE) != ERX_OK || handle_close(mem) != ERX_OK)
 		say("erx: space: warm-up refused\n");
 	/* The gate table, and the list of waiting threads up to the root's first thread. */
 	if (erx_gate_create(0, &gate) != ERX_OK || erx_gate_bind(gate, ERX_CAP_SELF_THREAD, 0) != ERX_OK ||
-	    erx_ipc_wait(erx_fiasco_clock_ns() + SHORT_NS, &tag, &label) != ERX_ETIMEDOUT || erx_cap_close(gate) != ERX_OK)
+	    erx_ipc_wait(erx_fiasco_clock_ns() + SHORT_NS, &tag, &label) != ERX_ETIMEDOUT || handle_close(gate) != ERX_OK)
 		say("erx: space: warm-up refused\n");
 }
 
@@ -1022,7 +1029,7 @@ case_time(void)
 		(void)erx_fiasco_task_join_until(space, erx_fiasco_clock_ns() + WAIT_NS, &status);
 	say_count("time_status", (uint64_t)status);
 	passed = passed && status == 0 && erx_vm_release(ERX_CAP_SELF, signal_addr, PAGE) == ERX_OK &&
-	    erx_cap_close(signal) == ERX_OK;
+	    handle_close(signal) == ERX_OK;
 	say_case("time", passed);
 }
 
@@ -1076,7 +1083,7 @@ case_image_shared(uint32_t entry)
 	bool passed = erx_budget_create(ERX_CAP_SELF, ERX_BUDGET_WALL, 64, 64, &budget) == ERX_OK &&
 	    image_task_start(entry, budget, 0, 0, MODE_DATA, &first) &&
 	    erx_fiasco_task_join_until(first, erx_fiasco_clock_ns() + WAIT_NS, &status) == ERX_OK && status == 0 &&
-	    erx_object_destroy(budget) == ERX_OK && erx_cap_close(budget) == ERX_OK;
+	    erx_object_destroy(budget) == ERX_OK && handle_close(budget) == ERX_OK;
 
 	steady = erx_fiasco_vm_free_pages();
 	before = steady;
@@ -1103,7 +1110,7 @@ case_image_shared(uint32_t entry)
 	    record_wait(erx_fiasco_clock_ns() + WAIT_NS, &record, &label) &&
 	    exit_record_is(&record, IMAGE_LABEL, label, IMAGE_STATUS) &&
 	    erx_fiasco_task_join_until(writer, erx_fiasco_clock_ns() + WAIT_NS, &status) == ERX_OK &&
-	    status == IMAGE_STATUS && erx_object_destroy(gate) == ERX_OK && erx_cap_close(gate) == ERX_OK;
+	    status == IMAGE_STATUS && erx_object_destroy(gate) == ERX_OK && handle_close(gate) == ERX_OK;
 	code_after = passed ? image_task_run(entry, MODE_CODE_READ) : INT64_MIN;
 	passed = passed && code_after == code_before && erx_fiasco_vm_free_pages() == steady;
 	say_case("image_shared", passed);

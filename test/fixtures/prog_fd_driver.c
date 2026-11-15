@@ -404,10 +404,10 @@ erx_umtx_wake(uint64_t addr, uint32_t count)
 }
 
 int
-erx_cap_close(uint64_t cap)
+erx_cap_close(erx_cap_t cap)
 {
 	pthread_mutex_lock(&fake);
-	if (cap_of(cap)->closes++ != 0)
+	if (cap_of(cap.raw)->closes++ != 0)
 		fail("a capability closed twice");
 	pthread_mutex_unlock(&fake);
 	return (ERX_OK);
@@ -621,7 +621,7 @@ do_state(int fd)
 
 	pthread_mutex_lock(&e->lock);
 	for (uint32_t rix = 0; rix < ERX_PIPE_READERS_MAX; rix++)
-		if (e->peers[rix] != ERX_CAP_NULL)
+		if (e->peers[rix].raw != ERX_CAP_NULL)
 			peers |= UINT64_C(1) << rix;
 	switch (e->kind) {
 	case ERX_PIPE_WRITE:
@@ -634,7 +634,7 @@ do_state(int fd)
 		for (uint32_t at = 0; at < e->u.r.st.nlanes; at++)
 			printf("%s%u:%s:%" PRIu64, at == 0 ? "" : ",", e->u.r.st.lanes[at].wend,
 			    e->u.r.st.lanes[at].writer == ERX_PIPE_WRITER_OPEN ? "open" : "gone",
-			    e->u.r.lanes[at].bell);
+			    e->u.r.lanes[at].bell.raw);
 		printf("\n");
 		break;
 	}
@@ -654,8 +654,8 @@ fx_ring_reader(void *ctx, uint32_t rix)
 {
 	erx_pipe_end_t *e = ctx;
 
-	if (rix < ERX_PIPE_READERS_MAX && e->peers[rix] != ERX_CAP_NULL)
-		(void)erx_irq_trigger(e->peers[rix]);
+	if (rix < ERX_PIPE_READERS_MAX && e->peers[rix].raw != ERX_CAP_NULL)
+		(void)erx_irq_trigger(e->peers[rix].raw);
 }
 
 static void

@@ -107,8 +107,11 @@ static bool
 channel_open(void)
 {
 	const uint64_t bytes = erx_lane_side_bytes(ERX_PROGRAM_LANE);
-	void *const own = erx_prog_object_map(self.regs[ERX_PROGRAM_ARG_OWN_SIDE], bytes, ERX_PROT_RW);
-	const void *const peer = erx_prog_object_map(self.regs[ERX_PROGRAM_ARG_PEER_SIDE], bytes, ERX_PROT_R);
+	/* The sides arrive in registers, as integers; here they become handles. */
+	const erx_cap_t own_side = { .raw = self.regs[ERX_PROGRAM_ARG_OWN_SIDE] };
+	const erx_cap_t peer_side = { .raw = self.regs[ERX_PROGRAM_ARG_PEER_SIDE] };
+	void *const own = erx_prog_object_map(own_side, bytes, ERX_PROT_RW);
+	const void *const peer = erx_prog_object_map(peer_side, bytes, ERX_PROT_R);
 
 	return (own != NULL && peer != NULL && erx_lane_reader_init(&inbound, peer, own, ERX_PROGRAM_LANE) &&
 	    erx_prog_channel_open(own, peer, self.regs[ERX_PROGRAM_ARG_DOORBELL]));

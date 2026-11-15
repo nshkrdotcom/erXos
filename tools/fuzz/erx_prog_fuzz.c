@@ -149,9 +149,9 @@ check_ids(uint32_t pipe_id, uint32_t end_id)
 }
 
 static void
-check_cap(uint64_t cap)
+check_cap(erx_cap_t cap)
 {
-	if (cap == ERX_CAP_NULL)
+	if (cap.raw == ERX_CAP_NULL)
 		abort();
 }
 
@@ -331,10 +331,10 @@ check_go(const erx_prog_startup_t *p, const erx_prog_start_t *s)
 	    !same_set(p->sigmask, signal_set(s->sigmask)) ||
 	    !same_set(p->sigignore, signal_set(s->sigignore)) ||
 	    p->spawn != s->spawn || p->umask != s->umask ||
-	    p->data_area != s->data_area.cap ||
+	    p->data_area.raw != s->data_area.cap.raw ||
 	    p->data_slots != s->data_area.data_slots ||
 	    p->has_image != s->has_image ||
-	    (s->has_image && p->image != s->image.u.object.cap))
+	    (s->has_image && p->image.raw != s->image.u.object.cap.raw))
 		abort();
 }
 
@@ -562,9 +562,9 @@ read_report(const erx_prog_report_t *r)
 		if (r->u.pipe_writer.wend == 0 ||
 		    (r->u.pipe_writer.lane_size != 16384 &&
 		    r->u.pipe_writer.lane_size != 65536) ||
-		    r->u.pipe_writer.cap_1 == r->u.pipe_writer.cap_2 ||
-		    r->u.pipe_writer.cap_1 == r->u.pipe_writer.cap_3 ||
-		    r->u.pipe_writer.cap_2 == r->u.pipe_writer.cap_3)
+		    r->u.pipe_writer.cap_1.raw == r->u.pipe_writer.cap_2.raw ||
+		    r->u.pipe_writer.cap_1.raw == r->u.pipe_writer.cap_3.raw ||
+		    r->u.pipe_writer.cap_2.raw == r->u.pipe_writer.cap_3.raw)
 			abort();
 		return;
 	case ERX_PROG_REPORT_PIPE_WRITER_GONE:

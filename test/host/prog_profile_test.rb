@@ -164,6 +164,19 @@ class ProgProfileTest < Minitest::Test
     refute compiles?(crossing('erx_prog_fds_iter_t')), "fds's iterator compiles as argv's"
   end
 
+  # A capability field is erx_cap_t and liberx's erx_cap_close takes one, so the field
+  # passes straight through, while a handle held as an integer of either width fails to
+  # build, and so does a field read into an integer.
+  def test_a_handle_held_as_an_integer_does_not_compile_as_a_capability
+    assert compiles?(closing('const erx_prog_reader_t *reader', 'reader->cap')), 'the control does not compile'
+    refute compiles?(closing('uint64_t handle', 'handle')), 'erx_cap_close takes a uint64_t'
+    refute compiles?(closing('uint32_t handle', 'handle')), 'erx_cap_close takes a uint32_t'
+    refute compiles?("#include <erx/prog_profile.h>\n" \
+                     "uint64_t handle(const erx_prog_reader_t *reader);\n" \
+                     "uint64_t\nhandle(const erx_prog_reader_t *reader)\n{\n\treturn (reader->cap);\n}\n"),
+           'a capability field reads as a uint64_t'
+  end
+
   def test_a_view_is_read_only_by_its_own_list
     assert(c_answers(fixture_requests).none? { |answer| answer.split[2] == 'crossed' })
   end
@@ -312,6 +325,12 @@ class ProgProfileTest < Minitest::Test
       "bool\ncrossed(#{type} *it, erx_profile_text_t *t)\n{\n\treturn (erx_prog_argv_next(it, t));\n}\n"
   end
 
+  # A function that hands value, of its one parameter's type, to erx_cap_close.
+  def closing(parameter, value)
+    "#include <erx/prog_profile.h>\n#include \"liberx/backend/api.h\"\n" \
+      "int closed(#{parameter});\nint\nclosed(#{parameter})\n{\n\treturn (erx_cap_close(#{value}));\n}\n"
+  end
+
   # Whether source compiles, with headers (an include path => its text) ahead of the tree's.
   def compiles?(source, headers: {})
     dir = Dir.mktmpdir('compile', @directory)
@@ -321,7 +340,7 @@ class ProgProfileTest < Minitest::Test
     end
     File.binwrite(File.join(dir, 'unit.c'), source)
     _, status = Open3.capture2e(ENV.fetch('ERX_CLANG', 'clang'), *CFLAGS, '-fsyntax-only', '-I', dir,
-                                '-I', File.join(ROOT, 'build/gen/include'), '-I', File.join(ROOT, 'include'),
+                                '-I', File.join(ROOT, 'build/gen/include'), '-I', File.join(ROOT, 'include'), '-I', ROOT,
                                 File.join(dir, 'unit.c'), stdin_data: '')
     status.success?
   end

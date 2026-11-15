@@ -351,7 +351,7 @@ destroy(uint64_t *object)
 	if (*object == ERX_CAP_NULL)
 		return (ERX_OK);
 	status = erx_object_destroy(*object);
-	(void)erx_cap_close(*object);
+	(void)erx_cap_close((erx_cap_t){ .raw = *object });
 	*object = ERX_CAP_NULL;
 	return (status);
 }
@@ -691,7 +691,7 @@ lease_take(program_t *program)
 static int
 close_cap(uint64_t *cap)
 {
-	const int status = erx_cap_close(*cap);
+	const int status = erx_cap_close((erx_cap_t){ .raw = *cap });
 
 	*cap = ERX_CAP_NULL;
 	return (status);

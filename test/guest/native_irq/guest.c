@@ -467,7 +467,7 @@ holder_run(const uint64_t objects[HOLDER_HANDLES])
 	if (erx_fiasco_task_join(task, &status) != ERX_OK)
 		fail("erx: irq: the holder was not joined FAILED\n");
 	/* The group went with its home, so the handle is stale; its close only frees the entry. */
-	(void)erx_cap_close(group);
+	(void)erx_cap_close((erx_cap_t){ .raw = group });
 	return (status);
 }
 

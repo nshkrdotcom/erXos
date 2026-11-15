@@ -472,9 +472,9 @@ erx_cap_pass(uint64_t from, uint64_t to, uint32_t n)
 }
 
 int
-erx_cap_close(uint64_t cap)
+erx_cap_close(erx_cap_t cap)
 {
-	const erx_fiasco_cap_request_t request = { .caller = erx_fiasco_thread_self()->index, .cap = cap };
+	const erx_fiasco_cap_request_t request = { .caller = erx_fiasco_thread_self()->index, .cap = cap.raw };
 	erx_fiasco_reply_t reply;
 
 	return (erx_fiasco_service_call(ERX_FIASCO_CALL_CAP_CLOSE, &request, sizeof(request), &reply));

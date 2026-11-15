@@ -1866,6 +1866,19 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
+  profile's capability fields, the walk's array, the pipe ends' handles, the startup record's, `erx_prog_object_map`
+  and `erx_cap_close` are `erx_cap_t`, but every other call of `api.h` takes or returns a handle as `uint64_t`
+  (`erx_cap_dup`, `erx_object_destroy`, `erx_cap_pass`, the `erx_*_create` out-handles, `erx_vm_map`, `erx_irq_*`,
+  `erx_ipc_*`, `erx_gate_*`, `erx_thread_*`, `erx_space_*`, `erx_image_*`, `erx_mem_*`, `erx_log_*`,
+  `erx_object_info`), as do the program channel's doorbell (`liberx/program/channel.c`, `erx_prog_channel_open`). A
+  handle crosses into those as `.raw` and leaves them as an integer that callers wrap with
+  `(erx_cap_t){ .raw = ... }`: the domain library's `made[]` and `remains_held` (`dom_apply.c`), the pipe and
+  domain-library NIFs, the program driver, the JIT memory, two guests inline and the `handle_close` helpers of the
+  function_api and native_space guests. Type them, with the Fiasco and hosted backends and their callers. Null and
+  identity tests are spelled `.raw == ERX_CAP_NULL` and `a.raw == b.raw`, and pipe.c keeps a file-local `cap_null`;
+  have `abi_emit_c.rb` emit a typed null and `erx_cap_is_null` and `erx_cap_same` beside `struct erx_cap`, so `.raw`
+  appears only where a handle arrives as an integer (registers, Erlang terms, a service request).
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network

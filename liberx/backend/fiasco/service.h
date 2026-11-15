@@ -109,7 +109,7 @@ int	erx_mem_seal(uint64_t mem) ERX_WARN_UNUSED_RESULT;
  * ERX_ENOTSUP; the handles to a destroyed object stay, answering ERX_ESTALE.
  */
 int	erx_cap_dup(uint64_t cap, uint64_t *copy) ERX_WARN_UNUSED_RESULT;
-int	erx_cap_close(uint64_t cap) ERX_WARN_UNUSED_RESULT;
+int	erx_cap_close(erx_cap_t cap) ERX_WARN_UNUSED_RESULT;
 int	erx_object_destroy(uint64_t object) ERX_WARN_UNUSED_RESULT;
 
 /*

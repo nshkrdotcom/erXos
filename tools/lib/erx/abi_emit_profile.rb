@@ -49,7 +49,7 @@ module Erx
         [banner,
          '', "#ifndef #{guard}", "#define #{guard}", '',
          "/* The #{@protocol.fetch(:name)} frame profile's C check (docs/design-abi.md#program-protocol). */",
-         '', '#include <erx/profile.h>', '', frame_enum, named_enum, enums, types, frame_types, prototypes, cap_prototypes, '',
+         '', *abi_include, '#include <erx/profile.h>', '', frame_enum, named_enum, enums, types, frame_types, prototypes, cap_prototypes, '',
          "#endif /* !#{guard} */", ''].join("\n")
       end
 
@@ -90,7 +90,15 @@ module Erx
 
       def frame_constant(frame) = "#{prefix}_frame_#{frame.fetch(:name)}".upcase
 
-      # The C type of a value of kind name.
+      # A protocol with a capability kind names erx_cap_t, which the ABI's
+      # own header declares (scalar cap).
+      def abi_include
+        @kinds.values.any? { |kind| kind[:capability] } ? ['#include <erx/abi.h>'] : []
+      end
+
+      # The C type of a value of kind name. A capability is erx_cap_t, the
+      # ABI's single-member struct, so a handle neither converts to nor
+      # from an integer field without saying so.
       def c_type(name)
         kind = @kinds[name]
         return INTEGER_TYPES.fetch(name) if INTEGER_TYPES.key?(name)
@@ -99,7 +107,7 @@ module Erx
         return 'uint8_t' if name == 'slot'
 
         case kind.fetch(:form)
-        when 'integer' then INTEGER_TYPES.fetch(kind.fetch(:base))
+        when 'integer' then kind[:capability] ? 'erx_cap_t' : INTEGER_TYPES.fetch(kind.fetch(:base))
         when 'text' then 'erx_profile_text_t'
         when 'list' then "#{prefix}_#{name}_iter_t"
         when 'union' then atoms_only?(kind) ? 'uint16_t' : "#{prefix}_#{name}_t"
@@ -438,7 +446,7 @@ module Erx
           "\n/* The most capabilities one #{name} holds, over its cases. */\n" \
             "#define\t#{caps_max(name)}\t#{most}\n" \
             "/* Names the capabilities #{name} holds, into caps[0, n), in its case's order; returns n. */\n" \
-            "size_t\t#{prefix}_#{name}_caps(const #{c_type(name)} *#{name},\n\t    uint64_t caps[#{caps_max(name)}]);"
+            "size_t\t#{prefix}_#{name}_caps(const #{c_type(name)} *#{name},\n\t    erx_cap_t caps[#{caps_max(name)}]);"
         end.join("\n")
       end
 
@@ -451,7 +459,7 @@ module Erx
           end
           empty = none.map { |item, _| "\tcase #{enum_name(name, item.fetch(:atoms))}:" }
           arms << "#{empty.join("\n")}\n\t\treturn (0);" unless empty.empty?
-          "size_t\n#{prefix}_#{name}_caps(const #{c_type(name)} *#{name}, uint64_t caps[#{caps_max(name)}])\n{\n" \
+          "size_t\n#{prefix}_#{name}_caps(const #{c_type(name)} *#{name}, erx_cap_t caps[#{caps_max(name)}])\n{\n" \
             "\tswitch (#{name}->which) {\n#{arms.join("\n")}\n\t}\n\treturn (0);\n}\n"
         end.join("\n")
       end

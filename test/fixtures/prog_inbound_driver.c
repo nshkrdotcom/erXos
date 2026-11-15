@@ -88,7 +88,7 @@ names(const erx_prog_report_t *r, uint32_t *pipe, uint32_t *end)
 static void
 frame_read(const uint8_t *frame, size_t len)
 {
-	uint64_t caps[ERX_PROG_REPORT_CAPS];
+	erx_cap_t caps[ERX_PROG_REPORT_CAPS];
 	const size_t scratch_len = erx_prog_scratch_bytes(len);
 	void *scratch = malloc(scratch_len == 0 ? 1 : scratch_len);
 	erx_prog_to_program_t got;
@@ -112,7 +112,7 @@ frame_read(const uint8_t *frame, size_t len)
 	printf("report %u %" PRIu32 " %" PRIu32, r->which, pipe, end);
 	n = erx_prog_report_caps(r, caps);
 	for (size_t at = 0; at < n; at++)
-		printf(" %" PRIu64, caps[at]);
+		printf(" %" PRIu64, caps[at].raw);
 	printf("\n");
 	free(scratch);
 }

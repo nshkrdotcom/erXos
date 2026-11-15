@@ -98,10 +98,10 @@ erx_irq_trigger(uint64_t irq)
 }
 
 int
-erx_cap_close(uint64_t cap)
+erx_cap_close(erx_cap_t cap)
 {
-	if (cap >= CAP_BASE && cap - CAP_BASE < CAP_SLOTS)
-		atomic_store(&cap_closed[cap - CAP_BASE], true);
+	if (cap.raw >= CAP_BASE && cap.raw - CAP_BASE < CAP_SLOTS)
+		atomic_store(&cap_closed[cap.raw - CAP_BASE], true);
 	return (ERX_OK);
 }
 

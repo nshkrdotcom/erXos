@@ -87,10 +87,10 @@ typedef struct erx_prog_startup {
 	uint16_t		 umask;
 	erx_prog_sigset_t	 sigmask;
 	erx_prog_sigset_t	 sigignore;
-	uint64_t		 data_area;	/* the data area's capability value */
+	erx_cap_t		 data_area;	/* the data area's capability value */
 	uint8_t			 data_slots;	/* its 64 KiB slots */
 	bool			 has_image;
-	uint64_t		 image;		/* the image object's capability value */
+	erx_cap_t		 image;		/* the image object's capability value */
 } erx_prog_startup_t;
 
 /*
