@@ -524,7 +524,10 @@ module Erx
         point = @checkpoints.fetch(@observed.size)
         next unless point.fetch(:pattern).match?(line)
 
+        # The next point is due from when the verify returned, however long it read.
+        verified = Process.clock_gettime(Process::CLOCK_MONOTONIC)
         point[:verify]&.call(line)
+        elapsed += Process.clock_gettime(Process::CLOCK_MONOTONIC) - verified
         @typed << point.fetch(:type, '').b
         @observed << { 'name' => point.fetch(:name), 'elapsed_seconds' => elapsed }.freeze
         @checkpoint_started = elapsed

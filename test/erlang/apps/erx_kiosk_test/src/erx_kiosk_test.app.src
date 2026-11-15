@@ -5,6 +5,6 @@
  [{description, "erXos test: a display's session that opens an LVGL-drawn UI and logs its events"},
   {vsn, "1"},
   {modules, [erx_kiosk_test, erx_kiosk_test_app]},
-  {registered, []},
+  {registered, [erx_kiosk_test]},
   {applications, [kernel, stdlib, erx, erx_win, erx_ui, erx_pattern_test]},
   {mod, {erx_kiosk_test_app, []}}]}.

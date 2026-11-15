@@ -289,6 +289,18 @@ class QemuTest < Minitest::Test
     assert_match(/second/, error.message)
   end
 
+  # A checkpoint's verify may take long (the display suite reads the screen in it); the
+  # next checkpoint's seconds count from when the verify returned, not from its match.
+  def test_a_verify_does_not_spend_the_next_checkpoint_seconds
+    points = [{ name: 'first', pattern: /\Afirst\n\z/n, seconds: 5, verify: ->(_line) { sleep 0.5 } }.freeze,
+              { name: 'second', pattern: /\Asecond\n\z/n, seconds: 1 }.freeze]
+    transcript = Erx::Transcript.new(checkpoints: points)
+    File.write(@serial, "first\n")
+    refute transcript.consume(@serial, elapsed: 1)
+    refute transcript.consume(@serial, elapsed: 2.2)
+    assert_raises(Erx::Error) { transcript.consume(@serial, elapsed: 2.6) }
+  end
+
   def test_missing_and_overlong_serial_are_failures
     transcript = Erx::Transcript.new(checkpoints: checkpoints)
     assert_raises(Erx::Error) { transcript.consume(@serial, elapsed: 2) }

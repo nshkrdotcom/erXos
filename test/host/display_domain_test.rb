@@ -62,9 +62,9 @@ class DisplayDomainTest < Minitest::Test
     assert_includes Suite::BOOT.applications, 'erx_kiosk_test'
   end
 
-  # Each boot's cell has its lvgl and lvgl-lease cells beside it.
+  # Each boot's cell has its lvgl, lvgl-lease and lvgl-restart cells beside it.
   def test_each_boot_carries_its_side_cells
-    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl hvf-1cpu-lvgl-lease], Suite.cells(%w[hvf-1cpu])
+    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl hvf-1cpu-lvgl-lease hvf-1cpu-lvgl-restart], Suite.cells(%w[hvf-1cpu])
   end
 
   # The lvgl client's lines are shown and then the button's event, and nothing else: a
@@ -156,9 +156,12 @@ end
   def test_the_screen_is_read_at_the_shell
     points = [{ name: 'boot' }.freeze, { name: 'release-shell', seconds: 60 }.freeze]
     side = ->(_suffix, &_check) {}
-    shell = Suite.checkpoints(points, socket: '/nonexistent/qmp.sock', references: '/nonexistent',
-                                      serial: '/nonexistent/serial.log', side: side).last
+    *, shell, erlang, killed = Suite.checkpoints(points, socket: '/nonexistent/qmp.sock', references: '/nonexistent',
+                                                         serial: '/nonexistent/serial.log', side: side)
     assert_equal 'release-shell', shell.fetch(:name)
+    assert_equal ["erl\r", Suite::KILL_LINE], [shell, erlang].map { |point| point.fetch(:type) }
+    assert_match killed.fetch(:pattern), "{kiosk_killed,true,false,true}\r\n"
+    refute_match killed.fetch(:pattern), "1> KtDoms = fun() -> {kiosk_killed, is_pid(KtK)}\r\n"
     assert_equal 60 + (2 * Suite::WAIT_SECONDS) + (3 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS + 15,
                  shell.fetch(:seconds)
     assert shell.fetch(:verify).respond_to?(:call)

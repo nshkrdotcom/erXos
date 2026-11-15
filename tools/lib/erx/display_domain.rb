@@ -59,6 +59,12 @@ module Erx
   # event (check_lvgl). That is the boot's lvgl cell, which fails on its own outcome as the
   # lease cell does. A program that draws another picture than the host's, a window that
   # is not shown, or an input path that loses the click, fails it.
+  #
+  # Last, the lvgl-restart cell: the system's Erlang shell kills the lvgl client's process
+  # in the session (KILL_LINE). The session's domain must keep running, the client's
+  # supervisor must start the process again, and its UI must come back on the screen and
+  # take the click (check_restart). A client started outside its supervisor, or a kill
+  # that ends the session, fails it.
   module DisplayDomain
     REFERENCES = 'test/display/reference'
     PATTERN = 'display-pattern'
@@ -285,19 +291,63 @@ module Erx
       client&.close
     end
 
+    # The lvgl-restart cell (docs/design-display.md, Verification): typed at the system's
+    # Erlang shell, where every variable carries the prefix Kt, once the other cells are
+    # done. It finds the client's session, the domain service's only session row whose
+    # node is the client principal's, and the lvgl client's process there, which
+    # registers itself as erx_kiosk_test, kills that process through erpc at the
+    # session's node, the route the driver domains suite kills a process of a domain by,
+    # and polls every 500 ms, at most KILL_POLLS times, until the name is held by another
+    # process. It answers {kiosk_killed, {Found, Replaced, Kept}}: whether the killed
+    # process was a pid, whether another took its place, and whether the session's domain
+    # pid is still the only one on that node; every erpc call waits at most 5 s, and any
+    # exception on the way is the answer instead, {kiosk_killed, {Class, Reason}}, so the
+    # cell fails on its own outcome and never waits out the boot's deadline.
+    KILL_POLLS = 240
+    KILL_LINE = 'KtDoms = fun() -> erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv))) end, ' \
+                'io:format("~0p~n", [{kiosk_killed, try ' \
+                '[#{node := KtN, pid := KtP}] = [KtD || #{origin := {session, _}, node := KtM} = KtD <- KtDoms(), ' \
+                'lists:prefix("client_", atom_to_list(KtM))], ' \
+                'KtWho = fun() -> erpc:call(KtN, erlang, whereis, [erx_kiosk_test], 5000) end, KtK = KtWho(), ' \
+                'true = erpc:call(KtN, erlang, exit, [KtK, kill], 5000), ' \
+                'KtNew = (fun KtF(0) -> timeout; KtF(KtI) -> case KtWho() of KtQ when is_pid(KtQ), KtQ =/= KtK -> KtQ; ' \
+                "_ -> timer:sleep(500), KtF(KtI - 1) end end)(#{KILL_POLLS}), " \
+                '{is_pid(KtK), is_pid(KtNew), [KtR || #{node := KtM, pid := KtR} <- KtDoms(), KtM =:= KtN] =:= [KtP]} ' \
+                'catch KtC:KtW -> {KtC, KtW} end}]).' "\r"
+    KILL_ANSWER = /\A\{kiosk_killed,[^\r\n]*\}\r*\n\z/n
+    KILLED = '{kiosk_killed,{true,true,true}}'
+    KILL_SECONDS = (KILL_POLLS / 2) + 60
+
+    # The lvgl-restart cell's check, given the answer line: the client killed, another in
+    # its place and the session's domain as it was; then the new process's UI shown, the
+    # screen equal to LVGL again, and the button's event once clicked, so the lines of the
+    # client are KIOSK_LINES twice, or Error naming what came.
+    def check_restart(answer, socket:, references:, serial:)
+      raise Error, "the kill answered #{answer.strip.inspect}, not #{KILLED}" unless answer.strip == KILLED
+
+      await_log(serial, wait_seconds: WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size > KIOSK_LINES.size }
+      await_screen(socket: socket, references: references, name: LVGL)
+      click(socket)
+      log = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(KIOSK_LINE).size >= 2 * KIOSK_LINES.size }
+      lines = log.b.scan(KIOSK_LINE)
+      raise Error, "the lvgl client logged #{lines.first(6).inspect}, not #{(KIOSK_LINES * 2).inspect}" unless lines == KIOSK_LINES * 2
+    end
+
     # The suite's cells, from the cells of its boots: each boot's own, and its side cells,
     # which a boot checks one after the other and each of which fails on its own outcome.
     LVGL_CELL = '-lvgl'
     LEASE_CELL = '-lvgl-lease'
-    SIDE_CELLS = [LVGL_CELL, LEASE_CELL].freeze
+    RESTART_CELL = '-lvgl-restart'
+    SIDE_CELLS = [LVGL_CELL, LEASE_CELL, RESTART_CELL].freeze
     def cells(boots) = boots.flat_map { |cell| [cell, *SIDE_CELLS.map { |side| "#{cell}#{side}" }] }
 
     # The production checkpoints to the command shell, whose banner starts the screen's
     # reads, then the driver's and the client's lines of the serial log at serial, then the
     # input typed and its lines, then the side cells, each through side, which records its
     # outcome: the lvgl cell (check_lvgl), then the lease cell on the serial log once the
-    # lvgl-lease client's line came, or once LEASE_WAIT_SECONDS passed. points must end at
-    # the command shell.
+    # lvgl-lease client's line came, or once LEASE_WAIT_SECONDS passed. Then the command
+    # shell starts the Erlang shell, which types KILL_LINE, and its answer is the
+    # lvgl-restart cell's (check_restart). points must end at the command shell.
     def checkpoints(points, socket:, references:, serial:, side:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
@@ -315,8 +365,14 @@ module Erx
           check_lease_lines(await_log(serial, wait_seconds: LEASE_WAIT_SECONDS) { |text| text.match?(LEASE_LINE) })
         end
       end
+      restart = lambda do |answer|
+        side.call(RESTART_CELL) { check_restart(answer, socket: socket, references: references, serial: serial) }
+      end
       seconds = shell.fetch(:seconds) + (2 * WAIT_SECONDS) + (3 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS + 15
-      [*points[0...-1], shell.merge(seconds: seconds, verify: screen).freeze].freeze
+      [*points[0...-1], shell.merge(seconds: seconds, verify: screen, type: ProductionImage::Run::ERL_LINE).freeze,
+       ProductionImage::Run::ERLANG_SHELL.merge(name: 'system-erlang-shell', type: KILL_LINE).freeze,
+       { name: 'kiosk-killed', pattern: KILL_ANSWER, verify: restart,
+         seconds: KILL_SECONDS + (2 * WAIT_SECONDS) + CLIENT_WAIT_SECONDS }.freeze].freeze
     end
 
     # Boots the image under HVF at each CPU count, where placement puts each cell.

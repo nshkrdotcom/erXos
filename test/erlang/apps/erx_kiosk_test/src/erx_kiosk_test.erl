@@ -12,7 +12,9 @@ picture the host's erx-lvgl draws of the same tree at the same size
 event this client logs.
 
 start_link/0 starts the client's process under the application's
-supervisor. The process logs `erx_kiosk_test: started`, then waits for the
+supervisor. The process registers itself as erx_kiosk_test, the name the
+lvgl-restart cell kills it by from the system's Erlang shell, logs
+`erx_kiosk_test: started`, then waits for the
 pattern client's window to end, polling erx_pattern_test:closed/0, which
 stays true once the window has ended, so a window that lived between two
 polls is not missed. Then the session's only window is this one, which
@@ -57,6 +59,7 @@ start_link() ->
     {ok, proc_lib:spawn_link(fun show/0)}.
 
 show() ->
+    true = register(?MODULE, self()),
     logger:notice("erx_kiosk_test: started"),
     case shown() of
         {ok, Window} ->
