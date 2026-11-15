@@ -12,7 +12,9 @@
 %% is the mini UART's own registers: the auxiliary block's enable register, which also
 %% enables the auxiliary SPI controllers on the same page, lies outside it.
 %%
-%% Receiving: IER's RX_ERRATA bits are set with RXIE, as the BCM2835 errata asks of the
+%% Receiving: IER's RX_ERRATA bits are set with RXIE, in the belief that the silicon's
+%% receive interrupt needs them. The BCM2711's manual prints the receive enable at a
+%% different bit than RXIE's, and says nothing of RX_ERRATA, so both are unverified on
 %% silicon. The receive interrupt is level, raised while the receive FIFO holds a byte, so
 %% one delivery drains the FIFO to empty and the line is acknowledged after it; a byte that
 %% arrives during the drain raises the line again. Bytes typed before the driver started

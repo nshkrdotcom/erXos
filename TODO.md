@@ -1562,9 +1562,17 @@ it; git history is the record of completed work.
   the device tree in the move's way, as QEMU `virt` does (the fuzz target's layouts and a seed do), and the fuzz
   target's plan check does not assert that a moved archive lies behind every image placed at its link addresses,
   since the plan does not say which those were.
-* [Low] Pi package 5 (docs/plan.md, 1b-I (a) 5), the board pass: confirm on silicon that the mini
-  UART's receive interrupt needs IER's `RX_ERRATA` bits (`hw/svd/mini_uart/mini_uart.svd`), which
-  `erx_mini_uart` sets as the BCM2835 errata asks and QEMU's model ignores, and drop them if not.
+* [Medium] Pi board pass (docs/plan.md, 1b-I (a) 5), the mini UART's interrupt enables: settle on
+  silicon the two facts `hw/svd/mini_uart/mini_uart.svd` marks unverified, because the BCM2711
+  ARM Peripherals PDF contradicts the first and does not mention the second. IER's receive
+  enable is bit 0 as the 16550 has it, where the PDF's table prints it at bit 1 and the transmit
+  enable at bit 0, and `erx_mini_uart` writes bit 0. If the PDF is right the driver enables the
+  transmit interrupt, a level interrupt asserted whenever the transmit FIFO is empty, so on the
+  line it shares with the auxiliary SPI controllers it fires without end, the driver spins on the
+  CPU, and it receives nothing. The receive interrupt may also need IER's `RX_ERRATA` bits (2 and
+  3), which `erx_mini_uart` sets; whether QEMU's model ignores them is unchecked. Probe by writing
+  each IER bit alone and watching the interrupt line and IIR, then correct the file and the
+  driver, and drop the bits if not needed.
 * [Medium] SD host controller, `hw/svd/sdhci/sdhci.svd` (docs/design-storage.md, "The SD host controller"), unnamed
   bits: the file names only the bits FreeBSD's `sdhci.h` names, so `write_field/4` writes every other bit of a word
   back as zero. In `CONTROL0` that is the block gap control byte, whose stop at block gap and continue requests

@@ -2,16 +2,34 @@
 <!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
      SPDX-License-Identifier: BSD-2-Clause
 
-     The BCM2711's mini UART, the auxiliary peripherals' UART1, written by erXos from
-     Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 1), section 2.2.2 "Mini UART
-     register details", with its 8250-style interrupt bits as the BCM2835 peripherals
-     errata and Linux's 8250_bcm2835aux driver read them. The window is the device
-     tree's `brcm,bcm2835-aux-uart` node, 0x40 bytes at 0x7e215040; the auxiliary
-     block's interrupt and enable registers at 0x7e215000, shared with the auxiliary
-     SPI controllers, lie outside it, so no driver of this window can touch them.
-     The baud rate is divided from the core clock, which the firmware pins
-     (`enable_uart=1`) and sets the divisor for; a driver keeps BAUD, LCR and CNTL as
-     the firmware left them (docs/design-platforms.md, "Raspberry Pi 4 Model B"). -->
+     The BCM2711's mini UART, the auxiliary peripherals' UART1, written by erXos from two
+     sources. Raspberry Pi Ltd's "BCM2711 ARM Peripherals" (release 4, 18 Jan 2022, build
+     cfcff44; SHA-256 d6e16ea089a1716e80621f99a26e130a2379f0a81d945dc22e4f80dc49dcdc78)
+     gives the offsets (section 2.1, Table 2), the baud formula (section 2.2.1) and every
+     register and field (section 2.2.2, printed pages 11 to 16). FreeBSD's 16550 register
+     definitions (sys/dev/ic/ns16550.h at src commit 34436bb7cf971dba1c0dcdb1d45f22fff1a4b6c1;
+     SHA-256 334762edbfbb724091b086506ddaf66456c2028d46e0a8364c8e944ab5e42923) corroborate
+     the PDF's statement that its first eight registers are laid out like a 16550's: register
+     numbers 0 to 7 (lines 38 to 149) at the PDF's stride of four, and every bit this file
+     names in IIR, LCR (DLAB, BREAK), MCR, LSR and MSR, except IER and LCR's character size
+     below. FreeBSD's ns8250 driver has no mini UART code. Access is the PDF's Type column,
+     with IO's read marked as taking a byte from the FIFO.
+
+     The window is 0x40 bytes at the mini UART's offset 0x40 in the auxiliary block (base
+     0x7e215000), erXos's choice: the PDF gives no size. A register's offset here is the
+     PDF's less 0x40. The block's AUX_IRQ and AUX_ENABLES registers (0x7e215000, 0x7e215004),
+     shared with the auxiliary SPI controllers, lie outside the window, so no driver of it can
+     touch them.
+
+     Unverified by the sources above, and marked so where they occur: IER's receive enable
+     (the PDF's table prints it at bit 1 and the transmit enable at bit 0, the 16550 and
+     FreeBSD's IER_ERXRDY have the receive enable at bit 0) and the two RX_ERRATA bits (the
+     PDF gives IER's bits 7:2 no meaning). LCR's character size is one bit in the PDF where a
+     16550's is two (LCR_8BITS 0x03, LCR_7BITS 0x02); the file follows the PDF.
+
+     The baud rate is divided from the system clock (the firmware's core clock), which the
+     firmware pins and sets the divisor for; a driver keeps BAUD, LCR and CNTL as the firmware
+     left them (docs/design-platforms.md, "Raspberry Pi 4 Model B"). -->
 <device schemaVersion="1.3">
   <name>MINI_UART</name><version>1</version>
   <description>BCM2711 auxiliary mini UART (UART1)</description>
@@ -24,7 +42,7 @@
         <register>
           <name>IO</name><ownedByNif>false</ownedByNif>
           <description>AUX_MU_IO_REG: a read takes the next byte of the receive FIFO, a write puts a byte in the transmit FIFO</description>
-          <addressOffset>0x00</addressOffset><access>read-write</access>
+          <addressOffset>0x00</addressOffset><access>read-write</access><readAction>modify</readAction>
           <fields><field><name>DATA</name><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field></fields>
         </register>
         <register>
@@ -32,14 +50,13 @@
           <description>AUX_MU_IER_REG: interrupt enables</description>
           <addressOffset>0x04</addressOffset><access>read-write</access>
           <fields>
-            <field><name>RXIE</name><description>Interrupt while the receive FIFO holds a byte</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
-            <field><name>TXIE</name><description>Interrupt while the transmit FIFO is empty</description><bitOffset>1</bitOffset><bitWidth>1</bitWidth></field>
-            <field><name>RX_ERRATA</name><description>Both 1 for the receive interrupt on silicon: ARM Peripherals marks them unused, the BCM2835 errata says the receive interrupt needs them; QEMU ignores them</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>RXIE</name><description>Interrupt while the receive FIFO holds a byte. Unverified: bit 0 is the 8250's receive enable (ns16550.h IER_ERXRDY); the PDF's table prints the receive enable at bit 1 and the transmit enable at bit 0</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
+            <field><name>RX_ERRATA</name><description>Unverified: the PDF gives bits 7:2 no meaning, and the driver sets both with RXIE in the belief that the silicon's receive interrupt needs them (the 8250 names these positions ERLS and EMSC, ns16550.h IER_ERLS and IER_EMSC)</description><bitOffset>2</bitOffset><bitWidth>2</bitWidth></field>
           </fields>
         </register>
         <register>
           <name>IIR</name><ownedByNif>false</ownedByNif>
-          <description>AUX_MU_IIR_REG: the pending interrupt; writing ID's bits 1 and 2 clears the receive and transmit FIFOs</description>
+          <description>AUX_MU_IIR_REG: the pending interrupt; writing with bit 1 set clears the receive FIFO, with bit 2 set the transmit FIFO, so it is written whole, never read back and rewritten</description>
           <addressOffset>0x08</addressOffset><access>read-write</access>
           <fields>
             <field><name>NONE_PENDING</name><description>0 while an interrupt is pending</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
@@ -52,7 +69,7 @@
           <description>AUX_MU_LCR_REG: line control</description>
           <addressOffset>0x0c</addressOffset><access>read-write</access>
           <fields>
-            <field><name>DATA_SIZE</name><description>3 for eight-bit characters, 0 for seven</description><bitOffset>0</bitOffset><bitWidth>2</bitWidth></field>
+            <field><name>DATA_SIZE</name><description>Set for eight-bit characters, clear for seven; bits 5:1 are reserved</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>BREAK</name><description>Hold the transmit line low</description><bitOffset>6</bitOffset><bitWidth>1</bitWidth></field>
             <field><name>DLAB</name><description>Give the first two registers to the baud rate's bytes</description><bitOffset>7</bitOffset><bitWidth>1</bitWidth></field>
           </fields>
@@ -121,7 +138,7 @@
         </register>
         <register>
           <name>BAUD</name><ownedByNif>false</ownedByNif>
-          <description>AUX_MU_BAUD_REG: the baud divisor, core clock / (8 * (BAUD + 1))</description>
+          <description>AUX_MU_BAUD_REG: the baud divisor, system clock / (8 * (BAUD + 1))</description>
           <addressOffset>0x28</addressOffset><access>read-write</access>
           <fields><field><name>DIVISOR</name><bitOffset>0</bitOffset><bitWidth>16</bitWidth></field></fields>
         </register>
