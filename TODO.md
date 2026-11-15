@@ -60,15 +60,13 @@ it; git history is the record of completed work.
   boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
   otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
   last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
-  recovery leaves `unknown` (the first set then holds the image's packages only, and the installed ones come
-  in a later set, with no record, which `rc.conf` does not enable at that boot: a design question); the
+  recovery leaves `unknown` (the installed ones come in a later set, with no record, which `rc.conf`
+  does not enable until the next boot, as design-packaging.md states); the
   `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
   and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
   included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
   form; the lifetime taken from the caller rather than the request; and whether image header reads wait for
-  the `packages` grant. A failed listing (`eio`, a storage domain's answer included) stops the lifetime as
-  a failed change does, so past erx_pkg_sup's intensity the image's packages are never published; a
-  listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
+  the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
   the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
@@ -91,9 +89,15 @@ it; git history is the record of completed work.
   reads wait for the `packages` grant.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). What remains: the boot view placing the app entries
-  (`erx_dom_apps_place`) from the packed `apps` row and its app template, a session template naming no
-  principal, with the principal tables sized for them; the library entry and NIF over
+  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
+  the app template, the session template naming no principal (`mf_none`), sized into the principal and
+  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
+  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
+  today. What remains: `erx_pkg:system_config/0` building its config from
+  `erx_pkg_manifest:system_config/1` and `erx_domain_lib:apps/0` (images from the packages, signers
+  with `{development, Key}`, `max` from the library), with admission's inputs (the app template's
+  `packages` facet row, each service's row and windows flag, the reserved names) read from the packed
+  facet, service and session rows once the template is derived; the library entry and NIF over
   `erx_dom_plan_app_session` and the domain service's start of an app's session from its
   `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
   and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups

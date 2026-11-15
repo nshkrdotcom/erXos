@@ -18,7 +18,9 @@
  * not the boot.
  *
  * Principals are numbered by row from 1, each admitted by
- * erx_dom_principal_check against those before it; each configured row
+ * erx_dom_principal_check against those before it, and the apps row's max
+ * app entries follow them, placed from the app template (boot_apps), so
+ * the principal and held tables have room for both; each configured row
  * takes its limits from its limits record and that record's runtime-limits
  * profile, and the rows stay in the manifest's table order, since a
  * record's origin names its row there. The files are judged one entry at a
@@ -57,8 +59,10 @@
 
 static bool	boot_place(size_t *, size_t, size_t, uint32_t, size_t *);
 static bool	boot_limits(const erx_manifest_view_t *, uint32_t, erx_runtime_limits_t *);
+static uint32_t	boot_apps_max(const erx_manifest_view_t *);
 static const char *boot_principals(erx_dom_lib_t *, const erx_manifest_view_t *,
 		    const erx_dom_boot_tables_t *);
+static const char *boot_apps(erx_dom_lib_t *, const erx_manifest_view_t *);
 static bool	boot_pages(uint64_t, uint64_t, erx_dom_range_t *);
 static bool	boot_compatible_is(const erx_manifest_view_t *, const erx_mf_device_t *, const char *);
 static bool	boot_reach(const erx_dom_device_entry_t *, erx_dom_range_t *);
@@ -92,13 +96,27 @@ erx_dom_view_sizes(const erx_manifest_view_t *manifest, uint32_t nfiles)
 {
 	return ((erx_dom_boot_sizes_t){ .max_domains = manifest->header.max_domains,
 	    .max_connections = manifest->header.max_connections,
-	    .nprincipals = manifest->header.principals.count,
+	    .nprincipals = manifest->header.principals.count + boot_apps_max(manifest),
 	    .nconfigured = manifest->header.domains.count,
 	    .ntemplates = manifest->header.sessions.count, .nfiles = nfiles,
 	    .ndevices = manifest->header.devices.count,
 	    .nservices = manifest->header.services.count,
 	    .nfacets = manifest->header.facets.count,
 	    .nparameters = manifest->header.facet_parameters.count });
+}
+
+/*
+ * The apps row's max, the app entries the view places after the
+ * principals (boot_apps), or 0 for a manifest with no apps row. The
+ * reader bounds the row's max to apps_max_limit, so the principal table's
+ * size cannot overflow.
+ */
+static uint32_t
+boot_apps_max(const erx_manifest_view_t *manifest)
+{
+	erx_mf_apps_t row;
+
+	return (manifest->header.apps.count == 1 && erx_manifest_apps_at(manifest, 0, &row) ? row.max : 0);
 }
 
 /*
@@ -673,13 +691,19 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 	for (uint32_t index = 0; index < manifest->header.sessions.count; index++) {
 		if (!erx_manifest_sessions_at(manifest, index, &session))
 			return ("manifest: a session template the reader cannot read");
-		if (session.principal >= manifest->header.principals.count ||
+		if ((session.principal != ERX_MF_NONE && session.principal >= manifest->header.principals.count) ||
 		    !erx_manifest_limits_at(manifest, session.limits, &profile))
 			return ("manifest: a session template names no principal or limits record");
-		/* The principal's number, from 1, as the view numbers principals. */
-		principal = session.principal + 1;
-		if (index > 0 && principal <= templates[index - 1].principal)
-			return ("manifest: the session templates are not one per principal in principal order");
+		/*
+		 * The principal's number, from 1, as the view numbers principals;
+		 * 0 for the app template, which names none and comes last
+		 * (boot_apps).
+		 */
+		principal = session.principal == ERX_MF_NONE ? 0 : session.principal + 1;
+		if (index > 0 && (templates[index - 1].principal == 0 ||
+		    (principal != 0 && principal <= templates[index - 1].principal)))
+			return ("manifest: the session templates are not one per principal in principal order, "
+			    "with the app template last");
 		/*
 		 * A session's principal and default display are the words its start
 		 * adds after the template's environment (erx_dom_plan_session), which
@@ -705,6 +729,37 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 			return ("manifest: a session template names no limits record");
 		view->ntemplates = index + 1;
 	}
+	return (NULL);
+}
+
+/*
+ * The apps row's app entries (docs/design-packaging.md, "An app's
+ * principal"), placed after the manifest's principals by
+ * erx_dom_apps_place from the row's budget and max and the app template,
+ * the session template that names no principal, which boot_templates
+ * keeps last. The row and the template come together: the build derives
+ * the template from the row, so a manifest with one and not the other is
+ * refused, and the view holds app entries exactly when the manifest has
+ * an apps row. Each entry starts with no handle, as a principal does.
+ */
+static const char *
+boot_apps(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
+{
+	erx_dom_view_t *view = &lib->view;
+	const bool has_app_template = view->ntemplates != 0 && view->templates[view->ntemplates - 1].principal == 0;
+	erx_mf_apps_t row;
+
+	if (manifest->header.apps.count == 0)
+		return (has_app_template ? "manifest: an app template with no apps row" : NULL);
+	if (!erx_manifest_apps_at(manifest, 0, &row))
+		return ("manifest: an apps row the reader cannot read");
+	if (!has_app_template)
+		return ("manifest: an apps row with no app template");
+	/* The principal and held tables hold boot_apps_max entries past the principals: place those. */
+	if (erx_dom_apps_place(view, view->ntemplates - 1, row.memory, boot_apps_max(manifest)) != ERX_OK)
+		return ("manifest: the domain library refuses the app entries");
+	for (uint32_t entry = 0; entry < view->apps.max; entry++)
+		lib->held.principals[view->apps.first - 1 + entry] = (erx_dom_principal_held_t){ UINT64_MAX, UINT64_MAX };
 	return (NULL);
 }
 
@@ -944,6 +999,7 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
 	    (reason = boot_configured(&lib->view, manifest, tables->configured)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
+	    (reason = boot_apps(lib, manifest)) != NULL ||
 	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL)
 		return (reason);
 	if (!boot_limits(manifest, header->native_limits, &lib->view.native_limits))

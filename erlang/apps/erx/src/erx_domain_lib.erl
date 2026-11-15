@@ -35,16 +35,16 @@ caller, since a group's or budget's report holds none of the domain's data.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
-         configured/0, configured/3, templates/0, devices/0, session/5, code_object/2, code_drop/2,
+         configured/0, configured/3, templates/0, apps/0, devices/0, session/5, code_object/2, code_drop/2,
          end_commit/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
-       disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, devices_nif/0,
+       disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
        session_create_nif/5, end_commit_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
 
--export_type([spec/0, created/0, error/0, configured/0, template/0, device/0]).
+-export_type([spec/0, created/0, error/0, configured/0, template/0, apps/0, device/0]).
 
 -type error() :: {error, atom() | {status, integer()}}.
 -type grant() :: #{quota_ns := non_neg_integer(), cpuset := non_neg_integer(),
@@ -111,6 +111,10 @@ principal, which has no other. It is no configured domain, and the boot
 creates none.
 """.
 -type template() :: #{template := non_neg_integer(), principal := pos_integer()}.
+
+-doc "The apps row's app entries in the library's view (apps/0).".
+-type apps() :: #{template := non_neg_integer(), first := pos_integer(),
+                  max := pos_integer(), memory := pos_integer()}.
 
 -doc """
 An entry of the device catalogue the system manifest's device table makes:
@@ -243,11 +247,25 @@ configured() ->
     configured_nif().
 
 -doc """
-The system manifest's session templates, in principal order.
+The system manifest's session templates, in principal order, but the app
+template, which names no principal and apps/0 names.
 """.
 -spec templates() -> {ok, [template()]} | error().
 templates() ->
     templates_nif().
+
+-doc """
+The apps row as the library placed it at boot (docs/design-packaging.md,
+"An app's principal"): none for a manifest with no apps row, or the app
+template's index, the first app entry's principal number, max, the app
+entries the boot holds, and the apps budget in bytes. It is the one source
+of max: the domain service bounds the registry of app principals by it, and
+admission is to be given the same max (docs/design-packaging.md, "An app's
+principal").
+""".
+-spec apps() -> {ok, none | apps()} | error().
+apps() ->
+    apps_nif().
 
 -doc """
 Ends the machine, off or reset, as the last step of its ordered end
@@ -341,6 +359,9 @@ configured_create_nif(_Id, _Row, _DomainPid) ->
     erlang:nif_error(undef).
 
 templates_nif() ->
+    erlang:nif_error(undef).
+
+apps_nif() ->
     erlang:nif_error(undef).
 
 devices_nif() ->

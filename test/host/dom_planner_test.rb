@@ -14,6 +14,7 @@ require_relative '../../tools/lib/erx/network_domain'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/system_domain'
+require_relative '../fixtures/abi_manifest_fixture'
 require_relative '../fixtures/generated_tree'
 require_relative '../fixtures/manifest_context'
 
@@ -264,6 +265,19 @@ class DomPlannerTest < Minitest::Test
   end
 
   # A template is no configured domain: alpha is the one domain the boot plans.
+  # The view places the apps row's max app entries after the manifest's one principal,
+  # from the app template, the session template naming no principal, and sizes the
+  # principal table for both; a row without the template, or the template without the
+  # row, is refused, so the view holds entries exactly when the manifest has the row.
+  def test_the_view_places_the_app_entries_from_the_apps_row_and_the_app_template
+    assert_equal ['apps template=0 first=2 max=2 memory=1048576 principals=3'],
+                 view_lines(AbiManifestFixture.app_template, 'apps').grep(/^apps /)
+    assert_equal ['refused manifest: an apps row with no app template'],
+                 view_lines(AbiManifestFixture.app_template(principal: 0), 'apps-no-template')
+    assert_equal ['refused manifest: an app template with no apps row'],
+                 view_lines(AbiManifestFixture.app_template(apps: false), 'template-no-apps')
+  end
+
   def test_session_templates_are_not_configured_domains
     assert_equal 1, admit(with_sessions).report.fetch('child_plan_instances')
   end
@@ -330,7 +344,7 @@ class DomPlannerTest < Minitest::Test
       bytes = manifest.dup.tap { |copy| copy[offset, 4] = [first].pack('V') }.tap { |copy| copy[offset + 40, 4] = [second].pack('V') }
       [bytes, '', "order 0\n"].zip(paths).each { |content, file| File.binwrite(file, content) }
       record = @helper.run(paths, runner: @runner, name: 'dom-plan-template', deadline: 30)
-      assert_match(/\Arefused manifest: the session templates are not one per principal in principal order\n\z/,
+      assert_match(/\Arefused manifest: the session templates are not one per principal in principal order, with the app template last\n\z/,
                    File.binread(record.fetch('log')))
     end
   end
@@ -693,7 +707,8 @@ class DomPlannerTest < Minitest::Test
     interface = ->(name) { @codec.schema.services.find { |service| service.fetch(:name) == name }.fetch(:number) }
     # The services, in name order, each with its server's index in boot order (display 0,
     # network 1, storage 2, web 3) or none for the system domain: data, of files, display,
-    # of windows, inspect, log, machine, of files, net, network_ctl, start, of files,
+    # of windows, inspect, log, machine, of files, net, network_ctl, packages, of files,
+    # start, of files,
     # storage_ctl and web.
     assert_equal ["service 0 name=data server=2 interface=#{interface.call('files')}",
                   "service 1 name=display server=0 interface=#{interface.call('windows')}",
@@ -702,9 +717,10 @@ class DomPlannerTest < Minitest::Test
                   "service 4 name=machine server=none interface=#{interface.call('files')}",
                   "service 5 name=net server=1 interface=#{interface.call('net')}",
                   "service 6 name=network_ctl server=1 interface=#{interface.call('driver_control')}",
-                  "service 7 name=start server=none interface=#{interface.call('files')}",
-                  "service 8 name=storage_ctl server=2 interface=#{interface.call('driver_control')}",
-                  "service 9 name=web server=3 interface=#{interface.call('web')}"],
+                  "service 7 name=packages server=2 interface=#{interface.call('files')}",
+                  "service 8 name=start server=none interface=#{interface.call('files')}",
+                  "service 9 name=storage_ctl server=2 interface=#{interface.call('driver_control')}",
+                  "service 10 name=web server=3 interface=#{interface.call('web')}"],
                  lines.grep(/\Aservice /)
   end
 

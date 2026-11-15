@@ -972,6 +972,17 @@ names and starts every session from its principal, and
 `erx_principal:register_app/2` and `erx_principal:app_registry/0`, the
 registry admission reads, reach it there.
 
+`max` has one source: the app entries the domain library's boot view
+places (`erx_dom_apps_place`) from the packed `apps` row and the app
+template, the session template that names no principal and comes last.
+The row and the template come together, since the build derives the
+template from the row, and the view refuses a manifest with one and not
+the other, so the library holds app entries exactly when the manifest
+has the row. `erx_domain_lib:apps/0` answers them; the domain service
+bounds the registry by their `max`, and the package process gives
+admission the same `max`, so admission and registration cannot disagree
+about how many entries there are.
+
 Its budget is a child of the `apps` budget. Every principal of the
 manifest has a wall, a budget whose cap is its guarantee; an app's is
 **elastic** ([design-kernel.md](design-kernel.md#budgets)), with no
@@ -1060,8 +1071,10 @@ of these that fails:
    `{bad_name, N}` or `{name_taken, N}`;
 4. a name the registry holds has the same signer, `{signer_changed, N}`;
    a new name finds a free entry, `apps_full`;
-5. the memory is at least `app_memory_min` and at most the `apps`
-   budget: `{memory, M}`;
+5. the memory is a whole number of pages, at least `app_memory_min` and
+   at most the `apps` budget: `{memory, M}`; the domain library's plan of
+   the app's session refuses memory that is not page-aligned, so admission
+   refuses it first;
 6. each need is a service of the `apps` row: `{not_offered, S}`.
 
 Nothing else is judged: a declaration can only name what the row
@@ -1430,6 +1443,13 @@ The recovery's publication is its lifetime's first, and the package
 process takes no close, removal or purge until it is answered, so the
 first set of a boot holds what the image and the data partition held at
 boot and nothing an install of that boot added.
+
+A listing of `packages/` that cannot be read, the `packages` grant not
+yet in place or the storage domain's error, leaves the scan `unknown`
+and stops nothing: the boot's package set holds the image's packages,
+which are published first. Installed apps that a late grant brings come
+in a later set with no record, and `rc.conf` does not enable them until
+the next boot.
 
 The recovery reads at most `pkg_scan_max` names and headers of at most
 64 KiB each, one at a time, and keeps one record for each entry it

@@ -20,8 +20,10 @@ the same name:
 4. `check_entry`: a name the registry holds keeps its entry, for its own
    signer only, and a new name takes the lowest entry the registry does
    not hold;
-5. `check_memory`: the declared memory is at least `ERX_APP_MEMORY_MIN`
-   and at most the `apps` row's budget;
+5. `check_memory`: the declared memory is a whole number of pages, at
+   least `ERX_APP_MEMORY_MIN` and at most the `apps` row's budget, so the
+   domain library's plan of the app's session, which refuses memory that
+   is not page-aligned, never meets one admission let in;
 6. `check_needs`: each need is a service of the `apps` row.
 
 Nothing else is judged: a declaration can only name what the row offers,
@@ -184,7 +186,8 @@ entry(Name, Signer, Max, Registry) ->
     end.
 
 check_memory(Memory, Budget) ->
-    require(Memory >= ?ERX_APP_MEMORY_MIN andalso Memory =< Budget,
+    require(Memory rem ?ERX_PAGE_SIZE =:= 0 andalso
+                Memory >= ?ERX_APP_MEMORY_MIN andalso Memory =< Budget,
             {memory, Memory}).
 
 %% The service of each need, once each; a need the row lacks is refused.

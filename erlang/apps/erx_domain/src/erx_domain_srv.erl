@@ -148,8 +148,6 @@ deadline that erx_domain_mints:new/1 takes; facet_names, the table of
 facet names that facets/2 checks (the generated ?ERX_FACET_NAMES by default);
 inspect_policy, #{roots, development}, the system-shell principals and
 development flag every inspect facet's scope is decided from (inspect_policy/1);
-apps_max, the apps row's max, which bounds the registry of app principals
-(erx_principal), 0 by default;
 and principals, the manifest's system principal and principal names, which
 name each principal's sessions (principals/2).
 """.
@@ -187,8 +185,8 @@ state(Lib, Principals, Opts) ->
     %% Served holds, by configured row and by {template, T}, the facets of services the
     %% system domain serves that the manifest grants the row or the template's sessions,
     %% each its service's name, its kind (served_kind/2) and the grant's limits.
-    %% Apps is the boot's registry of app principals (erx_principal), of apps_max entries,
-    %% the apps row's max.
+    %% Apps is the boot's registry of app principals (erx_principal), of the apps row's
+    %% max entries, as the library placed them (apps_max/1).
     MintConfig = maps:merge(#{owner => fun erx_dist:owner/1}, maps:with([owner, deadline], maps:get(mints, Opts, #{}))),
     #{lib => Lib, agent => Agent, exports => Exports, node => erlang:is_alive(), core => undefined,
       configured => #{}, templates => #{}, waiting => #{}, system_waiting => [], display_waiting => [],
@@ -200,7 +198,19 @@ state(Lib, Principals, Opts) ->
       served => #{}, web_lines => #{},
       facet_names => maps:get(facet_names, Opts, ?ERX_FACET_NAMES),
       inspect_policy => inspect_policy(Opts), principals => Principals,
-      apps => erx_principal:new(maps:get(apps_max, Opts, 0))}.
+      apps => erx_principal:new(apps_max(Lib))}.
+
+%% The registry's bound: the apps row's max, as many app entries as the library placed
+%% at boot, the one source of max (erx_domain_lib:apps/0), so the registry never names
+%% an entry the library does not hold; 0 with no library or no apps row, under which
+%% nothing registers.
+apps_max(none) ->
+    0;
+apps_max(Lib) ->
+    case Lib:apps() of
+        {ok, #{max := Max}} -> Max;
+        {ok, none} -> 0
+    end.
 
 %% What every inspect facet's scope is decided from (erx_domain_core:inspect_scope/3): the
 %% system manifest's system-shell principals and its development flag, read once, as the

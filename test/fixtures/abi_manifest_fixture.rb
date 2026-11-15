@@ -177,6 +177,32 @@ module AbiManifestFixture
     bytes
   end
 
+  # session_template's manifest naming principal (0xffffffff, none, by default), with
+  # an apps row of 1 MiB and max 2 and no services when apps is true: Header440,
+  # principal80, sessions40, limits160, runtime-limits56, apps24 at 776 when present,
+  # then strings.
+  def app_template(principal: 0xffffffff, apps: true)
+    original = session_template(principal: principal)
+    row = "\0".b * (apps ? 24 : 0)
+    strings = original.byteslice(776..-1)
+    bytes = original.byteslice(0, 776) + row + strings
+    strings_offset = 776 + row.bytesize
+    integer(bytes, 8, bytes.bytesize)
+    span(bytes, 360, strings_offset, strings.bytesize)
+    span(bytes, 384, strings_offset, 0)
+    span(bytes, 392, strings_offset, 0)
+    (400..432).step(8) { |offset| span(bytes, offset, strings_offset, 0) }
+    return bytes unless apps
+
+    span(bytes, 384, 776, 0)
+    span(bytes, 392, 776, 0)
+    span(bytes, 400, 776, 1)
+    integer(bytes, 776, 1_048_576, width: 8)
+    integer(bytes, 784, 2)
+    span(bytes, 792, 800, 0)
+    bytes
+  end
+
   # Byte offsets of erx_mf_start's fields in abi/manifest.txt, and its size.
   START_FIELDS = { principal: 0, flags: 4, display: 8, restarts: 12, restart_period_s: 16, reserved: 20 }.freeze
   START_ROW = 24

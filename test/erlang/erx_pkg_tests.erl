@@ -241,8 +241,12 @@ overflow_test() ->
     ?assertEqual([], erx_pkg_medium:deleted()),
     stop(Sup).
 
-absent_grant_test() ->
-    {_Io, Config} = setup([{listing, {error, absent}}]),
+unreadable_listing_test_() ->
+    [fun() -> unknown_scan({error, Reason}) end || Reason <- [absent, eio]].
+
+%% A listing that fails as Listing leaves the scan unknown and publishes the image's packages.
+unknown_scan(Listing) ->
+    {_Io, Config} = setup([{listing, Listing}]),
     {ok, Sup} = erx_pkg_sup:start_link(Config),
     wait_until(fun() -> published() =/= [] end),
     #{scan := Scan, packages := Records} = erx_pkg:packages(),

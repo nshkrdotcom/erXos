@@ -18,8 +18,8 @@ The recovery, in order:
    and registers its principal;
 3. reads the listing of `packages/`, at most `ERX_PKG_SCAN_MAX` entries; a
    listing with more is `overflow` and nothing in it is acted on, and a
-   listing not yet readable, before the packages grant is in place, leaves
-   the scan `unknown`;
+   listing not yet readable, before the packages grant is in place, or one
+   that fails leaves the scan `unknown`;
 4. deletes every temporary file, then judges each installed package, in name
    order, as in step 2 but under the trusted signer keys;
 5. publishes the package set: the admitted image packages, then the
@@ -220,7 +220,10 @@ step(list, {ok, Names, More}, #{config := #{max := Max}, tasks := Tasks} = Plan)
                    ++ [{installed, Name} || Name <- Packages],
             next(Plan#{scan := {ok, length(Names)}, tasks := Work ++ Tasks})
     end;
-step(list, {error, absent}, Plan) ->
+%% A listing that fails, the grant absent or the storage domain's error, leaves
+%% the scan unknown: the image's packages are published without the installed ones,
+%% as before the grant is in place, rather than the lifetime stopping on it.
+step(list, {error, _}, Plan) ->
     next(Plan);
 step({delete, _}, ok, Plan) ->
     next(Plan);
