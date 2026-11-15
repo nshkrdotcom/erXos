@@ -676,90 +676,151 @@ kernel's boot sequence
 ([design-kernel.md](design-kernel.md#boot)), the VL805's
 evidence ([design-usb.md](design-usb.md#the-bcm2711-bridge)) and the
 release check ([design-system.md](design-system.md#the-manifest)) refer
-here. Each platform record, `config/platforms/NAME.json`, which
-`Platform` reads, lists under `bus_masters` every bus master of the
-platform's DMA contract, whether or not a device row names it. An entry
-has a `name`, the device-tree `paths` it covers, and a `handover` from a
-closed set:
+here. Two facts decide it, and both are reviewed evidence the build
+cannot produce: that a platform's list of bus masters is complete, and
+that the loader stops a given master. Each is recorded the same way, as
+an evidence block of a research record bound to exactly what it proves,
+and everything the build concludes from them is derived, never written.
 
-| `handover` | Meaning | Its own fields |
+**The inventory.** Each platform record, `config/platforms/NAME.json`,
+which `Platform` reads, holds the platform's one list of its bus
+masters, `bus_masters`. The contract table below names this list and
+does not repeat it; the release profile, the inspector and release
+admission read it whole. An entry has a `name`, the device-tree `paths`
+it covers, and a `kind` from a closed set:
+
+| `kind` | The master | Its handover |
 | --- | --- | --- |
-| `unknown` | no recorded evidence establishes that the master is stopped and drained at the kernel's entry | none |
-| `stopped` | a research record proves that the loader release the entry names stops the master and drains its DMA before the kernel's first instruction | `release`, the loader release it covers; `evidence`, the research record's path |
-| `resident` | the master is the resident firmware, which keeps access to all memory for the machine's life and is trusted as any machine trusts its firmware ([Firmware](#firmware), [design.md](design.md#residual-risks)) | none |
+| `device` | a controller, a DMA engine, or a bridge that stands for every function behind it, whether erXos drives it or not | `stopped` while an evidence block binds it to the build's loader identity, below, and `unknown` otherwise |
+| `resident` | the resident firmware, which keeps access to all memory for the machine's life and is trusted as any machine trusts its firmware ([Firmware](#firmware), [design.md](design.md#residual-risks)); it lists no path, since erXos drives nothing of the firmware's | `resident` |
 
-The record's `loader` names what runs before the kernel's first
-instruction: by `deps.lock` id each piece the build fetches, whose
-version is its pin, and by name and version each piece the port records
-but does not fetch. The platform's **loader release** is the map from
-each piece to its version, derived from `deps.lock` and the record and
-written nowhere else. On the Pi 4 it is `rpi-firmware-start4`,
-`rpi-firmware-fixup4` and `trusted-firmware-a` from `deps.lock`, and the
-EEPROM bootloader's version, which the board's port records with the
-boot order it sets; on QEMU `virt` it is the QEMU release whose
-contract tests the evidence was taken on, which the record names. Two of
-the Pi 4's entries, as the record gives them:
+Nothing in the platform record says that a master is stopped, and no
+default makes one so. A device row is covered by the entry that lists
+its `path`, or, for a `pci` row, its host bridge's path, so one entry
+listing QEMU `virt`'s ECAM bridge node covers every function behind it,
+and one listing the Pi 4's PCIe bridge node covers the VL805 whether or
+not a row names it yet. The **inventory digest** is the SHA-256 of the
+canonical encoding of `bus_masters`, its entries sorted by name, which
+`Platform` computes; any change to the list, an entry left out among
+them, gives another digest.
+
+**The loader identity.** The record's `loader` names what runs before
+the kernel's first instruction: by `deps.lock` id each piece the build
+fetches, and by name and version each piece the port records but does
+not fetch. The platform's **loader identity** is a SHA-256 that
+`Platform` derives over every input of the loader as the build gives
+it, and that is written nowhere: the `deps.lock` SHA-256 of each fetched
+piece; the SHA-256 of each file the build makes for the loader to run or
+read, on the Pi 4 BL31 as built, the slot's `config.txt` and the
+EEPROM configuration that installing erXos writes; and each recorded
+piece's version. A firmware bump, a new EEPROM bootloader, another boot
+order, a TF-A build option that changes BL31's bytes and any line of
+`config.txt` each give another identity, so a board that runs
+unattended, whose `config.txt` sets the watchdog, and one that does not
+have identities of their own. On the Pi 4 the fetched pieces are
+`rpi-firmware-start4`, `rpi-firmware-fixup4` and `trusted-firmware-a`,
+and the recorded one the EEPROM bootloader; on QEMU `virt` the recorded
+piece is the QEMU release, and what the build makes for it is the
+harness's machine options, which decide the devices the machine has and
+under which the contract tests run. Two of the Pi 4's entries,
+as the record gives them:
 
 ```json
 "loader": { "deps": ["rpi-firmware-start4", "rpi-firmware-fixup4", "trusted-firmware-a"],
             "recorded": { "eeprom-bootloader": "VERSION" } },
 "bus_masters": [
-  { "name": "firmware", "paths": [], "handover": "resident" },
-  { "name": "sd", "paths": ["/emmc2bus/mmc@7e340000"], "handover": "unknown" }
+  { "name": "firmware", "kind": "resident", "paths": [] },
+  { "name": "sd", "kind": "device", "paths": ["/emmc2bus/mmc@7e340000"] }
 ]
 ```
 
-A `stopped` entry adds `release`, the loader release its evidence
-covers, written as the map the derivation gives,
-`{ "rpi-firmware-start4": "1.20260915", ... }`, and `evidence`, the
-path of a research record under `docs/`.
+**Evidence blocks.** A research record under `docs/` binds what it
+proves with a fenced block whose info string is `erx-evidence` and
+whose body is one JSON object, which `Platform` reads from every
+`docs/research-*.md` file. The record's prose is the proof; the block
+says what the proof covers, so that the build can tell evidence for one
+master and one loader from evidence for another:
 
-Everything else is derived. A device row is covered by the entry that
-lists its `path`, or, for a `pci` row, its host bridge's path, so one
-entry listing QEMU `virt`'s ECAM bridge node covers every function
-behind it, and one listing the Pi 4's PCIe bridge node covers the VL805
-whether or not a row names it yet. A `stopped` entry counts as
-stopped only while its `release` equals the platform's loader release:
-any difference, a firmware bump or a new EEPROM bootloader, makes it
-count as unknown until evidence for the new release is recorded. No
-default makes a master stopped: a master the record does not list is
-unknown, and a field left out is refused, not assumed. One function of
-`Platform` gives each entry's **effective handover** from the record and
-the loader release; a platform **may be released** exactly when every
-entry's effective handover is `stopped` or `resident`, and that verdict
-is never stored. A `resident` entry covers no path, since erXos drives
-nothing of the firmware's, so no device row can be declared resident;
-the firmware is in the trusted base on every board that has it, the
-release profile shows it as resident, and it is never the reason a
-release is refused.
+| `claim` | Its other fields | It binds |
+| --- | --- | --- |
+| `inventory` | `platform`, the record's name; `masters`, an inventory digest | the platform's inventory with that digest, which the research record found complete against the platform's documentation and the device tree the firmware hands over |
+| `stopped` | `platform`; `master`, an entry's name; `paths`, that entry's paths; `loader`, a loader identity; `proof`, the anchors of the headings of its own record under which each piece of the proof stands | that one master, under that one loader build and configuration |
 
-What a platform's entries admit differs by build. `Platform` validates
-the entries' shape for every build kind, with the refusals below.
-Development builds boot whatever the effective handovers are: they run
-trusted code only, say so in their banner and never ship, and each
-unknown master is an open security residual in `TODO.md`. A release
-build is refused by the release clause of property 9 of the manifest
-check ([design-system.md](design-system.md#the-manifest)), which reads
-the platform record and the loader release from the checked context
-the build gives the check, so the one admission that decides a release
-build decides this too, and the packer adds no check of its own.
+```erx-evidence
+{ "claim": "stopped", "platform": "raspi4b", "master": "sd",
+  "paths": ["/emmc2bus/mmc@7e340000"], "loader": "SHA256",
+  "proof": ["#documented-behaviour", "#reading-at-entry"] }
+```
 
-**The handover refusals.** `Platform`
-refuses a record, for every build kind, with an `Erx::Error` that names
-the record and the entry, when `bus_masters` is missing or not a list;
-an entry lacks a `name`, repeats another's, has `paths` that is not a
-list of strings, or has a `handover` outside the set; a `stopped` entry
-lacks `release` or `evidence`, or another entry has either; `evidence`
-names no `docs/research-*.md` file of the tree; a `resident` entry
-lists a path; a path is listed by two entries; a device row whose `dma`
-is not `none` is covered by no entry; or the record's `loader` is
-missing, names a `deps.lock` id that does not exist, or names no piece
-at all. A `stopped` entry whose `release` differs from the loader
-release is not refused: it counts as unknown, which fails safe.
-A release build on a platform that may not be released fails the
-manifest check under property 9, with a diagnostic that names each
-master whose effective handover is unknown and, for a `stopped` entry
-whose release is stale, both the release it covers and the build's.
+A research record carries a `stopped` block only once every piece of
+its proof agrees, and a record whose reading refutes the documented
+behaviour carries none. The hardware-contract audit takes only
+executable evidence of a loader's quiescence
+([research-hardware-contracts.md](research-hardware-contracts.md#evidence-still-required)),
+so every `stopped` proof includes a reading at entry; a reading that
+needs a configuration the release does not have, such as the debug pins
+the VL805's reading enables, states in its record how its configuration
+differs from the bound one and why that difference does not change the
+master's handover. Whether a proof proves is the research record's
+review, as for any research record; that a block binds only what it
+names is the build's. Research records are point-in-time reports,
+re-checked rather than edited in place, so new evidence, a smaller
+inventory among it, is a new reviewed record.
+
+**What follows.** One function of `Platform` gives the verdicts, from
+the record, the blocks and the loader identity, and none is stored:
+
+* an entry's **effective handover** is `resident` for a `resident`
+  entry; `stopped` for a `device` entry when a `stopped` block names the
+  record's platform, the entry's name, exactly its paths and the build's
+  loader identity; and `unknown` otherwise;
+* the platform's inventory is **bound** when an `inventory` block names
+  the platform and the digest of its `bus_masters`;
+* a platform **may be released** exactly when its inventory is bound and
+  every entry's effective handover is `stopped` or `resident`.
+
+So no evidence stands in for another's: a block for one master binds no
+other, a block taken under one loader binds no other loader, and a
+platform whose record leaves out a master, used or not, no longer has
+the inventory its evidence found complete. A master that no reviewed
+inventory names is beyond what any build can see, which is why the
+inventory is evidence. The firmware is in the trusted base on every
+board that has it, the release profile shows it as resident, and it is
+never the reason a release is refused.
+
+What a platform's evidence admits differs by build. `Platform` validates
+the record's and the blocks' shape for every build kind, with the
+refusals below. Development builds boot whatever the verdicts are: they
+run trusted code only, say so in their banner and never ship, and each
+unknown master and an unbound inventory are open security residuals in
+`TODO.md`. A release build is refused by the release clause of property
+9 of the manifest check
+([design-system.md](design-system.md#the-manifest)), which reads the
+platform record, the blocks and the loader identity from the checked
+context the build gives the check, so the one admission that decides a
+release build decides this too, and the packer adds no check of its own.
+
+**The handover refusals.** `Platform` refuses, for every build kind,
+with an `Erx::Error` that names the file and the entry or block: a
+record whose `bus_masters` is missing or not a list; an entry that lacks
+a `name`, repeats another's, has `paths` that is not a list of strings
+or a `kind` outside the set; a `resident` entry that lists a path, or a
+`device` entry that lists none; a path listed by two entries; a device
+row whose `dma` is not `none` that no entry covers; a record whose
+`loader` is missing, names a `deps.lock` id that does not exist, or
+names no piece at all; and an evidence block whose body is not one JSON
+object with exactly the fields of its claim, whose `claim` is outside
+the set, whose digest or identity is not 64 lowercase hexadecimal
+digits, or whose `proof` is empty or names an anchor that no heading of
+its own record has. A block that binds nothing, because it names
+another platform, a master the record does not have, other paths, or
+another loader identity or inventory digest, is not refused: it binds
+nothing, which fails safe. A release build on a platform that may not
+be released fails the manifest check under property 9, with a
+diagnostic that names an unbound inventory with the digest the build
+computed, and each master whose effective handover is unknown with the
+loader identity the build computed, each input of that identity, and the
+identity of every `stopped` block that names the master under another.
 
 **The SMMUv3 is QEMU's.** The kernel's SMMUv3 driver covers what QEMU
 `virt`'s model needs: one SMMU, stage 1, 4 KiB pages and 16-bit ASIDs,
@@ -772,8 +833,7 @@ Raspberry Pi has one.
 
 | | QEMU `virt` | Raspberry Pi 4 | Raspberry Pi 5 |
 | --- | --- | --- | --- |
-| Bus masters | PCIe functions behind the ECAM bridge; virtio-mmio devices, whose DMA QEMU performs for them | the SD controller, the legacy and large-address DMA engines, Ethernet, the VL805 USB controller behind the PCIe bridge, which the USB domain drives through the PCIe domain's `open` and `master` ([design-pcie.md](design-pcie.md#the-plan)), and the firmware, which stays resident with access to all memory ([Firmware](#firmware)) | RP1's devices behind PCIe, Ethernet and two USB hosts among them; the SD controllers; a function on the external PCIe connector; the media blocks behind the BCM2712 IOMMUs; the firmware, which stays resident with access to all memory ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1), [Firmware](#firmware)) |
-| Handover at entry, as the platform record's entries give it ([The handover at entry](#dma)) | `unknown` for every master: the functions behind the ECAM bridge and each virtio-mmio device that masters DMA; their evidence is part of M11's hardware closure ([plan.md](plan.md#m11-security-closure), [audit](research-hardware-contracts.md#evidence-still-required)) | `resident` for the firmware; `unknown` for every other master, the VL805 among them: the EEPROM's boot order names the microSD card alone, so that the boot firmware has no reason to start it, but no source read says what the firmware does with it, so it counts as possibly running at entry ([design-usb.md](design-usb.md#the-bcm2711-bridge)) | `resident` for the firmware; `unknown` for every other master |
+| Bus masters | the inventory of `config/platforms/qemu-virt.json` ([The handover at entry](#dma)) | the inventory of `config/platforms/raspi4b.json` | the inventory of the Pi 5's platform record, which its port writes from the board's documentation ([research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)) |
 | Translation | the SMMUv3, stage 1, for functions on the root bus, which the harness creates with `iommu=smmuv3`; nothing for virtio-mmio | none described ([research](research-boards-storage.md#raspberry-pi-4-model-b-bcm2711)) | none for Ethernet, USB, the SD controllers or the external connector; each BCM2712 IOMMU serves media blocks or RP1's camera and display paths, with one address space for all its devices |
 | Bypass | none: the driver sets the global bypass to abort before anything else, and a stream without a window aborts | every master | the BCM2712 IOMMUs pass addresses below their windows through untranslated |
 | Requester identity | fixed on the ECAM root bus: `smmu_get_sid` builds the id from the model's bus and `devfn`; `pcibus_num` fixes the root bus at zero, whereas a subordinate bus takes its number from writable bridge configuration. Each root-bus function is its own isolation group. This is source-checked in QEMU v11.1.2; the supported binary must pass the same contract tests before its confined profile is admitted ([audit](research-hardware-contracts.md)) | none used | none per device |
@@ -1921,21 +1981,36 @@ in [Trust in the boot](#trust-in-the-boot).
   tree, and so is the crash region's discovery, with a tree that has the
   node and one that lacks it.
 * **The handover at entry.** Host tests of `Platform` and the manifest
-  check, on records built for the test ([The handover at entry](#dma)).
-  A record whose `stopped` entry's `release` equals the loader release
-  derived from a test `deps.lock` gives that entry `stopped`, and a
-  release build on it, every other entry `resident`, passes property 9;
-  the paired failure bumps one piece's version in the test `deps.lock`
-  and expects `unknown` and a property-9 refusal naming the entry and
-  both releases, so the comparison is shown to read the pin. A release
-  build on the checked-in QEMU `virt` and Pi 4 records is refused,
-  naming every master but the Pi 4's firmware; with the property-9
-  clause seeded out, that test fails. A record with an unconfined
-  device row that no entry covers is refused in a development build;
-  the paired passing case adds the entry, and a seeded coverage check
-  that skips `pci` rows lets a function behind an uncovered bridge pass,
-  which the test catches. A `resident` entry listing a device row's
-  path is refused.
+  check, on records, evidence blocks and loader files built for the test
+  ([The handover at entry](#dma)). A record whose inventory an
+  `inventory` block binds, with a `stopped` block naming one entry's
+  name and paths and the loader identity derived from a test `deps.lock`
+  and test loader files, every other entry `resident`, gives that entry
+  `stopped`, and a release build on it passes property 9. Each paired
+  failure expects `unknown` or an unbound inventory and a property-9
+  refusal naming it:
+  * stale evidence: one piece's hash bumped in the test `deps.lock`, and
+    separately one line added to the test `config.txt`, each with the
+    block unchanged, so the identity is shown to read both;
+  * unrelated evidence: the same block naming another master of the
+    record, and the block unchanged with the entry's paths changed;
+  * an omitted master: the record with an unused master's entry
+    deleted, one that no device row names, and the `inventory` block
+    unchanged, which the refusal names with the digest the build
+    computed; a seeded admission without the inventory clause, which
+    judges only the entries the record still has, passes it, and the
+    test catches that.
+  A block whose `proof` names an anchor no heading of its record has is
+  refused in a development build, and the paired passing case adds the
+  heading. A release build on the checked-in QEMU `virt` and Pi 4
+  records is refused, naming each unbound inventory and every master but
+  the Pi 4's firmware;
+  with the property-9 clause seeded out, that test fails. A record with
+  an unconfined device row that no entry covers is refused in a
+  development build; the paired passing case adds the entry, and a
+  seeded coverage check that skips `pci` rows lets a function behind an
+  uncovered bridge pass, which the test catches. A `resident` entry
+  listing a device row's path is refused.
 * **Ends and trials.** Each end (off, reset, panic, trial) is tested on
   each platform with and without a lease, and on each board a trial that
   panics, hangs with interrupts masked or halts boots the committed slot.

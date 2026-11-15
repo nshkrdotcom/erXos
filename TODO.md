@@ -879,7 +879,8 @@ it; git history is the record of completed work.
     `mem` descriptor 3 (the Programs item below), and `present`, `window/2` and `resize/3` bound to the window, with
     the display domain; the fault log names the window and the report's byte position, which the design asks for
     and the shell does not count yet. A window grown past its buffer is refused by the program and ends the UI as
-    `renderer_down`, so the restart allocates a buffer at the new screen's size; the shell does not clamp. A fault
+    `renderer_down`, because the shell does not clamp; the design has the shell write each `screen` record clipped
+    to the buffer's size, which it asks for at the size of `erx_win:info/1`'s `screen`, so clip it there. A fault
     fails a waiting `apply/2` only by the shell's exit. A program that stops reading its input blocks the shell in
     `port_command/2`, and with it `apply/2`, `close/1`, the window's input and the program's exit, a residual until
     writes are bounded (`nosuspend` and a busy event for the core, or a `close/1` that kills the program itself).
@@ -1179,7 +1180,9 @@ it; git history is the record of completed work.
   window, so any client takes it from another session's window by a `wctl` `top`, `hide` then `show`, or a
   `mkdir`, and reads what the user types next. Land the policy with the user's pick of [Windows and the window
   system](docs/design-display.md#windows-and-the-window-system) instead, set only by `input/4` on a click or a
-  menu choice, and with `erx_wm`'s `decorate/3`, which `erx_wm_single` and `erx_winfs` take up too.
+  menu choice, and with `erx_wm`'s `decorate/3`, which `erx_wm_single` and `erx_winfs` take up too; `erx_winfs`
+  then hands over the layout whenever the one derived from the table and the policy's state changes, a pick
+  included, not only after a change of the table.
 * [Low] `otp/erts/emulator/nifs/erxos/erx_device_nif.c`: a move of a bound edge line can lose the one delivery taken under the old label just before the old sink was unregistered, while a level
   line fires again at the bind's acknowledgement. A driver of an edge line looks at its device after binding. The PL011's line is level.
 * [Medium] `erlang/apps/erx_blk/src/erx_blk_sd_host.erl` (`issued/2`), the request transfer: it expects command
@@ -2618,7 +2621,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `{deposit, Ticket}`. `test/erlang/erx_pipe_explore.erl` gains their events with them.
 * [Medium] session, `erx_prog_handler`: the handler starts a program for a session process with its pipe
   ends and a window's buffer, forwards its notices and reports, and tells the starter its end; what
-  remains is the command server that assigns process ids (start/1 takes `pid`, `ppid` and `pgid` from its
+  remains is the command server that assigns process ids and spawns every handler, so that no handler
+  carries its starter's job tag (start/1 spawns the handler in its caller and takes `pid`, `ppid` and `pgid` from its
   caller, so nothing yet keeps a pid from being given twice over a session's life: a pid reused while the
   pipe server still holds the ends of the program that last had it, or reused once that program's holder
   entry is gone but before the pipe server has read its gone, names those ends as the new program's, so
@@ -6616,23 +6620,28 @@ to the corpus and follow rc
   [plan.md](docs/plan.md#m11-security-closure)). What a bus master whose
   handover at entry is unknown admits is stated in
   [design-platforms.md](docs/design-platforms.md#dma): this blocks each
-  such platform's release, not its development. On QEMU `virt` every
-  bus master's handover is unknown, the functions behind the ECAM
-  bridge and each virtio-mmio device that masters DMA; on the Pi 4
-  every master's but the resident firmware's is.
-* [High] tools, the platform records' bus-master entries, M11
+  such platform's release, not its development. No research record
+  binds either platform's inventory of bus masters or any master's
+  handover, so on QEMU `virt` every master's handover is unknown, and
+  on the Pi 4 every master's but the resident firmware's is.
+* [High] tools, the platform records' bus-master inventories, M11
   ([design-platforms.md](docs/design-platforms.md#dma)): no build check
   exists yet, since every image is a development build
   (`ProductionImage::BUILD_KIND`) and the Phase 1 manifest check refuses
   every release build under property 9. Before M11's release admission
   lands, give `config/platforms/qemu-virt.json` and
-  `config/platforms/raspi4b.json` their `loader` and `bus_masters`,
-  with the Pi 4's EEPROM bootloader version recorded in `loader`; make
-  `Platform` validate them for every build kind and derive each entry's
-  effective handover from the record and `deps.lock`; carry the loader
-  release in `Manifest::Context` beside the record; and add property 9's
-  handover clause to the release admission, with the host tests and
-  seeded failures the design names.
+  `config/platforms/raspi4b.json` their `loader` and `bus_masters`:
+  on QEMU `virt` the ECAM bridge and each virtio-mmio device that
+  masters DMA; on the Pi 4 the SD controller, the legacy and
+  large-address DMA engines, Ethernet, the PCIe bridge for the VL805,
+  and the firmware as `resident`, with the EEPROM bootloader's version
+  recorded in `loader`. Make `Platform` validate the records and the
+  `erx-evidence` blocks of `docs/research-*.md` for every build kind,
+  compute the inventory digest and the loader identity, and derive the
+  verdicts from them; carry the blocks and the loader identity in
+  `Manifest::Context` beside the record; and add property 9's handover
+  clause to the release admission, with the host tests and seeded
+  failures the design names.
 * [High] platforms, the Pi 4's VL805 at handover
   ([design-usb.md](docs/design-usb.md#the-bcm2711-bridge),
   [design-platforms.md](docs/design-platforms.md#dma)), part of the DMA

@@ -933,13 +933,13 @@ EEPROM starts the controller, or whether a firmware update changes
 either. The kernel reads nothing behind the bridge and cannot observe
 the VL805 before it reclaims memory, so on the Pi 4 the contract's rule
 acts through the build rather than at run time: the Pi 4's platform
-record lists the VL805, by the PCIe bridge's node, as a bus master
-whose handover is `unknown`, beside its other bus masters, and the
-entry becomes `stopped` only once the evidence below is recorded for
-the loader release the board port supports. What an unknown handover
-admits in each kind of build, and how a firmware update returns a
-`stopped` entry to unknown, is stated once, in [the handover at
-entry](design-platforms.md#dma); the worst a VL805 left running can do
+record's inventory lists the VL805, by the PCIe bridge's node, as a
+`device` master beside its other bus masters, and its handover is
+`stopped` only while a research record holding the evidence below binds
+it to the loader identity of the build. What an unknown handover admits
+in each kind of build, and how a firmware update or a change of
+configuration leaves such evidence binding nothing, is stated once, in
+[the handover at entry](design-platforms.md#dma); the worst a VL805 left running can do
 in a development build is corrupt the memory of a development machine.
 
 Until then this design claims nothing for the handover, and the
@@ -951,7 +951,7 @@ the boot firmware does use under this boot order, belongs to
 
 **What establishes the handover** is evidence for the time before the
 kernel's first instruction, which nothing erXos runs after it can
-observe. Two pieces, for each firmware release the board port supports:
+observe. Two pieces, for each loader identity the board port supports:
 
 1. **The firmware's documented behaviour.** Raspberry Pi's own
    documentation of the boot firmware and the EEPROM bootloader at the
@@ -979,10 +979,14 @@ observe. Two pieces, for each firmware release the board port supports:
    adds nothing to the kernel.
 
 (1) speaks for the time before entry and (2) shows that the board in
-hand matches it; with both recorded in one research record, the Pi 4's
-platform record marks the VL805's entry `stopped`, naming that record
-and the loader release it covers. Without (1), or with (2) refuting it,
-the entry stays `unknown`, and a release for the Pi 4 then
+hand matches it. With both recorded in one research record, that record
+carries a `stopped` evidence block naming the VL805's entry, its path,
+the loader identity of the build the board port installs and the
+headings of (1) and (2), and states that the reading's `config.txt`
+differs from that build's by the JTAG pins alone, and why that leaves the handover as it is
+([The handover at entry](design-platforms.md#dma)). Without (1), or
+with (2) refuting it, the record carries no block, the handover stays
+`unknown`, and a release for the Pi 4 then
 needs a stop before kernel entry, a first stage that resets the VL805
 and waits out its drain, which this design does not define.
 

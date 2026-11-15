@@ -1979,11 +1979,15 @@ nothing: which trusted screen it brings up, a
 login or a lock, is the login design's ([Risks and
 decisions](#risks-and-decisions), 14).
 
-After every change of the table, `erx_winfs` hands `erx_screen` the
-**layout**: the shown windows in stacking order, each with its window
-process, its rectangle and its decorations from `decorate/3`. The layout
-is derived from the table, so `erx_screen` keeps nothing of it that it
-could not ask for again. A window whose rectangle changed is told so by
+The **layout** is the shown windows in stacking order, each with its
+window process, its rectangle and its decorations from `decorate/3`, a
+function of the table and the policy's state together. After every call
+of the policy and every change of the table, `erx_winfs` derives the
+layout from both and hands it to `erx_screen` when it differs from the
+one it last handed, so a pick that changes no table, a click on a window
+that is already topmost, still moves the border with the keyboard. The
+layout is derived, so `erx_screen` keeps nothing of it that it could
+not ask for again. A window whose rectangle changed is told so by
 `erx_winfs` and reports the new rectangle in `wctl`; when its size
 changed, it sets `resized`, and its client, at the `r` record, draws at
 the new size and presents. Until that present the window shows its last
@@ -3776,8 +3780,11 @@ at 1920 by 1080, so that second allocation would be refused with
 `enomem`. `open(Display, #{buffer => none})` makes the window as any
 `open` does and allocates no range, so the window holds none and its
 end frees none; the widget server opens `erx_ui_lvgl`'s window so.
-`info/1` answers the handle's `peer`, `rect` and `chan`, from which the
-renderer sizes the program's buffer, and `present(Window, Buffer,
+`info/1` answers the handle's `peer`, `rect`, `chan` and `screen`, the
+screen's rectangle as `open/2` read it from `screen` before the
+`mkdir`, by which the renderer sizes the program's buffer, as every
+window's buffer is sized ([Windows and buffers](#windows-and-buffers)),
+and `present(Window, Buffer,
 Rects)` presents rectangles of `Buffer`, a `buffer()` of [Windows and
 buffers](#windows-and-buffers): a range's offset in the client's area
 and the width and height its frame was drawn at. `present/2` is
@@ -3790,9 +3797,10 @@ The display checks a `present/3` as any present, against the client's
 area and never against a range, since it does not see the allocator
 ([The window tree](#the-window-tree)), and clips the buffer to the
 window. Keeping a present inside its range is the client's:
-`erx_ui_lvgl` asks for the program's buffer at the window's size when it
-starts the program, keeps that size, writes each `screen` record at the
-window's size clipped to it, as `resized/1` clips an image, and presents
+`erx_ui_lvgl` asks for the program's buffer at the size of `info/1`'s
+`screen` when it starts the program, keeps that size, writes each
+`screen` record at the window's size clipped to it, as `resized/1`
+clips an image, and presents
 a report only at the last `screen` record's size (`erx_ui_lvgl_core`),
 so no present names a byte past the range and the program never draws
 past its mapping. The window's holder is the widget server; the range is
@@ -4021,7 +4029,7 @@ at a terminal that declares `links`.
 | a window's widget server would number a node past 2^32 - 1 | the window ends; the application receives `{ui_down, Window, limit}` | the application opens a new window |
 | the LVGL program exits | the widget server ends the window and the application receives `{ui_down, Window, renderer_down}`; the session logs the exit record, as for any of its programs | the application reopens |
 | the LVGL program reports a rectangle outside the size it names, or a second report before the first is answered | `erx_ui_lvgl` stops the program and logs the report's position, and the application receives `{ui_down, Window, renderer_down}` | the application reopens |
-| the window grows past the buffer the program maps, which the handler allocated at the screen's size before the screen grew | the program refuses the `screen` record and exits, and the application receives `{ui_down, Window, renderer_down}`; `erx_ui_lvgl` does not clamp the size | the application reopens, and the new program's buffer has the new screen's size |
+| the window grows past the buffer the program maps, which the handler allocated at the screen's size before the screen grew | `erx_ui_lvgl` writes the `screen` record clipped to the buffer's size, the program draws that much, and the window shows the background beyond it | the application reopens, and the new program's buffer has the new screen's size |
 | the LVGL program writes outside its buffer | the write faults in the program's own sub-space, which holds no other page of the pixel area; its exit is the row above | the application reopens |
 | an input device stops | its driver restarts and resets it; the router takes the old process's end as its source's end and sends an up for every key and touch it held, to the window each down went to, and releases its buttons | events resume, and no key stays held or repeats |
 | an input device reports dropped events (`SYN_DROPPED`) | its driver discards the update in progress and sends `release`, which the router handles as above | a key still pressed is pressed again to be seen |
@@ -4522,7 +4530,11 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   policy, keys typed at a window the user clicked keep reaching it while
   a second client makes a window, raises it with `top`, and hides and
   shows it; the second client's `kbd` reads nothing, where a seeded
-  policy that picks each new window fails it. The menu, drawn as
+  policy that picks each new window fails it. With window A current
+  and window B topmost, a click on B moves the border on the screen and
+  the next key to B together, where a seeded `erx_winfs` that hands
+  over the layout only when the table changes leaves the border on A
+  while the key reaches B. The menu, drawn as
   an overlay, lies above every window and reaches the screen only
   through `erx_screen:overlay/2`.
 * **The input router.** `erx_input` is a pure state machine and is
@@ -4596,7 +4608,12 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
 * **A window over a lent range.** An `erx_ui_lvgl` window at 1920 by
   1080 in the default pixel area of 8 MiB shows the program's first
   frame, where a seeded `open/2` that allocates a buffer despite
-  `buffer => none` fails the program's start with `enomem`. After the
+  `buffer => none` fails the program's start with `enomem`. Under the
+  overlapping policy, an `erx_ui_lvgl` window that `new` places smaller
+  than the screen and that is then resized to the whole screen, which
+  has not changed, shows the program's frames at the screen's size,
+  where a seeded renderer that asks for the program's buffer at the
+  window's rectangle clips them to the first placement. After the
   screen grows past the size the program's buffer was allocated at, the
   program receives a `screen` record clipped to that size and keeps
   running, where a seeded renderer that writes the window's unclipped
