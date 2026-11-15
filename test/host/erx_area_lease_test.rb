@@ -79,7 +79,7 @@ class ErxAreaLeaseTest < Minitest::Test
                  anchor: '{ok, #range{owner = Owner, live = true} = Range}', replacement: '{ok, #range{live = true} = Range}'),
     'an allocator that refuses a range with a lease outstanding' =>
       Mutant.new(file: PIXELS_CORE, catching_case: 'lend_waits_for_the_last_return_test',
-                 anchor: '{store(Core, Start, Range#range{waiting = From}), Refused};',
+                 anchor: '{store(Core, Start, Range#range{waiting = {From, Holder}}), refused(Earlier)};',
                  replacement: '{Core, [{reply, From, {error, einval}}]};'),
     'an allocator that skips the zeroing' =>
       Mutant.new(file: PIXELS, catching_case: 'reuse_is_zeroed_test',

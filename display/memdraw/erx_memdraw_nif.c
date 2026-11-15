@@ -22,6 +22,7 @@
 #endif
 #include "erl_nif.h"
 
+#include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
 
@@ -51,7 +52,25 @@ static ErlNifResourceType *image_type;
  */
 bool erx_area_stand_in_load(ErlNifEnv *env);
 ERL_NIF_TERM erx_area_stand_in_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[]);
+
+/*
+ * The images made and not yet destroyed, which a test reads where erXos
+ * reads the session's budget (test_images/0).
+ */
+static atomic_long live_images;
 #endif
+
+/* An image made (+1) or destroyed (-1), counted only in a test's build. */
+static void
+count_image(long delta)
+{
+#ifdef ERX_MEMDRAW_LOADABLE
+	atomic_fetch_add(&live_images, delta);
+#else
+	(void)delta;
+#endif
+}
+
 static ERL_NIF_TERM atom_ok, atom_error, atom_einval, atom_enomem, atom_none, atom_dst, atom_opaque, atom_true,
     atom_false, atom_fill;
 
@@ -61,8 +80,10 @@ image_dtor(ErlNifEnv *env, void *object)
 	image_res_t *res = object;
 
 	(void)env;
-	if (res->image != NULL)
+	if (res->image != NULL) {
 		erx_memdraw_free(res->image);
+		count_image(-1);
+	}
 	/* Only now may the area go: nothing refers to its pixels any more. */
 	if (res->area != NULL)
 		enif_release_resource(res->area);
@@ -205,6 +226,8 @@ alloc_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	res->area = NULL;
 	res->readonly = false;
 	erx_memdraw_status_t status = erx_memdraw_alloc(&res->image, chan, r, clipr, repl, color);
+	if (res->image != NULL)
+		count_image(1);
 	ERL_NIF_TERM term = enif_make_resource(env, res);
 	enif_release_resource(res);
 	return status == ERX_MEMDRAW_DONE ? enif_make_tuple2(env, atom_ok, term) : error(env, status);
@@ -258,6 +281,8 @@ wrap_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	res->readonly = !area.writable;
 	erx_memdraw_status_t status =
 	    erx_memdraw_wrap(&res->image, chan, r, area.base + offset, area.bytes - (size_t)offset);
+	if (res->image != NULL)
+		count_image(1);
 	if (status == ERX_MEMDRAW_DONE && area.resource != NULL) {
 		enif_keep_resource(area.resource);
 		res->area = area.resource;
@@ -606,6 +631,17 @@ load(ErlNifEnv *env, void **priv, ERL_NIF_TERM info)
 	return 0;
 }
 
+#ifdef ERX_MEMDRAW_LOADABLE
+/* test_images() -> Count: the images alive in the emulator. */
+static ERL_NIF_TERM
+test_images_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	(void)argc;
+	(void)argv;
+	return enif_make_long(env, atomic_load(&live_images));
+}
+#endif
+
 static ErlNifFunc functions[] = {
 	{ "alloc", 5, alloc_nif, 0 },
 	{ "wrap", 4, wrap_nif, 0 },
@@ -624,6 +660,7 @@ static ErlNifFunc functions[] = {
 #endif
 #ifdef ERX_MEMDRAW_LOADABLE
 	{ "test_area", 2, erx_area_stand_in_nif, 0 },
+	{ "test_images", 0, test_images_nif, 0 },
 #endif
 };
 

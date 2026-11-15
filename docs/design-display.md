@@ -593,7 +593,9 @@ of whole pages of that display's area, zeroed, `{error, enomem}` when no
 free run is long enough, or `{error, none}` when the domain has no area
 to `Peer`. The range belongs to
 the process that asked, which `erx_pixels` monitors, and its owner may
-lend it whole to one program at a time with `lend(Peer, Offset)` (below). It
+lend it whole to one holder at a time: to a program it starts, with
+`lend(Peer, Offset)`, or to the draw connection that draws in its
+window, which asks with `lend(Peer, Offset, Owner)` (below). It
 goes back to the free list once nothing holds it: its owner has exited
 and no lease of it is outstanding. It goes back in no other way: there
 is no `free`. So a range is reused only once its owner is gone and no
@@ -603,7 +605,11 @@ client can touch the range once its leases are returned:
 
 * a window's buffer for drawing in the runtime belongs to the window's
   holder, the process that opened it with `erx_win` (a widget server, a
-  terminal, a draw connection), whose exit ends the window too;
+  terminal, a program's handler), whose exit ends the window too; a draw
+  connection on the window draws into the buffer under a lease it holds
+  until it ends ([The draw connection](#the-draw-connection)), so the
+  range waits for the connection's end as it waits for a program's
+  teardown;
 * a buffer mapped into a program belongs to the program's handler,
   which allocates it when a session process names it among a program's
   descriptors as `{N, {buffer, Peer, Bytes}}` and answers the starter its
@@ -669,8 +675,10 @@ the slot of the area's object that the area's resource records from
 over the area does (`erx_area.h`), so the connection agent, which
 unmaps the area and answers that the connection is unmapped only once
 the resource's last reference is gone, waits for the program's mapping
-as it waits for an image's. A lease has a **holder**, the process the
-range belongs to, and is in one of three states:
+as it waits for an image's. A lease has a **holder**, the process that
+asked for it: the range's owner, for a program it starts, or a draw
+connection, for the buffer of the window it draws in, whose owner is the
+window's holder. A lease is in one of three states:
 
 | State | Who has it | Leaves it |
 | --- | --- | --- |
@@ -712,7 +720,18 @@ The steps, each in the one place that serializes it:
    lease when that one's return arrives, so a handler that starts a
    program again in the same buffer waits for the last program's
    teardown instead of racing it. It answers `{ok, Lease, Pages}`, the
-   lease's number and the range's pages. Only `erx_pixels` calls
+   lease's number and the range's pages. A draw connection lends with
+   `lend(Peer, Offset, Owner)`, naming the window's holder as the
+   range's owner: the allocator checks that `Offset` starts a range of
+   `Owner`'s and makes the lease with the caller as its holder. While a
+   lease of the range is outstanding, the owner's own lend waits for its
+   return only when the owner itself holds it (a program's lease,
+   returned at the program's teardown); any other lend, a draw
+   connection's or the owner's while a connection holds the lease, is
+   refused with `EBUSY`, since its wait could outlast the owner. Neither
+   the caller a call names nor the owner a lend names is an authority,
+   since every process of the domain can open the area itself; a lease
+   is taken only by its holder's own port. Only `erx_pixels` calls
    `erx_area:lend/5`, `erx_area:unlend/1` and `erx_area:zero/3`, so every lease is a whole
    range of one owner, and the allocator knows of every lease before it
    can be returned.
@@ -877,7 +896,9 @@ local pid and `Tag` a reference: anything else, or an `Area` that is no
 area, is `badarg`, as
 `map/4`'s arguments are (`erx_area_nif.c`). `erx_pixels`'s
 `lend(Peer, Offset)` answers `{error, einval}` for an `Offset` that starts no
-range of the caller's in `Peer`'s area; for a caller that exited while it waited it
+range of the caller's in `Peer`'s area, and `lend(Peer, Offset, Owner)` for one
+that starts no range of `Owner`'s; a lend that may not wait (Lend, above)
+answers `{error, ebusy}`; for a caller that exited while it waited it
 makes no lease, and its own monitor frees the range as any owner's exit
 does. `erx_area:unlend/1` answers `ok` whatever the lease's state, and
 `badarg` for a term that is no integer from 1 to 2^64 - 1.
@@ -2510,13 +2531,45 @@ client loaded, and no domain renders text or reads a font for another.
 A flush `v` presents: the connection writes the window's `ctl` a
 present of its buffer with the dirty rectangles, waits for the answer
 and clears them, so a client that draws faster than the device shows
-waits in its flush, as it waits in any write. A connection ends with
-its window, or with the program or process it was opened for; its
-images are resources of its process, and the runtime drops them when it
-ends, however it ends.
+waits in its flush, as it waits in any write. Only image 0's rectangles
+are dirty, a `v` with none presents nothing, and a present that fails
+fails the write and keeps them for the next `v`. Its images are
+resources of its process, and the runtime drops them when it ends,
+however it ends. An `f` drops an image at once: the process collects
+its garbage before it takes its next message, so the memory goes with
+the charge.
+
+**The connection and its window.** `erx_draw_conn:start/1` starts a
+connection on a window its caller holds, as a temporary child of the
+client's `erx_win_sup`, after the allocator, so it ends before it. The
+connection ends with its starter, the window's holder, which it monitors
+and whose exit ends the window too. It draws into the window's buffer
+under a lease of the buffer's range that it takes from `erx_pixels`
+before it makes image 0 and holds until it ends ([The pixel
+area](#the-pixel-area)). The holder's exit does not return that lease,
+so the range is zeroed and handed to another window only once the
+connection has ended, never while a write the holder's end interrupted
+still draws into it. A lend names a range its starter owns or is
+refused, so a connection starts only on a window its starter holds. A
+range has one lease at a time, so a window has one connection at a time:
+a second start on it is refused with `EBUSY` until the first connection
+has ended and its lease is back. A window that ends while its holder
+lives, its directory removed or its display lost, leaves the connection
+running, each present failing, until the holder exits.
+
+**Failures after the plan.** A planned operation can fail only for want
+of memory, or, for a `v`, in its present. A draw, shape, `r` or present
+that fails fails the write once the rest of the write is applied; a `b`
+that cannot allocate ends the connection, since its images are no longer
+those its core holds, and the client opens another. The connection
+answers such a write apart from a refused one, which applied nothing:
+`erx_draw` answers the first `{incomplete, Errno, Draw}` and the second
+`{error, Errno, Draw}`, and a program's write to `draw` fails with the
+errno either way.
 
 **Reading pixels.** An `r` message queues the rectangle's bytes for the
-next read of `draw`, at most 64 KiB at a time, as Plan 9 does.
+next read of `draw`, at most 64 KiB at a time, as Plan 9 does; each read
+takes the next of them, and a read with none left answers no bytes.
 
 ### The terminal
 
@@ -3849,9 +3902,10 @@ the lease is back. Each end follows from those two owners:
 
 `erx_draw` draws with Plan 9's messages: `open(Window)` starts a draw
 connection on a window; `alloc/4`, `draw/6`, `line/6`, `string/5`,
-`load/3`, `flush/1` and the rest encode messages with the generated
+`load/4`, `flush/1` and the rest encode messages with the generated
 encoder and hand them to the connection, batching until a flush or
-64 KiB. `erx_font` reads a Plan 9 subfont file and loads its glyphs into
+64 KiB, one write's most; `load/4` sends pixels too many for one write
+in bands of whole rows, as libdraw's `loadimage` does. `erx_font` reads a Plan 9 subfont file and loads its glyphs into
 a font cache image with `i` and `l`, so a client's text is a sequence of
 `s` messages; it is a parser of file data and has a fuzz target.
 

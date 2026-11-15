@@ -7,15 +7,15 @@ A client domain's one allocator of its pixel areas (docs/design-display.md,
 "The pixel area", A client's buffers), registered locally as `erx_pixels`.
 For each display whose area it has open it keeps an `erx_pixels_core` and
 performs that core's effects: it zeroes a range before the range rejoins the
-free list, makes each lease of a range for the range's owner, and answers the
-lends that waited.
+free list, makes each lease of a range for the process that asked for it,
+and answers the lends that waited.
 
 A range belongs to the process that allocated it, which this process
 monitors, and goes back to the free list once its owner has exited and no
 lease of it is outstanding; there is no `free`. An area is opened at the
 first `alloc/2` that names its display, and let go once no range of it is
-live, so a lost connection's end waits for its last program's return and for
-nothing else.
+live, so a lost connection's end waits for its last program's and its last
+draw connection's return and for nothing else.
 
 The allocator is never restarted over an area: its state is the only record
 of which ranges programs still map. `erx_win_sup` starts it as a
@@ -25,12 +25,13 @@ has new, zeroed areas.
 Every request is checked on arrival, whoever sends it, and a `'DOWN'` counts
 only with the reference of this process's own monitor, so nothing another
 process sends ends this one or frees a live owner's range. The caller named in
-a call's `From` is taken as given: that check is not an authority, and a lease
-made for an impersonated owner can be taken only by that owner's own port.
+a call's `From`, and the owner a lend names, are taken as given: neither is an
+authority, as every process of the domain can open the area itself, and a
+lease can be taken only by its holder's own port.
 """.
 -behaviour(gen_server).
 
--export([start_link/0, alloc/2, lend/2, unlend/1]).
+-export([start_link/0, alloc/2, lend/2, lend/3, unlend/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, handle_continue/2]).
 
 -define(MAX_U64, 16#ffffffffffffffff).
@@ -59,19 +60,32 @@ alloc(Peer, Bytes) when is_integer(Peer), Peer > 0, is_integer(Bytes), Bytes > 0
     gen_server:call(?MODULE, {alloc, Peer, Bytes}, infinity).
 
 -doc """
-A lease of the caller's whole range at Offset of Peer's area, with the caller
-as its holder, for `erx_program:start/1`: `{ok, Lease, Pages}`. While an
-earlier lease of the range is outstanding the call waits for its return.
-`{error, einval}` for an Offset that starts no range of the caller's in
-Peer's area.
+A lease of the caller's whole range at Offset of Peer's area, held by the
+caller, for `erx_program:start/1`: `lend(Peer, Offset, self())`.
 """.
--spec lend(pos_integer(), non_neg_integer()) -> {ok, pos_integer(), pos_integer()} | {error, einval | noproc | enomem}.
-lend(Peer, Offset) when is_integer(Peer), Peer > 0, is_integer(Offset), Offset >= 0 ->
-    gen_server:call(?MODULE, {lend, Peer, Offset}, infinity).
+-spec lend(pos_integer(), non_neg_integer()) ->
+          {ok, pos_integer(), pos_integer()} | {error, einval | ebusy | noproc | enomem}.
+lend(Peer, Offset) ->
+    lend(Peer, Offset, self()).
 
 -doc """
-Gives back Lease, a lease of the caller's, if no program port has taken it;
-does nothing to one taken, returned or not the caller's.
+A lease of Owner's whole range at Offset of Peer's area, held by the caller:
+`{ok, Lease, Pages}`. The range stays out of the free list until the lease is
+returned, at the holder's exit or its `unlend/1`, or once a port of the
+holder took it, at that program's teardown, whenever its owner exits. While
+an earlier lease of the range is outstanding, the owner's own lend waits for
+its return only when the owner itself holds it (a program's lease, returned
+at the program's teardown); any other lend answers `{error, ebusy}`. `{error, einval}` for an Offset that starts no range of
+Owner's in Peer's area.
+""".
+-spec lend(pos_integer(), non_neg_integer(), pid()) ->
+          {ok, pos_integer(), pos_integer()} | {error, einval | ebusy | noproc | enomem}.
+lend(Peer, Offset, Owner) when is_integer(Peer), Peer > 0, is_integer(Offset), Offset >= 0, is_pid(Owner) ->
+    gen_server:call(?MODULE, {lend, Peer, Offset, Owner}, infinity).
+
+-doc """
+Gives back Lease, a lease the caller holds, if no program port has taken it;
+does nothing to one taken, returned or held by another.
 """.
 -spec unlend(pos_integer()) -> ok.
 unlend(Lease) when is_integer(Lease), Lease > 0, Lease =< ?MAX_U64 ->
@@ -88,11 +102,11 @@ handle_call({alloc, Peer, Bytes}, {Owner, _}, State) when ?IS_PEER(Peer), is_int
         none ->
             {reply, {error, none}, State}
     end;
-handle_call({lend, Peer, Offset}, {Owner, _} = From, #state{areas = Areas} = State)
-  when ?IS_PEER(Peer), is_integer(Offset), Offset >= 0 ->
+handle_call({lend, Peer, Offset, Owner}, {Holder, _} = From, #state{areas = Areas} = State)
+  when ?IS_PEER(Peer), is_integer(Offset), Offset >= 0, is_pid(Owner) ->
     case maps:find(Peer, Areas) of
         {ok, {Area, Core}} ->
-            {noreply, perform(Peer, Area, erx_pixels_core:lend(Core, Owner, Offset, From), State)};
+            {noreply, perform(Peer, Area, erx_pixels_core:lend(Core, Owner, Offset, Holder, From), State)};
         error ->
             {reply, {error, einval}, State}
     end;
@@ -138,7 +152,7 @@ handle_continue(collect, State) ->
     erlang:garbage_collect(),
     {noreply, State}.
 
-%% The owner of the range Lease is an outstanding lease of, or error.
+%% The holder of Lease, an outstanding lease, or error.
 holder(Lease, #state{areas = Areas, leases = Leases}) ->
     case maps:find(Lease, Leases) of
         {ok, {Peer, _Tag}} -> erx_pixels_core:holder(element(2, maps:get(Peer, Areas)), Lease);
@@ -184,9 +198,9 @@ effect({reply, From, Reply}, _Peer, _Area, Core, State) ->
 effect({zero, Offset, Pages}, _Peer, Area, Core, State) ->
     ok = erx_area:zero(Area, Offset, Pages),
     {erx_pixels_core:zeroed(Core, Offset, Pages), State};
-effect({lend, Offset, Pages, Owner}, Peer, Area, Core, #state{leases = Leases} = State) ->
+effect({lend, Offset, Pages, Holder}, Peer, Area, Core, #state{leases = Leases} = State) ->
     Tag = make_ref(),
-    Answer = erx_area:lend(Area, Offset, Pages, Owner, Tag),
+    Answer = erx_area:lend(Area, Offset, Pages, Holder, Tag),
     Kept = case Answer of
                {ok, Lease} -> State#state{leases = Leases#{Lease => {Peer, Tag}}};
                {error, _} -> State

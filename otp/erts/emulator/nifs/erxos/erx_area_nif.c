@@ -73,7 +73,7 @@ struct erx_area_lease {
 	area_t *area;		/* kept from the lend until the lease's destructor */
 	uint64_t offset;	/* the range, checked against the area by the lend */
 	uint64_t pages;
-	ErlNifPid holder;	/* the range's owner, whose port alone takes the lease */
+	ErlNifPid holder;	/* who asked for it; its port alone takes the lease */
 	ErlNifPid lender;	/* erx_pixels, sent {erx_area_returned, Tag, Number} */
 	ErlNifEnv *tag_env;	/* keeps tag for the lease's life; freed by lease_dtor */
 	ERL_NIF_TERM tag;	/* the lender's reference for this lease, set by the lend */

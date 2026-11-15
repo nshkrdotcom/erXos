@@ -5,7 +5,9 @@
 -moduledoc """
 The pure state of `erx_pixels` over one pixel area (docs/design-display.md,
 "The pixel area", The allocator's core): which whole pages of the area are
-free and which ranges are live, each with its owner and its lease.
+free and which ranges are live, each with its owner and its lease, and the
+lease's holder, the process that asked for it: the owner, for a program it
+starts, or a draw connection on the owner's window.
 
 The free list is a list of disjoint runs `{Start, Pages}`, in pages, in order
 of `Start`, no two of them adjacent. A live range is in one of three states:
@@ -24,8 +26,8 @@ Each event answers the next state and the effects to perform, in order:
 
 * `{zero, Offset, Pages}`: store zero over the range with the area's `zero/3`,
   then call `zeroed/3`;
-* `{lend, Offset, Pages, Owner}`: make a lease of the range for `Owner` with
-  the area's `lend/5`, then call `lent/3` with its answer;
+* `{lend, Offset, Pages, Holder}`: make a lease of the range held by `Holder`
+  with the area's `lend/5`, then call `lent/3` with its answer;
 * `{reply, From, Reply}`: answer a `lend` call.
 
 The process performs each effect, and the effects the follow-up call answers,
@@ -35,20 +37,22 @@ interface, multiples of the page size of abi/erx_abi.txt.
 
 -include("generated/erx_abi.hrl").
 
--export([new/1, alloc/3, lend/4, lent/3, returned/2, owner_down/2, zeroed/3]).
+-export([new/1, alloc/3, lend/5, lent/3, returned/2, owner_down/2, zeroed/3]).
 -export([holder/2, idle/1, ranges/1, free/1]).
 -export_type([core/0, effect/0]).
 
 -type lease() :: pos_integer().
 -type from() :: term().
 
-%% A live range. waiting is the owner's one lend that waits for the outstanding
-%% lease's return, or that waits for lent/3 while its lease is being made.
+%% A live range. holder holds its outstanding lease. waiting is the one lend,
+%% with the holder it names, that waits for the outstanding lease's return, or
+%% that waits for lent/3 while its lease is being made.
 -record(range, {pages :: pos_integer(),
                 owner :: pid(),
                 live = true :: boolean(),
                 lease = none :: none | lease(),
-                waiting = none :: none | from()}).
+                holder = none :: none | pid(),
+                waiting = none :: none | {from(), pid()}}).
 
 %% pages: the area's size. free: the free runs, by start. ranges: the live
 %% ranges, by start page. zeroing: runs given a zero effect and not yet zeroed.
@@ -87,22 +91,25 @@ alloc(#core{free = Free, ranges = Ranges} = Core, Owner, Bytes) when is_integer(
     end.
 
 -doc """
-Owner's lend of the range at Offset, a call answered through From. A range
-Owner does not own at exactly that offset is refused with `einval`. With no
-lease outstanding the lease is made now; with one outstanding the call waits
-for its return. A range has at most one waiting lend: a later one takes the
-place of the earlier, which is refused, since the owner, blocked in its call,
-can have made a second only after giving up the first, as with
-`gen_server:send_request/2`.
+A lend of Owner's range at Offset to Holder, a call answered through From. A
+range Owner does not own at exactly that offset is refused with `einval`.
+With no lease outstanding the lease is made now. With one outstanding, the
+owner's own lend waits for its return only when the owner itself holds that
+lease, a program's, returned at the program's teardown; any other lend is
+refused with `ebusy`, since it would wait on a holder that may outlive the
+owner. A range has at most one waiting lend: a later one of the owner's
+takes the place of the earlier, which is refused, since the owner, blocked
+in its call, can have made a second only after giving up the first.
 """.
--spec lend(core(), pid(), non_neg_integer(), from()) -> {core(), [effect()]}.
-lend(#core{ranges = Ranges} = Core, Owner, Offset, From) ->
+-spec lend(core(), pid(), non_neg_integer(), pid(), from()) -> {core(), [effect()]}.
+lend(#core{ranges = Ranges} = Core, Owner, Offset, Holder, From) ->
     case owned_range(Ranges, Owner, Offset) of
         {ok, Start, #range{lease = none, waiting = none, pages = Pages} = Range} ->
-            {store(Core, Start, Range#range{waiting = From}), [{lend, Offset, Pages, Owner}]};
-        {ok, Start, #range{waiting = Earlier} = Range} ->
-            Refused = [{reply, Earlier, {error, einval}} || Earlier =/= none],
-            {store(Core, Start, Range#range{waiting = From}), Refused};
+            {store(Core, Start, Range#range{waiting = {From, Holder}}), [{lend, Offset, Pages, Holder}]};
+        {ok, Start, #range{holder = Owner, waiting = Earlier} = Range} when Holder =:= Owner ->
+            {store(Core, Start, Range#range{waiting = {From, Holder}}), refused(Earlier)};
+        {ok, _Start, #range{}} ->
+            {Core, [{reply, From, {error, ebusy}}]};
         error ->
             {Core, [{reply, From, {error, einval}}]}
     end.
@@ -115,17 +122,17 @@ lease was made and the call is answered with the error.
 -spec lent(core(), non_neg_integer(), {ok, lease()} | {error, term()}) -> {core(), [effect()]}.
 lent(#core{ranges = Ranges} = Core, Offset, Answer) ->
     Start = Offset div ?PAGE,
-    #range{waiting = From, pages = Pages} = Range = maps:get(Start, Ranges),
+    #range{waiting = {From, Holder}, pages = Pages} = Range = maps:get(Start, Ranges),
     case Answer of
         {ok, Lease} ->
-            {store(Core, Start, Range#range{lease = Lease, waiting = none}),
+            {store(Core, Start, Range#range{lease = Lease, holder = Holder, waiting = none}),
              [{reply, From, {ok, Lease, Pages}}]};
         {error, _} = Error ->
             {store(Core, Start, Range#range{waiting = none}), [{reply, From, Error}]}
     end.
 
 -doc """
-A lease's return. A lent range is owned again, unless its owner's lend waits,
+A lease's return. A lent range is owned again, unless a lend of it waits,
 which then makes the next lease; an orphaned range is released. A lease this
 area does not know changes nothing.
 """.
@@ -135,9 +142,9 @@ returned(#core{ranges = Ranges} = Core, Lease) ->
         [{Start, #range{live = false, pages = Pages}}] ->
             release(Start, Pages, Core#core{ranges = maps:remove(Start, Ranges)});
         [{Start, #range{waiting = none} = Range}] ->
-            {store(Core, Start, Range#range{lease = none}), []};
-        [{Start, #range{owner = Owner, pages = Pages} = Range}] ->
-            {store(Core, Start, Range#range{lease = none}), [{lend, Start * ?PAGE, Pages, Owner}]};
+            {store(Core, Start, Range#range{lease = none, holder = none}), []};
+        [{Start, #range{waiting = {_From, Holder}, pages = Pages} = Range}] ->
+            {store(Core, Start, Range#range{lease = none, holder = none}), [{lend, Start * ?PAGE, Pages, Holder}]};
         [] ->
             {Core, []}
     end.
@@ -157,6 +164,10 @@ owner_gone({Start, #range{lease = none, pages = Pages}}, {#core{ranges = Ranges}
 owner_gone({Start, Range}, {Core, Effects}) ->
     {store(Core, Start, Range#range{live = false, waiting = none}), Effects}.
 
+%% The answer to the owner's earlier lend that a later one replaced, if one waited.
+refused(none) -> [];
+refused({From, _Holder}) -> [{reply, From, {error, einval}}].
+
 %% Zero, then join: a released run is held aside until zeroed/3.
 release(Start, Pages, #core{zeroing = Zeroing} = Core) ->
     {Core#core{zeroing = Zeroing#{Start => Pages}}, [{zero, Start * ?PAGE, Pages}]}.
@@ -173,11 +184,11 @@ zeroed(#core{zeroing = Zeroing, free = Free} = Core, Offset, Pages) ->
     Pages = maps:get(Start, Zeroing),
     Core#core{zeroing = maps:remove(Start, Zeroing), free = join({Start, Pages}, Free)}.
 
--doc "The owner of the range that Lease, outstanding, is a lease of, or `error`.".
+-doc "The holder of Lease, an outstanding lease, or `error`.".
 -spec holder(core(), lease()) -> {ok, pid()} | error.
 holder(#core{ranges = Ranges}, Lease) ->
-    case [Owner || _ := #range{lease = L, owner = Owner} <- Ranges, L =:= Lease] of
-        [Owner] -> {ok, Owner};
+    case [Holder || _ := #range{lease = L, holder = Holder} <- Ranges, L =:= Lease] of
+        [Holder] -> {ok, Holder};
         [] -> error
     end.
 

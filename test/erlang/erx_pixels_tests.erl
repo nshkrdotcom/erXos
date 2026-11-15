@@ -127,7 +127,7 @@ raw_requests_are_refused_test() ->
     with(fun() ->
         Pixels = whereis(erx_pixels),
         [?assertEqual({error, badarg}, gen_server:call(erx_pixels, R))
-         || R <- [foo, {alloc, 7, 0}, {alloc, foo, 1}, {lend, 7, -1}, {unlend, 0}]],
+         || R <- [foo, {alloc, 7, 0}, {alloc, foo, 1}, {lend, 7, -1, self()}, {lend, 7, 0, foo}, {unlend, 0}]],
         A = client(),
         {ok, 0} = run(A, fun() -> erx_pixels:alloc(7, ?PAGE) end),
         erx_pixels ! {'DOWN', make_ref(), process, pid(A), forged},
@@ -226,6 +226,26 @@ orphaned_range_stays_out_until_returned_test() ->
         ok = erx_area:give(Lease),
         ?assert(eventually(fun() -> run(B, fun() -> erx_pixels:alloc(8, 1) end) end, {ok, 0})),
         stop(B)
+    end).
+
+%% A draw connection's lease: B holds a lease of A's range, which outlives A until B
+%% exits; only the holder gives a lease back, a lend naming a range Owner does not own
+%% is refused, and a second holder's lend is refused at once, not kept waiting.
+a_lease_held_for_an_owner_outlives_it_test() ->
+    with(fun() ->
+        A = client(),
+        B = client(),
+        C = client(),
+        {ok, 0} = run(A, fun() -> erx_pixels:alloc(8, ?PAGES * ?PAGE) end),
+        ?assertEqual({error, einval}, run(B, fun() -> erx_pixels:lend(8, 0, pid(C)) end)),
+        {ok, Lease, ?PAGES} = run(B, fun() -> erx_pixels:lend(8, 0, pid(A)) end),
+        ?assertEqual({error, ebusy}, run(C, fun() -> erx_pixels:lend(8, 0, pid(A)) end)),
+        ?assertEqual(ok, run(A, fun() -> erx_pixels:unlend(Lease) end)),
+        stop(A),
+        ?assertEqual({error, enomem}, run(C, fun() -> erx_pixels:alloc(8, 1) end)),
+        stop(B),
+        ?assert(eventually(fun() -> run(C, fun() -> erx_pixels:alloc(8, 1) end) end, {ok, 0})),
+        stop(C)
     end).
 
 area_is_let_go_once_no_range_is_live_test() ->

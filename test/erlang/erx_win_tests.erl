@@ -15,15 +15,18 @@
 %% kbd reads a typed rune and label takes a write; the single policy refuses resize/2; an area with no room for
 %% a second buffer answers enomem and leaves no window behind; no grant answers none.
 %% A window opened with buffer => none over a full area allocates nothing, answers its
-%% peer, rectangle and channel, refuses image/1 and present/2, and presents a range of
-%% the area it does not own through present/3, at the range's own size after the screen
-%% shrinks past it; a present/3 in the area's last page is shown up to the area's last
-%% byte and refused a word past it.
+%% peer, rectangle and channel, refuses image/1, lease/2 and present/2, and presents a
+%% range of the area it does not own through present/3, at the range's own size after
+%% the screen shrinks past it; a present/3 in the area's last page is shown up to the
+%% area's last byte and refused a word past it.
+%%
+%% with/1 and flushed/0 are also the fixture of test/erlang/erx_draw_tests.erl, which
+%% opens draw connections under the erx_win_sup this fixture starts.
 
 -module(erx_win_tests).
 -include_lib("eunit/include/eunit.hrl").
 
--export([info/1, export/3]).
+-export([info/1, export/3, with/1, flushed/0]).
 
 -define(XRGB32, 16#68081828).
 -define(WIDTH, 8).
@@ -69,11 +72,11 @@ serve(Test, Info) ->
 
 %% The window system and screen over the driver model, a grant minted for ?SESSION over a
 %% stand-in area, installed where the stand-in erx:cap/1 finds it, and the client's
-%% allocator. The area is one page of the host's, 16 KiB on Apple's, which the stand-in
-%% maps whole: four of erXos's pages. The grant holds two windows, so a second window
+%% supervisor with its allocator. The area is one page of the host's, 16 KiB on Apple's,
+%% which the stand-in maps whole: four of erXos's pages. The grant holds two windows, so a second window
 %% is refused by the area, not by the windows quota.
 start() ->
-    _ = [kill(Pid) || Name <- [erx_screen, erx_winfs, erx_pixels, ?DRIVER], Pid <- [whereis(Name)],
+    _ = [kill(Pid) || Name <- [erx_screen, erx_winfs, erx_win_sup, erx_pixels, ?DRIVER], Pid <- [whereis(Name)],
                       is_pid(Pid)],
     Test = self(),
     {Driver, Image} = driver(),
@@ -84,15 +87,15 @@ start() ->
                                          area => fun erx_area:open/1, clients => own, provide => false,
                                          policy => {erx_wm_single, #{}}}),
     {ok, Screen} = erx_screen:start_link({?MODULE, ?DRIVER}),
-    {ok, Pixels} = gen_server:start({local, erx_pixels}, erx_pixels, [], []),
-    [true = unlink(P) || P <- [Winfs, Screen]],
+    {ok, Client} = erx_win_sup:start_link(),
+    [true = unlink(P) || P <- [Winfs, Screen, Client]],
     Tag = erlang:unique_integer([positive]),
     erx_winfs ! {erx_origin, ?SYSTEM,
                  {erx_facet_mint, Tag, ?SERVICE, ?SESSION, root, #{session => true, windows => 2}}},
     Grant = receive {minted, Tag, {ok, G}} -> G after ?WAIT -> error(no_mint) end,
     persistent_term:put({erx_stand_in, cap, ?SERVICE}, Grant),
     persistent_term:put({erx_stand_in, owner, Grant}, ?SESSION),
-    #{image => Image, grant => Grant, procs => [Pixels, Screen, Winfs, Driver]}.
+    #{image => Image, grant => Grant, procs => [Client, Screen, Winfs, Driver]}.
 
 stop(#{procs := Procs}) ->
     _ = [kill(P) || P <- Procs],
@@ -106,10 +109,12 @@ kill(Pid) ->
     exit(Pid, kill),
     receive {'DOWN', Ref, process, Pid, _} -> ok end.
 
+-doc false.
 with(Case) ->
     Fixture = start(),
     try Case(Fixture) after stop(Fixture) end.
 
+-doc false.
 flushed() ->
     receive {flushed, Rects} -> Rects after ?WAIT -> error(no_flush) end.
 
@@ -193,6 +198,7 @@ lent_range_test() ->
                                                                      code := Code}} =
             erx_win:info(Window),
         ?assertEqual({error, none}, erx_win:image(Window)),
+        ?assertEqual({error, none}, erx_win:lease(Window, self())),
         ?assertEqual({error, none}, erx_win:present(Window, [])),
         {ok, Area, _} = erx_area:open(?SESSION),
         {ok, Image} = erx_memdraw:wrap(Area, Range, {0, 0, ?WIDTH, ?HEIGHT}, Code),

@@ -52,10 +52,6 @@ everything. Entering the direct path compares with what the device shows,
 the screen image, so `erx_screen` pushes every rectangle it still owes the
 driver before it enters.
 
-`add_dirty/2` keeps a window's dirty list of at most 16 rectangles, which a
-seventeenth replaces by the bounding box of all of them, as Plan 9's
-`flushimage` does with one; `present/4` refuses a longer list.
-
 **Cost.** The tiling works in **bands**: the horizontal edges of the screen
 and of every window and decoration rectangle cut the screen into bands, and
 within a band a sweep from left to right over the rectangles that cross it
@@ -74,12 +70,9 @@ rectangles is refused with `{error, einval}`.
 
 -include("generated/erx_abi.hrl").
 
--export([new/3, layout/2, repaint/1, present/4, visible/2, tiles/1, path/1,
-         add_dirty/2]).
+-export([new/3, layout/2, repaint/1, present/4, visible/2, tiles/1, path/1]).
 -export_type([rect/0, color/0, window_id/0, entry/0, layout/0, source/0,
               tile/0, path/0, plan/0, state/0]).
-
--define(DIRTY_MAX, 16).
 
 -type coord() :: ?ERX_WINDOWS_COORD_MIN..?ERX_WINDOWS_COORD_MAX.
 -type rect() :: {X0 :: coord(), Y0 :: coord(), X1 :: coord(), Y1 :: coord()}.
@@ -213,20 +206,6 @@ tiles(#screen{tiles = Tiles}) -> Tiles.
 -doc "The path of the current layout: `copy`, or `{direct, Id}` for window `Id`.".
 -spec path(state()) -> path().
 path(#screen{path = Path}) -> Path.
-
--doc """
-Adds `Rect`, a rectangle that changed, to a dirty list, which holds
-at most 16 rectangles: a seventeenth replaces the list by the bounding box of
-all seventeen. An empty rectangle changes nothing.
-""".
--spec add_dirty(rect(), [rect()]) -> [rect()].
-add_dirty({_, _, _, _} = Rect, Dirty) when is_list(Dirty) ->
-    true = is_rect(Rect),
-    case is_empty(Rect) of
-        true -> Dirty;
-        false when length(Dirty) < ?DIRTY_MAX -> [Rect | Dirty];
-        false -> [lists:foldl(fun bounding_box/2, Rect, Dirty)]
-    end.
 
 %% The plan and state of Layout over a screen that holds Known, the bands it
 %% shows, or unknown.
@@ -410,9 +389,6 @@ is_empty({X0, Y0, X1, Y1}) -> X0 >= X1 orelse Y0 >= Y1.
 
 intersect({AX0, AY0, AX1, AY1}, {BX0, BY0, BX1, BY1}) ->
     {max(AX0, BX0), max(AY0, BY0), min(AX1, BX1), min(AY1, BY1)}.
-
-bounding_box({AX0, AY0, AX1, AY1}, {BX0, BY0, BX1, BY1}) ->
-    {min(AX0, BX0), min(AY0, BY0), max(AX1, BX1), max(AY1, BY1)}.
 
 %% The nonempty parts of Rects inside Rect.
 clip_region(Rects, Rect) ->

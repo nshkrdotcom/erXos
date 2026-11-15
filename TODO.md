@@ -881,7 +881,8 @@ it; git history is the record of completed work.
     `gen_server:send_request/2` and keeps only pending state (the newest layout, one waiting present per live window,
     dropped at the window's end); presents and `erx_memdraw:wrap/4` refuse an offset off a page boundary.
   * **The display domain**: the display side gains `erx_winfs`, `erx_window`, the
-    policies and `erx_wm_menu`, and the client side `erx_win`'s library, `erx_draw`, `erx_draw_conn`, `erx_font`,
+    policies and `erx_wm_menu`, and the client side `erx_win`'s library, `erx_draw`'s `string/5`, `erx_font`,
+    `erx_draw_conn`'s crash report scrubbing (its state is hidden, its stack trace and queued writes are not),
     `erx_term` and `erx_ui` with its servers and renderers (docs/design-display.md, "What runs where"). The G9 build
     check (`tools/lib/erx/display_release.rb`) reads module names in the display script's sources; the design's xref
     check over the display release's beams, with its refusal of calls that start a port or a sub-space, is not built.
@@ -1115,6 +1116,16 @@ it; git history is the record of completed work.
   window's first placement. Serve `screen` as the design gives it (`EIO` while there is no screen, `EACCES` when
   opened for writing, `EEXIST` for a `mkdir` of `screen` or `snarf`), have `open/2` read it before the `mkdir` for
   the size and the channel, keep the allocation after the `mkdir`, and correct the moduledoc's account of the order.
+* [Medium] `erlang/apps/erx_win/src/erx_pixels.erl`, [The lease](docs/design-display.md#the-pixel-area): a lease
+  `lend/3` makes for a holder other than the range's owner can be taken by that holder's program port like any, so
+  "a program maps only a range its handler owns" holds only because `erx_draw_conn`, the one caller of `lend/3`,
+  starts no port. Nothing widens today, since every process of the domain can open the area, but make it hold by
+  construction: a lease whose holder is not the owner is one no port takes (a flag of `erx_area:lend`, checked by
+  `erx_area_lease_take`). The same "taken" knowledge would let an owner's second lend of a lease it still holds
+  untaken answer `ebusy` instead of waiting for a return only it can cause; today every failed start unlends.
+* [Low] `erlang/apps/erx_win/src/erx_draw_conn.erl`, [The draw connection](docs/design-display.md#the-draw-connection):
+  a connection ends only with its window's holder; a window ended otherwise (its directory removed, its display
+  lost) leaves it running, each present failing with `EIO`. End it when a present answers that the window is gone.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
   emulator](docs/design-display.md#the-terminal-emulator): the core is built without `key/2`. The oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases

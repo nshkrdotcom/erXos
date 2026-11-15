@@ -64,40 +64,59 @@ lend_refusals_test() ->
     A = owner(1),
     B = owner(2),
     {ok, 0, Core} = erx_pixels_core:alloc(erx_pixels_core:new(4 * ?PAGE), A, 2 * ?PAGE),
-    ?assertMatch({_, [{lend, 0, 2, A}]}, erx_pixels_core:lend(Core, A, 0, from)),
-    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, B, 0, from)),
-    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, ?PAGE, from)),
-    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, 1, from)),
-    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, 2 * ?PAGE, from)).
+    ?assertMatch({_, [{lend, 0, 2, A}]}, erx_pixels_core:lend(Core, A, 0, A, from)),
+    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, B, 0, B, from)),
+    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, ?PAGE, A, from)),
+    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, 1, A, from)),
+    ?assertEqual({Core, [{reply, from, {error, einval}}]}, erx_pixels_core:lend(Core, A, 2 * ?PAGE, A, from)).
 
 a_lend_waits_for_the_outstanding_lease_test() ->
     A = owner(1),
     {ok, 0, C0} = erx_pixels_core:alloc(erx_pixels_core:new(4 * ?PAGE), A, ?PAGE),
-    {C1, [{lend, 0, 1, A}]} = erx_pixels_core:lend(C0, A, 0, first),
+    {C1, [{lend, 0, 1, A}]} = erx_pixels_core:lend(C0, A, 0, A, first),
     {C2, [{reply, first, {ok, 7, 1}}]} = erx_pixels_core:lent(C1, 0, {ok, 7}),
     ?assertEqual({ok, A}, erx_pixels_core:holder(C2, 7)),
-    {C3, []} = erx_pixels_core:lend(C2, A, 0, second),
-    {C4, [{reply, second, {error, einval}}]} = erx_pixels_core:lend(C3, A, 0, third),
+    {C3, []} = erx_pixels_core:lend(C2, A, 0, A, second),
+    %% A lend to another holder neither waits nor takes the owner's place.
+    ?assertEqual({C3, [{reply, other, {error, ebusy}}]}, erx_pixels_core:lend(C3, A, 0, owner(9), other)),
+    {C4, [{reply, second, {error, einval}}]} = erx_pixels_core:lend(C3, A, 0, A, third),
     {C5, [{lend, 0, 1, A}]} = erx_pixels_core:returned(C4, 7),
     ?assertEqual(error, erx_pixels_core:holder(C5, 7)),
     {C6, [{reply, third, {ok, 8, 1}}]} = erx_pixels_core:lent(C5, 0, {ok, 8}),
     {C7, []} = erx_pixels_core:returned(C6, 8),
     ?assertEqual([{0, 1, A, owned}], erx_pixels_core:ranges(C7)),
-    {C8, [{lend, 0, 1, A}]} = erx_pixels_core:lend(C7, A, 0, fourth),
+    {C8, [{lend, 0, 1, A}]} = erx_pixels_core:lend(C7, A, 0, A, fourth),
     {C9, [{reply, fourth, {error, noproc}}]} = erx_pixels_core:lent(C8, 0, {error, noproc}),
     ?assertEqual([{0, 1, A, owned}], erx_pixels_core:ranges(C9)).
 
 an_orphaned_range_waits_for_its_return_test() ->
     A = owner(1),
     {ok, 0, C0} = erx_pixels_core:alloc(erx_pixels_core:new(2 * ?PAGE), A, ?PAGE),
-    {C1, _} = erx_pixels_core:lend(C0, A, 0, first),
+    {C1, _} = erx_pixels_core:lend(C0, A, 0, A, first),
     {C2, _} = erx_pixels_core:lent(C1, 0, {ok, 3}),
-    {C3, []} = erx_pixels_core:lend(C2, A, 0, waiting),
+    {C3, []} = erx_pixels_core:lend(C2, A, 0, A, waiting),
     {C4, []} = erx_pixels_core:owner_down(C3, A),
     ?assertEqual([{0, 1, A, orphaned}], erx_pixels_core:ranges(C4)),
     ?assertEqual({error, enomem}, erx_pixels_core:alloc(C4, owner(2), 2 * ?PAGE)),
     {C5, [{zero, 0, 1}]} = erx_pixels_core:returned(C4, 3),
     ?assert(erx_pixels_core:idle(erx_pixels_core:zeroed(C5, 0, 1))).
+
+%% A draw connection holds the lease of its window's buffer: the range outlives its owner
+%% until the holder's lease comes back.
+a_lease_held_by_another_keeps_the_range_test() ->
+    A = owner(1),
+    Holder = owner(2),
+    {ok, 0, C0} = erx_pixels_core:alloc(erx_pixels_core:new(?PAGE), A, ?PAGE),
+    {C1, [{lend, 0, 1, Holder}]} = erx_pixels_core:lend(C0, A, 0, Holder, conn),
+    {C2, [{reply, conn, {ok, 5, 1}}]} = erx_pixels_core:lent(C1, 0, {ok, 5}),
+    ?assertEqual({ok, Holder}, erx_pixels_core:holder(C2, 5)),
+    %% While another holds the lease, no lend waits for it, the owner's own included.
+    ?assertEqual({C2, [{reply, again, {error, ebusy}}]}, erx_pixels_core:lend(C2, A, 0, owner(3), again)),
+    ?assertEqual({C2, [{reply, mine, {error, ebusy}}]}, erx_pixels_core:lend(C2, A, 0, A, mine)),
+    {C3, []} = erx_pixels_core:owner_down(C2, A),
+    ?assertEqual([{0, 1, A, orphaned}], erx_pixels_core:ranges(C3)),
+    {C4, [{zero, 0, 1}]} = erx_pixels_core:returned(C3, 5),
+    ?assert(erx_pixels_core:idle(erx_pixels_core:zeroed(C4, 0, 1))).
 
 random_sequences_test_() ->
     {timeout, 120, fun() -> lists:foreach(fun sequence/1, lists:seq(1, ?SEQUENCES)) end}.
@@ -146,7 +165,7 @@ lend(#{ranges := Ranges, live := Live} = Model) ->
 
 lend_range({Offset, N}, #{core := Core} = Model) ->
     From = make_ref(),
-    perform(erx_pixels_core:lend(Core, owner(N), Offset, From), Model).
+    perform(erx_pixels_core:lend(Core, owner(N), Offset, owner(N), From), Model).
 
 %% Performs effects as erx_pixels does, but queues each zero for a later step.
 perform({Core, Effects}, Model) ->

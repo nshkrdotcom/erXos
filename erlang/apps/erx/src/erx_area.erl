@@ -57,7 +57,8 @@ map(_Slot, _Bytes, _Mode, _Tag) -> erlang:nif_error(undef).
 
 -doc """
 For `erx_pixels` alone: a held lease of the Pages pages of Area from Offset,
-for Holder, the range's owner, whose own program port alone can take it
+for Holder, the process that asked `erx_pixels` for it, whose own program
+port alone can take it
 (docs/design-display.md, "The pixel area", The lease). Answers the lease's
 number, from 1 and never given again. The caller is sent
 `{erx_area_returned, Tag, Lease}` once the lease is returned: given back

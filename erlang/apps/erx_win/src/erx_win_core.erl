@@ -30,14 +30,15 @@ word past them, for a width and height from 1 to 16,384; Erlang's integers
 do not overflow, and the sides are checked before any product is taken.
 
 **Lines.** `present/4` writes a `present` line of at most 16 rectangles,
-sending the bounding box of more, as Plan 9's `flushimage` does; `resize/1`
-a `wctl` resize command.
+sending the bounding box of more, as Plan 9's `flushimage` does, and
+`add_dirty/2` keeps a draw connection's dirty list within that bound;
+`resize/1` writes a `wctl` resize command.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([ctl/1, wctl/1, mouse/1, kbd/1]).
--export([bytes/3, image_rect/2, present/4, resize/1]).
+-export([bytes/3, image_rect/2, present/4, add_dirty/2, resize/1]).
 -export_type([rect/0, chan/0, placed/0, pointer/0, key/0]).
 
 %% A channel descriptor of four channels is 8 bytes; its line is 9.
@@ -149,6 +150,16 @@ present(Offset, Width, Height, Rects) ->
            end,
     Numbers = [Offset, Width, Height | lists:append([tuple_to_list(R) || R <- Sent])],
     iolist_to_binary([<<"present">>, [[$\s, integer_to_binary(N)] || N <- Numbers], $\n]).
+
+-doc """
+Adds `Rect`, a rectangle that changed, to a dirty list, which holds at most
+16 rectangles, as many as one `present` line carries: a seventeenth
+replaces the list by the bounding box of all seventeen, as Plan 9's
+`flushimage` sends one.
+""".
+-spec add_dirty(rect(), [rect()]) -> [rect()].
+add_dirty(Rect, Dirty) when length(Dirty) < ?ERX_WINDOWS_PRESENT_RECTS -> [Rect | Dirty];
+add_dirty(Rect, Dirty) -> [bounding_box([Rect | Dirty])].
 
 -doc "The `wctl` command that asks for the rectangle `Rect`.".
 -spec resize(rect()) -> binary().

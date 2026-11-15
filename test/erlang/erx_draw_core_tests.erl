@@ -366,6 +366,17 @@ last_read_test() ->
     {ok, Planned, Ops} = erx_draw_core:plan(State, Write),
     ?assertEqual({0, [flush, {read, 0, {0, 0, 1, 1}}]}, {maps:get(op, Planned), Ops}).
 
+%% The last read stays where the write put it: it reads the pixels as they
+%% were then, and an image freed after it is read before it goes.
+last_read_keeps_its_place_test() ->
+    State = new(#{pixels => 16 * ?PAGE, side => 64}),
+    R = {0, 0, 1, 1},
+    Write = << <<(erx_draw_codec:encode(M))/binary>>
+               || M <- [{alloc, 1, 0, 0, 16#48081828, 0, R, R, 0}, {read, 1, R},
+                        {draw, 1, 0, 0, R, {0, 0}, {0, 0}}, {free, 1}] >>,
+    {ok, _Planned, Ops} = erx_draw_core:plan(State, Write),
+    ?assertMatch([{alloc, 1, _, _, _, _, _}, {read, 1, R}, {draw, 1, R, 0, _, 0, _, _, dst}, {free, 1}], Ops).
+
 %% A resized window's image 0 takes the new rectangle and keeps the
 %% client's images; a load inside the new rectangle passes.
 resize_test() ->

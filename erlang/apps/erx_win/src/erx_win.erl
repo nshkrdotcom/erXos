@@ -15,10 +15,14 @@ channel, the buffer and the window's rectangle. The caller owns the fids,
 so they live as long as the caller does; any process of the domain may
 use the handle meanwhile (docs/design-files.md, "Fid owners"), as a
 renderer linked to the widget server that opened its window does
-(docs/design-display.md, "The widget server").
+(docs/design-display.md, "The widget server"), and as the draw connection
+the caller opens on it with `erx_draw:open/1` does, which ends with the
+caller too.
 
 `image/1` answers an `erx_memdraw` image over the buffer at the window's
-size, clipped to the buffer; `present/2` writes a present of rectangles of
+size, clipped to the buffer, and `image_rect/1` and `chan/1` that image's
+rectangle and channel; `lease/2` takes a lease of the buffer for the
+draw connection that draws in it; `present/2` writes a present of rectangles of
 that image and waits for its answer; `mouse/1` and `kbd/1` read one record
 each, waiting for one; `resized/1`, after an `r` record, reads the
 window's rectangle again and answers an image at the new size over the
@@ -33,8 +37,8 @@ renderer sizes a buffer someone else owns, and `present/3` presents
 rectangles of a named `buffer()`, drawn at its own width and height. The
 display checks such a present against the client's whole pixel area and
 clips the buffer to the window; keeping it inside the range it names is
-the caller's. Of a window with no buffer, `image/1` and `present/2`
-answer `{error, none}`, and `resized/1` answers `none` for the image.
+the caller's. Of a window with no buffer, `image/1`, `lease/2` and
+`present/2` answer `{error, none}`, and `resized/1` answers `none` for the image.
 
 Every request to the display passes `erx_file_remote:exchange/2`, which
 holds it to the file protocol's grammar and each reply to its request, and
@@ -51,8 +55,8 @@ made, and an area with no room answers `{error, enomem}` after the
 
 -include("generated/erx_abi.hrl").
 
--export([open/2, info/1, image/1, present/2, present/3, mouse/1, kbd/1, resized/1, resize/2,
-         label/2]).
+-export([open/2, info/1, image/1, image_rect/1, chan/1, lease/2, present/2, present/3, mouse/1,
+         kbd/1, resized/1, resize/2, label/2]).
 -export_type([window/0, options/0, buffer/0, info/0]).
 
 -define(O_RDONLY, 0).
@@ -119,9 +123,36 @@ buffer; `{error, none}` for a window with no buffer.
 -spec image(window()) -> {ok, erx_memdraw:image()} | {error, none | einval | enomem}.
 image(#{own := none}) ->
     {error, none};
-image(#{own := #{area := Area, buffer := #{offset := Offset} = Buffer},
-        chan := #{code := Code}, rect := Rect}) ->
-    erx_memdraw:wrap(Area, Offset, erx_win_core:image_rect(Rect, extent(Buffer)), Code).
+image(#{own := #{area := Area, buffer := #{offset := Offset}}} = Window) ->
+    erx_memdraw:wrap(Area, Offset, image_rect(Window), chan(Window)).
+
+-doc """
+The rectangle of the image `image/1` answers, with its origin at (0, 0), of
+a window with a buffer.
+""".
+-spec image_rect(window()) -> erx_win_core:rect().
+image_rect(#{own := #{buffer := Buffer}, rect := Rect}) ->
+    erx_win_core:image_rect(Rect, extent(Buffer)).
+
+-doc "The channel of the window's buffer, as `erx_memdraw` takes it.".
+-spec chan(window()) -> erx_chan:code().
+chan(#{chan := #{code := Code}}) ->
+    Code.
+
+-doc """
+A lease of the window's buffer held by the caller, from `erx_pixels`: the
+buffer's range stays out of the free list until the caller has exited,
+whenever `Holder`, the window's holder and so the buffer's owner, exits.
+`{error, einval}` when `Holder` does not own the buffer. A window's buffer
+has one lease at a time: while one is outstanding, a lease for a caller other
+than `Holder` is refused with `{error, ebusy}`. `{error, none}` for a
+window with no buffer.
+""".
+-spec lease(window(), pid()) -> {ok, pos_integer(), pos_integer()} | {error, atom()}.
+lease(#{own := none}, Holder) when is_pid(Holder) ->
+    {error, none};
+lease(#{peer := Peer, own := #{buffer := #{offset := Offset}}}, Holder) when is_pid(Holder) ->
+    erx_pixels:lend(Peer, Offset, Holder).
 
 -doc """
 Presents the rectangles `Rects` of the window's image, all of it for `[]`,

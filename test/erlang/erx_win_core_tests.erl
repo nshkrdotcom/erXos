@@ -77,6 +77,16 @@ lines_test() ->
                  erx_winctl:parse(erx_win_core:present(0, 20, 20, Many))),
     ?assertEqual({ok, {resize, {0, -1, 5, 6}}}, erx_wctl:parse(erx_win_core:resize({0, -1, 5, 6}))).
 
+%% Sixteen rectangles stay as they are; the seventeenth folds them all into their
+%% bounding box, which takes the next rectangle beside it.
+seventeenth_dirty_rectangle_yields_its_bounding_box_test() ->
+    Sixteen = [{X, Y, X + 1, Y + 1} || X <- lists:seq(0, 3), Y <- lists:seq(0, 3)],
+    Full = lists:foldl(fun erx_win_core:add_dirty/2, [], Sixteen),
+    ?assertEqual(lists:sort(Sixteen), lists:sort(Full)),
+    ?assertEqual([{-2, 0, 4, 9}], erx_win_core:add_dirty({-2, 8, -1, 9}, Full)),
+    Again = erx_win_core:add_dirty({7, 7, 8, 8}, [{-2, 0, 4, 9}]),
+    ?assertEqual(lists:sort([{-2, 0, 4, 9}, {7, 7, 8, 8}]), lists:sort(Again)).
+
 swap_words(Read) ->
     <<Numbers:48/binary, Focus:12/binary, State:12/binary>> = Read,
     <<Numbers/binary, State/binary, Focus/binary>>.

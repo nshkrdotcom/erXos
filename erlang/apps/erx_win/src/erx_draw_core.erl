@@ -50,7 +50,9 @@ left for reading, so a plan keeps only its write's last `read`. `i` and `O`
 change only the state, `o` changes nothing, and none of the three has an
 operation.
 """.
--export([new/1, resize/2, step/2, plan/2]).
+-include("generated/erx_abi.hrl").
+
+-export([new/1, resize/2, step/2, plan/2, plane/0]).
 -export_type([state/0, quota/0, op/0, glyph/0]).
 
 %% The compose operations of draw(2) that the core names: S, which `l`
@@ -62,8 +64,6 @@ operation.
 -define(PAGE, 4096).
 -define(GLYPH_BYTES, 16).
 -define(MAX_GLYPHS, 4096).
-%% A write carries at most the file protocol's payload.
--define(MAX_WRITE, 65536).
 %% 9front's badrect: an image's area is below this many pixels.
 -define(MAX_AREA, 16#10000000).
 -define(COORD_MIN, -16#80000000).
@@ -149,13 +149,18 @@ The client's images are kept.
 resize(#{images := #{0 := Window} = Images} = State, R) ->
     State#{images := Images#{0 := Window#{r := R, repl := false}}}.
 
+-doc "All of draw(3)'s 32-bit plane, the clip rectangle of an image that clips nowhere.".
+-spec plane() -> rect().
+plane() ->
+    {?COORD_MIN, ?COORD_MIN, ?COORD_MAX, ?COORD_MAX}.
+
 -doc """
 The state and operations after the whole write Bytes, or the errno and the
 offset from the write's start of the message that failed. A write longer
 than the file protocol's payload fails whole at offset 0.
 """.
 -spec plan(state(), binary()) -> {ok, state(), [op()]} | {error, errno(), Offset :: non_neg_integer()}.
-plan(_State, Bytes) when byte_size(Bytes) > ?MAX_WRITE -> {error, einval, 0};
+plan(_State, Bytes) when byte_size(Bytes) > ?ERX_P9_IO_MAX -> {error, einval, 0};
 plan(State, Bytes) -> plan(State, Bytes, 0, []).
 
 plan(State, <<>>, _Offset, Planned) ->
@@ -171,12 +176,20 @@ plan(State, Bytes, Offset, Planned) ->
     end.
 
 %% Each r replaces what the one before it left for the next read of draw,
-%% and a read comes only after the write, so only the last read counts.
+%% and a read comes only after the write, so only the last read counts. It
+%% keeps its place among the operations, so it reads the pixels as the write
+%% had left them there, and before any later f of its image.
 last_read_only(Ops) ->
-    case lists:partition(fun is_read/1, Ops) of
-        {[], _} -> Ops;
-        {Reads, Others} -> Others ++ [lists:last(Reads)]
-    end.
+    %% From the end: the first read met is the last, and every later one met
+    %% is an earlier read, dropped.
+    {Kept, _Seen} = lists:foldr(fun(Op, {Acc, Seen}) ->
+                                        case {is_read(Op), Seen} of
+                                            {true, true} -> {Acc, Seen};
+                                            {true, false} -> {[Op | Acc], true};
+                                            {false, _} -> {[Op | Acc], Seen}
+                                        end
+                                end, {[], false}, Ops),
+    Kept.
 
 is_read({read, _, _}) -> true;
 is_read(_Op) -> false.

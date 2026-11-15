@@ -10,11 +10,15 @@ require_relative '../../tools/lib/erx/generated'
 require_relative '../../tools/lib/erx/host_os'
 require_relative '../../tools/lib/erx/memdraw_build'
 
-# Runs test/erlang/erx_win_core_tests.erl, the readers and lines of erx_win_core, and
+# Runs test/erlang/erx_win_core_tests.erl, the readers and lines of erx_win_core,
 # test/erlang/erx_win_tests.erl, erx_win with erx_pixels against erx_winfs, erx_window
-# and erx_screen, on stock's emulator with erx_memdraw's NIF built for the host
-# (Erx::MemdrawBuild.nif). erx's registry and erx_area are stand-ins written here, and
-# erx_win's fids, which prim_file draws on erXos, come from a counter of the emulator's.
+# and erx_screen, and test/erlang/erx_draw_tests.erl, erx_draw and its draw connection
+# on such a window, on stock's emulator with erx_memdraw's NIF built for the host
+# (Erx::MemdrawBuild.nif). erx's registry, erx_area and erx_log are stand-ins written
+# here, the stand-in erx_area's leases returned by a process that watches the holder,
+# and erx_win's fids, which prim_file draws on erXos, come from a counter of the
+# emulator's. Then each seeded fault of the dirty list and of the draw connection,
+# applied to a copy of its module, must fail the case named for it.
 class ErxWinTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -25,11 +29,14 @@ class ErxWinTest < Minitest::Test
                erx_wm_single erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl]
   FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
-  CLIENT = %w[erx_win_core erx_pixels erx_pixels_core].map { |name| "erlang/apps/erx_win/src/#{name}.erl" }
+  CONN_SOURCE = 'erlang/apps/erx_win/src/erx_draw_conn.erl'
+  CLIENT = %w[erx_win_core erx_win_sup erx_pixels erx_pixels_core erx_draw erx_draw_core
+              erx_draw_image].map { |name| "erlang/apps/erx_win/src/#{name}.erl" } + [CONN_SOURCE]
+  TESTS = %w[erx_win_core_tests erx_win_tests erx_draw_tests].freeze
   MODULES = (%w[erlang/apps/erx_memdraw/src/erx_memdraw.erl erlang/apps/erx_memdraw/src/erx_chan.erl
                 build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl otp/erts/preloaded/src/erx_file_remote.erl
                 erlang/apps/erx/src/erx_facet.erl] + DISPLAY + FILES + CLIENT +
-             %w[test/erlang/erx_win_core_tests.erl test/erlang/erx_win_tests.erl]).freeze
+             TESTS.map { |name| "test/erlang/#{name}.erl" }).freeze
   FID = 'prim_file:erx_fid()'
   STAND_INS = {
     'erx_log' => <<~ERLANG,
@@ -45,12 +52,58 @@ class ErxWinTest < Minitest::Test
     ERLANG
     'erx_area' => <<~ERLANG
       -module(erx_area).
-      -export([open/1, zero/3]).
+      -export([open/1, zero/3, lend/5, unlend/1]).
       open(Peer) -> persistent_term:get({erx_area_stand_in, Peer}, {error, none}).
       zero(_Area, _Offset, _Pages) -> ok.
+      %% A held lease: returned to the lender at its holder's exit or its give-back.
+      lend(_Area, _Offset, _Pages, Holder, Tag) ->
+          Lender = self(),
+          Lease = erlang:unique_integer([positive]),
+          Watcher = spawn(fun() ->
+                                  Monitor = monitor(process, Holder),
+                                  receive {'DOWN', Monitor, _, _, _} -> ok; unlend -> ok end,
+                                  Lender ! {erx_area_returned, Tag, Lease}
+                          end),
+          persistent_term:put({erx_area_stand_in, lease, Lease}, Watcher),
+          {ok, Lease}.
+      unlend(Lease) ->
+          persistent_term:get({erx_area_stand_in, lease, Lease}) ! unlend,
+          ok.
     ERLANG
   }.freeze
   DEADLINE_SECONDS = '300'
+
+  Seed = Data.define(:fault, :path, :anchor, :replacement, :suite, :catching_case)
+
+  SEEDS = [
+    Seed.new(fault: 'a dirty list that holds a seventeenth rectangle',
+             path: 'erlang/apps/erx_win/src/erx_win_core.erl',
+             anchor: 'add_dirty(Rect, Dirty) when length(Dirty) < ?ERX_WINDOWS_PRESENT_RECTS',
+             replacement: 'add_dirty(Rect, Dirty) when length(Dirty) =< ?ERX_WINDOWS_PRESENT_RECTS',
+             suite: 'erx_win_core_tests',
+             catching_case: 'seventeenth_dirty_rectangle_yields_its_bounding_box_test'),
+    Seed.new(fault: 'a connection that keeps one image past its end',
+             path: CONN_SOURCE,
+             anchor: '{ok, Image} -> {ok, Conn#conn{images = Images#{Id => Image}}};',
+             replacement: '{ok, Image} -> persistent_term:put({erx_draw_conn_leak, self()}, Image), ' \
+                          '{ok, Conn#conn{images = Images#{Id => Image}}};',
+             suite: 'erx_draw_tests',
+             catching_case: 'a_connection_frees_its_images_when_its_window_ends_test'),
+    Seed.new(fault: "a refused write that applies the messages before the refused one, as devdraw's does",
+             path: CONN_SOURCE,
+             anchor: "{error, Errno, Offset} ->\n",
+             replacement: "{error, Errno, Offset} ->\n" \
+                          '_ = perform_write(element(3, erx_draw_core:plan(Core, binary:part(Bytes, 0, Offset))), ' \
+                          "Conn),\n",
+             suite: 'erx_draw_tests',
+             catching_case: 'a_refused_write_applies_nothing_test'),
+    Seed.new(fault: 'a connection that draws into its window without a lease of the buffer',
+             path: CONN_SOURCE,
+             anchor: '{ok, _Lease, _Pages} ?= erx_win:lease(Window, Opener),',
+             replacement: '',
+             suite: 'erx_draw_tests',
+             catching_case: 'the_connection_never_draws_into_the_next_window_test')
+  ].freeze
 
   def setup
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)
@@ -62,23 +115,67 @@ class ErxWinTest < Minitest::Test
   end
 
   def test_client_cases
-    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: @directory, compiler: COMPILER)
-    sources = MODULES.map { |path| File.join(ROOT, path) } + stand_ins
-    text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
-                                   *INCLUDES.flat_map { |dir| ['-I', dir] }, '-o', @directory, *sources,
-                                   stdin_data: '')
-    assert status.success?, text
-    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@directory))
-    text, status = Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, File.join(OTP, 'bin/erl'),
-                                   '-noshell', '-pa', @directory, '-eval',
-                                   'case eunit:test([erx_win_core_tests, erx_win_tests], [verbose]) of ' \
-                                   'ok -> halt(0); _ -> halt(1) end.',
-                                   chdir: @directory, stdin_data: '')
+    build
+    text, status = eunit(TESTS)
     assert status.success?, text
     assert_match(/All \d+ tests passed/, text)
   end
 
+  def test_each_seeded_fault_fails_its_case
+    sources = SEEDS.to_h do |seed|
+      source = File.read(File.join(ROOT, seed.path))
+      assert_equal 1, source.scan(seed.anchor).size, "anchor for #{seed.fault} is not once in #{seed.path}"
+      [seed, source]
+    end
+    build
+    runs = SEEDS.each_with_index.map do |seed, index|
+      seeded = Dir.mktmpdir("erx-win-seed#{index}-", @directory)
+      FileUtils.cp(Dir.glob(File.join(@directory, '*.{beam,so}')), seeded)
+      copy = File.join(seeded, File.basename(seed.path))
+      File.write(copy, sources.fetch(seed).sub(seed.anchor, seed.replacement))
+      erlc(seeded, [copy])
+      Thread.new { [seed, *eunit([seed.suite], directory: seeded)] }
+    end
+    runs.map(&:value).each do |seed, output, status|
+      refute status.success?, "#{seed.fault} passed every case:\n#{output}"
+      assert_includes failed_cases(seed.suite, output), seed.catching_case,
+                      "#{seed.catching_case} did not catch #{seed.fault}"
+    end
+  end
+
   private
+
+  # The cases of suite EUnit reports failed: each case's report runs from its
+  # "suite: case..." line to the next, with the fixture's crash reports in between.
+  def failed_cases(suite, output)
+    output.split(/^  #{suite}: /).drop(1).filter_map do |report|
+      report[/\A\w+/] if report.include?('*failed*')
+    end
+  end
+
+  # The NIF, the generated draw codec, MODULES and the stand-ins, compiled into @directory.
+  def build
+    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: @directory, compiler: COMPILER)
+    codec = File.join(@directory, 'erx_draw_codec.erl')
+    File.write(codec, Erx::ABI::Generator.plan(root: ROOT).files.fetch(Erx::ABI::DrawEmitter::ERLANG_PATH))
+    erlc(@directory, MODULES.map { |path| File.join(ROOT, path) } + stand_ins + [codec])
+  end
+
+  def erlc(directory, sources)
+    text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
+                                   *INCLUDES.flat_map { |dir| ['-I', dir] }, '-o', directory, *sources,
+                                   stdin_data: '')
+    assert status.success?, text
+  end
+
+  # The output and status of EUnit over modules, with the beams and the NIF of directory.
+  def eunit(modules, directory: @directory)
+    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(directory))
+    Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, File.join(OTP, 'bin/erl'),
+                    '-noshell', '-pa', directory, '-eval',
+                    "case eunit:test([#{modules.join(', ')}], [verbose]) of ok -> halt(0); _ -> halt(1) end.",
+                    chdir: directory, stdin_data: '')
+  end
 
   # The stand-ins, and erx_win with its fids drawn from a counter of stock's emulator.
   def stand_ins

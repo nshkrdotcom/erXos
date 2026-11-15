@@ -311,20 +311,6 @@ an_unchanged_layout_plans_nothing_test() ->
     {ok, Plan, _} = erx_screen_core:layout(Layout, laid_out(Screen, [Layout])),
     ?assertEqual(#{fill => [], copy => [], push => []}, Plan).
 
-%% The dirty list.
-
-seventeenth_dirty_rectangle_yields_its_bounding_box_test() ->
-    Sixteen = [{X, Y, X + 1, Y + 1} || X <- lists:seq(0, 3), Y <- lists:seq(0, 3)],
-    Full = lists:foldl(fun erx_screen_core:add_dirty/2, [], Sixteen),
-    ?assertEqual(lists:sort(Sixteen), lists:sort(Full)),
-    ?assertEqual([{-2, 0, 4, 9}], erx_screen_core:add_dirty({-2, 8, -1, 9}, Full)),
-    Again = erx_screen_core:add_dirty({7, 7, 8, 8}, [{-2, 0, 4, 9}]),
-    ?assertEqual(lists:sort([{-2, 0, 4, 9}, {7, 7, 8, 8}]), lists:sort(Again)).
-
-an_empty_dirty_rectangle_changes_nothing_test() ->
-    ?assertEqual([], erx_screen_core:add_dirty({1, 1, 1, 5}, [])),
-    ?assertEqual([{0, 0, 1, 1}], erx_screen_core:add_dirty({3, 2, 1, 5}, [{0, 0, 1, 1}])).
-
 %% Malformed input.
 
 malformed_input_is_refused_test() ->
@@ -371,10 +357,6 @@ improper_lists_are_refused_test() ->
     ?assertEqual({error, einval}, erx_screen_core:layout([W#{decorations := [{{0, 0, 1, 1}, 1} | x]}], State)),
     ?assertEqual({error, einval}, erx_screen_core:layout([maps:remove(proc, W)], State)),
     ?assertEqual({error, einval}, erx_screen_core:present({1, self()}, {0, 0, 1, 1}, [{0, 0, 1, 1} | x], State)).
-
-a_malformed_dirty_rectangle_fails_its_window_test() ->
-    ?assertError(_, erx_screen_core:add_dirty({0, 0, a, 1}, [])),
-    ?assertError(_, erx_screen_core:add_dirty({0, 0, 1}, [])).
 
 %% Cost: a weave of 64 windows, half tall and half wide, each with a border
 %% of four rectangles, has thousands of tiles; moving one window must not

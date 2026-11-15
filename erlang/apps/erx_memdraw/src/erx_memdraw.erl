@@ -17,9 +17,9 @@ it, and is used by one process at a time.
 """.
 
 -export([alloc/5, wrap/4, store/4, clip/3, draw/8, line/9, poly/8, fill_poly/6, ellipse/8, arc/10, load/3, read/2,
-         cload/3, test_area/2]).
+         cload/3, test_area/2, test_images/0]).
 -nifs([alloc/5, wrap/4, store/4, clip/3, draw/8, line/9, poly/8, fill_poly/6, ellipse/8, arc/10, load/3, read/2,
-         cload/3, test_area/2]).
+         cload/3, test_area/2, test_images/0]).
 -on_load(load_nif/0).
 
 -type image() :: reference().
@@ -151,3 +151,12 @@ read-only, and the host's page size; its unmap sends the caller
 """.
 -spec test_area(pos_integer(), write | read) -> {ok, erx_area:area(), pos_integer()}.
 test_area(_Bytes, _Mode) -> ?NIF.
+
+-doc """
+Test only, absent from the runtime as `test_area/2` is: the images made and
+not yet destroyed in the emulator, which a host test reads where erXos reads
+the session's budget, so that a test sees an image freed once no process
+holds it.
+""".
+-spec test_images() -> non_neg_integer().
+test_images() -> ?NIF.

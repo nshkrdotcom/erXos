@@ -4,12 +4,15 @@
 -module(erx_win_sup).
 -moduledoc """
 The supervisor of `erx_win` in a client domain (docs/design-display.md,
-"The pixel area", The allocator is not restarted over an area). Its one
+"The pixel area", The allocator is not restarted over an area). Its first
 child is the allocator erx_pixels, which is temporary and significant, so
 it is never restarted: its end, however it comes, shuts the supervisor down, which ends
 the permanent application and the domain with it. A second allocator over
 the same areas would hand out ranges that programs still map; the domain's
-next start has new connections and new, zeroed areas instead.
+next start has new connections and new, zeroed areas instead. Its other
+children are the domain's draw connections, which `erx_draw_conn:start/1`
+adds as temporary children: they draw into buffers the allocator leased
+them, so they start after it and end before it.
 """.
 -behaviour(supervisor).
 
