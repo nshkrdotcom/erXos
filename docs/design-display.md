@@ -1428,8 +1428,14 @@ A **state** property holds what the user changes: each kind that takes
 **fixed** property is part of the node's identity, as its kind is. An
 event property holds a term the application chooses; the server sends it
 back as `{ui, Window, Term, Detail}` when the event fires. Every renderer
-shows a text property through the line escape (G5); `erx_ui_lvgl` writes
-each text escaped, so `erx-lvgl` needs no escape of its own.
+shows a text property through the line escape (G5). `erx_ui_lvgl` writes
+its records with `erx_ui_wire:encode/2`, which writes every text a record
+carries, each item of a list and each presentation's canonical text
+through the line escape, so `erx-lvgl` needs no escape of its own. An
+escaped text longer than its type's bound is cut after escaping, at a whole
+escape token, and ends with an ellipsis, `...`. `erx_ui_wire:encode_raw/2` writes texts as they
+are, for the browser, whose client escapes each text it shows (W2 of
+[design-web.md](design-web.md#invariants)).
 
 A tree is **valid** when every node is a three-tuple of a declared kind,
 a map of properties that kind takes with values of their types, and
@@ -5097,7 +5103,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
 | Only `erx_area_lease_map` maps memory into a space other than the runtime's own, and it maps only its lease's range, read-write, at the buffer place | the C half of `area-mappers`, over every C file of `otp/erts/emulator`: an `erx_vm_map` whose space is not `ERX_CAP_SELF` appears only in `erx_area_lease_map`, so no other mapper, whatever slot it is handed, maps into a program; a seeded such call in `erx_program_drv.c` fails it |
 | Only `erx_render` writes the link and input-context sequences | a source check for the `erx:` URI prefix |
 | `erx_term` and `erx_ui_server` call no facet | an xref check that neither module nor its callees reach `erx_facet` clients |
-| Attributed text in a window passes through `erx_text:escape_line/1` | the source check of V9 extended to `erx_wm_menu` in the display release and to `erx_ui_erlang` and `erx_ui_lvgl` in the widget application |
+| Attributed text in a window passes through `erx_text:escape_line/1` | the source check of V9 extended to `erx_wm_menu` in the display release and to `erx_ui_erlang` in the widget application; `erx_ui_lvgl` writes through `erx_ui_wire:encode/2`, which escapes every text, and `ui-raw-texts` (tools/lib/erx/chokepoint_rules/display.rb) refuses a call of `erx_ui_wire:encode_raw/2` in the Erlang sources of `otp/` and `erlang/` outside the codec, in the forms `display-driver-callers` refuses; the web line that hands records to the browser is its one other site |
 | No NIF of the display release takes a client's bytes to parse | a build check over the release's NIF libraries and ERTS's own NIFs in the display release, `zlib_nif` among them, and their exported functions, a closed list with each function's use of the binaries it takes; a new NIF or function fails it |
 | No module of the draw and widget applications calls a native parser of ERTS on a client's bytes | an xref check that no module of those applications calls `zlib`, `binary_to_term/1,2`, `re` or `erlang:decode_packet/3`; a seeded call to each fails it |
 | Only `erx_vt` interprets a terminal's output | a source check that no other module of `erx_term`'s application matches on ESC, CSI or OSC bytes |

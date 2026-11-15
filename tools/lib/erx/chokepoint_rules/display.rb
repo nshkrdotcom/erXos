@@ -7,6 +7,8 @@ module Erx
     DISPLAY_DESIGN = 'docs/design-display.md'
     DISPLAY_REQUESTS = "(?:#{%w[flush_request power_request].map { |name| ErlangText::ATOM.call(name) }.join('|')})"
     ERX_DISPLAY = ErlangText::ATOM.call('erx_display')
+    ERX_UI_WIRE = ErlangText::ATOM.call('erx_ui_wire')
+    ENCODE_RAW = ErlangText::ATOM.call('encode_raw')
 
     # The display's Erlang rules.
     declare_group(
@@ -38,6 +40,30 @@ module Erx
           sites: ['erlang/apps/erx_display/src/erx_screen.erl'],
           seed: { 'erlang/apps/erx_display/src/seeded.erl' => "f(D) -> gen_server:call(D, erx_display:power_request(D, on)).\n",
                   'erlang/apps/erx_win/src/seeded.erl' => "f(M, D) -> M:flush_request(D, a, b).\n" }
+        ),
+        # A widget renderer shows each text it reads unchanged, so a record
+        # reaches one only through erx_ui_wire:encode/2, which writes every
+        # text through the line escape (G5). encode_raw/2 writes texts as they
+        # are, for a reader that escapes them itself, the browser, whose web
+        # line is to be its one caller beside the codec.
+        # Refused outside the codec, in the forms of the rule above: the name
+        # after erx_ui_wire and a colon or a comma, through a variable or
+        # macro module, in an apply, an import from erx_ui_wire, and a macro
+        # defined as either name.
+        Chokepoints::ErlangForbidden.new(
+          name: 'ui-raw-texts', rule: 'nothing calls erx_ui_wire:encode_raw/2, the widget records\' writer that skips ' \
+                                      'the line escape, outside the codec',
+          design: "#{DISPLAY_DESIGN}#chokepoints", strings: :blanked,
+          pattern: /
+              #{ERX_UI_WIRE}\s*[:,]\s*#{ENCODE_RAW}
+            | (?:#{ErlangText::INDIRECT})\s*:\s*#{ENCODE_RAW}
+            | #{ErlangText::ATOM.call('apply')}\s*\(\s*[^,()]+,\s*#{ENCODE_RAW}
+            | -\s*import\s*\(\s*#{ERX_UI_WIRE}
+            | -\s*define\s*\(\s*[^,()]+(?:\([^()]*\))?\s*,\s*(?:#{ERX_UI_WIRE}|#{ENCODE_RAW})\s*\)
+          /x,
+          sites: ['erlang/apps/erx_ui/src/erx_ui_wire.erl'],
+          seed: { 'erlang/apps/erx_ui/src/seeded.erl' => "f(R) -> erx_ui_wire:encode_raw(R, fun(_, _) -> <<>> end).\n",
+                  'erlang/apps/erx_ui/src/seeded_indirect.erl' => "f(M, R) -> M:encode_raw(R, p).\n" }
         )
       ]
     )

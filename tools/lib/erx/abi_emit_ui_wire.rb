@@ -118,16 +118,17 @@ module Erx
           -module(erx_ui_wire).
           -moduledoc """
           ui.txt's binary form (docs/design-abi.md, "Widget format"). encode/2 writes
-          any record; read/1 reads the records a renderer sends the server, event and
-          damage, and refuses every other tag; read_server/1 reads the records the
-          server sends a renderer, insert to commit, screen, input, repaint and
-          presented, and refuses event and damage. A record is a u32 length, which counts the tag
-          and the fields, then a u8 tag and the fields; integers are little-endian.
-          The readers keep no state between records, decide nothing that depends on
-          a node's kind and make no atom: every name they return comes from the
-          declaration's tables.
+          any record, every text through the line escape, and encode_raw/2 writes it
+          with its texts as they are; read/1 reads the records a renderer sends the
+          server, event and damage, and refuses every other tag; read_server/1 reads
+          the records the server sends a renderer, insert to commit, screen, input,
+          repaint and presented, and refuses event and damage. A record is a u32
+          length, which counts the tag and the fields, then a u8 tag and the fields;
+          integers are little-endian. The readers keep no state between records,
+          decide nothing that depends on a node's kind and make no atom: every name
+          they return comes from the declaration's tables.
           """.
-          -export([encode/2, read/1, read_server/1]).
+          -export([encode/2, encode_raw/2, read/1, read_server/1]).
           -export_type([wire_record/0, present/0, reason/0, refusal/0]).
 
           -define(OP_MAX, #{ui.op_max}).
@@ -167,18 +168,40 @@ module Erx
          UIFields.erlang_input_encoder(ui), UIFields.erlang_writers(ui)].join("\n")
       end
 
-      # encode/2, then the clauses of body/2: the server's records', from the
-      # declaration, and the reports'.
+      # encode/2 and encode_raw/2, then the clauses of body/2: the server's
+      # records', from the declaration, and the reports'. Both thread one
+      # pair, Texts = {Present, Form}, through the clauses: the present()
+      # function and the form every text is written in, a function of the
+      # text and its type's bound, which only text_bytes/4 applies.
       ENCODER_HEAD = <<~'ERLANG'
           -doc """
-          The record's bytes. Props and removals come from a tree erx_ui_schema
-          accepted; a value that does not fit its field raises
-          {bad_value, Property} rather than being truncated, and a record longer
-          than its limit raises {too_long, Size}.
+          The record's bytes as a renderer that shows them unchanged reads them:
+          every text the record carries, each item of a list and each
+          presentation's canonical text included, is written through the line
+          escape, erx_text:escape_line/2 (docs/design-display.md, G5), which cuts
+          an escaped text longer than its type's bound after a whole character
+          or token and ends it with an ellipsis. An event's detail, which no
+          renderer shows, is written as it is. Props and removals come from a
+          tree erx_ui_schema accepted; a value that does not fit its field
+          raises {bad_value, Property}, and a record longer than its limit
+          raises {too_long, Size}.
           """.
           -spec encode(wire_record(), present()) -> binary().
           encode(Record, Present) ->
-              Body = iolist_to_binary(body(Record, Present)),
+              write(Record, {Present, fun erx_text:escape_line/2}).
+
+          -doc """
+          The record's bytes with every text as the record holds it, for a
+          reader that escapes each text itself where it shows it, as the
+          browser does (docs/design-web.md, W2). The chokepoint ui-raw-texts
+          names the sources that may call it.
+          """.
+          -spec encode_raw(wire_record(), present()) -> binary().
+          encode_raw(Record, Present) ->
+              write(Record, {Present, fun(Text, _Max) -> Text end}).
+
+          write(Record, Texts) ->
+              Body = iolist_to_binary(body(Record, Texts)),
               Size = byte_size(Body),
               Size =< ?OP_MAX orelse error({too_long, Size}),
               <<Size:32/little, Body/binary>>.
@@ -186,13 +209,13 @@ module Erx
       ERLANG
 
       ENCODER_REPORTS = <<~'ERLANG'
-          body({event, Node, Event, Detail}, _Present) when ?IS_NODE(Node) ->
+          body({event, Node, Event, Detail}, _Texts) when ?IS_NODE(Node) ->
               [<<?EVENT, Node:32/little, (event_number(Event))>> | detail(Detail)];
-          body({damage, Width, Height, Rects}, _Present)
+          body({damage, Width, Height, Rects}, _Texts)
             when ?IS_U16(Width), ?IS_U16(Height), is_list(Rects), length(Rects) >= 1, length(Rects) =< ?DAMAGE_MAX ->
               [<<?DAMAGE, Width:16/little, Height:16/little, (length(Rects))>>
                | [rect(Rect, Width, Height) || Rect <- Rects]];
-          body(Record, _Present) ->
+          body(Record, _Texts) ->
               error({bad_record, Record}).
 
           %% A damage report's rectangle; one of no width or height, or not within
@@ -209,34 +232,34 @@ module Erx
 
       ENCODER_VALUES = <<~'ERLANG'
           %% A u8 count, then each property in number order: its number and value.
-          props(Props, Present) ->
+          props(Props, Texts) ->
               Fields = lists:sort([{number(Name), Name, Value} || Name := Value <- Props, Name =/= key]),
-              [length(Fields) | [[Number | value(Name, Value, Present)] || {Number, Name, Value} <- Fields]].
+              [length(Fields) | [[Number | value(Name, Value, Texts)] || {Number, Name, Value} <- Fields]].
 
           %% A status property begins with its status block: status, reporter, the
           %% stopgap's name and the timeout. A two-tuple whose first element is a
           %% reporter is an attr(); anything else is the application's own value.
-          status({Reporter, Carried}, Name, Present) when Reporter =:= kernel; Reporter =:= service; Reporter =:= runtime ->
-              carried(Carried, case Reporter of kernel -> 1; service -> 2; runtime -> 3 end, <<>>, Name, Present);
-          status({{stopgap, Stopgap}, Carried}, Name, Present) ->
+          status({Reporter, Carried}, Name, Texts) when Reporter =:= kernel; Reporter =:= service; Reporter =:= runtime ->
+              carried(Carried, case Reporter of kernel -> 1; service -> 2; runtime -> 3 end, <<>>, Name, Texts);
+          status({{stopgap, Stopgap}, Carried}, Name, Texts) ->
               stopgap(Stopgap) orelse error({bad_value, Name}),
-              carried(Carried, 4, atom_to_binary(Stopgap), Name, Present);
-          status(Value, Name, Present) ->
-              [block(0, 0, <<>>, 0) | plain(Name, Value, Present)].
+              carried(Carried, 4, atom_to_binary(Stopgap), Name, Texts);
+          status(Value, Name, Texts) ->
+              [block(0, 0, <<>>, 0) | plain(Name, Value, Texts)].
 
-          carried({ok, Value}, Reporter, Stopgap, Name, Present) ->
-              [block(0, Reporter, Stopgap, 0) | plain(Name, Value, Present)];
-          carried({partial, Value}, Reporter, Stopgap, Name, Present) ->
-              [block(1, Reporter, Stopgap, 0) | plain(Name, Value, Present)];
-          carried(unknown, Reporter, Stopgap, _Name, _Present) ->
+          carried({ok, Value}, Reporter, Stopgap, Name, Texts) ->
+              [block(0, Reporter, Stopgap, 0) | plain(Name, Value, Texts)];
+          carried({partial, Value}, Reporter, Stopgap, Name, Texts) ->
+              [block(1, Reporter, Stopgap, 0) | plain(Name, Value, Texts)];
+          carried(unknown, Reporter, Stopgap, _Name, _Texts) ->
               block(2, Reporter, Stopgap, 0);
-          carried(unsupported, Reporter, Stopgap, _Name, _Present) ->
+          carried(unsupported, Reporter, Stopgap, _Name, _Texts) ->
               block(3, Reporter, Stopgap, 0);
-          carried({timeout, Ms}, Reporter, Stopgap, _Name, _Present) when is_integer(Ms), Ms >= 1, Ms =< 16#ffffffff ->
+          carried({timeout, Ms}, Reporter, Stopgap, _Name, _Texts) when is_integer(Ms), Ms >= 1, Ms =< 16#ffffffff ->
               block(4, Reporter, Stopgap, Ms);
-          carried({error, _Reason}, Reporter, Stopgap, _Name, _Present) ->
+          carried({error, _Reason}, Reporter, Stopgap, _Name, _Texts) ->
               block(5, Reporter, Stopgap, 0);
-          carried(_Carried, _Reporter, _Stopgap, Name, _Present) ->
+          carried(_Carried, _Reporter, _Stopgap, Name, _Texts) ->
               error({bad_value, Name}).
 
           block(Status, Reporter, Stopgap, Ms) ->
@@ -259,18 +282,23 @@ module Erx
           bytes(Value, Max, _Name) when is_binary(Value), byte_size(Value) =< Max -> [<<(byte_size(Value)):32/little>> | Value];
           bytes(_Value, _Max, Name) -> error({bad_value, Name}).
 
-          list(Value, TextMax, Max, Name) when is_list(Value), length(Value) =< Max ->
-              [<<(length(Value)):16/little>> | [bytes(Text, TextMax, Name) || Text <- Value]];
-          list(_Value, _TextMax, _Max, Name) -> error({bad_value, Name}).
+          %% A text in the form Texts writes texts in: Form takes the text and its
+          %% bound, and the bytes it returns must fit the bound.
+          text_bytes(Value, Max, {_Present, Form}, Name) when is_binary(Value) -> bytes(Form(Value, Max), Max, Name);
+          text_bytes(_Value, _Max, _Texts, Name) -> error({bad_value, Name}).
+
+          list(Value, TextMax, Max, Texts, Name) when is_list(Value), length(Value) =< Max ->
+              [<<(length(Value)):16/little>> | [text_bytes(Text, TextMax, Texts, Name) || Text <- Value]];
+          list(_Value, _TextMax, _Max, _Texts, Name) -> error({bad_value, Name}).
 
           %% A presentation's name as a u8 length and at most 63 bytes, then its
-          %% canonical text as a text of at most 4,096 bytes. erx_present:text/2
-          %% returns valid UTF-8 within that bound.
-          presentation({Type, Value}, Present, Name) when is_atom(Type) ->
+          %% canonical text, erx_present:text/2's valid UTF-8, as a text of at
+          %% most 4,096 bytes.
+          presentation({Type, Value}, {Present, _Form} = Texts, Name) when is_atom(Type) ->
               TypeName = atom_to_binary(Type),
               byte_size(TypeName) =< ?NAME_MAX orelse error({bad_value, Name}),
-              [byte_size(TypeName), TypeName | bytes(Present(Type, Value), ?PRESENT_MAX, Name)];
-          presentation(_Value, _Present, Name) -> error({bad_value, Name}).
+              [byte_size(TypeName), TypeName | text_bytes(Present(Type, Value), ?PRESENT_MAX, Texts, Name)];
+          presentation(_Value, _Texts, Name) -> error({bad_value, Name}).
 
           detail(none) -> <<0>>;
           detail(true) -> <<1, 1>>;
@@ -330,8 +358,8 @@ module Erx
       end
 
       def value_clauses(status)
-        lines = status.map { |property| "value(#{atom(property.name)}, Value, Present) -> status(Value, #{atom(property.name)}, Present);\n" }
-        "#{lines.join}value(Name, Value, Present) -> plain(Name, Value, Present).\n"
+        lines = status.map { |property| "value(#{atom(property.name)}, Value, Texts) -> status(Value, #{atom(property.name)}, Texts);\n" }
+        "#{lines.join}value(Name, Value, Texts) -> plain(Name, Value, Texts).\n"
       end
 
       def plain_clause(property)
@@ -343,14 +371,15 @@ module Erx
           when 'boolean' then "boolean(Value, #{name})"
           when 'enum', 'image'
             "member(Value, [#{type.atoms.zip(type.numbers).map { |member, number| "{#{atom(member)}, #{number}}" }.join(', ')}], #{name})"
-          when 'text', 'bytes' then "bytes(Value, #{type.maximum}, #{name})"
-          when 'list' then "list(Value, #{type.element.maximum}, #{type.maximum}, #{name})"
+          when 'text' then "text_bytes(Value, #{type.maximum}, Texts, #{name})"
+          when 'bytes' then "bytes(Value, #{type.maximum}, #{name})"
+          when 'list' then "list(Value, #{type.element.maximum}, #{type.maximum}, Texts, #{name})"
           when 'event' then '<<>>'
-          when 'presentation' then "presentation(Value, Present, #{name})"
+          when 'presentation' then "presentation(Value, Texts, #{name})"
           end
         value = type.form == 'event' ? '_Value' : 'Value'
-        present = type.form == 'presentation' ? 'Present' : '_Present'
-        "plain(#{name}, #{value}, #{present}) ->\n    #{body}"
+        texts = %w[text list presentation].include?(type.form) ? 'Texts' : '_Texts'
+        "plain(#{name}, #{value}, #{texts}) ->\n    #{body}"
       end
 
       def erlang_reader

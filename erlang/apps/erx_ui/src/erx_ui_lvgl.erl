@@ -14,6 +14,8 @@ report through the window, answers an apply, hands the widget server each
 hit, and ends, abnormally, when the core stops the program, which the
 widget server it is linked to takes as `renderer_down`. It decides nothing
 itself: every judgement is the core's.
+It writes each record with erx_ui_wire:encode/2, which writes every text
+through the line escape, so the program shows no text raw (G5).
 
 start/3 links the process to the widget server and ignores its target:
 until the window stack binds a window's size, channel and presents, the
@@ -69,7 +71,7 @@ and with it every call (a residual, TODO.md).
 """.
 
 -export([start/3, apply/2, stop/1, window/2, resize/3, shown/1]).
--export([init/1, callback_mode/0, handle_event/4]).
+-export([init/1, callback_mode/0, handle_event/4, format_status/1]).
 
 %% How long start/3 waits for the shell's init, the program's start.
 -define(START_MS, 30000).
@@ -128,6 +130,18 @@ stop(Shell) ->
 %% would hold them. The data holds the core, the running program, its
 %% buffer's offset and the bytes of its output not yet a whole record.
 callback_mode() -> handle_event_function.
+
+%% A crash report keeps only the state, `reading` or `holding`: the queue
+%% holds an apply's operations, the postponed events the window's keys, the
+%% data the tree and the program's unread output, and the reason or the log
+%% can name a record. A crash's stack trace does not pass through here, so a
+%% clause that fails with application terms as arguments still logs them (a
+%% residual, TODO.md).
+format_status(Status) ->
+    maps:map(fun(state, State) -> State;
+                (Key, _Value) when Key =:= queue; Key =:= postponed; Key =:= log -> [];
+                (_Key, _Value) -> hidden
+             end, Status).
 
 init(#{width := W, height := H, chan := Chan, program := Program} = Opts) ->
     %% The death of the port or the reader (a write that found the program

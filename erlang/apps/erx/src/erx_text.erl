@@ -37,7 +37,7 @@ UTF-8 decoders are separate, and test/fixtures/line_escape_vectors.json
 holds what both must answer for each class.
 """.
 
--export([escape_line/1, escape_field/1, unescape_field/1]).
+-export([escape_line/1, escape_line/2, escape_field/1, unescape_field/1]).
 
 %% A token: the text before the hexadecimal digits, the fewest digits it
 %% is written with, and the text after them.
@@ -52,6 +52,33 @@ escape_line(Text) when is_binary(Text); is_list(Text) ->
     iolist_to_binary(lists:reverse(pieces([Text], line_tokens(), [])));
 escape_line(_Text) ->
     error(badarg).
+
+-doc """
+The line escape of `Text` in at most `Max` bytes, for a display that takes
+no more: the whole escape when it fits, and otherwise the longest run of
+its whole characters and tokens from the start that leaves room for an
+ellipsis, `...`, then the ellipsis. `Max` is at least 3.
+""".
+-spec escape_line(unicode:chardata(), pos_integer()) -> unicode:unicode_binary().
+escape_line(Text, Max) when (is_binary(Text) orelse is_list(Text)), is_integer(Max), Max >= 3 ->
+    Pieces = lists:reverse(pieces([Text], line_tokens(), [])),
+    case iolist_size(Pieces) =< Max of
+        true -> iolist_to_binary(Pieces);
+        false -> iolist_to_binary([kept(Pieces, Max - 3), <<"...">>])
+    end;
+escape_line(_Text, _Max) ->
+    error(badarg).
+
+%% The pieces from the start, each a printable ASCII byte, a character or a
+%% token, while they fit in Room bytes.
+kept([Piece | Rest], Room) ->
+    Size = iolist_size([Piece]),
+    case Size =< Room of
+        true -> [Piece | kept(Rest, Room - Size)];
+        false -> []
+    end;
+kept([], _Room) ->
+    [].
 
 %% The chardata as a work list, so its nesting costs heap and not stack.
 %% An improper list's tail must be a binary or a list, as in chardata.

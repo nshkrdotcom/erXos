@@ -27,7 +27,7 @@ run([Seed]) ->
 round() ->
     {Read, Make} = pick([{fun read_all/2, fun record/0}, {fun read_all_server/2, fun server_record/0}]),
     Records = [Make() || _ <- lists:seq(1, rand:uniform(4))],
-    Stream = iolist_to_binary([erx_ui_wire:encode(Record, fun(_, _) -> <<>> end) || Record <- Records]),
+    Stream = iolist_to_binary([erx_ui_wire:encode_raw(Record, fun(_, _) -> <<>> end) || Record <- Records]),
     case Read(Stream, []) of
         {Records, <<>>} -> ok;
         Other -> error({round_trip, Records, Other})
@@ -133,7 +133,7 @@ read_all(Bytes, Acc) ->
             %% empty, each within the size the report names, and exactly the
             %% bytes its count says, so it encodes to what was read.
             Used = byte_size(Bytes) - byte_size(Rest),
-            true = erx_ui_wire:encode(Record, fun(_, _) -> <<>> end) =:= binary:part(Bytes, 0, Used),
+            true = erx_ui_wire:encode_raw(Record, fun(_, _) -> <<>> end) =:= binary:part(Bytes, 0, Used),
             true = length(Rects) >= 1 andalso length(Rects) =< 16,
             true = lists:all(fun({X, Y, W, H}) -> W >= 1 andalso H >= 1 andalso
                                                   X + W =< SW andalso Y + H =< SH end, Rects),

@@ -92,3 +92,16 @@ random_binaries(N) ->
 unsafe(Point) ->
     lists:any(fun({First, Last}) -> Point >= First andalso Point =< Last end,
               tuple_to_list(erx_text_tables:unicode_unsafe_ranges())).
+
+%% escape_line/2 keeps whole characters and tokens: a cut never splits a
+%% token or a multi-byte character, and text that fits is the whole escape.
+escape_line_bounded_test_() ->
+    [?_assertEqual(<<"ab">>, erx_text:escape_line(<<"ab">>, 3)),
+     ?_assertEqual(<<"<0xFF>">>, erx_text:escape_line(<<16#ff>>, 6)),
+     ?_assertEqual(<<"...">>, erx_text:escape_line(<<16#ff>>, 5)),
+     ?_assertEqual(<<"a...">>, erx_text:escape_line(<<"a", 16#ff>>, 6)),
+     ?_assertEqual(<<"<0xFF>...">>, erx_text:escape_line(<<16#ff, 16#ff>>, 11)),
+     ?_assertEqual(<<"x...">>, erx_text:escape_line(<<"x", 16#e9/utf8, "yzwv">>, 5)),
+     ?_assertEqual(<<"x", 16#e9/utf8, "...">>, erx_text:escape_line(<<"x", 16#e9/utf8, "yzwv">>, 6)),
+     ?_assertError(badarg, erx_text:escape_line(<<"a">>, 2)),
+     ?_assertError(badarg, erx_text:escape_line(atom, 10))].

@@ -24,13 +24,15 @@ require_relative '../../tools/lib/erx/web_stage'
 # bytes. The other way, the C and TypeScript harnesses' writers write
 # random event and damage records and say what each means, by number from C
 # and by name from TypeScript; erx_ui_wire_tests:read_corpus/2 reads them and
-# says what it read by name, and the two must agree the same way.
+# says what it read by name, and the two must agree the same way. A seeded
+# fault takes the line escape out of encode/2, and the escape's cases fail.
 class ErxUIWireTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   GENERATED = File.join(ROOT, Erx::Generated::OUTPUT)
   TESTS = %w[test/erlang/erx_ui_wire_tests.erl].freeze
   HARNESS = File.join(ROOT, 'test/fixtures/erx_ui_wire_harness.c')
+  BUILT_WIRE = File.join(Erx::Generated::OUTPUT, Erx::ABI::UIWireEmitter::ERLANG_PATH)
   UI = Erx::ABI::Generator.plan(root: ROOT).schema.ui
 
   def test_generated_wire_cases_pass_under_eunit
@@ -38,6 +40,22 @@ class ErxUIWireTest < Minitest::Test
       output = run!(ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                     'halt(case eunit:test(erx_ui_wire_tests, [verbose]) of ok -> 0; _ -> 1 end)', chdir: work)
       assert_match(/All \d+ tests passed/, output)
+    end
+  end
+
+  # The seeded fault: encode/2 with the line escape taken out writes texts as
+  # they are, and the escape's cases fail.
+  def test_the_escape_cases_catch_an_encoder_without_the_escape
+    source = File.binread(File.join(ROOT, BUILT_WIRE))
+    seeded = source.sub('fun erx_text:escape_line/2', 'fun(Text, _Max) -> Text end')
+    refute_equal source, seeded, 'the seed must take the escape out'
+    in_erlang(replaced: { BUILT_WIRE => seeded }) do |work|
+      output, status = Open3.capture2e(*timed([ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
+                                               'halt(case eunit:test(erx_ui_wire_tests, [verbose]) of ok -> 0; _ -> 1 end)']),
+                                       chdir: work, stdin_data: '')
+      refute status.success?, output
+      assert_match(/texts_are_written_escaped_test\.\.\.\*failed\*/, output)
+      assert_match(/escaped_text_past_its_bound_is_cut_test\.\.\.\*failed\*/, output)
     end
   end
 
@@ -224,9 +242,9 @@ class ErxUIWireTest < Minitest::Test
     tokens.join(' ')
   end
 
-  def in_erlang
+  def in_erlang(replaced: {})
     Dir.mktmpdir('erx-ui-wire-test') do |work|
-      ErlangBuild.compile(work, applications: %w[erx erx_ui], tests: TESTS)
+      ErlangBuild.compile(work, applications: %w[erx erx_ui], tests: TESTS, replaced: replaced)
       yield work
     end
   end

@@ -1154,6 +1154,18 @@ it; git history is the record of completed work.
   quadratic in a node's children (a reversed flat node of 16,000 children: 10 s for `delta/2`, 20 s to apply, on
   Homebrew erl), and an index above 65,535 does not fit `diff_op()` or the binary form. Add a per-node children
   limit to the validity rules (at most 65,536; 1,024 suggested), which bounds both by construction.
+* [Medium] `erlang/apps/erx_ui` and the generated `erx_ui_wire:encode/2`, [Widget
+  trees](docs/design-display.md#widget-trees): an `input` whose application-set `text` holds a character the line
+  escape changes (a tab, a control, a format character) is shown escaped, and a user's edit of it reports the
+  escaped text back as typed, so the application stores `<U+0009>` where it set a tab. Make what an input shows and
+  what it holds one text by construction, for example a validity rule that refuses a state text the line escape
+  changes. Until then the widget tests cover only inputs of printable text. The cut at the bound adds a second
+  loss: an input text whose escape is longer than 4,096 bytes is shown cut with `...`, and an edit reports the cut
+  text back.
+* [Low] `erlang/apps/erx_ui/src/erx_ui_lvgl.erl`: `format_status/1` keeps only the state, but a crash's stack
+  trace does not pass through it, so a `function_clause` in `handle_event/4` (a stray `'EXIT'` while it traps exits)
+  or in `erx_ui_lvgl_core:step/2` logs the widget tree as an argument. Add a catch-all clause that drops an unknown
+  message, and end a core or encode failure through `down/2` with a reason that names no term.
 * [Low] `test/fixtures/erx_draw_codec_harness.c` and `tools/fuzz/draw_codec_target.rb`, the draw codec's C twin,
   [Draw messages](docs/design-display.md#draw-messages): the twin still frames a `Y` with the stand-in
   `erx_draw_cload_frame`, so the differential test of the codec against it compares `erx_draw_image` with the

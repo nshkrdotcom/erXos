@@ -78,7 +78,7 @@ module Erx
                                     '    (@m >= 0xd800 && @m <= 0xdfff)))',
                                     "\treturn (ERX_UI_REFUSAL_BAD_RUNE);"],
                            ts_type: 'number | null', ts_read: 'rune(cursor.u32(@s))', ts_write: 'writeRune(writer, @f);'),
-        'props' => Code.new(erlang_read: 'read_props', erlang_short: false, erlang_segment: 'props(@v, Present)',
+        'props' => Code.new(erlang_read: 'read_props', erlang_short: false, erlang_segment: 'props(@v, Texts)',
                             erlang_call: true, erlang_guard: 'is_map(@v)', erlang_type: 'map()',
                             c_type: nil, c_read: 'erx_ui_props(cursor, @m, &@n)',
                             ts_type: 'readonly Prop<T>[]', ts_read: 'readProps(cursor)', ts_write: 'writeProps(writer, @f);'),
@@ -232,7 +232,7 @@ module Erx
         guards = owner.fields.filter_map do |field|
           code(field).erlang_guard&.gsub('@v', erlang_var(field.name))
         end
-        present = owner.fields.any? { |field| field.type == 'props' } ? 'Present' : '_Present'
+        texts = owner.fields.any? { |field| field.type == 'props' } ? 'Texts' : '_Texts'
         segments = owner.fields.each_with_object([[prefix]]) do |field, parts|
           segment = code(field).erlang_segment.gsub('@v', erlang_var(field.name))
           if code(field).erlang_call
@@ -243,7 +243,7 @@ module Erx
         end
         segments = segments.reject(&:empty?).map { |part| part.is_a?(Array) ? "<<#{part.join(', ')}>>" : part }
         body = segments.size == 1 ? segments.first : "[#{segments.join(', ')}]"
-        clause_head = head.call(erlang_term(owner), present)
+        clause_head = head.call(erlang_term(owner), texts)
         unless guards.empty?
           guard = "when #{guards.join(', ')}"
           clause_head += clause_head.size + guard.size < 96 ? " #{guard}" : "\n  #{guard}"
@@ -253,7 +253,7 @@ module Erx
 
       def erlang_body_clauses(ui)
         ui.records.map do |record|
-          erlang_encode(->(term, present) { "body(#{term}, #{present})" }, record.tag.to_s, record)
+          erlang_encode(->(term, texts) { "body(#{term}, #{texts})" }, record.tag.to_s, record)
         end.join
       end
 

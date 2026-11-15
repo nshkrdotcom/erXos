@@ -965,6 +965,14 @@ refused whole when it does not fit or breaks a rule a reader checks. The
 encoder takes the canonical
 text of a `present` value as a function, `erx_present:text/2` in the
 widget server, so the generated module depends on no presentation table.
+Its `encode/2` writes every text a record carries, each item of a list
+and each canonical text through the line escape, `erx_text:escape_line/2`,
+since a native renderer shows the bytes it reads ([design-display.md,
+G5](design-display.md#invariants)), and cuts an escaped text longer than
+its type's bound at a whole escape token, ending it with an ellipsis;
+`encode_raw/2` writes texts as they are, for
+the browser, which escapes each text itself, and only the sites of the
+chokepoint `ui-raw-texts` call it.
 In Erlang, `screen` is `{screen, Width, Height, Chan}`, `input` is
 `{input, {pointer, X, Y, Buttons}}`, `{input, {key, down | up, Code,
 Rune | none}}` or `{input, {wheel, Steps}}`, `repaint` and `presented`

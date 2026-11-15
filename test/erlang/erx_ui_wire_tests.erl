@@ -12,18 +12,18 @@
 %% The canonical text a test stands in for erx_present:text/2.
 present(_Type, Value) -> iolist_to_binary(io_lib:format("~0p", [Value])).
 
-encode(Record) -> erx_ui_wire:encode(Record, fun present/2).
+encode_raw(Record) -> erx_ui_wire:encode_raw(Record, fun present/2).
 
 event_and_damage_round_trip_test() ->
     Records = [{event, 1, on_click, none}, {event, 7, on_change, true}, {event, 7, on_change, false},
                {event, 16#ffffffff, on_change, -16#80000000}, {event, 2, on_submit, <<"caf", 16#e9/utf8>>},
                {event, 3, on_select, <<>>}, {damage, 2, 4, [{0, 1, 2, 3}]},
                {damage, 65535, 65535, [{0, 0, 65535, 65535} || _ <- lists:seq(1, 16)]}],
-    Stream = iolist_to_binary([encode(Record) || Record <- Records]),
+    Stream = iolist_to_binary([encode_raw(Record) || Record <- Records]),
     ?assertEqual(Records, read_all(Stream)).
 
 every_strict_prefix_is_more_test() ->
-    Bytes = encode({event, 9, on_submit, <<"hello">>}),
+    Bytes = encode_raw({event, 9, on_submit, <<"hello">>}),
     [?assertEqual(more, erx_ui_wire:read(binary:part(Bytes, 0, N))) || N <- lists:seq(0, byte_size(Bytes) - 1)].
 
 refusals_test_() ->
@@ -32,8 +32,8 @@ refusals_test_() ->
      ?_assertEqual({error, bad_length}, erx_ui_wire:read(<<65537:32/little>>)),
      ?_assertEqual({error, bad_length}, erx_ui_wire:read(<<65025:32/little, 6>>)),
      %% A server's record arriving at the server is refused by tag.
-     ?_assertEqual({error, bad_tag}, erx_ui_wire:read(encode(commit))),
-     ?_assertEqual({error, bad_tag}, erx_ui_wire:read(encode(repaint))),
+     ?_assertEqual({error, bad_tag}, erx_ui_wire:read(encode_raw(commit))),
+     ?_assertEqual({error, bad_tag}, erx_ui_wire:read(encode_raw(repaint))),
      ?_assertEqual({error, bad_tag}, erx_ui_wire:read(frame(<<11>>))),
      ?_assertEqual({error, bad_node}, erx_ui_wire:read(frame(<<6, 0:32, 24, 0>>))),
      %% 11 is text, a property but no event; 1 is the key, never written.
@@ -64,23 +64,64 @@ refusals_test_() ->
      ?_assertEqual({error, bad_body}, erx_ui_wire:read(frame(<<6, 1:32>>)))].
 
 encoder_refuses_what_does_not_fit_test_() ->
-    [?_assertError({bad_value, width}, encode({set, 1, #{width => 16385}, []})),
-     ?_assertError({bad_value, text}, encode({set, 1, #{text => {{stopgap, nobody}, unknown}}, []})),
-     ?_assertError({bad_kind, nothing}, encode({insert, 1, 0, 0, nothing, #{}})),
-     ?_assertError({bad_record, _}, encode({move, 1, 65536})),
-     ?_assertError({bad_value, 16#d800}, encode({input, {key, down, 1, 16#d800}})),
-     ?_assertError({bad_record, _}, encode({damage, 1, 1, []})),
-     ?_assertError({bad_record, _}, encode({damage, 1, 1, [{0, 0, 1, 1} || _ <- lists:seq(1, 17)]})),
-     ?_assertError({bad_record, _}, encode({damage, 65536, 1, [{0, 0, 1, 1}]})),
-     ?_assertError({bad_rect, {0, 0, 0, 1}}, encode({damage, 1, 1, [{0, 0, 0, 1}]})),
-     ?_assertError({bad_rect, {65536, 0, 1, 1}}, encode({damage, 65535, 1, [{65536, 0, 1, 1}]})),
-     ?_assertError({bad_rect, {1, 0, 1, 1}}, encode({damage, 1, 1, [{1, 0, 1, 1}]})),
-     ?_assertError({bad_rect, {0, 0, 1, 2}}, encode({damage, 1, 1, [{0, 0, 1, 2}]}))].
+    [?_assertError({bad_value, width}, encode_raw({set, 1, #{width => 16385}, []})),
+     ?_assertError({bad_value, text}, encode_raw({set, 1, #{text => {{stopgap, nobody}, unknown}}, []})),
+     ?_assertError({bad_kind, nothing}, encode_raw({insert, 1, 0, 0, nothing, #{}})),
+     ?_assertError({bad_record, _}, encode_raw({move, 1, 65536})),
+     ?_assertError({bad_value, 16#d800}, encode_raw({input, {key, down, 1, 16#d800}})),
+     ?_assertError({bad_record, _}, encode_raw({damage, 1, 1, []})),
+     ?_assertError({bad_record, _}, encode_raw({damage, 1, 1, [{0, 0, 1, 1} || _ <- lists:seq(1, 17)]})),
+     ?_assertError({bad_record, _}, encode_raw({damage, 65536, 1, [{0, 0, 1, 1}]})),
+     ?_assertError({bad_rect, {0, 0, 0, 1}}, encode_raw({damage, 1, 1, [{0, 0, 0, 1}]})),
+     ?_assertError({bad_rect, {65536, 0, 1, 1}}, encode_raw({damage, 65535, 1, [{65536, 0, 1, 1}]})),
+     ?_assertError({bad_rect, {1, 0, 1, 1}}, encode_raw({damage, 1, 1, [{1, 0, 1, 1}]})),
+     ?_assertError({bad_rect, {0, 0, 1, 2}}, encode_raw({damage, 1, 1, [{0, 0, 1, 2}]}))].
 
 %% The key is never written, and a set's removals are in number order.
 key_is_never_written_test() ->
-    ?assertEqual(encode({insert, 4, 0, 0, label, #{}}), encode({insert, 4, 0, 0, label, #{key => k}})),
-    ?assertEqual(<<9:32/little, 3, 4:32/little, 0, 2, 2, 11>>, encode({set, 4, #{}, [text, key, width]})).
+    ?assertEqual(encode_raw({insert, 4, 0, 0, label, #{}}), encode_raw({insert, 4, 0, 0, label, #{key => k}})),
+    ?assertEqual(<<9:32/little, 3, 4:32/little, 0, 2, 2, 11>>, encode_raw({set, 4, #{}, [text, key, width]})).
+
+%% A native renderer shows the bytes it reads, so encode/2 writes every text
+%% a record carries through the line escape (docs/design-display.md, G5): a
+%% text, each item of a list, a text a status carries and a presentation's
+%% canonical text holding C0 and C1 controls, a bidirectional override and
+%% invalid UTF-8 reach the renderer as the escape's tokens.
+-define(HOSTILE, <<"a", 7, 27, "[2J", 16#85/utf8, 16#9b/utf8, 16#202e/utf8, 16#ff, "z">>).
+-define(SHOWN, <<"a<U+0007><U+001B>[2J<U+0085><U+009B><U+202E><0xFF>z">>).
+
+texts_are_written_escaped_test() ->
+    Present = fun(_Type, _Value) -> ?HOSTILE end,
+    Records = [{insert, 2, 1, 0, label, #{text => ?HOSTILE, present => {group, 7}}},
+               {insert, 3, 1, 1, list, #{items => [?HOSTILE, <<"plain">>]}},
+               {insert, 4, 1, 2, input, #{placeholder => ?HOSTILE, text => <<"typed", 9>>}},
+               {insert, 5, 1, 3, image, #{alt => ?HOSTILE}},
+               {set, 2, #{text => {kernel, {ok, ?HOSTILE}}}, []}],
+    Stream = iolist_to_binary([erx_ui_wire:encode(Record, Present) || Record <- Records]),
+    ?assertEqual([{insert, 2, 1, 0, label, #{text => ?SHOWN, present => {<<"group">>, ?SHOWN}}},
+                  {insert, 3, 1, 1, list, #{items => [?SHOWN, <<"plain">>]}},
+                  {insert, 4, 1, 2, input, #{placeholder => ?SHOWN, text => <<"typed<U+0009>">>}},
+                  {insert, 5, 1, 3, image, #{alt => ?SHOWN}},
+                  {set, 2, #{text => {kernel, {ok, ?SHOWN}}}, []}],
+                 read_all_server(Stream)).
+
+%% An escaped text longer than its type's bound is cut after a whole token
+%% and ends with an ellipsis; one that fits exactly is written whole. A
+%% caption takes 4,096 bytes, 512 tokens of eight; an item 128, 16 tokens.
+%% The same text written raw stays as it is.
+escaped_text_past_its_bound_is_cut_test() ->
+    Shown = fun(Record) -> hd(read_all_server(erx_ui_wire:encode(Record, fun present/2))) end,
+    Bells = fun(N) -> binary:copy(<<7>>, N) end,
+    Tokens = fun(N) -> binary:copy(<<"<U+0007>">>, N) end,
+    Cut = fun(Kept) -> <<Kept/binary, "...">> end,
+    ?assertEqual({set, 1, #{text => Tokens(512)}, []}, Shown({set, 1, #{text => Bells(512)}, []})),
+    ?assertEqual({set, 1, #{text => Cut(Tokens(511))}, []}, Shown({set, 1, #{text => Bells(513)}, []})),
+    ?assertEqual({set, 1, #{text => Cut(Tokens(511))}, []}, Shown({set, 1, #{text => Bells(4096)}, []})),
+    ?assertEqual({set, 1, #{text => Cut(<<"abc", (Tokens(511))/binary>>)}, []},
+                 Shown({set, 1, #{text => <<"abc", (Bells(600))/binary>>}, []})),
+    ?assertEqual({set, 1, #{items => [Tokens(16), Cut(Tokens(15))]}, []},
+                 Shown({set, 1, #{items => [Bells(16), Bells(17)]}, []})),
+    ?assertEqual([{set, 1, #{text => Bells(4096)}, []}], read_all_server(encode_raw({set, 1, #{text => Bells(4096)}, []}))).
 
 %% A server record reads back as what the binary form carries of it.
 server_records_read_back_test() ->
@@ -89,11 +130,11 @@ server_records_read_back_test() ->
          {insert, 4, 3, 0, label, #{present => {group, 7}, text => {kernel, {timeout, 30}}}},
          {insert, 5, 3, 1, label, #{text => {{stopgap, liberx_pool}, {error, gone}}, present => {service, unknown}}},
          {set, 4, #{text => {runtime, {partial, <<"p">>}}, visible => false}, [width, key, text]}],
-    Stream = iolist_to_binary([encode(Record) || Record <- Records]),
+    Stream = iolist_to_binary([encode_raw(Record) || Record <- Records]),
     ?assertEqual([meaning(Record) || Record <- Records], read_all_server(Stream)).
 
 every_strict_prefix_of_a_server_record_is_more_test() ->
-    Bytes = encode({insert, 9, 1, 0, label, #{text => <<"hello">>}}),
+    Bytes = encode_raw({insert, 9, 1, 0, label, #{text => <<"hello">>}}),
     [?assertEqual(more, erx_ui_wire:read_server(binary:part(Bytes, 0, N))) || N <- lists:seq(0, byte_size(Bytes) - 1)].
 
 %% test/host/erx_ui_wire_test.rb checks every reason against the C and
@@ -167,7 +208,7 @@ with the C and TypeScript readers'.
 corpus(StreamPath, ReadPath, Seed) ->
     rand:seed(exsss, {Seed, 3, 5}),
     Records = [record() || _ <- lists:seq(1, 600)] ++ fixed(),
-    Stream = iolist_to_binary([encode(Record) || Record <- Records]),
+    Stream = iolist_to_binary([encode_raw(Record) || Record <- Records]),
     Read = read_all_server(Stream),
     Read =:= [meaning(Record) || Record <- Records] orelse error(read_is_not_the_meaning),
     ok = file:write_file(StreamPath, Stream),
