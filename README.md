@@ -195,7 +195,9 @@ Eshell V17.1.1 (type help(). for help)
   power cycle) and Ethernet (1000 Mb/s, DHCP, `ping`, `host`) work; the
   card's [manual checklist](docs/design-platforms.md#the-sd-card-and-ethernet-on-a-board)
   and the [first pass](docs/research-rpi4-board-pass.md) record what was
-  tried. The board needs a bootloader dated 2022-12-01 or later.
+  tried. The board needs a bootloader dated 2022-12-01 or later. When the
+  device tree carries no random seed, the system domain seeds its
+  generator from the board's RNG200 hardware entropy source.
 * Boot images are reproducible, for the QEMU disk image and the Pi 4's
   SD card alike.
 
@@ -215,6 +217,10 @@ Eshell V17.1.1 (type help(). for help)
 * The Erlang shell, `erx:i()`, `source(Pid)`, `erx:trace/1` and `/proc`
   show processes and kernel objects; a value the stopgap cannot measure
   reads as unsupported or partial.
+* `erx:inspect(Path, Options)` reads an inspection path with a wait of the
+  caller's own. Every session sees the machine's load (each CPU's idle
+  time and ready threads) and the clock's state at `/proc/time/status`:
+  unset, boot or set.
 * A host link lets `tools/erx load`, `watch` and `files` replace modules in
   the running system and read its files; `tools/erx web` shows the
   machine's records in a browser.
@@ -231,8 +237,14 @@ Eshell V17.1.1 (type help(). for help)
 * Root's session can end the machine: `reboot` resets it and `halt`
   powers it off, at root's console session and at the system domain's
   shell.
-* Programs have pipes and a session process can start one. The shell does
-  not start programs yet. The file tree a program will see (`/bin`, `/dev`
+* A command can ask the terminal's size and stop its own job; the console
+  passes a change of its line's size to the foreground jobs that asked
+  for it.
+* Each terminal master in a session has a tty of its own, and its close
+  hangs up that tty's shells.
+* Programs have pipes and a session process can start one. A program's
+  `kill` and `kill(pid, 0)` are answered by its handler, and a program
+  reaches only itself. The shell does not start programs yet. The file tree a program will see (`/bin`, `/dev`
   with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
 
@@ -247,8 +259,11 @@ Eshell V17.1.1 (type help(). for help)
   failure. A QEMU suite kills the block driver in the middle of a transfer
   and finds each kept file cut at a sync. An EROFS reader mounts read-only
   images.
-* An F2FS codec reads a volume's superblock and checkpoint pack. The file
+* An F2FS codec reads a volume's superblock and checkpoint pack, its node
+  and segment tables, journals, inodes and directory entries. The file
   system is not built yet.
+* `tools/erx-app pack` packs an app directory into a `.app` file: a
+  header, an EROFS image of the app's files and a dm-verity tree.
 
 **Networking**
 
@@ -269,8 +284,20 @@ Eshell V17.1.1 (type help(). for help)
   with `erx_win`, and the virtio-gpu, virtio-input (keyboard and tablet)
   and Pi firmware-framebuffer drivers are Erlang processes. A QEMU suite
   compares screenshots; the Pi's screen is checked by hand.
+* A window's client speaks Plan 9's draw protocol over a draw connection
+  (`erx_draw`) and loads Plan 9 subfonts, and the tree holds the 6x13 fixed ones. The
+  window tree serves `/clipboard`, the display's shared clipboard, to a
+  client whose grant carries it. The widget renderer reads PNG images in
+  Erlang (`erx_png`, with its own inflate), and every widget text is
+  written through the line escape.
+* One theme file declares the desktop's type roles, spacing, radii, shadow
+  and palette, with contrast rules the build checks; the Erlang, C and
+  TypeScript sides are generated from it.
 * `erx-lvgl`, LVGL as a native program, is built into every image whose
-  release holds `erx_ui`.
+  release holds `erx_ui`. A session starts it through its program
+  handler, and on QEMU a display-suite cell runs the LVGL renderer over
+  the real `erx-lvgl` drawing into a buffer lent from the display's pixel
+  area.
 
 **Web demo and checks**
 
