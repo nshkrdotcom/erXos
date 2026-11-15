@@ -94,11 +94,11 @@ module Erx
         Chokepoints::Forbidden.new(
           name: 'dom-session-entries',
           rule: "only the domain service, through #{DOM_NIF}, calls erx_dom_lib_session, and only #{DOM_BOOT} " \
-                'calls erx_dom_plan_session, beside the manifest check\'s host planner, the host driver and the fuzz target; ' \
+                'calls erx_dom_plan_session or erx_dom_plan_app_session, beside the manifest check\'s host planner, the host driver and the fuzz target; ' \
                 'no domain facet reaches either',
           design: 'docs/design-domains.md#principals-sessions-and-quotas',
           scope: Chokepoints::Scope.new(own: true, extra: [GLUE, ERXOS_NIFS]),
-          pattern: /\berx_dom_(?:plan|lib)_session\b/,
+          pattern: /\berx_dom_(?:plan|lib)_(?:app_)?session\b/,
           sites: [DOM_BOOT, DOM_LIB_HEADER, DOM_CORE, DOM_HEADER, DOM_NIF, DOM_HOST_PLANNER,
                   'liberx/backend/core/dom_lib_none.c', 'test/fixtures/dom_core_driver.c', 'tools/fuzz/dom_core_fuzz.c']
                  .map { |site| Chokepoints::Site.new(glob: site) },

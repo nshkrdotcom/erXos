@@ -56,6 +56,10 @@ typedef struct erx_dom_principal_held {
 typedef struct erx_dom_held {
 	erx_dom_principal_held_t *principals;	/* view.nprincipals: principal
 						 * number n at n - 1 */
+	uint64_t	apps;			/* the apps budget, carved from the
+						 * root, which every app entry's
+						 * budget is elastic under; unused
+						 * without an apps row */
 	uint64_t	system_group;		/* the system domain's group: its bells, and
 						 * a configured domain's CPU parent */
 	uint64_t	image;			/* the boot image (SYSTEM): what erx_image_slice

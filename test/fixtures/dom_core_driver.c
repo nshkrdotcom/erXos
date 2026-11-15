@@ -1028,6 +1028,104 @@ principals(void)
 }
 
 /*
+ * App entries and app sessions (docs/design-packaging.md, "An app's
+ * principal" and "An app's session"): the view of reset_view with a second
+ * template, the app template, which names no principal, and room for
+ * APP_ENTRIES app entries after principal 1 under an apps budget of
+ * APPS_MIB. Each line names a case and its result.
+ */
+#define APP_ENTRIES	3
+#define APPS_MIB	16
+
+static erx_dom_principal_t app_principals[1 + APP_ENTRIES];
+static erx_dom_template_t app_templates[2];
+
+static void
+reset_apps(void)
+{
+	reset_view();
+	app_principals[0] = principal;
+	app_templates[0] = session_template;
+	app_templates[1] = session_template;
+	app_templates[1].principal = 0;
+	view.principals = app_principals;
+	view.templates = app_templates;
+	view.ntemplates = 2;
+}
+
+/* Plans entry's session with mib MiB under id and records it. */
+static erx_status_t
+app_session(uint32_t id, uint32_t entry, uint64_t mib, erx_dom_plan_t *plan)
+{
+	erx_status_t status;
+
+	status = erx_dom_plan_app_session(&view, id, entry, mib * MIB, "app_1", 5, NULL, 0,
+	    (erx_dom_pid_t){ id, 1 }, plan);
+	return (status == ERX_OK ? erx_dom_plan_record(&view, plan) : status);
+}
+
+static int
+apps(void)
+{
+	static erx_dom_plan_t plan;
+	const erx_dom_principal_t *entry;
+
+	reset_apps();
+	printf("apps place %d", (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, APP_ENTRIES));
+	entry = &view.principals[view.nprincipals - 1];
+	printf(" first=%u max=%u principals=%u last=%u,%u,%u,%d\n", view.apps.first, view.apps.max,
+	    view.nprincipals, entry->number, (unsigned)(entry->memory / MIB), entry->domains_max,
+	    memcmp(&entry->share, &app_templates[1].grant, sizeof(entry->share)) == 0);
+	printf("apps place_twice %d %u\n", (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, 1),
+	    view.nprincipals);
+	reset_apps();
+	printf("apps place_refused %d %d %d %d %d %d %u\n",
+	    (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, 0),
+	    (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, ERX_APPS_MAX_LIMIT + 1),
+	    (int)erx_dom_apps_place(&view, 2, APPS_MIB * MIB, 1),
+	    (int)erx_dom_apps_place(&view, 0, APPS_MIB * MIB, 1),
+	    (int)erx_dom_apps_place(&view, 1, 0, 1),
+	    (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB + 1, 1), view.nprincipals);
+	/*
+	 * An entry the check refuses leaves the view as it was: the second entry's
+	 * number is the manifest principal's, renumbered here.
+	 */
+	app_principals[0].number = 3;
+	printf("apps place_entry_refused %d %u %u\n", (int)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, 2),
+	    view.nprincipals, view.apps.max);
+
+	reset_apps();
+	(void)erx_dom_apps_place(&view, 1, APPS_MIB * MIB, APP_ENTRIES);
+	printf("apps session %d", (int)erx_dom_plan_app_session(&view, 8, 2, 8 * MIB, "app_1", 5,
+	    "screen", 6, (erx_dom_pid_t){ 3, 1 }, &plan));
+	printf(" principal=%u memory=%u outer=%u origin=%u,%u words=", plan.spec.principal,
+	    (unsigned)(plan.spec.memory / MIB), (unsigned)(plan.spec.outer / MIB),
+	    plan.spec.origin.kind, plan.spec.origin.record);
+	for (uint32_t at = 0; at < plan.spec.env_len; at++) {
+		const char byte = plan.spec.strings[plan.spec.args_len + at];
+
+		putchar(byte == '\0' ? '|' : byte);
+	}
+	printf("\n");
+	printf("apps session_refused %d %d %d %d\n",
+	    (int)erx_dom_plan_session(&view, 8, 1, "app_1", 5, NULL, 0, (erx_dom_pid_t){ 3, 1 }, &plan),
+	    (int)erx_dom_plan_app_session(&view, 8, APP_ENTRIES, 8 * MIB, "app_1", 5, NULL, 0,
+	    (erx_dom_pid_t){ 3, 1 }, &plan),
+	    (int)erx_dom_plan_app_session(&view, 8, 0, (APPS_MIB + 1) * MIB, "app_1", 5, NULL, 0,
+	    (erx_dom_pid_t){ 3, 1 }, &plan),
+	    (int)erx_dom_plan_app_session(&view, 8, 0, 8 * MIB, "app_1", 5, "a\0b", 3,
+	    (erx_dom_pid_t){ 3, 1 }, &plan));
+	/* One session per app; the apps budget bounds what every app's sessions carve together. */
+	/* The last entry first, so the sum that counts every entry is seen to count it. */
+	printf("apps budget %d", (int)app_session(8, APP_ENTRIES - 1, 8, &plan));
+	printf(" second=%d", (int)app_session(9, APP_ENTRIES - 1, 4, &plan));
+	printf(" over=%d", (int)app_session(9, 1, 8, &plan));
+	printf(" fits=%d", (int)app_session(9, 1, 4, &plan));
+	printf(" full=%d\n", (int)app_session(10, 0, 4, &plan));
+	return (0);
+}
+
+/*
  * A configured row's gives (docs/design-system.md, "Devices"): a catalogue
  * of device 0, an unconfined transport of unit 0 placed on configured row
  * 0, and device 1, of unit 1, the system domain's, each on a line of its
@@ -1190,7 +1288,9 @@ main(int argc, char **argv)
 		return (records());
 	if (argc == 2 && strcmp(argv[1], "gives") == 0)
 		return (gives());
+	if (argc == 2 && strcmp(argv[1], "apps") == 0)
+		return (apps());
 	fprintf(stderr,
-	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives\n");
+	    "usage: dom_core_driver explore|cases|seeded|principal|record|gives|apps\n");
 	return (2);
 }

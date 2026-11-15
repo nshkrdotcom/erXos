@@ -72,6 +72,7 @@ erx_dom_boot_up(erx_dom_lib_t *lib, const erx_boot_info_t *system_page, uint64_t
 {
 	const erx_dom_principal_t *principal;
 	erx_dom_principal_held_t *held;
+	uint64_t parent, guarantee, cap;
 
 	lib->view.system_space = system_space;
 	lib->held.system_group = system_page->group.raw;
@@ -82,11 +83,28 @@ erx_dom_boot_up(erx_dom_lib_t *lib, const erx_boot_info_t *system_page, uint64_t
 	lib->hwcap = system_page->hwcap;
 	lib->hwcap2 = system_page->hwcap2;
 	lib->det = (system_page->flags & ERX_BOOT_DET) != 0;
+	/* The apps budget is a wall, as a principal's is (docs/design-packaging.md, "An app's principal"). */
+	cap = lib->view.apps.memory / ERX_PAGE_SIZE;
+	if (lib->view.apps.max != 0 &&
+	    erx_budget_create(ERX_CAP_SELF, ERX_BUDGET_ELASTIC, cap, cap, &lib->held.apps) != ERX_OK)
+		return ("the domain library: the backend refused the apps budget");
 	for (uint32_t index = 0; index < lib->view.nprincipals; index++) {
 		principal = &lib->view.principals[index];
 		held = &lib->held.principals[index];
-		if (erx_budget_create(ERX_CAP_SELF, ERX_BUDGET_ELASTIC, principal->memory / ERX_PAGE_SIZE,
-		    principal->memory / ERX_PAGE_SIZE, &held->budget) != ERX_OK)
+		/*
+		 * A principal's budget is a wall carved from the root; an app
+		 * entry's has no guarantee, and the apps budget for its parent
+		 * and, as its memory, its cap.
+		 */
+		cap = principal->memory / ERX_PAGE_SIZE;
+		if (erx_dom_app_principal(&lib->view, principal->number)) {
+			parent = lib->held.apps;
+			guarantee = 0;
+		} else {
+			parent = ERX_CAP_SELF;
+			guarantee = cap;
+		}
+		if (erx_budget_create(parent, ERX_BUDGET_ELASTIC, guarantee, cap, &held->budget) != ERX_OK)
 			return ("the domain library: the backend refused a principal's budget");
 		if (erx_group_create(0, 0, &held->group) != ERX_OK)
 			return ("the domain library: the backend refused a principal's group");
