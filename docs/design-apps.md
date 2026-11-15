@@ -847,6 +847,15 @@ would start every enabled row that an install or update had left
 of the store is a bug of the system domain like any other: the records
 process parses nothing.
 
+Beside the table's process and the keepers' branch, the top supervisor
+holds packaging's two processes
+([design-packaging.md](design-packaging.md#the-package-lifetime)):
+`erx_pkg_io`, whose end ends the application, and `erx_pkg_sup`, the
+package process's own supervisor, a temporary child that is not
+significant. So a package process that ends past its intensity ends no
+row, no keeper and no other child: the table keeps the last package set
+it took, and `/apps` answers `eio`.
+
 Nothing compares the table with the file. A row changes only when it
 enters the table and at its own command, so no record has to hold a
 row back from a later read: a stopped or installed row stays so
