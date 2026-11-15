@@ -7397,12 +7397,8 @@ document's "residual risks accepted" paragraph.
 ## Planned features
 
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
-  (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist, but no
-  QEMU cell boots it. Part 4a runs it in a manifest principal's session with no package, which needs a
-  test image's session release to hold `erx_dashboard`, while
-  [design-packaging.md](docs/design-packaging.md#examples) says no list of erXos's names an example and
-  builds one only through the SDK. Decide how part 4a's image takes the example (or move its QEMU check to
-  part 4b's package), then add the display suite's cell. design-packaging.md's verification row for
+  (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
+  first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
   check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
