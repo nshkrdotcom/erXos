@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'securerandom'
 require_relative 'error'
+require_relative 'key_directory'
 require_relative 'source_revision'
 
 module Erx
@@ -23,9 +24,7 @@ module Erx
   #
   # ensure is the one operation that makes the pair, for `tools/erx setup` and the image
   # build alike. It keeps a pair that checks out, refuses one that is damaged or whose
-  # halves disagree, and makes a missing one in a fresh directory that it then renames
-  # into place, so a build that stops part-way leaves no half-made pair and of two builds
-  # racing one wins and the other uses the winner's.
+  # halves disagree, and makes a missing one whole or not at all (Erx::KeyDirectory).
   module DevKey
     DIRECTORY = 'erxos/dev-key'
     UNCLONED_DIRECTORY = 'build/dev-key'
@@ -95,7 +94,8 @@ module Erx
       path
     end
 
-    # The clone's key directory for the tree at root.
+    # The clone's key directory for the tree at root: under git's common directory, or
+    # under root's build tree when the tree is not a git checkout.
     def directory(root:, runner:)
       return File.join(root, UNCLONED_DIRECTORY) unless File.exist?(File.join(root, '.git'))
 
@@ -111,7 +111,10 @@ module Erx
 
     # The pair at directory, made first when there is none there.
     def ensure(directory:, runner:)
-      make(directory: directory, runner: runner) unless File.exist?(directory)
+      KeyDirectory.ensure(directory, what: 'the development key') do |fresh|
+        runner.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', COMMENT, '-f', File.join(fresh, PRIVATE)],
+                   name: 'dev-key-make', deadline: DEADLINE)
+      end
       read(directory: directory, runner: runner)
     end
 
@@ -119,12 +122,8 @@ module Erx
     # holding an owner-only regular private file and a public file of one Ed25519 key that
     # ssh-keygen derives from the private one.
     def read(directory:, runner:)
-      raise Error, "the development key directory #{directory} is not an owner-only directory" unless
-        owner_only?(directory, directory: true)
-
-      private_path = File.join(directory, PRIVATE)
-      raise Error, "the development key #{private_path} is not an owner-only regular file" unless
-        owner_only?(private_path, directory: false)
+      KeyDirectory.checked(directory, what: 'the development key')
+      private_path = KeyDirectory.private_file(directory, PRIVATE, what: 'the development key')
 
       public_path = File.join(directory, PUBLIC)
       raise Error, "the development key's public half #{public_path} is missing" unless
@@ -150,26 +149,6 @@ module Erx
       raise Error, "#{source} is not one Ed25519 public key"
     end
 
-    # Makes a pair in a fresh owner-only directory beside directory, then renames it
-    # into place; when another build's pair took the place first, this one's is removed.
-    def make(directory:, runner:)
-      parent = File.dirname(directory)
-      FileUtils.mkdir_p(parent)
-      fresh = File.join(parent, ".#{File.basename(directory)}-#{Process.pid}-#{SecureRandom.hex(8)}")
-      Dir.mkdir(fresh, 0o700)
-      begin
-        runner.run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', COMMENT, '-f', File.join(fresh, PRIVATE)],
-                   name: 'dev-key-make', deadline: DEADLINE)
-        begin
-          File.rename(fresh, directory)
-        rescue Errno::EEXIST, Errno::ENOTEMPTY
-          nil
-        end
-      ensure
-        FileUtils.rm_rf(fresh)
-      end
-    end
-
     # The public line ssh-keygen derives from the private key at path. Only the public
     # line reaches the command's output file.
     def derive(path, runner:)
@@ -180,14 +159,6 @@ module Erx
       raise Error, "ssh-keygen cannot read the development key #{path}; remove its directory to make a new pair"
     ensure
       FileUtils.rm_f(output) if output
-    end
-
-    def owner_only?(path, directory:)
-      stat = File.lstat(path)
-      kind = directory ? stat.directory? : stat.file?
-      kind && stat.uid == Process.uid && stat.mode.nobits?(0o077)
-    rescue SystemCallError
-      false
     end
   end
 end

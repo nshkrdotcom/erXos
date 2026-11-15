@@ -21,7 +21,8 @@ require_relative '../../tools/fuzz/package_seeds'
 # (Erx::PackageSeeds): two well-formed packages, each decoded whole, and one file for each
 # of the decoder's checks, wrong in a way only that check catches, with the answer it must
 # give. The packer's cases are two sample apps, an Erlang one and a native one, packed by
-# Erx::AppPack with fsimg and a signing key made for the run.
+# Erx::AppPack with fsimg and a signing key made for the run, with an SDK that holds the
+# file check's modules alone, compiled here.
 class ErxPkgHeaderTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -46,7 +47,6 @@ class ErxPkgHeaderTest < Minitest::Test
                  'lib/erx_hello/ebin/erx_hello.app' => "{application, erx_hello, [{modules, []}]}.\n",
                  'lib/erx_hello/ebin/erx_hello.beam' => 'not compiled',
                  'lib/erx_hello/priv/greeting.txt' => "hello\n",
-                 'lib/erx_hello/src/erx_hello.erl' => "-module(erx_hello).\n",
                  'share/data.bin' => (0...540_000).map { |index| (index % 251).chr }.join }.freeze
   NATIVE_APP = { 'app.txt' => "app tiny\n  memory 8388608\n  program \"bin/tiny\" \"-v\" \"\"\n",
                  'bin/tiny' => "\x7fELF not really".b,
@@ -72,13 +72,15 @@ class ErxPkgHeaderTest < Minitest::Test
       File.write(File.join(work, 'signing.pem'), key.private_to_pem)
       signer = Erx::AppPackage::Signer.read(File.join(work, 'signing.pem'))
       runner = Erx::Runner.new(owner_root: work, log_dir: File.join(work, 'logs'))
+      sdk = file_check_sdk(File.join(work, 'sdk'))
       PACKED.to_h do |name, app, _fields|
         directory = File.join(work, File.basename(name, '.app'))
         app.each do |path, bytes|
           FileUtils.mkdir_p(File.dirname(File.join(directory, path)))
           File.binwrite(File.join(directory, path), bytes)
         end
-        path = Erx::AppPack.pack(directory: directory, signer: signer, output_directory: work, runner: runner, root: ROOT)
+        path = Erx::AppPack.pack(directory: directory, sdk: sdk, signer: signer, output_directory: work, runner: runner,
+                                 root: ROOT)
         assert_equal name, File.basename(path)
         [name, File.binread(path)]
       end
@@ -165,6 +167,16 @@ class ErxPkgHeaderTest < Minitest::Test
     in Array then "[#{value.map { |item| term(item) }.join(', ')}]"
     in Hash then "\#{#{value.map { |key, item| "#{key} => #{term(item)}" }.join(', ')}}"
     end
+  end
+
+  # An SDK whose one application holds the file check's modules and erx_bytes for stock.
+  def file_check_sdk(root)
+    ebin = File.join(root, 'erlang/lib/erx/ebin')
+    FileUtils.mkdir_p(ebin)
+    output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-I', INCLUDE, '-o', ebin,
+                                     *SOURCES.reject { it.include?('_tests.erl') }, stdin_data: '')
+    assert status.success?, output
+    Erx::AppPack::Sdk.new(root: root, erlc: ENV.fetch('ERX_ERLC'))
   end
 
   # Writes files (each name's bytes) into a directory ERX_PKG_CASES names and runs module's

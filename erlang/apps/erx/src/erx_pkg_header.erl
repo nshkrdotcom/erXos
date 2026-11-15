@@ -110,7 +110,7 @@ with its 32-byte Ed25519 public key.
 
 -doc """
 A trusted signer: the name of the manifest's `signer` row that holds its
-key, or `development` for the SDK's development key.
+key, or `development` for the image builder's development package key.
 """.
 -type signer() :: binary() | development.
 

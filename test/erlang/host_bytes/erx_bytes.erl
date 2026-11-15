@@ -26,7 +26,9 @@
 %%   * entropy/1 is stock's crypto:strong_rand_bytes/1, the host's generator: badarg unless N
 %%     is an integer from 1 to 256. It never fails a read, so the raise of a failed read is
 %%     judged in the release (test/integration/runtime_hosted_smoke_test.rb).
-%% Only host tests compile it; it never reaches a release.
+%% Host tests compile it, and the SDK carries it in host/erlang/ebin for the packer's file
+%% check (docs/design-packaging.md, "The SDK"); it never reaches a release. tcp_merge/1 needs
+%% erx_tcp_merge_model beside it, which the SDK does not carry.
 
 -module(erx_bytes).
 -export([crc32c/2, inet_csum/2, inet_csum_update/3, siphash24/2, tcp_merge/1, tcp_merge_limit/0, sha256/1,
