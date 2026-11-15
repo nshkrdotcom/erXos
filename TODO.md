@@ -6421,15 +6421,6 @@ to the corpus and follow rc
   design's intent puts the holder in the console's trusted base, a domain of its own. Decide
   whether the clause also refuses a holder that serves or holds anything beyond those units,
   and tighten the text and the check together. No shipped manifest places `gpio`.
-* [High] stopgap, Raspberry Pi 4, `kernel/core/dt.c` `erx_dt_registers`, `liberx/backend/fiasco/rng200.c`: the
-  RNG200's register window comes from the device tree alone. The reader refuses a window that is empty,
-  wraps, is not translated whole and in one piece through the buses' `ranges`, or meets the tree's RAM, but
-  nothing ties it to where the generator is, so a tree that names another device's page under the RNG200's
-  compatible string has the root map that page, set bit 0 of its first register if nothing else there is set,
-  and read two more registers for 100 ms. The framebuffer row closes the same gap with the manifest row's
-  window (`erx_dt_framebuffer`); the RNG200 has no such row or platform fact yet. A development build runs
-  trusted code from one boot medium, which holds the tree; release needs the window from one checked-in
-  source, checked as the framebuffer's is.
 * [Medium] kernel design, `docs/design-platforms.md` "Data model": erXos's kernel binds the devices of
   `hw/kernel_devices.txt` (the RNG200, the watchdog, the mailbox) by compatible string from the device tree
   alone, so a tree that names another device's page under one of those strings would have the kernel drive
