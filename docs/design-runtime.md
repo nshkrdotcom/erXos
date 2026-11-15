@@ -2463,7 +2463,7 @@ stays as long as hosted mode does: it is hosted mode's device, not a step toward
 the UART driver, which is a process over [the device NIF](#the-device-nif).
 
 **Pipes in a runtime.** A session's domain is the home of its pipes: its
-pipe server, a process of the command server, creates and keeps every
+pipe server, a process of the session, creates and keeps every
 pipe's rings and pages, makes every end and every doorbell, and installs
 the ends into its programs' sub-spaces through the program driver
 ([design-pipes.md](design-pipes.md#making-a-pipe)). The session's own

@@ -118,8 +118,8 @@ processes.
  | shell: parse -> evaluate -> stages               |  |              |
  |   Erlang stage --bytes---> Erlang stage --bytes--+--+-> program    |
  |                                          (pipe)  |  |  (a port,    |
- | command server (pid 1): process ids, jobs and    |  |   channel to |
- | handlers; the port driver                        |  |   handler)   |
+ | command server (pid 1): process ids and the      |  |   channel to |
+ | process table; handlers; the port driver         |  |   handler)   |
  +--------------------------------------------------+  +--------------+
 ```
 
@@ -142,7 +142,6 @@ The shell's state is a few Erlang terms in the session's domain:
                  | {program, binary()}.       % a program command, in /bin
 -type job() :: #{id := pos_integer(),         % %N
                  stages := [pid()],           % the job's Erlang processes
-                 programs := [2..16#7fffffff],% process ids, at each spawn
                  group_leader := pid(),       % inherited by its Erlang processes
                  state := foreground | background | paused}.
 ```
@@ -156,8 +155,10 @@ precedence and unresolved-conflict rules below.
 A session sees only commands of releases it holds. Live-loaded command
 metadata passes the same checks before publication
 ([design-generation.md](design-generation.md#configuration-and-command-catalogs)).
-The command server keeps the jobs and the session's process table
-([design-programs.md](design-programs.md#the-parties)). What flows
+The shell's job table keeps the jobs; a job's programs are the rows of
+the command server's process table that carry its job tag, each
+recorded at its spawn, so neither keeps the other's facts
+([design-programs.md](design-programs.md#the-command-server)). What flows
 between stages is bytes, which the shell does not interpret
 ([Pipelines](#pipelines)).
 
@@ -655,8 +656,11 @@ each passes the field escape.
 
 ### Starting programs
 
-The session's command server starts each program of a line
-([design-programs.md](design-programs.md)). The shell derives each
+The stage that names a program starts it, as any session process does,
+with `erx_prog_handler:start/1`, and its monitor of the program's
+handler brings it the program's end; the command server gives the
+program its process id and records it in the stage's job
+([design-programs.md](design-programs.md#the-command-server)). The shell derives each
 program's grants from the session's namespace, unless the line narrows it:
 `within /data/logs -- find /data/logs -name '*.err'` starts `find` with
 one grant, rooted at `/data/logs` and read-only, and no `/bin`, so `find`
@@ -1108,8 +1112,9 @@ program's table is built from its starter's
 
 **Interaction with other subsystems.** The console carries the bytes of
 the session's tty
-([design-live.md](design-live.md#the-tty)); the command server starts
-programs through the spawn path and keeps their handlers, and the port
+([design-live.md](design-live.md#the-tty)); each program's handler
+starts it through the spawn path, the command server gives it its
+process id and keeps the process table, and the port
 driver creates, pauses and ends their sub-spaces
 ([design-programs.md](design-programs.md),
 [design-runtime.md](design-runtime.md#programs-as-ports)); `/proc`, the
@@ -1151,8 +1156,8 @@ the tree, never adapted ([design.md](design.md#compatibility)).
 | An evaluator, stage or command passes its heap limit | `max_heap_size` | nothing of that process | the runtime, which kills the process | its stage's status is the kill's reason |
 | A command reads a line over 64 KiB | `erx_cmd:read_line/1` | nothing of that stage | the stage ends; its pipes' ends close with it | its stage's status is `line too long` |
 | An evaluator's Erlang stages do not fit the stage allowance | the shell, before it starts them | nothing: no stage runs | none | a foreground line waits for running stages to end, and fails with `too many stages` when it could never fit; a background job, a substitution or a pipeline inside a stage fails with `too many stages` at once |
-| A program cannot start: no such command, a quota, a pipe's read ends, the session's budget | the command server, from the handler's answer | nothing: the ends made for the program are gone, so the line's other stages see the end of their pipes | the spawn path, which undoes each step it took ([design-programs.md](design-programs.md#starting-a-program)) | the reason as the stage's status, such as `not found`, `permission denied` or `quota` |
-| A stage crashes or faults | the command server's monitor on an Erlang stage; a program's exit or fault record, through its handler | nothing: a crashed stage's pipe ends close with it, and a program's with its image | the session's pipe server, and the port driver for a program ([design-programs.md](design-programs.md#a-programs-end)) | the neighbouring stages see the end of the stream or a broken pipe; `$status` lists the crash or the signal |
+| A program cannot start: no such command, a quota, a pipe's read ends, the session's budget, the spent process ids | the stage, from `start/1`'s answer | nothing: the ends made for the program are gone, so the line's other stages see the end of their pipes | the spawn path, which undoes each step it took ([design-programs.md](design-programs.md#starting-a-program)) | the reason as the stage's status, such as `not found`, `permission denied` or `quota` |
+| A stage crashes or faults | the shell's monitor on an Erlang stage; a program's exit or fault record, through its handler's exit, which the stage that started it monitors | nothing: a crashed stage's pipe ends close with it, and a program's with its image | the session's pipe server, and the port driver for a program ([design-programs.md](design-programs.md#a-programs-end)) | the neighbouring stages see the end of the stream or a broken pipe; `$status` lists the crash or the signal |
 
 **Diagnostics.** `jobs` lists each job's stages, programs and state; the
 inspector shows the session's processes and its programs as ports under

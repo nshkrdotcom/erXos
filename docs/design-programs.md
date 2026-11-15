@@ -181,8 +181,8 @@ first tier, and Linux binaries
 A starter, the shell or a program, plans a spawn as a pure function of its
 own state and sends one request on its channel to its handler. The handler
 checks the right to start commands, resolves the command to an image
-through the starter's namespace, has the command server assign a process
-id and create the program's handler, has the session's pipe server make an
+through the starter's namespace, spawns the program's handler, which has
+the command server assign it a process id, has the session's pipe server make an
 end for each pipe end the request names, clones the child's grants from
 the starter's at the servers, and has the port driver build the sub-space
 from one plan: a budget, a group, an anchor space and an image space, the
@@ -198,8 +198,8 @@ handed it, reached through the session.
 ```text
    session domain                                   sub-spaces of the session
   +-------------------------------------------+     +-----------------------+
-  | shell --> command server (pid 1)          |     | program P             |
-  |               | creates                   |     |   main thread, workers|
+  | shell stage, or the starter's handler     |     | program P             |
+  |               | spawns                    |     |   main thread, workers|
   |               v                           | channel: two lanes,       |
   |   handler of P (port owner) <-------------+-two doorbells-------------+
   |      |  table of P: namespace, opens,     |     |   liberx: descriptors,|
@@ -208,6 +208,8 @@ handed it, reached through the session.
   |   port driver: spaces, channel, installs, |     +-----------------------+
   |   pause, stop; the session's fault gate   |     | program Q ...         |
   |   pipe server: lanes, doorbells           |     +-----------------------+
+  |   command server (pid 1): the process     |
+  |   table; each new handler reserves its id |
   +-------------------------------------------+
           | connections                       the system domain creates no
           v                                   sub-space; file bytes move
@@ -562,7 +564,7 @@ state, and a channel made for an image dies with it:
 
 | The program record, in its handler | One image, in its `liberx` |
 | --- | --- |
-| the process id, the parent, the job and the session | the space and its threads |
+| the process id, the parent and the job, as the command server's reservation gave them ([The command server](#the-command-server)), and the current image's command and arguments | the space and its threads |
 | the anchor, the budget, the group and the current image's space and channel | its mappings of the channel and of its pipe ends |
 | the namespace: each mount point's grant, cloned for the program at its server, and its rights | the arguments, the environment, the working directory and the file mode creation mask |
 | the open table: each open's kind and the open-file description it names, mapping opens among them | the descriptor table: which numbers name which opens and ends, each write end's private position, `FD_CLOEXEC` and `O_NONBLOCK` |
@@ -590,9 +592,10 @@ still checks what the handler asks of it.
 
 ### The handler
 
-A program's **handler** is an Erlang process of the session's command
-server, created for the program before its sub-space is built and the
-owner of its port. It is to its program what Plan 9's kernel is to a
+A program's **handler** is an Erlang process of the session, spawned for
+the program by its starter's side before its sub-space is built, which
+takes the program's process id from the command server ([The command
+server](#the-command-server)) and owns its port. It is to its program what Plan 9's kernel is to a
 process: its process table, its namespace, its file server and its source
 of signals, acting with the session's authority after checking the
 program's own table. It does five things:
@@ -643,8 +646,11 @@ program's own table. It does five things:
   driver has released the anchor ([design-pipes.md](design-pipes.md#hand-offs)).
 
 Below, the **starter's handler** is the handler of the program that asks
-for a spawn, or the command server when the shell asks, and the
-**program's handler** the one created for the new program. The handler
+for a spawn, and the **program's handler** the one created for the new
+program; a session process that starts a program, a stage of the shell
+among them, has no handler, and the program's handler takes the
+starter's handler's steps for it, against the namespace and rights its
+spec names. The handler
 runs the one generated decoder of the program protocol over every frame
 and acts only on what the decoder admitted; it keeps no state outside the
 record and the pending requests, so what it holds for a program is
@@ -654,9 +660,12 @@ protocol](#the-program-protocol)).
 
 **A session process's program.** A session process, such as the LVGL
 renderer, starts a native program with `erx_prog_handler:start/1`, which
-creates the program's handler with the caller as the program's starter.
-The spec is `erx_program:start/1`'s but for its descriptors, which the
-starter names as it holds them: `{N, {pipe, End}}` for a pipe end it
+creates the program's handler with the caller as the program's starter
+and monitors it. The spec is `erx_program:start/1`'s with two
+differences. It names no process id, parent or group: the handler
+reserves them for the program as `{process, Tag}`, `Tag` the caller's
+job tag ([The command server](#the-command-server)). And it names the
+descriptors as the starter holds them: `{N, {pipe, End}}` for a pipe end it
 holds, which the handler asks the pipe server for as an inherit with the
 starter as the end's holder
 ([design-pipes.md](design-pipes.md#inherited-ends)), and
@@ -1152,16 +1161,20 @@ The parties in a program's life, all but the first in its session:
 * the **starter**, the shell, a program calling `liberx`'s spawn
   functions or a session process such as the LVGL renderer, which names
   everything the program receives, pipe ends as the ends it holds; a
-  session process starts its program through the program's handler
+  session process, each stage of the shell that names a program among
+  them, starts its program through the program's handler
   ([A session process's program](#the-handler)), hears of its end and
   takes it down with it;
 * the session's **command server**, an Erlang process with process id 1,
-  which keeps the session's process table (each program's process id,
-  parent and job), serves the shell's spawns, assigns process ids, and
-  creates one handler per program;
+  which assigns process ids, keeps the session's process table, and
+  finds the handlers of the processes a `kill` or a job names ([The
+  command server](#the-command-server));
 * each program's **handler**, the port's owner, which keeps the program's
   table, serves its requests and alone sends to it ([The
-  handler](#the-handler));
+  handler](#the-handler)); its starter's side spawns it, `start/1` in a
+  session process or the starter's handler for a program's spawn or
+  fork, and it reserves its program's process id at the command server
+  before anything else;
 * the session's **port driver** for programs, the C of the session's
   runtime that makes every kernel call about a program: it builds a
   sub-space from a plan the handler gives it, validated whole before
@@ -1179,6 +1192,111 @@ The parties in a program's life, all but the first in its session:
 * the program's own `liberx`, which reads the startup message, builds the
   program's tables and runs its event executor.
 
+#### The command server
+
+**Where it runs.** `erx_command_srv` is a module of the `erx`
+application, beside `erx_prog_handler` and `erx_pipe_srv`: the
+handlers and the inspection agent, in `erx`, and the shell's stages and
+commands, in `erx_shell`, call it, and `erx_session` depends on
+`erx_shell`, so a module of `erx_session` would make a cycle. The
+session's supervisor,
+`erx_session_sup`, starts it after the pipe server and before the
+terminal relay, so it serves before any shell can start a program, as a
+`temporary`, `significant` child under `auto_shutdown =>
+any_significant`, as `erx_win_sup` starts `erx_pixels`
+([design-display.md](design-display.md#the-pixel-area)); every session's
+release starts `erx_session` as a permanent application, so the
+server's end ends the session's domain. A domain that does not run
+`erx_session`, the system domain among them, has no command server and
+starts no program: `erx_prog_handler:start/1` there fails with `ENOTSUP`.
+
+**What it keeps.** The process table, beside the code objects and the
+file table it keeps for file objects and shared mappings ([File
+objects](#file-objects), [Shared libraries and mappings of
+files](#shared-libraries-and-mappings-of-files)):
+
+* the next process id, from 2;
+* a row for each process the table names, while the session process
+  that speaks for it lives: its process id, its parent's, its job's tag,
+  its process group and that process, and in the second tier its POSIX
+  session ([The terminal](#the-terminal)). A program is spoken for by
+  its handler, and an Erlang command that a program runs in its command
+  domain by the stream relay that carries the command's streams ([What a
+  program can start](#what-a-program-can-start)); below, both are the
+  row's handler.
+
+A row's process id, parent and job are fixed when it is made, and the
+program record keeps them as the reservation gave them. A program's
+parent is the program that started it, or 1, the command server, for a
+program a session process started; its job is its parent's, or the job
+tag of the session process that started it. In the first tier its group
+is its job's: the group of the rows its job already has, or its own
+process id when it has none, so a job's programs share one group while
+any of them lives. The table's decisions are one pure function,
+`erx_command_core:step(Table, Event) -> {Table, [Action]}`, as the pipe
+server's are.
+
+Nothing else of a program or a job is the server's, and it copies none
+of it: a program's namespace, opens, command and arguments and its
+children's states are its handler's record ([The program
+record](#the-program-record)); a job's number, text and state are the
+shell's job table ([design-shell.md](design-shell.md#job-control)); a
+job's Erlang processes are those that carry its tag, and whether the
+tag is stopped or ending is the job table's mark on it, which step 8 of
+[Starting a program](#starting-a-program) reads
+([design-runtime.md](design-runtime.md#scheduling)); a program's running
+state, CPU time and charges are the kernel's, which its handler reads
+through the port driver.
+
+**Its calls.** Each is a message, answered with one where it has an
+answer. The server answers from its table alone, waiting on no program,
+handler or file server, so the handler that asks keeps serving its
+program meanwhile (P3):
+
+| Call | Made by | What the server does |
+| --- | --- | --- |
+| `{reserve, Starter}`, `Starter` being `{program, Pid}` or `{process, Tag}` | a new program's handler, as its first act (step 5), and a command's stream relay | assigns the next process id; makes the row with the caller as the handler and the parent, job and group above; monitors the caller; answers `{ok, Pid, Pgid}`, or `{error, eagain}` once 2^31 - 1 has been assigned |
+| `programs()` | `read/2`, below | answers the rows |
+| `{kill, Scope, Target, Signal, Sender}` | a program's handler, for a `kill` whose target is neither its program nor one of its children | hands `Signal` from `Sender` to the handler of each row that `Target` names within `Scope`, the requester's `signal` right or, in the second tier, its POSIX session; answers `ok`, or `esrch` when no row is in scope, pid 1 included |
+| `{job, Tag, Action}`, `Action` being `pause`, `resume` or `{signal, Signal}` | the shell's job table, through the effects the shell carries out, and the terminal relay at `Ctrl-C` | sends `Action` to the handler of each row with the tag, which carries it out with the `job` cause ([Job control](#job-control)) |
+
+In the second tier `setpgid` and `setsid` reach the server the same way,
+through the requester's handler, and the server sends an orphaned group
+`SIGHUP` and `SIGCONT` ([The terminal](#the-terminal)).
+
+**Ends and failures.** A handler's end, however it comes, reaches the
+server as its monitor's `'DOWN'`, which drops the row; the id is never
+given again, since the next id only grows. A start that fails after its
+reservation is undone the same way, by its handler's exit, so no path
+of a start leaves a row behind, and the handler, which its starter
+spawned and monitors, cannot end unseen by its starter. Handlers are not
+linked to the server and are not its children: a handler's crash costs
+its own program alone. The server itself is never restarted: a new one
+could not know which ids the old one gave and would give one again,
+and the pipe server, which names a program by its process id, and a
+parent's `waitpid` would then take one program for another. So its end
+ends the session, and every program with it (P9).
+
+**How `ps` and `/proc` read it.** `erx_command_srv:read(Keys, Deadline)`
+runs in the caller: it takes `programs()`, asks each row's handler for
+`Keys` at once, and waits for the answers until `Deadline`. A handler
+answers from its record and its port, whose driver reads the sub-space's
+state and charges and the group's CPU time with the session's own
+capabilities; it never asks its program. A row whose handler ends
+meanwhile, or does not answer in time, has each value `missing`, which
+`ps` prints as `-`. `ps`, `top` and the `Ctrl-T` line read the session's
+programs so, in its own runtime and with no facet, with
+`inspect_agent_wait`, 500 ms, as the deadline
+([design-live.md](design-live.md#the-command-shell)). The session's
+inspection agent answers `[domains, Self, programs]` and `[domains,
+Self, programs, N]`, `N` a process id, the same way, with the record's
+other attributes among the keys and half that deadline, so its own
+answer meets the query worker's wait; `/proc/domains/D/programs/N/status`
+is that record, which a `/proc` server fetches through its inspect facet
+as it fetches every path ([design-live.md](design-live.md#the-proc-tree)).
+So the process table is read one way, by one function, and the server
+knows nothing of `ps` or `/proc`.
+
 ### Starting a program
 
 A program starts in nine steps. Steps 3 to 7 are the starter's handler's
@@ -1193,7 +1311,7 @@ reserved:
 | 2 | the starter | sends `{spawn, Path, Start}` to its handler and waits for the reply, in a closed wait ([Signals in liberx](#signals-in-liberx)) | as the step that fails |
 | 3 | the starter's handler: **validate** | checks the frame against the protocol's grammar and bounds, the requester's right to start commands, its `children` quota and its principal's `programs` quota, and that every end and open the request names is in the requester's table | nothing to undo; `EPERM` without the right, `EAGAIN` at a quota, `EBADF` for an end or open the requester does not hold |
 | 4 | the starter's handler: **resolve** | resolves `Path` through the requester's namespace to an image ([What a program can start](#what-a-program-can-start)); for an executable file, the handler makes its image check and a filler opens it for reading, and the command server makes or finds its code object ([File objects](#file-objects)) | nothing to undo, since a code object belongs to the cache; `ENOENT` for an unknown command, `EACCES` for a file without `rx`, `ETXTBSY` for a file that keeps changing while it is read |
-| 5 | the command server, the program's handler, the pipe server: **reserve** | the command server assigns the next process id, records the program in the starter's job and creates the program's handler, which makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it clones at each server, with a `walk` of no names, a grant for each entry of the requester's namespace, with the requester's rights there, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the command server marks the id dead, never to be given again, and drops the job's record; the handler clunks the grants it made, drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone; `EMFILE` beyond a pipe's read ends, a server's error for a grant it refuses |
+| 5 | the command server, the program's handler, the pipe server: **reserve** | the starter's handler spawns the program's handler, which reserves the program's process id at the command server, which assigns the next one and records the program in the starter's job ([The command server](#the-command-server)); the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it clones at each server, with a `walk` of no names, a grant for each entry of the requester's namespace, with the requester's rights there, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler clunks the grants it made, drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, a server's error for a grant it refuses |
 | 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`; binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, in its argument registers | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
 | 7 | the program's handler | writes the startup message into the image's inbound lane, with the program's `pid`, `ppid` and `pgid`, the data area's value, each descriptor's values in the program's table, and for `erx_exec` the code object's value as `image` | none: the lane is the session's own memory |
 | 8 | the session's job table, then the program's handler | when the program's starter is paused for its job, or the shell starts it for a job it has stopped, the port driver pauses the image first ([Job control](#job-control)); the handler then has the port driver start the first thread | `ERX_EDEAD` when the program was stopped first, by a kill or by its parent's or session's end: the starter still gets `{ok, Pid}`, then the child's end as `SIGKILL` |
@@ -1405,7 +1523,9 @@ names it; clunks the grants it cloned for the program
 ([design-files.md](design-files.md#narrowing-for-a-program)); has the
 domain service end the program's command domain, if one was made; and
 tells the starter's handler, which sends the parent `{exit, N, Pid,
-Status}`, or the command server, which records it for the shell. The
+Status}`, or, for a session process's program, exits with the status in
+its reason, which the starter's monitor reads ([A session process's
+program](#the-handler)). The
 handler says nothing of pipes: the pipe NIF tells the pipe server the
 program's ends are gone once the port driver has released the anchor
 ([design-pipes.md](design-pipes.md#hand-offs)). When the
@@ -3306,6 +3426,20 @@ terminal cases.
   reports `sigkill` for every stop, which loses the exit 3; a start
   whose failure after the window's open skips closing it;
   a handler that exits `normal`, which the test reads as a lost status.
+* **The command server.** `erx_command_core` on the host over random
+  reservations and handler ends, with the properties that ids run from 2
+  in order, no id is given twice, the reservation after 2^31 - 1 is
+  `eagain`, a row exists exactly while its handler lives, and a job's
+  rows share one group; seeded: a core that gives a dropped row's id
+  again, and one that gives each program a group of its own.
+  In a session, a program that exits at once still gives its starter
+  `{exited, 0}`, with a seeded `start/1` that has the command server
+  spawn the handler and monitors it after the answer, which loses the
+  status under a scheduling hook; `ps` and
+  `/proc/domains/D/programs/N/status` show a running program with the
+  same process id and command; and a handler held busy by a test hook
+  makes `ps` print `-` for that program's values and the others whole,
+  with a seeded `read/2` that drops a row that missed its deadline.
 * **Build checks.** The entry macro on every exported function of
   `liberx`'s program layer, with a seeded function without it; the event
   executor's call graph free of kept locks, with a seeded call to

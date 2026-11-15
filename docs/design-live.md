@@ -408,7 +408,7 @@ adding attributes keeps it.
 | `[domains, Id, capabilities]`, `[domains, Id, mappings]` | the domain's capability table and mapping records, paginated | kernel |
 | `[domains, Id, connections]`, `[domains, Id, connections, Peer]` | the domain's connections: the peer domain and each lane's size (service, from the domain service's records); each doorbell's trigger count (kernel, from the IRQ object); frames accepted and refused on each lane (runtime, from the domain's funnel) | each attribute marked |
 | `[domains, Id, exports]` | the domain's export table: each name as data, a process's `proc_id()` or an alias as `{alias, Owner}`, with the peer domain and rights, paginated | runtime |
-| `[domains, Id, programs]`, `[domains, Id, programs, N]` | for a session's domain, its programs, each a port of the session's runtime: name, owner pid, state, exit status, the fids its handler holds for it, its namespace, its failed write-backs of shared mappings (runtime, from the session's agent); its sub-space's state and charges and its group's usage (kernel, from `INSPECT` on the session's space and group tree); below it, `threads`, `capabilities` and `mappings` of the sub-space as the session's agent relays them from the capabilities it holds, marked runtime, or `unsupported` | each attribute marked |
+| `[domains, Id, programs]`, `[domains, Id, programs, N]` | for a session's domain, its programs, `N` a program's process id, each a port of the session's runtime: name, owner pid, state, exit status, the fids its handler holds for it, its namespace, its failed write-backs of shared mappings (runtime, from the session's agent); its sub-space's state and charges and its group's usage (kernel, from `INSPECT` on the session's space and group tree); below it, `threads`, `capabilities` and `mappings` of the sub-space as the session's agent relays them from the capabilities it holds, marked runtime, or `unsupported` | each attribute marked |
 | `[domains, Id, pipes]`, `[domains, Id, pipes, N]` | for a session's domain, its pipes: each end's holder, a program by its number or a process, each ring's size and the bytes its header reports, marked as reported by the ring ([design-pipes.md](design-pipes.md#failure-handling-diagnostics-and-debuggability)) | runtime, from the session's pipe server |
 | `[domains, Id, processes]` | the domain's pids, paginated | runtime |
 | `[domains, Id, crash]` | the domain's last crash dump, paginated; marked truncated when its header says so | service, from the crash area |
@@ -1128,7 +1128,9 @@ process as a live value, with each value's status and reporter, is the
 Erlang shell's `erx:ps()` and `erx:i/1`.
 
 **`ps`** lists the session's own process table: its Erlang processes and
-its programs, the latter from the session's port table, so a session sees
+its programs, the latter from the command server's process table and
+each program's handler
+([design-programs.md](design-programs.md#the-command-server)), so a session sees
 its programs without an inspect facet, as a UNIX user sees their own
 processes. It prints FreeBSD's default columns, `PID`, `TT`, `STAT`,
 `TIME` and `COMMAND` (`bin/ps/ps.c:156`), under FreeBSD's header line,
@@ -1614,8 +1616,10 @@ programs and pipes, the inspector asks that domain's inspection agent:
   with the attributes
   its runtime's collectors give, and answers any other path `{error,
   scope}`: a runtime describes only itself. A session's agent relays its
-  programs' and pipes' attributes from its command server and pipe
-  server. The agent takes questions one at a time, in order, and keeps
+  programs' attributes from its command server's process table and the
+  programs' handlers, as `ps` reads them
+  ([design-programs.md](design-programs.md#the-command-server)), and its
+  pipes' from its pipe server. The agent takes questions one at a time, in order, and keeps
   its answer within `inspect_reply_max` by the inspector's own rules of
   cutting.
 * **The wait.** The query worker sends each question with a fresh
@@ -1729,7 +1733,7 @@ memory and work, charged to it.
   its record, and whose subdirectories are the paths below it:
   `/proc/status` is the machine (`[]`), `/proc/domains/7/status` a domain,
   `/proc/domains/7/processes/` its pids, `/proc/domains/7/programs/3/status`
-  a session's third program, and `/proc/processes/7.85.0/status` a
+  a session's program with process id 3, and `/proc/processes/7.85.0/status` a
   process, its pid written without angle brackets so a shell needs no
   quoting. `/proc/processes/7.85.0/source` holds the source lines around
   the process's location, as `erx:source/1` prints them, and

@@ -110,7 +110,7 @@ with the kernel's other departures
 ([design-kernel.md](design-kernel.md#l4-lineage)).
 
 Programs ask their session for everything a pipe's structure needs: a
-program's handler, a process of the session's command server, already
+program's handler, a process of the session, already
 starts its children, installs what they hold and reports their ends
 ([design-programs.md](design-programs.md#starting-a-program)). Pipes add a
 **pipe server**, `erx_pipe_srv`, to each session, and nothing to the data
@@ -1140,7 +1140,7 @@ report, the end of the stream, no read end remaining, or a signal.
 
 ### The pipe server
 
-`erx_pipe_srv` is a process of the session's command server. The pipe's modules are `erx_pipe`, `erx_pipe_srv`,
+`erx_pipe_srv` is a process of the session, a child of its supervisor `erx_session_sup` beside the command server. The pipe's modules are `erx_pipe`, `erx_pipe_srv`,
 `erx_prog_handler` and the static NIF `erx_pipe_nif`, all in the `erx` app.
 The server's decisions are one pure function,
 `erx_pipe:step(State, Event) -> {State, [Action]}`; the process performs the actions with the pipe NIF, the port driver and the
