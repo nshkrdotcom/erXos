@@ -997,7 +997,10 @@ it; git history is the record of completed work.
   (event's node, event number and detail; damage's count and rectangles) and the report reader's six reasons are
   still fixed text in the Erlang encoder and `read/1`, the C writers and the TypeScript `readReport`, `writeEvent`
   and `writeDamage`, tied by the parity test. Give `report` lines fields (a `detail`, and a width, a height and a
-  list of rectangles for `damage`) and generate them as the records are.
+  list of rectangles for `damage`) and generate them as the records are. The C damage layout's
+  offsets (`ERX_UI_DAMAGE_SIZE_AT` and the rest) then come from that row instead of the emitter's constants, and
+  `erx/ui_wire.h`'s `ERX_UI_DAMAGE_MAX` goes, since `erx/abi.h`, which it includes, names the same limit
+  `ERX_UI_DAMAGE_RECTS`.
 * [Medium] `tools/lib/erx/abi_emit_ui_fields.rb`, [Widget format](docs/design-abi.md#widget-format): a field type's
   code is spread beyond its `UIFields::CODE` row (the Erlang `read_props`/`read_removed`, the C `erx_ui_props`/
   `erx_ui_removed`, `kind_number/1`, the `input()` type, the TypeScript `nodeId`/`kindName`/`rune`/`writeRune`

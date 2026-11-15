@@ -18,10 +18,13 @@
  *   rect	a damage report of the screen's size whose one rectangle is a
  *		pixel wider than the screen: written valid, one pixel wider in
  *		both, since the generated writer refuses a rectangle outside its
- *		report's size, then the report's width lowered to the screen's
+ *		report's size, then the size of a valid report of the screen's
+ *		size copied over its own
  *   past N	descriptor 3, the window's buffer, mapped whole as erx-lvgl maps
  *		it (display/lvgl/erx_lvgl.c, map_buffer); a store to the last of
- *		the N bytes the session lent, then one to the first byte of the
+ *		the N bytes the session lent, then a damage report of the whole
+ *		screen and the wait for its presented record, so the session sees
+ *		the first store succeed, then a store to the first byte of the
  *		page past them, which faults, so the program ends with SIGSEGV
  *
  * twice and rect then read their input until it ends, since the renderer
@@ -41,6 +44,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <erx/abi.h>
 #include <erx/ui_wire.h>
 
 int	main(int, char **);
@@ -49,15 +53,13 @@ int	main(int, char **);
 #define EXIT_USAGE	2
 #define EXIT_INPUT	3
 #define EXIT_STORED	4
-#define PAGE		4096
 
 /*
- * Where a damage record's width lies: after its length word and its tag
- * (erx_ui_write_damage's layout, tools/lib/erx/abi_emit_ui_wire.rb).
+ * Standard input: input[0..input_have) read, of which the first
+ * input_used bytes are the record record_read last returned.
  */
-#define DAMAGE_WIDTH_AT	(4 + 1)
-
 static uint8_t input[ERX_UI_OP_MAX + 4];
+static size_t input_have, input_used;
 
 /* Writes bytes[0..length) whole to standard output, or ends the program. */
 static void
@@ -76,18 +78,23 @@ write_all(const uint8_t *bytes, size_t length)
 	}
 }
 
-/* The screen record the renderer writes first, or the program ended. */
+/*
+ * The next record of standard input, which must be a tag record, or the
+ * program ended. Its bytes stay in input until the next call.
+ */
 static erx_ui_record_t
-screen_read(void)
+record_read(uint8_t tag)
 {
 	erx_ui_record_t record;
-	size_t have = 0, used;
 	ssize_t got;
 
+	memmove(input, input + input_used, input_have - input_used);
+	input_have -= input_used;
+	input_used = 0;
 	for (;;) {
-		switch (erx_ui_read(input, have, &record, &used)) {
+		switch (erx_ui_read(input, input_have, &record, &input_used)) {
 		case ERX_UI_READ_OK:
-			if (record.tag != ERX_UI_SCREEN)
+			if (record.tag != tag)
 				_exit(EXIT_INPUT);
 			return (record);
 		case ERX_UI_READ_BAD:
@@ -95,12 +102,13 @@ screen_read(void)
 		case ERX_UI_READ_MORE:
 			break;
 		}
-		got = read(STDIN_FILENO, input + have, sizeof(input) - have);
+		got = read(STDIN_FILENO, input + input_have,
+		    sizeof(input) - input_have);
 		if (got < 0 && errno == EINTR)
 			continue;
 		if (got <= 0)
 			_exit(EXIT_INPUT);
-		have += (size_t)got;
+		input_have += (size_t)got;
 	}
 }
 
@@ -145,13 +153,15 @@ static void
 rect(const erx_ui_record_t *screen)
 {
 	uint8_t report[ERX_UI_DAMAGE_RECORD_MAX];
+	uint8_t valid[ERX_UI_DAMAGE_RECORD_MAX];
 	size_t written;
 
 	if (screen->width == UINT16_MAX)
 		_exit(EXIT_INPUT);
 	written = damage(report, screen->width + 1, screen->height);
-	report[DAMAGE_WIDTH_AT] = (uint8_t)(screen->width & 0xff);
-	report[DAMAGE_WIDTH_AT + 1] = (uint8_t)(screen->width >> 8);
+	(void)damage(valid, screen->width, screen->height);
+	memcpy(report + ERX_UI_DAMAGE_SIZE_AT, valid + ERX_UI_DAMAGE_SIZE_AT,
+	    ERX_UI_DAMAGE_SIZE_BYTES);
 	write_all(report, written);
 	drain();
 }
@@ -166,14 +176,15 @@ lent_bytes(const char *text)
 	errno = 0;
 	bytes = strtoumax(text, &end, 10);
 	if (errno != 0 || end == text || *end != '\0' || bytes == 0 ||
-	    bytes % PAGE != 0 || bytes > SIZE_MAX)
+	    bytes % ERX_PAGE_SIZE != 0 || bytes > SIZE_MAX)
 		_exit(EXIT_USAGE);
 	return ((size_t)bytes);
 }
 
 static void
-past(size_t lent)
+past(const erx_ui_record_t *screen, size_t lent)
 {
+	uint8_t report[ERX_UI_DAMAGE_RECORD_MAX];
 	struct stat st;
 	volatile uint8_t *buffer;
 	void *at;
@@ -187,6 +198,8 @@ past(size_t lent)
 		_exit(EXIT_INPUT);
 	buffer = at;
 	buffer[lent - 1] = 0xff;
+	write_all(report, damage(report, screen->width, screen->height));
+	(void)record_read(ERX_UI_PRESENTED);
 	buffer[lent] = 0xff;
 	_exit(EXIT_STORED);
 }
@@ -197,18 +210,18 @@ main(int argc, char **argv)
 	erx_ui_record_t screen;
 
 	if (argc == 2 && strcmp(argv[1], "twice") == 0) {
-		screen = screen_read();
+		screen = record_read(ERX_UI_SCREEN);
 		twice(&screen);
 	}
 	if (argc == 2 && strcmp(argv[1], "rect") == 0) {
-		screen = screen_read();
+		screen = record_read(ERX_UI_SCREEN);
 		rect(&screen);
 	}
 	if (argc == 3 && strcmp(argv[1], "past") == 0) {
 		const size_t lent = lent_bytes(argv[2]);
 
-		(void)screen_read();
-		past(lent);
+		screen = record_read(ERX_UI_SCREEN);
+		past(&screen, lent);
 	}
 	return (EXIT_USAGE);
 }

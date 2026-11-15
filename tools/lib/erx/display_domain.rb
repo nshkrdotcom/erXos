@@ -58,8 +58,9 @@ module Erx
   # suite's image alone carries (test/guest/programs/uiprobe.c). Its damage run writes a
   # second damage report before the first is answered, then a rectangle outside the size
   # its report names; the renderer must stop the program each time and present only the
-  # first report of the first. Its confine run stores one page past the buffer it was
-  # lent, which must fault in the program. Each run's line, "damage passed" and "confine
+  # first report of the first. Its confine run stores to the last byte of the buffer it
+  # was lent, has a report presented and answered, then stores one page past the
+  # buffer, which must fault in the program. Each run's line, "damage passed" and "confine
   # passed", is the lvgl-damage and the lvgl-confine cell's (docs/design-display.md,
   # Verification, the kiosk's cells). A renderer that presents a bad report, or a session
   # that maps more of the pixel area than the buffer into the program, fails its cell.

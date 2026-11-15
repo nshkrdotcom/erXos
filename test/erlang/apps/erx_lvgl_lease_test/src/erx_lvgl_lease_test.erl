@@ -35,16 +35,24 @@ gone. Any other refusal fails the round at once.
 
 The damage and confine runs start the renderer the same way over
 uiprobe, a stand-in for erx-lvgl that breaks one rule
-(test/guest/programs/uiprobe.c), answer no present, and expect the
-renderer to stop the program and end (docs/design-display.md,
+(test/guest/programs/uiprobe.c) and expect the renderer to stop the
+program and end (docs/design-display.md,
 Verification, the kiosk's cells). The damage run's first round writes
 a second damage report before the first is answered, which must reach
 the present callback once and then stop the program as
 `report_before_presented`; its second writes a rectangle outside the
 size its report names, which the renderer's reader must refuse before
-anything is presented. The confine run's program stores to the last
-byte of its buffer and then one page past it, which must fault in the
-program, so it ends with SIGSEGV and nothing is presented.
+anything is presented; neither is answered. The confine run's program
+stores to the last byte of its buffer and reports the whole screen,
+which is presented and answered, then stores one page past the buffer,
+which must fault in the program, so it ends with SIGSEGV after exactly
+that one present: a store within the lease that faults ends it before
+its report.
+
+A round that fails with its renderer up kills it; its program, whose
+starter the renderer is, stops with it and returns its lease
+(erx_prog_handler), so a failed run leaves the later runs the room
+they lend.
 
 Each run's outcome is one notice that names it,
 
@@ -107,10 +115,10 @@ attempt(Rounds) ->
 rounds(lease, Peer) ->
     lists:foreach(fun(Round) -> lend_round(Peer, Round) end, lists:seq(1, ?ROUNDS));
 rounds(damage, Peer) ->
-    probe_round(Peer, ?ROUNDS + 1, [<<"twice">>], 1, report_before_presented),
-    probe_round(Peer, ?ROUNDS + 2, [<<"rect">>], 0, {refused, bad_body});
+    probe_round(Peer, ?ROUNDS + 1, [<<"twice">>], unanswered, 1, report_before_presented),
+    probe_round(Peer, ?ROUNDS + 2, [<<"rect">>], unanswered, 0, {refused, bad_body});
 rounds(confine, Peer) ->
-    probe_round(Peer, ?ROUNDS + 3, [<<"past">>, integer_to_binary(?BYTES)], 0, {exit, {signaled, sigsegv}}).
+    probe_round(Peer, ?ROUNDS + 3, [<<"past">>, integer_to_binary(?BYTES)], shown, 1, {exit, {signaled, sigsegv}}).
 
 %% The display domain whose area the session shares: the owner of the
 %% display's grant, which arrives after the session starts.
@@ -123,29 +131,49 @@ peer(N) ->
     end.
 
 lend_round(Peer, Round) ->
-    Shell = started(Round, opts(Peer, Round, ?LVGL, []), ?POLLS),
-    expect(Round, {ok, Shell}, applied(Round, Shell)),
-    expect(Round, {?WIDTH, ?HEIGHT}, first_present(Round, Shell)),
-    clicked(Round, Shell),
-    ok = erx_ui_lvgl:stop(Shell),
-    receive
-        {'EXIT', Shell, normal} -> ok;
-        {'EXIT', Shell, Why} -> throw({failed, Round, {stopped, Why}})
-    after ?WAIT_MS -> throw({failed, Round, stop_hung})
-    end.
+    with_renderer(Round, opts(Peer, Round, ?LVGL, []), fun(Shell) ->
+        expect(Round, {ok, Shell}, applied(Round, Shell)),
+        expect(Round, {?WIDTH, ?HEIGHT}, first_present(Round, Shell)),
+        clicked(Round, Shell),
+        ok = erx_ui_lvgl:stop(Shell),
+        receive
+            {'EXIT', Shell, normal} -> ok;
+            {'EXIT', Shell, Why} -> throw({failed, Round, {stopped, Why}})
+        after ?WAIT_MS -> throw({failed, Round, stop_hung})
+        end
+    end).
 
 %% The stand-in renderer started with Args: its renderer must stop it for
-%% Reason after exactly Presents presents, none of them answered.
-probe_round(Peer, Round, Args, Presents, Reason) ->
-    Shell = started(Round, opts(Peer, Round, ?PROBE, Args), ?POLLS),
-    expect(Round, {Presents, {shutdown, {renderer_down, Reason}}}, presents_until_down(Shell, 0)).
+%% Reason after exactly Presents presents, each answered when Answer is
+%% `shown` and none when it is `unanswered`.
+probe_round(Peer, Round, Args, Answer, Presents, Reason) ->
+    with_renderer(Round, opts(Peer, Round, ?PROBE, Args), fun(Shell) ->
+        expect(Round, {Presents, {shutdown, {renderer_down, Reason}}}, presents_until_down(Shell, Answer, 0))
+    end).
 
-presents_until_down(Shell, Count) ->
+presents_until_down(Shell, Answer, Count) ->
     receive
-        {present, Shell, _, _, _} -> presents_until_down(Shell, Count + 1);
+        {present, Shell, _, _, _} ->
+            answer(Answer, Shell),
+            presents_until_down(Shell, Answer, Count + 1);
         {'EXIT', Shell, Why} -> {Count, Why}
     after ?WAIT_MS -> {Count, not_down}
     end.
+
+answer(shown, Shell) -> erx_ui_lvgl:shown(Shell);
+answer(unanswered, _Shell) -> ok.
+
+%% Body run over a renderer started with Opts. The renderer is down when
+%% this returns or throws: a round that failed with it up kills it.
+with_renderer(Round, Opts, Body) ->
+    Shell = started(Round, Opts, ?POLLS),
+    try Body(Shell) after ended(Shell) end.
+
+ended(Shell) ->
+    Monitor = monitor(process, Shell),
+    exit(Shell, kill),
+    receive {'DOWN', Monitor, process, Shell, _} -> ok end,
+    receive {'EXIT', Shell, _} -> ok after 0 -> ok end.
 
 %% A started renderer; a start refused for want of room or of the area
 %% is retried, any other refusal fails the round with its reason.

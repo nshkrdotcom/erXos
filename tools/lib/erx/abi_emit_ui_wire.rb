@@ -34,6 +34,13 @@ module Erx
       # An event's tag, node, number, detail tag and text length: what an
       # event record holds besides its text.
       EVENT_TEXT_FIELDS = 1 + 4 + 1 + 1 + 4
+      # A damage record, its length word counted: the length word and the tag, the
+      # report's size (a u16 width, then a u16 height), a u8 count, then each
+      # rectangle's x, y, width and height, a u16 each.
+      DAMAGE_SIZE_AT = 4 + 1
+      DAMAGE_SIZE_BYTES = 2 * 2
+      DAMAGE_HEAD = DAMAGE_SIZE_AT + DAMAGE_SIZE_BYTES + 1
+      DAMAGE_RECT_BYTES = 4 * 2
 
       module_function
 
@@ -48,7 +55,7 @@ module Erx
           raise SchemaError, 'a ui enum of 256 members does not fit the reader member count'
         end
         { ERLANG_PATH => erlang(schema.ui, stopgaps: stopgaps),
-          C_HEADER_PATH => c_header(schema.ui, enums: enums),
+          C_HEADER_PATH => c_header(schema.ui),
           C_SOURCE_PATH => c_source(schema.ui, stopgaps: stopgaps, enums: enums) }.freeze
       end
 
@@ -647,13 +654,18 @@ module Erx
 
       def macro(*parts) = "ERX_#{parts.join('_').upcase}"
 
-      def c_header(ui, enums:)
+      def c_header(ui)
         properties = wire_properties(ui)
         defines = [
           ['ERX_UI_VERSION', ui.version, "ui.txt's version"],
           ['ERX_UI_OP_MAX', ui.op_max, 'the longest record, its tag and fields'],
           ['ERX_UI_DAMAGE_MAX', ui.damage_max, 'the most rectangles one damage report carries'],
-          ['ERX_UI_DAMAGE_RECORD_MAX', 4 + 1 + 4 + 1 + (4 * 2 * ui.damage_max), 'the longest damage record, its length word counted'],
+          ['ERX_UI_DAMAGE_RECORD_MAX', DAMAGE_HEAD + (DAMAGE_RECT_BYTES * ui.damage_max),
+           'the longest damage record, its length word counted'],
+          ['ERX_UI_DAMAGE_HEAD', DAMAGE_HEAD, "the bytes of a damage record before its rectangles, its length word counted; the last is the count"],
+          ['ERX_UI_DAMAGE_RECT_BYTES', DAMAGE_RECT_BYTES, "the bytes of a damage record's rectangle"],
+          ['ERX_UI_DAMAGE_SIZE_AT', DAMAGE_SIZE_AT, "where a damage record's size lies, its width then its height, its length word counted"],
+          ['ERX_UI_DAMAGE_SIZE_BYTES', DAMAGE_SIZE_BYTES, "the bytes of a damage record's size"],
           ['ERX_UI_EVENT_TEXT_MAX', ui.op_max - EVENT_TEXT_FIELDS, 'the longest text detail of an event'],
           ['ERX_UI_PROPERTY_MAX', properties.size, 'the most properties one record carries, each at most once'],
           ['ERX_UI_RUNE_NONE', '0xffffffffU', "a key's rune when it has none"],
@@ -666,7 +678,6 @@ module Erx
           ['Kinds.', ui.kinds.map { |kind| [macro('ui_kind', kind.name), kind.number] }],
           ['Properties.', properties.map { |property| [macro('ui_prop', property.name), property.number] }],
           ['Image types.', ui.images.map { |image| [macro('ui_image', image.name), image.number] }],
-          *enums.map { |type| ["The root enum #{type.name.delete_prefix('@')}.", type.atoms.zip(type.numbers).map { |member, number| [macro(type.name.delete_prefix('@'), member), number] }] },
           ["A property's form, which says which fields of its erx_ui_prop_t hold its value.",
            FORMS.each_with_index.map { |name, index| [macro('ui_form', name), index + 1] }],
           ['A status block: the status and the reporter.',
@@ -699,6 +710,9 @@ module Erx
           #include <stdbool.h>
           #include <stddef.h>
           #include <stdint.h>
+
+          /* ui.txt's limits and root enums (ERX_UI_ALIGN_FILL and the rest). */
+          #include <erx/abi.h>
 
           #{defines.map { |name, value, comment| "#define #{name.ljust(26)}#{value}\t/* #{comment} */" }.join("\n")}
 
@@ -1486,16 +1500,16 @@ module Erx
         		    (uint32_t)rects[index].y + rects[index].height > height)
         			return (0);
         	/* The tag, the size, the count, and x, y, width and height of each. */
-        	record = 1 + 2 * 2 + 1 + 4 * 2 * (uint32_t)count;
+        	record = ERX_UI_DAMAGE_HEAD - 4 + ERX_UI_DAMAGE_RECT_BYTES * (uint32_t)count;
         	if (size < 4 || size - 4 < record)
         		return (0);
         	erx_ui_put32(buffer, record);
         	buffer[4] = ERX_UI_DAMAGE;
-        	erx_ui_put16(buffer + 5, width);
-        	erx_ui_put16(buffer + 7, height);
-        	buffer[9] = (uint8_t)count;
-        	at = buffer + 10;
-        	for (size_t index = 0; index < count; index++, at += 4 * 2) {
+        	erx_ui_put16(buffer + ERX_UI_DAMAGE_SIZE_AT, width);
+        	erx_ui_put16(buffer + ERX_UI_DAMAGE_SIZE_AT + 2, height);
+        	buffer[ERX_UI_DAMAGE_HEAD - 1] = (uint8_t)count;
+        	at = buffer + ERX_UI_DAMAGE_HEAD;
+        	for (size_t index = 0; index < count; index++, at += ERX_UI_DAMAGE_RECT_BYTES) {
         		erx_ui_put16(at, rects[index].x);
         		erx_ui_put16(at + 2, rects[index].y);
         		erx_ui_put16(at + 4, rects[index].width);
