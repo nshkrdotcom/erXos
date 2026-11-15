@@ -69,7 +69,7 @@ print_word(const char *label, uint64_t word, const named_bit_t *names, size_t co
 int
 main(int argc, char **argv)
 {
-	uint64_t id[ERX_BOOT_CPU_ID_COUNT] = { 0 };
+	uint64_t id[ERX_CPU_ID_WORD_COUNT] = { 0 };
 	erx_cpu_features_t features;
 
 	if ((size_t)argc != 1 + ARGUMENTS)

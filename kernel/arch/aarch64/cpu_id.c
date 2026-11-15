@@ -19,14 +19,13 @@
 #include "erx/core/boot_handoff.h"
 
 /*
- * Each register at the word abi/arch/aarch64.txt's cpu_id_word gives it. A
- * word past the handoff's fails to build here, and the words no register
- * takes are 0.
+ * Each register at the word abi/arch/aarch64.txt's cpu_id_word numbers it. A
+ * member without a read here leaves its word 0, never undefined.
  */
 void
-erx_boot_cpu_id_read(uint64_t id[ERX_BOOT_CPU_ID_COUNT])
+erx_boot_cpu_id_read(uint64_t id[ERX_CPU_ID_WORD_COUNT])
 {
-	const uint64_t words[ERX_BOOT_CPU_ID_COUNT] = {
+	const uint64_t words[ERX_CPU_ID_WORD_COUNT] = {
 		[ERX_CPU_ID_WORD_AA64ISAR0] = erx_sysreg_id_aa64isar0_el1_read(),
 		[ERX_CPU_ID_WORD_AA64ISAR1] = erx_sysreg_id_aa64isar1_el1_read(),
 		[ERX_CPU_ID_WORD_AA64ISAR2] = erx_sysreg_id_aa64isar2_el1_read(),
@@ -34,6 +33,6 @@ erx_boot_cpu_id_read(uint64_t id[ERX_BOOT_CPU_ID_COUNT])
 		[ERX_CPU_ID_WORD_AA64PFR1] = erx_sysreg_id_aa64pfr1_el1_read(),
 	};
 
-	for (int index = 0; index < ERX_BOOT_CPU_ID_COUNT; index++)
+	for (size_t index = 0; index < ERX_CPU_ID_WORD_COUNT; index++)
 		id[index] = words[index];
 }

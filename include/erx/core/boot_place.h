@@ -37,13 +37,6 @@ extern "C" {
 
 #define ERX_BOOT_PLACE_COPIES_MAX	48
 #define ERX_BOOT_WORKSPACE_SIZE		32768
-#define ERX_BOOT_ID_SIZE		8
-#define ERX_BOOT_HASH_SIZE		32
-/* The image format's version, and the most of a command line the record holds. */
-#define ERX_BOOT_IMAGE_VERSION		2
-#define ERX_BOOT_ARGS_MAX		2048
-/* The longest node path of /chosen/stdout-path the record holds. */
-#define ERX_BOOT_STDOUT_MAX		256
 /* The entry a refusal concerns when it concerns no entry. */
 #define ERX_BOOT_NO_ENTRY		UINT32_MAX
 
@@ -127,8 +120,8 @@ struct erx_boot_load_plan {
 	erx_boot_range_t archive_loaded;
 	uint32_t	 flags;
 	uint32_t	 root_entry;
-	uint8_t		 build_id[ERX_BOOT_ID_SIZE];
-	uint8_t		 index_hash[ERX_BOOT_HASH_SIZE];
+	uint8_t		 build_id[ERX_BUILD_ID_SIZE];
+	uint8_t		 index_hash[ERX_PACK_HASH_SIZE];
 	erx_boot_placed_t kernel;
 	erx_boot_placed_t sigma0;
 	bool		 has_stand_in_root;
@@ -165,7 +158,7 @@ erx_boot_pair_t erx_boot_pair_derive(const void *, size_t, const void *, size_t)
  * Writes the handoff record over size bytes at record from the plan, the
  * first bootargs_len bytes of bootargs, at most the record's bound, the
  * stdout_len bytes of the node path /chosen/stdout-path names, at most
- * ERX_BOOT_STDOUT_MAX, stored empty unless it is a node path
+ * ERX_BOOT_STDOUT_PATH_MAX, stored empty unless it is a node path
  * (erx_boot_node_path_valid), the boot pair and the range of the device
  * tree's copy, and the boot CPU's identification words (erx_boot_cpu_id_read). Returns false when the record does not fit, the pair is one a reader refuses
  * (erx_boot_pair_valid) or the tree's range is (erx_boot_tree_range_valid),
@@ -173,7 +166,7 @@ erx_boot_pair_t erx_boot_pair_derive(const void *, size_t, const void *, size_t)
  */
 bool erx_boot_handoff_write(const erx_boot_load_plan_t *, const char *, size_t,
     const char *, size_t, erx_boot_pair_t, erx_boot_range_t,
-    const uint64_t [ERX_BOOT_CPU_ID_COUNT], uint8_t *, size_t);
+    const uint64_t [ERX_CPU_ID_WORD_COUNT], uint8_t *, size_t);
 
 #ifdef __cplusplus
 }

@@ -63,16 +63,6 @@ _Static_assert(_Alignof(erx_boot_work_t) <= _Alignof(erx_boot_workspace_t),
     "the bootstrap workspace is aligned for its contents");
 _Static_assert(ERX_BOOT_PLACE_COPIES_MAX >= ERX_BOOT_ROLES * ERX_ELF_SEGMENTS_MAX,
     "every role's segments fit in the copy list");
-_Static_assert(ERX_BOOT_HASH_SIZE == ERX_PACK_HASH_SIZE,
-    "the seam's hash size is the format's");
-_Static_assert(ERX_BOOT_ID_SIZE == sizeof(((erx_boot_handoff_t *)0)->build_id),
-    "the seam's identifier size is the record's");
-_Static_assert(ERX_BOOT_IMAGE_VERSION == ERX_PACK_VERSION,
-    "the seam's image version is the format's");
-_Static_assert(ERX_BOOT_STDOUT_MAX == ERX_BOOT_STDOUT_PATH_MAX,
-    "the first stage's stdout path bound is the ABI's");
-_Static_assert(ERX_BOOT_ARGS_MAX == ERX_BOOT_STRINGS_MAX,
-    "the seam's command line bound is the ABI's");
 
 /*
  * The roles, in the order each of erx_boot_load_plan's two placement passes
@@ -619,9 +609,9 @@ erx_boot_load_plan(const erx_boot_load_request_t *request,
 	plan = (erx_boot_load_plan_t){ .archive = archive,
 	    .archive_loaded = archive, .flags = view.header.flags,
 	    .root_entry = view.header.root_entry };
-	for (size_t index = 0; index < ERX_BOOT_ID_SIZE; index++)
+	for (size_t index = 0; index < ERX_BUILD_ID_SIZE; index++)
 		plan.build_id[index] = view.header.build_id[index];
-	for (size_t index = 0; index < ERX_BOOT_HASH_SIZE; index++)
+	for (size_t index = 0; index < ERX_PACK_HASH_SIZE; index++)
 		plan.index_hash[index] = view.header.index_hash[index];
 	if (!erx_boot_hold_apart(request, &work->clear, error))
 		return (false);
@@ -717,7 +707,7 @@ bool
 erx_boot_handoff_write(const erx_boot_load_plan_t *plan, const char *bootargs,
     size_t bootargs_len, const char *stdout_path, size_t stdout_len,
     erx_boot_pair_t boot, erx_boot_range_t tree,
-    const uint64_t cpu_id[ERX_BOOT_CPU_ID_COUNT], uint8_t *record, size_t size)
+    const uint64_t cpu_id[ERX_CPU_ID_WORD_COUNT], uint8_t *record, size_t size)
 {
 	erx_boot_handoff_t *handoff;
 
@@ -746,15 +736,15 @@ erx_boot_handoff_write(const erx_boot_load_plan_t *plan, const char *bootargs,
 		.tree_start = tree.start,
 		.tree_size = tree.size,
 	};
-	for (size_t index = 0; index < ERX_BOOT_ID_SIZE; index++)
+	for (size_t index = 0; index < ERX_BUILD_ID_SIZE; index++)
 		handoff->build_id[index] = plan->build_id[index];
-	for (size_t index = 0; index < ERX_BOOT_HASH_SIZE; index++)
+	for (size_t index = 0; index < ERX_PACK_HASH_SIZE; index++)
 		handoff->index_hash[index] = plan->index_hash[index];
 	for (size_t index = 0; index < bootargs_len; index++)
 		handoff->bootargs[index] = (uint8_t)bootargs[index];
 	for (size_t index = 0; index < stdout_len; index++)
 		handoff->stdout_path[index] = (uint8_t)stdout_path[index];
-	for (size_t index = 0; index < ERX_BOOT_CPU_ID_COUNT; index++)
+	for (size_t index = 0; index < ERX_CPU_ID_WORD_COUNT; index++)
 		handoff->cpu_id[index] = cpu_id[index];
 	return (true);
 }

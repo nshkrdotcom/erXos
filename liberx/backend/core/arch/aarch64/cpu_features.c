@@ -57,12 +57,8 @@ signed_field(uint64_t field)
 }
 
 erx_cpu_features_t
-erx_cpu_features(const uint64_t id[ERX_BOOT_CPU_ID_COUNT])
+erx_cpu_features(const uint64_t id[ERX_CPU_ID_WORD_COUNT])
 {
-	/* Each word read lies in the handoff, which the parameter's type does not check. */
-	_Static_assert(ERX_CPU_ID_WORD_AA64PFR0 < ERX_BOOT_CPU_ID_COUNT, "PFR0 is a handoff word");
-	_Static_assert(ERX_CPU_ID_WORD_AA64ISAR0 < ERX_BOOT_CPU_ID_COUNT, "ISAR0 is a handoff word");
-	_Static_assert(ERX_CPU_ID_WORD_AA64ISAR1 < ERX_BOOT_CPU_ID_COUNT, "ISAR1 is a handoff word");
 	const uint64_t pfr0 = id[ERX_CPU_ID_WORD_AA64PFR0];
 	const uint64_t isar0 = id[ERX_CPU_ID_WORD_AA64ISAR0];
 	const uint64_t isar1 = id[ERX_CPU_ID_WORD_AA64ISAR1];

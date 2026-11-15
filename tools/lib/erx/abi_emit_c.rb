@@ -46,6 +46,16 @@ module Erx
         end
       end
 
+      # One constant as this header defines it; a seam header that repeats
+      # it takes this spelling, so a file including both redefines nothing.
+      def constant_definition(item) = "#define #{constant(item.name)} #{literal(item.value, item.type)}"
+
+      # A layout's size and alignment, under the same rule.
+      def layout_extent(layout)
+        prefix = constant(layout.name)
+        ["#define #{prefix}_SIZE #{layout.size}", "#define #{prefix}_ALIGN #{layout.alignment}"]
+      end
+
       def header(schema)
         out = [NOTICE, '#ifndef ERX_ABI_H', '#define ERX_ABI_H', '',
                '#include <stdbool.h>', '#include <stddef.h>',
@@ -54,9 +64,7 @@ module Erx
                'typedef struct erx_rights erx_rights_t;',
                'struct erx_rights {', "\tuint32_t\tbits;", '};',
                '/* Only rights constructors publish values of this type. */', '']
-        schema.constants.each_value do |item|
-          out << "#define #{constant(item.name)} #{literal(item.value, item.type)}"
-        end
+        schema.constants.each_value { |item| out << constant_definition(item) }
         out << ''
         schema.type_order.each do |type_name|
           type = schema.types.fetch(type_name)
@@ -350,9 +358,7 @@ module Erx
       # private_headers emits the rest.
       def layout_declaration(layout)
         tag = name(layout.name)
-        prefix = constant(layout.name)
-        extent = ["#define #{prefix}_SIZE #{layout.size}",
-                  "#define #{prefix}_ALIGN #{layout.alignment}"]
+        extent = layout_extent(layout)
         typedef = "typedef struct #{tag} #{tag}_t;"
         return [*extent, typedef] if layout.private?
 
@@ -378,7 +384,7 @@ module Erx
             out << "\t#{align}uint8_t\tpadding_#{member[0]}[#{member[1]}];"
           else
             atomic = member.atomic ? '_Atomic ' : ''
-            count = member.array? ? "[#{member.count}]" : ''
+            count = member.array? ? "[#{array_count(member)}]" : ''
             out << "\t#{align}#{atomic}#{c_type(member.type)}\t#{member.name}#{count};"
           end
         end
@@ -397,6 +403,12 @@ module Erx
           out << "    \"#{tag}.#{layout.tail.name} offset\");"
         end
         out
+      end
+
+      # An array's length: the count of the enum that numbers its elements
+      # when it has one, which ties the C array to the enum, else the number.
+      def array_count(field)
+        field.numbered_by ? constant(Model.count_constant(field.numbered_by)) : field.count
       end
 
       def note_declaration(schema)

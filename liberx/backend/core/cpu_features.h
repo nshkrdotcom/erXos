@@ -27,6 +27,6 @@ typedef struct erx_cpu_features {
  * defines (liberx/backend/core/arch/<arch>/cpu_features.c). Words that claim
  * a feature the kernel does not enable and save give no bit for it.
  */
-erx_cpu_features_t	erx_cpu_features(const uint64_t id[ERX_BOOT_CPU_ID_COUNT]);
+erx_cpu_features_t	erx_cpu_features(const uint64_t id[ERX_CPU_ID_WORD_COUNT]);
 
 #endif /* LIBERX_BACKEND_CORE_CPU_FEATURES_H */

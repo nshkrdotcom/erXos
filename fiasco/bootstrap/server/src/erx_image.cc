@@ -37,9 +37,9 @@ enum { Memory_ranges_max = 16, Reservations_max = 32 };
 static_assert(offsetof(L4_kernel_options::Options, erx_handoff) % 8 == 0,
               "the handoff record lies on its alignment inside the options");
 static_assert(sizeof(L4_kernel_options::Options::erx_handoff)
-              == ERX_BOOT_HANDOFF_RECORD_SIZE,
+              == ERX_BOOT_HANDOFF_SIZE,
               "the options block embeds the whole handoff record");
-static_assert(ERX_BOOT_HANDOFF_RECORD_SIZE <= L4_PAGESIZE,
+static_assert(ERX_BOOT_HANDOFF_SIZE <= L4_PAGESIZE,
               "the handoff page holds the whole handoff record");
 static_assert(sizeof(l4_kernel_info_t::magic) == sizeof(l4_uint32_t)
               && sizeof(L4_kernel_options::Options::magic) == sizeof(l4_uint32_t)
@@ -51,7 +51,7 @@ static erx_boot_workspace_t workspace;
 static erx_boot_load_plan_t plan;
 // The handoff record, written whole before anything moves and copied into the
 // kernel's options block once the kernel is copied.
-alignas(8) static l4_uint8_t handoff_record[ERX_BOOT_HANDOFF_RECORD_SIZE];
+alignas(8) static l4_uint8_t handoff_record[ERX_BOOT_HANDOFF_SIZE];
 
 // The boot stops here, on the console, naming the check; the operator's harness
 // or the machine's watchdog ends it.
@@ -64,7 +64,7 @@ refuse(erx_boot_error_t const &error)
     printf("erXos image: entry %u: %s\n", error.entry, error.reason);
   else if (!strcmp(error.reason, "version"))
     printf("erXos image: header: version %llu, expected %u\n",
-           static_cast<unsigned long long>(error.found), ERX_BOOT_IMAGE_VERSION);
+           static_cast<unsigned long long>(error.found), ERX_PACK_VERSION);
   else
     printf("erXos image: header: %s\n", error.reason);
   l4_infinite_loop();
@@ -129,10 +129,10 @@ chosen_initrd(void const *fdt, erx_boot_range_t *initrd)
 // length (Devicetree Specification v0.4, section 3.6: the value ends at the first
 // ":", where the UART's options begin, and is a full path or an alias, which
 // libfdt resolves through /aliases). 0 when the property is absent, is no string,
-// names no node, or resolves to a path longer than ERX_BOOT_STDOUT_MAX; the
+// names no node, or resolves to a path longer than ERX_BOOT_STDOUT_PATH_MAX; the
 // root then refuses the boot and says the tree names no console.
 static size_t
-chosen_stdout_path(void const *fdt, int chosen, char (&path)[ERX_BOOT_STDOUT_MAX + 1])
+chosen_stdout_path(void const *fdt, int chosen, char (&path)[ERX_BOOT_STDOUT_PATH_MAX + 1])
 {
   if (chosen < 0)
     return 0;
@@ -299,7 +299,7 @@ write_handoff_page(l4_uint8_t const *record)
 
   char *target = reinterpret_cast<char *>(page);
   memset(target, 0, L4_PAGESIZE);
-  memcpy(target, record, ERX_BOOT_HANDOFF_RECORD_SIZE);
+  memcpy(target, record, ERX_BOOT_HANDOFF_SIZE);
   if (Cache::Data::enabled())
     Cache::Data::clean(page, L4_PAGESIZE);
   return page;
@@ -344,7 +344,7 @@ copy_device_tree(void const *fdt)
       || !drop_initrd(target) || fdt_pack(target) != 0)
     refuse("device tree", "copy");
   unsigned long size = fdt_totalsize(target);
-  if (size == 0 || size > ERX_BOOT_TREE_COPY_MAX)
+  if (size == 0 || size > ERX_BOOT_TREE_MAX)
     refuse("device tree", "too_long");
   unsigned long pages = l4_round_page(size);
   reserve({copy, pages}, ".erxtree", Region::Root, Region::Root_section_ro);
@@ -411,11 +411,11 @@ erx_image_load(Platform_base *plat)
     : static_cast<char const *>(fdt_getprop(fdt, chosen, "bootargs", &args_size));
   size_t args_length = 0;
   if (args && args_size > 0)
-    args_length = erx_boot_args_cut(args, strnlen(args, args_size), ERX_BOOT_ARGS_MAX);
-  static char stdout_path[ERX_BOOT_STDOUT_MAX + 1];
+    args_length = erx_boot_args_cut(args, strnlen(args, args_size), ERX_BOOT_STRINGS_MAX);
+  static char stdout_path[ERX_BOOT_STDOUT_PATH_MAX + 1];
   size_t stdout_length = chosen_stdout_path(fdt, chosen, stdout_path);
   // The boot CPU's identification registers, which only kernel mode reads.
-  uint64_t cpu_id[ERX_BOOT_CPU_ID_COUNT];
+  uint64_t cpu_id[ERX_CPU_ID_WORD_COUNT];
   erx_boot_cpu_id_read(cpu_id);
 
   // The last refusals, before anything moves: the tree's copy and the record go

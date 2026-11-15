@@ -59,7 +59,7 @@ typedef struct erx_crash_input {
 	uint32_t	 nframes;
 	uint64_t	 uptime_ns;
 	uint64_t	 since_pet_ns;
-	uint8_t		 build_id[ERX_CRASH_BUILD_ID_BYTES];
+	uint8_t		 build_id[ERX_BUILD_ID_SIZE];
 	erx_crash_fault_t fault;
 	const void	*regs;
 	const uint64_t	*frames;

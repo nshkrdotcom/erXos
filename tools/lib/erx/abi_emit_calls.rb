@@ -584,27 +584,39 @@ module Erx
       # hands the crash record's writer, spelled as include/erx/abi.h spells
       # it, so a file that includes both redefines nothing differently.
       def crash_seam(schema)
-        enums = %w[crash_cause crash_form boot_value boot_slot].flat_map do |name|
-          schema.types.fetch(name).members.sort.map do |member, value|
-            "#define ERX_#{name.upcase}_#{member.upcase} UINT32_C(#{value})"
-          end
+        members = %w[crash_cause crash_form boot_value boot_slot].flat_map do |name|
+          schema.types.fetch(name).members.keys.sort.map { |member| "#{Model.constant_prefix(name)}_#{member}" }
         end
+        constants = [*members, 'crash_size', 'build_id_size'].map { |name| schema.constants.fetch(name) }
         values = schema.types.fetch('fault_kind').members.values
         raise SchemaError, 'a fault kind does not fit the crash seam\'s mask' unless values.all? { |value| value.between?(0, 31) }
 
         kinds = values.reduce(0) { |mask, value| mask | (1 << value) }
         regs = schema.types.fetch('erx_regs')
-        brief = schema.types.fetch('erx_crash_brief')
-        build_id = brief.fields.find { |member| member.name == 'build_id' }
         [CEmitter::NOTICE, '#ifndef ERX_CORE_ABI_CRASH_H', '#define ERX_CORE_ABI_CRASH_H', '',
          '#include <stddef.h>', '#include <stdint.h>', '',
-         *enums,
-         "#define ERX_CRASH_SIZE UINT32_C(#{schema.constants.fetch('crash_size').value})",
+         *constants.map { |item| CEmitter.constant_definition(item) },
          "#define ERX_CRASH_FAULT_KINDS UINT32_C(#{format('0x%x', kinds)})",
-         "#define ERX_CRASH_REGS_BYTES #{regs.size}",
-         "#define ERX_CRASH_BUILD_ID_BYTES #{build_id.count}", '',
+         "#define ERX_CRASH_REGS_BYTES #{regs.size}", '',
          *%w[boot_value boot_slot].flat_map { |name| CEmitter.enum_name_lookup(schema.types.fetch(name)) },
          '#endif /* ERX_CORE_ABI_CRASH_H */', ''].join("\n")
+      end
+
+      # The ABI constants bootstrap's handoff writer needs: the record's
+      # extent, the bounds of what it carries (a command line, a stdout
+      # path, the device tree's page-aligned copy, the image's build
+      # identifier, format version and hashes) and its CPU words' count.
+      # Macros only, spelled as include/erx/abi.h spells them, so the seam
+      # header stays valid C and C++ and a file that includes both
+      # redefines nothing differently.
+      def boot_seam(schema)
+        constants = %w[boot_strings_max boot_stdout_path_max boot_tree_max build_id_size cpu_id_word_count
+                       pack_hash_size pack_version page_size].map { |name| schema.constants.fetch(name) }
+        [CEmitter::NOTICE, '#ifndef ERX_CORE_ABI_BOOT_H', '#define ERX_CORE_ABI_BOOT_H', '',
+         '#include <stdint.h>', '',
+         *CEmitter.layout_extent(schema.types.fetch('erx_boot_handoff')),
+         *constants.map { |item| CEmitter.constant_definition(item) },
+         '', '#endif /* ERX_CORE_ABI_BOOT_H */', ''].join("\n")
       end
 
       def frame_index(register)

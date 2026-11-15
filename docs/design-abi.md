@@ -108,7 +108,15 @@ The declaration forms are:
 
 The base integer types are `u8`, `u16`, `u32`, `u64`, `i8`, `i16`, `i32`
 and `i64`. A record field is `field NAME TYPE OFFSET`; a fixed array adds
-`count COUNT`. A `padding OFFSET LENGTH` member represents every gap and
+`count COUNT`, a number or a `@limit`, or the name of an enum whose
+members number the array's elements: an index enum, not a flags type,
+whose values run from 0 without a gap. The model then derives the array's
+length from the enum's members, so adding a member without growing the
+record fails the extent check below, and the C record sizes the array by
+the members' count, a constant the generator emits for each index enum
+under the enum's constant prefix (`ERX_CPU_ID_WORD_COUNT` for
+`cpu_id_word`). An index enum has no member named `count`.
+A `padding OFFSET LENGTH` member represents every gap and
 requires zero bytes in a wire encoding. Tail padding is explicit too.
 Nested records have no pointers and form an acyclic by-value type graph.
 A record's fields, including padding, cover its fixed prefix exactly.
@@ -2298,6 +2306,7 @@ The output families have explicit locations, shown relative to `build/gen/`:
 | --- | --- |
 | `include/erx/abi.h` | constants, strong scalar wrappers, typed layouts, size/offset assertions and field operations |
 | `include/erx/abi_reader.h`, `liberx/generated/abi_reader.c` | bounded structural readers and diagnostic types |
+| `include/erx/core/abi_trap.h`, `include/erx/core/abi_crash.h`, `include/erx/core/abi_boot.h` | the seam headers of the C17 cores' C++ glue, which does not include `include/erx/abi.h`: the values it needs for the trap's registers, the crash record's writer and bootstrap's handoff record, each value `include/erx/abi.h` also defines spelled as that header spells it |
 | `kernel/generated/abi_calls.h`, `kernel/generated/abi_decode.c` | typed handler declarations, argument validation, closed dispatch/executor metadata and each call's admission plan |
 | `kernel/generated/NAME_impl.h` | a private layout's offsets, record and operations |
 | `liberx/generated/calls.h` | backend-independent call signatures |

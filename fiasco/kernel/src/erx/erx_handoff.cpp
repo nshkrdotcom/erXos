@@ -23,7 +23,7 @@ IMPLEMENTATION:
 #include "koptions.h"
 #include "panic.h"
 
-static_assert(sizeof(Koptions::Options::erx_handoff) == ERX_BOOT_HANDOFF_RECORD_SIZE,
+static_assert(sizeof(Koptions::Options::erx_handoff) == ERX_BOOT_HANDOFF_SIZE,
               "the options block embeds the whole handoff record");
 
 static FIASCO_INIT

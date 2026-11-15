@@ -10,17 +10,6 @@
 #include "erx/abi.h"
 #include "erx/core/boot_handoff.h"
 
-_Static_assert(ERX_BOOT_HANDOFF_RECORD_SIZE == ERX_BOOT_HANDOFF_SIZE,
-    "the seam's record size is the ABI's");
-_Static_assert(ERX_BOOT_TREE_COPY_MAX == ERX_BOOT_TREE_MAX &&
-    ERX_BOOT_TREE_ALIGN == ERX_PAGE_SIZE, "the seam's tree bounds are the ABI's");
-_Static_assert(sizeof(((erx_boot_handoff_view_t *)0)->build_id) ==
-    sizeof(((erx_boot_handoff_t *)0)->build_id) &&
-    sizeof(((erx_boot_handoff_view_t *)0)->index_hash) ==
-    sizeof(((erx_boot_handoff_t *)0)->index_hash), "the view holds the record's identifiers");
-_Static_assert(sizeof(((erx_boot_handoff_t *)0)->cpu_id) ==
-    ERX_BOOT_CPU_ID_COUNT * sizeof(uint64_t), "the seam's CPU words are the record's");
-
 const char *
 erx_boot_handoff_accept(const uint8_t *record, size_t length,
     erx_boot_handoff_view_t *view)
@@ -74,7 +63,7 @@ erx_boot_handoff_accept(const uint8_t *record, size_t length,
 		view->build_id[index] = handoff->build_id[index];
 	for (size_t index = 0; index < sizeof(view->index_hash); index++)
 		view->index_hash[index] = handoff->index_hash[index];
-	for (size_t index = 0; index < ERX_BOOT_CPU_ID_COUNT; index++)
+	for (size_t index = 0; index < ERX_CPU_ID_WORD_COUNT; index++)
 		view->cpu_id[index] = handoff->cpu_id[index];
 	return (NULL);
 }

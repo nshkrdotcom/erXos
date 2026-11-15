@@ -59,8 +59,9 @@ limit ns_names_max u32 256
 limit pack_path_max u32 4096
 limit pack_strings_max u32 4194304
 limit pack_hash_size u32 32
+limit build_id_size u32 8
 limit boot_locator_version u32 1
-limit boot_handoff_version u32 6
+limit boot_handoff_version u32 7
 limit boot_kip_view_type u32 16
 limit boot_koptions_view_type u32 17
 limit boot_kip_view_min u32 4096
@@ -342,7 +343,7 @@ layout erx_pack_header wire_le 8 96
   field strings_off u64 40
   field strings_size u32 48
   field root_entry u32 52
-  field build_id u8 56 count 8
+  field build_id u8 56 count @build_id_size
   field index_hash u8 64 count 32
 layout erx_pack_entry wire_le 8 64
   field path_off u32 0

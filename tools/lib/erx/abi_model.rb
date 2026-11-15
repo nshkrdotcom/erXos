@@ -75,7 +75,9 @@ module Erx
       end
     end
 
-    Field = Struct.new(:name, :type, :offset, :count, :bits, :atomic,
+    # An array field's count, and numbered_by, the index enum whose members
+    # number its elements when `count` names one, else nil.
+    Field = Struct.new(:name, :type, :offset, :count, :numbered_by, :bits, :atomic,
                        :writer, :owners, :zero_mask, :input_masks,
                        :visibility, :line, keyword_init: true) do
       def size
@@ -383,7 +385,7 @@ module Erx
                   when 'scalar', 'enum', 'flags' then [declaration.args[1]]
                   when 'layout'
                     declaration.members.select { |line| %w[field tail names].include?(line.words.first) }
-                               .map { |line| line.words[2] }
+                               .flat_map { |line| [line.words[2], *index_name(line)] }
                   else []
                   end
           names.each do |dependency|
@@ -594,11 +596,16 @@ module Erx
             line.fail!('variable layout cannot be embedded') if type.is_a?(Layout) && type.tail
             line.fail!('nested layout storage differs from its owner') if type.is_a?(Layout) && type.storage != storage
             line.fail!('a private layout cannot be embedded') if type.is_a?(Layout) && type.private?
-            count = words.size == 5 ? reference(words[4], constants, line) : nil
+            numbered_by = index_name(line)
+            count = case words
+                    in [_, _, _] then nil
+                    in [*, 'count', _] if numbered_by then index_enum(types.fetch(numbered_by), line).members.size
+                    in [*, 'count', limit] then reference(limit, constants, line)
+                    end
             line.fail!('array count must be positive and bounded') if count && (!count.positive? || count > MAX_LAYOUT_SIZE)
             offset = unsigned(words[2], line, maximum: size)
             current_field = { name: field_name, type: type, offset: offset,
-                              count: count, bits: [], line: line }
+                              count: count, numbered_by: numbered_by, bits: [], line: line }
             fields << current_field
           when 'padding'
             arity(line, 3)
@@ -656,6 +663,31 @@ module Erx
                    bindings: field_bindings(names, completed, types, tail: tail),
                    line: declaration.line).freeze
       end
+
+      # The enum a `field NAME TYPE OFFSET count ENUM` line counts its array
+      # by, or nil when the count is a number or a @constant.
+      def index_name(line)
+        keyword, *words = line.words
+        words[4] if keyword == 'field' && words.size == 5 && words[3] == 'count' && words[4].match?(/\A[a-z]/)
+      end
+
+      # An index enum numbers an array's elements: an enum, not flags,
+      # whose members take every value from 0 to the array's last element,
+      # so each element has its member and the count is the members'. No
+      # member is named count, which would collide with count_constant.
+      def index_enum(type, line)
+        name = type.name
+        line.fail!("count #{name} is not an enum") unless type.is_a?(EnumType)
+        line.fail!("count #{name} is a flags type") if type.flags
+        bound = type.members.size
+        line.fail!("count #{name} is not an enum numbering 0 to #{bound - 1}") unless type.members.values.sort == (0...bound).to_a
+        line.fail!("count #{name} has a member named count") if type.members.key?('count')
+        type
+      end
+
+      # The constant an index enum's count is generated as: ERX_<ENUM>_COUNT
+      # in C, under the enum's constant prefix.
+      def count_constant(enum) = "#{constant_prefix(enum)}_count"
 
       # Each `names FIELD TYPE [args ARRAY]` line: FIELD is one integer
       # field of the layout and TYPE an enum or flags type over that same
@@ -847,14 +879,17 @@ module Erx
         name.delete_prefix('erx_').sub(/_(?:flags|kind)\z/, '')
       end
 
-      # Each enumeration member, and for each flags type its known bits as
-      # <type>_known, the one mask a reader refuses an unknown bit with.
+      # Each enumeration member, for each flags type its known bits as
+      # <type>_known, the one mask a reader refuses an unknown bit with, and
+      # for each enum that counts an array its members' count as <enum>_count.
       def type_constants(types)
         constants = {}
+        indices = types.each_value.grep(Layout).flat_map { |layout| layout.fields.filter_map(&:numbered_by) }
         types.each_value do |type|
           next unless type.is_a?(EnumType)
           generated = type.members.transform_keys { |name| "#{constant_prefix(type.name)}_#{name}" }
           generated["#{type.name}_known"] = type.members.values.reduce(0, :|) if type.flags
+          generated[count_constant(type.name)] = type.members.size if indices.include?(type.name)
           generated.each do |key, value|
             raise SchemaError, "generated constant collision #{key}" if constants.key?(key)
             constants[key] = Constant.new(name: key.freeze, value: value, type: type.base).freeze

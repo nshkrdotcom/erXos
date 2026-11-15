@@ -75,7 +75,7 @@ layout erx_arch_boot_header wire_le 8 64
 # handoff's cpu_id holds (kernel.txt, erx_boot_handoff): bootstrap's
 # reader, kernel/arch/aarch64/cpu_id.c, writes them, and the root's
 # feature core, liberx/backend/core/arch/aarch64/cpu_features.c, reads
-# them. Each value indexes cpu_id, whose other words are 0.
+# them. The members number cpu_id's words, one each.
 enum cpu_id_word u32
   value aa64isar0 0
   value aa64isar1 1

@@ -42,11 +42,11 @@
 
 #define DEVICE_TREE_SIZE 0x2000
 
-_Alignas(8) static uint8_t record[ERX_BOOT_HANDOFF_RECORD_SIZE];
+_Alignas(8) static uint8_t record[ERX_BOOT_HANDOFF_SIZE];
 static erx_boot_workspace_t workspace;
 static erx_boot_load_plan_t plan;
 /* Identification words a writer stores and a reader gives back in order. */
-static const uint64_t cpu_id[ERX_BOOT_CPU_ID_COUNT] = { 0x1010, 0x2020, 0x3030, 0x4040, 0x5050, 0x6060, 0x7070, 0x8080 };
+static const uint64_t cpu_id[ERX_CPU_ID_WORD_COUNT] = { 0x1010, 0x2020, 0x3030, 0x4040, 0x5050 };
 
 static uint8_t *
 read_file(const char *path, size_t *length)
@@ -251,7 +251,7 @@ print_accepted(size_t length)
 	    erx_boot_handoff_covered(&view, &range, 1), view.boot.value, view.boot.slot,
 	    view.tree.start, view.tree.size);
 	printf("cpu_id");
-	for (size_t index = 0; index < ERX_BOOT_CPU_ID_COUNT; index++)
+	for (size_t index = 0; index < ERX_CPU_ID_WORD_COUNT; index++)
 		printf(" %" PRIx64, view.cpu_id[index]);
 	printf("\n");
 }

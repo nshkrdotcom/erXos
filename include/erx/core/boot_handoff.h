@@ -10,6 +10,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+/*
+ * The record's size, which Fiasco's options block embeds, the bounds of what it
+ * carries and its CPU words' count, generated from the ABI for bootstrap's C++,
+ * which does not include erx/abi.h.
+ */
+#include "erx/core/abi_boot.h"
 #include "erx/core/boot_pair.h"
 #include "erx/core/boot_range.h"
 
@@ -25,17 +31,6 @@
 extern "C" {
 #endif
 
-/* The size of the record Fiasco's options block embeds. */
-#define ERX_BOOT_HANDOFF_RECORD_SIZE	2488
-/*
- * The longest device-tree copy and its alignment: ERX_BOOT_TREE_MAX and
- * ERX_PAGE_SIZE of the ABI, which bootstrap's C++ does not include.
- */
-#define ERX_BOOT_TREE_COPY_MAX		1048576
-#define ERX_BOOT_TREE_ALIGN		4096
-/* The words of the boot CPU's identification registers the record carries. */
-#define ERX_BOOT_CPU_ID_COUNT		8
-
 typedef struct erx_boot_handoff_view erx_boot_handoff_view_t;
 
 struct erx_boot_handoff_view {
@@ -43,8 +38,8 @@ struct erx_boot_handoff_view {
 	bool		 development;
 	/* The image carries test code: a test image, always a development build. */
 	bool		 test_code;
-	uint8_t		 build_id[8];
-	uint8_t		 index_hash[32];
+	uint8_t		 build_id[ERX_BUILD_ID_SIZE];
+	uint8_t		 index_hash[ERX_PACK_HASH_SIZE];
 	erx_boot_range_t image;
 	uint64_t	 pool_usable;
 	uint64_t	 pool_heap;
@@ -62,16 +57,17 @@ struct erx_boot_handoff_view {
 	erx_boot_pair_t	 boot;
 	/*
 	 * The packed read-only copy of the firmware's device tree bootstrap
-	 * made: page-aligned, 1 to ERX_BOOT_TREE_COPY_MAX bytes, its end inside the
+	 * made: page-aligned, 1 to ERX_BOOT_TREE_MAX bytes, its end inside the
 	 * address space. Its bytes are untrusted until erx_dt_accept takes them.
 	 */
 	erx_boot_range_t tree;
 	/*
-	 * The boot CPU's identification registers as bootstrap read them, at the
-	 * words the architecture's cpu_id_word gives (abi/arch/<arch>.txt); what they
-	 * claim is untrusted until the root's feature core takes them.
+	 * The boot CPU's identification registers as bootstrap read them, one
+	 * word for each member of the architecture's cpu_id_word (abi/arch/<arch>.txt),
+	 * at the word it numbers; what they claim is untrusted until the root's
+	 * feature core takes them.
 	 */
-	uint64_t	 cpu_id[ERX_BOOT_CPU_ID_COUNT];
+	uint64_t	 cpu_id[ERX_CPU_ID_WORD_COUNT];
 };
 
 /*
@@ -115,7 +111,7 @@ erx_boot_handoff_build_id(const erx_boot_handoff_view_t *handoff)
 
 /*
  * Whether a device-tree copy's range is one the handoff carries: start
- * page-aligned, length from 1 to ERX_BOOT_TREE_COPY_MAX, end not overflowing.
+ * page-aligned, length from 1 to ERX_BOOT_TREE_MAX, end not overflowing.
  * The writer stores only such a range and the reader accepts only one.
  */
 static inline bool
@@ -123,18 +119,18 @@ erx_boot_tree_range_valid(uint64_t start, uint64_t size)
 {
 	uint64_t end;
 
-	return ((start % ERX_BOOT_TREE_ALIGN) == 0 && size != 0 &&
-	    size <= ERX_BOOT_TREE_COPY_MAX &&
+	return ((start % ERX_PAGE_SIZE) == 0 && size != 0 &&
+	    size <= ERX_BOOT_TREE_MAX &&
 	    !__builtin_add_overflow(start, size, &end));
 }
 
 /*
- * Reads the boot CPU's identification registers into id, in kernel mode, at the
- * words the architecture's cpu_id_word gives (abi/arch/<arch>.txt), its other words 0
- * (kernel/arch/<arch>/cpu_id.c). Bootstrap calls it and hands the words to
+ * Reads the boot CPU's identification registers into id, in kernel mode, each at
+ * the word the architecture's cpu_id_word numbers it (abi/arch/<arch>.txt;
+ * kernel/arch/<arch>/cpu_id.c). Bootstrap calls it and hands the words to
  * erx_boot_handoff_write.
  */
-void erx_boot_cpu_id_read(uint64_t id[ERX_BOOT_CPU_ID_COUNT]);
+void erx_boot_cpu_id_read(uint64_t id[ERX_CPU_ID_WORD_COUNT]);
 
 /* Returns NULL when the record is good, else the check that failed. */
 const char *erx_boot_handoff_accept(const uint8_t *, size_t,

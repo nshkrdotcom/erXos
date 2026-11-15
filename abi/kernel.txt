@@ -93,7 +93,7 @@ layout erx_crash_brief wire_le 8 120
   field cpu u32 28
   field uptime_ns u64 32
   field since_pet_ns u64 40
-  field build_id u8 48 count 8
+  field build_id u8 48 count @build_id_size
   field boot_value boot_value 56
   field boot_slot boot_slot 60
   field nframes u32 64
@@ -388,7 +388,7 @@ layout erx_machine_page shared 4096 4096
   field watchdog_period_s u32 36
   field watchdog_deadline_s u32 40
   field watchdog_boot_s u32 44
-  field build_id u8 48 count 8
+  field build_id u8 48 count @build_id_size
   padding 56 4040
   atomic lease_deadline_ns load acquire store none
   writer lease_deadline_ns kernel_boot
@@ -737,14 +737,16 @@ layout erx_trace_record shared 8 64
 # What bootstrap tells the kernel (docs/design-stopgap.md, "Boot handoff").
 # boot_value and boot_slot are the pair bootstrap derives from /chosen/bootloader,
 # under the machine page's rule for pairs. cpu_id holds the boot CPU's identification
-# registers as bootstrap read them (kernel/arch/<arch>/cpu_id.c), at the words the
-# architecture file's cpu_id_word gives, its other words 0; the root takes the CPU feature
-# words of every boot information page from them.
-layout erx_boot_handoff wire_le 8 2488
+# registers as bootstrap read them (kernel/arch/<arch>/cpu_id.c), one word for each
+# member of the architecture file's cpu_id_word, at the word the member numbers; the root
+# takes the CPU feature words of every boot information page from them. The record's size
+# is 2424 bytes and 8 per member, so a member added grows the declared size (and the
+# options block's copy, fiasco/*/koptions-def.h) or generation fails.
+layout erx_boot_handoff wire_le 8 2464
   field version u32 0
   field flags pack_flags 4
-  field build_id u8 8 count 8
-  field index_hash u8 16 count 32
+  field build_id u8 8 count @build_id_size
+  field index_hash u8 16 count @pack_hash_size
   field image_start u64 48
   field image_size u64 56
   field pool_usable u64 64
@@ -759,4 +761,4 @@ layout erx_boot_handoff wire_le 8 2488
   field reserved u32 2404
   field tree_start u64 2408
   field tree_size u64 2416
-  field cpu_id u64 2424 count 8
+  field cpu_id u64 2424 count cpu_id_word

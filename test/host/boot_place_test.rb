@@ -404,14 +404,17 @@ class BootPlaceTest < Minitest::Test
   # then the boot value and its slot, a reserved word, the device tree copy's range and the
   # boot CPU's identification words.
   def record(version: @codec.constant('boot_handoff_version'), flags: 1, start: 0x4020_4000, size: 0x8000, args: 'erx.a=1', stdout: '/pl011@9000000',
-             stdout_length: stdout.bytesize, boot: [2, 1], tree: [0x4800_0000, 0x2000], cpu_id: (1..8).map { |word| word * 0x101 })
+             stdout_length: stdout.bytesize, boot: [2, 1], tree: [0x4800_0000, 0x2000], cpu_id: cpu_words)
     bytes = [version, flags].pack('VV') + ("\x11".b * 8) + ("\x22".b * 32) + [start, size, 0, 0, 0, args.bytesize].pack('Q<4VV') + args.b
-    bytes = bytes.ljust(2136, "\0".b) + [stdout_length].pack('V') + stdout.b.ljust(256, "\0".b) + boot.pack('VV') + [0].pack('V') + tree.pack('Q<Q<') + cpu_id.pack('Q<8')
+    bytes = bytes.ljust(2136, "\0".b) + [stdout_length].pack('V') + stdout.b.ljust(256, "\0".b) + boot.pack('VV') + [0].pack('V') + tree.pack('Q<Q<') + cpu_id.pack('Q<*')
     bytes.ljust(@codec.layout_size('erx_boot_handoff'), "\0".b)
   end
 
+  # One identification word for each cpu_id_word member, each distinct.
+  def cpu_words = (1..@codec.constant('cpu_id_word_count')).map { |word| word * 0x101 }
+
   def test_the_kernel_accepts_a_good_record_and_says_what_it_holds
-    assert_equal "flags 1 development 1 test_code 0 image 40204000 8000 bootargs erx.a=1 stdout /pl011@9000000 covered 1 0 boot 2 1 tree 48000000 2000\ncpu_id 101 202 303 404 505 606 707 808",
+    assert_equal "flags 1 development 1 test_code 0 image 40204000 8000 bootargs erx.a=1 stdout /pl011@9000000 covered 1 0 boot 2 1 tree 48000000 2000\ncpu_id #{cpu_words.map { |word| word.to_s(16) }.join(' ')}",
                  handoff(record)
     assert_match(/development 0 test_code 0 /, handoff(record(flags: 2)))
     assert_match(/flags 5 development 1 test_code 1 /, handoff(record(flags: 5)))
@@ -476,7 +479,7 @@ class BootPlaceTest < Minitest::Test
   # Bootstrap writes only a pair the kernel accepts; a refused write leaves the record alone.
   def test_the_record_carries_the_pair_bootstrap_writes
     ALL_PAIRS.each do |pair|
-      expected = GOOD_PAIRS.include?(pair) ? / boot #{pair.join(' ')} tree 48000000 2000\ncpu_id 1010 2020 3030 4040 5050 6060 7070 8080\z/ : /\Aunwritten\z/
+      expected = GOOD_PAIRS.include?(pair) ? / boot #{pair.join(' ')} tree 48000000 2000\ncpu_id 1010 2020 3030 4040 5050\z/ : /\Aunwritten\z/
       assert_match expected, write(*pair), pair.inspect
     end
   end

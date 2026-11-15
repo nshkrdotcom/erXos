@@ -302,6 +302,7 @@ module Erx
         if field.array?
           element = field.dup
           element.count = nil
+          element.numbered_by = nil
           lines = validate_leaf(element.freeze, "#{expression}[index]", path,
                                 "#{offset} + index * #{field.type.size}", source_role)
           return [] if lines.empty?

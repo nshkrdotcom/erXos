@@ -254,4 +254,96 @@ class AbiGenerationTest < Minitest::Test
     end
   end
 
+  INDEXED = <<~ABI
+    abi 1
+    enum word u32
+      value first 0
+      value second 1
+      value third 2
+    layout rec wire_le 8 32
+      field tag u32 0
+      padding 4 4
+      field words u64 8 count word
+  ABI
+
+  # An array counted by an enum has one element for each member, which
+  # numbers it: the generator derives the count, emits it as the enum's
+  # ERX_<ENUM>_COUNT and sizes the C array by that name.
+  def test_an_index_enum_counts_its_array
+    schema = Erx::ABI::Model.validate(Erx::ABI::SourceSet.new(declarations: Erx::ABI::Syntax.parse(INDEXED), inputs: {}).freeze)
+    words = schema.types.fetch('rec').fields.find { |field| field.name == 'words' }
+    assert_equal [3, 'word'], [words.count, words.numbered_by]
+    header = Erx::ABI::CEmitter.header(schema)
+    assert_includes header, '#define ERX_WORD_COUNT UINT32_C(3)'
+    assert_includes header, "\tuint64_t\twords[ERX_WORD_COUNT];"
+    Dir.mktmpdir('erx-abi-index-') do |directory|
+      FileUtils.mkdir_p(File.join(directory, 'erx'))
+      File.write(File.join(directory, 'erx/abi.h'), header)
+      File.write(File.join(directory, 'use.c'), <<~C)
+        #include <erx/abi.h>
+        _Static_assert(sizeof(((erx_rec_t *)0)->words) == ERX_WORD_COUNT * sizeof(uint64_t), "one word per member");
+        _Static_assert(ERX_WORD_THIRD == ERX_WORD_COUNT - 1, "the last member indexes the last word");
+      C
+      runner = Erx::Runner.new(owner_root: directory, log_dir: File.join(directory, 'logs'), timeout_program: 'gtimeout')
+      begin
+        runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-ffreestanding', '-I', directory,
+                    '-fsyntax-only', File.join(directory, 'use.c')], name: 'index', deadline: 60)
+      rescue Erx::CommandError => error
+        flunk(File.binread(error.result.fetch('log')))
+      end
+    end
+  end
+
+  # The tie holds both ways: a member added to the enum without growing the
+  # layout overruns it, and a count by an enum whose members leave a gap or
+  # include one named count, by a flags type or by a type that is no enum is
+  # refused.
+  def test_an_array_counted_by_an_enum_is_refused_when_the_tie_breaks
+    refused = {
+      'a member the layout has no word for' => [INDEXED.sub("  value third 2\n", "  value third 2\n  value fourth 3\n"),
+                                                /fields overlap, leave a gap or exceed the layout/],
+      'a gap in the enum' => [INDEXED.sub('value third 2', 'value third 3'), /count word is not an enum numbering 0 to 2/],
+      'a flags type' => [INDEXED.sub("enum word u32\n  value first 0\n  value second 1\n  value third 2\n",
+                                     "flags word u32\n  bit first 0\n  bit second 1\n  bit third 2\n"),
+                         /count word is a flags type/],
+      'a member named count' => [INDEXED.sub('value third 2', 'value count 2'), /count word has a member named count/],
+      'a scalar type' => [INDEXED.sub('count word', 'count u32'), /count u32 is not an enum/],
+      'an undefined name' => [INDEXED.sub('count word', 'count missing'), /undefined type missing/]
+    }
+    refused.each do |label, (text, message)|
+      error = assert_raises(Erx::ABI::SchemaError, label) do
+        Erx::ABI::Model.validate(Erx::ABI::SourceSet.new(declarations: Erx::ABI::Syntax.parse(text), inputs: {}).freeze)
+      end
+      assert_match message, error.message, label
+    end
+  end
+
+  # The boot and crash seams spell each value as include/erx/abi.h does, so C that
+  # includes all three builds warning-free, and the boot seam stays valid C++ for
+  # bootstrap; the handoff's cpu_id has one word per cpu_id_word member.
+  def test_boot_seam_matches_the_abi_header
+    seam = @plan.files.fetch('include/erx/core/abi_boot.h')
+    words = @plan.schema.types.fetch('cpu_id_word').members.size
+    assert_includes seam, "#define ERX_CPU_ID_WORD_COUNT UINT32_C(#{words})"
+    assert_includes @plan.files.fetch('include/erx/abi.h'), "\tuint64_t\tcpu_id[ERX_CPU_ID_WORD_COUNT];"
+    Dir.mktmpdir('erx-abi-boot-seam-') do |directory|
+      FileUtils.mkdir_p(File.join(directory, 'erx/core'))
+      File.write(File.join(directory, 'erx/abi.h'), @plan.files.fetch('include/erx/abi.h'))
+      File.write(File.join(directory, 'erx/core/abi_boot.h'), seam)
+      File.write(File.join(directory, 'erx/core/abi_crash.h'), @plan.files.fetch('include/erx/core/abi_crash.h'))
+      File.write(File.join(directory, 'both.c'), "#include <erx/abi.h>\n#include <erx/core/abi_boot.h>\n#include <erx/core/abi_crash.h>\n" \
+                                                 "_Static_assert(ERX_BOOT_HANDOFF_SIZE == sizeof(erx_boot_handoff_t), \"size\");\n")
+      File.write(File.join(directory, 'seam.cc'), "#include <erx/core/abi_boot.h>\n" \
+                                                  "static_assert(ERX_CPU_ID_WORD_COUNT == #{words}, \"words\");\n")
+      runner = Erx::Runner.new(owner_root: directory, log_dir: File.join(directory, 'logs'), timeout_program: 'gtimeout')
+      begin
+        runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-I', directory,
+                    '-fsyntax-only', File.join(directory, 'both.c')], name: 'both', deadline: 60)
+        runner.run(['clang++', '-std=c++17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-I', directory,
+                    '-fsyntax-only', File.join(directory, 'seam.cc')], name: 'seam', deadline: 60)
+      rescue Erx::CommandError => error
+        flunk(File.binread(error.result.fetch('log')))
+      end
+    end
+  end
 end
