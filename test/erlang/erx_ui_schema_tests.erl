@@ -110,6 +110,27 @@ related_properties_test() ->
     ?assertEqual({error, {bad_value, {[], text}}}, v({input, #{secret => true, text => <<"pw">>}, []})),
     ?assertEqual(ok, v({input, #{secret => false, text => <<"pw">>}, []})).
 
+%% The six additions of docs/design-desktop-programs.md, "Widget format
+%% additions": role only beneath the kinds that show text, area only beneath
+%% the containers, icons as long as items, and samples and mark within min
+%% and max, none a gap that lies within any bounds.
+additions_test() ->
+    Row = fun(Props) -> v({row, Props, []}) end,
+    Graph = fun(Props) -> v({graph, Props, []}) end,
+    List = fun(Props) -> v({list, Props, []}) end,
+    ?assertEqual(ok, Row(#{area => toolbar})),
+    ?assertEqual({error, {unknown_property, {[], role}}}, Row(#{role => title})),
+    ?assertEqual({error, {unknown_property, {[], area}}}, v({label, #{area => section}, []})),
+    ?assertEqual(ok, v({button, #{text => <<"11">>, role => numeric, icon => calendar, current => true}, []})),
+    ?assertEqual(ok, List(#{items => [<<"a">>, <<"b">>], icons => [folder, document], on_submit => {event, 3}})),
+    ?assertEqual({error, {bad_value, {[], icons}}}, List(#{items => [<<"a">>, <<"b">>], icons => [folder]})),
+    ?assertEqual({error, {bad_value, {[], icons}}}, List(#{icons => [folder]})),
+    ?assertEqual(ok, Graph(#{min => 0, max => 10, samples => [0, none, 10], mark => 5, role => caption})),
+    ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{min => 0, max => 10, samples => [3, none, 11]})),
+    ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{min => 5, samples => [4]})),
+    ?assertEqual({error, {bad_value, {[], mark}}}, Graph(#{max => 10, mark => 11})),
+    ?assertEqual({error, {bad_value, {[], samples}}}, Graph(#{samples => lists:duplicate(241, 1)})).
+
 tables_test() ->
     #{number := 10, state := text, fixed := [secret], takes := Takes} = erx_ui_schema:kind(input),
     ?assert(lists:member(key, Takes)),

@@ -36,13 +36,18 @@ round() ->
 
 %% Server records whose every value reads back as written: no presentation,
 %% whose name reads as a binary, no error, whose reason the form drops, and
-%% removals in number order.
+%% removals in number order; among them the additions of
+%% docs/design-desktop-programs.md, samples with gaps and icons among them.
 server_record() ->
     Node = rand:uniform(16#ffffffff),
     Props = maps:from_list([Prop || Prop <- [{text, status(text())}, {visible, pick([true, false])},
-                                             {width, rand:uniform(16385) - 1}, {on_click, true}],
+                                             {width, rand:uniform(16385) - 1}, {on_click, true},
+                                             {samples, [pick([none, 0, 16#7fffffff]) || _ <- lists:seq(1, rand:uniform(240))]},
+                                             {icons, [pick([folder, calendar]) || _ <- lists:seq(1, rand:uniform(4))]},
+                                             {role, pick([display, caption])}, {area, sidebar}, {icon, clock},
+                                             {current, pick([true, false])}],
                                     rand:uniform(2) =:= 1]),
-    pick([{insert, Node, rand:uniform(16#100000000) - 1, u16(), pick([label, button, column]), Props},
+    pick([{insert, Node, rand:uniform(16#100000000) - 1, u16(), pick([label, button, column, list, graph]), Props},
           {set, Node, Props, pick([[], [width], [width, visible]])},
           {remove, Node}, {move, Node, u16()}, commit, repaint, presented,
           {screen, u16(), u16(), rand:uniform(16#100000000) - 1},

@@ -74,7 +74,9 @@ module Erx
           #{wrap(ui.kinds.map { |kind| atom(kind.name) }, '    [', ']')}.
 
           %% A kind's number, whether it takes children, every property it takes,
-          %% its state property and its fixed properties.
+          %% its state property, its fixed properties and the marks that relate
+          %% its properties, each {Property, {within, Low, High} | {index, List} |
+          %% {hides, Hidden} | {parallel, List}}.
           -spec kind(atom()) -> map() | error.
           #{kinds.join}kind(_Kind) -> error.
 
@@ -100,7 +102,16 @@ module Erx
         head = "number => #{kind.number}, children => #{kind.children}, " \
                "state => #{state ? atom(state) : 'none'}, fixed => [#{fixed.join(', ')}]"
         "kind(#{atom(kind.name)}) ->\n    \#{#{head},\n" \
+          "#{wrap(kind.takes.flat_map { |entry| mark_terms(entry) }, '      marks => [', '],')}\n" \
           "#{wrap(kind.takes.map { |entry| atom(entry.property.name) }, '      takes => [', ']}')};\n"
+      end
+
+      # The marks of a kind's property line, each as {Property, Mark}: the
+      # relations relation_calls checks, for a reader that must satisfy them.
+      def mark_terms(entry)
+        [(['within', *entry.within] if entry.within), (['index', entry.index] if entry.index),
+         (['hides', entry.hides] if entry.hides), (['parallel', entry.parallel] if entry.parallel)]
+          .compact.map { |mark| "{#{atom(entry.property.name)}, {#{mark.map { |word| atom(word) }.join(', ')}}}" }
       end
 
       def property_clause(property)

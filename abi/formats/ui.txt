@@ -24,6 +24,46 @@ enum ui_align u8
   value end 2
   value fill 3
 
+# How a node's text ranks in its window (docs/design-desktop-programs.md,
+# "Widget format additions"); a renderer picks the face and size.
+enum ui_role u8
+  value display 0
+  value title 1
+  value heading 2
+  value body 3
+  value numeric 4
+  value caption 5
+
+# What a container is: a renderer marks a section, a toolbar or a sidebar.
+enum ui_area u8
+  value section 0
+  value toolbar 1
+  value sidebar 2
+
+# The icon set (docs/design-desktop-programs.md, "Icons"): the item a node
+# stands for. A renderer without an icon shows the node's text alone.
+enum ui_icon u8
+  value folder 0
+  value document 1
+  value text 2
+  value picture 3
+  value program 4
+  value package 5
+  value link 6
+  value system 7
+  value unknown 8
+  value back 9
+  value forward 10
+  value refresh 11
+  value copy 12
+  value chevron 13
+  value cpu 14
+  value memory 15
+  value messages 16
+  value load 17
+  value clock 18
+  value calendar 19
+
 ui 1
   integer size 0 16384
   integer share 0 255
@@ -34,6 +74,9 @@ ui 1
   text short 255 utf8
   text item 128 utf8
   list items item 256
+  list icons @ui_icon 256
+  integer sample 0 2147483647
+  list samples sample 240 none
   bytes picture @ui_picture_bytes
   image png 1 "image/png"
   prop key 1 key common
@@ -62,21 +105,38 @@ ui 1
   prop on_click 24 event
   prop on_change 26 event detail state
   prop on_submit 27 event detail state
+  prop role 28 @ui_role default body
+  prop area 29 @ui_area
+  prop icon 30 @ui_icon
+  prop icons 31 icons
+  prop current 32 boolean default false
+  prop samples 33 samples
+  prop mark 34 bound
   kind column 1 children
+    prop area
   kind row 2 children
+    prop area
   kind grid 3 children
     prop columns
+    prop area
   kind scroll 4 children
+    prop area
   kind stack 5 children
   kind label 6
     prop text
+    prop role
+    prop icon
   kind button 7
     prop text
     prop on_click
+    prop role
+    prop icon
+    prop current
   kind checkbox 8
     prop text
     prop checked state
     prop on_change
+    prop role
   kind slider 9
     prop min
     prop max
@@ -88,15 +148,26 @@ ui 1
     prop secret fixed hides text
     prop on_change
     prop on_submit
+    prop role
   kind list 11
     prop items
     prop selected state index items
     prop on_change
+    prop on_submit
+    prop icons parallel items
+    prop role
   kind image 12
     prop image
     prop image_type
     prop alt
   kind spacer 13
+  kind graph 14
+    prop min
+    prop max
+    prop samples within min max
+    prop mark within min max
+    prop text
+    prop role
   # The records the server writes to a renderer, by tag, with their fields
   # in wire order after the tag; a fixed field cut short is refused for the
   # record's short reason, short_record unless marked. The readers and the

@@ -270,13 +270,15 @@ class ErxUIWireTest < Minitest::Test
     end
   end
 
-  # A line of the C harness with an insert's or a set's properties in number
-  # order, as numeric/1 puts them: a mutant may list them in any order, and
-  # the Erlang reader reads them into a map.
+  # A line of the C harness with an insert's or a set's properties, and a
+  # set's removals, in number order, as numeric/1 puts them: a mutant may list
+  # either in any order; the Erlang reader reads properties into a map, and
+  # numeric/1 sorts the removals. An insert has no '/', so no removals.
   def in_number_order(line)
     tokens = line.split(' ')
     first, last = { 'insert' => [5, tokens.size], 'set' => [2, tokens.index('/')] }.fetch(tokens.first) { return line }
-    [*tokens[0...first], *tokens[first...last].sort_by { |token| token.to_i }, *tokens[last..]].join(' ')
+    [*tokens[0...first], *tokens[first...last].sort_by(&:to_i), *tokens[last, 1],
+     *tokens.drop(last + 1).sort_by(&:to_i)].join(' ')
   end
 
   def props(tokens)

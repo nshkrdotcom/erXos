@@ -14,7 +14,8 @@ require_relative '../fixtures/erlang_build'
 # The widget format's list grammar (docs/design-abi.md, "Widget format";
 # docs/design-desktop-programs.md, the grammar additions): `list NAME ELEMENT
 # MAX [none]` of integers and root enums, `within` on a list of integers and
-# `parallel`, over a test declaration, abi/formats/ui.txt with a kind of each.
+# `parallel`, over a test declaration, abi/formats/ui.txt, whose graph kind
+# takes samples within min and max, with a menu kind added.
 # The validator generated from it refuses a list of the wrong length, a value
 # outside `within` and a 241st value, each with its reason and path, and a
 # validator generated without the `parallel` check accepts the first; one
@@ -26,25 +27,18 @@ class ErxUIGrammarTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   SCHEMA = Erx::ABI::Generator.plan(root: ROOT).schema
   STOPGAPS = SCHEMA.inspection.stopgaps.keys
-  # A graph's samples, an integer list with none within two bounds, and its
-  # levels, one without none; and a menu's alignments, an enum list as long as
-  # its items.
+  # ui.txt's graph holds the samples, an integer list with none within two
+  # bounds. A menu adds its alignments, an enum list as long as its items, and
+  # its levels, an integer list without none.
   ADDITIONS = <<~UI
-    integer sample 0 2147483647
-    list samples sample 240 none
     list levels sample 4
     list aligns @ui_align 8
-    prop samples 40 samples
     prop aligns 41 aligns
     prop levels 42 levels
-    kind graph 40
-      prop min
-      prop max
-      prop samples within min max
-      prop levels
     kind menu 41
       prop items
       prop aligns parallel items
+      prop levels
   UI
   RECORDS = '  # The records the server writes'
   BUILT = File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx_ui/src')
@@ -57,7 +51,7 @@ class ErxUIGrammarTest < Minitest::Test
     'Graph(#{samples => lists:duplicate(241, 100)})' => '{error,{bad_value,{[1],samples}}}',
     'Graph(#{min => 0, max => 10, samples => [3, none, 11]})' => '{error,{bad_value,{[1],samples}}}',
     'Graph(#{samples => [-1]})' => '{error,{bad_value,{[1],samples}}}',
-    'Graph(#{levels => [none]})' => '{error,{bad_value,{[1],levels}}}',
+    'Menu(#{levels => [none]})' => '{error,{bad_value,{[1],levels}}}',
     'Menu(#{items => [<<"a">>, <<"b">>], aligns => [start, fill]})' => 'ok',
     'Menu(#{items => [<<"a">>, <<"b">>], aligns => [start]})' => '{error,{bad_value,{[1],aligns}}}',
     'Menu(#{items => [<<"a">>], aligns => [start, center]})' => '{error,{bad_value,{[1],aligns}}}',
@@ -71,9 +65,9 @@ class ErxUIGrammarTest < Minitest::Test
   RECORDS_SENT = '[{insert, 1, 0, 0, graph, #{min => -5, samples => [0, none, 2147483647, none]}}, ' \
                  '{insert, 2, 0, 1, menu, #{items => [<<"a">>, <<"b">>], aligns => [start, fill]}}, ' \
                  '{set, 1, #{samples => []}, []}]'
-  C_LINES = ['insert 1 0 0 40 15=0,0,,0:-5 40=0,0,,0:[0,-2147483648,2147483647,-2147483648]',
+  C_LINES = ['insert 1 0 0 14 15=0,0,,0:-5 33=0,0,,0:[0,-2147483648,2147483647,-2147483648]',
              'insert 2 0 1 41 18=0,0,,0:[x61,x62] 41=0,0,,0:[0,3]',
-             'set 1 40=0,0,,0:[] /'].freeze
+             'set 1 33=0,0,,0:[] /'].freeze
   TS_LINES = ['insert 1 0 0 graph min=-5 samples=[0,none,2147483647,none]',
               'insert 2 0 1 menu items=[x61,x62] aligns=[start,fill]',
               'set 1 samples=[] /'].freeze
@@ -82,8 +76,8 @@ class ErxUIGrammarTest < Minitest::Test
   # the list's bytes: a sample below its type, -2^31 in levels, which allow no
   # none, an alignment no member has, samples cut short inside a value, and
   # nine alignments of at most eight.
-  BROKEN_LISTS = [[40, 40, ['vl<', 1, -1]], [40, 42, ['vl<', 1, -(1 << 31)]], [41, 41, ['vC', 1, 9]],
-                  [40, 40, ['vl<v', 2, 5, 0]], [41, 41, ['vC9', 9, *[0] * 9]]].freeze
+  BROKEN_LISTS = [[14, 33, ['vl<', 1, -1]], [41, 42, ['vl<', 1, -(1 << 31)]], [41, 41, ['vC', 1, 9]],
+                  [14, 33, ['vl<v', 2, 5, 0]], [41, 41, ['vC9', 9, *[0] * 9]]].freeze
 
   def test_the_validator_refuses_each_fault_with_reason_and_path
     assert_equal VALIDATIONS.values, validations(ui)

@@ -67,19 +67,55 @@ keyed(Children) ->
          3 -> {K, P, C}
      end || {I, {K, P, C}} <- lists:enumerate(Children)].
 
-%% The marks that relate a kind's properties, made to hold.
-fix(slider, Props) ->
-    Low = rand:uniform(2000) - 1000,
-    High = Low + rand:uniform(500),
-    Props#{min => Low, max => High, value => Low + rand:uniform(High - Low + 1) - 1};
-fix(list, Props = #{items := Items, selected := _}) when Items =/= [] ->
-    Props#{selected => rand:uniform(length(Items)) - 1};
-fix(list, Props) ->
-    maps:remove(selected, Props);
-fix(input, Props = #{secret := true}) ->
-    maps:remove(text, Props);
-fix(_Kind, Props) ->
-    Props.
+%% The marks that relate a kind's properties (erx_ui_schema:kind/1), made to
+%% hold: each pair of bounds drawn once, then each mark satisfied.
+fix(Kind, Props) ->
+    #{marks := Marks} = erx_ui_schema:kind(Kind),
+    Pairs = lists:usort([{Low, High} || {_, {within, Low, High}} <- Marks]),
+    Bounded = lists:foldl(fun(Pair, Acc) -> bounds(Pair, Marks, Acc) end, Props, Pairs),
+    lists:foldl(fun hold/2, Bounded, Marks).
+
+%% Low < High, both within -1000..1000 and within the type of the bounds and
+%% of every property between them, so each of those can take a value inside.
+bounds({Low, High}, Marks, Props) ->
+    Ranges = [range(P) || P <- [Low, High | [P || {P, {within, L, H}} <- Marks, {L, H} =:= {Low, High}]]],
+    Min = lists:max([-1000 | [Min || {Min, _} <- Ranges]]),
+    Max = lists:min([1000 | [Max || {_, Max} <- Ranges]]),
+    From = Min + rand:uniform(Max - Min) - 1,
+    Props#{Low => From, High => From + rand:uniform(Max - From)}.
+
+range(Property) ->
+    case erx_ui_schema:property(Property) of
+        #{type := {list, {integer, Min, Max}, _, _}} -> {Min, Max};
+        #{type := {integer, Min, Max}} -> {Min, Max}
+    end.
+
+hold({Property, {within, Low, High}}, Props) ->
+    #{Low := L, High := H} = Props,
+    Inside = fun(none) -> none; (_) -> L + rand:uniform(H - L + 1) - 1 end,
+    case Props of
+        #{Property := Values} when is_list(Values) -> Props#{Property := lists:map(Inside, Values)};
+        #{Property := Value} -> Props#{Property := Inside(Value)};
+        _ -> Props
+    end;
+hold({Property, {index, List}}, Props) ->
+    case Props of
+        #{List := [_ | _] = Items, Property := _} -> Props#{Property := rand:uniform(length(Items)) - 1};
+        _ -> maps:remove(Property, Props)
+    end;
+hold({Flag, {hides, Hidden}}, Props) ->
+    case Props of
+        #{Flag := true} -> maps:remove(Hidden, Props);
+        _ -> Props
+    end;
+hold({Property, {parallel, List}}, Props) ->
+    case Props of
+        #{Property := _} ->
+            #{type := {list, Element, _, _}} = erx_ui_schema:property(Property),
+            Props#{Property := [plain(Element) || _ <- maps:get(List, Props, [])]};
+        _ ->
+            Props
+    end.
 
 value(Property) ->
     #{type := Type, status := Status} = erx_ui_schema:property(Property),

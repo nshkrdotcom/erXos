@@ -23,16 +23,31 @@ const le = (value: number, bytes: number): number[] =>
 const record = (body: number[]): Uint8Array => Uint8Array.from([...le(body.length, 4), ...body]);
 const text = (bytes: number[]): number[] => [...le(bytes.length, 4), ...bytes];
 const number = (name: string): number => PROPERTIES.get(name)?.number ?? 0;
+/* A member's number in the enum of a property, or of its list's elements. */
+const member = (name: string, atom: string): number =>
+  [...(PROPERTIES.get(name)?.members ?? [])].find(([, value]) => value === atom)?.[0] ??
+  (() => { throw new Error(`no member ${atom} of ${name}`); })();
+const kindNumber = (name: string): number => KINDS.get(name) ?? (() => { throw new Error(`no kind ${name}`); })();
+const i32 = (value: number): number[] => le(value >>> 0, 4);
 
 /*
- * Valid records: an insert of each kind with a status text and a boolean, a
- * set with removals, a move, a commit, a screen, each input form, a repaint
+ * Valid records: an insert of each kind with a status text and a boolean;
+ * inserts of the additions of docs/design-desktop-programs.md, a graph's
+ * samples with gaps, a list's icons, a button's role, icon and current; a set
+ * with removals, a move, a commit, a screen, each input form, a repaint
  * and a presented.
  */
 export const SEEDS: readonly Uint8Array[] = [
   ...[...KINDS.values()].map((kind) =>
     record([1, ...le(5, 4), ...le(0, 4), 0, 0, kind, 2, number('text'), 0, 0, 0, ...le(0, 4), ...text([0x68, 0xc3, 0xa9]), number('visible'), 1]),
   ),
+  record([1, ...le(6, 4), ...le(5, 4), 0, 0, kindNumber('graph'), 4, number('min'), ...i32(0), number('max'), ...i32(0x7fffffff),
+          number('samples'), ...le(4, 2), ...i32(0), ...i32(-0x80000000), ...i32(0x7fffffff), ...i32(9),
+          number('role'), member('role', 'numeric')]),
+  record([1, ...le(7, 4), ...le(5, 4), 1, 0, kindNumber('list'), 2, number('items'), ...le(2, 2), ...text([0x61]), ...text([0x62]),
+          number('icons'), ...le(2, 2), member('icons', 'folder'), member('icons', 'calendar')]),
+  record([1, ...le(8, 4), ...le(5, 4), 2, 0, kindNumber('button'), 3, number('role'), member('role', 'title'),
+          number('icon'), member('icon', 'clock'), number('current'), 1]),
   record([3, ...le(5, 4), 1, number('visible'), 1, 2, number('text'), number('placeholder')]),
   record([4, ...le(5, 4), 1, 0]),
   record([5]),
