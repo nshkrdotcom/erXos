@@ -32,10 +32,12 @@ class ErxWinTest < Minitest::Test
   CONN_SOURCE = 'erlang/apps/erx_win/src/erx_draw_conn.erl'
   CLIENT = %w[erx_win_core erx_win_sup erx_pixels erx_pixels_core erx_draw erx_draw_core
               erx_draw_image].map { |name| "erlang/apps/erx_win/src/#{name}.erl" } + [CONN_SOURCE]
-  TESTS = %w[erx_win_core_tests erx_win_tests erx_draw_tests].freeze
+  # The program's own /dev over this window system (test/erlang/erx_win_dev_tests.erl).
+  DEV = %w[erlang/apps/erx_session/src/erx_session_export.erl erlang/apps/erx/src/erx_prog_handler_core.erl].freeze
+  TESTS = %w[erx_win_core_tests erx_win_tests erx_draw_tests erx_win_dev_tests].freeze
   MODULES = (%w[erlang/apps/erx_memdraw/src/erx_memdraw.erl erlang/apps/erx_memdraw/src/erx_chan.erl
                 build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl otp/erts/preloaded/src/erx_file_remote.erl
-                erlang/apps/erx/src/erx_facet.erl] + DISPLAY + FILES + CLIENT +
+                erlang/apps/erx/src/erx_facet.erl] + DISPLAY + FILES + CLIENT + DEV +
              TESTS.map { |name| "test/erlang/#{name}.erl" }).freeze
   FID = 'prim_file:erx_fid()'
   STAND_INS = {
@@ -102,7 +104,19 @@ class ErxWinTest < Minitest::Test
              anchor: '{ok, _Lease, _Pages} ?= erx_win:lease(Window, Opener),',
              replacement: '',
              suite: 'erx_draw_tests',
-             catching_case: 'the_connection_never_draws_into_the_next_window_test')
+             catching_case: 'the_connection_never_draws_into_the_next_window_test'),
+    Seed.new(fault: 'a clipboard open whose refused lopen keeps its walked fid',
+             path: 'erlang/apps/erx_win/src/erx_win.erl',
+             anchor: '{error, _} = Refused -> clunk(Tree, [Fid]), Refused;',
+             replacement: '{error, _} = Refused -> Refused;',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'the_clipboard_opens_on_a_fid_of_its_own_test'),
+    Seed.new(fault: 'a program /dev whose mouse relay never remakes image 0',
+             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
+             anchor: '_ = [erx_draw_conn:resized(Conn)',
+             replacement: '_ = [ok',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_resize_reaches_ctl_before_the_program_sees_its_r_test')
   ].freeze
 
   def setup
@@ -132,7 +146,8 @@ class ErxWinTest < Minitest::Test
       seeded = Dir.mktmpdir("erx-win-seed#{index}-", @directory)
       FileUtils.cp(Dir.glob(File.join(@directory, '*.{beam,so}')), seeded)
       copy = File.join(seeded, File.basename(seed.path))
-      File.write(copy, sources.fetch(seed).sub(seed.anchor, seed.replacement))
+      # erx_win's fids come from the emulator's counter here, seeded or not (stand_ins).
+      File.write(copy, sources.fetch(seed).sub(seed.anchor, seed.replacement).sub(FID, 'erlang:unique_integer([positive])'))
       erlc(seeded, [copy])
       Thread.new { [seed, *eunit([seed.suite], directory: seeded)] }
     end

@@ -3005,10 +3005,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   read-only, or away from `/dev`, writes `/dev/tty` through it. Decide whether the entry's rights are
   capped at the narrowed `/dev` entry's (which leaves `draw` unwritable for an `ro` narrowing) or whether
   the design records why `rw` is right.
-* [Medium] session, `erx_win` clipboard: `clipboard/1`, `clipboard_open/2` and their fid clunks on a
-  refused walk or `lopen` run only behind a stand-in in the host tests; the fixture display test of a
-  program's window (docs/design-files.md, Verification) covers them with a seeded fault that drops the
-  clunk on a refused `lopen`.
+* [Medium] tests, a program's window (docs/design-files.md, Verification, "A program's window" and the
+  cases after it): `test/erlang/erx_win_dev_tests.erl` covers the display's side over a real `erx_winfs`
+  with the test as the tree's 9P client: the corpus as plain-name walks, a window removed and remade (its
+  label checked, not its rectangle), a resize read through `ctl`, a killed connection, and the clipboard's
+  fids. Still open: the corpus through a test program and the handler's resolver (`/dev/kbd/../ctl`,
+  `/dev/./wctl`, `mkdir /dev/w1`), a `d` drawn after a resize and its present at the new size, the seeded
+  trees that relay any name to the window's directory or walk each relayed open by name, the descriptor
+  case, the refused-rectangle resize and the child case.
 * [Low] session, `erx_session_export`: each open of a program's `/dev/clipboard` holds one fid on the
   session's display grant, so a program and its children can hold up to their tree's pool of them and
   make the session's other window opens fail at the display grant's pool.

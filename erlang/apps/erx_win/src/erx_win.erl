@@ -238,7 +238,7 @@ clipboard, or the display's error, with every fid the attempt made clunked.
 clipboard_open(Display, Flags) when is_atom(Display), is_integer(Flags), Flags >= 0 ->
     maybe
         {ok, Tree, Fid} ?= clipboard_fid(Display),
-        {ok, _} ?= case one(Tree, {lopen, Fid, Flags}) of
+        {ok, _Qid, _Iounit} ?= case one(Tree, {lopen, Fid, Flags}) of
                        {error, _} = Refused -> clunk(Tree, [Fid]), Refused;
                        Opened -> Opened
                    end,
