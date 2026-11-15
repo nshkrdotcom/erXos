@@ -7178,6 +7178,9 @@ document's "residual risks accepted" paragraph.
   each (the soft resets at 0x04 and 0x08, the total bit count and its threshold at 0x0c and 0x10, the status at
   0x18) matter to a read after a cold boot. erXos's kernel's platform layer reads it through the same
   `kernel/core/rng200.c` ([design-platforms.md](docs/design-platforms.md#entropy-sources)).
+* [Low] stopgap, root task, `liberx/backend/fiasco/rng200.c` `erx_fiasco_rng200_read`: a FIFO_COUNT read that
+  fails inside the loop returns at once, past the erase of the local `word`, so the last secret word taken stays
+  in the stack frame. The fix routes that failure through the one erase and return.
 * [Low] USB, DWC2 on QEMU `raspi4b` ([design-usb.md](docs/design-usb.md#dwc2)): `erx_dwc2`, a
   programmed-I/O host driver for the model's DWC2 beside `erx_xhci` under the same USB core, for low- and
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real

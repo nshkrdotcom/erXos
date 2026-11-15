@@ -20,7 +20,7 @@
 static bool	rng200_map(erx_dt_window_t, erx_mmio_t *);
 static bool	rng200_start(erx_mmio_t);
 
-erx_fiasco_board_seed_t
+erx_board_seed_t
 erx_fiasco_rng200_read(const erx_dt_t *tree, const char *path, erx_dt_window_t window, erx_rng200_read_t *read)
 {
 	erx_rng200_action_t action;
@@ -30,22 +30,22 @@ erx_fiasco_rng200_read(const erx_dt_t *tree, const char *path, erx_dt_window_t w
 	*read = (erx_rng200_read_t){ .words = 0 };
 	/* With no counter frequency the clock stands still, and the wait would never end. */
 	if (erx_fiasco_counter_hz() == 0)
-		return (ERX_FIASCO_BOARD_UNREADABLE);
+		return (ERX_BOARD_UNREADABLE);
 	switch (erx_dt_registers(tree, path, ERX_RNG200_COMPATIBLE, window)) {
 	case ERX_DT_REGS_NONE:
-		return (ERX_FIASCO_BOARD_NONE);
+		return (ERX_BOARD_NONE);
 	case ERX_DT_REGS_MALFORMED:
 	case ERX_DT_REGS_OTHER:
-		return (ERX_FIASCO_BOARD_UNREADABLE);
+		return (ERX_BOARD_UNREADABLE);
 	case ERX_DT_REGS_OK:
 		break;
 	}
 	if (!rng200_map(window, &device) || !rng200_start(device))
-		return (ERX_FIASCO_BOARD_UNREADABLE);
+		return (ERX_BOARD_UNREADABLE);
 	*read = erx_rng200_start(erx_fiasco_clock_ns());
 	for (;;) {
 		if (!erx_rng200_fifo_count_read(device, &count))
-			return (ERX_FIASCO_BOARD_UNREADABLE);
+			return (ERX_BOARD_UNREADABLE);
 		action = erx_rng200_next(read, erx_rng200_fifo_count_count_get(count), erx_fiasco_clock_ns(), &take);
 		if (action != ERX_RNG200_POLL && action != ERX_RNG200_TAKE)
 			break;
@@ -54,7 +54,7 @@ erx_fiasco_rng200_read(const erx_dt_t *tree, const char *path, erx_dt_window_t w
 			erx_rng200_take(read, word);
 	}
 	erx_explicit_bzero(&word, sizeof(word));
-	return (action == ERX_RNG200_DONE ? ERX_FIASCO_BOARD_READ : ERX_FIASCO_BOARD_TIMED_OUT);
+	return (action == ERX_RNG200_DONE ? ERX_BOARD_READ : ERX_BOARD_TIMED_OUT);
 }
 
 /*

@@ -37,5 +37,5 @@ void
 erx_rng200_take(erx_rng200_read_t *read, uint32_t word)
 {
 	if (read->words < ERX_RNG200_WORDS)
-		read->word[read->words++] = word;
+		read->data[read->words++] = word;
 }

@@ -35,13 +35,13 @@ typedef struct erx_rng200_read erx_rng200_read_t;
 
 /*
  * A read in progress: the clock's value at which it gives up, and the words taken so
- * far. Invariant: words <= ERX_RNG200_WORDS. The words are secret; whoever holds them
- * erases them.
+ * far, the first words entries of data. Invariant: words <= ERX_RNG200_WORDS. The
+ * words are secret; whoever holds them erases them.
  */
 struct erx_rng200_read {
 	uint64_t	deadline_ns;
 	uint32_t	words;
-	uint32_t	word[ERX_RNG200_WORDS];
+	uint32_t	data[ERX_RNG200_WORDS];
 };
 
 typedef enum erx_rng200_action {

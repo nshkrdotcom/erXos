@@ -10,7 +10,7 @@ require 'fileutils'
 require_relative '../fixtures/generated_tree'
 
 # Judges the boot read of the RNG200, kernel/core/rng200.c, and the root's entropy line,
-# liberx/backend/fiasco/entropy_line.c (docs/design-platforms.md, "Entropy sources";
+# liberx/backend/core/entropy_line.c (docs/design-platforms.md, "Entropy sources";
 # docs/design-stopgap.md, "The Raspberry Pi 4"), through test/fixtures/rng200_driver.c:
 # a read whose FIFO fills is done after 32 bytes and never asks for more words than the
 # count gave; one whose count stays zero gives up at the 100 ms bound and not before;
@@ -18,7 +18,7 @@ require_relative '../fixtures/generated_tree'
 class Rng200Test < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'kernel/core/rng200.c'
-  LINE = 'liberx/backend/fiasco/entropy_line.c'
+  LINE = 'liberx/backend/core/entropy_line.c'
   DRIVER = 'test/fixtures/rng200_driver.c'
   WAIT = 100_000_000
   WORDS = 8

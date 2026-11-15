@@ -4,7 +4,7 @@
  */
 
 /*
- * Drives kernel/core/rng200.c and liberx/backend/fiasco/entropy_line.c for
+ * Drives kernel/core/rng200.c and liberx/backend/core/entropy_line.c for
  * test/host/rng200_test.rb. Each line of standard input is one request and gets one
  * line of answer:
  *
@@ -23,7 +23,7 @@
 #include <string.h>
 
 #include "erx/core/rng200.h"
-#include "liberx/backend/fiasco/entropy_line.h"
+#include "liberx/backend/core/entropy_line.h"
 
 static const char *const actions[] = { "poll", "take", "done", "timed_out" };
 static const char *const boards[] = { "none", "read", "timed_out", "unreadable" };
@@ -40,7 +40,7 @@ board_of(const char *name)
 int
 main(void)
 {
-	char request[256], word[16], line[ERX_FIASCO_ENTROPY_LINE_MAX];
+	char request[256], word[16], line[ERX_ENTROPY_LINE_MAX];
 	unsigned long long a, b;
 	erx_rng200_read_t read = { 0 };
 	erx_rng_seeded_t seeded;
@@ -62,7 +62,7 @@ main(void)
 		} else if (sscanf(request, "line %llu %llu %15s", &a, &b, word) == 3 && (board = board_of(word)) >= 0) {
 			seeded.length[ERX_DT_SEED_RNG] = (size_t)a;
 			seeded.length[ERX_DT_SEED_KASLR] = (size_t)b;
-			length = erx_fiasco_entropy_line(line, &seeded, (erx_fiasco_board_seed_t)board);
+			length = erx_entropy_line(line, &seeded, (erx_board_seed_t)board);
 			if (length == 0 || length > sizeof(line) || line[length - 1] != '\n')
 				return (3);
 			printf("line %.*s\n", (int)(length - 1), line);

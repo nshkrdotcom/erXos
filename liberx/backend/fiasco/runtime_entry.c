@@ -362,7 +362,7 @@ board_seed(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
 {
 	erx_boot_row_t row;
 
-	seeds->board = ERX_FIASCO_BOARD_NONE;
+	seeds->board = ERX_BOARD_NONE;
 	if (!seeds_none(&seeds->chosen) || !erx_boot_held_row(manifest, ERX_RNG200_COMPATIBLE, &row))
 		return (NULL);
 	if (!tree_path_set(row.path))

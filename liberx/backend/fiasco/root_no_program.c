@@ -21,7 +21,7 @@ erx_fiasco_program_tree(erx_dt_t *tree, const erx_manifest_view_t *manifest, erx
 {
 	(void)tree;
 	(void)manifest;
-	*seeds = (erx_fiasco_seeds_t){ .board = ERX_FIASCO_BOARD_NONE };
+	*seeds = (erx_fiasco_seeds_t){ .board = ERX_BOARD_NONE };
 	return (NULL);
 }
 

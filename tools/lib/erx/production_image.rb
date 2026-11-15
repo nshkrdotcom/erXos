@@ -680,7 +680,7 @@ module Erx
       SMOKE_CELLS = %w[tcg-1cpu tcg-deterministic].freeze
       # One more word on the deterministic boot's line, which the page must carry too.
       DETERMINISTIC_LINE = 'erx.det=1 erx.arg=-deterministic'
-      # The root's entropy line (liberx/backend/fiasco/entropy_line.c), by what its generator
+      # The root's entropy line (liberx/backend/core/entropy_line.c), by what its generator
       # mixed: QEMU virt's tree carries /chosen's rng-seed and kaslr-seed, unless deterministic
       # mode's dtb-randomness=off leaves them out (Qemu::MACHINES), and a boot without them
       # starts from the counter alone, since the tree names no RNG200. A boot that pins neither takes any seeded line or that one.

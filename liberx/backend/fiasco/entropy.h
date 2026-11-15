@@ -11,7 +11,7 @@
 #include "erx/abi.h"
 #include "erx/core/dt.h"
 #include "erx/core/rng200.h"
-#include "liberx/backend/fiasco/entropy_line.h"
+#include "liberx/backend/core/entropy_line.h"
 
 /*
  * The entropy calls' bodies (docs/design-stopgap.md, "The call table"): the kernel's
@@ -22,12 +22,12 @@
 /*
  * What seeds the generator besides the counter, as the program's tree read gives it
  * (erx_fiasco_program_tree): /chosen's seeds and, when /chosen carries neither, what
- * the board's random generator gave, its words in board_read on ERX_FIASCO_BOARD_READ.
+ * the board's random generator gave, its words in board_read on ERX_BOARD_READ.
  * The bytes are secret; whoever holds the record erases it.
  */
 typedef struct erx_fiasco_seeds {
 	erx_dt_seeds_t		 chosen;
-	erx_fiasco_board_seed_t	 board;
+	erx_board_seed_t	 board;
 	erx_rng200_read_t	 board_read;
 } erx_fiasco_seeds_t;
 

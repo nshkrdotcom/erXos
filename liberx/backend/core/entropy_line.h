@@ -3,8 +3,8 @@
  * SPDX-License-Identifier: BSD-2-Clause
  */
 
-#ifndef ERX_FIASCO_ENTROPY_LINE_H
-#define ERX_FIASCO_ENTROPY_LINE_H
+#ifndef ERX_BACKEND_ENTROPY_LINE_H
+#define ERX_BACKEND_ENTROPY_LINE_H
 
 #include <stddef.h>
 
@@ -17,32 +17,32 @@
  */
 
 /* What the board's random generator gave. The root reads it only when /chosen carried no seed. */
-typedef enum erx_fiasco_board_seed {
+typedef enum erx_board_seed {
 	/*
 	 * Not read: /chosen carried a seed, the manifest gives the system domain no
 	 * generator, or the tree has no enabled generator at its row's path.
 	 */
-	ERX_FIASCO_BOARD_NONE,
+	ERX_BOARD_NONE,
 	/* Its ERX_RNG200_SEED_BYTES went in. */
-	ERX_FIASCO_BOARD_READ,
+	ERX_BOARD_READ,
 	/* It gave fewer words than that within its wait. */
-	ERX_FIASCO_BOARD_TIMED_OUT,
+	ERX_BOARD_TIMED_OUT,
 	/*
 	 * Its node names a malformed window or one other than its row's
 	 * (erx_dt_registers), it is stopped with CTRL bits the root cannot write back, or
 	 * its bytes could not be mixed.
 	 */
-	ERX_FIASCO_BOARD_UNREADABLE
-} erx_fiasco_board_seed_t;
+	ERX_BOARD_UNREADABLE
+} erx_board_seed_t;
 
 /* The longest line, its newline included. */
-#define ERX_FIASCO_ENTROPY_LINE_MAX	160
+#define ERX_ENTROPY_LINE_MAX	160
 
 /*
  * Writes the line for the seeds seeded mixed and, when it mixed none, for what board
  * gave; newline-terminated, not NUL-terminated. Returns its bytes.
  */
-size_t	erx_fiasco_entropy_line(char line[ERX_FIASCO_ENTROPY_LINE_MAX], const erx_rng_seeded_t *seeded,
-	    erx_fiasco_board_seed_t board);
+size_t	erx_entropy_line(char line[ERX_ENTROPY_LINE_MAX], const erx_rng_seeded_t *seeded,
+	    erx_board_seed_t board);
 
-#endif /* ERX_FIASCO_ENTROPY_LINE_H */
+#endif /* ERX_BACKEND_ENTROPY_LINE_H */

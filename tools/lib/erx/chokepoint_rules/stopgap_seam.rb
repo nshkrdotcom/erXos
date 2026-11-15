@@ -27,6 +27,8 @@ module Erx
         liberx/backend/core/device_check.h
         liberx/backend/core/line_gather.c
         liberx/backend/core/line_gather.h
+        liberx/backend/core/entropy_line.c
+        liberx/backend/core/entropy_line.h
         liberx/backend/api.h
         liberx/backend/fiasco/api_names.c
         liberx/backend/hosted/arch/aarch64/switch_stack.S
@@ -84,6 +86,8 @@ module Erx
         liberx/backend/fiasco/program_task.c
         liberx/backend/fiasco/domain_entry.c
         liberx/backend/fiasco/release_task.c
+        liberx/backend/fiasco/rng200.c
+        liberx/backend/fiasco/rng200.h
         liberx/backend/fiasco/root.c
         liberx/backend/fiasco/root_no_program.c
         liberx/backend/fiasco/runtime_entry.c
