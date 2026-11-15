@@ -142,8 +142,8 @@ module Erx
     #   only loads (with ssl and inets, for an app's HTTPS requests, once the runtime
     #   builds them), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
     #   which mounts the app's package at /app and starts what it declares. Its .app
-    #   file names erx_session,
-    #   since the design starts a native app's program through the session's servers.
+    #   file names erx_session, since the design starts a native app's program through
+    #   the session's servers.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
