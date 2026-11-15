@@ -180,7 +180,7 @@ read for this design.
 * **ERTS follows a wall step.** Multi-time-warp mode is OTP's default
   since OTP 26 and "Erlang system time can perform time warps both
   forwards and backwards at any time"
-  (`otp/erts/doc/guides/time_correction.md`); no manifest's runtime
+  (OTP 29.1.2's `erts/doc/guides/time_correction.md`); no manifest's runtime
   arguments set `+C`. ERTS's time supervisor compares OS system time with
   Erlang system time every 60 s (`ERTS_LONG_TIME_CORRECTION_CHECK`,
   15 s for a while after a change) and moves its time offset when they
@@ -950,7 +950,6 @@ These were open and are settled as stated here:
   `otp/erts/emulator/sys/erxos/erl_unix_sys.h`,
   `otp/erts/emulator/sys/erxos/imports.txt`,
   `otp/erts/emulator/beam/erl_time_sup.c`,
-  `otp/erts/doc/guides/time_correction.md`,
   `otp/erts/emulator/nifs/erxos/erx_watchdog_nif.c`,
   `erlang/apps/erx/src/erx_log_facet.erl`,
   `erlang/apps/erx_net_client/src/erx_gen_udp.erl`,

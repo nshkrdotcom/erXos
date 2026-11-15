@@ -877,7 +877,7 @@ frame
 ```
 
 The control term is the control tuple of OTP 29.1.2's distribution protocol
-for the operation (`erts/doc/guides/erl_dist_protocol.md`), and the payload
+for the operation (OTP 29.1.2's `erts/doc/guides/erl_dist_protocol.md`), and the payload
 is the message, exit reason or argument list that the protocol sends after
 it. Frames are encoded with the **peer's flags**: the mandatory set of OTP
 29 (`DFLAG_DIST_MANDATORY`) plus `DIST_MONITOR`, `DIST_MONITOR_NAME`,

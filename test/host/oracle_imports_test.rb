@@ -10,6 +10,8 @@ require 'zlib'
 require_relative '../../tools/import_origins'
 
 class OracleImportsTest < Minitest::Test
+  APPLICATION_REASON = 'outside the shipped OTP application set in the runtime design'
+
   def fixture_import(project, bad_notice:, extra: {})
     FileUtils.mkdir_p(File.join(project, 'config/imports'))
     FileUtils.copy_file(File.expand_path('../../config/imports/otp.json', __dir__), File.join(project, 'config/imports/otp.json'))
@@ -67,18 +69,79 @@ class OracleImportsTest < Minitest::Test
     recorded = Erx::Origin.new(root: File.expand_path('../../otp', __dir__)).inventory.fetch('exclusions')
     kept = profile.fetch('exclusions').flat_map do |exclusion|
       exclusion.fetch('keep', []).map { |name| "#{exclusion.fetch('path')}/#{name}" }
-    end
+    end + profile.fetch('excluded_names').fetch('keep')
     Dir.mktmpdir('erx-otp-replay-') do |root|
+      # The import prunes an application outside the profile's set only as a directory,
+      # so a path recorded for that reason is one; every other is a file.
+      applications = recorded.select { |exclusion| exclusion.fetch('reason') == APPLICATION_REASON }
+                             .map { |exclusion| exclusion.fetch('path') }
       [*recorded.map { |exclusion| exclusion.fetch('path') }, *kept].each do |relative|
         path = File.join(root, relative)
         FileUtils.mkdir_p(File.dirname(path))
-        # The import prunes an application outside the profile's set only as a directory.
-        relative.match?(%r{\Alib/[^/]+\z}) ? FileUtils.mkdir_p(path) : File.write(path, '')
+        applications.include?(relative) ? FileUtils.mkdir_p(path) : File.write(path, '')
       end
       FileUtils.cp_r(File.expand_path('../../otp/lib/public_key/asn1', __dir__), File.join(root, 'lib/public_key'))
       assert_equal recorded, Erx::ImportOrigins.remove_exclusions(root, profile: profile, component: 'otp')
     end
     assert_includes recorded.map { |exclusion| exclusion.fetch('path') }, 'erts/ebin'
+  end
+
+  # The tree holds no entry the profile's excluded names take: each of OTP's doc,
+  # examples and internal_doc entries is gone but for the files the build reads.
+  def test_no_excluded_name_is_left_in_the_tree_but_what_the_build_reads
+    rule = JSON.parse(File.read(File.expand_path('../../config/imports/otp.json', __dir__))).fetch('excluded_names')
+    otp = File.expand_path('../../otp', __dir__)
+    files = Erx::Origin.new(root: otp).inventory.fetch('files').keys
+    named = files.select { |path| path.split('/').any? { |part| rule.fetch('names').include?(part) } }
+    assert_equal rule.fetch('keep').sort, named.sort
+  end
+
+  def exclude_names(root, keep: [])
+    rule = { 'names' => %w[doc examples], 'keep' => keep, 'reason' => 'documentation' }
+    Erx::ImportOrigins.remove_exclusions(root, profile: { 'exclusions' => [], 'excluded_names' => rule }, component: 'openssl')
+  end
+
+  def write_files(root, paths)
+    paths.each do |relative|
+      FileUtils.mkdir_p(File.dirname(File.join(root, relative)))
+      File.write(File.join(root, relative), '')
+    end
+  end
+
+  # An excluded name takes its entries at any depth, files and links among them,
+  # each recorded once; a directory that holds a kept file leaves but for the way
+  # to it, and each entry that went is recorded.
+  def test_excluded_names_leave_wherever_they_lie_but_for_what_they_keep
+    Dir.mktmpdir('erx-otp-names-') do |root|
+      write_files(root, %w[erts/doc/a.md erts/doc/src/b.md erts/doc/src/keep.md erts/doc/src/more/c.md
+                           lib/x/examples/e.erl lib/x/src/x.erl lib/x/src/doc lib/x/docs/d.md])
+      File.symlink('../doc', File.join(root, 'lib/x/doc'))
+      # Directories that hold no file leave unrecorded, as the inventory lists none.
+      %w[erts/doc/empty/deeper lib/y/examples].each { |directory| FileUtils.mkdir_p(File.join(root, directory)) }
+      recorded = exclude_names(root, keep: %w[erts/doc/src/keep.md])
+      refute File.exist?(File.join(root, 'lib/y/examples'))
+      assert_equal %w[erts/doc/a.md erts/doc/src/b.md erts/doc/src/more lib/x/doc lib/x/examples lib/x/src/doc],
+                   recorded.map { |exclusion| exclusion.fetch('path') }
+      assert_equal ['documentation'], recorded.map { |exclusion| exclusion.fetch('reason') }.uniq
+      assert_equal %w[erts/doc/src/keep.md lib/x/docs/d.md lib/x/src/x.erl],
+                   Dir.glob('**/*', base: root).select { |path| File.file?(File.join(root, path)) }.sort
+    end
+  end
+
+  # A kept path the archive lacks, or one no excluded name holds, is refused, so a
+  # misspelt row can neither keep what it does not name nor bring documentation back.
+  def test_excluded_names_keep_only_files_beneath_them
+    Dir.mktmpdir('erx-otp-names-keep-') do |root|
+      write_files(root, %w[erts/doc/src/keep.md lib/x/src/x.erl])
+      error = assert_raises(Erx::Error) { exclude_names(root, keep: %w[erts/doc/src/kept.md]) }
+      assert_match(/keep erts\/doc\/src\/kept.md, which the archive lacks/, error.message)
+      error = assert_raises(Erx::Error) { exclude_names(root, keep: %w[lib/x/src/x.erl]) }
+      assert_match(/beneath none of doc, examples/, error.message)
+      assert_raises(Erx::Error) { exclude_names(root, keep: %w[erts/doc/src]) }
+      assert File.file?(File.join(root, 'erts/doc/src/keep.md'))
+      # An application the archive lacks keeps nothing and refuses nothing.
+      assert_equal [{ 'path' => 'erts/doc', 'reason' => 'documentation' }], exclude_names(root, keep: %w[lib/y/doc/z.md])
+    end
   end
 
   # The exclusions below are tried alone, without OTP's pruning of applications,

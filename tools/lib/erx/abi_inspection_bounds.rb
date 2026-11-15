@@ -121,7 +121,7 @@ module Erx
         end
       end
 
-      # The external term format's sizes (erts/doc/src/erl_ext_dist.xml):
+      # The external term format's sizes (OTP 29.1.2's erts/doc/guides/erl_ext_dist.md):
       # SMALL_ATOM_UTF8_EXT, SMALL_INTEGER_EXT, INTEGER_EXT, SMALL_BIG_EXT,
       # SMALL_TUPLE_EXT, LIST_EXT with its NIL_EXT tail, and NIL_EXT alone.
       def atom_size(name) = 2 + name.to_s.bytesize

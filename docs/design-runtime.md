@@ -3098,7 +3098,7 @@ and option 2 for every other domain.
 
 | Option | How it works | Gains | Costs |
 | --- | --- | --- | --- |
-| **1. Interpreter only** (the design for the system domain) | ERTS's interpreter; loading writes threaded code, which is data | no generated machine code; no C++ runtime; deterministic | the slowest: BeamAsm is "anything from no difference to up to four times as fast" (`erts/emulator/internal_doc/BeamAsm.md`) |
+| **1. Interpreter only** (the design for the system domain) | ERTS's interpreter; loading writes threaded code, which is data | no generated machine code; no C++ runtime; deterministic | the slowest: BeamAsm is "anything from no difference to up to four times as fast" (OTP 29.1.2's `erts/emulator/internal_doc/BeamAsm.md`) |
 | **2. JIT in each domain** (the design for every other domain) | BeamAsm translates each module once at load into a JIT object | up to four times faster; hot loading unchanged | the translator and asmjit and a C++ runtime in the BeamAsm image; a writable alias of each domain's code, inside that domain |
 | **3. Ahead-of-time translation on the host** | the host runs BeamAsm's translator over a release's modules; the boot image ships native code | no translator in the domain; boot translates nothing; reproducible native images; native speed in a domain whose space allows no JIT objects | BeamAsm's output must become relocatable (it embeds absolute addresses, atom numbers and a dispatch table keyed by code pointers, `beam/jit/arm/beam_asm.hpp`); a native-code loader; a hot load needs a translation first |
 | **4. An ahead-of-time image with hot-loaded code interpreted** | the boot image's modules are native; a module loaded after boot runs on the interpreter until the next image | no code generation at run time; hot loading still works | native and interpreted modules must call each other, which ERTS lost when HiPE was removed in OTP 24 (`erts/doc/notes.md`, Erts 12.0) |
@@ -4358,7 +4358,7 @@ measures it per device class.
 | a cross-domain message, sender's encode to receiver's receive | one copy in, one copy out, one decode; at most one kernel call per batch at each end | E-D1 on both lane sizes in hosted mode and under HVF |
 | idle domain | 0% CPU | by construction: no spinning, parks with a deadline |
 | minimal ERTS domain | the budget [plan.md](plan.md) sets from the host baseline | measured in a domain under HVF |
-| BeamAsm over the interpreter | 1x to 4x | cited: `erts/emulator/internal_doc/BeamAsm.md` |
+| BeamAsm over the interpreter | 1x to 4x | cited: OTP 29.1.2's `erts/emulator/internal_doc/BeamAsm.md` |
 | a reference's AES-128 permutation | the local-operation target holds on the portable path as well as the hardware path | `erts-local` reports `make_ref/0`, alias creation, comparison, hashing and term round trips for both paths |
 | interrupt to driver process | per device class, set by G9 | the driver tests report it under HVF |
 

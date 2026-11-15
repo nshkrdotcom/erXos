@@ -460,7 +460,11 @@ words, so the choice follows the kernel's report:
 the rest, as erXos's code, with the test suites of `crypto`,
 `public_key`, `ssh`, `ssl` and `inets` as fixtures. The import leaves out what the build neither reads nor
 ships, each part with its reason in `config/imports/otp.json` and
-`otp/ORIGIN.md`: their `doc` directories, their prebuilt beams, the
+`otp/ORIGIN.md`: their documentation and examples, which go by one rule
+for the whole of OTP's tree (every `doc`, `examples` and `internal_doc`
+entry, but the files the build reads from beneath one: the Markdown
+that `-moduledoc` and `-doc` attributes take by `{file, ...}` and
+`stdlib`'s `erl_id_trans`), their prebuilt beams, the
 Erlang the ASN.1 compiler generated from `public_key`'s specifications,
 and all of `asn1` but its run-time module `asn1rt_nif`, its NIF and the
 files its make reads to build them, so the ASN.1 compiler, its test

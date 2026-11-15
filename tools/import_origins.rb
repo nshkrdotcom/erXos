@@ -137,18 +137,109 @@ module Erx
     end
 
     # What the import removes from the unpacked tree, each path with its reason, as
-    # the origin record keeps them: the profile's exclusions, and for OTP alone two
-    # more. Each application outside the profile's set goes first, so that an
-    # exclusion beneath one finds nothing to take, and the ASN.1 compiler's output
-    # in each application that stays goes last. The record lists the profile's
-    # exclusions, the applications, then the compiler's output.
+    # the origin record keeps them: the profile's exclusions and the entries its
+    # excluded names take, and for OTP alone two more. Each application outside the
+    # profile's set goes first, so that an exclusion beneath one finds nothing to
+    # take, and the ASN.1 compiler's output in each application that stays goes last.
+    # The record lists the profile's exclusions, the excluded names' entries, the
+    # applications, then the compiler's output.
     def remove_exclusions(root, profile:, component:)
-      exclude = -> { profile.fetch('exclusions').flat_map { |exclusion| remove_profile_exclusion(root, exclusion) } }
+      exclude = lambda do
+        profile.fetch('exclusions').flat_map { |exclusion| remove_profile_exclusion(root, exclusion) } +
+          remove_named_entries(root, profile.fetch('excluded_names', nil))
+      end
       return exclude.call unless component == 'otp'
 
       applications = select_otp_applications(root, applications: profile.fetch('applications'))
       exclude.call + applications + remove_asn1_outputs(root)
     end
+
+    # A profile's excluded names (OTP's doc, examples and internal_doc): every entry
+    # of the archive with one of the names leaves, wherever it lies, but the files the
+    # rule keeps, which the build reads from beneath one (check_kept). An entry that
+    # holds a kept file leaves but for the directories on the way to it, each entry
+    # that went recorded; any other leaves whole, recorded once. Only an entry that
+    # holds a file or a link is recorded, as the inventory lists only those.
+    def remove_named_entries(root, rule)
+      return [] if rule.nil?
+      unless rule.is_a?(Hash) && rule.keys.sort == %w[keep names reason]
+        raise Error, "invalid excluded names #{rule.inspect}"
+      end
+
+      names, keep, reason = rule.fetch_values('names', 'keep', 'reason')
+      unless names.is_a?(Array) && names.all? { |name| plain_name?(name) }
+        raise Error, "excluded names #{names.inspect} are something other than names"
+      end
+      raise Error, "excluded names keep #{keep.inspect}, which is not a list" unless keep.is_a?(Array)
+
+      entries = named_entries(root, '', names: names)
+      keep.each { |kept| check_kept(root, kept, names: names, entries: entries) }
+      entries.flat_map { |entry| remove_all_but_kept(root, entry, keep: keep, reason: reason) }
+    end
+    private_class_method :remove_named_entries
+
+    # A kept path must lie beneath one of names, and when the archive holds that
+    # entry, the entry must hold the path as a file, reached through directories of
+    # the archive alone (reach), so a misspelt file name cannot bring back the rest.
+    # An entry the archive lacks, such as one inside an application the import pruned,
+    # keeps nothing; a misspelt directory above the entry passes here, and the build
+    # that reads the file then fails.
+    def check_kept(root, kept, names:, entries:)
+      path = reach(root, kept)
+      parts = kept.split('/')
+      named = parts[0...-1].index { |part| names.include?(part) }
+      raise Error, "excluded names keep #{kept}, which lies beneath none of #{names.join(', ')}" unless named
+      return unless entries.include?(parts[0..named].join('/'))
+      return if path && File.file?(path) && !File.symlink?(path)
+
+      raise Error, "excluded names keep #{kept}, which the archive lacks"
+    end
+    private_class_method :check_kept
+
+    # The archive's entries under relative with one of names, in sorted order; an
+    # entry so named is not searched beneath, nor is a link.
+    def named_entries(root, relative, names:)
+      Dir.children(relative.empty? ? root : File.join(root, relative)).sort.flat_map do |name|
+        path = relative.empty? ? name : "#{relative}/#{name}"
+        absolute = File.join(root, path)
+        if names.include?(name)
+          [path]
+        elsif File.directory?(absolute) && !File.symlink?(absolute)
+          named_entries(root, path, names: names)
+        else
+          []
+        end
+      end
+    end
+    private_class_method :named_entries
+
+    # Removes path but the kept files beneath it; check_kept has made each directory
+    # above a kept file a directory of the archive.
+    def remove_all_but_kept(root, path, keep:, reason:)
+      return [] if keep.include?(path)
+      unless keep.any? { |kept| kept.start_with?("#{path}/") }
+        recorded = payload?(File.join(root, path))
+        remove_exclusion(root, path)
+        return recorded ? [{ 'path' => path, 'reason' => reason }] : []
+      end
+
+      Dir.children(File.join(root, path)).sort.flat_map do |name|
+        remove_all_but_kept(root, "#{path}/#{name}", keep: keep, reason: reason)
+      end
+    end
+    private_class_method :remove_all_but_kept
+
+    # Whether path is a file or a link, or a directory that holds one at any depth.
+    def payload?(path)
+      return true if File.symlink?(path) || !File.directory?(path)
+
+      Dir.children(path).any? { |name| payload?(File.join(path, name)) }
+    end
+    private_class_method :payload?
+
+    # A name of one entry in a directory: no separator, and not empty, . or ..
+    def plain_name?(value) = value.is_a?(String) && !['', '.', '..'].include?(value) && !value.include?('/')
+    private_class_method :plain_name?
 
     # OTP's archive carries the ASN.1 compiler's output prebuilt: ASN1_OUTPUTS for each
     # module the specifications in lib/<application>/asn1 make (Asn1Specifications).
@@ -192,7 +283,7 @@ module Erx
     private_class_method :remove_profile_exclusion
 
     def remove_all_but(root, path:, keep:, reason:)
-      unless keep.is_a?(Array) && keep.all? { |name| name.is_a?(String) && !name.include?('/') }
+      unless keep.is_a?(Array) && keep.all? { |name| plain_name?(name) }
         raise Error, "import exclusion #{path} keeps something other than names in it"
       end
       directory = reach(root, path)
