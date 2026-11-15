@@ -1235,9 +1235,10 @@ that would otherwise be a case of its own follows from that value:
   byte the editor has not used is still in the tty when the next holder
   reads, and nothing is ever given back;
 * no reader of a job takes a key typed after a `Ctrl-C`, `Ctrl-Z` or
-  `Ctrl-\` before the job's shell has acted on the signal, whether the
+  `Ctrl-\` before the signal has been carried out on it, whether the
   key reached the job or, as a line starts, the console
-  ([A signal suspends a job's input](#the-terminal-relays-protocol));
+  ([A signal suspends a job's input](#the-terminal-relays-protocol),
+  [A reader the signal ends](#the-terminal-relays-protocol));
 * `Ctrl-C` discards all typed input that waits, unless `NOFLSH` is set,
   since it all waits in the tty, and the tty's 4 KiB bound on unread
   input bounds all of it ([design-live.md](design-live.md#the-tty)); the
@@ -1421,12 +1422,14 @@ the close's answer, and none after.
     ended `F`, the bullet of that change applies instead, and when the
     console holds the terminal the shell sends nothing.
 
-  At each stop the shell keeps `Left` for the job's `fg`. It ignores an
-  `{error, einval}` answer: the relay then changed nothing, and the next
-  `foreground` the table gives is sent as before. Its own requests are
-  never refused, since `cooked` and a kept `termios` are the relay's own,
-  it sends `current` only for the job it gave the terminal, and it counts
-  no signal the relay has not counted.
+  At each stop the shell keeps `Left` for the job's `fg`. Its own
+  requests are never refused, since `cooked` and a kept `termios` are
+  the relay's own, it sends `current` only for the job it gave the
+  terminal, and it counts no signal the relay has not counted. So a
+  refusal is a fault of the shell or the relay, and the shell treats it
+  as one: it ends, with the request and the answer in its exit reason,
+  as at any crash of the shell ([Context](#context)). Ignoring it would
+  leave every later `foreground` refused for as long as the shell lives.
   When the job `fg` waits for ends by `Ctrl-C`, its last stage being a
   program that `SIGINT` ended or an Erlang command that the interrupt
   ended, the shell interrupts the line as well, as FreeBSD's `sh` raises
@@ -1746,7 +1749,7 @@ and sends that number as `Seen` in every `foreground`. Each signal the
 relay counts for a command shell's group reaches that shell once, by the
 route it was counted on, and is counted before it is sent, so a shell's
 `Seen` never passes `Sent`, and a `foreground` whose `Seen` does is
-refused ([Requests](#the-terminal-relays-protocol)) and ignored by the
+refused ([Requests](#the-terminal-relays-protocol)), which ends the
 shell that sent it. The two are equal exactly when the shell has carried
 out every signal made for it, in whichever order the two routes
 delivered them. A job's opens may read only while the `Seen` and `Sent`
@@ -1774,11 +1777,12 @@ get no report, its reads are answered `eagain`, so a report delivered
 before the key grants nothing, and its writes, `tcgetattr`, `tcsetattr`
 and `winsize` go on, since a program's `SIGINT` handler that restores
 the terminal's modes would otherwise be answered `{background, false}`
-and stopped. A program that caught the signal reads the keys typed after
-it one round trip of the shell later, nothing lost or reordered, and
-otherwise the next holder's reader takes them, so the reader of a key
-typed after `Ctrl-C` is chosen by the job table after it has acted on
-the interrupt. `info` and `winch` count for no one and suspend nothing.
+and stopped. A job that goes on after the signal reads the keys typed
+after it one round trip of the shell later, nothing lost or reordered,
+and otherwise the next holder's reader takes them, so the reader of a
+key typed after `Ctrl-C` is chosen by the job table after it has acted
+on the interrupt. `info` and `winch` count for no one and suspend
+nothing.
 The console never waits on the numbers: it reads only for its group's
 ask and takes an event before the answer to any read made after the key
 ([The console reads on demand](#the-terminal-relays-protocol)).
@@ -1803,12 +1807,48 @@ line and sends `{foreground, console, {G, 1}}`, and the console reads
 the relay would have sent it to the shell as the line's event and
 counted it the same, so `rm` reads `y` in neither case.
 
-Two readers can still act on a key typed after a signal before the
-signal reaches them. A process of the job that was running when the
-shell marked its tag can, for the rest of its slice
-([design-runtime.md](design-runtime.md#scheduling), "Job tags"), and so
-can a program whose handler passes it the relay's report before the
-signal ([Open decisions](#risks-and-open-questions)).
+**Four places agree on what counts.** The relay's rule above, the
+console's passing of `interrupt` and `suspend` to a group
+([design-runtime.md](design-runtime.md), "Which input bytes mean
+something"), the group's three messages for them
+(`lib/kernel/src/group.erl:255-258`, `:519-533`) and the signals the
+shell counts must name the same signals, and a disagreement is a fault
+that does not heal. A shell that counts a signal the relay did not
+counts one too many, and its next `foreground` is refused, which ends
+the shell ([The foreground rule](#the-terminal-relays-protocol)). A
+signal the relay counts and the shell never takes leaves `Seen` one
+short for as long as the shell lives: every later job's reads stay
+suspended, while the console still reads, so `exit` at the prompt
+starts a fresh shell, whose numbers start at 0. The test "Each
+console signal counted once" runs the four together
+([Verification](#verification-and-testing)).
+
+**A reader the signal ends.** The relay gives a job its reads back when
+the shell has carried the signal out: for an Erlang command, once the
+shell has marked the job's tag, and for a program, once the command
+server has passed the signal to its handler. Neither yet means the
+reader has stopped. A process of the job that runs when its tag is
+marked runs on to the end of its slice
+([design-runtime.md](design-runtime.md#scheduling), "Job tags"), and
+nothing orders a handler's report of the signal to its program before
+the relay's ready report. Two rules make the second property of the
+list above hold for every reader:
+
+* `erx_cmd`'s terminal read calls `erlang:yield/0` once after it takes
+  the relay's answer and before it returns the bytes. An answer that
+  carries a key typed after a signal is sent only after a `foreground`
+  whose `Seen` counts the signal, which the shell sends only after it
+  has marked the tag, so the scheduler's pick after the yield finds the
+  mark, and the process ends there before the command sees the bytes.
+* A program reads no terminal input. Its handler answers a program's
+  `read` of a terminal open, and its watch of `{read, Count}` there,
+  `{error, enotsup}` itself, without passing either to the relay, and
+  the `read` fails with `ENOTSUP`
+  ([design-programs.md](design-programs.md#the-terminal)). A program's
+  terminal reads need a handshake in which each handler answers the shell
+  once its program has taken the signal, and the shell sends `current`
+  only after every answer; that handshake is open work
+  ([TODO.md](../TODO.md)).
 
 **Failure.** The relay is its console's line and ends with it, and the
 console of the session role ends when the line hangs up, and every shell
@@ -1950,7 +1990,9 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
   domain, whose stream relay only copies bytes, and in the system shell,
   whose console has no tty: a call never reaches the session's terminal
   through a stream that is not it.
-* `read/1` on the terminal reads as `liberx` reads for a program: it asks
+* `read/1` on the terminal reads with the requests a program's handler
+  would pass on for a program
+  ([design-programs.md](design-programs.md#the-terminal)): it asks
   the relay for one ready report, the line discipline's `read_wait` with
   the 4 KiB it will read as its count, and
   once the report comes sends the read, which the relay answers at once
@@ -1960,7 +2002,10 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
   read, and `Ctrl-D` at the start of a line gives `eof`. In raw mode a
   timed read that ends with no bytes returns `<<>>`, never `eof`. A read
   that another reader of the job beat to the bytes waits for the next
-  report.
+  report. Once it has the relay's answer, it calls `erlang:yield/0`
+  before it returns the bytes, so a process whose job a signal has
+  ended since never returns them ([A reader the signal
+  ends](#the-terminal-relays-protocol)).
 * `watch/1` arms that ready report and returns at once; the report
   arrives as the message `{erx_cmd, ready}`. A `read/1` made while a
   report is armed or delivered, which `erx_cmd` notes in the caller's
@@ -2310,11 +2355,21 @@ remain independent of catalog generation.
     G, interrupt}`; after `{foreground, A, cooked, {G, 0}}` and `y\n`
     typed, A's watch gets no report and its read answers `eagain`, and
     after `{foreground, A, current, {G, 1}}` the read returns `y\n`. The
-    same holds with `Ctrl-Z`. In a fresh relay, after `Ctrl-\` with the
-    console holding, `{foreground, A, cooked, {G, 0}}` lets A read at
-    once. Seeded: a relay that counts no signal it sends the console,
-    whose A read returns `y\n` before the `current`; and one that counts
-    the console's `quit`, after which A's watch gets no report.
+    same holds with `Ctrl-Z`. In a fresh relay, after `{console_group,
+    G}` and then `Ctrl-\` with the console holding, `{foreground, A,
+    cooked, {G, 0}}` lets A read at once. Seeded: a relay that counts no
+    signal it sends the console, whose A read returns `y\n` before the
+    `current`; and one that counts the console's `quit`, after which A's
+    watch gets no report.
+  * A console signal for another group: the shell, holding the
+    terminal for its line `L` under `G` with `Seen` `n`, starts `erl`
+    and sends `{foreground, console, {G, n}}`, and the console names
+    `{console_group, E}`. `Ctrl-C` at the Erlang prompt gives the fake
+    console `{erx_tty_event, E, interrupt}`. The console then names
+    `{console_group, G}` again, as after `q()`, and `{foreground, L,
+    cooked, {G, n}}` lets `L` read a typed line at once. Seeded: a relay
+    that counts a console signal for the group of the last `foreground`,
+    under which `G`'s count is `n` + 1 and `L`'s read answers `eagain`.
   * Refusals: with `A` holding and no signal made, `{foreground, A,
     current, {G, 1}}` and `{foreground, B, cooked, {G, 1}}` each answer
     `{error, einval}`, and a typed key reports A's watch; with the
@@ -2371,6 +2426,17 @@ remain independent of catalog generation.
     Seeded: a relay that counts no signal it sends the console, whose
     `Line` read returns `y\n` in both cases, as `rm` would read it and
     remove the file.
+  * Each console signal counted once: with the shell's job table core
+    in place of the test shell's count, `Ctrl-C`, `Ctrl-Z`, `Ctrl-\` and
+    a size change are made at the prompt while the shell reads, and
+    `Ctrl-C` and `Ctrl-Z` after its group has returned a line and before
+    the shell has sent anything; after each, the next line the shell
+    runs, given the terminal with the table's `foreground`, reads a
+    typed line at once, and no `foreground` is refused. Seeded, each
+    failing one case: a relay that counts the console's `quit`, under
+    which the next line's read answers `eagain`; a table that does not
+    count `{G, suspend}`, likewise; and a relay that counts the size
+    change made while the console holds, likewise.
   * `ls\npwd\n` typed in one input while the shell reads: the shell gets
     `ls\n`; the test then sends `{foreground, Line, cooked}`, and an open
     of `Line` reads `pwd\n`. Seeded: a group without edit 71, which never
@@ -2512,6 +2578,10 @@ remain independent of catalog generation.
     cooked, {G, 1}}` carries it. Seeded: a table that counts only the
     relay's events, which gives `{G, 0}` in each, so the relay would keep
     the reads of the next job suspended for ever.
+  * A refused `foreground`: against a fake relay that answers one
+    `foreground` `{error, einval}`, the shell ends, and its exit reason
+    carries the request and the answer. Seeded: a shell that ignores
+    the answer, which lives on.
   * Window size: while a delivery for A runs, a `winch` for B and then
     one for C arrive, and B ends; C gets one delivery after A's, and B
     none. Seeded: one waiting delivery for every job, which merges C's
@@ -2771,6 +2841,28 @@ signal on both routes, and the shell counting what reaches it on both,
 closes that with no extra message
 ([A signal suspends a job's input](#the-terminal-relays-protocol)).
 
+**One sender for the console's signals.** The shell would name its
+group to the relay at its start, the relay would send it every signal
+the console takes for that group, as it sends a job's events, and the
+shell would count only the relay's events and take its group's
+`{error, interrupted}` only as the end of the line being edited. One
+sender and one receiver would need no list of what counts. It loses:
+the relay's event can reach the shell before the line the group is
+still returning. `rm -i f` and Enter are read; the group returns the
+line through the console, and before that message reaches the shell
+the relay takes `Ctrl-C` and sends its event straight to the shell,
+which still waits for a line, takes the key for its prompt and drops
+it, then gets the line and gives it the terminal with the count
+matched, so `rm` reads the `y` typed after the `Ctrl-C`. Only the
+group knows whether a key came before or after the line it returned:
+it answers the line request `{error, interrupted}` in the first case
+and sends the exit signal `interrupt` in the second, in order with the
+line (`lib/kernel/src/group.erl:519-526`). The relay sees the
+console's reads, not where the editor ended a line, so it cannot tag
+the event with that, and one process's messages to another keep their
+order only from one sender
+(`system/doc/reference_manual/ref_man_processes.md:507-511`).
+
 **Learning the count with a call.** The shell, on its group's interrupt
 or suspend, would ask the relay for the count and send it back as
 `Seen`. It loses: the answer counts every signal made so far, including
@@ -2847,21 +2939,6 @@ Open decisions, each with a recommendation:
   `ps` and `ls` print none. Recommended: text commands print none, so
   their bytes match FreeBSD's at a terminal too; a clickable pid comes
   from `erx:ps()` and the inspector.
-* **When a program reads again after a signal.** The shell gives a job
-  its reads back with `{foreground, Job, current, Signals}` once it has
-  carried the signal out, which for a program means once the command
-  server has passed the signal to its handler. Nothing orders the
-  handler's report of the signal to the program before the relay's ready
-  report, so a program the signal ends can take keys typed after it, and
-  that can lose data: with a program waiting for `y` to confirm that it
-  should delete a file, `Ctrl-C` and `y` typed together can let it read
-  `y` and delete the file before `SIGINT` ends it. A handshake would have each handler answer once its
-  program has taken the signal, and the shell send `current` only after
-  every answer. Erlang commands, `vi` among them, need none: their
-  processes end at their next pick once the tag is marked. Recommended:
-  design the handshake together with programs' reads of the terminal in
-  [design-programs.md](design-programs.md#the-terminal), so that no
-  program reads the terminal without it.
 
 ## References
 

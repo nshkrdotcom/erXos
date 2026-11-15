@@ -3896,6 +3896,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `record()`'s `entries` is answered only for `[kernel, log]`; a domain's pids, also marked `entries`, are still
   a listing's children, and no query takes `limit`, so a page is always erx_schema's 1,000. Answer every
   `entries` path with entries and take `limit` in `erx_inspector:inspect/3`.
+* [Low] shell, `erlang/apps/erx_shell/src/erx_shell.erl:177`: the console's shell waits for the boot in `booted()`
+  before `init/3` traps exits (`:192`), so a console `Ctrl-C` during that wait, which the shell's group passes on as
+  the exit signal `interrupt` while it serves no request (`otp/lib/kernel/src/group.erl:519-522`), ends the shell
+  before its banner. Trap exits before the wait.
 * [Low] `erlang/apps/erx_shell/src/erx_render.erl`, `erlang/apps/erx_web_line/src/erx_web_value.erl`: neither shows a
   record's `entries`, so `erx:i([kernel, log])` prints an empty record and the web's log view
   ([design-web.md](docs/design-web.md#views-on-the-line)) has nothing to read; `/proc/kernel/log` and `dmesg`
@@ -7380,6 +7384,32 @@ document's "residual risks accepted" paragraph.
 * [Low] ABI, `tools/lib/erx/abi_errno.rb`: an errno name is any `e[a-z0-9]{1,15}`, so a row `errno eof 99` would
   generate `#define EOF 99` against `<stdio.h>`; and `abi_errno_test.rb`'s `ERRNO_DEFINE` drops a FreeBSD define
   of another form unnoticed, where the musl comparison counted every define.
+* [Medium] musl, `musl/arch/aarch64/bits/signal.h`, `abi/signals.txt`,
+  `erlang/apps/erx_shell/src/erx_shell_jobs.erl`: give erXos's musl FreeBSD's signal numbers from the signal
+  table of the ABI file ([design-programs.md](docs/design-programs.md#signal-numbers)). The table holds each
+  signal's name, number and default action, and generates the `ERX_SIG` constants, `erx_sig_name`,
+  `erx_sig_action` and `erx_sig_valid` in `erx/abi.h` and the Erlang `erx_abi_signals`; its numbers are compared
+  with FreeBSD 15.1's `sys/sys/signal.h`. Today musl keeps Linux's
+  numbers (`bits/signal.h`, `SIGSTOP` 19, `SIGCONT` 18, `SIGPWR` 30, `_NSIG` 65), its real-time range starts at
+  35 (`musl/src/signal/sigrtmin.c`), and the shell's `?SIGNALS` writes
+  FreeBSD's numbers by hand. The work: the table's descriptions (`sys_siglist`'s text) and number 34 as reserved,
+  the comparison with the names of `sys_signame` in FreeBSD's `lib/libc/gen/siglist.c`, and musl's number header
+  and set of valid signals generated from it; `erx_prog`, the protocol's grammar and the shell on
+  `erx_abi_signals`; in musl, the
+  generated header in place of the Linux block, `SIGRTMIN` 65 and `SIGRTMAX` 126 as constants, `_NSIG` 128,
+  the generated predicate in `sigaddset`, `sigdelset`, `sigismember`, `sigaction` and `pthread_kill`,
+  `sigfillset`'s generated set, `strsignal` on FreeBSD's text, `sysconf(_SC_RTSIG_MAX)` 62, and new
+  `sig2str`, `str2sig`, `sys_signame`, `sys_siglist` and `sys_nsig`; the shell's table read from the generated
+  one; the `difference` kind in `test/conformance/libc-test-verdicts.txt` and `tools/lib/erx/libc_test.rb`;
+  the tests of design-programs.md's "Signal numbers" bullet. The package also carries the errno numbers as
+  a table of the ABI file, and lands before the Track P ports.
+* [Medium] programs and shell, terminal reads by programs ([design-programs.md](docs/design-programs.md#the-terminal),
+  "No terminal input without the signal handshake"; [design-shell.md](docs/design-shell.md#the-terminal-relays-protocol),
+  "A reader the signal ends"): a program's handler refuses its terminal `read` with `ENOTSUP`, because nothing
+  orders the handler's report of a signal to its program before the relay's ready report, so a program a `Ctrl-C`
+  ends could read a key typed after it. Design the handshake: each handler answers the shell once its program has
+  taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it the
+  handler passes reads to the relay as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

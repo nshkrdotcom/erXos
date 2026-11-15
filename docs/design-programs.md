@@ -2349,6 +2349,22 @@ delivers it ([design-shell.md](design-shell.md#window-size)). A program opens `/
 its namespace, so a narrowed program without the export's `/dev` has no
 terminal beyond the streams it was started with.
 
+**No terminal input without the signal handshake.** A program must not
+read a key typed after a signal it has not yet taken, and nothing orders
+a handler's report of a signal to its program before the relay's ready
+report ([design-shell.md](design-shell.md#the-terminal-relays-protocol),
+"A reader the signal ends"): with a program waiting for `y` to confirm
+that it should delete a file, `Ctrl-C` and `y` typed together would let
+it read `y` and delete the file before `SIGINT` ends it. So the handler
+answers a program's `read` of a terminal open, and its watch of
+`{read, Count}` there, `{error, enotsup}` itself, without passing
+either to the relay, and the `read` fails with `ENOTSUP`. The reads
+described next run only under a handshake that orders them: each
+handler answers the shell once its program has taken the signal, and
+the shell gives the job its reads back only after every answer. That
+handshake is open work ([TODO.md](../TODO.md)). Writes, `tcgetattr`,
+`tcsetattr`, `TIOCGWINSZ` and a `poll` for output are not affected.
+
 **Reading a terminal.** A terminal read waits for input before it asks for
 it, as a socket's read does, so the wait has no request in flight and a
 signal interrupts it by POSIX's rules ([Signals in
@@ -3798,12 +3814,12 @@ terminal cases.
   again, or fails with `ETXTBSY` when it is rewritten again; `system` and
   `popen` of rc commands, whose wait statuses follow `$status`; a program
   whose standard output and error both go to the terminal, interleaved
-  line by line in the order written; `/dev/tty` read in the foreground, a
-  background job's read that waits until `fg`, a password prompt with
-  `ECHO` cleared that does not echo, and `Ctrl-D` that ends one `read`
-  with 0 while the next reads on; a raw read of one byte with `VMIN` 10
-  that returns at the first byte typed, which a `liberx` whose watch
-  carries no count fails; a background program's `tcsetattr` that stops
+  line by line in the order written; a `read` of `/dev/tty`, in the
+  foreground and in the background, which fails with `ENOTSUP` while a
+  typed line stays in the tty for the next prompt, where a handler that
+  passes the read to the relay fails the
+  case (the reads of "Reading a terminal" are tested with the handshake
+  that enables them); a background program's `tcsetattr` that stops
   its job, which `jobs` shows stopped with the `termios` unchanged, and
   is made after `fg`, where a `liberx` that fails the call with `EIO` as
   for an orphaned group fails the case, and the same call with `SIGTTOU`
