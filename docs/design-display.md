@@ -1399,27 +1399,36 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `visible`, `enabled` | boolean; `true` when absent | every kind | whether the node is shown, and whether it takes input |
 | `present` | a presentation, `{Type, Value}`, or an `attr()` carrying one | every kind | a typed value ([Presentations](#presentations)) |
 | `on_select` | event | every kind | a click on the node's presentation |
-| `text` | at most 4,096 bytes of UTF-8, or an `attr()` carrying them | `label`, `button`, `checkbox`, `input` | the caption; an `input`'s edited text, its state |
+| `text` | at most 4,096 bytes of UTF-8, or an `attr()` carrying them | `label`, `button`, `checkbox`, `input`, `graph` | the caption; an `input`'s edited text, its state |
 | `placeholder` | at most 255 bytes of UTF-8 | `input` | shown while the text is empty |
 | `secret` | boolean, fixed | `input` | the text is shown as marks and never kept |
 | `checked` | boolean, state | `checkbox` | |
-| `min`, `max` | integer -2^31 to 2^31 - 1; 0 and 100 when absent | `slider` | the range, `min` below `max` |
+| `min`, `max` | integer -2^31 to 2^31 - 1; 0 and 100 when absent | `slider`, `graph` | the range, `min` below `max` |
 | `value` | integer within `min` and `max`, state | `slider` | |
 | `items` | at most 256 texts of at most 128 bytes of UTF-8 | `list` | the entries |
+| `icons` | at most 256 `ui_icon` values, as many as `items` | `list` | each entry's icon |
 | `selected` | an index into `items`, state | `list` | absent when nothing is selected |
 | `columns` | integer 1 to 64; 1 when absent | `grid` | children fill the grid row by row |
 | `image`, `image_type` | at most 48 KiB of encoded bytes; one of the image types | `image` | the picture and its encoding |
 | `alt` | at most 255 bytes of UTF-8 | `image` | the picture's text, for a renderer that cannot show it |
+| `role` | one of the `ui_role` values: `display`, `title`, `heading`, `body`, `numeric`, `caption`; `body` when absent | `label`, `button`, `checkbox`, `input`, `list`, `graph` | how the node's text ranks in its window; a renderer picks the face and size |
+| `area` | one of the `ui_area` values: `section`, `toolbar`, `sidebar`; absent by default | `column`, `row`, `grid`, `scroll` | what the container is, so a renderer can mark it |
+| `icon` | one of the `ui_icon` values, the twenty icons of [Icons](design-desktop-programs.md#icons) | `label`, `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
+| `current` | boolean; `false` when absent | `button` | the button stands for the current one of its set, such as today in a month; a renderer marks it |
+| `samples` | at most 240 integers within `min` and `max`, or `none`, oldest first | `graph` | the series the graph draws; `none` is a sample not taken |
+| `mark` | integer within `min` and `max` | `graph` | a reference value drawn across the series, such as a grant |
 | `on_click` | event | `button` | |
 | `on_change` | event | `checkbox`, `slider`, `input`, `list` | the user changed the node's state |
-| `on_submit` | event | `input` | the user pressed enter |
+| `on_submit` | event | `input`, `list` | the user pressed enter, or activated the selected entry of a `list` by a double click or Return; a `list`'s value is its `selected` index |
 
 The containers are `column` and `row`, which lay their children out in
 order; `grid`; `scroll`, a viewport over its children laid out as a
 column; and `stack`, which lays its children over one another, the last
 on top. The widgets are `label`, `button`, `checkbox`, `slider`, `input`,
-`list`, `image` and `spacer`, which takes only the properties every kind
-takes. The one image type is PNG, `image/png`, which every renderer
+`list`, `image`, `spacer`, which takes only the properties every kind
+takes, and `graph`, a series of numbers within a range. A renderer scales a
+value against `min` and `max` in 64-bit arithmetic, since a graph or slider
+over the full range, 0 to 2^31 - 1, overflows a 32-bit scaling. The one image type is PNG, `image/png`, which every renderer
 decodes; the table holds no `image/svg+xml`, which the generator refuses,
 so an image is never a document in the browser.
 
@@ -1444,8 +1453,8 @@ carry the same `key`; when an `input` whose `secret` is `true` carries no
 `text`; when it has at most `ui_nodes` nodes, the toolkit's limit of
 10,000, and is at most
 64 deep, since the renderers lay a tree out recursively in languages whose
-stacks are fixed; and when `min` is below `max`, `value` within them and
-`selected` an index of `items`; and when no node has more than
+stacks are fixed; and when `min` is below `max`, `value`, each sample and `mark` within them,
+`selected` an index of `items` and `icons` as long as `items`; and when no node has more than
 `ui_children` children, 1,024, a root limit of `ui.txt` that bounds
 `delta/2`'s work and keeps every `insert` and `move` index within 16 bits. `erx_ui_schema`, generated from
 `ui.txt`, decides validity for the whole tree before anything is applied

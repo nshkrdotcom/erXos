@@ -126,11 +126,13 @@ and it takes no other system's assets, names or icons.
   `erx_ui_erlang` and the browser renderer are not in the tree; the
   Erlang renderer is part 7 of track D
   ([plan.md](plan.md#track-d-windows-widgets-and-the-web)).
-* **The widget format** `abi/formats/ui.txt` declares thirteen kinds,
+* **The widget format** `abi/formats/ui.txt` declares fourteen kinds,
   `column`, `row`, `grid`, `scroll`, `stack`, `label`, `button`,
-  `checkbox`, `slider`, `input`, `list`, `image` and `spacer`, and one
-  enumeration, `ui_align` (`ui.txt:18-96`). It has no graph, no icon and
-  no notion of a text's size.
+  `checkbox`, `slider`, `input`, `list`, `image`, `spacer` and `graph`, and
+  four enumerations, `ui_align`, `ui_role`, `ui_area` and `ui_icon`. It
+  carries a text's role, a container's area, icons, a button's `current`
+  and a list's `on_submit`, as [Widget format
+  additions](#widget-format-additions) describes.
 * **Drawing.** `display/libmemdraw` is 9front's `libmemdraw`. Its draw
   reads a mask without an alpha channel as grey and uses the grey as
   coverage (`draw.c:488-494`, `greymaskread` at `draw.c:1065`), so a
