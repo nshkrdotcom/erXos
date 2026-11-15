@@ -1365,20 +1365,27 @@ has scope `all`, and machine-wide inspection is done in the system shell
 at a secure line. A path's owner is decided by construction: a process's
 domain is its pid's creation, a program's is the session under whose path
 it lies, and every other path names its domain or belongs to the machine.
-A scoped facet reaches only the paths its domains own: listings contain
-only those, `[]` shows only the machine attributes the schema marks
-`visible any`, and every other machine-wide path (`[cpus, ...]`, `[groups, ...]`, `[budgets, ...]`,
-`[devices, ...]`, `[kernel, ...]`) answers `{error, scope}`; a domain's own
-group and budget are under its path. A path outside the scope
-and a path that names nothing get the same answer, `{error, scope}`, so a
-scoped facet cannot learn whether a process outside its scope exists.
-The machine attributes `visible any` are those every UNIX user reads:
-the build identifier, the development flag and the DMA profile, which
-reveal nothing of other domains, and the uptime, the CPUs online and the
-memory total and free, which `uptime` and `top` show anyone. Free memory
-moves as other domains commit and release pages, so it tells a domain a
-little of the others' activity; erXos accepts that side channel for the
-figure every `top` shows.
+A scoped facet reaches only the paths its domains own and the machine's
+`visible any` attributes: listings contain only its domains, `[]` and
+`[cpus, N]` show only the machine attributes the schema marks `visible
+any`, `[cpus]` lists the CPUs, and every other machine-wide path
+(`[groups, ...]`, `[budgets, ...]`, `[devices, ...]`, `[kernel, ...]`)
+answers `{error, scope}`; a domain's own group and budget are under its
+path. A path outside the scope and a path that names nothing get the
+same answer, `{error, scope}`, so a scoped facet cannot learn whether a
+process outside its scope exists. The machine attributes `visible any`
+are those every UNIX user reads: the build identifier, the development
+flag and the DMA profile, which reveal nothing of other domains, and the
+uptime, the CPUs online and the memory total and free, which `uptime`
+and `top` show anyone, and each CPU's idle time and ready threads, the
+machine's load. Free memory moves as other domains commit and release
+pages, and a CPU's idle time and ready threads as other domains run, so
+they tell a domain how busy the others keep the machine; erXos accepts
+that side channel so that every session sees the machine's load, as the
+desktop's `stats` shows it
+([design-desktop-programs.md](design-desktop-programs.md#stats)).
+A CPU's running thread, interrupts and throttled groups stay `visible
+all`.
 
 **From a process to its source.** A process record carries its current
 location, `{Module, Function, Arity, File, Line}`, and its module's
@@ -2611,9 +2618,10 @@ line escape).
 current functions and resource use of what their scope covers; that is the
 facet's purpose. A scoped facet sees nothing machine-wide beyond the
 attributes the schema marks `visible any`: the build identifier, the
-development flag, the DMA profile, the uptime, the CPUs online and the
-memory total and free, the last of which moves with the other domains'
-activity, a side channel accepted for the figure every `top` shows
+development flag, the DMA profile, the uptime, the CPUs online, the
+memory total and free, and each CPU's idle time and ready threads, the
+last three of which move with the other domains' activity, a side
+channel accepted so that every session sees the machine's load
 ([Scopes](#inspection)). Pids and domain ids reveal
 creation order. A domain reads only its own release's files from the boot
 image, so the sources a release carries are visible to the domains running

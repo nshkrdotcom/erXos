@@ -15,8 +15,8 @@ Plan 9 shaped how they work: everything they show is a file, a `/proc`
 path or a typed record, read through the session's own namespace and
 facets, and nothing they do needs a channel the shell does not have.
 Plan 9 did not shape how they look. They look modern and quiet:
-anti-aliased type on a 4-pixel grid, a restrained palette in light and
-dark, rounded controls and soft depth where they help, and an icon set
+anti-aliased type on a 4-pixel grid, a restrained light palette,
+rounded controls and soft depth where they help, and an icon set
 drawn for erXos.
 
 The architecture is [design.md](design.md); windows, the widget
@@ -73,12 +73,16 @@ Decisions every reader of this document needs:
   icons, rounded corners, soft shadows and graph lines are 8-bit
   coverage masks composed through `libmemdraw`'s one draw, which already
   reads a grey mask as coverage. Glyphs and icons are rasterised once
-  by a host step; corners, shadows and graph lines are computed by a
-  pure Erlang module in the renderer. No primitive is added to
-  `erx_memdraw`.
+  by a host step, through FreeType run as a host build tool; corners,
+  shadows and graph lines are computed by `erx_mask`, a pure Erlang
+  module that the renderer and the window manager's menu share. No
+  native primitive is added to `erx_memdraw`.
+* **Padding is inside the node.** A node's `pad` is space between its
+  edge and its content, as LVGL's and CSS's padding are, so a padded
+  button's background and hit area cover its padding.
 * **One theme, generated.** `abi/theme.txt` declares the type scale,
-  the spacing grid, the radii, the shadows, the palette in light and
-  dark, and the fonts and icons to rasterise. Its generator writes the
+  the spacing grid, the radii, the shadows, the palette, and the fonts
+  and icons to rasterise. Its generator writes the
   Erlang module both sides of the display take, the C header `erx-lvgl`
   builds with and the web client's constants, and checks every
   contrast ratio the palette must meet.
@@ -136,12 +140,10 @@ and it takes no other system's assets, names or icons.
   (`erlang/apps/erx_memdraw/src/erx_memdraw.erl:19`). `erx_draw`,
   `erx_font`, `erx_draw_conn`, the overlapping policy `erx_wm_rio`, its
   menu and `erx_term` are part 6's and not in the tree.
-* **Fonts.** The tree holds no font. design-display's dependency row
-  plans plan9port's `fixed` bitmap fonts for the terminal and the first
-  widgets, and anti-aliased fonts "rasterised by a host step, chosen with
-  the first application that needs them"
-  ([design-display.md](design-display.md#dependencies)); these programs
-  are that application. LVGL compiles in Montserrat 14 under OFL-1.1,
+* **Fonts.** The tree holds no font. design-display's dependency rows
+  name plan9port's `fixed` bitmap fonts for the terminal and the first
+  widgets, and the anti-aliased fonts these programs bring
+  ([design-display.md](design-display.md#dependencies)). LVGL compiles in Montserrat 14 under OFL-1.1,
   which the release check admits as font data only
   (`tools/lib/erx/license_expression.rb:24-36`, `FONT_DATA_ONLY`).
 * **LVGL** 9.6.0 (`display/lvgl/ORIGIN.md`, commit `80ca777e`) draws
@@ -186,8 +188,8 @@ and it takes no other system's assets, names or icons.
 * **DP-R1.** stats shows, live, each visible domain's CPU use against
   its group's grant, its memory against its budget, and its message
   rate, and the machine's CPU, memory and scheduler load, read only
-  through the session's inspect facet; what the facet's scope does not
-  show is shown as out of scope, never estimated.
+  through the session's inspect facet; a domain outside the facet's
+  scope is neither shown nor counted.
 * **DP-R2.** clock shows the time and date from the wall clock, and
   says when the wall clock is not set or its state is unknown.
 * **DP-R3.** month shows any month of the Gregorian calendar with ISO
@@ -206,7 +208,7 @@ and it takes no other system's assets, names or icons.
   escape, and never decides which file or domain an action reaches.
 * **DP-R7.** The four share one visual language, declared once, which
   the window manager's decorations and the display's background take
-  too, in a light and a dark variant.
+  too.
 * **DP-R8.** An idle program costs nothing: no program and no renderer
   redraws without a change, and only stats, clock and month wake on a
   timer, stats once per sampling period, clock once a minute and month
@@ -356,23 +358,23 @@ theme 1
   space xs 1  s 2  m 3  l 4  xl 6  xxl 8          # in units of 4 px
   radius control 6  section 10  menu 8  window 0
   hairline 1
-  shadow section light 0 2 12 10   dark 0 2 16 40  # x y blur percent
-  color window     light F6F5F2 dark 17181A
-  color surface    light FFFFFF dark 202124
-  color sunken     light EEEDE9 dark 121315
-  color line       light DDDCD7 dark 303236
-  color text       light 1B1C1E dark ECEDEE
-  color secondary  light 5D6066 dark A4A8AD
-  color tertiary   light 8A8E94 dark 70757B
-  color accent     light 0E7A6B dark 3FC1AE
-  color on_accent  light FFFFFF dark 0B1F1C
-  color ok         light 2F7D4F dark 52B97E
-  color warn       light 9A6A12 dark E2B54A
-  color critical   light B3362C dark F07C72
-  color series_cpu light 0E7A6B dark 3FC1AE
-  color series_mem light 5B53C6 dark 9C95F0
-  color series_msg light B8620B dark F0A34E
-  color desktop    light D9DAD5 dark 0E0F10
+  shadow section 0 2 12 10                       # x y blur percent
+  color window     F6F5F2
+  color surface    FFFFFF
+  color sunken     EEEDE9
+  color line       DDDCD7
+  color text       1B1C1E
+  color secondary  5D6066
+  color tertiary   8A8E94
+  color accent     0E7A6B
+  color on_accent  FFFFFF
+  color ok         2F7D4F
+  color warn       9A6A12
+  color critical   B3362C
+  color series_cpu 0E7A6B
+  color series_mem 5B53C6
+  color series_msg B8620B
+  color desktop    D9DAD5
   contrast text      on window surface sunken 7.0
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
@@ -383,13 +385,12 @@ The colour values are the starting palette, tuned with the first
 screenshots; the rules are what the generator enforces. Each is a
 checked constraint, as the spec discipline asks:
 
-* every colour has both a light and a dark value, and a row naming one
-  only is refused;
+* every colour a `role` or a `contrast` row names is declared, once;
 * every `contrast` row holds, by WCAG 2's contrast ratio of relative
   luminances, whose definition the generator cites from the
-  specification it implements, in both variants: body text at 7:1 against every surface it names,
-  secondary text at 4.5:1, text on the accent at 4.5:1; a seeded
-  `secondary` of `B0B0B0` in the light variant fails the build;
+  specification it implements: body text at 7:1 against every surface
+  it names, secondary text at 4.5:1, text on the accent at 4.5:1; a
+  seeded `secondary` of `B0B0B0` fails the build;
 * every `role` names a declared font and weight, and a size and line
   height on the 4-pixel grid where the line height is concerned;
 * every `space` and `radius` value is a whole number of units or
@@ -407,9 +408,28 @@ that change in place, stats' values and the clock, use the tabular
 figures, so digits do not shift as values change.
 
 **The glyph step.** A host step, `Erx::Glyphs` in `tools/lib/erx`,
-reads the TrueType outlines of each declared font file, rasterises
-each declared code point at each role's size and weight into 8-bit
-coverage, and writes one Plan 9 subfont per role, with an 8-bit grey
+rasterises every glyph and icon through FreeType, run as a host build
+tool ([Dependencies](#dependencies)). FreeType is fetched at its pinned
+release and SHA-256 and compiled out of tree by erXos's own compiler
+invocations from the source files its build notes list for a build
+without its scripts (`docs/INSTALL.ANY`, lines 28 and 134-139, at
+2.15.0), and linked into one small C17 host program of erXos's,
+`erx-raster`, which nothing in an image contains. `Erx::Glyphs` runs
+`erx-raster` with an argument vector, once per font file and size and
+once per icon size, and reads back each glyph's coverage rows and
+metrics. `erx-raster` loads each declared code point of the role's font
+at the role's size unhinted (`FT_LOAD_NO_HINTING`,
+`include/freetype/freetype.h`, line 3502) and renders it with
+FreeType's anti-aliasing rasteriser, which computes the exact coverage
+of straight segments on each pixel and approximates curves by
+subdividing them (`src/smooth/ftgrays.c`, lines 45-48 and 63). It
+builds each icon's paths as an outline, strokes them with FreeType's
+stroker, round joins and round caps (`include/freetype/ftstroke.h`,
+lines 136, 168 and 310), and renders the result with the same
+rasteriser (`FT_Outline_Render`, `include/freetype/ftoutln.h`, line
+496), so glyphs and icons have one engine and erXos writes none.
+
+From that coverage the step writes one Plan 9 subfont per role, with an 8-bit grey
 image (`k8`) where `fixed` has a 1-bit one. A subfont file is an image
 in the external image format followed by the glyph table, and that
 format's header names the image's channel, of which an 8-bit grey one
@@ -420,11 +440,17 @@ subfont is a subfont like any other, and
 message then draws each glyph with its cache entry as the mask, which
 `libmemdraw` reads as coverage, so text is anti-aliased with no change
 below `erx_font`. The same step writes LVGL's bitmap font form of each
-role from the same coverage, so the two renderers draw the same glyphs.
-Rasterisation is unhinted, with exact area coverage, as current desktop
-type is; output is a pure function of the font file and the theme, so
+role from the same coverage, so the two renderers draw the same glyphs,
+and the `body` role's glyphs a third time as generated data for the
+window manager's menu, an Erlang module of each glyph's metrics beside
+its raw `k8` rows, which the menu loads with `erx_memdraw:load/3`, so
+the display release reads no font file and holds no font reader
+([Windows and the window manager](#windows-and-the-window-manager)).
+Rasterisation is unhinted, as current desktop type is; output is a pure
+function of the font file, the theme and FreeType's pinned release, so
 images stay reproducible. The step chooses the tabular figures by the
-font's glyph names for the roles marked `figures tabular`; that Inter
+font's glyph names (`FT_Get_Name_Index`, `include/freetype/freetype.h`,
+line 4428) for the roles marked `figures tabular`; that Inter
 4.1's static fonts carry those names (`one.tf` and the rest) is
 unverified until the files are fetched at the pin, and the step refuses
 a role whose substitutions it cannot find.
@@ -444,28 +470,27 @@ px wide; sections are separated by `xl` (24 px) and their content by `m`
 gives none, the renderer takes the theme's spacing for the node's kind
 and role, so the four programs set almost no sizes and still align.
 
-### Colour, light and dark
+A node's `pad` is inside the node: its rectangle is the room its slot
+gives it, its content (a label's text, a container's children) is
+placed in that rectangle less the pad on each side, and its background,
+border, `current` ring and hit area cover the whole rectangle, pad
+included. That is how LVGL's padding (`erx-lvgl` sets `pad_all`) and
+CSS's `padding` read it, so the three renderers agree with no
+translation, and a padded button is pressed anywhere on its face, not
+only on its text.
 
-The palette is above: a warm-neutral ground, white surfaces in light
-and charcoal in dark, one teal accent for selection, focus and the
-primary series, and three status colours used only for status. Graph
-series have one colour each, the same in every program. The desktop
-background, which `erx_screen` fills where no window is
+### Colour
+
+The palette is above: a warm-neutral ground, white surfaces, one teal
+accent for selection, focus and the primary series, and three status
+colours used only for status. Graph series have one colour each, the
+same in every program. The desktop background, which `erx_screen` fills
+where no window is
 ([design-display.md](design-display.md#windows-and-the-window-system)),
-is the theme's `desktop` colour.
-
-Which variant a window uses is one setting: the display's manifest
-entry gains `theme`, `light` or `dark`, `light` when absent, which the
-domain service puts in the display domain's environment as
-`display_theme`, as it puts `display_keymap`
-([design-display.md](design-display.md#a-displays-session)). The
-decorations, the menu and the background take it there, and the
-display's `screen` file answers it as a third field, after the
-rectangle and the channel, so the renderer of every window on that
-display takes the same variant. A session's environment variable
-`ui_theme`, beside `ui_renderer`, overrides it for that session's own
-windows. That is one change to a file a client already reads and no new
-interface ([Open decisions](#open-decisions), 3).
+is the theme's `desktop` colour. The theme has one palette, so no
+window, session or display chooses between palettes, and the
+decorations, the menu, the background and every renderer read the same
+constants.
 
 ### Anti-aliasing, corners and depth: coverage masks
 
@@ -477,18 +502,24 @@ of a colour through a mask. What is not a rectangle is a mask:
 | --- | --- | --- |
 | text | the glyph's coverage in the role's `k8` subfont | by the glyph step, at build |
 | icons | the icon's coverage in the icon subfont | by the glyph step, at build |
-| a rounded rectangle's corners | a quarter disc of the radius, exact area coverage | by `erx_ui_raster`, once per radius, kept as an image of the draw connection |
+| a rounded rectangle's corners | a quarter disc of the radius, exact area coverage | by `erx_mask`, once per radius, kept as an image of the draw connection |
 | a hairline border on a rounded rectangle | a quarter ring of the radius and the hairline's width | the same, once per radius |
 | a section's soft shadow | four blurred quarter discs and one blurred edge row, each a mask; an edge is a one-pixel strip with the replicate bit, drawn along the side | the same, once per radius and shadow |
-| a graph's line and the area below it | the polyline's stroke coverage and the area's coverage, in the graph's rectangle | by `erx_ui_raster`, at each change of the graph |
+| a graph's line and the area below it | the polyline's stroke coverage and the area's coverage, in the graph's rectangle | by `erx_mask`, at each change of the graph |
 
 So a rounded section costs two rectangle fills and four corner draws,
 its border four more, and its shadow eight; none touches a pixel
-outside the section and its shadow. `erx_ui_raster` is a pure Erlang
-module of the renderer, from geometry to the bytes of a `k8` image,
-tested on the host against analytic areas; the masks it makes once are
-images of the window's draw connection, charged to its quota as every
-image is ([design-display.md](design-display.md#the-draw-connection)).
+outside the section and its shadow. `erx_mask` is a pure Erlang
+module from geometry to the bytes of a `k8` image, tested on the host
+against analytic areas. It lives in `erx_memdraw`, the library both
+sides of the display take, beside `erx_theme`, because the menu needs
+its corners and shadow too and G9's check keeps every module of
+`erx_ui` out of the display release; it reads nothing, so G9 is
+unchanged. The masks the renderer makes once are images of the
+window's draw connection, charged to its quota as every image is
+([design-display.md](design-display.md#the-draw-connection)); the
+menu's are images of the display domain's own memory, as the menu's
+image is.
 No anti-aliased primitive is added to `erx_memdraw`, and `libmemdraw`'s
 own shapes stay what the draw protocol's clients get.
 
@@ -514,12 +545,14 @@ its border rectangles in the theme's `line` colour for windows that do
 not take the keyboard and `accent` for the one that does, one hairline
 wide, and the menu draws its items in the `body` role, on `surface`,
 with the `menu` radius and the section shadow, inside its own image.
-design-display gives the menu glyphs in the display release but keeps
-`erx_font` out of it (G9's check); the glyphs the menu draws are the
-`body` role's, in whatever form design-display settles for loading them
-([Open decisions](#open-decisions), 8). A
-title bar is a further decoration this design does not add ([Open
-decisions](#open-decisions), 4).
+The menu's glyphs are the `body` role's, which the glyph step writes as
+an Erlang module of metrics and raw `k8` rows; `erx_wm_menu` loads them
+into an image of the display domain's own with `erx_memdraw:load/3` and
+draws each label's glyphs through it as masks, so the display release
+holds no font file and no font reader and G9's check is unchanged
+([design-display.md](design-display.md#windows-and-the-window-system);
+[Decisions](#decisions), 8). The decorations are borders only, with no
+title bar ([Decisions](#decisions), 4).
 
 ### Motion
 
@@ -536,10 +569,10 @@ configured to do (`lv_conf.h:41`).
 The icon set is drawn for erXos: about twenty glyphs on a 24-unit grid
 with a 1.5-unit stroke, rounded joins and caps, declared as paths in
 `display/icons/icons.txt` and rasterised by the glyph step at 16 and 32
-pixels into an icon subfont, as glyphs are. An icon has at most two
-layers, a base drawn in the `secondary` colour and an accent drawn in
-the `accent` colour, so every icon follows the light and dark variants
-with no second drawing. The file is erXos's own work under its license,
+pixels into an icon subfont, stroked and rendered through FreeType as
+glyphs are. An icon has at most two layers, a base drawn in the
+`secondary` colour and an accent drawn in the `accent` colour, so an
+icon carries no colour of its own and takes the palette's. The file is erXos's own work under its license,
 so no icon set's license enters the question. The generator writes the
 same paths for the web client as SVG path data, and LVGL takes the icon
 subfont in its font form, so all three renderers draw one set.
@@ -556,11 +589,11 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 | --- | --- | --- | --- |
 | anti-aliased text | glyphs from `fixed`, 1-bit | Montserrat 14 only | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
 | a type scale | one size | one size | the theme's roles, and the `role` property |
-| rounded corners, borders | none | yes | `erx_ui_raster`'s corner masks, in the Erlang renderer |
-| soft shadows | none | yes | `erx_ui_raster`'s shadow masks, in the Erlang renderer |
-| graphs | no kind | chart widget | the `graph` kind; `erx_ui_raster`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
+| rounded corners, borders | none | yes | `erx_mask`'s corner masks, in the Erlang renderer |
+| soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
+| graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
 | icons | no property | symbol font only | the icon set, the `icon` and `icons` properties |
-| one palette, light and dark | none | LVGL's default theme | the theme, in both renderers and the decorations |
+| one palette | none | LVGL's default theme | the theme, in both renderers and the decorations |
 
 ## Widget format additions
 
@@ -646,26 +679,24 @@ inspect facet, `erx:inspect(Path, #{timeout => 1000})`, each a worker's
 
 | Measure | Path and attributes | Visible to a scoped facet | Shown as |
 | --- | --- | --- | --- |
-| CPU, machine | `[cpus]`, then `[cpus, N]`: `idle_time` | no: `{error, scope}` | busy share of all CPUs over the period: 1 minus the sum of idle time's growth over the period divided by the period times the CPU count |
+| CPU, machine | `[cpus]`, then `[cpus, N]`: `idle_time` | yes, `idle_time` is `visible any` | busy share of all CPUs over the period: 1 minus the sum of idle time's growth over the period divided by the period times the CPU count |
 | memory, machine | `[]`: `memory_total`, `memory_free` | yes, both are `visible any` | used and total |
-| scheduler load | `[cpus, N]`: `ready_threads`; `[domains, Id]`: `run_queue` | the CPUs' no; a domain's yes | ready threads summed over urgencies and CPUs; each domain's run queue in its detail |
+| scheduler load | `[cpus, N]`: `ready_threads`; `[domains, Id]`: `run_queue` | yes: `ready_threads` is `visible any`, and a domain's for its own domains | ready threads summed over urgencies and CPUs; each domain's run queue in its detail |
 | CPU of a domain | `[domains, Id, group]`: `used_ns`, `capacity_mcpu` | yes, for its own domains | the growth of `used_ns` over the period, as a share of the grant: growth divided by period times `capacity_mcpu` / 1000 |
 | memory of a domain | `[domains, Id, budget]`: `spending`, `guarantee`, `cap` | yes, for its own domains | `spending`, the budget's used, carved and lent pages ([design-live.md](design-live.md#paths)), against `cap`, with the guarantee as the graph's `mark` |
 | frames of a domain | `[domains, Id, connections]`: frames accepted on each lane | yes, for its own domains | the growth of their sum over the period, per second |
 | the domains | `[domains]`, then `[domains, Id]`: `name`, `state` | its own domains only | one row per listed domain |
 
-A scoped facet reaches only the paths its domains own, `[]` shows it
-only the machine attributes marked `visible any`, and every other
-machine-wide path answers `{error, scope}`
-([design-live.md](design-live.md), the facet's scope). So in a session
-whose facet is scoped, which in a release build is every session, the
-CPU panel and the CPU half of the load panel show the token `scope`
-and the caption "Not in this session's view", and the core asks those
-paths no more for the window's life, since a session's scope does not
-change. The memory panel and the domains' rows are what such a session
-sees. Whether ordinary sessions should see machine-wide CPU load is a
-question of the inspection schema's visibility, not of stats ([Open
-decisions](#open-decisions), 9).
+A scoped facet, every session's in a release build, sees every row of
+this table: `[]` and `[cpus, N]` show it the machine attributes marked
+`visible any`, a CPU's idle time and ready threads among them, and
+`[domains]` lists only the domains its scope covers
+([design-live.md](design-live.md#inspection), "Scopes"). So the four
+machine panels read the same in every session, and the rows beneath
+them are the session's own domains ([Decisions](#decisions), 9). stats
+has no answer of its own for a path out of scope: an `{error, scope}`
+for a machine path is an error like any other, shown as its token with
+a gap.
 
 A machine's sample is a handful of queries; each domain adds four. The
 period is one second by default, two, five and ten by the toolbar; at
@@ -747,8 +778,7 @@ ends.
 
 clock shows the hour and minute in the `display` role, the weekday and
 date in `body`, and the zone in `caption`. erXos has no time zone
-setting, so clock shows UTC and says so ([Open
-decisions](#open-decisions), 5).
+setting, so clock shows UTC and says so ([Decisions](#decisions), 5).
 
 **Reading the time.** At each tick the core reads the wall clock,
 `os:system_time(millisecond)`, which is the time page's wall clock in
@@ -897,8 +927,7 @@ buttons, one per folder from the root, the current folder's carrying
 Copying, moving, renaming and deleting are not files' to do: the
 commands already do them, with FreeBSD's behaviour and errors, and a
 window that deletes needs a confirmation, an undo or a trash, and a
-policy for conflicts, none of which a first browser needs ([Open
-decisions](#open-decisions), 2).
+policy for conflicts, none of which a first browser needs ([Decisions](#decisions), 2).
 
 ### Names and contents are untrusted
 
@@ -944,7 +973,7 @@ refuses. The cut therefore belongs with the escape: `erx_ui_lvgl` cuts
 the escaped text to the property's bound at the end of a whole
 character or token, never inside one, and ends it with an ellipsis.
 That is a rule for design-display's LVGL renderer, which every program
-needs, not these four alone ([Open decisions](#open-decisions), 10). The raw name stays in the core,
+needs, not these four alone ([Open decisions](#open-decisions), 1). The raw name stays in the core,
 whatever is cut on the way to the screen.
 
 ### Bounds
@@ -1014,7 +1043,7 @@ program's command domain, which holds no display grant
 ([design-shell.md](design-shell.md#commands)), so it fails with `no
 display`. Whether the desktop's session opens files and clock at its
 start is the session template's arguments, and this design opens none
-([Open decisions](#open-decisions), 6).
+([Decisions](#decisions), 6).
 
 ## Concurrency and failure
 
@@ -1032,7 +1061,6 @@ mailbox drains and the window takes input while a read waits.
 | a listing fails with an errno | its text in the list's place; history kept | back, or refresh |
 | a folder's names reach the listing worker's heap cap | the worker is killed; "This folder is too large to show here" in the list's place; history kept | back, or `ls` at a terminal |
 | a worker crashes | its request fails with the reason, shown as the error's text where the answer would go | refresh, or the next sample |
-| the inspector answers `{error, scope}` for a machine-wide path | that panel shows `scope` and is not asked again | none needed: the session's scope |
 | a preview read fails | the info section shows the error's text | none needed |
 | `/snarf` refuses a write | the copy button reports the errno once | none needed |
 | the window is closed from the menu | the widget server ends, the program receives `{ui_down, Window, _}` and ends with `shutdown`, its workers with it | the command again |
@@ -1065,20 +1093,21 @@ worker's heap cap bounds the names gathered, and information is asked
 for one page of names (D8).
 
 Nothing here changes what the display domain parses: the theme is
-generated constants, and the display's new work, the decorations' and
-the background's colours, reads them as data.
+generated constants and the menu's glyphs a generated module, and the
+display's new work, the decorations' and the background's colours and
+the menu's labels, reads them as data.
 
 ## Invariants
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
 | **D1.** A program reads only through the session's inspect facet, its namespace and the time page | the effect set is closed, and its performer calls `erx:inspect/2`, `file` and `os:system_time/1` and nothing else; no core performs an effect | a call from `erx_desk` to another erXos module than the public surface, a capability or a facet lookup | a source check over `erx_desk`'s modules: every call into an erXos module is one of `public.txt`'s functions ([design-packaging.md](design-packaging.md#the-sdk)) or `erx:inspect/2`, with a seeded call of `erx_inspector:route/3` failing it |
-| **D2.** No value is shown as other than it came | each derived value carries the worse status of its readings; a status not `ok` reaches the tree as the `attr()` of its text, which the renderer shows as its token (G7); a missing or non-`ok` sample is `none` in `samples`, a gap; a zero denominator is no value; a path out of scope shows `scope` | a status dropped on derivation; a gap filled with zero or the last value; a partial sample kept in the ring as a value; a negative rate from a counter that went down; a share of a zero grant shown as 0 or 100 percent; an out-of-scope panel shown as idle | the stats core's status table test over every pair of statuses, with a seeded derivation that keeps `partial` as `ok` failing it; a recorded run with a connections path answering `unsupported`, every row showing the token, with a seeded zero failing it; a counter that goes down, giving a gap, with a seeded subtraction failing it; a partial sample followed by `ok` samples, leaving a gap at the partial point, with a seeded ring that stores partial values failing it; a group of `capacity_mcpu` 0 and a budget of `cap` 0, each giving a gap and its fact, with a seeded division that answers 0 failing it; a session with a scoped facet, see [Verification and testing](#verification-and-testing) |
+| **D2.** No value is shown as other than it came | each derived value carries the worse status of its readings; a status not `ok` reaches the tree as the `attr()` of its text, which the renderer shows as its token (G7); a missing or non-`ok` sample is `none` in `samples`, a gap; a zero denominator is no value | a status dropped on derivation; a gap filled with zero or the last value; a partial sample kept in the ring as a value; a negative rate from a counter that went down; a share of a zero grant shown as 0 or 100 percent | the stats core's status table test over every pair of statuses, with a seeded derivation that keeps `partial` as `ok` failing it; a recorded run with a connections path answering `unsupported`, every row showing the token, with a seeded zero failing it; a counter that goes down, giving a gap, with a seeded subtraction failing it; a partial sample followed by `ok` samples, leaving a gap at the partial point, with a seeded ring that stores partial values failing it; a group of `capacity_mcpu` 0 and a budget of `cap` 0, each giving a gap and its fact, with a seeded division that answers 0 failing it; a session with a scoped facet, see [Verification and testing](#verification-and-testing) |
 | **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok` | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it |
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
 | **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; the renderers have none (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
-| **D7.** The palette meets its contrast rules in both variants | the generator checks every `contrast` row in light and dark | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
+| **D7.** The palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
 | **D8.** A listing costs the session bounded memory and work | the listing worker runs under a heap cap, and information is asked for one page of at most 256 names | a worker spawned without the cap; a lookup of every name | files: bounds, below |
 | **D9.** No worker outlives its window, and a cancelled worker sends nothing | workers are linked, the window traps exits, ends with `shutdown` or its crash reason, and unlinks before it kills | a window that ends `normal`; a kill without the unlink | the window's lifetime tests, below |
 
@@ -1097,7 +1126,7 @@ gate. Each test names the fault that must make it fail.
 | stats: pacing | with an inspector model that answers slowly, at most one sample is in flight | a tick that samples while the last sample waits |
 | stats: answers out of order | an answer of an earlier sample, arriving after a later one, changes nothing | the tag check removed |
 | stats: partial history and zero denominators | a partial sample followed by `ok` samples leaves a gap at the partial point; a group of `capacity_mcpu` 0, a budget of `cap` 0 and a machine of `memory_total` 0, all legal records of the schema, each give a gap and the number's fact | a ring that stores partial values; a division by zero answered as 0 |
-| stats: a scoped facet | with an inspector model that answers as design-live's scoped facet does, for two ordinary principals, `{error, scope}` for `[cpus]` and `[cpus, N]`, a listing of only their own domains, and `[]` with only the `visible any` attributes, the CPU panel and the CPU half of the load panel show `scope`, the memory panel and the rows show values, no count of other domains appears anywhere, and `[cpus]` is asked once | a panel that shows `scope` as 0 percent |
+| stats: a scoped facet | with an inspector model that answers as design-live's scoped facet does, for two ordinary principals, `[]` and `[cpus, N]` with only their `visible any` attributes and a listing of only each principal's own domains, the four machine panels show the same values for both principals, each window's rows are its own principal's domains, and no count of other domains appears anywhere | a CPU panel that reads `running_thread`, which the scoped record leaves out, and shows a gap |
 | clock: states | each `state` and each non-`ok` status gives its row of the table | the state ignored (D3) |
 | clock: ticks | over recorded readings, including a wall step back and forward and an early tick, each tick shows the minute it read and asks for a `tick_after` of the delay from its reading to the next minute's start; a step is shown by the first tick after it | the next tick set 60 s after the last instead of from the reading |
 | month: every month | for every month from 1600 to 2400, the grid's first weekday, length and week numbers equal `calendar`'s | February given 29 days in 1900 |
@@ -1114,8 +1143,8 @@ gate. Each test names the fault that must make it fail.
 ([design-packaging.md](design-packaging.md#the-sdk)), which runs the
 widget server, the schema and the renderer the session runs:
 
-* each program's tree, from recorded inputs and a fixed time, in light
-  and dark, drawn by the Erlang renderer equals its reference frame
+* each program's tree, from recorded inputs and a fixed time, drawn by
+  the Erlang renderer equals its reference frame
   under `test/display/reference/desk/`; a section's radius changed by
   one pixel fails it;
 * the attributed-text corpus of design-live, as file names in files and
@@ -1126,14 +1155,17 @@ widget server, the schema and the renderer the session runs:
   events, values and nodes, the new kinds and properties among them;
   a seeded LVGL reader that drops `none` samples fails it.
 
-**The raster and glyph steps, on the host.** `erx_ui_raster`'s quarter
+**The raster and glyph steps, on the host.** `erx_mask`'s quarter
 disc of radius 1 to 32 sums, row by row, to the disc's area within one
 part in a thousand, and its stroke of a straight line covers each
 column by the stroke's width; a seeded half-pixel offset fails both.
 The glyph step's coverage of a square glyph is exact, its output is
 byte-identical over two runs, and a role whose tabular figures it cannot
 find is refused; a seeded glyph shifted by one pixel fails the
-reference frames above.
+reference frames above. Every icon the `icon` enumeration names has
+paths in `icons.txt`, a straight stroke of an icon covers each column
+by the stroke's width, and the menu's glyph module loads with
+`erx_memdraw:load/3`; a seeded icon without paths fails the generator.
 
 **The widget format additions.** The validator refuses a `role` on a
 kind that does not take it, `icons` of another length than `items`, a
@@ -1150,7 +1182,7 @@ browser renderers, are drawn as their tokens, cut at a whole token in
 LVGL, and every record `erx_ui_lvgl` writes is accepted by the C
 reader; a seeded `erx_ui_lvgl` that escapes without cutting fails it.
 
-**The theme.** D7, and a row with one variant missing, refused.
+**The theme.** D7, and a `contrast` row naming an undeclared colour, refused.
 
 **On QEMU, the `display_domain` suite.** One test, in the suite's one
 cell, HVF at one CPU: the desktop's session runs `files` on a folder
@@ -1172,7 +1204,7 @@ this part starts:
   with each runtime's agent answering its share
   ([design-live.md](design-live.md#the-runtime-agent)); measured as the
   inspector's and the agents' CPU time per sample with twenty domains;
-* `erx_ui_raster`'s graph masks in Erlang: one stroke and one area mask
+* `erx_mask`'s graph masks in Erlang: one stroke and one area mask
   per graph per sample, about twenty-five sparklines and four larger
   graphs at one second; measured as the renderer's time per sample;
 * the Erlang renderer's time for a full files window of 256 items, at
@@ -1183,10 +1215,11 @@ this part starts:
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
 | Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files enter the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive's URL and SHA-256 when they are imported |
+| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations |
 
-The icon set is erXos's own work. The glyph step is erXos's Ruby, with
-no rasteriser dependency; whether the fonts keep it is open ([Open
-decisions](#open-decisions), 11).
+The icon set is erXos's own work, rasterised through FreeType with the
+fonts. What an image carries from the glyph step is the coverage of
+Inter's glyphs and of erXos's icons, never FreeType's code.
 
 ## Alternatives considered
 
@@ -1197,91 +1230,86 @@ decisions](#open-decisions), 11).
 | A graph as a PNG `image` the program encodes each sample | an encoder in the program, a picture of at most 48 KiB, and a value the renderers cannot read: no gap, no status, no parity |
 | Icons as PNG images per item | 256 pictures in a list's tree, past the 64 KiB update, and icons that cannot follow the palette |
 | Anti-aliased shapes in `erx_memdraw` | new native primitives over pixels for what masks already do with one existing draw; masks also cover glyphs and icons, so one mechanism serves all |
-| The Go fonts, which design-display names as an example | drawn by the designers of Lucida, Plan 9's face, and so the look this design moves away from; Inter is drawn for interface sizes and has tabular figures |
-| FreeType as the rasteriser | a third-party C library for a host step that renders a few hundred glyphs once per build; one Ruby rasteriser serves glyphs and icons and keeps the step reproducible and in-tree |
+| The Go fonts | drawn by the designers of Lucida, Plan 9's face, and so the look this design moves away from; Inter is drawn for interface sizes and has tabular figures |
+| A rasteriser of erXos's own in Ruby | outline decoding, curve flattening, exact coverage and stroking with round joins written and tested anew, for output a mature engine already gives; FreeType at a pinned release keeps the step reproducible as well |
+| A dark palette beside the light one | a second value in every colour row, a setting that chooses between them and a second reference frame per program; the first version has one light palette |
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
 
-## Open decisions
+## Decisions
 
-1. **The new mechanisms this design names.** Two are new: the theme,
-   `abi/theme.txt` with its generated module, header and constants, and
-   six additions to `ui.txt` (`role`, `area`, `icon`, `icons`,
-   `current` and `graph`, with list activation as a kind line), with
-   three grammar additions: lists of integers or enumerations with an
-   optional `none`, `within` applied to each value of a list, and
-   `parallel`. Recommendation: accept both. The theme is the one source the
-   look needs, without which every renderer and the decorations would
-   each carry their own copy of the palette; the additions are meaning
-   the tree should state, and each renderer gains them through the one
+1. **The new mechanisms this design names.** Two are new and accepted:
+   the theme, `abi/theme.txt` with its generated module, header and
+   constants, and six additions to `ui.txt` (`role`, `area`, `icon`,
+   `icons`, `current` and `graph`, with list activation as a kind
+   line), with three grammar additions: lists of integers or
+   enumerations with an optional `none`, `within` applied to each value
+   of a list, and `parallel`. The theme is the one source the look
+   needs, without which every renderer and the decorations would each
+   carry their own copy of the palette; the additions are meaning the
+   tree should state, and each renderer gains them through the one
    declaration.
-2. **Copy, move, rename and delete in files.** Recommendation: out of
-   this part. The commands do them; a window that deletes needs a trash
-   or an undo, confirmation and conflict policy, which deserve their own
-   design once there is a desktop to use them on.
-3. **Where light or dark is chosen.** Recommendation: the display's
-   manifest entry, `theme`, carried to the display domain and answered
-   in `screen`, with the session's `ui_theme` as an override, so one
-   setting makes the whole display consistent. The alternative, a
-   session variable alone, leaves the decorations and the background
-   with no way to follow it.
-4. **A title bar.** Recommendation: not in this part. A title bar with
-   the window's label is a modern window's most visible part, and the
-   display already draws labels in its menu; adding one changes
-   `decorate/2`, which returns rectangles and colours, to return
-   a label too, a change to design-display's overlapping policy that
-   should be decided there.
-5. **Time zones.** Recommendation: clock and month show UTC and say so.
-   A zone needs a time zone database and a setting, FreeBSD's
-   `/etc/localtime` over `zoneinfo`, which no design names; that is a
-   design of its own, after which both programs take local time with no
-   other change.
-6. **What the desktop opens at its start.** Recommendation: nothing
-   beyond the terminal, as design-display's desktop session does; the
-   session template's arguments can add `files` and `clock` once a
-   person wants them there.
+2. **Copy, move, rename and delete are not files'.** The commands do
+   them; a window that deletes needs a trash or an undo, confirmation
+   and conflict policy, which deserve their own design once there is a
+   desktop to use them on.
+3. **One palette, light.** The theme declares one palette, so there is
+   no setting to choose between palettes, in the display's manifest
+   entry, in its `screen` file or in a session's environment. A dark
+   palette is work in `TODO.md`.
+4. **No title bar.** A title bar with the window's label would change
+   `decorate/2`, which returns rectangles and colours, to return a label
+   too, a change to design-display's overlapping policy that belongs
+   there; the decorations are borders.
+5. **Time zones.** clock and month show UTC and say so. A zone needs a
+   time zone database and a setting, FreeBSD's `/etc/localtime` over
+   `zoneinfo`, which no design names; that is a design of its own,
+   after which both programs take local time with no other change.
+6. **What the desktop opens at its start.** Nothing beyond the
+   terminal, as design-display's desktop session does; the session
+   template's arguments can add `files` and `clock` once a person wants
+   them there.
 7. **The names.** `stats`, `clock` and `files` are free in FreeBSD's
    `usr.bin`; `cal` and `calendar` are FreeBSD's, so the calendar is
-   `month`. Recommendation: keep these four.
-8. **How the menu loads its glyphs.** design-display's dependency row
-   puts a font in the display release for the menu, and its G9 check
-   keeps `erx_font`, the subfont reader, out of that release, so the
-   menu has no stated way to load glyphs. Recommendation: the glyph step
-   also writes the `body` role's glyphs as generated data, an Erlang
-   module of metrics beside the raw `k8` rows, which the menu loads with
-   `erx_memdraw:load/3`, so the display release reads no font file and
-   G9 is unchanged; design-display records the choice.
-9. **Machine-wide CPU load for ordinary sessions.** The inspection
-   schema marks a CPU's `idle_time` and `ready_threads` `visible all`,
-   so a scoped facet, every session's in a release build, gets `{error,
-   scope}` for them and stats shows its CPU panel as `scope`. Marking
-   the two `visible any`, as `memory_total` and `memory_free` are,
-   would give every session the machine's busy share and run queue,
-   which tell one principal how busy the others keep the machine.
-   Recommendation: keep the schema as it is; stats shows what the scope
-   allows, and machine-wide load stays the system shell's, as design-live
-   puts it. This is a decision on what one principal may learn of
-   another, so it is not stats' to take.
-10. **The LVGL renderer's cut after the escape.** design-display has
-    `erx_ui_lvgl` escape each text before it encodes, and the readers
-    refuse a text past its property's bound, so any program's valid
-    text that is heavy with controls can become a record `erx-lvgl`
-    refuses ([The escape and the wire's
-    bounds](#names-and-contents-are-untrusted)). Recommendation:
-    design-display states that `erx_ui_lvgl` cuts the escaped text to
-    the property's bound at a whole character or token and ends it with
-    an ellipsis, and the parity test carries control-heavy texts of
-    every bound; no program cuts for a renderer.
-11. **The glyph rasteriser.** This design writes its own Ruby
-    rasteriser for the glyph step and the icons. FreeType, or a pinned
-    tool built on it and run as a subprocess, would rasterise the fonts
-    with a mature engine, leaving erXos's Ruby only the icons and the
-    output writers, at the cost of a pinned host dependency.
-    Recommendation: keep the Ruby rasteriser for the icons, whose
-    outlines are simple and erXos's own, and decide the fonts' engine
-    when the glyph step is built, by comparing a FreeType route's output
-    with the Ruby rasteriser's on the reference frames.
+   `month`.
+8. **How the menu loads its glyphs.** The glyph step writes the `body`
+   role's glyphs as generated data, an Erlang module of metrics beside
+   the raw `k8` rows, which the menu loads with `erx_memdraw:load/3`, so
+   the display release reads no font file and G9 is unchanged;
+   design-display records it
+   ([design-display.md](design-display.md#windows-and-the-window-system)).
+9. **Machine-wide CPU load is visible to every session.** The
+   inspection schema marks a CPU's `idle_time` and `ready_threads`
+   `visible any`, as `memory_total` and `memory_free` are, and `[cpus]`
+   carries no `visible all` mark of its own, so a scoped facet reads the
+   machine's busy share and ready threads, and stats' machine panels
+   read the same in every session. The two figures tell one principal
+   how busy the others keep the machine; design-live accepts that side
+   channel beside free memory's ([design-live.md](design-live.md#inspection),
+   "Scopes").
+10. **Padding is inside the node.** A node's `pad` is space between its
+    edge and its content, as LVGL and CSS read padding; design-display's
+    property table and box model say so ([Spacing and
+    layout](#spacing-and-layout)).
+11. **The glyph rasteriser is FreeType**, run as a host build tool:
+    fetched at a pinned release and SHA-256, compiled out of tree, and
+    linked only into erXos's host program `erx-raster`, which rasterises
+    the fonts' glyphs and strokes and rasterises the icons. Nothing of
+    FreeType enters an image.
+
+## Open decisions
+
+1. **The LVGL renderer's cut after the escape.** design-display has
+   `erx_ui_lvgl` escape each text before it encodes, and the readers
+   refuse a text past its property's bound, so any program's valid
+   text that is heavy with controls can become a record `erx-lvgl`
+   refuses ([The escape and the wire's
+   bounds](#names-and-contents-are-untrusted)). Recommendation:
+   design-display states that `erx_ui_lvgl` cuts the escaped text to the
+   property's bound at a whole character or token and ends it with an
+   ellipsis, and the parity test carries control-heavy texts of every
+   bound; no program cuts for a renderer.
 
 ## References
 
@@ -1310,3 +1338,15 @@ decisions](#open-decisions), 11).
   `bb541ffbf5dae3e080d9a9a6609f673efac143426cd0b8c65b1a76fca7619735`)
 * WCAG 2, the contrast ratio's definition, to be cited by the generator
   at the version it implements
+* FreeType 2.15.0, `freetype-2.15.0.tar.xz` (SHA-256 above):
+  `LICENSE.TXT`, lines 9-26, and `docs/FTL.TXT` (SHA-256s above);
+  `docs/INSTALL.ANY`, lines 28 and 134-139 (SHA-256
+  `945ea1d154cdbd7d4de906c012361c7ec8699fce02af952f6bc447dd3b632cc4`);
+  `include/freetype/freetype.h`, lines 3502 and 4428 (SHA-256
+  `7a343a0240598631b53adea94284d376979f42cf215e6ad7cfe932d96762497b`);
+  `include/freetype/ftstroke.h`, lines 136, 168 and 310 (SHA-256
+  `ba4ed8f81ac66e9e6a2cdf772b69da02a0085fc5576cd233e4da661c6fb1967c`);
+  `include/freetype/ftoutln.h`, line 496 (SHA-256
+  `db0585ea338debdb9b721adc5f6d138ec7f88df30ff44cf6fb3cac79a70982f8`);
+  `src/smooth/ftgrays.c`, lines 45-48 and 63 (SHA-256
+  `4ed0d154876ae4caf440224a04df9dc3f4bedd82e2b0fbb7e016de1d718c5379`)

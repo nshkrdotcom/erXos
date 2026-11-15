@@ -6805,6 +6805,16 @@ document's "residual risks accepted" paragraph.
   edited with `vi` in a terminal ([design-vi.md](docs/design-vi.md)). It needs its own design: an Emacs written in
   Erlang, or GNU Emacs or a BSD-licensed Emacs ported, with the license question settled first.
 
+* [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
+  `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and
+  `shadow` row, checked against the same `contrast` rows, and one setting that chooses it. The setting:
+  the display's manifest entry gains `theme` (`light` or `dark`, `light` when
+  absent), which the domain service puts in the display domain's environment as `display_theme`, as it
+  puts `display_keymap`; the decorations, the menu and the background take it there; the display's
+  `screen` file answers it as a third field after the rectangle and the channel, so every renderer on that
+  display takes it; and a session's `ui_theme`, beside `ui_renderer`, overrides it for that session's own
+  windows. Reference frames gain a dark copy per program.
+
 * [Medium] platform (Raspberry Pi 4), hardware watchdog on the stopgap: a board that runs unattended has no
   hardware watchdog behind a hang of Fiasco or of the root's watchdog thread, because the watchdog the
   firmware starts from `kernel_watchdog_timeout` needs a reload that only erXos's kernel makes

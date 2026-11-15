@@ -1331,7 +1331,7 @@ For the desktop:
 For the desktop programs:
 
 * the cores of `stats`, `clock`, `month` and `files`, the theme's
-  generator, the glyph step and `erx_ui_raster`.
+  generator, the glyph step and `erx_mask`.
 
 In this track W1 to W8 name design-web's invariants and G1 to G9
 design-display's, not the plan's gates or E-S1's workloads. Parts that
@@ -1473,12 +1473,14 @@ land after M11 repeat M11's closure over what they add.
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
    `erx_theme.h` and `theme.ts` and checking the palette's contrast
-   rules; the glyph step, rasterising Inter 4.1 into 8-bit subfonts and
-   LVGL fonts and erXos's icon set from `display/icons/icons.txt`;
-   `erx_ui_raster`'s coverage masks in the Erlang renderer; the theme in
+   rules; the glyph step, rasterising Inter 4.1 and erXos's icon set from
+   `display/icons/icons.txt` through FreeType, a host build tool, into
+   8-bit subfonts, LVGL fonts and the menu's glyph module;
+   `erx_mask`'s coverage masks in the Erlang renderer; the theme in
    `erx_wm_rio`'s decorations, `erx_wm_menu` and `erx_screen`'s
-   background, with the display entry's `theme` answered in `screen`
-   ([design-desktop-programs.md](design-desktop-programs.md)).
+   background; `pad` read inside the node by every renderer
+   ([design-desktop-programs.md](design-desktop-programs.md)). Its
+   packages are listed after the exit criteria.
 9. **The web on the network**, after part 2, M10's logins, M11's vault
    and 1b-G's network service with TLS. cowboy over TLS in the web domain;
    `erx_web_login`, its cookies and a session per login; the manifest
@@ -1639,9 +1641,9 @@ over arbitrary terms runs its budget clean.
 [design-desktop-programs.md](design-desktop-programs.md#verification-and-testing)
 pass and each fails on its seeded fault: stats' derivation keeps every
 status (D2), keeps no partial sample as exact, turns a counter that
-goes down or a zero denominator into a gap, shows `scope` for what a
-scoped facet does not see, keeps one sample in flight and drops a
-stale answer; clock never shows an unset clock's reading as a date
+goes down or a zero denominator into a gap, shows the machine's load
+and only the session's own domains to a scoped facet, keeps one sample
+in flight and drops a stale answer; clock never shows an unset clock's reading as a date
 (D3), ticks at each minute's start and shows a wall step by the first
 tick after it; month equals `calendar` for every month from 1600 to
 2400; files acts by index, never by shown text (D4), drops an event
@@ -1651,19 +1653,210 @@ reads at most 16 KiB for a preview; no worker outlives its window
 (D9); every tree from random listings, names and records passes
 `erx_ui_schema` (D5); an idle files window and
 a month without a today issue no tree in a simulated day (D6). Each
-program's frame through `erx_ui_host`, light and dark, equals its
-reference; the attributed-text corpus as file names and a domain name
+program's frame through `erx_ui_host` equals its reference; the attributed-text corpus as file names and a domain name
 draws its tokens; the parity test passes through the Erlang, LVGL and
 browser renderers with the new kinds and properties; the validator
 refuses each malformed addition and the readers' fuzz targets run their
-budgets clean; `erx_ui_raster`'s corners match analytic areas; the glyph
+budgets clean; `erx_mask`'s corners match analytic areas; the glyph
 step's output is byte-identical over two runs; a seeded low-contrast
-colour and a colour with one variant fail the theme's generator (D7);
+colour and a `contrast` row naming an undeclared colour fail the
+theme's generator (D7);
 the source check that `erx_desk` calls only the public surface and
 `erx:inspect/2` catches its seeded call (D1). In the `display_domain`
 suite, a screenshot of `files` and `month 11 2026` equals the reference
 image under HVF, and stats' window presents at least twice in three
 seconds while clock's presents at most once.
+
+**Packages, desktop programs.** Part 8 is built as the packages below,
+each one agent's work of about 50 to 100 tool calls ending in one
+reviewed commit. Each runs the host tests it names while it is written;
+the QEMU cell it names runs once, before its commit. Every QEMU cell is
+the `display_domain` suite's one cell, HVF at one CPU
+(`tools/lib/erx/display_domain.rb`, references under
+`test/display/reference/`). clock is the first program a person sees and
+month the second; both ship on `fixed` glyphs before the theme, and the
+theme's packages then restyle them and re-record month's reference.
+Packages 8.1, 8.2, 8.3, 8.5, 8.6, 8.10, 8.16, 8.17 and 8.19 need no
+display and can start at once, in parallel.
+
+What part 8 builds on, outside its packages:
+
+| Dependency | What it gives part 8 | Where it is |
+| --- | --- | --- |
+| `erx_ui_layout`, the box model | every frame's layout | commit `2f14a5bf8`, on a branch, not on master |
+| `erx_png` and `erx_inflate` | the Erlang renderer's `image` nodes | commit `9ce010cc3`, on a branch, not on master |
+| `erx_font` and the `fixed` subfonts | the first glyphs, and the reader of the glyph step's `k8` subfonts | commit `0987b7b5a`, on a branch, not on master |
+| `erx_draw_core` | the draw connection's state machine | master |
+| `erx_draw_conn` and `erx_draw` | the Erlang renderer's drawing | part 6; work in progress at commit `aa818a2f4`, on a branch |
+| `erx_wm_rio`, `erx_wm_menu`, `erx_term`, the desktop's session, windows under `[domains, Id]` | the overlapping policy and its menu, the terminal the commands run from, and the QEMU cells' present counts | part 6; not written |
+| `erx_ui_erlang`, LVGL in a desktop window, the parity test | the renderer the four draw with | part 7; not written |
+| `erx_ui_lvgl` and `erx-lvgl` | the LVGL renderer | master |
+| `erx_text:escape_line/2`, the cut after the escape | control-heavy texts through LVGL | commit `d347ad93e`, on a branch ([open decision](design-desktop-programs.md#open-decisions) 1) |
+| `erx_ui_browser` | the browser renderer of the parity test | part 2; not written |
+| `erx_ui_host` | host reference frames | track A's second part; not written |
+
+1. **8.1 Padding inside the node.** `erx_ui_layout` reads `pad` inside:
+   a node's `Rect` is what its slot gives it and its `Content` that
+   rectangle less the pad on each side; the box model's rules 1 and 3
+   in design-display say so, and the branch's `TODO.md` item on the two
+   readings is deleted. Start: `erlang/apps/erx_ui/src/erx_ui_layout.erl`
+   and `test/erlang/erx_ui_layout_tests.erl` at `2f14a5bf8`;
+   `display/lvgl/erx_lvgl.c:616`, `pad_all`, which already reads it so.
+   Depends on: `erx_ui_layout`, rebased onto master and landed with this.
+   Tests: a padded node's `Content` is its `Rect` less its pads and its
+   hit rectangle is its `Rect`, over the layout's random trees, where a
+   seeded layout that ignores the pad fails; the three existing seeds
+   still fail. QEMU: none.
+2. **8.2 `erx:inspect/2` and the machine's load for every session.**
+   `erx:inspect(Path, Options)` as design-live's Erlang interface, over
+   `erx_inspector:inspect/2`; `idle_time` and `ready_threads` `visible
+   any`, and no `visible all` on `[cpus]`. Start:
+   `abi/inspection.txt:84-85` and `:170-171`;
+   `erlang/apps/erx/src/erx.erl:12`; `erx_inspector.erl:57`, `:317` and
+   `:350`; `test/erlang/erx_inspector_tests.erl:153` and `:262`;
+   `test/erlang/erx_schema_tests.erl:112`. Depends on: nothing. Tests: a
+   scoped facet reads `[cpus]` and `[cpus, 0]` with `idle_time` and
+   `ready_threads` alone, while `[groups]` stays `{error, scope}`, where
+   a seeded `visible all` left on `[cpus]` fails; `erx:inspect/2` answers
+   what `erx_inspector:inspect/2` does. QEMU: none.
+3. **8.3 The `[time]` record.** The kind `clock` at path `time`,
+   `visible any`, with the time page's attributes collected in the
+   system domain, `state` among them, and the clock service's attributes
+   `unsupported` until that service reports them; `/proc/time/status`.
+   Start: [design-time.md](design-time.md#what-proc-shows), the attribute
+   table; `abi/inspection.txt`; `erx_inspector.erl:317`. Depends on: 8.2.
+   Tests: `state` for each page state, `unset`, `boot` and `set`, where a
+   seeded swap of `boot` and `unset` fails. QEMU: none; on the stopgap
+   `state` reads `unset`, which 8.4's cell shows.
+4. **8.4 clock, the first program.** The application `erx_desk`,
+   `erx_desk_sup`, `erx_desk_window` with the closed effect set, the
+   clock core and the `clock` command, on the widget format as it is
+   (every text in the default `body` role), and D1's source check. Start:
+   `erlang/apps/erx_ui/src/erx_ui.erl:27`;
+   `erlang/apps/erx_shell/src/erx_cmd.erl:53`, the command behaviour;
+   design-desktop-programs' clock and construction sections. Depends on:
+   parts 6 and 7, 8.1, 8.2; 8.3, without which clock shows the
+   `unsupported` token as designed. Tests: clock's states and ticks, the
+   window's lifetime with an inspector model, D5 over clock's trees, D6's
+   one tree a minute, and D1, each with its seeded fault from
+   design-desktop-programs. QEMU: `clock` opened in the desktop session
+   presents at most once in three seconds,
+   where a seeded once-a-second tick fails.
+5. **8.5 `erx_mask`.** The quarter disc, quarter ring, blurred shadow
+   parts, polyline stroke and area masks, in `erx_memdraw`. Start:
+   `erlang/apps/erx_memdraw/src/`. Depends on: nothing. Tests: the disc
+   of radius 1 to 32 within one part in a thousand of its area, the
+   stroke's column coverage, where a seeded half-pixel offset fails
+   both. QEMU: none.
+6. **8.6 The widget format's grammar.** `list NAME ELEMENT MAX [none]`
+   for integers and root enumerations, `within` and `parallel`, through
+   the reader, the validator and the Erlang, C and TypeScript codecs,
+   with the generator's refusal of `none` on a type that holds -2^31
+   and its check that every kind's largest insert fits one 64 KiB
+   update. Start: `tools/lib/erx/abi_ui.rb:215`,
+   `tools/lib/erx/abi_emit_ui.rb`, `abi_emit_ui_wire.rb`,
+   `abi_emit_ui_wire_ts.rb`. Depends on: nothing. Tests: over a test
+   declaration, a list of the wrong length, a value outside `within` and
+   a 241st value refused with reason and path; one list with `none`
+   round-trips identically through the three codecs; a seeded validator
+   without the `parallel` check fails. QEMU: none.
+7. **8.7 The six additions.** `role`, `area`, `icon`, `icons`, `current`,
+   the `graph` kind and list activation declared in
+   `abi/formats/ui.txt`, with fuzz seeds and parity corpus trees
+   generated from the declaration. Start: `abi/formats/ui.txt:18-96`.
+   Depends on: 8.6. Tests: the validator refuses `role` on a `row`,
+   `icons` of another length than `items` and a sample outside `min` and
+   `max`; the readers' fuzz targets take the new seeds. QEMU: none.
+8. **8.8 The renderers draw the additions.** `erx_ui_erlang` and
+   `erx-lvgl` draw `graph` with gaps (libmemdraw's lines, and `lv_chart`
+   with `LV_CHART_POINT_NONE`), `current` as a ring, `area` as a plain
+   rectangle and `icon` as its text alone, until the theme's packages;
+   the browser renderer the same when part 2 has it. Start:
+   `display/lvgl/erx_lvgl.c:430` and `:616`; `erx_ui_erlang` from part 7.
+   Depends on: 8.7, part 7. Tests: the parity test with the new kinds,
+   where a seeded LVGL reader that drops `none` samples fails. QEMU:
+   none.
+9. **8.9 month, the second program.** The month core and the `month`
+   command. Start: `otp/lib/stdlib/src/calendar.erl:297`, `:378` and
+   `:410`. Depends on: 8.4, 8.7, 8.8. Tests: every month from 1600 to
+   2400, every argument form and refusal, D3 for today, D6's midnight
+   tick, each with its seed. QEMU: `month 11 2026`'s screenshot equals a
+   new reference, with no today marked since the stopgap's clock is
+   unset, where a seeded grid that starts a day late fails.
+10. **8.10 The theme.** `abi/theme.txt`, its reader beside
+    `tools/lib/erx/abi_ui.rb` (loaded as `abi_model.rb:1101` loads that
+    one), and `erx_theme` in `erx_memdraw`, `erx_theme.h` and `theme.ts`,
+    with the WCAG 2 contrast ratio fetched at its pinned version and
+    cited. Depends on: nothing. Tests: D7 with a seeded `secondary` of
+    `B0B0B0`; a `contrast` row naming an undeclared colour refused;
+    byte-identical output over two runs. QEMU: none.
+11. **8.11 FreeType, `erx-raster` and the role subfonts.** FreeType
+    2.15.0 pinned in the fetch step and compiled out of tree; the C17
+    host program `erx-raster`; Inter 4.1 imported into
+    `display/fonts/inter/` with its license and origin file;
+    `Erx::Glyphs` writing one `k8` subfont per role. Start:
+    design-desktop-programs' type section and its dependency rows.
+    Depends on: 8.10, `erx_font`. Tests: a square glyph's coverage is
+    exact; output byte-identical over two runs; a role whose tabular
+    figures the font lacks is refused; every subfont parses with
+    `erx_font` and loads into `erx_draw_core`; a seeded one-pixel shift
+    fails the square test. QEMU: none.
+12. **8.12 Icons, LVGL fonts and the menu's glyphs.**
+    `display/icons/icons.txt`, the twenty icons drawn for erXos and
+    stroked through `erx-raster` at 16 and 32 pixels; the icons' SVG
+    path data in `theme.ts`; the LVGL font forms of the roles and the
+    icons; the `body` role's generated menu module. Depends on: 8.11.
+    Tests: every icon `ui.txt` names has paths, where a seeded missing
+    icon fails the generator; a straight stroke covers each column by
+    its width; the menu module loads with `erx_memdraw:load/3` on the
+    host. QEMU: none.
+13. **8.13 The Erlang renderer takes the theme.** Role subfonts, the
+    theme's spacing where the tree gives none, sections with `erx_mask`
+    corners and shadow, icons, the `current` ring and graph masks; clock
+    takes the `display` role; reference frames of clock and month under
+    `test/display/reference/desk/`. Depends on: 8.5, 8.8, 8.10, 8.11,
+    8.12, `erx_ui_host`. Tests: each frame equals its reference, where a
+    section radius one pixel off fails; the attributed-text corpus
+    draws its tokens. QEMU: month's reference re-recorded with the theme;
+    a seeded theme colour fails it.
+14. **8.14 LVGL and the browser take the theme.** `erx-lvgl` builds one
+    style per role from `erx_theme.h` in place of LVGL's default theme,
+    with the role and icon fonts; the browser takes `theme.ts`. Depends
+    on: 8.8, 8.10, 8.12, part 2's browser renderer. Tests: the parity
+    test over clock's and month's trees. QEMU: none.
+15. **8.15 The display takes the theme.** `erx_wm_rio`'s borders in
+    `line` and `accent`, `erx_wm_menu` in the `body` glyphs with the
+    `menu` radius and section shadow, `erx_screen`'s background in
+    `desktop`. Depends on: part 6, 8.5, 8.10, 8.12. Tests: G9's check
+    still passes, where a seeded dependency on `erx_font` fails it; the
+    policies' tests over the new colours. QEMU: the display's references
+    re-recorded.
+16. **8.16 The inspector's domain records.** `[domains]`, a domain's
+    record with `name`, `state` and `run_queue`, and its `group` and
+    `budget` collected; `connections` stays `unsupported`. Start:
+    `TODO.md`, the inspector item listing what is not collected;
+    `erx_inspector.erl:206`. Depends on: 8.2. Tests: a scoped facet
+    lists only its domains, where a seeded listing of every domain
+    fails. QEMU: none.
+17. **8.17 The stats core.** Derivation, the rings, pacing and stale
+    answers, on the host. Depends on: nothing. Tests: design-desktop-
+    programs' stats rows, each with its seed. QEMU: none.
+18. **8.18 stats.** The stats window and command. Depends on: 8.4,
+    8.7, 8.16, 8.17. Tests: D5 over stats' trees, and pacing with the
+    real effects against a slow inspector model. QEMU: stats presents at
+    least twice in three seconds, where a seeded stats that never
+    samples fails.
+19. **8.19 The files core.** Kinds, sorting, paging, acting by index,
+    the text test and the preview, on the host. Depends on: nothing.
+    Tests: design-desktop-programs' files rows, D4 and D5, each with its
+    seed. QEMU: none.
+20. **8.20 files.** The files window and command, the listing worker's
+    heap cap, `stat` and `read` effects and copy path. Start:
+    `otp/erts/preloaded/src/erlang.erl:8109`, `max_heap_size`. Depends
+    on: 8.4, 8.7, 8.19. Tests: files' bounds and the window's lifetime,
+    each with its seed. QEMU: `files` on a folder of the suite's image
+    beside `month 11 2026`, the design's screenshot, where a seeded
+    sort that puts folders first fails.
 
 **Exit criteria, the web on the network.** Two principals logged in
 through cowboy each see their own `/proc` snapshots and `ended scope` for

@@ -1363,7 +1363,7 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `key` | an integer, an atom or a binary of at most 255 bytes | every kind | the node's identity among its siblings (below); it never leaves the widget server |
 | `width`, `height` | integer 0 to 16,384 | every kind | a size hint in the renderer's unit: a pixel on a display, a CSS pixel in the browser |
 | `weight` | integer 0 to 255 | every kind | the node's share of the room its row or column has left over |
-| `pad` | integer 0 to 255 | every kind | space around the node, in the same unit |
+| `pad` | integer 0 to 255 | every kind | space inside the node, between its edge and its content on each side, in the same unit; the node's background, border and hit area cover it, as LVGL's and CSS's padding do |
 | `align` | `start`, `center`, `end` or `fill`; `fill` when absent | every kind | placement within the room the node gets |
 | `visible`, `enabled` | boolean; `true` when absent | every kind | whether the node is shown, and whether it takes input |
 | `present` | a presentation, `{Type, Value}`, or an `attr()` carrying one | every kind | a typed value ([Presentations](#presentations)) |
@@ -1906,7 +1906,19 @@ into an image of the display domain's own memory, which `erx_screen`
 shows above every window as an overlay. It has no item that
 starts a program, a terminal included: the display domain has no
 authority to start one in a session, and a terminal opens its sibling
-windows itself ([The terminal](#the-terminal)).
+windows itself ([The terminal](#the-terminal)). The borders, the menu
+and the background take their colours, radii and shadow from the
+desktop's theme, `erx_theme`, generated constants in `erx_memdraw`
+([design-desktop-programs.md](design-desktop-programs.md#the-theme-one-declaration)),
+and the menu's rounded corners and shadow are 8-bit masks from
+`erx_mask`, a pure Erlang module of `erx_memdraw` that the Erlang
+renderer shares.
+The menu's glyphs are the theme's `body` role, which the build's glyph
+step writes as a generated Erlang module of each glyph's metrics and
+raw 8-bit coverage rows; `erx_wm_menu` loads them into an image of its
+own with `erx_memdraw:load/3` and draws each glyph through it as a
+mask, so the display release holds glyphs as data and no font file and
+no font reader (G9).
 
 **The current window** is the one the overlapping policy sends key
 events to and whose border it marks. The policy's state holds the
@@ -4996,7 +5008,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
 | LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
-| a bitmap font as Plan 9 subfonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, and of the menu, in the display's | plan9port's `fixed` fonts (public domain); anti-aliased fonts, such as the Go fonts (BSD-3-Clause) rasterised by a host step, chosen with the first application that needs them | permanent |
+| fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain) for the terminal; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
 | `vttest`, Thomas Dickey's | the source of the corpus's `vttest` recordings | MIT-style (X11), confirmed at the pin | test tool, never in an image; fetched at a pinned release and SHA-256, built out of tree for the host and run on a host pseudo-terminal |
 | FreeBSD 15.1's `share/termcap/termcap`, from the pinned FreeBSD source | the `xterm` and `vt100` entries `abi/termcap` restricts | BSD-3-Clause, confirmed at the pin | reference; the restricted entries are erXos's text in `abi/termcap` |
@@ -5091,8 +5103,9 @@ Decisions:
    second display an application names
    ([design-web.md](design-web.md)).
 4. **Fonts.** plan9port's `fixed` fonts serve the terminal and the first
-   widgets; anti-aliased fonts (the Go fonts, rasterised by a host step)
-   are chosen with the first application that needs them.
+   widgets; the anti-aliased fonts are the desktop theme's, Inter 4.1,
+   rasterised at build through FreeType
+   ([design-desktop-programs.md](design-desktop-programs.md#type)).
 5. **A terminal is a program of its session.** `erx_term` runs in the
    session domain, makes its window through the session's grant and is
    the master of a tty of the session's terminal relay; the display
