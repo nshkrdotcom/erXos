@@ -46,6 +46,7 @@ these two. Third-party notices remain in their original files.
   "revision": "release/15.1.0-p6 (95719d8a895bf8170851e9844d9b4092b1d2b6fe)",
   "archive_sha256": "6fc6e5a43ff2f695ce61dd9532309c40fd8ba4f0c7f52c52a576aadb64b91e6e",
   "exclusions": [],
+  "removed": [],
   "files": {
     "chacha.c": {
       "license": "LicenseRef-DJB-public-domain",

@@ -50,6 +50,7 @@ Third-party notices remain in their original files.
   "revision": "1.8.7 (f3149ec5bb5449af877ba20377a11008ff499fa2)",
   "archive_sha256": "00a0d839dabfb693a6320d93a08e6ec74e0c4d3627627e24f2e2f087970c2527",
   "exclusions": [],
+  "removed": [],
   "files": {
     "LICENSE_A2LLVM": {
       "license": "Apache-2.0 WITH LLVM-exception",

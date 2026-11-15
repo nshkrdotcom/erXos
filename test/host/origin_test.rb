@@ -141,6 +141,34 @@ class OriginTest < Minitest::Test
     assert_includes error.message, 'source.c'
   end
 
+  # An imported file erXos deleted is listed under removed with its reason: the
+  # check accepts its absence, and refuses it if it comes back.
+  def test_a_removed_file_is_accepted_absent_and_refused_present
+    write_file('source.c', "/* upstream */\nint value;\n")
+    write_file('gone.c', "/* upstream */\nint gone;\n")
+    write_origin
+    File.unlink(File.join(@directory, 'gone.c'))
+    replace_inventory do |payload|
+      payload.merge('removed' => [{ 'path' => 'gone.c', 'reason' => 'the generated header replaces it' }])
+    end
+    assert @origin.check
+    write_file('gone.c', "/* upstream */\nint gone;\n")
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_match(/recorded as removed is present: gone\.c/, error.message)
+  end
+
+  # Seeded fault: a removal must name an imported file, so it cannot stand in
+  # for an exclusion or hide a file the inventory never listed.
+  def test_a_removal_must_name_an_imported_file
+    write_file('source.c', "/* upstream */\nint value;\n")
+    write_origin
+    replace_inventory do |payload|
+      payload.merge('removed' => [{ 'path' => 'other.c', 'reason' => 'never imported' }])
+    end
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_match(/removal names no imported file: other\.c/, error.message)
+  end
+
   def test_deleted_file_with_an_explicit_change_record_is_rejected
     write_file('source.c', "/* upstream */\n")
     write_origin

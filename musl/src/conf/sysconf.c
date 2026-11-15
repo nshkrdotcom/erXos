@@ -1,3 +1,4 @@
+/* Modified by erXos: _SC_RTSIG_MAX counts the realtime range of the generated bits/signum.h. */
 #include <unistd.h>
 #include <limits.h>
 #include <errno.h>
@@ -59,7 +60,7 @@ long sysconf(int name)
 		[_SC_MQ_PRIO_MAX] = JT_MQ_PRIO_MAX,
 		[_SC_VERSION] = VER,
 		[_SC_PAGE_SIZE] = JT_PAGE_SIZE,
-		[_SC_RTSIG_MAX] = _NSIG - 1 - 31 - 3,
+		[_SC_RTSIG_MAX] = SIGRTMAX - SIGRTMIN + 1,
 		[_SC_SEM_NSEMS_MAX] = SEM_NSEMS_MAX,
 		[_SC_SEM_VALUE_MAX] = JT_SEM_VALUE_MAX,
 		[_SC_SIGQUEUE_MAX] = -1,

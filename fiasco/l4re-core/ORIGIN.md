@@ -32639,6 +32639,7 @@ Third-party notices remain in their original files.
       "reason": "the stopgap's user programs link no compiler runtime library or object, and libgcc is GPL-3.0-only WITH GCC-exception-3.1"
     }
   ],
+  "removed": [],
   "files": {
     "LICENSE.spdx": {
       "license": "CC0-1.0",

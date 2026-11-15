@@ -6,6 +6,7 @@ require 'fileutils'
 require 'open3'
 require_relative 'error'
 require_relative 'generated'
+require_relative 'abi_emit_musl'
 
 module Erx
   # erXos's musl, built out of its tree by its own Makefile for the erxos arch.
@@ -49,10 +50,13 @@ module Erx
       File.join(directory, 'lib/libc.a')
     end
 
-    # In search order, for a program compiled with -nostdinc against this musl.
+    # In search order, for a program compiled with -nostdinc against this musl. The
+    # headers generated from the ABI files come last, as arch/erxos/arch.mak searches
+    # them when musl builds itself.
     def include_directories(directory:)
       [File.join(directory, 'obj/include'), File.join(source, 'arch', ARCH), File.join(source, 'arch', CPU),
-       File.join(source, 'arch/generic'), File.join(source, 'include')]
+       File.join(source, 'arch/generic'), File.join(source, 'include'),
+       File.join(@root, Generated::OUTPUT, ABI::MuslEmitter::INCLUDE)]
     end
 
     # The headers of include_directories as one tree under into, for a build that looks

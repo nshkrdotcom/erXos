@@ -268,7 +268,11 @@ matter for code review, and a copy that erXos deletes loses its row. The check r
 cannot detect one whose notices someone rewrote, which is a matter for code
 review. A changed binary or another file that cannot hold a comment has an explicit
 change entry in its origin document. Every recorded file must remain present with its recorded file
-type; deleting one fails the check. Import selection removes excluded files
+type; deleting one fails the check, unless the origin document lists it under `removed`, each
+entry a path the inventory records and a one-line reason, such as a generated header that
+replaces it. A listed file whose path comes back fails the check, so a removal never hides a
+file, and the inventory keeps its row, so the record of what was imported stays whole.
+Import selection removes excluded files
 before creating the inventory.
 The check discovers changed files from the comparison rather than a
 separate list of expected modifications. The ASCII check covers

@@ -1,3 +1,4 @@
+/* Modified by erXos: SIGRTMIN and SIGRTMAX are the constants of the generated bits/signum.h. */
 #ifndef _SIGNAL_H
 #define _SIGNAL_H
 
@@ -203,12 +204,6 @@ struct sigevent {
 #define SIGEV_NONE 1
 #define SIGEV_THREAD 2
 #define SIGEV_THREAD_ID 4
-
-int __libc_current_sigrtmin(void);
-int __libc_current_sigrtmax(void);
-
-#define SIGRTMIN  (__libc_current_sigrtmin())
-#define SIGRTMAX  (__libc_current_sigrtmax())
 
 int kill(pid_t, int);
 

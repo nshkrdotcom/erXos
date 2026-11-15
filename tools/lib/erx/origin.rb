@@ -172,7 +172,7 @@ module Erx
       display/lvgl/lvgl
     ].freeze
     INVENTORY_MARKER = "\n```json\n"
-    PAYLOAD_FIELDS = %w[version repository revision archive_sha256 exclusions files changes].freeze
+    PAYLOAD_FIELDS = %w[version repository revision archive_sha256 exclusions removed files changes].freeze
     MODIFIED_NOTICE = 'Modified by erXos'
 
     def initialize(root:, read_bytes: nil, authorize: nil, known_hash: nil)
@@ -191,7 +191,7 @@ module Erx
         [path, inventory_entry(path, review: review)]
       end
       payload = { 'version' => 1, 'repository' => repository, 'revision' => revision,
-                  'archive_sha256' => archive_sha256, 'exclusions' => exclusions,
+                  'archive_sha256' => archive_sha256, 'exclusions' => exclusions, 'removed' => [],
                   'files' => inventory, 'changes' => {} }
       validate_inventory(payload)
       text = "# Source origin\n\nRepository: #{repository}\n\nRevision: #{revision}\n\n" \
@@ -206,7 +206,10 @@ module Erx
       payload = read
       original = payload.fetch('files')
       current = files
-      required = original.keys | payload.fetch('changes').keys
+      removed = payload.fetch('removed').map { |removal| removal.fetch('path') }
+      restored = removed & current
+      raise Error, "imported file recorded as removed is present: #{restored.first}" unless restored.empty?
+      required = (original.keys - removed) | payload.fetch('changes').keys
       missing = required - current
       raise Error, "imported source file is missing: #{missing.first}" unless missing.empty?
       current.each do |path|
@@ -263,7 +266,8 @@ module Erx
       read
     end
 
-    # The inventory's row for a file as imported; nil for a file it does not list.
+    # The inventory's row for a file as imported, which a removed file keeps; nil
+    # for a file it does not list.
     def imported_file(path) = read.fetch('files')[path]
 
     private
@@ -342,7 +346,8 @@ module Erx
     def validate_inventory(payload)
       unless payload.is_a?(Hash) && payload.keys.sort == PAYLOAD_FIELDS.sort &&
              payload.fetch('version') == 1 && payload.fetch('files').is_a?(Hash) &&
-             payload.fetch('changes').is_a?(Hash) && payload.fetch('exclusions').is_a?(Array)
+             payload.fetch('changes').is_a?(Hash) && payload.fetch('exclusions').is_a?(Array) &&
+             payload.fetch('removed').is_a?(Array)
         raise Error, 'invalid origin inventory fields'
       end
       %w[repository revision].each { |field| validate_text(payload.fetch(field)) }
@@ -355,6 +360,7 @@ module Erx
         validate_text(exclusion.fetch('reason'))
       end
       payload.fetch('files').each { |path, entry| validate_entry(path, entry: entry) }
+      validate_removals(payload)
       validate_copies(payload.fetch('files'), exclusions: payload.fetch('exclusions'))
       payload.fetch('changes').each do |path, change|
         validate_path(path)
@@ -365,6 +371,25 @@ module Erx
         validate_text(change.fetch('evidence'))
         validate_hash(change.fetch('sha256'))
       end
+    end
+
+    # An imported file erXos deleted is listed under removed with a one-line
+    # reason. It names a file the inventory records, once, and no explicit
+    # change, so the record of what was imported stays whole and a removal
+    # never stands in for an exclusion.
+    def validate_removals(payload)
+      paths = payload.fetch('removed').map do |removal|
+        raise Error, 'invalid import removal' unless removal.is_a?(Hash) && removal.keys.sort == %w[path reason]
+
+        validate_path(removal.fetch('path'))
+        validate_text(removal.fetch('reason'))
+        removal.fetch('path')
+      end
+      unknown = paths.reject { |path| payload.fetch('files').key?(path) }
+      raise Error, "import removal names no imported file: #{unknown.first}" unless unknown.empty?
+      changed = paths.select { |path| payload.fetch('changes').key?(path) }
+      raise Error, "import removal names a file with an explicit change: #{changed.first}" unless changed.empty?
+      raise Error, 'import removal is listed twice' unless paths.uniq.size == paths.size
     end
 
     def read_content(path, maximum: nil)

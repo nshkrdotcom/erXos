@@ -16,6 +16,16 @@ Third-party notices remain in their original files.
   "exclusions": [
 
   ],
+  "removed": [
+    {
+      "path": "src/signal/sigrtmax.c",
+      "reason": "SIGRTMAX is a constant of the bits/signum.h generated from abi/signals.txt"
+    },
+    {
+      "path": "src/signal/sigrtmin.c",
+      "reason": "SIGRTMIN is a constant of the bits/signum.h generated from abi/signals.txt"
+    }
+  ],
   "files": {
     ".gitignore": {
       "license": "MIT",

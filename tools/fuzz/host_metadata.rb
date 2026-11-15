@@ -36,7 +36,7 @@ module Erx
                 'translation' => 'tla', 'deadline' => 10, 'deadlock' => 'check',
                 'scope' => 'finite', 'expect' => { 'kind' => 'pass' } }
       origin = { 'version' => 1, 'repository' => 'https://example.org/source', 'revision' => '1',
-                 'archive_sha256' => 'a' * 64, 'exclusions' => [], 'files' => {}, 'changes' => {} }
+                 'archive_sha256' => 'a' * 64, 'exclusions' => [], 'removed' => [], 'files' => {}, 'changes' => {} }
       source = { 'id' => 'fixture', 'kind' => 'file', 'version' => '1',
                  'url' => 'https://example.org/tool.jar', 'sha256' => 'a' * 64,
                  'filename' => 'tool.jar', 'license' => 'MIT', 'status' => 'permanent' }

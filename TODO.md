@@ -7260,24 +7260,25 @@ document's "residual risks accepted" paragraph.
   images it gives 2.9 s (raw data: ~/erxos-history commit 34d0390, `boot-slow-2026-11-11`). Rule C, a session
   taking the console only with its namespace in place, is the design
   ([design-system.md](docs/design-system.md#a-session-takes-the-console)).
-* [Medium] musl, `musl/arch/aarch64/bits/signal.h`, `abi/signals.txt`,
-  `erlang/apps/erx_shell/src/erx_shell_jobs.erl`: give erXos's musl FreeBSD's signal numbers from the signal
-  table of the ABI file ([design-programs.md](docs/design-programs.md#signal-numbers)). The table holds each
-  signal's name, number, default action and description, number 34 as reserved, and generates the `ERX_SIG`
-  constants, `erx_sig_name`, `erx_sig_action` and `erx_sig_valid` in `erx/abi.h` and the Erlang
-  `erx_abi_signals`; its numbers are compared with FreeBSD 15.1's `sys/sys/signal.h`, and its names and
-  descriptions with `sys_signame` and `sys_siglist` in `lib/libc/gen/siglist.c`. Today musl keeps Linux's
-  numbers (`bits/signal.h`, `SIGSTOP` 19, `SIGCONT` 18, `SIGPWR` 30, `_NSIG` 65), its real-time range starts at
-  35 (`musl/src/signal/sigrtmin.c`), and the shell's `?SIGNALS` writes
-  FreeBSD's numbers by hand. The work: musl's number header
-  and set of valid signals generated from the table; `erx_prog`, the protocol's grammar and the shell on
-  `erx_abi_signals`; in musl, the
-  generated header in place of the Linux block, `SIGRTMIN` 65 and `SIGRTMAX` 126 as constants, `_NSIG` 128,
-  the generated predicate in `sigaddset`, `sigdelset`, `sigismember`, `sigaction` and `pthread_kill`,
-  `sigfillset`'s generated set, `strsignal` on FreeBSD's text, `sysconf(_SC_RTSIG_MAX)` 62, and new
-  `sig2str`, `str2sig`, `sys_signame`, `sys_siglist` and `sys_nsig`; the shell's table read from the generated
-  one; the `difference` kind in `test/conformance/libc-test-verdicts.txt` and `tools/lib/erx/libc_test.rb`;
-  the tests of design-programs.md's "Signal numbers" bullet. The package lands before the Track P ports.
+* [Medium] musl, `abi/signals.txt`, `erlang/apps/erx_shell/src/erx_shell_jobs.erl`: finish FreeBSD's signal
+  numbers from the signal table of the ABI file ([design-programs.md](docs/design-programs.md#signal-numbers)).
+  The table generates the `ERX_SIG` constants, `erx_sig_name`, `erx_sig_action`, `erx_sig_valid` and
+  `erx_sig_description` in `erx/abi.h`, the Erlang `erx_abi_signals`, and musl's `bits/signum.h` (the numbers,
+  `SIGRTMIN` 65, `SIGRTMAX` 126 and `_NSIG` 128), which `strsignal` and `sysconf(_SC_RTSIG_MAX)` follow. The
+  shell's `?SIGNALS` still writes FreeBSD's numbers by hand. The work left: `erx_prog`, the protocol's grammar
+  and the shell on `erx_abi_signals`; in musl, the generated predicate in `sigaddset`, `sigdelset`,
+  `sigismember`, `sigaction` and `pthread_kill` in place of their range tests (today a number 35 to 64 or 127
+  enters a set, and `sigaction` refuses it only at liberx's `erx_prog_sig_check`), `sigfillset`'s generated
+  set, `strsignal`'s and `psignal`'s `Unknown signal: N` (musl's catch-all `Unknown signal` stands), and new
+  `sig2str`, `str2sig`, `sys_signame`, `sys_siglist` and `sys_nsig`; the `difference` kind in
+  `test/conformance/libc-test-verdicts.txt` and `tools/lib/erx/libc_test.rb`; the tests of design-programs.md's
+  "Signal numbers" bullet. With `sig2str`, the table's reserved numbers take one form,
+  `reserved_signal NUMBER [NAME [alias NAME]]` for 32, 33 and 34, so a `signal` line always has a description
+  and a default action, and the unnamed ones leave `SignalTable#signals`, whose every entry then has a name
+  (`tools/lib/erx/abi_signals.rb`), and musl's `SIGTIMER`, `SIGCANCEL` and `SIGSYNCCALL`
+  (`musl/src/internal/pthread_impl.h`) come from it; and the ABI lexer refuses a `\xNN` escape below 32 or of
+  127, as it refuses the raw byte, before a description reaches a terminal through `strsignal`
+  (`tools/lib/erx/abi_source.rb`). The package lands before the Track P ports.
 * [Medium] ABI, `abi/errno.txt`, `tools/lib/erx/abi_errno.rb`: the errno table lists every name of musl's
   `errno.h` and `erx_abi_errno` maps names and numbers, but the directed mappings of
   [design-programs.md](docs/design-programs.md#the-posix-lite-personality)'s "Errors and absent calls" are not
@@ -7305,12 +7306,6 @@ document's "residual risks accepted" paragraph.
   specify that with the first request that needs it.
   ones on every architecture erXos targets). The frame grammar's
   `errno` kind joins with the first reply that carries an error name (P2a).
-  the tests of design-programs.md's "Signal numbers" bullet. The package also carries the errno numbers as
-  a table of the ABI file, and lands before the Track P ports. With `strsignal`, the table's reserved numbers
-  take one form, `reserved_signal NUMBER [NAME [alias NAME]]` for 32, 33 and 34, so a `signal` line always has
-  a description and a default action, and the unnamed ones leave `SignalTable#signals`, whose every entry
-  then has a name (`tools/lib/erx/abi_signals.rb`); and the ABI lexer refuses a `\xNN` escape below 32 or of
-  127, as it refuses the raw byte, before a description reaches a terminal (`tools/lib/erx/abi_source.rb`).
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

@@ -8,6 +8,8 @@ require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/abi'
 require_relative '../../tools/lib/erx/dependencies'
+require_relative '../../tools/lib/erx/musl'
+require_relative '../fixtures/generated_tree'
 
 # The signal table of the ABI file (abi/signals.txt) against FreeBSD 15.1's
 # sys/sys/signal.h and lib/libc/gen/siglist.c at deps.lock's freebsd-signal
@@ -109,8 +111,10 @@ class AbiSignalsTest < Minitest::Test
         {
         	for (int n = -1; n <= 200; n++) {
         		const char *name = erx_sig_name(n);
+        		const char *description = erx_sig_description(n);
 
-        		printf("%d %d %d %s\\n", n, erx_sig_valid(n), erx_sig_action(n), name ? name : "-");
+        		printf("%d %d %d %s %s\\n", n, erx_sig_valid(n), erx_sig_action(n), name ? name : "-",
+        		    description ? description : "-");
         	}
         	return (0);
         }
@@ -129,6 +133,8 @@ class AbiSignalsTest < Minitest::Test
                    23 => 'IGNORE', 32 => 'RESERVED', 34 => 'RESERVED', 35 => 'NONE', 64 => 'NONE',
                    126 => 'TERMINATE', 127 => 'NONE' }
       assert_equal expected.transform_values { |action| action_value(action) }, actions.slice(*expected.keys)
+      described = rows.to_h { |row| [Integer(row[0]), row.drop(4).join(' ')] }
+      assert_equal(described(ROOT).transform_values(&:last), described.reject { |_n, text| text == '-' })
     end
   end
 
@@ -178,6 +184,23 @@ class AbiSignalsTest < Minitest::Test
     end
   end
 
+  # musl's <signal.h>, compiled through the include directories erXos's musl
+  # builds programs with, defines each name and alias of the table with its
+  # number, SIGRTMIN and SIGRTMAX as the realtime range's ends, _NSIG as the
+  # set's 128 bits, and no signal the table does not list. The signals the C
+  # library keeps are defined only for _BSD_SOURCE or _GNU_SOURCE.
+  def test_musl_signal_header_matches_the_table
+    table = schema_of(ROOT).signals
+    numbers = table.signals.select(&:name).to_h { |signal| [signal.name.upcase, signal.number] }
+    constants = numbers.select { |name, _number| name.match?(/\A[A-Z][A-Z0-9]*\z/) }
+                       .merge(table.aliases.to_h { |alias_name, name| [alias_name.upcase, numbers.fetch(name.upcase)] })
+                       .merge('_NSIG' => 128)
+    kept = %w[THR LWP LIBRT]
+    assert_equal constants.sort.to_h, musl_signal_macros('-D_BSD_SOURCE')
+    assert_equal constants.sort.to_h, musl_signal_macros('-D_GNU_SOURCE')
+    assert_equal constants.except(*kept).sort.to_h, musl_signal_macros('-D_POSIX_C_SOURCE=200809L')
+  end
+
   # Seeded fault: two signals that share an alias fail generation.
   def test_shared_alias_fails_generation
     seed = ->(text) { text.sub(/^signal thr 32 reserved alias lwp$/, 'signal thr 32 reserved alias iot') }
@@ -196,6 +219,29 @@ class AbiSignalsTest < Minitest::Test
       File.write(path, seed.call(text))
       error = assert_raises(Erx::ABI::SchemaError) { header_of(root) }
       assert_match message, error.message
+    end
+  end
+
+  # musl's <signal.h> as a program compiled against erXos's musl with the
+  # feature macro sees it: each SIG macro, without SIG, whose value is a
+  # number or another SIG macro (resolved), and _NSIG. SIGSTKSZ is a size,
+  # not a signal.
+  def musl_signal_macros(feature)
+    Dir.mktmpdir('erx-musl-signal-') do |work|
+      clang = ENV.fetch('ERX_CLANG', 'clang')
+      alltypes = File.join(work, 'obj/include/bits/alltypes.h')
+      FileUtils.mkdir_p(File.dirname(alltypes))
+      File.write(alltypes, execute('sed', '-f', File.join(ROOT, 'musl/tools/mkalltypes.sed'),
+                                   File.join(ROOT, 'musl/arch/aarch64/bits/alltypes.h.in'),
+                                   File.join(ROOT, 'musl/include/alltypes.h.in')))
+      source = File.join(work, 'signals.c')
+      File.write(source, "#include <signal.h>\n")
+      includes = Erx::Musl.new(root: ROOT, runner: nil, compiler: clang).include_directories(directory: work)
+                          .flat_map { |path| ['-isystem', path] }
+      macros = execute(*LIMIT, clang, '--target=aarch64-none-elf', '-nostdinc', '-std=c17', feature,
+                       *includes, '-E', '-dM', source)
+      defines = macros.scan(/^#define (SIG[A-Z0-9]+|_NSIG) (\S+)$/).to_h.except('SIGSTKSZ')
+      defines.to_h { |name, value| [name.delete_prefix('SIG'), Integer(defines.fetch(value, value))] }.sort.to_h
     end
   end
 

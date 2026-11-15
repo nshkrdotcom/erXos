@@ -121,6 +121,7 @@ Third-party notices remain in their original files.
       "reason": "an empty directory the release carries, which nothing reads"
     }
   ],
+  "removed": [],
   "files": {
     ".ctags.d/add-dir.ctags": {
       "license": "Apache-2.0",

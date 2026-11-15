@@ -2166,8 +2166,8 @@ program, through the C library seam
 ([design-runtime.md](design-runtime.md#the-c-library-seam)), which on
 erXos cancels by stopping the target thread rather than by signalling it;
 none is a name of the program protocol. `<signal.h>` defines `SIGTHR`,
-`SIGLWP` and `SIGLIBRT` under `_BSD_SOURCE`, as FreeBSD defines them under
-`__BSD_VISIBLE`, so code that names them builds; `sigaction` of one fails
+`SIGLWP` and `SIGLIBRT` under `_BSD_SOURCE` or `_GNU_SOURCE`, as musl gates
+its other BSD names and FreeBSD defines them under `__BSD_VISIBLE`, so code that names them builds; `sigaction` of one fails
 with `EINVAL`, as FreeBSD's thread library refuses `SIGTHR`.
 
 **Linux's own names.** `SIGPOLL` stays, as an alias of `SIGIO`, which adds
@@ -2184,7 +2184,8 @@ rather than at run time.
 126, constants generated from the table, as FreeBSD's are; musl's
 `__libc_current_sigrtmin` and `__libc_current_sigrtmax` go. `_NSIG` is
 128, as in musl's MIPS port, so a set passed through the seam is 16 bytes,
-whose 128 bits hold every number up to 128. `sigset_t` keeps musl's
+whose 128 bits hold every number up to 128, and musl's calls on a set take
+the numbers below `_NSIG`, which hold every signal up to `SIGRTMAX`. `sigset_t` keeps musl's
 128-byte storage, of which those 16 bytes are used. `NSIG` stays `_NSIG`,
 128, where FreeBSD's is 32: code written for Linux sizes per-signal arrays
 by `NSIG` and indexes them with real-time numbers, which an `NSIG` of 32

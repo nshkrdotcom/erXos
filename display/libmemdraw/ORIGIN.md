@@ -111,6 +111,7 @@ Third-party notices remain in their original files.
   "revision": "2859ae04e800737307470538a942ab8f8261253b",
   "archive_sha256": "f370f3008b10d3e26a96d30d9a2920c421b5f1e7b644d50e20b6f5bd730ce9f7",
   "exclusions": [],
+  "removed": [],
   "files": {
     "alloc.c": {
       "license": "MIT",

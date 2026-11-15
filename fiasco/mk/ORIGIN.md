@@ -16,6 +16,7 @@ Third-party notices remain in their original files.
   "exclusions": [
 
   ],
+  "removed": [],
   "files": {
     ".gitignore": {
       "license": "MIT",

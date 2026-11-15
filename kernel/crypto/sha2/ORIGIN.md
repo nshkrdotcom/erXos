@@ -37,6 +37,7 @@ Third-party notices remain in their original files.
   "revision": "release/15.1.0-p6 (95719d8a895bf8170851e9844d9b4092b1d2b6fe)",
   "archive_sha256": "2b1d9ac6be0420b103ad64e9071d443a6b841242893520ef5abf73ce9b065210",
   "exclusions": [],
+  "removed": [],
   "files": {
     "sha256.h": {
       "license": "BSD-2-Clause",

@@ -16,7 +16,16 @@ module Erx
     end
     # The signal table: every signal in number order, and each alias with
     # the name of the signal it stands for.
-    SignalTable = Struct.new(:signals, :aliases, keyword_init: true)
+    SignalTable = Struct.new(:signals, :aliases, keyword_init: true) do
+      # The names a header defines as constants, each with the signal it
+      # stands for: every name that is an identifier (hup, rtmin, but not
+      # rtmin+1), in number order, then every alias (iot).
+      def identifiers
+        named = signals.select(&:name).to_h { |signal| [signal.name, signal] }
+        named.select { |name, _signal| name.match?(Signals::NAME) }
+             .merge(aliases.transform_values { |name| named.fetch(name) })
+      end
+    end
     # One row of the fault table: a fault kind's name and number, and the
     # signal that ends a program whose thread faults with that kind.
     FaultSignal = Struct.new(:kind, :value, :signal, keyword_init: true)
@@ -104,10 +113,7 @@ module Erx
       def constants(table)
         return {} if table.signals.empty?
 
-        numbers = table.signals.select(&:name).to_h { |signal| [signal.name, signal.number] }
-        named = numbers.select { |name, _number| name.match?(NAME) }
-        aliases = table.aliases.transform_values { |name| numbers.fetch(name) }
-        named.merge(aliases).transform_keys { |name| "sig#{name}" }
+        table.identifiers.to_h { |name, signal| ["sig#{name}", signal.number] }
              .merge(ACTIONS.transform_keys { |action| "sig_action_#{action}" })
       end
 

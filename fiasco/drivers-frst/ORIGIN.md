@@ -327,6 +327,7 @@ Third-party notices remain in their original files.
       "reason": "outside the frozen bootstrap, sigma0 and kernel source selection"
     }
   ],
+  "removed": [],
   "files": {
     "Control": {
       "license": "MIT",

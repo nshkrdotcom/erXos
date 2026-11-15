@@ -46,6 +46,7 @@ Third-party notices remain in their original files.
   "revision": "3b10b89b05ca1ef5fff33316777249df25c8b930",
   "archive_sha256": "91b57d1da5f06bc5501293a1ab21723eab2450630912e6383e43070562c01c61",
   "exclusions": [],
+  "removed": [],
   "files": {
     "COPYING": {
       "license": "MIT",

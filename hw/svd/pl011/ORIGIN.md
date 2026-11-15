@@ -74,6 +74,7 @@ which is not redistributable and is not in the tree.
   "revision": "1.5.1",
   "archive_sha256": "5a046202808f07c660ade1a4b38ad31d10309ec1abbafea4a0342fc538f626c8",
   "exclusions": [],
+  "removed": [],
   "files": {
     "LICENSE.TXT": {
       "license": "BSD-3-Clause",

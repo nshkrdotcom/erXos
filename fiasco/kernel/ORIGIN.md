@@ -411,6 +411,7 @@ Third-party notices remain in their original files.
       "reason": "outside the frozen bootstrap, sigma0 and kernel source selection"
     }
   ],
+  "removed": [],
   "files": {
     ".github/workflows/check_build_arm.yml": {
       "license": "MIT",

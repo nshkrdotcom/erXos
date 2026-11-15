@@ -46,6 +46,7 @@ Third-party notices remain in their original files.
   "revision": "v2.11.3 (6cb4e86540eca0d9ba62500a298385c9d863c8be)",
   "archive_sha256": "15521be8aaed133c453e7337714e029a9f62480ab41f59c4ba5d18297a076207",
   "exclusions": [],
+  "removed": [],
   "files": {
     "LICENSE.md": {
       "license": "BSD-3-Clause",
