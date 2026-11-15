@@ -563,9 +563,14 @@ on the host:
   `poll_wait(Open, Tty)`, for a `poll` that waits for input,
   `cancel(Open, Tty)`, for a wait that a signal or a close ends,
   `timer(Timer, Tty)`, for a timer's end, and `read(Open, Max, Tty)`, for the
-  read itself, return the next state and what to do: bytes for the reader,
-  none for an end of file or a raw read with nothing to wait for, or
-  `eagain` when another reader took the bytes; a report `{ready, Open}`,
+  read itself, return the next state and what to do: bytes for the reader;
+  `eof` for an end of file, `VEOF` at the start of a cooked line or a read
+  that finds no bytes after a hangup; no bytes for a raw read with nothing
+  to wait for; or `eagain` when another reader took the bytes. The end of
+  file and an empty raw read stay apart because an Erlang command's read
+  returns `eof` for one and `<<>>` for the other, and only the step that
+  makes the answer knows which it is; a program's `read` returns 0 for
+  both, as POSIX's does. A report `{ready, Open}`,
   once per wait, that the read can go on; a timer to start or cancel. Each
   timer start names a fresh `{Open, Serial}`, so the end of a timer that was
   cancelled or replaced does nothing. A `poll` is ready at a complete line
@@ -805,12 +810,15 @@ with no request outstanding, and then sends a write that is answered at once,
 with the count taken ([Writing a
 terminal](design-programs.md#the-terminal)).
 
-An Erlang command reads the tty as a program does, because its outstanding
+An Erlang command reads the tty the same way, because its outstanding
 read must not block its `receive` either: it asks for one ready report, the
 line discipline's `read_wait`, takes the report as a message, and then sends
 a read that `read/3` answers at once, so one `receive` of the command takes
 its keys, its size reports and its own timers
-([Interfaces](design-shell.md#interfaces)).
+([Interfaces](design-shell.md#interfaces)). The read names the report it
+follows, so a signal made in between leaves the bytes in the tty
+([design-shell.md](design-shell.md#the-terminal-relays-protocol), "A
+reader the signal ends").
 
 **A stopped tty.** A tty whose master takes no more output is stopped, as a
 line held by XOFF is: the owner holds at most 4 KiB, counted after `output/3`,
@@ -2792,17 +2800,21 @@ determinism test of the generated tree.
   exhaustively over the flags of `erx_tty`'s table against libedit's
   masks, with and without `ICANON` in what a job left; an `adopt/2`
   without its masks fails it.
-* **Cooked and raw:** a program that reads a line in cooked mode, with
-  `VERASE` and `VKILL` typed; one that turns off `ECHO` and reads a password
-  that is not echoed; one that goes raw, reads single keys and draws; `Ctrl-Z`
-  from a program that clears `ICANON` and `ECHO` and keeps `ISIG`, after which
-  the shell's prompt works, and `fg`, after which the program's settings are back.
-  With the shell's restore removed, the prompt test fails. A program made raw
-  with `cfmakeraw` reads `Ctrl-Z` as a byte; with `ISIG` ignored by `input/2`
-  in the first case the program is never stopped, and that case fails.
-* **Timed reads:** a blocking read with `VMIN` 0 and `VTIME` 1 returns no bytes
-  after its timeout with no input, and a `poll` with the same settings reports
-  nothing and starts no timer. In the exploration, `read_wait` that starts no
+* **Cooked and raw:** an Erlang test command, reading through `erx_cmd`
+  ([design-shell.md](design-shell.md#interfaces)), that reads a line in
+  cooked mode, with `VERASE` and `VKILL` typed; one that turns off `ECHO`
+  and reads a password that is not echoed; one that goes raw, reads single
+  keys and draws; `Ctrl-Z` from a program that clears `ICANON` and `ECHO`
+  and keeps `ISIG`, after which the shell's prompt works, and `fg`, after
+  which the program's settings are back. With the shell's restore removed,
+  the prompt test fails. A command made raw as `cfmakeraw` makes it reads
+  `Ctrl-Z` as a byte; with `ISIG` ignored by `input/2` in the `Ctrl-Z`
+  case the program is never stopped, and that case fails. The same reads
+  by C programs run with the signal handshake that lets programs read the
+  terminal ([design-programs.md](design-programs.md#the-terminal)).
+* **Timed reads:** a blocking read by an Erlang command with `VMIN` 0 and
+  `VTIME` 1 returns no bytes after its timeout with no input, and a `poll`
+  by a program with the same settings reports nothing and starts no timer. In the exploration, `read_wait` that starts no
   timer leaves the first test waiting past its deadline, and `poll` that starts
   one fails the second. A cooked line past 4,095 bytes keeps its end and
   drops the rest with a count; with the bound removed the model's state grows

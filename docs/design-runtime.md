@@ -497,7 +497,17 @@ the first three rules, and `edlin` the other three:
    of a CSI sequence too. Stock ends the key after `ESC O` and after
    `ESC [` and one digit (`edlin_key.erl:35-38`, `:53`), and after more
    digits answers `{mode, {csi, Acc}}` (`:50`), for which `edlin:edit/5`
-   has no clause.
+   has no clause. A digit or semicolon continues a CSI sequence only
+   while the sequence holds fewer than 15 characters, `ESC [` included;
+   past that it cannot continue it, so rule 2 ends the sequence there as
+   an invalid key and reads the character again, as text. Stock
+   accumulates every digit and semicolon (`:97`, `:103-104`), so `ESC [`
+   and an endless run of digits would grow the group's state with no
+   line ever ending. With the bound the editor holds at most 15
+   characters of an unfinished key and a complete key has at most 16, a
+   `shell_keymap` entry longer than that is refused as rule 3 refuses any
+   entry that is not one key, and the longest keys of the default keymap,
+   such as `ESC [ 1 ; 5 C` (`:260-300`), have 6.
 2. A character that cannot continue a sequence ends it as an invalid key
    and is read again: the clauses after `ESC` (`:71`), `ESC ESC` (`:77`),
    `ESC O` (`:82`), `ESC ESC [` (`:87`), `ESC [` (`:93`), a CSI semicolon

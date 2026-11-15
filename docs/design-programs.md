@@ -1054,9 +1054,10 @@ the handler hands the request to the open's description, which sends
 session's connection to the file's server and advances its offset by the
 count, and the handler copies the reply's bytes into the slot, or the
 slot's bytes into the request, through its NIF. A terminal's description
-instead sends the relay `{read, Open, Max}` or `{write, Open, Bytes}`, at
-most 4 KiB, which the relay answers at once
-([The terminal](#the-terminal)), and a socket's goes to the network
+instead sends the relay `{write, Open, Bytes}`, at most 4 KiB, which the
+relay answers at once, and answers a read `{error, enotsup}` itself until
+the signal handshake lets it pass reads on
+([The terminal](#the-terminal)); a socket's goes to the network
 service. The reply names the
 count, and `liberx` then copies out of or into the caller's memory and
 frees the slot. So no byte crosses the channel, no server reaches a
@@ -1493,6 +1494,14 @@ the path into one of four images:
   ends and opens the program handed the command and copies bytes between
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
+  An open of the session's tty it relays for writing only: it never
+  reads the terminal, and answers the command's read of that stream
+  `enotsup`, which ends the command with that status, as the program's
+  handler refuses the program's own terminal reads ([The
+  terminal](#the-terminal)). The stream relay belongs to no job, so no
+  signal's mark would stop it taking a key typed after the signal; with
+  no read it takes none, and a build check proves that it sends the
+  terminal relay no read ([design.md](design.md#chokepoint-checks)).
   The relay starts its command as a run of the command domain's run
   server: it sends `{erx_start, 1, Start, Relay}`, `Start` the startup
   message the handler built for the command and `Relay` itself, and
@@ -2336,13 +2345,13 @@ relay knows the job of every reader, as a terminal knows the process group
 of every process that reads it. One program's output and error streams reach the
 terminal in the order the program wrote them, as they do through one UNIX
 terminal. A write reaches the terminal exact, apart from the tty's output
-flags, whichever job wrote it. A read returns what the line discipline gives
-while the program's job is in the foreground, a line when the tty is cooked,
-and waits while the job is in the background, as on UNIX. A terminal's
+flags, whichever job wrote it. A program's read of the terminal fails with
+`ENOTSUP` until the handshake below exists. A terminal's
 `ioctl`s are `{tty, Open, Request}` requests to the handler, which takes them
 to the relay ([The program protocol](#the-program-protocol)). `tcgetattr` and
-`tcsetattr` read and set the tty's `termios`, so a program can turn off `ECHO`
-for a password prompt, or go raw and draw with control sequences. `TIOCGWINSZ`
+`tcsetattr` read and set the tty's `termios`, so a program can go raw and
+draw with control sequences, and, once its reads run, turn off `ECHO` for a
+password prompt. `TIOCGWINSZ`
 answers from the size the master reports, and when that size changes each
 program of the foreground job gets `SIGWINCH` through its handler, as the shell
 delivers it ([design-shell.md](design-shell.md#window-size)). A program opens `/dev/tty` through
@@ -2358,14 +2367,20 @@ that it should delete a file, `Ctrl-C` and `y` typed together would let
 it read `y` and delete the file before `SIGINT` ends it. So the handler
 answers a program's `read` of a terminal open, and its watch of
 `{read, Count}` there, `{error, enotsup}` itself, without passing
-either to the relay, and the `read` fails with `ENOTSUP`. The reads
-described next run only under a handshake that orders them: each
-handler answers the shell once its program has taken the signal, and
-the shell gives the job its reads back only after every answer. That
-handshake is open work ([TODO.md](../TODO.md)). Writes, `tcgetattr`,
-`tcsetattr`, `TIOCGWINSZ` and a `poll` for output are not affected.
+either to the relay, and the `read` fails with `ENOTSUP`; a build check
+proves that no handler sends the relay's read
+([design.md](design.md#chokepoint-checks)). The reads described next
+run only under a handshake that orders them: each handler answers the
+shell once its program has taken the signal, and the shell gives the
+job its reads back only after every answer. That handshake is open work
+([TODO.md](../TODO.md)). Writes, `tcgetattr`, `tcsetattr`, `TIOCGWINSZ`
+and a `poll`, for input or output, are not affected; a `poll` for input
+takes no byte.
 
-**Reading a terminal.** A terminal read waits for input before it asks for
+**Reading a terminal**, under the handshake. A read returns what the line
+discipline gives while the program's job is in the foreground, a line
+when the tty is cooked, and waits while the job is in the background, as
+on UNIX. A terminal read waits for input before it asks for
 it, as a socket's read does, so the wait has no request in flight and a
 signal interrupts it by POSIX's rules ([Signals in
 liberx](#signals-in-liberx)). `liberx` first sends its handler a watch, which the handler answers at once
@@ -3819,7 +3834,11 @@ terminal cases.
   typed line stays in the tty for the next prompt, where a handler that
   passes the read to the relay fails the
   case (the reads of "Reading a terminal" are tested with the handshake
-  that enables them); a background program's `tcsetattr` that stops
+  that enables them); an Erlang command that `rc` as a program starts in
+  its command domain, whose standard input is the terminal, and whose
+  `erx_cmd:read/1` ends it with status `enotsup` while a typed line stays
+  in the tty for the next prompt, where a stream relay that copies the
+  terminal's input fails the case; a background program's `tcsetattr` that stops
   its job, which `jobs` shows stopped with the `termios` unchanged, and
   is made after `fg`, where a `liberx` that fails the call with `EIO` as
   for an orphaned group fails the case, and the same call with `SIGTTOU`
