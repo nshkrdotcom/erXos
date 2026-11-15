@@ -88,7 +88,7 @@ init(#{path := Path} = Spec) ->
 start_device(#{path := Path} = Spec) ->
     maybe
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
-        ok ?= identify(Dev),
+        ok ?= erx_virtio:identify(fun(Register) -> erx_device:read(Dev, Register) end, ?ERX_VIRTIO_ID_INPUT),
         {ok, Queue} ?= step(queue_create, erx_device:queue_create(Dev, ?QUEUE, ?QUEUE_SIZE,
                                                                   ?ERX_VIRTIO_INPUT_EVENT_SIZE)),
         {ok, _Features} ?= step(negotiate, erx_device:negotiate(Dev, ?WANTED)),
@@ -97,17 +97,6 @@ start_device(#{path := Path} = Spec) ->
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
         ok ?= step(post, post_all(Dev, Queue, ?QUEUE_SIZE)),
         {ok, #state{dev = Dev, irq = Irq, queue = Queue, path = Path, fold = Fold}}
-    end.
-
-%% Whether the transport's first registers say a virtio-mmio version 2 input device; device
-%% id 0 is an empty transport, virtio's name for no device.
-identify(Dev) ->
-    case {erx_device:read(Dev, magic), erx_device:read(Dev, version), erx_device:read(Dev, device_id)} of
-        {?ERX_VIRTIO_MMIO_MAGIC, ?ERX_VIRTIO_MMIO_VERSION, ?ERX_VIRTIO_ID_INPUT} -> ok;
-        {?ERX_VIRTIO_MMIO_MAGIC, ?ERX_VIRTIO_MMIO_VERSION, 0} -> {error, no_device};
-        {?ERX_VIRTIO_MMIO_MAGIC, ?ERX_VIRTIO_MMIO_VERSION, Other} -> {error, {device_id, Other}};
-        {?ERX_VIRTIO_MMIO_MAGIC, Version, _} -> {error, {version, Version}};
-        {Magic, _, _} -> {error, {magic, Magic}}
     end.
 
 %% The registers read for each query, as erx_virtio_input_core:new/1 takes them.

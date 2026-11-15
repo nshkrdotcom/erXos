@@ -52,11 +52,11 @@
 
 -type op() :: {read, non_neg_integer(), pos_integer()} | {write, non_neg_integer(), binary()} | flush.
 
-%% dev, irq, queue, capacity, version and features are fixed once init/1 returns; tag is
+%% dev, irq, queue, capacity and features are fixed once init/1 returns; tag is
 %% the next request's tag; pending maps each posted tag to its caller and what to decode;
 %% waiting holds the requests the full queue turned away, oldest first.
--record(state, {dev, irq, queue, capacity :: non_neg_integer(), version :: non_neg_integer(),
-                features :: non_neg_integer(), tag = 0 :: non_neg_integer(),
+-record(state, {dev, irq, queue, capacity :: non_neg_integer(), features :: non_neg_integer(),
+                tag = 0 :: non_neg_integer(),
                 pending = #{} :: #{non_neg_integer() => {gen_server:from(), erx_blk_request:request()}},
                 waiting = queue:new() :: queue:queue({gen_server:from(), op()})}).
 
@@ -73,7 +73,7 @@ start_link(Spec) ->
 init(Spec) ->
     case try start_device(Spec) catch Class:Raised -> {error, {Class, Raised}} end of
         {ok, State} ->
-            log("virtio-mmio version ~b, capacity ~b sectors", [State#state.version, State#state.capacity]),
+            log("virtio-mmio version ~b, capacity ~b sectors", [?ERX_VIRTIO_MMIO_VERSION, State#state.capacity]),
             {ok, State};
         {error, no_device} ->
             ignore;
@@ -87,23 +87,13 @@ init(Spec) ->
 start_device(Spec) ->
     maybe
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
-        {ok, Version} ?= identify(Dev),
+        ok ?= erx_virtio:identify(fun(Register) -> erx_device:read(Dev, Register) end, ?ERX_VIRTIO_ID_BLOCK),
         {ok, Queue} ?= step(queue_create, erx_device:queue_create(Dev, ?QUEUE, ?QUEUE_SIZE,
                                                                   erx_blk_request:buffer_size())),
         {ok, Features} ?= step(negotiate, negotiate(Dev)),
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
         {ok, Capacity} ?= capacity(Dev, ?GENERATION_TRIES),
-        {ok, #state{dev = Dev, irq = Irq, queue = Queue, capacity = Capacity, version = Version,
-                    features = Features}}
-    end.
-
-identify(Dev) ->
-    Version = erx_device:read(Dev, version),
-    case erx_blk_request:identify(erx_device:read(Dev, magic), Version, erx_device:read(Dev, device_id)) of
-        ok -> {ok, Version};
-        %% Device id 0 is an empty transport: virtio's name for no device.
-        {error, {device_id, 0}} -> {error, no_device};
-        Refused -> Refused
+        {ok, #state{dev = Dev, irq = Irq, queue = Queue, capacity = Capacity, features = Features}}
     end.
 
 %% The device's reset and features, at the start. The NIF accepts of WANTED only what the
@@ -132,9 +122,9 @@ step(_Name, ok) -> ok;
 step(_Name, {ok, Value}) -> {ok, Value};
 step(Name, {error, Reason}) -> {error, {Name, Reason}}.
 
-handle_call(info, _From, State = #state{version = Version, capacity = Capacity, features = Features}) ->
+handle_call(info, _From, State = #state{capacity = Capacity, features = Features}) ->
     {reply, {ok, #{transport => virtio_mmio, capacity => Capacity, max_sectors => erx_blk_request:max_sectors(),
-                   detail => #{version => Version, features => Features}}}, State};
+                   detail => #{version => ?ERX_VIRTIO_MMIO_VERSION, features => Features}}}, State};
 handle_call(Op = {read, _Sector, _Count}, From, State) ->
     submit(From, Op, State);
 handle_call(Op = {write, _Sector, _Data}, From, State) ->

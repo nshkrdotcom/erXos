@@ -19,13 +19,6 @@ hdr(Type, Flags, FenceId) -> <<Type:32/little, Flags:32/little, FenceId:64/littl
 
 screen() -> #{width => 64, height => 48, stride => 256, length => 256 * 48}.
 
-identify_test() ->
-    ?assertEqual(ok, erx_virtio_gpu_core:identify(16#74726976, 2, 16)),
-    ?assertEqual({error, {device_id, 2}}, erx_virtio_gpu_core:identify(16#74726976, 2, 2)),
-    ?assertEqual({error, {device_id, 0}}, erx_virtio_gpu_core:identify(16#74726976, 1, 0)),
-    ?assertEqual({error, {version, 1}}, erx_virtio_gpu_core:identify(16#74726976, 1, 16)),
-    ?assertEqual({error, {magic, 0}}, erx_virtio_gpu_core:identify(0, 2, 16)).
-
 %% x8r8g8b8 keeps blue in a pixel's first byte in memory, so the device's format is
 %% B8G8R8X8 (2); one with red first would swap the screen's red and blue.
 x8r8g8b8_is_blue_first_test() ->

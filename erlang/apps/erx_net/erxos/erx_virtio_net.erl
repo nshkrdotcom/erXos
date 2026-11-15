@@ -109,8 +109,7 @@ init(#{record := Spec}) ->
         {ok, Info, T} ->
             log("virtio-mmio, mtu ~b, link ~s", [maps:get(mtu, Info), maps:get(state, Info)]),
             {ok, Info, T};
-        %% Device id 0 is an empty transport: virtio's name for no device.
-        {error, {device_id, 0}} ->
+        {error, no_device} ->
             ignore;
         {error, Reason} ->
             log("the network device is not driven: ~0p", [Reason]),
@@ -122,7 +121,7 @@ init(#{record := Spec}) ->
 start(Spec) ->
     maybe
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
-        ok ?= identify(Dev),
+        ok ?= erx_virtio:identify(fun(Register) -> erx_device:read(Dev, Register) end, ?ERX_VIRTIO_ID_NET),
         {ok, Rx} ?= step(queue_create, erx_device:queue_create(Dev, ?RXQ, ?QUEUE_SIZE, ?BUFFER)),
         {ok, Tx} ?= step(queue_create, erx_device:queue_create(Dev, ?TXQ, ?QUEUE_SIZE, ?BUFFER)),
         {ok, Features} ?= step(negotiate, erx_device:negotiate(Dev, ?WANTED)),
@@ -134,14 +133,6 @@ start(Spec) ->
         {ok, #{link => ethernet, lladdr => lladdr(Features, Config), mtu => Mtu,
                state => link_state(Features, Config), tx_limit => ?QUEUE_SIZE,
                finish => none}, T}
-    end.
-
-identify(Dev) ->
-    case {erx_device:read(Dev, magic), erx_device:read(Dev, version), erx_device:read(Dev, device_id)} of
-        {?ERX_VIRTIO_MMIO_MAGIC, ?ERX_VIRTIO_MMIO_VERSION, ?ERX_VIRTIO_ID_NET} -> ok;
-        {?ERX_VIRTIO_MMIO_MAGIC, ?ERX_VIRTIO_MMIO_VERSION, Other} -> {error, {device_id, Other}};
-        {?ERX_VIRTIO_MMIO_MAGIC, Version, _} -> {error, {version, Version}};
-        {Magic, _, _} -> {error, {magic, Magic}}
     end.
 
 %% The configuration fields the driver uses, each read by name at its own width from

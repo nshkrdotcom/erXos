@@ -37,7 +37,7 @@
 
 -module(erx_virtio_gpu_core).
 
--export([identify/3, format/1, buffer_size/0]).
+-export([format/1, buffer_size/0]).
 -export([display_info_request/0, create_2d_request/4, set_scanout_request/3]).
 -export([attach_backing_request/2, chan_code/1, region_size/1]).
 -export([flush_plan/4, decode/2, mode/2]).
@@ -127,16 +127,6 @@
 -type frame_event() :: next | {full, 0..?U64_MAX} | {answers, [{0..?U64_MAX, binary()}]}.
 -type frame_action() :: {post, 0..?U64_MAX, [{out, binary()} | {out, {region, term()}} | {in, pos_integer()}]}
                       | wait | {done, [ok | {ok, [scanout()]}], 0..?U64_MAX} | {stop, term()}.
-
-%% Whether the first registers of a transport say a virtio-mmio version 2 GPU device; the
-%% reason carries the word that disagreed. Device id 0 is an empty transport.
--spec identify(non_neg_integer(), non_neg_integer(), non_neg_integer()) ->
-          ok | {error, {magic | version | device_id, non_neg_integer()}}.
-identify(Magic, _Version, _DeviceId) when Magic =/= ?ERX_VIRTIO_MMIO_MAGIC -> {error, {magic, Magic}};
-identify(_Magic, _Version, 0) -> {error, {device_id, 0}};
-identify(_Magic, Version, _DeviceId) when Version =/= ?ERX_VIRTIO_MMIO_VERSION -> {error, {version, Version}};
-identify(_Magic, _Version, DeviceId) when DeviceId =/= ?ERX_VIRTIO_ID_GPU -> {error, {device_id, DeviceId}};
-identify(_Magic, _Version, _DeviceId) -> ok.
 
 %% The device's pixel format for an erx_memdraw channel. x8r8g8b8 is one little-endian
 %% 32-bit word per pixel, so its bytes in memory are blue, green, red and the unused byte:

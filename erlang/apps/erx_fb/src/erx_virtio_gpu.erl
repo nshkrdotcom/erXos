@@ -91,7 +91,7 @@ init(Spec) ->
 start_device(Spec) ->
     maybe
         {ok, Dev} ?= step(open, erx_device:open(Spec)),
-        ok ?= identify(Dev),
+        ok ?= erx_virtio:identify(fun(Register) -> erx_device:read(Dev, Register) end, ?ERX_VIRTIO_ID_GPU),
         {ok, Queue} ?= step(queue_create, erx_device:queue_create(Dev, ?QUEUE, ?QUEUE_SIZE,
                                                                   erx_virtio_gpu_core:buffer_size())),
         {ok, _Features} ?= step(negotiate, erx_device:negotiate(Dev, ?WANTED)),
@@ -100,15 +100,6 @@ start_device(Spec) ->
         {Action, Setup} = erx_virtio_gpu_core:setup_start(?ERX_MEM_CONTIGUOUS_MAX),
         {ok, Ready, State1} ?= setup(Action, Setup, State0),
         screen(Ready, State1)
-    end.
-
-identify(Dev) ->
-    Read = fun(Register) -> erx_device:read(Dev, Register) end,
-    case erx_virtio_gpu_core:identify(Read(magic), Read(version), Read(device_id)) of
-        ok -> ok;
-        %% Device id 0 is an empty transport: virtio's name for no device.
-        {error, {device_id, 0}} -> {error, no_device};
-        Refused -> Refused
     end.
 
 %% The bring-up's actions performed until it is ready or stops: each request as a frame of
