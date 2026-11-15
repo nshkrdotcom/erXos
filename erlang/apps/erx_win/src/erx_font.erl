@@ -1,0 +1,212 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+-module(erx_font).
+-moduledoc """
+Plan 9 subfont files, read and loaded into a font cache of a draw
+connection (docs/design-display.md, "Erlang clients"). A subfont file is
+untrusted: it comes from a release or from whoever wrote the file, so
+`parse/1` checks all of it before `load/2` makes a message from it.
+
+The file, as font(7) and image(7) lay it out, is an image, then a subfont
+header and the glyph table:
+
+* the image: optionally `compressed\n`, then five fields of 12 bytes, each
+  one word padded with blanks (font(7) right-justifies it in 11 and adds
+  a blank): the channel (`erx_chan:parse/1`) and the rectangle's minimum and maximum
+  corners; then the pixels, either each row in turn or, compressed,
+  blocks of rows, each two fields (the block's last row plus one and its
+  byte count) and that many bytes of image(6)'s codes
+  (`erx_draw_image:decode/3`), which must fill the block's rows exactly;
+* the subfont header: three fields, the glyph count n, the height and the
+  ascent;
+* n+1 entries of 6 bytes: x (two bytes, low first), top, bottom, left (a
+  signed byte) and width; glyph i covers columns x(i) to x(i+1) and rows
+  top to bottom of the image, is placed left pixels right of the pen and
+  advances it by width. The last entry gives only the end of glyph n-1.
+
+`parse/1` refuses what a load could not use as it stands: an image that
+does not start at the origin, since a glyph's x and rows are offsets in
+it, as libdraw's loadchar reads them; an old image whose first field is a
+depth rather than a channel; a row of more than 8192 bytes, the most one
+`y` of `load/2` carries; a glyph count of none or more than a font cache
+holds (`erx_draw_core:max_glyphs/0`); an ascent outside a byte, the field
+`i` carries it in; a glyph whose columns leave the image or run backwards;
+and any byte after the glyph table. A glyph's rows are clamped into the
+image as loadchar clamps them, since real subfonts give empty glyphs rows
+past it, and an ascent above the height is kept, as plan9port keeps it.
+Every count
+is matched against the bytes present, so nothing is allocated for bytes the
+file does not hold, and decoding takes no more steps than the file has
+bytes.
+
+`load/2` turns a subfont into the messages that make one image of the
+client's connection hold it: `b` allocates it, `y` loads its pixels in
+bands of at most 8192 bytes, `i` makes it a font cache and one `l` per
+glyph records the glyph, copying it onto itself. The image is its own
+cache, so a glyph's index is its index in the subfont and text in it is a
+sequence of `s` messages.
+""".
+
+-export([parse/1, load/2]).
+-export_type([subfont/0, glyph/0, reason/0]).
+
+%% A header field: a number or descriptor right-justified in 11, then a blank.
+-define(FIELD, 12).
+%% The most bytes of pixels one `y` carries, so the widest row a subfont has.
+-define(BAND, 8192).
+
+-doc """
+Glyph i of a subfont, in the shape of a font cache's record, since the
+subfont's image is its cache: its columns and rows in the image, its
+offset from the pen and its advance.
+""".
+-type glyph() :: erx_draw_core:glyph().
+
+-doc """
+A subfont as `parse/1` read it: its image's channel and rectangle, which
+starts at the origin, the image's pixels row by row as a `y` message lays
+them, the font's height and ascent, and its glyphs in index order.
+""".
+-type subfont() :: #{chan := erx_chan:code(),
+                     r := {0, 0, pos_integer(), pos_integer()}, pixels := binary(),
+                     height := non_neg_integer(), ascent := byte(), glyphs := [glyph(), ...]}.
+
+-doc """
+Why a file is refused: `header` for a missing or malformed field of the
+image or subfont header, or an image not at the origin; `wide` for a row
+over 8192 bytes; `pixels` for pixels short of the rectangle or codes that
+do not fill a block; `glyphs` for a table short of n+1 entries, a glyph
+count, height or ascent out of range, or a glyph's columns outside the
+image or backwards; and
+`trailing` for bytes after the table.
+""".
+-type reason() :: header | wide | pixels | glyphs | trailing.
+
+-doc "The subfont in file `Bytes`, or why it is refused.".
+-spec parse(binary()) -> {ok, subfont()} | {error, reason()}.
+parse(Bytes) when is_binary(Bytes) ->
+    try
+        {Image, AfterImage} = image(Bytes),
+        {[N, Height, Ascent], AfterHeader} = numbers(3, AfterImage),
+        check(N >= 1 andalso N =< erx_draw_core:max_glyphs()
+              andalso Ascent >= 0 andalso Ascent =< 255 andalso Height >= 0, glyphs),
+        TableBytes = 6 * (N + 1),
+        Table = case AfterHeader of
+                    <<T:TableBytes/binary>> -> T;
+                    <<_:TableBytes/binary, _/binary>> -> throw(trailing);
+                    _ -> throw(glyphs)
+                end,
+        Glyphs = glyphs(Table, maps:get(r, Image)),
+        {ok, Image#{height => Height, ascent => Ascent, glyphs => Glyphs}}
+    catch
+        throw:Reason -> {error, Reason}
+    end.
+
+-doc """
+The draw messages that make image `Id` of a connection hold `Subfont` as
+a font cache: its allocation, its pixels, the cache and one glyph record
+per glyph, for `erx_draw_codec` to encode.
+""".
+-spec load(subfont(), erx_draw_codec:image_id()) -> [erx_draw_codec:msg()].
+load(#{chan := Chan, r := {0, 0, W, H} = R, pixels := Pixels, ascent := Ascent,
+       glyphs := Glyphs}, Id) ->
+    {ok, Depth} = erx_chan:depth(Chan),
+    Line = erx_draw_image:bytes_per_line(R, Depth),
+    Rows = ?BAND div Line,
+    Bands = [load_rows(Id, Pixels, W, Line, Y, min(Y + Rows, H))
+             || Y <- lists:seq(0, H - 1, Rows)],
+    Records = [{glyph, Id, Id, Index, {X0, Top, X1, Bottom}, {X0, Top}, Left band 16#ff, Width}
+               || {Index, {X0, X1, Top, Bottom, Left, Width}} <- lists:enumerate(0, Glyphs)],
+    [{alloc, Id, 0, 0, Chan, 0, R, R, 0}]
+        ++ Bands ++ [{font, Id, length(Glyphs), Ascent} | Records].
+
+%% The `y` of rows Y0 to Y1, Line bytes each.
+load_rows(Id, Pixels, W, Line, Y0, Y1) ->
+    {load, Id, {0, Y0, W, Y1}, binary:part(Pixels, Y0 * Line, (Y1 - Y0) * Line)}.
+
+%% The image: its header, then its pixels as each row in turn.
+image(<<"compressed\n", Bytes/binary>>) -> image(Bytes, compressed);
+image(Bytes) -> image(Bytes, rows).
+
+image(Bytes, Form) ->
+    {Descriptor, AfterChan} = field(Bytes),
+    {Chan, Depth} = case erx_chan:parse(Descriptor) of
+                        {ok, C, D} -> {C, D};
+                        {error, einval} -> throw(header)
+                    end,
+    {[X0, Y0, W, H], AfterRect} = numbers(4, AfterChan),
+    check(X0 =:= 0 andalso Y0 =:= 0 andalso W >= 1 andalso H >= 1, header),
+    R = {0, 0, W, H},
+    Line = erx_draw_image:bytes_per_line(R, Depth),
+    check(Line =< ?BAND, wide),
+    {Pixels, Rest} = pixels(Form, AfterRect, R, Depth, Line),
+    {#{chan => Chan, r => R, pixels => Pixels}, Rest}.
+
+pixels(rows, Bytes, {0, 0, _, H}, _Depth, Line) ->
+    Size = Line * H,
+    case Bytes of
+        <<Pixels:Size/binary, Rest/binary>> -> {Pixels, Rest};
+        _ -> throw(pixels)
+    end;
+pixels(compressed, Bytes, R, Depth, _Line) ->
+    blocks(Bytes, R, Depth, 0, []).
+
+%% Each block's rows, from row MinY, until the blocks reach the last row.
+blocks(Bytes, {0, 0, _, H}, _Depth, H, Done) ->
+    {iolist_to_binary(lists:reverse(Done)), Bytes};
+blocks(Bytes, {0, 0, W, H} = R, Depth, MinY, Done) ->
+    {[MaxY, Count], AfterBlock} = numbers(2, Bytes),
+    check(MaxY > MinY andalso MaxY =< H andalso Count >= 1, pixels),
+    case AfterBlock of
+        <<Codes:Count/binary, Rest/binary>> ->
+            case erx_draw_image:decode(Codes, {0, MinY, W, MaxY}, Depth) of
+                {ok, Rows, <<>>} -> blocks(Rest, R, Depth, MaxY, [Rows | Done]);
+                _ -> throw(pixels)
+            end;
+        _ ->
+            throw(pixels)
+    end.
+
+%% The glyphs of the table's n+1 entries, each from its entry to the next
+%% one's x, whose columns must lie in the image in order. Its rows are
+%% clamped into the image, bottom first, as libdraw's loadchar clamps
+%% them, since real subfonts give empty glyphs rows past the image.
+glyphs(Table, {0, 0, W, H}) ->
+    Entries = [{X, Top, Bottom, Left, Width}
+               || <<X:16/little, Top, Bottom, Left:8/signed, Width>> <= Table],
+    Glyphs = lists:zipwith(fun({X0, Top, Bottom, Left, Width}, {X1, _, _, _, _}) ->
+                                   Rows = min(Bottom, H),
+                                   {X0, X1, min(Top, Rows), Rows, Left, Width}
+                           end, lists:droplast(Entries), tl(Entries)),
+    check(lists:all(fun({X0, X1, _, _, _, _}) -> X0 =< X1 andalso X1 =< W end, Glyphs), glyphs),
+    Glyphs.
+
+%% Count numeric header fields.
+numbers(Count, Bytes) ->
+    lists:mapfoldl(fun(_, Rest) ->
+                           {Text, After} = field(Rest),
+                           {number(Text), After}
+                   end, Bytes, lists:seq(1, Count)).
+
+%% A field's text: one word, blank-padded within its 12 bytes.
+field(<<Field:?FIELD/binary, Rest/binary>>) ->
+    case binary:split(Field, <<" ">>, [global, trim_all]) of
+        [Text] -> {Text, Rest};
+        _ -> throw(header)
+    end;
+field(_) ->
+    throw(header).
+
+%% A decimal number, optionally negative.
+number(<<$-, Digits/binary>>) -> -digits(Digits);
+number(Digits) -> digits(Digits).
+
+digits(Digits) ->
+    case Digits =/= <<>> andalso << <<D>> || <<D>> <= Digits, D >= $0, D =< $9 >> =:= Digits of
+        true -> binary_to_integer(Digits);
+        false -> throw(header)
+    end.
+
+check(true, _Reason) -> ok;
+check(false, Reason) -> throw(Reason).

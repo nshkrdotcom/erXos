@@ -3978,7 +3978,13 @@ encoder and hand them to the connection, batching until a flush or
 64 KiB, one write's most; `load/4` sends pixels too many for one write
 in bands of whole rows, as libdraw's `loadimage` does. `erx_font` reads a Plan 9 subfont file and loads its glyphs into
 a font cache image with `i` and `l`, so a client's text is a sequence of
-`s` messages; it is a parser of file data and has a fuzz target.
+`s` messages; it is a parser of file data and has a fuzz target. The
+subfont's own image is the cache: `b` and `y` make it, `i` turns it into
+a cache of the subfont's glyph count and each `l` records a glyph where
+it already lies, so a glyph's index is its index in the subfont. The
+reader checks the whole file before it makes a message, so loading a
+file it accepts fails only for the connection's own reasons: a channel the
+connection does not support, an image past its size limits, or its quota.
 
 ## Interfaces
 
@@ -5152,7 +5158,7 @@ draws attaches as [Graphics hardware](#graphics-hardware) says.
 | Plan 9's `libmemdraw`, from 9front | the per-byte pixel primitives of `erx_memdraw`; its image(6) loader `cloadmemimage` is linked into no release, since the `Y` decoder is the Erlang `erx_draw_image` | MIT (9front's `lib/legal/NOTICE`, whose exceptions cover only fonts) | permanent; 9front at commit 2859ae04, imported as erXos's code into `display/libmemdraw` with an `ORIGIN.md` listing its edits |
 | the 9front build: 9front's `libmemdraw` and the parts of its `libdraw` it links, unmodified | test tool: the oracle of the shapes' pixels, of every `erx_memdraw` operation against the code it was imported from, and through `cloadmemimage` of `erx_draw_image`'s decoding and of the C twin's framing of `Y` (Verification) | MIT | tool, never part of a shipped image; fetched at the commit the import's origin file records, verified against a pinned SHA-256, and built for the host out of tree by erXos's own compiler invocations against plan9port's `lib9`, which is already fetched for rc; 9front's mkfiles never run |
 | LVGL 9 | the native widget renderer for panels, the program `erx-lvgl` of the application's session | MIT; its built-in fonts are OFL-1.1 font data | stopgap, replaced by the Erlang renderer when the parity test and the panel's frame times admit it; a git submodule from erXos's fork pinned at a recorded commit, built out of tree as a native program, its display and input glue erXos's own |
-| fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain) for the terminal; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
+| fonts | the glyphs of `erx_term` and of the Erlang renderer, in a session's release, as Plan 9 subfonts, and of the menu, in the display's, as a generated module | plan9port's `fixed` fonts (public domain, converted from X.Org's `misc-fixed` BDF files) for the terminal, of which the 6x13 subfonts of U+0000, U+2000 and U+2500 are imported into `display/font/fixed` with an origin file; Inter 4.1 (OFL-1.1, font data only) for the theme's roles, rasterised at build through FreeType, a host build tool used under the FTL, into 8-bit subfonts and the menu's module ([design-desktop-programs.md](design-desktop-programs.md#type)) | permanent |
 | libvterm 0.3.3 | the differential oracle of `erx_vt` | MIT | test tool, never in an image and never linked into erXos; fetched at its pinned release and SHA-256 and built out of tree for the host with the harness `test/vt/vterm_dump.c` |
 | `vttest`, Thomas Dickey's | the source of the corpus's `vttest` recordings | MIT-style (X11), confirmed at the pin | test tool, never in an image; fetched at a pinned release and SHA-256, built out of tree for the host and run on a host pseudo-terminal |
 | FreeBSD 15.1's `share/termcap/termcap`, from the pinned FreeBSD source | the `xterm` and `vt100` entries `abi/termcap` restricts | BSD-3-Clause, confirmed at the pin | reference; the restricted entries are erXos's text in `abi/termcap` |

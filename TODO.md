@@ -6143,6 +6143,15 @@ to the corpus and follow rc
   profile, so the checked `Unicode-3.0` document does not reach its notice.
   Unverified that these files reach a packed image's records; if they do,
   look up the profile for the selected grants other than erXos's own.
+* [Medium] build, license selection (`tools/lib/erx/license_expression.rb`,
+  `PERMISSIVE`; `display/font/fixed/ORIGIN.md`): the fixed fonts' grant,
+  `LicenseRef-misc-fixed-public-domain` ("Public domain font.  Share and
+  enjoy.", X.Org's `misc-fixed` `COPYING`), is not on the permissive list,
+  so the first release that packs `display/font/fixed/6x13.*` (the session
+  release of `erx_term`) fails with "license expression has no permitted
+  grant". Admitting it, with a case in `test/host/license_expression_test.rb`
+  and a notice row if `import_notices.rb` wants one, is a license decision
+  to make with that release.
 * [Low] build, license selection (`tools/lib/erx/license_expression.rb`,
   `PERMISSIVE`, and `PackProvenance#attribute`): the entries for ChaCha20's
   public-domain statement and public_key's RSA notices are global, so a

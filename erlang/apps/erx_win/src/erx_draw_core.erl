@@ -52,7 +52,7 @@ operation.
 """.
 -include("generated/erx_abi.hrl").
 
--export([new/1, resize/2, step/2, plan/2, plane/0]).
+-export([new/1, resize/2, step/2, plan/2, plane/0, max_glyphs/0]).
 -export_type([state/0, quota/0, op/0, glyph/0]).
 
 %% The compose operations of draw(2) that the core names: S, which `l`
@@ -153,6 +153,10 @@ resize(#{images := #{0 := Window} = Images} = State, R) ->
 -spec plane() -> rect().
 plane() ->
     {?COORD_MIN, ?COORD_MIN, ?COORD_MAX, ?COORD_MAX}.
+
+-doc "The most glyph records an `i` makes a font cache hold.".
+-spec max_glyphs() -> pos_integer().
+max_glyphs() -> ?MAX_GLYPHS.
 
 -doc """
 The state and operations after the whole write Bytes, or the errno and the

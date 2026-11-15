@@ -38,6 +38,7 @@ module Erx
   class Checks
     IMPORTS = %w[
       ctaes
+      display/font/fixed
       display/libmemdraw
       fiasco/bootstrap
       fiasco/drivers-frst

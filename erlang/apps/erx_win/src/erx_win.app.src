@@ -10,14 +10,17 @@
 %% writes; the draw protocol's codec erx_draw_codec, generated from
 %% abi/formats/draw.txt, its pure core erx_draw_core, which checks a write
 %% against a connection and plans it, and erx_draw_image, the decoder of a Y
-%% message's compressed pixels; erx_vt, the terminal emulator's core, with
-%% its generated width table erx_vt_width, which reads erx: links through
-%% erx's erx_present. The widget toolkit is an application of its own, erx_ui.
+%% message's compressed pixels; erx_font, the reader of subfont files, which
+%% loads one into a font cache of a draw connection; erx_vt, the terminal
+%% emulator's core, with its generated width table erx_vt_width, which reads
+%% erx: links through erx's erx_present. The widget toolkit is an
+%% application of its own, erx_ui.
 {application, erx_win,
  [{description, "erXos display client"},
   {vsn, "1"},
-  {modules, [erx_draw, erx_draw_codec, erx_draw_conn, erx_draw_core, erx_draw_image, erx_pixels,
-             erx_pixels_core, erx_vt, erx_vt_width, erx_win, erx_win_app, erx_win_core, erx_win_sup]},
+  {modules, [erx_draw, erx_draw_codec, erx_draw_conn, erx_draw_core, erx_draw_image, erx_font,
+             erx_pixels, erx_pixels_core, erx_vt, erx_vt_width, erx_win, erx_win_app,
+             erx_win_core, erx_win_sup]},
   {registered, [erx_win_sup, erx_pixels]},
   {applications, [kernel, stdlib, erx, erx_memdraw]},
   {env, []},
