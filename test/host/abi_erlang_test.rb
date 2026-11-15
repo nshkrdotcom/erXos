@@ -150,6 +150,21 @@ class AbiErlangTest < Minitest::Test
     assert_equal expected, File.binread(record.fetch('log'))
   end
 
+  # The generated erx_abi_errno maps each errno name to its number and back;
+  # an alias, an unlisted number and a name of no errno give unknown.
+  def test_generated_errno_maps_names_and_numbers
+    @runner.run([File.join(@oracle, 'erlc'), '-Werror', '-o', @directory,
+                 File.join(@directory, 'erx_abi_errno.erl')], name: 'erlc-errno', deadline: 60, env: @environment)
+    script = 'io:format("~w~n", [[erx_abi_errno:name(N) || N <- [0, 1, 11, 41, 95, 109, 133, 134]]]), ' \
+             'io:format("~w~n", [[erx_abi_errno:number(A) || A <- [einval, ewouldblock, eopnotsupp, enotsup, ' \
+             'sigint, eio2]]]), halt().'
+    record = @runner.run([File.join(@oracle, 'erl'), '+S', '1:1', '+SDcpu', '1', '+SDio', '1', '-noshell',
+                          '-noinput', '-pa', @directory, '-eval', script], name: 'errno', deadline: 60, env: @environment)
+    expected = "[unknown,eperm,eagain,unknown,enotsup,etoomanyrefs,ehwpoison,unknown]\n" \
+               "[22,unknown,unknown,95,unknown,unknown]\n"
+    assert_equal expected, File.binread(record.fetch('log'))
+  end
+
   # The generated erx_abi_translations gives a mapped usage its evdev code
   # and none for a usage FreeBSD's table leaves unmapped (00h, A0h), past the
   # u8 source (100h) or not an integer.

@@ -6906,8 +6906,17 @@ document's "residual risks accepted" paragraph.
   `sigfillset`'s generated set, `strsignal` on FreeBSD's text, `sysconf(_SC_RTSIG_MAX)` 62, and new
   `sig2str`, `str2sig`, `sys_signame`, `sys_siglist` and `sys_nsig`; the shell's table read from the generated
   one; the `difference` kind in `test/conformance/libc-test-verdicts.txt` and `tools/lib/erx/libc_test.rb`;
-  the tests of design-programs.md's "Signal numbers" bullet. The package also carries the errno numbers as
-  a table of the ABI file, and lands before the Track P ports.
+  the tests of design-programs.md's "Signal numbers" bullet. The package lands before the Track P ports.
+* [Medium] ABI, `abi/errno.txt`, `tools/lib/erx/abi_errno.rb`: the errno table lists every name of musl's
+  `errno.h` and `erx_abi_errno` maps names and numbers, but the directed mappings of
+  [design-programs.md](docs/design-programs.md#the-posix-lite-personality)'s "Errors and absent calls" are not
+  declared: from each kernel status and each error atom of the file and program protocols to an errno, with a
+  context where one status has several POSIX meanings, the generated C, Erlang and Ruby translations, and the
+  generator's check that every status has an errno, seeded with a status without one. The `error ATOM NUMBER`
+  rows of `abi/protocols/9p.txt` state names and numbers the errno table also states, unchecked against it;
+  they name an errno of the table and take its number from it (9P2000.L's Linux numbers are musl's generic
+  ones on every architecture erXos targets). The frame grammar's
+  `errno` kind joins with the first reply that carries an error name (P2a).
 * [Low] shell and programs, `Ctrl-T` (`SIGINFO`, [design-programs.md](docs/design-programs.md#the-terminal),
   [design-shell.md](docs/design-shell.md#ctrl-t-status-and-the-info-request)): the status line and the info
   request, right after the signal and errno table package, which gives `SIGINFO` its number.

@@ -42,7 +42,7 @@ module Erx
         aliases = signals.select(&:alias_name).to_h { |signal| [signal.alias_name, signal.name] }
         line = (by_kind.fetch('signal', []) + realtime).first
         unique(signals.map(&:number), label: 'signal number', line: line)
-        unique(signals.map(&:name) + aliases.keys, label: 'signal name', line: line)
+        unique(signals.map(&:name) + signals.filter_map(&:alias_name), label: 'signal name', line: line)
         SignalTable.new(signals: signals.map(&:freeze).freeze, aliases: aliases.freeze).freeze
       end
 

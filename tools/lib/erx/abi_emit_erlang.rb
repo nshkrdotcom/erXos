@@ -30,6 +30,7 @@ module Erx
       def outputs(schema)
         result = { 'erlang/apps/erx/include/generated/erx_abi.hrl' => header(schema),
                    'erlang/apps/erx/src/generated/erx_abi_events.erl' => events(schema),
+                   'erlang/apps/erx/src/generated/erx_abi_errno.erl' => errnos(schema),
                    'erlang/apps/erx/src/generated/erx_abi_signals.erl' => signals(schema),
                    'erlang/apps/erx/src/generated/erx_abi_translations.erl' => translations(schema) }
         # Beside erx_prog_grammar, the program protocol's other generated module.
@@ -133,10 +134,6 @@ module Erx
       # protocol name.
       def signals(schema)
         nameable = schema.signals.signals.select(&:nameable?)
-        clauses = lambda do |function, pairs|
-          (pairs.map { |key, value| "#{function}(#{literal(key)}) -> #{literal(value)}" } +
-           ["#{function}(_) -> unknown"]).join(";\n") + '.'
-        end
         name = ->(signal) { atom("sig#{signal.name}") }
         actions = Signals::ACTIONS.keys - %w[none reserved]
         [NOTICE, '-module(erx_abi_signals).',
@@ -146,14 +143,38 @@ module Erx
          "-type action() :: #{actions.map { |action| literal(atom(action)) }.join(' | ')}.", '',
          '%% The number of a signal, or unknown for an atom that names none.',
          '-spec number(atom()) -> pos_integer() | unknown.',
-         clauses.call('number', nameable.map { |signal| [name.call(signal), signal.number] }), '',
+         lookup('number', nameable.map { |signal| [name.call(signal), signal.number] }), '',
          '%% The name of a signal number, or unknown for a number that is no signal a program may name.',
          '-spec name(integer()) -> atom() | unknown.',
-         clauses.call('name', nameable.map { |signal| [signal.number, name.call(signal)] }), '',
+         lookup('name', nameable.map { |signal| [signal.number, name.call(signal)] }), '',
          '%% The default action of a signal, or unknown for an atom that names none.',
          '-spec default_action(atom()) -> action() | unknown.',
-         clauses.call('default_action', nameable.map { |signal| [name.call(signal), atom(signal.action)] }), '']
+         lookup('default_action', nameable.map { |signal| [name.call(signal), atom(signal.action)] }), '']
           .join("\n")
+      end
+
+      # erx_abi_errno: each errno of the table by its protocol name (einval)
+      # with its number, and each number with that name. An alias is a C
+      # name only, so one error has one atom and no alias is a protocol name.
+      def errnos(schema)
+        table = schema.errnos
+        named = table.errnos.map { |entry| [atom(entry.name), entry.number] }
+        [NOTICE, '-module(erx_abi_errno).',
+         '-moduledoc "The errno table of the ABI file: each error name a reply may carry and its number.".',
+         '-export([number/1, name/1]).', '',
+         '%% The number of an errno name, or unknown for an atom that names none.',
+         '-spec number(atom()) -> pos_integer() | unknown.',
+         lookup('number', named), '',
+         '%% The name of an errno number, or unknown for a number the table does not list.',
+         '-spec name(integer()) -> atom() | unknown.',
+         lookup('name', table.errnos.map { |entry| [entry.number, atom(entry.name)] }), '']
+          .join("\n")
+      end
+
+      # The clauses of a generated lookup function: one per key, then unknown.
+      def lookup(function, pairs)
+        (pairs.map { |key, value| "#{function}(#{literal(key)}) -> #{literal(value)}" } +
+         ["#{function}(_) -> unknown"]).join(";\n") + '.'
       end
 
       # erx_abi_translations: for each translation a function of its name

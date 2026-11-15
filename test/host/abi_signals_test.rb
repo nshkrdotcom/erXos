@@ -123,19 +123,30 @@ class AbiSignalsTest < Minitest::Test
       ->(text) { text.sub(/^  value signal 256$/, '  value signal 128') } => /exit_kind signal must exceed 255/,
       ->(text) { text.sub(/^fault budget kill$/, 'fault budget thr') } => /fault budget names no signal/
     }.each do |seed, message|
-      Dir.mktmpdir('erx-abi-faults-') do |root|
-        FileUtils.cp_r(File.join(ROOT, 'abi'), root)
-        path = File.join(root, 'abi/erx_abi.txt')
-        text = File.read(path)
-        refute_equal text, seed.call(text)
-        File.write(path, seed.call(text))
-        error = assert_raises(Erx::ABI::SchemaError) { header_of(root) }
-        assert_match message, error.message
-      end
+      assert_seeded_failure('abi/erx_abi.txt', seed, message)
     end
   end
 
+  # Seeded fault: two signals that share an alias fail generation.
+  def test_shared_alias_fails_generation
+    seed = ->(text) { text.sub(/^signal thr 32 reserved alias lwp$/, 'signal thr 32 reserved alias iot') }
+    assert_seeded_failure('abi/signals.txt', seed, /duplicate signal name iot/)
+  end
+
   private
+
+  # Generation of a copy of abi/ whose file the seed rewrote fails with message.
+  def assert_seeded_failure(file, seed, message)
+    Dir.mktmpdir('erx-abi-faults-') do |root|
+      FileUtils.cp_r(File.join(ROOT, 'abi'), root)
+      path = File.join(root, file)
+      text = File.read(path)
+      refute_equal text, seed.call(text)
+      File.write(path, seed.call(text))
+      error = assert_raises(Erx::ABI::SchemaError) { header_of(root) }
+      assert_match message, error.message
+    end
+  end
 
   def action_value(action)
     Integer(header_of(ROOT)[/^#define ERX_SIG_ACTION_#{action} INT32_C\((\d+)\)$/, 1])
