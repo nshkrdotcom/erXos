@@ -14,10 +14,10 @@
  * end the message gives. A refused plan stops the program's space with status 127 before
  * main and without a line; an accepted one sets the verdict and wakes the first thread,
  * which alone reads the plan from then on. The executor stays the lane's reader: every
- * later frame is a report, which it copies whole, reads and applies to the ends it names
- * (pipe.h). What each
- * record's header admits, and whether a report reads, is inbound.c's pure decision; a
- * record it refuses stops the program the same way.
+ * later frame is a report or a reply, which it copies whole and reads through the channel
+ * (channel.h), which puts a reply in its slot; a report it applies to the ends it names
+ * (pipe.h). What each record's header admits, and whether a frame reads, is inbound.c's
+ * pure decision; a record it refuses stops the program the same way.
  *
  * Every failure before main, a mapping or a commit as much as a refused message, stops
  * the program with ERX_PROG_STATUS_REFUSED, as an exec that fails does on UNIX. The layer
@@ -67,10 +67,10 @@ static erx_prog_inbound_t record_kind;
 static uint8_t *record_body;
 static size_t record_len;
 static size_t record_have;
-/* One report at a time, and the profile check's scratch for it, taken before main. */
-static uint8_t report[ERX_PROG_REPORT_MAX];
-static uint8_t *report_scratch;
-static uint64_t report_scratch_len;
+/* One later frame at a time, and the profile check's scratch for it, taken before main. */
+static uint8_t later[ERX_PROG_REPORT_MAX];
+static uint8_t *later_scratch;
+static uint64_t later_scratch_len;
 /* Written by the executor before VERDICT_GO, read by the first thread after it. */
 static erx_prog_startup_t plan;
 static _Atomic uint32_t verdict = VERDICT_WAIT;
@@ -173,23 +173,27 @@ message_close(void)
 		stop(plan.status);
 	if (erx_prog_fd_setup(plan.fds) != ERX_OK)
 		stop(ERX_PROG_STATUS_REFUSED);
-	report_scratch_len = erx_prog_page_round(erx_prog_scratch_bytes(ERX_PROG_REPORT_MAX));
-	report_scratch = erx_prog_pages_take(report_scratch_len);
-	if (report_scratch == NULL)
+	later_scratch_len = erx_prog_page_round(erx_prog_scratch_bytes(ERX_PROG_REPORT_MAX));
+	later_scratch = erx_prog_pages_take(later_scratch_len);
+	if (later_scratch == NULL)
 		stop(ERX_PROG_STATUS_REFUSED);
 	atomic_store_explicit(&verdict, VERDICT_GO, memory_order_release);
 	(void)erx_umtx_wake((uint64_t)(uintptr_t)&verdict, 1);
 }
 
-/* A report is whole: reads it and applies it to the ends it names (pipe.h), or stops the program. */
+/*
+ * A later frame is whole: reads it through the channel, which puts a reply in its slot,
+ * and applies a report to the ends it names (pipe.h), or stops the program.
+ */
 static void
-report_apply(void)
+later_apply(void)
 {
-	erx_prog_report_t got;
+	erx_prog_to_program_t got;
 
-	if (!erx_prog_report_read(report, record_len, report_scratch, report_scratch_len, &got))
+	if (!erx_prog_channel_frame(later, record_len, later_scratch, later_scratch_len, &got))
 		stop(ERX_PROG_STATUS_REFUSED);
-	erx_pipe_report(&got);
+	if (got.frame == ERX_PROG_FRAME_REPORT)
+		erx_pipe_report(&got.u.report);
 }
 
 /* A record opened: what its header admits decides where its body goes. */
@@ -203,8 +207,8 @@ record_open(const erx_lane_part_t *part)
 		message_open(part->len);
 		record_body = message;
 		break;
-	case ERX_PROG_INBOUND_REPORT:
-		record_body = report;
+	case ERX_PROG_INBOUND_FRAME:
+		record_body = later;
 		break;
 	case ERX_PROG_INBOUND_REFUSE:
 		stop(ERX_PROG_STATUS_REFUSED);
@@ -213,7 +217,7 @@ record_open(const erx_lane_part_t *part)
 	record_have = 0;
 }
 
-/* The record's last byte is copied: plans the start-up or applies the report. */
+/* The record's last byte is copied: plans the start-up or reads the later frame. */
 static void
 record_close(void)
 {
@@ -221,8 +225,8 @@ record_close(void)
 	case ERX_PROG_INBOUND_START:
 		message_close();
 		break;
-	case ERX_PROG_INBOUND_REPORT:
-		report_apply();
+	case ERX_PROG_INBOUND_FRAME:
+		later_apply();
 		break;
 	case ERX_PROG_INBOUND_REFUSE:
 		/* Not reached: record_open stopped the program at the header. */

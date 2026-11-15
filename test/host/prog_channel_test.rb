@@ -13,14 +13,19 @@ require_relative '../../tools/lib/erx/generated'
 # is written whole; a send without room for its whole frame writes nothing and waits until the
 # executor's announcement of room brings enough; a sender still waiting when another leaves is woken to
 # publish its need again; two senders' frames never interleave; a frame larger than
-# the ring is refused with ERX_ERANGE. Every case runs under the address and undefined
-# sanitizers, and the two-sender and waiting cases under the thread sanitizer too
-# (docs/design-programs.md, "The channel"). Each seeded fault must fail its case.
+# the ring is refused with ERX_ERANGE. A kill is a request on a reply slot that waits for its
+# reply, which only its own slot's reply ends; a kill with no target in the request table is
+# answered without one; with every worker slot held a request waits for a free one. Every case
+# runs under the address and undefined sanitizers, and the threaded cases under the thread
+# sanitizer too (docs/design-programs.md, "The channel" and "The program protocol"). Each seeded
+# fault must fail its case.
 class ProgChannelTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   CHANNEL = 'liberx/program/channel.c'
-  SOURCES = %w[liberx/erx_lane.c liberx/program/wake.c build/gen/liberx/generated/abi_reader.c
+  SOURCES = %w[liberx/erx_lane.c liberx/program/wake.c liberx/program/inbound.c liberx/program/signal.c
+               liberx/erx_profile.c liberx/erx_etf.c kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c
+               build/gen/liberx/generated/prog_profile.c build/gen/liberx/generated/abi_reader.c
                test/fixtures/prog_channel_driver.c].freeze
   FLAGS = ['-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g', '-pthread'].freeze
   SANITIZERS = {
@@ -28,8 +33,8 @@ class ProgChannelTest < Minitest::Test
     thread: ['-fsanitize=thread']
   }.freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  CASES = %w[whole wait waiters two large].freeze
-  THREADED = %w[wait waiters two].freeze
+  CASES = %w[whole wait waiters two large kill local slots].freeze
+  THREADED = %w[wait waiters two kill slots].freeze
 
   # A seeded fault, the case that catches it, and the edit that plants it.
   MUTANTS = {
@@ -38,7 +43,10 @@ class ProgChannelTest < Minitest::Test
                                                        'if (status == ERX_LANE_PUT_SHORT) {'],
     'a sender that leaves does not wake those still waiting' =>
       ['waiters', "\terx_prog_waitq_wake(&room_waiters);\n\t(void)pthread_mutex_unlock(&lock);\n\treturn (status);",
-       "\t(void)pthread_mutex_unlock(&lock);\n\treturn (status);"]
+       "\t(void)pthread_mutex_unlock(&lock);\n\treturn (status);"],
+    'a requester returns before its reply' => ['kill', "\t\treply_wait(slot);\n", "\t\t(void)reply_wait;\n"],
+    'a reply is read on a slot its request did not take' =>
+      ['kill', "read = erx_prog_inbound_read(&slots,", "slots.busy[0] = slots.busy[1] = ERX_PROG_REQUEST_KILL;\n\tread = erx_prog_inbound_read(&slots,"]
   }.freeze
 
   def test_each_case_under_the_address_and_undefined_sanitizers
@@ -72,7 +80,8 @@ class ProgChannelTest < Minitest::Test
   def with_driver(channel, sanitizer)
     Dir.mktmpdir('erx-prog-channel-') do |directory|
       binary = File.join(directory, 'driver')
-      includes = ['-I', ROOT, '-I', File.join(ROOT, 'include'), '-I', File.join(ROOT, 'build/gen/include')]
+      includes = ['-I', ROOT, '-I', File.join(ROOT, 'include'), '-I', File.join(ROOT, 'build/gen/include'),
+                  '-I', File.join(ROOT, 'kernel/crypto')]
       sources = [channel, *SOURCES.map { |path| File.join(ROOT, path) }]
       output, status = Open3.capture2e(COMPILER, *FLAGS, *SANITIZERS.fetch(sanitizer), *includes,
                                        *sources, '-o', binary)

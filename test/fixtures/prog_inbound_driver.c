@@ -7,11 +7,16 @@
  * The host driver of the event executor's inbound decisions
  * (liberx/program/inbound.h, test/host/prog_inbound_test.rb).  Each line of
  * the requests file is one request, each answered by one line:
- *   open STARTED KIND ZERO LEN	-> open start | report | refuse
- *   report HEX			-> report refused, or
+ *   open STARTED KIND ZERO LEN	-> open start | frame | refuse
+ *   frame HEX			-> refused, or
  *				   report WHICH PIPE END CAP... (the
- *				   capabilities erx_prog_report_caps names)
- * A report is read with all the scratch erx_prog_scratch_bytes promises.
+ *				   capabilities erx_prog_report_caps names), or
+ *				   reply SLOT REQUEST WHICH ERRNUM
+ *   take REQUEST			-> take SLOT (ERX_PROFILE_SLOTS for none)
+ *   release SLOT			-> release
+ *   state SLOT			-> state free | awaiting | answered
+ * A frame is read with all the scratch erx_prog_scratch_bytes promises,
+ * against the reply slots the requests before it left.
  */
 
 #include <inttypes.h>
@@ -25,9 +30,11 @@
 
 #define LINE_MAX_BYTES	4096
 
+static erx_prog_slots_t slots;
+
 static const char *const decisions[] = {
 	[ERX_PROG_INBOUND_START] = "start",
-	[ERX_PROG_INBOUND_REPORT] = "report",
+	[ERX_PROG_INBOUND_FRAME] = "frame",
 	[ERX_PROG_INBOUND_REFUSE] = "refuse",
 };
 
@@ -79,23 +86,31 @@ names(const erx_prog_report_t *r, uint32_t *pipe, uint32_t *end)
 }
 
 static void
-report(const uint8_t *frame, size_t len)
+frame_read(const uint8_t *frame, size_t len)
 {
 	uint64_t caps[ERX_PROG_REPORT_CAPS];
 	const size_t scratch_len = erx_prog_scratch_bytes(len);
 	void *scratch = malloc(scratch_len == 0 ? 1 : scratch_len);
-	erx_prog_report_t r;
+	erx_prog_to_program_t got;
+	const erx_prog_report_t *r = &got.u.report;
+	const erx_prog_kill_reply_t *kill = &got.u.reply.u.kill;
 	uint32_t pipe, end;
 	size_t n;
 
-	if (scratch == NULL || !erx_prog_report_read(frame, len, scratch, scratch_len, &r)) {
-		printf("report refused\n");
+	if (scratch == NULL || !erx_prog_inbound_read(&slots, frame, len, scratch, scratch_len, &got)) {
+		printf("refused\n");
 		free(scratch);
 		return;
 	}
-	names(&r, &pipe, &end);
-	printf("report %u %" PRIu32 " %" PRIu32, r.which, pipe, end);
-	n = erx_prog_report_caps(&r, caps);
+	if (got.frame == ERX_PROG_FRAME_REPLY) {
+		printf("reply %u %u %u %" PRId32 "\n", got.slot, got.u.reply.request, kill->which,
+		    kill->which == ERX_PROG_KILL_REPLY_ERROR ? kill->u.error.errnum : 0);
+		free(scratch);
+		return;
+	}
+	names(r, &pipe, &end);
+	printf("report %u %" PRIu32 " %" PRIu32, r->which, pipe, end);
+	n = erx_prog_report_caps(r, caps);
 	for (size_t at = 0; at < n; at++)
 		printf(" %" PRIu64, caps[at]);
 	printf("\n");
@@ -107,7 +122,7 @@ main(int argc, char **argv)
 {
 	static char line[LINE_MAX_BYTES];
 	static uint8_t frame[LINE_MAX_BYTES / 2];
-	unsigned started;
+	unsigned started, number;
 	uint32_t kind, len;
 	uint64_t zero;
 	FILE *requests;
@@ -115,16 +130,31 @@ main(int argc, char **argv)
 
 	if (argc != 2 || (requests = fopen(argv[1], "r")) == NULL)
 		return (2);
+	erx_prog_slots_init(&slots);
 	while (fgets(line, sizeof(line), requests) != NULL) {
 		if (sscanf(line, "open %u %" SCNu32 " %" SCNu64 " %" SCNu32,
 		    &started, &kind, &zero, &len) == 4) {
 			printf("open %s\n", decisions[erx_prog_inbound_open(started != 0, kind, zero, len)]);
 			continue;
 		}
-		if (strncmp(line, "report ", 7) != 0 ||
-		    (n = unhex(line + 7, frame, sizeof(frame))) == SIZE_MAX)
+		if (sscanf(line, "take %u", &number) == 1) {
+			printf("take %u\n", erx_prog_slot_take(&slots, (uint16_t)number));
+			continue;
+		}
+		if (sscanf(line, "release %u", &number) == 1 && number < ERX_PROFILE_SLOTS) {
+			erx_prog_slot_release(&slots, number);
+			printf("release\n");
+			continue;
+		}
+		if (sscanf(line, "state %u", &number) == 1 && number < ERX_PROFILE_SLOTS) {
+			printf("state %s\n", (slots.held & (1u << number)) == 0 ? "free" :
+			    erx_prog_slot_answered(&slots, number) ? "answered" : "awaiting");
+			continue;
+		}
+		if (strncmp(line, "frame ", 6) != 0 ||
+		    (n = unhex(line + 6, frame, sizeof(frame))) == SIZE_MAX)
 			return (2);
-		report(frame, n);
+		frame_read(frame, n);
 	}
 	fclose(requests);
 	return (0);

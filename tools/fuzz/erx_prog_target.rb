@@ -22,7 +22,7 @@ cwd_at_max = frames.start(frames::BASE_PAIRS.merge(fds: etf::NIL, cwd: etf.binar
 choice = { 'start' => "\x00".b, 'request' => "\x01".b, 'notice' => "\x02".b, 'report' => "\x03".b,
            'reply' => [4 | (1 << 6)].pack('C') }.freeze
 Erx::PackFuzz.declare_target(
-  sources: %w[liberx/program/startup.c liberx/erx_profile.c liberx/erx_etf.c kernel/crypto/blake3/blake3.c
+  sources: %w[liberx/program/startup.c liberx/program/inbound.c liberx/erx_profile.c liberx/erx_etf.c kernel/crypto/blake3/blake3.c
               kernel/crypto/blake3/blake3_portable.c build/gen/liberx/generated/prog_profile.c],
   includes: [*Erx::PackFuzz::INCLUDES, '.'],
   seeds: fixtures.to_h { |fixture| [fixture.name.to_s.tr('_', '-'), choice.fetch('start') + fixture.bytes] }.merge(

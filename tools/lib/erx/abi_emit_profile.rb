@@ -49,7 +49,7 @@ module Erx
         [banner,
          '', "#ifndef #{guard}", "#define #{guard}", '',
          "/* The #{@protocol.fetch(:name)} frame profile's C check (docs/design-abi.md#program-protocol). */",
-         '', '#include <erx/profile.h>', '', frame_enum, enums, types, frame_types, prototypes, cap_prototypes, '',
+         '', '#include <erx/profile.h>', '', frame_enum, named_enum, enums, types, frame_types, prototypes, cap_prototypes, '',
          "#endif /* !#{guard} */", ''].join("\n")
       end
 
@@ -123,6 +123,16 @@ module Erx
       def frame_enum
         constants = @frames.each_with_index.map { |frame, position| "\t#{frame_constant(frame)} = #{position}," }
         "/* The frames, by their index in the table. */\nenum {\n#{constants.join("\n")}\n};\n"
+      end
+
+      # Each named number's kind, by its index in the table: the kind argument of
+      # erx_profile_named_name, by which a frame's writer finds a number's atom.
+      def named_enum
+        constants = @order.each_with_index.select { |name, _| Protocols::NAMED_NUMBERS.key?(name) }
+                          .map { |name, position| "\t#{prefix.upcase}_KIND_#{name.upcase} = #{position}," }
+        return '' if constants.empty?
+
+        "/* The named numbers' kinds, by their index in the table. */\nenum {\n#{constants.join("\n")}\n};\n"
       end
 
       # A reply frame's struct, the request case it answers and that case's

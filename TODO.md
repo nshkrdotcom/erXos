@@ -2942,6 +2942,22 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   (`{erx_prog, 1, Slot, Reply}`), such as `pipe`'s, can carry a read end's descriptor far past it,
   and the header decision cannot tell a reply from a report. Have `send/2` refuse past it with
   `einval`, and size the executor's copy for replies before workers send requests.
+* [Medium] liberx program layer, `liberx/program/channel.c` (`erx_prog_channel_request`): a reply
+  is copied out of its slot as the check's struct, whose texts and lists are views into the
+  executor's one frame buffer, which the next frame overwrites. `kill_reply` holds none; the first
+  reply with a text or a list (`readlink`, `walk`) needs the frame kept with its slot, for example
+  a frame buffer per slot that the executor swaps with its own when it reads a reply. The requests
+  are also written by hand with `erx_etf_put_*`, as the notices are; a writer generated from the
+  profile, the inverse of its check, would keep each request's encoding one fact with its grammar.
+* [Medium] liberx program layer, `liberx/program/signal.c` (`erx_prog_kill`): musl's `kill` is
+  not offered to the program's seam yet. It waits on two things: musl numbering signals as the
+  ABI's signal table does (musl's Linux numbers would send `sigbus` for `SIGUSR1`), and the
+  handler's answer to `{kill, Target, Signal}` in `erx_prog_handler_core`, without which a
+  program's `kill` waits for its reply for ever. Once both land, add `SYS_kill` to
+  `seam_offered` and `erx_fiasco_libc_fd`, and a `programs` QEMU case of a kill round trip.
+* [Low] liberx program layer, `liberx/program/channel.c` (`slot_take`): the wait for a free reply
+  slot is open, and its waiter is on the thread's stack; once signal handlers run on workers, an
+  unwind out of it must take the waiter off `slot_waiters` first.
 * [Medium] docs/design-pipes.md ("Ends and their holders", "The program protocol"): the design
   does not say what a program does with a report for an end it no longer holds, though a
   `{pipe_writer}` can cross the program's `{closed}`. `liberx` closes the capabilities the report

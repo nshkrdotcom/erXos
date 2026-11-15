@@ -28,7 +28,10 @@
  * gone, and a mem range's first page and count from 1.  An accepted request
  * holds a kill of a process id from 2 and a signal of the signal table; an
  * accepted reply came on a slot that holds a kill, and holds ok or an
- * errno of the errno table.
+ * errno of the errno table.  The executor's read of a frame to the program
+ * over reply slots holding those requests accepts exactly what the check
+ * does, moves a reply's slot to answered so the same reply read again is
+ * refused, and leaves the slots unchanged otherwise.
  *
  * The start-up plan of liberx/program/startup.h runs on every start frame
  * and must agree with the check: a refused frame is refused with status 127
@@ -46,6 +49,7 @@
 #include <string.h>
 
 #include "erx/prog_profile.h"
+#include "liberx/program/inbound.h"
 #include "liberx/program/startup.h"
 
 int LLVMFuzzerTestOneInput(const uint8_t *, size_t);
@@ -433,6 +437,49 @@ read_reply(const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t slot,
 	abort();
 }
 
+/*
+ * The executor's read of a frame to the program (liberx/program/inbound.h)
+ * over reply slots held as busy says, which must agree with the check: it
+ * accepts what the check accepted, and an accepted reply moves its slot
+ * from awaiting to answered, so the same frame read again is refused;
+ * every other read leaves the slots as they were.
+ */
+static void
+slots_read(const uint8_t *frame, size_t len, size_t scratch_len,
+    const uint16_t busy[ERX_PROFILE_SLOTS], bool accepted)
+{
+	erx_prog_to_program_t got;
+	erx_prog_slots_t slots, before;
+	uint8_t *scratch;
+	bool read;
+
+	if ((scratch = malloc(scratch_len == 0 ? 1 : scratch_len)) == NULL)
+		abort();
+	memset(&slots, 0, sizeof(slots));
+	for (unsigned slot = 0; slot < ERX_PROFILE_SLOTS; slot++) {
+		slots.busy[slot] = busy[slot];
+		if (busy[slot] != ERX_PROFILE_NONE)
+			slots.held |= (uint16_t)(1u << slot);
+	}
+	before = slots;
+	read = erx_prog_inbound_read(&slots, frame, len, scratch, scratch_len, &got);
+	if (read != accepted)
+		abort();
+	if (read && got.frame == ERX_PROG_FRAME_REPLY) {
+		if (got.slot >= ERX_PROFILE_SLOTS || slots.held != before.held ||
+		    !erx_prog_slot_answered(&slots, got.slot) ||
+		    memcmp(&slots.replies[got.slot], &got.u.reply, sizeof(got.u.reply)) != 0)
+			abort();
+		before.busy[got.slot] = ERX_PROFILE_NONE;
+		before.replies[got.slot] = got.u.reply;
+		if (erx_prog_inbound_read(&slots, frame, len, scratch, scratch_len, &got))
+			abort();
+	}
+	if (memcmp(&slots, &before, sizeof(slots)) != 0)
+		abort();
+	free(scratch);
+}
+
 /* The busy slots of pattern, bits 6-7 of the first byte. */
 static void
 busy_slots(unsigned pattern, uint16_t busy[ERX_PROFILE_SLOTS])
@@ -614,6 +661,8 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		read_start(&start);
 	if (kind == FRAME_START)
 		plan_start(frame_start, len, need, full, &start, &full_refusal);
+	if (kind == FRAME_TO_PROGRAM)
+		slots_read(frame_start, len, need, busy, full);
 	if (check(kind, frame_start, len, offset, need - 1, busy, &start,
 	    &short_refusal) || (short_refusal.reason != ERX_PROFILE_SCRATCH &&
 	    short_refusal.reason != ERX_PROFILE_SIZE))

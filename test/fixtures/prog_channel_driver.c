@@ -26,10 +26,21 @@
  *   large	a frame whose record is larger than the ring is refused with
  *		ERX_ERANGE and writes nothing; one that fills the ring exactly
  *		is written
- * Every case ends within its deadline: alarm stops a driver whose send
- * never returns.
+ *   kill	erx_prog_kill sends {kill, Pid, Signal} on a slot and waits:
+ *		a reply on another slot is refused, the reply on its slot
+ *		is returned, an error negated, and a second one is refused
+ *   local	a kill the request table offers no target for, of an
+ *		unlisted signal or of the session, is answered without a
+ *		request
+ *   slots	with every worker slot held, one more kill waits for a slot
+ *		and takes the one a reply frees; no request uses the
+ *		executor's slot or a held one
+ * The driver plays the executor too, handing replies to
+ * erx_prog_channel_frame.  Every case ends within its deadline: alarm stops
+ * a driver whose send never returns.
  */
 
+#include <errno.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <stdbool.h>
@@ -40,10 +51,15 @@
 #include <time.h>
 #include <unistd.h>
 
+#include <erx/prog_profile.h>
+
 #include "erx/abi.h"
+#include "erx/etf.h"
 #include "erx/lane.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/channel.h"
+#include "liberx/program/inbound.h"
+#include "liberx/program/signal.h"
 
 #define DEADLINE_S	60
 #define HEADER		16	/* a frame record's header, as lane.h lays it out */
@@ -462,6 +478,187 @@ case_large(void)
 }
 
 int
+erx_space_stop(uint64_t space, int64_t status)
+{
+	(void)space;
+	(void)status;
+	fail("the program stopped");
+}
+
+/* A kill request made on a thread of its own: its target, signal and what erx_prog_kill returned. */
+typedef struct killer {
+	pthread_t	thread;
+	int		pid;
+	int		signo;
+	_Atomic int	result;
+	_Atomic bool	done;
+} killer_t;
+
+static void *
+killer_main(void *arg)
+{
+	killer_t *const k = arg;
+
+	atomic_store(&k->result, erx_prog_kill(k->pid, k->signo));
+	atomic_store(&k->done, true);
+	return (NULL);
+}
+
+static void
+killer_start(killer_t *k, int pid, int signo)
+{
+	k->pid = pid;
+	k->signo = signo;
+	atomic_store(&k->done, false);
+	if (pthread_create(&k->thread, NULL, killer_main, k) != 0)
+		fail("pthread_create");
+}
+
+/* Reads the next request as the handler's session does, the slot it came on into *slot. */
+static erx_prog_request_t
+request_read(uint8_t *slot)
+{
+	static unsigned char buf[ERX_PROGRAM_LANE];
+	static unsigned char scratch[4096];
+	erx_profile_refusal_t refusal;
+	erx_prog_request_t request;
+	uint32_t len;
+
+	while (!record_read(buf, sizeof(buf), sizeof(buf), &len))
+		pause_briefly();
+	if (erx_prog_scratch_bytes(len) > sizeof(scratch) ||
+	    !erx_prog_check_request(buf, len, scratch, sizeof(scratch), slot, &request, &refusal))
+		fail("a request the handler's grammar refuses");
+	return (request);
+}
+
+/*
+ * Hands the executor {erx_prog, 1, Slot, Reply}, Reply ok when error is
+ * NULL and {error, Error} otherwise, and returns whether it took the frame.
+ */
+static bool
+reply_give(uint8_t slot, const char *error)
+{
+	static unsigned char scratch[4096];
+	unsigned char frame[64];
+	erx_prog_to_program_t got;
+	erx_etf_writer_t writer;
+	size_t len;
+
+	erx_etf_writer_init(&writer, frame, sizeof(frame));
+	erx_etf_put_tuple(&writer, 4);
+	erx_etf_put_atom(&writer, "erx_prog", strlen("erx_prog"));
+	erx_etf_put_integer(&writer, 1);
+	erx_etf_put_integer(&writer, slot);
+	if (error == NULL) {
+		erx_etf_put_atom(&writer, "ok", 2);
+	} else {
+		erx_etf_put_tuple(&writer, 2);
+		erx_etf_put_atom(&writer, "error", strlen("error"));
+		erx_etf_put_atom(&writer, error, strlen(error));
+	}
+	if (!erx_etf_writer_done(&writer, &len) || erx_prog_scratch_bytes(len) > sizeof(scratch))
+		fail("a reply the driver cannot build");
+	if (!erx_prog_channel_frame(frame, len, scratch, sizeof(scratch), &got))
+		return (false);
+	if (got.frame != ERX_PROG_FRAME_REPLY || got.slot != slot)
+		fail("a reply read as another frame");
+	return (true);
+}
+
+static int
+killer_join(killer_t *k)
+{
+	pthread_join(k->thread, NULL);
+	return (atomic_load(&k->result));
+}
+
+static void
+case_kill(void)
+{
+	killer_t k;
+	erx_prog_request_t request;
+	uint8_t slot;
+
+	killer_start(&k, 42, ERX_SIGTERM);
+	request = request_read(&slot);
+	if (request.which != ERX_PROG_REQUEST_KILL || request.u.kill.process_id != 42 ||
+	    request.u.kill.signal != ERX_SIGTERM)
+		fail("the request is not the kill made");
+	if (reply_give((uint8_t)(slot + 1), NULL))
+		fail("a reply on a slot that awaits none was taken");
+	if (atomic_load(&k.done))
+		fail("kill returned before its reply");
+	if (!reply_give(slot, "esrch"))
+		fail("the reply on the request's slot was refused");
+	if (reply_give(slot, NULL))
+		fail("a second reply on the slot was taken");
+	if (killer_join(&k) != -ESRCH)
+		fail("kill did not return the reply's error");
+	killer_start(&k, 42, ERX_SIGKILL);
+	request = request_read(&slot);
+	if (!reply_give(slot, NULL) || killer_join(&k) != 0)
+		fail("kill did not return 0 for ok");
+}
+
+static void
+case_local(void)
+{
+	static unsigned char buf[ERX_PROGRAM_LANE];
+	uint32_t len;
+
+	if (erx_prog_kill(42, 0) != -ENOSYS || erx_prog_kill(0, ERX_SIGTERM) != -ENOSYS ||
+	    erx_prog_kill(-5, ERX_SIGTERM) != -ENOSYS)
+		fail("signal 0 or a process group is not ENOSYS");
+	if (erx_prog_kill(42, ERX_SIGRTMAX + 1) != -EINVAL || erx_prog_kill(42, -1) != -EINVAL)
+		fail("a signal the table does not list is not EINVAL");
+	if (erx_prog_kill(1, ERX_SIGTERM) != -ESRCH)
+		fail("the session is not ESRCH");
+	if (record_read(buf, sizeof(buf), sizeof(buf), &len))
+		fail("a kill answered locally sent a request");
+}
+
+/*
+ * Every worker slot held by a waiting kill: one more waits for a free slot,
+ * and takes the one a reply frees, so no slot carries two requests.
+ */
+static void
+case_slots(void)
+{
+	killer_t k[ERX_PROG_EXECUTOR_SLOT + 1];
+	uint8_t slot, last;
+	unsigned seen = 0;
+
+	for (unsigned at = 0; at < ERX_PROG_EXECUTOR_SLOT; at++) {
+		killer_start(&k[at], 100 + (int)at, ERX_SIGTERM);
+		(void)request_read(&slot);
+		if (slot >= ERX_PROG_EXECUTOR_SLOT || (seen & (1u << slot)) != 0)
+			fail("a request on the executor's slot or on a held one");
+		seen |= 1u << slot;
+	}
+	killer_start(&k[ERX_PROG_EXECUTOR_SLOT], 200, ERX_SIGTERM);
+	for (unsigned tries = 0; tries < 50; tries++) {
+		static unsigned char buf[ERX_PROGRAM_LANE];
+		uint32_t len;
+
+		pause_briefly();
+		if (record_read(buf, sizeof(buf), sizeof(buf), &len))
+			fail("a request sent with every worker slot held");
+	}
+	if (!reply_give(4, NULL))
+		fail("the reply on a held slot was refused");
+	(void)request_read(&last);
+	if (last != 4)
+		fail("the waiting kill did not take the slot freed");
+	for (unsigned at = 0; at < ERX_PROG_EXECUTOR_SLOT; at++) {
+		if (!reply_give((uint8_t)at, "eperm"))
+			fail("a reply on a held slot was refused");
+	}
+	for (unsigned at = 0; at <= ERX_PROG_EXECUTOR_SLOT; at++)
+		(void)killer_join(&k[at]);
+}
+
+int
 main(int argc, char **argv)
 {
 	static const struct {
@@ -469,7 +666,8 @@ main(int argc, char **argv)
 		void		(*run)(void);
 	} cases[] = {
 		{ "whole", case_whole }, { "wait", case_wait }, { "waiters", case_waiters },
-		{ "two", case_two }, { "large", case_large },
+		{ "two", case_two }, { "large", case_large }, { "kill", case_kill },
+		{ "local", case_local }, { "slots", case_slots },
 	};
 	const uint64_t bytes = erx_lane_side_bytes(ERX_PROGRAM_LANE);
 

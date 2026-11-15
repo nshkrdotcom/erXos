@@ -33,11 +33,14 @@
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <string.h>
 
 #include "erx/abi.h"
+#include "erx/etf.h"
 #include "erx/lane.h"
 #include "liberx/backend/api.h"
 #include "liberx/program/channel.h"
+#include "liberx/program/inbound.h"
 #include "liberx/program/wake.h"
 
 static pthread_mutex_t lock = PTHREAD_MUTEX_INITIALIZER;
@@ -47,11 +50,19 @@ static erx_lane_writer_t outbound;
 static uint64_t doorbell;
 /* The senders waiting for room, under lock. */
 static erx_prog_waitq_t room_waiters;
+/* The reply slots and the workers waiting on them, under lock. */
+static erx_prog_slots_t slots;
+static erx_prog_waitq_t reply_waiters[ERX_PROFILE_SLOTS];	/* a slot's requester */
+static erx_prog_waitq_t slot_waiters;				/* workers without a slot */
+
+/* A request's envelope before its value, the version byte and {erx_prog, Version, Slot,: 17 bytes. */
+#define ENVELOPE_MAX	32
 
 bool
 erx_prog_channel_open(void *own_side, const void *peer_side, uint64_t bell)
 {
 	doorbell = bell;
+	erx_prog_slots_init(&slots);
 	return (erx_lane_writer_init(&outbound, own_side, peer_side, ERX_PROGRAM_LANE));
 }
 
@@ -115,4 +126,100 @@ erx_prog_channel_room(void)
 	(void)pthread_mutex_lock(&lock);
 	erx_prog_waitq_wake(&room_waiters);
 	(void)pthread_mutex_unlock(&lock);
+}
+
+/*
+ * Under the lock, until the calling worker holds a slot for request: takes
+ * a free one, or joins those waiting for one and waits, as whole_put waits
+ * for room.
+ */
+static unsigned
+slot_take(uint16_t request)
+{
+	unsigned slot;
+
+	while ((slot = erx_prog_slot_take(&slots, request)) == ERX_PROFILE_SLOTS) {
+		const uint32_t seen = erx_prog_wake_seen();
+		erx_prog_waiter_t me;
+
+		erx_prog_waitq_join(&slot_waiters, &me);
+		(void)pthread_mutex_unlock(&lock);
+		erx_prog_wake_sleep(seen, ERX_WAIT_FOREVER);
+		(void)pthread_mutex_lock(&lock);
+		erx_prog_waitq_leave(&slot_waiters, &me);
+	}
+	return (slot);
+}
+
+/*
+ * Under the lock, until the reply to the request on slot is there: a closed
+ * wait, since the request in flight is the thread's obligation, and with no
+ * deadline (docs/design-programs.md, "Open and closed waits").
+ */
+static void
+reply_wait(unsigned slot)
+{
+	while (!erx_prog_slot_answered(&slots, slot)) {
+		const uint32_t seen = erx_prog_wake_seen();
+		erx_prog_waiter_t me;
+
+		erx_prog_waitq_join(&reply_waiters[slot], &me);
+		(void)pthread_mutex_unlock(&lock);
+		erx_prog_wake_sleep(seen, ERX_WAIT_FOREVER);
+		(void)pthread_mutex_lock(&lock);
+		erx_prog_waitq_leave(&reply_waiters[slot], &me);
+	}
+}
+
+int
+erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
+    erx_prog_reply_t *reply)
+{
+	const erx_profile_frame_t *const frame = &erx_prog_profile.frames[ERX_PROG_FRAME_REQUEST];
+	uint8_t envelope[ENVELOPE_MAX];
+	erx_lane_iov_t iov[2];
+	erx_etf_writer_t writer;
+	size_t envelope_len;
+	unsigned slot;
+	int status;
+
+	(void)pthread_mutex_lock(&lock);
+	slot = slot_take(request);
+	(void)pthread_mutex_unlock(&lock);
+
+	/* {Tag, Version, Slot, Value}: the value's own version byte gives way to the envelope's. */
+	erx_etf_writer_init(&writer, envelope, sizeof(envelope));
+	erx_etf_put_tuple(&writer, 4);
+	erx_etf_put_atom(&writer, frame->tag, strlen(frame->tag));
+	erx_etf_put_integer(&writer, (int64_t)erx_prog_profile.version);
+	erx_etf_put_integer(&writer, slot);
+	if (!erx_etf_writer_done(&writer, &envelope_len))
+		envelope_len = 0;	/* not reached: ENVELOPE_MAX holds it */
+	iov[0] = (erx_lane_iov_t){ .base = envelope, .len = envelope_len };
+	iov[1] = (erx_lane_iov_t){ .base = value + 1, .len = len - 1 };
+	status = erx_prog_channel_send(iov, 2);
+
+	(void)pthread_mutex_lock(&lock);
+	if (status == ERX_OK) {
+		reply_wait(slot);
+		*reply = slots.replies[slot];
+	}
+	erx_prog_slot_release(&slots, slot);
+	erx_prog_waitq_wake(&slot_waiters);
+	(void)pthread_mutex_unlock(&lock);
+	return (status);
+}
+
+bool
+erx_prog_channel_frame(const uint8_t *frame, size_t len, void *scratch,
+    size_t scratch_len, erx_prog_to_program_t *got)
+{
+	bool read;
+
+	(void)pthread_mutex_lock(&lock);
+	read = erx_prog_inbound_read(&slots, frame, len, scratch, scratch_len, got);
+	if (read && got->frame == ERX_PROG_FRAME_REPLY)
+		erx_prog_waitq_wake(&reply_waiters[got->slot]);
+	(void)pthread_mutex_unlock(&lock);
+	return (read);
 }

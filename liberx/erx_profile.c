@@ -102,6 +102,21 @@ erx_profile_name(const erx_profile_t *p, uint16_t name)
 	return (name < p->nnames ? p->names[name] : "unknown");
 }
 
+const char *
+erx_profile_named_name(const erx_profile_t *p, uint16_t kind, int32_t number)
+{
+	const erx_profile_table_t *table;
+
+	if (kind >= p->nkinds || p->kinds[kind].form != ERX_PROFILE_NAMED)
+		return (NULL);
+	table = &p->tables[p->kinds[kind].table];
+	for (uint16_t i = 0; i < table->nrows; i++) {
+		if (table->rows[i].number == number)
+			return (table->rows[i].name);
+	}
+	return (NULL);
+}
+
 static bool
 refuse(walk_t *w, erx_profile_reason_t reason, uint16_t kind)
 {

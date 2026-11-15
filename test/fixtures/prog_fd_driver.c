@@ -430,6 +430,18 @@ erx_space_stop(uint64_t space, int64_t status)
 	_exit(0);
 }
 
+/* No descriptor call makes a request; signal.c's kill, linked in, would. */
+int
+erx_prog_channel_request(uint16_t request, const uint8_t *value, size_t len,
+    erx_prog_reply_t *reply)
+{
+	(void)request;
+	(void)value;
+	(void)len;
+	(void)reply;
+	abort();
+}
+
 /* The channel's send: each frame checked by the generated notice check, then kept as a line. */
 static char notices[4096];
 
@@ -523,9 +535,16 @@ report_parse(const char *hex, erx_prog_report_t *report)
 	static uint8_t scratch[8192];
 	uint8_t *frame;
 	size_t len = unhex(hex, &frame);
-	bool ok = erx_prog_scratch_bytes(len) <= sizeof(scratch) &&
-	    erx_prog_report_read(frame, len, scratch, sizeof(scratch), report);
+	erx_prog_slots_t slots;
+	erx_prog_to_program_t got;
+	bool ok;
 
+	erx_prog_slots_init(&slots);
+	ok = erx_prog_scratch_bytes(len) <= sizeof(scratch) &&
+	    erx_prog_inbound_read(&slots, frame, len, scratch, sizeof(scratch), &got) &&
+	    got.frame == ERX_PROG_FRAME_REPORT;
+	if (ok)
+		*report = got.u.report;
 	free(frame);
 	return (ok);
 }

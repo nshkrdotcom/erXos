@@ -20,11 +20,21 @@
  * the channel's label, which the session rings when its read crosses the
  * room a sender published that it needs.  The executor never sends: a send
  * may wait for room, which only the executor can announce.
+ *
+ * The channel also keeps the reply slots (inbound.h), under the same lock.
+ * A worker's request takes a free slot, waiting for one in an open wait
+ * when all are held, sends {erx_prog, Version, Slot, Request} and waits for
+ * the reply in a closed wait, the request in flight being its obligation; the executor reads every frame after the
+ * startup message through erx_prog_channel_frame, which puts a reply in
+ * its slot and wakes its requester, so a reply reaches only the request on
+ * its slot.
  */
 
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
+
+#include <erx/prog_profile.h>
 
 #include "erx/lane.h"
 
@@ -51,5 +61,26 @@ int	erx_prog_channel_send(const erx_lane_iov_t *iov, size_t iovcnt);
  * sender waiting for it looks again.
  */
 void	erx_prog_channel_room(void);
+/*
+ * Makes a request of case request (ERX_PROG_REQUEST_...), whose value
+ * value[0, len) is one term as erx_etf_writer writes it, its version byte
+ * first: takes a free worker slot, waiting for one while all are held,
+ * sends the request on it through erx_prog_channel_send and waits for the
+ * reply, which it copies into *reply.  ERX_OK with *reply; the send's
+ * ERX_ERANGE or ERX_EDEAD, with no reply.  The slot is free again either
+ * way.  A reply holds no view into its frame: replies with texts or lists
+ * need the frame kept with the slot.  The executor never makes a request.
+ */
+int	erx_prog_channel_request(uint16_t request, const uint8_t *value,
+	    size_t len, erx_prog_reply_t *reply);
+/*
+ * The executor's read of a whole frame after the startup message,
+ * frame[0, len), with scratch_len bytes of scratch (erx_prog_inbound_read):
+ * a reply goes into its slot, whose requester it wakes, and a report into
+ * *got for the executor to apply.  False when the profile refuses the
+ * frame, a reply on a slot that awaits none among them.
+ */
+bool	erx_prog_channel_frame(const uint8_t *frame, size_t len, void *scratch,
+	    size_t scratch_len, erx_prog_to_program_t *got);
 
 #endif /* !LIBERX_PROGRAM_CHANNEL_H */

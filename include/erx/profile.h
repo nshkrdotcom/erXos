@@ -278,6 +278,15 @@ uint16_t erx_profile_select(const erx_profile_t *profile,
 bool	erx_profile_next(const erx_profile_t *profile, uint16_t kind,
 	    erx_profile_list_t *list, void *element);
 
+/*
+ * The protocol name of number in the table of the named kind kind, the atom
+ * a frame's writer puts for it (the generated ..._KIND_SIGNAL and the like
+ * name the kinds); NULL when kind is no named kind or its table lists no such
+ * number, which no frame may then carry.
+ */
+const char *erx_profile_named_name(const erx_profile_t *profile, uint16_t kind,
+	    int32_t number);
+
 const char *erx_profile_name(const erx_profile_t *profile, uint16_t name);
 const char *erx_profile_reason_name(erx_profile_reason_t reason);
 

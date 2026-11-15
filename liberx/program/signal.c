@@ -15,10 +15,18 @@
 #include <stdatomic.h>
 #include <stdbool.h>
 #include <stdint.h>
+#include <string.h>
+
+#include <erx/prog_profile.h>
 
 #include "erx/abi.h"
+#include "erx/etf.h"
 #include "liberx/backend/api.h"
+#include "liberx/program/channel.h"
 #include "liberx/program/signal.h"
+
+/* {kill, Pid, Signal} with its version byte: at most 27 bytes, the longest signal name being 11. */
+#define KILL_VALUE_MAX	40
 
 static pthread_mutex_t actions_lock = PTHREAD_MUTEX_INITIALIZER;
 static struct sigaction actions[ERX_SIGRTMAX + 1];
@@ -93,4 +101,35 @@ erx_prog_sig_raise(int signo)
 	(void)erx_space_stop(ERX_CAP_SELF, ERX_EXIT_SIGNAL + signo);
 	for (;;)
 		(void)erx_umtx_wait((uint64_t)(uintptr_t)&never, 0, ERX_WAIT_FOREVER);
+}
+
+int
+erx_prog_kill(int pid, int signo)
+{
+	const char *const name = erx_profile_named_name(&erx_prog_profile, ERX_PROG_KIND_SIGNAL, signo);
+	uint8_t value[KILL_VALUE_MAX];
+	erx_etf_writer_t writer;
+	erx_prog_reply_t reply;
+	size_t len;
+
+	/* kill(pid, 0) and a process group are no target the request table offers. */
+	if (signo == 0)
+		return (-ENOSYS);
+	if (name == NULL)
+		return (-EINVAL);
+	if (pid <= 0)
+		return (-ENOSYS);
+	/* Process 1 is the session, which no program signals; the handler answers esrch for it too. */
+	if (pid == 1)
+		return (-ESRCH);
+	erx_etf_writer_init(&writer, value, sizeof(value));
+	erx_etf_put_tuple(&writer, 3);
+	erx_etf_put_atom(&writer, "kill", strlen("kill"));
+	erx_etf_put_integer(&writer, pid);
+	erx_etf_put_atom(&writer, name, strlen(name));
+	if (!erx_etf_writer_done(&writer, &len) ||
+	    erx_prog_channel_request(ERX_PROG_REQUEST_KILL, value, len, &reply) != ERX_OK)
+		return (-EIO);
+	/* The ABI's errno table numbers each error as musl's errno.h does. */
+	return (reply.u.kill.which == ERX_PROG_KILL_REPLY_OK ? 0 : -reply.u.kill.u.error.errnum);
 }
