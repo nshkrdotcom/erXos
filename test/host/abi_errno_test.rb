@@ -14,10 +14,13 @@ require_relative '../fixtures/generated_tree'
 # The errno table of the ABI file (abi/errno.txt) against FreeBSD 15.1's
 # sys/sys/errno.h at deps.lock's freebsd-errno pin, musl's <errno.h> and
 # strerror read through the generated header (docs/design-programs.md, "The
-# POSIX-lite personality"), and the generator's refusal of a malformed table.
+# POSIX-lite personality"), strerror's texts against lib/libc/gen/errlst.c at
+# the freebsd-errlst pin, and the generator's refusal of a malformed table.
 class AbiErrnoTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   ERRNO_DEFINE = /^#define\s+(E[A-Z0-9]+)\s+(\d+|E[A-Z0-9]+)\b/
+  STRERROR = File.join(ROOT, 'musl/src/errno/__strerror.h')
+  STRERROR_ENTRY = /^E\((E[A-Z0-9]+),\s*"([^"]*)"\)$/
   DEADLINE = '60'
   LIMIT = ['gtimeout', '-k', '10', DEADLINE].freeze
 
@@ -46,9 +49,23 @@ class AbiErrnoTest < Minitest::Test
   # else: an unlisted name would not build, a missing one reads as "No error
   # information", and an alias or a repeat would take another errno's slot.
   def test_strerror_describes_every_errno
-    described = File.read(File.join(ROOT, 'musl/src/errno/__strerror.h')).scan(/^E\((E[A-Z0-9]+),/).flatten
+    described = strerror_texts(File.read(STRERROR)).keys
     names = schema_of(ROOT).errnos.errnos.map { |entry| entry.name.upcase }
     assert_equal names.sort, described.sort
+  end
+
+  # Each strerror text is FreeBSD's text for the errno's number in
+  # lib/libc/gen/errlst.c, not musl's own wording.
+  def test_strerror_texts_match_freebsd_errlst
+    assert_empty text_mismatches(File.read(STRERROR))
+  end
+
+  # Seeded fault: a text worded as musl words it is well formed, so only the
+  # comparison with errlst.c refuses it.
+  def test_comparison_catches_a_wrong_text
+    seeded = File.read(STRERROR).sub('"Illegal seek"', '"Invalid seek"')
+    refute_equal File.read(STRERROR), seeded
+    assert_equal ['ESPIPE'], text_mismatches(seeded).keys
   end
 
   # Seeded faults: the generator refuses a repeated number, a repeated name or
@@ -93,6 +110,32 @@ class AbiErrnoTest < Minitest::Test
                        '-E', '-dM', source)
       resolved(macros.scan(ERRNO_DEFINE).to_h)
     end
+  end
+
+  # The errnos whose text in a strerror table differs from FreeBSD's text for
+  # the number: name => [text, FreeBSD's text].
+  def text_mismatches(strerror)
+    numbers = table(ROOT)
+    freebsd = freebsd_texts
+    strerror_texts(strerror).to_h { |name, text| [name, [text, freebsd.fetch(numbers.fetch(name))]] }
+                            .reject { |_, (text, expected)| text == expected }
+  end
+
+  # The name => text of each E(NAME, "text") entry of a strerror table, but
+  # entry 0, the catch-all. A line that starts an entry and does not read as
+  # one is refused, so no entry escapes the comparison.
+  def strerror_texts(strerror)
+    entries = strerror.lines.grep(/^E\(E/).map(&:chomp)
+    entries.to_h { |line| line.match(STRERROR_ENTRY)&.captures or flunk("unreadable strerror entry: #{line}") }
+  end
+
+  # FreeBSD's error text by errno number: sys_errlist is an array, so a text's
+  # number is its position once the comments are removed. A slot that holds
+  # __uprefix, the prefix of an unknown error, has no text.
+  def freebsd_texts
+    _, path = Erx::Dependencies.new(root: ROOT, runner: nil).archive_for('freebsd-errlst')
+    body = File.read(path)[/sys_errlist\[\] = \{(.*?)^\};/m, 1] or flunk('no sys_errlist in errlst.c')
+    body.gsub(%r{/\*.*?\*/}m, '').scan(/"([^"]*)"|__uprefix/).flatten.each_with_index.to_h { |text, number| [number, text] }
   end
 
   # Names with their numbers, a value naming another macro replaced by its number.

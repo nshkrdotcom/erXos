@@ -189,6 +189,16 @@
       "status": "permanent"
     },
     {
+      "id": "freebsd-errlst",
+      "kind": "file",
+      "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",
+      "url": "https://raw.githubusercontent.com/freebsd/freebsd-src/95719d8a895bf8170851e9844d9b4092b1d2b6fe/lib/libc/gen/errlst.c",
+      "sha256": "34e87df532c0ba1dca3c94233e9b922a5d94d0ba9e104aa39f02790a3467ac1f",
+      "filename": "errlst.c",
+      "license": "BSD-3-Clause",
+      "status": "permanent"
+    },
+    {
       "id": "freebsd-errno",
       "kind": "file",
       "version": "95719d8a895bf8170851e9844d9b4092b1d2b6fe",

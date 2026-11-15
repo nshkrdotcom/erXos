@@ -3300,7 +3300,8 @@ define it.
   than becoming `EIO`. A consumer that cannot expose a status declares that
   explicitly. Unknown external codes follow the protocol's specified
   fallback, and numeric values are FreeBSD's, checked against FreeBSD's
-  headers, while 9P keeps its Linux wire numbering
+  headers, as are the texts of `strerror`, checked against FreeBSD's `errlst.c` (only
+  the catch-all text for an unknown code is musl's), while 9P keeps its Linux wire numbering
   ([design-generation.md](design-generation.md#inspection-and-diagnostics)). No call reports
   success without acting: a facility that is absent fails with a specific
   `errno`, such as `ENOSYS` for creating process groups and sessions in

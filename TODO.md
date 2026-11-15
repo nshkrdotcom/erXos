@@ -1886,11 +1886,9 @@ it; git history is the record of completed work.
   and the configure stamp does not cover OpenSSL's options or headers, so a change to `Libcrypto::OPTIONS`, `openssl/include` or
   `erl_nif.h` leaves them compiled against the old headers. Fold a digest of the OpenSSL prefix into the stamp, as
   `NativeJitRuntime#sdk_root` does for libc++, and give the prefix's header copy `--delete`.
-* [Medium] musl, strerror (`musl/src/errno/__strerror.h`, `test/host/abi_errno_test.rb`): the 17 texts taken
-  from FreeBSD's `lib/libc/gen/errlst.c` are a hand-kept copy that no test compares, while the signal table's
-  descriptions are checked against a pinned `siglist.c`. Pin `errlst.c` in deps.lock (`freebsd-errlst`), name it
-  in design.md's dependency row beside `sys/sys/errno.h`, and compare each FreeBSD-sourced text with it, or give
-  `errno` rows a description column and generate them.
+* [Low] musl, strerror (`musl/src/errno/__strerror.h`, `abi/errno.txt`): the texts are a hand-edited file kept in step with
+  the errno table by `test_strerror_describes_every_errno`, while the signal descriptions are generated. Give `errno` rows a
+  description column and generate the strerror table from it, so one file holds each errno's name, number and text.
 * [Low] LVGL, rebuild (`tools/lib/erx/lvgl.rb`, `make_library`): `display/lvgl/Makefile`'s `-MMD` leaves out musl's
   headers, which `library_flags` names with `-isystem`, and `library_directory` is keyed on the flags alone, so a changed
   errno, signal or other musl header leaves `liblvgl.a`'s objects compiled against the old one. Key the objects on
