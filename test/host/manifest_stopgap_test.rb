@@ -13,14 +13,14 @@ require_relative '../fixtures/manifest_context'
 # Every seed edits the real development manifest or the real platform record,
 # so a seed fails for its own reason and not for an unrelated difference.
 class ManifestStopgapTest < Minitest::Test
+  ROOT = File.expand_path('../..', __dir__)
   BLOCK = '/virtio_mmio@a003e00'
   SERVICE = "service probe\n  server system\n  interface 1\n"
 
   def setup
-    root = File.expand_path('../..', __dir__)
-    @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: root)))
-    @source = Erx::Platform.load(root: root, name: 'qemu-virt').manifest_source(root)
-    @platform = JSON.parse(File.read(File.join(root, 'config/platforms/qemu-virt.json')))
+    @codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    @source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
+    @platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
     @context = context
   end
 
@@ -116,11 +116,11 @@ class ManifestStopgapTest < Minitest::Test
         device = value.fetch('units').first.fetch('devices').first
         clock.nil? ? device.delete('clock') : device['clock'] = clock
       end
-      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: platform), message: /PL011 .*clock/)
+      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', @source, context(platform: platform), message: /arm,pl011 device .*clock/)
     end
   end
 
-  # Only a PL011's driver reads a clock, so any other row's clock is 0.
+  # Only a driver of a clocked kind reads a clock, so any other row's clock is 0.
   def test_a_row_of_another_device_carries_no_clock
     source, against = with_extra_device(compatible: 'virtio,mmio', clock: 24_000_000)
     refused(Erx::Manifest::Invalid, 'context', 'platform.devices', source, against, message: /clock/)
@@ -170,8 +170,7 @@ class ManifestStopgapTest < Minitest::Test
 
   # The website's manifest, made from the development one.
   def site_manifest
-    root = File.expand_path('../..', __dir__)
-    Erx::Platform.development(root).site_manifest_source(root)
+    Erx::Platform.development(ROOT).site_manifest_source(ROOT)
   end
 
   def test_the_report_claims_only_what_was_checked
@@ -543,6 +542,103 @@ class ManifestStopgapTest < Minitest::Test
     source = ManifestContextFixture.substitute(@source, /^unit hostlink\n  placement "hostlink-uart"\n  holder system\n/, '')
     refused(Erx::Manifest::Invalid, 8, 'machine.hostlink', source, context(platform: platform),
             message: /share interrupt line 33/)
+  end
+
+  # The Raspberry Pi 4's development manifest and platform record
+  # (docs/design-header-io.md), whose header map gives GPIO 14 and 15 to the console and
+  # GPIO 4 and 5 to the host link.
+  def pi_source = Erx::Platform.load(root: ROOT, name: 'raspi4b').manifest_source(ROOT)
+  def pi_record = JSON.parse(File.read(File.join(ROOT, 'config/platforms/raspi4b.json')))
+  def pi_context(record = pi_record) = context(platform: record)
+  def pi_unit(name, holder) = "unit #{name}\n  placement \"#{name}\"\n  holder #{holder}\n"
+
+  # The Pi's manifest with the framebuffer unit moved from the display domain to the
+  # system domain, so the display domain holds whatever else a test gives it alone.
+  def pi_display_holding_nothing
+    row = pi_unit('framebuffer', '@domain.display')
+    assert_includes pi_source, row
+    pi_source.sub(row, pi_unit('framebuffer', 'system'))
+  end
+
+  # The clock rule (docs/design-header-io.md, "Clocks"): BSC1 and SPI0 divide the core
+  # clock, which their rows carry as the PL011s carry theirs, so a manifest placing the
+  # i2c and spi units is admitted.
+  def test_the_pi_bus_units_carry_the_core_clock
+    admit(pi_source + pi_unit('i2c', 'system') + pi_unit('spi', 'system'), pi_context)
+  end
+
+  # The Pi's record with change applied to the device at path in unit key.
+  def pi_record_with(key, path)
+    pi_record.tap do |record|
+      yield record.fetch('units').find { |unit| unit.fetch('key') == key }.fetch('devices')
+                  .find { |device| device.fetch('path') == path }
+    end
+  end
+
+  # A row of a clocked kind without its clock, here BSC1's, would give its driver no rate
+  # to divide.
+  def test_a_bus_row_must_carry_its_clock
+    [nil, 0, -1, '500000000'].each do |clock|
+      record = pi_record_with('i2c', '/soc/i2c@7e804000') do |bsc1|
+        clock.nil? ? bsc1.delete('clock') : bsc1['clock'] = clock
+      end
+      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', pi_source + pi_unit('i2c', 'system'),
+              pi_context(record), message: %r{brcm,bcm2835-i2c device "/soc/i2c@7e804000" lacks its clock})
+    end
+  end
+
+  # A kind is its role and its compatible string together: BSC0, an I2C controller of
+  # role ordinary that no driver drives, carries no clock, and neither does SPI3.
+  def test_a_bus_row_of_no_kind_carries_no_clock
+    { 'i2c' => '/soc/i2c@7e205000', 'spi' => '/soc/spi@7e204600' }.each do |key, path|
+      record = pi_record_with(key, path) { |device| device['clock'] = 500_000_000 }
+      refused(Erx::Manifest::Invalid, 'context', 'platform.devices', pi_source + pi_unit(key, 'system'),
+              pi_context(record), message: /#{Regexp.escape(path)}" carries a clock/)
+    end
+  end
+
+  # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
+  # the console"): whoever holds the GPIO page sets the console's pin functions, so the
+  # pin controller's unit, gpio, is unplaced (the shipped manifest), held by the system
+  # domain, or held by a domain that holds no other unit. The clause counts units only, as
+  # its text says, so the display domain stands in for that domain here (TODO.md, "Security
+  # residuals").
+  def test_the_pin_controller_unit_is_unplaced_or_held_alone
+    admit(pi_source, pi_context)
+    admit(pi_source + pi_unit('gpio', 'system'), pi_context)
+    admit(pi_display_holding_nothing + pi_unit('gpio', '@domain.display'), pi_context)
+  end
+
+  # The seeded violation: the display domain, which holds the framebuffer unit, given the
+  # pin controller's unit too.
+  def test_a_domain_holding_the_pin_controller_and_more_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_unit('gpio', '@domain.display'), pi_context,
+            message: /unit gpio .*display/)
+  end
+
+  # The clause finds the pin controller's units by its register page, not its path: a
+  # second row on the GPIO page under another path, in the i2c unit, makes that unit one
+  # too, so the display domain may not hold it beside the framebuffer.
+  def test_a_second_row_on_the_pin_controllers_page_is_caught
+    record = pi_record
+    units = record.fetch('units')
+    gpio = units.find { |unit| unit.fetch('key') == 'gpio' }.fetch('devices').first
+    units.find { |unit| unit.fetch('key') == 'i2c' }.fetch('devices') <<
+      gpio.merge('path' => '/soc/gpiomem@7e200000', 'placement_key' => 'gpiomem')
+    refused(Erx::Manifest::Invalid, 8, 'unit.holder', pi_source + pi_unit('i2c', '@domain.display'),
+            pi_context(record), message: %r{unit i2c reaches pin controller /soc/gpio@7e200000})
+  end
+
+  # A record whose map gives no pin to the console or the host link leaves the pin
+  # controller's holder free: with the four UART rows made gpio, the display domain may
+  # hold gpio beside the framebuffer.
+  def test_the_clause_follows_from_the_map
+    record = pi_record
+    uarts = record.values_at('console', 'hostlink')
+    record.fetch('header').fetch('rows').each do |row|
+      row.replace('gpio' => row.fetch('gpio'), 'use' => 'gpio') if uarts.include?(row.fetch('use'))
+    end
+    admit(pi_source + pi_unit('gpio', '@domain.display'), pi_context(record))
   end
 
   # The network stack runs in the system domain in Phase 1, over the device its unit

@@ -1436,13 +1436,9 @@ it; git history is the record of completed work.
   medium is chosen by membership of one of them, so a board added to the others but not to
   `BoardTree::BOARDS` gets QEMU's release medium. Declare the medium, the load address and the board's tree in the
   platform record, checked when it loads, so a board without a medium is refused.
-* [Medium] tooling, the rest of plan.md 1b-I (e) package 1 (docs/design-header-io.md, "Placement"): the
-  manifest check's clock rule (`device_clock`, `tools/lib/erx/manifest.rb`) still lets only a PL011 row carry a
-  clock, so a manifest that places the `i2c` or `spi` unit is refused until it admits the `i2c` and `spi` kinds'
-  rows too, and docs/design-abi.md's `clock` paragraph says the same; property 8's pin-controller clause and its
-  seeded manifest; and the devices domain on the Pi's development manifest, holding `i2c` and `spi`, its memory
-  from a measured footprint, with the raspi4b suite's line for it (the domain runs no driver yet, so it logs
-  none).
+* [Medium] tooling, plan.md 1b-I (e), with the I2C driver (docs/design-header-io.md, "Placement"): the devices domain on
+  the Pi's development manifest, holding `i2c` and `spi`, its memory from a footprint measured with `erx_i2c`
+  loaded, with the raspi4b suite's line for it.
 * [Low] tooling, the header map reader (`tools/lib/erx/header_map.rb`): `controller?` matches a device to a pin
   table controller by its path's unit address alone, parsing it apart from `unit_address`, so a driven device whose
   path's address is unreadable (`@07e804000`, upper case) skips the rows rule, and the parent bus is ignored. Let
@@ -6196,6 +6192,14 @@ to the corpus and follow rc
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
   Fiasco sanitizes the processor state it restores; acceptable for Phase 1's trusted domains, and gone with erXos's
   kernel, which reads user-writable state only through accessors that load each field once.
+* [Medium] manifest check, property 8's pin controller clause (`check_pin_controller`,
+  `tools/lib/erx/manifest.rb`; docs/design-system.md property 8, docs/design-header-io.md "The
+  pin controller and the console"): the clause counts units only, as its text says ("a domain
+  that holds only such units"), so a domain that serves services, windows or sessions holds
+  the GPIO page, and with it the console's pins, as long as it holds no other unit. The
+  design's intent puts the holder in the console's trusted base, a domain of its own. Decide
+  whether the clause also refuses a holder that serves or holds anything beyond those units,
+  and tighten the text and the check together. No shipped manifest places `gpio`.
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
   `login_key` admits root's development key on the SSH domain's own

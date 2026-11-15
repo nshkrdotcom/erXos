@@ -16,8 +16,8 @@ module ManifestContextFixture
     { 'release' => { 'kind' => 'erofs_image', 'extents' => [{ 'slot_offset' => 128 << 20, 'length' => 8192 }] } }
   end
 
-  # The tree's own UART kinds, which the checked context carries.
-  def uart_peripherals = Erx::DeviceKinds.uart_peripherals(File.expand_path('../..', __dir__))
+  # The tree's own device kinds, which the checked context carries.
+  def device_kinds = Erx::DeviceKinds.context_rows(File.expand_path('../..', __dir__))
 
   def platform
     { 'name' => 'fixture', 'cpuset' => 1, 'console' => '/uart@0', 'hostlink' => '',
@@ -87,7 +87,7 @@ module ManifestContextFixture
       provenance: [{ 'path' => 'fixture/root.c', 'sha256' => 'a' * 64,
                      'license' => 'BSD-2-Clause', 'evidence' => 'fixture',
                      'status' => 'permanent', 'notice' => "original\xffnotice".b }],
-      uart_peripherals: uart_peripherals }
+      device_kinds: device_kinds }
   end
 
   # The development manifest's text with two configured domains of the domain

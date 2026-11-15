@@ -6,6 +6,7 @@
 #ifndef ERX_DEVICE_KINDS_H
 #define ERX_DEVICE_KINDS_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "erx/abi_reader.h"
@@ -14,7 +15,11 @@
  * The kinds of device a runtime drives, one row each: a manifest device of
  * a row's role and compatible string is a row's kind, and its record carries
  * the row's names: ROLE_WORD, the record's role, and PERIPHERAL, the
- * CMSIS-SVD peripheral the device NIF opens. Every row names both, and the
+ * CMSIS-SVD peripheral the device NIF opens. Every row names both. CLOCKED
+ * says whether the kind's driver divides its rates from a clock only the
+ * board knows: a platform row of a clocked kind carries that clock in hertz,
+ * every other row's clock is 0, and the manifest check refuses a row that
+ * disagrees (docs/design-abi.md, "Devices and partition windows"). The
  * host tools read the rows through tools/lib/erx/device_kinds.rb, which
  * refuses a row it cannot read or a name longer than a record holds
  * (ERX_BOOT_NAME_WORD_MAX, erx/boot_words.h).
@@ -35,17 +40,18 @@ typedef struct erx_device_kind {
 	const char	*compatible;	/* the platform record's compatible string */
 	const char	*role_word;	/* a given record's ROLE; a UART's, its record */
 	const char	*peripheral;	/* its PERIPHERAL, as the CMSIS-SVD source names it */
+	bool		 clocked;	/* its row carries the clock its driver divides rates from */
 } erx_device_kind_t;
 
 static const erx_device_kind_t erx_device_kinds[] = {
-	{ ERX_MF_DEVICE_ROLE_BLOCK, "virtio,mmio", "block", "virtio_blk" },
-	{ ERX_MF_DEVICE_ROLE_NETWORK, "virtio,mmio", "net", "virtio_net" },
-	{ ERX_MF_DEVICE_ROLE_NETWORK, "brcm,bcm2711-genet-v5", "net", "genet" },
-	{ ERX_MF_DEVICE_ROLE_BLOCK, "brcm,bcm2711-emmc2", "block", "sdhci" },
-	{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio" },
-	{ ERX_MF_DEVICE_ROLE_INPUT, "virtio,mmio", "input", "virtio_input" },
-	{ ERX_MF_DEVICE_ROLE_I2C, "brcm,bcm2835-i2c", "i2c", "bsc" },
-	{ ERX_MF_DEVICE_ROLE_SPI, "brcm,bcm2835-spi", "spi", "bcm2711_spi" },
+	{ ERX_MF_DEVICE_ROLE_BLOCK, "virtio,mmio", "block", "virtio_blk", false },
+	{ ERX_MF_DEVICE_ROLE_NETWORK, "virtio,mmio", "net", "virtio_net", false },
+	{ ERX_MF_DEVICE_ROLE_NETWORK, "brcm,bcm2711-genet-v5", "net", "genet", false },
+	{ ERX_MF_DEVICE_ROLE_BLOCK, "brcm,bcm2711-emmc2", "block", "sdhci", false },
+	{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio", false },
+	{ ERX_MF_DEVICE_ROLE_INPUT, "virtio,mmio", "input", "virtio_input", false },
+	{ ERX_MF_DEVICE_ROLE_I2C, "brcm,bcm2835-i2c", "i2c", "bsc", true },
+	{ ERX_MF_DEVICE_ROLE_SPI, "brcm,bcm2835-spi", "spi", "bcm2711_spi", true },
 };
 
 /*
@@ -59,8 +65,8 @@ static const erx_device_kind_t erx_device_kinds[] = {
  * neither reader of erx_device_kinds reads.
  */
 static const erx_device_kind_t erx_uart_kinds[] = {
-	{ ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "console", "pl011" },
-	{ ERX_MF_DEVICE_ROLE_UART, "brcm,bcm2835-aux-uart", "console", "mini_uart" },
+	{ ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "console", "pl011", true },
+	{ ERX_MF_DEVICE_ROLE_UART, "brcm,bcm2835-aux-uart", "console", "mini_uart", false },
 };
 
 #define ERX_FRAMEBUFFER_COMPATIBLE	"simple-framebuffer"

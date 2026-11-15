@@ -32,7 +32,7 @@
 typedef erx_device_kind_t device_kind_t;
 
 /* Selected by machine.hostlink's path, among the PL011s, the one UART its driver drives. */
-static const device_kind_t hostlink_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "hostlink", "pl011" };
+static const device_kind_t hostlink_kind = { ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "hostlink", "pl011", true };
 
 /* erx_manifest_open checked every string against the table, so these reads stay inside it. */
 static const uint8_t *

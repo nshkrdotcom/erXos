@@ -1861,10 +1861,15 @@ the framebuffer lies, and its geometry, at boot
 in hertz of the clock the device's driver divides rates from, the rate
 of the first entry of its node's `clocks` (a fixed clock's `clock-frequency`,
 or for a clock the firmware sets, the rate the board's firmware configuration
-fixes): a PL011 (compatible `arm,pl011`) times its
-characters and divides its baud rate from it, and only the board knows
-it, so its row carries a nonzero clock, and the manifest check refuses a
-PL011 row without one; every other device's clock is 0. Selector 2 is a PCIe function: `bridge`
+fixes). Whether a device has one is a fact of its kind, the `clocked`
+column of `include/erx/device_kinds.h`, which marks the kinds whose
+driver divides rates from such a clock: a PL011 times its characters and
+divides its baud rate from it, for example, and an I2C or SPI controller
+of the BCM2711 divides its bus clock from the core clock
+([design-header-io.md](design-header-io.md#clocks)). Only
+the board knows the rate, so a row of a clocked kind carries a nonzero
+clock, every other row's clock is 0, and the manifest check refuses a
+row that disagrees. Selector 2 is a PCIe function: `bridge`
 names its host bridge by device-tree path, `path` is empty, bus is at
 most 255, device at most 31 and function at most 7; its `base` and
 `size` are zero, since configuration space gives them, and so is its

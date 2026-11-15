@@ -47,12 +47,12 @@ class BootManifestTest < Minitest::Test
     output
   end
 
-  # record: the platform record, by default the named platform's own; uart_peripherals: the
-  # check's UART kinds, by default the tree's.
+  # record: the platform record, by default the named platform's own; device_kinds: the
+  # check's device kinds, by default the tree's.
   def admitted(source = @source, platform: 'qemu-virt', record: platform_record(platform),
-               uart_peripherals: ManifestContextFixture.uart_peripherals)
+               device_kinds: ManifestContextFixture.device_kinds)
     arguments = ManifestContextFixture.arguments(@codec).merge(platform: record, build_kind: 'development',
-                                                                 uart_peripherals: uart_peripherals)
+                                                                 device_kinds: device_kinds)
     context = Erx::Manifest::Context.new(**arguments)
     Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
   end
@@ -302,7 +302,7 @@ class BootManifestTest < Minitest::Test
 
   # A console UART of a compatible string no row of erx/device_kinds.h's erx_uart_kinds names
   # would get no console record, and its boot would end with the console's no_console, so
-  # the check refuses it and names the string. Its clock is 0, as a row of no PL011's is.
+  # the check refuses it and names the string. Its clock is 0, as a row of no clocked kind's is.
   def test_a_console_of_no_uart_kind_is_refused_at_the_check
     record = platform_record('qemu-virt')
     console = record.fetch('units').flat_map { |unit| unit.fetch('devices') }
@@ -451,8 +451,9 @@ class BootManifestTest < Minitest::Test
     console = record.fetch('units').flat_map { |unit| unit.fetch('devices') }
                     .find { |device| device.fetch('path') == '/pl011@9000000' }
     console.merge!('compatible' => 'ns16550a', 'clock' => 0)
-    planted = ManifestContextFixture.uart_peripherals.merge('ns16550a' => 'ns16550')
-    output, status = read(admitted(record: record, uart_peripherals: planted))
+    planted = ManifestContextFixture.device_kinds + [{ 'role' => 'uart', 'compatible' => 'ns16550a', 'role_word' => 'console',
+                                                       'peripheral' => 'ns16550', 'clocked' => false }]
+    output, status = read(admitted(record: record, device_kinds: planted))
     assert status.success?, output
     assert_includes output, "console_uart none 0 0 0 direct 0\n"
     assert_includes output, "console_wordsexact 0 short 0\n"

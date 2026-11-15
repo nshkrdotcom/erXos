@@ -752,7 +752,13 @@ class ProductionImageTest < Minitest::Test
       path = File.join(root, Erx::DeviceKinds::SOURCE)
       FileUtils.mkdir_p(File.dirname(path))
       FileUtils.cp(File.join(ROOT, Erx::DeviceKinds::BOOT_WORDS), File.join(root, Erx::DeviceKinds::BOOT_WORDS))
-      ['{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu" },', '{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio_sixteen" },', nil]
+      # A row short of a field, one whose clocked column is no C boolean, a name longer than a
+      # record holds, a UART row among the kinds a give drives, an empty table and none.
+      ['{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", false },',
+       '{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio" },',
+       '{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio", 1 },',
+       '{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio_sixteen", false },',
+       '{ ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "console", "pl011", true },', nil]
         .map { |row| "static const erx_device_kind_t erx_device_kinds[] = {\n#{row && "\t#{row}\n"}};\n" }
         .push("no table\n").each do |text|
           File.write(path, text)
@@ -760,8 +766,8 @@ class ProductionImageTest < Minitest::Test
         end
       # A UART table holding a row of another role, or one kind twice, which the C lookups would
       # not match or would match only once.
-      uart = '{ ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "console", "pl011" },'
-      ['{ ERX_MF_DEVICE_ROLE_BLOCK, "arm,pl011", "console", "pl011" },', "#{uart}\n\t#{uart}"].each do |rows|
+      uart = '{ ERX_MF_DEVICE_ROLE_UART, "arm,pl011", "console", "pl011", true },'
+      ['{ ERX_MF_DEVICE_ROLE_BLOCK, "arm,pl011", "console", "pl011", true },', "#{uart}\n\t#{uart}"].each do |rows|
         File.write(path, "static const erx_device_kind_t erx_uart_kinds[] = {\n\t#{uart}\n};\n")
         refute_empty Erx::DeviceKinds.uarts(root)
         File.write(path, "static const erx_device_kind_t erx_uart_kinds[] = {\n\t#{rows}\n};\n")

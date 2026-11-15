@@ -79,7 +79,7 @@ module Erx
         context = Manifest::Context.new(build_kind: build_kind, platform: platform,
                                         catalog: catalog, root_entry: root_entry,
                                         artifacts: artifacts, provenance: records,
-                                        uart_peripherals: DeviceKinds.uart_peripherals(@root))
+                                        device_kinds: DeviceKinds.context_rows(@root))
         admitted = Manifest.admit(source: manifest_source, codec: @codec, context: context, planner: @domain_planner)
         unless admitted.is_a?(Manifest::Admitted) && admitted.matches?(context)
           raise Error, 'system manifest is not admitted for this pack'
