@@ -1143,9 +1143,9 @@ system calls pass them to `namei` (`kern_openat` through `vn_open_cred`,
 | Operations | `nameiop` | A last link is |
 | --- | --- | --- |
 | `read_file`, `read_file_info`, `list_dir`, `set_cwd`, `change_mode`, `change_time`, `write_file_info`, `open` without a mode that creates; a program's `open` without `O_CREAT`, `stat`, `chmod`, `truncate`, `chdir` | `LOOKUP` | followed |
-| `read_link`, `read_link_info`; a program's `readlink`, `lstat` and `open` with `O_NOFOLLOW` | `LOOKUP` | acted on: read, described, or refused by `lopen`'s `eloop`, which a program's `open` answers as `EMLINK`, FreeBSD's open(2) answer |
+| `read_link`, `read_link_info`; a program's `readlink`, `lstat` and `open` with `O_NOFOLLOW` (`CREATE` with `O_CREAT`) | `LOOKUP` | acted on: read, described, or refused by `lopen`'s or `lcreate`'s `eloop`, which a program's `open` answers as `EMLINK`, FreeBSD's open(2) answer |
 | `make_link`'s existing name; a program's `link`'s existing name | `LOOKUP` | followed, so the new name links the link's target, as FreeBSD's `link` makes it |
-| `open` with `write` or `append` and without `exclusive`, `write_file`; a program's `open` with `O_CREAT` and without `O_EXCL` | `CREATE` | followed, so the file is made or opened where the link leads; `lcreate`'s `eloop` hands the link to the resolver |
+| `open` with `write` or `append` and without `exclusive`, `write_file`; a program's `open` with `O_CREAT` and without `O_EXCL`, `O_NOFOLLOW` or `O_DIRECTORY` | `CREATE` | followed, so the file is made or opened where the link leads; `lcreate`'s `eloop` hands the link to the resolver |
 | `make_dir`, `make_symlink`, `make_link`'s new name, `open` with `exclusive`; a program's `mkdir`, `symlink`, `link`'s new name, `mknod`, `open` with `O_CREAT` and `O_EXCL` | `CREATE` | the name, which exists, so each answers `eexist`, a dangling link included |
 | `delete`, `del_dir`, `rename`'s source; a program's `unlink`, `rmdir`, `rename`'s source | `DELETE` | the name: `delete` and `unlink` remove it, `rename` moves it, and `del_dir` and `rmdir` answer `enotdir` |
 | `rename`'s destination; a program's `rename`'s destination | `RENAME` | the name, which the rename replaces |
@@ -2559,7 +2559,10 @@ table:
   FIFO fails with `enxio`.
 
 For native programs: an `open` with `O_NOFOLLOW` of a link answers
-`EMLINK`, as FreeBSD's does, where Linux and macOS answer `ELOOP`; a
+`EMLINK`, as FreeBSD's does, where Linux and macOS answer `ELOOP`; one
+with `O_DIRECTORY` of anything but a directory answers `ENOTDIR`, with
+`O_CREAT` and `O_EXCL` too `EINVAL`, and with `O_CREAT` alone it creates
+nothing, as FreeBSD's `vn_open_cred` has them; a
 page of a shared mapping wholly past the file's
 end reads zeros rather than raising `SIGBUS`; the `munmap` whose
 write-back fails returns `EIO`; and two sessions that map one file shared

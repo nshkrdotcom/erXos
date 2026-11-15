@@ -68,9 +68,12 @@ it, and its pending file requests by reply slot. A request is relayed as
 an action and its answer comes back as an event, so the handler goes on
 taking the program's other frames, a kill included, while a file request
 waits. An `lopen` or `lcreate` with a flag bit outside 9P2000.L's open
-flags, or the access mode 3, is `einval`; one past `ERX_PROG_FDS_MAX`
-opens, those pending included, is `emfile`; otherwise it is resolved and
-opened over the narrowed namespace alone, and its answer is a new open.
+flags, or the access mode 3, is `einval`, and so is an `lcreate` with
+`O_EXCL` and `O_DIRECTORY`; one past `ERX_PROG_FDS_MAX` opens, those
+pending included, is `emfile`; otherwise it is resolved and opened over
+the narrowed namespace alone, and its answer is a new open. An `lcreate`
+with `O_DIRECTORY` creates nothing: it is resolved as an `lopen`, as
+FreeBSD's `vn_open_cred` looks up `O_CREAT | O_DIRECTORY`.
 A `read`, `write` or `clunk` of an open not in the table is `ebadf`, and a
 data slot past the program's slots is `einval`. A read's answer longer
 than the request's count is `eio` and is never copied; otherwise its
@@ -219,7 +222,8 @@ session code and the program's own driver.
 -define(REFUSED_STATUS, (?ERX_EXIT_SIGNAL + ?ERX_SIGSYS)).
 %% 9P2000.L's open flags a program may send (abi/protocols/9p.txt).
 -define(OPEN_FLAGS, (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC bor ?ERX_P9_O_EXCL bor ?ERX_P9_O_APPEND
-                     bor ?ERX_P9_O_SYNC)).
+                     bor ?ERX_P9_O_SYNC bor ?ERX_P9_O_DIRECTORY bor ?ERX_P9_O_NOFOLLOW)).
+-define(EXCL_DIRECTORY, (?ERX_P9_O_EXCL bor ?ERX_P9_O_DIRECTORY)).
 
 -doc """
 A handler for program `Pid` that starts it with the starter's
@@ -450,13 +454,18 @@ from_program(#core{opens = Opens} = C, {erx_prog, _, Slot, {file, clunk, Open}})
 open(#core{opens = Opens, pending = Pending, table = Table, cwd = Cwd} = C, Slot, Case, Path, Flags, Mode) ->
     Opening = length([P || P <- maps:values(Pending), P =:= file_lopen orelse P =:= file_lcreate]),
     if
-        Flags band bnot ?OPEN_FLAGS =/= 0; Flags band ?ERX_P9_O_ACCMODE =:= ?ERX_P9_O_ACCMODE ->
+        Flags band bnot ?OPEN_FLAGS =/= 0; Flags band ?ERX_P9_O_ACCMODE =:= ?ERX_P9_O_ACCMODE;
+        Case =:= file_lcreate, Flags band ?EXCL_DIRECTORY =:= ?EXCL_DIRECTORY ->
             file_reply(C, Case, Slot, {error, einval});
         map_size(Opens) + Opening >= ?ERX_PROG_FDS_MAX ->
             file_reply(C, Case, Slot, {error, emfile});
         true ->
-            relay(C, Slot, Case, {open, Slot, Path, Flags, Mode, Table, Cwd})
+            relay(C, Slot, Case, {open, Slot, Path, Flags, create_mode(Flags, Mode), Table, Cwd})
     end.
+
+%% The mode an open creates its file with: none, a lookup, for one with O_DIRECTORY.
+create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =/= 0 -> none;
+create_mode(_Flags, Mode) -> Mode.
 
 %% A read or a write of Open through data slot Data, relayed to the open's
 %% description as Relay says, or refused.

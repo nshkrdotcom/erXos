@@ -79,6 +79,8 @@ limit p9_o_rdwr u32 2
 limit p9_o_excl u32 0x80
 limit p9_o_append u32 0x400
 limit p9_o_sync u32 0x101000
+limit p9_o_directory u32 0x10000
+limit p9_o_nofollow u32 0x20000
 limit p9_lock_wrlck u8 1
 # A qid's type bits, and a mode's file type bits as Linux's st_mode carries
 # them (S_IFMT and its kinds), which getattr's mode includes.

@@ -3080,11 +3080,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erx_prog_handler` (files): the release refuses every `lcreate` with `erofs`,
   an exclusive one at an existing name included, where an image answers `eexist`; an open at a
   directory of the empty root answers `eio`; a start whose `cwd` the startup grammar accepts but
-  `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`; and `O_DIRECTORY`, `O_NOFOLLOW` and
-  `O_NONBLOCK` have no 9P2000.L value in abi/protocols/9p.txt, so `liberx`'s file client refuses them
-  `EINVAL` before sending, as the handler would (it keeps `O_CLOEXEC` to the descriptor table and never
-  sends it). A regular file's `O_NONBLOCK` changes nothing on UNIX, so refusing it breaks programs that
-  pass it; whether the request carries it, or `liberx` drops it, is open.
+  `erx_path:cwd/1` refuses (a trailing `/`) is refused `einval`. An open that writes on a read-only
+  grant, the release or an image answers `erofs` before it looks, where FreeBSD's `vn_open_vnode`
+  answers a last link under `O_NOFOLLOW` `EMLINK` and a file under `O_DIRECTORY` `ENOTDIR` first; an
+  `O_DIRECTORY` open of an image's directory or of a top answers `enotsup`, and a plain read-only open
+  of a directory on the release `eisdir`, where FreeBSD opens it. No case of `prim_file:erx_open_at/5`
+  runs on the host: its flag rules are reached by the programs suite alone. An `openat` relative to a
+  directory a program opened with `O_DIRECTORY` answers `ENOTDIR` (`liberx/program/file.c`, `dirfd_check`),
+  since the request carries no directory to resolve from.
 * [Low] liberx program layer, `liberx/program/file.c` and `fd.c`: the startup plan refuses a
   `{file, Open, Access}` descriptor, so a file reaches a program only through its own `open`; a clunk's
   error at a file's last close reaches no caller; `O_DSYNC` asks

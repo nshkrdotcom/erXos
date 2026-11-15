@@ -364,8 +364,8 @@ open(Grant, {parent, Dir, Name}, Modes) ->
         #{directory := true} ->
             %% A directory is never opened to write: einval, before anything is walked.
             {error, einval};
-        #{flags := Flags} = Open ->
-            created(Grant, Dir, Name, exclusive(Flags), Open)
+        Open ->
+            created(Grant, Dir, Name, Open)
     end.
 
 %% A native program's open (design-programs.md, Descriptors and files), with 9P2000.L's
@@ -374,17 +374,32 @@ open(Grant, {parent, Dir, Name}, Modes) ->
 %% open/3 does one that writes. An lopen that writes, with an access mode that writes
 %% or O_TRUNC, on an entry that is not rw is erofs. Neither checks the file's type: a
 %% directory opened to read opens, as open(2) opens one, and the server refuses what its
-%% file cannot do.
+%% file cannot do; but O_DIRECTORY opens nothing else (enotdir). Under O_NOFOLLOW the
+%% last name is walked as it is, and a link there, which a server never opens (lopen's
+%% eloop), answers emlink, as FreeBSD's vn_open_vnode refuses one.
 -spec open_flags(grant(), where(), non_neg_integer(), none | non_neg_integer()) ->
           {ok, #file_descriptor{}} | {error, posix()} | resume().
 open_flags({_, _, Rights} = Grant, {target, Names}, Flags, none) ->
     case Rights =/= rw andalso Flags band (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC) =/= 0 of
-        true -> {error, erofs};
-        false -> described(kept(Grant, {Names, follow}, fun(Fid) -> {lopen, Fid, Flags} end), Grant,
-                           flags_mode(Flags, none))
+        true ->
+            {error, erofs};
+        false ->
+            Kept = kept(Grant, {Names, last_mode(nofollow(Flags))}, fun(Fid) -> {lopen, Fid, Flags} end),
+            described(unfollowed(Kept, Flags), Grant, flags_mode(Flags, none))
     end;
-open_flags(Grant, {parent, Dir, Name}, Flags, Mode) when is_integer(Mode) ->
-    created(Grant, Dir, Name, exclusive(Flags), flags_mode(Flags, Mode)).
+open_flags(Grant, {parent, Dir, Name}, Flags, Mode)
+  when is_integer(Mode), Flags band ?ERX_P9_O_DIRECTORY =:= 0 ->
+    created(Grant, Dir, Name, flags_mode(Flags, Mode)).
+
+%% How an open walks its last name: as it is (nofollow) when it must not follow a link
+%% there, else through a link (follow).
+last_mode(true) -> nofollow;
+last_mode(false) -> follow.
+
+%% An lopen's answer under O_NOFOLLOW: a link at the last name, which the server refuses
+%% with eloop, answers emlink.
+unfollowed({error, eloop}, Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> {error, emlink};
+unfollowed(Kept, _Flags) -> Kept.
 
 %% What a program's flags ask, in open_mode/1's terms.
 flags_mode(Flags, Mode) ->
@@ -394,7 +409,7 @@ flags_mode(Flags, Mode) ->
                  ?ERX_P9_O_RDWR -> read_write
              end,
     #{access => Access, flags => Flags, append => Flags band ?ERX_P9_O_APPEND =/= 0,
-      directory => false, type_check => false, ahead => 0, mode => Mode}.
+      directory => Flags band ?ERX_P9_O_DIRECTORY =/= 0, type_check => false, ahead => 0, mode => Mode}.
 
 %% What the modes ask, as stock's efile_translate_modelist and get_flags read them:
 %% append and exclusive write, an open that neither reads nor writes reads, and only a
@@ -438,26 +453,34 @@ has(Mode, [Mode | _]) -> true;
 has(Mode, [_ | Modes]) -> has(Mode, Modes);
 has(_, _) -> false.
 
-created({_, _, rw} = Grant, Dir, Name, Exclusive, #{flags := Flags, mode := Mode} = Open) ->
+%% An open that may create Name in Dir. A link at Name is followed unless the open is
+%% exclusive or under O_NOFOLLOW, as FreeBSD's vn_open_cred walks it; otherwise it answers
+%% eexist when exclusive and emlink under O_NOFOLLOW, as vn_open_cred and vn_open_vnode
+%% refuse it. On a grant that is not rw nothing is created: an existing file answers as
+%% FreeBSD's vn_open looks before it refuses (open/3).
+created({_, _, rw} = Grant, Dir, Name, #{flags := Flags, mode := Mode} = Open) ->
     Create = fun(DirFid) -> {lcreate, DirFid, Name, Flags, Mode, 0} end,
-    case {kept(Grant, {Dir, directory}, Create), Exclusive} of
-        {{error, eloop}, false} -> {resume, 1, {[directory || _ <- Dir] ++ [link], ok}};
-        {{error, eloop}, true} -> {error, eexist};
+    case {kept(Grant, {Dir, directory}, Create), unfollowing(Flags)} of
+        {{error, eloop}, follow} -> {resume, 1, {[directory || _ <- Dir] ++ [link], ok}};
+        {{error, eloop}, Refused} -> {error, Refused};
         {Kept, _} -> described(Kept, Grant, Open)
     end;
-created(Grant, Dir, Name, Exclusive, _) ->
-    Mode = case Exclusive of
-               true -> nofollow;
-               false -> follow
-           end,
-    case looked_up(Grant, Dir, Name, Mode) of
-        {ok, _} when Exclusive -> {error, eexist};
-        {ok, #{mode := Type}} when Type band ?ERX_P9_S_IFMT =:= ?ERX_P9_S_IFDIR -> {error, eisdir};
-        {ok, _} -> {error, erofs};
-        Other -> Other
+created(Grant, Dir, Name, #{flags := Flags}) ->
+    case {looked_up(Grant, Dir, Name, last_mode(unfollowing(Flags) =/= follow)), unfollowing(Flags)} of
+        {{ok, _}, eexist} -> {error, eexist};
+        {{ok, #{mode := Type}}, emlink} when Type band ?ERX_P9_S_IFMT =:= ?ERX_P9_S_IFLNK -> {error, emlink};
+        {{ok, #{mode := Type}}, _} when Type band ?ERX_P9_S_IFMT =:= ?ERX_P9_S_IFDIR -> {error, eisdir};
+        {{ok, _}, _} -> {error, erofs};
+        {Other, _} -> Other
     end.
 
-exclusive(Flags) -> Flags band ?ERX_P9_O_EXCL =/= 0.
+%% What an open that may create answers at a last link: follow it, or refuse it with
+%% eexist when exclusive, which comes first, or emlink under O_NOFOLLOW.
+unfollowing(Flags) when Flags band ?ERX_P9_O_EXCL =/= 0 -> eexist;
+unfollowing(Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> emlink;
+unfollowing(_Flags) -> follow.
+
+nofollow(Flags) -> Flags band ?ERX_P9_O_NOFOLLOW =/= 0.
 
 stat([Fid | _]) -> {getattr, Fid, ?INFO_MASK}.
 

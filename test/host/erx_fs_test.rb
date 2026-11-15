@@ -42,6 +42,10 @@ class ErxFsTest < Minitest::Test
 
   # Each fault replaces one passage of one source; the test named in caught_by must fail.
   FAULTS = [
+    Fault.new(name: "an lopen with O_DIRECTORY that opens a file", file: GRANT,
+              from: 'when Flags band ?ERX_P9_O_DIRECTORY =/= 0, Type band ?ERX_P9_QTDIR =:= 0 ->',
+              to: 'when Flags band ?ERX_P9_O_DIRECTORY =:= -1, Type band ?ERX_P9_QTDIR =:= 0 ->',
+              caught_by: 'lopen_with_directory_opens_only_a_directory_test'),
     Fault.new(name: "a mkdir's Owner is replaced by the grant", file: GRANT,
               from: 'make(Dfid, Name, {directory, Mode band 8#7777, Owner}, Grant);',
               to: 'make(Dfid, Name, {directory, Mode band 8#7777, self()}, Grant);',

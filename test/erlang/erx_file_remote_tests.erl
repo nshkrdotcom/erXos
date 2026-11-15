@@ -9,6 +9,7 @@
 %% answers eio for a request whose server ended before a reply of that shape came.
 -module(erx_file_remote_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 %% The server's domain and a third one.
 -define(SERVER, 5).
@@ -79,3 +80,68 @@ pipelined_replies_meet_their_requests_test() ->
                           (_Alias, 3) -> []
                        end),
     ?assertEqual([{error, enoent}, ok, {error, eio}], erx_file_remote:sent(Server, [?CLUNK, ?CLUNK, ?CLUNK])).
+
+%% A native program's open, open_flags/4, against a server of one tree: a directory d, a
+%% file f and a link l at its root. Its walk stops at the first name that is not a
+%% directory, its lopen refuses a link (eloop) and its lcreate meets the link at l
+%% (eloop), as erx_fs_grant's do. The client's fids come from the test's stand-in for
+%% prim_file:erx_fid/0.
+-define(QDIR, {?ERX_P9_QTDIR, 0, 1}).
+-define(QFILE, {0, 0, 2}).
+-define(QLINK, {?ERX_P9_QTSYMLINK, 0, 3}).
+
+tree_server() ->
+    spawn(fun() -> tree_loop(#{}) end).
+
+tree_loop(Fids) ->
+    receive
+        {erx_9p, Alias, _Owner, Request} ->
+            {Reply, Next} = tree_reply(Request, Fids),
+            Alias ! {erx_9p, Alias, Reply},
+            tree_loop(Next)
+    end.
+
+tree_reply({attach, Fid, _, _, _, _}, Fids) ->
+    {{ok, ?QDIR}, Fids#{Fid => ?QDIR}};
+tree_reply({walk, From, New, Names}, Fids) ->
+    Qids = walked(Names),
+    {{ok, Qids}, Fids#{New => lists:last([maps:get(From, Fids) | Qids])}};
+tree_reply({lopen, Fid, _}, Fids) ->
+    case maps:get(Fid, Fids) of
+        ?QLINK -> {{error, eloop}, Fids};
+        Qid -> {{ok, Qid, 0}, Fids}
+    end;
+tree_reply({lcreate, _, <<"l">>, _, _, _}, Fids) ->
+    {{error, eloop}, Fids};
+tree_reply({lcreate, Fid, _, _, _, _}, Fids) ->
+    {{ok, ?QFILE, 0}, Fids#{Fid => ?QFILE}};
+tree_reply({clunk, Fid}, Fids) ->
+    {ok, maps:remove(Fid, Fids)}.
+
+walked([]) -> [];
+walked([<<"d">> | Names]) -> [?QDIR | walked(Names)];
+walked([<<"f">> | _]) -> [?QFILE];
+walked([<<"l">> | _]) -> [?QLINK].
+
+open(Where, Flags, Mode) ->
+    erx_file_remote:open_flags({tree_server(), <<"t">>, rw}, Where, Flags, Mode).
+
+%% O_NOFOLLOW: a link at the last name answers emlink, for an lopen and an lcreate, an
+%% exclusive one eexist first; without it the link goes back to the resolver to follow,
+%% and a link before the last name goes back under O_NOFOLLOW too.
+nofollow_refuses_a_last_link_test_() ->
+    NoFollow = ?ERX_P9_O_NOFOLLOW,
+    [?_assertEqual({error, emlink}, open({target, [<<"l">>]}, NoFollow, none)),
+     ?_assertEqual({error, emlink}, open({target, [<<"d">>, <<"l">>]}, NoFollow bor ?ERX_P9_O_DIRECTORY, none)),
+     ?_assertEqual({error, emlink}, open({parent, [], <<"l">>}, NoFollow bor ?ERX_P9_O_WRONLY, 8#644)),
+     ?_assertEqual({error, eexist}, open({parent, [], <<"l">>}, NoFollow bor ?ERX_P9_O_EXCL, 8#644)),
+     ?_assertEqual({resume, 1, {[link], ok}}, open({target, [<<"l">>]}, 0, none)),
+     ?_assertEqual({resume, 1, {[link], ok}}, open({parent, [], <<"l">>}, ?ERX_P9_O_WRONLY, 8#644)),
+     ?_assertMatch({resume, 1, _}, open({target, [<<"l">>, <<"f">>]}, NoFollow, none)),
+     ?_assertMatch({ok, _}, open({target, [<<"f">>]}, NoFollow, none))].
+
+%% O_DIRECTORY opens a directory alone: anything else is enotdir.
+directory_opens_only_a_directory_test_() ->
+    [?_assertEqual({error, enotdir}, open({target, [<<"f">>]}, ?ERX_P9_O_DIRECTORY, none)),
+     ?_assertMatch({ok, _}, open({target, [<<"d">>]}, ?ERX_P9_O_DIRECTORY, none)),
+     ?_assertMatch({ok, _}, open({target, [<<"f">>]}, 0, none))].

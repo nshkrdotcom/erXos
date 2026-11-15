@@ -687,17 +687,22 @@ erx_resolve_from(Text, Op, Flags, Table, Place) ->
 
 %% erXos: a native program's open (design-programs.md, Descriptors and files), resolved
 %% over the program's narrowed Table from its working directory Cwd, a place, never over
-%% the runtime's own. Flags are 9P2000.L's open flags as the program gave them. Mode none
-%% opens an existing file (lopen), following a last link; a file mode creates the file or
-%% opens the one there (lcreate), an exclusive one never through a last link. On a grant
-%% the flags and mode go to the server as given (erx_file_remote:open_flags/4). The
-%% release and an EROFS image are read-only: an open there that writes answers erofs, an
-%% lcreate at an existing name on an image what an image answers, and an open that reads
-%% opens the file to read. The open file's process is the caller.
+%% the runtime's own. Flags are 9P2000.L's open flags as the handler's core admitted them,
+%% an lcreate with O_DIRECTORY already made an lopen. Mode none opens an existing file
+%% (lopen); a file mode creates the file or opens the one there (lcreate). A last link is
+%% followed, except under O_NOFOLLOW and by an exclusive lcreate, as FreeBSD's
+%% vn_open_cred walks them; an open that reaches a link it did not follow answers emlink,
+%% and one with O_DIRECTORY of anything but a directory enotdir, as vn_open_vnode refuses
+%% them. On a grant the flags and mode go to the server as given
+%% (erx_file_remote:open_flags/4). The release and an EROFS image are read-only: an open
+%% there that writes answers erofs, an lcreate at an existing name on an image what an
+%% image answers, and an open that reads opens the file to read, a directory too under
+%% O_DIRECTORY. The open file's process is the caller.
 erx_open_at(Path, Flags, Mode, Table, Cwd) ->
     Exclusive = Flags band ?ERX_P9_O_EXCL =/= 0,
+    Directory = Flags band ?ERX_P9_O_DIRECTORY =/= 0,
     Writes = Mode =/= none orelse Flags band (?ERX_P9_O_ACCMODE bor ?ERX_P9_O_TRUNC) =/= 0,
-    Read = [read, binary],
+    Read = [read, binary | [directory || Directory]],
     ReadOnly = fun(_Open) when Writes -> {error, erofs};
                   (Open) -> Open()
                end,
@@ -706,11 +711,14 @@ erx_open_at(Path, Flags, Mode, Table, Cwd) ->
             image => fun(Fs, Names) -> ReadOnly(fun() -> erx_erofs_file:open(Fs, Names, Read) end) end,
             image_exists => erx_open_exists([exclusive || Exclusive]),
             top => erx_open_top([exclusive || Exclusive])},
-    {Op, Follow} = case {Mode, Exclusive} of
-                       {none, _} -> {lookup, ?ERX_FOLLOW};
-                       {_, true} -> {create, ?ERX_NOFOLLOW};
-                       {_, false} -> {create, ?ERX_FOLLOW}
-                   end,
+    Op = case Mode of
+             none -> lookup;
+             _ -> create
+         end,
+    Follow = case Flags band ?ERX_P9_O_NOFOLLOW =/= 0 orelse (Op =:= create andalso Exclusive) of
+                 true -> ?ERX_NOFOLLOW;
+                 false -> ?ERX_FOLLOW
+             end,
     element(2, erx_run_at(erx_resolve_from(Path, Op, Follow, Table, Cwd), erx_mode(Follow), Ops)).
 
 %% The action an operation ran at, each walk that stopped handed to its resumption, and
@@ -765,11 +773,13 @@ erx_image(Entry, {parent, Names, _Last}, _Mode, _Ops) ->
     end.
 
 %% What an open that writes answers at an existing name on an EROFS image, in the order
-%% of open(2) with O_CREAT, as the release's NIF answers: eexist when exclusive, eisdir
-%% for a directory, and erofs for anything else.
+%% of open(2) with O_CREAT, as the release's NIF answers: eexist when exclusive, emlink
+%% for a link, which reaches here only under a program's O_NOFOLLOW, as vn_open_vnode
+%% refuses one, eisdir for a directory, and erofs for anything else.
 erx_open_exists(Modes) ->
     Exclusive = erx_has(exclusive, Modes),
     fun(_) when Exclusive -> {error, eexist};
+       (link) -> {error, emlink};
        (directory) -> {error, eisdir};
        (_) -> {error, erofs}
     end.

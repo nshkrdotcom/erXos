@@ -179,6 +179,19 @@ walk_through_a_link_stops_at_it_test() ->
     ?assertEqual({error, enotdir}, walk(Grant, 2, 3, [<<"..">>])),
     stop(Grant).
 
+%% O_DIRECTORY on a fid at a file, a truncating open included, answers enotdir and
+%% never reaches the tree's open; at a directory it opens.
+lopen_with_directory_opens_only_a_directory_test() ->
+    Grant = grant(rw),
+    {ok, _} = attach(Grant, 1),
+    {ok, [_]} = walk(Grant, 1, 2, [<<"f">>]),
+    {ok, [_]} = walk(Grant, 1, 3, [<<"a">>]),
+    flush_tree_calls(),
+    ?assertEqual({error, enotdir}, call(Grant, {lopen, 2, ?O_WRONLY bor ?O_TRUNC bor ?ERX_P9_O_DIRECTORY})),
+    ?assertEqual([], tree_calls()),
+    ?assertMatch({ok, _, _}, call(Grant, {lopen, 3, ?ERX_P9_O_DIRECTORY})),
+    stop(Grant).
+
 flush_tree_calls() ->
     _ = tree_calls(),
     ok.

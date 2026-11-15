@@ -42,6 +42,8 @@ class ProgFileTest < Minitest::Test
   E = %i[ENOENT EIO EBADF EACCES EEXIST ENOTDIR EINVAL EMFILE EFAULT ENAMETOOLONG ENOSYS EBUSY]
       .to_h { |name| [name, -Errno.const_get(name)::Errno] }.freeze
 
+  FLAGS_CASE = 'O_DIRECTORY and O_NOFOLLOW as 9P2000.L values, whatever O_CREAT, and O_NONBLOCK as nothing'
+
   CASES = {
     'an open, a write, a read back and a close' => [
       ['slots 4', 'ok'],
@@ -63,14 +65,21 @@ class ProgFileTest < Minitest::Test
       ['open cwd /f wronly|creat 0', '3'],
       ['log', 'lcreate:/f:0x101481:0750 lopen:/f:0x202 lopen:/f:0x101000 lcreate:/f:0x1:0']
     ],
+    FLAGS_CASE => [
+      ['slots 1', 'ok'],
+      ['open cwd /f rdonly|creat 0644', '0'],
+      ['open cwd /f rdonly|directory 0', '1'],
+      ['open cwd /f rdonly|nofollow 0', '2'],
+      ['open cwd /f rdonly|nonblock 0', '3'],
+      ['open cwd /f wronly|creat|directory|nofollow 0600', '4'],
+      ['log', 'lcreate:/f:0:0644 lopen:/f:0x10000 lopen:/f:0x20000 lopen:/f:0 lcreate:/f:0x30001:0600']
+    ],
     'flags, paths and directories refused before a request' => [
       ['slots 1', 'ok'],
       ['open cwd /f rdonly|creat 0644', '0'],
       ['log', 'lcreate:/f:0:0644'],
       ['open cwd /f accmode 0', E[:EINVAL].to_s],
-      ['open cwd /f rdonly|nonblock 0', E[:EINVAL].to_s],
-      ['open cwd /f rdonly|directory 0', E[:EINVAL].to_s],
-      ['open cwd /f rdonly|nofollow 0', E[:EINVAL].to_s],
+      ['open cwd /f rdonly|async 0', E[:EINVAL].to_s],
       ['open cwd @ rdonly 0', E[:EFAULT].to_s],
       ['open cwd % rdonly 0', E[:ENOENT].to_s],
       ['open cwd #4097 rdonly 0', E[:ENAMETOOLONG].to_s],
@@ -205,7 +214,14 @@ class ProgFileTest < Minitest::Test
       ["an open's O_CLOEXEC, F_GETFL and an O_APPEND that stays the open's", FD,
        "\t\treturn (O_APPEND);\n", "\t\treturn (0);\n"],
     'O_EXCL travels without O_CREAT' =>
-      ['flags as 9P2000.L values and the mode less the umask', FILE_C, 'if (create && (flags & O_EXCL) != 0)', 'if ((flags & O_EXCL) != 0)']
+      ['flags as 9P2000.L values and the mode less the umask', FILE_C, 'if (create && (flags & O_EXCL) != 0)', 'if ((flags & O_EXCL) != 0)'],
+    'a flag open_plan does not know is sent' =>
+      ['flags, paths and directories refused before a request', FILE_C, '(flags & ~(OPEN_MAPPED | OPEN_IGNORED)) != 0 ||', ''],
+    'O_DIRECTORY is not sent' => [FLAGS_CASE, FILE_C, "\t\tp9 |= ERX_P9_O_DIRECTORY;\n", ''],
+    'O_NOFOLLOW is not sent' => [FLAGS_CASE, FILE_C, "\t\tp9 |= ERX_P9_O_NOFOLLOW;\n", ''],
+    'O_NONBLOCK is refused' => [FLAGS_CASE, FILE_C, 'O_NOCTTY | O_NONBLOCK | LARGEFILE', 'O_NOCTTY | LARGEFILE'],
+    'O_NONBLOCK is sent as O_APPEND' =>
+      [FLAGS_CASE, FILE_C, "\tif ((flags & O_APPEND) != 0)\n", "\tif ((flags & (O_APPEND | O_NONBLOCK)) != 0)\n"]
   }.freeze
 
   def test_each_case_under_the_address_and_undefined_sanitizers

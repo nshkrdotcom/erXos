@@ -22,6 +22,7 @@ nothing follows the end.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -define(PID, 21).
 -define(HAND(N), {pipe_hand, N, {pipe, read, {9, N}, #{lock => {hand, 1}}}}).
@@ -148,7 +149,22 @@ refused_open_answers_its_errno_test_() ->
 unknown_open_flags_are_einval_test_() ->
     [?_assertMatch({_, [?ANSWER(7, {error, einval})]}, erx_prog_handler_core:step(running(), ?ASK(7, Request)))
      || Request <- [{file, lopen, <<"x">>, 16#40}, {file, lopen, <<"x">>, 3},
-                    {file, lcreate, <<"x">>, 16#10000, 8#644}]].
+                    {file, lcreate, <<"x">>, 16#40000, 8#644},
+                    {file, lcreate, <<"x">>, ?ERX_P9_O_EXCL bor ?ERX_P9_O_DIRECTORY, 8#644}]].
+
+%% O_DIRECTORY and O_NOFOLLOW go to the resolution as the program sent them; an lcreate
+%% with O_DIRECTORY, which creates nothing, goes as a lookup, and an lopen with O_EXCL
+%% and O_DIRECTORY, whose O_EXCL means nothing without O_CREAT, goes too.
+directory_and_nofollow_are_relayed_test_() ->
+    Directory = ?ERX_P9_O_DIRECTORY,
+    Both = ?ERX_P9_O_DIRECTORY bor ?ERX_P9_O_NOFOLLOW,
+    Excl = ?ERX_P9_O_EXCL bor ?ERX_P9_O_DIRECTORY,
+    [?_assertMatch({_, [{open, 7, <<"d">>, Flags, Mode, _, _}]},
+                   erx_prog_handler_core:step(running(), ?ASK(7, Request)))
+     || {Request, Flags, Mode} <- [{{file, lopen, <<"d">>, Both}, Both, none},
+                                   {{file, lcreate, <<"d">>, ?ERX_P9_O_NOFOLLOW, 8#644}, ?ERX_P9_O_NOFOLLOW, 8#644},
+                                   {{file, lcreate, <<"d">>, Directory, 8#644}, Directory, none},
+                                   {{file, lopen, <<"d">>, Excl}, Excl, none}]].
 
 opens_past_the_descriptor_bound_are_emfile_test() ->
     Full = lists:foldl(fun(N, C) -> opened(C, 7, N) end, running(), lists:seq(1, 1024)),

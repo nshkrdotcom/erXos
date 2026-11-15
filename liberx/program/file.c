@@ -42,9 +42,14 @@
 #define LARGEFILE	0
 #endif
 
-/* The open flags open_plan maps onto the request, and those it sends nothing for: O_CLOEXEC is the slot's FD_CLOEXEC. */
-#define OPEN_MAPPED	(O_WRONLY | O_RDWR | O_CREAT | O_EXCL | O_TRUNC | O_APPEND | O_SYNC | O_DSYNC)
-#define OPEN_IGNORED	(O_CLOEXEC | O_NOCTTY | LARGEFILE)
+/*
+ * The open flags open_plan maps onto the request, and those it sends
+ * nothing for: O_CLOEXEC is the slot's FD_CLOEXEC, and O_NONBLOCK, which
+ * changes nothing for a regular file, is kept as the file's status alone.
+ */
+#define OPEN_MAPPED	(O_WRONLY | O_RDWR | O_CREAT | O_EXCL | O_TRUNC | O_APPEND | O_SYNC | O_DSYNC | \
+			 O_DIRECTORY | O_NOFOLLOW)
+#define OPEN_IGNORED	(O_CLOEXEC | O_NOCTTY | O_NONBLOCK | LARGEFILE)
 
 /* A file request's value: {file, lcreate, Path, Flags, Mode} with the longest path, and its framing. */
 #define VALUE_MAX	(ERX_PROG_PATH_MAX + 64)
@@ -63,7 +68,9 @@ typedef struct open_plan {
  * (abi/protocols/9p.txt), mapped one by one, never as the architecture's.
  * O_CREAT chooses lcreate, which alone carries O_EXCL, as Linux ignores
  * O_EXCL without O_CREAT; O_DSYNC asks for 9P2000.L's sync, which the ABI
- * offers alone and which promises more than O_DSYNC does.
+ * offers alone and which promises more than O_DSYNC does.  O_DIRECTORY and
+ * O_NOFOLLOW travel as they are, whatever O_CREAT: the handler decides what
+ * they mean with it, as FreeBSD's vn_open_cred does.
  */
 static int
 open_plan(int flags, mode_t mode, uint16_t umask, open_plan_t *plan)
@@ -86,6 +93,10 @@ open_plan(int flags, mode_t mode, uint16_t umask, open_plan_t *plan)
 		p9 |= ERX_P9_O_APPEND;
 	if ((flags & (O_SYNC | O_DSYNC)) != 0)
 		p9 |= ERX_P9_O_SYNC;
+	if ((flags & O_DIRECTORY) != 0)
+		p9 |= ERX_P9_O_DIRECTORY;
+	if ((flags & O_NOFOLLOW) != 0)
+		p9 |= ERX_P9_O_NOFOLLOW;
 	*plan = (open_plan_t){
 		.request = create ? ERX_PROG_REQUEST_FILE_LCREATE : ERX_PROG_REQUEST_FILE_LOPEN,
 		.p9_flags = p9,
@@ -97,8 +108,9 @@ open_plan(int flags, mode_t mode, uint16_t umask, open_plan_t *plan)
 /*
  * Whether a relative path may be resolved from dirfd: 0 for AT_FDCWD, the
  * working directory the handler keeps, -EBADF for a descriptor the table
- * does not hold and -ENOTDIR for every object it holds, since none is a
- * directory.
+ * does not hold and -ENOTDIR for every object it holds, since the request
+ * names no directory but the working directory (a directory opened with
+ * O_DIRECTORY included: TODO.md).
  */
 static int
 dirfd_check(int dirfd)

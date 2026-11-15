@@ -674,13 +674,19 @@ walk_step(Name, [{Dir, _, _} | _] = Path,
     end.
 
 %% lopen opens an unopened fid in place; a fid at a symbolic link is never
-%% opened (eloop), so no open acts on a link the client has not seen.
+%% opened (eloop), so no open acts on a link the client has not seen, and
+%% with O_DIRECTORY a fid at anything but a directory is never opened
+%% (enotdir), so its O_TRUNC empties nothing, as FreeBSD's vn_open_vnode
+%% refuses both before it opens.
 lopen(Fid, Flags, #grant{fids = Fids, module = Module, fs = Fs} = Grant) ->
     case Fids of
         #{Fid := #fid{open = {open, _, _}}} ->
             {{error, einval}, Grant};
         #{Fid := #fid{path = [{_, {Type, _, _}, _} | _]}} when Type band ?ERX_P9_QTSYMLINK =/= 0 ->
             {{error, eloop}, Grant};
+        #{Fid := #fid{path = [{_, {Type, _, _}, _} | _]}}
+          when Flags band ?ERX_P9_O_DIRECTORY =/= 0, Type band ?ERX_P9_QTDIR =:= 0 ->
+            {{error, enotdir}, Grant};
         #{Fid := #fid{path = [{Node, Qid, _} | _]}} ->
             case Module:open(Node, Flags, Fs) of
                 {ok, Handle} -> {{ok, Qid, ?IOUNIT}, opened(Fid, Node, Handle, Grant)};

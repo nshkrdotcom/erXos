@@ -481,7 +481,7 @@ flags_of(const char *names)
 		{ "excl", O_EXCL }, { "trunc", O_TRUNC }, { "append", O_APPEND }, { "sync", O_SYNC },
 		{ "dsync", O_DSYNC }, { "cloexec", O_CLOEXEC }, { "noctty", O_NOCTTY },
 		{ "directory", O_DIRECTORY }, { "nofollow", O_NOFOLLOW }, { "nonblock", O_NONBLOCK },
-		{ "accmode", O_WRONLY | O_RDWR },
+		{ "accmode", O_WRONLY | O_RDWR }, { "async", O_ASYNC },
 	};
 	char copy[256], *word, *rest;
 	int flags = 0;

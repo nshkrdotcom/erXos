@@ -35,6 +35,30 @@ class ErxFileRemoteReplyTest < Minitest::Test
               to: "        {erx_origin, _, {erx_9p, _, Reply}} -> {reply, Reply}",
               caught_by: 'only_a_reply_at_the_alias_in_one_envelope_is_taken_test')
   ].freeze
+  # Stock's prim_file has no erx_fid/0, so the client compiles with a stand-in that
+  # hands out fresh fids.
+  FID = "fid() ->\n    prim_file:erx_fid().\n"
+  STAND_IN_FID = "fid() ->\n    erlang:unique_integer([positive]).\n"
+  # Seeded faults of a native program's open: the text replaced, its replacement and the
+  # case that must fail.
+  OpenFault = Data.define(:name, :from, :to, :caught_by)
+  OPEN_FAULTS = [
+    OpenFault.new(name: "an lopen's eloop under O_NOFOLLOW answered as it is",
+                  from: 'unfollowed({error, eloop}, Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> {error, emlink};',
+                  to: 'unfollowed({error, eloop}, Flags) when Flags < 0 -> {error, emlink};',
+                  caught_by: 'nofollow_refuses_a_last_link_test_'),
+    OpenFault.new(name: 'an lopen under O_NOFOLLOW that follows a last link',
+                  from: 'last_mode(true) -> nofollow;', to: 'last_mode(true) -> follow;',
+                  caught_by: 'nofollow_refuses_a_last_link_test_'),
+    OpenFault.new(name: "an lcreate under O_NOFOLLOW that follows a last link",
+                  from: 'unfollowing(Flags) when Flags band ?ERX_P9_O_NOFOLLOW =/= 0 -> emlink;',
+                  to: 'unfollowing(Flags) when Flags < 0 -> emlink;',
+                  caught_by: 'nofollow_refuses_a_last_link_test_'),
+    OpenFault.new(name: 'O_DIRECTORY dropped',
+                  from: 'directory => Flags band ?ERX_P9_O_DIRECTORY =/= 0, type_check => false',
+                  to: 'directory => false, type_check => false',
+                  caught_by: 'directory_opens_only_a_directory_test_')
+  ].freeze
 
   def test_the_cases_pass
     output, status = eunit(File.read(File.join(ROOT, CLIENT)))
@@ -52,13 +76,25 @@ class ErxFileRemoteReplyTest < Minitest::Test
     end
   end
 
+  OPEN_FAULTS.each_with_index do |fault, index|
+    define_method(:"test_seeded_open_fault_#{index}_is_caught") do
+      source = File.read(File.join(ROOT, CLIENT))
+      assert_equal 1, source.scan(fault.from).size, "#{fault.name}: the text not found once"
+      output, status = eunit(source.sub(fault.from) { fault.to })
+      refute status.success?, "#{fault.name}: the tests passed\n#{output}"
+      assert_match(/#{Regexp.escape(fault.caught_by)}[^\n]*\*(?:failed|timed out)\*/, output, fault.name)
+    end
+  end
+
   private
 
   # Compiles the client from client_text, with the grammar and the cases, and runs them.
   def eunit(client_text)
     Dir.mktmpdir('erx-file-remote-reply') do |work|
       client = File.join(work, File.basename(CLIENT))
-      File.write(client, client_text)
+      raise 'the client has no fid/0 to stand in for' unless client_text.include?(FID)
+
+      File.write(client, client_text.sub(FID) { STAND_IN_FID })
       sources = [client, *SOURCES.drop(1).map { |path| File.join(ROOT, path) }]
       output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-Werror', *INCLUDES, '-o', work, *sources, stdin_data: '')
       return [output, status] unless status.success?

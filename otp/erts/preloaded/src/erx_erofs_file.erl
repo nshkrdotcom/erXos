@@ -42,9 +42,11 @@ reads a path, the code server included.
 -type posix() :: atom().
 
 -doc """
-Opens the regular file `Names` names on the mount `Fs` to read: `eisdir`
-for a directory and `enotdir` for anything else opened with `directory`,
-as stock answers; a directory opened with `directory` answers `enotsup`,
+Opens the regular file `Names` names on the mount `Fs` to read: `emlink`
+for a symbolic link, which a caller hands here only when it does not
+follow it, as FreeBSD's `vn_open_vnode` refuses one; `eisdir` for a
+directory and `enotdir` for anything else opened with `directory`, as
+stock answers; a directory opened with `directory` answers `enotsup`,
 since no operation here reads one.
 """.
 -spec open(erx_erofs:fs(), [binary()], list()) -> {ok, #file_descriptor{}} | {error, posix()}.
@@ -52,6 +54,8 @@ open(Fs, Names, Modes) ->
     case {erx_erofs:file_info(Fs, Names), has(directory, Modes)} of
         {{error, _} = Error, _} ->
             Error;
+        {#file_info{type = symlink}, _} ->
+            {error, emlink};
         {#file_info{type = directory}, true} ->
             {error, enotsup};
         {#file_info{type = directory}, false} ->

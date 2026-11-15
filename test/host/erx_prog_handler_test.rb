@@ -47,6 +47,17 @@ class ErxProgHandlerTest < Minitest::Test
     'a read answer longer than its count copied into the slot' =>
       Mutant.new(file: CORE, original: '{ok, Bytes}) when byte_size(Bytes) =< Count ->', replacement: '{ok, Bytes}) when is_integer(Count) ->',
                  caught_by: 'read_longer_than_its_count_is_eio'),
+    'O_NOFOLLOW refused as a flag the protocol lacks' =>
+      Mutant.new(file: CORE, original: 'bor ?ERX_P9_O_DIRECTORY bor ?ERX_P9_O_NOFOLLOW)).',
+                 replacement: 'bor ?ERX_P9_O_DIRECTORY)).', caught_by: 'directory_and_nofollow_are_relayed_test_'),
+    'an lcreate with O_EXCL and O_DIRECTORY admitted' =>
+      Mutant.new(file: CORE, original: 'Case =:= file_lcreate, Flags band ?EXCL_DIRECTORY =:= ?EXCL_DIRECTORY ->',
+                 replacement: 'Case =:= file_lcreate, Flags band ?EXCL_DIRECTORY =:= -1 ->',
+                 caught_by: 'unknown_open_flags_are_einval_test_'),
+    'an lcreate with O_DIRECTORY relayed to create' =>
+      Mutant.new(file: CORE, original: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =/= 0 -> none;',
+                 replacement: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =:= -1 -> none;',
+                 caught_by: 'directory_and_nofollow_are_relayed_test_'),
     'a data slot past the program slots admitted' =>
       Mutant.new(file: CORE, original: '{ok, _} when Data >= Slots ->', replacement: '{ok, _} when Data > Slots ->',
                  caught_by: 'data_slot_past_the_program_slots_is_einval'),
