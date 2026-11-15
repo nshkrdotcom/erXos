@@ -1091,8 +1091,8 @@ while that a program cannot escape `liberx` does not
   2,500 lines of Erlang: it follows the session domain and its terminal
   relay with `erx_tty`, and needs no program, pipe or toybox applet, so it
   lands before them. It brings the command shell's terminal calls,
-  `erx_cmd:tty/2`, `watch/1`, the terminal form of `read/1`, `stop/1`
-  and the size report, which the relay, the job table and the shell's
+  `erx_cmd:tty/2`, `watch/1`, the terminal form of `read/1`, `stop/1`,
+  the size report and a command's declared heap, `-erx_heap`, which the relay, the job table and the shell's
   delivery of `winch` serve
   ([design-shell.md](design-shell.md#interfaces)).
 
@@ -1106,8 +1106,11 @@ by a test.
 
 **Exit criteria, vi (1b-B).** In a session over the host link's
 `console` line, `vi` edits a file, writes it with `:wq` and leaves the
-prompt cooked; it follows a size change, stops on `^Z` and redraws after
-`fg`; a `vi` killed mid-edit leaves the prompt working. Its key-script
+prompt editing as before and the next command of its line cooked; it
+follows a size change, stops on `^Z` and redraws after `fg`, and draws
+nothing in the background; a `vi` killed mid-edit leaves the prompt
+working; and it edits an 8 MiB file to its held-text budget under its
+16 MiB heap. Its key-script
 corpus writes the same files as nvi on the FreeBSD 15.1 oracle guest,
 every difference listed in [design-vi.md](design-vi.md) and pinned by a
 test; its key parser passes its exhaustive test; its output check finds

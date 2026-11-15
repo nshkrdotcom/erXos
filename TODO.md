@@ -5537,6 +5537,12 @@ to the corpus and follow rc
   allowance at all (see pipeline admission below). A pump treats a read error as end of input, so `grep` of a
   directory finds nothing where FreeBSD's warns; `ls` and glob skip names that are not UTF-8
   (`list_dir_all`).
+* [Medium] shell, `erx_cmd:path/2` (`erlang/apps/erx_shell/src/erx_cmd.erl`): it takes `..` away by name
+  before the namespace resolves the path, so with `/tmp/link` a link to `/data/dir`, `cat /tmp/link/../config`
+  reads `/tmp/config` where design-files.md's resolution, which follows links before `..`, reaches
+  `/data/config`, and `rm`, `mv` and `mkdir` act on that wrong file within the session's grants. Make it only
+  join a relative name to the working directory and leave `.` and `..` to the namespace, with a test
+  through a link.
 * [Medium] shell, pipeline admission: each pipeline stage is admitted at
   its full `max_heap_size`, 16 MiB, against an eighth of the session's
   budget, so a 128 MiB session admits one stage and `ps | where | sort`

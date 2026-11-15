@@ -223,7 +223,9 @@ what a terminal needs added:
   and `wc` with a substitution leaves room in. So a runaway recursion
   ends its own stage, never the session. The limit acts at garbage
   collection, so what a stage takes in is bounded too
-  ([Pipelines](#pipelines)).
+  ([Pipelines](#pipelines)). A command that needs more, as `vi` does for
+  its buffer, declares a larger heap, at most 16 MiB, and its stage grows
+  to it when the command starts ([Pipelines](#pipelines)).
 * **What rc does that erXos cannot.** `exec` and `rfork` fail with a
   diagnostic, since the shell has no image to replace and no process to
   fork; `fn sigint` and `fn sighup` run when the shell itself is
@@ -508,6 +510,27 @@ waited could wait for the allowance its own pipeline holds, and background
 jobs that waited would queue without bound. So the stages together stay
 within the memory the session keeps for them, and no line waits on its own
 admission.
+
+**A command's heap.** A command module may declare a larger heap than the
+default with `-erx_heap(MiB)`, beside its `-erx_needs` declaration, `MiB` a
+whole number from 5 to 16; `vi` declares 16
+([design-vi.md](design-vi.md#bounds)). The release build reads it with the
+command's other metadata and refuses any other value, as a live load of
+a command module does
+([design-generation.md](design-generation.md#configuration-and-command-catalogs)),
+so the catalog entry carries a figure already checked and nothing checks
+it again. A command starts in a stage admitted at the default; when its
+entry declares more, the command's start, the one place where the shell
+checks an entry's binding before invoking it, takes the difference from
+the stage allowance and raises the stage's `max_heap_size` to the
+declared figure before `run/2` runs. That growth is admitted at once or
+the command fails with `too many stages`; it never waits, since the
+stages it would wait for may be the command's own pipeline. Since the
+growth is made at the command's start, a function or a computed name
+that runs `vi` gets its heap as a literal `vi` does; the stage gives the
+whole figure back when it ends. 16 MiB is half the
+stage allowance at the default budget, so an editor and an ordinary
+pipeline fit beside each other.
 
 ### Text commands
 
@@ -804,9 +827,11 @@ command there has no terminal to set:
 * **Modes across jobs.** The shell sets the tty back to cooked before it
   starts a foreground job, keeps a stopped job's `termios` for its `fg`, and
   takes its own raw setting back when the job ends or stops, as a UNIX shell
-  does. A job's `termios` is whatever its programs and Erlang commands set,
-  so a command that ends or crashes in raw mode leaves nothing in the
-  `termios` either.
+  does. A command that sets the `termios` sets back the one it found when
+  it returns or fails, as a FreeBSD program restores its terminal before it
+  exits, so the next command of the line starts cooked; the shell's
+  restore when the job ends or stops covers a command killed in raw mode,
+  so that leaves nothing in the `termios` either.
 
 **Jobs and their tags.** A job is the set of its stages and of every
 program they started, which the command server records at each spawn
@@ -1108,11 +1133,15 @@ path `Ctrl-T`'s info request takes, with no status line:
   job means nothing is sent.
 * **Bursts merge.** The shell runs one delivery at a time. A `winch` that
   arrives while one runs marks one more delivery to follow it, and further
-  ones change nothing, so a window dragged to a new size gives at most two
-  deliveries. Neither the signal nor the message carries the size: a
-  receiver asks for it (`erx_cmd:tty/2` with `winsize`, or `TIOCGWINSZ`),
-  so a merged report loses nothing, and `erx_cmd:requested(winch)` takes
-  the reports that wait.
+  ones change nothing, so however fast the master reports, one delivery
+  runs and at most one waits. Each delivery sends a subscriber one
+  message, so a subscriber that does not receive for a while, as one
+  waiting on a slow file does, finds one message for each delivery made
+  meanwhile, each a two-element tuple; they are bounded by the
+  deliveries, not by the reports. Neither the signal nor the message
+  carries the size: a receiver asks for it (`erx_cmd:tty/2` with
+  `winsize`, or `TIOCGWINSZ`), so a merged report loses nothing, and
+  `erx_cmd:requested(winch)` takes the messages that wait.
 * **A stopped job** gets no report, since it is not in the foreground; it
   asks the size when it is continued, as `vi` does
   ([design-vi.md](design-vi.md#the-command-at-the-edge)).
@@ -1147,7 +1176,9 @@ metadata ([design-generation.md](design-generation.md#configuration-and-command-
 streams and capabilities: its grants and its facets, each by its name,
 from which `erx_cmd:facet(Ctx, Name)` returns the facet or
 `{error, no_facet}`. A module declares the facets it needs with
-`-erx_needs(Names)`, which the shell checks before it runs the command.
+`-erx_needs(Names)`, which the shell checks before it runs the command,
+and a heap larger than the default with `-erx_heap(MiB)`
+([Pipelines](#pipelines)).
 A session's facets are its domain's (`erx:caps/0`):
 each facet the domain service minted for the domain, a pid by its name,
 the inspect facet among them. A session's inspector
@@ -1207,7 +1238,11 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
   sends for a program ([design-programs.md](design-programs.md#the-terminal)):
   `tcgetattr` and `tcsetattr` read and set the tty's `termios`, which
   `erx_tty:set/2` checks whole, and `winsize` answers the size the master
-  last reported. Standard input redirected from a file, a pipe or
+  last reported. A `tcsetattr` from a job that is not in the foreground
+  stops the job, as `stop/1` does, and is made once `fg` brings the job
+  back, as FreeBSD's terminal makes a background process group that sets
+  it wait for the foreground (`sys/kern/tty.c:570-607`); a job continued
+  by `bg` stops again at its next `tcsetattr`. Standard input redirected from a file, a pipe or
   `/dev/null` answers `enotty`, and so does every call in a command
   domain, whose stream relay only copies bytes, and in the system shell,
   whose console has no tty: a call never reaches the session's terminal
@@ -1222,11 +1257,15 @@ session's tty ([Pipelines](#pipelines)), and three calls reach it:
   timed read that ends with no bytes returns `<<>>`, never `eof`. A read
   that another reader of the job beat to the bytes waits for the next
   report.
-* `watch/1` asks for that ready report and returns at once; the report
-  arrives as the message `{erx_cmd, ready}`, after which `read/1` returns
-  without waiting. So a command's one `receive` takes keys, size reports
-  and its own timers together, as `vi`'s does
-  ([design-vi.md](design-vi.md#the-command-at-the-edge)).
+* `watch/1` arms that ready report and returns at once; the report
+  arrives as the message `{erx_cmd, ready}`. A `read/1` made while a
+  report is armed or delivered, which `erx_cmd` notes in the caller's
+  dictionary, sends its read at once and never waits: it returns the
+  bytes, or `<<>>` when another reader of the job took them first, and
+  the caller arms the next report with `watch/1`. So a command's one
+  `receive` takes keys, size reports and its own timers together, as
+  `vi`'s does ([design-vi.md](design-vi.md#the-command-at-the-edge)),
+  arming the first report before its loop starts.
 * `stop/1` stops the command's own job ([Job control](#job-control)).
 
 No other source of authority exists for a
@@ -1453,11 +1492,21 @@ remain independent of catalog generation.
     fails it. In cooked mode, a typed line, then `Ctrl-D` at the start of
     a line, gives the line and then `eof`. A command that calls `watch/1`
     and then sleeps gets `{erx_cmd, ready}` once for typed input and its
-    `read/1` returns at once.
+    `read/1` returns at once; when a second reader of the job takes the
+    bytes between the report and the read, that `read/1` returns `<<>>`
+    at once. A `read/1` that waits for the next report there fails it.
+  * A `tcsetattr` in the background: a test command started with `&`
+    that sets the tty raw is reported stopped and the `termios` is
+    unchanged; after `fg` the setting is made; after `^Z` and `bg` its
+    next `tcsetattr` stops it again. A `tcsetattr` that goes through in
+    the background fails it.
   * Window size: with a command in the foreground that opted in to
     `winch`, ten size reports from the master in a burst give it one or
     two `{erx_cmd, winch}` messages and `winsize` then answers the last
-    size; the same size reported again gives none. A command that did not
+    size; the same size reported again gives none. A command that opted in
+    and does not receive while a hundred reports arrive, ten at a time,
+    holds no more messages than the shell made deliveries, which the test
+    counts. A command that did not
     opt in gets nothing; a C test program in the foreground gets
     `SIGWINCH` once per delivery; with nothing in the foreground nothing
     is sent. Seeded: `size/3` that returns `winch` for an unchanged size,

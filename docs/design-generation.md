@@ -142,8 +142,9 @@ the domain library's whole-plan validation. The host report is a derived
 artifact and cannot configure a boot. Equal dependency choices use a
 stable name order so equivalent inputs produce identical images.
 
-The release build extracts command names, help and required facets from
-module metadata, and native commands from the image's program list. It generates the lookup catalog and validates
+The release build extracts command names, help, required facets and a
+declared stage heap, a whole number of MiB from 5 to 16
+([design-shell.md](design-shell.md#pipelines)), from module metadata, and native commands from the image's program list. It generates the lookup catalog and validates
 callbacks against their declarations without executing target modules.
 Lookup retains the shell's precedence rules and reports conflicting
 Erlang names with both origins instead of silently choosing one.
