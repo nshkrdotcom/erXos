@@ -72,11 +72,7 @@ a test, stand-ins for the kernel's generator and the session's tty.
 -doc false.
 -spec init(args()) -> {ok, map()}.
 init(#{principal := Principal, commands := Commands} = Args) ->
-    Dirs = #{root => [{<<"bin">>, bin}, {<<"dev">>, dev}, {<<"etc">>, etc}],
-             bin => [{Name, {command, Name}} || Name <- lists:usort(Commands)],
-             dev => [{<<"null">>, null}, {<<"tty">>, tty}, {<<"urandom">>, urandom},
-                     {<<"zero">>, zero}],
-             etc => [{<<"group">>, group}, {<<"passwd">>, passwd}]},
+    Dirs = dirs(Commands),
     Files = [Node || Entries <- maps:values(Dirs), {_, Node} <- Entries,
                      not is_map_key(Node, Dirs)],
     Qids = maps:from_list([{Dir, qid(?ERX_P9_QTDIR)} || Dir <- maps:keys(Dirs)]
@@ -84,6 +80,16 @@ init(#{principal := Principal, commands := Commands} = Args) ->
     {ok, #{dirs => Dirs, qids => Qids, texts => texts(Principal),
            entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1),
            tty => maps:get(tty, Args, fun erx_session_tty:write/1)}}.
+
+%% Each directory's listing, in order: /bin's commands, and /dev's devices and
+%% /etc's files as every program's handler knows them
+%% (erx_prog_handler_core:exported/0), each the node of its name.
+dirs(Commands) ->
+    #{dev := Devices, etc := Texts} = erx_prog_handler_core:exported(),
+    #{root => [{<<"bin">>, bin}, {<<"dev">>, dev}, {<<"etc">>, etc}],
+      bin => [{Name, {command, Name}} || Name <- lists:usort(Commands)],
+      dev => [{Name, binary_to_existing_atom(Name)} || Name <- Devices],
+      etc => [{Name, binary_to_existing_atom(Name)} || Name <- Texts]}.
 
 %% A qid of Type whose path is drawn from the domain's counter; a counter spent
 %% to 2^64 - 1 fails the grant's start.

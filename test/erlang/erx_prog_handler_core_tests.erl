@@ -248,6 +248,41 @@ narrowing_test_() ->
      ?_assertEqual({error, einval}, Narrow([{<<"/data">>, ro}, {<<"/data">>, ro}])),
      ?_assertEqual({error, enoent}, files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := [], within := [{<<"/x">>, ro}]})))].
 
+%% No display in a program's table (docs/design-files.md, "Narrowing for a
+%% program"): a display's facet mounted at /n/display and a bind of its
+%% client directory at /mnt/w, an alias that keeps the facet's provider,
+%% pass to no program, whole or narrowed, while the data grant passes.
+no_window_tree_test_() ->
+    Data = #{point => [<<"data">>], provider => {grant, self(), <<"t">>}, root => [], rights => rw},
+    Display = #{point => [<<"n">>, <<"display">>], provider => {facet, display, ?ERX_WINDOWS_TREE_BYTES},
+                root => [], rights => rw},
+    Alias = Display#{point := [<<"mnt">>, <<"w">>], root := [<<"client">>]},
+    Granted = Display#{point := [<<"n">>, <<"d2">>], provider := {grant, self(), ?ERX_WINDOWS_TREE_BYTES}},
+    Table = ?TABLE ++ [Data, Display, Alias, Granted],
+    Narrow = fun(Within) -> files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := Table, within := Within})) end,
+    [?_assertEqual(?TABLE ++ [Data], Narrow(all)),
+     ?_assertEqual([#{point => [<<"n">>], provider => release, root => [<<"n">>], rights => ro},
+                    #{point => [<<"mnt">>], provider => release, root => [<<"mnt">>], rights => ro}],
+                   Narrow([{<<"/n">>, ro}, {<<"/mnt">>, ro}])),
+     %% A narrowing to a place on the window tree leaves no entry there.
+     ?_assertEqual([], Narrow([{<<"/mnt/w/w1">>, rw}]))].
+
+%% The names the export serves at /dev and /etc: a start whose table holds an
+%% entry at or below one is refused, since the entry would hide the name or
+%% put a mount beneath a file.
+export_names_test_() ->
+    Bind = fun(Point) -> #{point => Point, provider => {grant, self(), <<"t">>}, root => [], rights => rw} end,
+    Start = fun(Entries, Within) ->
+                    files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := ?TABLE ++ Entries,
+                                                                           within := Within}))
+            end,
+    [?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"null">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"tty">>, <<"x">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"etc">>, <<"passwd">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"tty">>, <<"x">>])], [{<<"/dev">>, ro}])),
+     %% Beside the export's names, and at /dev itself, an entry stays.
+     ?_assertMatch([_, _], Start([Bind([<<"dev">>, <<"draw">>])], all)),
+     ?_assertMatch([_, _], Start([Bind([<<"dev">>])], all))].
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
      ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},

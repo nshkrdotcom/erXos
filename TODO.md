@@ -4535,11 +4535,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
   `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
   transfers alike; make the code answer the table's value, or the table say 0, so one statement holds.
-* [Medium] programs, `erlang/apps/erx/src/erx_prog_handler_core.erl:265-306`: `narrowed/2` carries every entry of
-  the starter's table it keeps, so an entry on a display's window tree (tree `windows`), a bind of one included,
-  reaches a program, and an entry at or below one of the export's names at `/dev` or `/etc` hides that name, where
-  `docs/design-files.md` ("Narrowing for a program") passes no window-tree entry to any program and refuses the
-  second with `EINVAL`. Drop the first and refuse the second, with the tests that section names.
 * [Low] `erlang/apps/erx_files/src/erx_fs.erl:179`: a grant for its own domain ignores `ends_with`, where
   `docs/design-files.md` ("Interfaces") has every grant monitor what `ends_with` names; a program's `/dev` tree ends
   with its handler through it, a refused start's `normal` exit included ("A program's window").

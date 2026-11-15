@@ -107,7 +107,7 @@ session code and the program's own driver.
 
 -include("generated/erx_abi.hrl").
 
--export([new/3, step/2, phase/1]).
+-export([new/3, step/2, phase/1, exported/0]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
@@ -237,14 +237,15 @@ action; or `{error, einval}` for a `Pid` outside 2..2^31-1, a descriptor
 of another form, a number named twice, more than one buffer, which the
 program may have only one of, a working directory that is not an
 absolute path of plain names, slots outside 1..`ERX_PROG_DATA_SLOTS_MAX`,
-or a narrowing path named twice or not absolute; `{error, enoent}` for a
+or a narrowing path named twice or not absolute, or a program's table with
+an entry at or below one of the names of exported/0; `{error, enoent}` for a
 narrowing path that no entry of the table holds; or `{error, eacces}` for
 rights the starter does not hold there.
 """.
 -spec new(term(), term(), files()) -> {ok, core(), [action()]} | {error, einval | enoent | eacces}.
 new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots})
   when ?IS_PID(Pid), is_list(Fds), is_integer(Slots), Slots >= 1, Slots =< ?ERX_PROG_DATA_SLOTS_MAX ->
-    case {valid_fds(Fds), erx_path:cwd(Cwd), narrowed(Table, Within)} of
+    case {valid_fds(Fds), erx_path:cwd(Cwd), program_table(Table, Within)} of
         {false, _, _} -> {error, einval};
         {_, error, _} -> {error, einval};
         {_, _, {error, _} = Refused} -> Refused;
@@ -254,8 +255,44 @@ new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots})
 new(_Pid, _Fds, _Files) ->
     {error, einval}.
 
-%% The program's namespace (docs/design-files.md, "Narrowing for a
-%% program"): the starter's whole table, or for each path the starter names
+-doc """
+The names the session's export serves every program at `/dev` and `/etc`
+(docs/design-programs.md, "Devices"), which erx_session_export serves and
+at or below which no entry of a program's table may stand
+(docs/design-files.md, "Narrowing for a program").
+""".
+-spec exported() -> #{dev := [binary()], etc := [binary()]}.
+exported() ->
+    #{dev => [<<"null">>, <<"tty">>, <<"urandom">>, <<"zero">>],
+      etc => [<<"group">>, <<"passwd">>]}.
+
+%% The program's table (docs/design-files.md, "Narrowing for a program").
+%% An entry on a window tree passes to no program, whatever its point, and a
+%% bind of one keeps its source's provider, so it is dropped too. An entry at
+%% or below one of the export's names would hide that name or put a mount
+%% beneath a file, so it refuses the start.
+program_table(Table, Within) ->
+    case narrowed(Table, Within) of
+        {ok, Narrowed} ->
+            Kept = [Entry || Entry <- Narrowed, not on_window_tree(Entry)],
+            Names = [[atom_to_binary(Dir), Name] || Dir := Names <- exported(), Name <- Names],
+            Hides = fun(#{point := Point}) -> lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names) end,
+            case lists:any(Hides, Kept) of
+                false -> {ok, Kept};
+                true -> {error, einval}
+            end;
+        {error, _} = Refused ->
+            Refused
+    end.
+
+%% An entry on a window tree names the tree in its provider, a grant's or a
+%% facet's (docs/design-files.md, "Namespaces").
+on_window_tree(#{provider := {Kind, _, ?ERX_WINDOWS_TREE_BYTES}})
+  when Kind =:= grant; Kind =:= facet ->
+    true;
+on_window_tree(_Entry) -> false.
+
+%% The starter's table narrowed: the whole table, or for each path the starter names
 %% an entry at that path, on the provider of the starter's entry that holds
 %% it, rooted where the path lies there, with the rights asked, the
 %% starter's own there or read-only; and each of the starter's entries

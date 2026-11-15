@@ -117,7 +117,15 @@ class ErxProgHandlerTest < Minitest::Test
                  caught_by: 'a_start_past_its_deadline_frees_what_it_holds'),
     'a refused start that keeps the program\'s holder entry, so its ends are never gone' =>
       Mutant.new(file: CORE, original: "        [holder_drop].\n", replacement: "        [].\n",
-                 caught_by: 'an_end_of_another_process_is_refused')
+                 caught_by: 'an_end_of_another_process_is_refused'),
+    'a builder that drops a display by its mount point, which keeps the bind of it' =>
+      Mutant.new(file: CORE,
+                 original: "on_window_tree(\#{provider := {Kind, _, ?ERX_WINDOWS_TREE_BYTES}})\n  when Kind =:= grant; Kind =:= facet ->",
+                 replacement: 'on_window_tree(#{point := [<<"n">>, <<"display">>]}) ->',
+                 caught_by: 'no_window_tree_test_'),
+    'a check that refuses only an entry exactly at an export name' =>
+      Mutant.new(file: CORE, original: 'lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names)',
+                 replacement: 'lists:member(Point, Names)', caught_by: 'export_names_test_')
   }.freeze
 
   def test_seeded_faults_are_caught
