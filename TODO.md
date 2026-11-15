@@ -2627,7 +2627,8 @@ it; git history is the record of completed work.
   `erlang/` (the public applications and `public.txt`) and `host/erlang/ebin`
   only. Not yet written: `sysroot/<arch>` (musl's
   headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
-  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
+  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, the host build of `erx_elf_plan` the packer plans a
+  program with, which it builds from the tree into `build/app-pack-tools`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
   which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
   of the advisors' review: while it runs it is the node's default display, `erx_ui:open/1` takes a window
@@ -2666,6 +2667,14 @@ it; git history is the record of completed work.
   (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside `AppPack.describe`; and
   `tools/erx app run DIR`.
   Fix: each with its own package.
+* [High] security residual, the website image's build record (`tools/build_site.rb`, `tools/lib/erx/site.rb`,
+  `Site.inventory`; [design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)): the site takes
+  its `image.boot` from a URL and checks only the SHA-256 given beside it, so an image `tools/erx pack --app X
+  --local` made, a GPL-2.0 package inside, would be published if handed to it; the card is checked against its
+  build record, the image against none. Fix: `tools/erx boot --without-web` writes the image's build record
+  (its SHA-256, the commit with no changes, the build facts' configuration and its package count), and
+  `Site.inventory` refuses a missing record, one of another image or commit, a `-local` configuration or any
+  package, with the test that feeds such a record.
 * [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
 * [Medium] apps, the development manifests' `apps` row (`config/manifest/*-development.txt`): each board grows four
   sums by hand for the row (the display domain's outer budget by `max` pixel areas and lanes, the system
@@ -2676,17 +2685,6 @@ it; git history is the record of completed work.
   running app's start is refused once the spare rows for restarts are used. Fix: property 19's check adds
   the row's share to the board's declared figures instead of the manifest holding it, which removes the copy
   and makes `without_apps` exact; the connections counted with it.
-* [Medium] apps, the Raspberry Pi 4 card (`config/manifest/raspi4b-development.txt`): the card the website
-  offers is packed from the development manifest, so it carries the `apps` row, where design-packaging.md
-  takes the row out of the browser image alone; harmless while no packed record carries the row, but once
-  development images trust their builder's key, every downloaded card would trust the site builder's.
-  Fix: the design says whether a distributed card takes packages, and the card build follows it.
-* [High] apps, restricted packages (`tools/lib/erx/pack_provenance.rb`, the `package` receipt): every
-  image refuses a package whose license is absent or not permissive, where step 4 of "Adding an app to an
-  image" lets one enter a local test image built to allow restricted inputs, so `examples/doom` (GPL-2.0)
-  cannot be added to any image yet. Fix: a build switch for such a local image that the site build and the
-  board cards cannot set, and a registration status for a package it admits, with the test that a
-  restricted package still fails without it.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on

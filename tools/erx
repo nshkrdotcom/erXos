@@ -579,8 +579,12 @@ module Erx
     # takes no --medium. Each --app adds an app to the image (image_apps,
     # docs/design-packaging.md, "Adding an app to an image"), --enable NAME starts it at
     # boot and --signer FILE trusts a deployer's key for packages installed later.
+    # --local makes it a local test image, which takes a package whose license is not
+    # permissive and never leaves this host (ImageApps::Plan); a board's card, the one the
+    # website offers, takes neither (ProductionImage#build_medium).
     def self.pack(arguments)
       medium = false
+      local = false
       probe = nil
       sources = []
       enable = []
@@ -591,16 +595,18 @@ module Erx
         flags.on('--app PATH') { |path| sources << File.expand_path(path) }
         flags.on('--enable NAME') { |name| enable << name }
         flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
+        flags.on('--local') { local = true }
       end
       no_arguments(arguments)
       raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
-      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && !(sources + enable + signers).empty?
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && (local || !(sources + enable + signers).empty?)
 
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
       return pack_probe(runner: runner, environment: environment, platform: platform) if probe
-      apps = image_apps(runner: runner, sources: sources, enable: enable, signers: signers)
+      apps = image_apps(runner: runner, sources: sources, enable: enable, signers: signers, local: local,
+                        compiler: environment.fetch('ERX_CLANG'))
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
                                              linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
                                              apps: apps)
@@ -625,25 +631,25 @@ module Erx
     # package key (Erx::PackageKey), or each package file as given, both staged in
     # build/app-packages, which the image takes them from; each directory is cleared
     # first. The key's private half stays in its directory.
-    def self.image_apps(runner:, sources:, enable:, signers:)
+    def self.image_apps(runner:, sources:, enable:, signers:, local:, compiler:)
       require_relative 'lib/erx/image_apps'
-      return ImageApps.none if sources.empty? && enable.empty? && signers.empty?
+      return ImageApps.none unless local || !(sources + enable + signers).empty?
 
       require_relative 'lib/erx/package_key'
       require_relative 'lib/erx/sdk'
       key = PackageKey.ensure
-      packages = sources.empty? ? [] : gathered_apps(sources, runner: runner, signer: key)
-      ImageApps.plan(packages, enable: enable, signers: signers.map { |path| ImageApps.signer(path) })
+      packages = sources.empty? ? [] : gathered_apps(sources, runner: runner, signer: key, compiler: compiler)
+      ImageApps.plan(packages, enable: enable, signers: signers.map { |path| ImageApps.signer(path) }, local: local)
     end
 
     # The packages of sources (ImageApps.gather), packed with an SDK exported into
     # build/app-sdk and signed by signer, staged in build/app-packages.
-    def self.gathered_apps(sources, runner:, signer:)
+    def self.gathered_apps(sources, runner:, signer:, compiler:)
       erlc = File.join(File.dirname(Oracle.new(root: ROOT, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
       exported = File.join(empty_build_directory('build/app-sdk'), 'sdk')
       Sdk.new(root: ROOT, runner: runner, erlc: erlc).export(exported)
       ImageApps.gather(sources, into: empty_build_directory('build/app-packages'), sdk: AppPack::Sdk.new(root: exported, erlc: erlc),
-                                signer: signer, runner: runner, root: ROOT)
+                                signer: signer, runner: runner, root: ROOT, compiler: compiler)
     end
 
     # The directory relative names under the tree, made empty.

@@ -13,6 +13,16 @@ require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/runner'
 
 class SiteTest < Minitest::Test
+  # The website's build has no --local switch (docs/design-packaging.md, "Adding an app to
+  # an image"), so it can never be asked for a local test image's restricted packages. The
+  # image file it is handed is not yet checked (TODO.md, the website image's build record).
+  def test_the_site_build_refuses_local
+    _, error, status = Open3.capture3(RbConfig.ruby, File.expand_path('../../tools/build_site.rb', __dir__), '--local',
+                                      stdin_data: '')
+    assert_equal 2, status.exitstatus
+    assert_match(/invalid option: --local/, error)
+  end
+
   REPO = File.expand_path('../..', __dir__)
   COMMIT = '0123456789abcdef0123456789abcdef01234567'
   CARD_BLOCK = '<!--card--><p class="card">card {{card_file}} {{card_download_size}} {{card_download_sha256}} ' \

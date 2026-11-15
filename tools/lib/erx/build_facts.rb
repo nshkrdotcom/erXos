@@ -45,9 +45,12 @@ module Erx
 
     # The configuration uname -i names: the platform record's name, a slash and
     # the build kind (development or release), each as it is, so a build of
-    # qemu-virt for development is qemu-virt/development. It follows the
+    # qemu-virt for development is qemu-virt/development. A local test image, one
+    # built to take packages whose license is not permissive (`tools/erx pack --local`),
+    # adds -local to the build kind, qemu-virt/development-local, so uname -i on the
+    # machine says the image may not leave the host that built it. It follows the
     # records, not where they lie in the tree.
-    def configuration(platform:, build_kind:) = "#{platform}/#{build_kind}"
+    def configuration(platform:, build_kind:, local: false) = "#{platform}/#{build_kind}#{'-local' if local}"
 
     # The facts of an image of the tree at root built for configuration with the
     # kernel named kernel (Fiasco#kernel_name).

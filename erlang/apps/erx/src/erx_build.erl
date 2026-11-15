@@ -205,7 +205,8 @@ development_flag(Flags) ->
 
 -doc """
 Whether build facts, as facts/0 answers them, name a development build: the
-kind of their configuration, `Platform/Kind`. Any domain can take this
+kind of their configuration, `Platform/Kind`, `development` or a local test
+image's `development-local`. Any domain can take this
 answer for its own release, unlike development/0's, since the image build
 writes the facts into every release from the same build kind as the
 manifest's flag. Facts that are missing, unreadable or `unknown` are a
@@ -215,6 +216,7 @@ release build's. Pure, for its tests.
 development_facts({ok, #{configuration := Configuration}}) when is_binary(Configuration) ->
     case binary:split(Configuration, <<"/">>) of
         [_Platform, <<"development">>] -> true;
+        [_Platform, <<"development-local">>] -> true;
         _ -> false
     end;
 development_facts(_) ->

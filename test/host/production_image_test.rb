@@ -99,6 +99,29 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
+  # The Raspberry Pi 4's card is the one the website offers: until a release signer exists
+  # its manifest leaves out the apps row, as the site's does, and it takes no package and
+  # no --local, refused before anything is built. QEMU's medium keeps the row.
+  def test_a_card_takes_no_packages
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    apps_row = /^apps$/
+    assert_match apps_row, pi.manifest_source(ROOT)
+    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, pi.manifest_source(ROOT))
+    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, PLATFORM.manifest_source(ROOT))
+
+    machine = Erx::ProductionImage::Machine.development(pi)
+    image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    [Erx::ImageApps.plan([], enable: [], local: true),
+     Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22,
+                                                     sha256: "\xab".b * 32, license: 'MIT')], enable: [])].each do |apps|
+      error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', apps: apps) }
+      assert_equal 'the raspi4b card is the one the website offers, so it takes no app and no --local', error.message
+    end
+    Erx::ProductionImage.check_card_apps(pi, Erx::ImageApps.none)
+    Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
+  end
+
   # libbeam.a holds littlefs's objects (lfs.o and lfs_util.o, in the emulator's OS_OBJS), so
   # its attribution names littlefs's license beside OTP's; compiler-rt's builtins carry LLVM's
   # license, and nothing linked is GPL; every notice named is a tree file.

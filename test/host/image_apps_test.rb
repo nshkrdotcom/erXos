@@ -120,7 +120,7 @@ class ImageAppsTest < Minitest::Test
                  JSON.parse(File.read(entry.fetch('receipt'))))
 
     resolve = lambda do |package|
-      external = Erx::ProductionImage.package_external(package, root: ROOT)
+      external = Erx::ProductionImage.package_external(package, root: ROOT, status: plan.status(package))
       catalog = Erx::BuildInputs.pack(root: ROOT, paths: [file, entry.fetch('receipt')])
       Erx::PackProvenance.new(root: ROOT, catalog: catalog, external: [external])
                          .resolve(receipt: entry.fetch('receipt'), artifact: file, build_kind: 'development')
@@ -131,6 +131,39 @@ class ImageAppsTest < Minitest::Test
                  assert_raises(Erx::Error) { resolve.call(dashboard.with(license: 'GPL-2.0-only')) }.message)
     assert_match(/cannot enter the image: unresolved source license/,
                  assert_raises(Erx::Error) { resolve.call(dashboard.with(license: '')) }.message)
+  end
+
+  # A package whose license is not permissive is registered package-local only in a local
+  # test image's plan (tools/erx pack --local), which a development build admits; without
+  # --local it is permanent and refused, and a permissive package or one that names no
+  # license is permanent either way.
+  def test_only_a_local_image_takes_a_package_that_is_not_permissive
+    gpl = package('doom').with(license: 'GPL-2.0-only')
+    local = Erx::ImageApps.plan([gpl], enable: [], local: true)
+    assert_equal 'package-local', local.status(gpl)
+    assert_equal 'permanent', Erx::ImageApps.plan([gpl], enable: []).status(gpl)
+    assert_equal 'permanent', local.status(package('clock'))
+    assert_equal 'permanent', local.status(gpl.with(license: ''))
+    assert_equal 'package-local', local.status(gpl.with(license: 'MIT AND GPL-2.0-only'))
+    assert_equal 'permanent', local.status(gpl.with(license: 'GPL-2.0-only OR MIT'))
+    refute Erx::ImageApps.none.local
+
+    dashboard = self.class.dashboard
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    restricted = dashboard.with(license: 'GPL-2.0-only')
+    resolve = lambda do |plan, build_kind|
+      entry, = Erx::ProductionImage.package_entries(plan, directory: self.class.scratch('erx-image-apps-local-'), root: ROOT, codec: codec)
+      external = Erx::ProductionImage.package_external(restricted, root: ROOT, status: plan.status(restricted))
+      catalog = Erx::BuildInputs.pack(root: ROOT, paths: [entry.fetch('artifact'), entry.fetch('receipt')])
+      Erx::PackProvenance.new(root: ROOT, catalog: catalog, external: [external])
+                         .resolve(receipt: entry.fetch('receipt'), artifact: entry.fetch('artifact'), build_kind: build_kind)
+    end
+    local = Erx::ImageApps.plan([restricted], enable: [], local: true)
+    assert_equal [['domains/erxos/pkg/dashboard.app', 'GPL-2.0-only', 'package-local']],
+                 resolve.call(local, 'development').map { |record| record.values_at('path', 'license', 'status') }
+    assert_match(/cannot enter the image: .*no permitted grant; only a local test image/,
+                 assert_raises(Erx::Error) { resolve.call(Erx::ImageApps.plan([restricted], enable: []), 'development') }.message)
+    assert_match(/cannot enter the image: .*no permitted grant/, assert_raises(Erx::Error) { resolve.call(local, 'release') }.message)
   end
 
   # The same packages give the same plan, whatever order they come in:

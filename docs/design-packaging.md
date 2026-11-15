@@ -450,7 +450,15 @@ site manifest it makes from the development one, with the room it took,
 as it leaves out the domains `site_leaves_out` names
 ([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)), since the site manifest has
 no display domain for `services` to name and the site machine's 256 MiB
-no room for the row's memory. The row's size follows from how the build counts it:
+no room for the row's memory. The Raspberry Pi 4's card, the medium of a
+board the firmware boots from a boot partition, is the other image the
+website offers, so until a release signer exists it carries none either:
+its build leaves the row out of the board's manifest with the room it
+took (`ProductionImage.medium_manifest`), and refuses a package or
+`--local`, so a card takes packages only once a key the release trusts
+can seal them, and no downloaded card ever trusts its builder's
+development key. A Raspberry Pi 4 image built without its card keeps the
+row. The row's size follows from how the build counts it:
 
 * `max` is reserved in full: property 19 counts the app template as
   `max` principals, each holding every service of `services`, in the
@@ -1093,7 +1101,12 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   one ([The SDK](#the-sdk)), writes `NAME.app` in `OUT`, the current directory
   by default, with its build record beside it, and runs the file check on
   what it wrote, under the signing key, before the package replaces any
-  `OUT/NAME.app`. The image holds the files below `bin/`, `share/` and each
+  `OUT/NAME.app`. A program is someone else's bytes, built outside the
+  packer, by the app's makefile or by any build of the app's own: `erx_elf_plan`'s
+  host build, the one reader of executable headers, plans it as the loader
+  will, for the SDK's ABI version and the target's architecture, with the
+  app's `memory` as the most its image may take, and the packer never runs
+  it. The image holds the files below `bin/`, `share/` and each
   `lib/APP/ebin` and `lib/APP/priv`, but for names starting with `.`, which
   it leaves out, so a host's own files (`.DS_Store`, `._NAME`) never enter
   a package; it refuses a link or any file there that is neither a regular
@@ -1121,10 +1134,30 @@ each package the build:
    SHA-256 in the row, as it records an image's root hash;
 3. runs the manifest check, property 19's file check, admission and
    memory clause included;
-4. judges the package's license as it judges an archive's, so a package
-   whose license is absent or not permissive enters only a local test
-   image built to allow restricted inputs, never a production image or an
-   image the website offers.
+4. judges the package's license as it judges an archive's: the package is
+   attributed whole under the license its header declares, and registered
+   as `permanent`, so a package whose license is not permissive is refused
+   and one that names no license enters no image at all.
+
+**A local test image** is the one exception: `tools/erx pack --app X
+--local` builds an image that takes a package whose license is not
+permissive, for its builder's own tests, such as the Doom demo on QEMU.
+Such a package is registered as `package-local` in place of `permanent`,
+and only a development build admits a `package-local` license, so a
+release build refuses it whatever asked for it. The image is marked
+local in its build facts, whose configuration reads
+`qemu-virt/development-local` and which `uname -i` shows; the kernel's
+banner names the archive's flags, and no flag says local. A local image
+never leaves the host that built it, and nothing distributes it: the
+website's build (`tools/build_site.rb`) has no `--local`, and the images
+it offers are made by builds that take no package: the website's image
+by `tools/erx boot --without-web`, and the card by the card build, which
+refuses `--local` and every package ([The shipped manifests](#the-apps-row)).
+The site build takes the card only with the card's build record, which
+names its commit, built with no changes, and takes the website's image
+only with its build record, which names the image's SHA-256, its commit
+and its build facts, and refuses one whose configuration is local or
+whose image carries a package.
 
 A development image also trusts, as its `development` signer, the public
 half of the development package key of the host that builds it, the key
@@ -2117,7 +2150,8 @@ Decisions:
     [design-apps.md](design-apps.md#the-start-table)).
 11. **Both development manifests carry an `apps` row**, sized as
     [The shipped manifests](#the-apps-row) says; the website's image
-    carries none.
+    and the Raspberry Pi 4's card, the images the website offers, carry
+    none until a release signer exists.
 12. **A native app starts through `erx_prog_handler`'s `window`
     option**, and the handler's start returns a monitor whose `'DOWN'`
     is the program's one end report, so no second launcher and no second

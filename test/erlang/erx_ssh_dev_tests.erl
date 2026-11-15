@@ -38,8 +38,9 @@ the_build_kind_test() ->
                     {ok, _} = erx_build:parse_facts(<<"revision unknown\ndate unknown\nconfiguration ",
                                                       Configuration/binary, "\nkernel unknown\n">>)
             end,
-    ?assertEqual([{development, true}, {release, false}, {unknown, false}, {none, false}],
+    ?assertEqual([{development, true}, {local, true}, {release, false}, {unknown, false}, {none, false}],
                  [{development, erx_build:development_facts(Facts(<<"qemu-virt/development">>))},
+                  {local, erx_build:development_facts(Facts(<<"qemu-virt/development-local">>))},
                   {release, erx_build:development_facts(Facts(<<"qemu-virt/release">>))},
                   {unknown, erx_build:development_facts(Facts(<<"unknown">>))},
                   {none, erx_build:development_facts({error, {no_facts, "none"}})}]).

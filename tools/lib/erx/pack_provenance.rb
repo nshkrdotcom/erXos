@@ -17,6 +17,14 @@ module Erx
   # requests an image. External files require exact reviewed registry entries.
   class PackProvenance
     MAX_METADATA = 64 * 1024 * 1024
+    # The statuses a dependency is registered under, as the dependency table names them,
+    # and those of a package of an image: permanent, or package-local for a package of a
+    # local test image (ImageApps::Plan#status). Each status but permanent is one under
+    # which a development build admits a license that is not permissive.
+    PERMANENT = 'permanent'
+    PACKAGE_LOCAL = 'package-local'
+    DEPENDENCY_STATUSES = [PERMANENT, 'stopgap'].freeze
+    PACKAGE_STATUSES = [PERMANENT, PACKAGE_LOCAL].freeze
     # compiler is the clang that built Fiasco's C17 cores, which Fiasco's audit records.
     def initialize(root:, catalog:, external: [], imports: {}, runner: nil, archive_program: 'llvm-ar', compiler: nil)
       @root = File.realpath(root)
@@ -250,18 +258,22 @@ module Erx
         sources.each { |source| attribute(checked_file(source).fetch('path'), records, build_kind) }
       when 'package'
         # An app's package an image takes as it is (ImageApps), from outside the tree: it
-        # is attributed whole, as an archive is, under the license its header declares,
-        # and its external registration must state it as permanent, so a package whose
-        # license is absent or not permissive enters no image, development ones included.
+        # is attributed whole, as an archive is, under the license its header declares.
+        # Its external registration states it as permanent, so a package whose license is
+        # absent or not permissive enters no image, or as package-local, which only a
+        # local test image's build registers (ImageApps::Plan#status) and only a
+        # development build admits under a license that is not permissive.
         exact_keys(receipt, %w[version kind artifact])
         package = output.fetch('path')
         registered = @external[package]
-        raise Error, 'a package receipt names a package not registered as permanent' unless registered&.fetch('status') == 'permanent'
+        raise Error, 'a package receipt names a package registered as neither permanent nor package-local' unless
+          PACKAGE_STATUSES.include?(registered&.fetch('status'))
 
         begin
-          attribute(package, records, build_kind)
+          attribute(package, records, build_kind, statuses: PACKAGE_STATUSES)
         rescue Error => error
-          raise Error, "the package #{registered.fetch('label')} cannot enter the image: #{error.message}"
+          raise Error, "the package #{registered.fetch('label')} cannot enter the image: #{error.message}; " \
+                       'only a local test image (tools/erx pack --local) takes a package whose license is not permissive'
         end
       else
         raise Error, 'unknown build receipt kind'
@@ -412,7 +424,10 @@ module Erx
       inputs.each { |input| attribute(checked_file(input).fetch('path'), records, build_kind) }
     end
 
-    def attribute(path, records, build_kind, additional_notices: [], public_path: nil, audited: nil)
+    # statuses are those path's registration may state: a dependency's, or a package's
+    # for the package receipt alone, so no other input is ever admitted as package-local.
+    def attribute(path, records, build_kind, additional_notices: [], public_path: nil, audited: nil,
+                  statuses: DEPENDENCY_STATUSES)
       path = authorized_path(path)
       document_references = additional_notices.map { |notice| notice_document(notice) }
       if records.key?(path)
@@ -472,8 +487,8 @@ module Erx
       end
       Attribution.validate_expression(license)
       raise Error, 'invalid font data statement' unless [true, false].include?(font_data)
-      raise Error, 'invalid dependency provenance status' unless %w[permanent stopgap].include?(status)
-      selected = LicenseExpression.select(license, allow_restricted: build_kind == 'development' && status == 'stopgap',
+      raise Error, 'invalid dependency provenance status' unless statuses.include?(status)
+      selected = LicenseExpression.select(license, allow_restricted: build_kind == 'development' && status != PERMANENT,
                                                    font_data: font_data)
       if public_path
         unless public_path.is_a?(String) && !public_path.start_with?('/') &&
