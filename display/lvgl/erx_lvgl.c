@@ -61,6 +61,7 @@
 #include <sys/mman.h>
 #include <sys/stat.h>
 
+#include <erx/theme.h>
 #include <erx/ui_wire.h>
 
 #include "lvgl.h"
@@ -590,6 +591,96 @@ set_slider(ui_node_t *node)
 }
 
 /*
+ * The theme's type roles (abi/theme.txt, generated as erx/theme.h): each
+ * role's size and colour, by its ui_role value, which ui.txt and the
+ * theme name alike.
+ */
+#define ROLE(name, NAME) [ERX_UI_ROLE_##NAME] = \
+	{ ERX_THEME_ROLE_##NAME##_SIZE, ERX_THEME_ROLE_##NAME##_COLOR },
+static const struct {
+	int32_t size;
+	uint32_t color;
+} roles[] = { ERX_THEME_ROLES(ROLE) };
+#undef ROLE
+
+/* LVGL's built-in faces that lv_conf.h compiles, smallest first. */
+static const struct {
+	int32_t size;
+	const lv_font_t *font;
+} faces[] = {
+	{ 12, &lv_font_montserrat_12 },
+	{ 14, &lv_font_montserrat_14 },
+	{ 16, &lv_font_montserrat_16 },
+	{ 20, &lv_font_montserrat_20 },
+	{ 48, &lv_font_montserrat_48 },
+};
+
+/*
+ * Shows a node's text in a type role: the smallest face at least the
+ * role's size, in its colour. With prop NULL the text takes LVGL's own
+ * face and colour again, as a node that never had a role shows.
+ */
+static void
+set_role(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	lv_obj_t *text = node->label != NULL ? node->label : node->obj;
+	size_t face = 0;
+
+	if (prop == NULL) {
+		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_FONT, 0);
+		lv_obj_remove_local_style_prop(text, LV_STYLE_TEXT_COLOR, 0);
+		return;
+	}
+	if ((size_t)prop->integer >= sizeof(roles) / sizeof(roles[0]) ||
+	    roles[prop->integer].size == 0)
+		fatal("role %d is not one of the theme's", prop->integer);
+	while (faces[face].size < roles[prop->integer].size)
+		if (++face == sizeof(faces) / sizeof(faces[0]))
+			fatal("no face has the %d pixels of role %d",
+			    roles[prop->integer].size, prop->integer);
+	lv_obj_set_style_text_font(text, faces[face].font, 0);
+	lv_obj_set_style_text_color(text,
+	    lv_color_hex(roles[prop->integer].color), 0);
+}
+
+/* The style properties a section sets, which a plain container leaves unset. */
+static const lv_style_prop_t section_props[] = {
+	LV_STYLE_BG_COLOR, LV_STYLE_BG_OPA, LV_STYLE_BORDER_COLOR,
+	LV_STYLE_BORDER_WIDTH, LV_STYLE_RADIUS, LV_STYLE_SHADOW_OFFSET_X,
+	LV_STYLE_SHADOW_OFFSET_Y, LV_STYLE_SHADOW_WIDTH, LV_STYLE_SHADOW_COLOR,
+	LV_STYLE_SHADOW_OPA,
+};
+
+/*
+ * Marks a container as its area: a section is a card of the theme's
+ * surface colour, hairline border, radius and shadow; a toolbar and a
+ * sidebar stay unmarked. With prop NULL, or another area, the container
+ * is plain again, as container() made it.
+ */
+static void
+set_area(ui_node_t *node, const erx_ui_prop_t *prop)
+{
+	lv_obj_t *obj = node->obj;
+
+	for (size_t index = 0;
+	    index < sizeof(section_props) / sizeof(section_props[0]); index++)
+		lv_obj_remove_local_style_prop(obj, section_props[index], 0);
+	if (prop == NULL || prop->integer != ERX_UI_AREA_SECTION)
+		return;
+	lv_obj_set_style_bg_color(obj, lv_color_hex(ERX_THEME_COLOR_SURFACE), 0);
+	lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
+	lv_obj_set_style_border_color(obj, lv_color_hex(ERX_THEME_COLOR_LINE), 0);
+	lv_obj_set_style_border_width(obj, ERX_THEME_HAIRLINE, 0);
+	lv_obj_set_style_radius(obj, ERX_THEME_RADIUS_SECTION, 0);
+	lv_obj_set_style_shadow_offset_x(obj, ERX_THEME_SHADOW_SECTION_X, 0);
+	lv_obj_set_style_shadow_offset_y(obj, ERX_THEME_SHADOW_SECTION_Y, 0);
+	lv_obj_set_style_shadow_width(obj, ERX_THEME_SHADOW_SECTION_BLUR, 0);
+	lv_obj_set_style_shadow_color(obj, lv_color_black(), 0);
+	lv_obj_set_style_shadow_opa(obj,
+	    (lv_opa_t)(ERX_THEME_SHADOW_SECTION_PERCENT * 255 / 100), 0);
+}
+
+/*
  * Sets one property to prop's value, or with prop NULL clears it. The node's
  * kind takes the property (set_props checks), so each case may call the
  * LVGL setter of the kind's widget.
@@ -673,12 +764,21 @@ set_prop(ui_node_t *node, uint8_t number, const erx_ui_prop_t *prop)
 	case ERX_UI_PROP_SELECTED:
 		lv_dropdown_set_selected(node->obj, (uint32_t)integer);
 		break;
+	case ERX_UI_PROP_ROLE:
+		set_role(node, prop);
+		break;
+	case ERX_UI_PROP_AREA:
+		set_area(node, prop);
+		break;
 	case ERX_UI_PROP_COLUMNS:
 		node->columns = cleared ? 1 : (uint8_t)integer;
 		children_size(node);
 		break;
 	default:
-		/* Events, images and keys change nothing a renderer shows. */
+		/*
+		 * Events, images and keys change nothing a renderer
+		 * shows; icons and graphs are not drawn here.
+		 */
 		break;
 	}
 }

@@ -38,6 +38,16 @@
 /* A failed LVGL assertion ends the program, which the server sees, rather than spinning. */
 #define LV_ASSERT_HANDLER		__builtin_trap();
 
+/*
+ * The built-in faces erx_lvgl.c offers the theme's type roles (abi/theme.txt),
+ * besides LVGL's default of 14 pixels; a role takes the smallest at least its
+ * size.
+ */
+#define LV_FONT_MONTSERRAT_12		1
+#define LV_FONT_MONTSERRAT_16		1
+#define LV_FONT_MONTSERRAT_20		1
+#define LV_FONT_MONTSERRAT_48		1
+
 #define LV_THEME_DEFAULT_TRANSITION_TIME 0
 #define LV_TEXTAREA_DEF_PWD_SHOW_TIME	0
 
