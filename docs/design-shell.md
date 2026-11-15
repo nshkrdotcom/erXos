@@ -1202,10 +1202,9 @@ only one (`erts/emulator/beam/register.c:216-218`), and every party
 below reaches it by that name or by its pid. Its construction is one
 value: **the terminal has one holder at a time, the console or one job,
 and the holder's `termios` goes with it; typed input waits only in the
-tty, and leaves it only by a read from a reader of the holder; a key that
-signals a job suspends that job's reads until the shell's next
-`foreground`.** Each event the line discipline makes goes to the holder
-of that moment.
+tty, and leaves it only by a read from a reader of the holder; a job
+reads only once the shell has acted on every signal its keys made.**
+Each event the line discipline makes goes to the holder of that moment.
 FreeBSD's terminal is built the same way: it has one foreground process
 group, against which a read or a change of the `termios` is checked
 (`sys/kern/tty.c:456-461`), its input queue is the one place typed bytes
@@ -1218,8 +1217,11 @@ console's open, which belongs to `console` and through which each of
 the console's groups reads; a program handler's open for
 its program, and an Erlang process's own open made by `erx_cmd`, each of
 which belongs to its job. An open **may read** while its holder holds the
-terminal and the holder's reads are not suspended; only such an open's
-wait reaches the line discipline and only its read takes bytes. The
+terminal and, if the holder is a job, the shell has acted on every
+signal event the relay has sent it
+([A signal suspends a job's input](#the-terminal-relays-protocol)); only
+such an open's wait reaches the line discipline and only its read takes
+bytes. The
 shell changes the holder and the `termios` in one request. Each rule
 that would otherwise be a case of its own follows from that value:
 
@@ -1304,7 +1306,7 @@ instead, and the handler copies between the two.
 | `{write, Open, Bytes}` | a process given the open | `{ok, N}`, the count `output/3` took; `eagain` when it took none, or bytes wait ahead of it | nothing |
 | `{console_group, Group}` | the console of the session role, at its start and in each step that changes its current group | `ok` | the events made while the console holds the terminal carry `Group` from this step on ([Terminal events](#the-terminal-relays-protocol)) |
 | `{status, Line}` | the shell's report process ([`Ctrl-T`](#ctrl-t-status-and-the-info-request)) | `ok`, whether `status/3` takes the line or drops it | nothing |
-| `{foreground, console}`, `{foreground, Tag, cooked}`, `{foreground, Tag, Termios}` or `{foreground, Tag, current}`, `Tag` being a job's tag | the shell | `{ok, Left}`, `Left` being the `termios` the previous holder left; `{error, einval}` when `erx_tty:set/2` refuses `Termios`, with nothing changed | the new holder's opens may read: their parked waits are armed and report at once where input waits; while the job `Tag` holds, the caller is the process its events go to |
+| `{foreground, console, Seen}`, `{foreground, Tag, cooked, Seen}`, `{foreground, Tag, Termios, Seen}` or `{foreground, Tag, current, Seen}`, `Tag` being a job's tag and `Seen` the number of the last signal event the shell has acted on, 0 before the first | the shell | `{ok, Left}`, `Left` being the `termios` the previous holder left; `{error, einval}` when `erx_tty:set/2` refuses `Termios`, or `current` names a job that does not hold the terminal, with nothing changed | where the new holder's opens may read, their parked waits are armed and report at once where input waits; while the job `Tag` holds, the caller is the process its events go to |
 
 Any other request is answered `{error, einval}`, and a request that names
 an open the relay did not make, or has closed, is answered
@@ -1351,9 +1353,11 @@ the close's answer, and none after.
   commands run under, which starts as the tty's defaults.
   `{foreground, Tag, cooked}` gives the terminal to the job `Tag` with
   the cooked `termios`, `{foreground, Tag, Termios}` with `Termios` as
-  given, and `{foreground, Tag, current}` with the `termios` the tty has,
-  which is how the shell gives a job back the reads a signal suspended.
-  `{foreground, console}` gives it to the console with its
+  given, and `{foreground, Tag, current, Seen}` changes neither the
+  holder nor the `termios` and only tells the relay what the shell has
+  acted on ([A signal suspends a job's
+  input](#the-terminal-relays-protocol)). `{foreground, console, Seen}`
+  gives it to the console with its
   **editing setting**: the cooked `termios` less `ICANON`, `ECHO` and
   `OPOST`, with `VMIN` 1 and `VTIME` 0, so its line editor takes each key
   as it is typed and writes its own CR-LF, while `ISIG` and `ICRNL` stay
@@ -1381,10 +1385,9 @@ the close's answer, and none after.
 * A `foreground` checks `Termios` whole first, and changes nothing if
   the check fails. It then takes the armed waits of the opens that lose
   the terminal out of the line discipline, timers included, and parks
-  them. It sets the new holder's `termios`, ends any suspension of its
-  reads, and arms the parked waits of its opens. A `foreground` that
-  names the job already holding the terminal loses no wait and only ends
-  the suspension. Input typed and not yet read stays in
+  them. It sets the new holder's `termios`, keeps `Seen`, and arms the
+  parked waits of the new holder's opens if they may read. Input typed
+  and not yet read stays in
   the tty and goes to the next holder's reader, as typed-ahead input does
   on UNIX; under a cooked `termios` it joins the readable bytes, in which
   a read looks for a line's end, as FreeBSD's tty does after a change of
@@ -1397,29 +1400,35 @@ the close's answer, and none after.
   brought back. The terminal goes to the innermost of them, and to the
   console when there is neither or while `erl` runs, since the Erlang
   shell's group reads through the console. So the shell sends
-  `foreground`:
-  * before a line starts, `{foreground, Line, cooked}`;
-  * at `fg`, `{foreground, Job, Kept}`, with the `termios` the job kept;
+  `foreground`, each with its `Seen`:
+  * before a line starts, `{foreground, Line, cooked, Seen}`;
+  * at `fg`, `{foreground, Job, Kept, Seen}`, with the `termios` the job
+    kept;
   * when the job `fg` waits for stops or ends, `{foreground, Line,
-    cooked}`, so the rest of the line reads the terminal, as FreeBSD's
-    `sh` takes the terminal back for itself when the job its `fg` waits
-    for is done (`bin/sh/jobs.c:1095-1097`); `fg` then returns
+    cooked, Seen}`, so the rest of the line reads the terminal, as
+    FreeBSD's `sh` takes the terminal back for itself when the job its
+    `fg` waits for is done (`bin/sh/jobs.c:1095-1097`); `fg` then returns
     ([Numbers, names and reports](#job-control));
-  * when the line itself stops or ends, `{foreground, console}`;
-  * when `erl` starts, `{foreground, console}`, and when it returns,
-    `{foreground, Line, cooked}`;
-  * once it has carried out an `interrupt` or a `quit` for the job that
-    holds the terminal, `{foreground, Job, current}` while the job is not
-    over, so a program that caught or ignored the signal reads on in the
-    modes it set; when the job is over, or a `suspend` has stopped it,
-    the bullets above apply.
+  * when the line itself stops or ends, `{foreground, console, Seen}`;
+  * when `erl` starts, `{foreground, console, Seen}`, and when it
+    returns, `{foreground, Line, cooked, Seen}`;
+  * once it has carried out a signal event, `{foreground, F, current,
+    Seen}` when the table's foreground after the event is a job `F` that
+    holds the terminal, whichever job the event named; when the event
+    stopped or ended `F`, the bullet of that change applies instead, and
+    when the console holds the terminal the shell sends nothing.
 
   At each stop the shell keeps `Left` for the job's `fg`.
   When the job `fg` waits for ends by `Ctrl-C`, its last stage being a
   program that `SIGINT` ended or an Erlang command that the interrupt
   ended, the shell interrupts the line as well, as FreeBSD's `sh` raises
   `SIGINT` in itself after such a job (`jobs.c:1117-1123`), so
-  `fg %1; cat` does not go on to `cat`.
+  `fg %1; cat` does not go on to `cat`. It does so in the step that sees
+  the job's end, before it sends any `foreground`, and then sends the one
+  the table gives after both: `{foreground, console, Seen}` when the line
+  is over after the interrupt's effects, and `{foreground, Line, cooked,
+  Seen}` when it is not, so no reader of the line reads between the
+  job's end and the line's interrupt.
 * Only the shell sends `foreground`. Any process of the session's domain
   could send it, but such a process holds the session's authority anyway
   (SH1). A command domain cannot reach the relay at all.
@@ -1445,25 +1454,34 @@ holds the session's authority anyway (SH1).
     from the process it started as its shell, and answers any other
     process `{error, enotsup}`, changing nothing
     ([design-runtime.md](design-runtime.md), edit 73 of "The edits
-    outside `sys/erxos`"). Stock's group already refuses an input request
-    inside `requests` (`lib/kernel/src/group.erl:55-57`, `:662-672`).
-    The guard sits where requests enter the group, so it holds for every
-    process: a job's, a helper that inherited the shell's group, and one
-    that made the group its leader with `group_leader/2`. None of them
-    takes a key meant for the shell or turns its echo off. A command
-    reads its standard input, the terminal included, through `erx_cmd`
-    ([Interfaces](#interfaces)).
+    outside `sys/erxos`"). An input request or a `setopts` inside
+    `requests` is answered `{error, request}` in every group, from any
+    process, by the same edit: stock's output dispatcher hands such an
+    entry to a fallback (`lib/kernel/src/group.erl:671-672`) whose value
+    its caller does not match (`:608-614`), so the group crashes and
+    takes its shell with it. The guard sits where requests enter the
+    group, so a job's process, a helper that inherited the shell's group
+    and one that made the group its leader with `group_leader/2` get the
+    refusal from the `io` calls they would use on stock OTP, and none of
+    them takes a key meant for the shell or turns its echo off by
+    mistake. It is not a security boundary: a process of the session's
+    domain can name the shell as a request's sender, or ask the group
+    for its driver and send the group what the driver would, but it
+    holds the session's authority anyway (SH1), as for `{open,
+    console}`. A command reads its standard input, the terminal
+    included, through `erx_cmd` ([Interfaces](#interfaces)).
   * *One line at a time.* The shell has one line request outstanding at
     most, and makes the next only once it has acted on the line it got:
     a whole unit runs as a line, which it gives the terminal with
-    `{foreground, Line, cooked}` before the line starts. So once the
+    `{foreground, Line, cooked, Seen}` before the line starts. So once the
     group has answered a line it serves no request (`group.erl:557-560`)
     and makes no ask until the shell asks for its next line, as `sh`
     reads nothing until it calls `el_gets` for its next line
     (`bin/sh/input.c:138`). A nested request, whose state the group
     pushes and resumes with a read of its own (`group.erl:396-397`,
     `:439`), never arises in it.
-  * *The Erlang shell's group stays stock.* It serves its shell and every
+  * *The Erlang shell's group stays stock*, but for the refusal inside
+    `requests`. It serves its shell and every
     process of its evaluations, nested requests included; no job takes
     the terminal while it runs, so whichever of them reads next takes
     the next key.
@@ -1545,12 +1563,22 @@ holds the session's authority anyway (SH1).
   ends the line, and a key that a mode hands to another mode is read
   there again whole. libedit's `read_getcmd` likewise reads on
   through `keymacro_get` while what it has read leads a bound sequence
-  (`read.c:255-270`). So every key gives the same action, in every mode of
-  the editor, whether its bytes arrive together or one at a time, and a
+  (`read.c:255-270`). So `edlin` gives every key the same action, in
+  every mode, whether its bytes arrive together or one at a time, and a
   `shell_keymap` entry that no stream of bytes could match whole, such as
   `ESC [ H ~`, which reads as Home and then `~`, is refused when the
   keymap is read, with stock's diagnostic
-  (`lib/stdlib/src/edlin_key.erl:124-133`).
+  (`lib/stdlib/src/edlin_key.erl:124-133`). The group's clauses for a
+  history key that finds a line and for the end of a search drop what
+  follows the key in
+  the same call (`lib/kernel/src/group.erl:890-923`, `:1022-1056`).
+  A session's console never gives them anything to drop: it answers one
+  character at a time, or two when a byte that belongs to no character
+  is answered with the character after it, and that first character is
+  a history or search key only under a `shell_keymap` that binds a
+  character from U+0080 to U+00FF to one. The system console's driver
+  sends input as it arrives, so there `Up` and Enter arriving together
+  lose the Enter, as on stock OTP.
 
 Each property follows:
 
@@ -1608,10 +1636,14 @@ ends the command's cooked read.
 
 **Terminal events.** The relay compares holders to gate reads, but acts
 on no job. Each signal and event the line discipline returns goes to the
-holder of the moment it is made, named with what it was made for, as
-`{erx_tty_event, Tag, Event}`: while a job holds the terminal, to the
-process that gave it the terminal, the shell, `Tag` being the job's tag;
-while the console holds it, to the console, `Tag` being the group the
+holder of the moment it is made, named with what it was made for:
+while a job holds the terminal, to the process that gave it the
+terminal, the shell, as `{erx_tty_event, Tag, Event, N}`, `Tag` being
+the job's tag and `N` the number of the last signal event the relay has
+sent the shell, this one included
+([A signal suspends a job's input](#the-terminal-relays-protocol));
+while the console holds it, to the console, as `{erx_tty_event, Tag,
+Event}`, `Tag` being the group the
 console last named with `{console_group, Group}`, or `none` before it
 has named one. The console names its current group at its start and in
 every step that changes it, as when a shell started from a shell takes
@@ -1669,39 +1701,69 @@ take ([design-live.md](design-live.md#the-tty)), as FreeBSD's
 `ttydisc_rint` takes one byte per call and, at a signal's key, flushes,
 echoes and signals the foreground group before it returns
 (`sys/kern/tty_ttydisc.c:1012`, `:1124-1133`, FreeBSD 15.1). The relay
-carries out such a stop in the step that took the input:
+carries out such a stop in the step that took the input, in this order:
 
-1. While a job holds the terminal, it suspends that job's reads: it takes
-   the armed `read` and `in` waits of the job's opens out of the line
-   discipline, timers included, and parks them, as for a job that does
-   not hold the terminal, and answers every read of the job `eagain`
-   from then on, so a report delivered before the key grants nothing.
+1. While a job holds the terminal, it adds one to `Sent`, below, and
+   parks the job's armed `read` and `in` waits.
 2. It sends the event as above.
 3. It passes the bytes after the key to `input/2` again, until none is
    left. They wait in the tty.
 
-The job keeps the terminal for everything but reading: its writes,
-`tcgetattr`, `tcsetattr` and `winsize` go on, since a program's `SIGINT`
-handler that restores the terminal's modes would otherwise be answered
-`{background, false}` and stopped. Only the shell's next `foreground`
-ends the suspension ([The foreground rule](#the-terminal-relays-protocol)):
-`{foreground, Job, current}` when the job is not over once the shell has
-carried the signal out, so a program that caught the signal reads the
-keys typed after it one round trip of the shell later, nothing lost or
-reordered; otherwise the `foreground` that gives the terminal to the
-next holder, whose reader takes them. So the reader of a key typed after
-`Ctrl-C` is chosen by the job table after it has acted on the interrupt.
-While the console holds the terminal a signal suspends nothing: the
-console reads only for its group's ask and takes the event before the
-answer to any read made after the key ([The console reads on
-demand](#the-terminal-relays-protocol)), and at the prompt no
-`foreground` would end a suspension. `info` and `winch` suspend nothing.
-Two readers can still act on a key after the shell's `current` and before
-the signal reaches them: a process of the job that was running when the
-shell marked its tag, for the rest of its slice
-([design-runtime.md](design-runtime.md#scheduling), "Job tags"), and a
-program whose handler passes it the relay's report before the signal
-([Open decisions](#risks-and-open-questions)).
+The relay keeps one counter, `Sent`, the number of signal events
+(`interrupt`, `suspend` and `quit`) it has sent the shell, and beside it
+`Seen`, the number the shell's last `foreground` carried; both start at
+0. A job's opens may read only while `Seen` equals `Sent`, so a job's
+reads are suspended exactly while the shell has a signal event it has
+not acted on, and no flag records it. The shell carries its events out
+one at a time, in the order the relay sent them, which is the order they
+arrive, and sends the number of the last one it has carried out in every
+`foreground`;
+after each signal event it sends `{foreground, F, current, Seen}` for
+the job `F` that is the table's foreground and holds the terminal,
+unless the event stopped or ended it ([The foreground
+rule](#the-terminal-relays-protocol)). So a `foreground` ends a
+suspension only once the shell has acted on every signal it was sent,
+and one sent for an earlier signal carries a smaller number and ends
+nothing: with `Ctrl-C`, `Ctrl-Z` and `bg` typed within one round trip of
+the shell to a job `A` that catches `SIGINT`, the `current` after the
+interrupt carries 1 while `Sent` is 2, A's reads stay suspended, and
+the shell stops A and gives the terminal to the console, which reads
+`bg`. A `foreground` that gives the terminal to another job while
+`Seen` lags `Sent` leaves that job's reads suspended until the shell's
+`current` for it, and `current` for a job that does not hold the
+terminal is refused, so it never moves the terminal. While suspended,
+the job keeps the terminal for everything but reading: its parked waits
+get no report, its reads are answered `eagain`, so a report delivered
+before the key grants nothing, and its writes, `tcgetattr`, `tcsetattr`
+and `winsize` go on, since a program's `SIGINT` handler that restores
+the terminal's modes would otherwise be answered `{background, false}`
+and stopped. A program that caught the signal reads the keys typed after
+it one round trip of the shell later, nothing lost or reordered, and
+otherwise the next holder's reader takes them, so the reader of a key
+typed after `Ctrl-C` is chosen by the job table after it has acted on
+the interrupt. `info` and `winch` carry `Sent` unchanged and suspend
+nothing. The console never waits on `Sent`: a signal made while it holds
+the terminal goes to it unnumbered, and it reads only for its group's
+ask and takes the event before the answer to any read made after the
+key ([The console reads on demand](#the-terminal-relays-protocol)).
+
+Three readers can still act on a key typed after a signal before the
+signal reaches them. A process of the job that was running when the
+shell marked its tag can, for the rest of its slice
+([design-runtime.md](design-runtime.md#scheduling), "Job tags"), and so
+can a program whose handler passes it the relay's report before the
+signal ([Open decisions](#risks-and-open-questions)). And a line can,
+when the console takes the `Ctrl-C` after its group has returned the
+line and before the shell gives the line the terminal: the interrupt
+reaches the shell as its group's exit signal (`group.erl:519-522`),
+which carries no number, after the shell has started the line, and the
+line reads until the shell has interrupted it, one round trip
+([Open decisions](#risks-and-open-questions)). `Sent` counts no signal
+the console takes, since the shell never learns the number of one: the
+console drops `quit`, an event for an Erlang shell's group never
+reaches the command shell, and the group's interrupt is an exit signal
+or `{error, interrupted}`, so a counter that counted them would leave
+every later job's reads suspended.
 
 **Failure.** The relay is its console's line and ends with it, and the
 console of the session role ends when the line hangs up, and every shell
@@ -1914,10 +1976,16 @@ as the image, and `unmount DIR` ends it
   pipe or redirection, and reaches the terminal with `erx_cmd:tty/2`
   ([Interfaces](#interfaces)). Code that prompts through its group leader
   works under `erl`, whose group is stock's.
-* **Two limitations at the terminal**, each failing safe: a key typed
+* **Three limitations at the terminal**: a key typed
   between two `Ctrl-C` within one round trip of the shell appears in the
   next line, where it is seen before anything runs
-  ([The ask](#the-terminal-relays-protocol)); and a process left running
+  ([The ask](#the-terminal-relays-protocol)); a key typed within one
+  round trip after a `Ctrl-C` that follows the Enter of a line can reach
+  that line's command before the interrupt ends it, where FreeBSD's `sh`
+  takes the signal at once (`bin/sh/trap.c:372-377`) and so starts the
+  command only if it has already begun to fork it (`bin/sh/jobs.c:894`)
+  ([A signal suspends a job's input](#the-terminal-relays-protocol));
+  and a process left running
   by a finished job that reads the terminal waits until the session ends,
   where FreeBSD fails the read with `EIO` ([Reading in the
   background](#job-control)).
@@ -2086,7 +2154,10 @@ remain independent of catalog generation.
   are EUnit cases of `erx_session_relay` against a fake master and a fake
   console, a test process that makes the console's open, run by
   `test/host/erx_session_relay_test.rb`. Each passing case has a seeded
-  fault that makes it fail:
+  fault that makes it fail. Outside the case of signal numbers, every
+  `foreground` carries the `N` of the last event the test process took,
+  0 before the first, and is written here without it, as are the events
+  the test process takes as the shell:
   * Order: a watch of `in` made while a byte waits receives `ok` as its
     first message and the report as its second. Seeded: a relay that
     sends the report before the answer.
@@ -2146,31 +2217,46 @@ remain independent of catalog generation.
     that does not monitor the maker answers that request.
   * Events: with `A` holding the terminal, each of the five
     line-discipline actions reaches the process that sent the
-    `foreground` as `{erx_tty_event, A, Event}`, with `Event` from the
-    table; after `{foreground, B, cooked}` from the same process, `Ctrl-C`
+    `foreground` as `{erx_tty_event, A, Event, N}`, with `Event` from the
+    table, made in the table's order, so `N` is 1, 2 and 3 for the
+    signals and 3 for `info` and `winch`; after `{foreground, B, cooked}` from the same process, `Ctrl-C`
     gives `{erx_tty_event, B, interrupt}`; with the console holding,
     `Ctrl-Z` reaches the fake console as `{erx_tty_event, none, suspend}`
     before it names a group, as `{erx_tty_event, G1, suspend}` after
     `{console_group, G1}` and as `{erx_tty_event, G2, suspend}` after
     `{console_group, G2}`, and nothing reaches the shell; a size change
     reaches the fake console as `erx_console_size`. Seeded: `sigtstp`
-    mapped to `interrupt`, the console's events sent to the shell, and a
-    relay that keeps the first group the console named, each fail one
-    case.
+    mapped to `interrupt`, the console's events sent to the shell, a
+    relay that keeps the first group the console named, and one that
+    counts `info` as a signal, which numbers it 4, each fail one case.
   * A signal suspends the job's reads: with `A` holding the cooked
-    terminal and A's open watching `{read, 4096}`, `Ctrl-C` and `ls\n`
-    typed in one input give the shell `{erx_tty_event, A, interrupt}` and
-    A no report, and A's read answers `eagain`; A's `write` and its
-    `tcsetattr` of a raw `termios` go through. After `{foreground, A,
-    current}` A's watch is reported, its read returns `ls`, and
-    `tcgetattr` shows the raw `termios` A set. With A's watch reported
-    and not yet read when `Ctrl-C` is typed, A's read answers `eagain`.
-    Seeded, each failing one case: an `input/2` that goes on past the
-    signal's key, which reports A's watch with `ls\n` before the event; a
-    suspension that also refuses `tcsetattr`, which answers it
-    `{background, false}`; a `current` that sets the cooked `termios`;
+    terminal, given with `Seen` 0, and A's open watching `{read, 4096}`,
+    `Ctrl-C` and `ls\n` typed in one input give the shell
+    `{erx_tty_event, A, interrupt, 1}` and A no report, and A's read
+    answers `eagain`; A's `write` and its `tcsetattr` of a raw `termios`
+    go through. After `{foreground, A, current, 1}` A's watch is
+    reported, its read returns `ls\n`, and `tcgetattr` shows the raw
+    `termios` A set. With A's watch reported and not yet read when
+    `Ctrl-C` is typed, A's read answers `eagain`. Seeded, each failing
+    one case: a suspension that also refuses `tcsetattr`, which answers
+    it `{background, false}`; a `current` that sets the cooked `termios`;
     and a suspension that only parks waits, whose read after the
     delivered report returns `ls\n`.
+  * Signal numbers: with `A` holding, `Ctrl-C`, `Ctrl-Z` and `bg\n`
+    typed in one input give the shell `{erx_tty_event, A, interrupt, 1}`
+    and `{erx_tty_event, A, suspend, 2}`; after `{foreground, A, current,
+    1}` A's watch gets no report and its read answers `eagain`, and after
+    `{foreground, console, 2}` the console's reads return `b`, `g` and
+    `\n`. With `B` given the terminal by `{foreground, B, cooked, 1}`
+    after the same two events, B's read answers `eagain` until
+    `{foreground, B, current, 2}`. Seeded: a relay that keeps one
+    suspension flag, which any `foreground` naming the holder clears, so
+    A's read returns `bg\n` after the first `current`.
+  * `current` for a job that does not hold: with the console holding,
+    `{foreground, A, current, 0}` answers `{error, einval}`, and a typed
+    key still reports the console's watch. Seeded: a relay that takes
+    `current` from any job as a `foreground`, which gives A the terminal,
+    so the console's watch gets no report.
   * The name: the relay starts registered as `erx_tty_owner`, and a
     handler's `{open, Job}` reaches it by that name. Seeded: a relay that
     also registers a second name, which fails to start.
@@ -2183,14 +2269,14 @@ remain independent of catalog generation.
     queue empties, before the master's answer.
 * **The console on demand.** EUnit cases of `erx_console` of the session
   role, with its group and its relay, against a fake master and a test
-  shell that reads lines from the group:
+  shell that reads lines from the group; each `foreground` the test sends
+  carries `Seen` 0 and is written without it:
   * `ls\npwd\n` typed in one input while the shell reads: the shell gets
     `ls\n`; the test then sends `{foreground, Line, cooked}`, and an open
     of `Line` reads `pwd\n`. Seeded: a group without edit 71, which never
-    asks, so no line comes before the test's deadline; a console that
-    reads 4,096 bytes for an ask, and one that watches again after each
-    answer whatever its group asks, each of which takes `pwd\n` into the
-    group, so `Line`'s read finds nothing.
+    asks, so no line comes before the test's deadline; and a console
+    that reads 4,096 bytes for an ask, which takes `pwd\n` into the group,
+    so `Line`'s read finds nothing.
   * Another key that ends a line: with `shell_keymap` binding `^X` to
     `new_line_finish`, `cat^Xsecret\n` typed in one input gives the shell
     `cat`, and after `{foreground, Line, cooked}` an open of `Line` reads
@@ -2203,10 +2289,16 @@ remain independent of catalog generation.
     typed in one input gives the shell `cat\n`, echoed, and an open of
     `Line` reads `secret\n` after `{foreground, Line, cooked}`. In an
     Erlang shell's group, an evaluation's `io:get_line/1` returns the
-    line typed. Seeded: a group without edit 73, on which the job's
-    request pushes the shell's and takes `cat\n`; and edit 73 applied to
-    every group, on which the Erlang shell's evaluation gets
-    `{error, enotsup}`.
+    line typed. A job's process that sends the group
+    `{requests, [{get_line, unicode, ""}]}`, and one that sends
+    `{requests, [{put_chars, unicode, "x"}, {setopts, [{echo, false}]}]}`,
+    each with `io:request/2`, get `{error, request}`, and the shell's next
+    line is read and echoed. Seeded: a group without edit 73, on which the
+    job's request pushes the shell's and takes `cat\n`; the shell-only
+    refusal applied to every group, on which the Erlang shell's evaluation
+    gets `{error, enotsup}`; and stock's fallback for an unknown entry of
+    `requests` (`group.erl:671-672`), on which the group exits with
+    `case_clause` and the test shell with it.
   * One answer for one ask: with a test process as the console's group,
     an ask `R` with `ab` typed gets `{Console, {read, R, "a"}}` and
     nothing more until a second ask; `é` typed as two writes of the
@@ -2262,7 +2354,9 @@ remain independent of catalog generation.
     `ESC [ A` in the expansion list `history_up`; and a key that
     `tab_expand` hands to `normal` read again from the start of the last
     input, which for a left arrow typed a character per call in the
-    expansion list reads `D` alone and inserts it.
+    expansion list reads `D` alone and inserts it; and stock's reversal
+    at `new_line` (`edlin.erl:375-377`), which for `ab`, `ESC` and NL
+    given whole asks for the redraw before the inserts.
   * A character that cannot continue a sequence is read again: NL after
     each of `ESC ESC`, `ESC O`, `ESC ESC [`, `ESC [`, `ESC [ 1 ;` and
     `ESC [ 3`, given whole and a character per call, ends the line, and
@@ -2284,36 +2378,50 @@ remain independent of catalog generation.
     setting with `ISIG` clear, where the byte waits unread and the
     evaluation goes on.
 * **The job table and the terminal.** EUnit cases of the job table's core,
-  which returns the `foreground` requests and job effects it decides:
+  which returns the `foreground` requests and job effects it decides, in
+  the order it decides them; a signal event the table takes carries the
+  next number, and every `foreground` it gives carries the number of the
+  last event it took, written here only where a case depends on it:
   * An `interrupt` that names job A, taken after A has ended and B holds
-    the terminal, gives no effect; one that names A while A runs ends A
-    alone. An `info` that names A after A has ended writes `empty
+    the terminal, gives no effect on a job and only `{foreground, B,
+    current, N}`, `N` the event's number; one that names A while A runs
+    ends A alone. An `info` that names A after A has ended writes `empty
     foreground process group` and sends no request. Seeded: a table that
-    acts on its current foreground, which ends B and reports on B.
+    acts on its current foreground, which ends B and reports on B; and
+    one that gives `current` only for the job the event named, which
+    gives none, so B's reads would stay suspended.
   * Giving the reads back: an `interrupt` and a `quit` for A while A
     holds the terminal and has a program left each give A's effects and
-    then `{foreground, A, current}`; when A is over after the effects,
-    the table gives the `foreground` of A's end and no `current`; a `suspend`
-    gives the stop's `foreground` alone. Seeded, each failing one case: a
-    table that gives `{foreground, A, cooked}`, which resets the modes a
-    program set; one that gives no `foreground` after the effects, which
-    would leave A's reads suspended; and one that gives `current` for a
-    job that is over.
+    then `{foreground, A, current, N}`, `N` the event's number; when A is
+    over after the effects, the table gives the `foreground` of A's end
+    and no `current`; a `suspend` gives the stop's `foreground` alone. The
+    events `suspend` and then `interrupt` for A, the line, give
+    the stop's `{foreground, console, 1}` and then A's effects and no
+    `foreground`. Seeded, each failing one case: a table that gives
+    `{foreground, A, cooked}`, which resets the modes a program set; one
+    that gives no `foreground` after the effects, which would leave A's
+    reads suspended; one that gives `current` for a job that is over;
+    and one that gives `current` for the job
+    the event named whether or not it is the table's foreground, which
+    gives `{foreground, A, current, 2}` for the stopped A.
   * Window size: while a delivery for A runs, a `winch` for B and then
     one for C arrive, and B ends; C gets one delivery after A's, and B
     none. Seeded: one waiting delivery for every job, which merges C's
     into B's and drops it.
   * `fg %1; cat`: when `%1` ends, the table gives `{foreground, Line,
     cooked}` and `fg` returns `%1`'s status; when `%1` stops, the same,
-    with `fg` returning `sigtstp`; when `Ctrl-C` ended `%1`, the line is
-    interrupted and `cat` never starts. Seeded: a table that gives the
-    terminal to the console when the job `fg` waits for ends, which
-    fails the first case, and one that does not interrupt the line,
-    which fails the third.
+    with `fg` returning `sigtstp`; when `Ctrl-C` ended `%1`, the table
+    gives the line's interrupt and then, the line being over,
+    `{foreground, console}` and no `{foreground, Line, cooked}`, and `cat`
+    never starts. Seeded: a table that gives the terminal to the console
+    when the job `fg` waits for ends, which fails the first case; one
+    that does not interrupt the line, which fails the third; and one that
+    gives `{foreground, Line, cooked}` before the line's interrupt, which
+    also fails the third.
 * **A command at the terminal:**
   * `tty/2`: a test command sets the tty raw, reads three keys typed with
     no Return one by one, and ends; the prompt then echoes and edits. With
-    the editing setting not set at `{foreground, console}`, the prompt
+    the editing setting not set at `{foreground, console, Seen}`, the prompt
     test fails. The same command with standard input from a file, from a pipe
     and from `/dev/null`, under `within`, and in the system shell gets
     `enotty` and the tty's `termios` is unchanged; a `tty/2` that falls
@@ -2536,6 +2644,15 @@ the shell has acted, so it takes the keys typed after the key. Suspending
 the job's reads in the step that makes the signal closes that gap with
 one rule ([A signal suspends a job's input](#the-terminal-relays-protocol)).
 
+**A suspension flag on the holder.** A signal would set a flag on the
+job holding the terminal, and the shell's next `foreground` would clear
+it. It loses: a `foreground` the shell sent for one signal clears the
+flag a later signal set, so with `Ctrl-C`, `Ctrl-Z` and `bg` typed
+together a job that catches `SIGINT` reads `bg`. Comparing the count of
+signals sent with the count the shell has acted on keeps no flag, and a
+`foreground` for an earlier signal ends nothing
+([A signal suspends a job's input](#the-terminal-relays-protocol)).
+
 **Job control through a party outside the session.** A separate trusted
 program would pause and resume a session's programs at the shell's
 request. It loses: the session created each program's space and holds
@@ -2586,18 +2703,32 @@ Open decisions, each with a recommendation:
   their bytes match FreeBSD's at a terminal too; a clickable pid comes
   from `erx:ps()` and the inspector.
 * **When a program reads again after a signal.** The shell gives a job
-  its reads back with `{foreground, Job, current}` once it has carried the
-  signal out, which for a program means once the command server has
-  passed the signal to its handler. Nothing orders the handler's report of
-  the signal to the program before the relay's ready report, so a program
-  the signal ends can take keys typed after it. A handshake would have
-  each handler answer once its program has taken the signal, and the
-  shell send `current` after every answer. Erlang commands, `vi` among
-  them, need none: their processes end at their next pick once the tag
-  is marked. Recommended: design the handshake together with programs'
-  reads of the terminal in
-  [design-programs.md](design-programs.md#the-terminal), and send the
-  single `current` until then.
+  its reads back with `{foreground, Job, current, Seen}` once it has
+  carried the signal out, which for a program means once the command
+  server has passed the signal to its handler. Nothing orders the
+  handler's report of the signal to the program before the relay's ready
+  report, so a program the signal ends can take keys typed after it. A
+  handshake would have each handler answer once its program has taken
+  the signal, and the shell send `current` only after every answer.
+  Erlang commands, `vi` among them, need none: their processes end at
+  their next pick once the tag is marked. Recommended: design the
+  handshake together with programs' reads of the terminal in
+  [design-programs.md](design-programs.md#the-terminal), and send
+  `current` once the signal is passed on until then.
+* **A `Ctrl-C` the console takes as a line starts.** When `Ctrl-C`
+  arrives after the group has returned a line and before the shell gives
+  the line the terminal, the console takes it, the group passes it to the
+  shell as an exit signal with no number, and the line can read keys
+  typed after it for one round trip
+  ([A signal suspends a job's input](#the-terminal-relays-protocol)).
+  Closing the window would carry the relay's number from the console
+  through the group to the shell: an edit to the group's interrupt,
+  which stock delivers as an exit signal or as `{error, interrupted}` to
+  the request (`group.erl:519-526`), and to `erx_console`, for every
+  group the console serves. Recommended: keep the window as a recorded
+  limitation; it needs a key typed after Enter and `Ctrl-C` within one
+  round trip of the console, the group and the shell, and FreeBSD's
+  `sh` has a narrower window of its own while it forks.
 
 ## References
 

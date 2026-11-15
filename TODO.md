@@ -1901,6 +1901,11 @@ it; git history is the record of completed work.
   as `MediumBoot::SYSTEM_DOMAIN_ID` (kept in step by `medium_boot_test.rb`), `CodeCommands::SYSTEM_DOMAIN`,
   `reload_guest.rb` and `ProductionImage::Run::TRACE_DOMAIN`. Make it a row of `abi/erx_abi.txt`, generate the
   define, and read it in Ruby through `Erx::ABI`, so no copy can drift.
+* [Low] `docs/design-runtime.md`, "The edits outside `sys/erxos`": the numbers 66, 67 and 68 each name two edits
+  (`link/1,2` on a connection and the `select_val` fall-through; `erlang:send/3`'s `notify` and the controller keeping
+  `init` as its group leader; init's reboot and the dirty scheduler's elapsed-time charge), so a reference such as
+  "edit 68" is ambiguous. Give the second of each pair a number of its own and update the references in
+  `docs/design-runtime.md`, `docs/design-domains.md`, `docs/design-network-stack.md` and `docs/todo-performance.md`.
 * [Low] development manifests (`tools/lib/erx/platform.rb` `manifest_source`, `config/manifest/`): a reader error in
   a board's composed manifest names the line of the joined text (`config/manifest:403`), not the file and line of
   `development.txt` or the board's part; pass the parts to `ABI::Syntax.parse` with their paths. The network

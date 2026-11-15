@@ -556,7 +556,8 @@ on the host:
   back, so the tty drops in that case too. One call's echo is at most
   16 KiB, and the rest is dropped, as FreeBSD drops echo that finds its
   output queue full, so a run of `VREPRINT` keys costs no more than its
-  bytes.
+  bytes; past the bound, how much is echoed depends on how the input was
+  cut into calls.
 * `read_wait(Open, Count, Tty)`, for a blocking read of `Count` bytes that
   starts to wait,
   `poll_wait(Open, Tty)`, for a `poll` that waits for input,
@@ -2784,8 +2785,10 @@ determinism test of the generated tree.
   `VMIN`. A `read_wait` that ignores its count fails the exploration's
   model. `input/2` returns untaken exactly the bytes after the first key
   that makes a signal, and passing them back until none is left gives the
-  same state, echo and actions as passing the input a byte at a time; an
-  `input/2` that goes on past the key fails the first check. `erx_tty_modes`' `adopt/2` is checked
+  same state, echo and actions as passing the input a byte at a time,
+  over inputs whose calls each echo less than the 16 KiB bound, past which
+  echo is cut per call; an `input/2` that goes on past the key fails the
+  first check. `erx_tty_modes`' `adopt/2` is checked
   exhaustively over the flags of `erx_tty`'s table against libedit's
   masks, with and without `ICANON` in what a job left; an `adopt/2`
   without its masks fails it.
