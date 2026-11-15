@@ -229,7 +229,7 @@ class ReleaseFilesTest < Minitest::Test
   # is either a release directory or one of those. NsPlaces raises on a place/1 clause
   # it cannot read, so a place written in another shape is never skipped.
   def test_the_mount_points_are_where_erx_ns_mounts_facets
-    places = Erx::NsPlaces.points(File.read(File.join(ROOT, Erx::NsPlaces::PATH)))
+    places = Erx::NsPlaces.points(File.read(File.join(ROOT, Erx::NsPlaces::SOURCE)))
     released = Erx::ReleaseFiles::MOUNT_POINTS.map { |name| "/#{name}" }
     assert_equal [*released, '/apps', '/machine'].sort, places.values.sort
   end

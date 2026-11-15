@@ -15,7 +15,7 @@ class CommandNeedsTest < Minitest::Test
   IFCONFIG = 'erlang/apps/erx_shell/src/erx_cmd_ifconfig.erl'
   NS = "place(data) -> {<<\"/data\">>, [rw]};\nplace(machine) -> {<<\"/machine\">>, [rw]};\n" \
        "place(apps) -> {<<\"/apps\">>, [rw]};\nplace(_Name) -> none.\n"
-  STACK = { 'erlang/apps/erx_net/src/erx_net.erl' => "-module(erx_net).\n", Erx::NsPlaces::PATH => NS }.freeze
+  STACK = { 'erlang/apps/erx_net/src/erx_net.erl' => "-module(erx_net).\n", Erx::NsPlaces::SOURCE => NS }.freeze
 
   def tree
     paths = Dir.glob('erlang/apps/**/*.erl', base: ROOT).select { |path| Erx::CommandNeeds.reads?(path) }

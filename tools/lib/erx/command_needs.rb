@@ -26,9 +26,11 @@ module Erx
   # backend"), and inet's functions that resolve names or read the interfaces. A
   # service whose tree erx_ns mounts (erx_ns:place/1, read through NsPlaces) is reached
   # by path too: a string literal that is the tree's mount point or a path beneath it,
-  # as reboot's "/machine/ctl" is, counts as a name of the service, while a doc string
-  # does not. Comments, other strings and quoted atoms are left out, so 'erx_net':f(),
-  # an OTP function named through apply and a path built from pieces get past it, as
+  # as reboot's "/machine/ctl" is, counts as a name of the service; prose is never
+  # exactly a path. Comments, other strings and quoted atoms are left out, so
+  # 'erx_net':f(), an OTP function named through apply, and a path built from pieces
+  # or written as a quoted atom, a triple-quoted string or another sigil form get past
+  # it, as
   # do a name built from pieces and a call a command makes through a helper of another
   # application: like the other text rules it catches a slip. It is no boundary either:
   # a session's authority rests on its domain, whose release ships no service module
@@ -58,8 +60,9 @@ module Erx
     # atoms, the OTP names as Module or Module:Function before a call, and its tree's
     # mount point as the start of a path.
     Names = Data.define(:atoms, :calls, :points)
-    # A string literal, ~"..." and ~b"..." among them, that holds an absolute path.
-    PATH = %r{\A(?:~[bs]?)?"(?<path>/[^"\\]*)"\z}
+    # A plain string literal, or one of the sigils ~, ~b and ~s with double quotes,
+    # that holds an absolute path.
+    PATH_LITERAL = %r{\A(?:~[bs]?)?"(?<path>/[^"\\]*)"\z}
 
     Violation = Data.define(:path, :line, :detail) do
       def to_s = "chokepoint command-needs: #{path}:#{line}: #{detail}"
@@ -105,7 +108,7 @@ module Erx
     def names_of(files)
       atoms = files.keys.filter_map { |path| service_of(path)&.then { |facet| [File.basename(path, '.erl'), facet] } }
       calls = SERVICES.flat_map { |facet, service| [*service.modules, *service.functions].map { |name| [name, facet] } }
-      ns = files[NsPlaces::PATH]
+      ns = files[NsPlaces::SOURCE]
       points = ns ? NsPlaces.points(ns).slice(*SERVICES.keys).invert : {}
       Names.new(atoms: atoms.to_h, calls: calls.to_h, points: points)
     end
@@ -135,13 +138,19 @@ module Erx
         Reach.new(facet: names.calls.fetch(name), line: line, name: name)
       end
       paths = matches(code, ErlangText::LEXEME).filter_map do |found, line|
-        path = PATH.match(found[:kept].to_s)&.[](:path)
-        facet = path && names.points.find { |point, _| path == point || path.start_with?("#{point}/") }&.last
+        path = PATH_LITERAL.match(found[:kept].to_s)&.[](:path)
+        facet = path && facet_at(path, names.points)
         next unless facet
 
         Reach.new(facet: facet, line: line, name: path)
       end
       (atoms + calls + paths).sort_by(&:line)
+    end
+
+    # The facet whose tree's mount point, among points, is path or a directory above it,
+    # nil for none.
+    def facet_at(path, points)
+      points.find { |point, _| path == point || path.start_with?("#{point}/") }&.last
     end
 
     # Each match of pattern in text with the line it starts on.
