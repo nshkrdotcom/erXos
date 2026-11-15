@@ -1351,9 +1351,10 @@ over the block, never by computed offsets; a count read from the medium
 (`entry_count`, the journals' counts, `name_len`, `i_namelen`,
 `i_extra_isize`, `cp_pack_total_block_count`, the bitmap sizes) is checked
 against the room it claims before the cursor moves. The codec follows
-the rules Linux enforces on reads ([F 42], [F 60], [T 92]) and adds the
-bounds Linux leaves out: the version bitmaps' room and the journals and
-orphan counts against their blocks. A failed decode is one
+the rules Linux enforces on reads ([F 26], [F 32], [F 42], [F 60],
+[T 92]) and adds the bounds Linux leaves out: the version bitmaps' room,
+`i_namelen` against its field, and an inline file's `i_size` against its
+inline area whatever else the inode holds. A failed decode is one
 module-private `throw` caught at the codec's entry, answered as
 `{error, {Structure, Rule}}`.
 

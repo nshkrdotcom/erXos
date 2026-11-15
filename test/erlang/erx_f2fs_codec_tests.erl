@@ -18,7 +18,11 @@
 -include("generated/erx_abi.hrl").
 
 -export([superblock_fields/0, superblock_block/1, checkpoint_fields/0,
-         checkpoint_block/2, orphan_block/2, crc_reference/2]).
+         checkpoint_block/2, orphan_block/2, crc_reference/2,
+         nat_entry/3, nat_block/1, nat_journal/2, sit_entry/2, sit_block/1,
+         sit_journal/2, summary_block/1, compact_blocks/3, inode_fields/0,
+         inode_block/2, inode_checksum_applies/2, with_inode_checksum/2,
+         dentry_block/1, dentry_area/3]).
 
 -define(BLOCK, 4096).
 
@@ -333,3 +337,501 @@ an_orphan_block_answers_its_used_slots_test() ->
 an_orphan_count_past_the_block_fails_test() ->
     ?assertEqual({error, {orphan_block, entry_count}},
                  erx_f2fs_codec:orphan_block(orphan_block([], ?ERX_F2FS_ORPHANS_PER_BLOCK + 1))).
+
+%%% Fixtures of the tables, summaries, inodes and dentries
+
+nat_entry(Version, Ino, Address) ->
+    #{version => Version, ino => Ino, block_addr => Address}.
+
+%% A NAT block whose first entries are Entries and the rest free.
+nat_block(Entries) ->
+    Free = nat_entry(0, 0, 0),
+    erx_abi_packed:encode(erx_f2fs_nat_block,
+                          #{entries => pad(Entries, ?ERX_F2FS_NAT_ENTRIES_PER_BLOCK, Free)}).
+
+%% A NAT journal claiming Count entries, its slots Entries ({Nid, Entry})
+%% and zeros.
+nat_journal(Count, Entries) ->
+    Slots = [#{nid => Nid, entry => Entry} || {Nid, Entry} <- Entries],
+    Empty = #{nid => 0, entry => nat_entry(0, 0, 0)},
+    erx_abi_packed:encode(erx_f2fs_nat_journal,
+                          #{n_nats => Count,
+                            entries => pad(Slots, ?ERX_F2FS_NAT_JOURNAL_ENTRIES, Empty)}).
+
+%% A SIT entry of log Type whose valid blocks are Valid, a list of block
+%% offsets, their bits set first-bit-most-significant ([F 5], [F 37]).
+sit_entry(Type, Valid) ->
+    Map = << <<(case lists:member(Bit, Valid) of true -> 1; false -> 0 end):1>>
+             || Bit <- lists:seq(0, 511) >>,
+    #{vblocks => (Type bsl 10) bor length(Valid), valid_map => Map, mtime => 77}.
+
+sit_block(Entries) ->
+    erx_abi_packed:encode(erx_f2fs_sit_block,
+                          #{entries => pad(Entries, ?ERX_F2FS_SIT_ENTRIES_PER_BLOCK,
+                                           sit_entry(0, []))}).
+
+sit_journal(Count, Entries) ->
+    Slots = [#{segno => Segno, entry => Entry} || {Segno, Entry} <- Entries],
+    erx_abi_packed:encode(erx_f2fs_sit_journal,
+                          #{n_sits => Count,
+                            entries => pad(Slots, ?ERX_F2FS_SIT_JOURNAL_ENTRIES,
+                                           #{segno => 0, entry => sit_entry(0, [])})}).
+
+%% A summary block of a data segment whose entry for block k is nid 100 + k,
+%% version k mod 256 and offset k, with Journal.
+summary_block(Journal) ->
+    Entries = [#{nid => 100 + K, version => K rem 256, ofs_in_node => K}
+               || K <- lists:seq(0, 511)],
+    erx_abi_packed:encode(erx_f2fs_summary_block,
+                          #{entries => Entries, journal => Journal,
+                            entry_type => 0, check_sum => 16#dead}).
+
+%% The compact form's blocks for the data logs' Summaries, laid out by
+%% [F 29]'s numbers: the journals at bytes 0 and 507 of the first block,
+%% its 439 entries from byte 1014, then 584 entries from byte 0 of each
+%% further block, the last 5 bytes and more of each block unused.
+compact_blocks(Nat, Sit, Summaries) ->
+    Packed = [<<Nid:32/little, Version:8, Offset:16/little>>
+              || #{nid := Nid, version := Version, ofs_in_node := Offset}
+                     <- lists:append(Summaries)],
+    {Head, Tail} = lists:split(min(439, length(Packed)), Packed),
+    First = iolist_to_binary([Nat, Sit | Head]),
+    [pad_block(First) | [pad_block(iolist_to_binary(Chunk)) || Chunk <- chunks(Tail, 584)]].
+
+chunks([], _Size) -> [];
+chunks(List, Size) when length(List) =< Size -> [List];
+chunks(List, Size) ->
+    {Chunk, Rest} = lists:split(Size, List),
+    [Chunk | chunks(Rest, Size)].
+
+pad_block(Bytes) -> <<Bytes/binary, 0:((?BLOCK - byte_size(Bytes)) * 8)>>.
+
+pad(List, Count, Filler) -> List ++ lists:duplicate(Count - length(List), Filler).
+
+%% Inode 4 of superblock_fields()'s volume: a regular file of two blocks,
+%% with EXTRA_ATTR and i_extra_isize 12, so its addresses start at word 3
+%% of i_addr ([F 41]), named "file" in directory 3.
+inode_fields() ->
+    Zero = erx_abi_packed:decode(erx_f2fs_inode, <<0:(?ERX_F2FS_INODE_SIZE * 8)>>),
+    Inode = Zero#{i_mode => 8#100644, i_inline => ?ERX_F2FS_EXTRA_ATTR,
+                  i_links => 1, i_size => 8192, i_blocks => 3,
+                  i_generation => 16#01020304, i_pino => 3,
+                  i_namelen => 4, i_name => <<"file", 0:(251 * 8)>>},
+    Addresses = [5000, 5001 | lists:duplicate(?ERX_F2FS_ADDRS_PER_INODE - 5, 0)],
+    #{inode => Inode, i_addr => extra_words(12, 0) ++ Addresses,
+      i_nid => [0, 0, 0, 0, 0],
+      footer => #{nid => 4, ino => 4, flag => 0, cp_ver => 1, next_blkaddr => 0}}.
+
+%% The first words of i_addr for i_extra_isize Size and an inline xattr
+%% size, the rest of the extra attributes zero ([F 41]).
+extra_words(Size, XattrWords) ->
+    [Size bor (XattrWords bsl 16) | lists:duplicate(Size div 4 - 1, 0)].
+
+%% An inode block of Super's volume, its checksum computed when [F 50]
+%% asks for one.
+inode_block(Super, Fields) ->
+    Block = erx_abi_packed:encode(erx_f2fs_inode_block, Fields),
+    case inode_checksum_applies(Super, Fields) of
+        true -> with_inode_checksum(Super, Block);
+        false -> Block
+    end.
+
+inode_checksum_applies(#{feature := Feature},
+                       #{inode := #{i_inline := Inline}, i_addr := [Word0 | _]}) ->
+    Feature band ?ERX_F2FS_FEATURE_INODE_CHKSUM =/= 0 andalso
+        Inline band ?ERX_F2FS_EXTRA_ATTR =/= 0 andalso
+        Word0 band 16#ffff >= 12.
+
+%% [F 50]: the CRC of the UUID from all ones, continued over the footer's
+%% ino, i_generation, bytes 0 to 367, four zeros and bytes 372 to 4095,
+%% stored at byte 368.
+with_inode_checksum(#{uuid := Uuid}, Block) ->
+    <<Before:368/binary, _:32, After/binary>> = Block,
+    <<_:4076/binary, Ino:4/binary, _/binary>> = Block,
+    <<_:68/binary, Generation:4/binary, _/binary>> = Block,
+    Seed = crc_reference(16#ffffffff, Uuid),
+    Crc = crc_reference(Seed, <<Ino/binary, Generation/binary, Before/binary, 0:32,
+                                After/binary>>),
+    <<Before/binary, Crc:32/little, After/binary>>.
+
+%% A dentry block holding Dentries, {Slot, Name, Ino}, laid out by [F 59]'s
+%% offsets: the bitmap, first bit least significant, at byte 0, slot
+%% records of 11 bytes from byte 30 and name slots of 8 bytes from byte
+%% 2384. A name's run sets every bit and zeroes the later records'
+%% name_len ([F 60]).
+dentry_block(Dentries) ->
+    dentry_area(?BLOCK, {27, 30, 2384}, Dentries).
+
+dentry_area(Size, {BitmapBytes, RecordsAt, NamesAt}, Dentries) ->
+    Runs = [{Slot, (byte_size(Name) + 7) div 8, Name, Ino} || {Slot, Name, Ino} <- Dentries],
+    Used = lists:append([lists:seq(Slot, Slot + Run - 1) || {Slot, Run, _, _} <- Runs]),
+    Bitmap = << <<(lists:sum([1 bsl Bit || Bit <- lists:seq(0, 7),
+                                           lists:member(Byte * 8 + Bit, Used)]))>>
+               || Byte <- lists:seq(0, BitmapBytes - 1) >>,
+    Writes = [{0, Bitmap}]
+        ++ [{RecordsAt + 11 * Slot,
+             <<(16#1000 + Slot):32/little, Ino:32/little, (byte_size(Name)):16/little, 1>>}
+            || {Slot, _, Name, Ino} <- Runs]
+        ++ [{NamesAt + 8 * Slot, Name} || {Slot, _, Name, _} <- Runs],
+    lists:foldl(fun({At, Bytes}, Area) ->
+                        <<Before:At/binary, _:(byte_size(Bytes))/binary, After/binary>> = Area,
+                        <<Before/binary, Bytes/binary, After/binary>>
+                end, <<0:(Size * 8)>>, Writes).
+
+inode(Fields) ->
+    Super = superblock_fields(),
+    erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields)).
+
+%% Fields with the inode's fixed part changed by Changes.
+with_inode(#{inode := Inode} = Fields, Changes) ->
+    Fields#{inode := maps:merge(Inode, Changes)}.
+
+%%% The NAT and the SIT
+
+a_nat_block_answers_its_entries_test() ->
+    Entries = [nat_entry(1, 3, 4096), nat_entry(255, 9, 4100)],
+    {ok, Read} = erx_f2fs_codec:nat_block(nat_block(Entries)),
+    ?assertEqual(?ERX_F2FS_NAT_ENTRIES_PER_BLOCK, length(Read)),
+    ?assertEqual(Entries, lists:sublist(Read, 2)),
+    ?assertEqual({error, {nat_block, block_size}},
+                 erx_f2fs_codec:nat_block(binary:part(nat_block([]), 0, 4095))).
+
+a_nat_journal_answers_its_counted_entries_test() ->
+    Entries = [{N, nat_entry(N, N, 4096 + N)} || N <- lists:seq(3, 40)],
+    Full = [#{nid => Nid, entry => Entry} || {Nid, Entry} <- Entries],
+    ?assertEqual({ok, Full}, erx_f2fs_codec:nat_journal(nat_journal(38, Entries))),
+    ?assertEqual({ok, lists:sublist(Full, 2)},
+                 erx_f2fs_codec:nat_journal(nat_journal(2, Entries))),
+    ?assertEqual({ok, []}, erx_f2fs_codec:nat_journal(nat_journal(0, []))).
+
+%% [F 32]: more than 38 entries refuses the journal, and the journal is its
+%% 507 bytes.
+a_nat_journal_past_its_room_fails_test() ->
+    ?assertEqual({error, {nat_journal, entry_count}},
+                 erx_f2fs_codec:nat_journal(nat_journal(39, []))),
+    ?assertEqual({error, {nat_journal, journal_size}},
+                 erx_f2fs_codec:nat_journal(<<0:4096>>)).
+
+a_sit_block_answers_its_main_segments_test() ->
+    Entries = [sit_entry(3, [0, 1, 2]), sit_entry(0, lists:seq(0, 511)), sit_entry(5, [])],
+    {ok, Read} = erx_f2fs_codec:sit_block(sit_block(Entries), 3),
+    ?assertMatch([#{valid_blocks := 3, type := 3, mtime := 77},
+                  #{valid_blocks := 512, type := 0},
+                  #{valid_blocks := 0, type := 5}], Read),
+    ?assertEqual([Map || #{valid_map := Map} <- Entries],
+                 [Map || #{valid_map := Map} <- Read]).
+
+%% Entries past the main area's segments are not read ([F 39]), and no
+%% block holds more than 55.
+a_sit_block_reads_only_the_entries_asked_for_test_() ->
+    Broken = (sit_entry(0, [1]))#{vblocks => 2},
+    Block = sit_block([sit_entry(0, [1]), Broken]),
+    [?_assertMatch({ok, [_]}, erx_f2fs_codec:sit_block(Block, 1)),
+     ?_assertEqual({error, {sit_block, valid_map}}, erx_f2fs_codec:sit_block(Block, 2)),
+     ?_assertEqual({error, {sit_block, entry_count}},
+                   erx_f2fs_codec:sit_block(Block, ?ERX_F2FS_SIT_ENTRIES_PER_BLOCK + 1))].
+
+%% Each rule of [F 39] on one entry.
+each_sit_entry_rule_fails_with_its_name_test_() ->
+    Valid = sit_entry(2, [7, 8]),
+    Cases = [{valid_map, Valid#{vblocks => (2 bsl 10) bor 3}},
+             {valid_map, Valid#{vblocks => 2 bsl 10}},
+             {valid_blocks, Valid#{vblocks => (2 bsl 10) bor 513}},
+             {type, Valid#{vblocks => (6 bsl 10) bor 2}}],
+    lists:append(
+      [[{atom_to_list(Rule) ++ " in a block",
+         ?_assertEqual({error, {sit_block, Rule}},
+                       erx_f2fs_codec:sit_block(sit_block([Entry]), 1))},
+        {atom_to_list(Rule) ++ " in a journal",
+         ?_assertEqual({error, {sit_journal, Rule}},
+                       erx_f2fs_codec:sit_journal(sit_journal(1, [{9, Entry}])))}]
+       || {Rule, Entry} <- Cases]).
+
+a_sit_journal_answers_its_counted_entries_test() ->
+    Entries = [{S, sit_entry(S rem 6, [S])} || S <- lists:seq(10, 15)],
+    {ok, Read} = erx_f2fs_codec:sit_journal(sit_journal(6, Entries)),
+    ?assertEqual([10, 11, 12, 13, 14, 15], [Segno || #{segno := Segno} <- Read]),
+    ?assertMatch([#{entry := #{valid_blocks := 1, type := 4}} | _], Read),
+    ?assertEqual({error, {sit_journal, entry_count}},
+                 erx_f2fs_codec:sit_journal(sit_journal(7, Entries))),
+    ?assertEqual({error, {sit_journal, journal_size}},
+                 erx_f2fs_codec:sit_journal(<<0:4048>>)).
+
+%%% Segment summaries
+
+a_summary_block_answers_its_entries_and_journal_test() ->
+    Journal = nat_journal(1, [{3, nat_entry(0, 3, 4096)}]),
+    {ok, Read} = erx_f2fs_codec:summary_block(summary_block(Journal)),
+    ?assertEqual([entries, entry_type, journal], lists:sort(maps:keys(Read))),
+    #{entries := Entries, journal := Journal, entry_type := 0} = Read,
+    ?assertEqual(512, length(Entries)),
+    ?assertEqual(#{nid => 611, version => 255, ofs_in_node => 511}, lists:last(Entries)),
+    ?assertEqual({error, {summary_block, block_size}},
+                 erx_f2fs_codec:summary_block(<<0:8>>)).
+
+%% Summaries for logs of 439, 512 and 512 entries take three blocks: the
+%% first log fills the first block exactly ([F 29]).
+compact_summaries_run_on_through_their_blocks_test() ->
+    Nat = nat_journal(1, [{5, nat_entry(0, 5, 4200)}]),
+    Sit = sit_journal(0, []),
+    Logs = [[#{nid => Log * 10000 + K, version => K rem 256, ofs_in_node => K}
+             || K <- lists:seq(1, Count)]
+            || {Log, Count} <- [{1, 439}, {2, 512}, {3, 512}]],
+    Blocks = compact_blocks(Nat, Sit, Logs),
+    ?assertEqual(3, length(Blocks)),
+    ?assertEqual({ok, #{nat_journal => Nat, sit_journal => Sit, summaries => Logs}},
+                 erx_f2fs_codec:compact_summaries([439, 512, 512], Blocks)),
+    ?assertEqual({ok, #{nat_journal => Nat, sit_journal => Sit, summaries => [[], [], []]}},
+                 erx_f2fs_codec:compact_summaries([0, 0, 0], [hd(Blocks)])).
+
+compact_summaries_past_their_room_fail_test_() ->
+    Blocks = compact_blocks(nat_journal(0, []), sit_journal(0, []), [[]]),
+    [?_assertEqual({error, {compact_summary, room}},
+                   erx_f2fs_codec:compact_summaries([440], Blocks)),
+     ?_assertEqual({error, {compact_summary, room}},
+                   erx_f2fs_codec:compact_summaries([0], [])),
+     ?_assertEqual({error, {compact_summary, entry_count}},
+                   erx_f2fs_codec:compact_summaries([513], Blocks ++ Blocks)),
+     ?_assertEqual({error, {compact_summary, block_size}},
+                   erx_f2fs_codec:compact_summaries([1], [<<0:8>>]))].
+
+%%% Inodes
+
+a_valid_inode_reads_as_its_fields_test() ->
+    #{inode := Fixed} = Fields = inode_fields(),
+    {ok, Inode} = inode(Fields),
+    ?assertMatch(#{i_name := <<"file">>, i_size := 8192, i_extra_isize := 12,
+                   inline_xattr_words := 0, i_nid := [0, 0, 0, 0, 0],
+                   footer := #{nid := 4, ino := 4}}, Inode),
+    ?assertEqual(lists:sort(maps:keys(Fixed) ++ [addresses, footer, i_extra_isize, i_nid,
+                                                 inline_xattr_words]),
+                 lists:sort(maps:keys(Inode))),
+    #{addresses := Addresses} = Inode,
+    ?assertEqual(?ERX_F2FS_ADDRS_PER_INODE - 3, length(Addresses)),
+    ?assertEqual([5000, 5001, 0], lists:sublist(Addresses, 3)).
+
+a_changed_byte_under_the_inode_checksum_fails_it_test_() ->
+    Super = superblock_fields(),
+    Block = inode_block(Super, inode_fields()),
+    Flip = fun(At) ->
+                   <<Before:At/binary, Byte, After/binary>> = Block,
+                   erx_f2fs_codec:inode(Super, 4, <<Before/binary, (Byte bxor 1), After/binary>>)
+           end,
+    %% A byte of the fixed part, of the addresses and of the footer's cp_ver.
+    [?_assertEqual({error, {inode, checksum}}, Flip(At)) || At <- [33, 2000, 4090]].
+
+%% Without INODE_CHKSUM, or with i_extra_isize short of the field, no
+%% checksum is read ([F 50]).
+an_inode_without_a_checksum_is_not_checked_test_() ->
+    Fields = inode_fields(),
+    Short = Fields#{i_addr := extra_words(8, 0) ++ [5000 | lists:duplicate(920, 0)]},
+    NoChecksum = (superblock_fields())#{feature => ?ERX_F2FS_FEATURE_EXTRA_ATTR},
+    [?_assertMatch({ok, #{i_extra_isize := 8}}, inode(Short)),
+     ?_assertMatch({ok, _}, erx_f2fs_codec:inode(NoChecksum, 4,
+                                                 erx_abi_packed:encode(erx_f2fs_inode_block,
+                                                                       Fields)))].
+
+%% Each rule of [F 41] and [F 42] that concerns one inode block.
+each_inode_rule_fails_with_its_name_test_() ->
+    Valid = inode_fields(),
+    Super = superblock_fields(),
+    Read = fun(SuperFields, Nid, Fields) ->
+                   erx_f2fs_codec:inode(SuperFields, Nid, inode_block(SuperFields, Fields))
+           end,
+    Extra = fun(Words) -> Valid#{i_addr := Words ++ lists:duplicate(923 - length(Words), 0)} end,
+    Flexible = Super#{feature => ?ERX_F2FS_FEATURE_EXTRA_ATTR bor
+                                 ?ERX_F2FS_FEATURE_FLEXIBLE_INLINE_XATTR},
+    Cases =
+        [{nid, Read(Super, 2, Valid#{footer := #{nid => 2, ino => 2, flag => 0,
+                                                 cp_ver => 1, next_blkaddr => 0}})},
+         {nid, Read(Super, 455 * 512, Valid)},
+         {footer, Read(Super, 5, Valid)},
+         {footer, Read(Super, 4, Valid#{footer := #{nid => 4, ino => 3, flag => 0,
+                                                    cp_ver => 1, next_blkaddr => 0}})},
+         %% An xattr node's offset in an inode's footer ([F 43], [F 53]).
+         {footer, Read(Super, 4, Valid#{footer := #{nid => 4, ino => 4,
+                                                    flag => 16#1fffffff bsl 3,
+                                                    cp_ver => 1, next_blkaddr => 0}})},
+         {extra_attr, Read(Super, 4, with_inode(Valid, #{i_inline => 0}))},
+         {extra_attr, Read(Super#{feature => ?ERX_F2FS_FEATURE_SB_CHKSUM}, 4, Valid)},
+         {extra_isize, Read(Super, 4, Extra([13, 0, 0]))},
+         {extra_isize, Read(Super, 4, Extra([2]))},
+         {extra_isize, Read(Super, 4, Extra([40 | lists:duplicate(9, 0)]))},
+         {extra_isize, Read(Super, 4, Extra([14, 0, 0, 0]))},
+         {inline_xattr_size, Read(Flexible, 4, Extra(extra_words(4, 904)))},
+         {inline_xattr_size,
+          Read(Flexible, 4, with_inode(Extra(extra_words(4, 5)),
+                                       #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor
+                                                         ?ERX_F2FS_INLINE_XATTR}))},
+         {blocks, Read(Super, 4, with_inode(Valid, #{i_blocks => 0}))},
+         {xattr_nid, Read(Super, 4, with_inode(Valid, #{i_xattr_nid => 4}))},
+         {xattr_nid, Read(Super, 4, with_inode(Valid, #{i_xattr_nid => 1}))},
+         {casefold, Read(Super, 4, with_inode(Valid, #{i_flags => ?ERX_F2FS_CASEFOLD_FL}))},
+         {device_alias,
+          Read(Super, 4, with_inode(Valid, #{i_flags => ?ERX_F2FS_DEVICE_ALIAS_FL}))},
+         {device_alias,
+          Read(Super#{feature => maps:get(feature, Super) bor
+                                     ?ERX_F2FS_FEATURE_DEVICE_ALIAS}, 4,
+               with_inode(Valid, #{i_flags => ?ERX_F2FS_DEVICE_ALIAS_FL}))},
+         {namelen, Read(Super, 4, with_inode(Valid, #{i_namelen => 256}))},
+         {inline_data,
+          Read(Super, 4, with_inode(Valid, #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor
+                                                             ?ERX_F2FS_INLINE_DATA,
+                                             i_size => 4 * (923 - 3 - 1) + 1}))}],
+    [{atom_to_list(Rule), ?_assertEqual({error, {inode, Rule}}, Result)}
+     || {Rule, Result} <- Cases].
+
+the_flags_pass_with_their_features_test_() ->
+    Valid = inode_fields(),
+    Super = superblock_fields(),
+    Features = maps:get(feature, Super),
+    Read = fun(SuperFields, Fields) ->
+                   erx_f2fs_codec:inode(SuperFields, 4, inode_block(SuperFields, Fields))
+           end,
+    [?_assertMatch({ok, _},
+                   Read(Super#{feature => Features bor ?ERX_F2FS_FEATURE_CASEFOLD},
+                        with_inode(Valid, #{i_flags => ?ERX_F2FS_CASEFOLD_FL}))),
+     ?_assertMatch({ok, _},
+                   Read(Super#{feature => Features bor ?ERX_F2FS_FEATURE_DEVICE_ALIAS},
+                        with_inode(Valid, #{i_flags => ?ERX_F2FS_DEVICE_ALIAS_FL,
+                                            i_inline => ?ERX_F2FS_EXTRA_ATTR bor
+                                                            ?ERX_F2FS_PIN_FILE}))),
+     ?_assertMatch({ok, _}, Read(Super, with_inode(Valid, #{i_xattr_nid => 9})))].
+
+%% Every row of [F 48]'s table of worked values: E and X give where the
+%% inline content starts and its size, and the inline dentry area's slots,
+%% bitmap and reserved bytes. Each row reads an inode whose content fills
+%% its inline area, as file bytes and as dentries with a name in the last
+%% slot.
+the_inode_layout_follows_every_row_of_the_table_test_() ->
+    Rows = [{0, 50, 364, 3488, 182, 23, 7},
+            {0, 0, 364, 3688, 192, 24, 16},
+            {1, 50, 368, 3484, 182, 23, 3},
+            {3, 50, 376, 3476, 181, 23, 14},
+            {6, 50, 388, 3464, 181, 23, 2},
+            {9, 50, 400, 3452, 180, 23, 9}],
+    lists:append([layout_cases(Row) || Row <- Rows]).
+
+layout_cases({E, X, Start, Size, Slots, BitmapBytes, Reserved} = Row) ->
+    Super = layout_super(E),
+    Xattr = case X of 50 -> ?ERX_F2FS_INLINE_XATTR; 0 -> 0 end,
+    Extra = case E of 0 -> 0; _ -> ?ERX_F2FS_EXTRA_ATTR end,
+    Data = << <<(N rem 251)>> || N <- lists:seq(1, Size) >>,
+    DataInode = inline_inode(Data,
+                             #{i_inline => Extra bor Xattr bor ?ERX_F2FS_INLINE_DATA bor
+                                               ?ERX_F2FS_DATA_EXIST,
+                               i_size => Size}, E),
+    DataBlock = inode_block(Super, DataInode),
+    Name = <<"last">>,
+    Last = Slots - 1,
+    Area = dentry_area(Size, {BitmapBytes, BitmapBytes + Reserved,
+                              BitmapBytes + Reserved + 11 * Slots},
+                       [{Last, Name, 77}]),
+    DentryInode = inline_inode(Area,
+                               #{i_mode => 8#40755, i_links => 2, i_size => Size,
+                                 i_inline => Extra bor ?ERX_F2FS_INLINE_DENTRY}, E),
+    Read = fun(Fields) -> erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields)) end,
+    %% The fixture puts the content where the table's start says.
+    [{lists:flatten(io_lib:format("~p start", [Row])),
+      ?_assertMatch(<<_:Start/binary, Data:Size/binary, _/binary>>, DataBlock)},
+     {lists:flatten(io_lib:format("~p data", [Row])),
+      ?_assertMatch({ok, #{inline_data := Data, inline_xattr_words := X}}, Read(DataInode))}]
+        ++ [{lists:flatten(io_lib:format("~p dentries", [Row])),
+             ?_assertMatch({ok, #{inline_dentries :=
+                                      #{entries := [#{slot := Last, name := Name, ino := 77}],
+                                        bitmap := <<0:Last, 1:1>>}}},
+                           Read(DentryInode))}
+            || X =:= 50].
+
+%% A volume whose features give an inode E extra words: none for E = 0,
+%% EXTRA_ATTR alone for E = 1, and INODE_CHKSUM too beyond.
+layout_super(0) -> (superblock_fields())#{feature => 0};
+layout_super(1) -> (superblock_fields())#{feature => ?ERX_F2FS_FEATURE_EXTRA_ATTR};
+layout_super(_) -> superblock_fields().
+
+%% An inode whose inline content is Content, after E extra words and the
+%% reserved word.
+inline_inode(Content, Changes, E) ->
+    Fields = with_inode(inode_fields(), Changes),
+    Before = case E of 0 -> []; _ -> extra_words(4 * E, 0) end,
+    Words = [Word || <<Word:32/little>> <= Content],
+    Fields#{i_addr := pad(Before ++ [0 | Words], ?ERX_F2FS_ADDRS_PER_INODE, 0)}.
+
+%% With FLEXIBLE_INLINE_XATTR the inline xattr area is i_inline_xattr_size
+%% words, even without INLINE_XATTR, and the address array shrinks by it.
+a_flexible_inline_xattr_size_moves_the_inline_area_test() ->
+    Super = (superblock_fields())#{feature => ?ERX_F2FS_FEATURE_EXTRA_ATTR bor
+                                              ?ERX_F2FS_FEATURE_FLEXIBLE_INLINE_XATTR},
+    Fields = (inode_fields())#{i_addr := pad(extra_words(4, 10) ++ [0, 16#64636261],
+                                             ?ERX_F2FS_ADDRS_PER_INODE, 0)},
+    Data = with_inode(Fields, #{i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA,
+                                i_size => 4 * (923 - 1 - 10 - 1)}),
+    {ok, #{inline_data := Bytes, inline_xattr_words := 10}} =
+        erx_f2fs_codec:inode(Super, 4, inode_block(Super, Data)),
+    ?assertMatch(<<"abcd", 0:(4 * (923 - 1 - 10 - 2) * 8)>>, Bytes),
+    ?assertMatch({ok, #{addresses := Addresses}} when length(Addresses) =:= 923 - 1 - 10,
+                 erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields))).
+
+%%% Dentries
+
+a_dentry_block_answers_its_used_slots_test() ->
+    Long = binary:copy(<<"n">>, 255),
+    Block = dentry_block([{0, <<".">>, 3}, {1, <<"..">>, 3}, {2, <<"eightchr">>, 10},
+                          {3, <<"ninechars">>, 11}, {181, Long, 12}]),
+    {ok, #{bitmap := Bitmap, entries := Entries}} = erx_f2fs_codec:dentry_block(Block),
+    ?assertEqual(214, bit_size(Bitmap)),
+    ?assertMatch(<<2#11111:5, 0:176, 16#ffffffff:32, 0:1>>, Bitmap),
+    ?assertEqual([{0, <<".">>, 3}, {1, <<"..">>, 3}, {2, <<"eightchr">>, 10},
+                  {3, <<"ninechars">>, 11}, {181, Long, 12}],
+                 [{Slot, Name, Ino} || #{slot := Slot, name := Name, ino := Ino} <- Entries]),
+    ?assertMatch([#{hash_code := 16#1000, file_type := 1} | _], Entries).
+
+%% A set bit whose record has name_len 0 is one unused slot ([F 60]).
+a_used_slot_without_a_name_is_passed_test() ->
+    Block = dentry_block([{0, <<"a">>, 5}]),
+    <<Bitmap, Rest/binary>> = Block,
+    {ok, #{entries := Entries}} =
+        erx_f2fs_codec:dentry_block(<<(Bitmap bor 2#110), Rest/binary>>),
+    ?assertEqual([0], [Slot || #{slot := Slot} <- Entries]).
+
+each_dentry_rule_fails_with_its_name_test_() ->
+    LongRecord = fun(Slot, Length) ->
+                         Block = dentry_block([{Slot, <<"x">>, 5}]),
+                         At = 30 + 11 * Slot + 8,
+                         <<Before:At/binary, _:16, After/binary>> = Block,
+                         <<Before/binary, Length:16/little, After/binary>>
+                 end,
+    [?_assertEqual({error, {dentry_block, name_len}},
+                   erx_f2fs_codec:dentry_block(LongRecord(0, 256))),
+     ?_assertEqual({error, {dentry_block, name_run}},
+                   erx_f2fs_codec:dentry_block(LongRecord(213, 9))),
+     ?_assertEqual({error, {dentry_block, name_run}},
+                   erx_f2fs_codec:dentry_block(LongRecord(190, 255))),
+     ?_assertMatch({ok, #{entries := [#{slot := 213, name := <<"x">>}]}},
+                   erx_f2fs_codec:dentry_block(dentry_block([{213, <<"x">>, 5}]))),
+     ?_assertEqual({error, {dentry_block, block_size}},
+                   erx_f2fs_codec:dentry_block(<<0:8>>))].
+
+%% A long name past the inline area's last slot fails the inode.
+an_inline_dentry_past_its_last_slot_fails_the_inode_test() ->
+    Super = superblock_fields(),
+    Area = dentry_area(3476, {23, 37, 37 + 11 * 181}, [{180, <<"x">>, 5}]),
+    At = 37 + 11 * 180 + 8,
+    <<Before:At/binary, _:16, After/binary>> = Area,
+    Broken = <<Before/binary, 9:16/little, After/binary>>,
+    Fields = inline_inode(Broken, #{i_mode => 8#40755, i_links => 2, i_size => 3476,
+                                    i_inline => ?ERX_F2FS_EXTRA_ATTR bor
+                                                    ?ERX_F2FS_INLINE_DENTRY}, 3),
+    ?assertEqual({error, {inode, name_run}},
+                 erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields))).
+
+%% With both inline flags the content is read as dentries, until the file
+%% type rules of TODO.md decide which an inode may have.
+inline_dentries_come_before_inline_data_test() ->
+    Super = superblock_fields(),
+    Area = dentry_area(3476, {23, 37, 37 + 11 * 181}, [{0, <<"a">>, 5}]),
+    Fields = inline_inode(Area, #{i_size => 3476,
+                                  i_inline => ?ERX_F2FS_EXTRA_ATTR bor ?ERX_F2FS_INLINE_DATA
+                                                  bor ?ERX_F2FS_INLINE_DENTRY}, 3),
+    ?assertMatch({ok, #{inline_dentries := #{entries := [#{name := <<"a">>}]}}},
+                 erx_f2fs_codec:inode(Super, 4, inode_block(Super, Fields))).

@@ -7,11 +7,14 @@ F2FS's on-disk records read from a volume's blocks (docs/design-f2fs.md,
 "Reading the medium"): the only module that reads block bytes. The layouts
 are abi/formats/f2fs.txt's, read by erx_abi_packed; this module checks every
 value a decoder reads against its bounds before anything uses it, following
-the rules Linux enforces on reads and adding the bounds Linux leaves out,
-here the version bitmaps' room in the checkpoint pack. [F n] cites fact n of
-the F2FS facts record, part 1.
+the rules Linux enforces on reads and adding the bounds Linux leaves out:
+the version bitmaps' room in the checkpoint pack, an inode's name length
+against its field, and an inline file's size against its inline area
+whatever else the inode holds. [F n] cites fact n of the F2FS facts
+record, part 1.
 
-Each decoder takes whole 4096-byte blocks and answers {ok, Record}, or
+Each decoder takes whole 4096-byte blocks, or a journal's 507 bytes, and
+answers {ok, Record}, or
 {error, {Structure, Rule}} naming the structure and the first rule its bytes
 broke: a decoder fails at its first error by one module-private throw,
 caught once at its entry. What a decoder checks is one record's own
@@ -27,18 +30,43 @@ adds the SIT and NAT version bitmaps; both bitmaps are
 first-bit-most-significant ([F 5]), Erlang's own bit order, so they are the
 bytes as they are. An orphan block (orphan_block/1) answers its inode
 numbers.
+
+The tables: a NAT block (nat_block/1) answers its entries, a SIT block
+(sit_block/2) the entries of the main area's segments it holds, each under
+its own rules ([F 39]). A summary block (summary_block/1) answers its
+entries and its journal's bytes, which nat_journal/1 or sit_journal/1 reads
+by the log the summary is for ([F 28]); a pack's compact data summaries
+(compact_summaries/2) answer both journals and each data log's entries.
+
+An inode block (inode/3) answers the inode's fields and its body: the
+address words, or with INLINE_DATA the file's bytes, or with INLINE_DENTRY
+its inline dentries, where its geometry puts them ([F 41], [F 48]). A
+dentry block (dentry_block/1) answers its used slots. Both dentry forms
+are read by one walk; their bitmaps are first-bit-least-significant
+([F 5]), and the codec answers each as a bitstring in Erlang's own order,
+first bit most significant.
 """.
 
 -export([superblock/1, checkpoint/1, checkpoint_copy/1, checkpoint/3,
-         orphan_block/1, crc/2]).
--export_type([superblock/0, checkpoint/0, failure/0]).
+         orphan_block/1, nat_block/1, nat_journal/1, sit_block/2,
+         sit_journal/1, summary_block/1, compact_summaries/2, inode/3,
+         dentry_block/1, crc/2]).
+-export_type([superblock/0, checkpoint/0, nat_entry/0, sit_entry/0,
+              summary/0, inode/0, dentries/0, failure/0]).
 
 -include("generated/erx_abi.hrl").
 
 -define(BLOCK_SIZE, (1 bsl ?ERX_F2FS_LOG_BLOCK_SIZE)).
 -define(BLOCKS_PER_SEG, (1 bsl ?ERX_F2FS_LOG_BLOCKS_PER_SEG)).
-%% A checksum is a 32-bit word in the block it covers.
+%% A checksum, an address and a node id are each a 32-bit word.
 -define(CHECKSUM_SIZE, 4).
+-define(WORD, 4).
+%% The features whose inodes Linux reads only with EXTRA_ATTR set ([F 41]).
+-define(NEED_EXTRA_ATTR, (?ERX_F2FS_FEATURE_PRJQUOTA bor
+                          ?ERX_F2FS_FEATURE_INODE_CHKSUM bor
+                          ?ERX_F2FS_FEATURE_FLEXIBLE_INLINE_XATTR bor
+                          ?ERX_F2FS_FEATURE_INODE_CRTIME bor
+                          ?ERX_F2FS_FEATURE_COMPRESSION)).
 
 -doc "A superblock copy: erx_abi_packed's map of erx_f2fs_super_block.".
 -type superblock() :: #{atom() => term()}.
@@ -47,8 +75,40 @@ A checkpoint pack's header: erx_abi_packed's map of erx_f2fs_checkpoint,
 and from checkpoint/3 also sit_version_bitmap and nat_version_bitmap.
 """.
 -type checkpoint() :: #{atom() => term()}.
+-doc "A NAT entry: erx_abi_packed's map of erx_f2fs_nat_entry.".
+-type nat_entry() :: #{version := byte(), ino := non_neg_integer(),
+                       block_addr := non_neg_integer()}.
+-doc """
+A SIT entry: its valid blocks and log type from vblocks, its valid map,
+first bit most significant, and its age ([F 37]).
+""".
+-type sit_entry() :: #{valid_blocks := non_neg_integer(),
+                       type := non_neg_integer(), valid_map := binary(),
+                       mtime := non_neg_integer()}.
+-doc "A summary entry: erx_abi_packed's map of erx_f2fs_summary_entry.".
+-type summary() :: #{nid := non_neg_integer(), version := byte(),
+                     ofs_in_node := 0..16#ffff}.
+-doc """
+An inode: erx_abi_packed's map of erx_f2fs_inode with i_name cut to
+i_namelen, and i_nid, footer, i_extra_isize (0 without EXTRA_ATTR),
+inline_xattr_words, and one body: addresses, the 923 - E - X address words
+from word E, or inline_data, or inline_dentries ([F 41], [F 48]).
+""".
+-type inode() :: #{atom() => term()}.
+-doc """
+A dentry area's slots: bitmap, one bit per slot in slot order, and each
+used slot's record with its name ([F 59], [F 60]).
+""".
+-type dentries() :: #{bitmap := bitstring(),
+                      entries := [#{slot := non_neg_integer(),
+                                    hash_code := non_neg_integer(),
+                                    ino := non_neg_integer(),
+                                    file_type := byte(),
+                                    name := binary()}]}.
 -doc "The structure a decoder read and the first rule its bytes broke.".
--type failure() :: {superblock | checkpoint | orphan_block, atom()}.
+-type failure() :: {superblock | checkpoint | orphan_block | nat_block |
+                    nat_journal | sit_block | sit_journal | summary_block |
+                    compact_summary | inode | dentry_block, atom()}.
 
 %%% Entries
 
@@ -109,6 +169,89 @@ and blk_count are read by no one.
           {ok, [non_neg_integer()]} | {error, failure()}.
 orphan_block(Block) ->
     decode(orphan_block, fun() -> read_orphans(Block) end).
+
+-doc """
+A NAT block's f2fs_nat_entries_per_block entries, entry k for the block's
+k-th nid ([F 33]). Where a used entry's block lies, and whether the SIT
+marks it valid, are the mount's to check ([F 35]).
+""".
+-spec nat_block(binary()) -> {ok, [nat_entry()]} | {error, failure()}.
+nat_block(Block) ->
+    decode(nat_block, fun() -> read_nat_block(Block) end).
+
+-doc """
+A NAT journal's entries, each a nid and its NAT entry, at most
+f2fs_nat_journal_entries of them ([F 32], [F 47]).
+""".
+-spec nat_journal(binary()) ->
+          {ok, [#{nid := non_neg_integer(), entry := nat_entry()}]} |
+          {error, failure()}.
+nat_journal(Journal) ->
+    decode(nat_journal, fun() -> read_nat_journal(Journal) end).
+
+-doc """
+The first Used entries of a SIT block, Used being how many of the main
+area's segments it holds, at most f2fs_sit_entries_per_block: Linux checks
+only main segments' entries ([F 39]).
+""".
+-spec sit_block(binary(), non_neg_integer()) ->
+          {ok, [sit_entry()]} | {error, failure()}.
+sit_block(Block, Used) ->
+    decode(sit_block, fun() -> read_sit_block(Block, Used) end).
+
+-doc """
+A SIT journal's entries, each a segment number and its SIT entry, at most
+f2fs_sit_journal_entries of them ([F 32], [F 47]); whether each segment is
+in the main area is the mount's to check ([F 39]).
+""".
+-spec sit_journal(binary()) ->
+          {ok, [#{segno := non_neg_integer(), entry := sit_entry()}]} |
+          {error, failure()}.
+sit_journal(Journal) ->
+    decode(sit_journal, fun() -> read_sit_journal(Journal) end).
+
+-doc """
+A summary block: its f2fs_summaries_per_block entries in block order, its
+journal's bytes and its entry_type ([F 45]). Its check_sum is read by no
+one.
+""".
+-spec summary_block(binary()) ->
+          {ok, #{entries := [summary()], journal := binary(),
+                 entry_type := byte()}} | {error, failure()}.
+summary_block(Block) ->
+    decode(summary_block, fun() -> read_summary_block(Block) end).
+
+-doc """
+A pack's data summaries in the compact form ([F 29]): the NAT and SIT
+journals' bytes from the first of Blocks, and Counts, each data log's
+entry count in log order, at most a segment's blocks, as summaries read on
+from there through the rest of Blocks, which must hold them.
+""".
+-spec compact_summaries([non_neg_integer()], [binary()]) ->
+          {ok, #{nat_journal := binary(), sit_journal := binary(),
+                 summaries := [[summary()]]}} | {error, failure()}.
+compact_summaries(Counts, Blocks) ->
+    decode(compact_summary, fun() -> read_compact(Counts, Blocks) end).
+
+-doc """
+The inode Nid of a volume whose superblock is Super, from its node block:
+valid under every rule of [F 41], [F 42] and [F 50] that concerns one
+inode block and its volume's features, with its body where its geometry
+puts it ([F 48]). Whether its address words and node ids name valid blocks
+and nodes is for the readers of those to check.
+""".
+-spec inode(superblock(), non_neg_integer(), binary()) ->
+          {ok, inode()} | {error, failure()}.
+inode(Super, Nid, Block) ->
+    decode(inode, fun() -> read_inode(Super, Nid, Block) end).
+
+-doc """
+A dentry block's slots ([F 59]): each used slot's record and name, a long
+name's run of slots answered once, at its first slot ([F 60]).
+""".
+-spec dentry_block(binary()) -> {ok, dentries()} | {error, failure()}.
+dentry_block(Block) ->
+    decode(dentry_block, fun() -> require_block(Block), dentries(Block) end).
 
 -doc """
 F2FS's CRC-32 of Data continued from Seed ([F 49]): the reflected
@@ -305,6 +448,279 @@ read_orphans(Block) ->
     require(Used =< ?ERX_F2FS_ORPHANS_PER_BLOCK, entry_count),
     lists:sublist(Slots, Used).
 
+%%% The NAT and the SIT
+
+read_nat_block(Block) ->
+    require_block(Block),
+    #{entries := Entries} = erx_abi_packed:decode(erx_f2fs_nat_block, Block),
+    Entries.
+
+read_nat_journal(Journal) ->
+    require_size(Journal, ?ERX_F2FS_NAT_JOURNAL_SIZE, journal_size),
+    #{n_nats := Count, entries := Entries} =
+        erx_abi_packed:decode(erx_f2fs_nat_journal, Journal),
+    require(Count =< ?ERX_F2FS_NAT_JOURNAL_ENTRIES, entry_count),
+    lists:sublist(Entries, Count).
+
+read_sit_block(Block, Used) ->
+    require_block(Block),
+    require(Used =< ?ERX_F2FS_SIT_ENTRIES_PER_BLOCK, entry_count),
+    #{entries := Entries} = erx_abi_packed:decode(erx_f2fs_sit_block, Block),
+    [sit_entry(Entry) || Entry <- lists:sublist(Entries, Used)].
+
+read_sit_journal(Journal) ->
+    require_size(Journal, ?ERX_F2FS_SIT_JOURNAL_SIZE, journal_size),
+    #{n_sits := Count, entries := Entries} =
+        erx_abi_packed:decode(erx_f2fs_sit_journal, Journal),
+    require(Count =< ?ERX_F2FS_SIT_JOURNAL_ENTRIES, entry_count),
+    [#{segno => Segno, entry => sit_entry(Entry)}
+     || #{segno := Segno, entry := Entry} <- lists:sublist(Entries, Count)].
+
+%% A SIT entry's own rules ([F 39]): its valid blocks are at most a
+%% segment's and exactly the bits its map sets, and its type is one of the
+%% six logs'.
+sit_entry(#{vblocks := VBlocks, valid_map := Map, mtime := Age}) ->
+    <<Type:(16 - ?ERX_F2FS_SIT_VBLOCKS_BITS),
+      Valid:?ERX_F2FS_SIT_VBLOCKS_BITS>> = <<VBlocks:16>>,
+    require(Valid =< ?BLOCKS_PER_SEG, valid_blocks),
+    require(Valid =:= lists:sum([Bit || <<Bit:1>> <= Map]), valid_map),
+    require(Type < ?ERX_F2FS_SIT_TYPES, type),
+    #{valid_blocks => Valid, type => Type, valid_map => Map, mtime => Age}.
+
+%%% Segment summaries
+
+read_summary_block(Block) ->
+    require_block(Block),
+    Summary = erx_abi_packed:decode(erx_f2fs_summary_block, Block),
+    maps:remove(check_sum, Summary).
+
+%% The compact form's entries run on through its blocks from the journals,
+%% each block usable up to f2fs_compact_summary_end ([F 29]): a cursor over
+%% those spans gives each log its entries in turn.
+read_compact(Counts, Blocks) ->
+    lists:foreach(fun require_block/1, Blocks),
+    require(lists:all(fun(Count) -> Count =< ?ERX_F2FS_SUMMARIES_PER_BLOCK end,
+                      Counts),
+            entry_count),
+    require(Blocks =/= [], room),
+    [First | Rest] = Blocks,
+    <<Journals:?ERX_F2FS_COMPACT_JOURNALS_SIZE/binary, _/binary>> = First,
+    #{nat_journal := Nat, sit_journal := Sit} =
+        erx_abi_packed:decode(erx_f2fs_compact_journals, Journals),
+    End = ?ERX_F2FS_COMPACT_SUMMARY_END,
+    Spans = [binary:part(First, byte_size(Journals), End - byte_size(Journals))
+             | [binary:part(Block, 0, End) || Block <- Rest]],
+    {Summaries, _Unused} =
+        lists:mapfoldl(fun(Count, Cursor) -> summaries(Count, Cursor, []) end,
+                       Spans, Counts),
+    #{nat_journal => Nat, sit_journal => Sit, summaries => Summaries}.
+
+%% Count entries from the spans; an entry that does not fit what is left
+%% of a span starts the next one.
+summaries(0, Spans, Read) ->
+    {lists:reverse(Read), Spans};
+summaries(Count, [<<Entry:?ERX_F2FS_SUMMARY_ENTRY_SIZE/binary, Rest/binary>>
+                  | Spans], Read) ->
+    Summary = erx_abi_packed:decode(erx_f2fs_summary_entry, Entry),
+    summaries(Count - 1, [Rest | Spans], [Summary | Read]);
+summaries(Count, [_Spent | Spans], Read) ->
+    summaries(Count, Spans, Read);
+summaries(_Count, [], _Read) ->
+    fail(room).
+
+%%% Inodes
+
+read_inode(Super, Nid, Block) ->
+    require_block(Block),
+    #{inode := Inode, i_addr := Words, i_nid := Nids, footer := Footer} =
+        erx_abi_packed:decode(erx_f2fs_inode_block, Block),
+    require(valid_nid(Super, Nid), nid),
+    check_inode_footer(Nid, Footer),
+    Extra = extra_attributes(Inode, Words),
+    check_inode_checksum(Super, Inode, Extra, Footer, Block),
+    check_extra_attributes(Super, Extra),
+    XattrWords = inline_xattr_words(Super, Inode, Extra),
+    check_inode_fields(Super, Nid, Inode),
+    #{i_name := Name, i_namelen := NameLength} = Inode,
+    ExtraSize = case Extra of
+                    none -> 0;
+                    #{i_extra_isize := Size} -> Size
+                end,
+    Body = inode_body(Inode, Words, ExtraSize div ?WORD, XattrWords),
+    maps:merge(Inode#{i_name := binary:part(Name, 0, NameLength),
+                      i_nid => Nids, footer => Footer,
+                      i_extra_isize => ExtraSize,
+                      inline_xattr_words => XattrWords},
+               Body).
+
+%% A nid names a node when it is at least the root's and below the NAT's
+%% capacity, f2fs_nat_entries_per_block for each block of one of the NAT's
+%% two copies ([F 6], [F 36]).
+valid_nid(#{segment_count_nat := NatSegments}, Nid) ->
+    Capacity = ?ERX_F2FS_NAT_ENTRIES_PER_BLOCK * (NatSegments div 2)
+                   * ?BLOCKS_PER_SEG,
+    Nid >= ?ERX_F2FS_ROOT_INO andalso Nid < Capacity.
+
+%% The block is the node asked for, an inode, whose footer names it as its
+%% own inode, and not an xattr node, whose node offset is
+%% f2fs_xattr_node_offset ([F 43], [F 53]).
+check_inode_footer(Nid, #{nid := FooterNid, ino := Ino, flag := Flag}) ->
+    require(FooterNid =:= Nid andalso Ino =:= Nid andalso
+                Flag bsr ?ERX_F2FS_NODE_MARK_BITS =/= ?ERX_F2FS_XATTR_NODE_OFFSET,
+            footer).
+
+%% With EXTRA_ATTR the extra attributes lie over the first words of the
+%% address array ([F 41]); without it there are none.
+extra_attributes(#{i_inline := Inline}, Words)
+  when Inline band ?ERX_F2FS_EXTRA_ATTR =/= 0 ->
+    Covered = lists:sublist(Words, ?ERX_F2FS_INODE_EXTRA_SIZE div ?WORD),
+    erx_abi_packed:decode(erx_f2fs_inode_extra,
+                          << <<Word:32/little>> || Word <- Covered >>);
+extra_attributes(_Inode, _Words) ->
+    none.
+
+%% On a volume with INODE_CHKSUM, an inode whose extra attributes reach
+%% i_inode_checksum carries the CRC of its block with that field as zeros,
+%% seeded with the CRC of the volume's UUID from all ones and continued over
+%% the footer's ino and i_generation ([F 50]). It is checked once the footer
+%% shows the block is this inode, before any rule of the inode's own fields,
+%% so a damaged inode fails as one.
+check_inode_checksum(#{feature := Feature, uuid := Uuid},
+                     #{i_generation := Generation},
+                     #{i_extra_isize := Size}, #{ino := Ino}, Block)
+  when Feature band ?ERX_F2FS_FEATURE_INODE_CHKSUM =/= 0,
+       Size >= ?ERX_F2FS_INODE_EXTRA_OFF_I_INODE_CHECKSUM + ?CHECKSUM_SIZE ->
+    At = ?ERX_F2FS_INODE_BLOCK_OFF_I_ADDR
+             + ?ERX_F2FS_INODE_EXTRA_OFF_I_INODE_CHECKSUM,
+    <<Before:At/binary, Stored:32/little, After/binary>> = Block,
+    Seed = crc(16#ffffffff, Uuid),
+    Computed = crc(Seed, [<<Ino:32/little, Generation:32/little>>, Before,
+                          <<0:32>>, After]),
+    require(Computed =:= Stored, checksum);
+check_inode_checksum(_Super, _Inode, _Extra, _Footer, _Block) ->
+    ok.
+
+%% EXTRA_ATTR on an inode needs the feature, and the features that extend
+%% an inode need EXTRA_ATTR on every inode; i_extra_isize is a whole number
+%% of words from the two size words to the whole extra attributes ([F 41]).
+check_extra_attributes(#{feature := Feature}, none) ->
+    require(Feature band ?NEED_EXTRA_ATTR =:= 0, extra_attr);
+check_extra_attributes(#{feature := Feature}, #{i_extra_isize := Size}) ->
+    require(Feature band ?ERX_F2FS_FEATURE_EXTRA_ATTR =/= 0, extra_attr),
+    require(Size rem ?ERX_F2FS_EXTRA_ISIZE_ALIGN =:= 0 andalso
+                Size >= ?ERX_F2FS_EXTRA_ISIZE_MIN andalso
+                Size =< ?ERX_F2FS_INODE_EXTRA_SIZE,
+            extra_isize).
+
+%% The inline xattr area's words, X of [F 48]: i_inline_xattr_size with
+%% FLEXIBLE_INLINE_XATTR, which check_extra_attributes has made present,
+%% within its bounds ([F 42]); else f2fs_inline_xattr_words when the inode
+%% has INLINE_XATTR or INLINE_DENTRY, and none otherwise.
+inline_xattr_words(#{feature := Feature}, #{i_inline := Inline}, Extra)
+  when Feature band ?ERX_F2FS_FEATURE_FLEXIBLE_INLINE_XATTR =/= 0 ->
+    #{i_inline_xattr_size := Words} = Extra,
+    require(Words =< ?ERX_F2FS_INLINE_XATTR_WORDS_MAX andalso
+                (Inline band ?ERX_F2FS_INLINE_XATTR =:= 0 orelse
+                     Words >= ?ERX_F2FS_INLINE_XATTR_WORDS_MIN),
+            inline_xattr_size),
+    Words;
+inline_xattr_words(_Super, #{i_inline := Inline}, _Extra)
+  when Inline band (?ERX_F2FS_INLINE_XATTR bor ?ERX_F2FS_INLINE_DENTRY) =/= 0 ->
+    ?ERX_F2FS_INLINE_XATTR_WORDS;
+inline_xattr_words(_Super, _Inode, _Extra) ->
+    0.
+
+%% The rules of [F 42] on the inode's own fields: it counts at least its
+%% own block, its xattr node is another valid node, its flags need their
+%% features, and its name fits its field.
+check_inode_fields(#{feature := Feature} = Super, Nid,
+                   #{i_blocks := Blocks, i_xattr_nid := Xattr, i_flags := Flags,
+                     i_inline := Inline, i_namelen := NameLength}) ->
+    require(Blocks =/= 0, blocks),
+    require(Xattr =:= 0 orelse (Xattr =/= Nid andalso valid_nid(Super, Xattr)),
+            xattr_nid),
+    require(Flags band ?ERX_F2FS_CASEFOLD_FL =:= 0 orelse
+                Feature band ?ERX_F2FS_FEATURE_CASEFOLD =/= 0,
+            casefold),
+    require(Flags band ?ERX_F2FS_DEVICE_ALIAS_FL =:= 0 orelse
+                (Feature band ?ERX_F2FS_FEATURE_DEVICE_ALIAS =/= 0 andalso
+                     Inline band ?ERX_F2FS_PIN_FILE =/= 0),
+            device_alias),
+    require(NameLength =< ?ERX_F2FS_NAME_LEN_MAX, namelen).
+
+%% The address array is the 923 - E - X words from word E. An inline inode
+%% keeps that array's first word reserved and its content in the rest, up
+%% to the inline xattr area ([F 48]): a directory's inline dentries, or a
+%% file's first i_size bytes, which must fit.
+inode_body(#{i_inline := Inline, i_size := Size}, Words, ExtraWords,
+           XattrWords) ->
+    Count = ?ERX_F2FS_ADDRS_PER_INODE - ExtraWords - XattrWords,
+    Addresses = lists:sublist(Words, ExtraWords + 1, Count),
+    if
+        Inline band ?ERX_F2FS_INLINE_DENTRY =/= 0 ->
+            #{inline_dentries => dentries(inline_content(Addresses))};
+        Inline band ?ERX_F2FS_INLINE_DATA =/= 0 ->
+            Content = inline_content(Addresses),
+            require(Size =< byte_size(Content), inline_data),
+            #{inline_data => binary:part(Content, 0, Size)};
+        true ->
+            #{addresses => Addresses}
+    end.
+
+inline_content([_Reserved | Words]) ->
+    << <<Word:32/little>> || Word <- Words >>.
+
+%%% Dentries
+
+%% A dentry area, a block or an inode's inline content, holds as many slots
+%% as fit at a bitmap bit, a slot record and a name slot each; its bitmap
+%% has a bit per slot rounded up to bytes, and reserved bytes take what is
+%% left before the records ([F 48], [F 59]). The bitmap's bits are turned
+%% into Erlang's order, first bit most significant ([F 5]).
+dentries(Area) ->
+    SlotBytes = ?ERX_F2FS_DIR_ENTRY_SIZE + ?ERX_F2FS_NAME_SLOT_SIZE,
+    Slots = 8 * byte_size(Area) div (8 * SlotBytes + 1),
+    BitmapBytes = (Slots + 7) div 8,
+    Reserved = byte_size(Area) - BitmapBytes - Slots * SlotBytes,
+    <<Bitmap:BitmapBytes/binary, _:Reserved/binary,
+      Records:(Slots * ?ERX_F2FS_DIR_ENTRY_SIZE)/binary, Names/binary>> = Area,
+    Reordered = << <<H:1, G:1, F:1, E:1, D:1, C:1, B:1, A:1>>
+                   || <<A:1, B:1, C:1, D:1, E:1, F:1, G:1, H:1>> <= Bitmap >>,
+    <<Used:Slots/bitstring, _/bitstring>> = Reordered,
+    #{bitmap => Used, entries => walk(Used, Records, Names, 0, [])}.
+
+%% The slots in order, three cursors moving together: a used slot with a
+%% name takes the run of slots its name needs, which must end by the last
+%% slot, and any other slot is passed alone ([F 60]).
+walk(<<>>, _Records, _Names, _Slot, Read) ->
+    lists:reverse(Read);
+walk(<<1:1, Bits/bitstring>>, Records, Names, Slot, Read) ->
+    <<Record:?ERX_F2FS_DIR_ENTRY_SIZE/binary, _/binary>> = Records,
+    case erx_abi_packed:decode(erx_f2fs_dir_entry, Record) of
+        #{name_len := 0} ->
+            pass(Bits, Records, Names, Slot, Read);
+        #{name_len := Length} = Entry ->
+            require(Length =< ?ERX_F2FS_NAME_LEN_MAX, name_len),
+            Run = (Length + ?ERX_F2FS_NAME_SLOT_SIZE - 1)
+                      div ?ERX_F2FS_NAME_SLOT_SIZE,
+            require(Run =< 1 + bit_size(Bits), name_run),
+            RecordBytes = Run * ?ERX_F2FS_DIR_ENTRY_SIZE,
+            NameBytes = Run * ?ERX_F2FS_NAME_SLOT_SIZE,
+            <<_:(Run - 1), BitsLeft/bitstring>> = Bits,
+            <<_:RecordBytes/binary, RecordsLeft/binary>> = Records,
+            <<Name:Length/binary, _/binary>> = Names,
+            <<_:NameBytes/binary, NamesLeft/binary>> = Names,
+            Dentry = maps:remove(name_len, Entry#{slot => Slot, name => Name}),
+            walk(BitsLeft, RecordsLeft, NamesLeft, Slot + Run, [Dentry | Read])
+    end;
+walk(<<0:1, Bits/bitstring>>, Records, Names, Slot, Read) ->
+    pass(Bits, Records, Names, Slot, Read).
+
+pass(Bits, Records, Names, Slot, Read) ->
+    <<_:?ERX_F2FS_DIR_ENTRY_SIZE/binary, RecordsLeft/binary>> = Records,
+    <<_:?ERX_F2FS_NAME_SLOT_SIZE/binary, NamesLeft/binary>> = Names,
+    walk(Bits, RecordsLeft, NamesLeft, Slot + 1, Read).
+
 %%% The one failure path
 
 decode(Structure, Read) ->
@@ -317,7 +733,10 @@ decode(Structure, Read) ->
 %% Every decoder reads whole blocks: anything else, a bitstring that is not
 %% whole bytes included, is no block.
 require_block(Block) ->
-    require(is_binary(Block) andalso byte_size(Block) =:= ?BLOCK_SIZE, block_size).
+    require_size(Block, ?BLOCK_SIZE, block_size).
+
+require_size(Bytes, Size, Rule) ->
+    require(is_binary(Bytes) andalso byte_size(Bytes) =:= Size, Rule).
 
 require(true, _Rule) -> ok;
 require(false, Rule) -> fail(Rule).

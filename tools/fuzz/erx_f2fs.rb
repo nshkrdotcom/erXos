@@ -8,8 +8,8 @@ require 'tmpdir'
 require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_f2fs_codec, F2FS's codec (test/erlang/erx_f2fs_fuzz.erl,
-# docs/design-f2fs.md, "Reading the medium"): its superblock and checkpoint pack
-# readers over mutations of the codec tests' fixtures, the checksums mostly fixed up,
+# docs/design-f2fs.md, "Reading the medium"): every reader over mutations of the
+# codec tests' fixtures, the checksums mostly fixed up,
 # fail every malformed block with an error naming the rule, never a crash. Compiled
 # from source with erx_abi_packed, which the ABI generator writes into build/gen, and
 # run on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the codec as it
@@ -22,7 +22,8 @@ module ErxF2fsFuzz
   SOURCES = [File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/src/generated/erx_abi_packed.erl'),
              *%w[erx_f2fs_codec_tests erx_f2fs_fuzz].map { |name| File.join(ROOT, "test/erlang/#{name}.erl") }].freeze
   INCLUDE = File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/include')
-  # Each of the three runs, inside tools/erx check-fuzz's 900 s for the target.
+  # Each run, inside tools/erx check-fuzz's 900 s for the target: the codec's own runs
+  # every case, and a seeded fault's ends at its first failure.
   DEADLINE_SECONDS = '280'
 
   Seed = Data.define(:fault, :anchor, :replacement, :failure)
@@ -32,6 +33,19 @@ module ErxF2fsFuzz
              anchor: "    check_areas(Super),\n", replacement: '', failure: 'areas'),
     Seed.new(fault: "the checkpoint header bitmaps' room check removed",
              anchor: '            require(SitBytes + NatBytes =< HeaderRoom, bitmap_room),',
+             replacement: '            ok,', failure: 'crash'),
+    Seed.new(fault: "the NAT journal's count bound off by one",
+             anchor: '    require(Count =< ?ERX_F2FS_NAT_JOURNAL_ENTRIES, entry_count),',
+             replacement: '    require(Count =< ?ERX_F2FS_NAT_JOURNAL_ENTRIES + 1, entry_count),',
+             failure: 'size'),
+    Seed.new(fault: "the SIT count's comparison with the map's set bits dropped",
+             anchor: "    require(Valid =:= lists:sum([Bit || <<Bit:1>> <= Map]), valid_map),\n",
+             replacement: '', failure: 'valid_map'),
+    Seed.new(fault: "i_extra_isize's multiple-of-4 rule dropped",
+             anchor: '    require(Size rem ?ERX_F2FS_EXTRA_ISIZE_ALIGN =:= 0 andalso',
+             replacement: '    require(true andalso', failure: 'extra_isize'),
+    Seed.new(fault: "a long name's run allowed past the last slot",
+             anchor: '            require(Run =< 1 + bit_size(Bits), name_run),',
              replacement: '            ok,', failure: 'crash')
   ].freeze
 
@@ -48,7 +62,7 @@ module ErxF2fsFuzz
       output, status = fuzz(source.sub(fault.anchor, fault.replacement), seed: seed, cases: cases)
       abort("#{fault.fault} passed:\n#{output}") if status.success? || !output.include?("fuzz failure: #{fault.failure}")
     end
-    puts "erx_f2fs_codec fails every mutated superblock and checkpoint pack cleanly over #{cases} cases, " \
+    puts "erx_f2fs_codec fails every mutated record cleanly over #{cases} cases, " \
          "and each of #{SEEDS.size} seeded faults fails"
   end
 

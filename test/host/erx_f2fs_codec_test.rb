@@ -34,7 +34,27 @@ class ErxF2fsCodecTest < Minitest::Test
     Seed.new(fault: 'the orphan count bound off by one',
              anchor: '    require(Used =< ?ERX_F2FS_ORPHANS_PER_BLOCK, entry_count),',
              replacement: '    require(Used =< ?ERX_F2FS_ORPHANS_PER_BLOCK + 1, entry_count),',
-             failure: /an_orphan_count_past_the_block_fails_test.*failed/)
+             failure: /an_orphan_count_past_the_block_fails_test.*failed/),
+    Seed.new(fault: "the NAT journal's count bound off by one",
+             anchor: '    require(Count =< ?ERX_F2FS_NAT_JOURNAL_ENTRIES, entry_count),',
+             replacement: '    require(Count =< ?ERX_F2FS_NAT_JOURNAL_ENTRIES + 1, entry_count),',
+             failure: /a_nat_journal_past_its_room_fails_test.*failed/),
+    Seed.new(fault: "the SIT count's comparison with the map's set bits dropped",
+             anchor: "    require(Valid =:= lists:sum([Bit || <<Bit:1>> <= Map]), valid_map),\n",
+             replacement: '',
+             failure: /each_sit_entry_rule_fails_with_its_name[^\n]*valid_map[^\n]*failed/),
+    Seed.new(fault: "i_extra_isize's multiple-of-4 rule dropped",
+             anchor: '    require(Size rem ?ERX_F2FS_EXTRA_ISIZE_ALIGN =:= 0 andalso',
+             replacement: '    require(true andalso',
+             failure: /each_inode_rule_fails_with_its_name[^\n]*extra_isize[^\n]*failed/),
+    Seed.new(fault: "the reserved word before inline data dropped",
+             anchor: 'inline_content([_Reserved | Words]) ->',
+             replacement: 'inline_content(Words) ->',
+             failure: /layout_cases[^\n]*failed/),
+    Seed.new(fault: "a long name's run allowed past the last slot",
+             anchor: '            require(Run =< 1 + bit_size(Bits), name_run),',
+             replacement: '            ok,',
+             failure: /each_dentry_rule_fails_with_its_name[^\n]*failed/)
   ].freeze
 
   def test_eunit_cases_pass

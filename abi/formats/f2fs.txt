@@ -2,7 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # F2FS's on-disk format as Linux reads and writes it with 4096-byte blocks
 # (docs/design-f2fs.md, "Reading the medium"): the facts erx_f2fs_codec reads
-# the superblock and the checkpoint pack with. Every field and value is from
+# a volume's records with. Every field and value is from
 # the F2FS facts record, part 1, cited as [F n] beside it. Every integer is
 # little-endian, and the records are packed: a field may sit at any byte
 # offset, so each layout is packed_le, which only Erlang reads, by bit-syntax
@@ -161,3 +161,174 @@ layout erx_f2fs_orphan_block packed_le 1 4096
   field blk_count u16 4086
   field entry_count u32 4088
   field check_sum u32 4092
+# The NAT entries one NAT block holds [F 33].
+limit f2fs_nat_entries_per_block u32 455
+# A NAT entry: the node's version, its inode and its block, 0 when the nid
+# is free [F 33].
+layout erx_f2fs_nat_entry packed_le 1 9
+  field version u8 0
+  field ino u32 1
+  field block_addr u32 5
+layout erx_f2fs_nat_block packed_le 1 4096
+  field entries erx_f2fs_nat_entry 0 count @f2fs_nat_entries_per_block
+  padding 4095 1
+# The SIT entries one SIT block holds. An entry's vblocks has the segment's
+# valid blocks, at most a segment's, in its low 10 bits and its log type,
+# below 6, above them [F 37, F 39].
+limit f2fs_sit_entries_per_block u32 55
+limit f2fs_sit_vblocks_bits u32 10
+limit f2fs_sit_types u32 6
+# A SIT entry: vblocks, the valid map of one bit per block of the segment,
+# first bit most significant, and the segment's age [F 37].
+layout erx_f2fs_sit_entry packed_le 1 74
+  field vblocks u16 0
+  field valid_map u8 2 count 64
+  field mtime u64 66
+layout erx_f2fs_sit_block packed_le 1 4096
+  field entries erx_f2fs_sit_entry 0 count @f2fs_sit_entries_per_block
+  padding 4070 26
+# A summary block has one entry per block of its segment [F 45].
+limit f2fs_summaries_per_block u32 512
+# A summary entry: the node that owns the block, that node's NAT version and
+# the block's index in the node's address array [F 46].
+layout erx_f2fs_summary_entry packed_le 1 7
+  field nid u32 0
+  field version u8 4
+  field ofs_in_node u16 5
+# The journal of a summary block: a NAT journal, a SIT journal or the
+# hot-node log's statistics, by the log the summary is for [F 28, F 47].
+bytes erx_f2fs_journal 507
+# A summary block of 4096-byte blocks [F 45]: entry_type is 1 for a node
+# segment and 0 for a data segment; Linux checks no check_sum.
+layout erx_f2fs_summary_block packed_le 1 4096
+  field entries erx_f2fs_summary_entry 0 count @f2fs_summaries_per_block
+  field journal erx_f2fs_journal 3584
+  field entry_type u8 4091
+  field check_sum u32 4092
+# The most entries the NAT and SIT journals hold [F 32, F 47].
+limit f2fs_nat_journal_entries u32 38
+limit f2fs_sit_journal_entries u32 6
+layout erx_f2fs_nat_journal_entry packed_le 1 13
+  field nid u32 0
+  field entry erx_f2fs_nat_entry 4
+layout erx_f2fs_nat_journal packed_le 1 507
+  field n_nats u16 0
+  field entries erx_f2fs_nat_journal_entry 2 count @f2fs_nat_journal_entries
+  padding 496 11
+layout erx_f2fs_sit_journal_entry packed_le 1 78
+  field segno u32 0
+  field entry erx_f2fs_sit_entry 4
+layout erx_f2fs_sit_journal packed_le 1 507
+  field n_sits u16 0
+  field entries erx_f2fs_sit_journal_entry 2 count @f2fs_sit_journal_entries
+  padding 470 37
+# The compact form of a pack's data summaries [F 29]: its first block starts
+# with the NAT and the SIT journal, and summary entries follow, none ending
+# past byte 4091 of a block, the next block taking them from its byte 0.
+layout erx_f2fs_compact_journals packed_le 1 1014
+  field nat_journal erx_f2fs_journal 0
+  field sit_journal erx_f2fs_journal 507
+limit f2fs_compact_summary_end u32 4091
+# An inode block holds 923 address words and 5 node ids after its fixed part
+# [F 40]; a name is at most 255 bytes [F 40, F 59].
+limit f2fs_addrs_per_inode u32 923
+limit f2fs_nids_per_inode u32 5
+limit f2fs_name_len_max u32 255
+# i_inline's flags [F 40].
+limit f2fs_inline_xattr u32 0x1
+limit f2fs_inline_data u32 0x2
+limit f2fs_inline_dentry u32 0x4
+limit f2fs_data_exist u32 0x8
+limit f2fs_inline_dots u32 0x10
+limit f2fs_extra_attr u32 0x20
+limit f2fs_pin_file u32 0x40
+limit f2fs_compress_released u32 0x80
+# The bits of i_flags a reader checks against the feature word [F 40, F 42].
+limit f2fs_casefold_fl u32 0x40000000
+limit f2fs_device_alias_fl u32 0x80000000
+# i_extra_isize is a multiple of 4, at least the two size words [F 41].
+limit f2fs_extra_isize_min u32 4
+limit f2fs_extra_isize_align u32 4
+# The inline xattr area in words: without FLEXIBLE_INLINE_XATTR, 50 when the
+# inode has INLINE_XATTR or INLINE_DENTRY; with it, i_inline_xattr_size, at
+# most 903 and with INLINE_XATTR at least 6 [F 42, F 48].
+limit f2fs_inline_xattr_words u32 50
+limit f2fs_inline_xattr_words_min u32 6
+limit f2fs_inline_xattr_words_max u32 903
+# The largest-extent hint: file blocks fofs onward at blk onward, none when
+# len is 0 [F 44].
+layout erx_f2fs_extent packed_le 1 12
+  field fofs u32 0
+  field blk u32 4
+  field len u32 8
+# The fixed part of an inode block [F 40]. i_current_depth is a directory's
+# hash levels; a regular file keeps i_gc_failures in its first 2 bytes.
+layout erx_f2fs_inode packed_le 1 360
+  field i_mode u16 0
+  field i_advise u8 2
+  field i_inline u8 3
+  field i_uid u32 4
+  field i_gid u32 8
+  field i_links u32 12
+  field i_size u64 16
+  field i_blocks u64 24
+  field i_atime u64 32
+  field i_ctime u64 40
+  field i_mtime u64 48
+  field i_atime_nsec u32 56
+  field i_ctime_nsec u32 60
+  field i_mtime_nsec u32 64
+  field i_generation u32 68
+  field i_current_depth u32 72
+  field i_xattr_nid u32 76
+  field i_flags u32 80
+  field i_pino u32 84
+  field i_namelen u32 88
+  field i_name u8 92 count @f2fs_name_len_max
+  field i_dir_level u8 347
+  field i_ext erx_f2fs_extent 348
+# The extra attributes, over the first words of i_addr when i_inline has
+# EXTRA_ATTR. A field is present only within the first i_extra_isize bytes,
+# so i_extra_isize is at most this layout's size [F 41].
+layout erx_f2fs_inode_extra packed_le 1 36
+  field i_extra_isize u16 0
+  field i_inline_xattr_size u16 2
+  field i_projid u32 4
+  field i_inode_checksum u32 8
+  field i_crtime u64 12
+  field i_crtime_nsec u32 20
+  field i_compr_blocks u64 24
+  field i_compress_algorithm u8 32
+  field i_log_cluster_size u8 33
+  field i_compress_flag u16 34
+# A node footer's flag has the cold, fsync and dentry marks in its low 3
+# bits and the node offset above them [F 43]; an xattr node's offset is all
+# ones in those 29 bits [F 53].
+limit f2fs_node_mark_bits u32 3
+limit f2fs_xattr_node_offset u32 0x1fffffff
+# The last 24 bytes of every node block [F 43].
+layout erx_f2fs_node_footer packed_le 1 24
+  field nid u32 0
+  field ino u32 4
+  field flag u32 8
+  field cp_ver u64 12
+  field next_blkaddr u32 20
+# An inode block [F 40]: the fixed part, the address words, the node ids of
+# direct node 1, direct node 2, indirect node 1, indirect node 2 and the
+# double indirect node, and the footer.
+layout erx_f2fs_inode_block packed_le 1 4096
+  field inode erx_f2fs_inode 0
+  field i_addr u32 360 count @f2fs_addrs_per_inode
+  field i_nid u32 4052 count @f2fs_nids_per_inode
+  field footer erx_f2fs_node_footer 4072
+# A dentry slot record, and the bytes of name each slot carries [F 59]. A
+# dentry block and an inline dentry area are each a bitmap of one bit per
+# slot, first bit least significant, reserved bytes, the slot records and
+# the name slots, with as many slots as fit at 8 * (11 + 8) + 1 bits each
+# [F 48, F 59].
+layout erx_f2fs_dir_entry packed_le 1 11
+  field hash_code u32 0
+  field ino u32 4
+  field name_len u16 8
+  field file_type u8 10
+limit f2fs_name_slot_size u32 8
