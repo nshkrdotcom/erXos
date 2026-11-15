@@ -821,7 +821,8 @@ boot_facet_grantee(const erx_dom_view_t *view, const erx_mf_facet_t *facet, cons
 
 /*
  * Why row is not a value of parameter, or NULL with the value in *value:
- * it is of the declared kind and within the declared bound, and text or
+ * it is of the declared kind and within the declared bound, a member
+ * kind's bound being exactly its members (erx_service_parameter_t), and text or
  * bytes point into strings, the manifest's string table. A
  * reference kind, which nothing carries to the domain service, is refused,
  * as the packer refuses one. The reader has checked a boolean's value and
@@ -839,6 +840,7 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
 	switch (row->kind) {
 	case ERX_MF_PARAMETER_U64:
 	case ERX_MF_PARAMETER_BOOLEAN:
+	case ERX_MF_PARAMETER_MEMBER:
 		within = row->scalar >= parameter->minimum && row->scalar <= parameter->maximum;
 		break;
 	case ERX_MF_PARAMETER_I64:

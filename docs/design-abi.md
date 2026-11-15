@@ -2163,7 +2163,9 @@ Within `service NAME NUMBER`, the exact metadata members are
 `operation NAME NUMBER`, `liveness OPERATION_NAME` and `parameter NAME NUMBER KIND CARDINALITY
 BOUND checked_by HELPER`. For integer kinds, BOUND is `range MIN MAX`;
 for identifier, path or bytes it is `bytes MAX_BYTES`; boolean uses
-`boolean`; a reference kind uses `target TABLE`, with `domains`,
+`boolean`; a member kind uses `member ENUM`, naming an enum the ABI
+declares, not a flag set, whose values run without a gap; a reference
+kind uses `target TABLE`, with `domains`,
 `principals` or `devices` as appropriate. A domain reference additionally
 spells `system yes|no`. The helper is a qualified symbol of the service's
 manifest-grant checker, resolved against its checked consumer inventory;
@@ -2172,7 +2174,7 @@ The service is unusable by the packer unless that checker is available.
 These declarations supply manifest metadata and validation, not request
 execution or a future service's callback implementation.
 The closed KIND tokens are `u64`, `i64`, `boolean`, `identifier`,
-`namespace_path`, `domain`, `principal`, `device` and `bytes`. A liveness
+`namespace_path`, `domain`, `principal`, `device`, `bytes` and `member`. A liveness
 marker names one declared operation. Its request and response signature
 belongs to the service contract and is verified against that service's
 checked consumer descriptor before admission; an absent or incompatible
@@ -2181,9 +2183,11 @@ permit the watchdog to invoke an arbitrary operation by number.
 
 Parameter kinds are unsigned integer 1, signed integer 2, boolean 3,
 identifier 4, namespace path 5, domain reference 6, principal index 7,
-device index 8 and bounded bytes 9. Integer and boolean values use
-`scalar`; signed values use the declared 64-bit signed representation,
-and booleans are 0 or 1. Text and bounded bytes use `bytes`; references
+device index 8, bounded bytes 9 and enum member 10. Integer, boolean and
+member values use `scalar`; signed values use the declared 64-bit signed
+representation, booleans are 0 or 1, and a member is its enum value,
+which a facet's source spells as the member's bare name and the domain
+service receives as the atom of that name. Text and bounded bytes use `bytes`; references
 use `index`. All inactive fields are zero. A parameter's maximum length,
 range and allowed reference category come from its declaration. Opaque
 bytes are legal only for a field whose service contract defines them as

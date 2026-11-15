@@ -565,7 +565,7 @@ module Erx
       # Service interfaces have a namespace of their own, as their constants'
       # service_ prefix says, so an interface may share its name with a right
       # or a type (the inspect interface and the inspect right).
-      def services(declarations)
+      def services(declarations, types:)
         seen_numbers = {}
         seen_names = {}
         declarations.map do |declaration|
@@ -595,7 +595,7 @@ module Erx
               liveness = words[0]
             when 'parameter'
               key, id, kind, cardinality, *bound = words
-              allowed = %w[u64 i64 boolean identifier namespace_path domain principal device bytes]
+              allowed = %w[u64 i64 boolean identifier namespace_path domain principal device bytes member]
               line.fail!('invalid parameter kind or duplicate key') unless allowed.include?(kind) && !parameters.key?(key)
               Syntax.identifier(key, line: line)
               count = cardinality == 'set' ? Model.positive(bound.shift, line, maximum: 65536) : 1
@@ -604,10 +604,10 @@ module Erx
               line.fail!('parameter requires one checked_by helper') unless marker && marker == bound.size - 2
               helper = Syntax.identifier(bound.last, line: line)
               constraint = bound.take(marker)
-              minimum, maximum = validate_parameter_constraint(kind, constraint, line)
+              minimum, maximum, members = validate_parameter_constraint(kind, constraint, line, types: types)
               parameters[key] = { number: Model.positive(id, line, maximum: (1 << 32) - 1),
                                   kind: kind, cardinality: cardinality, maximum_count: count,
-                                  bound: constraint.freeze, minimum: minimum, maximum: maximum,
+                                  bound: constraint.freeze, minimum: minimum, maximum: maximum, members: members,
                                   helper: helper }.freeze
             else line.fail!('unknown service metadata member')
             end
@@ -620,10 +620,13 @@ module Erx
         end.freeze
       end
 
-      # A parameter's bound, checked, as its minimum and maximum: an integer kind's
-      # range, 0 and a text or bytes kind's byte maximum, 0 and 1 for a boolean, and 0
-      # and 0 for a reference kind, whose table bounds it.
-      def validate_parameter_constraint(kind, constraint, line)
+      # A parameter's bound, checked, as its minimum, its maximum and, for a member
+      # kind, its members' names in value order (nil for any other kind): an integer
+      # kind's range, 0 and a text or bytes kind's byte maximum, 0 and 1 for a boolean,
+      # 0 and 0 for a reference kind, whose table bounds it, and a member kind's
+      # enum's least and greatest value. The enum's values run without a gap, so the
+      # range a reader checks is exactly its set of members.
+      def validate_parameter_constraint(kind, constraint, line, types:)
         case kind
         when 'u64', 'i64'
           line.fail!('integer parameter requires range MIN MAX') unless constraint.size == 3 && constraint[0] == 'range'
@@ -637,12 +640,27 @@ module Erx
         when 'boolean'
           line.fail!('boolean parameter requires boolean bound') unless constraint == ['boolean']
           [0, 1]
+        when 'member'
+          line.fail!('member parameter requires member ENUM') unless constraint.size == 2 && constraint[0] == 'member'
+          member_bound(types[constraint[1]], line)
         else
           table = { 'domain' => 'domains', 'principal' => 'principals', 'device' => 'devices' }.fetch(kind)
           valid = kind == 'domain' ? constraint.size == 4 && constraint[2] == 'system' && %w[yes no].include?(constraint[3]) : constraint.size == 2
           line.fail!('reference parameter has an invalid target') unless valid && constraint[0] == 'target' && constraint[1] == table
           [0, 0]
         end
+      end
+
+      # A member kind's bound: the least and greatest value of enum, which the ABI
+      # declares, is not a flag set and has no gap between its values, and its
+      # members' names in value order.
+      def member_bound(enum, line)
+        line.fail!('member parameter names no declared enum') unless enum.is_a?(EnumType) && !enum.flags &&
+                                                                     !enum.members.empty?
+        names = enum.members.sort_by { |_name, value| value }.map(&:first)
+        low, high = enum.members.values.minmax
+        line.fail!('member parameter enum has a gap between its values') unless high - low + 1 == names.size
+        [low, high, names.freeze]
       end
     end
   end

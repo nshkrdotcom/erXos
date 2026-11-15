@@ -12,11 +12,11 @@ started after the volume's owner, so it serves the volume already mounted, and i
 itself the service's mint (erx_facet:provide/2) before the domain's ready report.
 
 For each mint request in the system domain's envelope (mint_request/3) it starts one
-erx_fs grant of the service's tree, read-write, whose client is the grantee's domain id,
-so the grant takes frames only in that domain's envelope and with that domain's names
-(erx_fs_grant, S9). The grant exports itself to the grantee, with `send` alone, before
-its start returns, so no answer names a grant the grantee cannot reach; a refused export
-is the mint's answer, and no grant is left. A grant for another domain than the system
+erx_fs grant of the service's tree, with the facet row's rights, whose client is the
+grantee's domain id, so the grant takes frames only in that domain's envelope and with
+that domain's names (erx_fs_grant, S9). The grant exports itself to the grantee, with
+`send` alone, before its start returns, so no answer names a grant the grantee cannot
+reach; a refused export is the mint's answer, and no grant is left. A grant for another domain than the system
 domain ends with this domain's connection to the grantee (erx_connections:connection/1):
 a grantee's restart is a new domain id and a new connection, so a frame of the old
 incarnation reaches no grant that would take it. A grant for the system domain lives as
@@ -24,7 +24,7 @@ long as this domain, whose link to the system domain is its own.
 
 The grants run under erx_fs_grants, a supervisor of temporary children that the mint
 starts linked to itself, so the end of a grant ends nothing else, while the mint's end,
-and so the volume's, ends every grant. erx_fs_grants applies the facet row's limits.
+and so the volume's, ends every grant. erx_fs_grants applies the facet row's limits and rights.
 """.
 
 -export([start_link/2, mint_request/3, grant/5]).
