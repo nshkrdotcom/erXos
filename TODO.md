@@ -2935,8 +2935,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   of its choosing, and the driver does not refuse one a live program already has. The programs suite's driver
   cases do so with pids 2 to 45 in the session whose server gives the suite's handler cases 2 to 4; it holds
   only because none of those three is an id a driver case gives pipe ends, an exception list. Reserve each
-  driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker, and add the
-  chokepoint check that only `erx_prog_handler` calls `erx_program:start/1` outside the tests.
+  driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
+  `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
+  suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
 * [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
   by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
   generated limit.

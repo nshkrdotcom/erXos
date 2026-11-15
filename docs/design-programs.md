@@ -1242,6 +1242,11 @@ The parties in a program's life, all but the first in its session:
 
 #### The command server
 
+**Only the handler starts a program.** A program starts only through its
+handler, under the process id this server gave it: among the Erlang
+sources only `erx_prog_handler` names the program driver's module
+`erx_program`, which the build check `program-start` enforces.
+
 **Where it runs.** `erx_command_srv` is a module of the `erx`
 application, beside `erx_prog_handler` and `erx_pipe_srv`: the
 handlers and the inspection agent, in `erx`, and the shell's stages and

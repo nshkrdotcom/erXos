@@ -77,4 +77,23 @@ class ChokepointsProgramTest < Minitest::Test
       refute_empty evaluate(decode, { path => text }, imported: [path]), "#{path} may decode: #{text}"
     end
   end
+
+  # The handler alone names the driver's module; a call, a call through apply/3 or a
+  # variable, or an import elsewhere is refused, while a doc string naming the call and erx_program's
+  # own definition are not starts.
+  def test_only_the_handler_starts_a_program
+    start = %w[program-start]
+    allowed = {
+      Rules::PROGRAM_HANDLER => "act(S) -> erx_program:start(S).\n",
+      Rules::PROGRAM_MODULE => "-module(erx_program).\n",
+      'erlang/apps/erx_win/src/erx_pixels.erl' => "-doc \"Lends for erx_program:start/1.\".\nf() -> ok.\n"
+    }
+    assert_empty erlang_found(start, allowed)
+    { 'erlang/apps/erx_shell/src/erx_shell_runner.erl' => "f(S) -> erx_program:start(S).\n",
+      'erlang/apps/erx/src/erx_command_srv.erl' => "f(S) -> apply(erx_program, start, [S]).\n",
+      'erlang/apps/erx_ui/src/erx_ui_lvgl.erl' => "-import(erx_program, [start/1]).\n",
+      'erlang/apps/erx/src/erx_command_core.erl' => "f(S) -> M = erx_program, M:start(S).\n" }.each do |path, code|
+      refute_empty erlang_found(start, { path => code }), "#{path} may start a program"
+    end
+  end
 end

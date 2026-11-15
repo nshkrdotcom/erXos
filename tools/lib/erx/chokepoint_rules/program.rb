@@ -6,6 +6,9 @@ module Erx
   module ChokepointRules
     # The erx_program port driver, ERTS's one maker of a program's spaces.
     PROGRAM_DRIVER = 'otp/erts/emulator/sys/erxos/erx_program_drv.c'
+    # The handler, the one Erlang caller of the driver's start, and the module defining it.
+    PROGRAM_HANDLER = 'erlang/apps/erx/src/erx_prog_handler.erl'
+    PROGRAM_MODULE = 'otp/erts/preloaded/src/erx_program.erl'
 
     declare_group(
       rules: [
@@ -74,6 +77,22 @@ module Erx
           seed: { 'otp/erts/emulator/sys/erxos/erx_lane_drv.c' =>
                     "\tterm = erts_decode_ext(&factory, &bytes, ERTS_DIST_EXT_BTT_SAFE);\n",
                   PROGRAM_DRIVER => "\tterm = erts_decode_ext(&factory, &bytes, 0);\n" }
+        ),
+        # A program's handler alone talks to the program driver, so it alone
+        # starts a program, under the process id the command server gave it
+        # (docs/design-programs.md, "The command server"). The rule refuses the
+        # module's atom itself outside the handler and erx_program, so no call
+        # form, a variable module or apply/3 included, starts one elsewhere;
+        # doc strings may name it.
+        Chokepoints::ErlangForbidden.new(
+          name: 'program-start',
+          rule: "only a program's handler, erx_prog_handler, names the program driver's module erx_program " \
+                'among the Erlang sources, so only it calls erx_program:start/1',
+          design: 'docs/design-programs.md#the-command-server',
+          pattern: Regexp.new(ErlangText::ATOM.call('erx_program')),
+          sites: [PROGRAM_HANDLER, PROGRAM_MODULE],
+          strings: :blanked,
+          seed: { 'erlang/apps/erx_shell/src/seeded.erl' => "f(S) -> M = erx_program, M:start(S).\n" }
         )
       ]
     )
