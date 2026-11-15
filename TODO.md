@@ -1148,12 +1148,6 @@ it; git history is the record of completed work.
   differs from Control-2's NUL. Take the `ctl` layer of the non-letter keys from `kbdtables.h`, with the keymap
   test's table; FreeBSD's Control-keypad-2 types `2`, which `key/2` would send as NUL, and Control-Shift-Space
   types Space where `key/2` sends NUL (`share/vt/keymaps/us.kbd` line 62), so decide those two in the design.
-* [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [Keys and paste](docs/design-display.md#keys-and-paste):
-  Shift-Tab sends HT, as the design says, where FreeBSD's console gives `btab` (`kbdtables.h` row `0f`) and
-  xterm sends `CSI Z` ("XTerm Control Sequences", Patch #411, line 2374), so back-tab in programs that read it
-  does not work. Make Tab's rune with Shift send `CSI Z` in the design and `key/2`, with a case, and check
-  FreeBSD's `btab` bytes against its source. Also settle whether DCH, which blanks a row's last cells, clears
-  the row's `Wrapped` flag as ECH and EL do, with an oracle case.
 * [Medium] `abi/formats/ui.txt` validity and `erlang/apps/erx_ui/src/erx_ui_model.erl`, [Widget
   trees](docs/design-display.md#widget-trees): no rule bounds one node's children below the grant's `ui_nodes`, which
   has no value yet. `delta/2`'s longest kept run and its index bookkeeping, and `apply_ops/2`'s insert and move, are

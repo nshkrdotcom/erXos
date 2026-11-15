@@ -535,6 +535,13 @@ erasing_characters_to_the_row_end_ends_its_wrap_test() ->
     ?assertMatch({false, _}, element(1, erx_vt:grid(VT))),
     ?assertMatch({true, _}, element(1, erx_vt:grid(run("0123456789x\e[1;8H\e[2X")))).
 
+%% DCH blanks the row's last cells whatever its count, so the row no
+%% longer continues into the next.
+deleting_characters_ends_the_rows_wrap_test() ->
+    VT = run("0123456789x\e[1;3H\e[P"),
+    ?assertEqual(<<"013456789 ">>, text(VT, 1)),
+    ?assertMatch({false, _}, element(1, erx_vt:grid(VT))).
+
 wide_characters_test() ->
     Wide = run(["012345678", utf8([16#4E2D])]),
     ?assertEqual(<<"012345678 ">>, text(Wide, 1)),
@@ -629,14 +636,16 @@ silent_runes_send_nothing_test() ->
      || Name <- silent_runes(), {Held, _} <- modifier_sets()].
 
 %% Every ASCII rune but DEL, Delete's, and a rune past ASCII, under every
-%% modifier set: itself, with the design's four exceptions, after ESC with
+%% modifier set: itself, with the design's five exceptions, after ESC with
 %% Alt; DECCKM changes none of them.
 typed_runes_test() ->
     Normal = erx_vt:new(10, 5),
     Application = run("\e[?1h"),
     [begin
          Control = (M - 1) band 4 =/= 0,
+         Shift = (M - 1) band 1 =/= 0,
          Bytes = case {Rune, Control} of
+                     {$\t, false} when Shift -> <<"\e[Z">>;
                      {16#08, false} -> <<16#7F>>;
                      {$\n, false} -> <<$\r>>;
                      {$\s, true} -> <<0>>;
@@ -673,7 +682,11 @@ backspace_return_and_their_control_forms_test() ->
     ?assertEqual(<<$\r>>, erx_vt:key(VT, {$\n, [?ERX_INPUT_RUNE_KSHIFT]})),
     ?assertEqual(<<$\n>>, erx_vt:key(VT, {$\n, [Control]})),
     ?assertEqual(<<16#1B, 16#1B>>, erx_vt:key(VT, {?ERX_INPUT_RUNE_KESC, [?ERX_INPUT_RUNE_KALT]})),
-    ?assertEqual(<<"\t">>, erx_vt:key(VT, {$\t, [?ERX_INPUT_RUNE_KSHIFT]})),
+    ?assertEqual(<<"\t">>, erx_vt:key(VT, {$\t, []})),
+    %% Shift-Tab is back-tab, xterm's CSI Z, and Alt puts ESC before it.
+    ?assertEqual(<<"\e[Z">>, erx_vt:key(VT, {$\t, [?ERX_INPUT_RUNE_KSHIFT]})),
+    ?assertEqual(<<"\e\e[Z">>, erx_vt:key(VT, {$\t, [?ERX_INPUT_RUNE_KSHIFT, ?ERX_INPUT_RUNE_KALT]})),
+    ?assertEqual(<<"\t">>, erx_vt:key(VT, {$\t, [?ERX_INPUT_RUNE_KSHIFT, Control]})),
     %% The held set holds other keys' runes too; only the modifiers count.
     ?assertEqual(<<"a">>, erx_vt:key(VT, {$a, [$a, $b, ?ERX_INPUT_RUNE_KCAPS]})).
 

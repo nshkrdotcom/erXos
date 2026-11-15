@@ -122,6 +122,7 @@ module VtCorpus
      Case.new(name: 'choice-1049l-on-main', bytes: "\e[?1049lA"),
      Case.new(name: 'choice-decstr-cursor', bytes: "\e[3;7H\e[!p"),
      Case.new(name: 'choice-erase-end-unwraps', bytes: "\e[3;1HABCDEFGHIJKL\e[3;5H\e[K"),
+     Case.new(name: 'choice-delete-chars-unwraps', bytes: "\e[3;1HABCDEFGHIJKL\e[3;5H\e[P"),
      Case.new(name: 'choice-dec-graphics-underscore', bytes: "\e(0_\e(B")]
   end
 end

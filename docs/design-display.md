@@ -3114,7 +3114,11 @@ Control-2 as NUL, as FreeBSD's console does (`sys/dev/kbd/kbdtables.h`,
 lines 48 and 102; `share/vt/keymaps/us.kbd`, lines 8 and 62), since a
 `kbd` record, which a NUL ends, cannot carry one: the keymap's `ctl`
 layer types Space and `2` for those keys, and `erx_vt` turns them into
-NUL. It sends Tab as HT, any other
+NUL. It sends Tab as HT and Tab with Shift, without Control, as
+`CSI Z`, xterm's back-tab ("XTerm Control Sequences", Patch #411,
+line 2374; FreeBSD's console also takes Shift-Tab as back-tab,
+`sys/dev/kbd/kbdtables.h` row `0f`), so Control-Shift-I, which types
+Tab on the `ctl` layer, sends HT as FreeBSD's does (row `17`); any other
 control character as the keymap's `ctl` layer typed it, a special rune
 of no key below, a modifier's or a lock's, as nothing, and Alt with a
 key as ESC before it; the arrows as `CSI A` to
@@ -3187,7 +3191,7 @@ differs `test/vt/differences.txt` gives the reason:
 * `CSI ? 1049 h` on the alternate screen and `l` on the main one do
   nothing;
 * RIS keeps the ignored counters; DECSTR keeps the cursor's place;
-* erasing a row's end clears its `Wrapped` flag;
+* erasing a row's end, and DCH, which blanks it, clear its `Wrapped` flag;
 * writing over either half of a width-2 cell blanks the other half;
 * DEC Special Graphics maps `_` to U+00A0, the blank of the VT100's
   table.

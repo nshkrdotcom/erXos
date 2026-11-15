@@ -219,10 +219,12 @@ among those held, and DECCKM, never from which key typed the rune.
 A key of a sequence (the arrows, Home, End, Insert, Delete, Page Up,
 Page Down and F1 to F12) sends xterm's form, its modifiers as a
 parameter. Any other rune sends itself in UTF-8, after ESC when Alt is
-held, but for four rules: Backspace's rune is DEL and the newline's CR
+held, but for five rules: Backspace's rune is DEL and the newline's CR
 unless Control is held; Space and `2` with Control are NUL, which no
-kbd record carries; and a special rune of no key here, a modifier's or
-a lock's among them, sends nothing.
+kbd record carries; Tab with Shift and without Control is `CSI Z`,
+back-tab, so Control-Shift-I, whose `ctl` rune is Tab, sends HT; and
+a special rune of no key here, a modifier's or a lock's among them,
+sends nothing.
 """.
 -spec key(state(), key()) -> binary().
 key(#vt{modes = #modes{cursor_keys = Application}}, {Rune, Held})
@@ -232,7 +234,7 @@ key(#vt{modes = #modes{cursor_keys = Application}}, {Rune, Held})
     Alt = lists:member(?ERX_INPUT_RUNE_KALT, Held),
     Control = lists:member(?ERX_INPUT_RUNE_KCTL, Held),
     case sequence_key(Rune) of
-        none -> alt_prefix(Alt, typed(Rune, Control));
+        none -> alt_prefix(Alt, plain_key(Rune, Shift, Control));
         Key -> sequence(Key, xterm_modifiers(Shift, Alt, Control), Application)
     end.
 
@@ -591,7 +593,7 @@ csi($J, Ps, VT) -> erase_display(arg0(Ps), VT);
 csi($K, Ps, VT) -> erase_line(arg0(Ps), VT);
 csi($L, Ps, VT) -> insert_lines(arg(Ps, 1), VT);
 csi($M, Ps, VT) -> delete_lines(arg(Ps, 1), VT);
-csi($P, Ps, VT) -> edit_row(VT, fun(L, C, B) -> delete_cells(L, C, arg(Ps, 1), B) end);
+csi($P, Ps, VT) -> unwrap(edit_row(VT, fun(L, C, B) -> delete_cells(L, C, arg(Ps, 1), B) end));
 csi($S, Ps, #vt{margins = {Top, Bottom}} = VT) when length(Ps) =< 1 ->
     scroll_up(VT, Top, Bottom, arg(Ps, 1), save);
 csi($T, Ps, #vt{margins = {Top, Bottom}} = VT) when length(Ps) =< 1 ->
@@ -1170,9 +1172,16 @@ xterm_modifiers(Shift, Alt, Control) ->
 held(true, Value) -> Value;
 held(false, _Value) -> 0.
 
-%% A rune that sends no sequence. Without Control, Backspace's Kbs is DEL
-%% and the Return key's LF is CR; with Control, as Control-H and Control-J
-%% type them, both are sent as typed. Space and `2` with Control are NUL.
+%% A rune that sends no sequence. Shift-Tab is back-tab, xterm's CSI Z,
+%% but with Control the rune is the `ctl` layer's Tab of Control-I and
+%% Control-Shift-I, which FreeBSD's console sends as HT; any other rune
+%% is typed.
+plain_key($\t, true, false) -> <<"\e[Z">>;
+plain_key(Rune, _Shift, Control) -> typed(Rune, Control).
+
+%% The bytes a rune sends when typed. Without Control, Backspace's Kbs is
+%% DEL and the Return key's LF is CR; with Control, as Control-H and
+%% Control-J type them, both are sent as typed. Space and `2` with Control are NUL.
 %% A rune past ASCII sends itself in UTF-8 unless it is a special rune,
 %% which sends nothing here; Kbs, Kesc and Kdel are ASCII, and Kdel is a
 %% sequence key.
