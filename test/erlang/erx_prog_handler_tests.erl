@@ -16,7 +16,8 @@ everything undone; a refused start drops every hand-off, gives back the lease an
 lets the holder entry go; a buffer is allocated and lent by the handler
 and its offset answered; a start whose lend never answers is refused at
 its deadline, its handler killed with what it held; the program's notice reaches the pipe server as
-the program's; a report owed while the lane is busy waits for room; a
+the program's; a request is answered on its slot and a frame the grammar
+refuses stops the program; a report owed while the lane is busy waits for room; a
 hand-off report is installed and sent filled; the exit tells the
 starter and ends the handler, also when a report or a stop meets the
 port the driver closed at the program's end; a port closed with no
@@ -39,6 +40,8 @@ handler_test_() ->
       fun buffer_is_lent_by_the_handler/1,
       fun a_start_past_its_deadline_frees_what_it_holds/1,
       fun notice_reaches_the_pipe_server/1,
+      fun a_request_is_answered_on_its_slot/1,
+      fun a_refused_frame_stops_the_program/1,
       fun owed_report_waits_for_room/1,
       fun hand_off_report_is_installed_then_sent/1,
       fun exit_tells_the_starter/1,
@@ -163,6 +166,22 @@ notice_reaches_the_pipe_server(_) ->
     %% end, which it applies first.
     Applied = nif_call(apply),
     ?_assertEqual({apply, R, {pipe_writer_gone, 1, 1, 2}}, Applied).
+
+a_request_is_answered_on_its_slot(_) ->
+    {H, Port, []} = started([]),
+    H ! {erx_channel, Port, {erx_prog, 1, 4, {probe, ?PID}}},
+    Probed = fake(send),
+    H ! {erx_channel, Port, {erx_prog, 1, 9, {kill, ?PID + 1, sigterm}}},
+    Killed = fake(send),
+    [?_assertEqual({send, Port, {erx_prog, 1, 4, ok}}, Probed),
+     ?_assertEqual({send, Port, {erx_prog, 1, 9, {error, esrch}}}, Killed),
+     ?_assert(is_process_alive(H))].
+
+a_refused_frame_stops_the_program(_) ->
+    {H, Port, []} = started([]),
+    H ! {erx_channel, Port, {erx_prog, 1, 4, {kill, ?PID, 0}}},
+    Stopped = fake(stop),
+    [?_assertEqual({stop, Port, 256 + 12}, Stopped), ?_assert(is_process_alive(H))].
 
 owed_report_waits_for_room(_) ->
     erx_prog_handler_fakes:set(sends, [busy]),

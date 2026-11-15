@@ -14,11 +14,11 @@ require_relative '../../tools/lib/erx/generated'
 # executor's announcement of room brings enough; a sender still waiting when another leaves is woken to
 # publish its need again; two senders' frames never interleave; a frame larger than
 # the ring is refused with ERX_ERANGE. A kill is a request on a reply slot that waits for its
-# reply, which only its own slot's reply ends; a kill with no target in the request table is
-# answered without one; with every worker slot held a request waits for a free one. Every case
-# runs under the address and undefined sanitizers, and the threaded cases under the thread
-# sanitizer too (docs/design-programs.md, "The channel" and "The program protocol"). Each seeded
-# fault must fail its case.
+# reply, which only its own slot's reply ends, and a kill of signal 0 a probe on one; a kill with
+# no target in the request table is answered without one; with every worker slot held a
+# request waits for a free one. Every case runs under the address and undefined sanitizers,
+# and the threaded cases under the thread sanitizer too (docs/design-programs.md, "The
+# channel" and "The program protocol"). Each seeded fault must fail its case.
 class ProgChannelTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -33,8 +33,8 @@ class ProgChannelTest < Minitest::Test
     thread: ['-fsanitize=thread']
   }.freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  CASES = %w[whole wait waiters two large kill local slots].freeze
-  THREADED = %w[wait waiters two kill slots].freeze
+  CASES = %w[whole wait waiters two large kill probe local slots].freeze
+  THREADED = %w[wait waiters two kill probe slots].freeze
 
   # A seeded fault, the case that catches it, and the edit that plants it.
   MUTANTS = {

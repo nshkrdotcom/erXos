@@ -265,8 +265,8 @@ pipe_mutations() ->
      {report_version, {frame, report, {erx_prog, 0, pipe_server_lost}}, "version report"},
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
 
-%% The busy slots of the replies: slot 3 holds a kill.
--define(BUSY, #{3 => kill}).
+%% The busy slots of the replies: slot 3 holds a kill and slot 5 a probe.
+-define(BUSY, #{3 => kill, 5 => probe}).
 
 %% Requests and their replies, each through its builder, and frames to the program
 %% through check_to_program/2's dispatch: a report, and a reply on a busy slot.
@@ -275,9 +275,13 @@ request_valid() ->
     {ok, Reply} = erx_prog_grammar:build_reply(kill, 3, {error, esrch}),
     [request(kill_least, 0, {kill, 2, sighup}),
      request(kill_max, 15, {kill, 16#7fffffff, 'sigrtmax'}),
-     reply(kill_ok, 3, ok),
-     reply(kill_esrch, 3, {error, esrch}),
-     reply(kill_last_errno, 3, {error, ehwpoison}),
+     request(probe_least, 0, {probe, 2}),
+     request(probe_max, 15, {probe, 16#7fffffff}),
+     reply(kill_ok, kill, 3, ok),
+     reply(kill_esrch, kill, 3, {error, esrch}),
+     reply(kill_last_errno, kill, 3, {error, ehwpoison}),
+     reply(probe_ok, probe, 5, ok),
+     reply(probe_esrch, probe, 5, {error, esrch}),
      {to_program_report, {frame, to_program, ?BUSY, Report}, "accept"},
      {to_program_reply, {frame, to_program, ?BUSY, Reply}, "accept"}].
 
@@ -285,8 +289,8 @@ request(Name, Slot, Value) ->
     {ok, Frame} = erx_prog_grammar:build_request(Slot, Value),
     {Name, {frame, request, Frame}, "accept"}.
 
-reply(Name, Slot, Value) ->
-    {ok, Frame} = erx_prog_grammar:build_reply(kill, Slot, Value),
+reply(Name, Request, Slot, Value) ->
+    {ok, Frame} = erx_prog_grammar:build_reply(Request, Slot, Value),
     {Name, {frame, reply, ?BUSY, Frame}, "accept"}.
 
 %% One mutation for each rule of the requests and replies: a reply's slot must be busy
@@ -296,6 +300,10 @@ request_mutations() ->
      {kill_signal_unknown, {frame, request, {erx_prog, 1, 0, {kill, 2, sigfoo}}}, "range signal"},
      {kill_pid_one, {frame, request, {erx_prog, 1, 0, {kill, 1, sigint}}}, "range process_id"},
      {kill_arity, {frame, request, {erx_prog, 1, 0, {kill, 2}}}, "no_case request"},
+     {probe_pid_one, {frame, request, {erx_prog, 1, 0, {probe, 1}}}, "range process_id"},
+     {probe_signal, {frame, request, {erx_prog, 1, 0, {probe, 2, 0}}}, "no_case request"},
+     {probe_atom, {frame, request, {erx_prog, 1, 0, probe}}, "no_case request"},
+     {probe_reply_no_case, {frame, reply, ?BUSY, {erx_prog, 1, 5, {ok, 1}}}, "no_case probe_reply"},
      {reply_idle_slot, {frame, reply, ?BUSY, {erx_prog, 1, 4, ok}}, "range slot"},
      {reply_nothing_busy, {frame, reply, #{}, {erx_prog, 1, 3, ok}}, "range slot"},
      {reply_slot_past, {frame, reply, ?BUSY, {erx_prog, 1, 16, ok}}, "range slot"},

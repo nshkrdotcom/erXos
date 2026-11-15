@@ -66,13 +66,14 @@ void	erx_prog_sig_raise(int signo);
 
 /*
  * kill(pid, signo) for a process id pid and a number signo of the ABI
- * file's signal table, through the request
- * {kill, Pid, Signal} on the channel (docs/design-programs.md, "The program
- * protocol"): 0, or the handler's error negated.  Without a request:
- * -ENOSYS for signal 0 and for pid 0 or below, a process group, for which
- * the request table offers no target; -EINVAL for a number the signal
- * table does not list or reserves; -ESRCH for process 1, the session.
- * -EIO when the channel cannot carry the request.
+ * file's signal table, through the request {kill, Pid, Signal} on the
+ * channel, or for signo 0 through {probe, Pid}, which asks whether a kill
+ * would reach pid and signals nothing (docs/design-programs.md, "The
+ * program protocol"): 0, or the handler's error negated.  Without a
+ * request: -ENOSYS for pid 0 or below, a process group, for which the
+ * request table offers no target; -EINVAL for a number the signal table
+ * does not list or reserves; -ESRCH for process 1, the session.  -EIO
+ * when the channel cannot carry the request.
  */
 int	erx_prog_kill(int pid, int signo);
 

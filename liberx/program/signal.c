@@ -25,7 +25,10 @@
 #include "liberx/program/channel.h"
 #include "liberx/program/signal.h"
 
-/* {kill, Pid, Signal} with its version byte: at most 27 bytes, the longest signal name being 11. */
+/*
+ * {kill, Pid, Signal} or {probe, Pid} with its version byte: at most 27
+ * bytes, the longest signal name being 11.
+ */
 #define KILL_VALUE_MAX	40
 
 static pthread_mutex_t actions_lock = PTHREAD_MUTEX_INITIALIZER;
@@ -107,29 +110,38 @@ int
 erx_prog_kill(int pid, int signo)
 {
 	const char *const name = erx_profile_named_name(&erx_prog_profile, ERX_PROG_KIND_SIGNAL, signo);
+	/* Signal 0 only asks whether a kill would reach pid. */
+	const uint16_t request = signo == 0 ? ERX_PROG_REQUEST_PROBE : ERX_PROG_REQUEST_KILL;
 	uint8_t value[KILL_VALUE_MAX];
 	erx_etf_writer_t writer;
 	erx_prog_reply_t reply;
 	size_t len;
 
-	/* kill(pid, 0) and a process group are no target the request table offers. */
-	if (signo == 0)
-		return (-ENOSYS);
-	if (name == NULL)
+	if (request == ERX_PROG_REQUEST_KILL && name == NULL)
 		return (-EINVAL);
+	/* A process group is no target the request table offers. */
 	if (pid <= 0)
 		return (-ENOSYS);
 	/* Process 1 is the session, which no program signals; the handler answers esrch for it too. */
 	if (pid == 1)
 		return (-ESRCH);
 	erx_etf_writer_init(&writer, value, sizeof(value));
-	erx_etf_put_tuple(&writer, 3);
-	erx_etf_put_atom(&writer, "kill", strlen("kill"));
-	erx_etf_put_integer(&writer, pid);
-	erx_etf_put_atom(&writer, name, strlen(name));
-	if (!erx_etf_writer_done(&writer, &len) ||
-	    erx_prog_channel_request(ERX_PROG_REQUEST_KILL, value, len, &reply) != ERX_OK)
+	if (request == ERX_PROG_REQUEST_PROBE) {
+		erx_etf_put_tuple(&writer, 2);
+		erx_etf_put_atom(&writer, "probe", strlen("probe"));
+		erx_etf_put_integer(&writer, pid);
+	} else {
+		erx_etf_put_tuple(&writer, 3);
+		erx_etf_put_atom(&writer, "kill", strlen("kill"));
+		erx_etf_put_integer(&writer, pid);
+		erx_etf_put_atom(&writer, name, strlen(name));
+	}
+	if (!erx_etf_writer_done(&writer, &len))
+		return (-EIO);
+	if (erx_prog_channel_request(request, value, len, &reply) != ERX_OK)
 		return (-EIO);
 	/* The ABI's errno table numbers each error as musl's errno.h does. */
+	if (request == ERX_PROG_REQUEST_PROBE)
+		return (reply.u.probe.which == ERX_PROG_PROBE_REPLY_OK ? 0 : -reply.u.probe.u.error.errnum);
 	return (reply.u.kill.which == ERX_PROG_KILL_REPLY_OK ? 0 : -reply.u.kill.u.error.errnum);
 }

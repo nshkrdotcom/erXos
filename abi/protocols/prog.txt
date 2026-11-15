@@ -171,11 +171,16 @@ protocol erx_prog
   union kill_reply
     case ok
     case error errno
-  # kill's Signal is a signal's name; kill(pid, 0), which only checks that
-  # the target exists, is no request of this table.
+  union probe_reply
+    case ok
+    case error errno
+  # kill's Signal is a signal's name, never 0: kill(pid, 0), which only
+  # checks that kill would reach the target, is the request probe.
   union request
     case kill process_id signal
     reply kill_reply
+    case probe process_id
+    reply probe_reply
   union notice
     case closed pipe_id end_id
     case drained pipe_id end_id wend

@@ -2894,7 +2894,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the old program's reports reach the new one and the old one's gone, read late, takes the new one's ends
   away; start/1 refuses a pid whose holder
   entry still exists with `einval`, which narrows but does not close the window), the program's requests
-  (the protocol's `request` union is empty), a program as a starter (step 3's checks of its table), and the
+  other than `kill` and `probe`, a program as a starter (step 3's checks of its table), and the
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
   takes and installs directly.
@@ -3116,11 +3116,22 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   are also written by hand with `erx_etf_put_*`, as the notices are; a writer generated from the
   profile, the inverse of its check, would keep each request's encoding one fact with its grammar.
 * [Medium] liberx program layer, `liberx/program/signal.c` (`erx_prog_kill`): musl's `kill` is
-  not offered to the program's seam yet. It waits on two things: musl numbering signals as the
-  ABI's signal table does (musl's Linux numbers would send `sigbus` for `SIGUSR1`), and the
-  handler's answer to `{kill, Target, Signal}` in `erx_prog_handler_core`, without which a
-  program's `kill` waits for its reply for ever. Once both land, add `SYS_kill` to
-  `seam_offered` and `erx_fiasco_libc_fd`, and a `programs` QEMU case of a kill round trip.
+  not offered to the program's seam yet. It waits on musl numbering signals as the ABI's signal
+  table does (musl's Linux numbers would send `sigbus` for `SIGUSR1`). Once it does, add
+  `SYS_kill` to `seam_offered` and `erx_fiasco_libc_fd`, and a `programs` QEMU case of a kill
+  and a probe round trip.
+* [Medium] session, `erx_prog_handler_core` (`kill`, `probe`): a program reaches itself alone.
+  The handler keeps no child record and the program holds no `signal` right, and there is no
+  command server to answer `{kill, Scope, Target, Signal, Sender}` and `{probe, Scope, Target}`,
+  so every other target is `esrch` (docs/design-programs.md, "The program protocol"). A kill of
+  itself with a signal other than `sigkill` and the job-control ones is `enosys`: the protocol has
+  no `{signal, Signal, Sender}` report, and `liberx` raises none. Add the report to
+  `abi/protocols/prog.txt` with its raise in the event executor, then answer such a kill by
+  queueing the report ahead of the reply.
+* [Low] session, `erx_prog_handler_core` (`from_program/2`): it has a clause for each request and
+  notice case `abi/protocols/prog.txt` declares, and no other, so a case added to the protocol
+  without its clause crashes the handler on the first such frame. Have the grammar generator export
+  the cases from the program, and an EUnit case feed the core one accepted frame of each.
 * [Low] liberx program layer, `liberx/program/channel.c` (`slot_take`): the wait for a free reply
   slot is open, and its waiter is on the thread's stack; once signal handlers run on workers, an
   unwind out of it must take the waiter off `slot_waiters` first.

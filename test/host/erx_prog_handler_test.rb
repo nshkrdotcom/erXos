@@ -20,6 +20,7 @@ class ErxProgHandlerTest < Minitest::Test
   TESTS = %w[test/erlang/erx_pipe_fake_nif.erl test/erlang/erx_prog_handler_fakes.erl
              test/erlang/stand_in/erx_program.erl test/erlang/stand_in/erx_pixels.erl
              test/erlang/stand_in/erx_pipe_nif.erl build/gen/otp/erts/preloaded/src/erx_prog.erl
+             build/gen/otp/erts/preloaded/src/erx_prog_grammar.erl
              test/erlang/erx_prog_handler_core_tests.erl test/erlang/erx_prog_handler_tests.erl].freeze
   SUITES = %w[erx_prog_handler_core_tests erx_prog_handler_tests].freeze
   CORE = 'erlang/apps/erx/src/erx_prog_handler_core.erl'
@@ -42,8 +43,23 @@ class ErxProgHandlerTest < Minitest::Test
       Mutant.new(file: CORE, original: "{C#core{out = owed}, []};\n",
                  replacement: "pump(drop_head(C));\n", caught_by: 'owed_report_waits_for_room'),
     'a stop asked again at every stop event' =>
-      Mutant.new(file: CORE, original: 'stop(C) -> {C, []}.',
-                 replacement: 'stop(C) -> {C, [{stop, ?STOP_STATUS}]}.', caught_by: 'stop_once_then_exit'),
+      Mutant.new(file: CORE, original: 'stop(C, _Status) -> {C, []}.',
+                 replacement: 'stop(C, Status) -> {C, [{stop, Status}]}.', caught_by: 'stop_once_then_exit'),
+    'a kill that reaches a process beyond the program' =>
+      Mutant.new(file: CORE, original: 'reach(_C, _Target) -> none.', replacement: 'reach(_C, _Target) -> self.',
+                 caught_by: 'kill_beyond_reach_is_esrch'),
+    'a kill of itself answered ok without a signal sent' =>
+      Mutant.new(file: CORE, original: 'reply(C, kill, Slot, {error, enosys})', replacement: 'reply(C, kill, Slot, ok)',
+                 caught_by: 'kill_of_itself_with_another_signal_is_enosys'),
+    'a continue signal taken for one of the program\'s own' =>
+      Mutant.new(file: CORE, original: 'when Action =:= stop; Action =:= continue ->', replacement: 'when Action =:= stop ->',
+                 caught_by: 'kill_of_itself_with_a_job_control_signal_is_eperm'),
+    'a frame the grammar refuses read anyway' =>
+      Mutant.new(file: CORE, original: '{error, _} -> stop(C, ?REFUSED_STATUS)', replacement: '{error, _} -> from_program(C, Frame)',
+                 caught_by: 'refused_frames_stop_the_program'),
+    'a reply sent at once, ahead of the frame out' =>
+      Mutant.new(file: CORE, original: '    pump(enqueue(C, {frame, Frame})).',
+                 replacement: '    {C, [{send, Frame}]}.', caught_by: 'replies_queue_behind_the_frame_out'),
     'a starter whose exit leaves its program running' =>
       Mutant.new(file: HANDLER, original: "{'DOWN', _, process, Starter, _} -> stop;",
                  replacement: '', caught_by: 'starters_exit_stops_the_program'),

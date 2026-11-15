@@ -474,22 +474,28 @@ put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
 		put_u64(&w, r->u.kill.process_id);
 		put_named(&w, "signal", r->u.kill.signal);
 		break;
+	case ERX_PROG_REQUEST_PROBE:
+		erx_etf_put_tuple(&w, 2);
+		put_atom(&w, "probe");
+		put_u64(&w, r->u.probe.process_id);
+		break;
 	default:
 		return (false);
 	}
 	return (erx_etf_writer_done(&w, len));
 }
 
+/* A reply of ok or {error, Errno}, kill's and probe's. */
 static void
-put_kill_reply(erx_etf_writer_t *w, const erx_prog_kill_reply_t *r)
+put_ok_or_errno(erx_etf_writer_t *w, bool ok, int32_t errnum)
 {
-	if (r->which == ERX_PROG_KILL_REPLY_OK) {
+	if (ok) {
 		put_atom(w, "ok");
 		return;
 	}
 	erx_etf_put_tuple(w, 2);
 	put_atom(w, "error");
-	put_named(w, "errno", r->u.error.errnum);
+	put_named(w, "errno", errnum);
 }
 
 /* The reply frame again, from its slot and struct. */
@@ -502,7 +508,10 @@ put_reply(uint8_t slot, const erx_prog_reply_t *r, uint8_t *out, size_t cap,
 	put_slot_head(&w, out, cap, slot);
 	switch (r->request) {
 	case ERX_PROG_REQUEST_KILL:
-		put_kill_reply(&w, &r->u.kill);
+		put_ok_or_errno(&w, r->u.kill.which == ERX_PROG_KILL_REPLY_OK, r->u.kill.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_PROBE:
+		put_ok_or_errno(&w, r->u.probe.which == ERX_PROG_PROBE_REPLY_OK, r->u.probe.u.error.errnum);
 		break;
 	default:
 		return (false);

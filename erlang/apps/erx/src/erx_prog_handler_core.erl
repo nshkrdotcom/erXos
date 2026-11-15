@@ -25,7 +25,9 @@ A handler lives through three phases:
   values the install gave. A send the driver answers `busy` stays at the
   head, owed, until the program frees room, so nothing newer passes it.
   The program's notices go to the pipe server as events naming the
-  program.
+  program. Its requests are answered on their own reply slots, each
+  reply queued like a report, so it reaches the program after every
+  frame queued before it (Requests, below).
 * **ended**: the program's exit status reached the handler, which tells
   the starter and exits, or its port closed with none, and the handler
   exits without a report.
@@ -36,10 +38,31 @@ handler then waits for the exit status like any other end. So a session
 process's programs never outlive it, as a program's children never
 outlive their parent (docs/design-programs.md, "A program's end").
 
-Every event the core does not expect in its phase leaves the state as it
-was and does nothing: the handler's mailbox is reached only by session
-code and the program's own driver, which delivers only frames of the
-program protocol's grammar within the program's credit.
+Every frame from the program passes the program protocol's grammar
+(erx_prog_grammar:check_from_program/1) before anything reads it. The
+driver delivers only records that decode, within the program's credit,
+so at most one request is outstanding on each slot, but it does not judge
+their form: a frame the grammar refuses stops the program with
+`ERX_EXIT_SIGNAL + SIGSYS`, as the driver stops one for a malformed
+record, and the handler carries on until the program's end.
+
+**Requests** (docs/design-programs.md, "The program protocol"). A
+`{kill, Target, Signal}` and a `{probe, Target}` reach the processes the
+handler's policy lets the program reach: its own children, itself, and
+the processes its `signal` right names. This handler keeps no child
+record and its program holds no `signal` right, so a program reaches
+itself alone, and every other target is `esrch`, whether or not it
+exists, so a kill or a probe tells the program nothing of processes
+beyond its reach. A probe of itself is `ok`. A kill of itself with
+`sigkill` stops the program as a stop does and answers `ok`; with a stop
+or continue signal, which belong to the session's job control, it is
+`eperm`; with any other signal it is `enosys`, since the protocol has no
+report that carries a signal to a program (TODO.md), and a kill answered
+`ok` must have signaled.
+
+Every other event the core does not expect in its phase leaves the state
+as it was and does nothing: the handler's mailbox is reached only by
+session code and the program's own driver.
 """.
 
 -include("generated/erx_abi.hrl").
@@ -115,6 +138,9 @@ program protocol's grammar within the program's credit.
 %% A stop by the session reads as signaled SIGKILL (docs/design-programs.md,
 %% "A program's end").
 -define(STOP_STATUS, (?ERX_EXIT_SIGNAL + ?ERX_SIGKILL)).
+%% A program whose frame the grammar refuses ends signaled SIGSYS
+%% (docs/design-programs.md, "Credit").
+-define(REFUSED_STATUS, (?ERX_EXIT_SIGNAL + ?ERX_SIGSYS)).
 
 -doc """
 A handler for program `Pid` that starts it with the starter's
@@ -173,7 +199,7 @@ step(#core{phase = running, out = sending} = C, {sent, {error, _}}) ->
     %% miss a report and read the later ones, so nothing more is sent and the
     %% program is stopped, as a refused install's pass stops it; one already
     %% ending refuses the stop.
-    stop(C#core{out = lost, queue = queue:new()});
+    stop(C#core{out = lost, queue = queue:new()}, ?STOP_STATUS);
 step(#core{phase = running, out = owed} = C, room) ->
     pump(C#core{out = false});
 step(#core{phase = running, out = sending, queue = Q} = C, {installed, Filled}) ->
@@ -185,12 +211,13 @@ step(#core{phase = running, out = sending, queue = Q} = C, {install_refused, _})
     {hand, {pipe_hand, _, Report}} = queue:head(Q),
     {C1, Actions} = pump(drop_head(C)),
     {C1, [{forward, {install_failed, holder(C), element(2, Report), element(3, Report)}} | Actions]};
-step(#core{phase = running} = C, {frame, {erx_prog, 1, {closed, Pipe, End}}}) ->
-    {C, [{forward, {closed, holder(C), Pipe, End}}]};
-step(#core{phase = running} = C, {frame, {erx_prog, 1, {drained, Pipe, End, Writer}}}) ->
-    {C, [{forward, {drained, holder(C), Pipe, End, Writer}}]};
+step(#core{phase = running} = C, {frame, Frame}) ->
+    case erx_prog_grammar:check_from_program(Frame) of
+        ok -> from_program(C, Frame);
+        {error, _} -> stop(C, ?REFUSED_STATUS)
+    end;
 step(#core{phase = running} = C, stop) ->
-    stop(C);
+    stop(C, ?STOP_STATUS);
 step(#core{phase = running} = C, {exit_status, Status}) when is_integer(Status) ->
     {C#core{phase = ended, queue = queue:new()}, [{tell_starter, Status}, exit]};
 step(#core{phase = running} = C, port_closed) ->
@@ -200,9 +227,51 @@ step(#core{phase = running} = C, port_closed) ->
 step(C, _Event) ->
     {C, []}.
 
-%% A stop by the session, asked once.
-stop(#core{stopping = false} = C) -> {C#core{stopping = true}, [{stop, ?STOP_STATUS}]};
-stop(C) -> {C, []}.
+%% A stop of the program with Status, asked once.
+stop(#core{stopping = false} = C, Status) -> {C#core{stopping = true}, [{stop, Status}]};
+stop(C, _Status) -> {C, []}.
+
+%% A frame from the program, which the grammar accepted.
+from_program(C, {erx_prog, _, {closed, Pipe, End}}) ->
+    {C, [{forward, {closed, holder(C), Pipe, End}}]};
+from_program(C, {erx_prog, _, {drained, Pipe, End, Writer}}) ->
+    {C, [{forward, {drained, holder(C), Pipe, End, Writer}}]};
+from_program(C, {erx_prog, _, Slot, {kill, Target, Signal}}) ->
+    case reach(C, Target) of
+        none -> reply(C, kill, Slot, {error, esrch});
+        self -> kill_self(C, Slot, Signal)
+    end;
+from_program(C, {erx_prog, _, Slot, {probe, Target}}) ->
+    case reach(C, Target) of
+        none -> reply(C, probe, Slot, {error, esrch});
+        self -> reply(C, probe, Slot, ok)
+    end.
+
+%% A kill of the program itself. A signal whose default action in the
+%% signal table is stop or continue belongs to the session's job control.
+kill_self(C, Slot, Signal) ->
+    case {Signal, erx_abi_signals:default_action(Signal)} of
+        {_, Action} when Action =:= stop; Action =:= continue ->
+            reply(C, kill, Slot, {error, eperm});
+        {sigkill, _} ->
+            {C1, Stop} = stop(C, ?STOP_STATUS),
+            {C2, Sent} = reply(C1, kill, Slot, ok),
+            {C2, Stop ++ Sent};
+        _ ->
+            reply(C, kill, Slot, {error, enosys})
+    end.
+
+%% Whom a kill or a probe of Target reaches: the program itself, or no one,
+%% as the handler keeps no child record and the program holds no signal right.
+reach(#core{pid = Pid}, Pid) -> self;
+reach(_C, _Target) -> none.
+
+%% The reply Value to the request of case Request on Slot, queued behind the
+%% frames already waiting. The handler builds every reply it sends, so one
+%% the grammar refuses is the handler's bug, and crashes it.
+reply(C, Request, Slot, Value) ->
+    {ok, Frame} = erx_prog_grammar:build_reply(Request, Slot, Value),
+    pump(enqueue(C, {frame, Frame})).
 
 %% The next descriptor's reservation, or the start once none is left.
 reserve_next(#core{todo = [{_N, {pipe, End}} | _]} = C) ->

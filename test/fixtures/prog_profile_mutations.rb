@@ -60,8 +60,9 @@ module ProgProfileMutations
     ['report', t(:pipe_writer_gone, 1, 2, 3)], ['report', t(:pipe_reader, 1, 2, 63, 101, :gone)],
     ['report', t(:pipe_reader_gone, 1, 2, 0)], ['report', t(:pipe_lost, 1, 2)],
     ['report', :pipe_server_lost],
-    ['request', t(:kill, 2, :sigint)],
-    ['reply', :ok, '3:kill'], ['reply', t(:error, :eperm), '3:kill']
+    ['request', t(:kill, 2, :sigint)], ['request', t(:probe, 2)],
+    ['reply', :ok, '3:kill'], ['reply', t(:error, :eperm), '3:kill'],
+    ['reply', :ok, '3:probe'], ['reply', t(:error, :esrch), '3:probe']
   ].freeze
 
   module_function

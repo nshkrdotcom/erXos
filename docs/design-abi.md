@@ -1266,9 +1266,14 @@ protocol erx_prog
   union kill_reply
     case ok
     case error errno
+  union probe_reply
+    case ok
+    case error errno
   union request
     case kill process_id signal
     reply kill_reply
+    case probe process_id
+    reply probe_reply
   frame start to erx_start start
   frame request from erx_prog slot request
   frame reply to erx_prog slot reply request

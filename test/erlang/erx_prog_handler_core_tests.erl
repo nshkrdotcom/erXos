@@ -8,7 +8,10 @@ reserved one at a time in order and the start follows; a refusal at any
 step undoes exactly what was reserved; reports queue behind the start and
 one is out at a time, an owed one waiting for room; a hand-off report is
 installed before it is sent and a refused install becomes the pipe
-server's install_failed; notices name the program; a stop is asked once;
+server's install_failed; notices name the program; a kill or probe is
+answered on its own slot, behind the frames already queued, and reaches
+the program itself alone; a frame the grammar refuses stops the program
+with SIGSYS; a stop is asked once;
 and the exit status tells the starter and ends the handler. A bounded
 exhaustive walk over every sequence of the running phase's events checks
 that at most one frame is ever out, that frames reach the program in the
@@ -19,6 +22,11 @@ order they were queued, and that nothing follows the end.
 
 -define(PID, 21).
 -define(HAND(N), {pipe_hand, N, {pipe, read, {9, N}, #{lock => {hand, 1}}}}).
+-define(ASK(Slot, Request), {frame, {erx_prog, 1, Slot, Request}}).
+-define(ANSWER(Slot, Reply), {send, {erx_prog, 1, Slot, Reply}}).
+%% The status of a stop for a refused frame, 256 + SIGSYS, and of a SIGKILL.
+-define(REFUSED, 268).
+-define(KILLED, 265).
 
 new_refuses_bad_specs_test_() ->
     [?_assertEqual({error, einval}, erx_prog_handler_core:new(1, [])),
@@ -89,7 +97,60 @@ notices_name_the_program_test_() ->
                    erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {closed, 9, 1}}})),
      ?_assertEqual({C, [{forward, {drained, {program, ?PID}, 9, 1, 3}}]},
                    erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {drained, 9, 1, 3}}})),
-     ?_assertEqual({C, []}, erx_prog_handler_core:step(C, {frame, {erx_prog, 1, 0, anything}}))].
+     ?_assertMatch({_, [{stop, ?REFUSED}]}, erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {closed, 0, 1}}}))].
+
+%% The handler keeps no child record and its program holds no signal
+%% right, so a program's kill and probe reach the program itself alone.
+kill_of_itself_with_sigkill_stops_it_and_answers_ok_test() ->
+    ?assertMatch({_, [{stop, ?KILLED}, ?ANSWER(3, ok)]},
+                 erx_prog_handler_core:step(running(), ?ASK(3, {kill, ?PID, sigkill}))).
+
+kill_beyond_reach_is_esrch_test_() ->
+    [?_assertMatch({_, [?ANSWER(3, {error, esrch})]},
+                   erx_prog_handler_core:step(running(), ?ASK(3, {kill, Target, Signal})))
+     || Target <- [2, ?PID + 1, 16#7fffffff], Signal <- [sigterm, sigkill, sigstop]].
+
+kill_of_itself_with_a_job_control_signal_is_eperm_test_() ->
+    [?_assertMatch({_, [?ANSWER(0, {error, eperm})]},
+                   erx_prog_handler_core:step(running(), ?ASK(0, {kill, ?PID, Signal})))
+     || Signal <- [sigstop, sigtstp, sigttin, sigttou, sigcont]].
+
+%% The protocol has no report that carries a signal to a program (TODO.md),
+%% so a kill of itself with any other signal is refused, never ok.
+kill_of_itself_with_another_signal_is_enosys_test() ->
+    ?assertMatch({_, [?ANSWER(15, {error, enosys})]},
+                 erx_prog_handler_core:step(running(), ?ASK(15, {kill, ?PID, sigterm}))).
+
+probe_test_() ->
+    [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
+     ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},
+                   erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID + 1})))].
+
+replies_name_the_slot_of_their_request_test_() ->
+    [?_assertMatch({_, [?ANSWER(Slot, ok)]}, erx_prog_handler_core:step(running(), ?ASK(Slot, {probe, ?PID})))
+     || Slot <- lists:seq(0, 15)].
+
+%% A reply queues behind the frame out, each on its own request's slot.
+replies_queue_behind_the_frame_out_test() ->
+    {C1, [{send, _}]} = erx_prog_handler_core:step(running(), {report, {pipe_lost, 9, 1}}),
+    {C2, []} = erx_prog_handler_core:step(C1, ?ASK(7, {probe, ?PID + 1})),
+    {C3, []} = erx_prog_handler_core:step(C2, ?ASK(2, {probe, ?PID})),
+    {C4, [?ANSWER(7, {error, esrch})]} = erx_prog_handler_core:step(C3, {sent, ok}),
+    ?assertMatch({_, [?ANSWER(2, ok)]}, erx_prog_handler_core:step(C4, {sent, ok})).
+
+%% A frame the program's grammar refuses stops the program, as the driver
+%% stops one for a malformed record, and the handler goes on.
+refused_frames_stop_the_program_test_() ->
+    [?_assertMatch({_, [{stop, ?REFUSED}]}, erx_prog_handler_core:step(running(), {frame, Frame}))
+     || Frame <- [{erx_prog, 1, 0, anything}, {erx_prog, 1, 0, {kill, ?PID, 0}},
+                  {erx_prog, 1, 0, {kill, 1, sigterm}}, {erx_prog, 1, 16, {probe, ?PID}},
+                  {erx_prog, 2, 0, {probe, ?PID}}, {erx_prog, 1, 0, {probe, ?PID, extra}},
+                  {erx_prog, 1, {closed, 9}}, {erx_start, 1, #{}}, <<"bytes">>, [], self()]].
+
+refused_frames_after_a_stop_ask_nothing_more_test() ->
+    {C1, [{stop, ?REFUSED}]} = erx_prog_handler_core:step(running(), {frame, {erx_prog, 1, 0, nope}}),
+    ?assertMatch({_, []}, erx_prog_handler_core:step(C1, {frame, {erx_prog, 1, 0, nope}})),
+    ?assertMatch({_, []}, erx_prog_handler_core:step(C1, stop)).
 
 stop_once_then_exit_test() ->
     {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
@@ -125,19 +186,22 @@ walk(C, M, Depth, Count) ->
                         walk(C1, M1, Depth - 1, Acc)
                 end, Count + 1, events(M)).
 
-%% The reports are numbered so the order they reach the program can be checked.
+%% The reports are numbered so the order they reach the program can be
+%% checked; a probe of the program itself queues its reply among them.
 events(#{next := N}) ->
     [{report, {pipe_lost, 9, N}}, {sent, ok}, {sent, busy}, room, stop, {exit_status, 0},
-     {frame, {erx_prog, 1, {closed, 9, 1}}}].
+     {frame, {erx_prog, 1, {closed, 9, 1}}}, ?ASK(N rem 16, {probe, ?PID})].
 
-%% The model: each report is queued; a send takes the oldest unsent; at most
-%% one send is out; after the end nothing happens.
+%% The model: each report and each reply is queued; a send takes the oldest
+%% unsent; at most one send is out; after the end nothing happens.
 check(_Event, Actions, #{ended := true} = M) ->
     ?assertEqual([], Actions),
     M;
 check(Event, Actions, M0) ->
     M1 = case {Event, maps:get(out, M0)} of
-             {{report, {pipe_lost, _, N}}, _} -> M0#{queued := maps:get(queued, M0) ++ [N], next := N + 1};
+             {{report, {pipe_lost, _, N} = Report}, _} ->
+                 M0#{queued := maps:get(queued, M0) ++ [{erx_prog, 1, Report}], next := N + 1};
+             {?ASK(Slot, {probe, _}), _} -> M0#{queued := maps:get(queued, M0) ++ [{erx_prog, 1, Slot, ok}]};
              {{sent, ok}, sending} ->
                  [_ | Rest] = maps:get(queued, M0),
                  M0#{out := none, queued := Rest};
@@ -147,11 +211,11 @@ check(Event, Actions, M0) ->
              {{exit_status, _}, _} -> M0#{ended := true};
              _ -> M0
          end,
-    lists:foldl(fun({send, {erx_prog, 1, {pipe_lost, 9, N}}}, M) ->
+    lists:foldl(fun({send, Frame}, M) ->
                         ?assertEqual(none, maps:get(out, M)),
                         [Oldest | _] = maps:get(queued, M),
-                        ?assertEqual(Oldest, N),
-                        M#{out := sending, sent := maps:get(sent, M) ++ [N]};
+                        ?assertEqual(Oldest, Frame),
+                        M#{out := sending, sent := maps:get(sent, M) ++ [Frame]};
                    (_, M) ->
                         M
                 end, M1, Actions).

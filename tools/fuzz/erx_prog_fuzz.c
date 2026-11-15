@@ -10,8 +10,8 @@
  * startup message (4), checked by erx_prog_check_to_program; bits 3-5 the
  * scratch's offset from an aligned address; bits 6-7 the busy slots a
  * reply is judged by: none (0), every slot holding a kill (1), the even
- * slots holding one (2), or slot 0 holding one and the others ids that
- * name no request case (3).
+ * slots holding one (2), or slot 0 holding a kill, slot 1 a probe and the
+ * others ids that name no request case (3).
  * The rest is the frame's bytes.
  *
  * For every input the harness checks the frame twice: with all the scratch
@@ -26,9 +26,9 @@
  * read end's index to 63, a lane size of 16 or 64 KiB, capabilities other
  * than the null one and distinct within the frame, and an end state open or
  * gone, and a mem range's first page and count from 1.  An accepted request
- * holds a kill of a process id from 2 and a signal of the signal table; an
- * accepted reply came on a slot that holds a kill, and holds ok or an
- * errno of the errno table.  The executor's read of a frame to the program
+ * holds a kill of a process id from 2 and a signal of the signal table, or
+ * a probe of a process id from 2; an accepted reply came on a slot that
+ * holds its request, and holds ok or an errno of the errno table.  The executor's read of a frame to the program
  * over reply slots holding those requests accepts exactly what the check
  * does, moves a reply's slot to answered so the same reply read again is
  * refused, and leaves the slots unchanged otherwise.
@@ -409,29 +409,53 @@ named(const char *word, int32_t number)
 	return (false);
 }
 
+static bool
+is_process_id(uint32_t pid)
+{
+	return (pid >= 2 && pid <= 0x7fffffffu);
+}
+
 static void
 read_request(const erx_prog_request_t *r)
 {
-	if (r->which != ERX_PROG_REQUEST_KILL || r->u.kill.process_id < 2 ||
-	    r->u.kill.process_id > 0x7fffffffu ||
-	    !named("signal", r->u.kill.signal))
+	switch (r->which) {
+	case ERX_PROG_REQUEST_KILL:
+		if (!is_process_id(r->u.kill.process_id) || !named("signal", r->u.kill.signal))
+			abort();
+		return;
+	case ERX_PROG_REQUEST_PROBE:
+		if (!is_process_id(r->u.probe.process_id))
+			abort();
+		return;
+	}
+	abort();
+}
+
+/* An ok, or an error of the errno table, kill's and probe's replies. */
+static void
+read_ok_or_errno(bool ok, bool error, int32_t errnum)
+{
+	if (ok)
+		return;
+	if (!error || !named("errno", errnum))
 		abort();
 }
 
-/* A reply accepted on slot, which busy must hold a kill on. */
+/* A reply accepted on slot, which busy must hold its request on. */
 static void
 read_reply(const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t slot,
     const erx_prog_reply_t *r)
 {
-	if (slot >= ERX_PROFILE_SLOTS || busy[slot] != ERX_PROG_REQUEST_KILL ||
-	    r->request != ERX_PROG_REQUEST_KILL)
+	if (slot >= ERX_PROFILE_SLOTS || busy[slot] != r->request)
 		abort();
-	switch (r->u.kill.which) {
-	case ERX_PROG_KILL_REPLY_OK:
+	switch (r->request) {
+	case ERX_PROG_REQUEST_KILL:
+		read_ok_or_errno(r->u.kill.which == ERX_PROG_KILL_REPLY_OK,
+		    r->u.kill.which == ERX_PROG_KILL_REPLY_ERROR, r->u.kill.u.error.errnum);
 		return;
-	case ERX_PROG_KILL_REPLY_ERROR:
-		if (!named("errno", r->u.kill.u.error.errnum))
-			abort();
+	case ERX_PROG_REQUEST_PROBE:
+		read_ok_or_errno(r->u.probe.which == ERX_PROG_PROBE_REPLY_OK,
+		    r->u.probe.which == ERX_PROG_PROBE_REPLY_ERROR, r->u.probe.u.error.errnum);
 		return;
 	}
 	abort();
@@ -496,8 +520,12 @@ busy_slots(unsigned pattern, uint16_t busy[ERX_PROFILE_SLOTS])
 			    ERX_PROFILE_NONE;
 			break;
 		case 3:
-			busy[slot] = slot == 0 ? ERX_PROG_REQUEST_KILL :
-			    (uint16_t)(ERX_PROG_REQUEST_KILL + slot);
+			if (slot == 0)
+				busy[slot] = ERX_PROG_REQUEST_KILL;
+			else if (slot == 1)
+				busy[slot] = ERX_PROG_REQUEST_PROBE;
+			else
+				busy[slot] = (uint16_t)(ERX_PROG_REQUEST_PROBE + slot);
 			break;
 		default:
 			busy[slot] = ERX_PROFILE_NONE;

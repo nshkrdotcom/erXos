@@ -29,9 +29,11 @@
  *   kill	erx_prog_kill sends {kill, Pid, Signal} on a slot and waits:
  *		a reply on another slot is refused, the reply on its slot
  *		is returned, an error negated, and a second one is refused
- *   local	a kill the request table offers no target for, of an
- *		unlisted signal or of the session, is answered without a
- *		request
+ *   probe	erx_prog_kill with signal 0 sends {probe, Pid} on a slot
+ *		and returns its reply: 0 for ok, an error negated
+ *   local	a kill or probe of a process group, a kill of an
+ *		unlisted signal, and either of the session, are answered
+ *		without a request
  *   slots	with every worker slot held, one more kill waits for a slot
  *		and takes the one a reply frees; no request uses the
  *		executor's slot or a held one
@@ -602,17 +604,36 @@ case_kill(void)
 }
 
 static void
+case_probe(void)
+{
+	killer_t k;
+	erx_prog_request_t request;
+	uint8_t slot;
+
+	killer_start(&k, 42, 0);
+	request = request_read(&slot);
+	if (request.which != ERX_PROG_REQUEST_PROBE || request.u.probe.process_id != 42)
+		fail("the request is not the probe made");
+	if (!reply_give(slot, "esrch") || killer_join(&k) != -ESRCH)
+		fail("a probe did not return the reply's error");
+	killer_start(&k, 42, 0);
+	request = request_read(&slot);
+	if (request.which != ERX_PROG_REQUEST_PROBE || !reply_give(slot, NULL) || killer_join(&k) != 0)
+		fail("a probe did not return 0 for ok");
+}
+
+static void
 case_local(void)
 {
 	static unsigned char buf[ERX_PROGRAM_LANE];
 	uint32_t len;
 
-	if (erx_prog_kill(42, 0) != -ENOSYS || erx_prog_kill(0, ERX_SIGTERM) != -ENOSYS ||
-	    erx_prog_kill(-5, ERX_SIGTERM) != -ENOSYS)
-		fail("signal 0 or a process group is not ENOSYS");
+	if (erx_prog_kill(0, ERX_SIGTERM) != -ENOSYS || erx_prog_kill(-5, ERX_SIGTERM) != -ENOSYS ||
+	    erx_prog_kill(0, 0) != -ENOSYS || erx_prog_kill(-5, 0) != -ENOSYS)
+		fail("a process group is not ENOSYS");
 	if (erx_prog_kill(42, ERX_SIGRTMAX + 1) != -EINVAL || erx_prog_kill(42, -1) != -EINVAL)
 		fail("a signal the table does not list is not EINVAL");
-	if (erx_prog_kill(1, ERX_SIGTERM) != -ESRCH)
+	if (erx_prog_kill(1, ERX_SIGTERM) != -ESRCH || erx_prog_kill(1, 0) != -ESRCH)
 		fail("the session is not ESRCH");
 	if (record_read(buf, sizeof(buf), sizeof(buf), &len))
 		fail("a kill answered locally sent a request");
@@ -667,7 +688,7 @@ main(int argc, char **argv)
 	} cases[] = {
 		{ "whole", case_whole }, { "wait", case_wait }, { "waiters", case_waiters },
 		{ "two", case_two }, { "large", case_large }, { "kill", case_kill },
-		{ "local", case_local }, { "slots", case_slots },
+		{ "probe", case_probe }, { "local", case_local }, { "slots", case_slots },
 	};
 	const uint64_t bytes = erx_lane_side_bytes(ERX_PROGRAM_LANE);
 

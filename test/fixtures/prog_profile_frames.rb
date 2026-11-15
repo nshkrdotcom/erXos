@@ -226,6 +226,12 @@ module ProgProfileFrames
                     bytes: frame(tuple(atom('erx_prog'), small(1), small(15), tuple(atom('kill'), int(0x7fff_ffff),
                                                                                     atom('sigrtmin+1')))),
                     verdict: 'accept'),
+           Seed.new(name: 'request-probe', frame: 'request',
+                    bytes: frame(tuple(atom('erx_prog'), small(1), small(0), tuple(atom('probe'), small(2)))),
+                    verdict: 'accept'),
+           Seed.new(name: 'reply-probe-error', frame: 'reply',
+                    bytes: frame(tuple(atom('erx_prog'), small(1), small(1), tuple(atom('error'), atom('esrch')))),
+                    verdict: 'accept', busy: '1:probe'),
            *[['ok', atom('ok')], ['error', tuple(atom('error'), atom('enotsup'))]].map do |name, value|
              Seed.new(name: "reply-#{name}", frame: 'reply', bytes: frame(tuple(atom('erx_prog'), small(1), small(0), value)),
                       verdict: 'accept', busy: '0:kill')
