@@ -18,6 +18,8 @@ class HeaderProbeTest < Minitest::Test
   PI = Erx::Platform.load(root: ROOT, name: 'raspi4b')
   DEVICES = Erx::Hardware.devices(root: ROOT)
   PINS = Erx::Pins.read(root: ROOT, soc: 'bcm2711')
+  # What HeaderProbe.console_device reads of a platform.
+  RecordOnly = Data.define(:record, :record_path)
 
   def defines(platform = PI, devices: DEVICES) = Erx::HeaderProbe.defines(platform, devices: devices, pins: PINS, revision: 'n1-abc')
 
@@ -33,7 +35,10 @@ class HeaderProbeTest < Minitest::Test
   def test_refuses_a_console_that_is_not_the_mini_uart
     pl011 = PI.record.fetch('units').flat_map { |unit| unit.fetch('devices') }
               .find { |device| device['compatible'] == 'arm,pl011' }.fetch('path')
-    platform = Erx::Platform.new(name: 'raspi4b', record: PI.record.merge('console' => pl011))
+    # Platform.new refuses this record before the probe sees it, since the header map then
+    # finds the mini UART's pins on a device no driver drives; the probe reads only the
+    # record and its path, so it is handed those.
+    platform = RecordOnly.new(record: PI.record.merge('console' => pl011), record_path: PI.record_path)
     error = assert_raises(Erx::Error) { defines(platform) }
     assert_match(/not a brcm,bcm2835-aux-uart/, error.message)
   end

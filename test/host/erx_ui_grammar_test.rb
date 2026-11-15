@@ -140,8 +140,8 @@ class ErxUIGrammarTest < Minitest::Test
       source = File.read(File.join(ROOT, Erx::ABI::UI::SOURCE))
       text = source.sub(RECORDS) { "#{ADDITIONS.gsub(/^/, '  ')}#{RECORDS}" }
       declarations = Erx::ABI::Syntax.parse(text, path: Erx::ABI::UI::SOURCE).select { |item| item.kind == 'ui' }
-      real = SCHEMA.ui
-      limits = { 'web_ui_op_max' => real.op_max, 'ui_children' => real.children_max, 'ui_damage_rects' => real.damage_max }
+      # The root limits as the generator reads them, so a bound written as @name resolves.
+      limits = SCHEMA.constants.transform_values(&:value)
       Erx::ABI::UI.validate(declarations, limits: limits, types: SCHEMA.types)
     end
   end
