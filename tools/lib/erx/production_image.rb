@@ -1032,8 +1032,8 @@ module Erx
       # Last the person kills the console from its Erlang shell (CONSOLE_KILL): its
       # supervisor starts it again, which writes the slogan and starts the command shell on
       # the line, the shell a person meets at boot, and the Erlang shell started
-      # there answers a sum and writes a line through the master of an application started
-      # after kernel (APP_IO), the group leader of that application's processes, which reaches the
+      # there answers a sum and writes a line through the master of the last application started
+      # that has one (APP_IO), the group leader of that application's processes, which reaches the
       # restarted console's `user` (docs/design-live.md, "Failure handling, diagnostics and
       # debuggability").
       def self.console_checkpoints(machine:)
@@ -1359,10 +1359,15 @@ module Erx
       # Typed at the console's Erlang shell: the console killed, as a crash would end it.
       CONSOLE_KILL = "exit(whereis(erx_console), kill).\r"
       # Typed at the restarted console's Erlang shell: a line written as the processes of
-      # the last application started write theirs, through its master. Every application
-      # but kernel starts after `user` is first registered.
-      APP_IO = 'io:format(application_controller:get_master(element(1,hd(application:which_applications()))),' \
-               '"app-io-~s~n",[ok]).' "\r"
+      # the last application started that has a master write theirs, through that master.
+      # which_applications/0 lists the last started first, and a library application, one
+      # with no `mod`, has no master: stock OTP behaves the same way, and get_master/1
+      # returns undefined for it. Kernel is passed over: its master starts while the
+      # controller's group leader is still init, in stock OTP too, so it finds `user` by
+      # name whatever happens; only a master started later, after `user` is first
+      # registered, tests that the restarted console's `user` is found by name.
+      APP_IO = 'io:format(hd([M||{A,_,_}<-application:which_applications(),A=/=kernel,' \
+               'M<-[application_controller:get_master(A)],is_pid(M)]),"app-io-~s~n",[ok]).' "\r"
       # The same status file through file:read_file/1: every line of it is a field escape's
       # name, value and reporter, and the console's line says so. B is LOAD_ONLY_EXPRESSION's.
       PROC_READ_EXPRESSION = '{ok,PB}=file:read_file(["/proc/processes/",P,"/status"]),' \
