@@ -84,7 +84,8 @@ winfs(_Display, _Policy) ->
     [].
 
 %% The window manager and its configuration of each mf_display_policy member, by its name.
-policy("single") -> {erx_wm_single, #{}}.
+policy("single") -> {erx_wm_single, #{}};
+policy("rio") -> {erx_wm_rio, #{}}.
 
 %% The driver and screen of the domain's display record, the virtio-gpu's or the firmware
 %% framebuffer's, or none, with a line saying why.

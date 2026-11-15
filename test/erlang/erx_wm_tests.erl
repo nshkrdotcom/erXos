@@ -183,7 +183,7 @@ one_shown(#{table := Table}) ->
         _ -> error({app_window_not_shown, Table})
     end.
 
-decorations_within(#{policy := Policy, table := Table, screen := Screen}) ->
+decorations_within(#{policy := Policy, table := Table, screen := Screen, state := State}) ->
     lists:foreach(
       fun({Id, Sides}) ->
               case erx_wm:fetch(Id, Table) of
@@ -192,7 +192,7 @@ decorations_within(#{policy := Policy, table := Table, screen := Screen}) ->
               end,
               [error({decoration_outside_screen, Side})
                || {Side, _} <- Sides, not erx_wm:within(Side, Screen)]
-      end, Policy:decorate(Table, Screen)).
+      end, Policy:decorate(Table, Screen, State)).
 
 %% Random operations
 
@@ -266,7 +266,7 @@ single_shows_the_oldest_app_window_full_screen_test() ->
     ?assertMatch([#{id := 1, state := hidden}, #{id := 2, state := shown},
                   #{id := 3, state := hidden}], Table),
     ?assertEqual([screen()], lists:usort([R || #{rect := R} <- Table])),
-    ?assertEqual([], erx_wm_single:decorate(Table, screen())).
+    ?assertEqual([], erx_wm_single:decorate(Table, screen(), #{})).
 
 %% No event marks a window's end: the table erx_winfs hands the policy
 %% after the shown window ended already routes input to the next oldest.

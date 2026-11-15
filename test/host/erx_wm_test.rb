@@ -7,7 +7,7 @@ require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
-# Runs test/erlang/erx_wm_tests.erl, erx_wctl_tests.erl and erx_winctl_tests.erl, the EUnit cases
+# Runs test/erlang/erx_wm_tests.erl, erx_wm_rio_tests.erl, erx_wctl_tests.erl and erx_winctl_tests.erl, the EUnit cases
 # of the window policies and of the wctl and ctl text (docs/design-display.md, "Verification and
 # testing", the window system), against the erx_display application compiled from source
 # with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC, which make check
@@ -16,7 +16,7 @@ require_relative '../fixtures/erlang_build'
 class ErxWmTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SOURCE_DIRECTORY = 'erlang/apps/erx_display/src'
-  TESTS = %w[erx_wm_tests erx_wctl_tests erx_winctl_tests].freeze
+  TESTS = %w[erx_wm_tests erx_wm_rio_tests erx_wctl_tests erx_winctl_tests].freeze
   DEADLINE = '300'
   # A broken rule: the file, its text, what replaces it, and the property that must fail,
   # by the name the cases raise.
@@ -37,7 +37,30 @@ class ErxWmTest < Minitest::Test
     keys_dropped: Mutant.new(file: 'erx_wm_single.erl',
                              text: 'Id -> {{to, Id, Input}, State}',
                              broken: '_Id -> {drop, State}',
-                             property: /key_not_delivered/)
+                             property: /key_not_delivered/),
+    # The overlapping policy's keyboard goes only to the user's pick: a client that gains it
+    # by its own wctl top, a window that takes it by being made, and a current window that
+    # falls back to the topmost shown one when the pick is hidden or ended each fail the
+    # exhaustive run, as does a click on another window delivered to it.
+    top_picks: Mutant.new(file: 'erx_wm_rio.erl',
+                          text: "request(top, Window, Windows, _Screen, State) ->\n    {ok, raise(Window, Windows), State};",
+                          broken: 'request(top, #{id := Id} = Window, Windows, _Screen, State) ->' \
+                                  "\n    " '{ok, raise(Window, Windows), State#{pick := Id}};',
+                          property: /key_not_to_the_pick/),
+    new_picks: Mutant.new(file: 'erx_wm_rio.erl',
+                          text: 'State#{cascade := (Index + 1) rem ?CASCADE_LENGTH}};',
+                          broken: 'State#{cascade := (Index + 1) rem ?CASCADE_LENGTH, pick := maps:get(id, Window)}};',
+                          property: /key_not_to_the_pick/),
+    topmost_fallback: Mutant.new(file: 'erx_wm_rio.erl',
+                                 text: '        {ok, #{state := shown}} -> Pick;' "\n" '        _ -> none',
+                                 broken: '        {ok, #{state := shown}} -> Pick;' "\n" \
+                                         '        _ -> case erx_wm:shown(Windows) of [#{id := Top} | _] -> Top; ' \
+                                         '[] -> none end',
+                                 property: /key_not_to_the_pick/),
+    click_delivered: Mutant.new(file: 'erx_wm_rio.erl',
+                                text: '_Other -> {{windows, raised(Id, Windows)}, State#{pick := Id}}',
+                                broken: '_Other -> {{to, Id, Input}, State#{pick := Id}}',
+                                property: /click_reached_a_client/)
   }.freeze
 
   def test_policy_and_wctl_cases_pass_under_eunit
@@ -53,6 +76,15 @@ class ErxWmTest < Minitest::Test
   def test_showing_the_newest_window_fails_the_single_property = assert_mutant_fails(:newest_window_shown)
 
   def test_dropped_keys_fail_the_delivery_property = assert_mutant_fails(:keys_dropped)
+
+  def test_a_pick_by_wctl_top_fails_the_overlapping_keyboard_run = assert_mutant_fails(:top_picks)
+
+  def test_a_pick_of_each_new_window_fails_the_overlapping_keyboard_run = assert_mutant_fails(:new_picks)
+
+  def test_the_topmost_shown_window_as_fallback_fails_the_overlapping_keyboard_run =
+    assert_mutant_fails(:topmost_fallback)
+
+  def test_a_selecting_click_delivered_fails_the_overlapping_keyboard_run = assert_mutant_fails(:click_delivered)
 
   private
 

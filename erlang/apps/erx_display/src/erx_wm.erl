@@ -7,9 +7,9 @@ The window policy behaviour (docs/design-display.md, "Windows and the
 window system"): the pure module erx_winfs asks every question of
 geometry and input. A policy decides where windows go, which are shown,
 how they are framed and which window an input event reaches; erx_winfs
-keeps the window table and applies the answers. erx_wm_single, the
-kiosk's, is the policy built so far; the overlapping one, erx_wm_rio,
-comes with the desktop. The input router's core, erx_input, alone asks
+keeps the window table and applies the answers. erx_wm_single is the
+kiosk's policy and erx_wm_rio the desktop's overlapping one. The input
+router's core, erx_input, alone asks
 input/4, and only about what starts something: a key's down, a
 gesture's first event, and a pointer event or wheel step while nothing
 is held. What follows a down goes where the down went without asking.
@@ -20,7 +20,8 @@ and `state`, may reorder the list, and keeps every other field as it
 found it.
 
 A policy's own state, from init/1, is threaded by erx_winfs through
-place/6, arrange/4 and input/4, which also take
+place/6, arrange/4 and input/4 and read by decorate/3; the first three
+also take
 `Session`, the directory of the display's session or `none`, which
 erx_winfs derives at the call from its grants: the live grant most
 recently minted with `session` set. The configuration names no
@@ -39,12 +40,16 @@ Callbacks:
 * arrange(Windows, Screen, Session, State) sets every window's `rect` and
   `state` after a change erx_winfs makes itself: a window ended or the
   screen's size changed.
-* decorate(Windows, Screen) returns each shown window's decoration as
-  rectangles and colours, or none.
+* decorate(Windows, Screen, State) returns each shown window's
+  decoration as rectangles and colours, or none: a function of the table
+  and the policy's state together, from which erx_winfs derives the
+  layout.
 * input(Input, Windows, Session, State) routes one input event: to one window,
   to the window system itself (`{wm, Term}`, such as a menu request),
   as a rearranged table (`{windows, Table}`, such as a click that
-  raises a window), or nowhere.
+  raises a window), or nowhere. `{wm, {delete, Id}}` asks erx_winfs to
+  end window `Id`, as a removal of its directory does; every other
+  `{wm, Term}` is the policy's own.
 
 Every rectangle a policy returns lies within the screen, within/2.
 """.
@@ -103,7 +108,7 @@ runes of the modifiers held on the display.
 -callback arrange(Windows :: [window()], Screen :: rect(), Session :: session(),
                   State :: term()) ->
     {[window()], State :: term()}.
--callback decorate(Windows :: [window()], Screen :: rect()) ->
+-callback decorate(Windows :: [window()], Screen :: rect(), State :: term()) ->
     [{window_id(), [{rect(), color()}]}].
 -callback input(input(), Windows :: [window()], Session :: session(), State :: term()) ->
     {route(), State :: term()}.

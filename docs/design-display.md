@@ -1946,7 +1946,9 @@ default, frames each shown window with a border whose colour marks the
 window that takes the keyboard, sends pointer events to the window under
 the pointer and key events to the current window, and reserves the right
 button outside any window for its menu: resize, move, delete, hide, and
-the hidden windows by label. The menu is the display's own and no
+the hidden windows by label. A command names its window by the next
+press; a delete is answered `{wm, {delete, W}}`, which `erx_winfs`
+performs by ending `W` as a removal of its directory does. The menu is the display's own and no
 client's: `erx_wm_menu` draws it, each label through the line escape,
 into an image of the display domain's own memory, which `erx_screen`
 shows above every window as an overlay. It has no item that

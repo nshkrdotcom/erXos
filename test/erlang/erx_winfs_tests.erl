@@ -354,10 +354,11 @@ the_display_variable_names_the_window_system_s_service_test() ->
     ?assertEqual([], erx_fb_sup:winfs(lists:duplicate(64, $a), "single")).
 
 %% erx_fb_sup maps each mf_display_policy member to its window manager and nothing else,
-%% so a policy with no window manager, rio among them, fails its start instead of running
-%% another policy's.
+%% so a policy with no window manager fails its start instead of running another policy's.
 the_window_system_has_no_policy_beyond_its_window_managers_test() ->
-    ?assertError(function_clause, erx_fb_sup:winfs("screen", "rio")).
+    ?assertMatch([#{start := {erx_winfs, start_link, [screen, {erx_wm_rio, #{}}]}}],
+                 erx_fb_sup:winfs("screen", "rio")),
+    ?assertError(function_clause, erx_fb_sup:winfs("screen", "tiled")).
 
 %% Started as the display domain's, the window system names itself the mint of the
 %% configured service, the name every mint request of it carries.
