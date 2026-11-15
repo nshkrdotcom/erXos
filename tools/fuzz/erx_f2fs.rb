@@ -1,0 +1,77 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# frozen_string_literal: true
+
+require 'open3'
+require 'optparse'
+require 'tmpdir'
+require_relative '../lib/erx/generated'
+
+# The fuzz target of erx_f2fs_codec, F2FS's codec (test/erlang/erx_f2fs_fuzz.erl,
+# docs/design-f2fs.md, "Reading the medium"): its superblock and checkpoint pack
+# readers over mutations of the codec tests' fixtures, the checksums mostly fixed up,
+# fail every malformed block with an error naming the rule, never a crash. Compiled
+# from source with erx_abi_packed, which the ABI generator writes into build/gen, and
+# run on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs the codec as it
+# is, then each seeded fault the design names for these readers applied to a copy,
+# which the target must fail with the failure named for it.
+module ErxF2fsFuzz
+  ROOT = File.expand_path('../..', __dir__)
+  Erx::Generated.ensure(root: ROOT)
+  CODEC = File.join(ROOT, 'erlang/apps/erx_f2fs/src/erx_f2fs_codec.erl')
+  SOURCES = [File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/src/generated/erx_abi_packed.erl'),
+             *%w[erx_f2fs_codec_tests erx_f2fs_fuzz].map { |name| File.join(ROOT, "test/erlang/#{name}.erl") }].freeze
+  INCLUDE = File.join(Erx::Generated::OUTPUT, 'erlang/apps/erx/include')
+  # Each of the three runs, inside tools/erx check-fuzz's 900 s for the target.
+  DEADLINE_SECONDS = '280'
+
+  Seed = Data.define(:fault, :anchor, :replacement, :failure)
+
+  SEEDS = [
+    Seed.new(fault: 'the area-boundary rule of [F 14] dropped',
+             anchor: "    check_areas(Super),\n", replacement: '', failure: 'areas'),
+    Seed.new(fault: "the checkpoint header bitmaps' room check removed",
+             anchor: '            require(SitBytes + NatBytes =< HeaderRoom, bitmap_room),',
+             replacement: '            ok,', failure: 'crash')
+  ].freeze
+
+  module_function
+
+  def run(seed:, cases:)
+    source = File.binread(CODEC)
+    SEEDS.each do |fault|
+      raise "no anchor for #{fault.fault} in #{CODEC}" unless source.scan(fault.anchor).size == 1
+    end
+    output, status = fuzz(source, seed: seed, cases: cases)
+    abort(output) unless status.success? && output.match?(/^fuzz: \d+ cases ok$/)
+    SEEDS.each do |fault|
+      output, status = fuzz(source.sub(fault.anchor, fault.replacement), seed: seed, cases: cases)
+      abort("#{fault.fault} passed:\n#{output}") if status.success? || !output.include?("fuzz failure: #{fault.failure}")
+    end
+    puts "erx_f2fs_codec fails every mutated superblock and checkpoint pack cleanly over #{cases} cases, " \
+         "and each of #{SEEDS.size} seeded faults fails"
+  end
+
+  # In a directory of its own, which also takes the crash dump of a failed run.
+  def fuzz(codec_text, seed:, cases:)
+    Dir.mktmpdir('erx-f2fs-fuzz') do |work|
+      codec = File.join(work, 'erx_f2fs_codec.erl')
+      File.binwrite(codec, codec_text)
+      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', INCLUDE, '-o', work, codec, *SOURCES,
+                                       stdin_data: '')
+      raise output unless status.success?
+
+      Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                      '-run', 'erx_f2fs_fuzz', 'run', seed.to_s, cases.to_s, chdir: work, stdin_data: '')
+    end
+  end
+end
+
+if $PROGRAM_NAME == __FILE__
+  options = { seed: 1, cases: 200_000 }
+  OptionParser.new do |flags|
+    flags.on('--seed N', Integer) { |value| options[:seed] = value }
+    flags.on('--cases N', Integer) { |value| options[:cases] = value }
+  end.parse!
+  ErxF2fsFuzz.run(**options)
+end

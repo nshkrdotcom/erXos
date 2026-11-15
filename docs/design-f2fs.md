@@ -170,12 +170,14 @@ assumes a medium that writes a sector atomically and honours a flush
 ([design-storage.md](design-storage.md#invariants)); this design rests on
 those two assumptions and on nothing else about the medium.
 
-No F2FS code exists in the tree. The ABI's layout language cannot state
-F2FS's records yet: it refuses a field whose offset is not a multiple of
-its size, in every storage (`tools/lib/erx/abi_model.rb` l.703-710), and
 F2FS's records are packed, with a 64-bit `block_count` at offset 36 of
 the superblock and 32-bit fields at odd offsets in NAT entries, summary
-entries and dentry slots ([F 1]).
+entries and dentry slots ([F 1]), and the ABI's layout language states
+them in its packed storage
+([design-abi.md](design-abi.md#packed-layouts)).
+`abi/formats/f2fs.txt` holds the superblock, the checkpoint header and
+the orphan block, and `erx_f2fs_codec`, in the `erx_f2fs` application,
+reads those three.
 
 ## Requirements
 
@@ -1463,7 +1465,8 @@ clean room's facts too.
 
 The seam is the `erx_fs` callback module and the storage domain's
 supervisor: `erx_storage_sup`'s data child changes from `erx_lfs_sup` to
-`erx_f2fs_sup`, the release adds the `erx_f2fs` application, and the
+`erx_f2fs_sup`, of the `erx_f2fs` application the storage domain's
+release carries, and the
 medium writer's `DataVolume` runs F2FS's format plan instead of
 `lfs-format`. Nothing above `erx_fs` sees the change, and the mount
 shows `f2fs` where it showed `littlefs`. At gate G13, which decides the

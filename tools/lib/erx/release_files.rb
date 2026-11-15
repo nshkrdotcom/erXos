@@ -103,9 +103,10 @@ module Erx
     #   crypto, public_key and ssh (DOMAIN_IMAGE_ONLY), which it only loads, so that a
     #   principal can run OTP's ssh daemon in its own session (docs/design-ssh.md,
     #   "Stages", stage 1) and no session runs ssh's supervisors unasked;
-    # * storage: the block driver and littlefs's volume (docs/design-stopgap.md, "littlefs
-    #   in the storage domain"), so no system domain loads the driver of a device the
-    #   manifest gives the storage domain, and none reads its windows;
+    # * storage: the block driver, littlefs's volume (docs/design-stopgap.md, "littlefs
+    #   in the storage domain") and F2FS's codec (docs/design-f2fs.md), so no system
+    #   domain loads the driver of a device the manifest gives the storage domain,
+    #   and none reads its windows or parses a volume;
     # * network: the network stack, started permanent, so the stack's end ends the network
     #   domain (docs/design-network-stack.md, "The process tree"); the system domain parses
     #   no network input and holds no code that reaches a `net` grant, which it may not hold
@@ -128,7 +129,7 @@ module Erx
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
                         'session' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_shell',
                                       'erx_web_line', 'erx_session'].freeze,
-                        'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage'].freeze,
+                        'storage' => [*DOMAIN_BASE, 'erx_blk', 'erx_storage', 'erx_f2fs'].freeze,
                         'network' => [*DOMAIN_BASE, 'erx_net'].freeze,
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,

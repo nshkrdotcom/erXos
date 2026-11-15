@@ -1,0 +1,14 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% erXos's F2FS (docs/design-f2fs.md), Linux's on-disk format served from the
+%% storage domain, whose boot script carries it beside erx_storage: the codec,
+%% erx_f2fs_codec, the only module that reads a volume's block bytes. Its
+%% modules are pure, and it starts no process.
+{application, erx_f2fs,
+ [{description, "erXos F2FS"},
+  {vsn, "1"},
+  {modules, [erx_f2fs_codec]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx]},
+  {env, []}]}.

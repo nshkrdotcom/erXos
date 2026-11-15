@@ -125,7 +125,7 @@ class ReleaseFilesTest < Minitest::Test
   # The system release neither ships nor names an application that runs only in other
   # domains. asn1 and crypto, whose NIFs the system image lacks, and public_key and ssh,
   # which call them, ship only in the domain releases that ask for them. The block
-  # driver and littlefs run in the storage domain alone, the network stack and its
+  # driver, littlefs and F2FS run in the storage domain alone, the network stack and its
   # client in the domains that use the network, the web line in a session alone, the
   # display's applications in the display domain alone and the client side of the window
   # system in display clients alone. They are named here, not taken from the allow-list,
@@ -133,7 +133,7 @@ class ReleaseFilesTest < Minitest::Test
   def test_the_system_release_ships_no_domain_only_application
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
-    only = %w[asn1 crypto public_key ssh erx_blk erx_storage erx_memdraw erx_display erx_fb erx_win erx_ui erx_web erx_net
+    only = %w[asn1 crypto public_key ssh erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_win erx_ui erx_web erx_net
               erx_net_client erx_web_line]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
