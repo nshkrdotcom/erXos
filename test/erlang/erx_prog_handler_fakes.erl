@@ -14,18 +14,20 @@ and writes its exit status and closes as the driver's port does at a
 program's end; or the error the test set. send/2, install/2 and stop/3
 on a closed port raise `badarg`, as `port_control/3` does; send/2 answers each
 of the answers the test queued, then `ok`; install/2 fills each `{hand, I}` with
-`100 * I`, or answers the error the test set; alloc/2 fails with `undef`,
-as a call of a module the release lacks does, when the test set
-`pixels` to `absent`.
+`100 * I`, or answers the error the test set; alloc/2 names its caller,
+the range's owner, and fails with `undef`, as a call of a module the
+release lacks does, when the test set `pixels` to `absent`; lend/2 never
+answers when the test set `lend` to `never`.
 """.
 
 -export([setup/1, set/2, start/1, send/2, install/2, stop/3, alloc/2, lend/2, unlend/1]).
 
 -doc "Sends every later call to Pid, with the default answers.".
 setup(Pid) ->
-    persistent_term:put(?MODULE, #{test => Pid, start => port, sends => [], install => ok, pixels => present}).
+    persistent_term:put(?MODULE, #{test => Pid, start => port, sends => [], install => ok, pixels => present,
+                                    lend => answer}).
 
--doc "Sets one answer: `start`, `sends` (a list), `install` or `pixels`.".
+-doc "Sets one answer: `start`, `sends` (a list), `install`, `pixels` or `lend`.".
 set(Key, Value) ->
     persistent_term:put(?MODULE, (persistent_term:get(?MODULE))#{Key => Value}).
 
@@ -60,7 +62,7 @@ stop(Port, anchor, Status) ->
     ok.
 
 alloc(Peer, Bytes) ->
-    tell({alloc, Peer, Bytes}),
+    tell({alloc, Peer, Bytes, self()}),
     case conf(pixels) of
         present -> {ok, 4096};
         absent -> erlang:error(undef, [Peer, Bytes])
@@ -68,7 +70,10 @@ alloc(Peer, Bytes) ->
 
 lend(Peer, Offset) ->
     tell({lend, Peer, Offset}),
-    {ok, 77, 2}.
+    case conf(lend) of
+        answer -> {ok, 77, 2};
+        never -> receive after infinity -> ok end
+    end.
 
 unlend(Lease) ->
     tell({unlend, Lease}),

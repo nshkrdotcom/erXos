@@ -2754,6 +2754,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
   takes and installs directly.
+* [Medium] display client, `erx_pixels` tests: `erx_prog_handler:start/1`'s deadline frees what a
+  killed handler reserved through the allocator's handling of a dead owner, which
+  `test/erlang/erx_pixels_tests.erl` does not cover: an alloc whose caller has already exited (the
+  monitor's immediate `'DOWN'` releases the range), a lend whose caller is killed before the reply
+  (`{error, noproc}` from `erx_area:lend/5`, then `owner_down`), and a holder that dies with its lease
+  outstanding (`returned/2` and `owner_down/2` in either order).
 * [Medium] session, `erx_prog_handler_core` tests: the exploration in
   `test/erlang/erx_prog_handler_core_tests.erl` offers neither hand-off reports, the install answers, a
   send error nor `pipes_lost`, and does not walk the reserving phase against every refusal point; a protocol
@@ -2768,7 +2774,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   runs a nested step's actions before the rest of its list and is not a tail call; the `exit` action does
   nothing. `pipe_report` and `erx_prog_stop` are taken from any process (session code is trusted), and
   the pipe server's starter-named inherit trusts the `Starter` the handler names. In the reserving
-  phase an event the core does not expect is ignored, which leaves `start/1` waiting; refusing it as
+  phase an event the core does not expect is ignored, which leaves `start/1` waiting until its deadline; refusing it as
   `einval` ends the phase by construction. `start/1` passes through `noproc` from `erx_pixels:lend/2`
   and `badarg` from the pipe server, neither an errno it documents. A `closed` or `drained` notice
   taken ahead of the pipe server's `'DOWN'` goes to the restarted server before `pipe_server_lost`

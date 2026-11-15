@@ -32,6 +32,15 @@ ends"):
 The pid, ppid and pgid come from the command server, which assigns
 process ids (docs/design-programs.md, "The parties").
 
+start/1 waits 30 seconds for the handler's answer; start/2, the tests'
+seam, takes the wait in milliseconds. Past it, the start kills the
+handler and answers `{error, timeout}`: a handler stuck in a call to the
+pixel allocator or the pipe server would hold the range, the lease, the
+holder entry and the hand-offs until that call answers, and its end
+gives each of them back through its owner, as each owner sees the exit.
+A kill takes effect only between the handler's calls of a driver or a
+NIF, so the answer can come that much later.
+
 When the program ends the starter gets `{erx_prog_exit, Handler,
 Status}`, `Status` read by erx_prog:status/1: `{exited, N}` or
 `{signaled, Signal}`. A port the driver closes with no status, when a
@@ -46,7 +55,10 @@ The handler monitors the pipe server and, when it goes, sends the program
 `pipe_server_lost` (docs/design-pipes.md, "The pipe server").
 """.
 
--export([start/1, stop/1]).
+-export([start/1, start/2, stop/1]).
+
+%% How long start/1 waits for the handler's answer.
+-define(START_MS, 30000).
 
 -record(h, {core :: erx_prog_handler_core:core(),
             starter :: pid(),
@@ -68,12 +80,18 @@ beyond a pipe's read ends, `enfile` at the session's pipes quota,
 `enodev` for a buffer in a domain where no pixel allocator runs,
 `einval` for a buffer in an area the domain does not share with `Peer`,
 `enomem` (for a pipe server that is gone too), `eio` when the handler
-crashed, `e2big` for strings past the startup message's bound, or the
-start's own refusal (erx_program:start/1). Nothing the start reserved
-survives an error.
+crashed, `e2big` for strings past the startup message's bound, the
+start's own refusal (erx_program:start/1), or `timeout` when the handler
+has not answered within 30 seconds.
+Nothing the start reserved survives an error.
 """.
 -spec start(map()) -> {ok, pid(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
-start(#{pid := _} = Spec) ->
+start(Spec) ->
+    start(Spec, ?START_MS).
+
+-doc "start/1 with a wait of `Timeout` milliseconds for the handler's answer.".
+-spec start(map(), timeout()) -> {ok, pid(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
+start(#{pid := _} = Spec, Timeout) when Timeout =:= infinity; is_integer(Timeout), Timeout >= 0 ->
     Self = self(),
     Ref = make_ref(),
     Handler = spawn(fun() -> init(Self, Ref, Spec) end),
@@ -89,8 +107,18 @@ start(#{pid := _} = Spec) ->
             %% The handler crashed, a fault of the session's own code; its
             %% hand-offs, lease and holder entry went with it.
             {error, eio}
+    after Timeout ->
+        %% Killed, the handler frees nothing itself: what it reserved goes
+        %% back to each owner, once, at its exit. Every message it sent
+        %% arrives before its 'DOWN', so an answer or an end that crossed
+        %% the kill is taken out of the mailbox here.
+        exit(Handler, kill),
+        receive {'DOWN', Watch, process, Handler, _} -> ok end,
+        receive {Ref, _} -> ok after 0 -> ok end,
+        receive {erx_prog_exit, Handler, _} -> ok after 0 -> ok end,
+        {error, timeout}
     end;
-start(_Spec) ->
+start(_Spec, _Timeout) ->
     {error, einval}.
 
 -doc """

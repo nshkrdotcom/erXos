@@ -743,6 +743,15 @@ display's errno as any start that does not fit is. Nothing waits for
 them: no consumer of `start/1` starts a second program in the same
 session process the moment the first ends.
 
+`start/1` waits 30 seconds for the handler's answer. The wait covers
+what the handler does for the start: the inherits, the buffer's
+allocation and lend, and the program's start. Past it, `start/1` kills
+the handler and answers `{error, timeout}`. A handler stuck in a call to
+the pixel allocator or the pipe server so keeps nothing: its end gives
+back what it reserved, by the ownership above, as each owner sees it.
+An answer the handler sent before the kill took effect is discarded, so
+the starter is never handed a handler that is gone.
+
 The handler monitors its starter, and the starter's exit stops the
 program, as a parent's end stops its children ([A program's
 end](#a-programs-end)), so no program outlives the session process that

@@ -14,7 +14,8 @@ undone; a holder entry the NIF cannot make
 answers its errno; a buffer where no allocator runs is refused with
 everything undone; a refused start drops every hand-off, gives back the lease and
 lets the holder entry go; a buffer is allocated and lent by the handler
-and its offset answered; the program's notice reaches the pipe server as
+and its offset answered; a start whose lend never answers is refused at
+its deadline, its handler killed with what it held; the program's notice reaches the pipe server as
 the program's; a report owed while the lane is busy waits for room; a
 hand-off report is installed and sent filled; the exit tells the
 starter and ends the handler, also when a report or a stop meets the
@@ -36,6 +37,7 @@ handler_test_() ->
       fun an_end_of_another_process_is_refused/1,
       fun refused_start_undoes_everything/1,
       fun buffer_is_lent_by_the_handler/1,
+      fun a_start_past_its_deadline_frees_what_it_holds/1,
       fun notice_reaches_the_pipe_server/1,
       fun owed_report_waits_for_room/1,
       fun hand_off_report_is_installed_then_sent/1,
@@ -128,8 +130,29 @@ buffer_is_lent_by_the_handler(_) ->
     erlang:put(H, handler),
     Calls = [fake(alloc), fake(lend), fake(start)],
     [?_assertEqual([{3, 4096}], Offsets),
-     ?_assertMatch([{alloc, 5, 8192}, {lend, 5, 4096}, {start, #{fds := [{3, {mem, 77, 2}}]}, _}], Calls),
+     ?_assertMatch([{alloc, 5, 8192, H}, {lend, 5, 4096}, {start, #{fds := [{3, {mem, 77, 2}}]}, _}], Calls),
      ?_assert(is_process_alive(H))].
+
+%% A handler stuck in the pixel allocator's lend is killed at start/2's
+%% deadline: the start answers timeout on time, the program never starts, and
+%% the handler, the range's owner and the holder entry's, is gone, which is
+%% what the allocator frees the range by and the NIF lets the entry go by.
+a_start_past_its_deadline_frees_what_it_holds(_) ->
+    erx_prog_handler_fakes:set(lend, never),
+    {ok, R, _W} = erx_pipe_srv:pipe(),
+    Began = erlang:monotonic_time(millisecond),
+    Answer = erx_prog_handler:start(spec([{0, {pipe, R}}, {3, {buffer, 5, 8192}}]), 300),
+    Took = erlang:monotonic_time(millisecond) - Began,
+    {alloc, 5, 8192, Owner} = fake(alloc),
+    Lent = fake(lend),
+    Holder = erx_pipe_fake_nif:holder_owner(?PID),
+    Started = receive {fake, {start, _, _}} = M -> M after 200 -> none end,
+    [?_assertEqual({error, timeout}, Answer),
+     ?_assert(Took >= 300 andalso Took < 1300),
+     ?_assertEqual({lend, 5, 4096}, Lent),
+     ?_assertNot(is_process_alive(Owner)),
+     ?_assertEqual({ok, Owner}, Holder),
+     ?_assertEqual(none, Started)].
 
 notice_reaches_the_pipe_server(_) ->
     {ok, R, W} = erx_pipe_srv:pipe(),

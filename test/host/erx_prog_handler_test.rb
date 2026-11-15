@@ -50,6 +50,11 @@ class ErxProgHandlerTest < Minitest::Test
     'a handler that stays after its program ends' =>
       Mutant.new(file: HANDLER, original: "        ended ->\n            ok;\n", replacement: '',
                  caught_by: 'exit_tells_the_starter'),
+    'a start past its deadline that leaves its handler holding the range and the holder entry' =>
+      Mutant.new(file: HANDLER,
+                 original: "        exit(Handler, kill),\n        receive {'DOWN', Watch, process, Handler, _} -> ok end,\n",
+                 replacement: '',
+                 caught_by: 'a_start_past_its_deadline_frees_what_it_holds'),
     'a refused start that keeps the program\'s holder entry, so its ends are never gone' =>
       Mutant.new(file: CORE, original: "        [holder_drop].\n", replacement: "        [].\n",
                  caught_by: 'an_end_of_another_process_is_refused')
