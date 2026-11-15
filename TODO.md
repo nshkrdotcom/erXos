@@ -964,6 +964,11 @@ it; git history is the record of completed work.
     has no canonical text for a presentation until `erx_present:text/2` exists; and the host starts `erx-lvgl`
     through `ruby -e`, because a port cannot hand a program its buffer as descriptor 3, so an app's host test needs
     Ruby on the path.
+    time out; the cell's 240x160 check shows only that a present came. The display suite's lvgl-confine cell
+    checks only the store past the buffer: the design's other two checks, that the session's process table lists
+    the program and that its pipes are the session's, wait for a reader of each, since no command server keeps a
+    process table of programs (`ps` lists the runtime's Erlang processes) and no inspection path names a pipe
+    end's holder.
   * **Programs** ([The startup message](docs/design-programs.md#the-startup-message)): the profile, `liberx`'s
     decoder, its fuzz targets and the descriptor table (`erx_prog_fd_mmap`, `erx_prog_fd_fstat`) take the `mem`
     descriptor; `erx_program:start/1` takes a window buffer's lease, the driver maps it at the buffer place, and

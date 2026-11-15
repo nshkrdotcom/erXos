@@ -3,7 +3,8 @@
 
 -module(erx_lvgl_lease_test).
 -moduledoc """
-The display suite's lvgl-lease cell (tools/lib/erx/display_domain.rb): in
+The display suite's lvgl-lease, lvgl-damage and lvgl-confine cells
+(tools/lib/erx/display_domain.rb), one run each. The lease run: in
 the session the start row keeps on the display, it runs the LVGL
 renderer, erx_ui_lvgl, over the real erx-lvgl started through its handler
 with a buffer lent from the pixel area the session shares with the display
@@ -14,7 +15,7 @@ program's fstat and mmap of descriptor 3, the driver's map of the lease,
 the pipes of a session process's program and the renderer's protocol over
 them all run on the target.
 
-run/0 logs `erx_lvgl_lease_test: started`, then runs ?ROUNDS rounds. Each
+run/0 logs `erx_lvgl_lease_test: started`, then the lease run's ?ROUNDS rounds. Each
 starts the renderer at ?WIDTH by ?HEIGHT with a buffer of ?BYTES, applies a
 tree, a column of a label and a button that takes clicks, waits for the
 program's first report after the apply returned, presented at that size,
@@ -30,14 +31,28 @@ stopped program's range rejoins the free list once its lease is returned
 refused for want of room or of the area (`enomem`, `einval`, `enodev`):
 the pixel area and its allocator arrive after the session starts, and a
 stopped round's range comes back only after its program's mapping is
-gone. Any other refusal fails the round at once. The outcome is one
-notice,
+gone. Any other refusal fails the round at once.
 
-    erx_lvgl_lease_test: passed
+The damage and confine runs start the renderer the same way over
+uiprobe, a stand-in for erx-lvgl that breaks one rule
+(test/guest/programs/uiprobe.c), answer no present, and expect the
+renderer to stop the program and end (docs/design-display.md,
+Verification, the kiosk's cells). The damage run's first round writes
+a second damage report before the first is answered, which must reach
+the present callback once and then stop the program as
+`report_before_presented`; its second writes a rectangle outside the
+size its report names, which the renderer's reader must refuse before
+anything is presented. The confine run's program stores to the last
+byte of its buffer and then one page past it, which must fault in the
+program, so it ends with SIGSEGV and nothing is presented.
 
-or `erx_lvgl_lease_test: {error, Round, Reason}` naming the round that
-failed, round 0 for the wait for the display's grant. The process then
-waits for ever.
+Each run's outcome is one notice that names it,
+
+    erx_lvgl_lease_test: lease passed
+
+or `erx_lvgl_lease_test: lease {error, Round, Reason}` naming the round
+that failed, round 0 for the wait for the display's grant. The process
+then waits for ever.
 """.
 
 -export([run/0]).
@@ -48,6 +63,8 @@ waits for ever.
 -define(X8R8G8B8, 16#68081828).
 -define(BYTES, 1 bsl 20).
 -define(ROUNDS, 9).
+-define(LVGL, <<"erx-lvgl">>).
+-define(PROBE, <<"uiprobe">>).
 -define(BUTTON, 3).
 -define(BUTTON_Y, 5 + 30 + 40 div 2).
 -define(POLLS, 120).
@@ -61,20 +78,39 @@ waits for ever.
 run() ->
     process_flag(trap_exit, true),
     logger:notice("erx_lvgl_lease_test: started"),
-    Outcome = try
-                  Peer = peer(?POLLS),
-                  lists:foreach(fun(Round) -> lend_round(Peer, Round) end, lists:seq(1, ?ROUNDS))
-              catch
-                  throw:{failed, Round, Reason} -> {error, Round, Reason};
-                  Class:Reason -> {error, unknown, {Class, Reason}}
-              end,
-    case Outcome of
-        ok -> logger:notice("erx_lvgl_lease_test: passed");
-        Failed -> logger:notice("erx_lvgl_lease_test: ~0p", [Failed])
-    end,
+    Found = try {ok, peer(?POLLS)} catch throw:{failed, 0, Reason} -> {error, 0, Reason} end,
+    lists:foreach(fun(Run) -> report(Run, Found) end, [lease, damage, confine]),
     %% A trapping process would never take the application's shutdown.
     process_flag(trap_exit, false),
     receive after infinity -> ok end.
+
+%% Run's outcome line: its rounds' outcome, or the wait for the display's
+%% grant's failure.
+report(Run, Found) ->
+    Outcome = case Found of
+                  {ok, Peer} -> attempt(fun() -> rounds(Run, Peer) end);
+                  {error, _Round, _Reason} = Failed -> Failed
+              end,
+    case Outcome of
+        ok -> logger:notice("erx_lvgl_lease_test: ~s passed", [Run]);
+        _ -> logger:notice("erx_lvgl_lease_test: ~s ~0p", [Run, Outcome])
+    end.
+
+attempt(Rounds) ->
+    try Rounds() of
+        _ -> ok
+    catch
+        throw:{failed, Round, Reason} -> {error, Round, Reason};
+        Class:Reason -> {error, unknown, {Class, Reason}}
+    end.
+
+rounds(lease, Peer) ->
+    lists:foreach(fun(Round) -> lend_round(Peer, Round) end, lists:seq(1, ?ROUNDS));
+rounds(damage, Peer) ->
+    probe_round(Peer, ?ROUNDS + 1, [<<"twice">>], 1, report_before_presented),
+    probe_round(Peer, ?ROUNDS + 2, [<<"rect">>], 0, {refused, bad_body});
+rounds(confine, Peer) ->
+    probe_round(Peer, ?ROUNDS + 3, [<<"past">>, integer_to_binary(?BYTES)], 0, {exit, {signaled, sigsegv}}).
 
 %% The display domain whose area the session shares: the owner of the
 %% display's grant, which arrives after the session starts.
@@ -87,7 +123,7 @@ peer(N) ->
     end.
 
 lend_round(Peer, Round) ->
-    Shell = started(Peer, Round, ?POLLS),
+    Shell = started(Round, opts(Peer, Round, ?LVGL, []), ?POLLS),
     expect(Round, {ok, Shell}, applied(Round, Shell)),
     expect(Round, {?WIDTH, ?HEIGHT}, first_present(Round, Shell)),
     clicked(Round, Shell),
@@ -98,23 +134,37 @@ lend_round(Peer, Round) ->
     after ?WAIT_MS -> throw({failed, Round, stop_hung})
     end.
 
+%% The stand-in renderer started with Args: its renderer must stop it for
+%% Reason after exactly Presents presents, none of them answered.
+probe_round(Peer, Round, Args, Presents, Reason) ->
+    Shell = started(Round, opts(Peer, Round, ?PROBE, Args), ?POLLS),
+    expect(Round, {Presents, {shutdown, {renderer_down, Reason}}}, presents_until_down(Shell, 0)).
+
+presents_until_down(Shell, Count) ->
+    receive
+        {present, Shell, _, _, _} -> presents_until_down(Shell, Count + 1);
+        {'EXIT', Shell, Why} -> {Count, Why}
+    after ?WAIT_MS -> {Count, not_down}
+    end.
+
 %% A started renderer; a start refused for want of room or of the area
 %% is retried, any other refusal fails the round with its reason.
-started(Peer, Round, Polls) ->
-    try erx_ui_lvgl:start({window, lease}, self(), opts(Peer, Round)) of
+started(Round, Opts, Polls) ->
+    try erx_ui_lvgl:start({window, lease}, self(), Opts) of
         {ok, Shell} -> Shell
     catch
         error:{badmatch, {error, {shutdown, {renderer_down, {start, Errno}}}}}
           when Polls > 1, (Errno =:= enomem orelse Errno =:= einval orelse Errno =:= enodev) ->
             timer:sleep(?POLL_MS),
-            started(Peer, Round, Polls - 1);
+            started(Round, Opts, Polls - 1);
         error:{badmatch, {error, Refused}} ->
             throw({failed, Round, {start, Refused}})
     end.
 
-opts(Peer, Round) ->
+%% The renderer's options, its program the release's bin/Name run with Args.
+opts(Peer, Round, Name, Args) ->
     Pid = ?FIRST_PID + Round,
-    Spec = #{image => <<"bin/erx-lvgl">>, pid => Pid, ppid => 1, pgid => Pid, argv => [<<"erx-lvgl">>],
+    Spec = #{image => <<"bin/", Name/binary>>, pid => Pid, ppid => 1, pgid => Pid, argv => [Name | Args],
              env => [], cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022},
     Test = self(),
     #{width => ?WIDTH, height => ?HEIGHT, chan => ?X8R8G8B8,

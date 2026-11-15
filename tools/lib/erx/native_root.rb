@@ -140,7 +140,7 @@ module Erx
     # - a program's entry (program_task.c), whose descriptor seam answers in errno values;
     # - liberx's program layer, which that entry calls;
     # - the programs suite's programs that read what the layer keeps or call its seam;
-    # - erx-lvgl's own (Lvgl::Program).
+    # - erx-lvgl's own (Lvgl::Program) and the display suite's stand-in for it (DisplayDomain::PROBE).
     # libc-test and the native_musl suite compile none of them, so they build without the runtime.
     LIBC_SOURCES = %w[liberx/backend/core/boot_info.c liberx/system/dom_core.c liberx/system/dom_life.c
                       liberx/system/dom_apply.c liberx/system/dom_boot.c liberx/system/dom_boot_view.c liberx/system/dom_install.c liberx/system/dom_dump.c
@@ -155,6 +155,7 @@ module Erx
                       liberx/program/spawn_plan.c liberx/erx_profile.c
                       build/gen/liberx/generated/prog_profile.c test/guest/programs/args.c
                       test/guest/programs/bigargs.c test/guest/programs/note.c test/guest/programs/pipeio.c
+                      test/guest/programs/uiprobe.c
                       display/lvgl/erx_lvgl.c build/gen/display/generated/erx_ui_wire.c].freeze
     # The native runtime's sysroot (NativeRuntime), whose header tree LIBC_SOURCES compile with.
     LIBC_SYSROOT = 'build/runtime/native/sysroot'

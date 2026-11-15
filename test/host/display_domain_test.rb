@@ -62,9 +62,11 @@ class DisplayDomainTest < Minitest::Test
     assert_includes Suite::BOOT.applications, 'erx_kiosk_test'
   end
 
-  # Each boot's cell has its lvgl, lvgl-lease and lvgl-restart cells beside it.
+  # Each boot's cell has its lvgl, lvgl-lease, lvgl-damage, lvgl-confine and lvgl-restart
+  # cells beside it.
   def test_each_boot_carries_its_side_cells
-    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl hvf-1cpu-lvgl-lease hvf-1cpu-lvgl-restart], Suite.cells(%w[hvf-1cpu])
+    assert_equal %w[hvf-1cpu hvf-1cpu-lvgl hvf-1cpu-lvgl-lease hvf-1cpu-lvgl-damage hvf-1cpu-lvgl-confine
+                    hvf-1cpu-lvgl-restart], Suite.cells(%w[hvf-1cpu])
   end
 
   # The lvgl client's lines are shown and then the button's event, and nothing else: a
@@ -86,16 +88,19 @@ class DisplayDomainTest < Minitest::Test
     assert_equal [pattern.width, pattern.height], [lvgl.width, lvgl.height]
   end
 
-  # One passed passes; a failed round, a second outcome after the session was started
-  # again, or no outcome at all fails. The started line is not an outcome.
-  def test_the_lease_lines_are_one_passed
+  # One passed of the run passes, whatever the other runs logged; a failed round, a second
+  # outcome after the session was started again, or no outcome at all fails. The started
+  # line is not an outcome.
+  def test_each_runs_lines_are_one_passed
     started = "space 3: notice: erx_lvgl_lease_test: started\r\n"
-    passed = "space 3: notice: erx_lvgl_lease_test: passed\r\n"
-    Suite.check_lease_lines("boot\r\n#{started}space 3: notice: erx_pattern_test: presented\r\n#{passed}")
-    ["boot\r\n#{started}", "#{started}space 3: notice: erx_lvgl_lease_test: {error,4,start_refused}\r\n",
-     "#{started}#{passed}#{started}#{passed}"].each do |log|
-      assert_raises(Erx::Error) { Suite.check_lease_lines(log) }
+    passed = "space 3: notice: erx_lvgl_lease_test: lease passed\r\n"
+    damage = "space 3: notice: erx_lvgl_lease_test: damage {error,10,{0,not_down}}\r\n"
+    Suite.check_run_lines("boot\r\n#{started}space 3: notice: erx_pattern_test: presented\r\n#{passed}#{damage}", run: 'lease')
+    ["boot\r\n#{started}", "#{started}space 3: notice: erx_lvgl_lease_test: lease {error,4,start_refused}\r\n",
+     "#{started}#{passed}#{started}#{passed}", "#{started}#{damage}"].each do |log|
+      assert_raises(Erx::Error) { Suite.check_run_lines(log, run: 'lease') }
     end
+    assert_raises(Erx::Error) { Suite.check_run_lines("#{started}#{passed}#{damage}", run: 'damage') }
   end
 
   # The manifest check admits the suite's manifest, properties 4 and 18 among its own,
@@ -162,8 +167,8 @@ end
     assert_equal ["erl\r", Suite::KILL_LINE], [shell, erlang].map { |point| point.fetch(:type) }
     assert_match killed.fetch(:pattern), "{kiosk_killed,true,false,true}\r\n"
     refute_match killed.fetch(:pattern), "1> KtDoms = fun() -> {kiosk_killed, is_pid(KtK)}\r\n"
-    assert_equal 60 + (2 * Suite::WAIT_SECONDS) + (3 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS + 15,
-                 shell.fetch(:seconds)
+    assert_equal 60 + (2 * Suite::WAIT_SECONDS) + (3 * Suite::CLIENT_WAIT_SECONDS) + Suite::LEASE_WAIT_SECONDS +
+                 (2 * Suite::PROBE_WAIT_SECONDS) + 15, shell.fetch(:seconds)
     assert shell.fetch(:verify).respond_to?(:call)
     assert_raises(Erx::Error) do
       Suite.checkpoints([{ name: 'boot' }.freeze], socket: '/x', references: '/y', serial: '/z', side: side)

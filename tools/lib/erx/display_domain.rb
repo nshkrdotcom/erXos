@@ -2,10 +2,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative 'abi'
+require_relative 'compiler_rt'
 require_relative 'error'
 require_relative 'fiasco'
-require_relative 'medium_boot'
+require_relative 'generated'
 require_relative 'manifest_edit'
+require_relative 'medium_boot'
+require_relative 'native_root'
+require_relative 'native_runtime'
 require_relative 'ppm'
 require_relative 'production_image'
 require_relative 'qemu'
@@ -44,10 +49,20 @@ module Erx
   #
   # The same session runs erx_lvgl_lease_test beside it: the LVGL renderer drives the real
   # erx-lvgl through the program's handler over a buffer lent from the session's pixel
-  # area, in rounds that lend more than the whole area. Its one outcome line must be
-  # "passed" (check_lease_lines); that is the boot's second cell, lvgl-lease (cells). That
-  # cell fails on its own outcome, and the boot's cell passes whatever it is; a boot that
-  # fails before the lease's wait fails the suite, both cells with it.
+  # area, in rounds that lend more than the whole area. Its lease run's one outcome line
+  # must be "lease passed" (check_run_lines); that is the boot's lvgl-lease cell (cells).
+  # Each side cell fails on its own outcome, and the boot's cell passes whatever they are;
+  # a boot that fails before the side cells' waits fails the suite, every cell with it.
+  #
+  # The same client then runs the renderer over PROBE, a stand-in for erx-lvgl that this
+  # suite's image alone carries (test/guest/programs/uiprobe.c). Its damage run writes a
+  # second damage report before the first is answered, then a rectangle outside the size
+  # its report names; the renderer must stop the program each time and present only the
+  # first report of the first. Its confine run stores one page past the buffer it was
+  # lent, which must fault in the program. Each run's line, "damage passed" and "confine
+  # passed", is the lvgl-damage and the lvgl-confine cell's (docs/design-display.md,
+  # Verification, the kiosk's cells). A renderer that presents a bad report, or a session
+  # that maps more of the pixel area than the buffer into the program, fails its cell.
   #
   # Once the pattern client has read its input it ends its window, and erx_kiosk_test, the
   # lvgl cell's client in the same session, opens its UI with erx_ui:open(#{renderer =>
@@ -240,18 +255,27 @@ module Erx
       client&.close
     end
 
-    # The lvgl-lease client's outcome lines of a boot's serial log
-    # (erx_lvgl_lease_test:run/0): one "passed" and no other, or Error naming them.
-    LEASE_LINE = /erx_lvgl_lease_test: (?!started)[^\r\n]*/n
-    LEASE_PASSED = 'erx_lvgl_lease_test: passed'
-    # How long the harness waits for that line once the input's lines came.
-    LEASE_WAIT_SECONDS = 240
-    def check_lease_lines(log)
-      lines = log.b.scan(LEASE_LINE)
-      return if lines == [LEASE_PASSED]
+    # The outcome lines of erx_lvgl_lease_test's run called run (lease, damage or confine)
+    # in a boot's serial log (erx_lvgl_lease_test:run/0): one "<run> passed" and no other,
+    # or Error naming them.
+    def run_line(run) = /erx_lvgl_lease_test: #{run} [^\r\n]*/n
 
-      raise Error, "the lvgl-lease client logged #{lines.size} outcomes, not one passed: #{lines.first(4).inspect}"
+    def check_run_lines(log, run:)
+      lines = log.b.scan(run_line(run))
+      return if lines == ["erx_lvgl_lease_test: #{run} passed"]
+
+      raise Error, "the lvgl-#{run} client logged #{lines.size} outcomes, not one passed: #{lines.first(4).inspect}"
     end
+
+    # How long the harness waits for the lease run's line once the input's lines came, and
+    # for each later run's once the one before it logged.
+    LEASE_WAIT_SECONDS = 240
+    PROBE_WAIT_SECONDS = 90
+    # The stand-in for erx-lvgl that the damage and confine runs start
+    # (test/guest/programs/uiprobe.c), in the session release's bin/, linked with the
+    # ui.txt writer it reports through. Only this suite's image carries it.
+    PROBE = 'uiprobe'
+    PROBE_SOURCES = %w[test/guest/programs/uiprobe.c build/gen/display/generated/erx_ui_wire.c].freeze
 
     # The lvgl cell's reference, the host's render of erx_kiosk_test:tree/0, and the
     # client's lines once the screen shows it and the harness has clicked its button: the
@@ -337,15 +361,18 @@ module Erx
     # which a boot checks one after the other and each of which fails on its own outcome.
     LVGL_CELL = '-lvgl'
     LEASE_CELL = '-lvgl-lease'
+    DAMAGE_CELL = '-lvgl-damage'
+    CONFINE_CELL = '-lvgl-confine'
     RESTART_CELL = '-lvgl-restart'
-    SIDE_CELLS = [LVGL_CELL, LEASE_CELL, RESTART_CELL].freeze
+    SIDE_CELLS = [LVGL_CELL, LEASE_CELL, DAMAGE_CELL, CONFINE_CELL, RESTART_CELL].freeze
     def cells(boots) = boots.flat_map { |cell| [cell, *SIDE_CELLS.map { |side| "#{cell}#{side}" }] }
 
     # The production checkpoints to the command shell, whose banner starts the screen's
     # reads, then the driver's and the client's lines of the serial log at serial, then the
     # input typed and its lines, then the side cells, each through side, which records its
     # outcome: the lvgl cell (check_lvgl), then the lease cell on the serial log once the
-    # lvgl-lease client's line came, or once LEASE_WAIT_SECONDS passed. Then the command
+    # lease run's line came, or once LEASE_WAIT_SECONDS passed, then the damage and the
+    # confine cells each on its run's line, waiting PROBE_WAIT_SECONDS for it. Then the command
     # shell starts the Erlang shell, which types KILL_LINE, and its answer is the
     # lvgl-restart cell's (check_restart). points must end at the command shell.
     def checkpoints(points, socket:, references:, serial:, side:)
@@ -361,14 +388,16 @@ module Erx
         typed = await_log(serial, wait_seconds: CLIENT_WAIT_SECONDS) { |text| text.scan(INPUT_READ_LINE).size >= INPUT_READ.size }
         check_input_lines(typed)
         side.call(LVGL_CELL) { check_lvgl(socket: socket, references: references, serial: serial) }
-        side.call(LEASE_CELL) do
-          check_lease_lines(await_log(serial, wait_seconds: LEASE_WAIT_SECONDS) { |text| text.match?(LEASE_LINE) })
+        { LEASE_CELL => ['lease', LEASE_WAIT_SECONDS], DAMAGE_CELL => ['damage', PROBE_WAIT_SECONDS],
+          CONFINE_CELL => ['confine', PROBE_WAIT_SECONDS] }.each do |cell, (run, wait)|
+          side.call(cell) { check_run_lines(await_log(serial, wait_seconds: wait) { |text| text.match?(run_line(run)) }, run: run) }
         end
       end
       restart = lambda do |answer|
         side.call(RESTART_CELL) { check_restart(answer, socket: socket, references: references, serial: serial) }
       end
-      seconds = shell.fetch(:seconds) + (2 * WAIT_SECONDS) + (3 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS + 15
+      seconds = shell.fetch(:seconds) + (2 * WAIT_SECONDS) + (3 * CLIENT_WAIT_SECONDS) + LEASE_WAIT_SECONDS +
+                (2 * PROBE_WAIT_SECONDS) + 15
       [*points[0...-1], shell.merge(seconds: seconds, verify: screen, type: ProductionImage::Run::ERL_LINE).freeze,
        ProductionImage::Run::ERLANG_SHELL.merge(name: 'system-erlang-shell', type: KILL_LINE).freeze,
        { name: 'kiosk-killed', pattern: KILL_ANSWER, verify: restart,
@@ -395,16 +424,19 @@ module Erx
       # Why each failed side cell failed.
       def notes = @notes.dup.freeze
 
-      # Packs the test image, which carries the client's boot script (BOOT), once, then boots
-      # it at each CPU count.
+      # Packs the test image, which carries the client's boot script (BOOT) and PROBE, once,
+      # then boots it at each CPU count.
       def call(cpus:, jobs: 4, build: true, placement: QemuCells::HERE)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
+        runtime = NativeRuntime.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, fiasco: fiasco,
+                                    platform: @machine.platform)
         directory = ProductionImage.clear_directory(root: @root, path: File.join(@root, 'build/display-domain/image'))
-        nothing = ProductionImage::Added.new(entries: [].freeze, inputs: [].freeze, imports: {}.freeze)
+        # The image's build builds the runtime again; make finds nothing left to do.
+        added = probe(fiasco, libc: runtime.build.libc)
         built = ProductionImage.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, machine: @machine,
-                                    fiasco: fiasco)
-                               .build_test_image(directory: directory, added: nothing, machine: @machine, domains: [BOOT],
+                                    fiasco: fiasco, runtime: runtime)
+                               .build_test_image(directory: directory, added: added, machine: @machine, domains: [BOOT],
                                                  manifest_source: @manifest)
         booted = placement.each(accels: [QemuCells::LOCAL_ACCELERATOR], cpus: cpus) do |accel, count, remote|
           ["#{accel}-#{count}cpu", show(accel, count, remote, built)]
@@ -413,6 +445,20 @@ module Erx
       end
 
       private
+
+      # PROBE linked over musl's libc.a, the one the runtime images link, as a release file
+      # of the session's, as the programs suite adds its programs (Programs::Run#added).
+      def probe(fiasco, libc:)
+        Generated.ensure(root: @root)
+        native = NativeRoot.new(root: @root, runner: @runner, compiler: @compiler, linker: @linker, platform: @machine.platform,
+                                fiasco: fiasco)
+        program = native.build_task_receipted(name: PROBE, sources: [*NativeRoot::PROGRAM, *PROBE_SOURCES],
+                                              directory: File.join(@root, 'build/display-domain', PROBE),
+                                              archives: [libc, CompilerRt.archive(root: @root, runner: @runner, compiler: @compiler)])
+        codec = ABI::Codec.new(ABI::Generator.plan(root: @root).schema)
+        ProductionImage::Added.new(entries: [ProductionImage.program_entry(PROBE, program, codec: codec)].freeze,
+                                   inputs: program.fetch(:inputs), imports: {}.freeze)
+      end
 
       # One boot to the command shell, then the screen's reads; returns each side cell's
       # status, by its suffix. The run's directory is made afresh and owner-only here, so
