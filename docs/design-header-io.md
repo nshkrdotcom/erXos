@@ -203,10 +203,11 @@ console's, the host link's and JTAG's pins as above.
 ## The construction: one map of the header
 
 The design rests on one table. The platform record gains `header`: the
-path of its **pin controller**, the device whose registers set the pins'
-functions (on the Pi 4 the GPIO controller), and one row for each of
-GPIO 0 to 27, each with a **use** and, for a pin a block other than GPIO
-drives, a **function** and a **pull**:
+SoC pin table it is checked against (`bcm2711`), the path of its **pin
+controller**, the device whose registers set the pins' functions (on
+the Pi 4 the GPIO controller), and one row for each of GPIO 0 to 27,
+each with a **use** and, for a pin a block other than GPIO drives, a
+**function** and a **pull**:
 
 | Use | Meaning | Function and pull |
 | --- | --- | --- |
@@ -218,10 +219,11 @@ drives, a **function** and a **pull**:
 A checked-in table of the SoC's bank-0 pins, `hw/pins/bcm2711.txt`, is
 written from DS 5.3, Table 94, as the CMSIS-SVD files are written from
 the register chapters. It has one row per pin, with its power-on pull
-and its six alternate functions, and one row per controller that owns
-any of those functions, with its base address, the signals that are its
+and its six alternate functions, and one row per controller a header map
+may give pins to, with its base address, the signals that are its
 own (`SDA1` and `SCL1` for BSC1 at `0x7e804000`) and which of them it
-cannot work without (SDA and SCL; SCLK, MOSI and MISO; TXD and RXD). The
+cannot work without (SDA and SCL; SCLK, MOSI and MISO; TXD and RXD); a
+row is added with its driver. The
 Raspberry Pi 4's map is:
 
 | GPIO | Header pin | Use | Function, pull |
@@ -271,14 +273,16 @@ build derives from it, so nothing else states a pin:
 **What the reader refuses**, each with a diagnostic naming the row: a
 map without exactly one row for each of GPIO 0 to 27; a pin controller
 that is not a device path of the record; a function that is not one of
-the pin's six in the SoC table; a function that is a signal of another
-controller than the one at the row's device's base; a device use that
-is not a path of the record, or names a device of no kind; a driven
-device, the console's and the host link's UARTs among them, that is
-missing a signal its controller cannot work without or names one signal
-on two rows; a driven bus device that no row names; a `gpio` or
-`reserved` row with a function. A pull on a `gpio` row is refused too: a
-GPIO pin's pull is its holder's to set.
+the pin's six in the SoC table; a device row unless its device's base
+(the unit address of its path) names a controller row and its function
+is one of that row's signals; a device use that is not a path of the
+record, or names a device of no kind; a driven device, the console's
+and the host link's UARTs among them, that is missing a signal its
+controller cannot work without or names one signal on two rows; a
+driven bus device that no row names; `jtag` rows that leave out a JTAG
+signal, since `enable_jtag_gpio` sets all six pins; a `gpio` or
+`reserved` row with a function, or a `jtag` row with a pull. A pull on
+a `gpio` row is refused too: a GPIO pin's pull is its holder's to set.
 
 Every rule about pins follows from the map instead of from a list:
 
@@ -1064,6 +1068,11 @@ checks are ([plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap)):
    second, slow enough that no edge coalesces with the next; with
    `duty 0` it stops. Seeded fault: `disable`, after which the count
    stops.
+9. **The map's card**: a development card whose `config.txt` the
+   header map wrote, with the `gpio=` lines, `core_freq=500` and
+   `core_freq_fixed=1` of the writer's test, boots to the console's
+   login prompt on GPIO 14 and 15, and `tools/erx` reaches the host link
+   over UART3 on GPIO 4 and 5 (header pins 7 and 29).
 
 ## Performance
 

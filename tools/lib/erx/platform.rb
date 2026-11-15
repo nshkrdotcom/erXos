@@ -1,6 +1,7 @@
 # frozen_string_literal: true
 
 require_relative 'error'
+require_relative 'header_map'
 require_relative 'json_input'
 require_relative 'manifest_edit'
 
@@ -17,8 +18,10 @@ module Erx
   # domains its site manifest leaves out (site_leaves_out). A record without one of these
   # numbers, with a RAM number that is not a whole number of MiB, with a root_withheld that
   # is not a positive number of bytes, or with a site_leaves_out that is not a list of
-  # domain names, is refused when it is loaded, before any tool uses it.
-  Platform = Data.define(:name, :record)
+  # domain names, is refused when it is loaded, before any tool uses it. A board's header
+  # map, the record's header, is checked as the record loads too (HeaderMap); header is the
+  # checked map, nil for a board without one.
+  Platform = Data.define(:name, :record, :header)
   class Platform
     # The board the QEMU harnesses and `tools/erx` build for when no caller names another:
     # QEMU's virt machine, the development target.
@@ -63,7 +66,12 @@ module Erx
         (leaves_out.is_a?(Array) && !leaves_out.empty? && leaves_out.uniq.size == leaves_out.size &&
          leaves_out.all? { |domain| domain.is_a?(String) && domain.match?(/\A[a-z0-9][a-z0-9_-]{0,62}\z/) })
 
-      super
+      header = begin
+        HeaderMap.read(record)
+      rescue Error => e
+        raise Error, "#{self.class.record_path(name)}: header: #{e.message}"
+      end
+      super(name: name, record: record, header: header)
     end
 
     # The records every board's development manifest takes.

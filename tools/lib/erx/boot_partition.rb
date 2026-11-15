@@ -72,12 +72,6 @@ module Erx
     # fiasco_reserve were measured. A larger board runs on that 1 GB.
     TOTAL_MEM_MIB = 1024
     GPU_MEM_MIB = 76
-    # The pins of each overlay config.txt names. An overlay edits only the device tree,
-    # and the firmware sets pins only from config.txt, so each overlay's pins follow it as
-    # gpio lines: UART3 is GPIO 4 (TXD3) and GPIO 5 (RXD3) in function ALT4 (BCM2711 ARM
-    # Peripherals, 5.3 "Alternative Function Assignments"), the receive line pulled up as
-    # Linux's uart3_gpio4 pin group pulls it.
-    OVERLAY_PINS = { 'uart3' => %w[gpio=4=a4,pn gpio=5=a4,pu] }.freeze
 
     # What write left in the image's directory: path, the card's image (the medium, as
     # ReleaseMedium::Written#path is QEMU's); files, the partition's directory; record,
@@ -93,16 +87,23 @@ module Erx
     # config.txt for platform and build_kind (development or release), setting by setting:
     # * arm_64bit, kernel, kernel_address, armstub: a 64-bit kernel8.img, loaded where the
     #   model's loader puts it and bootstrap is linked, entered through BL31.
-    # * enable_uart: the console, the mini UART, on GPIO 14 and 15 in function ALT5, with
-    #   its line set and the core clock it divides from pinned, so its divisor holds for
-    #   the later stages. The firmware puts the pins in ALT5 whatever gpio= lines say.
+    # * enable_uart: the console, the mini UART, with its line set and the core clock it
+    #   divides from pinned, so its divisor holds for the later stages. The firmware puts
+    #   GPIO 14 and 15 in ALT5 whatever gpio= lines say; the map's console rows agree.
     # * init_uart_clock: the PL011s' clock from the record, for UART3, the host link.
+    # * core_freq, core_freq_fixed: the header map's core clock, which the I2C and SPI
+    #   controllers divide, fixed so the rate their drivers divide holds (core_lines).
     # * total_mem, gpu_mem: the record's RAM.
-    # * development_lines: the firmware's own boot log on the console and the JTAG pins,
-    #   on a development card only.
-    # * each overlay the board's tree carries, with its pins.
+    # * development_lines: the firmware's own boot log on the console and, for a map with
+    #   jtag rows, the ARM's JTAG, on a development card only.
+    # * a dtoverlay line for each overlay the board's tree carries.
+    # * pin_lines: the header map's device rows. The firmware sets no pins from an overlay,
+    #   so an overlay's device gets its pins from these lines alone.
     def config_txt(platform, overlays:, build_kind:)
-      <<~CONFIG + development_lines(build_kind) + overlays.map { |name| overlay_lines(name) }.join
+      header = platform.header
+      raise Error, "#{platform.record_path}: the boot partition needs a header map" if header.nil?
+
+      <<~CONFIG + core_lines(header) + development_lines(build_kind, header) + overlays.map { |name| "dtoverlay=#{name}\n" }.join + pin_lines(header)
         # erXos boot partition for #{platform.name}, written by tools/lib/erx/boot_partition.rb.
         arm_64bit=1
         kernel=#{KERNEL}
@@ -126,21 +127,40 @@ module Erx
       TOTAL_MEM_MIB
     end
 
-    # The firmware's own boot log on the console (uart_2ndstage), and the ARM's JTAG on
-    # GPIO 22 to 27 in function ALT4 (enable_jtag_gpio), for a probe when the serial log
-    # cannot locate a hang, on pins neither the console (GPIO 14 and 15) nor UART3 (GPIO 4
-    # and 5) uses. A release card keeps both off its header.
-    def development_lines(build_kind)
+    # The firmware's own boot log on the console (uart_2ndstage), and the ARM's JTAG on the
+    # map's jtag rows (enable_jtag_gpio, which sets GPIO 22 to 27 to ALT4), for a probe
+    # when the serial log cannot locate a hang. A release card keeps both off its header,
+    # and its jtag rows give no line at all.
+    def development_lines(build_kind, header)
       case build_kind
-      in 'development' then "uart_2ndstage=1\nenable_jtag_gpio=1\n"
+      in 'development' then "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if header.jtag?}"
       in 'release' then ''
       else raise Error, "boot partition: build kind #{build_kind.inspect} is neither development nor release"
       end
     end
 
-    def overlay_lines(name)
-      pins = OVERLAY_PINS.fetch(name) { raise Error, "boot partition: the pins of overlay #{name} are not known" }
-      ["dtoverlay=#{name}", *pins].map { |line| "#{line}\n" }.join
+    # core_freq in MHz, the unit config.txt takes, and core_freq_fixed, for a map whose
+    # devices divide the core clock (HeaderMap::Map#core_clock, whole MHz).
+    def core_lines(header)
+      clock = header.core_clock
+      return '' if clock.nil?
+
+      "core_freq=#{clock / 1_000_000}\ncore_freq_fixed=1\n"
+    end
+
+    # The pull letters of a gpio= line.
+    PULL_LETTERS = { none: 'n', up: 'u', down: 'd' }.freeze
+
+    # One gpio=N=aK,pX line for each run of consecutive device rows of one alternate and
+    # pull, written gpio=N-M=... for a run of more than one pin.
+    def pin_lines(header)
+      runs = header.device_rows.slice_when do |left, right|
+        right.gpio != left.gpio + 1 || [right.alternate, right.pull] != [left.alternate, left.pull]
+      end
+      runs.map do |run|
+        pins = run.size == 1 ? run.first.gpio.to_s : "#{run.first.gpio}-#{run.last.gpio}"
+        "gpio=#{pins}=a#{run.first.alternate},p#{PULL_LETTERS.fetch(run.first.pull)}\n"
+      end.join
     end
 
     # The one clock of the record's PL011s, which config.txt's init_uart_clock sets for

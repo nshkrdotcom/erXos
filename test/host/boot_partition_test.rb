@@ -16,32 +16,51 @@ class BootPartitionTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   PI = Erx::Platform.load(root: ROOT, name: 'raspi4b')
 
+  # The Pi 4's card (docs/design-header-io.md, "Verification"): BSC1's, UART3's, SPI0's and
+  # the console's pins from the header map, none for the gpio rows (GPIO 18 and 19, PWM0's,
+  # among them), the core clock fixed at the map's 500 MHz, and the ARM's JTAG on a
+  # development card.
   def test_config_txt_comes_from_the_record
     assert_equal %w[arm_64bit=1 kernel=kernel8.img kernel_address=0x200000 armstub=bl31.bin enable_uart=1
-                    init_uart_clock=48000000 total_mem=1024 gpu_mem=76 uart_2ndstage=1 enable_jtag_gpio=1
-                    dtoverlay=uart3 gpio=4=a4,pn gpio=5=a4,pu],
+                    init_uart_clock=48000000 total_mem=1024 gpu_mem=76 core_freq=500 core_freq_fixed=1
+                    uart_2ndstage=1 enable_jtag_gpio=1 dtoverlay=uart3
+                    gpio=2-3=a0,pn gpio=4=a4,pn gpio=5=a4,pu gpio=7-11=a0,pn gpio=14-15=a5,pn],
                  settings('development')
   end
 
-  # A release card leaves the firmware's log and the ARM's JTAG off the header; any other
-  # build kind is refused.
+  # A release card leaves the firmware's log and the ARM's JTAG off the header: the jtag
+  # rows give neither enable_jtag_gpio nor gpio= lines. Any other build kind is refused.
   def test_only_a_development_card_has_jtag
     assert_equal settings('development') - %w[uart_2ndstage=1 enable_jtag_gpio=1], settings('release')
+    assert_empty set_pins(settings('release')) & [*22..27]
     error = assert_raises(Erx::Error) { Erx::BootPartition.config_txt(PI, overlays: [], build_kind: 'debug') }
     assert_match(/neither development nor release/, error.message)
   end
 
-  # enable_jtag_gpio puts JTAG on GPIO 22 to 27, so no gpio line may set one of those, and
-  # no two lines set one pin. enable_uart puts the console's GPIO 14 and 15 in ALT5
-  # whatever a gpio line says (seen on the board), so no line names them either. A line
-  # may name one pin or a range (gpio=22-27=...).
-  def test_no_two_settings_take_one_pin
-    pins = settings('development').grep(/\Agpio=/).flat_map do |line|
+  # A map without jtag rows asks for no JTAG, even on a development card.
+  def test_a_map_without_jtag_rows_gives_no_jtag
+    header = PI.record.fetch('header')
+    rows = header.fetch('rows').map { |row| row['use'] == 'jtag' ? { 'gpio' => row.fetch('gpio'), 'use' => 'reserved' } : row }
+    platform = record(header: header.merge('rows' => rows))
+    lines = Erx::BootPartition.config_txt(platform, overlays: [], build_kind: 'development').lines(chomp: true)
+    assert_includes lines, 'uart_2ndstage=1'
+    refute_includes lines, 'enable_jtag_gpio=1'
+  end
+
+  # The gpio= lines set each of the map's device rows once and nothing else, so no pin of
+  # a gpio, reserved or jtag row gets a line.
+  def test_the_pin_lines_are_the_maps_device_rows
+    pins = set_pins(settings('development'))
+    assert_equal PI.header.device_rows.map(&:gpio), pins
+  end
+
+  # The pins each gpio= line sets, in order; a line may name one pin or a range
+  # (gpio=7-11=...).
+  def set_pins(lines)
+    lines.grep(/\Agpio=/).flat_map do |line|
       first, last = line[/\Agpio=([\d-]+)=/, 1].split('-').map { |pin| Integer(pin, 10) }
       (first..(last || first)).to_a
     end
-    assert_equal pins.uniq, pins
-    assert_empty pins & [*14..15, *22..27]
   end
 
   def settings(build_kind)
@@ -56,10 +75,18 @@ class BootPartitionTest < Minitest::Test
     assert_match(/is not total_mem 1024 MiB less gpu_mem 76 MiB/, error.message)
   end
 
-  # The firmware sets no pins from an overlay, so an overlay whose pins config.txt does
-  # not know is refused.
-  def test_an_overlay_needs_its_pins
-    assert_raises(Erx::Error) { Erx::BootPartition.config_txt(PI, overlays: ['uart5'], build_kind: 'development') }
+  # config.txt takes core_freq in MHz, so a core clock of another grain is refused, and a
+  # board without a header map has no card.
+  def test_the_core_clock_and_the_map_are_needed_whole
+    units = PI.record.fetch('units').map do |unit|
+      unit.merge('devices' => unit.fetch('devices').map { |device| device['clock'] == 500_000_000 ? device.merge('clock' => 500_000_001) : device })
+    end
+    error = assert_raises(Erx::Error) { Erx::BootPartition.config_txt(record(units: units), overlays: [], build_kind: 'release') }
+    assert_match(/one core clock in whole MHz/, error.message)
+    error = assert_raises(Erx::Error) do
+      Erx::BootPartition.config_txt(Erx::Platform.new(name: 'raspi4b', record: PI.record.except('header')), overlays: [], build_kind: 'release')
+    end
+    assert_match(/needs a header map/, error.message)
   end
 
   def test_the_pl011s_need_one_clock

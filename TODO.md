@@ -1432,10 +1432,22 @@ it; git history is the record of completed work.
   (`Fiasco#build_board_bootstrap`) and the 16550 and BCM2835 UART drivers it links have no build record. Make the
   audit take a users directory and run it once per bootstrap build, its object lookup scoped to that directory.
 * [Low] tooling, the Raspberry Pi 4's medium (`BootPartition.boot_partition_medium?`, `Fiasco::BOARD_BOOTSTRAPS`,
-  `BoardTree::BOARDS`, `QemuPlan::MACHINES`, `BootPartition::OVERLAY_PINS`): a board's facts sit in four tables keyed
-  by platform name, and the medium is chosen by membership of one of them, so a board added to the others but not to
+  `BoardTree::BOARDS`, `QemuPlan::MACHINES`): a board's facts sit in three tables keyed by platform name, and the
+  medium is chosen by membership of one of them, so a board added to the others but not to
   `BoardTree::BOARDS` gets QEMU's release medium. Declare the medium, the load address and the board's tree in the
   platform record, checked when it loads, so a board without a medium is refused.
+* [Medium] tooling, the header map reader (`tools/lib/erx/header_map.rb`, docs/design-header-io.md, "The
+  construction"): it does not yet refuse a device use of no kind or a driven bus device that no row names, since
+  the record has no `i2c` or `spi` kind: BSC1, SPI0 and the GPIO controller are `ordinary` rows, each alone in its
+  unit, without the BSCs and SPIs that share their pages and lines. Add both refusals with the kinds, roles and full
+  units of plan.md 1b-I (e) package 1.
+* [Medium] tooling, the header map reader (`tools/lib/erx/header_map.rb`): the core clock is taken from the devices
+  a map names that are not UARTs (`core_clock`), a rule by exclusion that a PWM row with its own clock would break;
+  derive it from what the device is (its kind, or a clock column of the pin table's controller rows). The reader
+  also reads `hw/pins` from the code tree, not the root `Platform.load` was given (pass the table in); some
+  refusals do not name the row (`alternate`'s and `fetch_controller`'s, a decimal address); a record whose
+  console or hostlink is no device path skips the UART rule; an overlay whose device the map gives no pins is not
+  refused; `Row#device?` and the reader decide a device row two ways; a JSON null passes as an absent key.
 * [Low] tooling, `tools/erx pack` and the raspi4b suite share `build/production-image/raspi4b/`, cleared before
   each build: a suite run replaces the card last packed, two packs of one platform at once remove each other's
   files, and a failed pack leaves the directory partial. Build into a sibling directory and rename it into place.
