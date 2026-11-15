@@ -30,7 +30,10 @@ class ProgInboundTest < Minitest::Test
   E = ProgProfileFrames::Etf
 
   # The bounds are abi/protocols/prog.txt's limits, read from the schema the headers come from.
-  LIMITS = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)).constants
+  MODEL = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT))
+  LIMITS = MODEL.constants
+  # The errno a kill reply names, numbered by abi/errno.txt.
+  ESRCH = MODEL.errnos.errnos.find { |entry| entry.name == 'esrch' }.number
   REC_FRAME = LIMITS.fetch('rec_frame').value
   FRAME_MAX = LIMITS.fetch('prog_frame_max').value
   REPORT_BYTES = LIMITS.fetch('prog_report_max').value
@@ -90,37 +93,36 @@ class ProgInboundTest < Minitest::Test
 
   def self.reply(slot, body) = E.frame(E.tuple(E.atom('erx_prog'), E.small(1), E.small(slot), body))
   def self.reply_on(slot, body) = "frame #{reply(slot, body).unpack1('H*')}"
-  KILL = 0 # ERX_PROG_REQUEST_KILL, the request union's first case
   # Every state of a slot (free, awaiting, answered) under every event (take, reply, release), with
   # the answer each request must give. Slot 0 is the one walked; take gives the lowest free one.
   SLOTS = [
     ['state 0', 'state free'],
     [reply_on(0, E.atom('ok')), 'refused'],                                         # free + reply
-    ["take #{KILL}", 'take 0'],                                                     # free + take
+    ['take kill', 'take 0'],                                                        # free + take
     ['state 0', 'state awaiting'],
-    ["take #{KILL}", 'take 1'],                                                     # awaiting + take
+    ['take kill', 'take 1'],                                                        # awaiting + take
     ['release 1', 'release'],
-    [reply_on(0, E.tuple(E.atom('error'), E.atom('esrch'))), "reply 0 #{KILL} 1 3"], # awaiting + reply
+    [reply_on(0, E.tuple(E.atom('error'), E.atom('esrch'))), "reply 0 kill error #{ESRCH}"], # awaiting + reply
     ['state 0', 'state answered'],
     [reply_on(0, E.atom('ok')), 'refused'],                                         # answered + reply
-    ["take #{KILL}", 'take 1'],                                                     # answered + take
+    ['take kill', 'take 1'],                                                        # answered + take
     ['release 0', 'release'],                                                       # answered + release
     ['state 0', 'state free'],
-    ["take #{KILL}", 'take 0'],
+    ['take kill', 'take 0'],
     ['release 0', 'release'],                                                       # awaiting + release
     ['state 0', 'state free'],
-    [reply_on(1, E.atom('ok')), "reply 1 #{KILL} 0 0"],
+    [reply_on(1, E.atom('ok')), 'reply 1 kill ok'],
     ['release 1', 'release'],
     # A reply on an awaiting slot that is not its request's reply, and one on the executor's slot.
-    ["take #{KILL}", 'take 0'],
+    ['take kill', 'take 0'],
     [reply_on(0, E.tuple(E.atom('ok'), E.small(1))), 'refused'],
     ['state 0', 'state awaiting'],
     [reply_on(15, E.atom('ok')), 'refused'],
     # Every worker slot held: the next take finds none, and the executor's slot is never given.
-    *(1..14).map { |slot| ["take #{KILL}", "take #{slot}"] },
-    ["take #{KILL}", 'take 16'],
+    *(1..14).map { |slot| ['take kill', "take #{slot}"] },
+    ['take kill', 'take 16'],
     ['release 9', 'release'],
-    ["take #{KILL}", 'take 9']
+    ['take kill', 'take 9']
   ].freeze
 
   def test_reply_slots_move_through_every_state_and_event

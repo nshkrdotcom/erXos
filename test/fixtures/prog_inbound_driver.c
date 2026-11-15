@@ -11,8 +11,11 @@
  *   frame HEX			-> refused, or
  *				   report WHICH PIPE END CAP... (the
  *				   capabilities erx_prog_report_caps names), or
- *				   reply SLOT REQUEST WHICH ERRNUM
- *   take REQUEST			-> take SLOT (ERX_PROFILE_SLOTS for none)
+ *				   reply SLOT kill ok | error ERRNUM (every
+ *				   slot awaits a kill: a reply to another
+ *				   request fails the driver)
+ *   take kill			-> take SLOT (ERX_PROFILE_SLOTS for none), a
+ *				   slot awaiting ERX_PROG_REQUEST_KILL's reply
  *   release SLOT			-> release
  *   state SLOT			-> state free | awaiting | answered
  * A frame is read with all the scratch erx_prog_scratch_bytes promises,
@@ -93,7 +96,6 @@ frame_read(const uint8_t *frame, size_t len)
 	void *scratch = malloc(scratch_len == 0 ? 1 : scratch_len);
 	erx_prog_to_program_t got;
 	const erx_prog_report_t *r = &got.u.report;
-	const erx_prog_kill_reply_t *kill = &got.u.reply.u.kill;
 	uint32_t pipe, end;
 	size_t n;
 
@@ -103,8 +105,14 @@ frame_read(const uint8_t *frame, size_t len)
 		return;
 	}
 	if (got.frame == ERX_PROG_FRAME_REPLY) {
-		printf("reply %u %u %u %" PRId32 "\n", got.slot, got.u.reply.request, kill->which,
-		    kill->which == ERX_PROG_KILL_REPLY_ERROR ? kill->u.error.errnum : 0);
+		const erx_prog_kill_reply_t *kill = &got.u.reply.u.kill;
+
+		if (got.u.reply.request != ERX_PROG_REQUEST_KILL)
+			exit(2);
+		if (kill->which == ERX_PROG_KILL_REPLY_ERROR)
+			printf("reply %u kill error %" PRId32 "\n", got.slot, kill->u.error.errnum);
+		else
+			printf("reply %u kill ok\n", got.slot);
 		free(scratch);
 		return;
 	}
@@ -137,8 +145,8 @@ main(int argc, char **argv)
 			printf("open %s\n", decisions[erx_prog_inbound_open(started != 0, kind, zero, len)]);
 			continue;
 		}
-		if (sscanf(line, "take %u", &number) == 1) {
-			printf("take %u\n", erx_prog_slot_take(&slots, (uint16_t)number));
+		if (strcmp(line, "take kill\n") == 0) {
+			printf("take %u\n", erx_prog_slot_take(&slots, ERX_PROG_REQUEST_KILL));
 			continue;
 		}
 		if (sscanf(line, "release %u", &number) == 1 && number < ERX_PROFILE_SLOTS) {
