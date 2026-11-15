@@ -212,6 +212,9 @@ module Erx
       required = (original.keys - removed) | payload.fetch('changes').keys
       missing = required - current
       raise Error, "imported source file is missing: #{missing.first}" unless missing.empty?
+      # The one refusal gathered over the whole tree rather than raised at the
+      # first file: an edit of upstream code often touches many files at once.
+      unnoticed = []
       current.each do |path|
         absolute = File.join(@root, path)
         @authorize.call(absolute) if @authorize
@@ -243,9 +246,7 @@ module Erx
           next
         end
         if baseline
-          unless Attribution.header_notice?(bytes, notice: MODIFIED_NOTICE)
-            raise Error, "imported file lacks its erXos change notice: #{path}"
-          end
+          unnoticed << path unless Attribution.header_notice?(bytes, notice: MODIFIED_NOTICE)
         else
           check_addition(path, bytes: bytes, exclusions: payload.fetch('exclusions'))
         end
@@ -259,6 +260,7 @@ module Erx
           permitted.delete_at(index)
         end
       end
+      raise Error, "imported files lack their erXos change notice: #{unnoticed.join(', ')}" unless unnoticed.empty?
       payload
     end
 

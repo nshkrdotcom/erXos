@@ -117,7 +117,7 @@ class OriginTest < Minitest::Test
     copy_with_row
     write_file('copy.c', "/* SPDX-License-Identifier: BSD-2-Clause */\nint changed;\n")
     error = assert_raises(Erx::Error) { @origin.check }
-    assert_match(/lacks its erXos change notice: copy\.c/, error.message)
+    assert_match(/lack their erXos change notice: copy\.c/, error.message)
     write_file('copy.c', "/* Modified by erXos */\n/* SPDX-License-Identifier: BSD-2-Clause */\nint changed;\n")
     @origin.check
   end
@@ -205,6 +205,19 @@ class OriginTest < Minitest::Test
     assert @origin.check
   end
 
+  # One check names every changed file without its notice, not only the
+  # first.
+  def test_every_changed_file_without_its_notice_is_named_at_once
+    %w[first.c second.c kept.c].each { |path| write_file(path, "int value;\n") }
+    write_origin
+    %w[first.c second.c].each { |path| write_file(path, "int changed;\n") }
+    write_file('kept.c', "/* Modified by erXos */\nint changed;\n")
+    error = assert_raises(Erx::Error) { @origin.check }
+    assert_match(/first\.c/, error.message)
+    assert_match(/second\.c/, error.message)
+    refute_match(/kept\.c/, error.message)
+  end
+
   # A block comment that closes on its own line, as an imported license header
   # does, leaves nothing of that line to read: the check answers, not crashes.
   def test_a_header_comment_closed_on_its_own_line_is_read
@@ -212,7 +225,7 @@ class OriginTest < Minitest::Test
     write_origin
     write_file('source.c', "/*\n * License.\n */\nint changed;\n")
     error = assert_raises(Erx::Error) { @origin.check }
-    assert_match(/lacks its erXos change notice/, error.message)
+    assert_match(/lack their erXos change notice/, error.message)
     write_file('source.c', "/*\n * License.\n */\n// Modified by erXos\nint changed;\n")
     assert @origin.check
   end
