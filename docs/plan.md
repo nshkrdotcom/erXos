@@ -135,7 +135,7 @@ names; the table's order is the order.
 | 1b-A M5 on the stopgap | spawn into a sandbox domain with a link, crash it, get `{domain_down, D, crash}`; kill a domain mid-burst and watch its end arrive after its last messages; kill the system domain and read its crash record after the reset; every guarantee deferred | 9,000 lines of C17, 6,000 of Erlang for M5, its kernel interface carried as backend rows in the Fiasco backend, and in the hosted backend where cheap (2,000 to 4,000 lines of C17, a guess until the first rows land) | Phase 1 | G5, provisionally |
 | 1b-B Track S, programs | `find /tmp/logs -type f \| xargs tail -n 1` through toybox's applets as ports of the session, and `within` confining a program to one grant, on the stopgap | in track S's figure | 1b-A | |
 | Track A Apps, part 1 | a QEMU image boots into an app's session with no login, holding exactly its template's grants, and `service -e` prints everything that starts | estimated before it starts | 1b-A, 1b-B's session domain, and M6's data partition for `rc.conf` | |
-| 1b-C Track D, parts 1 to 4 | `tools/erx web` shows a QEMU guest's records, kernel log and the traces of `root`'s session domain in a browser over the host link, with no network or display device; one application's user interface in the browser; a QEMU `virt` display showing the window of a session that starts at boot with no login, drawn by that session into a buffer the display domain composes; and the same interface on a QEMU `virt` kiosk, drawn by LVGL as a program of the kiosk's session | estimated per part before it starts; the designs give no figure | 1b-A and the session domain, 1b-B's first slice; part 3 also 1b-E and track A's first part; part 4 also 1b-B's sub-space ports and pipes, 1b-D's first slice and track A's second part | GW |
+| 1b-C Track D, parts 1 to 4 | `tools/erx web` shows a QEMU guest's records, kernel log and the traces of `root`'s session domain in a browser over the host link, with no network or display device; one application's user interface in the browser; a QEMU `virt` display showing the window of a session that starts at boot with no login, drawn by that session into a buffer the display domain composes; and the same interface on a QEMU `virt` kiosk, drawn by LVGL as a program of the kiosk's session | estimated per part before it starts; the designs give no figure | 1b-A and the session domain, 1b-B's first slice; part 3 also 1b-E and track A's first part; part 4a also 1b-B's sub-space ports and pipes and 1b-D's first slice, and part 4b track A's second part | GW |
 | 1b-D Track P, the first part | a UNIX program recompiled unchanged makes pipes, spawns children with inherited descriptors and waits for them, on the stopgap | 10,000 to 15,000 lines of C for the track | 1b-B's session domain, sub-space ports and pipes, not toybox's applets | GP, provisionally; the G6 baseline |
 | 1b-E M9 on the stopgap | a block transfer runs while the block driver process is killed; the kill ends the storage domain, whose restart resets the device and mounts `/data` again with every synced file present ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)); drivers run in the storage and network domains over virtio-mmio, unconfined | 3,000 lines of C17, 5,000 of Erlang for M9, of which the PCIe enumerator and the MSI frame's driver are its kernel part's | 1b-A | G9's measurements, deciding nothing |
 | Track A, part 2 | an app built outside the tree with the SDK alone, added to an image with `tools/erx pack --app`, boots into its session with exactly the `apps` row's services its declaration names, its code read from its package at `/app` | estimated before it starts | part 1 | |
@@ -1378,11 +1378,14 @@ land after M11 repeat M11's closure over what they add.
    ([design-display.md](design-display.md#the-pixel-area),
    [design-display.md](design-display.md#the-screen-and-its-one-path-to-the-device),
    [design-display.md](design-display.md#a-displays-session)).
-4. **A kiosk on QEMU `virt`**, in 1b-C, after parts 2 and 3, 1b-B's
-   sub-space ports and pipes, the first slice of 1b-D and track A's second
-   part, because it needs the kiosk's app as a package added to the image
-   and LVGL running on erXos beside the widget toolkit, which the start
-   table of track A's first part alone does not ship: a native
+4. **A kiosk on QEMU `virt`**, in 1b-C, in two steps. Part 4a, after
+   parts 2 and 3, 1b-B's sub-space ports and pipes and the first slice of
+   1b-D, runs the LVGL interface below in the session of a principal the
+   manifest names, with no package. Part 4b, after part 4a and track A's
+   second part, runs the same interface as the kiosk's app, a package
+   added to the image. Both need LVGL running on erXos beside the widget
+   toolkit, which the start table of track A's first part alone does not
+   ship: a native
    program with inherited pipe descriptors and `read`, `write` and `poll`
    on them. `erx_ui_lvgl` in the application's session, and `erx-lvgl`,
    LVGL as a native program of that session behind `erx_ui_renderer`: the
@@ -1390,7 +1393,7 @@ land after M11 repeat M11's closure over what they add.
    window's buffer into the program; LVGL's direct mode into that buffer;
    the generated C reader of `ui.txt`'s binary form, with its `screen`,
    `input`, `repaint` and `presented` records and its `damage` reports.
-   The kiosk's session: `examples/dashboard`, a package added to the
+   Part 4b's kiosk session: `examples/dashboard`, a package added to the
    image within the development manifest's `apps` row, whose application
    opens its UI with `erx_ui:open(#{renderer => lvgl})` and whose start
    row is on the display, from track
@@ -2282,8 +2285,8 @@ brings.
 card, to the shell on its console; a file synced under `/data` on the SD
 card survives a power cut; the network domain carries UDP echo and a TCP
 bulk transfer to a peer over the Pi's Ethernet, and over WiFi once the
-Pi has joined a WPA2 or WPA3 network; the kiosk application of
-[1b-C](#track-d-windows-widgets-and-the-web)'s part 3 shows on the Pi's
+Pi has joined a WPA2 or WPA3 network; the LVGL dashboard of
+[1b-C](#track-d-windows-widgets-and-the-web)'s part 4 shows on the Pi's
 screen; a real-time clock module on the header keeps the time across a
 power cut. Every guarantee is deferred, as on QEMU. An LED on the header
 that lights from the shell, and a button that wakes a read of its
@@ -2502,7 +2505,8 @@ by side; (f) needs (b) and (c).
   a device that is not coherent (`TODO.md`, `erx_device.c`, queues).
 * (c): (a); 1b-E's network domain and 1b-G's network service; the
   device NIF's cache maintenance, as for (b).
-* (d): (a); 1b-C's part 3, the display domain and the kiosk; the device
+* (d): (a); 1b-C's part 3, the display domain, and part 4a's LVGL
+  dashboard (part 4b's once it lands); the device
   NIF's region call, `erx_device:fill/3` (`TODO.md`,
   `docs/design-display.md`).
 * (e): (a); 1b-E's configured domains, for the devices domain; for
