@@ -37,12 +37,14 @@ module Erx
     # A name here that the release does not ship would leave that application started.
     raise Error, "LOAD_ONLY names what the release does not ship: #{LOAD_ONLY - APPLICATIONS}" unless
       (LOAD_ONLY - APPLICATIONS).empty?
-    # A domain's own applications: the system release ships them (SYSTEM_APPLICATIONS),
-    # and every release only loads them, so that none runs in the
-    # system domain and none starts before its domain's facets: the session template's
-    # arguments start erx_session with -eval, which runs once init has them
-    # (docs/design-runtime.md, edit 65).
-    DOMAIN_ONLY = %w[erx_session].freeze
+    # A domain's own applications, which every release only loads, so that none runs in
+    # the system domain and none starts before its domain's facets: the session
+    # template's arguments start erx_session with -eval, which runs once init has them
+    # (docs/design-runtime.md, edit 65), and the app template's start erx_app, once the
+    # ready answer has also brought the app's record (docs/design-packaging.md,
+    # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
+    # and not erx_app, which only the app script holds.
+    DOMAIN_ONLY = %w[erx_session erx_app].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -124,9 +126,14 @@ module Erx
     #   No manifest names it yet: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
-    #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script and session's name them,
-    #   so no other domain has crypto on its code path. No manifest names it yet; the
-    #   native domain tests boot it (NativeDomain).
+    #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script, session's and app's
+    #   name crypto, so no other domain has it on its code path. No manifest names it
+    #   yet; the native domain tests boot it (NativeDomain).
+    # * app, an app's session, which the app template boots (docs/design-packaging.md,
+    #   "The apps row"): the client side of the display as client's, the network
+    #   client, asn1, crypto and public_key, which it only loads (with ssl and inets,
+    #   for an app's HTTPS requests, once the runtime builds them), and erx_app (DOMAIN_ONLY), which the template's -eval starts and
+    #   which mounts the app's package at /app and starts what it declares.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
                         'session' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY, 'erx_net_client', 'erx_shell',
                                       'erx_web_line', 'erx_session'].freeze,
@@ -135,7 +142,9 @@ module Erx
                         'web' => [*DOMAIN_BASE, 'erx_web'].freeze,
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
-                        'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze }.freeze
+                        'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
+                        'app' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
+                                  'erx_net_client', 'erx_app'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release

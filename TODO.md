@@ -23,9 +23,10 @@ it; git history is the record of completed work.
   stopgap check reads the `apps` and `signer` rows, counts `max` apps in property 4's domain and memory sums
   and in property 18's display costs, checks clauses 1 (refusing an inspect service), 3 and 6, and refuses every
   `package` row. What remains, each with its seeded violation: the rows derived from `apps` (the app
-  template, its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which
-  wait for the domain release's `app` script, the storage service's `tree` parameter and its enforcement, a
-  server of `packages`, and the `apps` service freed from the start table; clause 4, which needs
+  template, booting the domain release's `app` script with `-eval ok=application:start(erx_app, permanent)`,
+  its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
+  storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
+  from the start table, and the app session below; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
   package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
   facet-row indices, the manifest's reserved names and the image's package names) read from the packed
@@ -53,6 +54,17 @@ it; git history is the record of completed work.
   mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
   offset and size; the lifetime taken from the caller rather than the request; and whether image header
   reads wait for the `packages` grant. The missing signature check is a security residual below.
+* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
+  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
+  (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
+  table, an app principal's elastic budget under the `apps` budget, and `erx_dom_plan_session` taking an
+  app principal with the app template and no other template; `erx_principal:register_app/2`; the session plan
+  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
+  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
+  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
+  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
+  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
+  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the

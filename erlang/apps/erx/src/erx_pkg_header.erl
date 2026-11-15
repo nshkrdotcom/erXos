@@ -21,7 +21,8 @@ the decoder, then the file's name and the header's authentication.
 """.
 
 -export([decode/2, layout/2, check_file/2]).
--export_type([decoded/0, layout/0, reason/0, authority/0, checked/0, check_reason/0]).
+-export_type([decoded/0, layout/0, start/0, reason/0, authority/0, checked/0,
+              check_reason/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -41,6 +42,9 @@ the decoder, then the file's name and the header's authentication.
                     salt := binary(),
                     root_hash := binary()}.
 
+-doc "What a package starts: its Erlang applications, or its program with its arguments.".
+-type start() :: {applications, [binary(), ...]} | {program, binary(), [binary()]}.
+
 -doc """
 A decoded header: the packed declaration, the build's ABI version and
 architecture, the seal and the header's length, and the image's layout.
@@ -51,8 +55,7 @@ architecture, the seal and the header's length, and the image's layout.
                      version := pos_integer(),
                      memory := non_neg_integer(),
                      needs := [binary()],
-                     start := {applications, [binary(), ...]}
-                            | {program, binary(), [binary()]},
+                     start := start(),
                      license := binary(),
                      key := binary(),
                      signature := binary(),

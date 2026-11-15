@@ -1148,10 +1148,10 @@ ready answer brings the app's record. Then it:
 
 The app's paths come after the release's, so a module the app ships
 under a name the release already uses is never the one the code server
-finds first: a clash breaks only the app that brought it. Whether the
-code server in the session's embedded mode resolves a module by path
-order in this way, rather than refusing or replacing it, is unverified;
-`erx_app`'s host test, run in the session's code-server mode, settles it.
+finds first: a clash breaks only the app that brought it. A session's
+code server runs in interactive mode, which loads a module from the
+first directory of the path that holds it; `erx_app`'s host test, run
+in that mode, checks it.
 
 `erx_app` is permanent, so its end, a declared application's end and a
 program's end each end the session, and the start row's keeper starts it

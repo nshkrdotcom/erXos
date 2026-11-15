@@ -9,7 +9,7 @@ to the module that does the work, with that module's authority and no
 authority of its own.
 """.
 
--export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0]).
+-export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0, app/0]).
 
 %%% Source lines: erx:source/1.
 
@@ -181,3 +181,13 @@ system domain included, which takes its names from the manifest.
 -spec granted() -> [atom()].
 granted() ->
     persistent_term:get({erx, granted}, []).
+
+-doc """
+The app's record that this domain's ready answer brought, when the domain is an
+app's session (docs/design-packaging.md, "An app's session"): its package's
+place, its header's layout and what it starts, which erx_app reads.
+`undefined` in every other domain.
+""".
+-spec app() -> erx_app:record() | undefined.
+app() ->
+    persistent_term:get({erx, app}, undefined).

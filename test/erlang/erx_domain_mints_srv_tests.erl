@@ -402,7 +402,7 @@ granted_answers([], Answers) ->
     Answers;
 granted_answers(Pids, Answers) ->
     receive
-        {trace, Pid, 'receive', {_Ref, facets, _Facets, Granted}} ->
+        {trace, Pid, 'receive', {_Ref, facets, _Facets, Granted, none}} ->
             case lists:member(Pid, Pids) of
                 true -> granted_answers(lists:delete(Pid, Pids), Answers#{Pid => Granted});
                 false -> granted_answers(Pids, Answers)
@@ -453,7 +453,7 @@ answers([], Answers) ->
     Answers;
 answers(Pids, Answers) ->
     receive
-        {trace, Pid, 'receive', {_Ref, facets, Facets, _Granted}} ->
+        {trace, Pid, 'receive', {_Ref, facets, Facets, _Granted, none}} ->
             answers(lists:delete(Pid, Pids), Answers#{Pid => Facets});
         {trace, _, 'receive', _} ->
             answers(Pids, Answers)

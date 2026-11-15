@@ -135,7 +135,7 @@ class ReleaseFilesTest < Minitest::Test
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
     only = %w[asn1 crypto public_key ssh erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_win erx_ui erx_desk erx_web erx_net
-              erx_net_client erx_web_line]
+              erx_net_client erx_web_line erx_app]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
       refute_includes release, "{#{application},"
@@ -267,6 +267,20 @@ class ReleaseFilesTest < Minitest::Test
     domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('session')]))
     assert_match(/\{erx_shell,"#{VERSION}"\},\{erx_web_line,"#{VERSION}"\},\{erx_session,"#{VERSION}",load\}\]\}\.\n\z/,
                  boot_release_file('session'), 'the session script starts the line and only loads erx_session')
+  end
+
+  # The app script, which the app template boots (docs/design-packaging.md, "The apps
+  # row"), starts the client side of the display and the network client, only loads
+  # asn1, crypto and public_key, holds no ssh and no command shell, and only loads
+  # erx_app, which the template's -eval starts once the ready answer brought the app's
+  # record.
+  def test_the_app_script_boots_the_client_side_and_only_loads_erx_app
+    domain_entries(Erx::ReleaseFiles.domain([Erx::ProductionImage.domain_boot('app')]))
+    release = boot_release_file('app')
+    %w[asn1 crypto public_key].each { |name| assert_match(/\{#{name},"[^"]+",load\}/, release, "app only loads #{name}") }
+    refute_match(/\{(ssh|erx_shell|erx_session),/, release, 'an app runs no ssh daemon, shell or session tty')
+    assert_match(/\{erx_ui,"#{VERSION}"\},\{erx_net_client,"#{VERSION}"\},\{erx_app,"#{VERSION}",load\}\]\}\.\n\z/,
+                 release, 'the app script starts the client side and the network client and only loads erx_app')
   end
 
   # A principal can run OTP's ssh daemon in its own session (docs/design-ssh.md, "Stages",

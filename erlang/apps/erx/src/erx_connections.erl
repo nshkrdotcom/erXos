@@ -351,12 +351,13 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(Env, connection_up(Env, Peer, PeerNode, Values, Area, Held), Dropped);
         {erx_origin, SystemId, {erx_connection_down, Peer, Reason}} when is_integer(Peer) ->
             records(Env, connection_down(Env, Peer, Reason, Held), Dropped);
-        {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
+        {erx_origin, SystemId, {erx_facets, Facets, Granted, App}} when is_map(Facets) ->
             Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_pid(Facet)},
             register_facets(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
             %% find the names erx:granted/0 reads.
             persistent_term:put({erx, granted}, lists:usort(names(Granted))),
+            put_app(App),
             init ! {erx_facets, Valid},
             records(Env, Held, Dropped);
         {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}}
@@ -418,6 +419,11 @@ names(_) -> [].
 %% registry before it.
 register_facets(Facets) ->
     persistent_term:put({erx, facets}, maps:merge(persistent_term:get({erx, facets}, #{}), Facets)).
+
+%% An app's record, which only an app's session receives (erx:app/0); every other
+%% domain's answer carries none.
+put_app(none) -> ok;
+put_app(App) when is_map(App) -> persistent_term:put({erx, app}, App).
 
 %% connection_up: the port opens, on the lane driver (lane_open/1), with the record's
 %% words, "erx_lane Side PeerSide PeerBell Label OutSize InSize Peer PeerNode"

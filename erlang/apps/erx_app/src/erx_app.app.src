@@ -1,0 +1,15 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% An app's session (docs/design-packaging.md, "Starting an app"): erx_app mounts the
+%% app's package at /app from the record the ready answer brings and starts what the
+%% package declares. The domain release's app script only loads it; the app template's
+%% -eval starts it, permanent, once the domain holds its facets.
+{application, erx_app,
+ [{description, "erXos app session"},
+  {vsn, "1"},
+  {modules, [erx_app]},
+  {registered, []},
+  {applications, [kernel, stdlib, erx, erx_files]},
+  {mod, {erx_app, []}},
+  {env, []}]}.

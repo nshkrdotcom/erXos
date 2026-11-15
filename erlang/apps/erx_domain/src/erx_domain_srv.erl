@@ -859,7 +859,9 @@ grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) -
     %% A spec never names a service of the table (facet/3), and the manifest grants a
     %% configured domain no spec, so the two never share a name.
     Minted = maps:filtermap(fun(Name, Facet) -> mint(Id, Pid, Name, Facet, Exports) end, maps:merge(Specs, Systems)),
-    Pid ! {Ref, facets, Minted, Granted},
+    %% No session plan takes an app principal (TODO.md, "an app's session"), so no
+    %% answer carries an app's record (docs/design-packaging.md, "An app's session").
+    Pid ! {Ref, facets, Minted, Granted, none},
     State.
 
 %% The facet of a service the system domain serves, for a domain of Principal: the
