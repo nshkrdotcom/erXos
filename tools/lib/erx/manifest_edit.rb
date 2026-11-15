@@ -51,6 +51,21 @@ module Erx
         Frontend.render(removed(source, records.map { |name| named(source, name) }))
       end
 
+      # text without its apps row: the row's memory given back from root_memory and its
+      # max from max_domains. The pixel areas its max takes of the display domain's outer
+      # budget stay counted there and leave with that domain (without_domain), as the
+      # site manifest leaves it out (Platform#site_manifest_source); a harness that keeps
+      # the display domain keeps them reserved. The row must state its max, so what it took
+      # follows from the text alone. A manifest with no apps row is rendered unchanged.
+      def without_apps(text)
+        source = Frontend.read(text)
+        apps = source.records.fetch('apps', []).first
+        return Frontend.render(source) unless apps
+
+        changes = { %w[machine root_memory] => -apps.decimal('memory'), %w[machine max_domains] => -apps.decimal('max') }
+        Frontend.render(changed(removed(source, [apps]), changes) { |value, added| value + added })
+      end
+
       # text with no session template: every session record, and every facet granted to
       # one, which would name a template no longer there.
       def without_sessions(text)

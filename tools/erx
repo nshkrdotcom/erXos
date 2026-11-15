@@ -576,23 +576,34 @@ module Erx
     # QEMU (ReleaseMedium), or a board's boot partition and SD card image (BootPartition).
     # With --probe header, instead the Raspberry Pi 4's header probe card (HeaderProbe),
     # a card of its own that needs no Fiasco and no image; it is a medium already, so it
-    # takes no --medium.
+    # takes no --medium. Each --app adds an app to the image (image_apps,
+    # docs/design-packaging.md, "Adding an app to an image"), --enable NAME starts it at
+    # boot and --signer FILE trusts a deployer's key for packages installed later.
     def self.pack(arguments)
       medium = false
       probe = nil
+      sources = []
+      enable = []
+      signers = []
       platform = platform_option(arguments) do |flags|
         flags.on('--medium') { medium = true }
         flags.on('--probe NAME', %w[header]) { |name| probe = name }
+        flags.on('--app PATH') { |path| sources << File.expand_path(path) }
+        flags.on('--enable NAME') { |name| enable << name }
+        flags.on('--signer FILE') { |path| signers << File.expand_path(path) }
       end
       no_arguments(arguments)
       raise Error, 'pack: --probe packs a card of its own and takes no --medium' if probe && medium
+      raise Error, 'pack: --probe packs a card of its own and takes no app' if probe && !(sources + enable + signers).empty?
 
       require_relative 'lib/erx/production_image'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       environment = host_environment(runner: runner)
       return pack_probe(runner: runner, environment: environment, platform: platform) if probe
+      apps = image_apps(runner: runner, sources: sources, enable: enable, signers: signers)
       result = ProductionImage.pack_platform(root: ROOT, runner: runner, compiler: environment.fetch('ERX_CLANG'),
-                                             linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium)
+                                             linker: environment.fetch('ERX_LLD'), platform: platform, medium: medium,
+                                             apps: apps)
       built, written = medium ? result : [result, nil]
       Terminal.puts("production image: #{built.single}; root_startup: #{built.report.fetch('manifest').fetch('root_startup')}")
       case written
@@ -607,6 +618,39 @@ module Erx
         Terminal.puts("release medium: #{written.path}; EROFS image: #{written.erofs}; #{extents.join('; ')}")
       end
       0
+    end
+
+    # The packages pack's --app options add to the image, as an ImageApps::Plan: each app
+    # directory packed with the SDK exported into build/app-sdk and the host's development
+    # package key (Erx::PackageKey), or each package file as given, both staged in
+    # build/app-packages, which the image takes them from; each directory is cleared
+    # first. The key's private half stays in its directory.
+    def self.image_apps(runner:, sources:, enable:, signers:)
+      require_relative 'lib/erx/image_apps'
+      return ImageApps.none if sources.empty? && enable.empty? && signers.empty?
+
+      require_relative 'lib/erx/package_key'
+      require_relative 'lib/erx/sdk'
+      key = PackageKey.ensure
+      packages = sources.empty? ? [] : gathered_apps(sources, runner: runner, signer: key)
+      ImageApps.plan(packages, enable: enable, signers: signers.map { |path| ImageApps.signer(path) })
+    end
+
+    # The packages of sources (ImageApps.gather), packed with an SDK exported into
+    # build/app-sdk and signed by signer, staged in build/app-packages.
+    def self.gathered_apps(sources, runner:, signer:)
+      erlc = File.join(File.dirname(Oracle.new(root: ROOT, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
+      exported = File.join(empty_build_directory('build/app-sdk'), 'sdk')
+      Sdk.new(root: ROOT, runner: runner, erlc: erlc).export(exported)
+      ImageApps.gather(sources, into: empty_build_directory('build/app-packages'), sdk: AppPack::Sdk.new(root: exported, erlc: erlc),
+                                signer: signer, runner: runner, root: ROOT)
+    end
+
+    # The directory relative names under the tree, made empty.
+    def self.empty_build_directory(relative)
+      directory = ProductionImage.clear_directory(root: ROOT, path: File.join(ROOT, relative))
+      FileUtils.mkdir_p(directory)
+      directory
     end
 
     # The header probe card for platform (HeaderProbe.pack).
@@ -798,7 +842,7 @@ module Erx
     end
 
     def self.help(_arguments)
-      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
+      Terminal.puts('usage: tools/erx boot [--accel tcg|hvf] [--cpus N] [--jobs N] [--hostlink] [--without-web] | build fiasco | build runtime | build rc-oracle | build fsimg | build herd7 | build lvgl | build web | qemu | oracle build|run|probe | oracle hosted [--suites LIST] | oracle qemu [--suites LIST] | bench WORKLOAD | bench g3 --accel tcg|hvf | bench g5 --accel tcg|hvf | bench boot --accel tcg|hvf [--runs N] [--image PATH] | bench bytes --accel hvf [--image PATH] | bench web --accel hvf | bench net-freebsd --host H [--runs N] [--only LIST] [--require-fast-path] | conformance | check-boot-image | check-debug-log | check-qemu [--suite NAME] [--fresh] [--one-at-a-time] [--remote DEST] [--busy-load LOAD] | fetch | generate | check | check-reproducible [--platform NAME] | check-runtime-seam | check-fuzz | check-sanitizers | check-stack-proof | check-oracle | check-libc-test ACCEL CPUS | check-tla | check-cbmc [--filter TEXT] | check-litmus | sysreg refresh [--verify] [--root PATH] | gates | pack [--medium] [--platform NAME] [--app DIR|FILE]... [--enable NAME]... [--signer FILE]... | pack --probe header --platform raspi4b | sdk export DIR | load --socket PATH [--build HEX] FILE... | watch --socket PATH [--build HEX] [--interval S] DIR | files --socket PATH --listen SOCK [--build HEX] [--once] | web --socket PATH [--build HEX] [--port N] | status | setup [--bootstrap] [--jobs N] | ssh [--port N] [COMMAND...]')
       0
     end
 

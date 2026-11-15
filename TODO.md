@@ -38,8 +38,7 @@ it; git history is the record of completed work.
   records, one reader for the machine and the packer, which then owns the types `erx_app_admit` declares
   for them; clause 7, once the `apps` service and `tree` exist; clause 1's inspect
   scope; clause 2's counts in the principal table, the session-name atoms and each server's connections, which
-  the stopgap check sums for no principal; and the development manifests' `apps` row, with the site manifest
-  leaving it out.
+  the stopgap check sums for no principal.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
@@ -2656,19 +2655,38 @@ it; git history is the record of completed work.
   environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
   `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
   shows only as the runner's log path. Fix: add each with the SDK package.
-* [High] apps, `tools/erx pack --app DIR [--enable NAME]` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
-  `Erx::ImageApps` plans what an image takes for its packages (the file at the release's `pkg/NAME.app`, the
-  `package` rows bound to artifacts the host file check described, and the `development` signer row from the
-  builder's development package key) and the manifest check binds the rows, but nothing calls it yet. What
-  remains: the command, which packs DIR with the in-tree packer (`AppPack.pack` with an SDK exported into the
-  build tree, until the SDK's `host/bin` exports `erx-app`) or takes a package file as given; `ProductionImage`
-  taking the plan into `assemble` (the entries in the domain release with a receipt each, the artifacts merged
-  into `ProductionImage.artifacts`, the rows appended to the image's copy of the manifest source); the
-  package's license judged as an archive's (step 4 of "Adding an app to an image"), which needs a receipt kind
-  for a package that is not the tree's; the `development` signer added to every development image whose
-  manifest has an `apps` row, not only to those `pack --app` builds; `--signer FILE`; the packed records of
-  `apps`, `package` and `signer` in `abi/manifest.txt`, without which the machine sees none of the rows (the
-  package process at boot reads them); and the development manifests' `apps` row.
+* [High] apps, `tools/erx pack --app` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
+  the command packs an app directory with the in-tree packer (`AppPack.pack` with an SDK exported into
+  `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
+  the packed records of `apps`, `package` and `signer` in `abi/manifest.txt` are missing, so the machine sees
+  none of the rows the image carries (the package process at boot reads them); no image carries the builder's
+  development key yet (it is to be a field of the build context, `Manifest::Context`'s `development_key`,
+  admitted only in a development build beside an `apps` row, which `pack --app` passes from
+  `PackageKey.ensure`); the packer does not yet run the machine's manifest reader
+  (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside `AppPack.describe`; and
+  `tools/erx app run DIR`.
+  Fix: each with its own package.
+* [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
+* [Medium] apps, the development manifests' `apps` row (`config/manifest/*-development.txt`): each board grows four
+  sums by hand for the row (the display domain's outer budget by `max` pixel areas and lanes, the system
+  principal's memory, root_memory and max_domains), so `limits display` is copied into both board files to
+  differ in `outer` alone and `Manifest::Edit.without_apps` gives back only the row's memory and max, leaving
+  the pixel areas reserved when a harness keeps the display domain (`site_manifest_source(keep: display)`);
+  and `max_connections` is not grown for an app's system connection and its three grants, so a second
+  running app's start is refused once the spare rows for restarts are used. Fix: property 19's check adds
+  the row's share to the board's declared figures instead of the manifest holding it, which removes the copy
+  and makes `without_apps` exact; the connections counted with it.
+* [Medium] apps, the Raspberry Pi 4 card (`config/manifest/raspi4b-development.txt`): the card the website
+  offers is packed from the development manifest, so it carries the `apps` row, where design-packaging.md
+  takes the row out of the browser image alone; harmless while no packed record carries the row, but once
+  development images trust their builder's key, every downloaded card would trust the site builder's.
+  Fix: the design says whether a distributed card takes packages, and the card build follows it.
+* [High] apps, restricted packages (`tools/lib/erx/pack_provenance.rb`, the `package` receipt): every
+  image refuses a package whose license is absent or not permissive, where step 4 of "Adding an app to an
+  image" lets one enter a local test image built to allow restricted inputs, so `examples/doom` (GPL-2.0)
+  cannot be added to any image yet. Fix: a build switch for such a local image that the site build and the
+  board cards cannot set, and a registration status for a package it admits, with the test that a
+  restricted package still fails without it.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on

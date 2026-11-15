@@ -40,7 +40,8 @@
 # domain runs without a screen (erx_virtio_gpu). Fixed
 # medium roles carry partition 0, as docs/design-abi.md says. The machine is
 # QEMU virt with the platform record's RAM (config/platforms/qemu-virt.json).
-# root_memory holds what the budgets below promise and an 8 MiB margin no one is
+# The figures of this comment leave out the apps row; the row and its comment at the end
+# of this file add to them. root_memory holds what the budgets below promise and an 8 MiB margin no one is
 # promised; what RAM less fiasco_reserve leaves beside it is bootstrap's and the boot
 # archive's, and the packer prints both figures for each image it builds. The system
 # baseline, 46 MiB, holds ERTS at the shell and /tmp, whose cap is 4 MiB. ERTS
@@ -220,7 +221,7 @@ limits web
   peer_held 4096
   peer_held_total 4096
 principal system
-  memory 163577856
+  memory 197148672
   grant @share.users
   domains 5
   names 64
@@ -237,12 +238,12 @@ machine
   console "/pl011@9000000"
   hostlink "/pl011@9040000"
   platform "qemu-virt"
-  root_memory 231079936
+  root_memory 402014208
   system_baseline 48234496
   system_share @share.system
   users_share @share.users
   system_principal @principal.system
-  max_domains 5
+  max_domains 9
   max_connections 12
   system_lane 4096
   system_queue 16384
@@ -335,3 +336,28 @@ facet web
   reductions 100000
   period_ns 1000000000
   max_heap_size 262144
+# The apps row (docs/design-packaging.md, "The shipped manifests"), so a development
+# build takes packages with no edit: the apps' shared budget of 131 MiB, two apps of
+# the default 64 MiB with their sessions' outer budgets and one ended app's, and
+# max 4 apps, each holding the services display, data and net. Property 19
+# reserves max in full: a domain each in max_domains, and a pixel area of
+# windows_pixels_default, 8 MiB, with its 4 KiB lane each in the display domain's
+# outer budget, which is the board's for that reason (33570816 bytes beyond its
+# 1 MiB). root_memory and the system principal's memory grow by those areas, and
+# root_memory by the apps' budget too.
+limits display
+  memory 25165824
+  outer 34619392
+  grant @share.display
+  spaces none
+  lane 4096
+  connections 0
+  crash 0
+  flags none
+  runtime_limits @runtime_limits.display
+  peer_held 4096
+  peer_held_total 4096
+apps
+  memory 137363456
+  services display data net
+  max 4

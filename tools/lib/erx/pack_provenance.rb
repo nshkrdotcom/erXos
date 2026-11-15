@@ -248,6 +248,21 @@ module Erx
         sources = receipt.fetch('sources')
         raise Error, 'compiled receipt has no sources' unless sources.is_a?(Array) && sources.size.between?(1, 64)
         sources.each { |source| attribute(checked_file(source).fetch('path'), records, build_kind) }
+      when 'package'
+        # An app's package an image takes as it is (ImageApps), from outside the tree: it
+        # is attributed whole, as an archive is, under the license its header declares,
+        # and its external registration must state it as permanent, so a package whose
+        # license is absent or not permissive enters no image, development ones included.
+        exact_keys(receipt, %w[version kind artifact])
+        package = output.fetch('path')
+        registered = @external[package]
+        raise Error, 'a package receipt names a package not registered as permanent' unless registered&.fetch('status') == 'permanent'
+
+        begin
+          attribute(package, records, build_kind)
+        rescue Error => error
+          raise Error, "the package #{registered.fetch('label')} cannot enter the image: #{error.message}"
+        end
       else
         raise Error, 'unknown build receipt kind'
       end

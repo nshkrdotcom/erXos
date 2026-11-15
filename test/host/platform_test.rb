@@ -48,11 +48,11 @@ class PlatformTest < Minitest::Test
     end
   end
 
-  # The site manifest is the development manifest with the domains site_leaves_out names
-  # taken out, in order, and keep keeps one of them in; it keeps nothing the site does not
-  # leave out.
+  # The site manifest is the development manifest without its apps row and with the
+  # domains site_leaves_out names taken out, in order, and keep keeps one of them in; it
+  # keeps nothing the site does not leave out.
   def test_the_site_manifest_is_made_from_the_development_manifest
-    development = VIRT.manifest_source(ROOT)
+    development = Erx::Manifest::Edit.without_apps(VIRT.manifest_source(ROOT))
     without = ->(source, domain) { Erx::Manifest::Edit.without_domain(source, domain, units: VIRT.record.fetch('units')) }
     assert_equal without.(without.(development, 'web'), 'display'), VIRT.site_manifest_source(ROOT)
     assert_equal without.(development, 'web'), VIRT.site_manifest_source(ROOT, keep: %w[display])

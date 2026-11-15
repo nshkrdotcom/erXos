@@ -73,13 +73,14 @@ module Erx
                     '{ok, #{header_length := Header}} -> ' \
                     'erx_pkg_header:check_file({Name, Length, Bytes}, {hash, erx_bytes:sha256(binary:part(Bytes, 0, Header))}); ' \
                     'Refused -> Refused end, ' \
-                    'case Answer of {ok, #{header := #{name := App, memory := Memory}, sha256 := Sha256}} -> ' \
-                    'io:format("ok ~s ~b ~s~n", [App, Memory, binary:encode_hex(Sha256, lowercase)]); ' \
+                    'case Answer of {ok, #{header := #{name := App, memory := Memory, license := License}, sha256 := Sha256}} -> ' \
+                    'io:format("ok ~s ~b ~s ~s~n", [App, Memory, binary:encode_hex(Sha256, lowercase), License]); ' \
                     'Other -> io:format("~0p~n", [Other]) end, halt().'
 
     # What the file check found in a package of an image: its app's name, its declared
-    # memory and its header's SHA-256, which the image's package row records.
-    Described = Data.define(:name, :memory, :sha256)
+    # memory, its header's SHA-256, which the image's package row records, and the SPDX
+    # expression it declares as its license, '' when it names none.
+    Described = Data.define(:name, :memory, :sha256, :license)
 
     module_function
 
@@ -123,14 +124,18 @@ module Erx
 
     # The file check of the package at path as an image takes it (FILE_DESCRIBE); answers
     # its Described or raises the refusal. The answer comes from a file that may be
-    # someone else's, so it is read as untrusted: an app name, a decimal memory and 64
-    # hexadecimal digits, or a refusal.
+    # someone else's, so it is read as untrusted: an app name, a decimal memory, 64
+    # hexadecimal digits and a license of printable ASCII within pkg_license_max, or a
+    # refusal. The license is judged where the image takes the package
+    # (PackProvenance's package receipt).
     def describe(path, sdk:, runner:)
       verdict = file_check(FILE_DESCRIBE, [path], sdk: sdk, runner: runner)
-      _, name, memory, sha256 = verdict.match(/\Aok (\S+) ([0-9]{1,20}) ([0-9a-f]{64})\z/)&.to_a
+      license_max = AppPackage.codec.constant('pkg_license_max')
+      _, name, memory, sha256, license =
+        verdict.match(/\Aok (\S+) ([0-9]{1,20}) ([0-9a-f]{64}) ?([\x20-\x7e]{0,#{license_max}})\z/)&.to_a
       raise Error, "the file check refuses #{File.basename(path)}: #{verdict}" unless name && AppPackage::APPLICATION.match?(name)
 
-      Described.new(name: name, memory: Integer(memory, 10), sha256: [sha256].pack('H*'))
+      Described.new(name: name, memory: Integer(memory, 10), sha256: [sha256].pack('H*'), license: license)
     end
 
     # The answer of the host's stock erl evaluating expression, the machine's file check

@@ -316,6 +316,32 @@ class PackProvenanceTest < Minitest::Test
     resolver.resolve(receipt: receipt, artifact: @artifact, build_kind: 'release')
   end
 
+  # A package an image takes (ImageApps) is attributed whole under the license its header
+  # declares, judged as an archive's but always as permanent, so a development build that
+  # admits a stopgap's restricted license still refuses a package's, and a package that
+  # names no license.
+  def resolve_package(license, status: 'permanent')
+    package = write('clock.app', 'package bytes')
+    external = { 'path' => package, 'sha256' => Digest::SHA256.file(package).hexdigest, 'license' => license,
+                 'label' => 'pkg/clock.app', 'evidence' => 'package header', 'status' => status, 'notices' => [] }
+    resolver = Erx::PackProvenance.new(root: @root, catalog: build_catalog, external: [external])
+    receipt = write('package.json', JSON.generate('version' => 1, 'kind' => 'package', 'artifact' => reference(package)))
+    resolver.instance_variable_set(:@catalog, build_catalog)
+    resolver.resolve(receipt: receipt, artifact: package, build_kind: 'development')
+  end
+
+  def test_a_package_enters_only_under_a_permissive_license
+    record = resolve_package('BSD-2-Clause').first
+    assert_equal %w[pkg/clock.app BSD-2-Clause permanent], record.values_at('path', 'license', 'status')
+    { 'GPL-2.0-only' => /no permitted grant/, 'NOASSERTION' => /unresolved source license/ }.each do |license, reason|
+      error = assert_raises(Erx::Error) { resolve_package(license) }
+      assert_match(%r{\Athe package pkg/clock\.app cannot enter the image: }, error.message)
+      assert_match(reason, error.message)
+    end
+    error = assert_raises(Erx::Error) { resolve_package('GPL-2.0-only', status: 'stopgap') }
+    assert_match(/a package receipt names a package not registered as permanent/, error.message)
+  end
+
   def test_release_admits_ofl_for_font_data_and_refuses_it_otherwise
     record = resolve_external_release('MIT AND OFL-1.1', font_data: true).first
     assert_equal '(MIT AND OFL-1.1)', record.fetch('license')
