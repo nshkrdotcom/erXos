@@ -23,6 +23,7 @@ nothing follows the end.
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -define(PID, 21).
 -define(HAND(N), {pipe_hand, N, {pipe, read, {9, N}, #{lock => {hand, 1}}}}).
@@ -237,6 +238,29 @@ pwrite_answers_its_count_test() ->
     ?assertEqual({ok, 9}, answer(erx_prog_handler_core:step(C1, {file_done, 3, ok}))),
     {C2, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pwrite, 0, 7, 9, 1})),
     ?assertEqual({error, enospc}, answer(erx_prog_handler_core:step(C2, {file_done, 3, {error, enospc}}))).
+
+%% A getattr goes to the description, and its reply holds each attribute the record
+%% gives and no key for one it does not: no uid, no atime and no nanoseconds here.
+getattr_answers_the_attributes_given_test_() ->
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, getattr, 0})),
+    Info = #file_info{size = 5, mode = 8#100600, links = 1, gid = 20, mtime = -1, ctime = 1 bsl 40},
+    [?_assertEqual([{getattr, desc, 3}], Relayed),
+     ?_assertEqual({ok, #{size => 5, mode => 8#100600, nlink => 1, gid => 20, mtime => -1, ctime => 1 bsl 40}},
+                   answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, Info}}))),
+     ?_assertEqual({error, eio}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {error, eio}})))].
+
+%% An attribute past its field is eoverflow, as FreeBSD's freebsd11_stat answers an
+%% nlink past its old nlink_t; the largest of each is sent.
+getattr_past_a_field_is_eoverflow_test_() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, getattr, 0})),
+    Done = fun(Info) -> answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, Info}})) end,
+    Max = #file_info{links = 16#ffffffff, size = ?ERX_OFF_MAX, mode = 16#ffff, uid = 16#ffffffff,
+                     atime = -(1 bsl 63), mtime = (1 bsl 63) - 1},
+    [?_assertMatch({ok, #{nlink := 16#ffffffff, size := ?ERX_OFF_MAX}}, Done(Max)),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{links = 1 bsl 32})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{size = ?ERX_OFF_MAX + 1})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{mode = 16#10000})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{mtime = 1 bsl 63}))].
 
 %% A seek goes to the description, which answers the offset it reached or its error.
 seek_answers_the_offset_reached_test_() ->

@@ -53,6 +53,17 @@ typedef struct erx_profile_named erx_profile_named_t;
 typedef struct erx_profile_text erx_profile_text_t;
 typedef struct erx_profile_total erx_profile_total_t;
 
+/*
+ * A frame's time, a "time" kind's value: FreeBSD's time_t in whole seconds
+ * since the epoch, in a struct of its own so that it converts to no integer,
+ * an offset (int64_t) included, and no integer converts to it.  The check
+ * stores it as the 8 bytes of an int64_t.
+ */
+typedef struct erx_profile_time {
+	int64_t	seconds;
+} erx_profile_time_t;
+_Static_assert(sizeof(erx_profile_time_t) == sizeof(int64_t), "a time is stored as an int64_t");
+
 /* Why a frame was refused, the names the Erlang grammar gives too. */
 typedef enum erx_profile_reason {
 	ERX_PROFILE_OK,

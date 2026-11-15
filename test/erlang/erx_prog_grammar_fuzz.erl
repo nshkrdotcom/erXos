@@ -20,7 +20,7 @@
 -define(WARM_ROUNDS, 200).
 %% The request cases, which name a reply slot's request.
 -define(REQUESTS, [kill, probe, pipe, file_lopen, file_lcreate, file_read, file_write, file_pread, file_pwrite,
-                   file_clunk, local_seek]).
+                   file_getattr, file_clunk, local_seek]).
 -define(DEPTH, 3).
 -define(PATH_MAX, 4096).
 
@@ -115,7 +115,7 @@ requests() ->
      {file, read, 3, 65536, 15}, {file, write, 0, 1, 0}, {file, clunk, 16#ffff},
      {file, pread, 3, 16#7fffffffffffffff, 65536, 15}, {file, pwrite, 0, 0, 1, 0},
      {local, seek, 1, -16#8000000000000000, bof}, {local, seek, 1, 16#7fffffffffffffff, eof},
-     {local, seek, 1, -1, cur}].
+     {local, seek, 1, -1, cur}, {file, getattr, 16#ffff}].
 
 %% A reply of each case of each request's reply, with the request it answers; pipe's
 %% ends are the start value's fds 3 and 2.
@@ -127,7 +127,11 @@ replies() ->
      {pipe, {ok, Read, Write}}, {pipe, {error, emfile}}, {file_lopen, {ok, 16#ffff}},
      {file_read, {ok, 0}}, {file_read, {ok, 65536}}, {file_read, {error, eio}}, {file_clunk, ok},
      {file_pread, {ok, 65536}}, {file_pwrite, {error, enospc}}, {local_seek, {ok, 0}},
-     {local_seek, {ok, 16#7fffffffffffffff}}, {local_seek, {error, eoverflow}}].
+     {local_seek, {ok, 16#7fffffffffffffff}}, {local_seek, {error, eoverflow}},
+     {file_getattr, {ok, #{}}}, {file_getattr, {error, eoverflow}},
+     {file_getattr, {ok, #{mode => 16#ffff, nlink => 16#ffffffff, size => 16#7fffffffffffffff,
+                           atime => -16#8000000000000000, atime_nsec => 999999999,
+                           mtime => 16#7fffffffffffffff, ctime => 0}}}].
 
 %% Busy slots: none, some holding a request, or a term of another shape.
 random_busy() ->
@@ -274,6 +278,7 @@ random_atom() ->
           closed, drained, pipe_writer, pipe_writer_gone, pipe_reader, pipe_reader_gone, pipe_lost,
           pipe_server_lost, erlang, ok, undefined, error, kill, probe, cloexec, nonblock, esrch, eperm, emfile,
           enotsup, eopnotsupp, lopen, lcreate, clunk, file_read, eio, pread, pwrite, local, seek, bof, cur,
-          eof, eoverflow]).
+          eof, eoverflow, getattr, mode, nlink, uid, gid, size, atime, mtime, ctime,
+          atime_nsec, mtime_nsec, ctime_nsec]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).

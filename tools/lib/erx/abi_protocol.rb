@@ -115,7 +115,7 @@ module Erx
             line.fail!('expected errors type N') unless words.size == 2 && words.first == 'type'
             error_type = number(words[1], 255, line, constants).fetch(:value)
             errors = error_numbers(children, line, constants)
-          when 'integer', 'capability', 'offset', 'text', 'tuple', 'list', 'map', 'union'
+          when 'integer', 'capability', 'offset', 'time', 'text', 'tuple', 'list', 'map', 'union'
             kind_name = atom_name(words.first, line: line)
             line.fail!("reserved kind name #{kind_name}") if RESERVED_KINDS.include?(kind_name)
             if kinds.key?(kind_name) || BASE_KINDS.include?(kind_name) || totals.key?(kind_name)
@@ -170,6 +170,7 @@ module Erx
         when 'integer' then integer_kind(words, line, constants)
         when 'capability' then capability_kind(words, line, constants)
         when 'offset' then offset_kind(words, line, constants)
+        when 'time' then time_kind(words, line)
         when 'text' then text_kind(words, line, constants)
         when 'tuple'
           line.fail!('a tuple has 1 to 32 elements') unless words.size.between?(1, MAX_FIELDS)
@@ -303,7 +304,18 @@ module Erx
         end
         line.fail!('an offset range has MIN above MAX') if range.first > range.last
         min, max = range.map { |value| { value: value, constant: nil }.freeze }
-        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, offset: true }.freeze
+        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, signed: true, offset: true }.freeze
+      end
+
+      # "time NAME": a time in whole seconds since the epoch (docs/design-abi.md,
+      # "Program protocol"), FreeBSD's time_t: any signed 64-bit integer. Its base
+      # is an offset's, i64, and so is its range check, but its C value is
+      # erx_profile_time_t, a struct of its own, so a time is never passed where
+      # an offset or a capability is expected, nor either where a time is.
+      def time_kind(words, line)
+        line.fail!('a time takes no options') unless words.empty?
+        min, max = [-INT64_MAX - 1, INT64_MAX].map { |value| { value: value, constant: nil }.freeze }
+        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, signed: true, time: true }.freeze
       end
 
       # max N, then "utf8", "refuse" and its refusals, "assign", "path",

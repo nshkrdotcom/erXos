@@ -3043,10 +3043,20 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   copy after the program ended. The handler's stand-in `erx_program:data_read/3` answers `enosys`, so
   its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
   host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
-  The other operations of the `{file, ...}` row wait too, `getattr` for `fstat` among them: its reply's
-  times are `time_t`, a signed 64-bit value the frame profile spells only as an `offset`, so it needs a
-  declared kind of its own first (docs/design-abi.md, "Program protocol"), and a file's `fstat` answers
-  `ENOSYS` until then. No QEMU case runs a program's `lseek`, `pread` or `pwrite` end to end yet.
+  The other operations of the `{file, ...}` row wait too. No QEMU case runs a program's `lseek`,
+  `pread`, `pwrite` or `fstat` end to end yet.
+* [Low] programs, `fstat` of a file (`liberx/program/file.c` `erx_prog_file_getattr`; abi/protocols/prog.txt
+  `stat`): `st_ino`, `st_dev` and `st_rdev` are not carried and read 0. `ino` and `rdev` need an unsigned
+  64-bit kind the frame profile does not have (`integer ... u64` is refused in a frame protocol, which keeps
+  a capability's spelling unique); `dev` is a `phash2` stand-in (`erx_file_remote`'s `major_device`), of no use
+  without `ino`, since a program pairs the two to tell files apart. `st_blksize` and `st_blocks` read 0 too,
+  though 9P's `getattr` gives both; `st_blocks` 0 beside a non-zero size reads as a sparse file to `du` and
+  libarchive. The description (`erx_file_description`, `file:read_file_info/2`) gives no nanoseconds, since
+  `#file_info{}` has no field for them and `erx_file_remote:file_info/2` drops the server's `*_nsec`, so the
+  reply's `atime_nsec`, `mtime_nsec` and `ctime_nsec` keys have no producer and every `tv_nsec` reads 0.
+  A time before 1970 is `EOVERFLOW` if a 9P server sends it as its two's complement in the `u64` field
+  (abi/protocols/9p.txt `atime_sec`), since `erx_file_remote` passes it on unsigned (unverified which
+  servers do).
 * [Low] programs, FreeBSD's seek rule (a sum past `OFF_MAX` is `EOVERFLOW`, a negative one `EINVAL`, as
   `vn_seek` in sys/kern/vfs_vnops.c answers) has one Erlang home, `erx_file_remote:seek_to/2`, which both
   backends' `file:position/2` and so a program's file description follow, but it is spelled again in C:

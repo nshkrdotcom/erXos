@@ -189,6 +189,21 @@ class ProgProfileTest < Minitest::Test
            'a capability field reads as an offset'
   end
 
+  # A time field is erx_profile_time_t, never an offset's int64_t nor erx_cap_t: a
+  # time read as an offset fails to build, an offset stored as a time fails, and a
+  # time handed to erx_cap_close fails.
+  def test_a_time_compiles_as_neither_an_offset_nor_a_capability
+    head = "#include <erx/prog_profile.h>\n#include \"liberx/backend/api.h\"\n"
+    body = lambda do |type, name, text|
+      "#{head}#{type} #{name}(erx_prog_stat_t *s);\n#{type}\n#{name}(erx_prog_stat_t *s)\n{\n\t#{text}\n}\n"
+    end
+    assert compiles?(body.call('int64_t', 'seconds', 'return (s->mtime.seconds + s->size);')),
+           'the control does not compile'
+    refute compiles?(body.call('int64_t', 'offset', 'return (s->mtime);')), 'a time reads as an offset'
+    refute compiles?(body.call('void', 'store', 's->mtime = s->size;')), 'an offset stores as a time'
+    refute compiles?(body.call('void', 'close', '(void)erx_cap_close(s->mtime);')), 'erx_cap_close takes a time'
+  end
+
   def test_a_view_is_read_only_by_its_own_list
     assert(c_answers(fixture_requests).none? { |answer| answer.split[2] == 'crossed' })
   end

@@ -19,6 +19,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
 
@@ -444,6 +445,45 @@ erx_prog_file_seek(erx_prog_file_t *file, off_t offset, int whence)
 	if (answer->which == ERX_PROG_SEEK_REPLY_ERROR)
 		return (-answer->u.error.errnum);
 	return (answer->u.ok.file_offset);
+}
+
+/* A time the server gave, or 0 and 0 for one it did not. */
+static struct timespec
+stat_time(bool has, erx_profile_time_t time, bool has_nsec, uint32_t nsec)
+{
+
+	return ((struct timespec){ .tv_sec = has ? time.seconds : 0, .tv_nsec = has && has_nsec ? nsec : 0 });
+}
+
+int
+erx_prog_file_getattr(erx_prog_file_t *file, struct stat *st)
+{
+	uint8_t value[VALUE_MAX];
+	const erx_prog_getattr_reply_t *answer;
+	const erx_prog_stat_t *a;
+	erx_prog_reply_t reply;
+	erx_etf_writer_t w;
+	int status;
+
+	value_start(&w, value, 3, "file", "getattr");
+	erx_etf_put_integer(&w, file->open);
+	if ((status = request(ERX_PROG_REQUEST_FILE_GETATTR, &w, value, &reply)) != 0)
+		return (status);
+	answer = &reply.u.file_getattr;
+	if (answer->which == ERX_PROG_GETATTR_REPLY_ERROR)
+		return (-answer->u.error.errnum);
+	a = &answer->u.ok.stat;
+	*st = (struct stat){
+		.st_mode = a->has_mode ? a->mode : 0,
+		.st_nlink = a->has_nlink ? a->nlink : 0,
+		.st_uid = a->has_uid ? a->uid : 0,
+		.st_gid = a->has_gid ? a->gid : 0,
+		.st_size = a->has_size ? a->size : 0,
+		.st_atim = stat_time(a->has_atime, a->atime, a->has_atime_nsec, a->atime_nsec),
+		.st_mtim = stat_time(a->has_mtime, a->mtime, a->has_mtime_nsec, a->mtime_nsec),
+		.st_ctim = stat_time(a->has_ctime, a->ctime, a->has_ctime_nsec, a->ctime_nsec),
+	};
+	return (0);
 }
 
 void

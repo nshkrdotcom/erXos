@@ -37,7 +37,7 @@ module Erx
                            if %i[max values atom except].count { |option| kind[option] } > 1
                              declaration.fail!("kind #{name}: a file protocol's integer takes one of max, values, or ATOM and except")
                            end
-                           kind[:capability] || kind[:offset] || kind[:unique] || kind[:refers] || kind[:min]
+                           kind[:capability] || kind[:signed] || kind[:unique] || kind[:refers] || kind[:min]
                          when 'text'
                            if kind.fetch(:max).fetch(:value) > LENGTHS.fetch(kind.fetch(:length))
                              declaration.fail!("kind #{name}: max past its #{kind.fetch(:length)} length")
@@ -130,7 +130,7 @@ module Erx
 
         # A capability is a value of a kind declared "capability NAME"
         # (Protocols.capability_kind); u64_rule! leaves a frame protocol no
-        # other 64-bit kind but an offset, which the generator types apart.
+        # other 64-bit kind but an offset or a time, which the generator types apart.
         def capability?(kinds, name)
           kinds.dig(name, :capability) == true
         end
@@ -246,8 +246,8 @@ module Erx
           element = kinds.dig(element, :elements)&.first || element if kinds.dig(element, :form) == 'tuple'
           kind = kinds[element]
           return element if FRAME_BUILTINS.include?(element) || BASE_KINDS.include?(element) && element != 'alias'
-          # The C check compares keys as u64, so an offset, which may be negative, is none.
-          return element if kind && kind.fetch(:form) == 'integer' && !kind[:offset]
+          # The C check compares keys as u64, so a signed kind, an offset or a time, is none.
+          return element if kind && kind.fetch(:form) == 'integer' && !kind[:signed]
           return element if kind && kind.fetch(:form) == 'union' && kind.fetch(:cases).all? { |item| item.fetch(:fields).empty? }
 
           nil

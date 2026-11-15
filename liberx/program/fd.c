@@ -671,7 +671,7 @@ erx_prog_fd_fstat(int fd, struct stat *st)
 		st->st_size = (off_t)mem_of(obj)->bytes;
 		break;
 	case ERX_PROG_OBJ_FILE:
-		result = -ENOSYS;
+		result = erx_prog_file_getattr(erx_prog_file_of(obj), st);
 		break;
 	}
 	erx_prog_obj_put(obj);

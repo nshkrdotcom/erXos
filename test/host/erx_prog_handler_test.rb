@@ -58,6 +58,14 @@ class ErxProgHandlerTest < Minitest::Test
       Mutant.new(file: CORE, original: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =/= 0 -> none;',
                  replacement: 'create_mode(Flags, _Mode) when Flags band ?ERX_P9_O_DIRECTORY =:= -1 -> none;',
                  caught_by: 'directory_and_nofollow_are_relayed_test_'),
+    'a getattr field the server did not give sent as known' =>
+      Mutant.new(file: CORE, original: 'maps:filter(fun(_, Value) -> is_integer(Value) end,',
+                 replacement: 'maps:map(fun(_, Value) -> if is_integer(Value) -> Value; true -> 0 end end,',
+                 caught_by: 'getattr_answers_the_attributes_given'),
+    'a getattr nlink past its field sent' =>
+      Mutant.new(file: CORE, original: "        {error, {range, _}} -> reply(C, file_getattr, Slot, {error, eoverflow})\n",
+                 replacement: "        {error, {range, _}} -> reply(C, file_getattr, Slot, {ok, \#{}})\n",
+                 caught_by: 'getattr_past_a_field_is_eoverflow'),
     'a data slot past the program slots admitted' =>
       Mutant.new(file: CORE, original: 'true when Data >= Slots ->', replacement: 'true when Data > Slots ->',
                  caught_by: 'data_slot_past_the_program_slots_is_einval'),

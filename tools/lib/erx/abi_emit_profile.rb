@@ -23,6 +23,8 @@ module Erx
       INTEGER_TYPES = { 'u8' => 'uint8_t', 'u16' => 'uint16_t', 'u32' => 'uint32_t', 'u64' => 'uint64_t' }.freeze
       # An offset's C type, FreeBSD's off_t (Protocols.offset_kind).
       OFFSET_TYPE = 'int64_t'
+      # A time's C type, FreeBSD's time_t in a struct of its own (Protocols.time_kind).
+      TIME_TYPE = 'erx_profile_time_t'
       BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff }.freeze
 
       def self.outputs(schema)
@@ -112,6 +114,7 @@ module Erx
         when 'integer'
           if kind[:capability] then 'erx_cap_t'
           elsif kind[:offset] then OFFSET_TYPE
+          elsif kind[:time] then TIME_TYPE
           else INTEGER_TYPES.fetch(kind.fetch(:base))
           end
         when 'text' then 'erx_profile_text_t'
@@ -330,7 +333,7 @@ module Erx
       end
 
       def integer_members(name, kind)
-        return offset_members(kind) if kind[:offset]
+        return signed_members(kind) if kind[:signed]
 
         values = kind[:values]&.map { |item| item.fetch(:value) }
         low = values&.min || kind.dig(:min, :value) || 0
@@ -342,9 +345,10 @@ module Erx
         members.join(",\n\t    ")
       end
 
-      # An offset's range, int64_t bounds held in min and max as their two's
-      # complement (erx/profile.h); -2^63 has no literal of its own in C.
-      def offset_members(kind)
+      # A signed kind's range, an offset's or a time's: int64_t bounds held in min
+      # and max as their two's complement (erx/profile.h); -2^63 has no literal of
+      # its own in C.
+      def signed_members(kind)
         bound = lambda do |number|
           value = number.fetch(:value)
           value == -(1 << 63) ? '(uint64_t)INT64_MIN' : "(uint64_t)INT64_C(#{value})"

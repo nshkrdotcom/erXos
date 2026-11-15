@@ -421,6 +421,32 @@ serve_seek(const erx_prog_request_t *q, erx_prog_seek_reply_t *r)
 	}
 }
 
+/*
+ * A getattr, as a description answers from a server that gives the mode, the
+ * links, the size and the modification time to the nanosecond, and neither
+ * owner nor the other times; atime holds a value it did not give, which
+ * the client must not read.  After a fail, its errno, the stat left holding
+ * values the client must not read either.
+ */
+static void
+serve_getattr(const erx_prog_request_t *q, erx_prog_getattr_reply_t *r)
+{
+	struct open *const o = open_find(q->u.file_getattr.open);
+	char line[32];
+
+	snprintf(line, sizeof(line), "getattr:%u", q->u.file_getattr.open);
+	log_line(line);
+	*r = (erx_prog_getattr_reply_t){ .which = ERX_PROG_GETATTR_REPLY_OK,
+	    .u.ok.stat = { .has_mode = true, .mode = S_IFREG | 0640, .has_nlink = true, .nlink = 2,
+		.has_size = true, .size = (int64_t)o->file->size, .has_mtime = true,
+		.mtime = { .seconds = -86400 }, .has_mtime_nsec = true, .mtime_nsec = 999999999,
+		.atime = { .seconds = 77 }, .atime_nsec = 5 } };
+	if (fail_next != 0) {
+		r->which = ERX_PROG_GETATTR_REPLY_ERROR;
+		r->u.error.errnum = fail_next;
+	}
+}
+
 /* The handler's answer to request q, into *reply. */
 static void
 serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
@@ -484,6 +510,9 @@ serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
 		break;
 	case ERX_PROG_REQUEST_LOCAL_SEEK:
 		serve_seek(q, &reply->u.local_seek);
+		break;
+	case ERX_PROG_REQUEST_FILE_GETATTR:
+		serve_getattr(q, &reply->u.file_getattr);
 		break;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		open_find(q->u.file_clunk.open)->file = NULL;
@@ -745,9 +774,18 @@ main(int argc, char **argv)
 		} else if (strcmp(word, "pwrite") == 0 && sscanf(line, "%*s %d %lld %255s", &fd, &off, arg) == 3) {
 			printf("%zd\n", erx_prog_fd_pwrite(fd, arg, strlen(arg), (off_t)off));
 		} else if (strcmp(word, "fstat") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
+			/* fstat FD: its status, then mode nlink uid gid size and each time's seconds.nanoseconds. */
 			struct stat st;
+			const int status = erx_prog_fd_fstat(fd, &st);
 
-			printf("%d\n", erx_prog_fd_fstat(fd, &st));
+			if (status != 0)
+				printf("%d\n", status);
+			else
+				printf("0 %o %lu %u %u %lld %lld.%ld %lld.%ld %lld.%ld\n", (unsigned)st.st_mode,
+				    (unsigned long)st.st_nlink, (unsigned)st.st_uid, (unsigned)st.st_gid,
+				    (long long)st.st_size, (long long)st.st_atim.tv_sec, st.st_atim.tv_nsec,
+				    (long long)st.st_mtim.tv_sec, st.st_mtim.tv_nsec,
+				    (long long)st.st_ctim.tv_sec, st.st_ctim.tv_nsec);
 		} else if (strcmp(word, "fcntl") == 0 && sscanf(line, "%*s %d %31s %255s", &fd, arg, arg2) == 3) {
 			/* fcntl FD getfd|getfl|setfl FLAGS: FLAGS as an open's, rdonly for none. */
 			const int cmd = strcmp(arg, "getfd") == 0 ? F_GETFD : strcmp(arg, "getfl") == 0 ? F_GETFL : F_SETFL;

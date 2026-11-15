@@ -276,6 +276,9 @@ act({pwrite, Description, Slot, Data, Offset, Count}, H) ->
 act({seek, Description, Slot, Offset, Whence}, H) ->
     ok = erx_file_description:seek(Description, Slot, Offset, Whence),
     H;
+act({getattr, Description, Slot}, H) ->
+    ok = erx_file_description:getattr(Description, Slot),
+    H;
 act({copy_in, Slot, Data, Bytes}, #h{port = Port} = H) ->
     Copied = driver(Port, fun() -> erx_program:data_write(Port, Data, Bytes) end, {error, edead}),
     {event, {file_copied, Slot, Copied}, H};

@@ -7,7 +7,7 @@ An open-file description of a native program's file
 (docs/design-programs.md, "Descriptors and files"): a session process
 that opens one file for the program's handler and owns it, the file's
 offset and status flags with it, and serves the handler's reads, writes,
-seeks and clunk on it one at a time, in the order sent, so a seek's
+seeks, getattrs and clunk on it one at a time, in the order sent, so a seek's
 reading of the offset and its move are one step, as FreeBSD's
 foffset_lock makes them.
 
@@ -19,7 +19,8 @@ answer goes to the handler as a message naming the request's reply slot:
 open, and `{erx_file_done, Slot, Answer}` for a read (`{ok, Bytes}`,
 `eof` or `{error, Errno}`), a write (`ok` or `{error, Errno}`), each
 also at an offset of its own (pread and pwrite), which moves none, a
-seek (`{ok, Offset}` or `{error, Errno}`) and the clunk (`ok` or
+seek (`{ok, Offset}` or `{error, Errno}`), a getattr (`{ok, #file_info{}}`
+with posix times, or `{error, Errno}`) and the clunk (`ok` or
 `{error, Errno}`), after which the description ends.
 
 The handler starts it linked, so a crash of the description, a fault of
@@ -28,7 +29,7 @@ description traps exits, so the handler's end, however it comes, closes
 the file.
 """.
 
--export([table/0, open/6, read/3, write/3, pread/4, pwrite/4, seek/4, clunk/2]).
+-export([table/0, open/6, read/3, write/3, pread/4, pwrite/4, seek/4, getattr/2, clunk/2]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -89,6 +90,12 @@ seek(Description, Slot, Offset, Whence) ->
     Description ! {seek, Slot, Offset, Whence},
     ok.
 
+-doc "The file's attributes, its times in whole POSIX seconds, for reply slot `Slot`.".
+-spec getattr(pid(), non_neg_integer()) -> ok.
+getattr(Description, Slot) ->
+    Description ! {getattr, Slot},
+    ok.
+
 -doc "Closes the file once the requests sent before are answered, for reply slot `Slot`.".
 -spec clunk(pid(), non_neg_integer()) -> ok.
 clunk(Description, Slot) ->
@@ -122,6 +129,9 @@ serve(Handler, File) ->
             serve(Handler, File);
         {seek, Slot, Offset, Whence} ->
             Handler ! {erx_file_done, Slot, file:position(File, {Whence, Offset})},
+            serve(Handler, File);
+        {getattr, Slot} ->
+            Handler ! {erx_file_done, Slot, file:read_file_info(File, [{time, posix}])},
             serve(Handler, File);
         {clunk, Slot} ->
             Handler ! {erx_file_done, Slot, file:close(File)};

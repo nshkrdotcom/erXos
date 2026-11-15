@@ -64,6 +64,10 @@ class ProgProfileDeclarationsTest < Minitest::Test
     "  offset off2 in 5 4\n  tuple probe off2" => /an offset range has MIN above MAX/,
     # The C check compares keys as u64, so an offset, which may be negative, keys no list.
     "  offset off2\n  tuple at off2 fd\n  list probe at max 4 ascending" => /an ascending list needs an integer or atom key/,
+    # A time is its own declaration: it takes no range or option, and keys no list.
+    "  time t2 in 0 1\n  tuple probe t2" => /a time takes no options/,
+    "  time t2 unique\n  tuple probe t2" => /a time takes no options/,
+    "  time t2\n  tuple at t2 fd\n  list probe at max 4 ascending" => /an ascending list needs an integer or atom key/,
     "  capability cap2 unique\n  tuple probe cap2" => /a capability takes no options/,
     "  capability cap2\n  tuple probe cap2" => /a protocol has at most one unique kind/,
     "#{TOTALS}\n  tuple probe #{(1..9).map { |n| "x#{n}" }.join(' ')}" => /at most 8 totals/,

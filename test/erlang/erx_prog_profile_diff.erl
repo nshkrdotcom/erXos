@@ -266,10 +266,10 @@ pipe_mutations() ->
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
 
 %% The busy slots of the replies: slot 3 holds a kill, slot 5 a probe, slot 6 an
-%% lopen, slot 7 a read, slot 8 a clunk, slot 9 a pipe, slot 10 a seek and slot 11 a
-%% pread.
+%% lopen, slot 7 a read, slot 8 a clunk, slot 9 a pipe, slot 10 a seek, slot 11 a
+%% pread and slot 12 a getattr.
 -define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk, 9 => pipe,
-                10 => local_seek, 11 => file_pread}).
+                10 => local_seek, 11 => file_pread, 12 => file_getattr}).
 %% off_t's bounds, an offset's.
 -define(OFF_MIN, -(1 bsl 63)).
 -define(OFF_MAX, (1 bsl 63) - 1).
@@ -317,6 +317,13 @@ request_valid() ->
      reply(seek_max, local_seek, 10, {ok, ?OFF_MAX}),
      reply(seek_eoverflow, local_seek, 10, {error, eoverflow}),
      reply(pread_full, file_pread, 11, {ok, 65536}),
+     request(getattr_open, 6, {file, getattr, 16#ffff}),
+     reply(getattr_none, file_getattr, 12, {ok, #{}}),
+     reply(getattr_all, file_getattr, 12,
+           {ok, #{mode => 16#ffff, nlink => 16#ffffffff, uid => 0, gid => 16#ffffffff, size => ?OFF_MAX,
+                  atime => ?OFF_MIN, atime_nsec => 999999999, mtime => ?OFF_MAX, mtime_nsec => 0,
+                  ctime => -1, ctime_nsec => 1}}),
+     reply(getattr_eoverflow, file_getattr, 12, {error, eoverflow}),
      reply(lopen_ok, file_lopen, 6, {ok, 16#ffff}),
      reply(lopen_enoent, file_lopen, 6, {error, enoent}),
      reply(read_eof, file_read, 7, {ok, 0}),
@@ -393,6 +400,13 @@ request_mutations() ->
      {seek_reply_negative, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, -1}}}, "range file_offset"},
      {seek_reply_past, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, 1 bsl 63}}}, "range file_offset"},
      {seek_reply_wide, {frame, reply, ?BUSY, {erx_prog, 1, 10, {ok, 1 bsl 64}}}, "range file_offset"},
+     {getattr_nlink_past, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{nlink => 1 bsl 32}}}}, "range stat_nlink"},
+     {getattr_mode_past, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{mode => 16#10000}}}}, "range stat_mode"},
+     {getattr_time_past, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{mtime => 1 bsl 63}}}}, "range file_time"},
+     {getattr_time_below, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{ctime => ?OFF_MIN - 1}}}}, "range file_time"},
+     {getattr_nsec_past, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{atime_nsec => 1000000000}}}}, "range time_nsec"},
+     {getattr_size_negative, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{size => -1}}}}, "range file_offset"},
+     {getattr_unknown_key, {frame, reply, ?BUSY, {erx_prog, 1, 12, {ok, #{ino => 1}}}}, "key stat"},
      {write_slot_past, {frame, request, {erx_prog, 1, 0, {file, write, 0, 1, 16}}}, "range data_slot"},
      {file_unknown_op, {frame, request, {erx_prog, 1, 0, {file, mkdir, <<"d">>}}}, "no_case request"},
      {read_reply_past, {frame, reply, ?BUSY, {erx_prog, 1, 7, {ok, 65537}}}, "range io_done"},

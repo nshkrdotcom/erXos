@@ -37,6 +37,18 @@
 
 #include "liberx/program/fd_plan.h"
 
+/*
+ * POSIX names a struct stat's times st_atim, st_mtim and st_ctim, as musl
+ * does.  macOS, which builds the program layer for its host tests, names
+ * them st_atimespec, st_mtimespec and st_ctimespec; this is the one place
+ * the program layer and its test drivers learn the difference.
+ */
+#ifdef __APPLE__
+#define st_atim	st_atimespec
+#define st_mtim	st_mtimespec
+#define st_ctim	st_ctimespec
+#endif
+
 struct erx_pipe_end;
 
 typedef enum erx_prog_obj_kind {
@@ -175,7 +187,7 @@ int	erx_prog_fd_mmap(int fd, size_t len, int prot, int flags, off_t offset, void
  * device of mode 0666, a pipe end a FIFO of mode 0600 and size 0, and a mem
  * range a regular file of mode 0600 whose size is its bytes (their parity
  * with FreeBSD is unverified, TODO.md).  Every other field is 0.  A file's
- * attributes need a request the protocol does not offer: -ENOSYS.
+ * are the attributes its server gives (erx_prog_file_getattr).
  */
 int	erx_prog_fd_fstat(int fd, struct stat *st);
 
