@@ -1221,6 +1221,17 @@ it; git history is the record of completed work.
   `ERL_NIF_RT_TAKEOVER`) when hot reload of the display domain is wanted.
 * [Low] `tools/lib/erx/abi_emit_draw.rb`: design-display.md says the generator also produces the message table of its
   interface section from `draw.txt`; it does not, and the table in "Draw messages" is hand-written.
+* [Medium] `erlang/apps/erx_ui/src/erx_ui_layout.erl` and `display/lvgl/erx_lvgl.c`, [Widget
+  trees](docs/design-display.md#widget-trees): the two renderers read `pad` differently. The property table's "space
+  around the node" is read by the box model as space outside the node's rectangle, so a padded button's background and
+  hit area hug its text; `erx_lvgl.c` sets LVGL's `pad_all`, space inside the object, as CSS `padding` is. Settle one
+  meaning in the table (inside, as LVGL and CSS read it, would make a node's `Content` its `Rect` less the pad) and
+  make the other renderer follow it.
+* [Low] `erlang/apps/erx_ui/src/erx_ui_layout.erl`, [The widget server](docs/design-display.md#the-widget-server):
+  `layout/3` takes a `tree()` and returns a placed tree of the same shape, while `erx_ui_erlang` will hold the
+  opaque `erx_ui_model:realised()` the operations build, so it must walk the two side by side. When `erx_ui_erlang`
+  is written, decide whether the layout takes the realised tree through an `erx_ui_model` accessor and returns a map
+  from `node_id()` to `{Rect, Content}`, which makes redraw a map comparison and hit testing a lookup.
 * [Medium] `display/lvgl/erx_lvgl.c`, [The widget server](docs/design-display.md#the-widget-server) and design-abi.md
   "Widget format": gaps the LVGL program had to fill. (1) An `input` key's `code` has no stated meaning; the program
   uses the rune alone, with keyboard(6)'s private-use runes for the cursor keys. (2) `align` `start`, `center` and

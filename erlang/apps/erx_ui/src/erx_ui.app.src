@@ -12,12 +12,13 @@
 %%   erx_ui_lvgl       the LVGL renderer, over erx_ui_lvgl_core, its pure
 %%                     decisions about its program's pipes;
 %%   erx_ui_model      the realised widget tree and its one difference;
+%%   erx_ui_layout     the box model that places a tree in a window;
 %%   erx_ui_schema     the widget format's validator and
 %%   erx_ui_wire       its codec, both generated from abi/formats/ui.txt.
 {application, erx_ui,
  [{description, "erXos widget toolkit"},
   {vsn, "1"},
-  {modules, [erx_ui, erx_ui_app, erx_ui_lvgl, erx_ui_lvgl_core, erx_ui_model, erx_ui_renderer, erx_ui_schema,
+  {modules, [erx_ui, erx_ui_app, erx_ui_layout, erx_ui_lvgl, erx_ui_lvgl_core, erx_ui_model, erx_ui_renderer, erx_ui_schema,
              erx_ui_server, erx_ui_sup, erx_ui_wire]},
   {registered, [erx_ui_sup]},
   {applications, [kernel, stdlib, erx]},
