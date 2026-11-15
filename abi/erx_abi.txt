@@ -33,6 +33,7 @@ include formats/ui.txt
 include formats/draw.txt
 include formats/package.txt
 include protocols/web.txt
+include theme.txt
 
 limit page_size u32 4096
 limit copy_max u32 1048576

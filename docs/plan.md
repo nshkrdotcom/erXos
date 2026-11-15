@@ -1477,7 +1477,7 @@ land after M11 repeat M11's closure over what they add.
    `graph` kind with `none` samples, through the validator, the binary form, the readers
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
-   `erx_theme.h` and `theme.ts` and checking the palette's contrast
+   `erx/theme.h` and `theme.ts` and checking the palette's contrast
    rules; the glyph step, rasterising Inter 4.1 and erXos's icon set from
    `display/icons/icons.txt` through FreeType, a host build tool, into
    8-bit subfonts, LVGL fonts and the menu's glyph module;
@@ -1790,8 +1790,8 @@ What part 8 builds on, outside its packages:
    new reference, with no today marked since the stopgap's clock is
    unset, where a seeded grid that starts a day late fails.
 10. **8.10 The theme.** `abi/theme.txt`, its reader beside
-    `tools/lib/erx/abi_ui.rb` (loaded as `abi_model.rb:1101` loads that
-    one), and `erx_theme` in `erx_memdraw`, `erx_theme.h` and `theme.ts`,
+    `tools/lib/erx/abi_ui.rb` (loaded as `abi_model.rb`'s `validate_ui`
+    loads that one), and `erx_theme` in `erx_memdraw`, `erx/theme.h` and `theme.ts`,
     with the WCAG 2 contrast ratio fetched at its pinned version and
     cited. Depends on: nothing. Tests: D7 with a seeded `secondary` of
     `B0B0B0`; a `contrast` row naming an undeclared colour refused;
@@ -1826,7 +1826,7 @@ What part 8 builds on, outside its packages:
     draws its tokens. QEMU: month's reference re-recorded with the theme;
     a seeded theme colour fails it.
 14. **8.14 LVGL and the browser take the theme.** `erx-lvgl` builds one
-    style per role from `erx_theme.h` in place of LVGL's default theme,
+    style per role from `erx/theme.h` in place of LVGL's default theme,
     with the role and icon fonts; the browser takes `theme.ts`. Depends
     on: 8.8, 8.10, 8.12, part 2's browser renderer. Tests: the parity
     test over clock's and month's trees. QEMU: none.

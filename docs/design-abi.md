@@ -1039,6 +1039,66 @@ is not one printable byte, an unknown field type, a reference to a
 field that is not an earlier one of the named type, and a count that
 counts two fields.
 
+### Theme
+
+`theme.txt` holds the one `theme VERSION` declaration of the desktop's
+visual facts ([The theme](design-desktop-programs.md#the-theme-one-declaration)).
+Its members, all at two-space indentation, are rows of the families
+below; each family's names have one namespace, and a name is a lower-case
+letter followed by at most 62 lower-case letters, digits or underscores.
+No member takes a quoted token. `unit`, `hairline`,
+`space`, `radius` and `icons` appear exactly once, and `font`, `role`,
+`color` and `shadow` at least once.
+
+| Member | Meaning |
+| --- | --- |
+| `unit PIXELS` | the spacing unit, on whose grid every role's line height lies |
+| `hairline PIXELS` | a separator's width |
+| `font NAME DIRECTORY WEIGHT FILE...` | a font: its directory beneath the root, and the TrueType file of each weight it has, `regular`, `medium` or `semibold`, each at most once |
+| `range FONT LOW-HIGH...` | the code points the glyph step rasterises from FONT, in upper-case hexadecimal, ascending and disjoint; each font has exactly one |
+| `role NAME KEY VALUE...` | a type role: `font`, a declared font; `size` and `line`, pixels; `weight`, one the font has; optionally `figures`, `tabular` or `proportional` (the default), and `color`, a declared colour (`text` by default) |
+| `space NAME UNITS...` | the spacing scale, in whole units |
+| `radius NAME PIXELS...` | corner radii; `window` is declared and 0 |
+| `shadow NAME X Y BLUR PERCENT` | a shadow: its offset and blur in pixels and the opacity of its black in percent |
+| `color NAME RRGGBB` | an sRGB colour, in six upper-case hexadecimal digits |
+| `contrast FOREGROUND on BACKGROUND... RATIO` | the least contrast ratio, one decimal from 1.0 to 21.0, that FOREGROUND has on each BACKGROUND |
+| `icons PATH sizes SIZE...` | the icons' definition file and the pixel sizes they are rasterised at, ascending |
+
+The generator computes each contrast row's ratios by WCAG 2.2's
+definitions of "contrast ratio" and "relative luminance" (W3C
+Recommendation 12 December 2024,
+`https://www.w3.org/TR/2024/REC-WCAG22-20241212/`), and a pair below
+its ratio fails generation with both names and the ratio measured.
+
+It emits three files of constants, each with every length in pixels and
+every colour in its target's own form: `erx_theme` in `erx_memdraw`
+(`color/1` as opaque RGBA32, `role/1`, `space/1`, `radius/1`,
+`shadow/1`, `unit/0`, `hairline/0`, and `colors/0` and `roles/0`, the
+names); `erx/theme.h`, the `ERX_THEME_` macros with colours as
+`0xRRGGBB` and `ERX_THEME_ROLES(X)` over the roles; and `theme.ts`,
+`THEME_PROPERTIES`, the CSS custom properties `--erx-...`, where a
+role's weight is its CSS numeric weight. Each family is a set: every
+output lists it in name order, so the order of the rows changes no
+byte. Fonts, ranges and icons are the glyph step's inputs and contrast
+rows are checks; none is emitted.
+
+Generation fails for a second `theme` declaration or one outside
+`theme.txt`, a member other than those above or at four spaces, a
+quoted token, a missing or repeated `unit`, `hairline`, `space`,
+`radius` or `icons`, a `font`, `role`, `color` or `shadow` family with
+no row, a name of another form or declared twice in its family, a row
+with the wrong number of fields, a value out of range, a font weight
+outside the three or given twice, a font file that is not a `.ttf`
+name, a path that is not relative beneath the root, a font without its
+range row or a range row of an undeclared font, a range out of order, a
+role with an unknown, repeated or missing key, an undeclared font or
+colour, a weight its font lacks or `figures` other than the two, a line
+height off the unit's grid, a space wider than 4,096 pixels, a `radius
+window` other than 0, icon sizes that do not ascend, a ratio outside
+1.0 to 21.0 or not written with one decimal and no leading zero, a
+`contrast` row naming an undeclared colour, and a contrast ratio that
+does not hold.
+
 ### Input records
 
 `formats/input.txt` holds the one `input` declaration: the binary form
@@ -2459,6 +2519,7 @@ The output families have explicit locations, shown relative to `build/gen/`:
 | `fuzz/generated/` | entry points invoking production readers |
 | `web/src/generated/` | the web client's TypeScript: `web.txt`'s types, codec, limits and hash; `ui.txt`'s tables and the reader and writer of its binary form; the inspection schema's kinds, attribute names, units, stopgap reporters and `present` marks ([design-web.md](design-web.md#the-client)) |
 | `erlang/apps/erx_win/src/erx_draw_codec.erl`, `include/erx/draw_codec.h`, `display/generated/erx_draw_codec.c` | the draw protocol's codec and its C twin |
+| `erlang/apps/erx_memdraw/src/erx_theme.erl`, `include/erx/theme.h`, `web/src/generated/theme.ts` | the theme's constants for the Erlang renderer and the display, `erx-lvgl` and the web client |
 | `erlang/apps/erx/src/generated/erx_input_codec.erl` | the input records' type, bounds check, reader and writer |
 | `otp/erts/preloaded/src/erx_prog_grammar.erl`, `include/erx/prog_profile.h`, `liberx/generated/prog_profile.c` | the program protocol's Erlang grammar, and the table and typed accessors of its C check |
 | `docs/generated/abi-reference.md` | signatures, assignments, fields, bounds and mapping tables |

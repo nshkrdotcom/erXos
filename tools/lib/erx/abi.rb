@@ -23,6 +23,7 @@ require_relative 'abi_emit_input'
 require_relative 'abi_emit_packed'
 require_relative 'abi_emit_web'
 require_relative 'abi_emit_web_ts'
+require_relative 'abi_emit_theme'
 
 module Erx
   module ABI
@@ -62,6 +63,7 @@ module Erx
         files.merge!(DrawEmitter.outputs(schema))
         files.merge!(InputEmitter.outputs(schema))
         files.merge!(PackedEmitter.outputs(schema))
+        files.merge!(ThemeEmitter.outputs(schema))
         # The protocol hash covers terminal.txt and its Unicode data, which are
         # not ABI sources, so they join the files this plan reads.
         hashed = schema.web ? WebEmitter.hashed_sources(root: root, inputs: source.inputs) : []

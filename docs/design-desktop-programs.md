@@ -335,19 +335,21 @@ which validates every row and writes:
   `erx_screen` read it in the display domain. It is data, not a reader:
   G9's check, which keeps every font and picture reader out of the
   display release, is unchanged;
-* `erx_theme.h`, the same constants as C, from which `erx-lvgl` builds
+* `erx/theme.h`, the same constants as C, from which `erx-lvgl` builds
   one LVGL style per role and replaces LVGL's default theme;
 * `theme.ts`, the same constants for the web client, as CSS custom
   properties;
-* the inputs of the glyph step (below): which font files, at which
-  sizes and weights, and which icons at which sizes.
+* and, held in the generator's model rather than written, the inputs
+  of the glyph step (below): which font files, at which sizes and
+  weights, and which icons at which sizes.
 
-Its grammar, in outline:
+Its grammar, in outline (the full grammar is
+[design-abi.md](design-abi.md#theme)'s):
 
 ```text
 theme 1
   unit 4
-  font ui display/fonts/inter Inter-Regular.ttf Inter-Medium.ttf Inter-SemiBold.ttf
+  font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
   role display  font ui size 48 line 56 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
@@ -532,7 +534,7 @@ only inside a window, under its sections.
 LVGL draws the same elements with its own software renderer, which
 already anti-aliases, rounds and shadows ([What the tree
 holds](#what-the-tree-holds)); `erx-lvgl` sets the radii, shadow and
-colours of each role's style from `erx_theme.h`. The browser draws them
+colours of each role's style from `erx/theme.h`. The browser draws them
 with CSS from `theme.ts`.
 
 ### Windows and the window manager
@@ -1336,8 +1338,17 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
   `fe1ca23bb73034dbf98d330127f636ce18c7453014fee3554a872790385c5688`)
   and `man/man7/image.7` (SHA-256
   `bb541ffbf5dae3e080d9a9a6609f673efac143426cd0b8c65b1a76fca7619735`)
-* WCAG 2, the contrast ratio's definition, to be cited by the generator
-  at the version it implements
+* WCAG 2.2, W3C Recommendation 12 December 2024,
+  `https://www.w3.org/TR/2024/REC-WCAG22-20241212/` (SHA-256
+  `6e3c5fe397257cae509a2fb4752b73062cf8cbeb92c2cec618989b17e4cf7057`):
+  the definitions of "contrast ratio" (`#dfn-contrast-ratio`) and
+  "relative luminance" (`#dfn-relative-luminance`), which the
+  generator cites and implements
+* CSS Fonts Module Level 3, W3C Recommendation 20 September 2018,
+  `https://www.w3.org/TR/2018/REC-css-fonts-3-20180920/` (SHA-256
+  `e3982d57e3992dfa7c0e56c1ff39977bd71d807731247decc794c61d2eacd63b`):
+  section 3.2, `font-weight`, the numeric weights of `regular` (400),
+  `medium` (500) and `semibold` (600)
 * FreeType 2.15.0, `freetype-2.15.0.tar.xz` (SHA-256 above):
   `LICENSE.TXT`, lines 9-26, and `docs/FTL.TXT` (SHA-256s above);
   `docs/INSTALL.ANY`, lines 28 and 134-139 (SHA-256
