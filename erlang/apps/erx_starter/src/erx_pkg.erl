@@ -35,7 +35,7 @@ The recovery's inputs: erx_pkg_plan's config and the manifest that
 admission reads.
 """.
 -type config() :: #{images := [{binary(), <<_:256>>}],
-                    signers := [{binary(), <<_:256>>}],
+                    signers := [{erx_pkg_header:signer(), <<_:256>>}],
                     max := pos_integer(),
                     manifest := term()}.
 
@@ -82,8 +82,9 @@ effect({delete, File}, _State) ->
     erx_pkg_io:request({delete, self(), File});
 effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
-effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
-    erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
+%% Admission reads the decoded header with the signer the file check named.
+effect({admit, #{header := Header, signer := Signer}}, #{config := #{manifest := Manifest}}) ->
+    erx_app_admit:admit(Header#{signer => Signer}, Manifest, erx_principal:app_registry());
 effect({register, Name, Admitted}, _State) ->
     erx_principal:register_app(Name, Admitted);
 effect({publish, Set}, _State) ->

@@ -8,8 +8,9 @@ module Erx
   # App package files for erx_pkg_header's tests and fuzz target, their headers written by
   # the packer's encoder (Erx::AppPackage.header). The decoder reads only a file's length
   # and its first pkg_header_max bytes, so a sample is those two; the image and the hash
-  # tree are zeros, which nothing before a mount reads, and the salt, root hash, key and
-  # signature are fixed bytes, which the decoder does not check. Edits replace fields of
+  # tree are zeros, which nothing before a mount reads, and the salt and root hash are fixed
+  # bytes, which the decoder does not check, as are the key and signature unless the caller
+  # names a signer that seals the header (erx_pkg's tests). Edits replace fields of
   # the header's fixed part after the layout is computed, so a sample can be wrong in
   # exactly one field.
   module PackageSeeds
@@ -40,11 +41,11 @@ module Erx
     # The sample of a well-formed package, or of one whose header fields edits replace,
     # whose header bytes header_edit rewrites, whose length length_edit changes or whose
     # first bytes prefix_edit rewrites.
-    def sample(name, declaration:, image_blocks:, tree_blocks:, edits: ->(values) { values },
+    def sample(name, declaration:, image_blocks:, tree_blocks:, signer: SIGNER, edits: ->(values) { values },
                header_edit: ->(bytes) { bytes }, length_edit: ->(length) { length },
                prefix_edit: ->(bytes) { bytes })
-      header = header_edit.call(header(declaration, image_blocks: image_blocks,
-                                                    tree_blocks: tree_blocks, edits: edits))
+      header = header_edit.call(header(declaration, image_blocks: image_blocks, tree_blocks: tree_blocks,
+                                                    signer: signer, edits: edits))
       boundary = ((header.bytesize + block - 1) / block) * block
       length = length_edit.call(boundary + ((image_blocks + tree_blocks) * block))
       file_start = header + ("\0".b * (boundary - header.bytesize))
@@ -52,9 +53,9 @@ module Erx
       Sample.new(name: name, length: length, prefix: prefix_edit.call(prefix.b).b.freeze)
     end
 
-    def header(declaration, image_blocks:, tree_blocks:, edits: ->(values) { values })
+    def header(declaration, image_blocks:, tree_blocks:, signer: SIGNER, edits: ->(values) { values })
       AppPackage.header(declaration, image_blocks: image_blocks, tree_blocks: tree_blocks,
-                                     salt: SALT, root_hash: ROOT_HASH, signer: SIGNER, &edits)
+                                     salt: SALT, root_hash: ROOT_HASH, signer: signer, &edits)
     end
   end
 end

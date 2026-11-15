@@ -43,7 +43,7 @@ it; git history is the record of completed work.
   supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
   them; the medium module over the `packages` grant (`erx_file_remote`) and, on the stopgap, the release's
   `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
-  `unknown`; `erx_starter:packages/2` and the start table's package rows; admission (`erx_app_admit:admit/3`)
+  `unknown`; `erx_starter:packages/2` and the start table's package rows; erx_pkg's tests against the real admission (`erx_app_admit:admit/3`) rather than its stub,
   and registration (`erx_principal:register_app/2`), stubbed in the tests, and the registry argument, which
   erx_pkg reads as `erx_principal:app_registry/0`, a name the design does not give; the `apps` tree serving
   `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
@@ -53,7 +53,9 @@ it; git history is the record of completed work.
   refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
   mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
   offset and size; the lifetime taken from the caller rather than the request; and whether image header
-  reads wait for the `packages` grant. The missing signature check is a security residual below.
+  reads wait for the `packages` grant. Registration cannot fill the registry's `signer`, which admission's
+  `signer_changed` check compares: `admitted()` carries no signer and the `register` action passes only it;
+  add the file check's signer to one of them before `register_app/2` is built.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
   (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal

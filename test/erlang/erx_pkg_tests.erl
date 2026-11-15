@@ -9,16 +9,12 @@ plan, erx_pkg_plan; the path table, erx_pkg_io; and the package process,
 erx_pkg, under erx_pkg_sup, over a simulated medium with admission,
 registration and publication stubbed. The package files come from
 test/host/erx_pkg_test.rb, in ERX_PKG_FILES: dashboard.bin, clock.bin and
-other.bin, each a well-formed package of that app name, signed by the key
-of 32 bytes 0x11.
+other.bin, each a well-formed package of that app name sealed by the
+Ed25519 key whose public half is key.bin.
 """.
 -include_lib("eunit/include/eunit.hrl").
 
--define(KEY, <<16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8,
-               16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8,
-               16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8,
-               16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8, 16#11:8>>).
--define(SIGNERS, [{<<"development">>, ?KEY}]).
+-define(SIGNERS, [{development, file("key")}]).
 
 file(Name) ->
     {ok, Bytes} = file:read_file(filename:join(os:getenv("ERX_PKG_FILES"), Name ++ ".bin")),
@@ -42,7 +38,8 @@ check_file_test() ->
     <<First, Rest/binary>> = Hash,
     ?assertEqual({error, {untrusted, hash}},
                  check(<<"clock.app">>, Clock, {hash, <<(First bxor 1), Rest/binary>>})),
-    ?assertMatch({ok, #{signer := unchecked}}, check(<<"clock.app">>, Clock, {signers, ?SIGNERS})),
+    ?assertMatch({ok, #{signer := development}},
+                 check(<<"clock.app">>, Clock, {signers, ?SIGNERS})),
     ?assertEqual({error, {untrusted, signer}},
                  check(<<"clock.app">>, Clock, {signers, [{<<"other">>, <<0:256>>}]})),
     ?assertEqual({error, {name, <<"misnamed.app">>, <<"clock">>}},
@@ -123,7 +120,7 @@ recovery_test() ->
     %% Every temporary file is deleted; an entry of no recognized form stays.
     ?assertEqual([<<"tmp.0">>, <<"tmp.7">>], erx_pkg_test_medium:deleted()),
     ?assertMatch(#{{system, <<"dashboard.app">>} := #{state := admitted, signer := image},
-                   {installed, <<"clock.app">>} := #{state := admitted, signer := unchecked,
+                   {installed, <<"clock.app">>} := #{state := admitted, signer := development,
                                                        version := 3},
                    {installed, <<"other.app">>} := #{state := refused, reason := {abi, 1, 2}},
                    {installed, <<"misnamed.app">>} := #{state := refused, version := unknown,

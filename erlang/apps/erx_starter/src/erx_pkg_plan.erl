@@ -44,7 +44,7 @@ the header hash its `package` row records; the trusted signer keys; and the
 lifetime writes.
 """.
 -type config() :: #{images := [{binary(), <<_:256>>}],
-                    signers := [{binary(), <<_:256>>}],
+                    signers := [{erx_pkg_header:signer(), <<_:256>>}],
                     max := pos_integer()}.
 
 -doc """
@@ -66,7 +66,7 @@ refused has no authenticated header, so its declared fields are `unknown`.
 -type package_record() :: #{place := place(),
                     state := admitted | refused,
                     reason := term(),
-                    signer := image | unchecked | unknown,
+                    signer := image | erx_pkg_header:signer() | unknown,
                     version := pos_integer() | unknown,
                     memory := non_neg_integer() | unknown,
                     needs := [binary()] | unknown,

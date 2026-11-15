@@ -4,6 +4,7 @@
 
 require 'minitest/autorun'
 require 'open3'
+require 'openssl'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/generated'
 require_relative '../../tools/fuzz/package_seeds'
@@ -14,7 +15,9 @@ require_relative '../../tools/fuzz/package_seeds'
 # admission, registration and publication stubbed (test/erlang/erx_pkg_stubs). They compile
 # from source with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC). The
 # package files are written here through the ABI codec (Erx::PackageSeeds): three
-# well-formed packages, dashboard, clock and other.
+# well-formed packages, dashboard, clock and other, each sealed by a fresh Ed25519 key
+# whose public half is key.bin. erx_bytes is the host stand-in (test/erlang/host_bytes),
+# whose Ed25519 check is stock's crypto.
 class ErxPkgTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -23,7 +26,7 @@ class ErxPkgTest < Minitest::Test
                 erlang/apps/erx_domain/src/erx_ident.erl erlang/apps/erx_files/src/erx_fs_version.erl
                 erlang/apps/erx_starter/src/erx_pkg_plan.erl erlang/apps/erx_starter/src/erx_pkg_io.erl
                 erlang/apps/erx_starter/src/erx_pkg.erl erlang/apps/erx_starter/src/erx_pkg_sup.erl
-                test/erlang/erx_pkg_tests.erl] +
+                test/erlang/host_bytes/erx_bytes.erl test/erlang/erx_pkg_tests.erl] +
              Dir.glob('test/erlang/erx_pkg_stubs/*.erl', base: ROOT)).map { |path| File.join(ROOT, path) }.freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
 
@@ -37,11 +40,17 @@ class ErxPkgTest < Minitest::Test
 
   private
 
-  def package(name) = Seeds.sample(name, declaration: Seeds::ERLANG.with(name: name), image_blocks: 3, tree_blocks: 1)
+  def package(name, signer:)
+    Seeds.sample(name, declaration: Seeds::ERLANG.with(name: name), image_blocks: 3, tree_blocks: 1, signer: signer)
+  end
 
   def eunit
     Dir.mktmpdir('erx-pkg-test') do |work|
-      %w[dashboard clock other].each { |name| File.binwrite(File.join(work, "#{name}.bin"), package(name).prefix) }
+      signer = Erx::AppPackage::Signer.new(OpenSSL::PKey.generate_key('ED25519'))
+      File.binwrite(File.join(work, 'key.bin'), signer.public_key)
+      %w[dashboard clock other].each do |name|
+        File.binwrite(File.join(work, "#{name}.bin"), package(name, signer: signer).prefix)
+      end
       output, status = Open3.capture2e('gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERLC'), '-Werror', '-I', INCLUDE, '-pa', work,
                                        '-o', work, *SOURCES, stdin_data: '')
       return [output, status] unless status.success?
