@@ -124,7 +124,8 @@ In the order it happens:
    `0x60` words, with the watermark enable and a message-busy control of
    `0x50` (brcmfmac `sdio.c:54-57, 4322-4334`). No drive-strength table
    covers chip `0x4345`, so nothing is written (brcmfmac `sdio.c:3790-3830`,
-   its default case; OpenBSD leaves a `TODO`). Save-and-restore is
+   its default case; OpenBSD leaves a `TODO`); brcmfmac's 6 mA default
+   only selects a row of that table (`sdio.c:4042-4046`). Save-and-restore is
    used when the PMU's chip-control register 3 has bit 2 set (brcmfmac
    `chip.c:1426-1442`, `sdio.c:3436-3492`; `if_bwfm_sdio.c:452-461`).
 4. **SDPCM framing.** Every frame on function 2 carries a 4-byte
@@ -205,7 +206,12 @@ chip process reads it at bring-up ([The chip](#the-chip)).
 * **No DMA from the chip.** An SDIO card cannot write host memory; the
   host reads every byte through the controller's data port. The firmware
   is hostile input, bounded by the host's parsers alone.
-* **Power and pins are unknowns:** [Facts this design does not have](#facts-this-design-does-not-have).
+* **The chip's power is the firmware's.** Its enable, `WL_REG_ON`, is
+  line 1 of the firmware's GPIO expander, not a SoC pin
+  ([research-wifi-pi4.md](research-wifi-pi4.md), fact 1), and no domain
+  reaches the expander (PL2), so the chip runs only if the firmware
+  leaves it on. That, and the pins' state at handover, are board facts:
+  [Facts this design does not have](#facts-this-design-does-not-have).
 
 ### What erXos stands on
 
@@ -369,6 +375,22 @@ since FreeBSD marks this controller's capabilities missing and asks the
 firmware for the rate (`bcm2835_sdhci.c:119-126`), which erXos cannot
 (PL2). The record marks the line shared, as EMMC2's does.
 
+Linux's driver for this controller adds no quirk to these
+([research-wifi-pi4.md](research-wifi-pi4.md), facts 16 to 23, "fact N"
+below). It accesses whole 32-bit words (fact 16); it substitutes the same
+capabilities, 3.3 V, high speed and a 1,024-byte block, with no 1.8 V
+mode (fact 20); it never sets the high-speed enable, counts the data
+timeout in card clocks and uses no preset values (fact 19); and the slot
+has no regulator, so its signalling stays at 3.3 V (fact 22). Against a
+write lost when two land within two card clocks, it writes the block size
+and count as one word and then the transfer mode with the command as one
+word (fact 17), which is the order and width in which `sd_issue/2` of
+`erx_blk_write` already writes `blksizecnt` and then `cmdtm`. Its spacing
+differs: four card clocks after each write, only at or below 400 kHz
+(fact 18). The controller record's spacing, 6 us after every non-data write at every
+clock, covers the two-clock window of fact 17 at the slowest clock the
+host runs, 400 kHz, and is kept.
+
 ### One controller core
 
 `erx_blk_sd_host`, EMMC2's controller core, holds two kinds of
@@ -433,7 +455,14 @@ CMD7 to select it; the 4-bit bus through the bus-interface control
 register `07h` (4.5, p.30; Table 6-1, p.43), after the card capability
 register `08h` shows a full-speed card or a low-speed card with 4-bit
 support (`LSC`, `4BLS`, 6.9); and the card clock at 25 MHz. That is
-OpenBSD's order (`sdmmc_io.c:73-132, 673-686, 688, 873-884`). The pure
+OpenBSD's order (`sdmmc_io.c:73-132, 673-686, 688, 873-884`). Every
+command before the last step runs at the 400 kHz identification clock,
+Linux's initial rate on this controller (fact 15). Linux's core issues
+the same I/O reset first and then CMD0 and CMD8 (fact 31); the host
+does not, since CMD0 does not reset an I/O card and the slot holds no
+memory. The bring-up drives no power line and waits for none: it takes
+the chip as out of reset since before the kernel started (F2), so
+Linux's 10 ms before and after power-up (fact 5) have long passed. The pure
 part, `erx_sdio_card`, is the bring-up as a state machine and the
 parsers of R4, R5 and R6. A card that answers no CMD5 is
 `{error, no_card}`; OpenBSD treats the same silence as no SDIO card
@@ -567,7 +596,12 @@ limits, each checked on its own:
 So a length is carried in byte mode when it is at most both 512 and the
 function's block size, otherwise in block mode when it is a multiple of
 the block size, and is refused when it is neither; the client pads as OpenBSD pads a frame
-longer than 512 bytes to a multiple of 512 (`if_bwfm_sdio.c:1121`). A
+longer than 512 bytes to a multiple of 512 (`if_bwfm_sdio.c:1121`).
+Linux's core draws the same lines, byte mode within 512 bytes, the
+controller's largest block and the function's largest block from its
+CIS, which the programmed size stays within, and block mode in at most
+511 blocks, and lists no Broadcom or Cypress chip among the cards
+whose byte mode is limited further (facts 24 to 26). A
 `block_size` step takes 1 to the smaller of 2,048 (4.8, p.31) and the
 controller's largest block. The host reads no CIS, so a function's
 `TPLFE_MAX_BLK_SIZE`, the largest block and byte count it supports
@@ -688,8 +722,10 @@ chip's id and revision through the backplane window
 KSO on the SDIO core from revision 12, the card-control reset bit and the
 PMU's resource reload, the ARM core halted, firmware written at
 `0x198000` and NVRAM at the top of RAM and both read back and compared,
-the core started (`if_bwfm_sdio.c:1045`), the HT clock awaited, function
-2 enabled with the 43455's watermark, the host interrupt mask, the card's
+the core started (`if_bwfm_sdio.c:1045`), the HT clock awaited, the
+host's protocol version written to the SDIO core's mailbox data word
+(`if_bwfm_sdio.c:438-442`; fact 29), function 2 enabled with the
+43455's watermark, the host interrupt mask, the card's
 interrupt enables for functions 1 and 2 and the master enable (SDIO
 Table 6-1), and save-and-restore where the chip reports it. The process
 accepts chip ID `0x4345` only when its revision is not 9, which is the
@@ -700,6 +736,21 @@ revision, which is W0's line. Then the firmware's ready mailbox
 of `ver`, `clmver`, `cur_etheraddr` and `cap` (brcmfmac `common.c:298,
 378, 401`; `feature.c:228-252`), whose answers the station shows at
 `/proc` and the log records, which is W1's line.
+
+**Waits.** Every wait of the bring-up is the chip process's, a timer
+between `run` lists and never a step, so the SDIO host holds no list
+open while the chip settles. Each wait reads its register again every
+10 ms until the bit it waits for is set, within a bound: a function's
+ready bit in `03h` after its enable, 3 s, the bound brcmfmac gives
+function 2 (fact 29), for both functions, since the host reads no CIS
+and Linux's core waits up to 1 s for a card without the CIS value
+(fact 28); the SDIO core's wake through KSO, 1 s, after a first 2 ms
+(fact 30); and the HT clock, 1 s (fact 30). These bounds are Linux's
+choices, not the vendor's, and brcmfmac rewrites and reads KSO every 50 us
+where the chip process does so every 10 ms, which can delay a wake by
+one poll period. A wait that runs out ends the chip process with the wait named
+in the log, and the WiFi domain's restart attaches afresh
+([Failure handling](#failure-handling)).
 
 **The files.** Firmware, NVRAM and CLM blob are files of `erx_wifi`'s
 `priv/firmware` directory, read with `file:read_file/1` at bring-up:
@@ -1473,7 +1524,7 @@ and nothing in the network domain calls it.
 | No card answers CMD5: power, pins or a missing chip | `attach` answers `no_card` | everything else | the WiFi domain logs one line naming the unknown facts and ends; the domain service's restarts bound the retries, then it stays down |
 | A command times out or the card reports an error | the step's result | the attachment, until the client acts | the chip process ends, so the WiFi domain restarts and attaches afresh |
 | A CMD53 runs slowly, up to its one deadline, 1 s from its issue | the SDIO host's poll | EMMC2 and its line, which never wait on the SDIO host | none needed; a deadline is a device error |
-| The firmware fails its read-back, does not start or stops answering control | `erx_bwfm_boot`; a 2.5 s control deadline | the storage and network domains | the WiFi domain restarts, reloading the firmware |
+| The firmware fails its read-back, a bring-up wait runs out, or the firmware does not start or stops answering control | `erx_bwfm_boot`; the wait's bound; a 2.5 s control deadline | the storage and network domains | the WiFi domain restarts, reloading the firmware |
 | A frame from the chip fails a check | the core | everything | the frame is dropped and counted; a bad header ends the read-ahead |
 | A handshake or SAE message fails a check | the core | the association, until its deadline | dropped and counted; a deadline or a deauthenticating check returns the station to `idle` |
 | A `wsec_key` is refused | the control reply | the WiFi domain | the station deauthenticates, deletes what it installed and returns to `idle` |
@@ -1670,20 +1721,26 @@ sound as the firmware that runs them.
 ## Facts this design does not have
 
 These facts live only in GPL sources (the board's device tree and
-Linux's SDIO and controller drivers) or only on the board. A clean-room
-facts record, written by a separate agent, or the board probe settles
-each; the design depends on none of them, and W0 fails safely, with
-`no_card` and a log line naming this list, when one is against it.
+Linux's SDIO and controller drivers) or only on the board. The GPL ones
+are settled by the clean-room facts record
+[research-wifi-pi4.md](research-wifi-pi4.md), written by a separate
+agent from Linux v7.3.4 and cited here by fact number; the design's
+other values come from FreeBSD, OpenBSD, brcmfmac's ISC sources and the
+published specifications ([Sources](#sources)). The board probe settles
+the rest. The design depends on one board fact, that the firmware leaves
+`WL_REG_ON` on (F2), and adds no mechanism for it; it works whichever
+way the others fall. W0 fails safely, with `no_card` and a log line
+naming this list, when one is against it.
 
-| Fact | Where it lies | What the design does with it unknown |
+| Fact | Where it lies | What the design does with it |
 | --- | --- | --- |
-| **F1.** Whether GPIO 34 to 39 are in ALT3 when the firmware starts the kernel | the board probe | if not, the slot's `config.txt` sets them with `gpio=` lines, the mechanism UART3's pins use ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)); that the firmware honours `gpio=` for these pins is *unverified* |
-| **F2.** Which line `WL_REG_ON` is, its controller, polarity and power sequence delays, and its state at handover | the device tree (facts record); the board probe | if the firmware leaves it on, nothing; if it is a SoC GPIO, a `config.txt` `gpio=` line as F1; if it is on the firmware's expander, no domain reaches it (PL2): the design adds no access to the firmware's mailbox or the expander, implicit or otherwise, and any mechanism that powers the chip comes back to the architecture as a decision of its own before it is built |
-| **F3.** A host-wake out-of-band interrupt line | the device tree (facts record); brcmfmac reads one from the node's `interrupts` (`of.c:132-152`) | not used: the SDIO host polls the card's in-band interrupt |
-| **F4.** The legacy controller's base clock | the board probe, as for EMMC2 ([design-storage.md](design-storage.md#the-sd-host-controller), "The controller's clock") | the platform record's `clock` for the unit's entry; with none, the SDIO host refuses to attach |
-| **F5.** The bus width and maximum clock the tree gives the slot | the device tree (facts record) | 4 bits at 25 MHz, which every full-speed SDIO card supports |
-| **F6.** Quirks of Linux's drivers for this controller in SDIO mode, beyond FreeBSD's and OpenBSD's | facts record | FreeBSD's and OpenBSD's quirks; a failure is a W0 diagnosis |
-| **F7.** Byte-mode CMD53 limits and delays after function enable in Linux's SDIO core for this chip | facts record | byte mode within 512 bytes and the function's block size (SDIO 5.3.1); function ready polled through `03h` (SDIO Table 6-1) |
+| **F1.** Whether GPIO 34 to 39 are in ALT3 when the firmware starts the kernel | the board probe; the tree gives the slot GPIO 34 to 39 in ALT3, the clock on 34 with no pull and 35 to 39 pulled up, and says nothing of their state at handover (fact 33) | if not, the slot's `config.txt` sets them, pulls included, with `gpio=` lines, the mechanism UART3's pins use ([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)); that the firmware honours `gpio=` for these pins is *unverified* |
+| **F2.** `WL_REG_ON`: its line, polarity, power sequence and state at handover | the facts record for all but the state: line 1 of the firmware's GPIO expander, not a SoC pin (fact 1); active-low, so the chip runs while the line is high (fact 2); no delays of the tree's own, and Linux's host core waits about 10 ms before releasing the chip and 10 ms after starting the clock (facts 3 to 5). The state at handover is not in the tree (fact 7): the board probe | No domain reaches the expander (PL2), so nothing in erXos powers the chip: the design depends on the firmware leaving `WL_REG_ON` high at handover, an open board fact. If the probe finds it low, the chip answers no CMD5 and W0 fails with `no_card`. The design then adds no access to the firmware's mailbox or the expander, implicit or otherwise; how the chip gets power returns to the architecture as a decision of its own, taken before anything is built for it |
+| **F3.** A host-wake out-of-band interrupt line | settled by the facts record: the tree gives the WiFi node no interrupt, and with none brcmfmac uses the card's in-band interrupt (facts 9 and 10) | none is used: the SDIO host polls the card's in-band interrupt |
+| **F4.** The legacy controller's base clock | the board probe, as for EMMC2 ([design-storage.md](design-storage.md#the-sd-host-controller), "The controller's clock"); the tree names the clock manager's EMMC clock with no rate, which the firmware sets, and Linux takes the rate from its clock framework (facts 21 and 34) | the platform record's `clock` for the unit's entry; with none, the SDIO host refuses to attach |
+| **F5.** The bus width and maximum clock the tree gives the slot | settled by the facts record: 4 bits, and no maximum-frequency property, so the limit is the controller's base clock (facts 12 and 13); Linux identifies at 400 kHz and runs a high-speed card at up to 50 MHz (facts 14 and 15) | 4 bits at 25 MHz, which every full-speed SDIO card supports, after identification at 400 kHz; 50 MHz waits for [Performance](#performance) |
+| **F6.** Quirks of Linux's driver for this controller, beyond FreeBSD's and OpenBSD's | settled by the facts record: none beyond them (facts 16 to 23) | [The legacy controller's record](#the-legacy-controllers-record) carries them; the spacing stays 6 us after every non-data write |
+| **F7.** Byte-mode CMD53 limits and delays after function enable | settled by the facts record (facts 24 to 30) | byte mode within 512 bytes and the function's block size, as [The `sdio` interface](#the-sdio-interface) has it; the chip process's waits and their bounds ([The chip](#the-chip), "Waits") |
 | **F8.** Whether the Pi's firmware build offers `sae_ext` and the events 187 to 190, and `mfp`, and whether its external authentication and PMF work | the chip's `cap` and `mfp` answers at W1; the exchange and PMF at W5, on the board | without them SAE networks are not candidates and WPA3 is reported unsupported; another licensed Cypress build is looked for before anything else ([SAE](#sae-and-protected-management-frames)) |
 | **F9.** Whether the firmware sends message 4 before applying a key requested after it | W4 on the board | the chip process keeps the order; if the firmware does not, the station waits for message 4's transmission before installing, a change to the station alone |
 | **F10.** What the firmware does with no country set, which country its CLM blob then applies, and whether it takes `country` while its interface is down | the board, with the pinned firmware and CLM blob | nothing transmits until a country is configured; if `country` is not taken while down, the order becomes `up`, `country`, then the first scan, still with no scan or join before the country |
@@ -2101,6 +2158,17 @@ reaches GPIO 34 to 39 (*BCM2711 ARM Peripherals*, 5.3, p.77).
    keeps itself, would each need a WiFi variant too. Until the vault has
    the purpose, development builds keep the blob in a file, a security
    residual that blocks release.
+2. **Decided: where the design's facts come from.** What lies only in
+   GPL sources, the Pi 4's device tree and Linux's SDIO and controller
+   drivers, reaches this design only through the clean-room facts record
+   [research-wifi-pi4.md](research-wifi-pi4.md), written by a separate
+   agent who wrote no part of the design, and the design cites it by
+   fact number. Every other value comes from FreeBSD, OpenBSD,
+   brcmfmac's ISC sources as FreeBSD carries them, and the published
+   specifications, each cited by file and line or section in
+   [Sources](#sources); no design or code agent reads the GPL sources.
+   What neither settles is a board fact, left to the board probe
+   ([Facts this design does not have](#facts-this-design-does-not-have)).
 
 ## Sources
 
@@ -2191,5 +2259,7 @@ sections 4.2.1.3, 5.3 and 6.2.
 
 **In the tree:** OpenSSL 3.5.9's `crypto/ec/ec_mult.c` and
 `crypto/ec/ecp_nistz256.c`, and OTP 29.1.2's `lib/crypto`, each recorded
-in its `ORIGIN.md`; the facts record
-[research-sdhci-bcm2711.md](research-sdhci-bcm2711.md).
+in its `ORIGIN.md`; the facts records
+[research-sdhci-bcm2711.md](research-sdhci-bcm2711.md) and
+[research-wifi-pi4.md](research-wifi-pi4.md), the second written from
+Linux v7.3.4 on 2026-11-15, whose sources and their SHA-256 it lists.
