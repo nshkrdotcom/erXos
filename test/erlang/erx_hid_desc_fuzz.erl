@@ -12,7 +12,7 @@
 %% buffer with its id byte, more than 15 numbered reports or 64 usage ranges a field.
 -module(erx_hid_desc_fuzz).
 
--export([run/1]).
+-export([run/1, descriptor/0]).
 
 -define(ROUNDS, 30000).
 -define(REASONS, [too_long, truncated, push_too_deep, pop_without_push, unbalanced_collection,
