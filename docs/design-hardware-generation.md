@@ -11,7 +11,25 @@ Unknown semantics fail; a source is never partially interpreted.
 CMSIS-SVD supplies peripheral register names, offsets, widths, access,
 fields and enumerated values. The input profile uses bounded XML with
 no document types, entities or external references. A register array is
-`NAME[%s]` with `dim` and `dimIncrement`. Each register carries the profile's
+`NAME[%s]` with `dim` and `dimIncrement`. A field list is CMSIS-SVD's field
+`dim` (svd-spec v1.3.9, commit 4195b358, `doxygen/src/svd_schema.txt`, SHA-256
+`35d4179b3198faeaf9fe602970a70abb9ca4112521308bb8d8f8820e27f4950a`,
+dimElementGroup and the field element): one field description named `NAME%s`,
+repeated `dim` times, each element named by its `dimIndex` string (0 upwards by
+default, or a range `FIRST-LAST` or comma list naming exactly `dim` elements) and
+placed `dimIncrement` bits above the one before. Its elements are ordinary fields
+of the register, so the generated accessors are those the fields written out one
+by one would give. A field array, `NAME[%s]`, and `dimIndex`'s letter ranges have
+no consumer and are refused. An enumeration a peripheral repeats is written once,
+as an `enumeratedValues` with a `name`, and each other field copies it with an
+empty `enumeratedValues derivedFrom="NAME"`: CMSIS-SVD's derivation "makes a copy
+from a previously defined enumeratedValues section" and allows "no modifications"
+(same source, the enumeratedValues element). The profile resolves a bare name
+within its own peripheral, so a name defines one enumeration there and a
+derivation names one defined before it; every copied value is checked against
+the field that copies it. A defined enumeration holds 1 to 256 values, and
+since lists and copies multiply what a file spells out, a peripheral carries at
+most 16384 field and value names. Each register carries the profile's
 one extension, `ownedByNif`, saying whether the device NIF owns it and writes it
 only in sequences of its own (a ring's base address, a queue's setup, the
 device's status and features); `erx/hw/device_owned.h` names each owned register

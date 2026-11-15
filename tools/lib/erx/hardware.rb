@@ -21,10 +21,14 @@ module Erx
     IDENTIFIER = /\A[A-Za-z][A-Za-z0-9_]*\z/
     ARRAY_NAME = /\A(.*)\[%s\]\z/
     ELEMENTS_MAX = 256
+    ENUMERATION_MAX = 256
+    NAMES_MAX = 16_384
     WIDTHS = [8, 16, 32, 64].freeze
     PERIPHERALS_MAX = 16
-    # The attributes the profile gives a meaning: the schema's version, and a cluster's derivation.
-    ATTRIBUTES = { 'device' => ['schemaVersion'], 'cluster' => ['derivedFrom'] }.freeze
+    # The attributes the profile gives a meaning: the schema's version, a cluster's derivation
+    # and an enumeration's.
+    ATTRIBUTES = { 'device' => ['schemaVersion'], 'cluster' => ['derivedFrom'],
+                   'enumeratedValues' => ['derivedFrom'] }.freeze
     # Headers the device table owns under include/erx/hw, so no peripheral may be named for one.
     DEVICE_HEADERS = %w[device_types device_table device_access device_owned].freeze
     # Every SVD file beneath hw/svd is an input; generation discovers them.
@@ -180,7 +184,8 @@ module Erx
       size = number(text(block, 'size'), maximum: 1024 * 1024)
       registers = child(peripheral, 'registers')
       known_elements(registers, allowed: %w[register cluster])
-      parsed = peripheral_registers(registers.children, default_width: default_width, block_size: size, earlier: earlier)
+      parsed = peripheral_registers(registers.children, default_width: default_width, block_size: size, earlier: earlier,
+                                                        enumerations: peripheral_enumerations(registers))
       list = parsed.list
       raise Error, 'SVD requires 1..4096 registers' unless list.size.between?(1, 4096)
       names = list.map { |register| register.name.downcase }
@@ -191,6 +196,11 @@ module Erx
       end
       # Every register, a copied one included, lies inside this peripheral's own block.
       raise Error, 'SVD register is outside its aligned block' if ranges.map(&:end).max > size
+      # Field lists and shared enumerations multiply what the file spells out; this bounds
+      # the names a peripheral's headers carry, one per field and one per field's value.
+      unless list.sum { |register| register.fields.sum { |field| 1 + field.values.size } } <= NAMES_MAX
+        raise Error, "SVD peripheral exceeds #{NAMES_MAX} field and value names"
+      end
 
       Device.new(name: identifier(text(peripheral, 'name')), size: size, registers: list.freeze,
                  derived_from: parsed.derived_from, leading: parsed.leading).freeze.then do |device|
@@ -206,11 +216,11 @@ module Erx
 
     # Only the first element may be a derived cluster or the leading cluster a later
     # peripheral copies; the rest are registers and plain clusters.
-    def peripheral_registers(nodes, default_width:, block_size:, earlier:)
+    def peripheral_registers(nodes, default_width:, block_size:, earlier:, enumerations:)
       raise Error, 'SVD requires 1..4096 registers' if nodes.empty?
 
       head, *rest = nodes
-      shape = { default_width: default_width, block_size: block_size }
+      shape = { default_width: default_width, block_size: block_size, enumerations: enumerations }
       tail = rest.flat_map do |node|
         raise Error, "an SVD derived cluster must be its peripheral's first element" if node.attributes.key?('derivedFrom')
 
@@ -229,21 +239,47 @@ module Erx
       end
     end
 
-    def element_registers(node, default_width:, block_size:)
-      return cluster_registers(node, default_width: default_width, block_size: block_size) if node.name == 'cluster'
+    def element_registers(node, **shape)
+      return cluster_registers(node, **shape) if node.name == 'cluster'
 
-      [parse_register(node, default_width: default_width, block_size: block_size)]
+      [parse_register(node, **shape)]
     end
 
     # A cluster of the profile: one level, no array, its registers at offsets from its own.
-    def cluster_registers(node, default_width:, block_size:)
+    def cluster_registers(node, block_size:, **shape)
       known_elements(node, allowed: %w[name description addressOffset register])
       identifier(text(node, 'name'))
       base = number(text(node, 'addressOffset'), maximum: block_size)
       members = children(node, 'register')
       raise Error, 'SVD cluster requires registers' if members.empty?
 
-      members.map { |member| parse_register(member, default_width: default_width, block_size: block_size, base: base) }
+      members.map { |member| parse_register(member, block_size: block_size, base: base, **shape) }
+    end
+
+    # The named enumerations of one peripheral's fields, each by its name, for an
+    # enumeratedValues derivedFrom to copy. CMSIS-SVD's derivation "makes a copy from a
+    # previously defined enumeratedValues section. No modifications are allowed" (svd-spec
+    # v1.3.9, doxygen/src/svd_schema.txt, the enumeratedValues element). The profile resolves
+    # a bare name within its own peripheral, so a name defines one enumeration there, and a
+    # derivation names one defined before it in document order; this walk is the one place
+    # that checks both, and parse_field's lookup cannot miss. Each definition is parsed here
+    # once, and every field that copies it shares the one frozen table.
+    def peripheral_enumerations(registers)
+      registers.children.flat_map { |node| node.name == 'cluster' ? children(node, 'register') : [node] }
+               .flat_map { |register| children(register, 'fields') }
+               .flat_map { |fields| children(fields, 'field') }
+               .flat_map { |field| children(field, 'enumeratedValues') }
+               .each_with_object({}) do |node, named|
+        source = node.attributes['derivedFrom']
+        name = text(node, 'name', default: '')
+        if source
+          raise Error, 'SVD enumeratedValues derives from no earlier enumeration' unless named.key?(source)
+        elsif !name.empty?
+          raise Error, 'SVD enumeratedValues names collide' if named.key?(name)
+
+          named[identifier(name)] = enumeration(node)
+        end
+      end.freeze
     end
 
     # A cluster derivedFrom "PERIPHERAL.CLUSTER" copies that cluster whole, as CMSIS-SVD's
@@ -311,7 +347,7 @@ module Erx
       [base, count, stride]
     end
 
-    def parse_register(node, default_width:, block_size:, base: 0)
+    def parse_register(node, default_width:, block_size:, enumerations:, base: 0)
       known_elements(node, allowed: %w[name description addressOffset size access readAction fields
                                        ownedByNif dim dimIncrement])
       width = number(text(node, 'size', default: default_width.to_s))
@@ -327,7 +363,9 @@ module Erx
       raise Error, 'unsupported SVD read action' unless ['', 'clear', 'set', 'modify', 'modifyExternal'].include?(action)
       fields_node = child(node, 'fields')
       known_elements(fields_node, allowed: ['field'])
-      fields = fields_node.children.map { |field| parse_field(field, width: width, register_access: mode) }
+      fields = fields_node.children.flat_map do |field|
+        parse_field(field, width: width, register_access: mode, enumerations: enumerations)
+      end
       raise Error, 'SVD register requires fields' if fields.empty?
       occupied = 0
       names = []
@@ -346,11 +384,16 @@ module Erx
                    fields: fields.freeze, owned_by_nif: owned_mark(node), count: count, stride: stride).freeze
     end
 
-    def parse_field(node, width:, register_access:)
-      known_elements(node, allowed: %w[name description bitOffset bitWidth access modifiedWriteValues enumeratedValues])
+    # The fields one field element describes: itself, or each element of a list. A list is
+    # CMSIS-SVD's field dim (svd-spec v1.3.9, doxygen/src/svd_schema.txt, dimElementGroup and
+    # the field element): one description repeated dim times, the name's %s replaced by each
+    # dimIndex string and the bit offset advanced by dimIncrement bits each time. The elements
+    # become ordinary fields, so the register's overlap and name checks see each of them.
+    def parse_field(node, width:, register_access:, enumerations:)
+      known_elements(node, allowed: %w[name description bitOffset bitWidth access modifiedWriteValues enumeratedValues
+                                       dim dimIncrement dimIndex])
       offset = number(text(node, 'bitOffset'), maximum: width)
       bits = number(text(node, 'bitWidth'), maximum: width)
-      raise Error, 'SVD field exceeds register width' unless bits.positive? && offset < width && bits <= width - offset
       mode = access(text(node, 'access', default: register_access))
       if register_access == 'read-only' && mode != 'read-only' || register_access == 'write-only' && mode != 'write-only'
         raise Error, 'SVD field access exceeds its register'
@@ -358,19 +401,86 @@ module Erx
       modified = text(node, 'modifiedWriteValues', default: '')
       raise Error, 'unsupported SVD write semantics' unless ['', 'oneToClear'].include?(modified)
       raise Error, 'read-only SVD field cannot be cleared' if modified == 'oneToClear' && mode == 'read-only'
-      values_node = child(node, 'enumeratedValues', required: false)
-      values = {}
-      if values_node
-        known_elements(values_node, allowed: ['enumeratedValue'])
-        values_node.children.each do |value|
-          known_elements(value, allowed: %w[name description value])
-          name = identifier(text(value, 'name'))
-          raise Error, 'duplicate SVD enumerated name' if values.key?(name.downcase)
-          values[name.downcase] = number(text(value, 'value'), maximum: (1 << bits) - 1)
-        end
+      values = enumerated_values(child(node, 'enumeratedValues', required: false), bits: bits, enumerations: enumerations)
+      field_elements(node, width: width).map do |name, shift|
+        first = offset + shift
+        raise Error, 'SVD field exceeds register width' unless bits.positive? && first < width && bits <= width - first
+
+        Field.new(name: name, offset: first, width: bits,
+                  access: mode, clear: modified == 'oneToClear', values: values).freeze
       end
-      Field.new(name: identifier(text(node, 'name')), offset: offset, width: bits,
-                access: mode, clear: modified == 'oneToClear', values: values.freeze).freeze
+    end
+
+    # Each field a field element names, with its bit offset from the element's own. The
+    # profile takes the list form, NAME%s, alone: an array, NAME[%s], would need array
+    # accessors no driver asks for.
+    def field_elements(node, width:)
+      name = text(node, 'name')
+      if child(node, 'dim', required: false).nil?
+        raise Error, 'SVD dimIncrement or dimIndex without dim' if child(node, 'dimIncrement', required: false) ||
+                                                                   child(node, 'dimIndex', required: false)
+
+        return [[identifier(name), 0]]
+      end
+
+      raise Error, 'an SVD field list names one %s' unless name.scan('%s').size == 1 && !name.include?('[%s]')
+      increment = number(text(node, 'dimIncrement'), maximum: width)
+      # Elements of at least one bit each that may not overlap number no more than the
+      # register's bits, and each name is checked as it is made.
+      indexes = dim_indexes(text(node, 'dimIndex', default: ''), count: number(text(node, 'dim'), maximum: width))
+      indexes.each_with_index.map { |index, position| [identifier(name.sub('%s', index)), position * increment] }
+    end
+
+    # The strings a list's %s takes: 0 to dim - 1 by default, or dimIndex's range FIRST-LAST
+    # or comma-separated list, which must name exactly dim elements. dimIndex's letter range
+    # (A-Z) has no consumer and is refused.
+    def dim_indexes(value, count:)
+      raise Error, 'SVD dim requires at least one element' unless count.positive?
+
+      indexes = case value
+                when '' then 0...count
+                when /\A[0-9]+-[0-9]+\z/ then value.split('-').then { |first, last| number(first)..number(last) }
+                when /\A[_0-9A-Za-z]+(?:,\s*[_0-9A-Za-z]+)+\z/ then value.split(/,\s*/)
+                else raise Error, 'unsupported SVD dimIndex'
+                end
+      raise Error, 'SVD dimIndex does not name dim elements' unless indexes.size == count
+
+      indexes.map(&:to_s)
+    end
+
+    # A field's values by lower-cased name, each fitting the field: its own enumeration, or
+    # the one a derivedFrom names, which peripheral_enumerations has parsed once and every
+    # copy shares. A derived section restates nothing, as the specification allows no
+    # modification of the copy. (The schema, schema/CMSIS-SVD.xsd, still asks one
+    # enumeratedValue of every section; the text's "no modifications" is what is followed.)
+    def enumerated_values(node, bits:, enumerations:)
+      return {}.freeze if node.nil?
+
+      values = if node.attributes.key?('derivedFrom')
+                 known_elements(node, allowed: [])
+                 enumerations.fetch(node.attributes['derivedFrom'])
+               else
+                 enumeration(node)
+               end
+      raise Error, 'SVD enumerated value exceeds its field' unless values.each_value.all? { |value| value < (1 << bits) }
+
+      values
+    end
+
+    # One enumeration's values by lower-cased name: 1..ENUMERATION_MAX of them, as the
+    # schema asks at least one of a section that defines its values.
+    def enumeration(node)
+      known_elements(node, allowed: %w[name enumeratedValue])
+      entries = children(node, 'enumeratedValue')
+      raise Error, "SVD enumeration requires 1..#{ENUMERATION_MAX} values" unless entries.size.between?(1, ENUMERATION_MAX)
+
+      entries.each_with_object({}) do |value, values|
+        known_elements(value, allowed: %w[name description value])
+        name = identifier(text(value, 'name'))
+        raise Error, 'duplicate SVD enumerated name' if values.key?(name.downcase)
+
+        values[name.downcase] = number(text(value, 'value'))
+      end.freeze
     end
 
     def c_mask(width, register_width:)

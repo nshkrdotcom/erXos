@@ -390,17 +390,41 @@ class HardwareTest < Minitest::Test
     end
   end
 
-  # Every pin's function select and pull follow one rule (Tables 64 to 69 and 90 to 93):
-  # GPIO n's FSEL is three bits at 3 * (n mod 10) of GPFSEL(n div 10), its pull two bits
-  # at 2 * (n mod 16) of PUP_PDN(n div 16), each with the encodings the tables give.
-  def test_every_gpio_pin_has_its_function_select_and_pull
+  # The GPIO SVD states each encoding once (Tables 64 and 90) and each register's fields as
+  # one list: a list names its elements from dimIndex and steps by dimIncrement bits, and a
+  # derived enumeration copies its source's values.
+  def test_a_field_list_expands_and_a_derived_enumeration_copies_its_source
     registers = header_device('BCM2711_GPIO').registers.to_h { |register| [register.name, register] }
     alternates = { 'input' => 0, 'output' => 1, 'alt0' => 4, 'alt1' => 5, 'alt2' => 6, 'alt3' => 7, 'alt4' => 3, 'alt5' => 2 }
-    58.times do |pin|
-      fsel = registers.fetch("GPFSEL#{pin / 10}").fields.find { |field| field.name == "FSEL#{pin}" }
-      assert_equal [3 * (pin % 10), 3, alternates], [fsel.offset, fsel.width, fsel.values], "FSEL#{pin}"
-      pull = registers.fetch("PUP_PDN#{pin / 16}").fields.find { |field| field.name == "PULL#{pin}" }
-      assert_equal [2 * (pin % 16), 2, { 'none' => 0, 'up' => 1, 'down' => 2 }], [pull.offset, pull.width, pull.values], "PULL#{pin}"
+    assert_equal (10..19).map { |pin| ["FSEL#{pin}", 3 * (pin - 10), alternates] },
+                 registers.fetch('GPFSEL1').fields.map { |field| [field.name, field.offset, field.values] }
+    assert_equal (48..57).map { |pin| ["PULL#{pin}", 2 * (pin - 48), { 'none' => 0, 'up' => 1, 'down' => 2 }] },
+                 registers.fetch('PUP_PDN3').fields.map { |field| [field.name, field.offset, field.values] }
+  end
+
+  # A list of no elements, a dimIndex naming the wrong number of elements, an increment
+  # that lays an element over the next, a derivation naming no earlier enumeration (none
+  # at all, or one defined only further down), an enumeration of no values, and a copy into
+  # a field too narrow for its values are each refused for what they are. The seeded
+  # faults, planted in the generator by hand: without dim_indexes' count or size check, or
+  # parse_register's overlap check, the first three parse or fail for another reason; without
+  # peripheral_enumerations' check the fourth reaches a KeyError, not an Erx::Error.
+  def test_a_malformed_field_list_or_derivation_is_refused
+    source = File.binread(File.join(@repository, HEADER_SVDS.fetch('BCM2711_GPIO')))
+    { ['<dim>10</dim>', '<dim>0</dim>'] => 'SVD dim requires at least one element',
+      ['<dimIndex>10-19</dimIndex>', '<dimIndex>10-18</dimIndex>'] => 'SVD dimIndex does not name dim elements',
+      ['<dimIndex>20-29</dimIndex>', '<dimIndex>20,21</dimIndex>'] => 'SVD dimIndex does not name dim elements',
+      ['<dimIncrement>3</dimIncrement>', '<dimIncrement>2</dimIncrement>'] => 'SVD fields overlap',
+      ['derivedFrom="FUNCTION"', 'derivedFrom="NOTHING"'] => 'SVD enumeratedValues derives from no earlier enumeration',
+      ['derivedFrom="FUNCTION"', 'derivedFrom="PULL"'] => 'SVD enumeratedValues derives from no earlier enumeration',
+      [%r{(<name>PULL</name>).*?(</enumeratedValues>)}, '\1\2'] => 'SVD enumeration requires 1..256 values',
+      ['<bitWidth>3</bitWidth><enumeratedValues derivedFrom', '<bitWidth>2</bitWidth><enumeratedValues derivedFrom'] =>
+        'SVD enumerated value exceeds its field' }
+      .each do |(from, to), message|
+      broken = source.sub(from, to)
+      refute_equal source, broken, from
+      error = assert_raises(Erx::Error, to) { Erx::Hardware.parse_svd(broken) }
+      assert_equal message, error.message, to
     end
   end
 
@@ -417,11 +441,11 @@ class HardwareTest < Minitest::Test
     assert gpio.fetch('GPEDS0').fields.all?(&:clear)
   end
 
-  # The seeded fault: FSEL9 three bits wider, past bit 31, which the generator must refuse
-  # before it writes an accessor.
+  # The seeded fault: GPFSEL0's list one field higher, so that its last element, FSEL9, runs
+  # past bit 31, which the generator must refuse before it writes an accessor.
   def test_a_header_field_wider_than_its_register_is_refused
     source = File.binread(File.join(@repository, HEADER_SVDS.fetch('BCM2711_GPIO')))
-    widened = source.sub(%r{(<name>FSEL9</name>.*?<bitWidth>)3(</bitWidth>)}) { "#{$1}6#{$2}" }
+    widened = source.sub('<bitOffset>0</bitOffset><bitWidth>3</bitWidth>', '<bitOffset>3</bitOffset><bitWidth>3</bitWidth>')
     refute_equal source, widened
     error = assert_raises(Erx::Error) { Erx::Hardware.parse_svd(widened) }
     assert_equal 'SVD field exceeds register width', error.message
