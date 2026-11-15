@@ -1378,8 +1378,9 @@ caller ever hands the planner a specification or an origin:
 * `erx_dom_plan_session(view, id, template, name, name_len, display, display_len, domain_pid)`
   takes an index into the checked manifest's session templates, the
   name the domain service chose and the session's default display, a
-  service name or none, which its environment gains as `display=NAME`
-  after the template's words; everything else (principal, images,
+  service name or none; its environment gains, after the template's
+  words, `principal=N`, the template's principal's number, and
+  `display=NAME`; everything else (principal, images,
   arguments, complete limits and flags) is the template's and its limits
   record's, so a session is its template by construction. A template
   whose limits lack `ERX_DOM_SPACES` is `ERX_EINVAL`. It sets

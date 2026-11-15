@@ -2,10 +2,11 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% EUnit cases of the session's export's fixed tree (docs/design-files.md, "Narrowing
-%% for a program"): erx_session_export's callbacks, called without a grant, for a made-up
-%% principal and command list, with stand-ins for the kernel's generator and the
-%% session's tty that report to the test; and erx_shell_namespace:commands/1, which
-%% names what /bin lists. test/host/erx_session_export_test.rb runs them on stock's
+%% for a program"): erx_session_export's callbacks, called without a grant and through
+%% real erx_fs grants of each of the session's rights, for a made-up principal and
+%% command list, with stand-ins for the kernel's generator and the session's tty that
+%% report to the test; erx_shell_namespace:commands/1, which names what /bin lists; and
+%% erx_session_sup:export_args/3, what the session starts the export from. test/host/erx_session_export_test.rb runs them on stock's
 %% emulator.
 -module(erx_session_export_tests).
 
@@ -295,3 +296,83 @@ bin_lists_the_erlang_commands_alone_test() ->
     %% cd and the job builtins are the runner's, and a conflicting name runs nothing.
     ?assertEqual([<<"cat">>, <<"wc">>], erx_shell_namespace:commands(Table)),
     ?assertEqual([<<"cat">>], erx_shell_namespace:commands(Conflicted)).
+
+%% ---------------------------------------------------------------------------
+%% Through a grant
+%% ---------------------------------------------------------------------------
+
+%% A grant of the tree with Rights, as erx_session_sup starts it, with a generator of
+%% sevens and a tty that reports each write; fid 1 is attached to its root.
+grant(Rights) ->
+    ok = erx_fs_version:init(),
+    Test = self(),
+    Args = #{principal => ?PRINCIPAL, commands => ?COMMANDS,
+             entropy => fun(Size) -> binary:copy(<<7>>, Size) end,
+             tty => fun(Bytes) -> Test ! {tty, Bytes}, ok end},
+    {ok, Grant} = erx_fs:start_link(erx_session_export, Args, Rights),
+    unlink(Grant),
+    {ok, _Qid} = call(Grant, {attach, 1, ?ERX_P9_NOFID, <<"user">>, <<"export">>, 0}),
+    Grant.
+
+%% One request and its reply, as erx_file_remote sends it: to a fresh alias.
+call(Grant, Request) ->
+    Alias = alias([reply]),
+    Grant ! {erx_9p, Alias, self(), Request},
+    receive
+        {erx_9p, Alias, Reply} -> Reply
+    after 2000 ->
+        erlang:error({no_reply, Request})
+    end.
+
+%% Fid walked from the root, fid 1, along Path.
+walk_to(Grant, Fid, Path) ->
+    {ok, Qids} = call(Grant, {walk, 1, Fid, Path}),
+    ?assertEqual(length(Path), length(Qids)).
+
+listing(Grant, Fid) ->
+    {ok, _Qid, _Iounit} = call(Grant, {lopen, Fid, 0}),
+    {ok, Entries} = call(Grant, {readdir, Fid, 0, 8192}),
+    [{Name, Type} || {_EntryQid, _Offset, Type, Name} <- Entries].
+
+the_rw_grant_reads_etc_and_lists_dev_as_character_devices_test() ->
+    Grant = grant(rw),
+    walk_to(Grant, 2, [<<"etc">>, <<"passwd">>]),
+    {ok, _Qid, _Iounit} = call(Grant, {lopen, 2, 0}),
+    {ok, Text} = call(Grant, {read, 2, 0, 4096}),
+    ?assertMatch([<<"alice:*:1001:1001::/:/bin/rc">> | _], binary:split(Text, <<"\n">>, [global])),
+    walk_to(Grant, 3, [<<"dev">>]),
+    ?assertEqual([{<<"null">>, ?ERX_P9_DT_CHR}, {<<"tty">>, ?ERX_P9_DT_CHR},
+                  {<<"urandom">>, ?ERX_P9_DT_CHR}, {<<"zero">>, ?ERX_P9_DT_CHR}],
+                 listing(Grant, 3)),
+    exit(Grant, kill).
+
+the_rw_grant_creates_into_a_device_and_writes_the_tty_test() ->
+    Grant = grant(rw),
+    walk_to(Grant, 2, [<<"dev">>]),
+    ?assertMatch({ok, _Qid, _Iounit},
+                 call(Grant, {lcreate, 2, <<"null">>, ?ERX_P9_O_WRONLY, 8#644, 0})),
+    ?assertEqual({ok, 3, 0}, call(Grant, {write, 2, 0, <<"abc">>})),
+    walk_to(Grant, 3, [<<"dev">>, <<"tty">>]),
+    {ok, _, _} = call(Grant, {lopen, 3, ?ERX_P9_O_WRONLY}),
+    ?assertEqual({ok, 2, 0}, call(Grant, {write, 3, 0, <<"hi">>})),
+    receive {tty, Bytes} -> ?assertEqual(<<"hi">>, Bytes) after 2000 -> erlang:error(no_tty) end,
+    exit(Grant, kill).
+
+the_rx_grant_lists_bin_and_refuses_writes_test() ->
+    Grant = grant(rx),
+    walk_to(Grant, 2, [<<"bin">>]),
+    ?assertEqual([<<"cat">>, <<"echo">>, <<"ls">>], [Name || {Name, _Type} <- listing(Grant, 2)]),
+    walk_to(Grant, 3, [<<"dev">>]),
+    ?assertEqual({error, erofs},
+                 call(Grant, {lcreate, 3, <<"null">>, ?ERX_P9_O_WRONLY, 8#644, 0})),
+    exit(Grant, kill).
+
+%% ---------------------------------------------------------------------------
+%% What the supervisor starts the export from
+%% ---------------------------------------------------------------------------
+
+export_args_take_the_number_and_the_node_names_prefix_test() ->
+    ?assertEqual(#{principal => #{name => <<"root">>, number => 1}, commands => ?COMMANDS},
+                 erx_session_sup:export_args("1", 'root_1@erxos', ?COMMANDS)),
+    ?assertMatch(#{principal := #{name := <<"a_b">>, number := 1002}},
+                 erx_session_sup:export_args("1002", 'a_b_12@erxos', ?COMMANDS)).

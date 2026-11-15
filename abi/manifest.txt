@@ -137,6 +137,11 @@ bytes display_key 7 value 646973706c6179
 bytes display_policy_key 14 value 646973706c61795f706f6c696379
 bytes display_idle_dim_key 18 value 646973706c61795f69646c655f64696d5f73
 bytes display_idle_off_key 18 value 646973706c61795f69646c655f6f66665f73
+# The key of the word a session gains at its start, after its template's
+# environment and before its display (docs/design-programs.md, "Users and
+# files"): "principal", its principal's number in decimal. A session
+# template's environment may set neither it nor "display".
+bytes principal_key 9 value 7072696e636970616c
 enum mf_image_format u32
   value erofs_verity 1
   value erofs_unchecked 2

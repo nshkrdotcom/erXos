@@ -527,10 +527,12 @@ a start that names no display, a console login's, gets none. The domain service:
 
 1. plans the session from the principal's template, with the name
    `<principal>_<n>`, as it plans any session, and with
-   `ERX_START_FLAGS` set to `Start`'s `flags` and the `display` variable
-   to the display `Start` names, its default display, in its environment,
-   after the template's own words, which the boot view refuses to set
-   either; the library charges the
+   `ERX_START_FLAGS` set to `Start`'s `flags`, and with the `principal`
+   variable, the principal's number, which the session's `/etc/passwd`
+   names ([design-programs.md](design-programs.md#the-posix-lite-personality)),
+   and the `display` variable, the display `Start` names, its default
+   display, in its environment after the template's own words; the boot
+   view refuses a template that sets either variable; the library charges the
    principal, and refuses the start with `quota` or `no_memory` when the
    principal has no room;
 2. at the session's ready report, starts the facets of the system

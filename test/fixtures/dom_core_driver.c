@@ -701,8 +701,9 @@ constructors(void)
 	    (unsigned)(plan.spec.memory / MIB), plan.spec.domain_pid.number,
 	    (int)plan.spec.name_len, plan.spec.name, plan.spec.env_len);
 	/*
-	 * A session's default display is one word after the template's
-	 * environment; a name with a NUL or longer than a name is refused.
+	 * A session's principal, then its default display, are words after the
+	 * template's environment; a display name with a NUL or longer than a
+	 * name is refused.
 	 */
 	session_template.env = "LANG=C";
 	session_template.env_len = sizeof("LANG=C");

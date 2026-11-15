@@ -62,13 +62,18 @@
 	    sizeof(ERX_DISPLAY_IDLE_OFF_KEY_STRING "=4294967295"))
 
 /*
- * The environment word a session gains from its start's display, its
- * default display (docs/design-display.md, "Choosing a display"):
- * display=NAME with its NUL, the name at its longest, ERX_DOM_NAME_MAX
- * bytes; the sizeof counts the '=' and the NUL.
+ * The environment words a session gains at its start, after its
+ * template's: principal=N, its principal's number in decimal, which its
+ * export's /etc/passwd and /etc/group name (docs/design-programs.md,
+ * "Users and files"), and display=NAME, its start's display, its default
+ * display (docs/design-display.md, "Choosing a display").
+ * ERX_DOM_SESSION_WORDS_MAX is the two at their longest, the number at
+ * ten digits and the name at ERX_DOM_NAME_MAX bytes; each sizeof counts
+ * its key's '=' and the word's NUL.
  */
-#define ERX_DOM_SESSION_DISPLAY_WORD_MAX				\
-	(sizeof(ERX_DISPLAY_KEY_STRING "=") + ERX_DOM_NAME_MAX)
+#define ERX_DOM_SESSION_WORDS_MAX					\
+	(sizeof(ERX_PRINCIPAL_KEY_STRING "=4294967295") +		\
+	    sizeof(ERX_DISPLAY_KEY_STRING "=") + ERX_DOM_NAME_MAX)
 
 /* Origin kinds; zero is no origin, so a zeroed origin fails planning. */
 #define ERX_DOM_REQUEST		1u
@@ -871,11 +876,12 @@ bool		erx_dom_from_row(const erx_dom_origin_t *origin, uint32_t row);
  * bytes of `name`, the name the domain service chose; only the domain
  * service's start of a session calls it, beside the manifest check's host
  * planner (tools/host/dom_plan.c), which plans each enabled start row's
- * session and applies none. display_len bytes of `display` name the
- * session's default display, which its environment gains after the
- * template's words as display=NAME (ERX_DOM_SESSION_DISPLAY_WORD_MAX); a
- * display_len of 0 names none, and a name longer than ERX_DOM_NAME_MAX or
- * holding a NUL is ERX_EINVAL. Everything else but the name, id and
+ * session and applies none. Its environment gains, after the template's
+ * words, principal=N, the template's principal's number, and, when
+ * display_len is not 0, display=NAME for the display_len bytes of
+ * `display`, the session's default display (ERX_DOM_SESSION_WORDS_MAX);
+ * a name longer than ERX_DOM_NAME_MAX or holding a NUL is ERX_EINVAL.
+ * Everything else but the name, id and
  * pid is the template's and its limits record's, so a session is its
  * template by construction, and planning it as any other domain judges
  * its limits against its principal's ceilings, its group against its

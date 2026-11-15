@@ -677,17 +677,18 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		if (index > 0 && principal <= templates[index - 1].principal)
 			return ("manifest: the session templates are not one per principal in principal order");
 		/*
-		 * A session's default display is the word its start adds after the
-		 * template's environment (erx_dom_plan_session), which must neither
-		 * be shadowed by the template's own nor overrun the strings. The
-		 * reader's string class has ended the template's last word.
+		 * A session's principal and default display are the words its start
+		 * adds after the template's environment (erx_dom_plan_session), which
+		 * must neither be shadowed by the template's own nor overrun the
+		 * strings. The reader's string class has ended the template's last
+		 * word.
 		 */
-		if (boot_env_sets(strings + session.env.offset, session.env.length, ERX_DISPLAY_KEY_STRING))
-			return ("manifest: a session template's environment sets the display variable its start gives it");
-		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_DISPLAY_WORD_MAX, 0,
-		    false))
+		if (boot_env_sets(strings + session.env.offset, session.env.length, ERX_PRINCIPAL_KEY_STRING) ||
+		    boot_env_sets(strings + session.env.offset, session.env.length, ERX_DISPLAY_KEY_STRING))
+			return ("manifest: a session template's environment sets a variable its start gives it");
+		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_WORDS_MAX, 0, false))
 			return ("manifest: a session template's arguments and environment leave the boot page's strings "
-			    "no reserve for its node names and display");
+			    "no reserve for its node names, principal and display");
 		templates[index] = (erx_dom_template_t){ .principal = principal,
 		    .flags = (profile.flags & ERX_MF_LIMITS_SPACES) != 0 ? ERX_DOM_SPACES : 0,
 		    .memory = profile.memory, .outer = profile.outer, .grant = profile.grant,

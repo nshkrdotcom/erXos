@@ -112,7 +112,7 @@ static void	dom_spec_configured(const erx_dom_view_t *, uint32_t,
 		    uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
 static void	dom_spec_partial(const erx_dom_view_t *, uint32_t, uint32_t,
 		    erx_dom_spec_t *);
-static bool	dom_session_display(const char *, uint32_t, erx_dom_spec_t *);
+static bool	dom_session_words(uint32_t, const char *, uint32_t, erx_dom_spec_t *);
 static void	dom_spec_session(const erx_dom_view_t *, uint32_t, uint32_t,
 		    const char *, uint32_t, const char *, uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
 static void	dom_decimal(uint32_t, erx_dom_spec_t *);
@@ -738,12 +738,12 @@ dom_spec_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
  * The session constructor: everything but the id, the pid and the name is
  * session template `template`'s and its resolved limits'; the name is the
  * one the domain service chose, and its environment the template's with
- * the session's default display after it (dom_session_display). The
- * template's arguments and environment, with the display's word at its
- * longest, fit the spec's strings, which boot_templates checked when it
- * built the view. A name that does not fit is left empty, which planning
- * refuses, as it refuses an empty name of a configured row; so is the name
- * of a session whose display's word does not fit.
+ * the session's principal and default display after it
+ * (dom_session_words). The template's arguments and environment, with
+ * those words at their longest, fit the spec's strings, which
+ * boot_templates checked when it built the view. A name that does not fit
+ * is left empty, which planning refuses, as it refuses an empty name of a
+ * configured row; so is the name of a session whose words do not fit.
  */
 static void
 dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
@@ -781,27 +781,28 @@ dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
 		memcpy(spec->strings, source->args, source->args_len);
 	if (source->env_len != 0)
 		memcpy(spec->strings + source->args_len, source->env, source->env_len);
-	if (!dom_session_display(display, display_len, spec))
+	if (!dom_session_words(source->principal, display, display_len, spec))
 		spec->name_len = 0;
 }
 
 /*
- * A session's default display (docs/design-display.md, "Choosing a
- * display") as the word display=NAME after its environment, or nothing for
- * a display_len of 0. False, with the environment unchanged, when the word
- * overruns the strings, which the view's reserve for it
- * (ERX_DOM_SESSION_DISPLAY_WORD_MAX) rules out.
+ * A session's words after its environment (ERX_DOM_SESSION_WORDS_MAX):
+ * principal=N, its principal's number (docs/design-programs.md, "Users
+ * and files"), and display=NAME, its default display
+ * (docs/design-display.md, "Choosing a display"), which a display_len of 0
+ * leaves out. False when the words overrun the strings, which the view's
+ * reserve for them rules out; the caller then leaves the name empty.
  */
 static bool
-dom_session_display(const char *display, uint32_t display_len, erx_dom_spec_t *spec)
+dom_session_words(uint32_t principal, const char *display, uint32_t display_len, erx_dom_spec_t *spec)
 {
 	const size_t start = (size_t)spec->args_len + spec->env_len;
 	size_t used = start;
 
-	if (display_len == 0)
-		return (true);
 	if (start > sizeof(spec->strings) ||
-	    !dom_word_put(spec->strings, sizeof(spec->strings), &used, ERX_DISPLAY_KEY_STRING "=", display, display_len))
+	    !dom_number_put(spec->strings, sizeof(spec->strings), &used, ERX_PRINCIPAL_KEY_STRING "=", principal) ||
+	    (display_len != 0 &&
+	    !dom_word_put(spec->strings, sizeof(spec->strings), &used, ERX_DISPLAY_KEY_STRING "=", display, display_len)))
 		return (false);
 	spec->env_len += (uint32_t)(used - start);
 	return (true);
