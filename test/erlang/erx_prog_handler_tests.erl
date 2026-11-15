@@ -42,6 +42,8 @@ handler_test_() ->
       fun notice_reaches_the_pipe_server/1,
       fun a_request_is_answered_on_its_slot/1,
       fun a_refused_frame_stops_the_program/1,
+      fun a_pipe_is_made_and_installed/1,
+      fun a_refused_install_undoes_the_pipe/1,
       fun owed_report_waits_for_room/1,
       fun hand_off_report_is_installed_then_sent/1,
       fun exit_tells_the_starter/1,
@@ -175,6 +177,26 @@ a_request_is_answered_on_its_slot(_) ->
     Killed = fake(send),
     [?_assertEqual({send, Port, {erx_prog, 1, 4, ok}}, Probed),
      ?_assertEqual({send, Port, {erx_prog, 1, 9, {error, esrch}}}, Killed),
+     ?_assert(is_process_alive(H))].
+
+a_pipe_is_made_and_installed(_) ->
+    {H, Port, []} = started([]),
+    H ! {erx_channel, Port, {erx_prog, 1, 4, {pipe, [cloexec]}}},
+    Installs = [fake(install), fake(install)],
+    Sent = fake(send),
+    [?_assertMatch([{install, Port, _}, {install, Port, _}], Installs),
+     ?_assertMatch({send, Port, {erx_prog, 1, 4, {ok, {pipe, read, {1, R}, #{lock := 100}},
+                                                  {pipe, write, {1, W}, #{ring := 1100}}}}} when R =/= W, Sent),
+     ?_assert(is_process_alive(H))].
+
+a_refused_install_undoes_the_pipe(_) ->
+    erx_prog_handler_fakes:set(install, [ok, {error, enomem}]),
+    {H, Port, []} = started([]),
+    H ! {erx_channel, Port, {erx_prog, 1, 4, {pipe, []}}},
+    Sent = fake(send),
+    Closes = [Call || {close, _} = Call <- nif_calls()],
+    [?_assertEqual({send, Port, {erx_prog, 1, 4, {error, enomem}}}, Sent),
+     ?_assertNotEqual([], Closes),
      ?_assert(is_process_alive(H))].
 
 a_refused_frame_stops_the_program(_) ->

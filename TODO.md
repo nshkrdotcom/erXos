@@ -3325,6 +3325,21 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   no `{signal, Signal, Sender}` report, and `liberx` raises none. Add the report to
   `abi/protocols/prog.txt` with its raise in the event executor, then answer such a kill by
   queueing the report ahead of the reply.
+* [Low] session, `erx_prog_handler_core` (`pipe`): when the driver refuses the write end's install
+  after the read end's, the handler closes both ends at the pipe server, but the read end's copies
+  and its doorbell's bind stay in the program's table, untold to the program, until it ends; on the
+  stopgap they hold a few capability slots and the pipe's objects, outside the session's `pipes`
+  quota, which the closes freed. Give the program driver an
+  uninstall of a hand-off's copies, or install both ends as one hand-off that passes whole or not
+  at all.
+* [Medium] ABI, `abi/protocols/prog.txt` (`pipe_reply`): its `ok` takes any two `descriptor`s, so
+  a swapped, foreign or very long end passes the grammar, and the reply's bound under
+  `prog_report_max` is written by hand. Narrow the case to a read end and a write end and have the
+  generator check each reply kind's largest frame against `prog_report_max`. The generator's
+  capability walk now covers reports only (`abi_profile.rb`, `capability_fields`); the passages
+  that still say it covers every frame to the program (`abi_profile.rb` on reply kinds,
+  `prog.txt` above the profile, `docs/design-abi.md` twice) need the same change, and liberx's
+  cleanup of a reply it cannot take is then hand-written per reply case.
 * [Low] session, `erx_prog_handler_core` (`from_program/2`): it has a clause for each request and
   notice case `abi/protocols/prog.txt` declares, and no other, so a case added to the protocol
   without its clause crashes the handler on the first such frame. Have the grammar generator export

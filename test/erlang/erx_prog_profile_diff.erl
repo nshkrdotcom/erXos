@@ -266,8 +266,17 @@ pipe_mutations() ->
      {report_tag, {frame, report, {erx_start, 1, pipe_server_lost}}, "shape report"}].
 
 %% The busy slots of the replies: slot 3 holds a kill, slot 5 a probe, slot 6 an
-%% lopen, slot 7 a read and slot 8 a clunk.
--define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk}).
+%% lopen, slot 7 a read, slot 8 a clunk and slot 9 a pipe.
+-define(BUSY, #{3 => kill, 5 => probe, 6 => file_lopen, 7 => file_read, 8 => file_clunk, 9 => pipe}).
+
+%% A new pipe's two ends as pipe's reply names them: its read end, which the write end
+%% feeds as writer 1, and its write end, which rings the read end's reader 0.
+pipe_read_end() ->
+    {pipe, read, {7, 1}, #{rix => 0, lock => 201, wends => 1,
+                           writers => [{1, 202, 203, 16384, {open, 204}}], readers => []}}.
+
+pipe_write_end() ->
+    {pipe, write, {7, 2}, #{wend => 1, ring => 205, rpage => 206, size => 16384, readers => [{0, 207}]}}.
 
 %% Requests and their replies, each through its builder, and frames to the program
 %% through check_to_program/2's dispatch: a report, and a reply on a busy slot.
@@ -278,6 +287,9 @@ request_valid() ->
      request(kill_max, 15, {kill, 16#7fffffff, 'sigrtmax'}),
      request(probe_least, 0, {probe, 2}),
      request(probe_max, 15, {probe, 16#7fffffff}),
+     request(pipe_no_flags, 0, {pipe, []}),
+     request(pipe_cloexec, 1, {pipe, [cloexec]}),
+     request(pipe_both_flags, 15, {pipe, [cloexec, nonblock]}),
      reply(kill_ok, kill, 3, ok),
      reply(kill_esrch, kill, 3, {error, esrch}),
      reply(kill_last_errno, kill, 3, {error, eintegrity}),
@@ -295,6 +307,10 @@ request_valid() ->
      reply(read_eof, file_read, 7, {ok, 0}),
      reply(read_full, file_read, 7, {ok, 65536}),
      reply(clunk_ok, file_clunk, 8, ok),
+     reply(pipe_ok, pipe, 9, {ok, pipe_read_end(), pipe_write_end()}),
+     reply(pipe_enfile, pipe, 9, {error, enfile}),
+     reply(pipe_emfile, pipe, 9, {error, emfile}),
+     reply(pipe_enomem, pipe, 9, {error, enomem}),
      {to_program_report, {frame, to_program, ?BUSY, Report}, "accept"},
      {to_program_reply, {frame, to_program, ?BUSY, Reply}, "accept"}].
 
@@ -309,7 +325,25 @@ reply(Name, Request, Slot, Value) ->
 %% One mutation for each rule of the requests and replies: a reply's slot must be busy
 %% and its value the reply the request on that slot takes; an alias names no errno.
 request_mutations() ->
-    [{kill_signal_zero, {frame, request, {erx_prog, 1, 0, {kill, 2, 0}}}, "shape signal"},
+    Read = pipe_read_end(),
+    Write = pipe_write_end(),
+    {pipe, write, WriteEnd, WriteFields} = Write,
+    [{pipe_flags_past_max, {frame, request, {erx_prog, 1, 0, {pipe, [cloexec, nonblock, cloexec]}}},
+      "length pipe_flags"},
+     {pipe_flag_unknown, {frame, request, {erx_prog, 1, 0, {pipe, [sync]}}}, "no_case pipe_flag"},
+     {pipe_flag_shape, {frame, request, {erx_prog, 1, 0, {pipe, [1]}}}, "shape pipe_flag"},
+     {pipe_without_flags, {frame, request, {erx_prog, 1, 0, {pipe}}}, "no_case request"},
+     {pipe_atom, {frame, request, {erx_prog, 1, 0, pipe}}, "no_case request"},
+     {pipe_reply_one_end, {frame, reply, ?BUSY, {erx_prog, 1, 7, {ok, Read}}}, "no_case pipe_reply"},
+     {pipe_reply_ok, {frame, reply, ?BUSY, {erx_prog, 1, 7, ok}}, "no_case pipe_reply"},
+     {pipe_reply_not_descriptor, {frame, reply, ?BUSY, {erx_prog, 1, 7, {ok, Read, erlang}}},
+      "no_case descriptor"},
+     {pipe_reply_ring_is_lock, {frame, reply, ?BUSY,
+                                {erx_prog, 1, 7, {ok, Read, {pipe, write, WriteEnd,
+                                                             WriteFields#{ring := 201}}}}},
+      "unique cap"},
+     {pipe_reply_on_kill, {frame, reply, ?BUSY, {erx_prog, 1, 3, {ok, Read, Write}}}, "no_case kill_reply"},
+     {kill_signal_zero, {frame, request, {erx_prog, 1, 0, {kill, 2, 0}}}, "shape signal"},
      {kill_signal_unknown, {frame, request, {erx_prog, 1, 0, {kill, 2, sigfoo}}}, "range signal"},
      {kill_pid_one, {frame, request, {erx_prog, 1, 0, {kill, 1, sigint}}}, "range process_id"},
      {kill_arity, {frame, request, {erx_prog, 1, 0, {kill, 2}}}, "no_case request"},

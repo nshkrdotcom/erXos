@@ -10,8 +10,8 @@
  * startup message (4), checked by erx_prog_check_to_program; bits 3-5 the
  * scratch's offset from an aligned address; bits 6-7 the busy slots a
  * reply is judged by: none (0), every slot holding a kill (1), the even
- * slots holding one (2), or slot 0 holding a kill, slot 1 a probe and the
- * others ids past the request union's cases, which name none (3).
+ * slots holding one (2), or slot 0 holding a kill, slot 1 a probe, slot 2
+ * a pipe and the others ids that name no request case (3).
  * The rest is the frame's bytes.
  *
  * For every input the harness checks the frame twice: with all the scratch
@@ -26,14 +26,16 @@
  * read end's index to 63, a lane size of 16 or 64 KiB, capabilities other
  * than the null one and distinct within the frame, and an end state open or
  * gone, and a mem range's first page and count from 1.  An accepted request
- * holds a kill of a process id from 2 and a signal of the signal table, or
- * a probe of a process id from 2, or a file request: a path within the
- * frame of at most prog_path_max bytes without a NUL, a mode to 07777, a
- * count from 1 to a data slot's bytes and a data slot to 15; an accepted
- * reply came on a slot that holds its request, and holds ok, an open, a
- * count to a data slot's bytes, or an errno of the errno table.  The executor's read of a frame to the program
- * over reply slots holding those requests accepts exactly what the check
- * does, moves a reply's slot to answered so the same reply read again is
+ * holds a kill of a process id from 2 and a signal of the signal table, a
+ * probe of a process id from 2, a pipe of at most two flags, each cloexec
+ * or nonblock, or a file request: a path within the frame of at most
+ * prog_path_max bytes without a NUL, a mode to 07777, a count from 1 to a
+ * data slot's bytes and a data slot to 15; an accepted reply came on a slot
+ * that holds its request, and holds ok, a pipe's two descriptors read as a
+ * start frame's are, an open, a count to a data slot's bytes, or an errno
+ * of the errno table.  The executor's read of a frame to the program over
+ * reply slots holding those requests accepts exactly what the check does,
+ * moves a reply's slot to answered so the same reply read again is
  * refused, and leaves the slots unchanged otherwise.
  *
  * The start-up plan of liberx/program/startup.h runs on every start frame
@@ -436,6 +438,22 @@ read_io(uint32_t count, uint8_t slot)
 }
 
 static void
+read_pipe_flags(erx_prog_pipe_flags_iter_t it)
+{
+	uint32_t left, n;
+	uint16_t flag;
+	bool more;
+
+	left = it.view.left;
+	if (left > 2)
+		abort();
+	for (n = 0; (more = erx_prog_pipe_flags_next(&it, &flag)) && n < left; n++)
+		if (flag != ERX_PROG_PIPE_FLAG_CLOEXEC && flag != ERX_PROG_PIPE_FLAG_NONBLOCK)
+			abort();
+	check_end(left, n, more);
+}
+
+static void
 read_request(const erx_prog_request_t *r)
 {
 	switch (r->which) {
@@ -463,11 +481,14 @@ read_request(const erx_prog_request_t *r)
 		return;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		return;
+	case ERX_PROG_REQUEST_PIPE:
+		read_pipe_flags(r->u.pipe.pipe_flags);
+		return;
 	}
 	abort();
 }
 
-/* An ok, or an error of the errno table: kill's, probe's and clunk's replies. */
+/* An ok, or an error of the errno table: kill's, probe's and clunk's replies, and pipe's error. */
 static void
 read_ok_or_errno(bool ok, bool error, int32_t errnum)
 {
@@ -514,6 +535,15 @@ read_reply(const uint16_t busy[ERX_PROFILE_SLOTS], uint8_t slot,
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		read_ok_or_errno(r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_OK,
 		    r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_ERROR, r->u.file_clunk.u.error.errnum);
+		return;
+	case ERX_PROG_REQUEST_PIPE:
+		if (r->u.pipe.which == ERX_PROG_PIPE_REPLY_OK) {
+			read_descriptor(&r->u.pipe.u.ok.descriptor_1);
+			read_descriptor(&r->u.pipe.u.ok.descriptor_2);
+			return;
+		}
+		read_ok_or_errno(false, r->u.pipe.which == ERX_PROG_PIPE_REPLY_ERROR,
+		    r->u.pipe.u.error.errnum);
 		return;
 	}
 	abort();
@@ -582,6 +612,8 @@ busy_slots(unsigned pattern, uint16_t busy[ERX_PROFILE_SLOTS])
 				busy[slot] = ERX_PROG_REQUEST_KILL;
 			else if (slot == 1)
 				busy[slot] = ERX_PROG_REQUEST_PROBE;
+			else if (slot == 2)
+				busy[slot] = ERX_PROG_REQUEST_PIPE;
 			else
 				busy[slot] = (uint16_t)(erx_prog_profile.kinds[
 				    erx_prog_profile.frames[ERX_PROG_FRAME_REQUEST].kind].ncases + slot);

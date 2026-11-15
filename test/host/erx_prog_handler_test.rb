@@ -71,6 +71,17 @@ class ErxProgHandlerTest < Minitest::Test
     'a frame the grammar refuses read anyway' =>
       Mutant.new(file: CORE, original: '{error, _} -> stop(C, ?REFUSED_STATUS)', replacement: '{error, _} -> from_program(C, Frame)',
                  caught_by: 'refused_frames_stop_the_program'),
+    'pipe2 ignoring O_CLOEXEC: the flags dropped before the pipe server' =>
+      Mutant.new(file: CORE, original: '[{make_pipe, Flags}]', replacement: '[{make_pipe, []}]',
+                 caught_by: 'pipe_asks_the_pipe_server_with_the_programs_flags'),
+    'an install that leaks the first hand-off when the second is refused' =>
+      Mutant.new(file: CORE, original: '[PipeEnd || {pipe, _, PipeEnd, _} <- lists:reverse(Done)] ++',
+                 replacement: '[] ++',
+                 caught_by: 'pipe_install_refused_second_closes_both_ends'),
+    'a refused install that keeps the hand-off not yet installed' =>
+      Mutant.new(file: CORE, original: '[{hand_drop, Number} || {pipe_hand, Number, _} <- Hands] ++',
+                 replacement: '[] ++',
+                 caught_by: 'pipe_install_refused_first_closes_both_ends'),
     'a reply sent at once, ahead of the frame out' =>
       Mutant.new(file: CORE, original: '    pump(enqueue(C, {frame, Frame})).',
                  replacement: '    {C, [{send, Frame}]}.', caught_by: 'replies_queue_behind_the_frame_out'),

@@ -19,11 +19,12 @@ fixtures = frames::ALL.select { |fixture| fixture.bytes.bytesize < 32_768 }
 etf = frames::Etf
 cwd_at_max = frames.start(frames::BASE_PAIRS.merge(fds: etf::NIL, cwd: etf.binary('/' + ('c' * 4095))))
 # A reply seed's busy slots are one of the fuzz target's patterns: every slot a kill for a reply on a
-# kill, and slot 0 a kill and slot 1 a probe for a reply on slot 1's probe.
+# kill, and slot 0 a kill, slot 1 a probe and slot 2 a pipe for a reply on slot 1's probe or slot
+# 2's pipe.
 choice = { 'start' => "\x00".b, 'request' => "\x01".b, 'notice' => "\x02".b, 'report' => "\x03".b,
            'reply' => [4 | (1 << 6)].pack('C') }.freeze
-probe_reply = [4 | (3 << 6)].pack('C')
-selector = ->(seed) { seed.busy == '1:probe' ? probe_reply : choice.fetch(seed.frame) }
+mixed_reply = [4 | (3 << 6)].pack('C')
+selector = ->(seed) { %w[1:probe 2:pipe].include?(seed.busy) ? mixed_reply : choice.fetch(seed.frame) }
 Erx::PackFuzz.declare_target(
   sources: %w[liberx/program/startup.c liberx/program/inbound.c liberx/erx_profile.c liberx/erx_etf.c kernel/crypto/blake3/blake3.c
               kernel/crypto/blake3/blake3_portable.c build/gen/liberx/generated/prog_profile.c],

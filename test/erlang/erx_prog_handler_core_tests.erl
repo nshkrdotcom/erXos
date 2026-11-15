@@ -10,7 +10,8 @@ one is out at a time, an owed one waiting for room; a hand-off report is
 installed before it is sent and a refused install becomes the pipe
 server's install_failed; notices name the program; a kill or probe is
 answered on its own slot, behind the frames already queued, and reaches
-the program itself alone; a frame the grammar refuses stops the program
+the program itself alone; a pipe installs both ends before its reply, and
+a refused install closes both; a frame the grammar refuses stops the program
 with SIGSYS; a stop is asked once;
 and the exit status tells the starter and ends the handler. A bounded
 exhaustive walk over every sequence of the running phase's events checks
@@ -237,6 +238,51 @@ probe_test_() ->
 replies_name_the_slot_of_their_request_test_() ->
     [?_assertMatch({_, [?ANSWER(Slot, ok)]}, erx_prog_handler_core:step(running(), ?ASK(Slot, {probe, ?PID})))
      || Slot <- lists:seq(0, 15)].
+
+%% A pipe: the request asks the pipe server with the program's flags, the
+%% read end's hand-off is installed, then the write end's, and the reply
+%% names the values the installs gave.
+-define(READ_HAND, {pipe_hand, 1, {pipe, read, {9, 1}, #{rix => 0, lock => {hand, 1}, wends => 1,
+                                                      writers => [{1, {hand, 2}, {hand, 3}, 65536, {open, {hand, 4}}}],
+                                                      readers => []}}}).
+-define(WRITE_HAND, {pipe_hand, 2, {pipe, write, {9, 2}, #{wend => 1, ring => {hand, 1}, rpage => {hand, 2},
+                                                        size => 65536, readers => [{0, {hand, 3}}]}}}).
+-define(READ, {pipe, read, {9, 1}, #{rix => 0, lock => 101, wends => 1, writers => [{1, 102, 103, 65536, {open, 104}}],
+                                     readers => []}}).
+-define(WRITE, {pipe, write, {9, 2}, #{wend => 1, ring => 105, rpage => 106, size => 65536, readers => [{0, 107}]}}).
+
+pipe_asks_the_pipe_server_with_the_programs_flags_test_() ->
+    [?_assertMatch({_, [{make_pipe, Flags}]}, erx_prog_handler_core:step(running(), ?ASK(4, {pipe, Flags})))
+     || Flags <- [[], [cloexec], [nonblock], [cloexec, nonblock]]].
+
+pipe_installs_both_ends_then_replies_test() ->
+    {C1, [{make_pipe, []}]} = erx_prog_handler_core:step(running(), ?ASK(4, {pipe, []})),
+    {C2, Install1} = erx_prog_handler_core:step(C1, {pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}),
+    {C3, Install2} = erx_prog_handler_core:step(C2, {end_installed, ?READ}),
+    {_, Reply} = erx_prog_handler_core:step(C3, {end_installed, ?WRITE}),
+    ?assertEqual([{install_end, ?READ_HAND}], Install1),
+    ?assertEqual([{install_end, ?WRITE_HAND}], Install2),
+    ?assertEqual([{send, {erx_prog, 1, 4, {ok, ?READ, ?WRITE}}}], Reply).
+
+pipe_server_refusal_is_the_reply_test_() ->
+    {C1, _} = erx_prog_handler_core:step(running(), ?ASK(4, {pipe, [cloexec]})),
+    [?_assertMatch({_, [?ANSWER(4, {error, Errno})]}, erx_prog_handler_core:step(C1, {pipe_made, {error, Given}}))
+     || {Given, Errno} <- [{enfile, enfile}, {enomem, enomem}, {ebadf, enomem}, {emfile, enomem}]].
+
+%% An install the driver refuses undoes the whole pipe: the hand-off not yet
+%% installed goes back, and the pipe server closes both ends, an installed
+%% one's too, so nothing of the pipe holds the session's quota.
+pipe_install_refused_first_closes_both_ends_test() ->
+    C1 = run(running(), [?ASK(4, {pipe, []}), {pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}]),
+    ?assertMatch({_, [{hand_drop, 1}, {hand_drop, 2}, {forward, {closed, {program, ?PID}, 9, 1}},
+                      {forward, {closed, {program, ?PID}, 9, 2}}, ?ANSWER(4, {error, enomem})]},
+                 erx_prog_handler_core:step(C1, {end_refused, einval})).
+
+pipe_install_refused_second_closes_both_ends_test() ->
+    C2 = run(running(), [?ASK(4, {pipe, []}), {pipe_made, {ok, ?READ_HAND, ?WRITE_HAND}}, {end_installed, ?READ}]),
+    ?assertMatch({_, [{hand_drop, 2}, {forward, {closed, {program, ?PID}, 9, 1}},
+                      {forward, {closed, {program, ?PID}, 9, 2}}, ?ANSWER(4, {error, enomem})]},
+                 erx_prog_handler_core:step(C2, {end_refused, elimit})).
 
 %% A reply queues behind the frame out, each on its own request's slot.
 replies_queue_behind_the_frame_out_test() ->

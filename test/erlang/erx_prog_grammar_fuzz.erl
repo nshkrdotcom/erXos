@@ -2,9 +2,9 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% Terms near the program protocol's grammar through erx_prog_grammar
-%% (docs/design-abi.md#program-protocol): valid start frames, notices, reports, kill
-%% and file requests and their replies with one subterm replaced, replies under random busy
-%% slots, random terms as frames of either direction, and start frames whose cwd is
+%% (docs/design-abi.md#program-protocol): valid start frames, notices, reports, kill,
+%% probe, pipe and file requests and their replies with one subterm replaced, replies
+%% under random busy slots, random terms as frames of either direction, and start frames whose cwd is
 %% drawn near its bound and its rules. Whatever arrives, every check answers ok or
 %% {error, {Reason, Kind}} and never raises; a notice, a report or a reply draws the
 %% same answer from its direction's dispatch as from its own check;
@@ -18,6 +18,8 @@
 -define(G, erx_prog_grammar).
 -define(ROUNDS, 20000).
 -define(WARM_ROUNDS, 200).
+%% The request cases, which name a reply slot's request.
+-define(REQUESTS, [kill, probe, pipe, file_lopen, file_lcreate, file_read, file_write, file_clunk]).
 -define(DEPTH, 3).
 -define(PATH_MAX, 4096).
 
@@ -37,11 +39,9 @@ rounds(N) ->
                           start_round(mutated(start())),
                           start_round(random_term(?DEPTH)),
                           request_round(random_term(?DEPTH), random_term(?DEPTH)),
-                          request_round(rand:uniform(17) - 1, mutated({kill, 2, sigint})),
-                          request_round(rand:uniform(17) - 1, mutated(pick(file_requests()))),
-                          file_reply_round(rand:uniform(17) - 1, mutated(pick(file_replies()))),
-                          reply_round(rand:uniform(17) - 1, random_busy(), mutated(pick(replies()))),
-                          reply_round(random_term(1), random_term(1), random_term(?DEPTH)),
+                          request_round(rand:uniform(17) - 1, mutated(pick(requests()))),
+                          mutated_reply_round(rand:uniform(17) - 1, random_busy()),
+                          reply_round(random_term(1), random_term(1), pick(?REQUESTS), random_term(?DEPTH)),
                           notice_round(mutated(pick(notices()))),
                           notice_round(random_term(?DEPTH)),
                           report_round(mutated(pick(reports()))),
@@ -92,46 +92,42 @@ report_round(Value) ->
 
 %% A reply goes through the dispatch of frames to the program to its own check, Busy
 %% being any term; a reply built for a request passes the check with that request busy.
-reply_round(Slot, Busy, Value) ->
+reply_round(Slot, Busy, Request, Value) ->
     Frame = {erx_prog, 1, Slot, Value},
     Verdict = ?G:check_reply(Frame, Busy),
     answer(Verdict),
     Verdict = ?G:check_to_program(Frame, Busy),
-    case ?G:build_reply(kill, Slot, Value) of
-        {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => kill});
+    case ?G:build_reply(Request, Slot, Value) of
+        {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => Request});
         Refused -> answer(Refused)
     end.
 
-%% A file request's reply goes through the check of a reply on a slot that holds a
-%% read: one the builder accepts passes the check, and the check and the dispatch agree.
-file_reply_round(Slot, Value) ->
-    Frame = {erx_prog, 1, Slot, Value},
-    Verdict = ?G:check_reply(Frame, #{Slot => file_read}),
-    answer(Verdict),
-    Verdict = ?G:check_to_program(Frame, #{Slot => file_read}),
-    case ?G:build_reply(file_read, Slot, Value) of
-        {ok, Built} -> ok = ?G:check_reply(Built, #{Slot => file_read});
-        Refused -> answer(Refused)
-    end.
+%% A reply of a request case with one subterm replaced.
+mutated_reply_round(Slot, Busy) ->
+    {Request, Value} = pick(replies()),
+    reply_round(Slot, Busy, Request, mutated(Value)).
 
-%% A request of each file case, at its bounds.
-file_requests() ->
-    [{file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"out">>, 16#241, 8#644},
+%% A request of each case, the file cases at their bounds.
+requests() ->
+    [{kill, 2, sigint}, {probe, 2}, {pipe, []}, {pipe, [cloexec, nonblock]},
+     {file, lopen, <<"/etc/doom.wad">>, 0}, {file, lcreate, <<"out">>, 16#241, 8#644},
      {file, read, 3, 65536, 15}, {file, write, 0, 1, 0}, {file, clunk, 16#ffff}].
 
-%% A reply of each case of a read's reply.
-file_replies() ->
-    [{ok, 0}, {ok, 65536}, {error, eio}].
-
-%% A reply of each case of each request's reply.
+%% A reply of each case of each request's reply, with the request it answers; pipe's
+%% ends are the start value's fds 3 and 2.
 replies() ->
-    [ok, {error, esrch}, {error, eperm}].
+    #{fds := Fds} = start(),
+    {3, Read} = lists:keyfind(3, 1, Fds),
+    {2, Write} = lists:keyfind(2, 1, Fds),
+    [{kill, ok}, {kill, {error, esrch}}, {kill, {error, eperm}}, {probe, ok}, {probe, {error, esrch}},
+     {pipe, {ok, Read, Write}}, {pipe, {error, emfile}}, {file_lopen, {ok, 16#ffff}},
+     {file_read, {ok, 0}}, {file_read, {ok, 65536}}, {file_read, {error, eio}}, {file_clunk, ok}].
 
-%% Busy slots: none, some holding kill, or a term of another shape.
+%% Busy slots: none, some holding a request, or a term of another shape.
 random_busy() ->
     case rand:uniform(4) of
         1 -> #{};
-        2 -> maps:from_list([{rand:uniform(16) - 1, kill} || _ <- lists:seq(1, rand:uniform(4))]);
+        2 -> maps:from_list([{rand:uniform(16) - 1, pick(?REQUESTS)} || _ <- lists:seq(1, rand:uniform(4))]);
         3 -> #{rand:uniform(16) - 1 => random_atom()};
         4 -> random_term(1)
     end.
@@ -270,7 +266,7 @@ random_atom() ->
     pick([read, write, read_write, pipe, socketpair, file, tty, dir, socket, dup, mem, null, object, open, gone,
           true, false, erx_start, erx_prog, sigint, sigterm, sigkill, pid, cwd, fds, wend, readers, writers,
           closed, drained, pipe_writer, pipe_writer_gone, pipe_reader, pipe_reader_gone, pipe_lost,
-          pipe_server_lost, erlang, ok, undefined, error, kill, esrch, eperm, enotsup, eopnotsupp,
-          lopen, lcreate, clunk, file_read, eio]).
+          pipe_server_lost, erlang, ok, undefined, error, kill, probe, cloexec, nonblock, esrch, eperm, emfile,
+          enotsup, eopnotsupp, lopen, lcreate, clunk, file_read, eio]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).

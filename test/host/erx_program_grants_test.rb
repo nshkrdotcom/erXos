@@ -31,6 +31,9 @@ class ErxProgramGrantsTest < Minitest::Test
   # The unions of the frames to the program that have a case naming a pipe end: a startup
   # message's descriptor, inside its fds, and a report, which is the report frame's term.
   WALKED = %w[descriptor report].freeze
+  # The descriptor cases that give pipe ends, by their leading atoms.
+  DESCRIPTOR_CASES = { %i[pipe write] => 'pipe_write', %i[pipe read] => 'pipe_read',
+                       %i[socketpair] => 'socketpair' }.freeze
   # The slot each reply sample answers.
   REPLY_SLOT = 3
 
@@ -83,13 +86,14 @@ class ErxProgramGrantsTest < Minitest::Test
     assert_equal want, grants(samples)
   end
 
-  # A reply names no pipe end (pipe_unions holds no reply kind), so each case of each reply
-  # kind grants nothing and answers its slot.
-  def test_a_reply_answers_its_slot_and_grants_nothing
+  # A reply answers its slot and grants what each descriptor it carries grants, as a
+  # startup message's do: pipe's ok gives the program both ends.
+  def test_a_reply_answers_its_slot_and_grants_its_descriptors
     samples = replies.flat_map { |union| union_samples(union) }
     refute_empty samples
-    assert_equal(samples.map { |sample| [sample.name, render(Tuple.new(items: [REPLY_SLOT, List.new(items: [])]))] },
-                 grants(samples))
+    assert(samples.any? { |sample| !reply_expected(sample).empty? }, 'some reply gives the program a pipe end')
+    want = samples.map { |sample| [sample.name, render(Tuple.new(items: [REPLY_SLOT, List.new(items: reply_expected(sample))]))] }
+    assert_equal want, grants(samples)
   end
 
   private
@@ -128,6 +132,20 @@ class ErxProgramGrantsTest < Minitest::Test
   def names_pipe_end?(sample)
     @kinds.fetch(sample.union).fetch(:cases).find { |c| c[:c_name] == sample.name }
           .fetch(:fields).intersect?(PIPE_KINDS)
+  end
+
+  # A reply's grants: those of each descriptor among its items, each by its case's rule.
+  def reply_expected(sample)
+    return [] unless sample.term.is_a?(Tuple)
+
+    sample.term.items.drop(1).flat_map { |item| descriptor_expected(item) }
+  end
+
+  def descriptor_expected(term)
+    return [] unless term.is_a?(Tuple)
+
+    name = DESCRIPTOR_CASES[term.items.first(2)] || DESCRIPTOR_CASES[term.items.first(1)]
+    name ? RULES.fetch(name).call(term.items) : []
   end
 
   def expected(sample)

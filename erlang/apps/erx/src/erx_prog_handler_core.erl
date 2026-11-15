@@ -78,6 +78,21 @@ bytes are copied into the slot, and the copy's answer is the reply's. A `clunk` 
 out of the table at once, and its description closes after the requests
 it holds. An error the protocol has no name for is `eio`.
 
+A `{pipe, Flags}` makes a pipe whose two ends the program holds
+(docs/design-pipes.md, "Making a pipe"): the pipe server makes it, with
+`Flags` as the program gave them, and answers each end as a hand-off; the
+handler has the driver install the read end's, then the write end's, and
+replies `{ok, Read, Write}` with the values the installs gave. A refusal
+undoes what came before it: the pipe server's refusal is the reply, and an
+install the driver refuses drops the hand-off not yet installed and tells
+the pipe server that both ends are closed, so their objects close and the
+quota is free again; the copies of an end installed before the refusal,
+which the program is never told of, stay in its table until it ends
+(TODO.md). The reply is the pipe server's `enfile` at the session's quota,
+and `enomem` for every other refusal: a full capability table refuses the
+driver's pass, which stops the program, so `emfile` comes only from
+`liberx`'s own descriptor table.
+
 Every other event the core does not expect in its phase leaves the state
 as it was and does nothing: the handler's mailbox is reached only by
 session code and the program's own driver.
@@ -106,6 +121,9 @@ session code and the program's own driver.
                | {sent, ok | busy | {error, atom()}}
                | {installed, term()}
                | {install_refused, atom()}
+               | {pipe_made, {ok, hand(), hand()} | {error, atom()}}
+               | {end_installed, term()}
+               | {end_refused, atom()}
                | room
                | pipes_lost
                | stop
@@ -140,7 +158,9 @@ session code and the program's own driver.
                 | {unlend, pos_integer()}
                 | holder_drop
                 | {send, term()}
-                | {install, {pipe_hand, pos_integer(), term()}}
+                | {install, hand()}
+                | {make_pipe, [cloexec | nonblock]}
+                | {install_end, hand()}
                 | {forward, tuple()}
                 | {stop, non_neg_integer()}
                 | {tell_starter, integer()}
@@ -154,7 +174,9 @@ session code and the program's own driver.
 
 %% What waits to reach the program, oldest first: a frame to send, or a
 %% hand-off to install, whose filled report is then sent.
--type outgoing() :: {frame, term()} | {hand, {pipe_hand, pos_integer(), term()}}.
+-type outgoing() :: {frame, term()} | {hand, hand()}.
+%% A hand-off the pipe server made, for the driver to install.
+-type hand() :: {pipe_hand, pos_integer(), term()}.
 
 -record(core, {pid :: pos_integer(),
                phase = reserving :: reserving | running | ended,
@@ -177,12 +199,18 @@ session code and the program's own driver.
                cwd = [] :: erx_path:place(),
                slots = 1 :: 1..?ERX_PROG_DATA_SLOTS_MAX,
                opens = #{} :: #{0..65535 => description()},
-               pending = #{} :: #{slot() => pending()}}).
+               pending = #{} :: #{slot() => pending()},
+               %% running: the pipe a request is making, from the request to
+               %% its reply, all within the steps of one event: the request's
+               %% slot, the hand-offs still to install, the next first, and the
+               %% values the installs gave, newest first.
+               piping = none :: none | {0..15, [hand()], [term()]}}).
 -opaque core() :: #core{}.
 
 -define(IS_FD(N), (is_integer(N) andalso N >= 0 andalso N < ?ERX_PROG_FDS_MAX)).
 -define(IS_POS(N), (is_integer(N) andalso N > 0)).
 -define(IS_PID(P), (is_integer(P) andalso P >= 2 andalso P =< 16#7fffffff)).
+-define(IS_HAND(H), (tuple_size(H) =:= 3 andalso element(1, H) =:= pipe_hand andalso ?IS_POS(element(2, H)))).
 %% A stop by the session reads as signaled SIGKILL (docs/design-programs.md,
 %% "A program's end").
 -define(STOP_STATUS, (?ERX_EXIT_SIGNAL + ?ERX_SIGKILL)).
@@ -325,6 +353,25 @@ step(#core{phase = running, out = sending, queue = Q} = C, {install_refused, _})
     {hand, {pipe_hand, _, Report}} = queue:head(Q),
     {C1, Actions} = pump(drop_head(C)),
     {C1, [{forward, {install_failed, holder(C), element(2, Report), element(3, Report)}} | Actions]};
+%% A pipe's making and its two installs, within the event of its request.
+step(#core{phase = running, piping = {Slot, [], []}} = C, {pipe_made, {ok, Read, Write}})
+  when ?IS_HAND(Read), ?IS_HAND(Write) ->
+    install_end(C#core{piping = {Slot, [Read, Write], []}});
+step(#core{phase = running, piping = {Slot, [], []}} = C, {pipe_made, {error, Errno}}) when is_atom(Errno) ->
+    reply(C#core{piping = none}, pipe, Slot, {error, pipe_errno(Errno)});
+step(#core{phase = running, piping = {Slot, [_ | Todo], Done}} = C, {end_installed, Filled}) ->
+    install_end(C#core{piping = {Slot, Todo, [Filled | Done]}});
+step(#core{phase = running, piping = {Slot, [_ | _] = Hands, Done}} = C, {end_refused, Errno})
+  when is_atom(Errno) ->
+    %% Every end of the pipe is the program's in the pipe server's records,
+    %% whether its install was done, refused or never tried. The refused
+    %% hand-off is dropped too: a refusal before the driver's take leaves it
+    %% held, and a drop of one taken does nothing.
+    Ends = [PipeEnd || {pipe, _, PipeEnd, _} <- lists:reverse(Done)] ++
+        [PipeEnd || {pipe_hand, _, {pipe, _, PipeEnd, _}} <- Hands],
+    {C1, Sent} = reply(C#core{piping = none}, pipe, Slot, {error, pipe_errno(Errno)}),
+    {C1, [{hand_drop, Number} || {pipe_hand, Number, _} <- Hands] ++
+         [{forward, {closed, holder(C), Pipe, End}} || {Pipe, End} <- Ends] ++ Sent};
 step(#core{phase = running} = C, {frame, Frame}) ->
     case erx_prog_grammar:check_from_program(Frame) of
         ok -> from_program(C, Frame);
@@ -370,6 +417,8 @@ from_program(C, {erx_prog, _, {closed, Pipe, End}}) ->
     {C, [{forward, {closed, holder(C), Pipe, End}}]};
 from_program(C, {erx_prog, _, {drained, Pipe, End, Writer}}) ->
     {C, [{forward, {drained, holder(C), Pipe, End, Writer}}]};
+from_program(C, {erx_prog, _, Slot, {pipe, Flags}}) ->
+    {C#core{piping = {Slot, [], []}}, [{make_pipe, Flags}]};
 from_program(C, {erx_prog, _, Slot, {kill, Target, Signal}}) ->
     case reach(C, Target) of
         none -> reply(C, kill, Slot, {error, esrch});
@@ -477,6 +526,19 @@ kill_self(C, Slot, Signal) ->
         _ ->
             reply(C, kill, Slot, {error, enosys})
     end.
+
+%% The install of a pipe's next hand-off, or once both are installed the
+%% reply that names the values they gave, the read end's first.
+install_end(#core{piping = {_Slot, [Hand | _], _Done}} = C) ->
+    {C, [{install_end, Hand}]};
+install_end(#core{piping = {Slot, [], Done}} = C) ->
+    [Read, Write] = lists:reverse(Done),
+    reply(C#core{piping = none}, pipe, Slot, {ok, Read, Write}).
+
+%% The errno of a pipe's refusal: the quota's as given, and enomem for the
+%% budget's and every other.
+pipe_errno(enfile) -> enfile;
+pipe_errno(_Errno) -> enomem.
 
 %% Whom a kill or a probe of Target reaches: the program itself, or no one,
 %% as the handler keeps no child record and the program holds no signal right.

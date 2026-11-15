@@ -237,6 +237,17 @@ act({install, Hand}, #h{port = Port} = H) ->
         {ok, Filled} -> {event, {installed, Filled}, H};
         {error, Errno} -> {event, {install_refused, Errno}, H}
     end;
+act({make_pipe, Flags}, #h{spec = #{pid := Pid}} = H) ->
+    %% A pipe server that is gone makes nothing, as when its objects cannot be made.
+    Made = try erx_pipe_srv:forward({pipe, {program, Pid}, Flags})
+           catch exit:_ -> {error, enomem}
+           end,
+    {event, {pipe_made, Made}, H};
+act({install_end, Hand}, #h{port = Port} = H) ->
+    case driver(Port, fun() -> erx_program:install(Port, Hand) end, {error, edead}) of
+        {ok, Filled} -> {event, {end_installed, Filled}, H};
+        {error, Errno} -> {event, {end_refused, Errno}, H}
+    end;
 act({forward, Notice}, H) ->
     %% A pipe server that is gone has forgotten the end; the handler's
     %% monitor tells the program.

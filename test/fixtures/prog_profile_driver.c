@@ -465,6 +465,17 @@ put_slot_head(erx_etf_writer_t *w, uint8_t *out, size_t cap, uint8_t slot)
 	put_u64(w, slot);
 }
 
+static void
+put_pipe_flags(erx_etf_writer_t *w, erx_prog_pipe_flags_iter_t it)
+{
+	uint16_t flag;
+
+	erx_etf_put_list(w, it.view.left);
+	while (erx_prog_pipe_flags_next(&it, &flag))
+		put_atom(w, flag == ERX_PROG_PIPE_FLAG_CLOEXEC ? "cloexec" : "nonblock");
+	erx_etf_put_nil(w);
+}
+
 /* The request frame again, from its struct. */
 static bool
 put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
@@ -522,13 +533,18 @@ put_request(uint8_t slot, const erx_prog_request_t *r, uint8_t *out,
 		put_atom(&w, "clunk");
 		put_u64(&w, r->u.file_clunk.open);
 		break;
+	case ERX_PROG_REQUEST_PIPE:
+		erx_etf_put_tuple(&w, 2);
+		put_atom(&w, "pipe");
+		put_pipe_flags(&w, r->u.pipe.pipe_flags);
+		break;
 	default:
 		return (false);
 	}
 	return (erx_etf_writer_done(&w, len));
 }
 
-/* A reply of ok or {error, Errno}, kill's, probe's and clunk's. */
+/* A reply of ok or {error, Errno}: kill's, probe's and clunk's, and pipe's error. */
 static void
 put_ok_or_errno(erx_etf_writer_t *w, bool ok, int32_t errnum)
 {
@@ -588,6 +604,16 @@ put_reply(uint8_t slot, const erx_prog_reply_t *r, uint8_t *out, size_t cap,
 		break;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		put_ok_or_errno(&w, r->u.file_clunk.which == ERX_PROG_CLUNK_REPLY_OK, r->u.file_clunk.u.error.errnum);
+		break;
+	case ERX_PROG_REQUEST_PIPE:
+		if (r->u.pipe.which != ERX_PROG_PIPE_REPLY_OK) {
+			put_ok_or_errno(&w, false, r->u.pipe.u.error.errnum);
+			break;
+		}
+		erx_etf_put_tuple(&w, 3);
+		put_atom(&w, "ok");
+		put_descriptor(&w, &r->u.pipe.u.ok.descriptor_1);
+		put_descriptor(&w, &r->u.pipe.u.ok.descriptor_2);
 		break;
 	default:
 		return (false);

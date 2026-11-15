@@ -1335,6 +1335,16 @@ protocol erx_prog
     ...
     field fds fds
     optional image image
+  # pipe's Flags, and its reply: the program's two new ends, each a
+  # descriptor naming values in the program's table (docs/design-pipes.md,
+  # "Making a pipe").
+  union pipe_flag
+    case cloexec
+    case nonblock
+  list pipe_flags pipe_flag max 2
+  union pipe_reply
+    case ok descriptor descriptor
+    case error errno
   union kill_reply
     case ok
     case error errno
@@ -1342,6 +1352,8 @@ protocol erx_prog
     case ok
     case error errno
   union request
+    case pipe pipe_flags
+    reply pipe_reply
     case kill process_id signal
     reply kill_reply
     case probe process_id

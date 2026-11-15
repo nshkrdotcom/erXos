@@ -88,10 +88,11 @@ limit prog_data_slot_bytes u32 65536
 limit prog_channel_label u64 1
 limit pipe_label_shift u64 32
 # The bytes of a frame the session writes after the startup message, a
-# report: the executor copies each whole into a buffer of this size and
-# refuses a longer one. The profile's largest report, {erx_prog, 1,
-# {pipe_writer, ...}} with three capabilities as 64-bit integers, takes
-# about 120 bytes of ETF.
+# report or a reply: the executor copies each whole into a buffer of this
+# size and refuses a longer one. The profile's largest report, {erx_prog,
+# 1, {pipe_writer, ...}} with three capabilities as 64-bit integers, takes
+# about 120 bytes of ETF, and its largest reply, pipe's {ok, Read, Write}
+# with every capability, pipe and end number at its widest, 276.
 limit prog_report_max u32 512
 # A program's buffer place (docs/design-display.md, "The pixel area"): a
 # window's buffer leased to a program is mapped from prog_mem_base, for at
@@ -192,6 +193,16 @@ protocol erx_prog
     field data_area data_area
     field fds fds
     optional image image
+  # pipe's Flags, and its reply: the program's two new ends, each a
+  # descriptor naming values in the program's table (docs/design-pipes.md,
+  # "Making a pipe").
+  union pipe_flag
+    case cloexec
+    case nonblock
+  list pipe_flags pipe_flag max 2
+  union pipe_reply
+    case ok descriptor descriptor
+    case error errno
   union kill_reply
     case ok
     case error errno
@@ -210,6 +221,8 @@ protocol erx_prog
   # kill's Signal is a signal's name, never 0: kill(pid, 0), which only
   # checks that kill would reach the target, is the request probe.
   union request
+    case pipe pipe_flags
+    reply pipe_reply
     case kill process_id signal
     reply kill_reply
     case probe process_id

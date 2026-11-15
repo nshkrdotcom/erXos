@@ -14,7 +14,9 @@ and writes its exit status and closes as the driver's port does at a
 program's end; or the error the test set. send/2, install/2 and stop/3
 on a closed port raise `badarg`, as `port_control/3` does; send/2 answers each
 of the answers the test queued, then `ok`; install/2 fills each `{hand, I}` with
-`100 * I`, or answers the error the test set; alloc/2 names its caller,
+`100 * I`, plus 1,000 for each install before it, as the driver gives
+each copy a slot of its own, or answers the error the test set, or each of the answers, `ok` or an
+error, the test queued as a list, then `ok`; alloc/2 names its caller,
 the range's owner, and fails with `undef`, as a call of a module the
 release lacks does, when the test set `pixels` to `absent`; lend/2 never
 answers when the test set `lend` to `never`.
@@ -24,10 +26,10 @@ answers when the test set `lend` to `never`.
 
 -doc "Sends every later call to Pid, with the default answers.".
 setup(Pid) ->
-    persistent_term:put(?MODULE, #{test => Pid, start => port, sends => [], install => ok, pixels => present,
-                                    lend => answer}).
+    persistent_term:put(?MODULE, #{test => Pid, start => port, sends => [], install => ok, installs => 0,
+                                    pixels => present, lend => answer}).
 
--doc "Sets one answer: `start`, `sends` (a list), `install`, `pixels` or `lend`.".
+-doc "Sets one answer: `start`, `sends` (a list), `install` (one or a list), `pixels` or `lend`.".
 set(Key, Value) ->
     persistent_term:put(?MODULE, (persistent_term:get(?MODULE))#{Key => Value}).
 
@@ -51,8 +53,16 @@ send(Port, Frame) ->
 install(Port, {pipe_hand, Number, Term}) ->
     tell({install, Port, Number}),
     open(Port),
-    case conf(install) of
-        ok -> {ok, fill(Term)};
+    Answer = case conf(install) of
+                 [Next | Rest] -> set(install, Rest), Next;
+                 [] -> ok;
+                 Set -> Set
+             end,
+    case Answer of
+        ok ->
+            Before = conf(installs),
+            set(installs, Before + 1),
+            {ok, fill(Term, 1000 * Before)};
         Error -> Error
     end.
 
@@ -79,11 +89,11 @@ unlend(Lease) ->
     tell({unlend, Lease}),
     ok.
 
-fill({hand, I}) -> 100 * I;
-fill(T) when is_tuple(T) -> list_to_tuple(fill(tuple_to_list(T)));
-fill(L) when is_list(L) -> [fill(E) || E <- L];
-fill(M) when is_map(M) -> maps:map(fun(_, V) -> fill(V) end, M);
-fill(X) -> X.
+fill({hand, I}, Base) -> Base + 100 * I;
+fill(T, Base) when is_tuple(T) -> list_to_tuple(fill(tuple_to_list(T), Base));
+fill(L, Base) when is_list(L) -> [fill(E, Base) || E <- L];
+fill(M, Base) when is_map(M) -> maps:map(fun(_, V) -> fill(V, Base) end, M);
+fill(X, _Base) -> X.
 
 conf(Key) -> maps:get(Key, persistent_term:get(?MODULE)).
 

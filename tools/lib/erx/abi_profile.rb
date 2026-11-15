@@ -151,14 +151,17 @@ module Erx
            *kind.fetch(:cases, []).flat_map { |item| item.fetch(:fields) }].compact
         end
 
-        # For each union a frame to the program carries whose cases hold
-        # capabilities, each case's C name and the positions of its fields that
-        # are capabilities, which the C emitter walks to name what a value
-        # installed. A frame from the program installs nothing. The walk
-        # reads a case's own fields only, so a case holding a capability inside
-        # another kind is refused rather than left for the walk to miss.
+        # For each union a report carries, an unslotted frame to the program,
+        # whose cases hold capabilities, each case's C name and the positions
+        # of its fields that are capabilities, which the C emitter walks to
+        # name what a value installed, for the program to close those of a
+        # report it does not apply. A frame from the program installs nothing,
+        # and a reply's capabilities are its requester's, which takes the reply
+        # whole, so neither needs the walk. The walk reads a case's own fields
+        # only, so a case holding a capability inside another kind is refused
+        # rather than left for the walk to miss.
         def capability_fields(declaration, kinds, frames)
-          to_program = frames.select { |frame| frame.fetch(:direction) == 'to' }
+          to_program = frames.select { |frame| frame.fetch(:direction) == 'to' && frame.fetch(:kind) }
           to_program.flat_map { |frame| frame_kinds(frame) }.uniq.filter_map do |union|
             next unless kinds.dig(union, :form) == 'union'
 

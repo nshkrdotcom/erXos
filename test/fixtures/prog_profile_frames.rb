@@ -196,8 +196,8 @@ module ProgProfileFrames
     def initialize(busy: nil, **fields) = super
   end
 
-  # A start frame's descriptors: a pipe's write end and its read end.
-  def self.pipes
+  # A pipe's write end and its read end as descriptors.
+  def self.pipe_ends
     pairs = ->(map) { map.map { |key, value| [atom(key.to_s), value] } }
     reader = tuple(small(0), small(103))
     write_end = map(pairs.call(wend: small(1), ring: small(101), rpage: small(102), size: int(16_384),
@@ -206,9 +206,12 @@ module ProgProfileFrames
                tuple(small(2), small(112), small(113), int(16_384), atom('gone'))]
     read_end = map(pairs.call(rix: small(0), lock: small(104), wends: small(2), writers: list(writers),
                               readers: list([])))
-    list([tuple(small(0), tuple(atom('pipe'), atom('write'), tuple(small(1), small(2)), write_end)),
-          tuple(small(1), tuple(atom('pipe'), atom('read'), tuple(small(2), small(3)), read_end))])
+    [tuple(atom('pipe'), atom('write'), tuple(small(1), small(2)), write_end),
+     tuple(atom('pipe'), atom('read'), tuple(small(2), small(3)), read_end)]
   end
+
+  # A start frame's descriptors: the pipe ends at fds 0 and 1.
+  def self.pipes = list(pipe_ends.each_with_index.map { |descriptor, fd| tuple(small(fd), descriptor) })
 
   # Accepted {erx_prog, 1, Value} frames of one frame kind, named by it and each name.
   def self.prog_seeds(kind, values)
@@ -232,6 +235,13 @@ module ProgProfileFrames
            Seed.new(name: 'reply-probe-error', frame: 'reply',
                     bytes: frame(tuple(atom('erx_prog'), small(1), small(1), tuple(atom('error'), atom('esrch')))),
                     verdict: 'accept', busy: '1:probe'),
+           Seed.new(name: 'request-pipe', frame: 'request',
+                    bytes: frame(tuple(atom('erx_prog'), small(1), small(0),
+                                       tuple(atom('pipe'), list([atom('cloexec'), atom('nonblock')])))),
+                    verdict: 'accept'),
+           Seed.new(name: 'reply-pipe-ok', frame: 'reply',
+                    bytes: frame(tuple(atom('erx_prog'), small(1), small(2), tuple(atom('ok'), *pipe_ends.reverse))),
+                    verdict: 'accept', busy: '2:pipe'),
            *[['ok', atom('ok')], ['error', tuple(atom('error'), atom('enotsup'))]].map do |name, value|
              Seed.new(name: "reply-#{name}", frame: 'reply', bytes: frame(tuple(atom('erx_prog'), small(1), small(0), value)),
                       verdict: 'accept', busy: '0:kill')

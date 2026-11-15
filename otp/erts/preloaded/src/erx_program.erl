@@ -316,7 +316,7 @@ data_write(Port, Slot, Bytes) when is_port(Port), ?IS_WORD(Slot), is_binary(Byte
 %% reply slot it answers, ?ERX_PROGRAM_SEND_NO_REPLY for none, and the notices it makes due, a
 %% {closed, Pipe, End} for each pipe end it gives the program and a {drained,
 %% Pipe, End, Writer} for each writer it names gone to a read end. Each kind of
-%% descriptor a startup message carries and each kind of report has a clause of
+%% descriptor a startup message or a reply carries and each kind of report has a clause of
 %% its own, which grants nothing where the kind gives no end and names no writer
 %% gone, and nothing falls through: a kind the protocol (abi/protocols/prog.txt)
 %% gains fails here until it has its rule, and test/host/erx_program_grants_test.rb
@@ -326,8 +326,14 @@ grants({erx_start, _, #{fds := Fds}}) ->
     {?ERX_PROGRAM_SEND_NO_REPLY, lists:flatmap(fun({_Fd, Descriptor}) -> descriptor_grants(Descriptor) end, Fds)};
 grants({erx_prog, _, Report}) ->
     {?ERX_PROGRAM_SEND_NO_REPLY, report_grants(Report)};
-grants({erx_prog, _, Slot, _Reply}) when is_integer(Slot), Slot >= 0, Slot < ?ERX_PROGRAM_SEND_NO_REPLY ->
-    {Slot, []}.
+grants({erx_prog, _, Slot, Reply}) when is_integer(Slot), Slot >= 0, Slot < ?ERX_PROGRAM_SEND_NO_REPLY ->
+    {Slot, reply_grants(Reply)}.
+
+%% A reply's grants: those of each descriptor it carries, pipe's two ends, and
+%% none for kill's and probe's.
+reply_grants({ok, Read, Write}) -> descriptor_grants(Read) ++ descriptor_grants(Write);
+reply_grants(ok) -> [];
+reply_grants({error, _Errno}) -> [].
 
 %% A descriptor's grants: each pipe end it gives, and each writer of a read end
 %% it names gone.

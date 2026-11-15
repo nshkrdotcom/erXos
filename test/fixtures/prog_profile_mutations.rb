@@ -15,7 +15,8 @@ require_relative '../../tools/lib/erx/abi_protocol'
 # refers and each total in the start base) and two wire faults (a map key repeated in each
 # map, each frame truncated), which both checks name by the frame, join them. A rule no
 # frame within the bound reaches first (a list maximum past what its keys or the frame
-# bound allow), and a kind no base holds, give no mutation; the skipped list names each.
+# bound allow), and a kind no base holds, give no mutation; the skipped list names each
+# once, and only when no other base reaches it.
 module ProgProfileMutations
   Tuple = ProgProfileFrames::Tuple
   Etf = ProgProfileFrames::Etf
@@ -52,7 +53,8 @@ module ProgProfileMutations
 
   # Each frame's base values: [frame, value] or, for a reply, [frame, value, busy] with the
   # request case its slot holds; start's BASE, one value of each case of the notices and
-  # reports (docs/design-pipes.md#the-program-protocol), and of each request and its reply.
+  # reports (docs/design-pipes.md#the-program-protocol), and of each request and its reply,
+  # pipe's ok naming BASE's read end and write end.
   BASES = [
     ['start', BASE],
     ['notice', t(:closed, 1, 2)], ['notice', t(:drained, 1, 2, 3)],
@@ -60,9 +62,11 @@ module ProgProfileMutations
     ['report', t(:pipe_writer_gone, 1, 2, 3)], ['report', t(:pipe_reader, 1, 2, 63, 101, :gone)],
     ['report', t(:pipe_reader_gone, 1, 2, 0)], ['report', t(:pipe_lost, 1, 2)],
     ['report', :pipe_server_lost],
-    ['request', t(:kill, 2, :sigint)], ['request', t(:probe, 2)],
+    ['request', t(:kill, 2, :sigint)], ['request', t(:probe, 2)], ['request', t(:pipe, %i[cloexec nonblock])],
     ['reply', :ok, '3:kill'], ['reply', t(:error, :eperm), '3:kill'],
     ['reply', :ok, '3:probe'], ['reply', t(:error, :esrch), '3:probe'],
+    ['reply', t(:ok, *BASE.fetch(:fds).values_at(4, 3).map { |fd| fd.items.last }), '3:pipe'],
+    ['reply', t(:error, :emfile), '3:pipe'],
     ['request', t(:file, :lopen, '/w', 0)], ['request', t(:file, :lcreate, 'f', 0x241, 0o644)],
     ['request', t(:file, :read, 3, 65_536, 15)], ['request', t(:file, :write, 0, 1, 0)],
     ['request', t(:file, :clunk, 7)],
@@ -85,7 +89,15 @@ module ProgProfileMutations
     results = [*generators.flat_map(&:kind_results),
                *generators.select { |generator| generator.frame == 'start' }.flat_map(&:refers_and_totals),
                *generators.uniq(&:frame).flat_map(&:wire_faults), *unreached].uniq
-    results.partition { |result| result.is_a?(Mutation) }.then { |mutations, skips| [mutations, skips.map(&:why)] }
+    mutations, skips = results.partition { |result| result.is_a?(Mutation) }
+    [mutations, unreached_rules(mutations, skips)]
+  end
+
+  # The reasons of skips, "KIND RULE: why", for the rules no mutation's "RULE KIND" verdict
+  # reaches, the first of each rule's alone: a rule one base cannot reach another may.
+  def unreached_rules(mutations, skips)
+    reached = mutations.to_set { |mutation| mutation.verdict.split.reverse.join(' ') }
+    skips.map(&:why).uniq { |why| why.split(':').first }.reject { |why| reached.include?(why.split(':').first) }
   end
 
   # The frame of value with tag, at the protocol's version 1, on slot when it is one.
