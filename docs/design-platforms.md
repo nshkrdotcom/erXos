@@ -663,35 +663,65 @@ configuration and translation cache through its own queue while that
 abort holds, and enables translation only after a completed sync. A
 device whose reset fails is not given to another driver. The loader's
 quiescence of the bus masters is a requirement on a trusted loader,
-which nothing checks (The handover at entry, below); for the IOMMU,
+which nothing checks and on which no guarantee of erXos rests (The
+handover at entry, below); for the IOMMU,
 source evidence and pending hardware tests are distinguished in [the
 hardware-contract audit](research-hardware-contracts.md).
 
-**The handover at entry.** The kernel cannot observe the time before its
-first instruction, so no boot and no build proves that the loader
-stopped a bus master. A bus master the loader started is part of the
-loader: whatever it does until its driver resets it is the loader's act,
-and the loader is trusted as the firmware is
-([Firmware](#firmware), [design.md](design.md#residual-risks)). What
-erXos guarantees begins at each device's reset, and holds by
+**The handover at entry.** The rule has three clauses:
+
+* **A bus master the loader started is the loader's until its reset.**
+  The kernel cannot observe the time before its first instruction, so no
+  boot and no build proves that the loader stopped a bus master, and
+  whatever a master the loader left running does until its driver resets
+  it is the loader's act; the loader is trusted as the firmware is
+  ([Firmware](#firmware), [design.md](design.md#residual-risks)).
+* **Every driven device is reset before use,** at its driver's first
+  start as at every restart, which are one sequence
+  ([design-system.md](design-system.md#drivers), Resets).
+* **A device's own buffers and descriptors are installed only after its
+  reset,** through the one install path, `negotiate/2` in the device
+  NIF (rule 1 below). Nothing keeps a master away from memory before its
+  reset: the window from the kernel's entry to that reset, in which a
+  master the firmware started may write memory the kernel has already
+  handed out, is a recorded [Medium] security residual (The residual,
+  below), not a property erXos enforces.
+
+What erXos guarantees thus begins at each device's reset, and holds by
 construction, for every device and every driver, with no list of either
 to keep:
 
-1. **No device is given an address before its driver has reset it.**
-   Every device address erXos gives a device is written by the device
-   NIF, through registers the SVD source marks `ownedByNif`, and a queue
-   is on a device only once `negotiate/2` has installed it
+1. **A device's buffers and descriptors are installed only after its
+   reset.** Every device address erXos gives a device is written by the
+   device NIF, through registers the SVD source marks `ownedByNif`, and
+   a queue is on a device only once `negotiate/2` has installed it
    ([design-runtime.md](design-runtime.md#the-device-nif), R8 and the
    reset rule). For every descriptor form, `negotiate/2` writes the
    device's reset first and installs nothing until the device's own
-   report that it holds no descriptor: virtio's status read back as 0,
-   GENET's DMA status, the SD controller's data-line reset bit clear
-   ([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)),
-   xHCI's halt and then `HCRST` clear
-   ([design-usb.md](design-usb.md#install)). A driver's first start and
-   its restart are one sequence ([design-system.md](design-system.md#drivers),
-   Resets), so a device the loader left running is reset exactly as one
-   a crashed driver left running is, and no driver can aim a device at
+   report that it holds no descriptor
+   ([design-device-dma.md](design-device-dma.md#the-three-descriptor-forms)):
+   * virtio's status read back as 0, which by the virtio 1.2
+     specification, csd01, sections 2.4.1 and 2.4.2, tells that the
+     device has finished its reset and does not touch its queues until
+     the driver initializes it again; this binds a device whose
+     `Version` reads 2 (section 4.2.2.1), the only one `erx_device`
+     drives (`abi/formats/virtio.txt`), and QEMU v11.1.3 runs the
+     device's reset inside the status write itself
+     (`hw/virtio/virtio-mmio.c`, lines 72-83 and 423-442); whether that
+     reset waits out requests a backend has in flight on another thread
+     is unverified;
+   * GENET's DMA status with the block's and the ring's bits set, which
+     is unverified: no specification of GENET has been read, and the
+     meaning of those bits comes from Linux's driver through the [GENET
+     facts record](research-genet-bcm2711.md#the-dma-status-register),
+     the ring bit's by inference, until the board pass settles it
+     ([design-device-dma.md](design-device-dma.md#verification));
+   * the SD controller's data-line reset bit clear;
+   * xHCI's halt and then `HCRST` clear
+     ([design-usb.md](design-usb.md#install)).
+
+   A device the loader left running is therefore reset exactly as one a
+   crashed driver left running is, and no driver can aim a device at
    memory by another path. The consumer is every DMA driver: it hands
    its device buffers only once the device has forgotten what it was
    aimed at before.
@@ -718,8 +748,10 @@ to keep:
    which stay the loader's.
 
 An unconfined device can reach all memory its bus reaches, so for it
-rule 2 has no counterpart: before its reset it can write anywhere, and
-that window is the loader's, the residual below. After the reset it is
+rule 2 has no counterpart: before its reset it can write anywhere,
+memory the kernel has handed out included, and no mechanism of erXos
+could stop it; that window is the loader's, the residual below. After
+the reset it is
 aimed only at its own memory, which is the device's for the boot and
 never given to anything else
 ([design-system.md](design-system.md#devices), What a device keeps).
@@ -763,19 +795,31 @@ rule lowers every function that does not read as its setting. No
 platform record lists bus masters, no
 research record carries a proof for the build to bind, and development
 and release builds are admitted alike: the manifest check has no
-handover clause. A native shim, a row of
+handover clause.
+
+A native shim, a row of
 [the driver table](design-system.md#the-driver-table), writes its device's
-addresses itself, so for it the reset before use is a requirement its row
-states and its review checks; the table has no rows.
+addresses itself, so the device NIF's install does not cover it; it
+takes the same `negotiate/2` contract instead. The shim is a sub-space
+port, and its owner's first command to it is `negotiate`, whose first
+write to the device is the reset the device's descriptor form names and
+which installs no buffer or descriptor until the device's own idle
+report; the shim refuses every other command before a `negotiate` has
+succeeded, as the NIF refuses `post/4`
+([design-system.md](design-system.md#drivers), Native shims). A row is
+admitted only with the test of a device the loader left running,
+[Reset before use](#verification-and-testing), run against its shim
+with the same seed. The table has no rows.
 
 **The residual.** From the kernel's first instruction until a master's
 reset, and for the whole boot for a master no driver resets, a master the
 loader left running can still write what it reaches: on the Pi 4, where
 every DMA master is unconfined, any memory below its bus's limit; on QEMU
 `virt`, any memory for a virtio-mmio device, and only its own window's
-for a confined function once the kernel's abort holds. A write in that
-window into memory the kernel has handed out corrupts it unseen. The gap
-is a security residual in `TODO.md`.
+for a confined function once the kernel's abort holds. The kernel hands
+out memory in that window, so a write into memory it has handed out
+corrupts it unseen. Nothing in the design closes the window; it is a
+[Medium] security residual in `TODO.md`.
 
 **The SMMUv3 is QEMU's.** The kernel's SMMUv3 driver covers what QEMU
 `virt`'s model needs: one SMMU, stage 1, 4 KiB pages and 16-bit ASIDs,
@@ -1895,8 +1939,10 @@ are residual risks, which [design.md](design.md#residual-risks) records:
 unconfined DMA on QEMU `virt`'s virtio-mmio devices and on both boards'
 DMA devices, whose drivers' domains are part of the trusted base, each
 holding one unit and nothing else in a release build, as is the PCIe
-domain, which holds configuration space and nothing else; the boards'
-closed boot firmware, resident with access to all memory, and BL31,
+domain, which holds configuration space and nothing else; the window
+from the kernel's entry to each bus master's reset, in which a master
+the loader left running may write memory the kernel has handed out
+([DMA](#dma)); the boards' closed boot firmware, resident with access to all memory, and BL31,
 resident at EL3; and MSIs through the GICv2m frame or the MIP block, which
 do not identify the writer, so a device can raise any line of the frame.
 PL2 keeps the firmware's mailbox out of every driver's reach, and with it
@@ -1954,7 +2000,9 @@ in [Trust in the boot](#trust-in-the-boot).
   reset while it runs. Seed: `negotiate/2` skips the reset for a record that no
   driver has opened before, as if a new record's device were idle, and
   the stand-in records the install's base-address writes while it is
-  still running.
+  still running. Each row of the driver table runs the same test against
+  its native shim's `negotiate`, with the same seed, before the row is
+  admitted.
 * **Ends and trials.** Each end (off, reset, panic, trial) is tested on
   each platform with and without a lease, and on each board a trial that
   panics, hangs with interrupts masked or halts boots the committed slot.

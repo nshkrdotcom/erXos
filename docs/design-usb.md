@@ -73,8 +73,10 @@ Decisions every reader needs:
   boot order names no USB device and no network boot, so the boot
   firmware has no reason to start the VL805. A VL805 the firmware left
   running anyway is part of the trusted loader until the PCIe domain's
-  start clears its bus mastering and the xHCI driver resets it; the
-  window before then is a security residual
+  start clears its bus mastering and the xHCI driver resets it; its
+  buffers and descriptors are installed only after that reset, and the
+  window before it, in which it may write memory the kernel has handed
+  out, is a [Medium] security residual
   ([The boot firmware's handover](#the-bcm2711-bridge)).
 
 ## Contents
@@ -891,20 +893,25 @@ same windows again changes nothing it uses.
 
 **The boot firmware's handover.** The boot's first start is decided by
 the same table, so a link the boot firmware left up with the VL805's
-firmware loaded is kept (probes B1 and B3). The keep needs no proof that
-the VL805 is stopped, because nothing erXos hands out is aimed at it
-before its reset ([The handover at entry](design-platforms.md#dma)):
-the PCIe domain's start turns off every function that does not read as
-its setting, and the VL805's is `off` until the USB domain opens it, so
-a VL805 the boot firmware left mastering has its bus mastering cleared
-at the PCIe domain's first start; the USB domain's xHCI driver then
-halts and resets the controller in `negotiate/2` before it gives it any
-address ([Install](#install)), and asks for bus mastering only after
+firmware loaded is kept (probes B1 and B3). The keep asks no proof that
+the VL805 is stopped, and claims none: the VL805's own buffers and
+descriptors are installed only after its reset, through `negotiate/2`
+([The handover at entry](design-platforms.md#dma)), and what it writes
+before that reset is a recorded residual. The PCIe domain's start turns
+off every function that does not read as its setting, and the VL805's
+is `off` until the USB domain opens it, so a VL805 the boot firmware
+left mastering has its bus mastering cleared at the PCIe domain's first
+start; the USB domain's xHCI driver then halts and resets the controller
+in `negotiate/2` before it installs any ring, context or buffer
+([Install](#install)), and asks for bus mastering only after
 ([design-system.md](design-system.md#drivers), Resets). Until its bus
 mastering is cleared, a VL805 the firmware left running is part of the
-trusted loader, and what it writes from the kernel's entry until then is
-the residual that [the handover at entry](design-platforms.md#dma) records. The bridge's reset path does not close
-that window, since it too runs after the kernel has reclaimed memory.
+trusted loader and may write memory the kernel has already handed out;
+that window, from the kernel's entry until then, is the [Medium]
+security residual that [the handover at
+entry](design-platforms.md#dma) records. Neither the keep nor the
+bridge's reset path closes it, since the reset path too runs after the
+kernel has reclaimed memory.
 
 **The Pi 4 boots from its microSD card alone.** The board's
 installation, which already writes the EEPROM's configuration and each

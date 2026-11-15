@@ -482,7 +482,9 @@ violation fails the build with the property, the record and the field:
    manifest has no
    partial boot. It has no clause for the bus masters the loader left
    running: those are the trusted loader's until each driver's reset,
-   by the rule [design-platforms.md](design-platforms.md#dma) states, so
+   after which alone a device's buffers and descriptors are installed,
+   and the window before that reset is a [Medium] security residual, by
+   the rule [design-platforms.md](design-platforms.md#dma) states, so
    development and release builds are admitted alike.
    The packer sets the boot image's `ERX_PACK_UNCONFINED_DMA` exactly
    when the manifest gives an unconfined device.
@@ -3289,9 +3291,12 @@ Through the NIF:
   controller by its software reset), and the NIF installs the device's
   queues only after that reset; a virtio device's reset is the NIF's
   own, the first step of `negotiate/2`, and the NIF posts nothing to a
-  device before it, so a driver that starts on a device another driver left
-  running cannot hand it an address before the reset has retired every
-  address the device may hold. A driver process that crashes is restarted
+  device before it, so a driver that starts on a device another driver
+  or the loader left running installs no buffer or descriptor before the
+  reset has retired every address the device may hold; a native shim
+  keeps the same order (Native shims, below). What a device the loader
+  left running writes before that reset is a [Medium] security residual
+  ([design-platforms.md](design-platforms.md#dma)). A driver process that crashes is restarted
   by its supervisor and resets the device again. Its pools and queues stay
   in the NIF's record of the device meanwhile, and the NIF releases them
   only at the new driver's `negotiate/2`. A PCIe function's driver, after
@@ -3315,7 +3320,13 @@ as to a port. It holds nothing but the device and its channel, so for a
 confined device its bugs cannot touch the Erlang heap; for an unconfined
 device the shim, like the device and the domain that holds it, is in the
 trusted base, since the device's DMA reaches all memory. A shim is
-single-threaded C under `liberx` and needs no runtime of its own.
+single-threaded C under `liberx` and needs no runtime of its own. It
+writes its device's addresses itself, so it takes the device NIF's
+`negotiate/2` contract as its own: its owner's first command to it is
+`negotiate`, whose first write to the device is the device's reset and
+which installs no buffer or descriptor until the device's idle report,
+and it refuses every other command until a `negotiate` has succeeded
+([design-platforms.md](design-platforms.md#dma), rule 1).
 
 **PCIe.** The host bridge is a device like any other, and its driver, the
 **PCIe enumerator**, is an Erlang process in the PCIe domain, which holds

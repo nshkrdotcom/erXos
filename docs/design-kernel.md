@@ -2487,9 +2487,11 @@ implements the same protocol, so no step is specific to one loader
    and caches, branch to the kernel's half, and remove the identity map.
 4. **Memory.** Check the IOMMU's handoff before reclaiming any memory.
    On a platform without an IOMMU there is nothing for the kernel to
-   check: every DMA device is unconfined, and the loader's quiescence of
-   every bus master, which the platform contract requires, is what keeps
-   old DMA out of reclaimed memory. On a platform with one, verify its
+   check: every DMA device is unconfined, the platform contract asks the
+   loader to quiesce every bus master, and nothing the kernel does keeps
+   a master the loader left running out of reclaimed memory before its
+   driver's reset, which is a security residual
+   ([design-platforms.md](design-platforms.md#dma)). On a platform with one, verify its
    reset-state handoff by the register checks the binding names
    ([design-arch-aarch64.md](design-arch-aarch64.md#iommu)): every
    memory-access and notification facility of the IOMMU disabled, with

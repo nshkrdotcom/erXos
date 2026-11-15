@@ -1191,8 +1191,10 @@ another domain.
   more privileged than the kernel. Both are trusted as any machine trusts
   its firmware, and so is every bus master the loader started and left
   running, until its driver resets it: erXos proves no master stopped at
-  its entry, gives a device no address before its reset, and leaves a
-  master it never drives as the loader left it
+  its entry, installs a device's buffers and descriptors only after its
+  reset, and leaves a master it never drives as the loader left it; what
+  such a master writes before its reset, memory the kernel has handed
+  out included, is a [Medium] security residual
   ([design-platforms.md](design-platforms.md#dma)). The Pi 5's firmware, its resident part included, and both
   boards' bootloaders live in the board's EEPROM, outside the slots, so an
   update does not change them

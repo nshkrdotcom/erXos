@@ -6621,9 +6621,14 @@ to the corpus and follow rc
 * [Medium] platforms, bus masters the loader left running
   ([design-platforms.md](docs/design-platforms.md#dma)): a bus master
   the loader started is part of the trusted loader until its driver
-  resets it, so from the kernel's first instruction until that reset it
-  can write whatever memory it reaches, and the kernel may already have
-  handed that memory out. On the Pi 4 every DMA master is unconfined:
+  resets it. A device's own buffers and descriptors are installed only
+  after that reset, through the one install path (`negotiate/2` in the
+  device NIF, or a native shim's `negotiate` under the same contract),
+  but nothing keeps the device away from memory before it: from the
+  kernel's first instruction until the reset, a master the firmware
+  started can write whatever memory it reaches, memory the kernel has
+  already handed out included, and no check sees it. The design does not
+  close this window. On the Pi 4 every DMA master is unconfined:
   the window is all memory below its bus's limit, and it closes for the
   VL805 at the PCIe domain's first start, which clears its bus
   mastering, and for each driven device at its driver's `negotiate/2`.

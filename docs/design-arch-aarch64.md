@@ -497,9 +497,10 @@ device, not the architecture's
 The SMMUv3 driver (`kernel/platform/smmuv3.c`) is erXos's own C17, written
 with OpenBSD's and FreeBSD's drivers as references. On a platform without
 an SMMU the kernel has nothing to check at boot: every DMA device there
-is unconfined, and until each device's reset the trusted loader's
-quiescence of every bus master ([Boot entry](#boot-entry)) is what keeps
-old DMA out of reclaimed memory. On a
+is unconfined, and until each device's reset nothing keeps a master the
+trusted loader left running ([Boot entry](#boot-entry)) out of
+reclaimed memory, a security residual
+([design-platforms.md](design-platforms.md#dma)). On a
 platform with one, boot checks the SMMU's reset-state handoff and brings
 it up in four ordered stages; the first two precede allocator handoff,
 and no stage repairs an unknown live firmware configuration by guessing
