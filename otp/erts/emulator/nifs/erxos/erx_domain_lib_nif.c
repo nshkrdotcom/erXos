@@ -644,7 +644,8 @@ configured_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 
 /*
  * A session's start: creates a session of template Template under id Id,
- * name Name and domain pid DomainPid (erx_dom_lib_session). Only the domain
+ * name Name, default display Display, a service name or <<>> for none, and
+ * domain pid DomainPid (erx_dom_lib_session). Only the domain
  * service may, so a session is built only from a template the view holds,
  * whose index the library bounds, never from fields a request carries.
  */
@@ -654,18 +655,20 @@ session_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	erx_dom_created_t created;
 	erx_dom_pid_t domain_pid;
 	erx_status_t status;
-	ErlNifBinary name;
+	ErlNifBinary name, display;
 	unsigned int id, template;
 
-	if (argc != 4 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &template) ||
+	if (argc != 5 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &template) ||
 	    !enif_inspect_binary(env, argv[2], &name) || name.size == 0 || name.size > ERX_DOM_NAME_MAX ||
-	    !domain_pid_from(env, argv[3], &domain_pid))
+	    !enif_inspect_binary(env, argv[3], &display) || display.size > ERX_DOM_NAME_MAX ||
+	    !domain_pid_from(env, argv[4], &domain_pid))
 		return (enif_make_badarg(env));
 	if (lib == NULL)
 		return (status_error(env, ERX_ENOTSUP));
 	enif_mutex_lock(lib_lock);
 	status = caller_is_service(env) ?
-	    erx_dom_lib_session(lib, id, template, (const char *)name.data, (uint32_t)name.size, domain_pid, &created) :
+	    erx_dom_lib_session(lib, id, template, (const char *)name.data, (uint32_t)name.size,
+	    (const char *)display.data, (uint32_t)display.size, domain_pid, &created) :
 	    ERX_ERIGHTS;
 	enif_mutex_unlock(lib_lock);
 	if (status != ERX_OK)
@@ -1098,7 +1101,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "end_commit_nif", 1, end_commit_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "devices_nif", 0, devices_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "configured_create_nif", 3, configured_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
-	{ "session_create_nif", 4, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "session_create_nif", 5, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

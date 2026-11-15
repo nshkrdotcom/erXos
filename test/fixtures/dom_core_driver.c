@@ -440,7 +440,7 @@ run_case(const char *name, origin_pick_t pick,
 		break;
 	case PICK_SESSION:
 		status = erx_dom_plan_session(&view, 8, case_row, req.name,
-		    req.name_len, ERX_DOM_PID_NONE, &plan);
+		    req.name_len, NULL, 0, ERX_DOM_PID_NONE, &plan);
 		break;
 	default:
 		status = ERX_EINVAL;
@@ -693,13 +693,34 @@ constructors(void)
 	configured.env_len = 0;
 	configured.display = (erx_dom_display_t){ .name = NULL };
 	/* Everything but the name, id and pid is the template's. */
-	status = erx_dom_plan_session(&view, 8, 0, "sess", 4,
+	status = erx_dom_plan_session(&view, 8, 0, "sess", 4, NULL, 0,
 	    (erx_dom_pid_t){ 3, 1 }, &plan);
-	printf("ctor session_owned %d %u %u %u %u %u %u %u %.*s\n", (int)status,
+	printf("ctor session_owned %d %u %u %u %u %u %u %u %.*s %u\n", (int)status,
 	    plan.spec.origin.kind, plan.spec.origin.record, (unsigned)plan.parent,
 	    plan.spec.flags, plan.spec.runtime_limits.atoms,
 	    (unsigned)(plan.spec.memory / MIB), plan.spec.domain_pid.number,
-	    (int)plan.spec.name_len, plan.spec.name);
+	    (int)plan.spec.name_len, plan.spec.name, plan.spec.env_len);
+	/*
+	 * A session's default display is one word after the template's
+	 * environment; a name with a NUL or longer than a name is refused.
+	 */
+	session_template.env = "LANG=C";
+	session_template.env_len = sizeof("LANG=C");
+	status = erx_dom_plan_session(&view, 8, 0, "sess", 4, "screen", 6,
+	    (erx_dom_pid_t){ 3, 1 }, &plan);
+	printf("ctor session_display %d ", (int)status);
+	for (uint32_t at = 0; at < plan.spec.env_len; at++) {
+		const char byte = plan.spec.strings[plan.spec.args_len + at];
+
+		putchar(byte == '\0' ? '|' : byte);
+	}
+	printf("\n");
+	printf("ctor session_display_refused %d %d\n",
+	    (int)erx_dom_plan_session(&view, 8, 0, "sess", 4, "a\0b", 3, (erx_dom_pid_t){ 3, 1 }, &plan),
+	    (int)erx_dom_plan_session(&view, 8, 0, "sess", 4, "screen", ERX_DOM_NAME_MAX + 1,
+	    (erx_dom_pid_t){ 3, 1 }, &plan));
+	session_template.env = NULL;
+	session_template.env_len = 0;
 	status = erx_dom_plan_partial(&view, 7, 0, &plan);
 	printf("ctor partial_owned %d %u %u %u %.*s\n", (int)status,
 	    plan.spec.origin.kind, plan.connection, plan.connection_row,

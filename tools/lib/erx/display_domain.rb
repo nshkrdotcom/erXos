@@ -62,7 +62,8 @@ module Erx
     # client, whose session template is granted the display's window tree with a pixel
     # area of PIXELS bytes, enough for a 1920 by 1080 screen of 32-bit pixels (8,294,400
     # bytes). The session's registry holds the grant under the service's name, SERVICE,
-    # which erx_pattern_test opens (docs/design-system.md, "Facets a configured domain
+    # which the start row names, so it is the session's default display, which
+    # erx_pattern_test opens (docs/design-system.md, "Facets a configured domain
     # serves"). Its domains quota, CLIENT_SESSIONS, is how many sessions of the template
     # can live at once, each a grant the display pays for.
     PIXELS = 8 << 20

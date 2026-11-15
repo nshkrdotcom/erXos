@@ -112,8 +112,9 @@ static void	dom_spec_configured(const erx_dom_view_t *, uint32_t,
 		    uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
 static void	dom_spec_partial(const erx_dom_view_t *, uint32_t, uint32_t,
 		    erx_dom_spec_t *);
+static bool	dom_session_display(const char *, uint32_t, erx_dom_spec_t *);
 static void	dom_spec_session(const erx_dom_view_t *, uint32_t, uint32_t,
-		    const char *, uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
+		    const char *, uint32_t, const char *, uint32_t, erx_dom_pid_t, erx_dom_spec_t *);
 static void	dom_decimal(uint32_t, erx_dom_spec_t *);
 static bool	dom_word_put(char *, size_t, size_t *, const char *, const char *, size_t);
 static bool	dom_number_put(char *, size_t, size_t *, const char *, uint32_t);
@@ -736,15 +737,18 @@ dom_spec_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
 /*
  * The session constructor: everything but the id, the pid and the name is
  * session template `template`'s and its resolved limits'; the name is the
- * one the domain service chose. The template's arguments and environment
- * fit the spec's strings, which boot_templates checked when it built the
- * view. A name that does not fit is left empty, which planning refuses, as
- * it refuses an empty name of a configured row.
+ * one the domain service chose, and its environment the template's with
+ * the session's default display after it (dom_session_display). The
+ * template's arguments and environment, with the display's word at its
+ * longest, fit the spec's strings, which boot_templates checked when it
+ * built the view. A name that does not fit is left empty, which planning
+ * refuses, as it refuses an empty name of a configured row; so is the name
+ * of a session whose display's word does not fit.
  */
 static void
 dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
-    const char *name, uint32_t name_len, erx_dom_pid_t domain_pid,
-    erx_dom_spec_t *spec)
+    const char *name, uint32_t name_len, const char *display, uint32_t display_len,
+    erx_dom_pid_t domain_pid, erx_dom_spec_t *spec)
 {
 	const erx_dom_template_t *source = &view->templates[template];
 
@@ -777,6 +781,30 @@ dom_spec_session(const erx_dom_view_t *view, uint32_t id, uint32_t template,
 		memcpy(spec->strings, source->args, source->args_len);
 	if (source->env_len != 0)
 		memcpy(spec->strings + source->args_len, source->env, source->env_len);
+	if (!dom_session_display(display, display_len, spec))
+		spec->name_len = 0;
+}
+
+/*
+ * A session's default display (docs/design-display.md, "Choosing a
+ * display") as the word display=NAME after its environment, or nothing for
+ * a display_len of 0. False, with the environment unchanged, when the word
+ * overruns the strings, which the view's reserve for it
+ * (ERX_DOM_SESSION_DISPLAY_WORD_MAX) rules out.
+ */
+static bool
+dom_session_display(const char *display, uint32_t display_len, erx_dom_spec_t *spec)
+{
+	const size_t start = (size_t)spec->args_len + spec->env_len;
+	size_t used = start;
+
+	if (display_len == 0)
+		return (true);
+	if (start > sizeof(spec->strings) ||
+	    !dom_word_put(spec->strings, sizeof(spec->strings), &used, ERX_DISPLAY_KEY_STRING "=", display, display_len))
+		return (false);
+	spec->env_len += (uint32_t)(used - start);
+	return (true);
 }
 
 /* id in decimal as spec's name: at most ten digits, which ERX_DOM_NAME_MAX holds. */
@@ -1008,13 +1036,16 @@ erx_dom_plan_partial(const erx_dom_view_t *view, uint32_t id, uint32_t row,
 erx_status_t
 erx_dom_plan_session(const erx_dom_view_t *view, uint32_t id,
     uint32_t template, const char *name, uint32_t name_len,
+    const char *display, uint32_t display_len,
     erx_dom_pid_t domain_pid, erx_dom_plan_t *plan)
 {
 	erx_dom_spec_t spec;
 
-	if (template >= view->ntemplates)
+	/* A NUL in the display's name would end its word and start another. */
+	if (template >= view->ntemplates || display_len > ERX_DOM_NAME_MAX ||
+	    (display_len != 0 && memchr(display, '\0', display_len) != NULL))
 		return (ERX_EINVAL);
-	dom_spec_session(view, id, template, name, name_len, domain_pid, &spec);
+	dom_spec_session(view, id, template, name, name_len, display, display_len, domain_pid, &spec);
 	return (dom_plan(&spec, view, plan));
 }
 

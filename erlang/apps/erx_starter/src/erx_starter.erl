@@ -374,8 +374,8 @@ run(Command, From, #{text := Text, rows := Rows, grants := Grants, local := Loca
             next(State)
     end.
 
-act({start_once, Name, Start}, #{principals := Principals}) ->
-    started(erx_starter_sup:start_once(Name, map_get(Name, Principals), Start));
+act({start_once, Name, Start}, #{principals := Principals} = State) ->
+    started(erx_starter_sup:start_once(Name, map_get(Name, Principals), with_default_display(Name, Start, State)));
 act({stop, Name}, State) ->
     case row(Name, State) of
         {ok, _Row} -> erx_starter_sup:stop_row(Name);
@@ -497,11 +497,11 @@ started({error, Why}) -> {error, {failed, Why}}.
 
 %% What enabled row Name's supervisor keeps (erx_starter_row:row()), or none
 %% for a row that is not enabled.
-row(Name, #{merged := Merged, principals := Principals}) when is_list(Merged) ->
+row(Name, #{merged := Merged, principals := Principals} = State) when is_list(Merged) ->
     case [Row || #{principal := Principal, status := enabled} = Row <- Merged, Principal =:= Name] of
         [#{display := Display, restarts := Restarts, period := Period}] ->
             Start = case Display of
-                        none -> #{};
+                        none -> with_default_display(Name, #{}, State);
                         _ -> #{display => Display}
                     end,
             {ok, #{principal => map_get(Name, Principals), start => Start, restarts => Restarts, period => Period}};
@@ -510,6 +510,20 @@ row(Name, #{merged := Merged, principals := Principals}) when is_list(Merged) ->
     end;
 row(_Name, #{merged := none}) ->
     none.
+
+%% Start for row Name's session, which names a display or names none: with none, the one
+%% display Name's template is granted, where it is granted exactly one, as the session's
+%% default display, so an app written for one display runs on any board
+%% (docs/design-display.md, "Choosing a display"). The start table is the one place a
+%% template's displays are worked out (manifest_table/1); the domain service applies none
+%% of its own, so a console login, which no row starts, has no default display.
+with_default_display(Name, Start, #{grants := Grants}) when map_size(Start) =:= 0 ->
+    case maps:get(Name, Grants, []) of
+        [Display] -> #{default_display => Display};
+        _ -> Start
+    end;
+with_default_display(_Name, Start, _State) ->
+    Start.
 
 %% What a row's supervisor keeps its session with, as erx_start_table:kept/1
 %% gives it for a merged row.

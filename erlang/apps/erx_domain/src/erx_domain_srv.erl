@@ -625,7 +625,9 @@ grant(_Grant) ->
 
 %% A session of Principal, made from its session template alone, with its Start checked
 %% (session_start/3): the console names the line it starts the session at by the console
-%% facet it hands, and a display, if Start names one, is kept in the session's record. The
+%% facet it hands, and a display, if Start names one, is kept in the session's record and
+%% is the session's default display, its `display` variable, which the library sets when
+%% it plans the session (docs/design-apps.md, "Starting a session", step 1). The
 %% service chooses only the name, the principal's prefix (erx_domain_core:session_prefix/3)
 %% and the lowest number no living session holds (erx_domain_core:session_name/3), so a
 %% refused start binds no name for good. A principal the manifest's names do not name is
@@ -637,12 +639,13 @@ start_session(Principal, Start, #{templates := Templates, principals := #{system
                                   lib := Lib, core := Core} = State) ->
     maybe
         #{Principal := #{template := Template}} ?= Templates,
-        {ok, Record} ?= session_start(Template, Start, State),
+        {ok, #{start := Displays} = Record} ?= session_start(Template, Start, State),
         {ok, Prefix} ?= erx_domain_core:session_prefix(Principal, System, Names),
         Name = erx_domain_core:session_name(Prefix, Principal, Core),
         Ident = erx_ident:new(Name),
         true ?= Ident =/= {error, bad_identifier},
-        Make = fun(Id, Pid) -> Lib:session(Id, Template, Name, Pid) end,
+        Display = default_display(Displays),
+        Make = fun(Id, Pid) -> Lib:session(Id, Template, Name, Display, Pid) end,
         build(Ident, Principal, {session, Template}, Make, Record, ?BOOT_TIMEOUT, State)
     else
         #{} -> {{error, no_template}, State};
@@ -653,12 +656,12 @@ start_session(Principal, Start, #{templates := Templates, principals := #{system
 
 %% A session's Start split into what the session's record keeps: its facets, which the
 %% funnel checks as a request's (facets/2), the console the only one it lets through; and
-%% its start, display or default_display, a service name the session's template is
-%% granted (erx_domain_mints:granted/3), one of them at most. display makes the session
-%% the display's session, whose grant on it carries the session mark; default_display is
-%% kept and not handed on. So a start's display marks only a grant of its template, and
-%% adds none. The checks go in order: the facets, then two displays at once, then a
-%% display the template is not granted.
+%% its start, display or default_display, a display the session's template is granted
+%% (erx_domain_mints:granted/3), one of them at most. Either is the session's default
+%% display (default_display/1); display also makes the session the display's session,
+%% whose grant on it carries the session mark. So a start's display marks only a grant of
+%% its template, and adds none. The checks go in order: the facets, then two displays at
+%% once, then a display the template is not granted.
 session_start(Template, Start, #{mints := Mints} = State) when is_map(Start) ->
     Displays = maps:with(?START_DISPLAYS, Start),
     Granted = maps:filter(fun(_Key, Display) ->
@@ -672,6 +675,12 @@ session_start(Template, Start, #{mints := Mints} = State) when is_map(Start) ->
     end;
 session_start(_Template, _Start, _State) ->
     {error, {bad_spec, facets}}.
+
+%% The default display a session's checked start names, or none: a console login's start
+%% names none (docs/design-display.md, "Choosing a display").
+default_display(#{display := Display}) -> Display;
+default_display(#{default_display := Display}) -> Display;
+default_display(#{}) -> none.
 
 %% A configured row, which has its own boot_timeout_s to report ready in.
 start_configured(#{row := Row, name := Name, principal := Principal, boot_timeout_s := Seconds},
@@ -825,8 +834,8 @@ ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) -
     end.
 
 %% The grant a session's ready report marks (erx_domain_mints): the one on the display its
-%% start named with display, and none for a default_display, which is kept and not
-%% handed on, or for no display at all.
+%% start named with display, and none for a default_display, which names only the
+%% session's default display, or for no display at all.
 marked(#{display := Display}) -> {display, Display};
 marked(#{}) -> none.
 

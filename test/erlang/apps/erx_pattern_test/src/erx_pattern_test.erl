@@ -5,8 +5,11 @@
 -moduledoc """
 The display suite's client (tools/lib/erx/display_domain.rb): a session the
 start row keeps on the display. It opens a window with `erx_win:open/2` on
-the grant its registry holds under the display's service name, `display`
-(docs/design-system.md, "Facets a configured domain serves"), draws a known
+its default display, the session's `display` variable, which the domain
+service sets to the display the row names when it plans the session
+(docs/design-apps.md, "Starting a session", step 1): the grant its
+registry holds under that service's name (docs/design-system.md, "Facets
+a configured domain serves"). It draws a known
 pattern into the window's buffer and presents it, so a screenshot of the
 display shows the pattern (docs/design-display.md, "Erlang clients" and
 "A display's session").
@@ -20,9 +23,10 @@ name:
 
     erx_pattern_test: presented
 
-or `erx_pattern_test: {error, Step, Reason}` naming the step that failed,
-`open` when the window was refused or the wait of ?POLLS polls ran out
-(Reason `none`). Once presented, it reads the window's input, which the
+or `erx_pattern_test: {error, Step, Reason}` naming the step that failed:
+`display` when the session has no default display (Reason `unset`), `open`
+when the window was refused or the wait of ?POLLS polls ran out (Reason
+`none`). Once presented, it reads the window's input, which the
 harness types through QMP: the first typed rune among the next ?KBD_READS
 records of its `kbd` file, then the first record of its `mouse` file, each
 logged as one notice,
@@ -37,7 +41,8 @@ when its holder does.
 
 -export([show/0, pattern/0]).
 
--define(DISPLAY, display).
+-include("generated/erx_abi.hrl").
+
 -define(POLLS, 240).
 -define(POLL_MS, 500).
 -define(KBD_READS, 8).
@@ -80,7 +85,8 @@ show() ->
 
 presented() ->
     maybe
-        {ok, Window} ?= step(open, opened(?POLLS)),
+        {ok, Display} ?= step(display, default_display()),
+        {ok, Window} ?= step(open, opened(Display, ?POLLS)),
         {ok, Image} ?= step(image, erx_win:image(Window)),
         ok ?= step(draw, drawn(Image, pattern())),
         ok ?= step(present, erx_win:present(Window, [])),
@@ -110,12 +116,22 @@ typed(Window, N) ->
         {error, _} = Error -> Error
     end.
 
+%% The session's default display, its display variable, which the session's environment
+%% holds from its start, as the atom its registry names the grant by. The grant's atom
+%% may not exist yet, since the grant arrives after the session starts, so the name is
+%% made an atom: one, from the session's own environment.
+default_display() ->
+    case os:getenv(binary_to_list(?ERX_DISPLAY_KEY_BYTES)) of
+        false -> {error, unset};
+        Name -> {ok, list_to_atom(Name)}
+    end.
+
 %% Ends: each retry lowers the finite count.
-opened(0) ->
+opened(_Display, 0) ->
     {error, none};
-opened(N) ->
-    case erx_win:open(?DISPLAY, #{name => <<"pattern">>}) of
-        {error, none} -> timer:sleep(?POLL_MS), opened(N - 1);
+opened(Display, N) ->
+    case erx_win:open(Display, #{name => <<"pattern">>}) of
+        {error, none} -> timer:sleep(?POLL_MS), opened(Display, N - 1);
         Answer -> Answer
     end.
 

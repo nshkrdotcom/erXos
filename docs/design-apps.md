@@ -518,12 +518,19 @@ gives the row's start flags as `flags` ([Start flags](#start-flags)),
 and names the display in one of two ways: `#{display => D}` from an enabled
 row's keeper, which makes the session the display's session, or
 `#{default_display => D}` from `onestart NAME display=D` on a row that
-is not enabled, which only sets the session's `display` variable. The domain service:
+is not enabled, which only sets the session's `display` variable. A row
+or command that names no display gets, from the start service, the one display
+its template is granted, where it is granted exactly one, as its
+`default_display` ([design-display.md](design-display.md#choosing-a-display)):
+the start table is the one place a template's displays are worked out, and
+a start that names no display, a console login's, gets none. The domain service:
 
 1. plans the session from the principal's template, with the name
    `<principal>_<n>`, as it plans any session, and with
-   `ERX_START_FLAGS` set to `Start`'s `flags` in its environment; the
-   library charges the
+   `ERX_START_FLAGS` set to `Start`'s `flags` and the `display` variable
+   to the display `Start` names, its default display, in its environment,
+   after the template's own words, which the boot view refuses to set
+   either; the library charges the
    principal, and refuses the start with `quota` or `no_memory` when the
    principal has no room;
 2. at the session's ready report, starts the facets of the system
@@ -532,11 +539,7 @@ is not enabled, which only sets the session's `display` variable. The domain ser
    ([design-system.md](design-system.md#facets-a-configured-domain-serves)),
    with the session mark set in the record of the grant on the display
    `Start` names with `display`, and in no other;
-3. hands the session its default display with the ready answer: the
-   display `Start` names, or else the one display the session holds,
-   where it holds exactly one
-   ([design-display.md](design-display.md#choosing-a-display));
-4. answers the keeper once each `files` grant of the session has
+3. answers the keeper once each `files` grant of the session has
    settled, as it answers a console's start
    ([design-system.md](design-system.md#a-session-takes-the-console)).
 

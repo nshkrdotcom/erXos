@@ -328,7 +328,7 @@ main(int argc, char **argv)
 	for (uint32_t index = 0; index < in.nsessions; index++) {
 		id = ERX_DOM_SYSTEM_ID + 1 + in.norder + index;
 		status = erx_dom_plan_session(&lib.view, id, in.sessions[index], DOM_PLAN_SESSION_NAME,
-		    sizeof(DOM_PLAN_SESSION_NAME) - 1, ERX_DOM_PID_NONE, &plan);
+		    sizeof(DOM_PLAN_SESSION_NAME) - 1, NULL, 0, ERX_DOM_PID_NONE, &plan);
 		if (status == ERX_OK)
 			status = erx_dom_plan_record(&lib.view, &plan);
 		printf("session %" PRIu32 " %d\n", index, (int)status);

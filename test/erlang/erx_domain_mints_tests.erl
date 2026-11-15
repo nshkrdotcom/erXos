@@ -434,7 +434,7 @@ marked() ->
     erx_domain_mints:new(#{services => [{?S, data}, {?T, other}],
                            grants => [{{template, 0}, data, ?S, ?LIMITS}, {{template, 0}, other, ?T, ?LIMITS},
                                       {?G, data, ?S, ?MARKED_LIMITS}],
-                           owner => fun ?MODULE:owner/1, deadline => 10000}).
+                           owner => fun ?MODULE:owner/1, deadline => 10000, windows => [data]}).
 
 %% The limits of every mint the core asks for once Events are stepped and each
 %% introduction they start succeeds, by grantee id and name; and the last state.
@@ -459,9 +459,11 @@ session_mark_test() ->
     ?assertEqual(#{{7, data} => ?LIMITS, {9, data} => ?MARKED_LIMITS,
                    {10, data} => ?LIMITS, {11, data} => ?LIMITS}, Again).
 
-granted_names_the_templates_grants_test() ->
+%% A start may name as its display only a windows service its template is granted: data,
+%% and not other, a grant of another interface.
+granted_names_the_templates_displays_test() ->
     ?assert(erx_domain_mints:granted(0, data, marked())),
-    ?assert(erx_domain_mints:granted(0, other, marked())),
+    ?assertNot(erx_domain_mints:granted(0, other, marked())),
     ?assertNot(erx_domain_mints:granted(0, log, marked())),
     ?assertNot(erx_domain_mints:granted(1, data, marked())),
     ?assertNot(erx_domain_mints:granted(0, "data", marked())).

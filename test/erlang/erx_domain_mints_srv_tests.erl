@@ -30,7 +30,7 @@ mints_test_() ->
 
 %% Template 0's sessions, beside a (5) and b (6), each get a grant of their own.
 sessions_test_() ->
-    {setup, fun setup/0, fun cleanup/1, fun(_) -> {timeout, 20, fun sessions/0} end}.
+    {setup, fun() -> setup(?ERX_SERVICE_WINDOWS) end, fun cleanup/1, fun(_) -> {timeout, 20, fun sessions/0} end}.
 
 %% With echo a service of the files interface, 5, a session's start is answered only
 %% once its echo grant is in place (docs/design-system.md, "A session takes the
@@ -88,6 +88,14 @@ introduced_area() ->
                   ?ERX_WINDOWS_PIXELS_DEFAULT, 5}, next_connect()),
     #{{0, echo} := idle} = grants(),
     _ = gen_server:wait_response(Request, 0).
+
+%% The library's next session call, past every other call the service makes first.
+session_call() ->
+    case erx_domain_fake_lib:next_call() of
+        Call when element(1, Call) =:= session -> Call;
+        timeout -> timeout;
+        _Other -> session_call()
+    end.
 
 %% The library's next connect call, past every other call the service makes first.
 next_connect() ->
@@ -573,13 +581,15 @@ await_call(Call) ->
 %% operation is dropped as of no operation. erx_domain_mints_tests covers two sessions
 %% at once; the fake library holds one. The session's start names echo as its display,
 %% a grant of its template: the record keeps it beside no facet, and the mint carries the
-%% session mark. A display the template is not granted, and two displays, are refused
-%% before the session takes an id.
+%% session mark, and the library plans the session with echo as its default display. A
+%% display the template is not granted, and two displays, are refused before the session
+%% takes an id.
 sessions() ->
     ?assertEqual({error, {bad_spec, display}}, erx_domain:start_session(1, #{display => inspect})),
     ?assertEqual({error, {bad_spec, display}}, erx_domain:start_session(1, #{display => echo,
                                                                               default_display => echo})),
     {ok, {erx_domain, 7, _, _} = Session} = erx_domain:start_session(1, #{display => echo}),
+    ?assertMatch({session, 7, 0, _, echo}, session_call()),
     #{core := Core} = sys:get_state(erx_domain_srv),
     {ok, #{facets := Facets, start := Start}} = erx_domain_core:fetch(7, Core),
     ?assertEqual({#{}, #{display => echo}}, {Facets, Start}),

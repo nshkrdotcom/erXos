@@ -678,10 +678,12 @@ it; git history is the record of completed work.
   written at `/data/etc/rc.conf`; the start service's tree, `start` (`erx_starter_fs`), holding `ctl` alone,
   which a session mounts at `/etc/start`;
   `erx_domain:start_session/2` with `display` and `default_display`, and the session mark; a row that names a
+  written under `/data`; the `apps` tree (`erx_starter_fs`), which a session mounts at `/apps`;
+  `erx_domain:start_session/2` with `display` and `default_display`, and the session mark; the session's default
+  display, the display its start names or the one its template is granted, set as its `display` variable when
+  the session is planned; a row that names a
   display started once that display's server has settled (`erx_domain:display_settled/1`).
-  Not built: the session's default display handed on with the ready answer and its `display` variable
-  (design-apps.md, "Starting a session", step 3), which the domain service keeps in the session's record and
-  hands to nothing; the reset count cleared by the first kept session; and start flags (design-apps.md,
+  Not built: the reset count cleared by the first kept session; and start flags (design-apps.md,
   "Start flags"): `limit start_flags_max u32 1024` in `abi/manifest.txt` and a string field for the default in
   `erx_mf_start`, under a name other than `flags`, which the layout gives its `mf_start_flags` bits, with the
   packer and the manifest reader holding it to the bound; `NAME_flags` in `rc.conf`'s parser; `flags` in
@@ -700,6 +702,18 @@ it; git history is the record of completed work.
   made since is lost at the next `enable` or `disable`; `service` therefore names `service NAME enable` rather
   than the file in its rc.subr answer. Code to change: `erx_starter_rc` only reads, from the `etc` grant, and its
   write path and the `superseded` rule go;
+* [Medium] apps, `erx_starter:with_default_display/3`
+  ([design-apps.md](docs/design-apps.md#starting-a-session)): no test covers the default display the start
+  service gives a row or command that names none. Add an `erx_starter_tests` case over a stub domain service
+  asserting the `Start` it receives: `#{default_display => D}` for a template granted exactly one display, `#{}`
+  for none or two, and the same for `start` of a row that is not enabled.
+* [Medium] apps, `/etc/start/ctl` and `/etc/rc.conf` ([design-apps.md](docs/design-apps.md#the-start-table)):
+  `/apps` holds apps alone, so the tree that `erx_starter_fs` serves at `/apps` becomes the service `start`,
+  mounted at `/etc/start`, holding only `ctl`, whose `enable` and `disable` go and which gains `restart`; and
+  `rc.conf` becomes an ordinary file of the data partition's `etc` tree, a service directory with a facet `etc`
+  (read-only to the system domain, read-write to the templates that hold `start`, rows the build derives, and an
+  entry of the facet table), mounted at `/etc`. Code to change: `erx_starter_fs` loses its read-only `rc.conf`
+  node; `erx_starter_rc` only reads, from the `etc` grant, and its write path and the `superseded` rule go;
   `erx_starter` reads `rc.conf` before every `ctl` command and writes nothing; a command applies the file to its
   own row alone, and the whole file applies only at boot (design-apps.md, "When the file is read"), so
   `erx_start_table:reconcile/3`, the stopped marks, the recorded `rc.conf` text, the restart of a running row whose

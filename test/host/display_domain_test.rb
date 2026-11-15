@@ -60,18 +60,6 @@ class DisplayDomainTest < Minitest::Test
     assert_includes Suite::BOOT.applications, 'erx_pattern_test'
   end
 
-  # A domain's registry holds each facet under its service's name, the service record's
-  # name field or else the record's own name, never under the facet record's name
-  # (docs/design-system.md, "Facets a configured domain serves"). The name
-  # erx_pattern_test opens is the display service's in the manifest the suite boots; any
-  # other name finds no grant, and the client polls until the suite's wait runs out.
-  def test_the_client_opens_the_display_by_its_service_name
-    service = record(Suite.manifest(KEPT), "service #{Suite::SERVICE}")
-    registry_name = service[/^  name "?([a-z_]+)"?$/, 1] || Suite::SERVICE
-    source = File.read(File.join(ROOT, 'test/erlang/apps/erx_pattern_test/src/erx_pattern_test.erl'))
-    assert_equal registry_name, source[/^-define\(DISPLAY, ([a-z_]+)\)\.$/, 1]
-  end
-
   # The manifest check admits the suite's manifest, properties 4 and 18 among its own,
   # over the fixture's archive with a planner that places nothing.
   def test_the_manifest_check_admits_the_suite_s_manifest

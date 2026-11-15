@@ -26,17 +26,17 @@ every well-formed call is {error, enotsup}, register/0 included. It does not loa
 lock and fault thread live as long as the system domain.
 
 The registered process, the domain service, is also the only one that may
-change the library: create/1, configured/3, session/4, start/1, stop/2, retire/1,
+change the library: create/1, configured/3, session/5, start/1, stop/2, retire/1,
 connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, connect/6, disconnect/1,
-         configured/0, configured/3, templates/0, devices/0, session/4, code_object/2, code_drop/2,
+         configured/0, configured/3, templates/0, devices/0, session/5, code_object/2, code_drop/2,
          end_commit/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, devices_nif/0,
-       session_create_nif/4, end_commit_nif/1]).
+       session_create_nif/5, end_commit_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -267,14 +267,19 @@ configured(Id, Row, DomainPid) ->
 -doc """
 A session's start: builds a session of template Template, an index
 templates/0 gave, under id Id, name Name and domain pid DomainPid, as
-create/1 builds a request's domain. Everything else is the template's and
-its limits record's, which the library judges against the template's
-principal as it judges a request: its ceilings, share, budget and domain
-quota, and SPACES, which a session's limits must hold.
+create/1 builds a request's domain, with Display, the service name of its
+default display or none, as its `display` variable after the template's
+environment (docs/design-display.md, "Choosing a display"). Everything
+else is the template's and its limits record's, which the library judges
+against the template's principal as it judges a request: its ceilings,
+share, budget and domain quota, and SPACES, which a session's limits must
+hold.
 """.
--spec session(pos_integer(), non_neg_integer(), binary(), pid()) -> {ok, created()} | error().
-session(Id, Template, Name, DomainPid) ->
-    session_create_nif(Id, Template, Name, DomainPid).
+-spec session(pos_integer(), non_neg_integer(), binary(), atom(), pid()) -> {ok, created()} | error().
+session(Id, Template, Name, none, DomainPid) ->
+    session_create_nif(Id, Template, Name, <<>>, DomainPid);
+session(Id, Template, Name, Display, DomainPid) ->
+    session_create_nif(Id, Template, Name, atom_to_binary(Display), DomainPid).
 
 -doc "A session's code object: {error, enotsup} until sessions exist.".
 -spec code_object(pos_integer(), non_neg_integer()) -> {ok, map()} | error().
@@ -322,7 +327,7 @@ templates_nif() ->
 devices_nif() ->
     erlang:nif_error(undef).
 
-session_create_nif(_Id, _Template, _Name, _DomainPid) ->
+session_create_nif(_Id, _Template, _Name, _Display, _DomainPid) ->
     erlang:nif_error(undef).
 
 end_commit_nif(_How) ->

@@ -633,7 +633,7 @@ LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t length)
 	case 5:
 		origin = ERX_DOM_SESSION;
 		status = erx_dom_plan_session(&view, in.id, in.row, in.req.name,
-		    in.req.name_len, ERX_DOM_PID_NONE, &plan);
+		    in.req.name_len, in.req.name, in.req.name_len, ERX_DOM_PID_NONE, &plan);
 		break;
 	default:
 		origin = ERX_DOM_PARTIAL_BOOT;
@@ -654,7 +654,7 @@ LLVMFuzzerTestOneInput(const uint8_t *bytes, size_t length)
 		break;
 	case ERX_DOM_SESSION:
 		status = erx_dom_plan_session(&view, in.id, in.row, in.req.name,
-		    in.req.name_len, ERX_DOM_PID_NONE, &plan);
+		    in.req.name_len, in.req.name, in.req.name_len, ERX_DOM_PID_NONE, &plan);
 		break;
 	default:
 		status = erx_dom_plan_partial(&view, in.id, in.row, &plan);

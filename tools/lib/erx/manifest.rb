@@ -1341,6 +1341,9 @@ module Erx
           args = boot_args(record, property: 14, field: 'session.args')
           invalid('arguments and environment exceed the boot page\'s strings', 14, 'session.args') if
             args.bytesize + words(record, 'env').bytesize > @codec.constant('boot_strings_max')
+          # A session's start gives it its display variable after the template's words, which may not shadow it.
+          invalid('a session template\'s environment sets the display variable its start gives it', 14, 'session.env') if
+            words(record, 'env').split("\0").any? { |word| word.partition('=').first == @codec.fixed_bytes('display_key') }
           runtime = artifact(record, 'runtime', 'executable', property: 14, field: 'session.runtime')
           release = artifact(record, 'release', 'release', property: 14, field: 'session.release')
           { 'principal' => principal, 'limits' => limits, 'runtime' => runtime.fetch('entry'),

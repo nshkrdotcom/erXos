@@ -44,9 +44,10 @@ erx_dom_lib_configured(erx_dom_lib_t *lib, uint32_t id, uint32_t row, erx_dom_pi
 
 erx_status_t
 erx_dom_lib_session(erx_dom_lib_t *lib, uint32_t id, uint32_t template, const char *name, uint32_t name_len,
-    erx_dom_pid_t domain_pid, erx_dom_created_t *created)
+    const char *display, uint32_t display_len, erx_dom_pid_t domain_pid, erx_dom_created_t *created)
 {
-	(void)lib, (void)id, (void)template, (void)name, (void)name_len, (void)domain_pid, (void)created;
+	(void)lib, (void)id, (void)template, (void)name, (void)name_len, (void)display, (void)display_len;
+	(void)domain_pid, (void)created;
 	return (ERX_ENOTSUP);
 }
 

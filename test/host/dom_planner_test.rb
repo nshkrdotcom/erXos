@@ -197,6 +197,46 @@ class DomPlannerTest < Minitest::Test
     system.sub(/(limits native\n(?:  .*\n)*?  grant )@share\.users/, '\1@share.narrow') + SESSIONS
   end
 
+  # A session's default display is the word its start adds after its template's
+  # environment (erx_dom_plan_session). A template whose environment sets the display
+  # variable, which would shadow the word, is refused: by the check (property 14), and by
+  # the view over bytes the check packed with another key that the test then renames. A
+  # key that only starts with display is the template's own. The view keeps room for the
+  # word at its longest: an environment that leaves exactly that room is admitted, one
+  # byte more is refused.
+  def test_a_session_template_leaves_its_start_room_for_the_display_variable
+    with_env = ->(words) { with_sessions.sub("session guest\n", "session guest\n  env \"#{words}\"\n") }
+    refused = ->(bytes, name) { view_lines(bytes, name).grep(/\Arefused /) }
+    error = assert_raises(Erx::Manifest::Invalid) { admit(with_env.call('LANG=C display=other')) }
+    assert_equal [14, 'session.env'], [error.property, error.field]
+    bytes = admit(with_env.call('LANG=C dispXay=other')).bytes
+    assert_equal 1, bytes.scan('dispXay=other').size
+    assert_equal ['refused manifest: a session template\'s environment sets the display variable its start gives it'],
+                 refused.call(bytes.sub('dispXay=other', 'display=other'), 'session-display')
+    assert_empty refused.call(admit(with_env.call('LANG=C displayed=yes')).bytes, 'session-displayed')
+    # Guest's arguments as the check packs them (Erx::Manifest's boot_args): its release's binding alone.
+    room = session_env_room - %w[-- -boot /bin/app --].sum { |arg| arg.bytesize + 1 }
+    word =->(bytes) { "E=#{'a' * (bytes - 3)}" }
+    assert_empty refused.call(admit(with_env.call(word.call(room))).bytes, 'session-room')
+    error = assert_raises(Erx::Manifest::Invalid) { admit(with_env.call(word.call(room + 1))) }
+    assert_match(/a session template's arguments and environment leave the boot page's strings no reserve for its node names and display/,
+                 error.message)
+  end
+
+  # The bytes of arguments and environment, NULs included, a session template may
+  # hold: the boot page's strings less the view's reserve for node names, the build
+  # record and the display's word (boot_templates), as the C headers define them.
+  def session_env_room
+    source = File.join(@directory, 'session-room.c')
+    File.write(source, "#include <stdio.h>\n#include \"erx/boot_words.h\"\n#include \"erx/dom_lib.h\"\n" \
+                       "int main(void) { printf(\"%zu\\n\", (size_t)ERX_BOOT_STRINGS_MAX - 2u * ERX_DOM_NODE_MAX - " \
+                       "ERX_BOOT_BUILD_WORDS_MAX - ERX_DOM_SESSION_DISPLAY_WORD_MAX); return 0; }\n")
+    output = File.join(@directory, 'session-room')
+    @runner.run([ENV.fetch('ERX_CLANG', 'clang'), '-std=c17', *Erx::Generated.include_flags(root: ROOT),
+                 '-I', File.join(ROOT, 'include'), '-I', ROOT, source, '-o', output], name: 'session-room-build', deadline: 60)
+    Integer(File.read(@runner.run([output], name: 'session-room', deadline: 10).fetch('log')), 10)
+  end
+
   # A template is no configured domain: alpha is the one domain the boot plans.
   def test_session_templates_are_not_configured_domains
     assert_equal 1, admit(with_sessions).report.fetch('child_plan_instances')

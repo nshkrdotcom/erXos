@@ -335,7 +335,7 @@ create_charged_to_the_system_principal() ->
 %% it once it is ready and awaits its end: the session's node.
 session_named(Principal, Template, Name) ->
     {ok, Session} = erx_domain:start_session(Principal, #{}),
-    ?assertEqual({session, erx_domain:id(Session), Template, Name}, next_call()),
+    ?assertEqual({session, erx_domain:id(Session), Template, Name, none}, next_call()),
     _ = [next_call() || _ <- [open_side, export, start]],
     ok = erx_domain:stop(Session, shutdown),
     retired(erx_domain:id(Session)),
@@ -1013,7 +1013,7 @@ sessions() ->
     {ok, First} = erx_domain:start_session(1, #{console => Echo}),
     Id = erx_domain:id(First),
     ?assertEqual('root_1@erxos', erx_domain:node(First)),
-    ?assertEqual({session, Id, 0, <<"root_1">>}, next_call()),
+    ?assertEqual({session, Id, 0, <<"root_1">>, none}, next_call()),
     ?assertEqual({open_side, Id, 'root_1@erxos', Id * 10}, next_call()),
     ?assertEqual({export, Id, [send]}, next_call()),
     ?assertEqual({start, Id}, next_call()),
@@ -1030,7 +1030,7 @@ sessions() ->
     %% no session is restarted.
     {ok, Second} = erx_domain:start_session(1, #{}),
     ?assertEqual('root_1@erxos', erx_domain:node(Second)),
-    ?assertEqual({session, Id + 71, 0, <<"root_1">>}, next_call()),
+    ?assertEqual({session, Id + 71, 0, <<"root_1">>, none}, next_call()),
     _ = [next_call() || _ <- [open_side, export, start]],
     ok = erx_domain:stop(Second, shutdown),
     retired(Id + 71),
@@ -1043,7 +1043,7 @@ killed_session_restarts() ->
     %% pid's end is not refused.
     {ok, First} = erx_domain:start_session(1, #{}),
     Id = erx_domain:id(First),
-    ?assertEqual({session, Id, 0, <<"root_1">>}, next_call()),
+    ?assertEqual({session, Id, 0, <<"root_1">>, none}, next_call()),
     _ = [next_call() || _ <- [open_side, export, start]],
     Ref = monitor(process, erx_domain:pid(First)),
     ok = erx_domain:stop(First, kill),
@@ -1053,7 +1053,7 @@ killed_session_restarts() ->
     ?assertEqual({close_side, Id, {domain_down, Id, stopped}}, next_call()),
     ?assertEqual({disconnect, Id * 10}, next_call()),
     ?assertEqual({retire, Id}, next_call()),
-    ?assertEqual({session, Id + 1, 0, <<"root_1">>}, next_call()),
+    ?assertEqual({session, Id + 1, 0, <<"root_1">>, none}, next_call()),
     _ = [next_call() || _ <- [open_side, export, start]],
     ok = erx_domain:stop(Second, shutdown),
     retired(Id + 1).

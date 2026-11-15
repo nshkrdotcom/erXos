@@ -1375,9 +1375,11 @@ caller ever hands the planner a specification or an origin:
   row of a partial-boot manifest, with the partial boot's system
   principal and the manifest's native limits; it sets
   `ERX_DOM_PARTIAL_BOOT`;
-* `erx_dom_plan_session(view, id, template, name, name_len, domain_pid)`
-  takes an index into the checked manifest's session templates and the
-  name the domain service chose; everything else (principal, images,
+* `erx_dom_plan_session(view, id, template, name, name_len, display, display_len, domain_pid)`
+  takes an index into the checked manifest's session templates, the
+  name the domain service chose and the session's default display, a
+  service name or none, which its environment gains as `display=NAME`
+  after the template's words; everything else (principal, images,
   arguments, complete limits and flags) is the template's and its limits
   record's, so a session is its template by construction. A template
   whose limits lack `ERX_DOM_SPACES` is `ERX_EINVAL`. It sets

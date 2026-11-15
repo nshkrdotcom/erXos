@@ -201,9 +201,13 @@ class DomCoreTest < Minitest::Test
     assert_includes lines, 'ctor configured_display 0 LANG=C|display=screen|display_policy=single|' \
                            'display_idle_dim_s=60|display_idle_off_s=4294967295|',
                     'a display domain\'s environment is its row\'s words, then its display record\'s'
-    assert_includes lines, 'ctor session_owned 0 4 0 2 2 6000 4 3 sess',
+    assert_includes lines, 'ctor session_owned 0 4 0 2 2 6000 4 3 sess 0',
                     'a session is its template: under its principal, SPACES, the template\'s limits and memory, ' \
-                    'with the caller\'s pid and name'
+                    'with the caller\'s pid and name, and with no display no word of one'
+    assert_includes lines, 'ctor session_display 0 LANG=C|display=screen|',
+                    'a session\'s default display is one word after its template\'s environment'
+    assert_includes lines, "ctor session_display_refused #{EINVAL} #{EINVAL}",
+                    'a display name holding a NUL, or longer than a name, is refused'
     assert_includes lines, 'ctor partial_owned 0 3 0 4294967295 7',
                     'a partial-boot domain has no connection row and its id for a name'
   end

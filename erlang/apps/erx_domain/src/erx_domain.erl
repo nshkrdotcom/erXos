@@ -102,14 +102,16 @@ quota. Start names, each optional:
 
 * console, the session's one facet, a grant as a create's spec takes it,
   which names the line the session starts at;
-* display, a service the template is granted, which makes the session that
-  display's session: the session's grant on it carries the session mark in
-  every mint (docs/design-system.md, "Facets a configured domain serves");
-* default_display, a service the template is granted, which the session's
-  record keeps as its default display and no mint carries.
+* display, a display (a windows service) the template is granted, which is
+  the session's default display, its `display` variable, and makes the
+  session that display's session: the session's grant on it carries the
+  session mark in every mint (docs/design-system.md, "Facets a configured
+  domain serves");
+* default_display, a display the template is granted, which is only the
+  session's default display, and no mint carries.
 
 display and default_display exclude each other, and either one naming a
-service the template is not granted refuses the start with {bad_spec, Key};
+display the template is not granted refuses the start with {bad_spec, Key};
 any other key is no facet the funnel lets through, {bad_spec, facets}. The
 session's name is its principal's name in the system manifest, root for the
 system principal, and the lowest number no living session of the principal

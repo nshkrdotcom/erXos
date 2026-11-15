@@ -69,6 +69,7 @@ static const char *boot_devices(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_device_entry_t *, erx_dom_device_t *);
 static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool);
 static bool	boot_env_names_display(const char *, uint32_t);
+static bool	boot_env_sets(const char *, uint32_t, const char *);
 static const char *boot_display(const erx_manifest_view_t *, uint32_t, const char *, uint32_t,
 		    erx_dom_display_t *);
 static const char *boot_places(erx_dom_configured_t *, uint32_t, const erx_manifest_view_t *);
@@ -483,17 +484,26 @@ boot_env_names_display(const char *env, uint32_t env_len)
 {
 	static const char *const keys[] = { ERX_DISPLAY_KEY_STRING, ERX_DISPLAY_POLICY_KEY_STRING,
 	    ERX_DISPLAY_IDLE_DIM_KEY_STRING, ERX_DISPLAY_IDLE_OFF_KEY_STRING };
+
+	for (size_t key = 0; key < sizeof(keys) / sizeof(keys[0]); key++) {
+		if (boot_env_sets(env, env_len, keys[key]))
+			return (true);
+	}
+	return (false);
+}
+
+/* Whether an environment of env_len bytes of NUL-terminated KEY=VALUE words sets key. */
+static bool
+boot_env_sets(const char *env, uint32_t env_len, const char *key)
+{
+	const size_t length = strlen(key);
 	uint32_t at = 0, end;
-	size_t length;
 
 	while (at < env_len) {
 		for (end = at; end < env_len && env[end] != '\0'; end++)
 			continue;
-		for (size_t key = 0; key < sizeof(keys) / sizeof(keys[0]); key++) {
-			length = strlen(keys[key]);
-			if (end - at > length && memcmp(env + at, keys[key], length) == 0 && env[at + length] == '=')
-				return (true);
-		}
+		if (end - at > length && memcmp(env + at, key, length) == 0 && env[at + length] == '=')
+			return (true);
 		at = end + 1;
 	}
 	return (false);
@@ -666,9 +676,18 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		principal = session.principal + 1;
 		if (index > 0 && principal <= templates[index - 1].principal)
 			return ("manifest: the session templates are not one per principal in principal order");
-		if (!boot_strings_fit(session.args.length, session.env.length, 0, false))
+		/*
+		 * A session's default display is the word its start adds after the
+		 * template's environment (erx_dom_plan_session), which must neither
+		 * be shadowed by the template's own nor overrun the strings. The
+		 * reader's string class has ended the template's last word.
+		 */
+		if (boot_env_sets(strings + session.env.offset, session.env.length, ERX_DISPLAY_KEY_STRING))
+			return ("manifest: a session template's environment sets the display variable its start gives it");
+		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_DISPLAY_WORD_MAX, 0,
+		    false))
 			return ("manifest: a session template's arguments and environment leave the boot page's strings "
-			    "no reserve for its node names");
+			    "no reserve for its node names and display");
 		templates[index] = (erx_dom_template_t){ .principal = principal,
 		    .flags = (profile.flags & ERX_MF_LIMITS_SPACES) != 0 ? ERX_DOM_SPACES : 0,
 		    .memory = profile.memory, .outer = profile.outer, .grant = profile.grant,

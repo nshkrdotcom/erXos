@@ -992,9 +992,9 @@ from the app's admitted record:
   admission kept, and no others; each mint computes its parameters from
   the session's principal, the app's, as every mint does
   ([design-system.md](design-system.md#facets-a-configured-domain-serves));
-* the ready answer, which hands the session its default display
-  ([design-apps.md](design-apps.md#starting-a-session)), also hands it
-  the app's record: the place of the package's file
+* its environment holds its default display, which its planning sets
+  ([design-apps.md](design-apps.md#starting-a-session)), and the ready
+  answer hands it the app's record: the place of the package's file
   (`packages/NAME.app` or `packages/image/NAME.app`, or `/pkg/NAME.app`
   in the release on the stopgap), the header's layout, and its
   applications or its program with its arguments and whether it has a

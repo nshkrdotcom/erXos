@@ -167,6 +167,7 @@ serves the display's service.
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
+                     windows := [name()],
                      areas := [area()],
                      deadline := pos_integer()}.
 %% A party of a pair as the domain service records it: its id and its origin, a
@@ -205,10 +206,10 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
                               || {Grantee, Name, Server, Limits} <- ForDomains]),
     Templates = maps:groups_from_list(fun({{template, T}, _, _, _}) -> T end,
                                       fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end, ForTemplates),
+    Windows = maps:get(windows, Config, []),
     #{declared => Declared, grants => Entries, rows => #{}, templates => Templates, sessions => #{},
-          next_tag => 1, owner => Owner, files => maps:get(files, Config, []),
-          areas => areas(maps:get(windows, Config, []), Grants),
-          deadline => maps:get(deadline, Config, ?DEADLINE)}.
+          next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
+          areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
 entry(Server, Limits, Mark) -> #{server => Server, limits => Limits, mark => Mark, state => idle}.
 
@@ -218,13 +219,14 @@ grants(#{grants := Grants}) ->
     #{Key => Grant || Key := #{state := Grant} <- Grants}.
 
 -doc """
-Whether the manifest grants template Template's sessions the service Name
-of a configured domain: the services a session's start may name as its
-display (erx_domain_srv), so a start names only a grant its template has.
+Whether the manifest grants template Template's sessions the display Name,
+a service of the windows interface of a configured domain: the services a
+session's start may name as its display (erx_domain_srv), so a start names
+only a display its template is granted.
 """.
 -spec granted(template(), term(), state()) -> boolean().
-granted(Template, Name, #{templates := Templates}) ->
-    lists:keymember(Name, 1, maps:get(Template, Templates, [])).
+granted(Template, Name, #{templates := Templates, windows := Windows}) ->
+    lists:member(Name, Windows) andalso lists:keymember(Name, 1, maps:get(Template, Templates, [])).
 
 -doc """
 The names of the services of configured domains the manifest grants

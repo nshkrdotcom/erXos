@@ -61,6 +61,15 @@
 	    sizeof(ERX_DISPLAY_IDLE_DIM_KEY_STRING "=4294967295") +	\
 	    sizeof(ERX_DISPLAY_IDLE_OFF_KEY_STRING "=4294967295"))
 
+/*
+ * The environment word a session gains from its start's display, its
+ * default display (docs/design-display.md, "Choosing a display"):
+ * display=NAME with its NUL, the name at its longest, ERX_DOM_NAME_MAX
+ * bytes; the sizeof counts the '=' and the NUL.
+ */
+#define ERX_DOM_SESSION_DISPLAY_WORD_MAX				\
+	(sizeof(ERX_DISPLAY_KEY_STRING "=") + ERX_DOM_NAME_MAX)
+
 /* Origin kinds; zero is no origin, so a zeroed origin fails planning. */
 #define ERX_DOM_REQUEST		1u
 #define ERX_DOM_CONFIGURED	2u
@@ -862,7 +871,11 @@ bool		erx_dom_from_row(const erx_dom_origin_t *origin, uint32_t row);
  * bytes of `name`, the name the domain service chose; only the domain
  * service's start of a session calls it, beside the manifest check's host
  * planner (tools/host/dom_plan.c), which plans each enabled start row's
- * session and applies none. Everything but the name, id and
+ * session and applies none. display_len bytes of `display` name the
+ * session's default display, which its environment gains after the
+ * template's words as display=NAME (ERX_DOM_SESSION_DISPLAY_WORD_MAX); a
+ * display_len of 0 names none, and a name longer than ERX_DOM_NAME_MAX or
+ * holding a NUL is ERX_EINVAL. Everything else but the name, id and
  * pid is the template's and its limits record's, so a session is its
  * template by construction, and planning it as any other domain judges
  * its limits against its principal's ceilings, its group against its
@@ -872,6 +885,7 @@ bool		erx_dom_from_row(const erx_dom_origin_t *origin, uint32_t row);
  */
 erx_status_t	erx_dom_plan_session(const erx_dom_view_t *, uint32_t id,
 		    uint32_t template, const char *name, uint32_t name_len,
+		    const char *display, uint32_t display_len,
 		    erx_dom_pid_t domain_pid, erx_dom_plan_t *plan);
 
 /*
