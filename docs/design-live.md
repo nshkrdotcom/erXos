@@ -550,7 +550,8 @@ on the host:
   16 KiB, and the rest is dropped, as FreeBSD drops echo that finds its
   output queue full, so a run of `VREPRINT` keys costs no more than its
   bytes.
-* `read_wait(Open, Tty)`, for a blocking read that starts to wait,
+* `read_wait(Open, Count, Tty)`, for a blocking read of `Count` bytes that
+  starts to wait,
   `poll_wait(Open, Tty)`, for a `poll` that waits for input,
   `cancel(Open, Tty)`, for a wait that a signal or a close ends,
   `timer(Timer, Tty)`, for a timer's end, and `read(Open, Max, Tty)`, for the
@@ -562,6 +563,12 @@ on the host:
   cancelled or replaced does nothing. A `poll` is ready at a complete line
   in cooked mode and at one byte in raw mode, whatever `VMIN` says, since
   FreeBSD's `poll` counts the bytes a read could take (`ttydisc.h:72`).
+* `unread(Bytes, Tty)` puts bytes that a reader took and did not use back
+  ahead of every byte that waits, as if they had never been read, with no
+  echo and no signal; under `ICANON` they join the readable bytes, in
+  which a read looks for a line's end, as after a change of `ICANON`. The
+  session's console is the one reader that gives bytes back
+  ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).
 * `set(Termios, Tty)` takes a new `termios`, checking it whole; a flag
   outside `erx_tty`'s table fails with `EINVAL`. The `termios` is an Erlang
   map of four flag lists, the character size, the special characters by name
@@ -614,6 +621,11 @@ program, are two waiters, and neither replaces the other.
   * `VMIN` 0, `VTIME` above 0: at the first byte, or when a timer that
     `read_wait` starts ends, and the read then returns no bytes;
   * both 0: at once, with whatever waits.
+
+  In the first two cases a read of fewer bytes than `VMIN` can go on at its
+  own count, as FreeBSD's read returns once its buffer is full
+  (`tty_ttydisc.c:290`, `:331`, `:384`), which is why `read_wait` takes the
+  count.
 * `ECHO`, `ISIG` and `OPOST` are flags of their own, which `cfmakeraw` clears
   with the rest, so a tty made raw with it delivers `Ctrl-Z` as data.
 * With `ISIG`, `VINTR`, `VQUIT` and `VSUSP` signal the foreground group.
@@ -637,22 +649,31 @@ A new tty starts cooked, with FreeBSD's defaults
 
 **A shell's line editor is a program on a raw tty.** `group`, `edlin` and
 `prim_tty` are to a shell what readline is to `bash`. While the shell
-prompts, its tty has `ICANON`, `ECHO`, `ICRNL` and `OPOST` clear, as stock
+prompts, its tty has `ICANON`, `ECHO` and `OPOST` clear, as stock
 OTP sets a real terminal (`erts/emulator/nifs/common/prim_tty_nif.c:1115-1127`,
 so `prim_tty` writes its own CR-LF), and `ISIG` clear, since `ssh_cli` and the
-group take `Ctrl-C` as data. The process that drives the group, the terminal
-relay or for the system shell `erx_console`, takes each request through
+group take `Ctrl-C` as data. `ICRNL` stays set, which stock OTP clears, as
+libedit keeps it while it edits (`contrib/libedit/tty.c:80`): an Enter typed
+ahead of a command is then a newline in the tty, the end of the command's
+cooked line ([design-shell.md](design-shell.md#the-terminal-relays-protocol)),
+and `edlin` takes `\n` as it takes `\r`
+(`lib/stdlib/src/edlin_key.erl:201-202`). The process that drives the group
+is `erx_console`, whose line driver is the session's terminal relay for a
+session's shell and the UART's driver for the system shell
+([design-runtime.md](design-runtime.md)). It takes each request through
 `prim_tty:handle_request/2`, whose state comes from `prim_tty:init_ssh/3`
 (`lib/kernel/src/prim_tty.erl:308`), which needs neither a terminal
-descriptor nor terminfo, and writes the bytes to the tty as any writer does, or
-for the system shell to the driver. Input goes to the group as `{self(), {data, Chars}}`, the protocol `ssh_cli`
+descriptor nor terminfo, and writes the bytes to its driver; the relay
+writes them to the tty as any writer does. Input goes to the group as `{self(), {data, Chars}}`, the protocol `ssh_cli`
 uses (`lib/ssh/src/ssh_cli.erl:420`), and `Ctrl-C` interrupts the shell's
 evaluator as `ssh_cli` turns it into `exit(Group, interrupt)`
 (`lib/ssh/src/ssh_cli.erl:409-411`). Before the shell starts a foreground
 job it sets the tty's `termios` back to cooked, keeps the job's when the job
 stops, and restores its own when the job ends or stops and the job's at `fg`,
 as a UNIX shell does. So a program that ends in raw mode leaves nothing in
-the `termios`. What it left on the terminal itself, an alternate screen, a
+the `termios`; how much of the setting an ended job leaves the next job
+keeps is an open decision
+([design-shell.md](design-shell.md#risks-and-open-questions)). What it left on the terminal itself, an alternate screen, a
 hidden cursor or a colour, stays until the operator runs `reset`, as on UNIX.
 
 **The editor's rendering is not the tty's.** A process's `io:put_chars` is
@@ -2741,8 +2762,10 @@ determinism test of the generated tree.
   with the same `termios`, comparing what a reader gets, what is echoed and
   what the master gets. `ONLCR` applied with `OPOST` clear fails both. Its
   `set/2`, `size/3` and `input/2` have a fuzz target. The exploration also drives
-  `read_wait/2`, `timer/2` and `read/3` as events, over each of POSIX's four
-  `VMIN` and `VTIME` cases.
+  `read_wait/3`, `timer/2`, `read/3` and `unread/2` as events, over each of
+  POSIX's four `VMIN` and `VTIME` cases and read counts below and above
+  `VMIN`. A `read_wait` that ignores its count, and an `unread` that puts
+  its bytes behind what waits, each fail the exploration's model.
 * **Cooked and raw:** a program that reads a line in cooked mode, with
   `VERASE` and `VKILL` typed; one that turns off `ECHO` and reads a password
   that is not echoed; one that goes raw, reads single keys and draws; `Ctrl-Z`

@@ -476,7 +476,8 @@ another ([Passing descriptors](#passing-descriptors)). A `file` descriptor
 names an **open** of the handler's open table, an open-file description at
 its server reached through a grant the handler holds, with that
 description's access mode ([Descriptors and files](#descriptors-and-files));
-a `tty` descriptor is the same for a terminal, a `dir` an open directory,
+a `tty` descriptor names an open of a terminal's description, which the
+terminal relay serves ([The terminal](#the-terminal)), a `dir` an open directory,
 through which `openat` resolves, and a `socket` an open of a socket's
 open-file description; a `dup` makes its number name the same object as another
 descriptor of the message, which is not itself a `dup`. A `mem`
@@ -811,8 +812,8 @@ holds one ends the program (Credit, below).
 | `{stop, Signal}` | in the second tier, pause the program for a stop signal under its default action ([The terminal](#the-terminal)) | `ok` once the program has been paused and continued, so the reply reaches it only after it is continued; at once when POSIX discards the signal |
 | `{file, Op, ...}` | an operation of 9P2000.L for the program, its name `Op` after `file` and its fields after the name, so each operation is a case of the request union with a reply of its own ([design-files.md](design-files.md#the-file-protocol)), with a path to resolve through the program's namespace, or the program's `Open`, in place of a fid: `walk`, `lopen`, `lcreate`, `read`, `write`, `clunk`, `close`, the program's own operation for a descriptor close that leaves its open other references, which releases the program's locks on the file and keeps the open ([Descriptors and files](#descriptors-and-files)), `remove`, `getattr`, `setattr`, `readdir`, `fsync`, `lock`, `getlock`, `link`, `symlink`, `mknod`, `renameat`, `unlinkat`, `readlink`, `mkdir`, `statfs` and the xattr operations; a read or a write names a count and a slot of the data area, and for `pread` and `pwrite` an offset, and its open's description supplies the offset otherwise; for `lock` and `getlock` the handler sets `ProcId` to the program's own, one per program, so its programs' locks conflict as UNIX processes' do ([Descriptors and files](#descriptors-and-files), [design-files.md](design-files.md#locks)) | the operation's reply, `{ok, Open}` for an `lopen` or an `lcreate`, `{ok, Count}` for a read or a write, mapped to `Errno` on failure |
 | `{local, Op}` | an operation the session answers from its own tables, which reaches no server but by a `walk` or a `getattr`: `{seek, Open, Offset, Whence}` on the open's description, `{setfl, Open, Flags}` of the description's status flags, `{chdir, Path}`, and `{access, Path, Mode}`, answered from the rights of the grant the path resolves through ([Descriptors and files](#descriptors-and-files)) | `{ok, Value}`; `{error, Errno}` |
-| `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer; `{error, enotty}` for any other open |
-| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`: the session's terminal relay answers for a terminal, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
+| `{tty, Open, Request}` | a terminal's `ioctl` for a `tty` open: `tcgetattr`, `tcsetattr`, `{tcsetattr, Termios, sigttou_ignored}` from a thread that ignores or blocks `SIGTTOU`, `tcgetpgrp`, `tcsetpgrp` and the window size, which the handler takes to the session's terminal relay, the owner of every terminal of the session, never through the file protocol ([The terminal](#the-terminal)) | the relay's answer, `{background, Orphaned}` among them, from which `liberx` decides as [The terminal](#the-terminal) says; `{error, enotty}` for any other open |
+| `{watch, Open, Events}` | ask for one `{ready, Open, Events}` report once a terminal or a socket is ready for `Events`, a terminal's read naming its count as `{read, Count}`: the session's terminal relay answers for a terminal, and the socket's open-file description, over the socket protocol of [design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs), for a socket; a file is always ready, and the file protocol carries no watch ([The terminal](#the-terminal)) | `ok` at once, the report later |
 | `{map, What, Use}` | give the requester an object of a file: for `Use` of `code` or `data`, the file's sealed file object, `What` a path the handler opens with `lopen` for reading, and for code only through a grant of the program's that carries `rx` ([File objects](#file-objects)); for `{shared, End}`, the session's object for the file, covering at least `End` bytes, `What` the program's `Open` of a file ([Shared libraries and mappings of files](#shared-libraries-and-mappings-of-files)) | `{ok, Cap}`, the object's capability value in the requester's table, and for a shared mapping `{ok, Cap, Open}`, with the mapping open that holds the requester's share; `{error, Errno}` |
 | `{fork, Start}` | the second tier's `fork`: `Start` names what the child receives, planned as for a spawn: every descriptor without a `dup`, each as `{pipe, End}`, `{socketpair, End, End}` or `{open, Open}`, and the flags of `cloexec` ([Fork](#fork)) | `{ok, Pid}`; `{error, Errno}` |
 | `{exec, Image, Start}` | the second tier's `exec`, first step, sent once the program's other threads are parked: build the requester's next image from `Image`, `{object, Cap}` for a file object of code that `liberx` obtained with `{map, Path, code}` and checked, or `{command, Path}` for a command of `/bin`; `Start` holds what the next image keeps that the parking froze ([Exec](#exec)) | `ok` once the next image is built, past which `exec` never returns; `{error, e2big}` past the message's bound; `{error, Errno}`; each error with the old image whole |
@@ -982,7 +983,7 @@ on anything but a terminal fails with `ENOTTY`. The table belongs
 to the image, so a change to it costs no frame to the handler beyond the
 opens and closes it causes; an `exec` names its kept part in `{exec}`, from
 which the handler builds the next image's ([Exec](#exec)).
-**Open-file descriptions.** An `open` of a file, a directory or a terminal
+**Open-file descriptions.** An `open` of a file or a directory
 makes an **open-file description**, as POSIX names it: a process of the
 session that holds two fids at the file's server, an **unopened fid** of
 the file and an **opened fid**, in the access mode and with the
@@ -995,6 +996,11 @@ session too, which holds no fid and is the socket's owner at the network
 service instead, and which the rules below for sharing, passing and
 closing a description cover as they cover a file's
 ([design-network-stack.md](design-network-stack.md#the-interface-towards-posix-programs)).
+An `open` of `/dev/tty` at the session's export makes a terminal's
+description in the same way: it holds no fid, keeps the status flags, and
+each program's open of it carries an open of the terminal relay that the
+program's handler made under the program's job ([The
+terminal](#the-terminal)).
 
 The two fids arise at the `open`. `lopen` opens a fid in place, so
 without `O_CREAT` the handler walks the path to the unopened fid, clones
@@ -1047,7 +1053,11 @@ the handler hands the request to the open's description, which sends
 9P2000.L's `read` or `write` at its offset, or at the one named, over the
 session's connection to the file's server and advances its offset by the
 count, and the handler copies the reply's bytes into the slot, or the
-slot's bytes into the request, through its NIF; the reply names the
+slot's bytes into the request, through its NIF. A terminal's description
+instead sends the relay `{read, Open, Max}` or `{write, Open, Bytes}`, at
+most 4 KiB, which the relay answers at once
+([The terminal](#the-terminal)), and a socket's goes to the network
+service. The reply names the
 count, and `liberx` then copies out of or into the caller's memory and
 frees the slot. So no byte crosses the channel, no server reaches a
 program's memory, and every server stays a plain process speaking frames.
@@ -2313,9 +2323,16 @@ UNIX process:
 
 **`/dev/tty`.** A session's terminal is a tty
 ([design-live.md](design-live.md#the-tty)), which the session's terminal relay
-owns. The session's export serves it as `/dev/tty`, a file whose reads and
-writes reach the relay, and a program's standard streams that go to the
-terminal are opens on it, so one program's output and error streams reach the
+owns. The session's export names it `/dev/tty`, and a program's standard
+streams that go to the terminal are opens on it. The export serves the name
+alone: the handler that opens it makes a terminal's description
+([Descriptors and files](#descriptors-and-files)) and asks the relay for an
+open, `{open, Job}`, under its program's job, which the command server's
+row gives it, and every read, write, watch and control of that open goes
+to the relay and never through the file protocol
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)). So the
+relay knows the job of every reader, as a terminal knows the process group
+of every process that reads it. One program's output and error streams reach the
 terminal in the order the program wrote them, as they do through one UNIX
 terminal. A write reaches the terminal exact, apart from the tty's output
 flags, whichever job wrote it. A read returns what the line discipline gives
@@ -2342,9 +2359,12 @@ then does `liberx` send the read, which is answered at once, with bytes or
 with `eagain` when another reader took them first, and `liberx` then
 watches again. Several opens of a foreground job may read, as on UNIX, and
 the relay serves their reads one at a time. A read under `O_NONBLOCK` is sent
-at once and fails with `EAGAIN` on `eagain`. A blocking read watches
-`{watch, Open, [read]}`, which is the line discipline's `read_wait` and starts
-the timer that `VTIME` asks for. `poll` watches `{watch, Open, [in]}`, which
+at once and fails with `EAGAIN` on `eagain`. A blocking read of `Count`
+bytes watches `{watch, Open, [{read, Count}]}`, `Count` at most 4,096, which
+is the line discipline's `read_wait` and starts the timer that `VTIME` asks
+for; a raw read is ready at `Count` bytes when that is fewer than `VMIN`, as
+FreeBSD's read returns once its buffer is full
+(`sys/kern/tty_ttydisc.c:290`). `poll` watches `{watch, Open, [in]}`, which
 starts no timer and reports only when bytes wait: a complete line when the
 terminal is cooked and otherwise one byte, whatever `VMIN` says, as FreeBSD's
 `poll` counts the bytes a read could take; it reports `POLLIN` from that, so a `poll` never
@@ -2372,6 +2392,22 @@ on `eagain`. `poll` reports `POLLOUT` from the same reports. musl's stdio is
 ordinary code above this: `__stdio_write` repeats on a short count, and a failed
 `write` sets `F_ERR` and discards its buffer (`musl/src/stdio/__stdio_write.c`),
 as it does on any UNIX.
+
+**Setting a terminal from the background.** A `tcsetattr` follows
+FreeBSD's rule for a process outside the terminal's foreground group
+(`sys/kern/tty.c:456-476`), which `liberx` applies, since it alone knows
+the calling thread's signal state. From a thread that ignores or blocks
+`SIGTTOU` it sends `{tcsetattr, Termios, sigttou_ignored}`, which the relay
+makes whichever job holds the terminal. From any other thread it sends
+`{tcsetattr, Termios}`, which the relay answers `{background, Orphaned}`,
+changing nothing, when the program's job does not hold the terminal; an
+orphaned group's call then fails with `EIO`. In the first tier a job counts
+as orphaned and `Orphaned` is always `true`, so a background program's
+`tcsetattr` fails with `EIO` unless it ignores or blocks `SIGTTOU`. In the
+second tier a group that is not orphaned gets `SIGTTOU`, and `liberx` sends
+the request again once the group is continued, as it does for a write
+under `TOSTOP`. An Erlang command, which has no signal state, stops its job
+instead ([design-shell.md](design-shell.md#interfaces)).
 
 **Status: `VSTATUS` and `SIGINFO`.** `termios` has FreeBSD's `VSTATUS`
 character, `^T` by default, and its `NOKERNINFO` flag, clear by default.
@@ -3382,6 +3418,7 @@ test:
 | in the first tier, a program cannot stop or continue itself or another: `kill` and `raise` of `SIGSTOP` fail with `EPERM`, and `SIGTSTP`, `SIGTTIN` and `SIGTTOU` under their default action are discarded | stopping is the session's job control, and a job's process group is orphaned, for whose members POSIX discards those three; the second tier stops and continues programs within a POSIX session ([The terminal](#the-terminal)) |
 | in the first tier, a job is one process group and session that no program can leave | process groups and sessions that programs create come with pseudo-terminals, in the second tier |
 | in the first tier, `tcsetattr` with `TOSTOP` fails with `EINVAL`, and a background job's write goes through | `TOSTOP`'s rules are about process groups and `SIGTTOU`, which come in the second tier, where POSIX's rules apply |
+| in the first tier, a background program's `tcsetattr` fails with `EIO` unless the thread ignores or blocks `SIGTTOU`, where under FreeBSD's `sh` the job would stop | a first-tier job counts as orphaned, and FreeBSD's terminal fails an orphaned group's call with `EIO` (`sys/kern/tty.c:470-476`); the second tier stops a group that is not orphaned |
 | `kill` of a process that is neither the caller's child nor in a `signal` right's scope it holds fails with `ESRCH`, even when it exists | a process id grants nothing, and the error does not say whether it exists |
 | `kill` with a `pid` of 0, of minus the caller's group or of -1 reaches the caller's children, the processes of its `signal` right's scope and the caller itself, and no other member of its job, its parent and its siblings included | the same rule: a program reaches only its children and what its `signal` right names, so a job's other members are out of its reach unless that right names them ([The POSIX-lite personality](#the-posix-lite-personality)) |
 | process ids are unique within a session only | a session is the namespace of its process ids |
@@ -3734,7 +3771,15 @@ terminal cases.
   line by line in the order written; `/dev/tty` read in the foreground, a
   background job's read that waits until `fg`, a password prompt with
   `ECHO` cleared that does not echo, and `Ctrl-D` that ends one `read`
-  with 0 while the next reads on; a program whose frame is outside the
+  with 0 while the next reads on; a raw read of one byte with `VMIN` 10
+  that returns at the first byte typed, which a `liberx` whose watch
+  carries no count fails; a background program's `tcsetattr` that fails
+  with `EIO` and leaves the `termios` unchanged, and the same call with
+  `SIGTTOU` blocked, which is made, where a `liberx` that ignores the
+  signal state fails the second; `cat` typed together with a line in one
+  write of the master, after which `cat` reads that line and the shell
+  never runs it, which a relay that takes no input back from the console
+  fails; a program whose frame is outside the
   grammar, which ends with `SIGSYS`; and each row of the exit status
   table.
 * **The POSIX-lite personality.** musl's `libc-test` and the Open POSIX Test

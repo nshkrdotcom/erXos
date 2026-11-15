@@ -609,9 +609,8 @@ never with an error. erXos's servers, as QEMU's, answer a `flush` only
 after they have answered the flushed request or abandoned it, so a tag,
 and inside the machine an alias, is never reused while its request could
 still be answered. A client that flushes a request deactivates its alias
-once the flush is answered, so nothing arrives after. A flushed read of a
-terminal therefore either returned a line or took none ([Native
-clients](#native-clients-liberxs-file-client)).
+once the flush is answered, so nothing arrives after. A flushed lock
+request therefore either was granted or took nothing ([Locks](#locks)).
 
 #### Open files and offsets
 
@@ -2132,8 +2131,8 @@ Error step 5 below finds the working directory through this path.
   ends with a request in flight needs no cleanup of its own: the reply
   goes to an alias that ended with it, and the grant clunks its fids when
   its end arrives ([Fid owners](#fid-owners)). `flush` is for a request a
-  live client abandons, as a native program's interrupted read of a
-  terminal is. A server that dies while files are open turns their next
+  live client abandons, as a native program's interrupted wait for a
+  lock is. A server that dies while files are open turns their next
   operations into `{error, eio}`.
 
 A rename or a `make_link` resolves its two paths one after the other,
@@ -2410,12 +2409,15 @@ tells each mapper that the old image's mappings ended, which writes them
 back.
 
 A program's terminal is `/dev/tty` at the session's export, and its
-standard streams that reach the terminal are opens on it; a read is a
-`read` that the export answers when the terminal relay has a line for
-that reader. How a program waits for a terminal, how a signal interrupts
-that wait, and the terminal's controls, which go to the terminal relay
-that owns the terminal and are no operation of the file protocol, are
-the handler's ([design-programs.md](design-programs.md#the-terminal)).
+standard streams that reach the terminal are opens on it. The export
+serves `tty` as a name only, which a walk and a `getattr` reach, and
+answers an `lopen` of it with `enxio`: the handler that opens the name
+makes a terminal's description instead, with an open of the terminal
+relay under its program's job, and the terminal's reads, writes, waits
+and controls all go to the relay, none through the file protocol. So a
+terminal read never waits at a server, and no `flush` ends one: a
+program waits for input with a watch and then reads, and a signal ends
+the watch ([design-programs.md](design-programs.md#the-terminal)).
 
 ### Text in file names
 
@@ -2883,11 +2885,13 @@ report, so a passing run shows the code under test ran.
   reference, which the `dup` case catches; and a description that clunks
   the opened fid an `F_SETFL` replaces, which the `O_APPEND` case
   catches.
-* Flush: a read of `/dev/tty` flushed before a line arrives, which gets
-  no reply but the flush's, and one flushed as the line arrives, whose
-  reply carries the line before the flush's answer;
-  seeded: a server that answers the flush before the read it took a line
-  for, which loses the line and fails the test.
+* Flush: a blocking lock request flushed before the holder unlocks,
+  which gets no reply but the flush's, and one flushed as the holder
+  unlocks, whose reply grants the lock before the flush's answer;
+  seeded: a server that answers the flush before the request it granted,
+  which leaves the lock taken with no owner who knows it and fails the
+  test. The export answers an `lopen` of `/dev/tty` with `enxio`; seeded:
+  an export that opens it, which the case catches.
 * F1: a domain test that a mounted pid the domain was not introduced to
   reaches nothing. F2 and F3: a program given `/data/logs` whose requests
   try every path above it, through `..`, links and other programs' file
@@ -3111,7 +3115,8 @@ and a translation wherever the host and the network speak 9P2000.L, while
 what it buys is already there. A program holds no fid, so the handler that
 is its file server narrows its namespace by walking fids; offsets shared
 by programs live in the session that holds every program sharing them;
-a terminal read blocks and a flush ends it, as 9P's own servers do; and a
+a terminal is no file of the protocol, and its readiness reports are the
+program protocol's, served by the terminal relay; and a
 shared mapping is the session's.
 
 **9P2000.L's bytes on connections too.** Every server would decode
