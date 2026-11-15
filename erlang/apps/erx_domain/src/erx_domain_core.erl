@@ -38,7 +38,7 @@ state is a bug of the caller and fails with a badmatch.
 -export([new/1, host/1, admit/4, built/5, running/2, ready/3, stopping/2, failed/2, ended/5,
          restart/5, fetch/2, find_pid/2, deaths/2, domains/1, info/1, session_prefix/3, session_name/3]).
 -export([inspect_scope/3, inspect_view/2]).
--export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0]).
+-export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0]).
 
 -define(SYSTEM_ID, 4).
 -define(ID_MAX, 16#ffffffff).
@@ -63,6 +63,11 @@ state is a bug of the caller and fails with a badmatch.
                    slogan => slogan()}.
 %% Every domain, or the domains of one principal (inspect_scope/3).
 -type inspect_scope() :: all | {principal, pos_integer()}.
+%% A domain of the inspect view (inspect_view/2): its id, its inspection
+%% agent, and this service's report of it, none for a domain that ended.
+-type inspect_entry() :: {pos_integer(), pid() | none | ended,
+                          #{name := binary(), principal := pos_integer(),
+                            state := booting | running | ending} | none}.
 %% A crash's slogan as the domain wrote it, untrusted text, or why its crash area could not be read.
 -type slogan() :: binary() | {unreadable, atom() | {status, integer()}}.
 -opaque state() :: #{host := binary(), next_id := pos_integer(),
@@ -281,17 +286,29 @@ inspect_scope(Principal, Roots, Development)
 The domains Scope covers, for the inspector's query worker
 (docs/design-live.md, "The inspect service"), in id order: each living
 domain of the scope with the inspection agent its ready report named,
-`none` while it has none, and each domain whose death record is kept,
-`ended`. `{principal, P}` covers P's domains, living and ended, so the
-inspector resolves a principal's scope from these records at each query.
+`none` while it has none, and this service's report of it, its name,
+principal and state; and each domain whose death record is kept, `ended`
+with no report. `{principal, P}` covers P's domains, living and ended, so
+the inspector resolves a principal's scope from these records at each
+query.
 """.
--spec inspect_view(inspect_scope(), state()) -> [{pos_integer(), pid() | none | ended}].
+-spec inspect_view(inspect_scope(), state()) -> [inspect_entry()].
 inspect_view(Scope, #{domains := Domains, deaths := Deaths}) ->
-    Living = [{Id, Agent} || Id := #{principal := Principal, inspect := Agent} <- Domains,
-                             covers(Scope, Principal)],
-    Ended = [{Id, ended} || Principal := Kept <- Deaths, covers(Scope, Principal),
-                            #{id := Id} <- Kept, not is_map_key(Id, Domains)],
+    Living = [{Id, Agent, #{name => erx_ident:to_binary(Name), principal => Principal,
+                            state => inspect_state(Life)}}
+              || Id := #{principal := Principal, inspect := Agent, name := Name, state := Life} <- Domains,
+                 covers(Scope, Principal)],
+    Ended = [{Id, ended, none} || Principal := Kept <- Deaths, covers(Scope, Principal),
+                                  #{id := Id} <- Kept, not is_map_key(Id, Domains)],
     lists:usort(Living ++ Ended).
+
+%% A domain's life as the inspection schema's domain_state names it: booting
+%% until its init reports ready, and ending once it is stopping.
+inspect_state(building) -> booting;
+inspect_state(built) -> booting;
+inspect_state(running) -> booting;
+inspect_state(ready) -> running;
+inspect_state(stopping) -> ending.
 
 covers(all, _Principal) -> true;
 covers({principal, Principal}, Principal) -> true;

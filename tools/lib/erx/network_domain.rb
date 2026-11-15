@@ -69,7 +69,7 @@ module Erx
     # arguments, and the root's pool pages in use.
     LEASE_LINE = [
       'NdDomains = fun() -> erx_domain_core:domains(maps:get(core, sys:get_state(erx_domain_srv))) end',
-      'NdUsed = fun() -> #{attrs := #{used := {_, {_, NdU}}}} = erx_kernel_records:budget(), NdU end',
+      'NdUsed = fun() -> #{attrs := #{used := {_, {_, NdU}}}} = erx_kernel_records:budget(erx_kernel_records:system_domain()), NdU end',
       'NdIfs = fun(NdN) -> erpc:call(NdN, erx_net, interfaces, [], 5000) end',
       'NdLeased = fun(NdN) -> string:find(lists:flatten(io_lib:format("~0p", [NdIfs(NdN)])), "{10,0,2,15}") =/= nomatch end',
       'NdWait = fun NdW(0) -> timeout; NdW(NdK) -> case catch [NdN || #{name := {erx_ident, <<"network">>}, node := NdN} <- NdDomains()] of ' \

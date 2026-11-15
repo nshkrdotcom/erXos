@@ -94,6 +94,16 @@ a_listing_lists_its_ids_and_markers_test() ->
     ?assertEqual([<<"status">>, <<"4.85.0">>],
                  names(erx_procfs_core:listing([processes], listing([processes], [{pid, 4, 85, 0}]), fun every/1))).
 
+%% A principal's tree lists its own domains under domains, as the query worker
+%% answers its facet: the system domain's and other principals' are not there,
+%% and its own domain's directory is reached.
+a_scoped_tree_lists_its_own_domains_test() ->
+    View = fun(_Scope) -> {ok, [{10, none, #{name => <<"web">>, principal => 7, state => running}}]} end,
+    Lookup = fun({_Question, Path}) -> erx_inspect_worker:call({inspect, Path, #{}}, {principal, 7}, #{view => View}) end,
+    ?assertEqual([<<"status">>, <<"10">>], names(erx_procfs_core:listing([domains], Lookup({listing, [domains]}), Lookup))),
+    ?assertMatch({ok, {dir, [domains, 10]}}, erx_procfs_core:walk([domains], <<"10">>, Lookup)),
+    ?assertEqual({error, enoent}, erx_procfs_core:walk([domains], <<"4">>, Lookup)).
+
 marker_files_never_fabricate_test() ->
     ?assertEqual(<<"left_out\t[unknown]\n">>, erx_procfs_core:marker(partial, listing([cpus], {partial, [0]}))),
     ?assertEqual(<<"[unsupported]\n">>, erx_procfs_core:marker(unknown, {error, unsupported})),

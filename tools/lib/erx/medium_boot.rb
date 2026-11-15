@@ -700,7 +700,7 @@ module Erx
         [
           'FpEnded=fun FpE(0)->timeout;FpE(FpK)->case length(erx_domain_core:deaths(1,maps:get(core,sys:get_state(erx_domain_srv)))) >= ' \
           "#{RELEASES.size} of true->ok;false->timer:sleep(200),FpE(FpK-1) end end",
-          'FpUsed=fun()->#{attrs:=#{used:={_,{_,FpU}}}}=erx_kernel_records:budget(),FpU end',
+          'FpUsed=fun()->#{attrs:=#{used:={_,{_,FpU}}}}=erx_kernel_records:budget(erx_kernel_records:system_domain()),FpU end',
           'FpAsk=fun(FpN,FpM,FpF,FpA)->try erpc:call(FpN,FpM,FpF,FpA,20000) catch FpC:FpR->{FpC,FpR} end end',
           'FpList=fun(FpV)->case is_list(FpV) of true->FpV;false->[] end end',
           # The bytes each allocator holds from the system: every mbcs and sbcs carrier of every instance.

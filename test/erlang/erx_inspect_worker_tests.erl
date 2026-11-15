@@ -41,8 +41,27 @@ listing(D, Count, Links) ->
 stalling(D) ->
     agent(D, fun(_Query) -> stall end).
 
+%% Worker options over View, whose entries are {D, Agent} or the domain
+%% service's own {D, Agent, Service}; {D, Agent} stands for a living domain
+%% of principal 7 (living/2), and {D, ended} for one that ended.
 options(View) ->
-    #{view => fun(_Scope) -> {ok, View} end}.
+    #{view => fun(_Scope) -> {ok, [entry(Entry) || Entry <- View]} end}.
+
+entry({D, ended}) -> {D, ended, none};
+entry({D, Agent}) -> living(D, Agent);
+entry({_D, _Agent, _Service} = Entry) -> Entry.
+
+%% A living domain D as the domain service's view gives it.
+living(D, Agent) ->
+    {D, Agent, #{name => <<"web">>, principal => 7, state => running}}.
+
+%% An agent of domain D that answers [domains, D] with its runtime's counters,
+%% as erx_inspect_agent does: the runtime attributes alone.
+counting(D) ->
+    {ok, #{attrs := Attrs} = Record} = erx_runtime_records:domain(D, #{atoms => 1, ets_tables => 2, modules => 3,
+                                                                      processes => 4, run_queue => 5}),
+    Runtime = Record#{attrs := maps:filter(fun(_Key, {Reporter, _}) -> Reporter =:= runtime end, Attrs)},
+    agent(D, fun({inspect, [domains, Domain], _}) when Domain =:= D -> {ok, Runtime} end).
 
 entries_of(D, Records) ->
     [Record || #{path := [processes, {pid, Domain, _, _}]} = Record <- Records, Domain =:= D].
@@ -240,3 +259,80 @@ a_listing_is_cut_by_bytes_test() ->
     ?assert(length(entries_of(?D, Records)) < 700),
     ?assert(erlang:external_size(Answer) =< ?ERX_INSPECT_REPLY_MAX),
     [?assertMatch({ok, _}, erx_schema:validate_record(Record)) || Record <- Records].
+
+%%% The domains.
+
+%% A principal's scope lists only its own domains, in the listing's record
+%% and in its entries, never the system domain's or another principal's,
+%% which the domain service's view does not give it (erx_domain_tests
+%% checks the view; docs/design-live.md, "Scopes").
+a_scoped_listing_holds_only_its_domains_test() ->
+    View = [{?D, counting(?D)}, {?D + 2, counting(?D + 2)}],
+    Ask = fun(Query) -> erx_inspect_worker:call(Query, {principal, 7}, options(View)) end,
+    ?assertMatch({ok, #{kind := listing, children := [?D, ?D + 2]}}, Ask({inspect, [domains], #{}})),
+    {ok, Records} = Ask({entries, [domains]}),
+    ?assertEqual([[domains, ?D], [domains, ?D + 2]], [Path || #{path := Path} <- Records]),
+    ?assertEqual({error, scope}, Ask({inspect, [domains, ?D + 1], #{}})).
+
+%% Scope `all` lists the system domain first, then every living domain the
+%% view gives, and no ended one.
+every_living_domain_is_listed_at_scope_all_test() ->
+    View = [{?D, counting(?D)}, {?D + 1, ended}, {?D + 2, none}],
+    System = erx_kernel_records:system_domain(),
+    ?assertMatch({ok, #{children := [System, ?D, ?D + 2]}},
+                 erx_inspect_worker:call({inspect, [domains], #{}}, all, options(View))).
+
+%% A domain's record: name, principal and state from the domain service, the
+%% runtime attributes from its agent, and the thread count, which nothing here
+%% collects, unsupported; without an agent the runtime attributes are unknown,
+%% and with the view unknown the service's are too.
+each_domain_attribute_has_its_status_test() ->
+    Ask = fun(View, Path) -> erx_inspect_worker:call({inspect, Path, #{}}, all, #{view => View}) end,
+    {ok, #{attrs := Attrs}} = Ask(fun(_) -> {ok, [living(?D, counting(?D))]} end, [domains, ?D]),
+    ?assertEqual(#{name => {service, {ok, <<"web">>}}, principal => {service, {ok, 7}},
+                   state => {service, {ok, running}}, threads => {kernel, unsupported},
+                   atoms => {runtime, {ok, 1}}, ets_tables => {runtime, {ok, 2}}, modules => {runtime, {ok, 3}},
+                   processes => {runtime, {ok, 4}}, run_queue => {runtime, {ok, 5}}}, Attrs),
+    {ok, #{attrs := Agentless}} = Ask(fun(_) -> {ok, [living(?D, none)]} end, [domains, ?D]),
+    ?assertEqual({runtime, unknown}, maps:get(run_queue, Agentless)),
+    ?assertEqual({service, {ok, running}}, maps:get(state, Agentless)),
+    {ok, #{attrs := Unseen}} = Ask(fun(_) -> unavailable end, [domains, ?D]),
+    ?assertEqual({service, unknown}, maps:get(name, Unseen)),
+    ?assertEqual({runtime, unknown}, maps:get(run_queue, Unseen)),
+    {ok, #{attrs := Late}} = erx_inspect_worker:call({inspect, [domains, ?D], #{}}, all,
+                                                    (options([{?D, stalling(?D)}]))#{agent_wait => 50}),
+    ?assertEqual({runtime, {timeout, 50}}, maps:get(run_queue, Late)).
+
+%% Another living domain's group and budget are collected here, each kernel
+%% attribute unsupported, while an ended domain's and an unknown id's name
+%% nothing.
+another_domains_group_and_budget_test() ->
+    View = [{?D, none}, {?D + 1, ended}],
+    Ask = fun(Path) -> erx_inspect_worker:call({inspect, Path, #{}}, all, options(View)) end,
+    [begin
+         Path = [domains, ?D, Kind],
+         {ok, #{kind := Kind, path := Path, attrs := Attrs}} = Ask(Path),
+         ?assertNotEqual(#{}, Attrs),
+         ?assertEqual([{kernel, unsupported}], lists:usort(maps:values(Attrs)))
+     end || Kind <- [group, budget]],
+    [?assertEqual({error, scope}, Ask([domains, D, Kind])) || D <- [?D + 1, ?D + 3], Kind <- [group, budget]].
+
+%% The entries at scope `all` hold the system domain's own record first; an
+%% unknown view leaves only it, partial.
+domain_entries_at_scope_all_test() ->
+    System = erx_kernel_records:system_domain(),
+    {ok, Records} = erx_inspect_worker:call({entries, [domains]}, all, options([{?D, counting(?D)}])),
+    ?assertEqual([[domains, System], [domains, ?D]], [Path || #{path := Path} <- Records]),
+    ?assertMatch({partial, [#{path := [domains, System]}]},
+                 erx_inspect_worker:call({entries, [domains]}, all, #{view => fun(_) -> unavailable end})).
+
+%% A principal reads its own domain's group and budget, never another
+%% principal's, which its view does not hold, nor an ended domain's; with
+%% the view unknown no domain's group is read.
+a_scoped_caller_reads_only_its_domains_group_test() ->
+    View = [{?D, none}, {?D + 1, ended}],
+    Ask = fun(Scope, Options, Path) -> erx_inspect_worker:call({inspect, Path, #{}}, Scope, Options) end,
+    ?assertMatch({ok, #{kind := group}}, Ask({principal, 7}, options(View), [domains, ?D, group])),
+    [?assertEqual({error, scope}, Ask({principal, 7}, options(View), [domains, D, Kind]))
+     || D <- [?D + 1, ?D + 2], Kind <- [group, budget]],
+    ?assertEqual({error, scope}, Ask(all, #{view => fun(_) -> unavailable end}, [domains, ?D, group])).

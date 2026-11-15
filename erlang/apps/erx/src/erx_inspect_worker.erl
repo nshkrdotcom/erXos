@@ -42,7 +42,8 @@ answer and exits.
   attribute it would have given. Of a record it takes, every `proc_id()`
   of another domain is dropped from the attributes (owned/2), so an agent
   can misname only its own processes. Attributes no runtime reports, a
-  process's `domain`, it gives itself.
+  process's `domain`, and a domain's name, principal and state from the
+  domain service's view, it gives itself.
 * **The page.** A listing across domains is built by erx_inspector's
   page: the system domain's own entries, then each agent's in id order,
   each answer merged as it arrives and the rest of it dropped once the
@@ -51,7 +52,8 @@ answer and exits.
 
 Every answer passes erx_schema:validate_record/1 before it leaves (V10).
 
-The view, which domains a scope covers and their agents, is injected, so
+The view, which domains a scope covers with their agents and the domain
+service's report of each, is injected, so
 the host tests stand fake agents for domains; erx_inspector passes the
 domain service's (erx_domain:inspect_view/1).
 """.
@@ -62,8 +64,7 @@ domain service's (erx_domain:inspect_view/1).
 -include("generated/erx_abi.hrl").
 
 -type query() :: {inspect, [erx_schema:segment()], map()} | {entries, [erx_schema:segment()]}.
--type agent() :: pid() | none | ended.
--type view() :: [{non_neg_integer(), agent()}].
+-type view() :: [erx_domain_core:inspect_entry()].
 %% view gives the domains a scope covers, `all` or `{principal, P}`;
 %% query_max narrows the query's deadline, for a caller's own timeout
 %% (erx_inspector:inspect/2) or a test; agent_wait narrows an agent's wait
@@ -181,9 +182,9 @@ view_scope(_Scope) -> all.
 
 resolve(all, {ok, View}) -> {all, View, true};
 resolve(all, unavailable) -> {all, [], false};
-resolve({principal, _}, {ok, View}) -> {[Id || {Id, _Agent} <- View], View, true};
+resolve({principal, _}, {ok, View}) -> {[Id || {Id, _Agent, _Service} <- View], View, true};
 resolve({principal, _}, unavailable) -> {unknown, [], false};
-resolve(Ids, {ok, View}) when is_list(Ids) -> {Ids, [Entry || {Id, _} = Entry <- View, lists:member(Id, Ids)], true};
+resolve(Ids, {ok, View}) when is_list(Ids) -> {Ids, [Entry || {Id, _, _} = Entry <- View, lists:member(Id, Ids)], true};
 resolve(Ids, unavailable) when is_list(Ids) -> {Ids, [], false}.
 
 answer(_Query, #{scope := unknown}) ->
@@ -192,22 +193,44 @@ answer({entries, [processes]}, Context) ->
     processes(Context);
 answer({inspect, [processes] = Path, _Options}, Context) ->
     erx_inspector:listing(Path, processes(Context));
+answer({entries, [domains]}, Context) ->
+    domains(Context);
+answer({inspect, [domains] = Path, _Options}, Context) ->
+    erx_inspector:children(Path, listed(Context));
 answer({inspect, Path, Options}, #{scope := Scope} = Context) ->
-    case agent_domain(Path, Context) of
-        {ok, Domain} -> remote(Path, Options, Domain, Context);
+    case route(Path, Context) of
+        {agent, Domain} -> remote(Path, Options, Domain, Context);
+        {root_object, Domain, Object} -> root_object(Domain, Object, Context);
         local -> erx_inspector:inspect(Path, Scope, Options)
     end;
 answer({entries, Path}, #{scope := Scope}) ->
     erx_inspector:entries(Path, Scope).
 
-%% The domain whose agent knows Path's runtime attributes: a process or the
-%% record of a domain other than this runtime's, which the scope reaches.
-%% Every other path is collected here.
-agent_domain(Path, #{scope := Scope, self := Self}) ->
+%% Where Path of another domain than this runtime's, within the scope, is
+%% answered:
+%% * {agent, D}: a process or a domain's record, its runtime attributes
+%%   from D's agent (remote/4);
+%% * {root_object, D, Object}: a domain's group or budget, the root's
+%%   objects, collected here (root_object/3);
+%% * local: every other path, and every path outside the scope, by the core.
+route(Path, #{scope := Scope, self := Self}) ->
     case {Path, erx_inspector:declared_reachable(Path, erx_schema:resolve(Path), Scope)} of
-        {[processes, {pid, Domain, _, _}], {ok, _Owner}} when Domain =/= Self -> {ok, Domain};
-        {[domains, Domain], {ok, _Owner}} when Domain =/= Self -> {ok, Domain};
+        {[processes, {pid, Domain, _, _}], {ok, _Owner}} when Domain =/= Self -> {agent, Domain};
+        {[domains, Domain], {ok, _Owner}} when Domain =/= Self -> {agent, Domain};
+        {[domains, Domain, Object], {ok, _Owner}} when Domain =/= Self, Object =:= group orelse Object =:= budget ->
+            {root_object, Domain, Object};
         _ -> local
+    end.
+
+%% Domain's group or budget as the scope sees it, while the view holds the
+%% domain living; any other domain names nothing. With the view unknown no
+%% domain is known to live, so it names nothing either.
+root_object(Domain, Object, #{domains := Domains} = Context) ->
+    case lists:keyfind(Domain, 1, Domains) of
+        {Domain, Agent, _Service} when Agent =/= ended ->
+            {ok, scoped(erx_kernel_records:Object(Domain), Domain, Context)};
+        _ ->
+            {error, scope}
     end.
 
 %% The record of Path of another domain: its runtime attributes from the
@@ -216,50 +239,59 @@ agent_domain(Path, #{scope := Scope, self := Self}) ->
 %% the view is unknown, has every runtime attribute unknown.
 remote(Path, Options, Domain, #{domains := Domains, known := Known} = Context) ->
     case lists:keyfind(Domain, 1, Domains) of
-        false when not Known -> standin(Path, Domain, unknown, Context);
+        false when not Known -> standin(Path, {Domain, none}, unknown, Context);
         false -> {error, scope};
-        {Domain, ended} -> {error, scope};
-        {Domain, none} -> standin(Path, Domain, unknown, Context);
-        {Domain, Agent} ->
+        {Domain, ended, _Service} -> {error, scope};
+        {Domain, none, Service} -> standin(Path, {Domain, Service}, unknown, Context);
+        {Domain, Agent, Service} ->
             Query = {inspect, Path, maps:with([offset], Options)},
-            asked(Path, Domain, checked(Query, Domain, ask(Agent, Domain, Query, Context)), Context)
+            asked(Path, {Domain, Service}, checked(Query, Domain, ask(Agent, Domain, Query, Context)), Context)
     end.
 
-asked(_Path, Domain, {answer, {ok, Record}}, Context) ->
-    {ok, scoped(given(Record, Domain), Domain, Context)};
-asked(_Path, _Domain, {answer, {error, Reason}}, _Context) when Reason =:= scope; Reason =:= unsupported ->
+%% An agent's answer for Path of Of, a domain and the service's report of it.
+asked(_Path, {Domain, _} = Of, {answer, {ok, Record}}, Context) ->
+    {ok, scoped(given(Record, Of), Domain, Context)};
+asked(_Path, _Of, {answer, {error, Reason}}, _Context) when Reason =:= scope; Reason =:= unsupported ->
     {error, Reason};
-asked(Path, Domain, {answer, {error, failed}}, Context) ->
-    standin(Path, Domain, {error, failed}, Context);
-asked(Path, Domain, {timeout, Status}, Context) ->
-    standin(Path, Domain, Status, Context);
-asked(Path, Domain, invalid, Context) ->
-    standin(Path, Domain, {error, invalid}, Context).
+asked(Path, Of, {answer, {error, failed}}, Context) ->
+    standin(Path, Of, {error, failed}, Context);
+asked(Path, Of, {timeout, Status}, Context) ->
+    standin(Path, Of, Status, Context);
+asked(Path, Of, invalid, Context) ->
+    standin(Path, Of, {error, invalid}, Context).
 
 %% The record of Path with each runtime attribute Status, as when its agent
 %% did not answer.
-standin(Path, Domain, Status, Context) ->
+standin(Path, {Domain, _} = Of, Status, Context) ->
     {ok, #{kind := Kind, children := Children}} = erx_schema:resolve(Path),
     {ok, Keys} = erx_schema:attributes(Kind),
     Runtime = maps:from_list([{Key, {runtime, Status}} || Key <- Keys, runtime_reports(Kind, Key)]),
     Record = #{schema => erx_schema:schema(), path => Path, kind => Kind, id => lists:last(Path),
                attrs => Runtime, children => literals(Children)},
-    {ok, scoped(given(Record, Domain), Domain, Context)}.
+    {ok, scoped(given(Record, Of), Domain, Context)}.
 
 literals({literals, Literals}) -> Literals;
 literals(_Children) -> [].
 
-%% Record with the attributes no runtime reports given here: a process's
-%% domain is the one its proc_id() names, and the rest are `unsupported` for
+%% Record with the attributes no runtime reports given here, for Of, the
+%% domain and the domain service's report of it, none when the view gives
+%% none (an unknown view, or a process's record): a process's domain is the
+%% one its proc_id() names, a domain's name, principal and state are the
+%% service's, unknown when the view is, and the rest are `unsupported` for
 %% another domain (TODO.md, the query worker's `[domains, D]`).
-given(#{kind := Kind, attrs := Attrs} = Record, Domain) ->
+given(#{kind := Kind, attrs := Attrs} = Record, Of) ->
     {ok, Keys} = erx_schema:attributes(Kind),
-    Given = maps:from_list([{Key, local(Kind, Key, Domain)} || Key <- Keys, not runtime_reports(Kind, Key)]),
+    Given = maps:from_list([{Key, local(Kind, Key, Of)} || Key <- Keys, not runtime_reports(Kind, Key)]),
     Record#{attrs := maps:merge(Attrs, Given)}.
 
-local(process, domain, Domain) ->
+local(process, domain, {Domain, _Service}) ->
     {service, {ok, Domain}};
-local(Kind, Key, _Domain) ->
+local(domain, Key, {_Domain, Service}) when Key =:= name; Key =:= principal; Key =:= state ->
+    case Service of
+        #{Key := Value} -> {service, {ok, Value}};
+        none -> {service, unknown}
+    end;
+local(Kind, Key, _Of) ->
     {ok, #{reporters := [Reporter | _]}} = erx_schema:attribute(Kind, Key),
     {Reporter, unsupported}.
 
@@ -273,7 +305,7 @@ scoped(Record, Domain, #{scope := Scope}) ->
 processes(#{scope := Scope, domains := Domains, self := Self, known := Known} = Context) ->
     {Status, Local} = erx_inspector:entries([processes], Scope),
     Start = {status(Status =:= ok andalso Known), erx_inspector:page_add(Local, erx_inspector:page())},
-    Others = [{Domain, Agent} || {Domain, Agent} <- Domains, Domain =/= Self, Agent =/= ended],
+    Others = [{Domain, Agent} || {Domain, Agent, _Service} <- Domains, Domain =/= Self, Agent =/= ended],
     {Listing, Page} = lists:foldl(fun(Other, Acc) -> gather(Other, Acc, Context) end, Start, Others),
     erx_inspector:page_entries(Page, Listing).
 
@@ -287,7 +319,7 @@ gather({Domain, Agent}, {Status, Page}, Context) ->
 %% each as the scope sees it; what does not fit is dropped with the answer,
 %% and an answer with any record not taken leaves the page as it was.
 merge(Domain, {answer, Answer}, {Status, Page}, Context) ->
-    Seen = fun(Record) -> scoped(given(Record, Domain), Domain, Context) end,
+    Seen = fun(Record) -> scoped(given(Record, {Domain, none}), Domain, Context) end,
     case entries_taken(Domain, Answer, Seen, Page) of
         {ok, Answered, Merged} -> {status(Status =:= ok andalso Answered =:= ok), Merged};
         invalid -> {partial, Page}
@@ -297,6 +329,45 @@ merge(_Domain, _Missed, {_Status, Page}, _Context) ->
 
 status(true) -> ok;
 status(false) -> partial.
+
+%% The domains the listing holds, the one source of its ids and its
+%% entries: this runtime's own domain when the scope reaches it, then each
+%% other living domain of the view in id order, at most a page of them;
+%% partial when the view is unknown or the page cut it.
+listed(#{scope := Scope, domains := Domains, self := Self, known := Known}) ->
+    Path = [domains, Self],
+    Own = [Self || {ok, _Owner} <- [erx_inspector:declared_reachable(Path, erx_schema:resolve(Path), Scope)]],
+    {Cut, Ids} = first_page(Own ++ [Domain || {Domain, Agent, _Service} <- Domains, Domain =/= Self, Agent =/= ended]),
+    {status(Known andalso Cut =:= ok), Ids}.
+
+first_page(Ids) when length(Ids) =< ?ERX_INSPECT_PAGE_MAX -> {ok, Ids};
+first_page(Ids) -> {partial, lists:sublist(Ids, ?ERX_INSPECT_PAGE_MAX)}.
+
+%% The records of the domains listing (listed/1) as the scope sees them,
+%% each asked as [domains, D] is, while the page has room. A record whose
+%% agent did not answer carries that in its runtime attributes' statuses;
+%% a full page and a domain whose record is refused make the listing
+%% partial.
+domains(Context) ->
+    {Status, Ids} = listed(Context),
+    {Listing, Page} = lists:foldl(fun(Domain, Acc) -> domain_entry(Domain, Acc, Context) end,
+                                  {Status, erx_inspector:page()}, Ids),
+    erx_inspector:page_entries(Page, Listing).
+
+domain_entry(Domain, {Status, Page}, Context) ->
+    case erx_inspector:page_full(Page) of
+        true -> {partial, Page};
+        false -> domain_taken(domain_record(Domain, Context), {Status, Page})
+    end.
+
+%% This runtime's own domain's record from the core, another's as remote/4 gives it.
+domain_record(Self, #{self := Self, scope := Scope}) ->
+    erx_inspector:inspect([domains, Self], Scope, #{});
+domain_record(Domain, Context) ->
+    remote([domains, Domain], #{}, Domain, Context).
+
+domain_taken({ok, Record}, {Status, Page}) -> {Status, erx_inspector:page_add([Record], Page)};
+domain_taken({error, _Reason}, {_Status, Page}) -> {partial, Page}.
 
 %% Asks Agent of Domain Query and waits for its answer, within the agent's
 %% wait and the query's deadline: `{answer, Answer}`, not yet checked, or

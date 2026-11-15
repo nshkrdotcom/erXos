@@ -299,10 +299,12 @@ status_cells_are_never_cut_test() ->
     Text = iolist_to_binary(erx_render:overview([{[processes], {ok, [B]}}], release)),
     ?assertMatch({match, _}, re:run(Text, <<"\\[timeout 500\\]\n">>)).
 
+%% The machine-wide groups and budgets are closed to a scoped caller, while
+%% the domains and the processes, listing only its own, are open.
 machine_paths_are_closed_to_scoped_callers_test() ->
-    ?assertEqual(error, reachable([domains], [?SYSTEM])),
-    ?assertEqual({ok, machine}, reachable([domains], all)),
-    ?assertEqual({ok, machine}, reachable([processes], [?SYSTEM])).
+    [?assertEqual(error, reachable([Path], [?SYSTEM])) || Path <- [groups, budgets]],
+    ?assertEqual({ok, machine}, reachable([groups], all)),
+    [?assertEqual({ok, machine}, reachable([Path], [?SYSTEM])) || Path <- [domains, processes]].
 
 repeated_thread_makes_a_partial_listing_test() ->
     Report = fun(Id) -> {ok, <<Id:64/little, 0:32/little, 0:32/little, 0:32/little, 0:32/little>>} end,

@@ -2716,11 +2716,15 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   [The runtime agent](docs/design-live.md#the-runtime-agent) name `[processes, Pid, source]`, the source lines
   around a process's location from `erx_source`, but the schema declares no such path, so the inspector, and a
   domain's `erx_inspect_agent` through it, answer it `{error, scope}`. Declare the path and its collector.
-* [Medium] query worker, `erlang/apps/erx/src/erx_inspect_worker.erl` (`given/2`): `[domains, D]` of a domain
-  other than the system domain gives its runtime attributes from D's agent and every domain-service and kernel
-  attribute `unsupported`, because the domain service's view (`erx_domain:inspect_view/1`) carries only each
-  domain's agent. Carry those attributes in the view, or collect them in the worker from the domain service
-  and the root's capabilities, as the system domain's own record is.
+* [Medium] inspector, another domain's kernel records (`erlang/apps/erx/src/erx_kernel_records.erl`,
+  `group/1` and `budget/1`; `erx_inspect_worker.erl`, `given/2`): `[domains, D, group]` of a domain other than
+  the system domain shows every attribute `unsupported`, although the domain library holds a handle to each
+  domain's group and the stopgap reports its `cpuset`, `parked` and `ready` (design-stopgap.md, "Reporting
+  kernel objects"): no call of `erx_domain_lib` hands the inspector that handle or its report. Add one (a NIF
+  over the domain library's record of D, as `crash_nif` reads D's crash area) and take `[domains, D, budget]`
+  through it too, so erXos's kernel reports both behind the same call. A domain record's `threads` is
+  `unsupported` for the same reason, and the system domain's own record has no name, principal or state,
+  since the domain service's table does not hold the system domain.
 * [Medium] query worker, `erlang/apps/erx/src/erx_inspect_worker.erl`: an agent's answer the worker refuses is
   dropped but not counted where an operator can read it, which design-live.md ("The runtime agent") asks; a
   `{principal, P}` query whose view the domain service does not give answers `{error, scope}` for P's
@@ -2731,10 +2735,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] inspect agent, `erlang/apps/erx/src/erx_inspect_agent.erl`: a session's agent does not relay its
   programs' and pipes' attributes ([The runtime agent](docs/design-live.md#the-runtime-agent),
   `[domains, Id, programs]`), and below `[domains, Self]` it asks `erx_inspector`, whose `collects_domain/2`
-  collects a domain's paths only in the system domain, so those paths answer `{error, scope}`. In the
-  session_domain QEMU cell, `top` in root's session (domain 8) prints
-  `Domain 8 budget [not in scope]: - Used, - Guarantee, - Cap`, because the agent answers `[domains, 8, budget]`
-  `{error, scope}`.
+  collects a domain's paths only in the system domain, so those paths answer `{error, scope}`.
 * [Medium] shell, the session_domain QEMU cell of session P6 (`tools/lib/erx/qemu_suites/session_domain.rb`, which
   session P5 brings with the session domain): `ifconfig` typed in a session prints `ifconfig: no_facet`
   and sets the status `no_facet`, and in the system shell lists the interfaces; `ps` lists the session's
@@ -3864,7 +3865,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   The listing page (1,000) and the scoped machine paths (`[]`, `[cpus]`, `[cpus, N]`, `[processes]`) are written
   in `erx_inspector`; have `erx_schema` export the page and the schema mark which machine paths a scoped facet
   reads. A thread past a partial listing's end is answered `{error, scope}`, as one that does not exist.
-  Not collected yet: `[groups]`, `[budgets]`, `[domains]` and a domain's record, modules, exports, connections
+  Not collected yet: `[groups]`, `[budgets]`, a domain's modules, exports, connections
   and paginated `[domains, Id, processes]`; `erx:ps/0` and `erx:domains/0` with their
   `shell_default` shortcuts, which `test/erlang/erx_shortcut_tests.erl` lists as pending.
 * [Medium] /proc (`erlang/apps/erx_files/src/erx_procfs.erl`, `erx_procfs_core.erl`; design-live's
@@ -3885,8 +3886,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   with `erx_ns` and `/tmp`; give it a supervisor of its own. The 256-snapshot bound counts a directory like a
   status file, but a `/proc/processes` snapshot is a list of about 17 words an entry, so 256 of them over about
   1,000 processes pass the grant's heap limit (estimated); weigh snapshots by size or pack listings into one
-  binary. A scoped tree cannot walk `[domains]`, which the inspector closes to scoped callers, so its own domain's
-  subtree is unreachable; make the inspector list a scoped caller's own domains there. Smaller: a listing's
+  binary. Smaller: a listing's
   `status` file is empty; an open `.unknown` whose listing has since come whole still reads `[unknown]`; statfs
   says `namelen` 255 while an encoded name reaches 765 bytes; `erx_fs_grant`'s lopen does not clunk a handle whose
   reply its check rejects, as lcreate does; and `erx_file_remote`'s read of a size-0 file takes a short piece as

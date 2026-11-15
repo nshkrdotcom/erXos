@@ -126,12 +126,13 @@ start_session(Principal, Start) when is_integer(Principal), Principal > 0 ->
 
 -doc """
 The domains Scope covers, `all` or `{principal, P}`, each with its
-inspection agent, `none` or `ended` (erx_domain_core:inspect_view/2), for
+inspection agent, `none` or `ended`, and the service's report of it
+(erx_domain_core:inspect_view/2), for
 the inspector's query worker in the system domain. It waits at most
 inspect_agent_wait milliseconds, the worker's wait for one agent, and
 exits like gen_server:call/3 when the service does not answer.
 """.
--spec inspect_view(all | {principal, pos_integer()}) -> [{pos_integer(), pid() | none | ended}].
+-spec inspect_view(all | {principal, pos_integer()}) -> [erx_domain_core:inspect_entry()].
 inspect_view(Scope) ->
     gen_server:call(erx_domain_srv, {inspect_view, Scope}, ?ERX_INSPECT_AGENT_WAIT).
 

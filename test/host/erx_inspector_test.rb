@@ -95,6 +95,14 @@ class ErxInspectorTest < Minitest::Test
               from: '{domain, Domain} = Owner -> answer(covered(Scope, Domain), Owner);',
               to: '{domain, _Domain} = Owner -> answer(true, Owner);',
               tests: 'erx_inspect_worker_tests', caught_by: 'a_session_reads_no_other_principals_domain_test'),
+    Fault.new(name: 'a domains listing that lists the system domain to any scope', file: WORKER,
+              from: '    Own = [Self || {ok, _Owner} <- [erx_inspector:declared_reachable(Path, erx_schema:resolve(Path), Scope)]],',
+              to: '    Own = [Self || Path =/= Scope],',
+              tests: 'erx_inspect_worker_tests', caught_by: 'a_scoped_listing_holds_only_its_domains_test'),
+    Fault.new(name: 'a domain record without the service\'s report', file: WORKER,
+              from: '#{Key := Value} -> {service, {ok, Value}};',
+              to: '#{Key := _Value} -> {service, unsupported};',
+              tests: 'erx_inspect_worker_tests', caught_by: 'each_domain_attribute_has_its_status_test'),
     Fault.new(name: 'an admission path that takes a scope from the options', file: QUERY,
               from: 'map_size(maps:without([offset, limit], Options)) =:= 0 andalso',
               to: 'map_size(maps:without([offset, limit, scope], Options)) >= 0 andalso',
@@ -103,7 +111,7 @@ class ErxInspectorTest < Minitest::Test
               from: '    {ok, #{scope => Scope, worker => maps:get(worker, Grant, #{view => fun erx_inspector:view/1})}}.',
               to: '    Worker = maps:get(worker, Grant, #{view => fun erx_inspector:view/1}), ' \
                   '{ok, Fixed} = (maps:get(view, Worker))(Scope), ' \
-                  '{ok, #{scope => [Id || {Id, _} <- Fixed], worker => Worker}}.',
+                  '{ok, #{scope => [Id || {Id, _, _} <- Fixed], worker => Worker}}.',
               tests: 'erx_inspect_facet_tests', caught_by: 'a_principals_scope_follows_its_domains_test'),
     Fault.new(name: 'a facet that runs its requests in its own process', file: FACET,
               from: '{ok, Query} -> {forward, erx_inspect_worker:serve(self(), Scope, Options), Query, State};',

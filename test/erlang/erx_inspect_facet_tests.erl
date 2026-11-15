@@ -80,8 +80,11 @@ facet(Scope, View, Wait) ->
                                   #{exports => ?MODULE}),
     Facet.
 
+%% The view as the domain service gives it, each {D, Agent} a living domain.
 view(unavailable) -> unavailable;
-view(Domains) -> {ok, Domains}.
+view(Domains) -> {ok, [living(D, Agent) || {D, Agent} <- Domains]}.
+
+living(D, Agent) -> {D, Agent, #{name => <<"web">>, principal => ?PRINCIPAL, state => running}}.
 
 %% Request to Facet as the grantee's call arrives, and its answer, or none in Timeout.
 call(Facet, Request, Timeout) ->
@@ -155,7 +158,7 @@ a_worker_ends_with_its_facet_test() ->
     Domain = holder(),
     {ok, Facet} = erx_facet:start(erx_inspect_facet,
                                   #{grantee => ?GRANTEE, ends_with => [Domain], scope => all,
-                                    worker => #{view => fun(_) -> {ok, [{?D, Stalling}]} end, agent_wait => 5000}},
+                                    worker => #{view => fun(_) -> view([{?D, Stalling}]) end, agent_wait => 5000}},
                                   #{exports => ?MODULE}),
     Before = erlang:processes(),
     Facet ! {erx_origin, ?GRANTEE, {'$gen_call', {self(), [alias | alias()]}, {inspect, [processes, {pid, ?D, 5, 0}], #{}}}},

@@ -28,7 +28,8 @@ whose scope the system domain fixed when it minted it
   domain in the scope, and a path outside the scope gets the answer of a
   path that names nothing, `{error, scope}`, so a scoped caller cannot
   learn whether it exists. Of the machine's paths a scoped caller reaches
-  only the machine's record, the CPUs, the processes and the clock.
+  only the machine's record, the CPUs, the domains, the processes and
+  the clock.
 * Of a record it may reach, the caller sees the attributes whose
   visibility class its scope admits (scoped/3): `any` always, `owner`
   with scope `all` or its owner's domain in the scope, `all` with scope
@@ -42,8 +43,10 @@ session's processes. In the system domain inspect/1 and entries/1 run
 in a query worker at scope `all` (erx_inspect_worker), which adds the
 processes of every other living domain from that domain's agent
 (erx_inspect_agent); `[domains, D]` of another domain carries its
-runtime attributes from the agent and every other attribute
-`unsupported`. Kernel objects, through
+runtime attributes from the agent, its name, principal and state from
+the domain service's view, and its thread count `unsupported`, and
+`[domains]` lists the system domain and the view's living domains, each
+within the scope. Kernel objects, through
 erx_kernel_records on the root's own capabilities, and the domain record,
 through erx_runtime_records, are the system domain's only; the kernel
 log, through erx_log_records, is read in the system domain only, and the
@@ -60,7 +63,7 @@ that has no collector here is
 
 -export([inspect/1, inspect/2, entries/1, overview/0]).
 -export([inspect/3, entries/2, route/4, proc_id/1, runtime_domain/0, is_system_runtime/0]).
--export([scoped/3, declared_reachable/3, listing/2, collects_domain/2]).
+-export([scoped/3, declared_reachable/3, listing/2, children/2, collects_domain/2]).
 -export([page/0, page_add/2, page_full/1, page_entries/2, view/1]).
 -export_type([scope/0, query_scope/0, answer/0, entries/0, page/0]).
 
@@ -264,12 +267,13 @@ reachable(Path, Scope) ->
 %% The machine's paths a scoped caller reaches (docs/design-live.md,
 %% "Scopes"): the machine's record and each CPU's, of which scoped/3 keeps
 %% only the attributes the schema marks `visible any`, the CPUs' listing,
-%% the processes, listing only its own domains', and the clock, of which
-%% scoped/3 drops the `visible all` server and source (docs/design-time.md,
-%% "What /proc shows").
+%% the domains and the processes, each listing only its own domains', and
+%% the clock, of which scoped/3 drops the `visible all` server and source
+%% (docs/design-time.md, "What /proc shows").
 scoped_machine_path([]) -> true;
 scoped_machine_path([cpus]) -> true;
 scoped_machine_path([cpus, _Index]) -> true;
+scoped_machine_path([domains]) -> true;
 scoped_machine_path([processes]) -> true;
 scoped_machine_path([time]) -> true;
 scoped_machine_path(_Path) -> false.
@@ -317,7 +321,9 @@ domain's own runtime. Another runtime's counters are its own domain's
 (erx_runtime_records), and so are its group, budget and threads where the
 kernel reports them to it (erx_kernel_records reads them on its own
 capabilities), so it collects none rather than show its own as the system
-domain's, whatever its scope.
+domain's, whatever its scope. Another domain's group and budget are the
+query worker's to collect, for a domain its view holds living
+(erx_inspect_worker).
 """.
 -spec collects_domain(non_neg_integer(), non_neg_integer()) -> boolean().
 collects_domain(Domain, Runtime) ->
@@ -368,10 +374,10 @@ literals(Path) ->
 
 system_domain(_Path, [], _Scope) ->
     erx_runtime_records:domain(erx_kernel_records:system_domain());
-system_domain(_Path, [group], _Scope) ->
-    {ok, erx_kernel_records:group()};
-system_domain(_Path, [budget], _Scope) ->
-    {ok, erx_kernel_records:budget()};
+system_domain([domains, Domain, group], _Rest, _Scope) ->
+    {ok, erx_kernel_records:group(Domain)};
+system_domain([domains, Domain, budget], _Rest, _Scope) ->
+    {ok, erx_kernel_records:budget(Domain)};
 system_domain([domains, Domain, threads, _Thread] = Path, _Rest, Scope) ->
     entry(Path, enumerate([domains, Domain, threads], Scope));
 system_domain(Path, _Rest, Scope) ->
@@ -494,7 +500,16 @@ since what it holds is no longer one snapshot.
 """.
 -spec listing([erx_schema:segment()], entries()) -> answer().
 listing(Path, {Status, Records}) when is_list(Records) ->
-    Ids = [Id || #{id := Id} <- Records],
+    children(Path, {Status, [Id || #{id := Id} <- Records]});
+listing(_Path, Error) ->
+    Error.
+
+-doc """
+The record of the listing at Path whose entries' ids are Ids, as listing/2
+gives it, for a listing known by its ids alone.
+""".
+-spec children([erx_schema:segment()], {ok | partial, [erx_schema:segment()]}) -> {ok, erx_schema:record()}.
+children(Path, {Status, Ids}) ->
     Distinct = distinct(Ids),
     Children = case Status =:= ok andalso length(Distinct) =:= length(Ids) of
                    true -> Ids;
@@ -502,9 +517,7 @@ listing(Path, {Status, Records}) when is_list(Records) ->
                end,
     {ok, _} = erx_schema:validate_record(#{schema => erx_schema:schema(), path => Path,
                                            kind => listing, id => lists:last(Path),
-                                           attrs => #{}, children => Children});
-listing(_Path, Error) ->
-    Error.
+                                           attrs => #{}, children => Children}).
 
 distinct(Ids) ->
     {Kept, _Seen} = lists:foldl(fun(Id, {Kept, Seen}) ->

@@ -4,9 +4,9 @@
 -module(erx_kernel_records).
 -moduledoc """
 The collector of erx_object_info (docs/design-live.md, "Inspection
-records"): the machine, CPU, group, budget and thread records of the
-system domain, each attribute from the report's reported bit and the
-partial bit of the system domain's own liberx.
+records"): the machine and CPU records, a domain's group and budget, and
+the system domain's threads, each attribute from the report's reported
+bit and the partial bit of the system domain's own liberx.
 
 | reported | partial | attribute                                  |
 | -------- | ------- | ------------------------------------------ |
@@ -28,7 +28,7 @@ partial mask is its own liberx's, so nothing a domain says reaches either
 mask. The pure core, record/5 and listing/4, takes the answers as data.
 """.
 
--export([machine/0, cpus/0, group/0, budget/0, threads/0, system_domain/0]).
+-export([machine/0, cpus/0, group/1, budget/1, threads/0, system_domain/0]).
 -export([record/5, listing/4]).
 -export_type([answer/0]).
 
@@ -60,15 +60,31 @@ machine() ->
 cpus() ->
     list(cpu, ?ERX_CAP_NULL, ?MAX_CPUS).
 
--doc "The system domain's group.".
--spec group() -> erx_schema:record().
-group() ->
-    collect(group, [domains, ?SYSTEM_DOMAIN, group], ?ERX_CAP_SELF, 0).
+-doc """
+Domain's group: the system domain's on ERX_CAP_SELF, and for another
+domain a record of every attribute unsupported, as ERX_ENOTSUP gives it,
+since the domain library's handle to that domain's group does not reach
+this collector (TODO.md, the inspector's other domains' groups).
+""".
+-spec group(non_neg_integer()) -> erx_schema:record().
+group(Domain) ->
+    domain_object(group, Domain).
 
--doc "The system domain's budget.".
--spec budget() -> erx_schema:record().
-budget() ->
-    collect(budget, [domains, ?SYSTEM_DOMAIN, budget], ?ERX_CAP_SELF, 0).
+-doc """
+Domain's budget: the system domain's on ERX_CAP_SELF, the root's one
+budget, and for another domain every attribute unsupported, as the
+stopgap answers any other budget handle (docs/design-stopgap.md,
+"Reporting kernel objects").
+""".
+-spec budget(non_neg_integer()) -> erx_schema:record().
+budget(Domain) ->
+    domain_object(budget, Domain).
+
+domain_object(Kind, ?SYSTEM_DOMAIN = Domain) ->
+    collect(Kind, [domains, Domain, Kind], ?ERX_CAP_SELF, 0);
+domain_object(Kind, Domain) ->
+    {ok, Record} = record(Kind, [domains, Domain, Kind], 0, {error, ?ERX_ENOTSUP}, 0),
+    Record.
 
 -doc "A record for each thread of the system domain, partial when the listing stopped short.".
 -spec threads() -> {ok | partial, [erx_schema:record()]}.
