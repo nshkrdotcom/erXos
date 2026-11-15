@@ -23,7 +23,7 @@ entered. from_applications/1 reads the metadata of an application's
 modules, loading them but running no command body.
 """.
 
--export([build/1, from_applications/1, lookup/2, whatis/2]).
+-export([build/1, from_applications/1, lookup/2, whatis/2, commands/1]).
 
 -export_type([table/0, entry/0, command/0, problem/0]).
 
@@ -129,3 +129,13 @@ whatis(Name, Table) ->
         not_found ->
             not_found
     end.
+
+-doc """
+The names of the table's Erlang commands, sorted: the Erlang commands of what
+the session's export lists in `/bin` (docs/design-programs.md, "Starting a
+program"). A builtin acts on the shell itself and a conflicting name runs
+nothing, so neither is listed.
+""".
+-spec commands(table()) -> [binary()].
+commands(Table) ->
+    lists:sort([Name || Name := {erlang, _} <- Table]).

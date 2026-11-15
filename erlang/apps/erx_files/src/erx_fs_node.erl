@@ -5,14 +5,17 @@
 -moduledoc """
 What the made trees share: trees of the erx_fs behaviour whose nodes their
 servers make from state they read rather than keep on a medium, `/proc`,
-`/dev`, `/apps`, `/machine` and a display's window tree
+`/dev`, `/apps`, `/machine`, a display's window tree and the fixed tree of
+a session's export
 (docs/design-files.md#serving-the-erx_fs-behaviour).
 
 * **Attributes.** Every node is owned by uid 0 and has size 0 and no times,
-  as a `/proc` file does; a directory has two links and a file one.
+  as a `/proc` file does; a directory has two links, and a file or a
+  character device one.
 * **A listing** is the entries the directory's open took, made by
-  listing/1, and an entry's offset is its place in the listing, so a read
-  from Offset continues after the entry that carried it.
+  listing/1, and an entry's
+  offset is its place in the listing, so a read from Offset continues after
+  the entry that carried it.
 * **A ctl file opens through a create.** prim_file opens every file it
   writes through a create, so a create of an existing ctl opens it for
   writing, as the tree's open does, unless it must make a new file
@@ -33,12 +36,16 @@ functions of what it hands them.
                         bor ?ERX_P9_GETATTR_MASK_INO bor ?ERX_P9_GETATTR_MASK_SIZE
                         bor ?ERX_P9_GETATTR_MASK_BLOCKS)).
 
--doc "The attributes of the node whose qid is Qid, a directory or a file with permission bits Mode.".
--spec attr(erx_fs:qid(), dir | file, 0..8#7777) -> {ok, erx_fs:attr()}.
+-doc """
+The attributes of the node whose qid is Qid, a directory, a file or a
+character device with permission bits Mode.
+""".
+-spec attr(erx_fs:qid(), dir | file | char, 0..8#7777) -> {ok, erx_fs:attr()}.
 attr(Qid, Kind, Mode) ->
     {Type, Nlink} = case Kind of
                         dir -> {?ERX_P9_S_IFDIR, 2};
-                        file -> {?ERX_P9_S_IFREG, 1}
+                        file -> {?ERX_P9_S_IFREG, 1};
+                        char -> {?ERX_P9_S_IFCHR, 1}
                     end,
     {ok, #{valid => ?GETATTR_VALID, qid => Qid, mode => Type bor Mode,
            uid => 0, gid => 0, nlink => Nlink, rdev => 0, size => 0,

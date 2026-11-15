@@ -2659,6 +2659,33 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   thread's stack while it sleeps, on a pipe end's list or the channel's. A signal design that
   lets a handler leave a wait without returning through it (`siglongjmp` from an upcall) would
   leave a dangling waiter; it must forbid that or take the thread's waiters off first.
+* [Medium] session, `erx_session_export`: no session starts the export's fixed tree, since its one
+  input the session lacks is its principal's number, which `/etc/passwd` and `/etc/group` name
+  (docs/design-programs.md, "The POSIX-lite personality"): the domain service holds it
+  (`erx_domain_core`'s `principal`) and the ready answer does not carry it, and `getuid` answers 0
+  (`musl/src/internal/erxos/syscall.c`, `ROOT_USER`), where the design says the principal's number,
+  never 0. Carry the number in the ready answer, start the export from `erx_session_sup` as two
+  grants of the session's own domain, an `rx` one for `/bin` and an `rw` one for `/dev` and `/etc`,
+  with `erx_shell_namespace:commands/1` of the command table, and answer `getuid` from the same
+  number, so a program's `id` and its `/etc/passwd` agree.
+* [Medium] session, `erx_session_export`: the export serves the fixed tree alone. The tree of each of
+  the session's local providers, named from the session's counter when it is mounted
+  (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
+  alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
+  `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
+  relay's line discipline serves the tty's readers.
+* [Medium] session, `erx_session_export`: a write to `/dev/tty` waits until the tty takes it
+  (`erx_console:write/2`, a call without a timeout), and a stopped tty holds 4 KiB, so writes to a
+  stopped tty fill the grant's 64 requests in flight and the grant answers `emfile` to every program
+  of the session, for `/bin` and `/etc` too. Have the terminal relay that owns the tty serve
+  `/dev/tty`'s opens, or answer a write once the relay accepts it, so a stopped tty blocks its
+  writers alone, as on UNIX.
+* [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
+  `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
+  uid 0 where the design's owner of a file its server records none for is `nobody`
+  (docs/design-programs.md, "Users and files"; `erx_fs_node:attr/3`), and `/etc/passwd` shows size 0;
+  and its EUnit cases call the callbacks without a grant, so no case checks a reply's shape through
+  `erx_fs_grant` (a create's answer, a listing's `DT_CHR`), which would reach a client as `eio`.
 * [Medium] session, `erx_pipe:step/2`: the second tier's events are not there: `{deposit}`, `{redeem}`,
   `{discard}`, `{withdraw}` and the collector of deposits no reader can reach
   (docs/design-pipes.md, "The second tier" and "Deposits"), and `holder()` has no

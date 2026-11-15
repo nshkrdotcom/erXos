@@ -91,6 +91,7 @@ limit p9_s_iflnk u32 0xa000
 limit p9_s_ifchr u32 0x2000
 limit p9_s_ifblk u32 0x6000
 # A readdir entry's type byte, Linux's DT_ values as 9P2000.L carries them.
+limit p9_dt_chr u8 2
 limit p9_dt_dir u8 4
 limit p9_dt_reg u8 8
 limit p9_dt_lnk u8 10

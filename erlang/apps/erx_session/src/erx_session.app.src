@@ -3,8 +3,10 @@
 
 %% A session's domain (docs/design-live.md, "Sessions"): the session's tty relay,
 %% erx_session_tty, on which the command shell runs, and the pure core of the tty's
-%% side of the messages to its master, erx_tty_link; and erx_ssh_dev, which starts
-%% OTP's ssh daemon in a development session (docs/design-ssh.md, "Stages").
+%% side of the messages to its master, erx_tty_link; the fixed tree of the session's
+%% export, erx_session_export (docs/design-files.md, "Narrowing for a program"); and
+%% erx_ssh_dev, which starts OTP's ssh daemon in a development session
+%% (docs/design-ssh.md, "Stages").
 %%
 %% Its applications are those that must run before it starts. ssh, with
 %% public_key, is not one: erx_ssh_dev starts it when it starts the daemon, so a
@@ -12,8 +14,9 @@
 {application, erx_session,
  [{description, "erXos session"},
   {vsn, "1"},
-  {modules, [erx_session_app, erx_session_sup, erx_session_tty, erx_ssh_dev, erx_tty_link]},
+  {modules, [erx_session_app, erx_session_export, erx_session_sup, erx_session_tty, erx_ssh_dev,
+              erx_tty_link]},
   {registered, [erx_session_sup, erx_session_tty, erx_session_shell]},
-  {applications, [kernel, stdlib, erx, erx_shell]},
+  {applications, [kernel, stdlib, erx, erx_files, erx_shell]},
   {mod, {erx_session_app, []}},
   {env, []}]}.
