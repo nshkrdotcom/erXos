@@ -2284,6 +2284,17 @@ set_port_connected(int bang_op,
     if (state & ERTS_PORT_SFLGS_INVALID_LOOKUP)
 	return ERTS_PORT_OP_DROPPED;
 
+    /*
+     * erXos: a driver that sets ERL_DRV_FLAG_ERX_NO_CONNECT keeps the process that opened
+     * the port as its owner. The connect is refused as this function refuses a malformed
+     * one: port_connect/2 raises badarg, and the port message sends the owner badsig.
+     */
+    if (prt->drv_ptr->flags & ERL_DRV_FLAG_ERX_NO_CONNECT) {
+	if (bang_op)
+	    send_badsig(prt);
+	return ERTS_PORT_OP_DROPPED;
+    }
+
     if (bang_op) { /* Bang operation */
 	if (is_not_internal_pid(connect) || ERTS_PORT_GET_CONNECTED(prt) != from) {
 	    send_badsig(prt);

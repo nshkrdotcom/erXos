@@ -3049,20 +3049,21 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   capability (docs/design-abi.md, "Program protocol").
 * [Medium] liberx program layer, `liberx/program/fd.c` (`status_change`): a file's `O_APPEND` is fixed
   at its open, and `F_SETFL` that would change it is `EINVAL`, since no request tells the handler's
-  description of the change. musl's `fdopen(fd, "a")` (musl/src/stdio/__fdopen.c) ignores that
-  refusal, so its stream writes at the current offset, not at the end, of a file opened without
+  description of the change. musl's `fdopen(fd, "a")` (musl/src/stdio/__fdopen.c) therefore fails
+  with `EINVAL` on a file opened without `O_APPEND`, rather than give a stream that writes at the
+  current offset; the programs suite's `fileio` case checks both. FreeBSD's `fdopen` leaves the
+  descriptor alone and seeks to the end before each write of such a stream, so there `fdopen(1, "a")`
+  on a standard output redirected with `>` succeeds, and here it fails until `F_SETFL` can change
   `O_APPEND`. The design's answer is the description's second opened fid with the other append flag
   (docs/design-files.md, the `F_SETFL` paragraph; docs/design-programs.md, "Descriptors and files"):
-  a request that carries the change to the description, and `fd.c` sending it. Until then `__fdopen`
-  could fail when its `F_SETFL` is refused, so the stream fails instead of writing in the wrong place.
+  a request that carries the change to the description, and `fd.c` sending it.
 * [Medium] programs suite, `tools/lib/erx/programs.rb` (`opener`): the case checks that a second process
-  is refused `einval` by every `port_control` command before and after `port_connect/2` and that the
-  exit status still reaches the opener, but not docs/design-pipes.md's full test: an `install/2` of the
-  handler's own hand-off number from the second process, the handler's install after it, and the
-  seeded failure that compares the caller with the current owner. Its command list `1..7` copies
-  abi/erx_abi.txt's `program_control`. Making `port_connect/2` refuse a program port (a driver flag
-  checked in `set_port_connected`, otp/erts/emulator/beam/io.c) would make owner and opener one
-  process by construction and delete the opener field and this test's reason.
+  is refused `einval` by every `port_control` command before and after its `port_connect/2`, which is
+  refused, and that the opener stays the owner and gets the exit status, but not docs/design-pipes.md's
+  full test: an `install/2` of the handler's own hand-off number from the second process, the
+  handler's install after it, and the seeded failure that drops `ERL_DRV_FLAG_ERX_NO_CONNECT`, under
+  which the second process's commands are answered. Its
+  command list `1..7` copies abi/erx_abi.txt's `program_control`.
 * [Low] session, `erx_file_remote:open_flags/4`: an `lopen` that writes on an entry that is not `rw`
   answers `erofs` before the path is walked, so a missing file opened to write there is `erofs`, where
   FreeBSD's `vn_open` answers `ENOENT` from the lookup first.
@@ -3095,7 +3096,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `open_plan` against the host's `<fcntl.h>`, never musl's aarch64 values (`O_ACCMODE` holding `O_PATH`,
   `O_SYNC` holding `O_DSYNC`'s bit, the `O_LARGEFILE` musl's `open` always passes); the programs suite's
   `fileio` case runs the target's values only for the flags `fileio.c` passes (`O_RDONLY`, `O_WRONLY`,
-  `O_CREAT`, `O_TRUNC`, `O_EXCL` and musl's `O_LARGEFILE`), so a mapping wrong only for the target's
+  `O_CREAT`, `O_TRUNC`, `O_EXCL`, `O_APPEND` and musl's `O_LARGEFILE`), so a mapping wrong only for the target's
   value of another flag passes every test. A host build of the mapping against the sysroot's
   `bits/fcntl.h` values closes it. A failed part after an earlier part moved bytes, and a write
   answered with 0 bytes, are in no case either.

@@ -9,7 +9,9 @@ the program's budget, group, anchor and image and maps the image from the
 session's release; it then hands the driver the program's startup message,
 which the driver writes into the program's channel, and starts its first
 thread. The port is linked to its
-caller, its owner, as every port is. When the program's image ends, the
+caller, its owner, as every port is, and the caller stays its owner: the
+driver refuses `port_connect/2`, so no other process can take the program's
+frames or its end. When the program's image ends, the
 owner gets `{Port, {exit_status, N}}` and the port closes; `N` is what
 `erx_prog:status/1` reads. Closing the port first, with `port_close/1` or
 by the owner's exit, kills the program.
@@ -330,8 +332,10 @@ grants({erx_prog, _, Slot, Reply}) when is_integer(Slot), Slot >= 0, Slot < ?ERX
     {Slot, reply_grants(Reply)}.
 
 %% A reply's grants: those of each descriptor it carries, pipe's two ends, and
-%% none for kill's and probe's.
+%% none for kill's, probe's and clunk's, or for an open's number or a read's or
+%% write's count.
 reply_grants({ok, Read, Write}) -> descriptor_grants(Read) ++ descriptor_grants(Write);
+reply_grants({ok, Number}) when is_integer(Number) -> [];
 reply_grants(ok) -> [];
 reply_grants({error, _Errno}) -> [].
 

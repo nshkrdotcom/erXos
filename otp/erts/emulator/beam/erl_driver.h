@@ -110,6 +110,8 @@ extern "C" {
 #define ERL_DRV_FLAG_SOFT_BUSY		(1 << 1)
 #define ERL_DRV_FLAG_NO_BUSY_MSGQ	(1 << 2)
 #define ERL_DRV_FLAG_USE_INIT_ACK	(1 << 3)
+/* erXos: the port refuses port_connect/2, so its owner stays the process that opened it. */
+#define ERL_DRV_FLAG_ERX_NO_CONNECT	(1 << 4)
 
 /*
  * Integer types

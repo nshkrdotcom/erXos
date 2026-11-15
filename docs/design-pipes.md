@@ -1346,15 +1346,15 @@ answers the hand-off once and only when it is for `Program`, the program
 whose port the driver runs, named by the pid of the port's open command,
 and `Caller` is its owner; a hand-off for another program is refused
 before the take touches the port's hold. `Caller` is the process that
-made the call: at a start, the process opening the port,
-which `driver_connected` names at the open and the driver records; for
-`install/2`, that same process: the driver refuses every `port_control`
-from any other caller (`driver_caller`). The port is not enough: ERTS
-lets any process of the runtime call `port_control` on a port it names,
-checking no owner (`erl_bif_port.c`, `lookup_port`), and records that
-process for the driver as the port's caller (`io.c`, `erts_port_control`);
-and `port_connect/2` lets any process make itself the port's owner, so
-the current owner, `driver_connected`, is not enough either. The driver then
+made the call: at a start, the process opening the port, which
+`driver_connected` names; for `install/2`, that same process: the driver
+refuses every `port_control` from any other caller (`driver_caller`).
+The port is not enough: ERTS lets any process of the runtime call
+`port_control` on a port it names, checking no owner (`erl_bif_port.c`,
+`lookup_port`), and records that process for the driver as the port's
+caller (`io.c`, `erts_port_control`). The owner stays the process that
+opened the port, because the driver refuses `port_connect/2`
+([design-runtime.md](design-runtime.md#programs-as-ports)). The driver then
 passes each copy into the image with its rights; binds the doorbell, if
 the hand-off has one, to the program's group with the hand-off's label,
 as it binds the channel's doorbell with `prog_channel_label`; lets the
@@ -1470,7 +1470,7 @@ end.
 **Refusals.** A take that finds no hand-off under its number, one taken
 or let go already, one for another program, one of another owner, one
 after the port's hold was released, or an install whose caller is not
-the port's owner, answers no hand-off, and the start or the install
+the port's owner, the process that opened it, answers no hand-off, and the start or the install
 fails with `einval`; the hand-off, if it is held, stays its owner's. A
 start that fails after its takes lets them go with its other undos, the
 port's hold just before the lease's return; the handler then drops the
@@ -1946,11 +1946,12 @@ readers, which any pipe has.
   test of a take for another owner fails. A hosted test in which a second
   process calls each of the program port's commands on a handler's port,
   `install/2` with the number of the handler's hand-off among them, gets
-  `einval` from each, before and after it makes itself the port's owner
-  with `port_connect/2`, and the handler's own install then succeeds; the
-  seeded failure compares the caller with the port's current owner in
-  place of the process that opened it, and the second process's install
-  after its `port_connect/2` succeeds. `copies/1`'s host
+  `einval` from each, before and after its `port_connect/2`, which is
+  refused, and the handler's own install then succeeds; the seeded
+  failure drops the driver's flag that refuses `port_connect/2`, and the
+  second process's `port_connect/2` succeeds and the driver answers its
+  commands, while its install of the handler's hand-off stays `einval`,
+  since the pipe NIF answers the hand-off only to the handler. `copies/1`'s host
   test finds `MAP` on every memory copy and `DUP`, `GIVE` and `DESTROY` on
   none; the seeded failure drops `MAP` from a lane's copies.
   `erx_program:start/1` refuses
@@ -2291,7 +2292,7 @@ session's capability values into the start's command. It loses: any
 process that owns a port could then have the driver install any
 capability of the session into a program, or bind a doorbell with the
 channel's label. A hand-off's number names only what the pipe NIF holds
-for that port's owner.
+for that port's owner, the process that opened it.
 
 **Pipes as frames on the channel.** A pipe would be a protocol of data and
 credit messages through each program's handler. Rejected in

@@ -486,8 +486,9 @@ of behaviour, however many lines it touches:
 | `beam/beam_common.c`, `beam/erl_process.h` | 68. a dirty scheduler charges every call its elapsed time in reductions through `erts_time2reds`, on the dirty I/O pool as on the dirty CPU pool, which stock charges one reduction a call, and the conversion charges an interval the clock ran backwards its one-reduction minimum ([NIFs and blocking](#nifs-and-blocking)) |
 | `beam/beam_debug.c` | 69. the dirty test BIFs of `erts_debug` take `busy_wait`, the busy loop that `wait` runs only on a dirty CPU scheduler, on either pool, so a test can charge a busy dirty I/O call |
 | `beam/erl_process.h`, `beam/erl_process.c`, `beam/erl_wakeup_other.h` | 70. no reduction counter of a dirty run queue can wrap, though a dirty call is charged up to `INT_MAX` (edit 68): a charge on a dirty scheduler leaves alone the balance counters, `prio_info[].reds` and `check_balance_reds`, which only `check_balance` reads and resets and only on normal queues, and which stock lets grow there until they wrap; `wakeup_other_reds` is 64 bits wide, since the schedulers sharing a dirty queue may each add a charge before one of them looks; and the wakeup-other check, a pure function in `erl_wakeup_other.h`, clamps that sum to `INT_MAX`, computes in 64 bits and keeps its count within its limit on every queue kind, a dirty queue's count holding at the limit, so each later look with a backlog still wakes a waiting dirty scheduler, where stock's grows until it wraps and the backlog wake stops. A threshold's negative shift, `+swt low` and `very_low`, divides the decay by its power of two, as stock's mask suggests was meant; stock shifts left by a negative count, which is undefined (with the shift count taken mod 32, as AArch64 and x86-64 take it, the mask then clears the decay; inferred, not disassembled) |
+| `beam/erl_driver.h`, `beam/io.c` | 71. a driver may set `ERL_DRV_FLAG_ERX_NO_CONNECT`, and `set_port_connected` then refuses every connect to its ports, as it refuses one of the wrong form: `port_connect/2` raises `badarg`, and a `{Pid, {connect, NewPid}}` port message sends the owner `badsig`; the program driver sets it, so a program port's owner is always the process that opened it ([Programs as ports](#programs-as-ports)) |
 
-Seventy edits outside `sys/erxos`, in seventy-four named files outside
+Seventy-one edits outside `sys/erxos`, in seventy-four named files outside
 the JIT's directory, in the JIT's directory and in asmjit's `VirtMem`;
 the interpreter build, and so the system and interpreter images, is
 built without the last two. Nothing in `erl_ptab.c`: processes take their pids as stock
@@ -1709,8 +1710,11 @@ handler receives at most one message of a program for each credit,
 whatever the program writes. The program driver answers every `port_control` command only from
 the process that opened the port, the handler, and refuses any other
 caller `einval` before it reads the command, since ERTS lets any
-process call `port_control` on a port it names and `port_connect/2`
-lets any process make itself the port's owner. The handler acts with the session's
+process call `port_control` on a port it names. A program port refuses
+`port_connect/2`: the driver sets `ERL_DRV_FLAG_ERX_NO_CONNECT`, which
+`set_port_connected` checks (edit 71), so the port's owner, the process
+every message of the port reaches, is always the process that opened
+it, and nothing has to track the two apart. The handler acts with the session's
 authority after checking the program's own table, and installs
 what the program's table gains with `erx_program:install(Port, Caps)`,
 which goes through the session's capability to the image the port
@@ -1807,7 +1811,7 @@ A fault record of one of the image's threads ends the program: the
 driver stops the anchor with `ERX_EXIT_SIGNAL` plus the signal the ABI
 file's fault table gives the fault's kind, and keeps the record for the
 shell. The image's exit record, unless it is an exec's switch, reaches
-the process that opened the port, which `port_connect/2` does not change,
+the port's owner, the process that opened it,
 as `{Port, {exit_status, N}}`, as the program's frames and the room notice
 do, with `N` the status the image
 stopped with: a halt's status, or `ERX_EXIT_SIGNAL` plus a signal for a

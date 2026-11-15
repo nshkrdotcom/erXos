@@ -1,3 +1,6 @@
+/* Modified by erXos: fdopen "a" fails with EINVAL, changing nothing, when the
+   descriptor refuses O_APPEND, rather than give a stream that writes at the
+   current offset (liberx/program/fd.c fixes a file's O_APPEND at its open). */
 #include "stdio_impl.h"
 #include <stdlib.h>
 #include <sys/ioctl.h>
@@ -26,16 +29,22 @@ FILE *__fdopen(int fd, const char *mode)
 	/* Impose mode restrictions */
 	if (!strchr(mode, '+')) f->flags = (*mode == 'r') ? F_NOWR : F_NORD;
 
-	/* Apply close-on-exec flag */
-	if (strchr(mode, 'e')) __syscall(SYS_fcntl, fd, F_SETFD, FD_CLOEXEC);
-
-	/* Set append mode on fd if opened for append */
+	/* Set append mode on fd if opened for append. erXos: a descriptor that
+	 * refuses O_APPEND fails the call with EINVAL, changing nothing, rather
+	 * than giving a stream that writes at the current offset. */
 	if (*mode == 'a') {
 		int flags = __syscall(SYS_fcntl, fd, F_GETFL);
-		if (!(flags & O_APPEND))
-			__syscall(SYS_fcntl, fd, F_SETFL, flags | O_APPEND);
+		if (!(flags & O_APPEND) &&
+		    __syscall(SYS_fcntl, fd, F_SETFL, flags | O_APPEND) < 0) {
+			free(f);
+			errno = EINVAL;
+			return 0;
+		}
 		f->flags |= F_APP;
 	}
+
+	/* Apply close-on-exec flag */
+	if (strchr(mode, 'e')) __syscall(SYS_fcntl, fd, F_SETFD, FD_CLOEXEC);
 
 	f->fd = fd;
 	f->buf = (unsigned char *)f + sizeof *f + UNGET;

@@ -37,8 +37,9 @@
  * what it took and fails whole.
  *
  * A take answers a hand-off only for the program the open command names and only to the
- * port's opener, the process that opened it (program_t's opener), at a start and at an
- * INSTALL alike.
+ * port's owner, at a start and at an INSTALL alike. The owner is the process that opened the
+ * port, always: the driver sets ERL_DRV_FLAG_ERX_NO_CONNECT, so ERTS refuses port_connect/2
+ * on it (docs/design-runtime.md, "Programs as ports").
  *
  * A take also takes the port's hold on the program's holder entry, and the port keeps
  * whether one of its takes did (held). Only then does the release let the hold go, after
@@ -49,7 +50,7 @@
  *
  * The input task also reads the program's frames from the channel's outbound lane: each whole
  * record passes the funnel's channel mode, then ERTS's safe decode, then the program's credit
- * (erx_program_credit_take), and goes to the opener as {erx_channel, Port, Frame}; a record that
+ * (erx_program_credit_take), and goes to the owner as {erx_channel, Port, Frame}; a record that
  * fails any of them ends the program with SIGSYS (REFUSED). It takes at most INPUT_ALLOWANCE
  * frames a run and rings its own doorbell for the rest, so a program that writes fast holds a
  * scheduler no longer than a lane port does; a run that holds a fault or exit record of the
@@ -90,7 +91,7 @@
 #include "erx_program_core.h"
 
 /*
- * The opener's port_control commands, abi/erx_abi.txt's program_control, which erx/abi.h
+ * The owner's port_control commands, abi/erx_abi.txt's program_control, which erx/abi.h
  * gives as ERX_PROGRAM_CONTROL_STARTED and so on (program_control() reads them; nothing is
  * defined here). Each answers "ok" or the refusing status's
  * e-prefixed name: STARTED how the start ended, "ok" followed by the data area's value in
@@ -155,12 +156,6 @@ static const uint32_t channel_sides[CHANNEL_SIDES] = {
 
 typedef struct {
 	ErlDrvPort		port;
-	/*
-	 * The process that opened the port, driver_connected at the open: the one process
-	 * program_control serves and every take is for, whatever port_connect/2 later makes the
-	 * port's owner.
-	 */
-	ErlDrvTermData		opener;
 	erx_program_spec_t	spec;
 	uint8_t			image_path[ERX_PACK_PATH_MAX];
 	int			start_error;	/* the start's run's answer */
@@ -236,6 +231,16 @@ static void		*scratch;
 static size_t		 scratch_len;
 
 extern ErlDrvEntry erx_program_driver_entry;
+
+/*
+ * The port's owner: the process that opened it, since ERTS refuses port_connect/2 on a port
+ * of a driver that sets ERL_DRV_FLAG_ERX_NO_CONNECT. Every take and every message is for it.
+ */
+static ErlDrvTermData
+owner(const program_t *program)
+{
+	return (driver_connected(program->port));
+}
 
 /* One decimal word and the space after it, into *value: false on anything else or above UINT64_MAX. */
 static bool
@@ -638,20 +643,20 @@ hand_take(program_t *program, uint64_t number, ERL_NIF_TERM caller)
 
 /*
  * HANDS_TAKE: takes each hand-off the open command names for the program its pid names, as
- * the port's opener, and makes room for the value of each of their copies. ERX_EINVAL for a hand-off the NIF refuses, the same
- * number twice among them, or one it answers with more copies than any hand-off holds;
- * ERX_ENOMEM. A step that fails makes nothing, so this one lets go what it took, and the
+ * the port's owner, and makes room for the value of each of their copies. ERX_EINVAL for a
+ * hand-off the NIF refuses, the same number twice among them, or one it answers with more
+ * copies than any hand-off holds; ERX_ENOMEM. A step that fails makes nothing, so this one lets go what it took, and the
  * port's hold, itself, and records no copies.
  */
 static int
 hands_take(program_t *program)
 {
-	const ERL_NIF_TERM opener = (ERL_NIF_TERM)program->opener;
 	size_t copies = 0;
 	int status = ERX_OK;
 
 	for (uint32_t at = 0; status == ERX_OK && at < program->hand_count; at++) {
-		erx_pipe_hand_t *const hand = hand_take(program, program->hand[at].number, opener);
+		erx_pipe_hand_t *const hand = hand_take(program, program->hand[at].number,
+		    (ERL_NIF_TERM)owner(program));
 
 		if (hand == NULL) {
 			status = ERX_EINVAL;
@@ -713,7 +718,7 @@ hands_bind(program_t *program)
 }
 
 /*
- * Takes the lease the spec names, for this port's opener, which erx_program:start/1 made
+ * Takes the lease the spec names, for this port's owner, which erx_program:start/1 made
  * the lease's holder by calling it itself (docs/design-display.md, "The pixel area").
  * A spec that names none takes nothing. The area NIF answers no lease for a number with
  * no held lease, another holder's or another length's, and the start fails with einval.
@@ -723,7 +728,7 @@ lease_take(program_t *program)
 {
 	if (program->spec.lease == 0)
 		return (ERX_OK);
-	program->lease = erx_area_lease_take(program->spec.lease, (ERL_NIF_TERM)program->opener,
+	program->lease = erx_area_lease_take(program->spec.lease, (ERL_NIF_TERM)owner(program),
 	    program->spec.lease_pages);
 	return (program->lease == NULL ? ERX_EINVAL : ERX_OK);
 }
@@ -737,7 +742,7 @@ close_cap(uint64_t *cap)
 	return (status);
 }
 
-/* {Port, {exit_status, Status}} to the port's opener, whom a port_connect/2 does not change. */
+/* {Port, {exit_status, Status}} to the port's owner. */
 static void
 report(program_t *program, int64_t status)
 {
@@ -750,11 +755,11 @@ report(program_t *program, int64_t status)
 		ERL_DRV_TUPLE, 2,
 	};
 
-	(void)erl_drv_send_term(driver_mk_port(program->port), program->opener, message,
+	(void)erl_drv_output_term(driver_mk_port(program->port), message,
 	    (int)(sizeof(message) / sizeof(message[0])));
 }
 
-/* {erx_channel_room, Port} to the port's opener: the owed frame may be sent again. */
+/* {erx_channel_room, Port} to the port's owner: the owed frame may be sent again. */
 static void
 room(program_t *program)
 {
@@ -764,14 +769,14 @@ room(program_t *program)
 		ERL_DRV_TUPLE, 2,
 	};
 
-	(void)erl_drv_send_term(driver_mk_port(program->port), program->opener, message,
+	(void)erl_drv_output_term(driver_mk_port(program->port), message,
 	    (int)(sizeof(message) / sizeof(message[0])));
 }
 
 /*
  * Applies one of the core's actions, other than ERX_PROGRAM_DONE and ERX_PROGRAM_CLOSE_PORT,
  * which the callers act on themselves: the kernel's answer for a start step, which the
- * core reads, the answer to the opener's command for THREAD_START and WRITE, and any status
+ * core reads, the answer to the owner's command for THREAD_START and WRITE, and any status
  * for the rest, which nothing reads. The session's budget and
  * group are the boot information's; the program's spaces name the domain's fault gate and
  * carry their own labels (erx_gate.h).
@@ -918,19 +923,19 @@ apply(program_t *program, erx_program_action_t action)
 /*
  * Feeds one input to the end and applies what it returns. True when the last action closed
  * the port: the core puts nothing after ERX_PROGRAM_CLOSE_PORT, and the port's stop may
- * already have freed program, so the caller touches it no more. When owner is not NULL it
- * receives the answer to the opener's command the input carries: apply's for THREAD_START,
+ * already have freed program, so the caller touches it no more. When reply is not NULL it
+ * receives the answer to the owner's command the input carries: apply's for THREAD_START,
  * WRITE or BUSY, ERX_OK for a STOP the end acted on, or ERX_EINVAL when the end admitted
  * none.
  */
 static bool
-end_feed(program_t *program, erx_program_input_t input, int *owner)
+end_feed(program_t *program, erx_program_input_t input, int *reply)
 {
 	erx_program_action_t actions[ERX_PROGRAM_ACTIONS_MAX];
 	const size_t count = erx_program_end_next(&program->end, input, actions);
 
-	if (owner != NULL)
-		*owner = ERX_EINVAL;
+	if (reply != NULL)
+		*reply = ERX_EINVAL;
 	for (size_t at = 0; at < count; at++) {
 		int status;
 
@@ -939,9 +944,9 @@ end_feed(program_t *program, erx_program_input_t input, int *owner)
 			return (true);
 		}
 		status = apply(program, actions[at]);
-		if (owner != NULL && (actions[at].act == ERX_PROGRAM_THREAD_START || actions[at].act == ERX_PROGRAM_WRITE ||
+		if (reply != NULL && (actions[at].act == ERX_PROGRAM_THREAD_START || actions[at].act == ERX_PROGRAM_WRITE ||
 		    actions[at].act == ERX_PROGRAM_BUSY || (input.kind == ERX_PROGRAM_STOP && actions[at].act == ERX_PROGRAM_STOP_ANCHOR)))
-			*owner = status;
+			*reply = status;
 	}
 	return (false);
 }
@@ -1018,13 +1023,12 @@ input_take(program_t *program, erx_lane_part_t *part)
 }
 
 /*
- * {erx_channel, Port, Frame} to the port's opener, whom a port_connect/2 does not change,
- * Frame the record decoded by ERTS's safe
+ * {erx_channel, Port, Frame} to the port's owner, Frame the record decoded by ERTS's safe
  * decode, which makes no atom, into a message of its own, sent as a port's message is. The
  * shape is read from the record and spent from the credit first, so a frame outside the
  * credit reaches no process, and every frame read spends credit whether or not it is
  * delivered, which bounds what one run can read. False when the credit or the decode
- * refuses it, and nothing is sent. An opener that is gone, as when the port outlives an opener
+ * refuses it, and nothing is sent. An owner that is gone, as when the port outlives an owner
  * that unlinked from it and exited, has no use for the frame, which is dropped undecoded
  * once its credit is spent.
  */
@@ -1034,7 +1038,7 @@ frame_deliver(program_t *program)
 	Port *const prt = erts_drvport2port(program->port);
 	const byte *ext = program->in;
 	ErtsHeapFactory factory;
-	Process *opener;
+	Process *to;
 	Sint words;
 	Eterm frame, *hp;
 
@@ -1043,8 +1047,8 @@ frame_deliver(program_t *program)
 		return (false);
 	if (prt == ERTS_INVALID_ERL_DRV_PORT)
 		return (true);
-	opener = erts_proc_lookup((Eterm)program->opener);
-	if (opener == NULL)
+	to = erts_proc_lookup((Eterm)owner(program));
+	if (to == NULL)
 		return (true);
 	words = erts_decode_ext_size(program->in, (Uint)program->in_len);
 	if (words < 0)
@@ -1060,7 +1064,7 @@ frame_deliver(program_t *program)
 	hp = erts_produce_heap(&factory, 4, 0);
 	frame = TUPLE3(hp, driver_mk_atom("erx_channel"), prt->common.id, frame);
 	erts_factory_close(&factory);
-	erts_queue_message(opener, 0, factory.message, frame, prt->common.id);
+	erts_queue_message(to, 0, factory.message, frame, prt->common.id);
 	return (true);
 }
 
@@ -1189,7 +1193,6 @@ program_start(ErlDrvPort port, char *command, SysDriverOpts *opts)
 		return (ERL_DRV_ERROR_GENERAL);
 	memset(program, 0, sizeof(*program));
 	program->port = port;
-	program->opener = driver_connected(port);
 	if (!program_open_parse(command, program)) {
 		driver_free(program);
 		return (ERL_DRV_ERROR_BADARG);
@@ -1243,7 +1246,7 @@ program_stop(ErlDrvData data)
  *
  * Why the read comes between the take and the feed: a frame the program wrote before the
  * fault or exit a record tells of is in the lane before the record was kept, so the read
- * after the take finds it, and the opener has every frame the program wrote before its end
+ * after the take finds it, and the owner has every frame the program wrote before its end
  * is fed. Every record ends the program: a fault, the image's exit or a loss directly, and
  * the anchor's exit by ending the image with it, since a space never outlives its parent.
  * So what the program writes after the stop, as one of its threads may after another
@@ -1414,7 +1417,7 @@ send_parse(const uint8_t *buf, size_t len, erx_program_send_t *send, const uint8
  * SEND: checks the payload's form and that the credit admits what its frame gives,
  * copies the frame and offers it to the end, which admits it as WRITE only while the program
  * lives and no other frame is being written, or answers SEND_BUSY while one is. The credit
- * takes the frame's reply and grants only once the end admitted it. The frame is the opener's,
+ * takes the frame's reply and grants only once the end admitted it. The frame is the owner's,
  * built with the program protocol's grammar; here only its size is bounded, and the program
  * checks the rest.
  */
@@ -1499,7 +1502,7 @@ pass_or_stop(program_t *program, const erx_pipe_hand_t *hand, uint64_t copies[])
 }
 
 /*
- * INSTALL: takes hand-off number for the running program as the port's opener, binds its
+ * INSTALL: takes hand-off number for the running program as the port's owner, binds its
  * doorbell to the program's group, passes its copies into the image, and lets it go whatever
  * those answered. Its refusals come in the order that keeps them clean. First every one that
  * touches nothing: ERX_EINVAL for a start that failed, a hand-off the NIF refuses, or one
@@ -1509,7 +1512,7 @@ pass_or_stop(program_t *program, const erx_pipe_hand_t *hand, uint64_t copies[])
  * Last the pass's, which stops the program (pass_or_stop). Nothing can fail after the
  * pass: on ERX_OK *ok is the whole answer, made before the bind, "ok" and the value each
  * copy took, 8 bytes each; on a refusal it is NULL. A failed install names nothing to the
- * program: the opener does not send the frame that would carry the values.
+ * program: the owner does not send the frame that would carry the values.
  */
 static int
 hand_install(program_t *program, uint64_t number, uint64_t expected, ErlDrvBinary **ok)
@@ -1524,7 +1527,7 @@ hand_install(program_t *program, uint64_t number, uint64_t expected, ErlDrvBinar
 		return (ERX_EINVAL);
 	if (!erx_program_end_installs(&program->end))
 		return (ERX_EDEAD);
-	hand = hand_take(program, number, (ERL_NIF_TERM)program->opener);
+	hand = hand_take(program, number, (ERL_NIF_TERM)owner(program));
 	if (hand == NULL)
 		return (ERX_EINVAL);
 	count = erx_pipe_hand_count(hand);
@@ -1579,10 +1582,11 @@ data_slot(program_t *program, uint64_t slot, uint64_t count, uint8_t **at)
 }
 
 /*
- * The opener's commands. ERTS lets any process of the runtime call port_control on a port it
- * names, and port_connect/2 lets any process make itself the port's owner, so every caller
- * but the opener is refused einval before the command is read, and every command is the
- * opener's alone. STARTED reads the start's answer, which feeds the end,
+ * The owner's commands. ERTS lets any process of the runtime call port_control on a port it
+ * names, so every caller but the owner, the process that opened the port, is refused einval
+ * before the command is read, as is a caller ERTS cannot name (NIL, which driver_caller and
+ * driver_connected both answer for a port they cannot find), and every command is the
+ * owner's alone. STARTED reads the start's answer, which feeds the end,
  * and the end closes the port here when the program already ended; the answer is built
  * first, since that close frees program. SEND, RUN and STOP act only on a program whose
  * start succeeded; the end decides whether each is admitted. A STOP's status
@@ -1594,6 +1598,7 @@ static ErlDrvSSizeT
 program_control(ErlDrvData data, unsigned int command, char *buf, ErlDrvSizeT len, char **rbuf, ErlDrvSizeT rlen)
 {
 	program_t *const program = (program_t *)data;
+	ErlDrvTermData caller;
 	ErlDrvBinary *installed;
 	uint8_t *values, *at = NULL;
 	size_t values_len;
@@ -1602,7 +1607,8 @@ program_control(ErlDrvData data, unsigned int command, char *buf, ErlDrvSizeT le
 	int status;
 
 	(void)rlen;
-	if (driver_caller(program->port) != program->opener)
+	caller = driver_caller(program->port);
+	if (caller == (ErlDrvTermData)NIL || caller != owner(program))
 		return (answer(ERX_EINVAL, NULL, 0, rbuf));
 	switch (command) {
 	case ERX_PROGRAM_CONTROL_STARTED:
@@ -1684,5 +1690,5 @@ ErlDrvEntry erx_program_driver_entry = {
 	.extended_marker = ERL_DRV_EXTENDED_MARKER,
 	.major_version = ERL_DRV_EXTENDED_MAJOR_VERSION,
 	.minor_version = ERL_DRV_EXTENDED_MINOR_VERSION,
-	.driver_flags = ERL_DRV_FLAG_USE_PORT_LOCKING,
+	.driver_flags = ERL_DRV_FLAG_USE_PORT_LOCKING | ERL_DRV_FLAG_ERX_NO_CONNECT,
 };

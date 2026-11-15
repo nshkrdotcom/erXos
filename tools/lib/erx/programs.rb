@@ -333,40 +333,33 @@ module Erx
             {note_burst, Count(0), S}
           end)().
        ERLANG
-       # A frame after the owner is gone: the port is handed to a process that unlinks from
-       # it and exits, so the port outlives its owner, and only then does the program run and
-       # write a request the credit admits. The frame still reaches this process, which
-       # opened the port: the driver sends frames to the opener, whom port_connect/2 does not
-       # change. The credit says when the driver has taken the request: until then slot 0 is
-       # free and a reply on it is refused with einval, and from then on it is admitted
-       # (docs/design-programs.md, "Credit"). A driver that refused the frame would have
-       # ended the program, and a send to an ended program is einval too, so ok also shows
-       # the program lives on. The program never reads the reply.
-       Case.new(name: 'owner_gone', seconds: 60, answer: '{owner_gone,ok,<<"ok">>,ok,{erx_prog,1,0,getpid},true}',
-                expression: line(<<~ERLANG)),
+       # Frames and an end after the owner is gone: a process starts the program, unlinks from
+       # its port and exits, so the port outlives its owner, and no other process can become
+       # the owner, since the driver refuses port_connect/2. The program writes a request on
+       # each of the 16 slots, a 17th the credit refuses, and faults (note's burst); the driver
+       # reads each, drops every frame it delivers once the owner is gone, ends the program at
+       # the 17th, drops its end and closes the port. The starter exits right after the start,
+       # usually before the program's first thread runs; which frames, or whether the end,
+       # reach it before it exits does not change the answer: the port closes by itself.
+       Case.new(name: 'owner_gone', seconds: 60, answer: '{owner_gone,closed}', expression: line(<<~ERLANG)),
          (fun() ->
-            P = open_port({spawn_driver, "erx_program 14 0 4096 4 0 0 0 bin/note"}, [binary]),
-            <<"ok", D:64>> = port_control(P, 1, []),
-            {ok, F} = erx_prog_grammar:build_start(\#{pid => 14, ppid => 1, pgid => 14,
-                                                     argv => [<<"note">>, <<"request">>], env => [],
-                                                     cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [],
-                                                     umask => 8#022, data_area => {D, 4}, fds => []}),
-            A = erx_program:send(P, F),
-            {B, M} = spawn_monitor(fun() -> receive go -> unlink(P) end end),
-            true = port_connect(P, B),
-            B ! go,
-            receive {'DOWN', M, process, B, normal} -> ok end,
-            R = port_control(P, 3, []),
-            AwaitTake = fun W(T) when T > 0 ->
-                            case erx_program:send(P, {erx_prog, 1, 0, {ok, 14}}) of
-                                ok -> ok;
-                                _ -> receive after 10 -> W(T - 10) end
-                            end;
-                        W(_) -> timeout
-                    end,
-            Taken = AwaitTake(#{WAIT_MS}),
-            Stray = receive {erx_channel, P, X} -> X after 0 -> none end,
-            {owner_gone, A, R, Taken, Stray, port_close(P)}
+            Self = self(),
+            {B, M} = spawn_monitor(fun() ->
+                                       P0 = erx_program:start(#{spec('note', 14, argv: '[<<"note">>, <<"burst">>]')}),
+                                       unlink(P0),
+                                       Self ! {started, P0}
+                                   end),
+            P = receive {started, Q} -> Q after #{WAIT_MS} -> timeout end,
+            receive {'DOWN', M, process, B, _} -> ok after #{WAIT_MS} -> ok end,
+            Closed = fun W(T) when T > 0 ->
+                             case erlang:port_info(P) of
+                                 undefined -> closed;
+                                 _ -> receive after 10 -> W(T - 10) end
+                             end;
+                         W(_) -> timeout
+                     end,
+            Gone = Closed(#{WAIT_MS}),
+            {owner_gone, Gone}
           end)().
        ERLANG
        # Flow control: a startup message of about 40 KiB, larger than the 16 KiB ring, is
@@ -391,10 +384,12 @@ module Erx
              receive {P, {exit_status, S}} -> S after #{WAIT_MS} -> timeout end}
           end)().
        ERLANG
-       # Only the opener commands the port: a second process gets einval from every command
-       # before and after it makes itself the port's owner with port_connect/2, and the
-       # program's end still reaches the opener (docs/design-runtime.md, "Programs as ports").
-       Case.new(name: 'opener', seconds: 60, answer: '{opener,[<<"einval">>],[<<"einval">>],ok,268}',
+       # Only the process that opened the port commands it: a second process gets einval from
+       # every command, its port_connect/2 is refused with badarg, so the opener stays the
+       # port's owner, and it still gets einval after; the program's end reaches the opener
+       # (docs/design-runtime.md, "Programs as ports").
+       Case.new(name: 'opener', seconds: 60,
+                answer: '{opener,[<<"einval">>],refused,[<<"einval">>],true,ok,268}',
                 expression: line(<<~ERLANG)),
          (fun() ->
             P = erx_program:start(#{spec('spin', 44)}),
@@ -402,16 +397,17 @@ module Erx
             Try = fun() -> lists:usort([port_control(P, C, <<>>) || C <- lists:seq(1, 7)]) end,
             O = spawn(fun() ->
                         B0 = Try(),
-                        true = port_connect(P, self()),
-                        unlink(P),
-                        Self ! {other, B0, Try()},
+                        C0 = try port_connect(P, self()) catch error:badarg -> refused end,
+                        Self ! {other, B0, C0, Try()},
                         receive done -> ok end
                       end),
-            {Before, After} = receive {other, B1, A1} -> {B1, A1} after #{WAIT_MS} -> {timeout, timeout} end,
+            {Before, Connect, After} = receive {other, B1, C1, A1} -> {B1, C1, A1}
+                                       after #{WAIT_MS} -> {timeout, timeout, timeout} end,
+            {connected, Owner} = erlang:port_info(P, connected),
             Stop = erx_program:stop(P, anchor, 268),
             S = receive {P, {exit_status, X}} -> X after #{WAIT_MS} -> timeout end,
             O ! done,
-            {opener, Before, After, Stop, S}
+            {opener, Before, Connect, After, Owner =:= Self, Stop, S}
           end)().
        ERLANG
        # The handler's stop of a program its grammar refuses: the end reports the status given.

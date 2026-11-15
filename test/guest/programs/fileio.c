@@ -12,14 +12,17 @@
  * namespace must let it create.  It writes a short text, then a block of
  * three data slots and a part, so the write and the read back each go in
  * parts; reads both back in order through a second open, finds the end of
- * the file, checks that a dup shares the open's offset, and ends with 0, or
- * with a code of its own for the first step that does not agree.
+ * the file, checks that a dup shares the open's offset, and that musl's
+ * fdopen "a" fails with EINVAL on an open whose O_APPEND it cannot set, since
+ * an open fixes a file's O_APPEND, but takes an open made with it.  It ends
+ * with 0, or with a code of its own for the first step that does not agree.
  */
 
 #include <errno.h>
 #include <fcntl.h>
 #include <stddef.h>
 #include <stdint.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
@@ -60,6 +63,7 @@ int
 main(int argc, char **argv)
 {
 	char small[sizeof(text)];
+	FILE *stream;
 	int fd, copy;
 
 	if (argc != 2)
@@ -99,5 +103,20 @@ main(int argc, char **argv)
 
 	if (open(argv[1], O_WRONLY | O_CREAT | O_EXCL, 0644) != -1 || errno != EEXIST)
 		return (13);
+
+	/* The stream would write at the open's offset, not at the end: refused, and fd stays. */
+	fd = open(argv[1], O_WRONLY);
+	if (fd < 0)
+		return (14);
+	if (fdopen(fd, "a") != NULL || errno != EINVAL)
+		return (15);
+	if (close(fd) != 0)
+		return (16);
+	fd = open(argv[1], O_WRONLY | O_APPEND);
+	if (fd < 0)
+		return (17);
+	stream = fdopen(fd, "a");
+	if (stream == NULL || fclose(stream) != 0)
+		return (18);
 	return (0);
 }
