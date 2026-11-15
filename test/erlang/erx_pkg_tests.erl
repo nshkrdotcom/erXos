@@ -65,21 +65,21 @@ listing_test() ->
 setup(Options) ->
     process_flag(trap_exit, true),
     ok = erx_fs_version:init(),
-    ok = erx_pkg_test_medium:new(),
+    ok = erx_pkg_medium:new(),
     Dashboard = file("dashboard"),
     Clock = file("clock"),
-    erx_pkg_test_medium:put(system, <<"dashboard.app">>, Dashboard),
-    erx_pkg_test_medium:put(installed, <<"clock.app">>, Clock),
-    erx_pkg_test_medium:put(installed, <<"other.app">>, file("other")),
-    erx_pkg_test_medium:put(installed, <<"misnamed.app">>, Clock),
-    erx_pkg_test_medium:put(installed, <<"short.app">>, binary:part(Clock, 0, 4096)),
-    erx_pkg_test_medium:put(installed, <<"tmp.0">>, <<"partial">>),
-    erx_pkg_test_medium:put(installed, <<"tmp.7">>, <<>>),
-    erx_pkg_test_medium:put(installed, <<"notes">>, <<"left alone">>),
-    erx_pkg_test_medium:put(installed, <<"image">>, <<>>),
-    [erx_pkg_test_medium:set(Key, Value) || {Key, Value} <- Options],
+    erx_pkg_medium:put(system, <<"dashboard.app">>, Dashboard),
+    erx_pkg_medium:put(installed, <<"clock.app">>, Clock),
+    erx_pkg_medium:put(installed, <<"other.app">>, file("other")),
+    erx_pkg_medium:put(installed, <<"misnamed.app">>, Clock),
+    erx_pkg_medium:put(installed, <<"short.app">>, binary:part(Clock, 0, 4096)),
+    erx_pkg_medium:put(installed, <<"tmp.0">>, <<"partial">>),
+    erx_pkg_medium:put(installed, <<"tmp.7">>, <<>>),
+    erx_pkg_medium:put(installed, <<"notes">>, <<"left alone">>),
+    erx_pkg_medium:put(installed, <<"image">>, <<>>),
+    [erx_pkg_medium:set(Key, Value) || {Key, Value} <- Options],
     Io = case whereis(erx_pkg_io) of
-             undefined -> {ok, Pid} = erx_pkg_io:start_link(erx_pkg_test_medium), Pid;
+             undefined -> {ok, Pid} = erx_pkg_io:start_link(), Pid;
              Pid -> Pid
          end,
     Config = #{images => [{<<"dashboard.app">>, header_hash(Dashboard)}],
@@ -113,7 +113,7 @@ wait_until(Done, N) ->
     end.
 
 published() ->
-    case ets:lookup(erx_pkg_test_medium, published) of
+    case ets:lookup(erx_pkg_medium, published) of
         [{published, Sets}] -> Sets;
         [] -> []
     end.
@@ -130,7 +130,7 @@ recovery_test() ->
     #{scan := Scan, packages := Records} = erx_pkg:packages(),
     ?assertEqual({ok, 8}, Scan),
     %% Every temporary file is deleted; an entry of no recognized form stays.
-    ?assertEqual([<<"tmp.0">>, <<"tmp.7">>], erx_pkg_test_medium:deleted()),
+    ?assertEqual([<<"tmp.0">>, <<"tmp.7">>], erx_pkg_medium:deleted()),
     ?assertMatch(#{{system, <<"dashboard.app">>} := #{state := admitted, signer := image},
                    {installed, <<"clock.app">>} := #{state := admitted, signer := development,
                                                        version := 3},
@@ -150,7 +150,7 @@ recovery_test() ->
     ?assertEqual([{<<"dashboard">>, 0, image}, {<<"clock">>, 1, development}],
                  [{Name, Entry, Signer}
                   || {Name, #{entry := Entry, signer := Signer}}
-                         <- ets:lookup_element(erx_pkg_test_medium, registered, 2)]),
+                         <- ets:lookup_element(erx_pkg_medium, registered, 2)]),
     stop(Sup).
 
 path_table_test() ->
@@ -177,11 +177,11 @@ path_table_test() ->
     ?assertEqual({error, einval}, erx_pkg_io:read(installed, <<"clock.app">>, Qid, 0, -1)),
     %% A header changed on the medium since its check is never served.
     <<Byte, Tail/binary>> = Clock,
-    erx_pkg_test_medium:put(installed, <<"clock.app">>, <<(Byte bxor 1), Tail/binary>>),
+    erx_pkg_medium:put(installed, <<"clock.app">>, <<(Byte bxor 1), Tail/binary>>),
     ?assertEqual({error, eio}, erx_pkg_io:read(installed, <<"clock.app">>, Qid, 0, 16)),
     %% A new lifetime gives the package a new qid path, and its predecessor's
     %% requests are refused.
-    erx_pkg_test_medium:put(installed, <<"clock.app">>, Clock),
+    erx_pkg_medium:put(installed, <<"clock.app">>, Clock),
     Old = whereis(erx_pkg),
     exit(Old, kill),
     wait_until(fun() -> is_pid(whereis(erx_pkg)) andalso whereis(erx_pkg) =/= Old end),
@@ -215,7 +215,7 @@ overflow_test() ->
     #{scan := Scan, packages := Records} = erx_pkg:packages(),
     ?assertEqual({overflow, 1024}, Scan),
     ?assertEqual([{system, <<"dashboard.app">>}], maps:keys(Records)),
-    ?assertEqual([], erx_pkg_test_medium:deleted()),
+    ?assertEqual([], erx_pkg_medium:deleted()),
     stop(Sup).
 
 absent_grant_test() ->

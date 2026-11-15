@@ -43,7 +43,8 @@ it; git history is the record of completed work.
   and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
   remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
   supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
-  them; the medium module over the `packages` grant (`erx_file_remote`) and, on the stopgap, the release's
+  them; `erx_pkg_medium`, the medium over the `packages` grant (`erx_file_remote`), declaring
+  `-behaviour(erx_pkg_io)` so the test stub and it meet one contract and, on the stopgap, the release's
   `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
   `unknown`; `erx_starter:packages/2` and the start table's package rows; registration
   (`erx_principal:register_app/2`), stubbed in the tests, and the registry argument, which
@@ -803,6 +804,12 @@ it; git history is the record of completed work.
   so a session writing refused lines in a loop fills the system log; and `erx_start_table:ctl_errno/1` has a clause per refusal and no catch-all, but nothing checks it against
   `ctl_error()` (no dialyzer runs), so a new refusal without a clause ends the session's grant on its first
   write: returning the errno with the refusal from `apply_ctl/4` makes it hold by construction.
+* [Medium] start service, `erlang/apps/erx_starter/src/erx_starter_fs.erl` (`start_link/1`, `call/2`): the
+  tree takes a `command` fun from outside, which only its tests pass, and calls it, where
+  [design-apps.md](docs/design-apps.md#invariants) has erx_starter call nothing given to it from outside;
+  the `starter-reach` chokepoint matches a variable or macro module and `apply` but not a fun value, so a
+  later caller of `start_link/1` would pass the check. Drop `start_link/1` and stand in for
+  `erx_starter:command/1` with a stub module in the tests, as `erx_pkg_medium` does for `erx_pkg_io`.
 * [Low] Property 17 plans one root session for the console, but a development build's console also logs root in
   at the host link's `console` line when the host opens it, and a console's relogin after a session ends may
   overlap the old session's end; neither is counted, so a manifest that exactly fills the system principal's

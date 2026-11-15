@@ -1,10 +1,10 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
--module(erx_pkg_test_medium).
+-module(erx_pkg_medium).
 -moduledoc """
-A simulated medium for erx_pkg_io's tests: the packages in a public ETS
-table, `{{Place, File}, Bytes}`, with the listing's answer under `listing`
+The test build's erx_pkg_medium, a simulated medium: the packages in a
+public ETS table, `{{Place, File}, Bytes}`, with the listing's answer under `listing`
 (the names are the installed files unless it is set), a failing deletion
 under `fail_delete`, and every deletion logged under `deleted`.
 """.

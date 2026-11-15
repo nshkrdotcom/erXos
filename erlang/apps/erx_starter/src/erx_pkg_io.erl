@@ -28,10 +28,12 @@ zeros after it to the image; a package the file check refused has no
 header hash, and every read of it answers `eio`. So no byte before the
 image reaches a reader unauthenticated.
 
-The medium, a module given at start, is the packages as storage holds them:
-the image's packages (`system`) and the data partition's `packages/`
+The medium, the module erx_pkg_medium, is the packages as storage holds
+them: the image's packages (`system`) and the data partition's `packages/`
 directory (`installed`), whose listing answers `{error, absent}` while the
-packages grant is not in place.
+packages grant is not in place. Every call names erx_pkg_medium, since
+erx_starter calls no module given to it from outside (docs/design-apps.md,
+"Invariants"); the callbacks below are its contract.
 
 erx_pkg_io is never restarted (docs/design-packaging.md, "The package
 lifetime"): a restarted one could not know whether a request of its
@@ -39,22 +41,21 @@ predecessor was still on its way to storage.
 """.
 -behaviour(gen_server).
 
--export([start_link/1, request/1, lookup/2, read/5]).
+-export([start_link/0, request/1, lookup/2, read/5]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -include("generated/erx_abi.hrl").
 
 -type place() :: system | installed.
 
--doc """
-The packages as storage holds them: `list/1` reads at most that many
-entries of `packages/` and says whether more remain; `size/2` and `pread/4`
-read a package; `delete/1` deletes an entry of `packages/`.
-""".
+-doc "Read at most that many entries of `packages/`, and whether more remain.".
 -callback list(pos_integer()) -> {ok, [binary()], boolean()} | {error, atom()}.
+-doc "The size of a package.".
 -callback size(place(), binary()) -> {ok, non_neg_integer()} | {error, atom()}.
+-doc "Read a package's bytes from an offset.".
 -callback pread(place(), binary(), non_neg_integer(), non_neg_integer()) ->
     {ok, binary()} | {error, atom()}.
+-doc "Delete an entry of `packages/`.".
 -callback delete(binary()) -> ok | {error, atom()}.
 
 -type request() :: {begin_lifetime, pid()}
@@ -63,10 +64,10 @@ read a package; `delete/1` deletes an entry of `packages/`.
                  | {delete, pid(), binary()}
                  | {path_entry, pid(), place(), binary(), erx_pkg_plan:entry()}.
 
--doc "Start the one erx_pkg_io over the medium module Medium.".
--spec start_link(module()) -> gen_server:start_ret().
-start_link(Medium) ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, Medium, []).
+-doc "Start the one erx_pkg_io.".
+-spec start_link() -> gen_server:start_ret().
+start_link() ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
 
 -doc """
 Carry out a lifetime's request, after every request taken before it.
@@ -97,8 +98,8 @@ for every read of a package the file check refused.
 read(Place, File, Qid, Offset, Size) ->
     gen_server:call(?MODULE, {read, Place, File, Qid, Offset, Size}, infinity).
 
-init(Medium) ->
-    {ok, #{medium => Medium, lifetime => none, table => #{}}}.
+init([]) ->
+    {ok, #{lifetime => none, table => #{}}}.
 
 handle_call({begin_lifetime, Lifetime}, _From, State) ->
     case is_pid(Lifetime) andalso is_process_alive(Lifetime) of
@@ -116,10 +117,10 @@ handle_call({read, _Place, _File, _Qid, Offset, Size}, _From, State)
   when not (is_integer(Offset) andalso Offset >= 0 andalso is_integer(Size) andalso Size >= 0) ->
     {reply, {error, einval}, State};
 handle_call({read, Place, File, Qid, Offset, Size}, _From,
-            #{medium := Medium, table := Table} = State) ->
+            #{table := Table} = State) ->
     Answer = case Table of
                  #{{Place, File} := #{qid := Qid, entry := Entry}} ->
-                     read_entry(Medium, Place, File, Entry, Offset, Size);
+                     read_entry(Place, File, Entry, Offset, Size);
                  #{} ->
                      {error, eio}
              end,
@@ -140,15 +141,16 @@ handle_cast(_Message, State) ->
     {noreply, State}.
 
 %% A request of the lifetime that began last, which is alive.
-take({header, _, Place, File}, #{medium := Medium} = State) ->
+take({header, _, Place, File}, State) ->
     Answer = maybe
-        {ok, Length} ?= Medium:size(Place, File),
-        {ok, Bytes} ?= Medium:pread(Place, File, 0, min(Length, ?ERX_PKG_HEADER_MAX)),
+        {ok, Length} ?= erx_pkg_medium:size(Place, File),
+        {ok, Bytes} ?= erx_pkg_medium:pread(Place, File, 0,
+                                            min(Length, ?ERX_PKG_HEADER_MAX)),
         {ok, Length, Bytes}
     end,
     {Answer, State};
-take({list, _}, #{medium := Medium, table := Table} = State) ->
-    case Medium:list(?ERX_PKG_SCAN_MAX) of
+take({list, _}, #{table := Table} = State) ->
+    case erx_pkg_medium:list(?ERX_PKG_SCAN_MAX) of
         {ok, Names, false} = Answer when length(Names) =< ?ERX_PKG_SCAN_MAX ->
             Held = maps:from_list([{{installed, Name}, pending}
                                    || Name <- Names, erx_pkg_plan:package_file(Name)]),
@@ -158,8 +160,9 @@ take({list, _}, #{medium := Medium, table := Table} = State) ->
         {error, _} = Error ->
             {Error, State}
     end;
-take({delete, _, File}, #{medium := Medium, table := Table} = State) ->
-    {Medium:delete(File), State#{table := maps:remove({installed, File}, Table)}};
+take({delete, _, File}, #{table := Table} = State) ->
+    Answer = erx_pkg_medium:delete(File),
+    {Answer, State#{table := maps:remove({installed, File}, Table)}};
 take({path_entry, _, Place, File, Entry}, #{table := Table} = State) ->
     case erx_fs_version:draw() of
         {ok, Qid} -> {ok, State#{table := Table#{{Place, File} => #{qid => Qid, entry => Entry}}}};
@@ -168,31 +171,31 @@ take({path_entry, _, Place, File, Entry}, #{table := Table} = State) ->
 
 %% A read of a listed package: the bytes before the image from the header
 %% its entry authenticates, the rest from the medium.
-read_entry(_Medium, _Place, _File, refused, _Offset, _Size) ->
+read_entry(_Place, _File, refused, _Offset, _Size) ->
     {error, eio};
-read_entry(Medium, Place, File, {accepted, Sha256, Length, Extent}, Offset, Size)
+read_entry(Place, File, {accepted, Sha256, Length, Extent}, Offset, Size)
   when Offset < Extent ->
-    case Medium:pread(Place, File, 0, Length) of
+    case erx_pkg_medium:pread(Place, File, 0, Length) of
         {ok, <<Header:Length/binary>>} ->
             case erx_bytes:sha256(Header) of
                 Sha256 ->
                     Before = <<Header/binary, 0:((Extent - Length) * 8)>>,
                     Take = min(Size, Extent - Offset),
                     Head = binary:part(Before, Offset, Take),
-                    tail(Medium, Place, File, Head, Extent, Size - Take);
+                    tail(Place, File, Head, Extent, Size - Take);
                 _ ->
                     {error, eio}
             end;
         {ok, _Short} -> {error, eio};
         {error, _} = Error -> Error
     end;
-read_entry(Medium, Place, File, {accepted, _, _, _}, Offset, Size) ->
-    Medium:pread(Place, File, Offset, Size).
+read_entry(Place, File, {accepted, _, _, _}, Offset, Size) ->
+    erx_pkg_medium:pread(Place, File, Offset, Size).
 
-tail(_Medium, _Place, _File, Head, _Extent, 0) ->
+tail(_Place, _File, Head, _Extent, 0) ->
     {ok, Head};
-tail(Medium, Place, File, Head, Extent, Size) ->
-    case Medium:pread(Place, File, Extent, Size) of
+tail(Place, File, Head, Extent, Size) ->
+    case erx_pkg_medium:pread(Place, File, Extent, Size) of
         {ok, Rest} -> {ok, <<Head/binary, Rest/binary>>};
         {error, _} = Error -> Error
     end.
