@@ -285,13 +285,13 @@ clients](#native-clients-liberxs-file-client)).
 | --- | --- | --- | --- |
 | **F1.** A path never reaches a file server the domain does not hold | a request is a frame on the lane from the client's domain to the server's, addressed to a grant pid; the server's funnel admits a frame only to a pid its runtime exported to the domain that lane belongs to, with `send` ([design-domains.md](design-domains.md#invariants) D3); a grant's pid reaches a domain only through the system domain's introduction of the two; a namespace entry stores only a pid | a request path that names servers by anything but a pid; a server that acts on a pid named inside a request; a runtime that exported a grant to a domain the server did not make it for | a domain test mounts a pid its domain was never introduced to and finds every request fails with `eio`; the funnel's export tests |
 | **F2.** No request reaches above its grant's root | a grant's root is fixed at the server when the grant is made; a walk of `..` at the root stays at the root, as 9P's walk(5) specifies and 9P2000.L keeps, and the grammar refuses a name holding `/` or NUL; the server follows no link during a walk or an open, so a link's text is resolved by the client through its own namespace; erXos's clients send neither `.` nor `..`, since both act on the client's place (F11) and every walk `erx_path` asks for carries only plain names, and the client's one request function refuses a walk that names `.`, `..` or an empty name | a server that accepts `/` inside a name, walks above its root on `..`, follows a link during a walk or an open, or roots a grant from anything the client sends after it is made | the resolver's fuzz target and properties; the grammar's refusals; an `erx_fs` test that walks `..` from the root and from below it, and whose links point above the root, at other mounts and in loops |
-| **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only fids it walked from its starter's fids, with rights in the program's table no wider than the starter's, and walks from them only names the resolver produced; the one addition, for a program its starter starts with a window, is the files of that window and of its draw connection, on the session's own grant of the display the starter names and on a tree of the session's own ([A program's window](#a-programs-window)), which the starter could open itself | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program or records wider rights than its starter's | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's |
+| **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only entries of its starter's table, each on the provider of the starter's entry, rooted at or below that entry's root, with rights no wider than the starter's there, and walks for it only names the resolver produced over that table; no entry on a window tree passes to any program, and the one addition, for a program its starter starts with a window, is a `/dev` tree of the session's own that serves that window's files through the session's own grant of the display the starter names, less the window's `ctl` ([A program's window](#a-programs-window)), which the starter could open itself | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program, records wider rights than its starter's, or carries an entry on a window tree into a program's table | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's, and that no program's table holds an entry whose tree is `windows` |
 | **F4.** A client spends a server's CPU and memory only within the server's admission | the protocol checks fid, request, payload and lock bounds before any callback; a grant is one process with a `max_heap_size` that counts its binaries, so what it holds for its client is bounded by its fid pool times the server's per-fid bound; the server runs on its own group's grant and its grant processes schedule among themselves as Erlang processes do, so a flooding client fills its own lane and waits in its own runtime ([design-domains.md](design-domains.md#connections), [design-scheduler.md](design-scheduler.md#service-work)); a blocking lock waits as a pending request of the file's owner, within the client's requests in flight, and nothing in the server blocks | a callback before admission; a grant that holds unbounded state for one fid; a server thread that runs on a client's time; a request whose work grows with the client's input outside the grammar's bounds | hostile-client tests below: fid floods, lock floods, retained `/proc` results, a tiny expensive request, a client that never drains its replies |
 | **F5.** A read-only grant never writes | a grant with rights `ro` or `rx` refuses with `erofs`, as part of decoding the request and so before any callback, every operation the protocol's table marks as writing: `lopen` for writing or with truncation, `lcreate` whatever its flags, since whether it creates a file only the server learns, `write`, `setattr`, `remove`, `unlinkat`, `rename`, `renameat`, `link`, `symlink`, `mknod`, `mkdir`, `xattrcreate`, and a write lock | an operation added to the table and not marked; a request that reaches the grant's dispatch by a path other than its decoding funnel | the refusal set is generated from the protocol's operation table, each operation marked as reading or writing; a test of every writing operation through a read-only grant |
 | **F6.** No grant carries write and execute together, and a session runs only what it read through an `rx` mount, the file-level twin of K8 | a grant's rights are one of `ro`, `rw` and `rx`, a type with no value for both; an `rx` grant writes nothing (F5); a handler gives a program rights within its starter's, and the session's command server fills a code object only from a fid the handler opened through a mount whose rights are `rx` ([design-programs.md](design-programs.md#file-objects)) | a rights representation with separate write and execute bits; a code object filled from a fid on an `ro` or `rw` mount | the grammar's rights type; a test that running a file through an `ro` and through an `rw` mount fails with `EACCES` and that an `rx` grant refuses every writing operation |
 | **F7.** A file's bytes, as one session's programs see them, live in one place per session | while any program of a session maps a file shared, the session's one object for the file holds them: every mapping of the file in the session maps that object, and the handlers send every read, write and size change of the file by the session's programs to the file's mapper, which serves them from the object; the session's file table holds at most one mapper per file, keyed by the server's domain, the tree and the qid path | a second object for one file in one session; a handler that relays such a read or write to the server past the mapper; a mapping installed past the filled extent; a write's bytes put in the object before the server acknowledged them | an exhaustive model of one mapper, its object and its server under interleaved stores, reads, writes the server takes whole, in part or not at all, extending writes, truncations, failed fills and write-backs up to depth 8, against a flat file; two programs of one session, one storing through a mapping and one reading through a descriptor |
 | **F8.** Every store through a shared mapping reaches the file's server as an ordinary write, at a point POSIX names | the mapper writes back, with the protocol's `write`, every page the kernel reports as stored to since the last write-back (`erx_mem_dirty`), at `msync`, at every close of a mapping's open (a program's last `munmap` of the file, its `exec` and its end) and at the `close` that leaves the session's programs no open of the file, and deletes the object only after its last write-back; a write-back that fails is returned to the call that caused it, or logged at a program's end ([Shared mappings](#shared-mappings)) | an object deleted before its last write-back; a stored page the report leaves out; a program's end that the mapper does not see; a failed write-back reported nowhere | a test per write-back point, reading the file through another domain after it; a store made while a write-back runs, which the next write-back carries; a server that fails a write-back, whose `msync`, `munmap` and `close` return `EIO` and whose program's end leaves a log line |
-| **F9.** A program reaches a file only through its handler | a program's sub-space holds its channel, its data area and the memory its session mapped, and nothing else: no grant pid, no fid, no lane to any server; its handler acts only on the program's own table, the fids it walked for it and the files it opened ([design-programs.md](design-programs.md#invariants)) | a capability to a lane or a grant installed in a sub-space; a handler that acts on a fid outside the program's table | a sub-space test that enumerates a program's capabilities and finds only its channel and mapped memory; a hostile program that names another program's open numbers, every request failing with `EBADF` |
+| **F9.** A program reaches a file only through its handler | a program's sub-space holds its channel, its data area and the memory its session mapped, and nothing else: no grant pid, no fid, no lane to any server; its handler acts only on the program's own table and the files it opened ([design-programs.md](design-programs.md#invariants)) | a capability to a lane or a grant installed in a sub-space; a handler that resolves a program's path over any table but the program's | a sub-space test that enumerates a program's capabilities and finds only its channel and mapped memory; a hostile program that names another program's open numbers, every request failing with `EBADF` |
 | **F10.** A fid ends exactly once, and, if nothing ended it before, when the grant handles its owner's `DOWN` | the grant's fid table is the one record of a fid and the grant alone ends one, at its `clunk`, its `remove`, its owner's end or the grant's end; the grant monitors every owner, signals between two processes keep their order, so an owner's `DOWN` follows every request it sent, and monitoring a process that has already ended delivers its `DOWN` at once, as OTP's monitors do ([Fid owners](#fid-owners)) | a fid made without its owner monitored; a client that keeps its own record of fids to clean up | the exhaustive model of a grant's fid table with owners' ends among its events; the ended-owner and killed-opener tests ([design-tmp.md](design-tmp.md#verification)) |
 | **F11.** Every name of a resolution's place is a directory the resolution reached | a name joins the place only when a walk's reply gives it a directory's qid, or when it is an entry's mount point or lies above one, a directory of the namespace itself; `..` removes the place's last name, nothing at `/`, and `.` leaves the place as it is, so neither acts on a name not yet walked; the parent of a place is therefore the directory the walk came down through, which makes `..` physical, and at an entry's top it is the parent of the entry's mount point ([Resolving a path](#resolving-a-path)) | a resolver that adds a run's names to the place before their walk answers; a `..` that removes a name of the run; a walk that carries `.` or `..` | the resolver's fuzz target, differential against a reference model of FreeBSD's lookup; its property that no walk names `.` or `..` |
 
@@ -308,10 +308,6 @@ clients](#native-clients-liberxs-file-client)).
                    provider := provider(),
                    root := [name()],       % for a bind: where in the provider
                                            % or grant the entry starts; else []
-                   file => name(),         % a file entry: the one file, in
-                                           % the directory root names, that
-                                           % the entry is; only in a program's
-                                           % table (A program's window)
                    rights := rights()}.    % the grant enforces them for the
                                            % domain, the handler for each
                                            % program
@@ -329,11 +325,8 @@ clients](#native-clients-liberxs-file-client)).
                                            % name: the grant the domain's
                                            % facet registry holds for it at
                                            % each resolution
-                  | ended                  % a grant that has ended: every
+                  | ended.                 % a grant that has ended: every
                                            % request answers eio, unsent
-                  | {fid, fid()}.          % a program's mount, in its
-                                           % handler's table: the fid the
-                                           % handler walked for it
 
 -type rights() :: ro | rw | rx.            % no value writes and runs
                                            % together (F6)
@@ -353,10 +346,10 @@ term that only `erx_ns`'s process writes ([Building, binding and
 mounting](#building-binding-and-mounting)), and its working directory, a
 place held as one binary in `prim_file`'s NIF that only `set_cwd` writes
 ([Erlang clients](#erlang-clients-prim_file-and-erx_file_remote)). A
-session's handler keeps one table for each program, in its own state,
-whose entries carry the fid of each mount as their provider, so a
+session's handler keeps one table for each program, in its own state, of
+the same type, its entries on the providers of its starter's, so a
 program's sub-space holds no namespace at all. The resolver reads only an
-entry's `point`, `root` and `file`; the rest is its callers'. The table is a
+entry's `point` and `root`; the rest is its callers'. The table is a
 term read in place from the persistent term by every resolution, so a
 domain's file state costs one copy of it, a few KiB for a typical domain
 and bounded by the limits above, and nothing on any server until it
@@ -365,8 +358,8 @@ its own copy at the global collection that follows, which counts
 against that process's heap. A `root` other than `[]` comes only from
 `bind` within the domain, whose authority is the grant it already holds,
 or from a handler's narrowing for a program, whose authority is its
-starter's fid, or from the window a handler makes for a program, whose
-authority is the session's own grant on the display. A grant entry's tree arrives with its pid, from the facet
+starter's entry, or from the `/dev` tree a handler makes for a program
+with a window, a tree of the session's own. A grant entry's tree arrives with its pid, from the facet
 or from `erx_ns:mount`'s options, and the grant checks it at every
 `attach`, so a client never keys a file by a tree its grant does not
 root in ([Identity and version](#identity-and-version)).
@@ -1234,8 +1227,7 @@ the stopgap kernel or works around a gap of it.
 
 **Listings across mounts.** A directory's listing is its provider's
 entries, plus an entry of kind `directory` for every mount point directly
-below the directory that the provider does not list (of kind `unknown`
-for a file entry's, [A program's window](#a-programs-window)), so `ls /` shows
+below the directory that the provider does not list, so `ls /` shows
 `/data` and `/proc` whatever the provider mounted at `/` holds; a mount
 point hides a provider's entry of the same name. Where a domain has no
 `/data` mount, because the manifest grants it no `data` facet, `ls /`
@@ -1433,14 +1425,18 @@ name goes through the field escape (`erx_text:escape_field/1`).
 A native program gets the namespace its starter names, by default the
 starter's own whole namespace, narrowed where the starter asks
 ([design-shell.md](design-shell.md#starting-programs)). The namespace is
-a table in the program's handler, and every entry of it is a fid on one
-of the session's grants, which the handler walks for the program from the
-starter's fid on the same grant, with rights within the starter's:
+a table in the program's handler, of the type a domain's table is, built
+by the pure functions `erx_ns` applies to the domain's
+([Building, binding and mounting](#building-binding-and-mounting)), and
+every entry of it lies on one of the session's grants, with rights within
+the starter's:
 
-* a grant entry of the starter's becomes a fid walked from the starter's
-  to the root the starter asks for, with the rights it asks for within its
-  own;
-* a local entry of a session becomes a fid on the session's **export**,
+* a grant entry of the starter's, a facet's included, keeps its provider,
+  with its `root` moved down to the place the starter asks for and the
+  rights it asks for within its own; a facet's entry is read against the
+  session's facet registry at each resolution, as the session's own is;
+* a local entry of a session becomes an entry on a grant of the session's
+  **export**,
   an `erx_fs` server in the session's domain that serves the session's
   local providers, each as a tree of its own named by its mount: a name
   the export draws from the session's counter when the provider is
@@ -1454,8 +1450,26 @@ starter's fid on the same grant, with rights within the starter's:
   counter ([design-programs.md](design-programs.md)). Each tree has
   grants of its own, since a grant roots in one tree ([Version and
   attach](#version-and-attach)); so the export is the set of those
-  grants, and a program's draw connection adds one for as long as the
-  program runs ([A program's window](#a-programs-window)).
+  grants, and a program started with a window adds one, of its own
+  `/dev` tree, for as long as the program runs ([A program's
+  window](#a-programs-window)).
+
+A program's table is a value: the handler resolves each of the program's
+paths over it as `prim_file` resolves a domain's over the domain's
+table, walking from the grant's root through the entry's `root` with the
+names the resolver produced, and it holds no fid for an entry. So a fork
+copies it, nothing clunks it, and a `root` that a rename takes away
+answers `enoent` on the next walk, as a bind's does. An entry whose tree
+is a window tree, `windows` (`windows_tree`,
+`abi/services/windows.txt`), passes to no program, whatever its point
+and however it got into the starter's table, a bind of one included;
+a program reaches a display only through its own window ([A program's
+window](#a-programs-window)). The tree is the one fact the test needs:
+a bind keeps its source's provider, and a grant answers only the tree it
+roots in at `attach` ([Namespaces](#namespaces)), so every entry that
+reaches a display names `windows`, under any point and any alias. A tree
+of another server that took the same name would only stay out of
+programs, which grants nothing.
 
 **Where the export and a grant meet.** A session may also mount a grant
 at `/etc` or `/dev`, where the export serves names of its own: a session
@@ -1466,29 +1480,42 @@ those two places the export answers its own names and the program's
 handler passes every other name to the grant. A walk of `passwd` or
 `group` under `/etc`, or of `null`, `zero`, `urandom` or `tty` under
 `/dev`, reaches the export's file; a walk of any other name goes to the
-program's fid on the session's grant at that place, which the handler
-walked within the root and rights the program's namespace was narrowed
-to, so a program narrowed away from the grant finds the export's names
-alone, and one given the grant read-only reaches its files read-only.
+session's grant at that place, through the program's entry there, within
+the root and rights the program's namespace was narrowed to, so a
+program narrowed away from the grant finds the export's names alone, and
+one given the grant read-only reaches its files read-only. For a program
+started with a window, its own `/dev` tree stands where the export's
+`dev` does, and the names it takes at `/dev` are the export's four and
+its window's ([A program's window](#a-programs-window)).
 A listing gives the export's names and then the grant's entries less
 any of those names, so every name a listing shows is the file a walk of
 it reaches; the handler numbers the joined listing's offsets itself. A
 writable file of the grant never replaces one of the export's names: a
-grant's own `passwd` or `null` is neither listed nor reached, and a
-create, rename, link or remove that names one of the export's names at
-those places is refused with `eacces` without reaching the grant. This
+grant's own `passwd` or `null` is neither listed nor reached, and an
+operation that names one of the export's names at those places goes to
+the export, never to the grant: a create of an existing device opens it,
+so `>/dev/null` reaches `null`, and every other create, a `mkdir`,
+`symlink`, `mknod` or a link's destination, answers `eacces`, and a
+rename or remove of one `eperm`, as the export's tree answers them
+(`erlang/apps/erx_session/src/erx_session_export.erl:225-233`, and
+`erlang/apps/erx_files/src/erx_fs_grant.erl:760-769` for a tree with no
+callback for the change). This
 is the one place a program's namespace joins two servers, and the names
 the export takes there are its own, fixed; it is no union mount
-(Non-goals).
+(Non-goals). Nor does an entry hide one: a start whose narrowed table
+holds an entry at or below one of the export's names at `/dev` or
+`/etc`, which would hide that name or put a mount beneath a file, is
+refused with `EINVAL` before anything is reserved.
 
 The program itself receives none of this: its sub-space gets its channel,
-its data area and its pipe ends, and the fids live in the session's
-Erlang state, held by the program's handler, and at the servers
+its data area and its pipe ends, and the table lives in the session's
+Erlang state, held by the program's handler
 ([design-programs.md](design-programs.md#a-program-is-a-port)). A program
-started with `/data/logs` therefore has a handler holding a fid on
-`logs`, and reaches nothing above it whatever it asks, since the handler
-walks for it only the plain names `erx_path` asks for, never `..`,
-and only from the program's own fids (F3, F9): a `..` at the top of the
+started with `/data/logs` therefore has an entry at `/data/logs` whose
+`root` is the starter's at `/data` with `logs` after it, and reaches
+nothing above it whatever it asks, since the handler walks for it only
+the plain names `erx_path` asks for, never `..`, and only below the
+`root` of an entry of the program's own table (F3, F9): a `..` at the top of the
 program's mount steps out in the program's namespace, to `/data`, which
 holds only `logs`, and never asks the server. The server sees the session's grant
 and knows nothing of the program: the narrowing is the handler's, which
@@ -1497,17 +1524,17 @@ every program's.
 
 A file passed to another program of the session, as `xargs` hands its
 standard streams to the programs it starts, is its open-file description,
-which the handler records in the receiving program's table; a directory
-passed is a fid the handler walks from the passer's. No program reaches
-another's files unless it was handed them. A program's end clunks every
-fid its handler walked for it and closes its share of every description
-([design-programs.md](design-programs.md#a-programs-end)).
+which the handler records in the receiving program's open table; a
+directory passed is its description too. No program reaches another's
+files unless it was handed them. A program's end closes its share of
+every description
+([design-programs.md](design-programs.md#a-programs-end)); its table
+holds no fid, so nothing else is clunked.
 
-A forked child gets fids of its own the same way: before the session
-copies the sub-space, the parent's handler walks a fid for each entry of
-the parent's namespace and each directory it has open, and gives the
-child each of the parent's descriptions, so parent and child never share
-a fid, and a `clunk` in one never closes a file of the other's
+A forked child gets a copy of its parent's table, and each of the
+parent's descriptions, its open directories' included, before the
+session copies the sub-space, so a `clunk` in one closes only its own
+share of a description and never a file of the other's
 ([design-programs.md](design-programs.md#the-second-tier)). A file the two
 share is one description, so they share its offset as POSIX processes do.
 
@@ -1519,109 +1546,125 @@ connection's `draw` and `ctl` and its window's `kbd`, `mouse`, `wctl`
 and `label` at `/dev/draw`, `/dev/ctl`, `/dev/kbd` and so on, and
 `/dev/clipboard` when the session's grant on the display carries
 `clipboard` ([design-display.md](design-display.md#the-window-tree), "A
-program's `/dev`"). Those files lie on two servers, the session's and
-the display's, in a directory that also holds the export's devices. And
-the window's directory holds one more file the program must not reach:
-the window's own `ctl`, which presents any range of the session's whole
-pixel area ([design-display.md](design-display.md#the-window-tree),
-"`ctl`"), so a program holding it could show another program's buffer
-in its own window. **A program reaches only its own window's files, and
-of them not the window's `ctl`.** Both follow from one construction:
-the handler binds each file the program may use as an entry of its own.
+program's `/dev`"). The window's directory holds one more file the
+program must not reach: the window's own `ctl`, which presents any range
+of the session's whole pixel area
+([design-display.md](design-display.md#the-window-tree), "`ctl`"), so a
+program holding it could show another program's buffer in its own
+window. **A program reaches only its own window's files, and of them not
+the window's `ctl`.** Two rules give it, and neither names a path:
 
-**File entries.** An entry of a program's table may be a **file
-entry**: besides its `root`, a place as every entry's is, it names one
-file of that directory in `file`, and the entry is that file and nothing
-else. The resolver reads a file entry so:
+* no entry on a window tree passes to any program ([Narrowing for a
+  program](#narrowing-for-a-program)), so whatever mounts and binds of a
+  display its starter's table holds, the program's holds none, below
+  `/dev` or anywhere else;
+* the program's `/dev` is a tree of its own, which holds its window and
+  its draw connection rather than a path to either, and serves from them
+  exactly the files above, so no name in it leads into the window's
+  directory.
 
-* a path that ends at its point reaches the file: a lookup sends the walk
-  of `root` and then `file` with the operation, as for any target;
-* a path with any name after its point, `.` and `..` included, answers
-  `enotdir` without a walk, as a path through a file does: the point
-  never joins a place, since it is not a directory (F11), so no walk
-  ever names anything below the file or another name of its directory;
-* a create at its point opens the file, as a create of an existing file
-  does, and answers `eexist` under `O_EXCL`; a remove, rename or link of
-  it answers `ebusy`, as at any mount point;
-* a listing of the directory above shows its name with the kind
-  `unknown`, FreeBSD's `DT_UNKNOWN` (`sys/sys/dirent.h:94`, release
-  15.1.0), since the table does not know whether the file is a device or
-  a regular file; a reader that needs the kind stats the name, which
-  reaches the file.
+**The `/dev` tree.** It is the export's fixed tree, `erx_session_export`,
+started for the one program with its window and connection among its
+arguments. Its `dev` directory holds `null`, `zero`, `urandom` and `tty`,
+as the shared tree's does, and the window's names, and nothing else; the
+program's `/bin` and `/etc` stay on the shared tree's grants, and only
+its `/dev` entry names this tree. Its qid paths are drawn from
+the domain's counter when its grant starts
+(`erlang/apps/erx_session/src/erx_session_export.erl:74-92`), as the
+shared tree's are, so its tree's name, `export`, may be the shared
+tree's and the domain, tree and path of each of its files still name no
+other file ([Identity and version](#identity-and-version)). Its window
+files are:
 
-A file entry's point lies below `/dev`, so the deepest entry that holds
-a path, the rule every resolution places by, puts `/dev/draw` on the file
-entry, ahead of the export's `/dev`, a grant at `/dev` and the join of
-the two ([Where the export and a grant meet](#narrowing-for-a-program)),
-and the point hides a file of the same name in either, as any mount
-point does. Only a program's handler makes file entries, for a window;
-`erx_ns` makes none, and a `bind` still roots at a directory
-([Building, binding and mounting](#building-binding-and-mounting)).
+| Name | What a request does | Opens |
+| --- | --- | --- |
+| `draw` | a write is one `erx_draw_conn:write/2` of its bytes, a read one `erx_draw_conn:read/2` | read and write |
+| `ctl` | a read answers the connection's `erx_draw_core:ctl/1` text | read only |
+| `kbd`, `mouse`, `wctl`, `label` | relayed to the window's file of that name, on a fid the tree walks for the open from the window's directory on the session's grant on `Display`, the grant and directory the window handle names, and clunks when the open closes | as the display allows: it refuses `kbd` and `mouse` for writing (`erlang/apps/erx_display/src/erx_winfs.erl:638-642`) |
+| `clipboard`, when that grant carries `clipboard` | relayed the same way, on a fid walked from the grant's root | read and write |
 
-**The connection's tree.** `draw` and `ctl` are a tree of the session's
-export: `erx_draw_tree`, an `erx_fs` module beside `erx_draw_conn` that
-serves one draw connection
-([design-display.md](design-display.md#the-draw-connection), "The
-connection's files"). Its root directory holds `draw` and `ctl`. One
-grant serves it, for the session's own domain, with `rw`. The tree's name
-is `draw`, the same for every connection: its qid paths come from the
-domain's counter (`erx_fs_version:draw/0`,
-`erlang/apps/erx_files/src/erx_fs_version.erl:35`), as the export's
-fixed tree's do (`erlang/apps/erx_session/src/erx_session_export.erl:88-92`),
-so the domain, tree and path of a connection's file name no other file
-([Identity and version](#identity-and-version)), and a name drawn for
-each tree would add nothing. What makes a tree one program's is its
-grant's pid: the handler starts the grant and writes its pid into that
-program's entries and nowhere else, a program holds no pid (F9), and no
-registry records it, so no table names it but this program's and a
-forked child's copy of it (below).
+The relayed fids are the tree's own, on a grant the session already
+holds, so the tree reaches nothing the starter could not, and they end
+with the tree's grant ([Fid owners](#fid-owners)). A read of `kbd`,
+`mouse` or `wctl` waits for a record at the display, so the tree runs it
+as a helper-mode read ([Serving](#serving-the-erx_fs-behaviour)) and a
+read waiting on one file holds up no other. The files of `draw` and
+`ctl`, their units and their answers are
+[design-display.md](design-display.md#the-draw-connection)'s ("The
+connection's files"). Every operation on a name of the tree has the
+answer the fixed tree gives its devices ([Narrowing for a
+program](#narrowing-for-a-program)), so `>/dev/draw` opens `draw`, and
+the resolver handles the tree as any other: it is a directory provider
+at `/dev`, joined with a grant at `/dev` where the session holds one,
+and its names are among the export's names there.
 
-**Binding.** When it reserves the program's grants (step 5 of
+**A resize.** The connection's image 0 has the window's size only after
+`erx_draw_conn:resized/1`
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:129-136, 174-181`), and a
+program learns of a resize from an `r` record of `mouse`
+([design-display.md](design-display.md#the-window-tree)). The tree is
+the one place both meet: when a read of `mouse` answers a record whose
+kind byte is `r`, the tree calls `resized/1` before it answers the read.
+So the program never sees an `r` before image 0 has the new size: a read
+of `ctl` after it shows the new rectangle, and a write after it draws on
+the new image. The call is one call to the connection, which takes its
+calls one at a time, so a write already running finishes on the old
+image 0 and the next starts on the new. A resize whose record no read has
+yet taken leaves image 0 as it was until a read takes it, and a
+`resized/1` that fails, for a window that has gone or whose rectangle
+cannot be read (`erlang/apps/erx_win/src/erx_win.erl:196-203`), or for a
+connection that has ended, leaves image 0 as it was; the read answers
+the record either way. Then `ctl` shows the size image 0 has, and a
+frame drawn at it is shown clipped to the window, as the display shows
+any frame drawn for an earlier size
+([design-display.md](design-display.md#the-window-tree), "`ctl`").
+
+**Starting.** When it reserves the program's grants (step 5 of
 [Starting a program](design-programs.md#starting-a-program)), the
-handler opens the window with `erx_win:open/2`, as its holder; starts the
-connection on it with `erx_draw_conn:start/1`, as its starter; starts the
-tree's grant with `erx_fs:start_link/3`, linked to itself; and adds to the
-program's narrowed table:
+handler, after building the program's table:
 
-| Point | Provider | `root` | `file` |
-| --- | --- | --- | --- |
-| `/dev/draw` | `{grant, DrawGrant, <<"draw">>}`, the grant of the connection's tree | `[]` | `draw` |
-| `/dev/ctl` | the same | `[]` | `ctl` |
-| `/dev/kbd`, `/dev/mouse`, `/dev/wctl`, `/dev/label` | `{grant, Pid, Tree}`, the session's grant on `Display` that the window was made on, as the window handle holds it | `[Window]`, the window's directory | `kbd`, `mouse`, `wctl`, `label` |
-| `/dev/clipboard`, when that grant carries `clipboard` | the same | `[]` | `clipboard` |
+1. opens the window with `erx_win:open/2`, as its holder;
+2. starts the connection on it with `erx_draw_conn:start/1`, as its
+   starter;
+3. starts the `/dev` tree's grant with `erx_fs:start_link/4`, for its own
+   domain (`client => own`), `rw`, ending with the handler (`ends_with =>
+   self()`);
+4. puts in the program's table, at `/dev`, the entry `{grant, DevGrant,
+   <<"export">>}` with `root` `[<<"dev">>]` and rights `rw`, in place of
+   the shared tree's `/dev` entry, or beside the others when the
+   narrowing left none.
 
-Each entry has its grant's rights, `rw`, and each file's server decides
-which opens it allows, as it does for any client: the display refuses to
-open `kbd` or `mouse` for writing
-(`erlang/apps/erx_display/src/erx_winfs.erl:638-642`), and
-`erx_draw_tree` refuses it for `ctl`. Nothing here widens
-what the starter has (F3): the window is one the starter could open on
-the session's own grant, and the tree is the session's own. A table
-that already holds an entry at one of these points, or that they would
-take past `ERX_NS_MOUNTS_MAX` entries, cannot hold the window, and the
-start is refused with `EINVAL`. A step that fails refuses the start with
-its errno: the window's as
-[design-programs.md](design-programs.md#the-handler) lists them, the
+A table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev` cannot take
+the entry, and the start is refused with `EINVAL` before the window is
+opened. A step that fails refuses the start with its errno: the window's
+as [design-programs.md](design-programs.md#the-handler) lists them, the
 connection's (`ENOMEM` when image 0 cannot be made,
 `erlang/apps/erx_win/src/erx_draw_conn.erl:149-160`), and `EIO` for a
-grant that does not start, whose crash reaches the handler through the
-link. The handler undoes nothing by hand: a refused start ends it, and
-what it made ends with it, as follows.
+grant that does not start. The handler undoes nothing by hand: a refused
+start ends it, and what it made ends with it, as follows.
 
-**Ownership and lifetime.** The handler is the one owner of all three.
-The display ends the window when its holder ends
+**Ownership and lifetime.** The handler is the one owner of the window,
+the connection and the tree's grant, and each watches the handler with
+a monitor, so each ends at the handler's end whatever its reason. That
+matters for a refused start, which ends the handler with `normal`
+(`erlang/apps/erx/src/erx_prog_handler_core.erl:332-333`), a reason that
+reaches a linked process as a signal it ignores
+(`otp/erts/emulator/beam/erl_proc_sig_queue.c:4711-4716`). The display
+ends the window when its holder ends
 ([design-display.md](design-display.md#the-window-tree)); the connection
 monitors its starter and stops at its end
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:149-150, 190-191`), giving
-back its buffer's lease, after which the buffer's range is free
-([design-display.md](design-display.md#the-pixel-area)); and the link
-ends the tree's grant, whose end ends every fid on it
-([Fid owners](#fid-owners)). Each sees the handler's end on its own, in
-no order, and nothing is unregistered, since nothing was registered.
-While the program runs:
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:150, 190-191`), giving back
+its buffer's lease, after which the buffer's range is free
+([design-display.md](design-display.md#the-pixel-area)); and the tree's
+grant ends with what its `ends_with` names
+([Interfaces](#interfaces)), whose end ends every fid on it and every
+fid it holds on the display. Each sees the handler's end on its own, in
+no order, and nothing is unregistered, since nothing was registered: the
+grant's pid is written into this program's table and nowhere else, and
+a program holds no pid (F9). While the program runs:
 
 * a connection that ends alone, for an allocation that failed after its
-  plan, leaves the entries in place, and `draw` and `ctl` answer `EBADF`,
+  plan, leaves the tree in place, and `draw` and `ctl` answer `EBADF`,
   as every call to an ended connection does
   (`erlang/apps/erx_win/src/erx_draw_conn.erl:138-144`); the program
   decides whether to exit, and nothing restarts the connection;
@@ -1632,20 +1675,22 @@ While the program runs:
   a window that is gone;
 * a crash of the tree's grant ends the handler through the link, and the
   program with it; the starter's `'DOWN'` carries the crash as the
-  handler's own end ([design-programs.md](design-programs.md#the-handler));
-* a forked child's table is a copy of its parent's, file entries
-  included, so parent and child share the window as they share an
-  inherited descriptor; the window, the connection and the grant still
-  end with the parent's handler, after which the child's requests to
-  `draw` and `ctl` answer `eio`, as every request to an ended grant
-  does, and those to the window's files what the display answers for a
-  window that is gone.
+  handler's own end ([design-programs.md](design-programs.md#the-handler)).
 
-Requests from several threads, or from parent and child, meet in two
-places that already order them: each file's owner process runs its
-file's requests one at a time, and the connection runs one call at a
-time, so a write reaches the connection whole and a read of `ctl` is
-answered between writes, never in the middle of one.
+**A forked child.** The child's copy of its parent's table has the shared
+tree's `/dev` entry where its parent's `/dev` tree stood, so the child's
+`/dev` holds the export's four devices and none of the window's, and
+nothing in its namespace ends when its parent's handler does. The child
+reaches the window only through the descriptors it inherited, as it
+reaches any inherited open; those share the parent's descriptions, and
+once the parent's handler has ended they answer `eio`, as every request
+to an ended grant does (open question 2).
+
+Requests from several threads meet in two places that already order
+them: each file's owner process runs its file's requests one at a time,
+and the connection runs one call at a time, so a write reaches the
+connection whole and a read of `ctl` is answered between writes, never
+in the middle of one.
 
 ### Serving: the `erx_fs` behaviour
 
@@ -2605,10 +2650,13 @@ recovers a value's exact bytes
   the client domain (`client`, `own` or the domain's id), the grant's
   pool (`pool`), its bounds on requests in flight and message size
   (`in_flight`, `msize`) and its process's heap (`max_heap_size`), and
-  for another domain what the grant ends with (`ends_with`: the port of
+  what the grant ends with (`ends_with`, which the grant monitors, so it
+  ends at that end whatever its reason: for another domain the port of
   the connection to the client or, in the system domain, which holds no
-  such port, the client's domain pid, or `none` for a grant that lives as
-  long as the server's domain) and the export table it exports
+  such port, the client's domain pid; for its own domain a process of
+  the domain whose end ends it, as a program's handler ends its `/dev`
+  tree ([A program's window](#a-programs-window)); or `none` for a grant
+  that lives as long as the server's domain) and the export table it exports
   itself through before its start returns (`exports`);
   every file server is one. `erx_fs_grants` supervises the grants of one
   tree that a files service hands to other domains: `start_link/2`, and
@@ -2743,7 +2791,7 @@ that hold them.
 | A server dies, or a grant ends | the client's monitor on the grant, which the connection's end also fires | nothing at the server | the client marks its fids dead | `eio` on every open file of that grant; the mount stays, so a restarted service can be mounted again |
 | A client process ends | the grant's monitor on each fid owner, whose `DOWN` follows every request the owner sent ([Fid owners](#fid-owners)) | nothing | the grant clunks every fid the process owned, which releases their locks and, for an open file, the file's open | nothing |
 | A client domain dies | the connection going down, which ends every export across it and fires the grant's monitor on the client ([design-domains.md](design-domains.md#connections)) | nothing | the grant clunks every fid it holds, which releases their locks | nothing |
-| A program ends | its handler, which owns the port | nothing | the handler unlocks every lock of the program's `ProcId`, clunks every fid it walked for the program, closes its share of every description and tells each mapper of a file it mapped | a log line for a failed write-back |
+| A program ends | its handler, which owns the port | nothing | the handler unlocks every lock of the program's `ProcId`, closes its share of every description and tells each mapper of a file it mapped | a log line for a failed write-back |
 | A reply exceeds its request | the generated reply check in `erx_file_remote` or the bridge | nothing | the client discards the reply and counts it | `eio` |
 | A write-back fails | the server's error, at the mapper | the pages it carried, written again at the next write-back; nothing after the last | the mapper | `EIO` from the `msync`, `close` or `munmap` that asked; a log line and a count at a program's end |
 | A session ends with stores not written back | the session's end | nothing of the object | the kernel deletes the object with the session's budget | the stores are lost, as a machine's are when it stops without a sync |
@@ -2782,7 +2830,7 @@ can mark a domain's file protocol frames.
   more; what crosses a trust boundary into the resolver, a link's text
   from a server and a program's path through its handler, is checked as
   [Resolving a path](#resolving-a-path) states, and a handler resolves
-  only over the program's own table and walks only from its fids (F3).
+  only over the program's own table and walks only below the roots of its entries (F3).
 * **A held table.** A resolution that outlives an unmount or a bind's
   replacement still walks only the grant its old entry named, which the
   domain still holds, from that entry's `root`, and for no longer than
@@ -3059,47 +3107,70 @@ report, so a passing run shows the code under test ran.
   of `/etc` shows `passwd` once, with the export's qid, and every name
   it lists opens; `/dev/zero` and
   `/dev/urandom` read as theirs, `/dev/draw` reaches the grant, and a
-  write to `/dev/null` reaches no grant; a create or remove of
-  `/etc/passwd` answers `eacces` and the fixture's `passwd` is
-  unchanged; a program narrowed to the grant read-only gets `erofs` on
-  the edit. Seeded: a join that asks the grant first, which reads the
-  fixture's `passwd`; and a listing that leaves the grant's `passwd` in,
-  which lists it twice.
-* File entries, in the resolver's host tests over a table with the
-  export at `/dev`, a fixture grant at `/dev` holding its own `kbd`, and
-  a file entry at `/dev/kbd` rooted at `[w1]` with `file` `kbd`. A
-  lookup of `/dev/kbd`, `/dev/./kbd` or `/dev//kbd` sends exactly the
-  walk `[w1, kbd]`; `/dev/kbd/x` and `/dev/kbd/../kbd` answer `enotdir`
-  with no walk sent, as a path through a file does; a
-  non-exclusive create of `/dev/kbd` opens the file and an exclusive one
-  answers `eexist`; a remove or rename of it answers `ebusy`; a listing
-  of `/dev` shows `kbd` once, of kind `unknown`, and the fixture's own
-  `kbd` is reached by no path. The resolver's property that every
-  walk's names lie at or below its entry's `root` gains file entries in
-  its generator, with the property that a file entry's every walk is
-  exactly its `root` and then its `file`. Seeded: a resolver that walks a
-  run through a file entry, which sends `[w1, kbd, x]` and fails the
-  property; and a listing that gives a file entry the kind `directory`.
+  write to `/dev/null`, through a create as `>/dev/null` makes it,
+  reaches no grant; a create of `/etc/passwd` answers `eacces` and a
+  remove `eperm`, and the fixture's `passwd` is unchanged; a program
+  narrowed to the grant read-only gets `erofs` on the edit; and a
+  starter's table with a bind at `/dev/null`, or one at `/dev/tty/x`,
+  refuses the start with `EINVAL`. Seeded: a join that asks the grant
+  first, which reads the fixture's `passwd`; a listing that leaves the
+  grant's `passwd` in, which lists it twice; and a check that refuses
+  only an entry exactly at an export name, which the `/dev/tty/x` case
+  catches.
+* No display in a program's table, in the handler's host tests of the
+  table it builds: a starter's table holding `data` at `/data`, a
+  fixture display facet mounted at `/n/display` on the tree `windows`,
+  and a bind of its client directory at `/mnt/w`, an alias that keeps
+  the facet's provider. Started with the whole table and started
+  narrowed to `/n` and `/mnt`, the program's table holds the `data`
+  entry, or nothing, and no entry whose tree is `windows`; a test program
+  started on the whole table finds `/n/display/w1/ctl` and `/mnt/w/w1/ctl`
+  answer `enoent` while the fixture records no walk. Seeded: a builder
+  that drops the display's mount by its point, which keeps the bind at
+  `/mnt/w` and fails the alias case.
 * A program's window, the handler over a fixture display tree that
-  records every walk, and a test program. The program's table holds
-  exactly the six file entries of the window (seven when the grant
-  carries `clipboard`) beside its narrowed entries. The program opens
-  or tries every path of a corpus (`/dev/ctl`, `/dev/kbd/../ctl`,
-  `/dev/./wctl`, `/dev/kbd/x`, `/dev/w1/ctl`, `/dev`'s listing and each
-  name in it), and no walk the fixture records names anything but
-  `[w1, kbd]`, `[w1, mouse]`, `[w1, wctl]` and `[w1, label]`, so the
-  window's `ctl` and directory are never reached; `/dev/ctl` reads the
-  connection's 144 bytes, not the display's channel line. Seeded: a
-  handler that binds the window's directory at `/dev/w1` instead, which
-  the corpus's `/dev/w1/ctl` reaches. Once the program exits, the tree's
-  grant and the connection have ended and the fixture has ended the
-  window; seeded: a grant started without the link, which is still alive.
-  A connection killed under a running program makes its write to
+  records every walk, and a test program. The program's `/dev` lists
+  `null`, `tty`, `urandom`, `zero`, `draw`, `ctl`, `kbd`, `mouse`, `wctl`
+  and `label`, and `clipboard` only when the fixture grant carries it.
+  The program opens or tries every path of a corpus (`/dev/ctl`,
+  `/dev/kbd/../ctl`, `/dev/./wctl`, `/dev/kbd/x`, `/dev/w1/ctl`,
+  `mkdir /dev/w1`, `/dev`'s listing and each name in it), and no walk
+  the fixture records names anything but `[w1, kbd]`, `[w1, mouse]`,
+  `[w1, wctl]`, `[w1, label]` and `[clipboard]`, so the window's `ctl`
+  and directory are never reached; `/dev/ctl` reads the connection's
+  144 bytes, not the display's channel line; `>/dev/draw` opens `draw`;
+  and the `mkdir` answers `eacces`. Seeded: a tree that relays any name
+  to the window's directory, which the corpus's `/dev/ctl` and the
+  `mkdir` reach. A starter's table with an entry at `/dev/kbd/x`
+  refuses the start with `EINVAL`, leaving no window, connection or
+  grant; seeded: a check of exact points only, which starts it.
+* A resize through the real path: the fixture display resizes the
+  window, the program reads the `r` record from `/dev/mouse`, then reads
+  `/dev/ctl`, which shows the new rectangle, and draws a `d` over the
+  rectangle `ctl` gave and flushes, and the fixture records a present
+  whose buffer has the new size. Seeded: a tree that relays `mouse`
+  without calling `resized/1`, whose `ctl` read shows the old rectangle.
+  A window whose rectangle the fixture refuses to answer after the
+  resize still hands the program its `r`, and `ctl` keeps the old
+  rectangle.
+* A window's lifetime. Once the program exits, the tree's grant and the
+  connection have ended and the fixture has ended the window. A start
+  refused at its last step, by a start stub that answers `ENOMEM` after
+  the tree's grant has started, answers the starter `ENOMEM`, and by the
+  time the starter's `start/1` returns, a monitor the test took on the
+  grant (found among the session's processes by its module) reports its
+  end, as do the connection's and the window's; seeded: a grant started
+  without `ends_with`, which the handler's `normal` exit leaves alive. A
+  connection killed under a running program makes its write to
   `/dev/draw` fail with `EBADF` while the program goes on and exits 0;
   seeded: a tree that answers `eio` for an ended connection. A fixture
   whose image 0 cannot be made refuses the start with `ENOMEM`, and a
-  starter's table with an entry at `/dev/kbd` with `EINVAL`, each leaving
-  no window, connection or grant alive.
+  starter's table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev`
+  with `EINVAL`, each leaving no window, connection or grant alive.
+* A forked child of a program with a window lists the export's four
+  devices in `/dev`, and once its parent has exited its inherited open of
+  `/dev/draw` answers `eio` while its `/dev/null` still opens. Seeded: a
+  fork that copies the parent's `/dev` entry, which the listing catches.
 * The data area: a program with one slot whose two threads read at once,
   one waiting for the other's slot; reads and writes of every size from 1
   byte to 64 KiB and across slot boundaries, compared with the file; a
@@ -3309,7 +3380,7 @@ the server for a grant rooted at each of a program's mounts, so the
 server would hold the program's root. It needs an operation 9P2000.L does
 not have, and protects against nothing: a program holds no fid and
 reaches a server only through its handler, which walks only from the
-program's own fids, so the narrowing is enforced by the program's file
+roots of the program's own entries, so the narrowing is enforced by the program's file
 server, and a compromised session holds the session's grants anyway.
 
 **A program that speaks the file protocol itself.** Each program would
@@ -3459,15 +3530,21 @@ Open question for the user:
    is to refuse such a mapping with `ENOMEM` while the object lives.
    Recommendation: keep `erx_mem_grow` for shared objects; refusing breaks
    SQLite's write-ahead log.
-2. **A forked child and its parent's window.** A child's table copies
-   its parent's file entries, so the two share the window, its draw
-   connection and its input until the parent's handler ends, as UNIX
-   processes share an inherited device
-   ([A program's window](#a-programs-window)). The alternative is to
-   leave a window's entries out of a child's table, so only the program
-   started with the window reaches it, at the cost of one more rule in
-   the fork's copy. Recommendation: share, as UNIX does; the child
-   reaches nothing its parent does not.
+2. **A forked child and its parent's window.** A child's copy of its
+   parent's table has the shared `/dev` where its parent's own `/dev`
+   tree stood, so the child reaches the window only through the
+   descriptors it inherited ([A program's window](#a-programs-window)).
+   Sharing the parent's tree instead, as UNIX processes share an
+   inherited device, would end the child's whole `/dev`, `null` and
+   `tty` included, with the parent's handler, since the tree's grant
+   ends with it; sharing without that loss means starting a second tree
+   for the child over the same window and connection, ending with the
+   child's handler, which makes a fork of a program with a window start
+   a grant and so able to fail. Recommendation: keep the shared `/dev`
+   for the child, one substitution in the fork's copy; a child that
+   draws in its parent's window still can through the opens it
+   inherited, and no consumer yet forks a child that opens its parent's
+   window by path.
 
 ## References
 
@@ -3520,9 +3597,6 @@ Open question for the user:
 * FreeBSD's manual pages at the same commit: rmdir(2) (2020-03-30),
   unlink(2) (2021-02-23), rename(2) (2024-08-25) and open(2)
   (2025-05-17).
-* FreeBSD at release/15.1.0: `sys/sys/dirent.h`
-  (`19fed2e1f5136919f522f553e6a07888f59a0c8a3994131a8f9c6de94c293bba`),
-  `DT_UNKNOWN` at line 94, the kind a file entry lists with.
 * Erlang/OTP 29.1.2: `lib/kernel/src/file.erl` (the file descriptor
   record and its module dispatch; `check_and_call/2`, which sends path
   operations to `file_server_2`, read 2026-10-30),

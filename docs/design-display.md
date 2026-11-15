@@ -1019,20 +1019,24 @@ which its starter asks for with the `window` option of
 `erx_prog_handler:start/1`
 ([design-programs.md](design-programs.md#the-handler)):
 its handler makes the window with itself as the holder, so the window
-ends with the program, and starts a draw connection on it. The handler
-binds the connection's `draw` and `ctl`, from the session's own export,
-and the window's `mouse`, `kbd`, `wctl` and `label`, from the display's
-tree, at `/dev/draw`, `/dev/ctl` and the rest, beside the session's own
-`/dev` entries, and, when the grant carries `clipboard`, `/clipboard` at
-`/dev/clipboard`. Each file is an entry of the program's table of its
-own, so the program reaches those files and nothing else of the window
-or of the session's grant on the display
-([design-files.md](design-files.md#a-programs-window)). A Plan 9 program finds the draw and window files where
+ends with the program, starts a draw connection on it, and gives the
+program a `/dev` of its own, a tree of the session's export that holds
+the window and the connection. Its `/dev` holds the session's devices
+and `draw`, `ctl`, `mouse`, `kbd`, `wctl` and `label`, and `clipboard`
+when the grant carries `clipboard`: `draw` and `ctl` are the
+connection's, and the window's files are relayed to the window's own,
+so the program reaches those files and nothing else of the window or of
+the session's grant on the display, and no program's namespace holds an
+entry on a window tree
+([design-files.md](design-files.md#a-programs-window)). The same tree
+calls the connection's `resized` when it hands the program an `r`
+record of `mouse`, so image 0 has the window's new size before the
+program learns of it. A Plan 9 program finds the draw and window files where
 it expects them; Plan 9 names its clipboard `/dev/snarf`. The
 `ctl` a program sees is the draw connection's, which answers the display
 information of draw(3) ([The draw connection](#the-draw-connection),
 "The connection's files"); the window's own `ctl`, which takes presents,
-stays with the draw connection and is bound for no program, since a
+stays with the draw connection and is served to no program, since a
 present may name any range of the session's pixel area.
 
 ### Draw messages
@@ -2463,7 +2467,8 @@ It owns the connection's images, `erx_memdraw` images in the client's
 own memory, and its image 0 is an image over the window's buffer. Bytes
 reach it from two callers and by one path: an Erlang client's `erx_draw`
 calls hand it the messages they encoded, and a program's write to
-`/dev/draw` reaches it through the session's export, which serves each
+`/dev/draw` reaches it through the program's `/dev` tree, which the
+session's export serves for the program and which serves the
 connection's `draw` and `ctl` as files
 ([design-files.md](design-files.md#a-programs-window), and "The
 connection's files" below). Either way the
@@ -2605,9 +2610,9 @@ next read of `draw`, at most 64 KiB at a time, as Plan 9 does; each read
 takes the next of them, and a read with none left answers no bytes.
 
 **The connection's files.** A program reaches its connection through two
-files, `draw` and `ctl`, which `erx_draw_tree` serves in the session's
-export as calls to the connection; the tree, its grant and how the files
-enter the program's namespace and end with its handler are in
+files, `draw` and `ctl`, which the program's `/dev` tree serves as calls
+to the connection; the tree, its grant, how it enters the program's
+namespace and how it ends with the handler are in
 [design-files.md](design-files.md#a-programs-window). Both are
 character devices, so a read or write ignores its offset except where
 said.
@@ -2622,10 +2627,15 @@ said.
   and the file protocol's largest write (`p9_io_max`,
   `abi/protocols/9p.txt:66`), reaches the connection as one binary.
   `liberx` sends a longer write in parts of that size
-  (`liberx/program/file.c:308-325`), each executed on its own: a message
-  cut between two parts fails the second part with `EINVAL`, as a `y`
-  cut across two writes does (Verification), and the write returns the
-  count of the parts before it, a short write. A client therefore
+  (`liberx/program/file.c:308-325`), each executed on its own, whole or
+  not at all, and stops at the first part that fails. A part that ends
+  inside a message holds a truncated message, which the plan of that
+  part refuses with `EINVAL`, applying none of it, as a `y` cut across
+  two writes fails the first (Verification). So a message cut at the
+  first 64 KiB boundary fails the whole write with `EINVAL`, nothing
+  drawn, and one cut at a later boundary returns the count of the parts
+  before it, a short write, with those parts drawn; a write whose
+  messages end exactly at each boundary draws every part. A client therefore
   ends each write on a message boundary within 64 KiB, as a Plan 9 client
   keeps each write to `data` within the `iounit` devdraw gives it, 64 KiB
   (9front `sys/src/9/port/devdraw.c:41, 987, 1044`). The program
@@ -2647,8 +2657,10 @@ said.
   is at the read, and one of fewer fails with `EINVAL`, as devdraw
   refuses a short read (`devdraw.c:1123-1124`); a read at any other
   offset answers no bytes, so `cat` stops after one line. Each read asks
-  the connection anew, so after an `r` record of `mouse` the next read
-  shows the resized image 0. It is a call answered between writes, so it
+  the connection anew, and the tree has made image 0 anew before it hands
+  the program an `r` record of `mouse`, so the next read after one shows
+  the resized image 0
+  ([design-files.md](design-files.md#a-programs-window), "A resize"). It is a call answered between writes, so it
   never shows a write half applied. `ctl` takes no write: draw(3)'s
   write of an image id selects another image's information (lines
   92-95), which no erXos client needs, and an open for writing fails
@@ -4181,9 +4193,9 @@ gives it the devices the manifest places on its row
 client's grant on the window tree, and the connection it makes first
 carries the pixel area
 ([design-system.md](design-system.md#facets-a-configured-domain-serves));
-a session's handler binds a window's files and a draw connection's into
-a program's namespace
-([Narrowing](design-files.md#narrowing-for-a-program)), and maps a
+a session's handler gives a program with a window a `/dev` tree that
+serves the window's files and its draw connection's
+([A program's window](design-files.md#a-programs-window)), and maps a
 window's buffer into a program as it builds it
 ([design-programs.md](design-programs.md#the-startup-message)); a
 session's terminal relay serves the tty whose master `erx_term` is
@@ -4889,7 +4901,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   `(-2147483648, 0, 1, 1)`, and after a resize; seeded: a field padded to
   10 characters, which the first case catches by its bytes, and a
   `ctl/1` that answers the window's rectangle as the clip rectangle,
-  which the `c` case catches. `erx_draw_tree` over a stub connection: a
+  which the `c` case catches. A program's `/dev` tree over a stub connection: a
   `ctl` read of 144 bytes at offset 0 answers the text, one of 143 fails
   with `EINVAL`, one at offset 144 answers no bytes, and an open for
   writing fails with `EACCES`; a `draw` write of 65,536 bytes reaches the
@@ -4898,9 +4910,14 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   `ENOMEM` and `EBADF`; seeded: a tree that answers a short `ctl` read
   with the text's first bytes, which the 143-byte case catches. A
   program's 64 KiB write of whole messages draws what `erx_draw` draws
-  for them, and one of 64 KiB plus one message, cut at the slot, returns
-  65,536 having drawn the first part, and its rest, written again, fails
-  with `EINVAL`.
+  for them, and so does one of those messages followed by one more
+  whole message, two parts that each end on a message; a write whose
+  last message starts before the 64 KiB boundary and ends after it fails
+  with `EINVAL` and draws nothing; and one of 64 KiB of whole messages
+  followed by 64 KiB more whose last message crosses the second boundary
+  returns 65,536 having drawn the first part alone. Seeded: a tree that
+  holds a part's unfinished last message and joins it to the next part,
+  which draws the cut message in the second case.
 * **The terminal.** Each test below names the seeded fault that fails
   it.
   * Exhaustive: on a 4-column, 3-row grid, every row of the sequence
