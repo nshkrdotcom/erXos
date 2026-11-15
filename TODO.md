@@ -1929,6 +1929,28 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [High] desktop, the glyph step: the display role does not fit its subfont (`tools/lib/erx/glyphs.rb`,
+  `abi/theme.txt`). At 48 pixels in a 56-pixel line, 77 of Inter SemiBold's glyphs leave the line: the accented
+  capitals rise up to 3 pixels above it and the bar `|` 2 above and 1 below, so `Erx::Glyphs` refuses the role and
+  `tools/erx build glyphs` fails on the theme. A line of 64 holds every glyph. And its glyphs are 10463 pixels
+  wide, more than the 8192 bytes one row may have in `erx_font` (its `?BAND`, the most one `y` carries), so even
+  a taller role would not parse. Two choices wait on a decision: the display role's line (or a
+  narrower range for it, which the theme grammar has no row for), and whether `erx_font:load/2` loads a row wider
+  than a band in column tiles, as a `y` of any rectangle inside the image allows. `test/host/glyphs_test.rb`
+  leaves the display row out of the theme it writes until then.
+* [Medium] desktop, the glyph step's limits (`tools/lib/erx/glyphs.rb` `MAX_X`, `erlang/apps/erx_win/src/erx_font.erl`
+  `?BAND`, `erx_draw_core.erl` `?MAX_GLYPHS`): `Erx::Glyphs` refuses only at font(7)'s field limits, so it writes a
+  `k8` subfont wider than 8192 pixels, or of more than 4096 glyphs, that `erx_font:parse/1` then refuses. Make the
+  reader's limits one generated fact that both the step and `erx_font` read, and refuse there.
+* [Medium] desktop, a present glyph of zero advance (`tools/lib/erx/glyphs.rb` `place`, design-desktop-programs "The
+  glyph step"): width 0 is how a subfont marks a missing glyph, so a glyph whose advance rounds to 0 reads as
+  missing too. Inter has U+200B (zero width space) at advance 0, inside the theme's range `2000-206F`, so the
+  renderer would draw a replacement box for it. Take the format controls out of the ranges, or decide another mark.
+* [Medium] host tools, one build scaffold (`tools/lib/erx/raster.rb`, `rc_oracle.rb`, `fsimg.rb`): `source_record`,
+  `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
+  Fold them into one module that takes a source id and an output directory.
+* [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
+  (`test/host/glyphs_test.rb`); the ink-leaves-the-line refusal is exercised only by the theme's display role.
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
   profile's capability fields, the walk's array, the pipe ends' handles, the startup record's, `erx_prog_object_map`
   and `erx_cap_close` are `erx_cap_t`, but every other call of `api.h` takes or returns a handle as `uint64_t`
