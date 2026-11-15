@@ -1,6 +1,7 @@
-# vi, the screen editor
+# evi, the screen editor
 
-`vi` is the command shell's screen editor: an Erlang command that edits
+evi, Erlang vi, is the command shell's screen editor, run as the command
+`vi`: an Erlang command that edits
 one text file on the session's terminal, whichever master carries it,
 `erx_term`'s window, a console line (the UART or the host link's
 `console` line), an SSH channel or the web terminal. It behaves like

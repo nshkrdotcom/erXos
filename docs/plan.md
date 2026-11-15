@@ -1087,7 +1087,7 @@ while that a program cannot escape `liberx` does not
   ([design-shell.md](design-shell.md#pipelines));
 * toybox 0.8.15 and `wak` imported as erXos's code and built applet by
   applet, each with toybox's own tests in a test domain;
-* `vi`, the screen editor ([design-vi.md](design-vi.md)), an estimated
+* evi, the screen editor, run as `vi` ([design-vi.md](design-vi.md)), an estimated
   2,500 lines of Erlang: it follows the session domain and its terminal
   relay with `erx_tty`, and needs no program, pipe or toybox applet, so it
   lands before them. It brings the command shell's terminal calls,
@@ -1104,7 +1104,7 @@ clean; `ps`, `ls`, `grep`, `sort` and `wc` agree with FreeBSD 15.1's over
 their corpus in the oracle guest, every difference classified and pinned
 by a test.
 
-**Exit criteria, vi (1b-B).** In a session over the host link's
+**Exit criteria, evi (1b-B).** In a session over the host link's
 `console` line, `vi` edits a file, writes it with `:wq` and leaves the
 prompt editing as before and the next command of its line cooked; it
 follows a size change, stops on `^Z` and redraws after `fg`, and draws
@@ -3713,7 +3713,7 @@ Phase 1:   M0 --> M1 --> M3 --> M4 --> M6 --> track S (shell)
 Phase 1b, in order of its demos (backend rows, hosted backend too; BeamAsm beside 1b-A):
            1b-A domains on the stopgap
              --> session domain (1b-B's first slice) --> 1b-C track D part 1 (GW) --> part 2
-             --> session domain and its terminal relay --> vi (track S)
+             --> session domain and its terminal relay --> evi (track S)
              --> 1b-E M9 on the stopgap --> track A part 3, installing at run time (on 1b-E's storage domain)
            track A part 1, the start table (on the session domain and M6's data partition)
              --> track A part 2, packages added to an image (the SDK, the apps row, erx_app, examples/)
