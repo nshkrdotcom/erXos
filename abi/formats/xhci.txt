@@ -10,8 +10,10 @@
 # and table. Every structure is little-endian. A controller whose HCCPARAMS1.CSZ is
 # set spaces its contexts 64 bytes apart, each context's first 32 bytes the layouts
 # below and the rest reserved (xhci.h:113-116, :163-166, :182-185). The ring form's own
-# sizes, its rings' lengths, queue blocks and buffers, are its record's, not this file's
-# (design-usb.md, "The TRB ring form").
+# sizes, its rings' lengths and queue blocks, are its record's, not this file's
+# (design-usb.md, "The TRB ring form"); the size of an interrupt and of a bulk queue
+# block's buffer is here, since the USB core admits an endpoint only when its payload of one service
+# interval fits one.
 
 # A device context holds the slot context and 31 endpoint contexts, indexed by the
 # device context index, EP0's 1 (XHCI_MAX_ENDPOINTS, xhci.h:33); an input context
@@ -37,6 +39,12 @@ limit xhci_scratchpad_array_align u32 64
 
 # The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
 limit xhci_endpoint_error_count u32 3
+
+# The buffer of an interrupt and of a bulk queue block: an interrupt block's four of
+# 1 KiB and a bulk block's two of 32 KiB (design-usb.md, "The TRB ring form"), each an
+# erXos choice.
+limit xhci_interrupt_buffer_size u32 1024
+limit xhci_bulk_buffer_size u32 32768
 
 # The slot context (xhci.h:74-111): the device's route, speed and hub fields, its
 # last valid context index, the root hub port it is reached through, its

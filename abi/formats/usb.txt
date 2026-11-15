@@ -117,6 +117,31 @@ enum usb_transfer_type u8
 limit usb_packet_size_mask u16 0x07ff
 limit usb_packet_extra_shift u32 11
 limit usb_packet_extra_mask u16 0x0003
+# The largest count of additional transactions a high-speed interrupt endpoint means:
+# FreeBSD calls a packet count above 3, so extra transactions of 3, invalid and clamps
+# it (usb_transfer.c:502-513); erXos refuses that value (design-usb.md, "Descriptors").
+limit usb_packet_extra_max u16 2
+# FreeBSD's filter of standard packet sizes (usbd_get_std_packet_size,
+# usb_transfer.c:3525-3591, applied at :569-592): an interrupt endpoint's largest packet
+# by speed, and a bulk endpoint's one size by speed, except at full speed, where it is
+# a power of two from 8 to 64, a value between two taken down to the one below and a
+# value below 8 taken up to 8.
+limit usb_interrupt_packet_low u16 8
+limit usb_interrupt_packet_full u16 64
+limit usb_interrupt_packet_high u16 1024
+limit usb_interrupt_packet_super u16 1024
+limit usb_bulk_packet_low u16 8
+limit usb_bulk_packet_full_min u16 8
+limit usb_bulk_packet_full_max u16 64
+limit usb_bulk_packet_high u16 512
+limit usb_bulk_packet_super u16 1024
+# A SuperSpeed endpoint companion's bMaxBurst, zero-based: FreeBSD clamps the packet
+# count it gives to 16 (usb_transfer.c:520-527), and the endpoint context's burst is
+# 0 to 15 (design-usb.md, "What Erlang names and what the NIF builds"); erXos refuses
+# a larger value. A SuperSpeed interrupt endpoint's payload of one service interval is
+# at most 3 KiB (xHCI 1.2, 4.14.2, p. 259, as design-usb.md cites it).
+limit usb_burst_max u8 15
+limit usb_ss_interrupt_payload_max u32 3072
 
 # The interface and device classes the claim table names (usb.h:374, :454, :468-480)
 # and a hub's device protocols (usb.h:376-379): a multi-TT hub selects its alternate
@@ -132,6 +157,7 @@ enum usb_hub_protocol u8
   value single_tt 1
   value multi_tt 2
   value super_speed 3
+limit usb_hub_multi_tt_alternate u8 1
 
 # The feature a pipe's reset clears (usb.h:239).
 enum usb_feature u16

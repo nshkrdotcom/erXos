@@ -664,8 +664,10 @@ since erXos has no counterpart of FreeBSD's `ugen`. A need for one is a
 declared protocol with a design of its own
 ([design.md](design.md#decisions)).
 
-Which interfaces it drives is one pure function of the device and
-configuration descriptors, `erx_usb_claim:functions/2`, a closed table:
+Which interfaces it drives is one pure function of the device's speed
+and its device and configuration descriptors,
+`erx_usb_claim:functions/3`, a closed table, which names an interface
+by its alternate setting 0:
 
 | Interface | Function | Alternate setting | Needs |
 | --- | --- | --- | --- |
@@ -677,8 +679,9 @@ configuration descriptors, `erx_usb_claim:functions/2`, a closed table:
 The device's first configuration is set, as FreeBSD sets configuration
 index 0 unless a quirk names another (`usb_device.c:1969-2019`). Each
 interface the table names is one function; a composite device's
-interfaces are claimed one by one. A device none of whose interfaces the
-table names is configured anyway, so its descriptors and state show in
+interfaces are claimed one by one. An interface whose selected setting
+lacks an endpoint its function needs runs no function. A device none of
+whose interfaces the table names is configured anyway, so its descriptors and state show in
 its inspection record, and runs no function. CBI (protocols 00h and
 01h), UAS (62h), the RBC, UFI and SFF-8070i command sets, isochronous
 interfaces and every other class are outside this design.
@@ -696,7 +699,7 @@ fixed before any device arrives:
 | configuration descriptor | 4 KiB: one control buffer; a longer `wTotalLength` refuses the device | `usb_config_max` |
 | HID report descriptor | 4 KiB, one control buffer; a longer one refuses the function | `hid_report_descriptor_max` |
 | string descriptor | 255 bytes, `bLength`'s own bound, three strings a device | the descriptor format |
-| endpoints a device may use | its claimed functions' endpoints, at most 8 with EP0 | `usb_endpoints_max` |
+| endpoints a device may use | its claimed functions' endpoints, at most 8 with EP0; a device whose functions claim more is refused (`too many endpoints`) | `usb_endpoints_max` |
 | xHCI queue blocks | 16 control, 16 interrupt and 4 bulk blocks per controller | the TRB ring form's record |
 | transfers in flight | 1 on a control pipe, 4 on an interrupt pipe, 2 on a bulk pipe | the queue blocks' buffers |
 | commands | one in flight per controller; a device's teardown at most one Stop Endpoint per endpoint and one Disable Slot | the controller process |
@@ -1347,7 +1350,7 @@ event:
 4. **Configuration descriptor.** Its 9-byte header, then `wTotalLength`
    bytes, refused past `usb_config_max`, decoded and checked whole
    ([Descriptors](#descriptors)).
-5. **Claim.** `erx_usb_claim:functions/2`.
+5. **Claim.** `erx_usb_claim:functions/3`.
 6. **Configure.** SET_CONFIGURATION with the first configuration's value.
 7. **Hub setup**, for a hub only: SET_INTERFACE to alternate setting 1 on
    a multi-TT hub; then the hub descriptor, first at the length that
@@ -1448,10 +1451,23 @@ bounds above, and the rules that make a configuration one endpoint graph:
   nothing); an interface descriptor is at least 9 bytes, an endpoint
   descriptor at least 7, a HID descriptor at least 9 with its report
   descriptor's length, a SuperSpeed endpoint companion at least 6, a hub
-  descriptor at least 7 with its port count from 1 to 15;
+  descriptor at least 7 with its port count from 1 to 15; a hub
+  descriptor arrives on its own request (enumeration step 7), so the
+  walk skips one like any other descriptor it does not use, and only
+  its 7-byte head, which holds every field the stack reads, is decoded,
+  so a read cut short of `bLength` is enough;
 * each endpoint descriptor belongs to the interface descriptor before
   it, and one before any interface descriptor refuses the configuration;
-  `bNumEndpoints` is not trusted, the descriptors are;
+  `bNumEndpoints` is not trusted, the descriptors are; a SuperSpeed
+  endpoint companion belongs to the endpoint descriptor just before it,
+  and a companion anywhere else refuses the configuration; a HID
+  descriptor belongs to the HID interface (class 03h) before it, one a
+  setting, its first class descriptor the report descriptor, and a
+  second one or another first class descriptor refuses the
+  configuration; type 21h anywhere else, before any interface or under
+  another class, is not HID's (DFU's functional descriptor, CCID's class
+  descriptor) and is skipped, so it never refuses a composite device's
+  HID function;
 * the walk builds one map from `{interface number, alternate setting}`
   to that setting's descriptors, so a second definition of a key refuses
   the configuration (`duplicate interface`) instead of shadowing the
@@ -1460,9 +1476,12 @@ bounds above, and the rules that make a configuration one endpoint graph:
   multi-TT hub without alternate setting 1, refuses the configuration
   (`missing setting`);
 * an endpoint descriptor whose address names endpoint 0, `0x00` or
-  `0x80`, refuses the configuration (`endpoint zero`), since its device context index
-  would be EP0's, 1 (xHCI 4.5.1, p. 96); among the selected settings
-  every other endpoint address appears once, kept as the keys of a
+  `0x80`, whatever its reserved bits 6:4 hold, refuses the configuration
+  (`endpoint zero`), since its device context index would be EP0's, 1
+  (xHCI 4.5.1, p. 96); an address is kept as its direction and number
+  alone, so two that differ only in the reserved bits are one pipe;
+  among the settings the claim selects every other endpoint address
+  appears once, kept as the keys of a
   second map, and a duplicate refuses the configuration, so no two
   functions can claim the same pipe;
 * an endpoint of a SuperSpeed device is followed by its companion, and a
@@ -1475,7 +1494,7 @@ bounds above, and the rules that make a configuration one endpoint graph:
   descriptor and the device's speed:
   * the **packet size**, bits 10:0 of `wMaxPacketSize`, taken through
     FreeBSD's filter of standard sizes (`usbd_get_std_packet_size`,
-    `usb_transfer.c:3525-3591`, applied at `:560-592`): an interrupt
+    `usb_transfer.c:3525-3591`, applied at `:569-592`): an interrupt
     endpoint's at most 8 at low speed, 64 at full and 1024 at high and
     SuperSpeed; a bulk endpoint's 8, 16, 32 or 64 at full speed, 512 at
     high and 1024 at SuperSpeed, a value between them taken down to
@@ -1484,8 +1503,11 @@ bounds above, and the rules that make a configuration one endpoint graph:
     SuperSpeed; bits 12:11 of `wMaxPacketSize` on a high-speed interrupt
     endpoint, where 3, which FreeBSD calls an invalid packet count and
     clamps to 2 (`usb_transfer.c:502-513`), refuses the endpoint, since a
-    value the device cannot mean is not one to guess at; and 0 on every other
-    endpoint, as the context requires (xHCI 6.2.3.4, p. 455);
+    value the device cannot mean is not one to guess at, as does a
+    `bMaxBurst` above 15, which FreeBSD clamps (`usb_transfer.c:520-527`)
+    and the context cannot hold, both with `malformed descriptor`; and 0
+    on every other endpoint, as the context requires (xHCI 6.2.3.4,
+    p. 455);
   * the **payload of one service interval**, by speed (4.14.2, p. 259).
     Below SuperSpeed, and on every bulk endpoint, it is the packet size
     times burst plus one (6.2.3.4, p. 455), computed with checked
@@ -1498,7 +1520,10 @@ bounds above, and the rules that make a configuration one endpoint graph:
     invalid, but erXos does not admit it, refusing the device with
     `zero interval payload`: the stack's interrupt endpoints are HID
     reports and hub status changes, so an interrupt endpoint that moves
-    no bytes has no consumer in it.
+    no bytes has no consumer in it. The same refusal meets a
+    `wMaxPacketSize` whose bits 10:0 are 0, on any endpoint: FreeBSD
+    raises it to the controller's largest packet before its filter
+    (`usb_transfer.c:563-567`), a guess erXos does not make.
   The payload must fit one buffer of the queue block the endpoint's type
   takes, or the device is refused with `endpoint too large`. Its
   consumer is the controller's bandwidth reservation: the NIF writes the
@@ -2716,7 +2741,7 @@ sink shows it.
 | a drive grant's `window` | `{error, no_medium}`, `{error, no_partition}` | the drive holds no ready medium; the medium's table has no entry for the grant's partition that the removable-media rule serves |
 | a window of a medium that has gone | no answer: the process has ended | the caller's monitor fires |
 | the transport | `{error, {device, {sense, Key, Asc, Ascq}}}`, `{error, {device, no_sense}}`, `{error, {device, reset}}`, `{error, {device, short}}`, `{error, {device, gone}}`, `{error, {device, deadline}}`, `{error, no_flush}` | a failed command; a failed command whose REQUEST SENSE failed too; a reset recovery; a transfer that moved less than asked; a request of an ended medium; the wait bound passed; a flush of a medium that cannot flush |
-| a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
+| a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `too many endpoints`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
 | an access of the bridge driver below the root port | `{error, link_down}` | the link was down before the access or after it |
 | the bridge's bring-up | fails, with `link down`, `endpoint mode` or `dma-ranges` in the bridge's inspection record, and no function reported | no link 200 ms after PERST#'s release; the block is not a root complex; the tree's inbound range breaks the window's rules |
 | the VL805's report | `not_ready`, never given, with `vl805 firmware not loaded` | `0x50` reads 0 or all ones after the notification, or the notification's kernel call failed; for the rest of the boot after a timed-out notification, whatever `0x50` reads |
