@@ -123,6 +123,12 @@ struct erx_dt_framebuffer {
 	uint32_t		 bits_per_pixel;
 };
 
+typedef enum erx_dt_regs_status {
+	ERX_DT_REGS_OK,
+	ERX_DT_REGS_NONE,
+	ERX_DT_REGS_MALFORMED
+} erx_dt_regs_status_t;
+
 /*
  * The seeds /chosen may carry for a generator (docs/design-kernel.md,
  * "Entropy"), in the order one mixes them, and their property names in the
@@ -164,6 +170,18 @@ void		 erx_dt_device(const erx_dt_t *tree, const char *path, erx_dt_row_t row, e
  * compatible, checked against window and the tree's RAM. */
 void		 erx_dt_framebuffer(const erx_dt_t *tree, const char *path, const char *compatible,
 		    erx_dt_window_t window, erx_dt_framebuffer_t *fb);
+
+/*
+ * Fills *window with the CPU addresses of the first register range of the
+ * first enabled node whose compatible list holds compatible, its reg read
+ * with its parent's cell counts and translated through each bus's ranges
+ * up to the root (docs/design-platforms.md, "The devices the kernel
+ * drives"). ERX_DT_REGS_NONE: no such node. ERX_DT_REGS_MALFORMED: the
+ * range is empty, wraps, is not translated whole and in one piece (a bus
+ * with no ranges translates nothing), or meets the tree's RAM. *window is
+ * zero unless ERX_DT_REGS_OK.
+ */
+erx_dt_regs_status_t erx_dt_registers(const erx_dt_t *tree, const char *compatible, erx_dt_window_t *window);
 
 /*
  * Fills *seeds from /chosen. A seed is absent when /chosen or its property

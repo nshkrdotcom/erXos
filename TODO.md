@@ -461,10 +461,6 @@ it; git history is the record of completed work.
   Decide it in the design: zero the `erx.dma_pool` once at boot and each range as it returns to the pool, or zero in
   preemptible steps, and keep only the measurement in `docs/todo-performance.md`.
 * [Low] stopgap, `liberx/backend/fiasco/irq.c`: an IRQ object is unbound by a holder allowed in its group (the group's home, its creator or the root: `irq_group_allowed`) and freed with its last handle. Whether a restarted block driver can rebind its line through that is untested.
-* [Low] stopgap, `liberx/backend/fiasco/entropy.c`, Raspberry Pi 4: whether the board's firmware writes `/chosen/rng-seed` is
-  unverified; the entropy line of the first board boot settles it. If it writes none, the board's generator starts from the
-  counter alone, and whether to read the RNG200 instead ([design-platforms.md](docs/design-platforms.md#entropy-sources)) is a
-  question to bring back.
 * [Medium] stopgap, `liberx/backend/fiasco/vm.c`, `liberx/backend/core/vm_table.c`: the range table sees an object's mapping as uncommitted, so
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the
   mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object, so `vm_give`'s address check and
@@ -6402,6 +6398,15 @@ to the corpus and follow rc
   design's intent puts the holder in the console's trusted base, a domain of its own. Decide
   whether the clause also refuses a holder that serves or holds anything beyond those units,
   and tighten the text and the check together. No shipped manifest places `gpio`.
+* [High] stopgap, Raspberry Pi 4, `kernel/core/dt.c` `erx_dt_registers`, `liberx/backend/fiasco/rng200.c`: the
+  RNG200's register window comes from the device tree alone. The reader refuses a window that is empty,
+  wraps, is not translated whole and in one piece through the buses' `ranges`, or meets the tree's RAM, but
+  nothing ties it to where the generator is, so a tree that names another device's page under the RNG200's
+  compatible string has the root map that page, set bit 0 of its first register if nothing else there is set,
+  and read two more registers for 100 ms. The framebuffer row closes the same gap with the manifest row's
+  window (`erx_dt_framebuffer`); the RNG200 has no such row or platform fact yet. A development build runs
+  trusted code from one boot medium, which holds the tree; release needs the window from one checked-in
+  source, checked as the framebuffer's is.
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s
   `login_key` admits root's development key on the SSH domain's own
@@ -7118,14 +7123,21 @@ document's "residual risks accepted" paragraph.
   ([design-platforms.md](docs/design-platforms.md#the-watchdog)); a reload from the root would rebuild a
   kernel mechanism in user mode. Residual until M12: the unattended board's `config.txt` sets the line
   once erXos's kernel runs there.
-* [Medium] platform (Raspberry Pi 4), RNG200: read the random generator when the firmware writes neither
-  `rng-seed` nor `kaslr-seed` into `/chosen`, in the root on the stopgap
-  ([design-stopgap.md](docs/design-stopgap.md#the-raspberry-pi-4)) and in the kernel's platform layer
-  on erXos's kernel ([design-platforms.md](docs/design-platforms.md#entropy-sources)). Two pieces, in order:
-  a clean-room facts record of the RNG200's registers and read sequence (a separate agent reads the
-  sources; the design and code agents never do), then the driver, with its host test, a
-  read path bounded at 100 ms, and the banner line naming the source. The register facts are not in the tree
-  until the record exists; the design states none.
+* [Medium] platform (Raspberry Pi 4), RNG200, `liberx/backend/fiasco/rng200.c`: the root's read is written from
+  the clean-room facts record alone and has run only on QEMU's `raspi4b` model, where it blocks the boot:
+  the root maps the generator's page, but its first read there (CTRL) never returns, while the mini UART's page,
+  mapped the same way at the same point, reads, so the root stops silently before its entropy line and the
+  `raspi4b` suite times out at `release-slogan`. The model tree (`tools/lib/erx/board_tree.rb`) names an RNG200
+  the model does not answer for; disabling that node there is the likely fix, and a root that stops silently on
+  a device read that faults is a gap of its own. A probe on a
+  real Pi 4, read from the entropy line, settles what the record leaves open: whether the firmware writes
+  `/chosen/rng-seed` or `kaslr-seed` at all, which skips the read; whether the generator, started only by setting
+  CTRL bit 0, with no warm-up and no soft reset, gives FIFO_COUNT eight words within the 100 ms bound; whether
+  the firmware leaves CTRL bits above bit 0 set with bit 0 clear, which the root does not write back, so the line
+  says the RNG200 could not be read (if it does, the SVD names those bits or marks them kept on write); and whether the registers that rest on one source
+  each (the soft resets at 0x04 and 0x08, the total bit count and its threshold at 0x0c and 0x10, the status at
+  0x18) matter to a read after a cold boot. erXos's kernel's platform layer reads it through the same
+  `kernel/core/rng200.c` ([design-platforms.md](docs/design-platforms.md#entropy-sources)).
 * [Low] USB, DWC2 on QEMU `raspi4b` ([design-usb.md](docs/design-usb.md#dwc2)): `erx_dwc2`, a
   programmed-I/O host driver for the model's DWC2 beside `erx_xhci` under the same USB core, for low- and
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real

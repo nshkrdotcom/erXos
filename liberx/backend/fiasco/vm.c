@@ -54,7 +54,8 @@
 #define VM_AREA_END	UINT64_C(0x8000000000)
 /*
  * Below the window and above all RAM: the device window, where each physical
- * object's registers stay mapped in the root, and the contiguous pool, one flexpage
+ * object's registers stay mapped in the root, as does the page the root reads the
+ * board's random generator through (erx_fiasco_vm_device_page), and the contiguous pool, one flexpage
  * of the order the manifest's devices ask for (erx_fiasco_contig_order). The pool
  * starts at a place aligned to the largest order, so a flexpage of any smaller one
  * is naturally aligned there too.
@@ -378,25 +379,54 @@ erx_fiasco_vm_object_create(uint32_t object, uint64_t size)
 	return (object_fill(object, size, &vm_no_effects, VM_OBJECT_PAGES, 0));
 }
 
+/*
+ * Maps size bytes of device memory at base, both page-aligned, at the device window's
+ * next free pages. The pages stay taken only once the caller calls device_take.
+ */
+static int
+device_map(uint64_t base, uint64_t size, uintptr_t *window)
+{
+	int status;
+
+	if ((size >> L4_PAGESHIFT) > VM_DEVICE_PAGES - vm_device_pages_used)
+		return (ERX_ENOMEM);
+	*window = (uintptr_t)(VM_DEVICE_BASE + ((uint64_t)vm_device_pages_used << L4_PAGESHIFT));
+	status = l4sigma0_map_iomem(L4_BASE_PAGER_CAP, (l4_addr_t)base, (l4_addr_t)*window, (l4_addr_t)size, 0);
+	/* sigma0's library leaves a receive window armed, and no request may map anything here. */
+	l4_utcb_br()->br[0] = 0;
+	return (status == 0 ? ERX_OK : ERX_ERANGE);
+}
+
+static void
+device_take(uint64_t size)
+{
+	vm_device_pages_used += (uint32_t)(size >> L4_PAGESHIFT);
+}
+
 int
 erx_fiasco_vm_physical_create(uint32_t object, uint64_t base, uint64_t size)
 {
-	const uint64_t pages = size >> L4_PAGESHIFT;
-	const uintptr_t window = (uintptr_t)(VM_DEVICE_BASE + ((uint64_t)vm_device_pages_used << L4_PAGESHIFT));
+	uintptr_t window;
 	int status;
 
-	if (pages > VM_DEVICE_PAGES - vm_device_pages_used)
-		return (ERX_ENOMEM);
-	status = l4sigma0_map_iomem(L4_BASE_PAGER_CAP, (l4_addr_t)base, (l4_addr_t)window, (l4_addr_t)size, 0);
-	/* sigma0's library leaves a receive window armed, and no request may map anything here. */
-	l4_utcb_br()->br[0] = 0;
-	if (status != 0)
-		return (ERX_ERANGE);
-	status = object_fill(object, size, &vm_run_effects, VM_OBJECT_PHYSICAL, window);
+	status = device_map(base, size, &window);
+	if (status == ERX_OK)
+		status = object_fill(object, size, &vm_run_effects, VM_OBJECT_PHYSICAL, window);
 	if (status != ERX_OK)
 		return (status);
-	vm_device_pages_used += (uint32_t)pages;
+	device_take(size);
 	return (ERX_OK);
+}
+
+int
+erx_fiasco_vm_device_page(uint64_t page, uintptr_t *window)
+{
+	int status;
+
+	status = device_map(page, L4_PAGESIZE, window);
+	if (status == ERX_OK)
+		device_take(L4_PAGESIZE);
+	return (status);
 }
 
 int

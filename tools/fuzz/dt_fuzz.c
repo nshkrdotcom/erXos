@@ -81,6 +81,21 @@ seeds_check(const erx_dt_t *tree)
 	}
 }
 
+/* A register window the reader gives is non-empty and does not wrap. */
+static void
+registers_check(const erx_dt_t *tree)
+{
+	erx_dt_window_t window;
+
+	if (erx_dt_registers(tree, "brcm,bcm2711-rng200", &window) != ERX_DT_REGS_OK) {
+		if (window.base != 0 || window.size != 0)
+			abort();
+		return;
+	}
+	if (window.size == 0 || window.base + (window.size - 1) < window.base)
+		abort();
+}
+
 int
 LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 {
@@ -106,6 +121,7 @@ LLVMFuzzerTestOneInput(const uint8_t *data, size_t size)
 		framebuffer_check(&tree, 0x7e000000, 0x400000);
 		framebuffer_check(&tree, 0, UINT64_MAX);
 		seeds_check(&tree);
+		registers_check(&tree);
 	} else if (tree.bytes != NULL || tree.memory_count != 0) {
 		abort();
 	}

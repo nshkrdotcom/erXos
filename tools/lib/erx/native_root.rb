@@ -48,7 +48,7 @@ module Erx
                  #{BACKEND}/arch/aarch64/thread_start.S #{BACKEND}/thread_claim.c #{BACKEND}/umtx.c #{BACKEND}/umtx_table.c
                  liberx/backend/core/object_info.c
                  #{BACKEND}/park.c liberx/backend/core/park_table.c #{BACKEND}/group.c #{BACKEND}/irq.c #{BACKEND}/time.c #{BACKEND}/time_page.c #{BACKEND}/time_table.c
-                 #{BACKEND}/entropy.c liberx/backend/core/entropy_take.c kernel/core/rng.c kernel/core/rng_seed.c kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c
+                 #{BACKEND}/entropy.c #{BACKEND}/entropy_line.c liberx/backend/core/entropy_take.c kernel/core/rng.c kernel/core/rng_seed.c kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c
                  kernel/crypto/chacha20/chacha.c
                  #{BACKEND}/watchdog_thread.c #{BACKEND}/end.c liberx/backend/core/trace_ring.c #{BACKEND}/trace.c
                  #{BACKEND}/arch/aarch64/clock.c kernel/core/crash.c kernel/core/crash_frame.c kernel/core/log.c
@@ -113,7 +113,7 @@ module Erx
               'liberx/backend/core/boot_info.c', 'liberx/backend/core/boot_manifest.c', 'liberx/backend/core/refused.c',
               'liberx/backend/core/arch/aarch64/cpu_features.c',
               "#{BACKEND}/api_names.c", "#{BACKEND}/libc_start.c", "#{BACKEND}/libc_root_start.c", "#{BACKEND}/libc_root_write.c", "#{BACKEND}/runtime_entry.c",
-              "#{BACKEND}/park_report.c", "#{BACKEND}/runtime_main.c", 'liberx/release.c', 'liberx/release_fs.c',
+              "#{BACKEND}/park_report.c", "#{BACKEND}/runtime_main.c", "#{BACKEND}/rng200.c", "kernel/core/rng200.c", 'liberx/release.c', 'liberx/release_fs.c',
               *DOMAIN_LIBRARY, *CONNECTION, *PIPE, *DEVICE_TREE].freeze
     # A domain's runtime image: the interpreter ERTS as a task's program, at task.ld's
     # fixed addresses, since erx_image_map loads only an ERX_IMAGE_FIXED image. musl's

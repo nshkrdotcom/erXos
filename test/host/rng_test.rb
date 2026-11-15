@@ -249,6 +249,23 @@ class RngTest < Minitest::Test
     end
   end
 
+  # erx_rng_seed_add, as the stopgap's root mixes the board's RNG200 words after a boot
+  # seed that found no /chosen seed: a source of up to one digest's input mixes in as a
+  # seed does, and a longer one is refused and leaves the key the counter gave.
+  def test_a_source_added_after_the_boot_seed_mixes_in_as_a_seed_does
+    random = Random.new(SEED)
+    cases = [[7, random.bytes(32)], [random.rand(2**64), random.bytes(F::DIGEST_INPUT_MAX)], [9, random.bytes(F::DIGEST_INPUT_MAX + 1)]]
+    answers = @driver.ask(cases.map { |counter, bytes| "rng-seed-add #{counter} #{F.hex(bytes)}" })
+    fits = ->(bytes) { bytes.bytesize <= F::DIGEST_INPUT_MAX }
+    digests = @driver.blake3_table(cases.flat_map { |counter, bytes| [[counter].pack('Q<'), *([bytes] if fits.call(bytes))] })
+    cases.zip(answers).each do |(counter, bytes), answer|
+      model = F::Generator.new(digests: digests)
+      model.init([counter].pack('Q<'))
+      added = fits.call(bytes) && model.mix(bytes)
+      assert_equal "rng-seed-add #{F.hex(model.key)}:1 #{added ? 1 : 0}", answer, "#{bytes.bytesize} bytes"
+    end
+  end
+
   def test_cores_build_freestanding_for_the_target
     %w[kernel/core/rng.c kernel/core/rng_seed.c].each do |source|
       @driver.compile_for_target(File.join(F::ROOT, source))

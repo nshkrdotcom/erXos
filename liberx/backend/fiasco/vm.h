@@ -82,6 +82,12 @@ void	erx_fiasco_vm_object_free(uint32_t object);
  */
 int	erx_fiasco_vm_physical_create(uint32_t object, uint64_t base, uint64_t size) ERX_WARN_UNUSED_RESULT;
 /*
+ * Maps the device page at physical address page, page-aligned, into the root for
+ * the root's own use and gives its address in *window. The mapping lasts the root's
+ * life. A full device window is ERX_ENOMEM, and sigma0's refusal ERX_ERANGE.
+ */
+int	erx_fiasco_vm_device_page(uint64_t page, uintptr_t *window) ERX_WARN_UNUSED_RESULT;
+/*
  * An object over a zeroed run of the contiguous pool, wholly inside CPU addresses cpu
  * through last, whose device address is its physical address less cpu plus bus
  * (erx_mem_create_contiguous_in). A window that covers fewer of the pool's pages than

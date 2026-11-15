@@ -11,10 +11,12 @@
  * sequence of seed sources: the counter keys the generator, then each seed
  * the device tree's /chosen carries is mixed in on its own, in
  * erx_dt_seed_t's order. Mixing never weakens the key (erx/core/rng.h), so
- * a firmware's poor seed costs nothing. The stopgap's root and erXos's
+ * a firmware's poor seed costs nothing. A board whose /chosen carries no
+ * seed adds its random generator's bytes after (erx_rng_seed_add). The stopgap's root and erXos's
  * kernel both seed through it.
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -37,6 +39,11 @@ typedef struct erx_rng_seeded {
  * could not key mixes nothing, and its reads are refused.
  */
 erx_rng_seeded_t	erx_rng_seed(erx_rng_t *rng, uint64_t counter, const erx_dt_seeds_t *seeds);
+/*
+ * Mixes in length bytes of one more source, at most ERX_RNG_DIGEST_INPUT_MAX, as
+ * erx_rng_seed mixes each seed. Returns whether they went in.
+ */
+bool			erx_rng_seed_add(erx_rng_t *rng, const void *bytes, size_t length);
 
 #ifdef __cplusplus
 }

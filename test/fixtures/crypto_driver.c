@@ -33,6 +33,11 @@
  *               seed set, or one holding /chosen's rng-seed and kaslr-seed
  *               as hex, "-" for a seed the tree lacks
  *     -> rng-seed KEY:READY RNGMIXED KASLRMIXED   (the bytes each mixed)
+ *   rng-seed-add COUNTER HEX
+ *               seeds a generator with erx_rng_seed from COUNTER and no
+ *               seed set, then mixes HEX in with erx_rng_seed_add, as the
+ *               stopgap's root mixes the board's random generator
+ *     -> rng-seed-add KEY:READY ADDED   (1 when HEX went in, else 0)
  *   rng-residue KIND HEX HEX   KIND "hash", of two messages of one length,
  *               or "read" or "mix", under two 32-byte keys
  *     -> rng-residue DIFFERING TOUCHED
@@ -84,6 +89,7 @@ static void driver_answer_chacha20_bound(char *);
 static void driver_answer_rng(char *);
 static void driver_answer_rng_residue(char *);
 static void driver_answer_rng_seed(char *);
+static void driver_answer_rng_seed_add(char *);
 static void driver_answer_sha256(char *);
 static void driver_answer_sha256_repeat(char *);
 static void driver_residue_run(driver_residue_t, erx_rng_t *,
@@ -408,6 +414,23 @@ driver_answer_rng_seed(char *cursor)
 	fputs("\n", stdout);
 }
 
+static void
+driver_answer_rng_seed_add(char *cursor)
+{
+	const uint64_t counter = driver_number(driver_token(&cursor));
+	driver_bytes_t bytes = driver_hex(driver_token(&cursor));
+	erx_rng_t rng;
+	bool added;
+
+	memset(&rng, 0, sizeof(rng));
+	(void)erx_rng_seed(&rng, counter, NULL);
+	added = erx_rng_seed_add(&rng, bytes.bytes, bytes.length);
+	free(bytes.bytes);
+	fputs("rng-seed-add ", stdout);
+	driver_print_hex(rng.key, sizeof(rng.key));
+	printf(":%d %d\n", rng.ready ? 1 : 0, added ? 1 : 0);
+}
+
 /*
  * This function's saved frame record, which lies just below its caller's
  * frame, where the frame of the caller's next callee starts too. Only that
@@ -538,6 +561,8 @@ main(int argc, char **argv)
 			driver_answer_rng(cursor);
 		else if (strcmp(command, "rng-seed") == 0)
 			driver_answer_rng_seed(cursor);
+		else if (strcmp(command, "rng-seed-add") == 0)
+			driver_answer_rng_seed_add(cursor);
 		else if (strcmp(command, "rng-residue") == 0)
 			driver_answer_rng_residue(cursor);
 		else

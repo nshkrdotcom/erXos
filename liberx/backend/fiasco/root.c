@@ -94,7 +94,7 @@ erx_fiasco_root_main(void)
 static const char *
 root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_boot_args_t *boot_args)
 {
-	erx_dt_seeds_t seeds;
+	erx_fiasco_seeds_t seeds;
 	const char *reason;
 	uint64_t dma_bytes;
 
@@ -111,8 +111,8 @@ root_boot(erx_boot_handoff_view_t *handoff, erx_manifest_view_t *manifest, erx_b
 	if (!erx_boot_manifest_dma_total(manifest, &dma_bytes))
 		return ("manifest: the devices' memory cannot be counted");
 	/*
-	 * The tree comes first, so the generator mixes /chosen's seeds in before anything
-	 * draws from it; the seeds' bytes are erased once the generator holds them.
+	 * The tree comes first, so the generator mixes its seeds in before anything draws
+	 * from it; their bytes are erased once the generator holds them.
 	 */
 	reason = erx_fiasco_program_tree(&root_tree, &seeds);
 	if (reason == NULL)

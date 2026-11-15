@@ -135,7 +135,8 @@ erx_fiasco_service_boot(const erx_boot_handoff_view_t *handoff)
 }
 
 const char *
-erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes, const erx_dt_seeds_t *seeds)
+erx_fiasco_root_up(const void *archive, size_t archive_bytes, uint64_t dma_bytes,
+    const erx_fiasco_seeds_t *seeds)
 {
 	const char *reason;
 

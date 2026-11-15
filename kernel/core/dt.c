@@ -564,6 +564,85 @@ erx_dt_framebuffer(const erx_dt_t *tree, const char *path, const char *compatibl
 	fb->status = status;
 }
 
+/*
+ * Translates the window at path[depth]'s address level up to the root,
+ * through each bus's ranges as windows_translate reads a dma-ranges: entries
+ * of the bus's own address cells, its parent's address cells and its own size
+ * cells. An empty ranges is the identity; a missing one maps nothing. Returns
+ * the window's pieces at the root in out, or false on a malformed level.
+ */
+static bool
+regs_translate(const void *fdt, const int path[ERX_DT_DEPTH_MAX + 1], int depth, dt_window_t out[ERX_DT_WINDOWS_MAX],
+    uint32_t *count)
+{
+	dt_window_t windows[2][ERX_DT_WINDOWS_MAX];
+	const uint8_t *ranges;
+	int level, side, ac, pac, sc, len;
+
+	windows[0][0] = out[0];
+	side = 0;
+	for (level = depth - 1; level > 0; level--) {
+		ranges = fdt_getprop(fdt, path[level], "ranges", &len);
+		if (ranges == NULL)
+			return (false);
+		if (len == 0)
+			continue;
+		ac = fdt_address_cells(fdt, path[level]);
+		sc = fdt_size_cells(fdt, path[level]);
+		pac = fdt_address_cells(fdt, path[level - 1]);
+		if (!cells_valid(ac) || !cells_valid(sc) || !cells_valid(pac) ||
+		    windows_translate(ranges, len, ac, pac, sc, windows[side], *count, windows[!side], count) != ERX_DT_DMA_OK)
+			return (false);
+		side = !side;
+	}
+	memcpy(out, windows[side], *count * sizeof(windows[side][0]));
+	return (true);
+}
+
+erx_dt_regs_status_t
+erx_dt_registers(const erx_dt_t *tree, const char *compatible, erx_dt_window_t *window)
+{
+	const void *fdt = tree == NULL ? NULL : tree->bytes;
+	dt_window_t pieces[ERX_DT_WINDOWS_MAX];
+	int path[ERX_DT_DEPTH_MAX + 1];
+	const uint8_t *reg;
+	uint64_t base, size, last;
+	uint32_t count;
+	int node, depth, ac, sc, len;
+
+	window->base = 0;
+	window->size = 0;
+	if (fdt == NULL || compatible == NULL)
+		return (ERX_DT_REGS_NONE);
+	node = fdt_node_offset_by_compatible(fdt, -1, compatible);
+	while (node >= 0 && !node_enabled(fdt, node))
+		node = fdt_node_offset_by_compatible(fdt, node, compatible);
+	if (node < 0)
+		return (ERX_DT_REGS_NONE);
+	depth = ancestry(fdt, node, path);
+	if (depth < 1)
+		return (ERX_DT_REGS_MALFORMED);
+	ac = fdt_address_cells(fdt, path[depth - 1]);
+	sc = fdt_size_cells(fdt, path[depth - 1]);
+	if (!cells_valid(ac) || !cells_valid(sc))
+		return (ERX_DT_REGS_MALFORMED);
+	reg = fdt_getprop(fdt, node, "reg", &len);
+	if (reg == NULL || len < (ac + sc) * DT_CELL)
+		return (ERX_DT_REGS_MALFORMED);
+	base = cells_read(reg, ac);
+	size = cells_read(reg + ac * DT_CELL, sc);
+	if (size == 0 || __builtin_add_overflow(base, size - 1, &last))
+		return (ERX_DT_REGS_MALFORMED);
+	pieces[0] = (dt_window_t){ .bus = base, .last = last, .at = base };
+	count = 1;
+	if (!regs_translate(fdt, path, depth, pieces, &count) || count != 1 || pieces[0].bus != base ||
+	    pieces[0].last != last || memory_meets(tree, pieces[0].at, window_at_last(&pieces[0])))
+		return (ERX_DT_REGS_MALFORMED);
+	window->base = pieces[0].at;
+	window->size = size;
+	return (ERX_DT_REGS_OK);
+}
+
 const char *
 erx_dt_fb_format_name(uint32_t format)
 {

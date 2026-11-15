@@ -50,6 +50,18 @@ class DtTest < Minitest::Test
       "stride = <#{stride}>; format = #{format}; #{status} #{extra} };"
   end
 
+  # The RNG200 node of the Pi 4 trees (rng@7e104000), at reg.
+  RNG_COMPATIBLE = 'brcm,bcm2711-rng200'
+  RNG = lambda do |reg: '0x7e104000 0x28', status: nil|
+    "rng@7e104000 { compatible = \"#{RNG_COMPATIBLE}\"; reg = <#{reg}>; #{status && "status = \"#{status}\";"} };"
+  end
+
+  # A one-cell bus; ranges nil is an empty ranges, :none no property.
+  SOC = lambda do |ranges:, body:|
+    property = { nil => 'ranges;', none: '' }.fetch(ranges) { "ranges = <#{ranges}>;" }
+    "soc { #address-cells = <1>; #size-cells = <1>; #{property} #{body} };"
+  end
+
   FIXTURES = {
     'parent-coherent' => tree('bus { #address-cells = <2>; #size-cells = <1>; dma-coherent; dev { }; };'),
     'both-marks' => tree('dev { dma-coherent; dma-noncoherent; };'),
@@ -98,7 +110,26 @@ class DtTest < Minitest::Test
     'fb-no-reg' => tree("chosen { #address-cells = <2>; #size-cells = <1>; #{FRAMEBUFFER.call.sub(/reg = <[^>]*>; /, '')} };"),
     # A reg one cell short of #address-cells plus #size-cells, whose size read on past the
     # property would be above 4 GiB, so only the length test refuses it.
-    'fb-short-reg' => tree("chosen { #address-cells = <2>; #size-cells = <2>; #{FRAMEBUFFER.call(reg: '0x0 0x7e000000 0x1')} };")
+    'fb-short-reg' => tree("chosen { #address-cells = <2>; #size-cells = <2>; #{FRAMEBUFFER.call(reg: '0x0 0x7e000000 0x1')} };"),
+    # Register windows (erx_dt_registers): a node under the root, and under the Pi 4's
+    # soc bus, which maps bus 0x7e000000 to CPU 0xfe000000.
+    'regs-identity' => tree(RNG.call(reg: '0x0 0xfe104000 0x28')),
+    'regs-translated' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000', body: RNG.call)),
+    'regs-empty-ranges' => tree(SOC.call(ranges: nil, body: RNG.call(reg: '0xfe104000 0x28'))),
+    'regs-no-ranges' => tree(SOC.call(ranges: :none, body: RNG.call)),
+    # The window lies across two entries of the bus's ranges, or past the one entry's end or start.
+    'regs-split' => tree(SOC.call(ranges: '0x7e104000 0x0 0xfe104000 0x10 0x7e104010 0x0 0xfe104010 0x18', body: RNG.call)),
+    'regs-partial' => tree(SOC.call(ranges: '0x7e104000 0x0 0xfe104000 0x10', body: RNG.call)),
+    'regs-tail' => tree(SOC.call(ranges: '0x7e104010 0x0 0xfe104010 0x18', body: RNG.call)),
+    # Two entries that each map the whole window.
+    'regs-twice' => tree(SOC.call(ranges: '0x7e000000 0x0 0xfe000000 0x1800000 0x7e000000 0x0 0xfe000000 0x1800000', body: RNG.call)),
+    'regs-in-ram' => tree(SOC.call(ranges: '0x7e000000 0x0 0x0 0x1800000', body: RNG.call)),
+    'regs-disabled' => tree(RNG.call(reg: '0x0 0xfe104000 0x28', status: 'disabled')),
+    # The first node disabled, the second enabled.
+    'regs-second' => tree(RNG.call(reg: '0x0 0xfe104000 0x28', status: 'disabled') +
+                          RNG.call(reg: '0x0 0xfe105000 0x28').sub('rng@7e104000', 'rng@7e105000')),
+    'regs-empty' => tree(RNG.call(reg: '0x0 0xfe104000 0x0')),
+    'regs-short' => tree(RNG.call(reg: '0x0 0xfe104000'))
   }.freeze
 
   # The framebuffer row's window in the fixtures, above their RAM; one whose end is not
@@ -153,7 +184,20 @@ class DtTest < Minitest::Test
        "fb /chosen simple-framebuffer #{RAM_WINDOW}", 'fb outside 0x3ff00000 0x400000 0x0 0 - 0'],
     'the window test made over the unrounded reg' =>
       ['first_page < window.base || last_page > window_last', 'base < window.base || last > window_last', 'fb-crossing',
-       "fb /chosen simple-framebuffer #{CROSSING_WINDOW}", 'fb outside 0x7e000000 0x3ff801 0x0 0 - 0']
+       "fb /chosen simple-framebuffer #{CROSSING_WINDOW}", 'fb outside 0x7e000000 0x3ff801 0x0 0 - 0'],
+    "the buses' ranges passed over" =>
+      ['for (level = depth - 1; level > 0; level--)', 'for (level = depth - 1; level > depth - 1; level--)', 'regs-translated',
+       "regs #{RNG_COMPATIBLE}", 'regs ok 0xfe104000 0x28'],
+    'a bus with no ranges taken as the identity' =>
+      ["if (ranges == NULL)\n\t\t\treturn (false);\n\t\tif (len == 0)", 'if (ranges == NULL || len == 0)', 'regs-no-ranges',
+       "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+    "the window's start left untested" =>
+      ['count != 1 || pieces[0].bus != base ||', 'count != 1 ||', 'regs-tail', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+    'the window taken from the first of two pieces' =>
+      ['count != 1 || pieces[0].bus != base ||', 'pieces[0].bus != base ||', 'regs-twice', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0'],
+    "the register window's RAM test removed" =>
+      ['pieces[0].last != last || memory_meets(tree, pieces[0].at, window_at_last(&pieces[0])))', 'pieces[0].last != last)',
+       'regs-in-ram', "regs #{RNG_COMPATIBLE}", 'regs malformed 0x0 0x0']
   }.freeze
 
   def setup
@@ -239,6 +283,8 @@ class DtTest < Minitest::Test
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
                   'device ranges coherent 0 range 0x0 0x0 0x0 mac none',
                   'device cells coherent 0 range 0x0 0x0 0x0 mac none'], answers(built.board, queries)
+    # Both trees place the RNG200 at 0x7e104000 on the soc bus, CPU address 0xfe104000.
+    [built.model, built.board].each { |tree| assert_equal 'regs ok 0xfe104000 0x28', answers(tree, ["regs #{RNG_COMPATIBLE}"])[1] }
   end
 
   def test_coherence_marks
@@ -326,6 +372,25 @@ class DtTest < Minitest::Test
     assert_equal 'fb outside 0x7e000000 0x400000 0x0 0 - 0', fixture_answers('fb-ok', ['fb /chosen simple-framebuffer 0x7e000000 0'])[1]
     assert_equal 'fb outside 0x7e000000 0x400000 0x0 0 - 0',
                  fixture_answers('fb-ok', ['fb /chosen simple-framebuffer 0x9000000 0x400000'])[1]
+  end
+
+  def test_register_windows
+    {
+      'regs-identity' => 'regs ok 0xfe104000 0x28',
+      'regs-translated' => 'regs ok 0xfe104000 0x28',
+      'regs-empty-ranges' => 'regs ok 0xfe104000 0x28',
+      'regs-second' => 'regs ok 0xfe105000 0x28',
+      'regs-no-ranges' => 'regs malformed 0x0 0x0',
+      'regs-split' => 'regs malformed 0x0 0x0',
+      'regs-partial' => 'regs malformed 0x0 0x0',
+      'regs-tail' => 'regs malformed 0x0 0x0',
+      'regs-twice' => 'regs malformed 0x0 0x0',
+      'regs-in-ram' => 'regs malformed 0x0 0x0',
+      'regs-empty' => 'regs malformed 0x0 0x0',
+      'regs-short' => 'regs malformed 0x0 0x0',
+      'regs-disabled' => 'regs none 0x0 0x0',
+      'own-mark' => 'regs none 0x0 0x0'
+    }.each { |name, expected| assert_equal expected, fixture_answers(name, ["regs #{RNG_COMPATIBLE}"])[1], name }
   end
 
   MUTANTS.each do |name, (original, replacement, fixture_name, query, expected)|

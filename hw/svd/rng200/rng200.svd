@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The BCM2711's RNG200 random generator, written by erXos from the clean-room facts
+     record of the RNG200 (docs/design-platforms.md, "Entropy sources"), which read the
+     sources below and is the only source the design and code agents read. It holds only
+     the facts that record marks as given by two sources: the device tree and a driver,
+     or both drivers.
+
+     * The window: the device tree's `brcm,bcm2711-rng200` node, `rng@7e104000`, 0x28
+       bytes at bus address 0x7e104000 (Linux v6.12 arch/arm/boot/dts/broadcom/
+       bcm2711.dtsi:125-128, read as data; the record, section 1). The BCM2711 ARM
+       Peripherals (release 4, section 1.2.4) and the tree's soc ranges place it at CPU
+       address 0xfe104000 in Low Peripheral mode; the tree, not this file, gives the
+       address.
+     * The registers: FreeBSD's sys/arm/broadcom/bcm2835/bcm2835_rng.c at freebsd-src
+       34436bb7cf971dba1c0dcdb1d45f22fff1a4b6c1 (BSD-2-Clause), lines 67, 72-73, 81 and
+       126-133, its BCM2838 configuration, and the record's account of the other driver
+       (sections 3 and 5). Every access is an aligned 32-bit word.
+
+     The other registers the record names (the soft resets at 0x04 and 0x08, the total
+     bit count and its threshold at 0x0c and 0x10, the status at 0x18 and the interrupt
+     enable at 0x1c) and CTRL's bits above 0 rest on one source each, so they are not
+     here. -->
+<device schemaVersion="1.3">
+  <name>RNG200</name><version>1</version>
+  <description>BCM2711 RNG200 random generator</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>RNG200</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x28</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>CTRL</name><ownedByNif>false</ownedByNif>
+          <description>RNG_CTRL: control; both drivers set bit 0 to start the generator and clear it to stop it</description>
+          <addressOffset>0x00</addressOffset><access>read-write</access>
+          <fields><field><name>RBG_EN</name><description>The random bit generator runs</description><bitOffset>0</bitOffset><bitWidth>1</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>FIFO_DATA</name><ownedByNif>false</ownedByNif>
+          <description>RNG_FIFO_DATA: each read takes the next 32-bit random word from the FIFO; a read while FIFO_COUNT is zero is undocumented, and no driver makes one</description>
+          <addressOffset>0x20</addressOffset><access>read-only</access><readAction>modify</readAction>
+          <fields><field><name>WORD</name><bitOffset>0</bitOffset><bitWidth>32</bitWidth></field></fields>
+        </register>
+        <register>
+          <name>FIFO_COUNT</name><ownedByNif>false</ownedByNif>
+          <description>RNG_FIFO_COUNT: the FIFO's fill</description>
+          <addressOffset>0x24</addressOffset><access>read-only</access>
+          <fields><field><name>COUNT</name><description>The 32-bit words FIFO_DATA holds</description><bitOffset>0</bitOffset><bitWidth>8</bitWidth></field></fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

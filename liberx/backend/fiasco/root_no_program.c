@@ -17,11 +17,10 @@
 static const char line[] = "erx: root task: this image holds no program\n";
 
 const char *
-erx_fiasco_program_tree(erx_dt_t *tree, erx_dt_seeds_t *seeds)
+erx_fiasco_program_tree(erx_dt_t *tree, erx_fiasco_seeds_t *seeds)
 {
 	(void)tree;
-	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++)
-		seeds->length[seed] = 0;
+	*seeds = (erx_fiasco_seeds_t){ .board = ERX_FIASCO_BOARD_NONE };
 	return (NULL);
 }
 

@@ -25,8 +25,16 @@ erx_rng_seed(erx_rng_t *rng, uint64_t counter, const erx_dt_seeds_t *seeds)
 	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++) {
 		const size_t length = seeds->length[seed];
 
-		if (length != 0 && erx_rng_digest(&digest, seeds->bytes[seed], length) && erx_rng_mix(rng, &digest))
+		if (length != 0 && erx_rng_seed_add(rng, seeds->bytes[seed], length))
 			seeded.length[seed] = length;
 	}
 	return (seeded);
+}
+
+bool
+erx_rng_seed_add(erx_rng_t *rng, const void *bytes, size_t length)
+{
+	erx_rng_digest_t digest;
+
+	return (erx_rng_digest(&digest, bytes, length) && erx_rng_mix(rng, &digest));
 }

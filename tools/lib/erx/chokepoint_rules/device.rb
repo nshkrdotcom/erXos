@@ -55,6 +55,11 @@ module Erx
       permits: /\A(?:erx_(?:#{PROBE_PERIPHERALS})_\w+_(?:read|get)|erx_mini_uart_io_write|
                    ERX_(?:#{PROBE_PERIPHERALS.upcase})_\w+)\z/x
     )
+    # On the stopgap the root reads the board's RNG200 in the platform layer's place, through its one
+    # device shim, which may name the RNG200's header and accessors alone (docs/design-stopgap.md,
+    # "The Raspberry Pi 4").
+    RNG200_SHIM = Chokepoints::Site.new(glob: 'liberx/backend/fiasco/rng200.c',
+                                        permits: %r{\A(?:#\s*include\s*"erx/hw/rng200\.h"|erx_rng200_\w+)\z})
     # The prefix of every name Hardware.owned_symbols makes, so no list can fall behind the SVD files.
     OWNED_REGISTER = /\bERX_DEVICE_OWNED_\w+/
 
@@ -111,21 +116,21 @@ module Erx
         # import check, and a header and a call are all a bypass of erx_device needs.
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-headers',
-          rule: 'only the kernel platform layer and the header probe include a generated peripheral header',
+          rule: "only the kernel platform layer, the header probe and the root's RNG200 shim on the stopgap include a generated peripheral header",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: PERIPHERAL_INCLUDE,
-          sites: [PLATFORM_LAYER, PROBE_HEADERS],
+          sites: [PLATFORM_LAYER, PROBE_HEADERS, RNG200_SHIM],
           seed: { 'otp/erts/emulator/beam/seeded.c' => "#include <erx/hw/pl011.h>\n" }
         ),
         Chokepoints::Forbidden.new(
           name: 'device-peripheral-accessors',
-          rule: 'only the generated peripheral headers, the kernel platform layer and the header probe name their accessors',
+          rule: "only the generated peripheral headers, the kernel platform layer, the header probe and the root's RNG200 shim name their accessors",
           design: DEVICE_DESIGN,
           scope: DEVICE_SCOPE,
           pattern: /\b(?:#{PERIPHERAL_SYMBOLS.map { |symbol| Regexp.escape(symbol) }.join('|')})\b/,
           sites: PERIPHERAL_HEADERS.map { |header| Chokepoints::Site.new(glob: header) } +
-                 [PLATFORM_LAYER, PROBE_ACCESSORS],
+                 [PLATFORM_LAYER, PROBE_ACCESSORS, RNG200_SHIM],
           seed: { 'otp/erts/emulator/nifs/erxos/seeded.c' => "void f(erx_mmio_t d) { erx_pl011_dr_write(d, 65); }\n" }
         ),
         Chokepoints::Forbidden.new(

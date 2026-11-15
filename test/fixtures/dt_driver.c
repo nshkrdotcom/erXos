@@ -16,6 +16,8 @@
  *     -> fb STATUS BASE LENGTH WIDTHxHEIGHT STRIDE FORMAT
  *   seeds
  *     -> seeds rng-seed LENGTH HEX kaslr-seed LENGTH HEX, HEX - for an absent seed
+ *   regs COMPATIBLE
+ *     -> regs STATUS BASE SIZE
  */
 
 #include <inttypes.h>
@@ -27,6 +29,7 @@
 
 static const char *const dma_names[] = { "ok", "no_node", "coherence", "cells", "malformed", "ranges" };
 static const char *const fb_names[] = { "ok", "none", "ambiguous", "malformed", "unsupported", "outside" };
+static const char *const regs_names[] = { "ok", "none", "malformed" };
 
 static void
 device_print(const erx_dt_t *tree, const char *path, const char *row)
@@ -74,6 +77,15 @@ seeds_print(const erx_dt_t *tree)
 	printf("\n");
 }
 
+static void
+regs_print(const erx_dt_t *tree, const char *compatible)
+{
+	erx_dt_window_t window;
+	const erx_dt_regs_status_t status = erx_dt_registers(tree, compatible, &window);
+
+	printf("regs %s 0x%" PRIx64 " 0x%" PRIx64 "\n", regs_names[status], window.base, window.size);
+}
+
 int
 main(int argc, char **argv)
 {
@@ -107,6 +119,8 @@ main(int argc, char **argv)
 			fb_print(&tree, words[1], words[2], words[3], words[4]);
 		else if (count == 1 && strcmp(words[0], "seeds") == 0)
 			seeds_print(&tree);
+		else if (count == 2 && strcmp(words[0], "regs") == 0)
+			regs_print(&tree, words[1]);
 		else
 			return (2);
 	}

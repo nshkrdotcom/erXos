@@ -11,6 +11,7 @@
  */
 
 #include <stdalign.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -28,6 +29,7 @@
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/rng200.h"
 #include "liberx/backend/fiasco/runtime_entry.h"
 #include "liberx/backend/fiasco/service.h"
 #include "liberx/backend/fiasco/service_task.h"
@@ -321,9 +323,19 @@ gather_args(const erx_boot_handoff_view_t *handoff, const erx_boot_manifest_t *m
 	return (NULL);
 }
 
+/* Whether /chosen carried no seed of any kind. */
+static bool
+seeds_none(const erx_dt_seeds_t *seeds)
+{
+	for (size_t seed = 0; seed < ERX_DT_SEEDS; seed++)
+		if (seeds->length[seed] != 0)
+			return (false);
+	return (true);
+}
+
 /* Accepts the tree and reads its seeds (runtime_entry.h); a refusal names the reader's fixed reason. */
 const char *
-erx_fiasco_program_tree(erx_dt_t *tree, erx_dt_seeds_t *seeds)
+erx_fiasco_program_tree(erx_dt_t *tree, erx_fiasco_seeds_t *seeds)
 {
 	static const char refused[] = "the device tree: ";
 	static char line[sizeof(refused) + ERX_BOOT_STDOUT_PATH_MAX];
@@ -334,7 +346,10 @@ erx_fiasco_program_tree(erx_dt_t *tree, erx_dt_seeds_t *seeds)
 	if (erx_boot_tree(&bytes, &size) != ERX_OK)
 		return ("the device tree: the handoff carries none");
 	if ((reason = erx_dt_accept(bytes, size, tree)) == NULL) {
-		erx_dt_seeds(tree, seeds);
+		erx_dt_seeds(tree, &seeds->chosen);
+		seeds->board = ERX_FIASCO_BOARD_NONE;
+		if (seeds_none(&seeds->chosen))
+			seeds->board = erx_fiasco_rng200_read(tree, &seeds->board_read);
 		return (NULL);
 	}
 	while (reason[length] != '\0')
