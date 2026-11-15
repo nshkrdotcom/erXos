@@ -17,11 +17,14 @@ file's end, the tree as long as `erx_verity_tree` gives for the image. The
 file's bytes are untrusted: every length is checked before it is used, and
 the first failure is the answer. `layout/2` is the decoder's layout alone.
 `check_file/2` is the file check, the one entry that judges a package file:
-the decoder, then the file's name and the header's authentication.
+the decoder, then the file's name and the header's authentication, by the
+SHA-256 the image's `package` row records or by a trusted signer's Ed25519
+seal, which `erx_bytes:ed25519_verify/3` checks over every byte of the
+header before the signature.
 """.
 
 -export([decode/2, layout/2, check_file/2]).
--export_type([decoded/0, layout/0, start/0, reason/0, authority/0, checked/0,
+-export_type([decoded/0, layout/0, start/0, reason/0, authority/0, signer/0, checked/0,
               check_reason/0]).
 
 -include("generated/erx_abi.hrl").
@@ -100,30 +103,38 @@ layout(Length, Bytes) ->
 -doc """
 How a header is authenticated (docs/design-packaging.md, "The package"):
 `{hash, Sha256}` for a package of the image, the SHA-256 its `package` row
-records; `{signers, Keys}` for an installed package, each trusted key with
-its `signer` row's name, or `development`.
+records; `{signers, Keys}` for an installed package, each trusted signer
+with its 32-byte Ed25519 public key.
 """.
--type authority() :: {hash, <<_:256>>} | {signers, [{binary(), <<_:256>>}]}.
+-type authority() :: {hash, <<_:256>>} | {signers, [{signer(), <<_:256>>}]}.
+
+-doc """
+A trusted signer: the name of the manifest's `signer` row that holds its
+key, or `development` for the SDK's development key.
+""".
+-type signer() :: binary() | development.
 
 -doc """
 A file the file check accepted: its decoded header, the signer that
-authenticates it (`image` for a package of the image, `unchecked` for an
-installed one, whose signature Phase 1 does not verify), the SHA-256 of the
-header's bytes and the header's extent, the bytes before the image.
+authenticates it (`image` for a package of the image, the trusted signer
+whose seal it carries for an installed one), the SHA-256 of the header's
+bytes and the header's extent, the bytes before the image.
 """.
 -type checked() :: #{header := decoded(),
-                     signer := image | unchecked,
+                     signer := image | signer(),
                      sha256 := <<_:256>>,
                      extent := pos_integer()}.
 
 -doc """
 Why the file check refuses a file: the decoder's reason; a file name that
 is not `NAME.app` with NAME the declaration's app name; or a header the
-authority does not authenticate.
+authority does not authenticate: its SHA-256 is not the recorded one
+(`hash`), its key is no trusted signer's (`signer`), or its signature is
+not valid (`signature`).
 """.
 -type check_reason() :: reason()
                       | {name, binary(), binary()}
-                      | {untrusted, hash | signer}.
+                      | {untrusted, hash | signer | signature}.
 
 -doc """
 The file check: decode the file `{Name, Length, Bytes}`, `Name` its name in
@@ -131,8 +142,8 @@ the directory and `Bytes` its first bytes, then check that `Name` is
 `NAME.app` for the declaration's app name and that `Authority`
 authenticates the header. Under `{hash, H}` the signer and signature fields
 are not read. Under `{signers, Keys}` the header's key must be one of
-`Keys`; its signature is not verified, since the system domain has no
-Ed25519 verifier until the security closure, so the signer is `unchecked`.
+`Keys`, which is checked first, and its signature must verify over every
+byte of the header before it; the signer is the key's name in `Keys`.
 """.
 -spec check_file({binary(), non_neg_integer(), binary()}, authority()) ->
     {ok, checked()} | {error, check_reason()}.
@@ -149,7 +160,7 @@ check_file({Name, Length, Bytes}, Authority) when is_binary(Name) ->
     end.
 
 authenticate(Name, Bytes, #{name := App, header_length := HeaderLength,
-                            key := Key, layout := #{image_offset := Extent}} = Decoded,
+                            layout := #{image_offset := Extent}} = Decoded,
              Authority) ->
     check(Name =:= <<App/binary, ".app">>, {name, Name, App}),
     Sha256 = erx_bytes:sha256(binary:part(Bytes, 0, HeaderLength)),
@@ -158,10 +169,23 @@ authenticate(Name, Bytes, #{name := App, header_length := HeaderLength,
                      check(Sha256 =:= Want, {untrusted, hash}),
                      image;
                  {signers, Keys} ->
-                     check(lists:keymember(Key, 2, Keys), {untrusted, signer}),
-                     unchecked
+                     signed(Bytes, Decoded, Keys)
              end,
     #{header => Decoded, signer => Signer, sha256 => Sha256, extent => Extent}.
+
+%% The trusted signer whose key the header carries, once the signature,
+%% which the decoder found at the header's end, verifies over every byte of
+%% the header before it. Those bytes fit one call: the BIF
+%% (erx_bytes_bif.c) asserts that pkg_header_max less the signature is
+%% within its bound.
+signed(Bytes, #{header_length := HeaderLength, key := Key, signature := Signature}, Keys) ->
+    Signer = case lists:keyfind(Key, 2, Keys) of
+                 {Name, Key} -> Name;
+                 false -> throw({?MODULE, {untrusted, signer}})
+             end,
+    Signed = binary:part(Bytes, 0, HeaderLength - ?ERX_PKG_SIGNATURE_SIZE),
+    check(erx_bytes:ed25519_verify(Signature, Key, Signed), {untrusted, signature}),
+    Signer.
 
 decode_file(Length, Read) ->
     check(Length =< ?ERX_PKG_BYTES_MAX, {too_large, Length}),

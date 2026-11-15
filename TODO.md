@@ -2601,7 +2601,7 @@ it; git history is the record of completed work.
   with `erx_elf_plan`, sign with the SDK's development key when `--key` is absent, write the build record
   beside `NAME.app`, or run `erx_pkg_header:check_file/2` on what it wrote (docs/design-packaging.md,
   "Building and packing"). Each waits on the SDK (its public applications, development key and host
-  `erx_elf_plan`) or on `check_file`'s Ed25519 check. Safe meanwhile: `--key` is required and a missing
+  `erx_elf_plan`). Safe meanwhile: `--key` is required and a missing
   `ebin/APP.app` or program is refused. Until the packer compiles with `+deterministic`, a prebuilt
   `.beam` enters the package as given, with whatever host paths its compile information holds. Fix: add
   each with the SDK package.
@@ -6556,6 +6556,11 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
+* [Low] manifest check, `signer` rows: a signer key of small order, or one that does not
+  decode, would accept a seal anyone can make, as design-ssh.md's acceptance rules note for
+  login keys. Have property 19's signer clause refuse such a key, with the eight small-order
+  encodings as `add_login_key` refuses them, and a test; the rows land with the manifest's
+  `apps` and `signer` rows ([design-packaging.md](docs/design-packaging.md#the-package)).
 
 * [Medium] SSH before the vault, stages 2 and 3, development builds only
   ([design-ssh.md](docs/design-ssh.md#login-keys)): `erx_ssh_login`'s

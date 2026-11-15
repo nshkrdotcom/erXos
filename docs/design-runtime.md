@@ -2957,6 +2957,7 @@ around them.
 | Primitive | Does | Used by | Reference |
 | --- | --- | --- | --- |
 | `erx_bytes:sha256/1`, with `sha256_init/0`, `sha256_update/2` and `sha256_final/1` for streams | SHA-256 (FIPS 180-4) | the code server's blob checks, the hash-checking primitive, the update service | the specification's test vectors; OTP's `crypto:hash/2` on the host |
+| `erx_bytes:ed25519_verify/3` | checks an Ed25519 signature (RFC 8032, with SHA-512) of a message by a public key under the acceptance rules of [design-ssh.md](design-ssh.md#logging-in): `erx_ed25519.c` refuses a key or an `R` that is not the canonical encoding of its point, then Monocypher's `crypto_ed25519_check` refuses a point not on the curve and a scalar not below the group's order and checks the cofactored group equation; its time depends only on its inputs, which are public | the package process's check of an installed package's seal ([design-packaging.md](design-packaging.md#the-package)), the update service | RFC 8032's test vectors; OpenSSL on the host; signatures over non-canonical and small-order points built by the host test |
 | `erx_bytes:crc32c/2` | CRC-32C, continuing from a given value | the EROFS reader's superblock check | RFC 3720's test values; a table-driven model in Erlang |
 | `erx_bytes:inet_csum/2` and `inet_csum_update/3` | the Internet checksum of RFC 1071 over iodata, as the folded 16-bit sum, continuing from the sum of bytes before it of even length; and RFC 1624's incremental update (its equation 3) of a checksum field when an even-aligned run of bytes changes | the network stack | RFC 1071's and RFC 1624's examples; a straightforward Erlang model |
 | `erx_bytes:siphash24/2` | SipHash-2-4 with a 16-byte key over iodata, as a 64-bit integer | the network stack: initial sequence numbers, timestamp offsets, SYN cookies and the stream of its random generator, `erx_net_rand` ([design-network-stack.md](design-network-stack.md#where-c-is-used-and-what-is-measured)) | the SipHash paper's test vectors; an Erlang model |
@@ -2978,7 +2979,8 @@ around them.
   lists of at most 131072 cells in all, which one walk in C reads, with
   its stack of nested lists on the heap and bounded by the cell limit, so
   no depth of list makes C recurse; a list past the limits, or an improper
-  one, raises `badarg`. The SHA-256 calls take a binary of any size: `sha256_update/2` traps to itself between pieces of
+  one, raises `badarg`. `ed25519_verify/3` takes a message of at most
+  64 KiB and is charged for its fixed curve work besides. The SHA-256 calls take a binary of any size: `sha256_update/2` traps to itself between pieces of
   64 KiB, as ERTS's `md5_update/2` does, each charged reductions for its
   bytes, so a blob is checked in one call and the process is still
   preempted between its pieces; a state of `sha256_init/0` and

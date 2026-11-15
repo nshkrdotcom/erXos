@@ -51,6 +51,7 @@ module Erx
       kernel/crypto/chacha20
       kernel/crypto/sha2
       littlefs
+      monocypher
       musl
       openssl
       otp

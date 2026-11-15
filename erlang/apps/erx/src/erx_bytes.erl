@@ -11,13 +11,14 @@ which checks its own arguments; the functions here stand for them. A call takes 
 `crc32c/2` and `inet_csum/2` leave longer inputs to their caller, who passes each result as
 the next call's first argument; the SHA-256 calls take a binary of any size, and
 `sha256_update/2` takes it 64 KiB at a time, so the process is preempted between pieces like
-a loop of calls. `inet_csum/2` and `siphash24/2` take iodata and walk it in C, so a header
+a loop of calls. `ed25519_verify/3` checks a signature over at most 64 KiB. `inet_csum/2` and `siphash24/2` take iodata and walk it in C, so a header
 and a payload are summed or hashed without being joined first. `entropy/1`, beside them, is
 Erlang's entry to the kernel's generator.
 """.
 
 -export([crc32c/2, inet_csum/2, inet_csum_update/3, siphash24/2, tcp_merge/1, tcp_merge_limit/0, entropy/1]).
 -export([sha256/1, sha256_init/0, sha256_update/2, sha256_final/1]).
+-export([ed25519_verify/3]).
 -export_type([sha256_state/0]).
 
 -include("generated/erx_abi.hrl").
@@ -135,6 +136,18 @@ SHA-256 state.
 """.
 -spec sha256_final(State :: sha256_state()) -> <<_:256>>.
 sha256_final(_State) ->
+    erlang:nif_error(undef).
+
+-doc """
+True when `Signature` is a valid Ed25519 signature (RFC 8032, with SHA-512) of `Message` by
+the public key `Key`, false otherwise, under docs/design-ssh.md's acceptance rules: a key or
+an R that is not the canonical encoding of a point on the curve, or an S not below the
+group's order, is refused, and the group equation is the cofactored one. Fails with `badarg` unless
+`Signature` is a 64-byte binary, `Key` a 32-byte binary and `Message` a binary of at most
+65536 bytes.
+""".
+-spec ed25519_verify(Signature :: <<_:512>>, Key :: <<_:256>>, Message :: binary()) -> boolean().
+ed25519_verify(_Signature, _Key, _Message) ->
     erlang:nif_error(undef).
 
 -doc """

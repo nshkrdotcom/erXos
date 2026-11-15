@@ -9,7 +9,8 @@ test/host/erx_pkg_header_test.rb, which writes them through the ABI codec
 into the directory `ERX_PKG_CASES` names: each case's first bytes in
 NAME.bin, and cases.term, `{Name, Length, Expected}` for each, where
 `{refused, Reason}` in place of a reader error matches the reader's reason.
-Each case is decoded through both entries, `decode/2` and `layout/2`.
+Each case is decoded through both entries, `decode/2` and `layout/2`, and a
+refused one through the file check, `check_file/2`, too.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -30,11 +31,18 @@ check_case(Directory, Name, Length, Expected) ->
             ?assertEqual({ok, maps:get(layout, Header)}, Layout);
         {error, {header, {refused, Reason}}} ->
             ?assertMatch({error, {header, #{reason := Reason}}}, Decoded),
-            ?assertEqual(Decoded, Layout);
+            ?assertEqual(Decoded, Layout),
+            ?assertEqual(Decoded, check_file(Length, Bytes));
         {error, _} ->
             ?assertEqual(Expected, Decoded),
-            ?assertEqual(Expected, Layout)
+            ?assertEqual(Expected, Layout),
+            ?assertEqual(Expected, check_file(Length, Bytes))
     end.
+
+%% The file check refuses what the decoder refuses, with the decoder's reason,
+%% before it reads the name or authenticates anything.
+check_file(Length, Bytes) ->
+    erx_pkg_header:check_file({<<"misnamed.app">>, Length, Bytes}, {signers, []}).
 
 %% A block holds 128 SHA-256 hashes, so the levels over N > 1 blocks take
 %% ceil(N / 128) blocks, then ceil of that over 128, up to one block; an

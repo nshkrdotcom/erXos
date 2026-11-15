@@ -1974,10 +1974,9 @@ keyboard and its WAD read from a file.
    by `erx_starter:packages/2` that answers once a dropped app's sessions
    have ended; the package lifetime, `erx_pkg_io` and the bounded
    recovery with its fuzz target; `erx_pkg_plan` with its crash and
-   failure tests over reordered writes. Three checks of
+   failure tests over reordered writes. Two checks of
    design-packaging.md's Phase 1 table land later: the hash check that
-   finds a flipped image byte and an installed package's signature with
-   the small verifier, at M11, and `purge` with the storage service's
+   finds a flipped image byte, at M11, and `purge` with the storage service's
    `remove_app` and directories named by signer, with principals'
    directories at M10.
 
@@ -2022,7 +2021,7 @@ check` needs no `examples/doom`.
 
 **Exit criteria, installing at run time.** In a development build,
 `cp` of a package into `/apps` shows it `admitted` at
-`/proc/packages`, with its signer `unchecked`, and its image readable
+`/proc/packages`, with its signer `development`, and its image readable
 through `mount /apps/NAME.app DIR`; `service NAME enable` starts
 nothing and `service NAME start` then starts it, and a reboot keeps it;
 a newer build copied over it stops it and starts nothing, whatever
@@ -3266,9 +3265,9 @@ client is the vault, on littlefs, the stopgap until erXos's F2FS, so
 principals' files and the machine keys persist across boots from here;
 `tools/erx bench login` on QEMU under HVF, with TCG reported apart, which
 sets Argon2id's parameters against a budget of about a second; the fuzz
-target of the vault's file decoder; OpenSSL 3.5 and the update
-signature's small verifier pinned and built
-([design.md](design.md#dependencies)), the verifier only once the SSH
+target of the vault's file decoder; OpenSSL 3.5 pinned and built, and
+the small verifier, which the package check runs, checking
+update signatures ([design.md](design.md#dependencies)) once the SSH
 login facet's tests calling it directly pass on it
 ([design-ssh.md](design-ssh.md#verification)).
 

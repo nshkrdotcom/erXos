@@ -917,4 +917,5 @@ bif erx_bytes:tcp_merge_limit/0
 bif erx_bytes:sha256_init/0
 bif erx_bytes:sha256_update/2
 bif erx_bytes:sha256_final/1
+bif erx_bytes:ed25519_verify/3
 bif erx_bytes:entropy/1

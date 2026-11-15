@@ -1590,7 +1590,7 @@ and shown at `/proc/packages` to an inspect facet of scope `all`:
 the entries read), `room`, the `apps` budget left as the kernel reports
 it, and lists the packages by name; `[packages, Name]` gives `version`,
 `memory`, `place` (`system` or `installed`), `signer` (a `signer` row's
-name, `development`, `image`, or `unchecked` where Phase 1 checks none),
+name, `development` or `image`),
 `state` (`admitted` or `refused`), `reason`, `needs` and `license`. An
 app's start row, with whether it is enabled, is at `[apps, Name]` and
 its sessions at `[domains, Id]`, as any row's and any session's.
@@ -1852,7 +1852,6 @@ what rests on parts that arrive later, reporting each as it is:
 | rooting `data` grants by principal, `apps/`, `tree apps` and the signer in an app's directory | principals' directories (M10) | apps can reach each other's directories, the residual design-apps.md records; the directory half of PK4's test waits, its `/proc` half runs |
 | `purge` with `remove_app` | the same | `service NAME purge` answers `enotsup` |
 | the image builder's packages on the system slot | the storage service serving a slot's image | they lie in the boot image's domain release, readable by every domain, enlarging the boot image, which stays in RAM, so each MiB of them comes out of the room `root_memory` leaves the archive |
-| checking an installed package's signature | the small verifier in the build ([plan.md](plan.md#m11-security-closure)) | a development build installs packages whose signature it cannot check and shows them `unchecked`; a release build installs none |
 
 ## Verification and testing
 
@@ -1938,7 +1937,7 @@ it guards.
   image flipped on the medium gives `eio` at `/app`, with the row `down`
   and its reason, and at a mount of it;
 * the states the inspector shows, each with a test: `admitted`,
-  `refused` with its reason, `overflow`, and `unchecked` in Phase 1.
+  `refused` with its reason, and `overflow`.
 
 **Fuzz targets**, each landing with its parser: the declaration's text
 parser on the host; `erx_pkg_header:decode/2`, over unsigned headers

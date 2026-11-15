@@ -1054,14 +1054,20 @@ $(MEMDRAW_LIB:%=$(OBJDIR)/memdraw_%.o): $(OBJDIR)/memdraw_%.o: $(ERX_TREE)/displ
 $(OBJDIR)/erx_draw_clip.o $(OBJDIR)/erx_memdraw.o $(OBJDIR)/erx_fb_store.o $(OBJDIR)/erx_memdraw_nif.o: $(OBJDIR)/%.o: $(ERX_TREE)/display/memdraw/%.c
 	$(V_CC) $(CFLAGS) $(MEMDRAW_CFLAGS) $(INCLUDES) -c $< -o $@
 
-# FreeBSD SHA-256 as erXos imported it, the core of erx_bytes:sha256/1 (docs/design-runtime.md,
-# "Per-byte primitives"), built from its one copy in the tree.
 # ctaes, the reference identity primitive under sys/erxos/erx_ref.c (edit 17).
 $(OBJDIR)/ctaes.o: $(ERX_TREE)/ctaes/ctaes.c
 	$(V_CC) $(CFLAGS) -c $< -o $@
 
+# FreeBSD SHA-256 as erXos imported it, the core of erx_bytes:sha256/1 (docs/design-runtime.md,
+# "Per-byte primitives"), built from its one copy in the tree.
 $(OBJDIR)/sha256c.o: $(ERX_TREE)/kernel/crypto/sha2/sha256c.c
 	$(V_CC) $(CFLAGS) -I$(ERX_TREE)/include -c $< -o $@
+
+# Monocypher as erXos imported it, whose Ed25519 check is the core of erx_bytes:ed25519_verify/3
+# (docs/design-runtime.md, "Per-byte primitives"), built from its one copy in the tree.
+MONOCYPHER_OBJS = $(OBJDIR)/monocypher.o $(OBJDIR)/monocypher-ed25519.o
+$(MONOCYPHER_OBJS): $(OBJDIR)/%.o: $(ERX_TREE)/monocypher/%.c
+	$(V_CC) $(CFLAGS) -c $< -o $@
 
 # erx_net's per-byte cores and their iodata walk (docs/design-network-stack.md, "Two places,
 # four seams"), under erx_bytes's BIFs, built from erx_net's c_src, their one copy, which
@@ -1358,8 +1364,10 @@ OS_OBJS = \
 	$(if $(findstring hosted,$(TARGET)),$(OBJDIR)/erx_device_genet_model.o) \
 	$(OBJDIR)/erx_dma_arch.o \
 	$(OBJDIR)/erx_crc32c.o \
+	$(OBJDIR)/erx_ed25519.o \
 	$(ERX_NET_C_OBJS) \
 	$(OBJDIR)/sha256c.o \
+	$(MONOCYPHER_OBJS) \
 	$(OBJDIR)/erx_device_bif.o \
 	$(OBJDIR)/erx_trace_ring_bif.o \
 	$(OBJDIR)/erx_bytes_bif.o \
@@ -1613,6 +1621,7 @@ $(TTF_DIR)/nif.depend.mk: $(TTF_DIR)/GENERATED $(PRELOAD_SRC)
 	$(V_at)$(DEP_CC) $(DEP_FLAGS) -DLIBSCTP=$(LIBSCTP) -I../etc/$(STOCK_OSTYPE) $(NIF_OSTYPE_SRC) >> $@.tmp
 	$(V_at)$(DEP_CC) $(DEP_FLAGS) -I$(ERX_GEN) -I$(ERX_GEN)/include -I$(ERX_TREE) -I$(ERX_TREE)/include $(LFS_CFLAGS) $(wildcard nifs/erxos/*.c) >> $@.tmp
 	$(V_at)$(DEP_CC) $(DEP_FLAGS) -I$(ERX_TREE)/include $(ERX_TREE)/kernel/crypto/sha2/sha256c.c >> $@.tmp
+	$(V_at)$(DEP_CC) $(DEP_FLAGS) $(MONOCYPHER_OBJS:$(OBJDIR)/%.o=$(ERX_TREE)/monocypher/%.c) >> $@.tmp
 	$(V_at)$(DEP_CC) $(DEP_FLAGS) $(INCLUDES) $(ERX_NET_C_OBJS:$(OBJDIR)/%.o=$(ERX_TREE)/erlang/apps/erx_net/c_src/%.c) >> $@.tmp
 	$(V_at)$(DEP_CC) $(DEP_FLAGS) $(MEMDRAW_CFLAGS) $(INCLUDES) $(wildcard $(ERX_TREE)/display/memdraw/*.c) >> $@.tmp
 	$(V_at)$(SED_DEPEND) $@.tmp > $@

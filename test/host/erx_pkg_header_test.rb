@@ -27,6 +27,7 @@ class ErxPkgHeaderTest < Minitest::Test
   Erx::Generated.ensure(root: ROOT)
   SOURCES = %w[erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
                build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
+               test/erlang/host_bytes/erx_bytes.erl
                test/erlang/erx_pkg_header_tests.erl test/erlang/erx_app_pack_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
 
@@ -83,7 +84,8 @@ class ErxPkgHeaderTest < Minitest::Test
       end
     end
     lines = PACKED.map { |name, _app, fields| "{\"#{name}\", #{term(fields.merge(key: key.raw_public_key))}}.\n" }
-    output, status = eunit(:erx_app_pack_tests, files.merge('packed.term' => lines.join))
+    other = OpenSSL::PKey.generate_key('ED25519').raw_public_key
+    output, status = eunit(:erx_app_pack_tests, files.merge('packed.term' => lines.join, 'other_key.bin' => other))
     assert status.success?, output
     assert_match(/^  2 tests passed\./, output)
   end

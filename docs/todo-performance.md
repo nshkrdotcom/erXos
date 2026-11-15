@@ -546,6 +546,17 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   architecture layer, with the portable code as their oracle in the same test. The
   same run should time one 64 KiB call on each target board, since `erx_bytes_bif.c`
   charges it a quarter of a reduction slice from the host's number.
+* **[Low] per-byte primitives, `erx_bytes:ed25519_verify/3`'s cost on slower targets.**
+  One check took about 85 microseconds for the curve and about 105 more for SHA-512
+  over a 64 KiB message in a one-off loop on the development host (Apple M-series,
+  macOS, native, clang -O2), not a benchmark, and `erx_bytes_bif.c` charges 360 and up
+  to 440 reductions from those numbers. On the Pi 4's Cortex-A72 or under TCG one call
+  over 64 KiB may hold a scheduler for several reduction slices' time, and each
+  installed package's check at boot adds one. Measure: one call over 0 bytes and over
+  64 KiB on QEMU `virt` under HVF and on the Pi 4, and the package scan's time at boot
+  with 16 installed packages. If one call passes a slice's time, recharge it from the
+  target's number or split the SHA-512 over the message into trapped pieces as
+  `sha256_update/2` does.
 * **[Low] per-byte primitives, `erx_bytes:inet_csum/2` and `siphash24/2` run portable C
   only.** The checksum adds two 64-bit words a step with deferred carries and does not use the
   CPU's checksum-friendly instructions that

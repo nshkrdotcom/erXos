@@ -5,6 +5,7 @@
 require 'fileutils'
 require 'minitest/autorun'
 require 'open3'
+require 'openssl'
 require 'pty'
 require 'tmpdir'
 require 'io/wait'
@@ -351,6 +352,22 @@ class RuntimeHostedSmokeTest < Minitest::Test
     end
   end
 
+  # The Ed25519 BIF runs in the release: the probe (test/fixtures/erx_ed25519_probe.erl) gets
+  # RFC 8032's vectors and a signature by the host's OpenSSL over 65536 bytes, the most a call
+  # takes, and checks that erx_bytes:ed25519_verify/3 accepts each, also at a bit offset,
+  # refuses each altered, and raises badarg on every malformed argument; the answer is all
+  # empty lists only if each check passed.
+  def test_the_ed25519_bif_runs_in_the_release
+    Dir.mktmpdir('erx-hosted-ed25519-') do |directory|
+      probe = compiled_fixture('erx_ed25519_probe', directory)
+      assert_answers(
+        "{module, erx_ed25519_probe} = code:load_binary(erx_ed25519_probe, \"probe\", base64:decode(\"#{probe}\")), " \
+        'loaded.' => /^loaded$/,
+        "erx_ed25519_probe:check(#{ed25519_vectors}, #{ed25519_long_signature})." => /^\{ed25519,\[\],\[\],\[\]\}$/
+      )
+    end
+  end
+
   # The network stack's per-byte primitives run in the release and agree with the host
   # stand-in's models: the probe (test/fixtures/erx_net_bytes_probe.erl) answers its calls on
   # stock OTP with test/erlang/host_bytes/erx_bytes.erl, then checks the BIFs' answers to the
@@ -660,6 +677,26 @@ class RuntimeHostedSmokeTest < Minitest::Test
     assert status.success?, log
     [File.binread(File.join(directory, "#{name}.beam"))].pack('m0')
   end
+
+  # RFC 8032's vectors (test/fixtures/ed25519_rfc8032.txt) as an Erlang list of {Key, Message,
+  # Signature}.
+  def ed25519_vectors
+    vectors = File.readlines(File.join(ROOT, 'test/fixtures/ed25519_rfc8032.txt'), chomp: true)
+                  .reject { |line| line.start_with?('#') }
+                  .map { |line| line.split(' ').values_at(2, 3, 4) }
+    assert_equal 5, vectors.size
+    "[#{vectors.map { |fields| "{#{fields.map { |hex| erlang_binary(hex) }.join(',')}}" }.join(',')}]"
+  end
+
+  # {Key, Signature}: a seeded key and its signature over 65536 bytes of 0xa5, the probe's
+  # longest message.
+  def ed25519_long_signature
+    key = OpenSSL::PKey.new_raw_private_key('ED25519', "\x5a".b * 32)
+    signature = key.sign(nil, "\xa5".b * 65_536)
+    "{#{[key.raw_public_key, signature].map { |bytes| erlang_binary(bytes.unpack1('H*')) }.join(',')}}"
+  end
+
+  def erlang_binary(hex) = hex == '-' ? '<<>>' : "binary:decode_hex(<<\"#{hex}\">>)"
 
   # The probe's digests by stock OTP's crypto:hash/2, from the probe compiled in directory.
   def oracle_sha256_digests(directory)

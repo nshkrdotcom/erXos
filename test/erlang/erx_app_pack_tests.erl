@@ -7,15 +7,21 @@ EUnit cases of the packages the packer, `erx-app pack`, writes. The
 packages come from test/host/erx_pkg_header_test.rb, which packs its sample
 apps into the directory `ERX_PKG_CASES` names, each as NAME.app, and lists
 them in packed.term as `{File, Fields}`, Fields the header fields the
-decoder must give.
+decoder must give, the signer's key among them; other_key.bin is a key
+that signed none of them.
 
-Each package is judged whole, as a machine judges one: the decoder,
-`erx_pkg_header:decode/2`; the Ed25519 signature over every byte of the
-header before it, by the key the header carries; and the hash tree,
-recomputed from the image level by level with the level lengths
-`erx_verity_tree:levels/1` gives, which must be the file's tree, top level
-first, and hash to the header's root hash. One byte flipped in the
-header, the image or the tree must fail that judgement.
+Each package is judged whole, as a machine judges one: the file check,
+`erx_pkg_header:check_file/2`, with the packer's key a trusted signer,
+which runs the decoder and verifies the Ed25519 seal over every byte of
+the header before the signature; and the hash tree, recomputed from the
+image level by level with the level lengths `erx_verity_tree:levels/1`
+gives, which must be the file's tree, top level first, and hash to the
+header's root hash. One byte flipped in the header, the image or the tree
+must fail that judgement. The file check also gives each of its
+refusals: a key no trusted signer holds, a flipped signature byte, a name
+not the app's, a file a byte long or short, and under `{hash, H}` a
+header whose SHA-256 is not H; and it accepts the package under its own
+hash without reading the seal.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -26,14 +32,18 @@ header, the image or the tree must fail that judgement.
 packed_test_() ->
     Directory = os:getenv("ERX_PKG_CASES"),
     {ok, Cases} = file:consult(filename:join(Directory, "packed.term")),
-    [{Name, fun() -> check_package(filename:join(Directory, Name), Fields) end}
+    {ok, Other} = file:read_file(filename:join(Directory, "other_key.bin")),
+    [{Name, fun() -> check_package(Directory, Name, Fields, Other) end}
      || {Name, Fields} <- Cases].
 
-check_package(Path, Fields) ->
-    {ok, File} = file:read_file(Path),
-    {ok, Header} = decode(File),
+check_package(Directory, Name, #{key := Key} = Fields, Other) ->
+    {ok, File} = file:read_file(filename:join(Directory, Name)),
+    Trusted = {signers, [{<<"other">>, Other}, {<<"test">>, Key}]},
+    {ok, #{header := Header, signer := Signer, sha256 := Sha256}} = check(Name, File, Trusted),
     ?assertEqual(Fields, maps:with(maps:keys(Fields), Header)),
-    ?assertEqual(ok, judge(File)),
+    ?assertEqual(<<"test">>, Signer),
+    ?assertEqual(ok, judge(Name, File, Trusted)),
+    check_refusals(Name, File, Header, Sha256, Other),
     #{header_length := HeaderLength,
       layout := #{image_offset := Image, image_length := ImageLength,
                   tree_offset := Tree, tree_length := TreeLength}} = Header,
@@ -41,27 +51,39 @@ check_package(Path, Fields) ->
     Image0 = [Image, Image + ImageLength - 1],
     Tree0 = [Offset || TreeLength > 0, Offset <- [Tree, Tree + TreeLength - 1]],
     ?assertNotEqual([], Tree0),
-    [?assertNotEqual({Offset, ok}, {Offset, judge(flip(File, Offset))})
+    [?assertNotEqual({Offset, ok}, {Offset, judge(Name, flip(File, Offset), Trusted)})
      || Offset <- Header0 ++ Image0 ++ Tree0].
 
+check_refusals(Name, File, #{name := App, key := Key, header_length := HeaderLength} = Header,
+               Sha256, Other) ->
+    Trusted = {signers, [{<<"test">>, Key}]},
+    Length = byte_size(File),
+    ?assertEqual({error, {untrusted, signer}}, check(Name, File, {signers, [{<<"other">>, Other}]})),
+    ?assertEqual({error, {untrusted, signer}}, check(Name, File, {signers, []})),
+    ?assertEqual({error, {untrusted, signature}}, check(Name, flip(File, HeaderLength - 1), Trusted)),
+    ?assertEqual({error, {name, <<"other.app">>, App}}, check("other.app", File, Trusted)),
+    ?assertEqual({error, {length, Length + 1, Length}}, check(Name, <<File/binary, 0>>, Trusted)),
+    ?assertEqual({error, {length, Length - 1, Length}},
+                 check(Name, binary:part(File, 0, Length - 1), Trusted)),
+    ?assertEqual(crypto:hash(sha256, binary:part(File, 0, HeaderLength)), Sha256),
+    ?assertMatch({ok, #{header := Header, sha256 := Sha256, signer := image}},
+                 check(Name, File, {hash, Sha256})),
+    ?assertEqual({error, {untrusted, hash}}, check(Name, File, {hash, flip(Sha256, 31)})).
+
 %% ok, or the first part of the file that fails.
-judge(File) ->
+judge(Name, File, Trusted) ->
     maybe
-        {ok, Header} ?= decode(File),
-        ok ?= signed(File, Header),
-        verified(File, maps:get(layout, Header))
+        {ok, #{header := #{layout := Layout}}} ?= check(Name, File, Trusted),
+        verified(File, Layout)
     end.
 
-decode(File) ->
-    erx_pkg_header:decode(byte_size(File),
-                          binary:part(File, 0, min(byte_size(File), ?ERX_PKG_HEADER_MAX))).
+%% The file check of File under Name, given the bytes a read of its first
+%% ERX_PKG_HEADER_MAX bytes gets.
+check(Name, File, Authority) ->
+    erx_pkg_header:check_file({list_to_binary(Name), byte_size(File), header_bytes(File)}, Authority).
 
-signed(File, #{header_length := Length, key := Key, signature := Signature}) ->
-    Signed = binary:part(File, 0, Length - byte_size(Signature)),
-    case crypto:verify(eddsa, none, Signed, Signature, [Key, ed25519]) of
-        true -> ok;
-        false -> {error, signature}
-    end.
+header_bytes(File) ->
+    binary:part(File, 0, min(byte_size(File), ?ERX_PKG_HEADER_MAX)).
 
 verified(File, #{image_offset := Offset, image_length := Length, tree_offset := TreeOffset,
                  tree_length := TreeLength, salt := Salt, root_hash := Root}) ->

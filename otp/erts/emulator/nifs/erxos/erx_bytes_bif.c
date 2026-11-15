@@ -14,8 +14,9 @@
  * erx_iodata_walk, as the portable NIF library does outside erXos, through classify below;
  * crc32c/2 leaves longer inputs to its caller, and sha256_update/2 takes a binary of any size
  * and traps to itself between pieces of ERX_BYTES_CALL_MAX bytes, as ERTS's own md5_update/2
- * does. The work is in erx_net's cores (erlang/apps/erx_net/c_src), erx_crc32c.c beside this
- * file and kernel/crypto/sha2, all of which build for the host.
+ * does; ed25519_verify/3 takes at most ERX_BYTES_CALL_MAX bytes. The work is in erx_net's cores
+ * (erlang/apps/erx_net/c_src), erx_crc32c.c and erx_ed25519.c beside this file,
+ * kernel/crypto/sha2 and Monocypher (monocypher/), all of which build for the host.
  */
 
 #ifdef HAVE_CONFIG_H
@@ -42,6 +43,7 @@
 #include "liberx/backend/api.h"
 
 #include "erx_crc32c.h"
+#include "erx_ed25519.h"
 
 _Static_assert(sizeof(Eterm) == sizeof(erx_iodata_term_t), "a term is a word");
 _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "entropy/1: a word's first byte is its low byte");
@@ -55,8 +57,18 @@ _Static_assert(__BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__, "entropy/1: a word's f
 #define CRC32C_REDS_AT_MAX	960u
 #define SHA256_REDS_AT_MAX	1000u
 
+/*
+ * An Ed25519 check is a fixed curve computation, about 85 microseconds on the same host, and
+ * SHA-512 over its message, about 105 more over 64 KiB: charged at SHA-256's rate above, 1000
+ * reductions for 240 microseconds, 360 reductions for the curve and up to 440 for the message.
+ */
+#define ED25519_REDS_FIXED	360u
+#define ED25519_REDS_AT_MAX	440u
+
 _Static_assert(ERX_BYTES_SLICE_REDS == CONTEXT_REDS, "erx_iodata.h's slice is ERTS's");
 _Static_assert(sizeof(Uint) >= sizeof(uint64_t), "siphash24/2's result is a Uint");
+_Static_assert(ERX_PKG_HEADER_MAX - ERX_ED25519_SIGNATURE_BYTES <= ERX_BYTES_CALL_MAX,
+    "erx_pkg_header:check_file/2 verifies a header's signed bytes in one ed25519_verify/3 call");
 
 /*
  * True when term is a binary of whole bytes, whose size *size then is. Nothing is copied, so
@@ -566,6 +578,40 @@ erx_bytes_sha256_final_1(BIF_ALIST_1)
 		BIF_ERROR(BIF_P, BADARG);
 	ctx = *state;
 	BIF_RET(make_digest(BIF_P, &ctx));
+}
+
+/*
+ * ed25519_verify(Signature, Key, Message): true when Signature is a valid RFC 8032 Ed25519
+ * signature of Message by the public Key, false otherwise, as erx_ed25519_check decides.
+ * badarg unless Signature is a binary of ERX_ED25519_SIGNATURE_BYTES, Key one of
+ * ERX_ED25519_KEY_BYTES and Message a binary of at most ERX_BYTES_CALL_MAX bytes, all three
+ * checked before anything is read. The check's time depends on its inputs, which are all
+ * public.
+ */
+BIF_RETTYPE
+erx_bytes_ed25519_verify_3(BIF_ALIST_3)
+{
+	const byte *signature, *key, *message;
+	byte *signature_copy, *key_copy, *message_copy;
+	Uint signature_size, key_size, size;
+	bool valid;
+
+	if (!binary_size(BIF_ARG_1, &signature_size) || signature_size != ERX_ED25519_SIGNATURE_BYTES ||
+	    !binary_size(BIF_ARG_2, &key_size) || key_size != ERX_ED25519_KEY_BYTES ||
+	    !binary_size(BIF_ARG_3, &size) || size > ERX_BYTES_CALL_MAX)
+		BIF_ERROR(BIF_P, BADARG);
+	signature = binary_prefix(BIF_ARG_1, ERX_ED25519_SIGNATURE_BYTES, &signature_copy);
+	key = binary_prefix(BIF_ARG_2, ERX_ED25519_KEY_BYTES, &key_copy);
+	message = binary_prefix(BIF_ARG_3, size, &message_copy);
+	valid = erx_ed25519_check(signature, key, message, size);
+	if (signature_copy != NULL)
+		erts_free(ERTS_ALC_T_TMP, signature_copy);
+	if (key_copy != NULL)
+		erts_free(ERTS_ALC_T_TMP, key_copy);
+	if (message_copy != NULL)
+		erts_free(ERTS_ALC_T_TMP, message_copy);
+	BUMP_REDS(BIF_P, ED25519_REDS_FIXED + erx_bytes_reductions(size, 0, ED25519_REDS_AT_MAX));
+	BIF_RET(valid ? am_true : am_false);
 }
 
 /*

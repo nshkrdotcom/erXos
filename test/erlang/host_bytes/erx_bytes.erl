@@ -19,6 +19,10 @@
 %%   * The merge of received TCP segments is erx_tcp_merge_model (beside this file), written
 %%     from docs/design-network-fastpath.md, "The merge": badarg past its limit.
 %%   * SHA-256 is stock's crypto:hash/2: badarg unless Data is a binary.
+%%   * The Ed25519 check is stock's crypto:verify/5: badarg unless Signature is a 64-byte binary,
+%%     Key a 32-byte binary and Message a binary of at most 65536 bytes. OpenSSL's equation is
+%%     cofactorless, so it refuses some signatures by keys of small order that the BIF accepts
+%%     (test/host/erx_ed25519_test.rb); honest signatures get the same answer from both.
 %%   * entropy/1 is stock's crypto:strong_rand_bytes/1, the host's generator: badarg unless N
 %%     is an integer from 1 to 256. It never fails a read, so the raise of a failed read is
 %%     judged in the release (test/integration/runtime_hosted_smoke_test.rb).
@@ -26,7 +30,7 @@
 
 -module(erx_bytes).
 -export([crc32c/2, inet_csum/2, inet_csum_update/3, siphash24/2, tcp_merge/1, tcp_merge_limit/0, sha256/1,
-         entropy/1]).
+         ed25519_verify/3, entropy/1]).
 
 -define(CALL_MAX, 65536).
 -define(CELLS_MAX, 131072).
@@ -73,6 +77,14 @@ siphash24(_Key, _Data) ->
 sha256(Data) when is_binary(Data) ->
     crypto:hash(sha256, Data);
 sha256(_Data) ->
+    erlang:error(badarg).
+
+-spec ed25519_verify(binary(), binary(), binary()) -> boolean().
+ed25519_verify(Signature, Key, Message)
+  when is_binary(Signature), byte_size(Signature) =:= 64, is_binary(Key), byte_size(Key) =:= 32,
+       is_binary(Message), byte_size(Message) =< ?CALL_MAX ->
+    crypto:verify(eddsa, none, Message, Signature, [Key, ed25519]);
+ed25519_verify(_Signature, _Key, _Message) ->
     erlang:error(badarg).
 
 -spec tcp_merge(term()) -> [tuple()].

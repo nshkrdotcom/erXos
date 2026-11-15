@@ -44,6 +44,8 @@ class GateBaselineTest < Minitest::Test
     'device_queue' => { seeds: 8, sources: %w[otp/erts/emulator/nifs/erxos/erx_device_queue.c] },
     'dom_core' => { seeds: 9, sources: %w[liberx/system/dom_core.c liberx/system/dom_life.c liberx/erx_lane.c
                                           build/gen/liberx/generated/abi_reader.c] },
+    'ed25519' => { seeds: 16, sources: %w[otp/erts/emulator/nifs/erxos/erx_ed25519.c monocypher/monocypher.c
+                                           monocypher/monocypher-ed25519.c] },
     'elf' => { seeds: 10, sources: %w[liberx/elf_plan.c] },
     'lane' => { seeds: 8, sources: %w[liberx/erx_lane.c] },
     'lfs_image' => { seeds: 6, sources: %w[littlefs/lfs.c littlefs/lfs_util.c] },
