@@ -2,6 +2,7 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative 'device_kinds'
 require_relative 'error'
 require_relative 'pins'
 
@@ -36,6 +37,17 @@ module Erx
       def gpio_mask = rows.select { |row| row.use == 'gpio' }.sum { |row| 1 << row.gpio }
     end
 
+    # Which of the record's devices a driver drives: a device of a kind a give drives (given,
+    # include/erx/device_kinds.h's erx_device_kinds), or the record's console or host link
+    # UART (uarts, their paths), whose driver the system domain starts. A device row must
+    # name a driven device, and a driven device whose registers are a controller of the pin
+    # table must have rows.
+    Driven = Data.define(:given, :uarts) do
+      def driven?(path, device)
+        uarts.include?(path) || given.any? { |kind| kind.role == device['role'] && kind.compatible == device['compatible'] }
+      end
+    end
+
     KEYS = %w[controller pins rows].freeze
     ROW_KEYS = %w[function gpio pull use].freeze
     PLAIN_USES = %w[gpio reserved].freeze
@@ -62,10 +74,12 @@ module Erx
       raise Error, "pin controller #{controller.inspect} is not a device path of the record" unless devices.key?(controller)
 
       table = Pins.read(root: CODE_ROOT, soc: header.fetch('pins'))
-      rows = rows(header.fetch('rows'), table: table, devices: devices)
+      driven = Driven.new(given: DeviceKinds.given(CODE_ROOT), uarts: [record['console'], record['hostlink']].compact)
+      rows = rows(header.fetch('rows'), table: table, devices: devices, driven: driven)
       check_signals(rows, table: table)
-      unnamed = (devices.keys & [record['console'], record['hostlink']]) - rows.map(&:use)
-      raise Error, "the record's UART #{unnamed.first} has no pins in the map" unless unnamed.empty?
+      pinned = devices.select { |path, device| driven.driven?(path, device) && controller?(path, table) }.keys
+      unnamed = pinned - rows.map(&:use)
+      raise Error, "the record's driven device #{unnamed.first.inspect} has no pins in the map" unless unnamed.empty?
 
       Map.new(controller: controller, rows: rows.freeze, core_clock: core_clock(rows, devices: devices))
     end
@@ -88,7 +102,7 @@ module Erx
       end
     end
 
-    def rows(fields, table:, devices:)
+    def rows(fields, table:, devices:, driven:)
       raise Error, "rows must be a list of #{Pins::BANK0_PIN_COUNT}" unless fields.is_a?(Array) && fields.size == Pins::BANK0_PIN_COUNT
 
       fields.each_with_index.map do |field, gpio|
@@ -96,12 +110,14 @@ module Erx
           raise Error, "row #{gpio} must be an object for GPIO #{gpio} of #{ROW_KEYS.join(', ')}"
         end
 
-        row(field, gpio: gpio, table: table, devices: devices)
+        row(field, gpio: gpio, table: table, devices: devices, driven: driven)
       end
     end
 
-    # One row's use, and the function and pull it must or must not have.
-    def row(field, gpio:, table:, devices:)
+    # One row's use, and the function and pull it must or must not have. A device row names
+    # a device of a kind: the firmware would set the pins of a device of no kind for a
+    # driver that never runs.
+    def row(field, gpio:, table:, devices:, driven:)
       use, function, pull = field.values_at('use', 'function', 'pull')
       case use
       in String if PLAIN_USES.include?(use)
@@ -114,6 +130,7 @@ module Erx
         Row.new(gpio: gpio, use: use, function: function, alternate: table.alternate(gpio: gpio, function: function), pull: nil)
       in String if devices.key?(use)
         raise Error, "GPIO #{gpio}: a device row's pull is none, up or down" unless PULLS.key?(pull)
+        raise Error, "GPIO #{gpio}: #{use.inspect} is a device no driver drives" unless driven.driven?(use, devices.fetch(use))
 
         Row.new(gpio: gpio, use: use, function: function, alternate: table.alternate(gpio: gpio, function: function), pull: PULLS.fetch(pull))
       else
@@ -138,6 +155,13 @@ module Erx
       end
     end
 
+    # Whether the device at path is a controller of the pin table, a device the map may give
+    # pins to; a path with no unit address, such as /chosen, is none.
+    def controller?(path, table)
+      address = path[UNIT_ADDRESS, 1]
+      !address.nil? && table.controllers.any? { |controller| controller.base == Integer(address, 16) }
+    end
+
     def unit_address(path)
       address = path[UNIT_ADDRESS, 1]
       raise Error, "device path #{path} has no unit address" if address.nil?
@@ -157,6 +181,6 @@ module Erx
 
       clocks[0]
     end
-    private_class_method :devices_by_path, :rows, :row, :check_signals, :unit_address, :core_clock
+    private_class_method :devices_by_path, :rows, :row, :check_signals, :controller?, :unit_address, :core_clock
   end
 end

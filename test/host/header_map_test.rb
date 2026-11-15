@@ -14,6 +14,8 @@ class HeaderMapTest < Minitest::Test
   PI = Erx::Platform.load(root: ROOT, name: 'raspi4b')
   I2C = '/soc/i2c@7e804000'
   SPI = '/soc/spi@7e204000'
+  BSC0 = '/soc/i2c@7e205000'
+  UART2 = '/soc/serial@7e201400'
 
   def test_the_pi_map_is_accepted_with_its_derived_facts
     header = PI.header
@@ -54,14 +56,27 @@ class HeaderMapTest < Minitest::Test
     'a device row without a pull' => [->(map) { map['rows'][2].delete('pull') }, /GPIO 2: a device row's pull/],
     'a use that is no device of the record' => [->(map) { map['rows'][6]['use'] = '/soc/pwm@7e20c000' },
                                                 /GPIO 6: use "\/soc\/pwm@7e20c000" is neither/],
-    'a device at no controller of the pin table' => [->(map) { map['rows'][2]['use'] = '/soc/spi@7e215080' },
-                                                     /no controller of the pin table/],
+    # EMMC2, since it is driven (a block kind) and so reaches the controller rule.
+    'a driven device at no controller of the pin table' => [->(map) { map['rows'][2]['use'] = '/emmc2bus/mmc@7e340000' },
+                                                            /no controller of the pin table/],
+    'a UART no driver drives' => [lambda { |map|
+                                    map['rows'][0] = { 'gpio' => 0, 'use' => UART2, 'function' => 'TXD2', 'pull' => 'none' }
+                                    map['rows'][1] = { 'gpio' => 1, 'use' => UART2, 'function' => 'RXD2', 'pull' => 'none' }
+                                  }, /GPIO 0: "#{UART2}" is a device no driver drives/],
+    'a device of no kind' => [lambda { |map|
+                                map['rows'][0] = { 'gpio' => 0, 'use' => BSC0, 'function' => 'SDA0', 'pull' => 'none' }
+                                map['rows'][1] = { 'gpio' => 1, 'use' => BSC0, 'function' => 'SCL0', 'pull' => 'none' }
+                              }, /GPIO 0: "#{BSC0}" is a device no driver drives/],
+    'a driven bus that no row names' => [lambda { |map|
+                                           map['rows'][2] = { 'gpio' => 2, 'use' => 'gpio' }
+                                           map['rows'][3] = { 'gpio' => 3, 'use' => 'gpio' }
+                                         }, /the record's driven device "#{I2C}" has no pins/],
     'a jtag row with a pull' => [->(map) { map['rows'][22]['pull'] = 'none' }, /GPIO 22: a jtag row has a function and no pull/],
     'JTAG on part of its pins' => [->(map) { map['rows'][23] = { 'gpio' => 23, 'use' => 'gpio' } }, /jtag has no row for ARM_RTCK/],
     'the host link without its pins' => [lambda { |map|
                                            map['rows'][4] = { 'gpio' => 4, 'use' => 'gpio' }
                                            map['rows'][5] = { 'gpio' => 5, 'use' => 'gpio' }
-                                         }, /the record's UART \/soc\/serial@7e201600 has no pins/],
+                                         }, /the record's driven device "\/soc\/serial@7e201600" has no pins/],
     'an unknown pin table' => [->(map) { map['pins'] = 'bcm2712' }, /bcm2712/]
   }.freeze
 
@@ -87,11 +102,13 @@ class HeaderMapTest < Minitest::Test
   end
 
   # SDA3 is the function of GPIO 2 and of GPIO 4, so a map can name it twice for BSC3, and
-  # the reader must refuse that.
+  # the reader must refuse that. BSC3 is driven in BSC1's place here, so no other rule breaks.
   def test_one_signal_on_two_rows_is_refused
     record = JSON.parse(JSON.generate(PI.record))
     bsc3 = '/soc/i2c@7e205600'
-    record.fetch('units') << { 'key' => 'bsc3', 'devices' => [{ 'path' => bsc3, 'role' => 'ordinary', 'clock' => 500_000_000 }] }
+    devices = record.fetch('units').flat_map { |unit| unit.fetch('devices') }
+    devices.find { |device| device['path'] == I2C }.merge!('role' => 'ordinary')
+    devices.find { |device| device['path'] == bsc3 }.merge!('role' => 'i2c', 'clock' => 500_000_000)
     rows = record.fetch('header').fetch('rows')
     rows[2] = { 'gpio' => 2, 'use' => bsc3, 'function' => 'SDA3', 'pull' => 'none' }
     rows[3] = { 'gpio' => 3, 'use' => bsc3, 'function' => 'SCL3', 'pull' => 'none' }

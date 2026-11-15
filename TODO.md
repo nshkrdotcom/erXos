@@ -1436,11 +1436,24 @@ it; git history is the record of completed work.
   medium is chosen by membership of one of them, so a board added to the others but not to
   `BoardTree::BOARDS` gets QEMU's release medium. Declare the medium, the load address and the board's tree in the
   platform record, checked when it loads, so a board without a medium is refused.
-* [Medium] tooling, the header map reader (`tools/lib/erx/header_map.rb`, docs/design-header-io.md, "The
-  construction"): it does not yet refuse a device use of no kind or a driven bus device that no row names, since
-  the record has no `i2c` or `spi` kind: BSC1, SPI0 and the GPIO controller are `ordinary` rows, each alone in its
-  unit, without the BSCs and SPIs that share their pages and lines. Add both refusals with the kinds, roles and full
-  units of plan.md 1b-I (e) package 1.
+* [Medium] tooling, the rest of plan.md 1b-I (e) package 1 (docs/design-header-io.md, "Placement"): the
+  manifest check's clock rule (`device_clock`, `tools/lib/erx/manifest.rb`) still lets only a PL011 row carry a
+  clock, so a manifest that places the `i2c` or `spi` unit is refused until it admits the `i2c` and `spi` kinds'
+  rows too, and docs/design-abi.md's `clock` paragraph says the same; property 8's pin-controller clause and its
+  seeded manifest; and the devices domain on the Pi's development manifest, holding `i2c` and `spi`, its memory
+  from a measured footprint, with the raspi4b suite's line for it (the domain runs no driver yet, so it logs
+  none).
+* [Low] tooling, the header map reader (`tools/lib/erx/header_map.rb`): `controller?` matches a device to a pin
+  table controller by its path's unit address alone, parsing it apart from `unit_address`, so a driven device whose
+  path's address is unreadable (`@07e804000`, upper case) skips the rows rule, and the parent bus is ignored. Let
+  the pin table's controller rows name their kind (or compatible string), so a bus device follows from what it is.
+  The platform record fuzz target (`tools/fuzz/platform_record.rb`) has neither the `i2c` and `spi` role words nor
+  their compatible strings in its values, and does not assert that every device row names a driven device and
+  every driven device at a controller has rows.
+* [Low] hardware facts, BSC5's address: the datasheet's section 3.2 lists `0x7e205a80`, the board's tree has
+  BSC5 at `0x7e205a00` (board_tree_test passes with the record at that address), so the platform record says
+  `0x7e205a00` while `hw/pins/bcm2711.txt`'s `bsc5` row and docs/design-header-io.md's hardware table still say
+  `0x7e205a80`. Settle it on the board (the board checklist's BSC5 item) and make the three agree.
 * [Medium] tooling, the header map reader (`tools/lib/erx/header_map.rb`): the core clock is taken from the devices
   a map names that are not UARTs (`core_clock`), a rule by exclusion that a PWM row with its own clock would break;
   derive it from what the device is (its kind, or a clock column of the pin table's controller rows). The reader

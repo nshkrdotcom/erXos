@@ -44,6 +44,8 @@ static const erx_device_kind_t erx_device_kinds[] = {
 	{ ERX_MF_DEVICE_ROLE_BLOCK, "brcm,bcm2711-emmc2", "block", "sdhci" },
 	{ ERX_MF_DEVICE_ROLE_GPU, "virtio,mmio", "gpu", "virtio_mmio" },
 	{ ERX_MF_DEVICE_ROLE_INPUT, "virtio,mmio", "input", "virtio_input" },
+	{ ERX_MF_DEVICE_ROLE_I2C, "brcm,bcm2835-i2c", "i2c", "bsc" },
+	{ ERX_MF_DEVICE_ROLE_SPI, "brcm,bcm2835-spi", "spi", "bcm2711_spi" },
 };
 
 /*

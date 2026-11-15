@@ -276,10 +276,11 @@ that is not a device path of the record; a function that is not one of
 the pin's six in the SoC table; a device row unless its device's base
 (the unit address of its path) names a controller row and its function
 is one of that row's signals; a device use that is not a path of the
-record, or names a device of no kind; a driven device, the console's
+record, or names a device no driver drives (one of no kind, or a UART
+neither the console nor the host link); a driven device, the console's
 and the host link's UARTs among them, that is missing a signal its
 controller cannot work without or names one signal on two rows; a
-driven bus device that no row names; `jtag` rows that leave out a JTAG
+driven device at a controller of the SoC table that no row names; `jtag` rows that leave out a JTAG
 signal, since `enable_jtag_gpio` sets all six pins; a `gpio` or
 `reserved` row with a function, or a `jtag` row with a pull. A pull on
 a `gpio` row is refused too: a GPIO pin's pull is its holder's to set.
