@@ -8,14 +8,19 @@ compiled modules make outside themselves and outside stock OTP is one of
 the SDK's public functions, by module, function and arity.
 
 outside/2 analyses the beams of the app's ebin directories with xref and
-answers the calls that break the rule, `{Caller, Callee}` pairs of
-`{Module, Function, Arity}`, sorted; `[]` when the app keeps to the SDK.
+answers `{Outside, Variable}`. Outside is the calls that break the rule,
+`{Caller, Callee}` pairs of `{Module, Function, Arity}`, sorted; `[]`
+when the app keeps to the SDK. Variable is the calls whose callee xref
+cannot name, through a variable module, a fun in a variable or apply/3,
+each with the callee's module `'$M_EXPR'` (and its function
+`'$F_EXPR'` where that is a variable too), sorted. The check cannot say
+where such a call goes, so its caller pins Variable to the list of calls
+it has reviewed, and a call it has not fails.
 A module of the app whose name already loads, from stock OTP or the SDK,
 fails the check, since the image's module of that name is the one that
 runs. A callee is stock OTP's when its module loads from below
 code:lib_dir() or is preloaded and exports it, which holds for the host's stock OTP 29.1.2 with the
-SDK's applications on the path beside it, not inside it. A call through a
-variable module or apply/3 is not seen; xref sees only calls it can name.
+SDK's applications on the path beside it, not inside it.
 xref reads a beam's calls from its debug information, so a beam compiled
 without `debug_info` fails the check instead of passing unread.
 """.
@@ -24,9 +29,10 @@ without `debug_info` fails the check instead of passing unread.
 
 -doc """
 The calls of the modules in `Ebins` that leave the app and stock OTP for a
-function `Public`, the SDK's erlang/public.txt, does not list.
+function `Public`, the SDK's erlang/public.txt, does not list, and apart
+from them the calls whose callee xref cannot name.
 """.
--spec outside([file:filename()], file:filename()) -> [{mfa(), mfa()}].
+-spec outside([file:filename()], file:filename()) -> {[{mfa(), mfa()}], [{mfa(), mfa()}]}.
 outside(Ebins, Public) ->
     Listed = public(Public),
     {ok, Xref} = xref:start([{xref_mode, functions}]),
@@ -35,11 +41,13 @@ outside(Ebins, Public) ->
         Own = lists:append([added(Xref, Ebin) || Ebin <- Ebins]),
         [error({shadows, Module}) || Module <- Own, code:which(Module) =/= non_existing],
         {ok, Calls} = xref:q(Xref, "E"),
-        lists:sort([Call || {{From, _, _}, {Module, _, _} = Callee} = Call <- Calls,
-                            Module =/= From,
-                            not lists:member(Module, Own),
-                            not stock(Callee),
-                            not sets:is_element(Callee, Listed)])
+        {Variable, Named} = lists:partition(fun({_Caller, {Module, _, _}}) -> Module =:= '$M_EXPR' end, Calls),
+        {lists:sort([Call || {{From, _, _}, {Module, _, _} = Callee} = Call <- Named,
+                             Module =/= From,
+                             not lists:member(Module, Own),
+                             not stock(Callee),
+                             not sets:is_element(Callee, Listed)]),
+         lists:sort(Variable)}
     after
         xref:stop(Xref)
     end.

@@ -8028,8 +8028,7 @@ document's "residual risks accepted" paragraph.
   clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
   `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
   ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
-  colour-space chunks as sRGB; `erx_desk:reload/1`, which needs the window process `erx_desk_window` (plan 8.4)
-  ([design-desktop-programs.md](docs/design-desktop-programs.md#the-construction)); the theme's sizes as
+  colour-space chunks as sRGB; the theme's sizes as
   logical pixels at the window's scale. Each is small and lands with the next change to its module.
   Transitions ([Motion](docs/design-desktop-programs.md#motion)) come after the basic desktop runs,
   widgets first; window transitions wait for a Raspberry Pi measurement of a moving window. The trusted
@@ -8232,9 +8231,31 @@ document's "residual risks accepted" paragraph.
   design-desktop-programs.md ("Shipping and starting") puts `erx_desk` in the desktop session's release, and
   `erx_desk_files_core` calls `erx_ui_schema` and `erx_ui_model`, so `erx_desk` names `erx_ui` in its
   `applications`. Only the client script, a domain holding a display's grant, holds `erx_ui`, so `erx_desk` ships
-  there and not in the session script, where systools would refuse the boot script. When 8.4 adds `erx_desk_sup`
-  and the commands, settle which script a desktop session boots: the client script, or the session script with
-  `erx_memdraw`, `erx_win` and `erx_ui` added.
+  there and not in the session script, where systools would refuse the boot script. Settle which script a desktop
+  session boots: the client script, or the session script with `erx_memdraw`, `erx_win` and `erx_ui` added. Until
+  then the command `clock` (`erx_desk_cmd_clock`) is in no command namespace, since every shell builds its table
+  from `erx_shell` alone (`erx_shell_namespace:from_applications([erx_shell])` in `erx_session_sup`,
+  `erx_shell_runner` and `erx_shell_script`), and it names no `-behaviour(erx_cmd)`, which would make `erx_desk`
+  build after `erx_shell`. 8.4's QEMU cell, `clock` opened in the desktop session, waits on this.
+* [Medium] SDK boundary check (`test/erlang/erx_sdk_boundary.erl`; D1 in
+  [design-desktop-programs.md](docs/design-desktop-programs.md#verification-and-testing), and the SDK's boundary row of
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing)): a call handed to stock OTP as data, a
+  `{Module, Function, Args}` to `proc_lib:spawn/3`, `timer:apply_after/4`, `erpc:call/4`, a child spec's `start`, or
+  `erlang:make_fun/3`, reaches neither of `outside/2`'s lists, since xref resolves such triples only for `apply` and
+  `spawn`; and a pinned variable call is pinned per caller function and callee shape, so a second call of the same
+  shape in that function passes, and a caller may match `{[], _}` and drop the variable half. Close it by
+  construction: refuse a literal atom naming a non-public erXos module and the atom-making BIFs, put each pinned call
+  alone in a one-call function (the window's worker can dispatch its effect through a local function, which removes
+  its `worker/4` pin), and have the check take the reviewed list and answer one list of violations.
+* [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
+  the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
+  `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.
+* [Medium] desktop, D1 and the widget schema's bounds (`erx_desk_files_core.erl`, `max_items/0`, `item_max/0`,
+  `caption_max/0`; `test/host/erx_desk_boundary_test.rb`, `KNOWN`): D1 allows `erx_desk` only `sdk/public.txt`'s
+  functions and `erx:inspect/2`, but files' core reads its bounds through `erx_ui_schema:property/1`, which
+  public.txt does not list though design-packaging calls the widget schema public. Either list
+  `erx_ui_schema:property/1` in public.txt or give the bounds another public reader; the check's test then
+  expects no call outside.
 * [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
   [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
   `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names

@@ -22,9 +22,13 @@ answers the server's `{ui, Window, Term, Detail}` and refuses an action
 the server would drop. It also refuses an action on a node that is
 disabled, hidden or under a hidden node, since no renderer reports one
 there. Every refusal is an error naming the query.
+
+find/2 answers the properties of the one node a query matches in the
+tree as the server realises it, so a test of a program a person only
+reads, such as clock, reads its tree the same way.
 """.
 
--export([input/4]).
+-export([input/4, find/2]).
 -export_type([query/0, action/0]).
 
 -doc "What a node is found by; every key given must match.".
@@ -42,11 +46,7 @@ The input the widget server sends window `Window` when a person does
 -spec input(Window :: term(), query(), action(), erx_ui_model:tree()) ->
           {ui, Window :: term(), Term :: term(), Detail :: term()}.
 input(Window, Query, Action, Tree) ->
-    case erx_ui_schema:validate(Tree, ?UI_NODES) of
-        ok -> ok;
-        {error, Reason} -> error({invalid_tree, Reason})
-    end,
-    {Ui, _Next} = erx_ui_model:pair(erx_ui_model:empty(), Tree, 1),
+    Ui = realised(Tree),
     Number = case the_one(Query, realised_nodes(Ui)) of
                  #{number := N, actable := true} -> N;
                  #{actable := false} -> error({cannot_act, Query})
@@ -56,6 +56,22 @@ input(Window, Query, Action, Tree) ->
         {fire, Term, Detail, _Ui1} -> {ui, Window, Term, Detail};
         _KeptOrDropped -> error({no_event, Query, Action})
     end.
+
+-doc "The properties of the one node of `Tree` that `Query` matches.".
+-spec find(query(), erx_ui_model:tree()) -> #{atom() => term()}.
+find(Query, Tree) ->
+    #{props := Props} = the_one(Query, realised_nodes(realised(Tree))),
+    Props.
+
+%% Tree validated and paired with the empty tree, as the widget server
+%% realises a first tree.
+realised(Tree) ->
+    case erx_ui_schema:validate(Tree, ?UI_NODES) of
+        ok -> ok;
+        {error, Reason} -> error({invalid_tree, Reason})
+    end,
+    {Ui, _Next} = erx_ui_model:pair(erx_ui_model:empty(), Tree, 1),
+    Ui.
 
 %% The node event an action reports, and the state value it carries.
 event(click) -> {on_click, none};
