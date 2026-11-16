@@ -670,6 +670,18 @@ mode_code_write(void)
 	return (110);
 }
 
+/* A task may not make code, and runs the root's sealed code object, mapped at CODE_ADDR. */
+static int64_t
+mode_code_run(void)
+{
+	int64_t (*const code)(void) = (int64_t (*)(void))(uintptr_t)CODE_ADDR;
+	uint64_t mem;
+
+	if (erx_mem_create_paged(0, PAGE, ERX_MEM_CODE, &mem) != ERX_ERIGHTS)
+		return (120);
+	return (code());
+}
+
 int64_t
 erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 {
@@ -708,6 +720,8 @@ erx_task_main(const uint64_t args[ERX_FIASCO_START_ARGS])
 		return ((int64_t)*code_word());
 	case MODE_CODE_WRITE:
 		return (mode_code_write());
+	case MODE_CODE_RUN:
+		return (mode_code_run());
 	default:
 		return (90);
 	}

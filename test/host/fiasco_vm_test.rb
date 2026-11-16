@@ -15,16 +15,25 @@ require_relative '../fixtures/generated_tree'
 # test/fixtures/fiasco_vm_driver.c runs them exhaustively against a fake memory
 # unit and a table of what each page should be. Each mutant below seeds a failure
 # the design names, or the bug it would be, and the driver must catch it, which
-# shows the driver reaches that code. liberx/backend/fiasco/page_pool.c and
-# liberx/backend/core/vm_table.c are the cores under test.
+# shows the driver reaches that code. liberx/backend/fiasco/page_pool.c,
+# liberx/backend/core/vm_table.c and liberx/backend/fiasco/vm_rules.c are the
+# cores under test.
 class FiascoVmTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  CORES = %w[liberx/backend/fiasco/page_pool.c liberx/backend/core/vm_table.c liberx/backend/core/grow_table.c].freeze
+  CORES = %w[liberx/backend/fiasco/page_pool.c liberx/backend/core/vm_table.c liberx/backend/core/grow_table.c
+             liberx/backend/fiasco/vm_rules.c].freeze
   DRIVER = 'test/fixtures/fiasco_vm_driver.c'
 
   # Each edits exactly one place in its core, and the driver must name what is
   # wrong: name => [core, original, replacement, the driver's diagnostic].
   MUTANTS = {
+    'the sealed flag not read at the map' => ['vm_rules.c', 'return (object.sealed ? ERX_OK : ERX_EBUSY);', 'return (ERX_OK);', 'an unsealed paged object maps'],
+    'a paged object mapped writable' => ['vm_rules.c', 'if (prot == ERX_PROT_RW || (prot', 'if ((prot', 'a paged object maps writable'],
+    'a copy into a paged object' => ['vm_rules.c', ' || dst.kind == ERX_FIASCO_VM_PAGED)', ')', 'a paged object takes a copy'],
+    'a supply after the seal' => ['vm_rules.c', 'return (dst.sealed ? ERX_ERIGHTS : ERX_OK);', 'return (ERX_OK);', 'a sealed object takes a supply'],
+    'code made outside the root' => ['vm_rules.c', '(flags & ERX_MEM_CODE) != 0 && !root', '(flags & ERX_MEM_CODE) != 0 && root', 'code made outside the root'],
+    'a writable code flag' => ['vm_rules.c', '~(uint64_t)ERX_MEM_CODE', '~(uint64_t)(ERX_MEM_CODE | ERX_MEM_JIT)', 'a writable code flag accepted'],
+    'a seal that skips the code cache' => ['vm_rules.c', '.coherent = object.code && !object.sealed', '.coherent = false', 'a code object sealed without making its pages coherent'],
     'a contiguous run past the first fit' => ['page_pool.c', 'if (free_run < pages)', 'if (free_run <= pages)', 'contig: first fit'],
     'a contiguous run over a held page' => ['page_pool.c', 'contig_held(pool, last) ? 0 : free_run + 1;', 'contig_held(pool, last) ? free_run + 1 : free_run + 1;', 'contig: first fit'],
     'a contiguous run past the limit' => ['page_pool.c', 'limit < pool->pages ? limit : pool->pages;', '((void)limit, pool->pages);', %q(contig: a limit below every page)],

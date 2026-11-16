@@ -200,8 +200,11 @@ flags vm_flags u32
   bit noreplace 1
 flags space_flags u32
   bit jit 0
+# A paged object made with code may be mapped to run once sealed
+# (docs/design-stopgap.md, "The call table"); jit is erx_mem_create's alone.
 flags mem_flags u32
   bit jit 0
+  bit code 1
 enum mem_attr u32
   value device 0
 flags entropy_flags u32
@@ -710,6 +713,9 @@ enum fiasco_call u32
   value release_entry 46
   value group_configure 47
   value log_take 48
+  value mem_create_paged 49
+  value mem_supply 50
+  value mem_seal 51
 
 # erx_object_info's topics and the report each writes (docs/design-abi.md,
 # "Inspection schema"; docs/design-kernel.md, "Failure handling, diagnostics
@@ -926,6 +932,7 @@ layout erx_fiasco_time_set_wall_request wire_le 8 16
   field caller u64 0
   field wall_ns u64 8
 
+# erx_mem_create, and erx_mem_create_paged, whose flags are ERX_MEM_CODE or 0.
 layout erx_fiasco_mem_create_request wire_le 8 32
   field caller u64 0
   field budget u64 8
@@ -996,8 +1003,8 @@ layout erx_fiasco_task_join_request wire_le 8 16
   field caller u64 0
   field task u64 8
 
-# erx_cap_dup, erx_cap_close and erx_object_destroy, each naming one handle of
-# the caller's own table; a dup's copy is the reply's first word.
+# erx_cap_dup, erx_cap_close, erx_object_destroy and erx_mem_seal, each naming
+# one handle of the caller's own table; a dup's copy is the reply's first word.
 layout erx_fiasco_cap_request wire_le 8 16
   field caller u64 0
   field cap u64 8
@@ -1042,7 +1049,7 @@ layout erx_fiasco_image_slice_request wire_le 8 40
 # erx_mem_copy: len bytes from src at src_offset to dst at dst_offset, of
 # which the stub's earlier requests copied done. Each request checks the
 # whole range and copies at most 64 pages more; the reply's first word is
-# the new done.
+# the new done. erx_mem_supply sends the same request, its paged object as dst.
 layout erx_fiasco_mem_copy_request wire_le 8 56
   field caller u64 0
   field dst u64 8

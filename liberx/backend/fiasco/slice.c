@@ -148,18 +148,37 @@ slice_fill(uint32_t object, const void *request)
 	return (erx_fiasco_vm_slice_create(object, fill->window, fill->size, fill->first, fill->count));
 }
 
+/* The two objects of a copy or a supply request, each one the caller holds. */
+static int
+copy_objects(uint32_t caller, const erx_fiasco_mem_copy_request_t *request, uint32_t *dst, uint32_t *src)
+{
+	const int status = erx_fiasco_object_find(caller, request->dst, ERX_BACKEND_OBJECT_MEMORY, dst);
+
+	return (status != ERX_OK ? status : erx_fiasco_object_find(caller, request->src, ERX_BACKEND_OBJECT_MEMORY, src));
+}
+
 int
 erx_fiasco_mem_copy_body(uint32_t caller, const erx_fiasco_mem_copy_request_t *request, uint64_t *done)
 {
 	uint32_t dst, src;
-	int status = erx_fiasco_object_find(caller, request->dst, ERX_BACKEND_OBJECT_MEMORY, &dst);
+	const int status = copy_objects(caller, request, &dst, &src);
 
-	if (status == ERX_OK)
-		status = erx_fiasco_object_find(caller, request->src, ERX_BACKEND_OBJECT_MEMORY, &src);
 	if (status != ERX_OK)
 		return (status);
 	*done = request->done;
 	return (erx_fiasco_vm_object_copy(dst, request->dst_offset, src, request->src_offset, request->len, done));
+}
+
+int
+erx_fiasco_mem_supply_body(uint32_t caller, const erx_fiasco_mem_copy_request_t *request, uint64_t *done)
+{
+	uint32_t dst, src;
+	const int status = copy_objects(caller, request, &dst, &src);
+
+	if (status != ERX_OK)
+		return (status);
+	*done = request->done;
+	return (erx_fiasco_vm_object_supply(dst, request->dst_offset, src, request->src_offset, request->len, done));
 }
 
 /*

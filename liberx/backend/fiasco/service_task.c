@@ -42,6 +42,7 @@
 #include "liberx/backend/fiasco/time.h"
 #include "liberx/backend/fiasco/trace.h"
 #include "liberx/backend/fiasco/vm.h"
+#include "liberx/backend/fiasco/vm_rules.h"
 
 /* A task's run of slots: its threads, its semaphores, then the three below. */
 #define TASK_SLOT_GATE		(2 * ERX_FIASCO_THREADS_MAX)
@@ -73,6 +74,7 @@ static bool	task_segment_load(uint32_t, const uint8_t *, const erx_elf_load_t *,
 static bool	task_segment_share(uint32_t, uint32_t, const erx_elf_load_t *, uint64_t);
 static int	task_image_slice(uint32_t, uint32_t *);
 static int	task_fill_pages(uint32_t, const void *);
+static int	task_fill_paged(uint32_t, const void *);
 static int	task_fill_physical(uint32_t, const void *);
 static int	task_fill_contiguous(uint32_t, const void *);
 
@@ -756,6 +758,33 @@ static int
 task_fill_pages(uint32_t object, const void *request)
 {
 	return (erx_fiasco_vm_object_create(object, ((const erx_fiasco_mem_create_request_t *)request)->size));
+}
+
+int
+erx_fiasco_task_mem_paged_body(uint32_t caller, const erx_fiasco_mem_create_request_t *request, uint64_t *mem)
+{
+	const int status = erx_fiasco_vm_paged_rule(request->flags, request->size, caller == ERX_FIASCO_TASK_ROOT);
+
+	if (status != ERX_OK)
+		return (status);
+	return (erx_fiasco_object_create(caller, ERX_BACKEND_OBJECT_MEMORY, request->budget, task_fill_paged, request, mem));
+}
+
+static int
+task_fill_paged(uint32_t object, const void *request)
+{
+	const erx_fiasco_mem_create_request_t *const paged = request;
+
+	return (erx_fiasco_vm_paged_create(object, paged->size, (paged->flags & ERX_MEM_CODE) != 0));
+}
+
+int
+erx_fiasco_task_mem_seal_body(uint32_t caller, uint64_t mem)
+{
+	uint32_t object;
+	const int status = erx_fiasco_object_find(caller, mem, ERX_BACKEND_OBJECT_MEMORY, &object);
+
+	return (status != ERX_OK ? status : erx_fiasco_vm_object_seal(object));
 }
 
 static int

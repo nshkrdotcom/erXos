@@ -4,7 +4,7 @@
  */
 
 /*
- * Host checks of the Fiasco backend's page pool and range table, judged against
+ * Host checks of the Fiasco backend's page pool, range table and object rules, judged against
  * two models written here and not in the core: a fake memory unit, which behaves
  * as Fiasco was measured to (a map adds rights to what is there, an unmap of the
  * read right removes the mapping), and a table of what each page should be.
@@ -29,6 +29,7 @@
 #include "erx/abi.h"
 #include "liberx/backend/fiasco/page_pool.h"
 #include "liberx/backend/core/vm_table.h"
+#include "liberx/backend/fiasco/vm_rules.h"
 
 #define PAGE		((uint64_t)ERX_PAGE_SIZE)
 #define AREA_START	(UINT64_C(0x4000000000))
@@ -889,6 +890,82 @@ check_mappings(void)
 		fail("the pool's count did not return", pool.free_pages);
 }
 
+/*
+ * The object rules (vm_rules.c) over every kind, code and sealed flag and protection,
+ * judged by what each must never allow: nothing writes a paged object through a
+ * mapping or after its seal, an unsealed one maps nowhere, only pool pages and a
+ * sealed code object run, and only the root makes code.
+ */
+static void
+check_object_rules(void)
+{
+	static const uint32_t prots[] = { ERX_PROT_NONE, ERX_PROT_R, ERX_PROT_RW, ERX_PROT_RX };
+	const erx_fiasco_vm_traits_t pages = { .kind = ERX_FIASCO_VM_PAGES };
+	const erx_fiasco_vm_traits_t physical = { .kind = ERX_FIASCO_VM_PHYSICAL };
+
+	current_case = "object rules";
+	for (int kind = ERX_FIASCO_VM_PAGES; kind <= ERX_FIASCO_VM_PAGED; kind++)
+		for (unsigned flags = 0; flags < 4; flags++) {
+			const erx_fiasco_vm_traits_t object = { .kind = (erx_fiasco_vm_kind_t)kind, .code = (flags & 1) != 0,
+			    .sealed = (flags & 2) != 0 };
+			const bool paged = kind == ERX_FIASCO_VM_PAGED;
+			const int copy = erx_fiasco_vm_copy_rule(object, pages);
+			const int supply = erx_fiasco_vm_supply_rule(object, pages);
+
+			for (size_t index = 0; index < sizeof(prots) / sizeof(prots[0]); index++) {
+				const uint32_t prot = prots[index];
+				const int map = erx_fiasco_vm_map_rule(object, prot);
+
+				if (paged && !object.sealed && map == ERX_OK)
+					fail("an unsealed paged object maps", prot);
+				if (paged && prot == ERX_PROT_RW && map != ERX_ERIGHTS)
+					fail("a paged object maps writable", flags);
+				if (paged && !object.sealed && prot != ERX_PROT_RW && (prot != ERX_PROT_RX || object.code) &&
+				    map != ERX_EBUSY)
+					fail("an unsealed paged object's map is not busy", prot);
+				if (paged && object.sealed && object.code && (prot == ERX_PROT_R || prot == ERX_PROT_RX) &&
+				    map != ERX_OK)
+					fail("a sealed code object does not map to run", prot);
+				if (prot == ERX_PROT_RX && map == ERX_OK && kind != ERX_FIASCO_VM_PAGES &&
+				    !(paged && object.code && object.sealed))
+					fail("a map runs what may not run", (uint64_t)kind);
+				checks++;
+			}
+			if (paged && copy != ERX_ERIGHTS)
+				fail("a paged object takes a copy", (uint64_t)copy);
+			if (!paged && supply != ERX_ETYPE)
+				fail("a supply into an object that is not paged", (uint64_t)kind);
+			if (paged && object.sealed && supply != ERX_ERIGHTS)
+				fail("a sealed object takes a supply", (uint64_t)supply);
+			if (paged && !object.sealed && (supply != ERX_OK ||
+			    erx_fiasco_vm_supply_rule(object, physical) != ERX_ETYPE))
+				fail("an unsealed paged object's supply", (uint64_t)supply);
+			const erx_fiasco_vm_seal_t seal = erx_fiasco_vm_seal_rule(object);
+
+			if (seal.status != (paged ? ERX_OK : kind == ERX_FIASCO_VM_PAGES ? ERX_ENOTSUP : ERX_ETYPE))
+				fail("a seal's status", (uint64_t)kind);
+			if (paged && object.code && !object.sealed && !seal.coherent)
+				fail("a code object sealed without making its pages coherent", flags);
+			checks++;
+		}
+	for (unsigned root = 0; root < 2; root++) {
+		if (erx_fiasco_vm_paged_rule(ERX_MEM_CODE | ERX_MEM_JIT, PAGE, root != 0) != ERX_EINVAL)
+			fail("a writable code flag accepted", root);
+		if (erx_fiasco_vm_paged_rule(ERX_MEM_CODE << 1, PAGE, root != 0) != ERX_EINVAL ||
+		    erx_fiasco_vm_paged_rule(0, 0, root != 0) != ERX_EINVAL ||
+		    erx_fiasco_vm_paged_rule(0, PAGE + 1, root != 0) != ERX_EINVAL)
+			fail("a paged object's bad arguments accepted", root);
+		if (erx_fiasco_vm_paged_rule(0, PAGE, root != 0) != ERX_OK)
+			fail("a data object refused", root);
+		checks += 4;
+	}
+	if (erx_fiasco_vm_paged_rule(ERX_MEM_CODE, PAGE, false) != ERX_ERIGHTS)
+		fail("code made outside the root", 0);
+	if (erx_fiasco_vm_paged_rule(ERX_MEM_CODE, PAGE, true) != ERX_OK)
+		fail("the root refused code", 0);
+	checks += 2;
+}
+
 /* An index always has twice the slots of the pages it might hold, and fills whole pages. */
 static void
 check_layout(void)
@@ -1063,6 +1140,7 @@ main(int argc, char **argv)
 	check_contig_reach();
 	print_contig_orders();
 	check_layout();
+	check_object_rules();
 	check_refusals();
 	check_every_state_range_and_call();
 	check_random_calls(seed, 20000);

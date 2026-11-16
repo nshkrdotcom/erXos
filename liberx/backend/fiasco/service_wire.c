@@ -73,6 +73,7 @@ erx_fiasco_wire_words(int64_t number)
 	case ERX_FIASCO_CALL_GATE_CANCEL:
 		return (sizeof(erx_fiasco_gate_wait_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_MEM_CREATE:
+	case ERX_FIASCO_CALL_MEM_CREATE_PAGED:
 		return (sizeof(erx_fiasco_mem_create_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_MEM_CREATE_PHYSICAL:
 		return (sizeof(erx_fiasco_mem_physical_request_t) / sizeof(uint64_t));
@@ -97,6 +98,7 @@ erx_fiasco_wire_words(int64_t number)
 	case ERX_FIASCO_CALL_CAP_DUP:
 	case ERX_FIASCO_CALL_CAP_CLOSE:
 	case ERX_FIASCO_CALL_OBJECT_DESTROY:
+	case ERX_FIASCO_CALL_MEM_SEAL:
 		return (sizeof(erx_fiasco_cap_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_BUDGET_CREATE:
 		return (sizeof(erx_fiasco_budget_create_request_t) / sizeof(uint64_t));
@@ -107,6 +109,7 @@ erx_fiasco_wire_words(int64_t number)
 	case ERX_FIASCO_CALL_IMAGE_SLICE:
 		return (sizeof(erx_fiasco_image_slice_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_MEM_COPY:
+	case ERX_FIASCO_CALL_MEM_SUPPLY:
 		return (sizeof(erx_fiasco_mem_copy_request_t) / sizeof(uint64_t));
 	case ERX_FIASCO_CALL_RELEASE_ENTRY:
 		return (sizeof(erx_fiasco_release_entry_request_t) / sizeof(uint64_t));

@@ -29,6 +29,7 @@
 
 static int stub_range(uint32_t, uint64_t, uint64_t, uint64_t);
 static int stub_flagged(uint32_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t *);
+static int stub_copy(uint32_t, uint64_t, uint64_t, uint64_t, uint64_t, uint64_t);
 
 int
 erx_fiasco_service_call(uint32_t number, const void *request, size_t bytes, erx_fiasco_reply_t *reply)
@@ -357,12 +358,25 @@ erx_image_slice(uint64_t budget, uint64_t image, uint64_t first, uint64_t count,
 int
 erx_mem_copy(uint64_t dst, uint64_t dst_offset, uint64_t src, uint64_t src_offset, uint64_t len)
 {
+	return (stub_copy(ERX_FIASCO_CALL_MEM_COPY, dst, dst_offset, src, src_offset, len));
+}
+
+/* erx_mem_supply is a copy into a paged object, under the same loop. */
+int
+erx_mem_supply(uint64_t mem, uint64_t offset, uint64_t src, uint64_t src_offset, uint64_t len)
+{
+	return (stub_copy(ERX_FIASCO_CALL_MEM_SUPPLY, mem, offset, src, src_offset, len));
+}
+
+static int
+stub_copy(uint32_t call, uint64_t dst, uint64_t dst_offset, uint64_t src, uint64_t src_offset, uint64_t len)
+{
 	erx_fiasco_mem_copy_request_t request = { .caller = erx_fiasco_thread_self()->index, .dst = dst,
 	    .dst_offset = dst_offset, .src = src, .src_offset = src_offset, .len = len, .done = 0 };
 	erx_fiasco_reply_t reply;
 
 	do {
-		const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_MEM_COPY, &request, sizeof(request), &reply);
+		const int status = erx_fiasco_service_call(call, &request, sizeof(request), &reply);
 
 		if (status != ERX_OK)
 			return (status);
@@ -424,29 +438,23 @@ erx_fiasco_release_entry(uint64_t release, uint64_t index, bool check, erx_relea
 int
 erx_mem_create_paged(uint64_t budget, uint64_t size, uint32_t flags, uint64_t *mem)
 {
-	(void)budget;
-	(void)size;
-	(void)flags;
-	(void)mem;
-	return (ERX_ENOTSUP);
-}
+	const erx_fiasco_mem_create_request_t request = { .caller = erx_fiasco_thread_self()->index, .budget = budget,
+	    .size = size, .flags = flags };
+	erx_fiasco_reply_t reply;
+	const int status = erx_fiasco_service_call(ERX_FIASCO_CALL_MEM_CREATE_PAGED, &request, sizeof(request), &reply);
 
-int
-erx_mem_supply(uint64_t mem, uint64_t offset, uint64_t src, uint64_t src_offset, uint64_t len)
-{
-	(void)mem;
-	(void)offset;
-	(void)src;
-	(void)src_offset;
-	(void)len;
-	return (ERX_ENOTSUP);
+	if (status == ERX_OK)
+		*mem = reply.first;
+	return (status);
 }
 
 int
 erx_mem_seal(uint64_t mem)
 {
-	(void)mem;
-	return (ERX_ENOTSUP);
+	const erx_fiasco_cap_request_t request = { .caller = erx_fiasco_thread_self()->index, .cap = mem };
+	erx_fiasco_reply_t reply;
+
+	return (erx_fiasco_service_call(ERX_FIASCO_CALL_MEM_SEAL, &request, sizeof(request), &reply));
 }
 
 int
