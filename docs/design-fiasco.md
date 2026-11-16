@@ -492,7 +492,7 @@ own, a recorded difference.
 ## Downsides against erXos's kernel
 
 Each row is a property of erXos's kernel that Fiasco does not have, on a development build and a
-release alike, named `FD1` to `FD32` so that the call table, the hostile cases and other documents
+release alike, named `FD1` to `FD34` so that the call table, the hostile cases and other documents
 cite it. This is the one list of differences. A row says which numbered properties of other
 designs it weakens (D of [design-domains.md](design-domains.md), F of
 [design-files.md](design-files.md), SH1 of [design-shell.md](design-shell.md), P2 of
@@ -537,6 +537,8 @@ app sees. Release notes and the user documentation carry it.
 | FD30 | none | no table of the root's at all | the root's own bookkeeping: `erx_fiasco_task_join` trusts its caller, since its stub waits on the ended semaphore of the task index the service named, so a space deleted by another root thread between the answer and the wait leaves the stub spinning on the empty slot, and an index reused in that window takes another join's up (the launcher joins from one thread); a label naming no live task is counted, and nothing reads the count | no domain sees them | erXos's kernel, which drops the root's tables |
 | FD31 | F4 | a client spends a server's CPU only within the server's admission, on grants the kernel enforces | a service serves requests on its own threads at its own band, and service grants are records ([Consumers that name grants](#consumers-that-name-grants)) | a client makes a service spend that service's band: an app flooding its session, or a file, storage or network server, turns its own low band's CPU into the server's higher band's, delaying that band's other work and every band below it on those CPUs; the network domain's CPU grant and per-interface ingress budget are no guarantee | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | FD32 | none | branch prediction hardened at every entry from user mode and every switch between address spaces, as [design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations) chooses from the CPU | nothing: Fiasco's AArch64 entry makes no SMCCC `ARCH_WORKAROUND` call, clears no branch history and has no speculation barrier, and its prediction barriers are built for AMD64 alone (`src/Kconfig:478-487`) | on a CPU open to branch-target injection (Spectre v2, CVE-2017-5715) or branch-history injection (Spectre-BHB, CVE-2022-23960), a domain may steer Fiasco's, or another domain's, speculative execution to leak memory through the caches; Arm's firmware records the Raspberry Pi 4's Cortex-A72 as affected by both ([Read in source, never run](#read-in-source-never-run)); under HVF a QEMU `virt` guest runs on the host's cores, whose exposure is unverified | [the release's Fiasco build](#the-releases-fiasco-build) if [its open decision](#open-decisions) carries the patch; erXos's kernel |
+| FD33 | none | nothing a device does panics the kernel, and a fault ends only the faulting domain: an asynchronous error is contained at the device the platform's error records name, or at the thread a window presumes, and a fault of a domain's thread stops that thread with a typed fault record (K12, and CLAUDE.md's rule under "Untrusted input") | Fiasco's own interrupt, exception and asynchronous-error code, which no erXos test drives: the system-call fuzz campaign checks a domain's calls (FD24), not what a device does; how Fiasco handles an asynchronous error a device causes, or a storm of interrupts on a line, is unverified | a device that misbehaves, or a driver that makes it misbehave, may hang or panic Fiasco and end the machine instead of the driver's domain | erXos's kernel; whether a release accepts it is [an open decision](#open-decisions) |
+| FD34 | none | a range call that replaces a mapping is planned whole, its allocations made and its charge taken before anything changes, so the range is never unmapped between the old mapping and the new | the backend releases the old mapping, reserves the range again and maps the new object, with the range unmapped between the steps ([design-shared-code.md](design-shared-code.md#phase-1-on-fiasco)) | a runtime that swaps a module's code ends its domain, with a diagnostic naming the module, when either of the last two steps is refused or when a thread that blocking thread progress does not stop reads the code in that window | erXos's kernel |
 
 ## The scheduler on Fiasco
 
@@ -1697,8 +1699,9 @@ runs these steps for each task, a child with the status `ERX_EXIT_PARENT`:
 the task from the gate's label and each handle in that task's table, and keeps no pointer across a receive. Fiasco IPC
 queues no messages: a request is a live thread blocked on the gate, and deleting the thread removes it. So once a stop
 returns to the receive, nothing can name that task, and its label is reusable once its exit record or status is taken.
-A space handle in the creator's table names the stopped space's record until the creator closes it, and its generation
-makes it `ERX_ESTALE` once the record is freed.
+A space handle is a slot of the creator's object space and names the stopped space's record until the creator closes it,
+which frees the record; the root frees no slot before its holder's close ([Handles are slots](#handles-are-slots)), so the
+handle never names a later space.
 
 ### musl over the backend
 
@@ -2603,6 +2606,16 @@ fails the check. Development builds keep the debugger.
   (FD10). So for every other task the property stops resting on the root's code alone (an estimate
   of tens of lines, unverified). It covers one mapping: a page writable through one mapping and
   executable through another, and a device's write to a page mapped executable, stay FD8.
+* **Eager FP switching.** The fork deletes Fiasco's lazy FP switching: its `LAZY_FPU` option and every
+  section it guarded are gone from every architecture, so every switch saves the FP and SIMD state of
+  the thread it leaves and restores that of the thread it enters, as erXos's kernel does
+  ([design-kernel.md](design-kernel.md), "No FP or SIMD in the kernel; FP saved eagerly for
+  threads"), and no thread's registers stay in the unit while a thread of another space runs. SVE
+  stays trapped. `tools/lib/erx/fiasco_config.rb` forbids `CONFIG_LAZY_FPU` and `CONFIG_ARM_SVE`
+  in every configuration; `test/integration/fiasco_config_test.rb` resolves the fork's Kconfig and
+  its seeded case puts the option back with the `select` from `PERFORMANCE` that set it whatever the
+  defconfig said, which the check must catch. The switch itself has the *FP state* case of
+  [The release's cases](#the-releases-cases).
 
 Nothing else of erXos's kernel is built into Fiasco for the first release; the scheduler's stages
 come after it.
@@ -2705,7 +2718,7 @@ gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the c
 | **Function-API set** on each backend that carries a case's row, refusals included | a refusal changed in one backend |
 | **Mapping between tasks**, the QEMU gate's `native_space` suite, a root and two tasks: the root creates an object, writes a pattern, maps it read-only into one task and read-write into the other; the writer's bytes reach the reader; the root closes its handle and each task releases its range, and the pool's count returns only after the second release; a map over a committed page or a mapping, and a release that cuts a mapping, are `ERX_EINVAL` and change nothing. Host: `fiasco_vm_test.rb` over runs, pages and mappings | the release's decrement of the mapping list removed: the pool stays short. The overlap check removed: the host model maps over a committed page |
 | **Revoke**, `native_space`: an object mapped into both tasks is destroyed by its creator; each task's next read gives a fault record at its gate, and the pool's count returns; a destroy from a task that did not create it is `ERX_ERIGHTS` | the revoke step removed: the reader's read succeeds after the destroy |
-| **A stale handle**, `function_api`: a handle to a destroyed object is `ERX_ESTALE`, also after its record is reused by a new object | the generation comparison removed: the stale handle reads the new object's size |
+| **A stale handle**, `function_api`: a handle to a destroyed object is `ERX_ESTALE`, directly and by a service call, while its holder keeps the slot, and an object created meanwhile takes another slot | the root frees the holder's slot at the destroy: the new object takes it and the stale handle reads the new object's size |
 | **The tree**, from 1b-B, `native_space`: a task creates a sub-space, maps its own object into it and starts a thread there; the parent stops; the child's exit record, status `ERX_EXIT_PARENT`, comes before the parent's, each after its threads' deletions, and the pool's count returns | children walked after their parent: the child's object is freed while the child still maps it, and the child's spinning counter in that page moves after the parent's record |
 | **Passing**, `native_space`: the root passes a copy and a move of handles to one object into a task, which maps the copy after the root has closed its own handle and finds the root's pattern; each item comes back with its value in the task's table, its type and its mask's rights within the type's, less `DESTROY`; a pass of four into a table with room for three passes three and is `ERX_ELIMIT` at the fourth; a pass stops at a gate's handle with `ERX_ENOTSUP`, leaving the item before it passed; a pass from a space not the caller's, into the caller's own, of a space's handle and of more than four items are refused | none: the holder's map fails if a copy does not raise the count |
 | **A session's install**, `native_space`: a task binds a doorbell into the group of a child it created before the child's first thread exists, makes the channel's two sides and maps them as a session does, installs a budget, a group, both sides and its own doorbell into the child, refused a pass of a space's or a gate's handle, into its own space and into a handle that names no space, and starts the child with the values in the registers of `program_arg`'s objects, `budget` to `doorbell`, and a mark in each other argument register; the child finds every mark, maps its own side read-write and the task's side read-only, finds the task's value in the task's side and leaves its pattern in its own, is refused a bind into a group it neither created nor is the home of, takes its doorbell's ring and rings the task's | the creator's bind refused: the task's bind into the child's group is `ERX_ETYPE`. A bind into any group allowed: the child's refused bind succeeds. A pass into the caller's own space allowed: that pass succeeds. The trampoline loading fewer than eight registers: the child does not find its tag and ends without its status |
@@ -2718,7 +2731,7 @@ gate sets; a crash or hang of Fiasco is a HIGH finding and its input joins the c
 | **A task's start, time and release**, `native_space`: a task reads the wall clock the root set before the task was created and again after the root moves it; a task given a slice of a `domains/<name>/` release lists it with `erx_release_entry`, each path without the prefix and each offset from `release_addr` reading the file's bytes, one path longer than `utcb_bytes_max` included, and an index one past the slice is `ERX_ERANGE`; in a task holding a memory handle whose value equals the index of a thread it created and has not started, `erx_thread_start` of the memory handle is refused and the thread stays unstarted | `erx_time_page` in a task returning the root's address: the read faults. Offsets answered from the archive's start: the bytes differ. The stub taking one piece: the long path is cut. The base check removed: the start takes the memory handle for the thread |
 | **Devices in domains**, the production image suite with the harness's net device: each platform record path, base and line against QEMU's device tree; the network domain's driver reads each transport's magic and device id through objects the domain library gave them, and an interrupt reaches each driver's group | a platform record naming the transport of another device: that driver reads the wrong device id |
 | **Bounds of maps, supplies and copies**, `function_api`: `erx_vm_map`, `erx_mem_copy` and, from 1b-B, `erx_mem_supply` each with an offset plus length one page past the object, and with an offset near 2^64 whose sum wraps, are `ERX_ERANGE` and change nothing; a map off a page boundary or of size 0 is `ERX_EINVAL`; a copy into a slice is `ERX_ERIGHTS` | the end check written without checked arithmetic: the wrapping offset maps a page of the pool past the object, which the test finds by reading a pattern another object holds |
-| **Generations**, `function_api` with a host hook that sets a record's generation to its last value: the record's next free retires it, the next create takes another record, and the stale handle is `ERX_ESTALE`; a second thread created in a created space is `ERX_ENOTSUP` | the retire step removed: the generation wraps to an earlier value and the stale handle names the new object |
+| **Slot reuse**, `function_api`: two handles closed in turn, then a create: the create takes the slot freed first, not the one just closed; a second thread created in a created space is `ERX_ENOTSUP` | the free slots taken newest first: the create reuses the slot just closed |
 | **A group and its threads**, `native_space`: destroying a group whose home task still has a thread in it is `ERX_ENOTSUP` and the thread runs on; destroying the budget the group is charged to stops its home task, whose exit record arrives, and its stacks and pool pages return | the refusal removed: the service deletes the thread alone, and the pool count stays short by its stack |
 | **A payload read once**, a host test of the service's decoder over a public UTCB a second thread rewrites in a loop: `erx_debug_log` and `task_write` with their length changing between reads never copy more than `utcb_bytes_max` and never more than the length the decoder checked | the body reading the length again from the public UTCB: AddressSanitizer reports the overread |
 | **A configured holder restarted**, the QEMU gate's `device_give` suite: a configured domain holding the platform's spare unit opens it from its `given` record and reads the transport's magic; it is halted, the domain service restarts its row under the next id, and the new domain reads the magic again through the window and line its creation was given | the restart's plan with no gives: the new domain finds no record of the unit, and the cell's answer disagrees |
@@ -2743,6 +2756,7 @@ Each test below names the seeded failure that proves it ran:
 | thread limit | a create past the domain's limit answers `ERX_ELIMIT` | the count skips a sub-space's threads |
 | whole-space pause | a paused space's write counter stops advancing until the resume, with one thread parked on its semaphore, one in a umtx wait and one faulted and held; a space with a thread that repointed its exception handler ends at the deadline and the requester gets `ERX_EDEAD`; the root serves another domain's request while the pause is pending | the root skips the last thread it created; `Exr_cancel` dropped: the parked thread never arrives and the deadline ends the space; the root waiting for the arrivals: the other domain's request is not answered before the deadline |
 | the wall clock | a task's `erx_time_set_offset` on the time page's handle without `WRITE` answers `ERX_ERIGHTS`, and the page's offset is unchanged | the body's right check removed: the offset moves |
+| FP state | two threads of different spaces holding distinct vector registers keep them across switches and a migration between CPUs, and a fresh thread reads its vector registers as zero | the switch's restore skipped: the second thread reads the first's registers |
 | DMA confinement | a device's access outside its window is refused and reported | the whole pool mapped into the DMA space |
 | writable or executable | a request for such a mapping into a task fails at Fiasco's map, and the root still boots from `sigma0`'s mapping | the patch's check removed: the mapping is made; the exemption removed: the root does not start |
 | release licenses | the release image's link closure is all permissive | a release build with the debugger on; one with the original `kobject_rpc.h` restored in place |
@@ -2911,6 +2925,22 @@ hooks.
   carry the patch, since the Pi 4 is R1's hardware and the attack reads memory across the very
   isolation the release promises; price it with the null-request bench before it lands, and keep
   FD32 published until the patch's case passes.
+* **FD33: a device's input and a fault's reach on Fiasco.** The accepted deferral covers a domain's
+  input alone: "nothing a domain does can panic the kernel" rests on Fiasco's own code and on what
+  the system-call fuzz campaign checks (FD24). Whether a release also accepts that nothing a device
+  does panics Fiasco, and that a fault ends only the faulting domain, only as far as Fiasco's own
+  code gives it, with no erXos test driving that code, is not decided. Recommendation: accept it as
+  a published downside for R1, since no device of R1's platforms is confined (FD12) and a
+  misbehaving DMA-capable device already reaches the whole machine; add to the hostile suites'
+  Fiasco set an interrupt storm on a driver's line, whose pass is that the machine and the other
+  domains keep running, so the downside is measured rather than assumed.
+* **FD24: the kernel's reads of what a domain supplies.** CLAUDE.md's rules that the kernel never
+  loads or stores through an address a domain supplies, and reads each user-writable field once per
+  decision (K7), hold on Fiasco only as far as Fiasco's own code gives them. Whether a release
+  accepts that is not decided. Recommendation: accept it as part of FD24, which the system-call
+  fuzz campaign and the upstream watch defend, since proving either rule of Fiasco's inherited C++
+  would be an audit of code that erXos's kernel replaces, and the kernel states both by
+  construction.
 
 Decided, and applied above:
 

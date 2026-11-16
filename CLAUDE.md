@@ -129,7 +129,8 @@ These shape every design and change; the rules below apply them.
   [docs/design-fiasco.md](docs/design-fiasco.md) lists. R1, the first
   release, ships on that Fiasco: the backend uses Fiasco's own
   capabilities, factories, interrupts and DMA spaces, so isolation
-  between domains and budgets as walls are Fiasco's, and what Fiasco
+  between domains and budgets as walls rest on Fiasco and on the root
+  service's request decoder and placement code, and what Fiasco
   lacks against erXos's kernel is a published downside. Phase 2 builds
   erXos's kernel with every guarantee and replaces Fiasco.
   On Fiasco the properties only erXos's kernel enforces are deferred as
@@ -144,6 +145,9 @@ These shape every design and change; the rules below apply them.
   a domain does can panic the kernel" rests only on Fiasco's own code
   and on what erXos's system-call fuzz campaign checks (FD24). That is a
   weaker commitment than erXos's kernel makes, and I accepted it. The
+  same rule for what a device does, and that a fault ends only the
+  faulting domain, are FD33, whose acceptance is an open decision of
+  [docs/design-fiasco.md](docs/design-fiasco.md#open-decisions). The
   backend refuses a
   call it cannot implement over Fiasco with `ERX_ENOTSUP`, reports a
   value it cannot measure as unsupported or partial with its reporter
@@ -166,9 +170,9 @@ These shape every design and change; the rules below apply them.
   deadlock, and the results of the calls it offers, for trusted
   workloads. A stopgap a release ships, as R1 ships littlefs and LVGL,
   also commits to the release contract its design states for untrusted
-  workloads, and no more: where it runs, what it holds, what input
-  reaches it, what its failure ends and which fuzz targets cover that
-  input ([littlefs](docs/design-stopgap.md#release-contract),
+  workloads, and no more, such as where it runs, what it holds, what
+  input reaches it, what its failure ends and which fuzz targets cover
+  that input ([littlefs](docs/design-stopgap.md#release-contract),
   [LVGL](docs/design-display.md#lvgls-release-contract)). A call it does
   not offer fails with `ERX_ENOTSUP`, a value
   it cannot measure is reported as unsupported or partial with its
@@ -222,10 +226,13 @@ Third-party components are allowed when they pay for themselves.
   later phase replaces, as R1 runs on Fiasco and Phase 2 replaces it with
   erXos's kernel, is marked `release` in the dependency table. What
   separates it from a stopgap a release ships is where it runs: a stopgap
-  a release ships is confined, so its release contract states its
-  confinement and the input it is fuzzed against, while every domain's
-  isolation rests on a `release` component, so its whole design is its
-  release contract. Its replacement is
+  a release ships runs confined, its code in an address space that holds
+  only what its release contract names, though the data it serves is
+  still in that space's reach, so its contract states that confinement,
+  what a defect in it can reach and the input it is fuzzed against,
+  while every domain's isolation rests on a `release` component, so its
+  release contract is its design's contract section, which states the
+  isolation every domain rests on. Its replacement is
   planned in [docs/plan.md](docs/plan.md), what it lacks against that
   replacement is published with the release, and a release ships only a
   build of it whose link closure is permissive, which a release build
@@ -497,7 +504,7 @@ scripts live in `~/erxos-scratch/tools/`.
     * a stale capability never names a new object: every kernel call reaches
       objects through one lookup that checks generation, type and rights,
       and a capability slot retires before its generation wraps (on
-      Fiasco: FD1);
+      Fiasco: FD1, FD2);
     * rights only shrink: duplicating or transferring a capability
       intersects its rights with a mask, and no call adds a right;
     * no capability is ever in flight: capabilities pass only at an IPC
@@ -515,7 +522,7 @@ scripts live in `~/erxos-scratch/tools/`.
       promised to anyone, up to its cap; and a domain's budgets are
       walls, whose cap is fixed equal to their guarantee, so a domain is
       admitted or refused at its own budget alone and takes nothing from
-      another's (on Fiasco: FD14, FD25);
+      another's (on Fiasco: FD5, FD14, FD25);
     * a mapping never allows more than the capability that made it: each
       mapping keeps a ceiling fixed from that capability's rights, and
       changing its protection moves only beneath the ceiling (on Fiasco:
@@ -613,9 +620,9 @@ scripts live in `~/erxos-scratch/tools/`.
   first release's kernel. Every runtime runs in user mode, including the system
   domain's ERTS, which runs the trusted Erlang system services. Mechanism
   that every domain's isolation depends on lives in the kernel; on
-  Fiasco it lives in the kernel and in the system domain's root service,
-  the only creator of kernel objects and the only writer of any object
-  space or page table. The
+  Fiasco it lives in the kernel and in the request decoder and placement
+  code of the system domain's root service, the only creator of kernel
+  objects and the only writer of any object space or page table. The
   system domain is the root task: a C17 domain library in `liberx` builds
   and ends domains, Erlang policy in the system domain decides who gets
   what, and a fault of the system domain resets the machine. A domain's
@@ -655,7 +662,9 @@ scripts live in `~/erxos-scratch/tools/`.
     value between its check and its use. Kernel
     memory that user mode can write (UTCBs, vCPU state areas, shared areas)
     it reads only through accessors that load each field once per decision.
-    On Fiasco this holds only as far as Fiasco's own code gives it (FD24).
+    On Fiasco these hold only as far as Fiasco's own code gives them
+    (FD24); whether a release accepts that is an open decision of
+    [docs/design-fiasco.md](docs/design-fiasco.md#open-decisions).
   * Never let input-controlled depth drive unbounded recursion. Kernel C
     code recurses only through calls marked `musttail`, which compile to
     jumps or fail to build (on Fiasco, the C17 cores it links: FD24).
@@ -663,9 +672,13 @@ scripts live in `~/erxos-scratch/tools/`.
     does can panic the kernel: a malformed request fails with an error, and
     a fault ends only the faulting domain. The one exception, a device error
     the hardware reports too late to attribute, is a security residual in
-    `TODO.md`. On Fiasco this rests only on Fiasco's own code and on what
-    erXos's system-call fuzz campaign checks (FD24), a weaker commitment
-    that I accepted.
+    `TODO.md`. On Fiasco, that nothing a domain does panics the kernel
+    rests only on Fiasco's own code and on what erXos's system-call fuzz
+    campaign checks (FD24), a weaker commitment that I accepted; that
+    nothing a device does panics it, and that a fault ends only the
+    faulting domain, hold only as far as Fiasco's own code gives them
+    (FD33), and whether a release accepts that is an open decision of
+    [docs/design-fiasco.md](docs/design-fiasco.md#open-decisions).
   * Every kernel allocation is charged to a budget. A service admits a
     domain's requests only through that domain's facet and lane, on the
     service's own grant, so what one domain can make another spend is

@@ -221,7 +221,7 @@ records each departure with its reason and what keeping Fiasco's way would
 lose. Fiasco at commit `50bbe8a9` boots unmodified under HVF on the
 primary host when built to run in kernel mode without its hypervisor
 support ([research](research-hierarchical-scheduling.md#fiasco-under-hvf)),
-which makes it Fiasco behind this interface.
+which lets it stand behind this interface until this kernel replaces it.
 
 Prior art shapes the mechanisms. Fluke compares the process model with an
 event model of restartable calls, and seL4 a non-preemptible kernel with
@@ -7643,8 +7643,8 @@ work above come here.
 
 **Single pages.** The allocator hands out single pages and nothing
 larger. erXos's kernel takes single pages for everything, and its kernel
-stacks are mapped into their slots of the stack region page by page; the
-stopgap's thread blocks are two single pages mapped into an aligned slot
+stacks are mapped into their slots of the stack region page by page; Fiasco's
+thread blocks are two single pages mapped into an aligned slot
 of its thread region
 ([design-fiasco.md](design-fiasco.md#budgets-and-the-ownership-of-pages));
 and the contiguous pool is separate and outside the identity ([DMA and
@@ -7697,7 +7697,7 @@ put and record free at its retirement, and the list's, the allocator's
 and the tracker's locks are the
 core's ticket locks. The allocator's own take and put are referenced
 only from the backing and the free step, in `kernel/core/page.c`; the
-stopgap's `erx_page_free` is that put. A page is in exactly one of the
+Fiasco backend's `erx_page_free` is that put. A page is in exactly one of the
 four places of the identity at every instant between parts ([Chokepoint
 checks](#chokepoint-checks)).
 
@@ -8310,8 +8310,8 @@ appear. `tools/erx sysreg refresh --verify` extracts again and compares,
 on demand rather than in `make check`, so a hand-edited fact fails it
 without every build downloading the published data.
 
-Both sources bind erXos's kernel and the C17 code erXos adds to the
-stopgap; Fiasco's inherited C++ keeps its own register code.
+Both sources bind erXos's kernel and the C17 code erXos adds to
+Fiasco; Fiasco's inherited C++ keeps its own register code.
 
 ### Configuration
 
@@ -8697,8 +8697,10 @@ TLB, at most about once a second for each CPU that creates spaces on the
 first architecture, whose 65,535 ASIDs
 ([design-arch-aarch64.md](design-arch-aarch64.md#tlb-maintenance)) must
 all be used between rollovers, while creating and running a space takes
-an estimated 15 microseconds or more; Fiasco's unhardened
-state, accepted because only trusted code runs on it.
+an estimated 15 microseconds or more. What Fiasco, which R1 runs on,
+lacks against this kernel is not among them: it is a published downside,
+a row of [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)'s
+table.
 
 ## Verification and testing
 
