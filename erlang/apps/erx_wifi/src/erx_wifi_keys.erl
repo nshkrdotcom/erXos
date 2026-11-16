@@ -34,8 +34,6 @@ here, where it is made, and the holder checks lengths and parses nothing.
                 | {error, unavailable | no_secret | sae_only | no_pmk | no_commit | bad_element}.
 
 -define(ADDRESS, 6).
-%% A Rejected Groups list is one element's body: at most 254 bytes of 16-bit groups.
--define(REJECTED_MAX, 254).
 
 -doc """
 The request for SAE's commit under SSID's PT between the station's address Spa and
@@ -56,7 +54,7 @@ scalar, its element and its Rejected Groups list, empty when its commit carried 
 sae_key(Ssid, Scalar, Element, Rejected)
   when byte_size(Ssid) >= 1, byte_size(Ssid) =< ?ERX_IEEE80211_SSID_MAX,
        byte_size(Scalar) =:= ?ERX_SAE_SCALAR_SIZE, byte_size(Element) =:= 2 * ?ERX_SAE_SCALAR_SIZE,
-       byte_size(Rejected) rem 2 =:= 0, byte_size(Rejected) =< ?REJECTED_MAX ->
+       byte_size(Rejected) rem 2 =:= 0, byte_size(Rejected) =< ?ERX_SAE_REJECTED_GROUPS_MAX ->
     {sae_key, #{ssid => Ssid, scalar => Scalar, element => Element, rejected => Rejected}}.
 
 -doc """

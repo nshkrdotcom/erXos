@@ -174,9 +174,12 @@ enum ieee80211_eid_ext u8
 # coordinate are 32 bytes; the KCK of hash-to-element on it is 32 bytes (sae.h, line 12),
 # and the confirm's send-confirm counter stops at its 16-bit maximum (sae.c, lines
 # 2410-2411). A password identifier is at most 64 bytes (docs/design-wifi.md,
-# "Credentials").
+# "Credentials"). A Rejected Groups list is what follows the extension id in one
+# extension element: its length byte, at most 255, less that id, so at most 254 bytes,
+# 127 groups.
 limit sae_group u16 19
 limit sae_scalar_size u32 32
 limit sae_kck_size u32 32
 limit sae_send_confirm_max u16 0xffff
 limit sae_password_identifier_max u32 64
+limit sae_rejected_groups_max u32 254
