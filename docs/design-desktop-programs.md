@@ -546,19 +546,25 @@ the design needs follows from it:
 
 **Where the pairs come from.** `erx-raster` reports, beside each
 glyph's coverage, the font's index of the glyph, and after the glyphs
-the font's `GPOS` table as bytes, read through FreeType's
+the font's `GPOS` and `GDEF` tables as bytes, each empty when the font
+has none, read through FreeType's
 `FT_Load_Sfnt_Table` (`include/freetype/tttables.h`, line 758), and
 whether the font has a legacy `kern` table. `Erx::Gpos`, a reader in
-`tools/lib/erx`, takes the table and the role's glyph indices and
+`tools/lib/erx`, takes the two tables and the role's glyph indices and
 returns, in font units, the kerning of every ordered pair of the role's
 drawn glyphs that is not 0, as the OpenType specification applies it:
 
 * from the default language system of the `latn` script, or of `DFLT`
   when the font has no `latn` script, every feature tagged `kern`; a
-  font with neither has no pairs;
-* those features' lookups in the order of the lookup list, each adding
-  its value to the pair's, as a client processes the lookups of the
-  features it applies ("Features and lookups");
+  font with neither has no pairs, and a font whose chosen script has no
+  default language system is refused, since the font then kerns no
+  text that names no language and the reader would have to pick one;
+* the union of those features' lookup indices, each lookup applied once
+  however many times the features name it, in the order of the lookup
+  list, each adding its value to the pair's, as a client processes the
+  lookups of the features it applies ("Features and lookups"); Inter's
+  `DFLT` script names its three lookups twice in one `kern` feature
+  (2, 3, 1, 2, 3, 1), and its `latn` script once each;
 * within a lookup, its subtables in order, the first that matches
   giving the lookup's value ("Lookup table"): a format 1 subtable
   matches when its coverage holds the first glyph and that glyph's pair
@@ -566,11 +572,21 @@ drawn glyphs that is not 0, as the OpenType specification applies it:
   the first glyph, the second glyph's class being 0 when its class
   definition does not list it;
 * an extension lookup (type 9) read as the pair adjustment it wraps;
-* the lookup flags left unread: they choose glyphs to skip between the
-  two of a pair, bases, ligatures or marks by the `GDEF` table's classes
-  (common table formats, "Lookup table"), and the text path kerns
-  adjacent characters, each drawn as one spacing glyph; no code point of
-  the theme's ranges maps to a mark in any of the three fonts.
+* the lookup flags accepted only where they cannot change a pair of the
+  role's glyphs. A flag chooses glyphs to skip, bases, ligatures or
+  marks by the `GDEF` table's glyph classes, and a skipped glyph is
+  neither half of a pair (common table formats, "Lookup table"). The
+  reader accepts the bits that skip only marks, ignore marks (`0x0008`),
+  use a mark filtering set (`0x0010`) and a mark attachment type
+  (`0xFF00`), and refuses every other bit: right to left, ignore base
+  glyphs, ignore ligatures and the reserved bits. It also reads the
+  glyph class definition of the font's `GDEF` table and refuses a role
+  one of whose drawn glyphs is classed a mark, so the accepted bits skip
+  none of the role's glyphs and leave every pair as it is. The text
+  path kerns adjacent characters, each drawn as one spacing glyph.
+  Inter's three `kern` lookups set `0x0010`, `0x0010` and nothing, in
+  the order of the lookup list, and no code point of the theme's ranges
+  maps to a mark in any of the three fonts.
 
 FreeType has a reader of its own, `TT_CONFIG_OPTION_GPOS_KERNING`, which
 its build leaves off (`include/freetype/config/ftoption.h`, lines
@@ -585,9 +601,15 @@ rule, the first lookup's class value. It also drops every pair of a font
 one of whose `kern` lookups is not a pair adjustment (lines 677-678).
 So the step reads the table itself, in Ruby, where an offset past the
 table is a typed error and the reader is tested against tables built in
-the test; the font is a build input from the tree, checked against its
-recorded hash, not input from a domain, so the reader has no fuzz
-target.
+the test. The font is a third-party source: its recorded hash says the
+bytes are the ones imported, not that they are well formed, so the
+reader is a parser of untrusted input and has a fuzz target
+([Verification](#verification-and-testing)). Every input ends in pairs
+or in an `Erx::Error`, never another exception, and in time bounded by
+the table: each count is matched against the bytes it claims before
+anything it counts is read, each lookup is applied once, and an
+extension never wraps another extension, so the reader follows no
+cycle.
 
 **Rounding and bounds.** With a the glyph's advance as FreeType gives it
 (26.6 pixels, divided by 64) and k the pair's kerning scaled exactly,
@@ -620,19 +642,26 @@ first 400 ASCII lines of 8 to 70 characters of the tree's `README.md`
 
 So whole pixels shift each role's tracking by an amount that depends on
 its size, the `body` role about 0.09 pixel a glyph looser than the
-font and the `title` role tighter, while the spacing stays even. A pen
-kept in fractions of a pixel, each glyph's place rounded, keeps every
-line's length within half a pixel but moves a quarter of the distances
-between neighbours by half a pixel to a pixel, which reads as uneven
-spacing at these sizes. Exact length and even spacing together need
-glyphs rasterised at several horizontal phases and chosen by the pen's
-fraction, as current desktop systems draw text: a draw message that
-places each glyph, text subfonts three to four times as wide, and
-LVGL's font code changed to match, since it rounds each kerned advance
-to a whole pixel as this rule does
-(`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 250-256). That choice is
-[Open decisions](#open-decisions), 3; the pairs this section derives
-are the same data under either.
+font and the `title` role tighter, while the spacing stays even. A run
+of one narrow glyph shows the drift at its largest: the design's
+external review, with HarfBuzz 15.0.0 and FreeType's unhinted
+advances, set ten `i` of Inter Regular at 26.72 pixels at 11 pixels
+and 31.56 at 13, where this rule sets both at 30, since `i` has no
+pair and its advance, 2.67 and 3.16 pixels, rounds to 3 at either
+size. A pen kept in fractions of a pixel, each glyph's place rounded,
+keeps every line's length within half a pixel but moves a quarter of
+the distances between neighbours by half a pixel to a pixel, which may
+read as uneven spacing at these sizes. Exact length and even spacing
+together need glyphs rasterised at several horizontal phases and
+chosen by the pen's fraction, as current desktop systems draw text: a
+draw message that places each glyph, text subfonts three to four times
+as wide, and LVGL's font code changed to match, since it rounds each
+kerned advance to a whole pixel as this rule does
+(`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 250-256). Which of the
+three a person reads best at these sizes is judged by eye, on
+reference frames; that is [Open decisions](#open-decisions), 3, and the
+verification's line-length check gives it the numbers. The pairs this
+section derives are the same data under each.
 
 **The pair section.** When a role has pairs, its subfont file goes on
 after the glyph table with two fields of the subfont header's form, the
@@ -644,14 +673,22 @@ subfont without pairs ends at its glyph table, as `fixed` does. The
 body role's section is about 38 KiB and the display role's about 69
 KiB.
 
-`erx_font` checks the section with the rest of the file and refuses
-the whole file, with the reason `kern`, for a count of 0, entries short
-of the count or bytes after them, an index at or past the glyph count, a
-pair not above the one before it, an adjustment of 0, a pair naming a
-glyph of width 0, and a kerned advance outside 0 to 255; bytes after the
-glyph table that do not begin with the `kern` field stay `trailing`. It
-keeps the entries as the file's bytes and finds a pair by halving them,
-so a subfont costs its own size and no more.
+`erx_font` checks the section with the rest of the file. Bytes after
+the glyph table whose first field is not the word `kern`, fewer than a
+field's bytes among them, stay `trailing`. Once that field reads
+`kern`, every fault of the section refuses the whole file with the
+reason `kern`, a malformed count field included: the header's number
+reader answers `header` and takes a minus sign
+(`erlang/apps/erx_win/src/erx_font.erl`, lines 212-237), so the section
+reads its count under its own reason and checks the sign itself. Before it
+reads an entry, it requires the count to be at least 1 and the bytes
+after the count field to be exactly 5 times the count, so a missing
+count, a count of 0 or below, entries short of the count and bytes
+after them are one check; then, entry by entry, an index at or past the
+glyph count, a pair not above the one before it, an adjustment of 0, a
+pair naming a glyph of width 0, and a kerned advance outside 0 to 255.
+It keeps the entries as the file's bytes and finds a pair by halving
+them, so a subfont costs its own size and no more.
 
 **The text path.** The rule has one implementation, `erx_pen`, a pure
 module of `erx_memdraw`, which both sides of the display take:
@@ -690,13 +727,16 @@ advance. Each reader of the pairs calls it:
 
 **What the step refuses.** Beyond the refusals of the glyph step above,
 a role whose font has a legacy `kern` table, whose kerning would then
-have two sources, or whose `GPOS` table, under a `kern` feature, has a
-lookup that is not a pair adjustment, a pair adjustment of a format
-other than 1 or 2, value formats other than an advance of the first
-glyph and nothing of the second, an offset or count that reaches past
-the table, or a class at or past its subtable's class count; and a pair
-whose adjustment or kerned advance leaves its range, as above. Each
-names the role, the lookup and the subtable.
+have two sources; whose chosen script has no default language system;
+one of whose drawn glyphs `GDEF` classes a mark; or whose `GPOS` table,
+under a `kern` feature, has a lookup that is not a pair adjustment, an
+extension that wraps another extension, a lookup flag other than the
+mark bits above, a pair adjustment of a format other than 1 or 2, value
+formats other than an advance of the first glyph and nothing of the
+second, an offset or count that reaches past the table, or a class at
+or past its subtable's class count; and a pair whose adjustment or
+kerned advance leaves its range, as above. Each names the role, and the
+lookup and subtable where there is one.
 
 ### Spacing and layout
 
@@ -1444,13 +1484,35 @@ must catch:
   FreeType's rule, fails the sum, and one that stops at a format 1
   subtable whose coverage holds the first glyph fails the second case.
 * The same table cut short, with a value format of placement, with a
-  lookup of type 1 under `kern`, and a font with a legacy `kern` table,
-  are each refused with the step's typed error; a seeded reader without
-  its bound on offsets fails the first with another error.
+  lookup of type 1 under `kern`, with a lookup flag of ignore ligatures,
+  with a `latn` script without a default language system, with a
+  drawn glyph that `GDEF` classes a mark, and a font with a legacy
+  `kern` table, are each refused with the step's typed error; a seeded
+  reader without its bound on offsets fails the first with another
+  error, and one that leaves the flags unread accepts the third. The
+  table with its `kern` feature naming each lookup twice reads as the
+  table that names it once, where a seeded reader that applies a lookup
+  each time it is named doubles the sum.
+* `Erx::Gpos`'s fuzz target, `tools/fuzz/gpos_fuzz.rb`, run by
+  `make check-fuzz`, starts from the `GPOS` and `GDEF` tables of the
+  three Inter fonts, as `erx-raster` reports them, and from the tables
+  the test above builds, and changes, inserts and removes bytes, cuts
+  the tables short and writes offsets and counts near and past their
+  ends; each round passes a random set of up to 64 glyph indices, some
+  past the font's glyph count, so a round stays short. Every input must
+  end in pairs or in an `Erx::Error`: any other exception fails the run
+  with the input, as does a call that outlasts ten times the slowest
+  unmutated seed's time, measured when the target starts. Pairs it
+  returns name only the glyphs given, in order pairs of two, each with
+  a value that is not 0. A seeded reader without its bound on offsets
+  fails it with an exception other than `Erx::Error`, and one that
+  follows an extension wrapping another extension fails it on a table
+  whose extension points at itself.
 * Inter Regular in the `body` role, against the font's kerning: the
   step's values for `AV`, `To`, `Ty` and `",` are -140, -160, -128 and
   -168 units, each the one lookup's value or, for `",`, the sum of the
-  first lookup's 0 and the second's -168, as read for this design; the
+  first lookup's 0 and the second's -168, as read for this design and
+  confirmed with HarfBuzz 15.0.0 by the design's external review; the
   width that `erx_font:width/2` gives each two-character string, from
   `body.subfont` as `erx_font` parses it, equals the one computed from
   `erx-raster`'s advances and those units by the rounding rule in exact
@@ -1459,11 +1521,34 @@ must catch:
   that writes the adjustment with the wrong sign, or rounds k on its own
   rather than the kerned advance, fails these widths.
 * `erx_font` refuses each fault of the pair section with `kern`, an
-  index at the glyph count among them, and accepts a section whose last
-  index is one below it; a seeded reader with the bound off by one
-  accepts the first. Its fuzz target writes pair sections in one round
-  in four, and checks that every accepted file's pairs ascend, name
-  drawn glyphs and keep every kerned advance in 0 to 255.
+  index at the glyph count, a count of -1 with no entries and a count
+  field that is not a number among them, and accepts a section whose
+  last index is one below it; a seeded reader with the bound off by one
+  accepts the first, and one that reads the count with the header's
+  number reader answers `header` for the third. Its fuzz target
+  (`test/erlang/erx_font_fuzz.erl`) adds `kern` to its closed set of
+  reasons, writes pair sections in one round in four, and checks that
+  every accepted file's pairs ascend, name drawn glyphs and keep every
+  kerned advance in 0 to 255. Its two properties of an accepted file's
+  neighbours (lines 52-53) follow the section: a byte appended to a file
+  with pairs is refused with `kern`, and to one without them with
+  `trailing`; every prefix of the file is refused, except that a file
+  with pairs cut exactly at the end of its glyph table parses to the same
+  subfont without pairs.
+* The line-length check, over the `caption`, `body`, `heading` and
+  `title` subfonts: ten `i` measure 30 pixels by `erx_font:width/2` in
+  both `caption` and `body`, where the review measured the font's at
+  26.72 and 31.56; and over the tree's `README.md`, its lines chosen as
+  [Whole pixels and the pen](#kerning) chooses them, every line's width
+  by `erx_font:width/2` equals the
+  sum of the rule's rounded kerned advances computed in exact arithmetic
+  from `erx-raster`'s advances and the pairs' units. The test prints,
+  per role, the mean and the largest difference between each line's
+  width and its exact width, and the share of neighbour distances more
+  than half a pixel from the font's under each of the three pens of
+  [Open decisions](#open-decisions), 3, for the session that judges
+  them. A seeded width that adds exact advances and rounds the line once
+  gives the ten `i` 27 and 32 pixels and fails.
 * `erx_pen` places `AV` with V at A's advance plus the pair's
   adjustment; `erx_font:runs/2` cuts a line with one pair into two runs,
   and their `s` messages stepped through `erx_draw_core` draw every
@@ -1527,7 +1612,7 @@ this part starts:
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
 | Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files are in the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive, `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip`, SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
-| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, and its loader of each glyph's index and of a font's `GPOS` table, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
+| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, and its loader of each glyph's index and of a font's `GPOS` and `GDEF` tables, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
 
 The icon set is erXos's own work, rasterised through FreeType with the
 fonts. What an image carries from the glyph step is the coverage of
@@ -1549,9 +1634,9 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
 | FreeType's own `GPOS` kerning (`TT_CONFIG_OPTION_GPOS_KERNING`) and `FT_Get_Kerning` | no reader to write, and it reads class pairs as well as single ones (`src/sfnt/ttgpos.c`, lines 908-940), which give 13,701 of Inter Regular's 14,587 kerned pairs over the theme's ranges; but it takes the first matching subtable across the `kern` lookups instead of adding them, and so loses 529 to 568 of Inter's pairs per font ([Kerning](#kerning)) |
-| A pen in fractions of a pixel, each glyph's place rounded | exact line lengths, but a quarter of the distances between neighbours off by half a pixel to a pixel at the text roles' sizes, and a new draw message; with glyph phases it is [Open decisions](#open-decisions), 3 |
-| HarfBuzz as a pinned host tool | a full shaper, correct by construction, but a large C++ dependency whose only use would be the values of single pairs, read back through `hb-shape` and filtered of every other feature it applies |
-| The `GPOS` reader in C inside `erx-raster` | the same rules in a language where every offset is a memory-safety question, with a fuzz target of its own; Ruby makes an offset past the table a typed error, and the step's other decisions, rounding among them, are already Ruby |
+| A pen in fractions of a pixel, each glyph's place rounded | exact line lengths, but a quarter of the distances between neighbours off by half a pixel to a pixel at the text roles' sizes; it is one of the three pens of [Open decisions](#open-decisions), 3, judged by eye |
+| HarfBuzz as a pinned host tool | a full shaper, an independent and widely used implementation of the same rules, but a large C++ dependency whose only use would be the values of single pairs, read back through `hb-shape` and filtered of every other feature it applies |
+| The `GPOS` reader in C inside `erx-raster` | the same rules and the same fuzz target in a language where every offset is a memory-safety question; Ruby makes an offset past the table a typed error, and the step's other decisions, rounding among them, are already Ruby |
 | The pairs in a sibling file beside each subfont | two files a reader must load and keep together, for nothing a stock Plan 9 reader needs: it ignores what follows the glyph table |
 | Kerning in the draw server, a pair table loaded into a font cache | a new message and a new kind of data in the display domain, charged to a connection's quota, to save a few `s` messages per kerned line; the client already knows the pairs |
 | A class table, as `GPOS` and LVGL's class form store kerning | smaller for Inter, but two class maps, a matrix and the exceptions of format 1 folded into extra classes, where a sorted list of pairs is one table that every reader searches the same way |
@@ -1639,29 +1724,49 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 2. **An independent shaper as the kerning test's oracle.** The values
    the kerning tests expect of Inter were read for this design by a
    reader outside the tree, and the reader's rules are pinned by a table
-   the test builds ([Verification](#verification-and-testing)); no
-   shaper has checked them. HarfBuzz, pinned and built out of tree as a
-   test-only tool, would check every pair of every role, at the cost of
-   a C++ dependency used by one test. Recommendation: not now; take it
-   when a second font or script enters the theme, where a shaper's rules
-   (script itemisation, marks) begin to matter.
-3. **Whole-pixel pen or glyph phases.** The design's pen moves by whole
-   pixels: spacing within half a pixel of the font's at every pair, no
-   change to the draw protocol, the subfonts or LVGL, and each role's
-   tracking off the font's by up to about 0.09 pixel a glyph ([Whole
-   pixels and the pen](#kerning)). The alternative keeps the pen in
-   fractions of a pixel and rasterises each text role's glyphs at three
-   or four horizontal phases: exact line lengths and each glyph placed
-   within a sixth to an eighth of a pixel, the way current desktop systems set
-   text, at the cost of a draw message that places each glyph, text
-   subfonts three to four times as wide (the `display` role keeps one
-   phase) and a change to LVGL's font code. A fractional pen without
-   phases is not an option worth taking: it trades even spacing for
-   line length. Recommendation: build the whole-pixel pen with 8.12 and
-   8.13, then judge the phases on the reference frames of clock and
-   month at 13 pixels beside the same text set at exact positions; adopt them, as a
-   design of their own in design-display and here, if the tracking
-   shows.
+   the test builds ([Verification](#verification-and-testing)). The
+   design's external review checked the four values the tests name with
+   HarfBuzz 15.0.0 and found them the same (`AV` -140, `To` -160, `Ty`
+   -128, `",` -168 units), but no shaper checks the rest, and a reader
+   and a test table written from one reading of the specification can
+   share a misreading. HarfBuzz, pinned and built out of tree as a
+   test-only tool, would compare every pair of every role, with script
+   and features fixed, at the cost of a C++ dependency used by one test.
+   The review recommends that comparison over all supported pairs when
+   the reader lands, and finds a second font no condition for it.
+   Recommendation: not now; take it when a second font or script enters
+   the theme, where a shaper's rules (script itemisation, marks) begin
+   to matter. The review's recommendation, the comparison when the
+   reader lands, is the other choice.
+3. **Which pen: whole pixels, rounded fractional positions or glyph
+   phases.** The design's pen moves by whole pixels: spacing within half
+   a pixel of the font's at every pair, no change to the draw protocol,
+   the subfonts or LVGL, and each role's tracking off the font's by up
+   to about 0.09 pixel a glyph on ordinary text and more on runs of
+   narrow glyphs, ten `i` at 11 pixels 3.3 pixels long ([Whole pixels
+   and the pen](#kerning)). The second pen keeps each glyph's origin in
+   fractions of a pixel, adding the font's exact kerned advances, and
+   rounds each origin, with one bitmap per glyph: every line's length
+   within half a pixel of the font's, at the cost of the fractional
+   metrics kept beside the whole ones in each form the step writes, a
+   cut of a line into runs wherever a rounded origin is not the last one
+   plus its width, which is the run mechanism kerning already uses but
+   with many more runs, and LVGL's layout path changed to keep fractions,
+   not only its pair scale. The design's external review favours this
+   pen; the design's own measurement found it leaves 19 to 28 percent of
+   the distances between neighbours half a pixel to a pixel off the
+   font's, against none for the whole-pixel pen. The third pen keeps the
+   fractional origins and rasterises each text role's glyphs at three or
+   four horizontal phases: exact line lengths and each glyph placed
+   within a sixth to an eighth of a pixel, the way current desktop
+   systems set text, at the cost of a draw message that places each
+   glyph, text subfonts three to four times as wide (the `display` role
+   keeps one phase) and a change to LVGL's font code. Recommendation:
+   build the whole-pixel pen with 8.12 and 8.13, then compare the three
+   in a type session on the reference frames of clock and month at 11
+   and 13 pixels, the same text set by each pen, with the line-length
+   check's numbers beside them; adopt another pen, as a design of its
+   own in design-display and here, if the frames show it reads better.
 
 ## References
 
