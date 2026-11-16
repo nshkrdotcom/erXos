@@ -120,8 +120,8 @@ opcode_zero_only_updates_the_count_test() ->
 
 an_unanswered_command_stops_test() ->
     {Actions, Core} = to_command(16#0C03, new(1)),
-    [{timer, Token, 5000}] = [Timer || {timer, _, _} = Timer <- Actions],
-    ?assertEqual({stop, {command_timeout, reset}}, erx_bt_hci_core:step({timeout, Token}, Core)).
+    ?assert(lists:member({timer, 5000}, Actions)),
+    ?assertEqual({stop, {command_timeout, reset}}, erx_bt_hci_core:step(timeout, Core)).
 
 shared_buffers_are_read_with_read_buffer_size_test() ->
     {_, Core} = to_command(16#2002, new(1)),
@@ -173,21 +173,78 @@ a_disconnect_answered_by_status_frees_the_slot_test() ->
     {ok, Actions, Asked} = erx_bt_hci_core:step({disconnect, 16#40, 16#13}, Core),
     ?assert(lists:member({write, <<1, 6, 4, 3, 16#40, 0, 16#13>>}, Actions)),
     {ok, [], Written} = erx_bt_hci_core:step(written, Asked),
-    {ok, [], Answered} = answer(Written, {command_status, 0, 1, 16#0406}),
+    {ok, [cancel_timer], Answered} = answer(Written, {command_status, 0, 1, 16#0406}),
     {ok, More, _} = erx_bt_hci_core:step({event, {disconnection_complete, 0, 16#40, 16#16}}, Answered),
     ?assert(lists:member({write, <<1, 16#0A, 16#20, 1, 1>>}, More)).
 
-%% The explored case: every state reachable from start, breadth first, up to a bound on
-%% the states seen. The controller at each state may: take the writer's item; answer the
-%% command in flight well, with a failed status, or with another command's opcode; let a
-%% deadline pass; and once ready, connect, disconnect, complete packets truly or
-%% falsely, and take a link's packet. The invariants hold on every transition, every
-%% path ends in ready or a stop with a reason, a path patches at most once, and at
-%% quiescence advertising is on exactly while connections are below the limit.
--record(world, {core, writer = idle, command = none, timers = [], patches = 0, ready = false}).
+%% Num_HCI_Command_Packets 0: the next command falls due, unsent, under its deadline,
+%% which passes unless an opcode-0 event allows it (Part E, 4.4).
+a_command_the_controller_never_allows_stops_on_its_deadline_test() ->
+    {_, Core} = to_command(16#0C03, new(1)),
+    {ok, [], Written} = erx_bt_hci_core:step(written, Core),
+    {ok, Actions, Due} = answer(Written, {command_complete, 0, 16#0C03, <<0>>}),
+    ?assertEqual([cancel_timer, {timer, 5000}], Actions),
+    ?assertEqual({stop, {command_timeout, {first, read_local_version}}}, erx_bt_hci_core:step(timeout, Due)),
+    {ok, Allowed, _} = answer(Due, {command_complete, 1, 0, <<>>}),
+    ?assertEqual([{write, <<1, 1, 16#10, 0>>}], Allowed).
+
+%% A packet still on the writer's list has not reached the controller, so a completion
+%% of it is forged: the list stays within the credits however the line stalls.
+a_completion_of_a_queued_packet_stops_test() ->
+    {_, Core} = connected(1, 16#40),
+    {ok, [{write, _}], One} = erx_bt_hci_core:step({send, 16#40, 0, <<1>>}, Core),
+    {ok, [], Two} = erx_bt_hci_core:step({send, 16#40, 0, <<2>>}, One),
+    ?assertMatch({ok, [], _}, erx_bt_hci_core:step({event, {number_of_completed_packets, [{16#40, 1}]}}, Two)),
+    ?assertEqual({stop, {completion_beyond_in_flight, 16#40, 2}},
+                 erx_bt_hci_core:step({event, {number_of_completed_packets, [{16#40, 2}]}}, Two)).
+
+%% A command is in flight once the writer has it: with the line stalled, an answer to
+%% the next command, still queued, is forged.
+an_answer_to_a_queued_command_stops_test() ->
+    {_, Core} = to_command(16#0C03, new(1)),
+    {ok, Actions, Queued} = answer(Core, complete(16#0C03, <<0>>)),
+    ?assertEqual([cancel_timer, {timer, 5000}], Actions),
+    ?assertEqual({stop, {answer_before_sent, 16#1001}}, answer(Queued, complete(16#1001, version(15)))).
+
+fewer_buffers_than_connections_lower_the_limit_test() ->
+    {_, Core} = to_command(16#2002, new(2)),
+    {ok, _, Read} = answer(Core, complete(16#2002, <<0, 27, 0, 1>>)),
+    ?assertMatch(#{limit := 1, free := 1}, erx_bt_hci_core:facts(Read)).
+
+%% LE Read Buffer Size's length 0 also means shared buffers; Read Buffer Size reserves
+%% no lengths, but a length or count of 0 is outside its range (7.8.2, 7.4.5).
+shared_buffers_take_any_length_from_one_test() ->
+    {_, Core} = to_command(16#2002, new(1)),
+    {ok, [], Written} = erx_bt_hci_core:step(written, Core),
+    {ok, Actions, Next} = answer(Written, complete(16#2002, <<0, 0, 0, 4>>)),
+    {_, Shared} = drive(16#1005, Actions, Next),
+    {ok, _, Read} = answer(Shared, complete(16#1005, <<0, 8, 0, 0, 3, 0, 0, 0>>)),
+    ?assertMatch(#{free := 3}, erx_bt_hci_core:facts(Read)),
+    ?assertEqual({stop, {step_failed, shared_buffers, {buffers, 0, 3}}},
+                 answer(Shared, complete(16#1005, <<0, 0, 0, 0, 3, 0, 0, 0>>))).
+
+%% The explored case: every state reachable from start, breadth first, until none is
+%% left; running out of the budget first fails. The world is the core and what the
+%% process and the controller hold: the writer's item, the command written and not yet
+%% answered, and whether the one deadline is armed. No timer token or counter is in the
+%% state, so the states are finite. At each state the controller and the clock may:
+%% take the writer's item; let the deadline pass; answer the command written well (and
+%% allowing one more command or none), with a failed status, with another command's
+%% opcode, or by Command Status; send an opcode-0 event allowing one command or none;
+%% report a hardware error or a malformed event; once, an event or ACL packet the core
+%% drops; connect, during the bring-up or while advertising; and for each live handle,
+%% disconnect it from either side, take or deliver a packet, and complete packets truly
+%% or falsely. The invariants hold on every transition; every state before ready has
+%% its deadline armed, so every path ends in ready or a stop; a path patches at most
+%% once; and at quiescence advertising is on exactly while connections are below the
+%% limit in force.
+-record(world, {core, writer = idle, command = none, deadline = false, patches = 0, ready = false}).
+
+%% About 14,000 states for each configuration explored.
+-define(EXPLORE_BUDGET, 100000).
 
 explored_core_keeps_its_invariants_test_() ->
-    {timeout, 120, fun() ->
+    {timeout, 60, fun() ->
         Patched = (?READY_CONFIG(2))#{patch => #{manufacturer => 15, records => [{16#FC4C, <<1, 2>>}, {16#FC4E, <<>>}]}},
         [explore(Config) || Config <- [?READY_CONFIG(2), Patched]]
     end}.
@@ -197,15 +254,20 @@ explore(Config) ->
     World = observe(Actions, #world{core = Core}),
     {ok, LineActions, Next} = erx_bt_hci_core:step(line_ready, World#world.core),
     Start = observe(LineActions, World#world{core = Next}),
-    Stats = walk(queue:from_list([Start]), sets:from_list([key(Start)]), #{ready => 0, stops => #{}}, 30000),
+    {exhausted, Stats} = walk(queue:from_list([Start]), sets:from_list([key(Start)], [{version, 2}]),
+                              #{ready => 0, stops => #{}}, ?EXPLORE_BUDGET),
     ?assert(maps:get(ready, Stats) > 0),
-    ?assert(map_size(maps:get(stops, Stats)) > 3).
+    ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
+                  connection_beyond_limit, connection_during_bringup, duplicate_handle, hardware_error,
+                  malformed_event, step_failed],
+                 lists:sort(maps:keys(maps:get(stops, Stats)))).
 
 walk(Queue, Seen, Stats, Budget) ->
     case queue:out(Queue) of
-        {empty, _} -> Stats;
-        {_, _} when Budget =:= 0 -> Stats;
+        {empty, _} -> {exhausted, Stats};
+        {_, _} when Budget =:= 0 -> {budget_spent, Stats};
         {{value, World}, Rest} ->
+            check_progress(World),
             check_quiescent(World),
             {Queue1, Seen1, Stats1} = lists:foldl(fun(Input, Acc) -> visit(World, Input, Acc) end,
                                                   {Rest, Seen, count_ready(World, Stats)}, inputs(World)),
@@ -215,10 +277,11 @@ walk(Queue, Seen, Stats, Budget) ->
 visit(World, Input, {Queue, Seen, Stats}) ->
     case erx_bt_hci_core:step(Input, World#world.core) of
         {stop, Reason} ->
-            ?assert(is_atom(Reason) orelse is_tuple(Reason)),
+            ?assertNotMatch({unexpected_input, _}, Reason),
             {Queue, Seen, Stats#{stops := maps:update_with(element(1, tuple(Reason)), fun(N) -> N + 1 end, 1,
                                                           maps:get(stops, Stats))}};
         {ok, Actions, Core} ->
+            check_deadline_kept(Input, Actions),
             Next = observe(Actions, consume(Input, World#world{core = Core})),
             check(Next),
             Key = key(Next),
@@ -231,23 +294,36 @@ visit(World, Input, {Queue, Seen, Stats}) ->
 tuple(Reason) when is_tuple(Reason) -> Reason;
 tuple(Reason) -> {Reason}.
 
-key(#world{core = Core, writer = Writer, command = Command, timers = Timers, patches = Patches}) ->
-    {Core, Writer, Command, length(Timers), Patches}.
+key(#world{core = Core, writer = Writer, command = Command, deadline = Deadline, patches = Patches}) ->
+    {Core, Writer, Command, Deadline, Patches}.
 
 count_ready(#world{ready = true}, #{ready := N} = Stats) -> Stats#{ready := N + 1};
 count_ready(_, Stats) -> Stats.
 
-%% What the controller and the clock may do next.
-inputs(#world{core = Core, writer = Writer, command = Command, timers = Timers}) ->
-    Facts = erx_bt_hci_core:facts(Core),
-    Links = maps:get(links, Facts),
+%% What the controller and the clock may do next. Left out: a dropped input after the
+%% first, since the count is all it changes; a new connection while the core holds
+%% advertising off below the limit, which a controller sends only from advertising it
+%% enabled and has not yet reported, a race in which advertising may stay on at the
+%% limit until the next connection stops the process; and an answer to a command still
+%% queued for the writer, which a case gives.
+inputs(#world{core = Core, writer = Writer, command = Command, deadline = Deadline, ready = Ready}) ->
+    #{links := Links, advertising := Advertising, dropped := Dropped, limit := Limit} = erx_bt_hci_core:facts(Core),
     [written || Writer =:= busy] ++
-        [{timeout, Token} || Token <- Timers] ++
+        [timeout || Deadline] ++
         answers(Command) ++
-        [{event, {le_connection_complete, 0, Handle, #{}}} || maps:get(advertising, Facts), Handle <- [1, 2],
+        [{event, {command_complete, Allowed, 0, <<>>}} || Allowed <- [0, 1]] ++
+        [{event, {hardware_error, 1}}, {event, malformed}] ++
+        [Drop || Dropped =:= 0, Drop <- [{event, {unknown, 16#FF}}, {acl, 3, 2, 0, <<1>>},
+                                         {event, {disconnection_complete, 0, 3, 16#13}}]] ++
+        [{event, {le_connection_complete, 0, Handle, #{}}} || Advertising orelse not Ready, Handle <- [1, 2],
                                                               not is_map_key(Handle, Links)] ++
-        lists:append([[{event, {disconnection_complete, 0, Handle, 16#13}},
+        [{event, {le_connection_complete, 0, 4, #{}}} || Ready, map_size(Links) >= Limit] ++
+        lists:append([[{event, {le_connection_complete, 0, Handle, #{}}},
+                       {event, {disconnection_complete, 0, Handle, 16#13}},
+                       {disconnect, Handle, 16#13},
                        {send, Handle, 0, <<Handle>>},
+                       {acl, Handle, 2, 0, <<Handle>>},
+                       {event, {encryption_change, 0, Handle, 1}},
                        {event, {number_of_completed_packets, [{Handle, InFlight + 1}]}}] ++
                       [{event, {number_of_completed_packets, [{Handle, 1}]}} || InFlight > 0]
                       || Handle := InFlight <- Links]) ++
@@ -255,11 +331,13 @@ inputs(#world{core = Core, writer = Writer, command = Command, timers = Timers})
 
 answers(none) -> [];
 answers({Opcode, _}) when Opcode =:= 16#0406 ->
-    [{event, {command_status, 0, 1, Opcode}}, {event, {command_status, 2, 1, Opcode}}];
+    [{event, {command_status, 0, 1, Opcode}}, {event, {command_status, 2, 1, Opcode}},
+     {event, complete(Opcode, <<0>>)}, {event, complete(Opcode, <<2>>)}];
 answers({Opcode, _} = Command) ->
-    [{event, complete(Opcode, good(Command))}, {event, complete(Opcode, <<1>>)},
-     {event, complete(Opcode bxor 1, <<0>>)}, {event, {command_status, 0, 1, Opcode}}] ++
-        [{event, complete(Opcode, <<0, 0, 0, 0>>)} || Opcode =:= 16#2002].
+    [{event, {command_complete, Allowed, Opcode, good(Command)}} || Allowed <- [0, 1], not is_buffers(Opcode)] ++
+        [{event, complete(Opcode, <<1>>)}, {event, complete(Opcode, bad_layout(Command))},
+         {event, complete(Opcode bxor 1, <<0>>)}, {event, {command_status, 0, 1, Opcode}}] ++
+        [{event, complete(Opcode, Return)} || Return <- buffers(Opcode)].
 
 good({16#1001, _}) -> version(15);
 good({16#1002, _}) -> <<0, 0:512>>;
@@ -269,16 +347,30 @@ good({16#2002, _}) -> <<0, 27, 0, 4>>;
 good({16#1005, _}) -> <<0, 27, 0, 0, 3, 0, 0, 0>>;
 good(_) -> <<0>>.
 
-%% The world after an input: the writer's item taken, the command answered, a timer
-%% fired.
+%% A success whose return parameters are one octet too long.
+bad_layout(Command) -> <<(good(Command))/binary, 0>>.
+
+%% The buffer answers explored, in place of good/1's: two buffers, one per connection;
+%% five, two per connection and one no link may take; shared buffers by a count or a length of 0; one buffer,
+%% below the limit of 2; and a reserved LE length; then from Read Buffer Size two
+%% buffers, and a count of 0.
+buffers(16#2002) -> [<<0, 27, 0, 2>>, <<0, 27, 0, 5>>, <<0, 27, 0, 0>>, <<0, 0, 0, 2>>, <<0, 27, 0, 1>>, <<0, 26, 0, 2>>];
+buffers(16#1005) -> [<<0, 27, 0, 0, 2, 0, 0, 0>>, <<0, 27, 0, 0, 0, 0, 0, 0>>];
+buffers(_) -> [].
+
+is_buffers(Opcode) -> buffers(Opcode) =/= [].
+
+%% The world after an input: the writer's item taken, the command answered, the
+%% deadline passed.
 consume(written, World) -> World#world{writer = idle};
-consume({timeout, Token}, #world{timers = Timers} = World) -> World#world{timers = lists:delete(Token, Timers)};
+consume(timeout, World) -> World#world{deadline = false};
 consume({event, {command_complete, _, Opcode, _}}, #world{command = {Opcode, _}} = World) -> World#world{command = none};
 consume({event, {command_status, _, _, Opcode}}, #world{command = {Opcode, _}} = World) -> World#world{command = none};
 consume(_, World) -> World.
 
 %% The world after the core's actions, checking that the writer is given one item at a
-%% time and that a command is written only while none is in flight.
+%% time, that a command is written only while none is in flight, and that one deadline
+%% at most is armed.
 observe(Actions, World) ->
     lists:foldl(fun observe_action/2, World, Actions).
 
@@ -290,8 +382,14 @@ observe_action({write, <<1, _/binary>>}, _World) ->
     erlang:error(second_command_in_flight);
 observe_action({write, <<2, _/binary>>}, World) ->
     World#world{writer = busy};
-observe_action({timer, Token, _}, #world{timers = Timers} = World) ->
-    World#world{timers = [Token | Timers]};
+observe_action({timer, _}, #world{deadline = true}) ->
+    erlang:error(second_deadline);
+observe_action({timer, _}, World) ->
+    World#world{deadline = true};
+observe_action(cancel_timer, #world{deadline = false}) ->
+    erlang:error(cancel_without_deadline);
+observe_action(cancel_timer, World) ->
+    World#world{deadline = false};
 observe_action({ready, _}, World) ->
     World#world{ready = true};
 observe_action(_, World) ->
@@ -301,16 +399,30 @@ patch_start(16#FC2E) -> 1;
 patch_start(_) -> 0.
 
 check(#world{core = Core, patches = Patches}) ->
-    #{links := Links, free := Free} = erx_bt_hci_core:facts(Core),
+    #{links := Links, free := Free, limit := Limit} = erx_bt_hci_core:facts(Core),
     ?assert(Patches =< 1),
     ?assert(Free >= 0),
+    ?assert(map_size(Links) =< Limit),
     ?assert(lists:all(fun(InFlight) -> InFlight >= 0 end, maps:values(Links))).
 
-%% With nothing written or in flight, a ready core advertises exactly while connections
-%% are below the limit (2 in the explored configurations).
-check_quiescent(#world{ready = true, writer = idle, command = none, core = Core}) ->
-    #{links := Links, advertising := Advertising} = erx_bt_hci_core:facts(Core),
-    ?assertEqual(map_size(Links) < 2, Advertising);
+%% An opcode-0 event only updates the count: it neither arms nor disarms the deadline, so
+%% repeating it cannot hold a command off for ever.
+check_deadline_kept({event, {command_complete, _, 0, _}}, Actions) ->
+    ?assertEqual([], [Action || Action <- Actions, Action =:= cancel_timer orelse element(1, tuple(Action)) =:= timer]);
+check_deadline_kept(_Input, _Actions) ->
+    ok.
+
+%% Before ready, a deadline is always armed, which passes into the next step or a stop.
+check_progress(#world{ready = false, deadline = Deadline}) ->
+    ?assert(Deadline);
+check_progress(_) ->
+    ok.
+
+%% With nothing written, in flight or due, a ready core advertises exactly while
+%% connections are below the limit in force.
+check_quiescent(#world{ready = true, writer = idle, command = none, deadline = false, core = Core}) ->
+    #{links := Links, advertising := Advertising, limit := Limit} = erx_bt_hci_core:facts(Core),
+    ?assertEqual(map_size(Links) < Limit, Advertising);
 check_quiescent(_) ->
     ok.
 
@@ -344,8 +456,8 @@ drive(Opcode, Actions, Core) ->
             {ok, Next, Answered} = answer(Written, complete(Other, good({Other, x}))),
             drive(Opcode, Next, Answered);
         [] ->
-            [{timer, Token, _}] = [Timer || {timer, _, _} = Timer <- Actions],
-            {ok, Next, Waited} = erx_bt_hci_core:step({timeout, Token}, Core),
+            [{timer, _}] = [Timer || {timer, _} = Timer <- Actions],
+            {ok, Next, Waited} = erx_bt_hci_core:step(timeout, Core),
             drive(Opcode, Next, Waited)
     end.
 
@@ -353,7 +465,7 @@ drive(Opcode, Actions, Core) ->
 ready(Limit) ->
     {Actions, Core} = to_command(16#200A, new(Limit)),
     {ok, [], Written} = erx_bt_hci_core:step(written, Core),
-    {ok, [], Ready} = answer(Written, complete(16#200A, <<0>>)),
+    {ok, [cancel_timer], Ready} = answer(Written, complete(16#200A, <<0>>)),
     {Actions, Ready}.
 
 %% A ready core with one link on Handle.

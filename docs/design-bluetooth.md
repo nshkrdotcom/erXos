@@ -94,7 +94,7 @@ peripheral role, and is held to what each part requires of it:
 | Part | What erXos implements first | What it rests on |
 | --- | --- | --- |
 | Vol 4 Part A, UART transport (H4) | the host end of the line | a one-byte packet indicator before each HCI packet, `0x01` command, `0x02` ACL data, `0x04` event (section 2, Table 2.1); 8 data bits, no parity, one stop bit, RTS/CTS, which "should not be used for flow control of HCI" (section 3); a wrong indicator or an out-of-range length is a loss of synchronization, after which "a reset is needed" (section 4) |
-| Vol 4 Part E, HCI | the commands and events of a peripheral's host | one command outstanding within the controller's `Num_HCI_Command_Packets` (4.4); no ACL packet sent while the controller's free-buffer count is zero (4.1.1); a Disconnection Complete returns every unacknowledged packet of its handle (4.2); LE Read Buffer Size describes packets from host to controller (7.8.2), and the host states the longest ACL packet it accepts with Host Buffer Size, by which the controller segments what it sends the host, flow control on or off (7.3.39) |
+| Vol 4 Part E, HCI | the commands and events of a peripheral's host | one command outstanding within the controller's `Num_HCI_Command_Packets` (4.4); no ACL packet sent while the controller's free-buffer count is zero (4.1.1); a Disconnection Complete returns every unacknowledged packet of its handle (4.3); LE Read Buffer Size describes packets from host to controller (7.8.2), and the host states the longest ACL packet it accepts with Host Buffer Size, by which the controller segments what it sends the host, flow control on or off (7.3.39) |
 | Vol 3 Part A, L2CAP | the three LE-U fixed channels, ATT `0x0004`, LE signaling `0x0005`, SMP `0x0006` (2.1) | an unknown signaling command answered with `L2CAP_COMMAND_REJECT_RSP`, "Command not understood" (4.1) |
 | Vol 3 Part F, ATT | a server | a server answers at least Find Information and Read (3.3); an unsupported request is answered Request Not Supported, an unsupported command ignored (3.3); one request and one indication outstanding per bearer, and commands that cannot be processed are discarded (3.3.2); a transaction not completed in 30 s fails the bearer (3.3.3); a value is at most 512 octets (3.2.9); the error codes of Table 3.4 |
 | Vol 3 Part G, GATT | the server features of Table 4.1 | the mandatory discovery and read sub-procedures (4.2); the Service Changed characteristic exists when services can change in the device's lifetime, and is indicated to a bonded client at reconnection (2.5.2); a Client Characteristic Configuration persists for bonded clients and resets for others (3.3.3.3); default ATT_MTU 23 (5.2.1) |
@@ -724,12 +724,24 @@ status as its reason.
    rather than half a patch. The controller's name, which NetBSD uses to choose the file
    (`init_bcm43xx.c:110-114`), is text the controller writes and chooses
    nothing here.
-5. **Buffers.** LE Read Buffer Size (7.8.2); a controller that answers 0
-   packets shares its BR/EDR buffers, which Read Buffer Size gives (HCI
-   4.1.1); a length from 1 to 26, which 7.8.2 reserves, or a count of 0
-   from Read Buffer Size, stops the bring-up. Then Host Buffer Size (7.3.39) with
-   `bt_acl_rx_max` and the host's packet count, flow control from the
-   controller staying off.
+5. **Buffers.** LE Read Buffer Size (7.8.2); a controller that answers a
+   length or a count of 0 has no LE buffers of its own and shares its
+   BR/EDR buffers, which Read Buffer Size gives (7.8.2, 4.1.1). A length
+   from 1 to 26, which 7.8.2 alone reserves, stops the bring-up; Read
+   Buffer Size reserves no length, and a length or count of 0 from it,
+   outside the ranges 7.4.5 gives, stops the bring-up. A controller with
+   fewer buffers than the row's connection limit lowers the limit to its
+   buffer count, so each link's share is at least one buffer, and
+   `/proc/bt` shows the limit in force. Then Host Buffer Size (7.3.39)
+   with `bt_acl_rx_max` and `bt_host_acl_packets`, 8, flow control from
+   the controller staying off. The count is required, from 1 to 0xFFFF
+   (7.3.39), but with flow control off the controller sends without
+   counting the host's buffers (4.2), so it bounds nothing: the host
+   always reads, and the line's bound is the backstop ([Commands and data
+   credits](#commands-and-data-credits)). It stays a small nominal 8;
+   turning flow control on would make it a limit, with Host Number Of
+   Completed Packets returning the host's buffers (4.2), and needs a
+   design of its own.
 6. **Configure.** Set Event Mask (7.3.1) and LE Set Event Mask (7.8.1)
    with the events erXos decodes and no others; LE Set Random Address
    (7.8.4) with the identity address ([below](#the-identity-address));
@@ -759,18 +771,39 @@ count, and one whose opcode is neither `0x0000` nor the command in
 flight's ends the controller process, as a loss of synchronization
 does. Commands in this design are few and none is urgent, so one in
 flight is enough and makes every command's answer the answer to the last.
+A command's deadline, `bt_command_timeout_ms`, starts when the command
+falls due, not when it is written, and runs through any time the
+controller allows none: a controller that answers
+`Num_HCI_Command_Packets` 0 and never follows with an opcode-0 event
+ends the controller process at the deadline. Which command is due is
+decided again whenever the controller allows one, so a disconnect for a
+handle that has gone, or advertising at the limit, is never sent. A
+command is in flight once the writer has it, and the writer takes the
+command before any queued packet: an answer to a command still waiting
+for the writer is a controller fault and ends the controller process. The
+core arms at most one deadline at a time, since a bring-up wait and a
+command never overlap: its step answers `{timer, Ms}` or `cancel_timer`,
+and the controller process holds one Erlang timer for it, replacing or
+cancelling it as told and passing on a timeout only for the timer
+reference it holds, so the core never sees a stale one and its state
+holds no timer token.
 
-ACL packets to the controller use packet-based flow control (HCI 4.1.1):
-the controller process counts free buffers from LE Read Buffer Size,
-at most `bt_acl_credits_max`, takes one for each packet it gives the
-writer and keeps, for each live handle, how many of its packets are
-outstanding. It returns them on Number Of Completed Packets and, for a
-handle, all of its outstanding ones at Disconnection Complete (HCI 4.2).
-A completion that names a handle that is not live, or more packets than
-the handle has outstanding, is a controller fault and ends the controller
-process, so a forged report can return no credit for a packet that was
-never sent. Each link may hold at most its share of the buffers in
-flight; a link's notifications wait in its own queue, at most
+ACL packets to the controller use packet-based flow control (HCI 4.1.1).
+The controller process keeps, for each live handle, how many of its
+packets are outstanding, from the moment the link hands one over, and
+the free credits are derived: the buffer count from the bring-up, at
+most `bt_acl_credits_max`, less the live handles' outstanding packets.
+Number Of Completed Packets returns a handle's packets, and a handle's
+Disconnection Complete returns all of them by removing it (HCI 4.3),
+which cannot be forgotten since nothing else holds them. A completion
+that names a handle that is not live, or more packets than the handle
+has given the writer, is a controller fault and ends the controller
+process: a forged report can return no credit for a packet that was
+never sent, nor for one still waiting for the writer, so what waits for
+the writer stays within the credits however long the line stalls. Each
+link may hold at most its share of the buffers in flight, the buffer
+count divided by the connection limit, at least one since the bring-up
+keeps the limit at most the buffer count; a link's notifications wait in its own queue, at most
 `bt_notify_queue`, for its share. Controller-to-host flow control is not
 enabled: the host always reads, and the line's bound is the backstop.
 
@@ -1516,8 +1549,8 @@ Each passing case is paired with the seeded fault it must catch.
 | Core | Passes | Seeded fault that must fail it |
 | --- | --- | --- |
 | `erx_h4` | a stream cut at every byte offset splits into the same packets; an unknown indicator and an over-long ACL length are errors | the indicator check removed; the ACL length read as one byte |
-| `erx_bt_hci_core`, explored over every reachable state | every command waits for its answer; credits never go below zero and a Disconnection Complete returns a handle's outstanding packets; a completion for a dead handle, one beyond a handle's outstanding packets and an answer naming another command each end the controller process; the writer is never given a second item before its acknowledgement; every bring-up path from `reset` reaches `ready` or a stated reason, patching at most once; advertising is on exactly while connections are below the limit | the command slot not cleared by Command Status; credits not returned at disconnection; a completion's count added without the outstanding bound, so a forged report grows the credits; advertising not re-enabled after a disconnection |
-| `erx_h4` against `bt_acl_rx_max` | a 251-octet ACL packet splits; a 252-octet one is an error, before and after the bring-up | the bound taken from LE Read Buffer Size once known |
+| `erx_bt_hci_core`, explored over every reachable state, until none is left (the state holds no timer token; the count of dropped events, a statistic, is explored to one) | every command waits for its answer, and an answer to one still queued for the writer ends the controller process; an opcode-0 event never moves the deadline; a duplicate handle and a connection past the limit each end the controller process; credits never go below zero and a Disconnection Complete returns a handle's outstanding packets; a completion for a dead handle, one beyond the packets a handle has given the writer and an answer naming another command each end the controller process; the writer is never given a second item before its acknowledgement, and at most one deadline is armed; every state before `ready` has its deadline armed, so every bring-up path from `reset` reaches `ready` or a stated reason, patching at most once; a command the controller never allows ends at its deadline; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1; advertising is on exactly while connections are below the limit in force | the command slot not cleared by Command Status; a handle kept live after its Disconnection Complete; a completion's count taken without the outstanding bound, so a forged report grows the credits; a completion's bound counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets, so removing the handle returns them, and the handle kept live stands in its place |
+| `erx_h4` against `bt_acl_rx_max` | a 251-octet ACL packet splits; a 252-octet one is an error, before and after the bring-up | the bound one octet too long. The bound taken from LE Read Buffer Size once known cannot be written: `split/1` takes no bound, only the constant |
 | `erx_bt_patch` | the records of a synthetic patch replay in order; a file with a truncated last record or a foreign opcode is refused whole, before any record is sent | the record length not checked against the bytes left |
 | `erx_gatt_db` | a table built from the declarations matches a hand-written expected table; the hash changes when a characteristic changes and not when the manifest lists rows in another order | services laid out in manifest order |
 | `erx_gatt_gate` | GAP Table 10.2's rows for levels 1, 2 and 4, each answer as the table gives | Insufficient Encryption answered on a link with no key |
