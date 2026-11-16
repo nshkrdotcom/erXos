@@ -347,7 +347,7 @@ native pointer from the file.
 The records cover principals, configured domains, named domain and
 runtime limits, lane classes, units and devices, role-based partition
 windows, displays, services, facets with typed bounded scope parameters,
-introductions, read-only image extents and hash-tree metadata, boot order,
+introductions, read-only images' paths and hash-tree metadata, boot order,
 liveness, system-shell principals, the console lines' `secure`
 attributes and partial-boot programs. A unit owns its devices' one
 holder field. Domain records refer to complete named
@@ -3460,20 +3460,23 @@ a requested or session domain or to another row's.
 **Partition windows.** The block driver serves each partition of its
 medium as a window ([design-storage.md](design-storage.md#data-model)).
 Where each partition lies comes only from the medium layout of the ABI
-file. The device service gives the slots, the boot-selection record and
-the reset count to the slot writer alone, derived from that layout, and
+file. The device service gives the slots' boot and system partitions,
+the boot-selection record and the reset count to the slot writer alone,
+derived from that layout, and
 the manifest assigns each data partition by its role in the layout, never
 by sectors, to its storage domain, and each FAT partition likewise to a
-FAT server's domain of its own. A domain whose release lives in an EROFS
-image gets a read-only window on that image's sectors alone, from the
-extents the boot image records, which must lie inside the slot that the
-boot value names; when the boot value is `unknown`, it gets none. A window
-is a grant of the block driver's domain, which the device service
-introduces to the window's holder over a connection once the holder runs;
-it sends the holder's capability registry the window with the image's
-record from the manifest, its extents, root hash, salt and tree layout,
-which the registry hands to the hash-checking reader alone
-([design-runtime.md](design-runtime.md#per-byte-primitives)). The slot
+FAT server's domain of its own. The storage domain that serves `system`
+gets one read-only window on the system partition of the slot that the
+boot value names; when the boot value is `unknown`, it gets none
+([design-storage.md](design-storage.md#the-system-tree)). No other domain
+gets a window on a slot: a domain whose release lies in the `system`
+tree gets a read-only grant of that tree, and its capability registry
+gets the release's record from the manifest, its path, root hash, salt
+and tree layout, which the registry hands to the hash-checking reader
+alone ([design-runtime.md](design-runtime.md#per-byte-primitives)). A
+window is a grant of the block driver's domain, which the device service
+introduces to the window's holder over a connection once the holder
+runs. The slot
 writer and the block driver's domain each get, from the domain library, a
 read-only view of the machine page, so each reads the boot value itself:
 the slot writer never takes it from the update service, and the block

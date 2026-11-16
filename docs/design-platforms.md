@@ -1281,9 +1281,15 @@ request its one-shot `tryboot` flag
   writes the other encoding, which names S.
 * Each slot is a boot partition the firmware reads, a FAT partition
   holding the firmware's files and the single bootable file as the
-  kernel file, which carries the boot image inside it, followed in
-  the same partition by the EROFS images, so no domain on the target
-  parses that FAT. The packer refuses a slot image whose firmware predates
+  kernel file, which carries the boot image inside it, and a system
+  partition, the EROFS file system of
+  [design-storage.md](design-storage.md#data-model), which no firmware
+  reads; no domain on the target parses the boot partition's FAT. The
+  bootloader names a boot partition by its number, counted from 1, and
+  boots only a FAT partition, so the boot partitions are the master boot
+  record's entries 2 and 3 and the system partitions lie in its extended
+  partition ([design-storage.md](design-storage.md#references)). The
+  packer refuses a slot image whose firmware predates
   the version that the board's port records as reporting the boot value
   and honouring `tryboot`.
 * `ERX_END_TRIAL` sets the flag as [Trial requests](#trial-requests)
@@ -1360,8 +1366,9 @@ machine boots the committed slot
 
 ### Trust in the boot
 
-A boot can be trusted, and with it the console's prompts and the root
-hashes of the EROFS images that its boot image carries
+A boot can be trusted, and with it the console's prompts and the hashes
+by which its boot image pins the packages and releases of the system
+partition
 ([design-storage.md](design-storage.md#system-updates)), only as far as
 the platform checks the boot image before the kernel runs:
 
@@ -1377,8 +1384,8 @@ loads `boot.img` whole into memory; in trial mode (`tryboot_a_b=1`) it
 loads `boot.img` from the trial's partition, as it loads `config.txt` from
 it. Checking `boot.img` costs boot time in proportion to its size, about
 3.5 s for 9 MB on the Pi 4 by Raspberry Pi's figure, almost all of it
-SHA-256, so the boot image stays small and the EROFS images, checked
-through the root hashes it carries, hold the rest. The packer refuses a
+SHA-256, so the boot image stays small and the system partition's
+self-checking files, pinned by the hashes it carries, hold the rest. The packer refuses a
 `boot.img` larger than the board port's limit, which the port derives from
 the checking rate it measures and the firmware watchdog's timeout, less a
 margin, so a signed slot's check never runs the watchdog out before the
@@ -1790,8 +1797,8 @@ opens in root's session. Type each command as shown and press Enter.
    prints `written on the board`. Two errors mean the write never
    reached littlefs:
    * a read-only file system error (`erofs`): the session holds no
-     `data` grant, so `/data` is the release image's own empty directory,
-     and the release image is a read-only EROFS image;
+     `data` grant, so `/data` is the release slice's own empty directory,
+     and the release slice is read-only;
    * an I/O error (`eio`): the grant is there but no volume is behind it,
      because the storage domain has no card or did not mount it, which
      step 3's lines explain.

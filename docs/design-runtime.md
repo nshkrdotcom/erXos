@@ -2283,15 +2283,17 @@ server of its own:
 * **the release file system**, read-only: the files of the domain's release
   slice, listed by the boot image's index and mounted at `/`. Reading a
   whole file returns a binary over the slice's pages, without a copy;
-* **EROFS images**, read-only, for a domain whose release lives in an EROFS
-  image of its own rather than in the boot image: once booted from the
-  small release in its slice, the domain mounts the image at the path that
-  release names. For a path on it the NIF returns `{erofs, Image, Names}`,
+* **EROFS images**, read-only, read from files: a package, or the release
+  of a domain whose release lies in the `system` tree rather than in the
+  boot image, which, once booted from the small release in its slice,
+  mounts the image at the path that release names. For a path on it the
+  NIF returns `{erofs, Image, Names}`,
   and the EROFS reader, `erx_erofs`, Erlang preloaded in every runtime image,
-  serves the operation in the calling process from blocks it fetches from
-  the storage domain's block service through the domain's grant of it and
+  serves the operation in the calling process from blocks it reads from
+  the image's file through the domain's grant and
   hands to the hash-checking primitive, which checks them against the
-  image's dm-verity tree, whose root the boot image carries, and returns
+  image's dm-verity tree, whose root comes from the boot image's record of
+  the release or from a header the system domain authenticated, and returns
   only blocks that matched; the reader parses no block the primitive did
   not return ([design-storage.md](design-storage.md#data-model));
 * **a RAM file system** per domain at `/tmp`, an `erx_fs` server,

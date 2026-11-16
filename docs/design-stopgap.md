@@ -298,7 +298,7 @@ reason on refusal, with checked arithmetic on every offset. Each entry only gath
 | `budget`, `group_ctl`, `group_stat`, `spaces_group`, `release`, `crash_area`, `system_connection` | `ERX_CAP_NULL` and zeros: `erx_vm_*` and `erx_group_status` find theirs with no handle, `erx_release_entry` reads the archive, and no Phase 1 caller takes the rest | the same |
 | `cpuset`, `capacity_mcpu` | the manifest's system share's `cpuset` within what `l4_scheduler_info` reports; 1,000 for each CPU, since Phase 1 has no grants | the host's online CPUs; the same |
 | node name | `system@` and the manifest's `host` | the same |
-| `args` | the manifest's `system_args`, the console's words, `-erx_record boot VALUE SLOT` ([image windows](#image-windows)), `-erx_record build ID`, the boot image's build identifier in decimal, and each [device record](#device-records), then each `erx.arg=WORD` | the manifest's `system_args`, then `-erx_record console stdio`, then the command line after the archive's path |
+| `args` | the manifest's `system_args`, the console's words, `-erx_record boot VALUE SLOT` ([the booted slot](#the-booted-slot)), `-erx_record build ID`, the boot image's build identifier in decimal, and each [device record](#device-records), then each `erx.arg=WORD` | the manifest's `system_args`, then `-erx_record console stdio`, then the command line after the archive's path |
 | `env` | empty | empty: the host's environment is not inherited, and the entry sets `TZ=UTC` for libSystem |
 | `hwcap`, `hwcap2` | the features the boot CPU's identification registers name that the kernel enables and saves for user mode, from the handoff's `cpu_id` words ([Boot handoff](#boot-handoff), step 4; the architecture's binding gives the mapping, [design-arch-aarch64.md](design-arch-aarch64.md#cpu-feature-words)) | 0, which claims no optional feature |
 | `limits` | the projection of the manifest's `system_runtime_limits` | the same |
@@ -343,8 +343,8 @@ domain's node name and the system node's, its `args` and `env`, and the words th
 the row's own: `-erx_record build ID` with the boot image's build identifier, as the root's own page carries it, so
 every domain names the same build; one record per device it was given that has one, `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
 MEM_SIZE CLOCK COHERENT MAC`, the same record the root writes into the system domain's page for each device of a kind it holds ([Device records](#device-records)), or, for a framebuffer the root placed, `-erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT` ([design-device-tree.md](design-device-tree.md#facts-into-records)), and, when it holds a
-block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it ([Image
-windows](#image-windows)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
+block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it ([The booted
+slot](#the-booted-slot)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
 its unit shares lie in that device's window, and a line it shares with one is that device's IRQ object
 ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). PATH is the device-tree path of its manifest row, the name its driver gives it (`erx_device_record` returns it as `path`), a node path of at most `device_path_max` bytes (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the root's reader and the domain library's view refuse any other path (`erx_boot_device_path_valid`), and `erx_device_record` any other PATH word, so a name a driver shows holds no control or escape, and reaches a display only through that sink's escaping function; WINDOW_H, LINE_H and MEM_H are the installed objects' values in the holder's own handle
 table, OFFSET and SIZE place the registers in the window page, MEM_H and MEM_SIZE are 0 for a device with no
@@ -428,17 +428,14 @@ service, and the domain library's boot view refuses one that names any. A
 facet's parameters it resolves as [design-abi.md](design-abi.md) says, each
 key against its service's declaration and each value against that key's kind
 and bound, and the manifest property that consumes them holds as written, as
-property 18 does for `windows`. Its `image` records are
-format `erofs_unchecked` ([design-abi.md](design-abi.md)): the packer writes no
-hash tree, so an image's record carries its data's length and extents, which
-the packer derives from the built image, the artifact its `input` names, and
-zeros for every tree field, and a `salt` is refused. Each image lies on the
-block device, and a `verified_image` window names one image, read-only, held
-by the domain the window's record names. The production image's one image
-is the system release's EROFS image (`ReleaseMedium`), written before the
-archive is packed, since the archive's manifest records it; the image does not
-hold the manifest. Phase 1's EROFS windows pass blocks through unchecked; the
-hash check is a stopgap residual recorded in `TODO.md`. QEMU `virt`'s record is
+property 18 does for `windows`. The production image holds no `image`
+record: every release it starts lies in the boot image, which holds what
+the rule of [design-storage.md](design-storage.md#data-model) allows it,
+the releases that run before the `system` tree is served, the session
+releases and the rescue set, and the slot's system partition holds the
+image builder's packages. Phase 1's `erx_verity` passes a package's
+blocks through unchecked; the hash check is a stopgap residual recorded
+in `TODO.md` ([design-packaging.md](design-packaging.md#phase-1)). QEMU `virt`'s record is
 [config/platforms/qemu-virt.json](../config/platforms/qemu-virt.json) and its
 development manifest is the records every board takes,
 [config/manifest/development.txt](../config/manifest/development.txt),
@@ -727,7 +724,7 @@ and a macOS process has none. The ABI's layouts carry `reported`, but no partial
 | Topic | Asked on | `reported` | Partial |
 | --- | --- | --- | --- |
 | basic | any handle | the topic is `ERX_ENOTSUP`, since a handle carries no rights | none |
-| machine | the resource, which is ignored; a task other than the root `ERX_ENOTSUP` | `cpus_online`, the count of `l4_scheduler_info`'s CPU map, clear when that call fails; `uptime`, `liberx`'s clock (`erx_fiasco_clock_ns`, the generic timer's virtual count since the counter started, which QEMU starts at reset and a board's firmware at power-on); `build` and `boot_value`, the build identifier and boot value of bootstrap's handoff, which the program root keeps for the service before starting it (a root that does not keep them, such as a native test guest's, leaves both clear); nothing else, since no machine page is mapped ([Image windows](#image-windows)): `entropy_quality` stays clear, since `liberx`'s generator, not the kernel, holds the entropy, and keeps no quality of its own | `memory_total` and `memory_free`, the pool's ([Reporting a budget](#reporting-a-budget)) |
+| machine | the resource, which is ignored; a task other than the root `ERX_ENOTSUP` | `cpus_online`, the count of `l4_scheduler_info`'s CPU map, clear when that call fails; `uptime`, `liberx`'s clock (`erx_fiasco_clock_ns`, the generic timer's virtual count since the counter started, which QEMU starts at reset and a board's firmware at power-on); `build` and `boot_value`, the build identifier and boot value of bootstrap's handoff, which the program root keeps for the service before starting it (a root that does not keep them, such as a native test guest's, leaves both clear); nothing else, since no machine page is mapped ([The booted slot](#the-booted-slot)): `entropy_quality` stays clear, since `liberx`'s generator, not the kernel, holds the entropy, and keeps no quality of its own | `memory_total` and `memory_free`, the pool's ([Reporting a budget](#reporting-a-budget)) |
 | cpu | as machine; a CPU outside that map `ERX_ERANGE` | nothing: not `idle_time`, since Fiasco, built with periodic ticks and without fine-grained CPU time, charges each tick to the thread it interrupts, so its idle count bounds the idle time neither from below nor from above | none |
 | group | in the root, `ERX_CAP_SELF` or the root's own group's handle; any other group handle the caller holds, a domain's included, any other handle, `ERX_CAP_NULL` included, and any call before the root's group is up, `ERX_ENOTSUP` | `cpuset`, once a set was configured, `parked` and `ready`, read from the root's status page; not `capacity_mcpu`, since the grant's capacity is ignored, nor `used_ns` | none |
 | budget | `ERX_CAP_SELF` in the root, the root's budget; any other handle, and any call from a task, `ERX_ENOTSUP`, which the inspector shows as every field `unsupported` | nothing ([Reporting a budget](#reporting-a-budget)) | `used` |
@@ -1818,7 +1815,7 @@ role and peripheral are refused with a stated reason
 since a hosted runtime has no devices. More records than `ERX_BOOT_DEVICES_MAX` refuse
 the manifest at boot.
 
-### Image windows
+### The booted slot
 
 Phase 1 maps no machine page to the system domain, so the root hands its
 ERTS the boot value and slot as it hands it the device records: from the
@@ -1827,37 +1824,17 @@ handoff, which bootstrap derived from `/chosen/bootloader`, it adds
 (`unknown none`, `normal a`, `trial b` and so on). The hosted entry adds
 none, which reads as unknown.
 
-Once the partition table is admitted, `erx_blk_service` reads the
-release's manifest (`/manifest`, the archive's `system/manifest`) with
-the generated reader, and its pure core, `erx_blk_image`, places each
-image the system domain holds a read-only `verified_image` window on in
-the booted slot: the image's one extent becomes a window of role
-`{image, Name}` on the slot's sectors from `slot_offset`, `length` bytes
-long, which must be whole sectors inside the slot and the image's
-`data_bytes`. A boot with no slot, an unknown boot, serves no image
-window, as the storage design requires; an image of another format, in
-more than one extent or outside the slot is refused by name in the
-kernel log, and the other images are served. An image window refuses
-every write with `erofs`.
-
-`erx_blk_sup`'s next child mounts each image window at `/images/NAME`
-with `erx_ns:mount({erofs, Window}, ...)`, read-only and unchecked, as
-the image's format says. `/images/` is Phase 1's place for the system
-domain's own images; the system domain still starts from the release in
-the boot image and reads the slot's image as files only, never as code
-([design-live.md](design-live.md#invariants) V5).
-
-**No image window is served across domains.** Where a storage domain
-holds the `block` unit, as the development manifest has it, the driver
-places no image window: the storage domain's `/` is its domain release,
-which holds no manifest, and its runtime does not know its own index
-among the manifest's domains, so `erx_blk_service` logs that the manifest
-cannot be read and serves no image, and `/images/release` is mounted
-nowhere. The `-erx_record boot` words reach the storage domain all the same,
-since the domain library adds them to a configured block holder's
-arguments. Serving the release image from the storage domain is the domain
-library's work: it writes each image window's placement into the holder's boot
-page beside `-erx_record boot`, so the driver needs no manifest file.
+The domain library adds the same words to a configured block holder's
+arguments, so the block driver knows the booted slot without a machine
+page. Once the partition table is admitted, `erx_blk_service` starts one
+read-only window of role `system` on the booted slot's system partition,
+whose sectors come from the medium layout of the ABI file alone, for the
+storage domain that serves `system`; a boot with no slot, an unknown
+boot, starts none, as the storage design requires. That storage domain
+serves the window as the `system` tree, with the read-only `erx_fs`
+backend over `erx_erofs`, as on erXos's kernel
+([design-storage.md](design-storage.md#the-system-tree)), and every other
+domain reaches its files through a grant. The driver reads no manifest.
 
 ### The console
 
@@ -2024,13 +2001,13 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   [Slots and the boot-selection record](design-platforms.md#slots-and-the-boot-selection-record) describes: the
   record's partition, an 8 MiB FAT16 whose data area begins with `autoboot.txt`, one cluster at
   `medium_record_select_start`, and whose reserved area holds the reset count alone in its MiB at
-  `medium_record_count_start`; slot A, which begins with a FAT32 volume that holds the boot files below and ends before the
-  slot's EROFS images start at 128 MiB (`SLOT_IMAGES_START`, `tools/lib/erx/release_medium.rb`), with `kernel8.img`
+  `medium_record_count_start`; boot A, a FAT32 volume that holds the boot files below, with `kernel8.img`
   allocated first and contiguous from `medium_slot_boot_start`, so the harness and the slot writer find it without
-  parsing FAT and the firmware finds it through FAT; slot B, empty; the vault's partition; and the data partition with
-  a fresh littlefs volume. The volume is the slot's first 128 MiB, and its 1 KiB clusters make it FAT32 by the cluster count the FAT
-  specification sets ([design-storage.md](design-storage.md#references)), as the slot's partition type
-  (`medium_slot_type`, `0x0c`) says. Both placed files are fsimg's `place` option, `-o place=/PATH@OFFSET`, the file's absolute path in the
+  parsing FAT and the firmware finds it through FAT; boot B, empty; system A, the EROFS image of the slot's packages;
+  system B, empty; the vault's partition; and the data partition with
+  a fresh littlefs volume. The volume is the whole of boot A, 128 MiB, and its 1 KiB clusters make it FAT32 by the cluster count the FAT
+  specification sets ([design-storage.md](design-storage.md#references)), as the boot partition's type
+  (`medium_boot_type`, `0x0c`) says. Both placed files are fsimg's `place` option, `-o place=/PATH@OFFSET`, the file's absolute path in the
   volume and a byte offset from the volume's start: one placed file per volume, on FAT16 and FAT32, for which fsimg pads the reserved area so that the data area starts at
   the placement sector and gives the file the clusters from the first data cluster on, in order, the FAT32 root
   directory's cluster following them; `kernel8.img` is placed at `medium_slot_boot_start` and `autoboot.txt` at

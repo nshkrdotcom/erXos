@@ -2062,7 +2062,7 @@ creation request cannot supply origin or parent fields.
 | --- | --- |
 | unit, 24 | `0: name str`; `8: holder u32`; `12: devices span`; `20: reserved u32` |
 | device, 88 | `0: selector u32`; `4: role u32`; `8: path str`; `16: bridge str`; `24: compatible str`; `32: bus u16`; `34: device u8`; `35: function u8`; `36: dma u32`; `40: flags u32`; `44: line u32`; `48: dma_memory u64`; `56: placement_key str`; `64: base u64`; `72: size u64`; `80: clock u32`; `84: reserved u32` |
-| partition window, 32 | `0: holder u32`; `4: device u32`; `8: role u32`; `12: partition u32`; `16: rights u32`; `20: image u32`; `24: reserved u64` |
+| partition window, 32 | `0: holder u32`; `4: device u32`; `8: role u32`; `12: partition u32`; `16: rights u32`; `20: reserved u32`; `24: reserved u64` |
 
 A unit's `holder` is a domain reference. Its device span names a
 nonempty run in the device table. The unit spans cover that table once,
@@ -2124,16 +2124,20 @@ over ([design-device-tree.md](design-device-tree.md),
 [design-device-dma.md](design-device-dma.md#device-addresses-and-reach)). The packed marks do not establish actual confinement:
 the device service still verifies the machine before assigning the unit.
 
-Window roles are slot A 1, slot B 2, boot-selection record 3, reset
-count 4, vault 5, data 6, FAT 7 and verified image 8. Fixed-medium roles
-have `partition = 0`; the ABI medium layout determines their sectors.
+Window roles are boot A 1, boot B 2, boot-selection record 3, reset
+count 4, vault 5, data 6, FAT 7, booted system 8, system A 9 and system
+B 10. Fixed-medium roles have `partition = 0`; the ABI medium layout
+determines their sectors, and a booted-system window's are those of the
+system partition of the slot that the boot value names, so an `unknown`
+boot gives none.
 FAT names a primary partition numbered 1 through 4 on the selected
-removable device. A verified-image window names an image-table index;
-every other role has absent `image`. Rights are read bit 0 and write
-bit 1, at least read; a verified-image window is read-only. No record
+removable device. Rights are read bit 0 and write
+bit 1, at least read; a booted-system window is read-only. No record
 contains a caller-selected sector range. Role/holder checks still
-restrict slots and records to the slot writer, and data and FAT to
-their storage holders. These are private grants, not a global device
+restrict boot partitions, system A and B and the records to the slot
+writer, the booted system to the storage domain that serves `system`
+([design-storage.md](design-storage.md#the-system-tree)), and data and
+FAT to their storage holders. These are private grants, not a global device
 namespace.
 
 ### Services, facets and their parameter schemas
@@ -2249,8 +2253,7 @@ the kernel watchdog's period and cannot extend its deadline.
 
 | Record and size | Fields |
 | --- | --- |
-| image, 136 | `0: name str`; `8: device u32`; `12: format u32`; `16: extents span`; `24: data_bytes u64`; `32: data_block_size u32`; `36: hash_block_size u32`; `40: data_blocks u64`; `48: hash_offset u64`; `56: hash_bytes u64`; `64: salt_length u32`; `68: hash_algorithm u32`; `72: salt bytes[32]`; `104: root_hash bytes[32]` |
-| image extent, 16 | `0: slot_offset u64`; `8: length u64` |
+| image, 136 | `0: name str`; `8: path str`; `16: format u32`; `20: data_offset u32`; `24: data_bytes u64`; `32: data_block_size u32`; `36: hash_block_size u32`; `40: data_blocks u64`; `48: hash_offset u64`; `56: hash_bytes u64`; `64: salt_length u32`; `68: hash_algorithm u32`; `72: salt bytes[32]`; `104: root_hash bytes[32]` |
 | boot-order entry, 4 | `0: domain u32` |
 | system-shell principal, 4 | `0: principal u32` |
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
@@ -2269,20 +2272,18 @@ positive powers of two accepted by that format. Extents are nonempty,
 sector-aligned, sorted, disjoint byte ranges relative to a slot's start,
 not the medium's start. Concatenating their bytes produces the image
 window: its data starts at zero and its tree starts at `hash_offset`.
-The extents cover that entire window, including the hash tree. All
-size/block-count/tree calculations are checked against the storage
-format, and all slot extents fit the ABI's slot extent. The packer
-derives these fields and hashes from the built image; source text
-cannot supply an unchecked root hash or extent. At boot the device
-service adds the currently named slot's base after checking the boot
-value; `unknown` supplies no such window.
-
-Image format 2, `erofs_unchecked`, is an EROFS image with no tree,
-which only a development manifest admits: its window is its data alone,
-`data_bytes` long, its hash algorithm is 0, none, and every tree field,
-the salt and the root hash are zero, so the hash-checking reader opens it
-`unchecked` and no record claims a check that nothing makes
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)).
+An image record names a release that lies outside the boot image:
+`path` is its file in the `system` tree, in the package's container
+([design-packaging.md](design-packaging.md#the-package)), `data_offset`
+is where the EROFS image starts in that file and `hash_offset` where its
+tree starts. All size/block-count/tree calculations are checked against
+the storage format. The packer derives these fields and hashes from the
+built file; source text cannot supply an unchecked root hash or offset.
+The domain the release belongs to receives the record with its `system`
+grant and mounts the file with the record as its layout; an `unknown`
+boot serves no `system` tree, so that domain does not start. Every image
+record names a tree: the file mount refuses a layout without one
+([design-files.md](design-files.md#building-binding-and-mounting)).
 
 Boot order is the complete permutation of the configured-domain
 indices, with servers before clients. The packer uses a topological
@@ -2532,7 +2533,7 @@ Top-level named tables are sorted by name bytes; service names are
 qualified by their server and facet names by their grantee. Unit devices
 follow their units, in selector order. Facet operations and parameters
 follow their facets, with operation/key/value order inside each facet.
-Image extents follow their images. Windows sort by holder, device,
+Windows sort by holder, device,
 role and partition; introductions by their canonical endpoint pair.
 Auxiliary order lists follow their stated ordering. Strings are appended
 in header/table/record/field traversal order, without deduplication; equal

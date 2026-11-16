@@ -9649,7 +9649,7 @@ Fiasco's scheduling:
     compression: the opposite of an image that never changes.
   * *EROFS*, uncompressed with 4 KiB blocks, maps in place and is what
     the system release uses from M6, inside a minimal `ERXPACK` whose
-    files carry the EROFS images' root hashes
+    manifest pins the system partition's self-checking files by hash
     ([design-storage.md](design-storage.md#system-updates)). As the boot
     image itself it would put a file system's inodes, directories and
     extended attributes into the kernel's boot validator, and it has no
