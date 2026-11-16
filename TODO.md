@@ -2672,6 +2672,9 @@ it; git history is the record of completed work.
   answer does not fit in 512 bytes fails to resolve. Give the connection `{packet, 2}` framing, or
   have `erx_gen_tcp` frame the two-byte length itself, and test a truncated reply against a name
   server on the host.
+* [Low] shell, Ctrl-C of a foreground job (`erlang/apps/erx_shell/src/erx_shell.erl`): `docs/design-shell.md`,
+  "Interaction", says a job brought forward with `fg` and ended by Ctrl-C interrupts the line as well; that path is not
+  built or tested. The plain Ctrl-C of a running line already ends both the job and the line.
 * [Medium] shell, `cp` (`erlang/apps/erx_shell/src/erx_cmd_cp.erl`, `copy_bytes/2`): a failed close of the
   target is not reported. `cp` copies with `file:copy/2` between two names, which stock OTP runs in
   `file_server`, whose copy closes the target and drops the close's answer
