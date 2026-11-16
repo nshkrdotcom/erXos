@@ -16,6 +16,7 @@ require_relative '../qemu_gate'
 Erx::QemuGate.declare_suite(
   cells: %W[#{Erx::QemuGate.suite_cells([1]).first} #{Erx::QemuGate.suite_cells([1]).first}#{Erx::Kiosk::ALTERED}],
   run: lambda do |context|
-    Erx::QemuGate.result(Erx::Kiosk::Run.new(root: context.root).call(jobs: context.jobs, build: false))
+    run = Erx::Kiosk::Run.new(root: context.root)
+    Erx::QemuGate.result(run.call(jobs: context.jobs, build: false), notes: run.notes)
   end
 )

@@ -52,6 +52,32 @@ module Erx
 
       # The picture as a binary PPM file, for a person to look at when a comparison fails.
       def to_ppm = "P6\n#{width} #{height}\n255\n".b + pixels
+
+      # Where other, a picture of the same size, differs from this one, as a Difference;
+      # nil when no pixel does. Rows that are equal are skipped whole.
+      def difference(other)
+        raise FormatError, 'only pictures of one size have a pixel difference' unless
+          [width, height] == [other.width, other.height]
+
+        changed = (0...height).filter_map do |y|
+          mine = row(y)
+          theirs = other.row(y)
+          next if mine == theirs
+
+          [y, (0...width).select { |x| mine.byteslice(x * 3, 3) != theirs.byteslice(x * 3, 3) }]
+        end
+        return nil if changed.empty?
+
+        columns = changed.flat_map(&:last)
+        Difference.new(pixels: columns.size, left: columns.min, top: changed.first.first, right: columns.max,
+                       bottom: changed.last.first)
+      end
+    end
+
+    # How two pictures of one size differ: the count of pixels whose bytes differ and the
+    # smallest box holding them all, its edges inclusive, x from the left and y from the top.
+    Difference = Data.define(:pixels, :left, :top, :right, :bottom) do
+      def to_s = "#{pixels} pixels differ within x #{left}..#{right}, y #{top}..#{bottom}"
     end
 
     module_function

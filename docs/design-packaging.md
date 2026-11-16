@@ -2146,7 +2146,6 @@ what rests on parts that arrive later, reporting each as it is:
 | Deferred | Until | Meanwhile |
 | --- | --- | --- |
 | isolation between apps' domains, and budgets and quotas as limits | erXos's kernel | as for every domain ([design-apps.md](design-apps.md#phase-1)) |
-| the hash check in `erx_verity` | the security closure, M11 ([plan.md](plan.md#m11-security-closure)) | `erx_verity` passes blocks through unchecked, as for every image, so a byte changed on the medium is read as it is; PK3's QEMU test waits for M11 |
 | rooting `data` grants by principal, `apps/`, `tree apps` and the signer in an app's directory | principals' directories (M10) | apps can reach each other's directories, the residual design-apps.md records; the directory half of PK4's test waits, its `/proc` half runs |
 | `purge` with `remove_app` | the same | `service NAME purge` answers `enotsup` |
 

@@ -2252,6 +2252,17 @@ it; git history is the record of completed work.
   (`mount_options/3`, `rights()`), `erx.erl` (`facet()`), `erx_file_remote.erl` and `erx_verity.erl`, about a
   dozen copies that refuse a member the ABI gains while the generated list accepts it. Emit
   `?ERX_IS_<ENUM>(X)` and a type per atom enum and convert the copies.
+* [Medium] apps, a refused `/app` mount (`erlang/apps/erx_app/src/erx_app.erl`, `start_app/2`): in the kiosk
+  suite's altered cell, whose image the verity read refuses, `erx_app` fails with `{mount, Reason}` and is
+  started again about every 0.2 s for as long as the guest runs, logging each attempt. The design ends the
+  session at its start with the reader's reason ([design-packaging.md](docs/design-packaging.md), the failure
+  table's "the image does not mount" row) and lets the start row's keeper restart it only within the row's
+  intensity, 5 ends in 600 s by default, after which the row is `down`
+  ([design-apps.md](docs/design-apps.md)); the restarts break that bound, so either they bypass the row's
+  supervisor or its intensity is not applied to this row.
+* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
+  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
+  needs an `rx` mount); the mount should take the facet's rights.
 * [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live

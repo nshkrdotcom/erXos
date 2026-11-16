@@ -2011,11 +2011,10 @@ next available item of the plan.
    by `erx_starter:packages/2` that answers once a dropped app's sessions
    have ended; the package lifetime, `erx_pkg_io` and the bounded
    recovery with its fuzz target; `erx_pkg_plan` with its crash and
-   failure tests over reordered writes. Two checks of
-   design-packaging.md's Phase 1 table land later: the hash check that
-   finds a flipped image byte, at M11, and `purge` with the storage service's
-   `remove_app` and directories named by signer, with principals'
-   directories at M10.
+   failure tests over reordered writes. One check of
+   design-packaging.md's Phase 1 table lands later: `purge` with the
+   storage service's `remove_app` and directories named by signer, with
+   principals' directories at M10.
 
 **Exit criteria, the start table.** The merge's host tests and their
 seeded faults (a row added for an undeclared principal, the display
@@ -2073,15 +2072,14 @@ pass, with their seeded faults; installing and removing more distinct
 names than the `apps` row's `max` in one boot refuses the last with
 `apps_full`. A flipped image byte giving `eio` and the row `down`, and
 the refusal of an untrusted signer or a flipped header byte, are exit
-criteria of M11, since `erx_verity` checks no block before M11; `purge`
+criteria of M11; `purge`
 removing an app's directory is one of M10.
 
 ## M6: Immutable code, lasting data
 
 **Goal.** The system's files come from immutable images read through one
 block-checking funnel, and one practical store keeps data across power
-cuts, so the system is one a person can use. The funnel passes blocks
-through unchecked until M11 adds the hash check.
+cuts, so the system is one a person can use.
 
 **Demo.** A QEMU disk image holds a slot, its boot and its system
 partition, and a data partition. Booted from it, the shell reads a file
@@ -2108,10 +2106,10 @@ the guest's power cut and the next boot.
   included, and its fuzz target
   ([design-storage.md](design-storage.md#data-model)).
 * **Immutable code and files.** The block client, a local call in the
-  system domain, `erx_verity:read/3` as the one funnel through which the
-  EROFS reader reads blocks, over a mount's fid or over the `system`
-  window, which passes them through unchecked until M11
-  adds the hash check inside it, and CRC-32C among the per-byte primitives,
+  system domain, `erx_verity:read/3` as the one funnel, which checks each
+  block against its image's hash tree, through which the EROFS reader
+  reads blocks over a mount's fid or over the `system` window, and
+  CRC-32C among the per-byte primitives,
   with its fuzz target
   ([design-runtime.md](design-runtime.md#per-byte-primitives));
   each slot's system partition in the EROFS format, which the storage
