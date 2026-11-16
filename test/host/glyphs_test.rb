@@ -69,6 +69,7 @@ class GlyphsTest < Minitest::Test
     first, second = %w[first second].map { |name| write_theme(File.join(@work, name).tap { |path| Dir.mkdir(path) }) }
     assert_equal first.subfonts.keys, second.subfonts.keys
     first.subfonts.each { |role, path| assert_equal File.binread(path), File.binread(second.subfonts.fetch(role)), "role #{role}" }
+    first.lvgl.each { |role, path| assert_equal File.read(path), File.read(second.lvgl.fetch(role)), "role #{role}'s LVGL font" }
     assert_equal File.read(first.menu), File.read(second.menu)
   end
 

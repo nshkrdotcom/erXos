@@ -10,14 +10,15 @@ require_relative 'gpos'
 require_relative 'output_directory'
 require_relative 'raster'
 require_relative 'glyphs_menu'
+require_relative 'glyphs_lvgl_font'
 
 module Erx
   # The glyph step (docs/design-desktop-programs.md, "Type"): one Plan 9
   # subfont with an 8-bit grey image (`k8`) per role of the theme, from the
   # coverage erx-raster gives for the role's font, weight and size, written
-  # into build/glyphs as ROLE.subfont, with the body role's glyphs a second
-  # time as the window menu's Erlang module (Menu). Nothing here is checked
-  # in.
+  # into build/glyphs as ROLE.subfont, each role's glyphs a second time as
+  # its LVGL font's C source (LvglFont), and the body role's a third time as
+  # the window menu's Erlang module (Menu). Nothing here is checked in.
   #
   # A role's subfont holds one glyph for each code point of its font's
   # ranges, in ascending order across the ranges, so glyph i is the i-th code
@@ -119,13 +120,14 @@ module Erx
       ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' })
     end
 
-    # What write wrote: each role's subfont's path by role name, and the
-    # window menu's glyph module's path.
-    Written = Data.define(:subfonts, :menu)
+    # What write wrote: each role's subfont's path and LVGL font's path by
+    # role name, and the window menu's glyph module's path.
+    Written = Data.define(:subfonts, :lvgl, :menu)
 
-    # Writes every role's subfont of theme, and the menu role's glyph module
-    # (Menu), into OUTPUT beneath output_root, and returns their paths as
-    # Written. Font paths in the theme are beneath root.
+    # Writes every role's subfont of theme and its LVGL font (LvglFont), and
+    # the menu role's glyph module (Menu), into OUTPUT beneath output_root,
+    # and returns their paths as Written. Font paths in the theme are beneath
+    # root.
     def write(root:, program:, runner:, theme: Glyphs.theme(root: root), output_root: root)
       subfonts = theme.roles.transform_values do |role|
         font = theme.fonts.fetch(role.font)
@@ -137,9 +139,15 @@ module Erx
       menu_role = theme.roles[Menu::ROLE] || raise(Refused, "the theme has no #{Menu::ROLE} role, which the window menu takes")
       menu = Menu.erlang(subfonts.fetch(Menu::ROLE), code_points: code_points(theme.fonts.fetch(menu_role.font)),
                          sources: [ABI::Theme::SOURCE, font_file(theme, menu_role)])
-      files = subfonts.to_h { |name, subfont| [subfont_file(name), subfont.encode] }.merge(Menu::FILE => menu)
+      lvgl_fonts = subfonts.to_h do |name, subfont|
+        role = theme.roles.fetch(name)
+        [LvglFont.file(name), LvglFont.c_source(subfont, role: role, ranges: theme.fonts.fetch(role.font).ranges,
+                                                   sources: [ABI::Theme::SOURCE, font_file(theme, role)])]
+      end
+      files = subfonts.to_h { |name, subfont| [subfont_file(name), subfont.encode] }.merge(lvgl_fonts, Menu::FILE => menu)
       paths = publish(files, output_root: output_root)
       Written.new(subfonts: subfonts.to_h { |name, _| [name, paths.fetch(subfont_file(name))] },
+                  lvgl: subfonts.to_h { |name, _| [name, paths.fetch(LvglFont.file(name))] },
                   menu: paths.fetch(Menu::FILE))
     end
 

@@ -718,9 +718,14 @@ advance. Each reader of the pairs calls it:
   0 for any pair the module does not list, one clause a pair, generated
   from the same subfont value as `glyph/1`; `erx_wm_menu` places a
   label's glyphs with `erx_pen` and draws each through its mask.
-* The LVGL font of a role carries its pairs as LVGL's pair table
-  (`lv_font_fmt_txt_kern_pair_t`, `include/lvgl/font/lv_font_fmt_txt.h`,
-  lines 113-126): the glyph ids as 16-bit pairs in the same order, the
+* The LVGL font of a role, generated C (`Erx::Glyphs::LvglFont`), holds
+  the subfont's drawn glyphs as LVGL's glyphs 1 to n in subfont order,
+  since LVGL keeps glyph 0 for none, their coverage at 8 bits a pixel,
+  and one character map a range that names only drawn glyphs, so LVGL
+  lacks the characters the subfont lacks. It carries the pairs as LVGL's
+  pair table (`lv_font_fmt_txt_kern_pair_t`,
+  `include/lvgl/font/lv_font_fmt_txt.h`, lines 113-126): the glyph ids
+  as 16-bit pairs in the same order, which the numbering keeps, the
   adjustments as its values, a kern scale of 256 and each advance
   written as its whole pixels times 16. LVGL adds the value times the
   scale over 16 to the advance, in sixteenths of a pixel, and rounds to

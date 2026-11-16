@@ -11,6 +11,7 @@ require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/gpos_tables'
 require_relative '../fixtures/seeded_source'
 require_relative '../../tools/lib/erx/glyphs'
+require_relative '../../tools/lib/erx/lvgl'
 
 # The glyph step's kerning over the theme's Inter fonts
 # (docs/design-desktop-programs.md, "Kerning" and "Kerning, on the host"),
@@ -21,10 +22,12 @@ require_relative '../../tools/lib/erx/glyphs'
 # adjustment's sign flipped, or with k rounded on its own, fails; the pair
 # section as the subfont file holds it; the step's refusals of a legacy kern
 # table and of a drawn glyph GDEF classes a mark; no pair naming a tabular
-# digit; and the line-length check over the tree's README.md, each line
-# measured by erx_font:width/2, which prints each role's numbers for the pens
-# of Open decisions, 3. erx_font runs on stock's emulator (ERX_ERL and
-# ERX_ERLC, which make check supplies).
+# digit; the body role's LVGL font through LVGL's own font code, where a
+# seeded kern scale or ofs_y sign fails; and the line-length check over the
+# tree's README.md, each line measured by erx_font:width/2, which prints
+# each role's numbers for the pens of Open decisions, 3. erx_font runs on
+# stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies); LVGL
+# is built from its submodule (Erx::Lvgl::Build).
 class KerningTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   GLYPHS_SOURCE = File.join(ROOT, 'tools/lib/erx/glyphs.rb')
@@ -42,15 +45,22 @@ class KerningTest < Minitest::Test
   PHASES = 4
   DIGITS = 0x30..0x39
   DEADLINE_SECONDS = '300'
+  PROBE = File.join(ROOT, 'test/fixtures/lvgl_kern_probe.c')
+  LVGL_FONT_SOURCE = File.join(ROOT, 'tools/lib/erx/glyphs_lvgl_font.rb')
+  # LVGL's font code's characters: a kerned pair, a descender, a character
+  # of a range drawn in part, and the soft hyphen, which Inter does not draw.
+  LVGL_TEXT = "AVg\u00e9\u00ad"
+  OFS_Y = ['rise = box.height.zero? ? 0 : ascent - (box.top + box.height)',
+           'rise = box.height.zero? ? 0 : (box.top + box.height) - ascent'].freeze
   # erx_font's widths of the lines in lines.term, of the subfont in role.subfont.
   WIDTHS = '{ok, Bytes} = file:read_file("role.subfont"), {ok, Subfont} = erx_font:parse(Bytes), ' \
            '{ok, [Lines]} = file:consult("lines.term"), ' \
            'io:format("~w~n", [[erx_font:width(Subfont, Line) || Line <- Lines]]), halt(0)'
 
   # A role as the step reads it: its theme entry, its requests, erx-raster's
-  # result, the subfont, its code points and the font's kerning in units of
-  # its drawn glyphs.
-  Role = Data.define(:role, :requests, :result, :subfont, :points, :units)
+  # result, the subfont, its font's ranges and code points, and the font's
+  # kerning in units of its drawn glyphs.
+  Role = Data.define(:role, :requests, :result, :subfont, :ranges, :points, :units)
 
   def self.roles
     @roles ||= begin
@@ -66,10 +76,17 @@ class KerningTest < Minitest::Test
                                    glyphs: requests, runner: runner)
         subfont = Erx::Glyphs.subfont(role, requests: requests, result: result)
         drawn = result.glyphs.zip(subfont.glyphs).filter_map { |coverage, glyph| coverage.index if glyph.width.positive? }
-        Role.new(role: role, requests: requests, result: result, subfont: subfont, points: Erx::Glyphs.code_points(font),
+        Role.new(role: role, requests: requests, result: result, subfont: subfont, ranges: font.ranges,
+                 points: Erx::Glyphs.code_points(font),
                  units: Erx::Gpos.pairs(gpos: result.gpos, gdef: result.gdef, glyphs: drawn))
       end.freeze
     end
+  end
+
+  # LVGL's archive for the host, built once (Erx::Lvgl::Build).
+  def self.lvgl
+    @lvgl ||= Erx::Lvgl::Build.new(root: ROOT, runner: Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs')))
+                              .tap(&:call).library
   end
 
   # erx_font and what it calls, compiled once for every case.
@@ -156,6 +173,28 @@ class KerningTest < Minitest::Test
     refute_empty role('body').subfont.pairs.select { |a, _, _| DIGITS.cover?(role('body').points[a]) }
   end
 
+  # Through LVGL's own font code (lv_font_get_glyph_dsc and
+  # lv_font_get_glyph_static_bitmap, compiled into the host's liblvgl.a), each of
+  # LVGL_TEXT in the body role's LVGL font is the subfont's glyph: A advances
+  # by its width plus the pair's adjustment before V, g's box lies below the
+  # baseline, e acute comes from a range the font lacks a character of, and
+  # that character, the soft hyphen, is absent. A font with a seeded kern
+  # scale of 16, or written with ofs_y's sign flipped, fails.
+  def test_lvgl_font_draws_the_subfonts_glyphs
+    body = role('body')
+    first, second = indices(body, 'AV')
+    refute_nil kern(body, first, second), 'AV has no pair'
+    assert_equal 0, body.subfont.glyphs.fetch(indices(body, "­").first).width, 'the soft hyphen is drawn'
+    source = lvgl_font(body)
+    assert_equal subfont_view(body, LVGL_TEXT), lvgl_view(source, LVGL_TEXT)
+    seeded = source.sub(".kern_scale = #{Erx::Glyphs::LvglFont::KERN_SCALE},", '.kern_scale = 16,')
+    refute_equal source, seeded
+    refute_equal subfont_view(body, LVGL_TEXT), lvgl_view(seeded, LVGL_TEXT)
+    outcome = SeededSource.run(LVGL_FONT_SOURCE, OFS_Y, work: @work) { lvgl_font(body) }
+    assert_equal :value, outcome.first, outcome.inspect
+    refute_equal subfont_view(body, LVGL_TEXT), lvgl_view(outcome.last, LVGL_TEXT)
+  end
+
   # Ten i measure 30 pixels in caption and body, where a width that adds
   # exact advances and rounds the line once gives 27 and 32; each README line
   # measures, by erx_font:width/2, the rule's rounded kerned advances in
@@ -197,6 +236,48 @@ class KerningTest < Minitest::Test
                                      '-pa', self.class.erlang, '-eval', WIDTHS, chdir: @work, stdin_data: '')
     assert status.success?, output
     JSON.parse(output.lines.last)
+  end
+
+  def kern(entry, first, second) = entry.subfont.pairs.find { |a, b, _| [a, b] == [first, second] }&.last
+
+  def lvgl_font(entry) = Erx::Glyphs::LvglFont.c_source(entry.subfont, role: entry.role, ranges: entry.ranges,
+                                                         sources: ['test'])
+
+  # What the probe should print for each character of TEXT, from the
+  # subfont: the advance kerned by the next character, the ink's box, its
+  # offsets from the pen and from the baseline up to its bottom row, and its
+  # coverage; "absent" for a glyph of width 0.
+  def subfont_view(entry, text)
+    subfont = entry.subfont
+    glyphs = indices(entry, text)
+    glyphs.zip(glyphs.drop(1)).map do |index, after|
+      glyph = subfont.glyphs.fetch(index)
+      next 'absent' if glyph.width.zero?
+
+      rows = glyph.bottom - glyph.top
+      columns = rows.zero? ? 0 : (subfont.glyphs[index + 1]&.x || subfont.width) - glyph.x
+      ink = (glyph.top...glyph.bottom).map { |row| subfont.pixels.byteslice((row * subfont.width) + glyph.x, columns) }.join
+      [glyph.width + (after ? kern(entry, index, after).to_i : 0), columns, columns.zero? ? 0 : rows, glyph.left,
+       columns.zero? ? 0 : subfont.ascent - glyph.bottom, ink.empty? ? '-' : ink.unpack1('H*')].join(' ')
+    end
+  end
+
+  # The probe's lines for TEXT, in the body font whose C source is SOURCE,
+  # through test/fixtures/lvgl_kern_probe.c linked with LVGL under the
+  # sanitizers.
+  def lvgl_view(source, text)
+    font = File.join(@work, 'font.c')
+    probe = File.join(@work, 'probe')
+    File.write(font, source)
+    compile = [ENV.fetch('ERX_CLANG', 'clang'), *Erx::Lvgl::HOST_FLAGS.split, *Erx::Lvgl::SANITIZE.split, '-std=c17',
+               '-Wall', '-Wextra', '-Werror', '-DLV_CONF_INCLUDE_SIMPLE', '-I', File.join(ROOT, 'display/lvgl'),
+               '-I', File.join(ROOT, Erx::Lvgl::SUBMODULE), '-o', probe, PROBE, font, self.class.lvgl, '-lm']
+    output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, *compile, stdin_data: '')
+    assert status.success?, output
+    output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, probe, *text.chars.map { |char| char.ord.to_s },
+                                     stdin_data: '')
+    assert status.success?, output
+    output.lines.map(&:chomp)
   end
 
   # The font's exact advance of each glyph of TEXT, kerned by the next.

@@ -123,13 +123,19 @@ module Erx
       def call
         tree = Lvgl.source_tree(root: @root, runner: @runner)
         Generated.ensure(root: @root)
-        output = File.join(@root, 'build/host/lvgl', @sanitized ? 'sanitized' : 'plain')
         @runner.run(['gmake', "-j#{@jobs}", '-f', File.join(@root, MAKEFILE), "LVGL=#{tree}",
                      "GEN=#{File.join(@root, Generated::OUTPUT)}", "OUT=#{output}",
                      "CC=#{ENV.fetch('ERX_CLANG', 'clang')}", "FLAGS=#{HOST_FLAGS}", "SANITIZE=#{@sanitized ? SANITIZE : ''}"],
                     name: "lvgl-#{@sanitized ? 'sanitized' : 'plain'}", deadline: DEADLINE, chdir: @root)
         File.join(output, 'erx-lvgl')
       end
+
+      # LVGL compiled into an archive, which call builds beside the program.
+      def library = File.join(output, 'liblvgl.a')
+
+      private
+
+      def output = File.join(@root, 'build/host/lvgl', @sanitized ? 'sanitized' : 'plain')
     end
 
     # erx-lvgl for the target, a native program of the session that runs it
