@@ -373,16 +373,65 @@ it; git history is the record of completed work.
   pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
   until its device can no longer reach them, whoever ends first.
 
+* [High] R1 on Fiasco, `liberx/backend/fiasco`: handles become Fiasco slots. The root places each
+  capability in its holder's own object space at a slot it picks, with the Fiasco rights the holder's erXos
+  rights allow, and keeps a placement record per task and slot (object, kind, erXos rights); a slot is
+  freed only at its holder's close, so a destroyed object's handle answers `ERX_ESTALE`
+  ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco`: a Fiasco factory per domain budget, carved from its parent's
+  at the budget's creation with the manifest row's kernel-memory figure, and every object of the domain
+  created through it, so a domain that spends its kernel memory fails alone with `ERX_ENOMEM`; user pages
+  charged to the budget's record and refused past its cap
+  ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco`: doorbells and device lines placed directly in their holders
+  without Fiasco's special right, so a trigger and an acknowledgement are the holder's own `l4_irq_trigger`
+  and `l4_irq_unmask` and only the root binds or detaches
+  ([design-fiasco.md](docs/design-fiasco.md#who-holds-what)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
+  thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
+  `ERX_ELIMIT` ([design-fiasco.md](docs/design-fiasco.md#bands)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco`: whole-space pause and resume by the root, stopping each
+  thread by an artificial exception and answering its fault only at the resume, for `fork`'s copy and job
+  control ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
+  MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
+  unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
+* [High] R1 on Fiasco, `fiasco/kernel`: an erXos-authored BSD-2-Clause header that replaces the GPL-2.0
+  `kobject_rpc.h` in every build, written clean-room from what the MIT files that include it call and from
+  `l4sys`'s IPC layouts, by an agent that has never read the GPL header
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [Medium] R1 on Fiasco, `fiasco/kernel`: Fiasco's map refuses a user mapping writable and executable at
+  once, with a test whose seeded failure removes the check; an estimate of tens of lines, unverified
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] R1 on Fiasco, `tools/lib/erx/fiasco_config.rb`: the release configuration (the kernel debugger off,
+  every option without a consumer off) and its check, which fails a release build with the debugger on; the
+  landing gate boots the release configuration beside the development one
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] R1 on Fiasco, `test/guest`: the system-call fuzz campaign, a test domain invoking every slot of its
+  object space with random operations, words and typed items from many threads, checking that the root and a
+  neighbour still answer and no outside memory changed; its seeded failure is a removed bound in an IRQ
+  object's bind ([design-fiasco.md](docs/design-fiasco.md#verification)).
+* [Medium] R1 on Fiasco, `fiasco/kernel/ORIGIN.md`: the monthly upstream security watch, a review of
+  Kernkonzept's `fiasco` commits since the last one recorded, backporting each fix reachable in erXos's
+  configuration ([design-fiasco.md](docs/design-fiasco.md#upstream-security-fixes)).
+* [Medium] R1 on Fiasco, the release build: a check that fails when any file of the release image's link
+  closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, its seeded
+  failure a release build with the debugger on
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+
 ## Stopgap replacements
 
 * [High] kernel: replace the stopgap Fiasco with erXos's own C17 kernel
-  once it boots Phase 1's system and passes the conformance suite, at milestone
+  once it boots R1's system and passes the conformance suite, at milestone
   M7 (gate GK3), before the security closure of M11
-  ([plan.md](docs/plan.md)). Every stopgap build carries GPL-2.0 code,
+  ([plan.md](docs/plan.md)). R1 ships on Fiasco before then, with what
+  Fiasco lacks published as downsides
+  ([design-fiasco.md](docs/design-fiasco.md)). Every stopgap build carries GPL-2.0 code,
   Fiasco's `kobject_rpc.h`, without which the kernel does not build, and
   the kernel debugger's `jdb_object.cpp`, so any distribution outside the
-  project, in source or binary form, waits for this replacement
-  ([design.md](docs/design.md#dependencies)). The import also records
+  project, in source or binary form, waits for the clean-room header that
+  replaces `kobject_rpc.h` and a release build with the debugger off
+  (the R1 items above, [design.md](docs/design.md#dependencies)). The import also records
   the link closure of L4Re's `bootstrap` and `sigma0`, their `drivers-frst`
   UART support, and the license of each library in it.
 * [Medium] kernel, Track K, shelved Phase 1 work: three pieces of code
@@ -464,8 +513,7 @@ it; git history is the record of completed work.
   the console path, the clock and the cross-compiled core, not a kernel entry.
   The test that a call keeps the caller's registers left with the trap route
   and returns with the `erx` backend's kernel.
-* [Low] stopgap, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-stopgap.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`. Move handles onto the base. Likewise the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c`), not the handle-table entry "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it reaches that entry; give it a value no entry can bear, as the base does.
-* [Low] stopgap, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-stopgap.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused. Move handles onto the base.
+* [Low] stopgap, `liberx/backend/fiasco`: own-task thread handles are still the bare index, not `ERX_FIASCO_THREAD_HANDLE_BASE` plus the index that design-stopgap.md's "Thread handles" names, so thread 0's handle equals `ERX_CAP_NULL` and `erx_gate_bind` reaches thread 0 only through `ERX_CAP_SELF_THREAD`, and an `erx_cap_pass` item holding an own thread's handle is read as the handle table's entry of that number, so it may pass a memory object instead of being refused. Move handles onto the base. Likewise the handle the root or a creator holds to a created space's first thread is the task above the index (`service_thread_handle` in `service.c`), not the handle-table entry "Thread creation" names, so it can equal one of the root's entries once the root holds 256 of them, and `erx_cap_close` or `erx_cap_dup` of it reaches that entry; give it a value no entry can bear, as the base does.
 * [Medium] stopgap, `liberx/backend/fiasco/vm.c`: the page index's size counts the window, contiguous and device pages but not the archive pages a slice adds, one index entry each per live slice, so enough live slices fill the index and `page_find` spins on the service thread. One slice per domain cannot reach it; before a session slices per command, count live slice pages against a cap and refuse past it with `ERX_ENOMEM`, as `vm_device_pages_used` does, and correct `vm_table.h`'s "committing never finds it full".
 * [Low] stopgap, `liberx/backend/fiasco/service_wire.c`: the decoder copies a call's words into `decoded.request` without checking them against `ERX_FIASCO_WIRE_WORDS_MAX`; `erx_fiasco_mem_copy_request` fills all seven, so a longer layout would overflow it. Refuse past the maximum in the decoder, or assert every layout's size.
 * [Low] stopgap, `fiasco/kernel/src/erx/erx_probe.cpp` and `erx_syscall.cpp`
