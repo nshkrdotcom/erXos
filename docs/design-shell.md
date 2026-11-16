@@ -776,8 +776,11 @@ the runtime image running this shell's release in program mode
 * **On a tty.** `rc -c` on a tty's channel (an SSH exec) runs its command
   as one job, started as the command shell starts a job's evaluator, so
   every process the command starts, `&` jobs included, ends with it: at
-  Ctrl-C, which ends it with status 130, at the tty's hangup, and when
-  the command ends, as a UNIX session's processes end with its terminal.
+  Ctrl-C, which ends it by `SIGINT`, as FreeBSD's `sh -c` dies of the
+  signal, so the client hears SSH's `exit-signal`, not status 130
+  ([design-ssh.md](design-ssh.md#sessions-ttys-and-shells)), at the
+  tty's hangup, and when the command ends, as a UNIX session's processes
+  end with its terminal.
 
 A command for `system` is rc, not sh. The common translations:
 

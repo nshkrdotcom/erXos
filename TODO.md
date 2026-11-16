@@ -6392,7 +6392,13 @@ to the corpus and follow rc
   The group leader is a field any process can change, so a process that
   sets its own escapes its job's stop and end, one whose leader code in
   the job re-points to the job's is stopped and killed with it, and work
-  done by servers outside the job is not the job's. Each pass looks at
+  done by servers outside the job is not the job's. A shell a job starts
+  on the console with `erx_console:run_shell/2`, as `erl` does, runs on a
+  group of the console's, so it and what it starts escape the job: a
+  `&` block's `erl` outlives an exec that ends, until the console stops
+  with the exec's report, when its group ends and kills its shell only
+  if that shell is waiting for input (OTP's `group.erl`, the driver's
+  `'EXIT'`). Each pass looks at
   every process of the runtime. `erx_prog_handler:start/1` likewise
   records a program in its caller's group leader's job at the command
   server, where the design reads the caller's tag with `erx_job:tag/0`.
@@ -7146,8 +7152,8 @@ to the corpus and follow rc
 * [Low] funnel, a 'DOWN' is matched by reference alone (`liberx/erx_funnel.c`, the target rule for
   `ERX_FUNNEL_PAYLOAD_MONITOR_P_EXIT`; ERTS's `erl_proc_sig_queue.c`): the funnel checks that a monitor
   exit's `from` is the sending domain's and that its reference is the receiver's node's, but not that the
-  monitor was set up towards that domain, so a domain that learned a monitor's reference could end another
-  domain's monitor with a 'DOWN' of its own pid, which the receiver drops (`erx_session_relay` matches pid
+  monitor was set up towards that domain, so a domain that learned or guessed a monitor's reference
+  (ERTS's references are counter-based) could end another domain's monitor with a 'DOWN' of its own pid, which the receiver drops (`erx_session_relay` matches pid
   and reference) while ERTS has removed the monitor; the relay's watch of a master in another domain would
   then hang nothing up. Phase 2's kernel checks the monitor's connection.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the

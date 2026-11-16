@@ -146,18 +146,34 @@ open_failure_test() ->
         persistent_term:erase({?MODULE, open_error})
     end.
 
-%% The tty's report of its shell's status reaches the channel as {exited, Status}, sent
-%% by the line; the same report from a process that is no tty of the line's reaches no
-%% one.
-exited_reaches_the_channel_test() ->
+%% The tty's report of how its shell ended reaches the channel as that ending, sent by
+%% the line: {exited, Status}, or {signaled, sigint} for an exec Ctrl-C ended; the same
+%% report from a process that is no tty of the line's reaches no one, and neither does
+%% an ending the channel does not hear: a status out of range, a signal ssh_line_signal
+%% does not list, or another shape.
+ending_reaches_the_channel_test_() ->
+    [?_assertEqual(Ending, ending_on_the_channel(Ending))
+     || Ending <- [{exited, 0}, {exited, 4}, {exited, 255}, {signaled, sigint}]].
+
+ending_not_heard_is_dropped_test_() ->
+    [?_assertEqual(none, ending_on_the_channel(Ending))
+     || Ending <- [{exited, 256}, {exited, -1}, {exited, <<"4">>}, {signaled, sigkill},
+                   {signaled, "sigint"}]].
+
+ending_on_the_channel(Ending) ->
     Line = exported_line(),
     ?assertEqual(ok, call(Line, ?PEER, {open_tty, self(), {exec, <<"exit 4">>}, <<"vt100">>, 24, 80})),
     {Tty, Channel, _Run, _Size} = opened(),
     ?assertEqual(self(), Channel),
-    Line ! {erx_ssh_line, exited, spawn(fun() -> ok end), 5},
-    Tty ! {notify, 4},
-    ?assertEqual(4, receive {exited, Status} -> Status after 1000 -> none end),
-    ?assertEqual(none, receive {exited, Other} -> Other after 300 -> none end).
+    Line ! {erx_ssh_line, ended, spawn(fun() -> ok end), {exited, 5}},
+    Tty ! {notify, Ending},
+    Reported = receive {exited, _} = Exited -> Exited; {signaled, _} = Signaled -> Signaled
+               after 1000 -> none
+               end,
+    ?assertEqual(none, receive {exited, _} = Other -> Other; {signaled, _} = Other -> Other
+                       after 300 -> none
+                       end),
+    Reported.
 
 %% The tty opens at the size asked for, a side of zero being 24 rows or 80 columns.
 size_test() ->

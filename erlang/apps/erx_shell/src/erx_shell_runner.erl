@@ -55,7 +55,7 @@ does; a pattern character never matches a leading `.`, and a pattern
 that matches nothing stays as written.
 """.
 
--export([new/1, state/1, runner/0, glob/2, facets/0, facets/3]).
+-export([new/1, state/1, runner/0, spawn_evaluator/2, glob/2, facets/0, facets/3]).
 
 -include_lib("kernel/include/file.hrl").
 
@@ -166,7 +166,7 @@ request({background, Body}, S) ->
     InPlace = fun() ->
                       %% Nothing waits for it, so it is not monitored: its end
                       %% leaves no message behind.
-                      _ = spawn_opt(fun() -> _ = Run() end, [heap_limit()])
+                      _ = spawn_evaluator(Run, [heap_limit()])
               end,
     case maps:get(job_control, S, none) of
         {Shell, line} ->
@@ -299,11 +299,11 @@ status_text(<<Text:?MAX_STATUS/binary, _/binary>>) -> Text;
 status_text(Text) -> Text.
 
 %% Runs Fun in a process of its own with the heap limit and gives what it
-%% returned, or `{crashed, Reason}` when the process was killed.
+%% returned, or `{crashed, Reason}` when it crashed or was killed.
 isolated(Fun) ->
-    {_Pid, Ref} = spawn_opt(fun() -> exit({result, Fun()}) end, [monitor, heap_limit()]),
+    {_Pid, Ref} = spawn_evaluator(Fun, [monitor, heap_limit()]),
     receive
-        {'DOWN', Ref, process, _, {result, Result}} -> Result;
+        {'DOWN', Ref, process, _, {value, Result}} -> Result;
         {'DOWN', Ref, process, _, Reason} -> {crashed, Reason}
     end.
 
@@ -313,23 +313,40 @@ heap_limit() ->
 
 %%% Pieces run apart
 
+-doc """
+Spawns Body, code that evaluates the shell's source or runs what it calls,
+with the spawn Options, as every process that runs such code is spawned: it
+ends `{value, Result}` with what Body returned, or `crashed` with no report
+if Body raised anything, since a crash's reason and stack carry the shell's
+variables, which must not reach a log or a status. A process killed, as by
+the heap limit, ends `killed`, which reports nothing either.
+""".
+-spec spawn_evaluator(fun(() -> term()), [term()]) -> pid() | {pid(), reference()}.
+spawn_evaluator(Body, Options) ->
+    spawn_opt(fun() -> exit(evaluated(Body)) end, Options).
+
+evaluated(Body) ->
+    try {value, Body()}
+    catch _Class:_Reason -> crashed
+    end.
+
 %% Starts Body in a stage process on a copy of the state, once each pipe
 %% end it holds is attached to it, so a stage that ends at once still
 %% closes its ends.
 start_apart(Body, S, Ends) ->
-    {Pid, Ref} = spawn_opt(fun() ->
-                                   receive go -> ok end,
-                                   {Status, _} = Body(apart(S)),
-                                   exit({status, Status})
-                           end, [monitor, heap_limit()]),
+    {Pid, Ref} = spawn_evaluator(fun() ->
+                                         receive go -> ok end,
+                                         {Status, _} = Body(apart(S)),
+                                         Status
+                                 end, [monitor, heap_limit()]),
     [erx_shell_pipe:attach(Pipe, End, Pid) || {End, Pipe} <- Ends],
     Pid ! go,
     {Pid, Ref}.
 
-%% A stage's status, or its crash reason as one.
+%% A stage's status, or how it ended as one: `crashed`, or `killed`.
 await(_Pid, Ref) ->
     receive
-        {'DOWN', Ref, process, _, {status, Status}} -> Status;
+        {'DOWN', Ref, process, _, {value, Status}} -> Status;
         {'DOWN', Ref, process, _, Reason} ->
             status_text(iolist_to_binary(io_lib:format("~0tp", [Reason])))
     end.

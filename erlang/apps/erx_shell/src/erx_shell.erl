@@ -418,17 +418,9 @@ chars(Prompt) ->
 %%% Lines and jobs
 
 %% Runs Evaluate, which calls the evaluator and through it the runner, as
-%% the line in the foreground. A crash ends the process with a fixed reason
-%% and no report, since a crash's reason and stack carry the shell's
-%% variables and the runner's state, which must not reach a log.
+%% the line in the foreground.
 start_line(Evaluate, Text, S = #s{jobs = Jobs}) ->
-    Unit = fun() ->
-                   Outcome = try Evaluate()
-                             catch _Class:_Reason -> crashed
-                             end,
-                   exit({?MODULE, Outcome})
-           end,
-    {Leader, Go, S1} = start_first(Unit, S),
+    {Leader, Go, S1} = start_first(fun() -> {line, Evaluate()} end, S),
     %% The line takes the terminal before it runs.
     S2 = table(erx_shell_jobs:start_line(Leader, Text, Jobs), S1#s{text = Text}),
     Go(),
@@ -436,13 +428,7 @@ start_line(Evaluate, Text, S = #s{jobs = Jobs}) ->
 
 %% Starts Run, a background block of the running line, as a numbered job.
 start_job(Run, S) ->
-    Job = fun() ->
-                  Status = try Run()
-                           catch _Class:_Reason -> crashed
-                           end,
-                  exit({?MODULE, job, Status})
-          end,
-    {Leader, Go, S1} = start_first(Job, S),
+    {Leader, Go, S1} = start_first(fun() -> {job, Run()} end, S),
     Go(),
     {Leader, S1}.
 
@@ -451,6 +437,8 @@ start_job(Run, S) ->
 %% process waits until the shell has given it the leader and called Go, so
 %% everything it starts inherits the leader, the leader finds it if the
 %% shell ends, and the shell can carry out what its start calls for first.
+%% It ends as every process that runs evaluator code ends, a crash with a
+%% fixed reason and no report (erx_shell_runner:spawn_evaluator/2).
 start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
     Leader = erx_shell_leader:start(Group),
     Heap = #{size => ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
@@ -459,14 +447,13 @@ start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
     {Leader, Go, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
 
 %% What a job's first process ended with, for the table, and for the
-%% shell if the process was the line's and the line ends in the foreground.
-ending({?MODULE, {exit, Sh}}) -> {{exited, status(Sh)}, {stop, Sh}};
-ending({?MODULE, crashed}) -> {failed, {diagnose, <<"rc: the line crashed\n">>}};
-ending({?MODULE, job, crashed}) -> {failed, none};
-ending({?MODULE, job, Status}) when is_binary(Status) -> {{exited, Status}, none};
-ending({?MODULE, Outcome}) -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
+%% shell if the process was the line's and the line ends in the foreground;
+%% a background block's first is never the line's.
+ending({value, {line, {exit, Sh}}}) -> {{exited, status(Sh)}, {stop, Sh}};
+ending({value, {line, Outcome}}) -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
+ending({value, {job, Status}}) when is_binary(Status) -> {{exited, Status}, none};
 ending(killed) -> {failed, {diagnose, <<"rc: the line passed its heap limit\n">>}};
-ending(_Crash) -> {failed, {diagnose, <<"rc: the line crashed\n">>}}.
+ending(_Crashed) -> {failed, {diagnose, <<"rc: the line crashed\n">>}}.
 
 %% The shell an evaluator's outcome leaves.
 shell({ok, Sh}) -> Sh;
@@ -479,7 +466,7 @@ rc as a program (erx_shell_jobs:exit_status/1): a normal end for 0, so a console
 that restarts or halts on the shell's end sees what it always has, and
 `{shutdown, {exited, N}}` otherwise, which proc_lib reports to no log. A console
 started to report the status (erx_console's `on_shell_end`) reads it from
-the end (erx_console:exit_status/1).
+the end (erx_console:shell_ending/1).
 """.
 -spec exit_with(binary()) -> ok | no_return().
 exit_with(Status) ->

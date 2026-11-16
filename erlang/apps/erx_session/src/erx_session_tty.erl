@@ -26,7 +26,7 @@ its master in the six messages, and is read by its console on demand
   shells"), whose master is the channel, a process of that domain. Its shell is
   the command shell, or `rc -c Command` for an exec request, and it is not
   started again: once the shell has ended and the channel has taken its last
-  output, the console reports the shell's exit status and ends, its relay with
+  output, the console reports how the shell ended and ends, its relay with
   it.
 
 A tty is two processes. The groups that run its shells are driven by a console
@@ -90,12 +90,12 @@ open(Master) when is_pid(Master), node(Master) =:= node() ->
 Opens a tty of the session for Channel, a process of another domain, the
 SSH domain the session's line serves, under the session's supervisor, which
 never restarts it. Tty says what runs on it and its first size (channel());
-Notify gets the exit status of what ran once Channel has taken the tty's last
-output (erx_console's `on_shell_end`). Returns its console. The caller
-has checked that Channel is a process of the domain it serves: the relay
-hears the channel only in that domain's envelope.
+Notify gets how what ran ended (erx_console:shell_ending/1) once Channel has
+taken the tty's last output (erx_console's `on_shell_end`). Returns its
+console. The caller has checked that Channel is a process of the domain it
+serves: the relay hears the channel only in that domain's envelope.
 """.
--spec open_channel(pid(), channel(), fun((0..255) -> term())) -> {ok, pid()} | {error, term()}.
+-spec open_channel(pid(), channel(), fun((erx_prog:status()) -> term())) -> {ok, pid()} | {error, term()}.
 open_channel(Channel, Tty, Notify) when is_pid(Channel), node(Channel) =/= node(), is_function(Notify, 1) ->
     supervisor:start_child(erx_session_sup,
                            #{id => {?MODULE, make_ref()},

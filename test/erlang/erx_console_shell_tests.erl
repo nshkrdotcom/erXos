@@ -28,15 +28,20 @@ the_end_of_input_ends_the_runtime_test() ->
     [?assertEqual({halt, 1}, erx_console:shell_end(restart, Draining, Reason, true))
      || Reason <- [killed, {badarg, []}, shutdown], Draining <- [false, true]].
 
-%% A tty that exits with its shell waits on the drain at the group's first exit, with the
-%% status that exit carries, whether or not its input has ended.
-a_console_that_exits_drains_with_the_status_test() ->
+%% A tty that exits with its shell waits on the drain at the group's first exit, with
+%% how that exit says the shell ended, whether or not its input has ended: an exec that
+%% Ctrl-C ended by its signal, anything else by an exit status.
+a_console_that_exits_drains_with_the_ending_test() ->
     Exit = {exit, fun(_) -> ok end},
-    [?assertEqual({drain, Status}, erx_console:shell_end(Exit, false, Reason, Ended))
-     || {Reason, Status} <- [{normal, 0}, {{shutdown, {exited, 0}}, 0},
-                             {{shutdown, {exited, 7}}, 7}, {{shutdown, {exited, 255}}, 255},
-                             {killed, 1}, {{badarg, []}, 1}, {shutdown, 1},
-                             {{shutdown, {exited, 256}}, 1}, {{shutdown, {exited, -1}}, 1}],
+    [?assertEqual({drain, Ending}, erx_console:shell_end(Exit, false, Reason, Ended))
+     || {Reason, Ending} <- [{normal, {exited, 0}}, {{shutdown, {exited, 0}}, {exited, 0}},
+                             {{shutdown, {exited, 7}}, {exited, 7}},
+                             {{shutdown, {exited, 255}}, {exited, 255}},
+                             {{shutdown, {signaled, sigint}}, {signaled, sigint}},
+                             {killed, {exited, 1}}, {{badarg, []}, {exited, 1}},
+                             {shutdown, {exited, 1}}, {{shutdown, {exited, 256}}, {exited, 1}},
+                             {{shutdown, {exited, -1}}, {exited, 1}},
+                             {{shutdown, {signaled, "sigint"}}, {exited, 1}}],
         Ended <- [false, true]].
 
 %% The group's own exit after its first changes nothing: the status is the first's.

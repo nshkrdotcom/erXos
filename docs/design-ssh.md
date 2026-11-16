@@ -565,13 +565,33 @@ through each other's domain envelope and each checked by its receiver:
 | `job_sent` | channel to line | a `job_output` is unanswered; the line then reads the pipes again | ignored, as a late repeat |
 | `job_hangup` | channel to line | that atom; it holds from then on | not applicable; the line closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
 | `{exited, Status}` | line to channel | `Status` is an integer from 0 to 255 | the channel closes |
+| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of `ssh_line_signal` in `abi/services/ssh.txt`, `sigint` alone | the channel closes |
 
-`{exited, Status}` serves ttys too: the line sends it once what it
-started on the channel, the shell on the tty or the job, has ended and
-its last output has been taken, by `tty_taken` or `job_sent`, so it
-arrives after every byte of output. The channel then sends SSH's
-`exit-status`, its end of file and its close, and sends `tty_hangup` to
-a tty. One unanswered message each way bounds what either side holds for
+`{exited, Status}` serves ttys too, and a tty has a second ending,
+`{signaled, Signal}`, for an exec that the tty's `Ctrl-C` ended, with
+`Signal` a name of the closed list `ssh_line_signal` in
+`abi/services/ssh.txt`, `sigint` alone, since `Ctrl-C` is the only
+signal that ends an exec on a tty. The line sends a tty's ending only
+in these two shapes, with `Status` from 0 to 255 and `Signal` in that
+list, and drops any other; the channel checks it against that list and
+closes on any other. FreeBSD's `sh -c` dies of the SIGINT
+that ends its command (`onint` in `bin/sh/error.c` of FreeBSD 14.2,
+lines 117-123), rather than exiting 130, the `$?` a parent shell gives
+a command SIGINT ended (`waitforjob` in `bin/sh/jobs.c`, line 1114),
+and OpenSSH's `sshd` sends `exit-signal` for a command a signal ended
+(`session_exit_message` in `session.c`), so the client sees a signal,
+not an exit, on both systems. A hangup needs no ending, since the
+channel is gone by then.
+
+The line sends one ending once what it started on the channel, the
+shell on the tty or the job, has ended, every process it started has
+ended with it, and its last output has been taken, by `tty_taken` or
+`job_sent`, so the ending arrives after every byte of output. The
+channel then sends SSH's `exit-status` for `{exited, Status}`, or
+`exit-signal` for `{signaled, Signal}`, with the signal's name without
+`sig` in capitals (`INT`), no core dump, and an empty message and
+language tag; then its end of file and its close, and `tty_hangup` to a
+tty. One unanswered message each way bounds what either side holds for
 a channel to 32 KiB of input and 32 KiB of output beyond the client's own
 window, and a pipe's writer that waits for room carries back-pressure to
 the client's window.
@@ -899,7 +919,7 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
 | Interface | Between | Declared in |
 | --- | --- | --- |
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
-| `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_written`, `job_eof`, `job_output`, `job_sent`, `job_hangup` and `exited` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells) |
+| `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_written`, `job_eof`, `job_output`, `job_sent`, `job_hangup`, `exited`, and a tty's `signaled` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells) |
 | the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |
@@ -980,23 +1000,6 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   a paste larger than the bound into a program that is not reading loses
   bytes. An acknowledgement of input in the console interface would carry
   the SSH window to the tty; recorded in `TODO.md`.
-* **A command that a signal ends.** OpenSSH's `sshd` sends `exit-status`
-  only for a command that exited, and `exit-signal` (the signal's name
-  without `SIG`, whether it dumped core, and an empty message and
-  language) for one a signal ended (`session_exit_message` in
-  `session.c`), so FreeBSD's `sshd` reports a session whose shell Ctrl-C
-  ends as signal `INT` (whether FreeBSD's `sh -c` itself dies of that
-  SIGINT, rather than exiting 130, is not checked here). The line sends a
-  channel only
-  `{exited, Status}` with a status from 0 to 255, so the same command on
-  erXos reports `exit-status` 130, the status rc gives a command SIGINT
-  ended, and a client sees an exit, not a signal. The question is whether
-  the line should carry the signal. Recommendation: yes, as FreeBSD
-  behaves: a second ending, `{signalled, Name}`, with `Name` from a closed
-  list in `abi/services/ssh.txt` (`INT` alone at first, since Ctrl-C is
-  the only signal that ends an exec on a tty), which the channel sends as
-  `exit-signal` with no core dump; a hangup needs none, since the channel
-  is gone by then.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),

@@ -21,9 +21,15 @@ leaving the other tty and the line's `user` running.
 -export([init/1]).
 
 -define(WAIT_MS, 10000).
-%% Two execs that never end on their own: a pipeline's two stages, and a subshell.
--define(PIPELINE, <<"echo looping; while (true) { x = 1 } | cat">>).
+%% Two execs that never end on their own: a pipeline whose first stage loops, and a
+%% subshell that loops. The loop is braced, since `|` binds tighter than `while`, as in
+%% rc: unbraced, each pass would run a pipeline whose stages come and go at once.
+-define(PIPELINE, <<"echo looping; { while (true) { x = 1 } } | cat">>).
 -define(SUBSHELL, <<"echo looping; @ { while (true) { x = 1 } }">>).
+%% Two execs that end of themselves while an `&` block they started runs on: one that
+%% loops, and one that writes as fast as its output is taken.
+-define(LEFT_RUNNING, <<"{ while (true) { x = 1 } & }; exit 0">>).
+-define(LEFT_WRITING, <<"{ while (true) { echo left } & }; echo done; exit 0">>).
 
 %% One process drives a tty throughout, so the steps run in order in it.
 relay_test_() ->
@@ -41,20 +47,56 @@ channel_test_() ->
 %% tty's last output, and ends, the relay with it. Here the master is of this node,
 %% since the host's emulator names no process of another domain.
 channel_exits(_Sup) ->
-    ?assertEqual(4, exits(shell, <<"echo bye; exit 4\r">>, <<"bye">>)),
-    ?assertEqual(0, exits(shell, <<"echo fine; exit\r">>, <<"fine">>)),
-    ?assertEqual(3, exits({exec, <<"echo hi; exit 3">>}, none, <<"hi">>)),
-    ?assertEqual(1, exits({exec, <<"false">>}, none, <<>>)),
+    ?assertEqual({exited, 4}, exits(shell, <<"echo bye; exit 4\r">>, <<"bye">>)),
+    ?assertEqual({exited, 0}, exits(shell, <<"echo fine; exit\r">>, <<"fine">>)),
+    ?assertEqual({exited, 3}, exits({exec, <<"echo hi; exit 3">>}, none, <<"hi">>)),
+    ?assertEqual({exited, 1}, exits({exec, <<"false">>}, none, <<>>)),
     %% The channel's vars set the first variables of the shell and of an exec.
-    ?assertEqual(5, exits(shell, <<"echo term=$TERM; exit 5\r">>, <<"term=xterm-256color">>)),
-    ?assertEqual(6, exits({exec, <<"echo term=$TERM; exit 6">>}, none, <<"term=xterm-256color">>)),
-    ?assertEqual(130, looping_exec_ends(?PIPELINE, fun(Tty) -> type(Tty, <<3>>) end)),
+    ?assertEqual({exited, 5}, exits(shell, <<"echo term=$TERM; exit 5\r">>, <<"term=xterm-256color">>)),
+    ?assertEqual({exited, 6},
+                 exits({exec, <<"echo term=$TERM; exit 6">>}, none, <<"term=xterm-256color">>)),
+    ?assertEqual({signaled, sigint}, looping_exec_ends(?PIPELINE, fun(Tty) -> type(Tty, <<3>>) end)),
     ?assertEqual(none, looping_exec_ends(?PIPELINE, fun(Tty) -> Tty ! tty_hangup end)),
-    ?assertEqual(130, looping_exec_ends(?SUBSHELL, fun(Tty) -> type(Tty, <<3>>) end)),
-    ?assertEqual(none, looping_exec_ends(?SUBSHELL, fun(Tty) -> Tty ! tty_hangup end)).
+    ?assertEqual({signaled, sigint}, looping_exec_ends(?SUBSHELL, fun(Tty) -> type(Tty, <<3>>) end)),
+    ?assertEqual(none, looping_exec_ends(?SUBSHELL, fun(Tty) -> Tty ! tty_hangup end)),
+    %% An exec that ends of itself ends its `&` blocks first: none is led when the
+    %% report comes, and none of their output follows it.
+    ?assertEqual({{exited, 0}, [], none}, leftovers_end_first(?LEFT_RUNNING)),
+    ?assertEqual({{exited, 0}, [], none}, leftovers_end_first(?LEFT_WRITING)).
+
+%% The report of an exec that ends of itself while `&` blocks it started still run,
+%% with the job leaders that lead a process when the console reports, and the output
+%% that comes in the 300 ms after it, or none.
+leftovers_end_first(Command) ->
+    Test = self(),
+    Master = master(),
+    Channel = #{run => {exec, Command}, size => {24, 80}, vars => #{}},
+    Notify = fun(Ending) -> Test ! {notified, Ending, led_by_leaders()} end,
+    {ok, Console} = erx_session_tty:start_channel(Master, Channel, Notify),
+    Tty = opened(Master),
+    Ended = monitor(process, Console),
+    Report = report_then_output(Master, Tty),
+    _ = ended(Ended, Console),
+    unlink(Master),
+    exit(Master, kill),
+    Report.
+
+report_then_output(Master, Tty) ->
+    receive
+        {notified, Ending, Led} ->
+            Late = receive {Master, {tty_output, _N, Bytes}} -> Bytes after 300 -> none end,
+            {Ending, Led, Late};
+        {Master, {tty_output, N, _Bytes}} ->
+            Tty ! {tty_taken, N},
+            report_then_output(Master, Tty);
+        {Master, _Other} ->
+            report_then_output(Master, Tty)
+    after ?WAIT_MS ->
+            error(no_report)
+    end.
 
 %% How an exec that never ends on its own ends when End acts on its tty: Ctrl-C ends it
-%% as SIGINT ends `rc -c`, with status 128 + SIGINT, and a hangup with no status. Either
+%% as SIGINT ends `sh -c`, by that signal, and a hangup with no report. Either
 %% way every process the exec started ends with it: its evaluator and what that started,
 %% the stages of a pipeline and a subshell, all led by the exec's job leader.
 looping_exec_ends(Command, End) ->
@@ -66,7 +108,7 @@ looping_exec_ends(Command, End) ->
     Ended = monitor(process, Console),
     {ok, _} = await(Master, Tty, <<"looping">>),
     %% The evaluator, and the stages or the subshell it started, run under the leader.
-    {Leader, Led} = running_job(Master, Tty, 40),
+    {Leader, Led} = running_job(Master, Tty, ?WAIT_MS div 50),
     End(Tty),
     Status = receive_status(Master, Tty, Ended, Console),
     ?assertEqual([], still_alive(Led, 40)),
@@ -97,8 +139,8 @@ led_by_leaders() ->
                       Led =/= []].
 
 %% The one job leader and the processes it leads once it leads two or more, looking up
-%% to Tries times 50 ms apart, since the stages start after the echo, and taking each
-%% output meanwhile, since the echo waits until its output is taken.
+%% to Tries times 50 ms apart, since the stages start after the echo and then run on,
+%% and taking each output meanwhile, since the echo waits until its output is taken.
 running_job(Master, Tty, Tries) ->
     case led_by_leaders() of
         [{Leader, Led}] when length(Led) >= 2 -> {Leader, Led};

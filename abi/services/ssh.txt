@@ -5,9 +5,10 @@
 # erx_ssh_line exchange, each heard through the other's domain envelope and checked
 # by its receiver as that section says. A channel sends open_tty and open_job, each a
 # call the line answers, and for a job job_input, job_eof, job_sent and job_hangup;
-# the line sends a job's channel job_written and job_output, and every channel exited
-# once what it started has ended and its last output has been taken. A channel with a
-# tty exchanges the console messages (console.txt) with the tty itself.
+# the line sends a job's channel job_written and job_output, and every channel exited,
+# or signaled for an exec on a tty that Ctrl-C ended, once what it started has ended
+# and its last output has been taken. A channel with a tty exchanges the console
+# messages (console.txt) with the tty itself.
 service ssh_line 12
   served_as message
   operation open_tty 1
@@ -19,3 +20,9 @@ service ssh_line 12
   operation job_sent 7
   operation job_hangup 8
   operation exited 9
+  operation signaled 10
+# The signals a signaled names, each by its name in abi/signals.txt with sig before it,
+# as a program's end names it (docs/design-programs.md, "A program's end"); the channel
+# sends it as SSH's exit-signal, by the name without sig in capitals.
+enum ssh_line_signal u8
+  value sigint 1

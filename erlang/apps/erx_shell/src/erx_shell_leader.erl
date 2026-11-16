@@ -7,8 +7,9 @@ A job's leader: the group leader of every process a job starts, which ends
 them all when the process that started the leader ends, so no process a job
 started outlives the shell or the exec it ran under. It stands in for the
 runtime's job tag (docs/design-shell.md, "Jobs and their tags"; TODO.md, "a
-job's processes are found by group leader"). The command shell starts one per job (erx_shell), and `rc -c` on
-a tty one for its whole command (erx_shell_script:command/2).
+job's processes are found by group leader"). The command shell starts one
+per job (erx_shell), and `rc -c` on a tty one for its whole command
+(erx_shell_script:command/2).
 
 A process joins the job by having the leader as its group leader, which
 everything it spawns inherits, so membership needs no list: the processes a
@@ -19,10 +20,11 @@ the requester itself, and drops any other message. It ends every process it
 leads, and then itself, when its starter ends, for any reason; release/2
 ends the job's processes at once (`kill`), or lets the leader end on its own
 once it leads none (`keep`), as the processes a UNIX job leaves stay in its
-process group.
+process group; close/1 ends them and the leader once the leader has passed
+on every io request they sent.
 """.
 
--export([start/1, spawn_member/3, release/2, end_all/1, led_by/1]).
+-export([start/1, spawn_member/3, release/2, close/1, end_all/1, led_by/1]).
 
 %% How often a released leader looks for the processes its job left running.
 -define(LEFTOVER_LOOK_MS, 1000).
@@ -45,6 +47,8 @@ forward(Group, StarterRef, Look) ->
             end_all(self());
         {?MODULE, released} ->
             forward(Group, StarterRef, ?LEFTOVER_LOOK_MS);
+        {?MODULE, close} ->
+            ok;
         _Other ->
             forward(Group, StarterRef, Look)
     after Look ->
@@ -55,34 +59,60 @@ forward(Group, StarterRef, Look) ->
     end.
 
 -doc """
-Spawns Body as a process of Leader's job, with a monitor and the spawn
-Options: it is given Leader as its group leader before it runs, so
-everything it starts is led by Leader too, and it waits for Go, which the
+Spawns Body, evaluator code, as a process of Leader's job, with a monitor and
+the spawn Options, as erx_shell_runner:spawn_evaluator/2 spawns it and with
+the ending that gives: it is given Leader as its group leader before it runs,
+so everything it starts is led by Leader too, and it waits for Go, which the
 caller calls once it has recorded the process. The caller is not linked to
-it: a caller killed between the spawn and the group leader's change leaves
-it waiting, unled (TODO.md, "a job's processes are found by group leader").
+it; it watches the caller while it waits, so a caller that ends before Go,
+as one killed between the spawn and the group leader's change, ends it too,
+having run nothing.
 """.
--spec spawn_member(pid(), fun(() -> term()), [term()]) -> {pid(), reference(), fun(() -> ok)}.
+-spec spawn_member(pid(), fun(() -> term()), [term()]) ->
+          {pid(), reference(), fun(() -> ok)}.
 spawn_member(Leader, Body, Options) ->
     Go = make_ref(),
-    {Pid, Ref} = spawn_opt(fun() -> receive Go -> Body() end end, [monitor | Options]),
+    Caller = self(),
+    Member = fun() ->
+                     Watch = monitor(process, Caller),
+                     receive
+                         Go -> demonitor(Watch, [flush]), Body();
+                         {'DOWN', Watch, process, _, _} -> unstarted
+                     end
+             end,
+    {Pid, Ref} = erx_shell_runner:spawn_evaluator(Member, [monitor | Options]),
     true = group_leader(Leader, Pid),
     {Pid, Ref, fun() -> Pid ! Go, ok end}.
 
 -doc """
 The job's first process has ended. After a crash, the heap limit or an
-interrupt (`kill`) every process Leader leads is killed, and then the leader;
-after a normal end (`keep`) the processes still running stay with the
-leader, unlisted, and end with its starter at the latest.
+interrupt (`kill`) the job ends (close/1); after a normal end (`keep`) the
+processes still running stay with the leader, unlisted, and end with its
+starter at the latest.
 """.
 -spec release(kill | keep, pid()) -> ok.
 release(kill, Leader) ->
-    ok = end_all(Leader),
-    exit(Leader, kill),
-    ok;
+    close(Leader);
 release(keep, Leader) ->
     Leader ! {?MODULE, released},
     ok.
+
+-doc """
+Ends the job of Leader: kills every process it leads (end_all/1), and
+returns once the leader has passed on to the terminal's group every io
+request that came before, and ended. A process the job killed sent its
+last request before it died, so the group has all the job's output when
+this returns, and output the job wrote comes before anything the caller
+says once this returns, such as its exit status. That rests on ERTS, not on
+Erlang's per-pair order: on one node a send joins its receiver's queue at once,
+which holds while neither the leader nor the group keeps its messages off heap.
+""".
+-spec close(pid()) -> ok.
+close(Leader) ->
+    ok = end_all(Leader),
+    Watch = monitor(process, Leader),
+    Leader ! {?MODULE, close},
+    receive {'DOWN', Watch, process, _, _} -> ok end.
 
 -doc """
 Kills every process Leader leads. Each pass looks at every process. exit/2

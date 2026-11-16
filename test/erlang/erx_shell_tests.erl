@@ -473,6 +473,47 @@ answer({winch, _Count, Bytes}) -> unicode:characters_to_list(Bytes);
 answer(interrupted) -> {error, interrupted};
 answer(eof) -> eof.
 
+%% A script whose evaluator crashes ends as a fault whose status is a failure and
+%% names nothing of the script's, and leaves no report: the crash's reason and stack
+%% carry the shell's variables (erx_shell_script:run/2, and through the same evaluator
+%% an exec, command/2). A raise in a builtin never gets this far, since the runner
+%% makes it the unit's fault (erx_shell_runner:runner/0); here the evaluator crashes
+%% on a variable whose value is a binary, not a list of words, a shape it never makes.
+an_evaluator_crash_ends_a_script_unreported_test() ->
+    Test = self(),
+    Run = fun() ->
+                  Test ! {ending, erx_shell_script:run(<<"echo $secret">>,
+                                                       #{vars => #{<<"secret">> => <<"hidden-value">>},
+                                                         fds => #{0 => null, 1 => null, 2 => null}})}
+          end,
+    Logged = logged_by(Run),
+    {Ending, Status} = receive {ending, Ended} -> Ended after 5000 -> error(no_ending) end,
+    ?assertEqual([], Logged),
+    ?assertEqual(fault, Ending),
+    ?assertNotEqual(0, erx_shell_jobs:exit_status(Status)),
+    ?assertEqual(nomatch, binary:match(Status, <<"hidden-value">>)).
+
+%% An evaluator that crashes in a process of its own, a pipeline's stage, a subshell, a
+%% backquote or an `&` block, leaves no report either, and its status names nothing of
+%% the script's: every process that runs evaluator code ends a crash the same way
+%% (erx_shell_runner:spawn_evaluator/2).
+a_crash_run_apart_is_unreported_test_() ->
+    [{Source, ?_assertEqual({[], nomatch}, crash_run_apart(Source))}
+     || Source <- [<<"echo $secret | cat">>, <<"@ { echo $secret }">>,
+                   <<"x = `{ echo $secret }; echo $x">>, <<"{ echo $secret } &">>]].
+
+%% What a script that runs Source logs, and where its status names the secret.
+crash_run_apart(Source) ->
+    Test = self(),
+    Run = fun() ->
+                  Test ! {ending, erx_shell_script:run(Source,
+                                                       #{vars => #{<<"secret">> => <<"hidden-value">>},
+                                                         fds => #{0 => null, 1 => null, 2 => null}})}
+          end,
+    Logged = logged_by(Run),
+    {_Ending, Status} = receive {ending, Ended} -> Ended after 5000 -> error(no_ending) end,
+    {Logged, binary:match(Status, <<"hidden-value">>)}.
+
 %%% A runner whose every command crashes, built as the shell builds any runner
 
 new(Terminal) ->
@@ -508,3 +549,48 @@ collect_logged(Events) ->
 log(Event, #{config := Pid}) ->
     Pid ! {?MODULE, logged, Event},
     ok.
+
+%% Closing a job passes on to the terminal's group every io request its processes
+%% sent before, here each a member's io:format waiting at a leader held suspended
+%% until the close is under way, and ends the members and the leader
+%% (erx_shell_leader:close/1).
+a_closed_job_passes_on_its_last_output_test() ->
+    Group = self(),
+    Leader = erx_shell_leader:start(Group),
+    true = erlang:suspend_process(Leader),
+    Members = [begin
+                   {Pid, _Ref, Go} = erx_shell_leader:spawn_member(
+                                       Leader, fun() -> io:format("line ~b~n", [N]) end, []),
+                   ok = Go(),
+                   Pid
+               end || N <- lists:seq(1, 5)],
+    ok = queued(Leader, 5, 100),
+    {Closer, CloseRef} = spawn_monitor(fun() -> exit({closed, erx_shell_leader:close(Leader)}) end),
+    ok = closing(Closer, 100),
+    true = erlang:resume_process(Leader),
+    ?assertEqual({closed, ok}, receive {'DOWN', CloseRef, process, _, Closed} -> Closed after 5000 -> none end),
+    %% Each member's one request, whatever shape io:format gives it, among the
+    %% members' DOWN messages.
+    Requests = [Request || _ <- Members,
+                           Request <- [receive {io_request, _, _, _} = Got -> Got after 0 -> none end],
+                           Request =/= none],
+    ?assertEqual(5, length(Requests)),
+    ?assertEqual([], [Pid || Pid <- [Leader | Members], is_process_alive(Pid)]).
+
+%% Waits until Closer waits in close/1 for the leader's end, or has ended, looking up to
+%% Tries times 10 ms apart.
+closing(Closer, Tries) ->
+    case process_info(Closer, [current_function, status]) of
+        [{current_function, {erx_shell_leader, close, 1}}, {status, waiting}] -> ok;
+        undefined -> ok;
+        _ when Tries =:= 0 -> error({not_closing, Closer});
+        _ -> receive after 10 -> closing(Closer, Tries - 1) end
+    end.
+
+%% Waits until Pid holds Count messages, looking up to Tries times 10 ms apart.
+queued(Pid, Count, Tries) ->
+    case process_info(Pid, message_queue_len) of
+        {message_queue_len, Count} -> ok;
+        _ when Tries =:= 0 -> error({not_queued, Pid});
+        _ -> receive after 10 -> queued(Pid, Count, Tries - 1) end
+    end.

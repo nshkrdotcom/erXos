@@ -23,9 +23,11 @@ never goes to a third domain; anything else from another domain is dropped.
 
 An open tty is a tty of the session's (erx_session_tty:open_channel/3) whose
 master is the channel and on which Run runs. When what ran has ended and the
-channel has taken the tty's last output, the tty's console tells the line the
-status and ends, which the line sees through its monitor; the line sends the
-channel `{exited, Status}`, so every message the channel hears from the
+channel has taken the tty's last output, the tty's console tells the line how
+it ended (erx_console:shell_ending/1) and ends, which the line sees through
+its monitor; the line sends the channel that ending, `{exited, Status}`, or
+`{signaled, sigint}` for an exec Ctrl-C ended, a signal of the closed list
+abi/services/ssh.txt gives, so every message the channel hears from the
 session but the tty's own comes from the line.
 """.
 
@@ -39,7 +41,8 @@ session but the tty's own comes from the line.
 %% erx_session_tty:open_channel/3 or a host test's stand-in.
 -type config() :: #{system => pos_integer(),
                     exports => module(),
-                    open => fun((pid(), erx_session_tty:channel(), fun((0..255) -> term())) ->
+                    open => fun((pid(), erx_session_tty:channel(),
+                                 fun((erx_prog:status()) -> term())) ->
                                        {ok, pid()} | {error, term()})}.
 
 -doc "Starts the line for Config, linked to the caller.".
@@ -70,9 +73,12 @@ line(Parent, #{system := System, exports := Exports} = Config, Core) ->
                 true -> line(Parent, Config, call(From, Request, Config, Core));
                 false -> line(Parent, Config, Core)
             end;
-        {?MODULE, exited, Tty, Status} when is_pid(Tty) ->
+        {?MODULE, ended, Tty, Ending} when is_pid(Tty) ->
             %% A tty's report, through the Notify call/4 gave it, for its channel.
-            [Channel ! {exited, Status} || {ok, Channel} <- [erx_ssh_line_core:channel(Tty, Core)]],
+            case erx_ssh_line_core:report(Tty, Ending, Core) of
+                {send, Channel} -> Channel ! Ending;
+                drop -> ok
+            end,
             line(Parent, Config, Core);
         {'DOWN', _Ref, process, Tty, _Reason} ->
             line(Parent, Config, erx_ssh_line_core:ended(Tty, Core));
@@ -93,10 +99,10 @@ export(Ssh, Exports, Core) ->
 
 %% A request from the peer, answered as the core decides. A tty that cannot be
 %% started, a session out of room, is answered `limited`, as a full line is. The
-%% tty's console reports its shell's status by calling Notify, which tells the line.
+%% tty's console reports how its shell ended by calling Notify, which tells the line.
 call(From, Request, #{exports := Exports, open := Open}, Core) ->
     Line = self(),
-    Notify = fun(Status) -> Line ! {?MODULE, exited, self(), Status} end,
+    Notify = fun(Ending) -> Line ! {?MODULE, ended, self(), Ending} end,
     case erx_ssh_line_core:request(Request, fun Exports:owner/1, Core) of
         {open_tty, Channel, Spec} ->
             case Open(Channel, Spec, Notify) of
