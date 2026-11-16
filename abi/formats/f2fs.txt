@@ -246,6 +246,21 @@ limit f2fs_compress_released u32 0x80
 # The bits of i_flags a reader checks against the feature word [F 40, F 42].
 limit f2fs_casefold_fl u32 0x40000000
 limit f2fs_device_alias_fl u32 0x80000000
+# A compressed file's i_flags bit, which keeps it from inline data [F 70].
+limit f2fs_compr_fl u32 0x4
+# i_advise's bits that keep a regular file from inline data [F 70].
+limit f2fs_advise_encrypt u32 0x4
+limit f2fs_advise_verity u32 0x40
+# i_mode's file type, POSIX's S_IFMT bits, one of the seven below; the low
+# 12 bits are the permissions and the set-id and sticky bits [F 66].
+limit f2fs_mode_type_mask u32 0xf000
+limit f2fs_mode_fifo u32 0x1000
+limit f2fs_mode_chr u32 0x2000
+limit f2fs_mode_dir u32 0x4000
+limit f2fs_mode_blk u32 0x6000
+limit f2fs_mode_reg u32 0x8000
+limit f2fs_mode_lnk u32 0xa000
+limit f2fs_mode_sock u32 0xc000
 # i_extra_isize is a multiple of 4, at least the two size words [F 41].
 limit f2fs_extra_isize_min u32 4
 limit f2fs_extra_isize_align u32 4

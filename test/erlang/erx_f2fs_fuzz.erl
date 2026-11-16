@@ -52,6 +52,8 @@
         ++ [{inode, Rule} || Rule <- [ok, block_size, nid, footer, checksum, extra_attr,
                                       extra_isize, inline_xattr_size, blocks,
                                       xattr_nid, casefold, device_alias, namelen,
+                                      mode, links, inline_dentry, inline_data_type,
+                                      inline_data_blocks, inline_data_transformed,
                                       inline_data | ?DENTRY_RULES]]
         ++ [{dentry_block, Rule} || Rule <- [ok, block_size | ?DENTRY_RULES]]).
 -define(SIT_RULES, [valid_blocks, valid_map, type]).
@@ -186,12 +188,18 @@ inodes() ->
      {Flexible, FlexibleDirectory, name_lengths(368 + 34, FlexibleNames)}].
 
 %% Fields with an inline body: E extra words, X inline xattr words, the
-%% inline flags Flags and Content after the reserved word.
+%% inline flags Flags and Content after the reserved word; inline dentries
+%% make the inode a directory of two links, and inline data a file of no
+%% block but its inode's ([F 68], [F 70]).
 inline(#{inode := Inode} = Fields, E, X, Flags, Content) ->
     Extra = [4 * E bor (X bsl 16) | lists:duplicate(E - 1, 0)],
     Words = Extra ++ [0 | [Word || <<Word:32/little>> <= Content]],
-    Fields#{inode := Inode#{i_inline => ?ERX_F2FS_EXTRA_ATTR bor Flags,
-                            i_size => byte_size(Content)},
+    Kind = case Flags band ?ERX_F2FS_INLINE_DENTRY of
+               0 -> #{i_blocks => 1};
+               _ -> #{i_mode => 8#40755, i_links => 2}
+           end,
+    Fields#{inode := maps:merge(Inode, Kind#{i_inline => ?ERX_F2FS_EXTRA_ATTR bor Flags,
+                                             i_size => byte_size(Content)}),
             i_addr := Words ++ lists:duplicate(923 - length(Words), 0)}.
 
 %% Names of 1 to 20 bytes over the first slots of Slots, and one in the last.
@@ -407,9 +415,14 @@ nid_limit() -> ?ERX_F2FS_NAT_ENTRIES_PER_BLOCK bsl ?ERX_F2FS_LOG_BLOCKS_PER_SEG.
 
 %% A field of the inode's fixed part and a value at the edge of a rule.
 inode_field() ->
-    pick([{i_blocks, pick([0, 1])},
+    pick([{i_blocks, pick([0, 1, 2, 3])},
           {i_xattr_nid, pick([0, 1, 3, 4, 9, nid_limit()])},
-          {i_flags, pick([0, ?ERX_F2FS_CASEFOLD_FL, ?ERX_F2FS_DEVICE_ALIAS_FL])},
+          {i_flags, pick([0, ?ERX_F2FS_CASEFOLD_FL, ?ERX_F2FS_DEVICE_ALIAS_FL,
+                          ?ERX_F2FS_COMPR_FL])},
+          {i_mode, pick([8#644, 8#10644, 8#20644, 8#30644, 8#40755, 8#60644, 8#100644,
+                         8#120777, 8#140644, 8#170644])},
+          {i_links, pick([0, 1, 2])},
+          {i_advise, pick([0, ?ERX_F2FS_ADVISE_ENCRYPT, ?ERX_F2FS_ADVISE_VERITY])},
           {i_inline, rand:uniform(256) - 1},
           {i_namelen, pick([255, 256])},
           {i_size, pick([0, 3476, 3477])}]).

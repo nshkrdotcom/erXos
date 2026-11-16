@@ -4788,13 +4788,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   fixtures give every entry one mode and one time (the manifest's modes 0644 and 0755 and time 0), and only
   `extended.img` varies the owner (uid and gid 70000), so no case checks the mode-bit and mtime offsets
   with other values; fsimg's manifests can write them.
-* [Medium] storage, `erx_f2fs_codec` inode rules by file type: four rules of
-  [design-f2fs.md](docs/design-f2fs.md#reading-the-medium)'s facts depend on `i_mode`'s file type (a
-  directory never has one link, `INLINE_DENTRY` only on a directory, and inline data only on a regular file
-  or symlink, never an encrypted, verity or compressed regular file; [F 42], [F 48]), and the F2FS facts
-  record gives no file-type bits, only "POSIX mode" and the root inode's 0x41ed ([T 22]). The codec leaves
-  them out until a facts record states the bits; meanwhile an inode with `INLINE_DENTRY` answers its
-  inline dentries whatever its mode, ahead of `INLINE_DATA` when both are set.
 * [Medium] test, F2FS oracle: erXos's F2FS is checked against Linux's, which needs a Linux guest under QEMU
   with a pinned v7.3.4 kernel that has F2FS (Debian's generic arm64 kernel is the candidate to check;
   Ubuntu 26.04's is 7.0.0) and f2fs-tools 1.16.0. Neither the guest nor its pins exist.
