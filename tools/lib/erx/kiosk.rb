@@ -91,25 +91,24 @@ module Erx
         raise Error, failure unless log.match?(line)
       end
       names = shown_minutes(log).each_with_index.map do |minute, index|
-        "#{NAME}-#{index}".tap do |name|
-          digest, picture = ScreenReference.encode(draw.call(minute))
-          File.write(File.join(directory, "#{name}.sha256"), digest)
-          File.binwrite(File.join(directory, "#{name}.ppm.gz"), picture)
-        end
+        "#{NAME}-#{index}".tap { |name| ScreenReference.write(directory, name, draw.call(minute)) }
       end
       DisplayDomain.await_screen(socket: socket, references: directory, names: names)
     end
 
     # The checks of the altered package's boot: admitted by its row, refused at the mount,
-    # and nothing of the app ran.
+    # and nothing of the app ran. An altered image mounted or shown is the failure the cell
+    # exists for, a hash check that let a changed image through, and its message says so
+    # whenever the log shows it, before any other.
     def check_altered(serial:)
       log = DisplayDomain.await_log(serial, wait_seconds: REFUSED_SECONDS) { |text| text.match?(UNVERIFIED) }
+      if log.match?(UNVERIFIED)
+        log = DisplayDomain.await_log(serial, wait_seconds: SETTLE_SECONDS) { |text| text.match?(MOUNTED) || text.match?(SHOWN) }
+      end
+      raise Error, "the altered image's hash check let it through: its session mounted /app" if log.match?(MOUNTED)
+      raise Error, "the altered image's hash check let it through: it showed the dashboard" if log.match?(SHOWN)
       raise Error, 'the system did not admit the altered package by its row' unless log.match?(ADMITTED)
       raise Error, 'the altered image was not refused at its mount' unless log.match?(UNVERIFIED)
-
-      log = DisplayDomain.await_log(serial, wait_seconds: SETTLE_SECONDS) { |text| text.match?(MOUNTED) || text.match?(SHOWN) }
-      raise Error, "the altered package's session mounted /app" if log.match?(MOUNTED)
-      raise Error, 'the altered package showed the dashboard' if log.match?(SHOWN)
     end
 
     class Run
@@ -123,11 +122,16 @@ module Erx
         @qemu = qemu
         @machine = ProductionImage::Machine.development(platform)
         @manifest = platform.manifest_source(@root)
+        @notes = []
       end
 
+      # Why each failed cell failed.
+      def notes = @notes.dup.freeze
+
       # Packs the package once, then an image of it and one of its altered copy, and boots
-      # each at one CPU. Returns { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed' };
-      # any disagreement raises.
+      # each at one CPU, the altered cell whatever the first found. Returns
+      # { "hvf-1cpu" => 'passed', "hvf-1cpu-altered" => 'passed' }, a cell that failed
+      # 'failed' with its reason in notes.
       def call(jobs: 4, build: true)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
         fiasco.build(jobs: jobs) if build
@@ -137,10 +141,19 @@ module Erx
                                          runner: @runner, signer: PackageKey.ensure, compiler: @compiler)
         draw(WARM_MINUTE)
         { 'hvf-1cpu' => package, "hvf-1cpu#{ALTERED}" => Kiosk.altered(package, directory: altered_directory) }
-          .to_h { |cell, packed| [cell, boot(cell, packed, fiasco, work)] }
+          .to_h { |cell, packed| [cell, status(cell) { boot(cell, packed, fiasco, work) }] }
       end
 
       private
+
+      # 'passed' once the cell's block returns; 'failed' when it raises, its reason noted.
+      def status(cell)
+        yield
+        'passed'
+      rescue Error => e
+        @notes << "#{cell}: #{e.message}"
+        'failed'
+      end
 
       def boot(cell, package, fiasco, work)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700, path: File.join(work, cell))
@@ -160,7 +173,6 @@ module Erx
             .run(platform: @machine.platform, accel: 'hvf', cpus: 1, image: image, memory_mib: @machine.memory_mib,
                  directory: File.join(directory, 'boot'), display: display, dtb: tree, disks: disks,
                  checkpoints: checkpoints(built, cell, choice, socket: socket, directory: directory))
-        'passed'
       end
 
       # The production checkpoints with the boot value's after the image's identity, and

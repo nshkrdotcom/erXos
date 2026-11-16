@@ -155,29 +155,43 @@ module Erx
       Manifest::Edit.set(grown, { ["domain #{DOMAIN}", 'restarts'] => 0 }) + CLIENT
     end
 
+    # The name of the reference await_screen keeps of a screen that equals none.
+    KEPT_SCREEN = 'screen'
+
     # The screen read through the QMP socket until it equals one of the references called
-    # names in references, whose name it answers, or until wait_seconds have passed, which
-    # raises the last mismatch.
+    # names in references, whose name it answers, or until wait_seconds have passed. Then
+    # the last screen read is kept as the reference KEPT_SCREEN beside the socket, in the
+    # run's own directory, and Mismatch names it and how it differs from each reference.
     def await_screen(socket:, references:, names:, wait_seconds: WAIT_SECONDS)
       raise Error, 'await_screen names no reference' if names.empty?
 
+      wanted = names.map { |name| ScreenReference.load(references, name) }
       deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + wait_seconds
       client = Qmp.connect(socket)
-      dump = File.join(File.dirname(socket), 'screen.ppm')
+      directory = File.dirname(socket)
       loop do
-        image = client.screendump_image(dump)
-        mismatches = names.map do |name|
-          ScreenReference.check(image, directory: references, name: name)
-          return name
-        rescue ScreenReference::Mismatch => e
-          e
-        end
-        raise mismatches.last if Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
+        image = client.screendump_image(File.join(directory, "#{KEPT_SCREEN}.ppm"))
+        found = wanted.find { |reference| ScreenReference.matches?(image, reference) }
+        return found.name if found
+        raise kept_mismatch(image, directory: directory, references: references, names: names) if
+          Process.clock_gettime(Process::CLOCK_MONOTONIC) > deadline
 
         sleep POLL_SECONDS
       end
     ensure
       client&.close
+    end
+
+    # Writes image as the reference KEPT_SCREEN into directory and answers the Mismatch
+    # that names it and each reference's mismatch.
+    def kept_mismatch(image, directory:, references:, names:)
+      mismatches = names.map do |name|
+        ScreenReference.check(image, directory: references, name: name)
+      rescue ScreenReference::Mismatch => e
+        e.message
+      end
+      kept = ScreenReference.write(directory, KEPT_SCREEN, image)
+      ScreenReference::Mismatch.new("the screen, kept at #{kept}, equals no reference: #{mismatches.join('; and ')}")
     end
 
     # The driver's lines of a boot's serial log: one bring-up, "erx_fb: scanout 0 at WxH",
