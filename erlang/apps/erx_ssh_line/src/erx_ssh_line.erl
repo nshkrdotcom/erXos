@@ -26,8 +26,8 @@ master is the channel and on which Run runs. When what ran has ended and the
 channel has taken the tty's last output, the tty's console tells the line how
 it ended (erx_console:shell_ending/1) and ends, which the line sees through
 its monitor; the line sends the channel that ending, `{exited, Status}`, or
-`{signaled, sigint}` for an exec Ctrl-C ended, a signal of the closed list
-abi/services/ssh.txt gives, so every message the channel hears from the
+`{signaled, sigint}` for an exec Ctrl-C ended, a signal of the signal set
+ssh_line of abi/signals.txt, so every message the channel hears from the
 session but the tty's own comes from the line.
 """.
 
@@ -75,7 +75,7 @@ line(Parent, #{system := System, exports := Exports} = Config, Core) ->
             end;
         {?MODULE, ended, Tty, Ending} when is_pid(Tty) ->
             %% A tty's report, through the Notify call/4 gave it, for its channel.
-            case erx_ssh_line_core:report(Tty, Ending, Core) of
+            case erx_ssh_line_core:report(Tty, Core) of
                 {send, Channel} -> Channel ! Ending;
                 drop -> ok
             end,

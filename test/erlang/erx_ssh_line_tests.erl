@@ -148,17 +148,11 @@ open_failure_test() ->
 
 %% The tty's report of how its shell ended reaches the channel as that ending, sent by
 %% the line: {exited, Status}, or {signaled, sigint} for an exec Ctrl-C ended; the same
-%% report from a process that is no tty of the line's reaches no one, and neither does
-%% an ending the channel does not hear: a status out of range, a signal ssh_line_signal
-%% does not list, or another shape.
+%% report from a process that is no tty of the line's reaches no one. The line passes a
+%% tty's ending on as erx_console:shell_ending/1 made it (erx_console_shell_tests).
 ending_reaches_the_channel_test_() ->
     [?_assertEqual(Ending, ending_on_the_channel(Ending))
      || Ending <- [{exited, 0}, {exited, 4}, {exited, 255}, {signaled, sigint}]].
-
-ending_not_heard_is_dropped_test_() ->
-    [?_assertEqual(none, ending_on_the_channel(Ending))
-     || Ending <- [{exited, 256}, {exited, -1}, {exited, <<"4">>}, {signaled, sigkill},
-                   {signaled, "sigint"}]].
 
 ending_on_the_channel(Ending) ->
     Line = exported_line(),

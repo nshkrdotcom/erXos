@@ -438,22 +438,25 @@ start_job(Run, S) ->
 %% everything it starts inherits the leader, the leader finds it if the
 %% shell ends, and the shell can carry out what its start calls for first.
 %% It ends as every process that runs evaluator code ends, a crash with a
-%% fixed reason and no report (erx_shell_runner:spawn_evaluator/2).
+%% fixed reason and no report (erx_shell_runner:spawn_evaluator/3).
 start_first(Body, S = #s{group = Group, firsts = Firsts}) ->
     Leader = erx_shell_leader:start(Group),
-    Heap = #{size => ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
-             kill => true, error_logger => false, include_shared_binaries => true},
-    {Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, Body, [{max_heap_size, Heap}]),
+    HeapWords = ?UNIT_HEAP_BYTES div erlang:system_info(wordsize),
+    {Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, Body, HeapWords),
     {Leader, Go, S#s{firsts = Firsts#{Ref => {Leader, Pid}}}}.
 
 %% What a job's first process ended with, for the table, and for the
 %% shell if the process was the line's and the line ends in the foreground;
-%% a background block's first is never the line's.
-ending({value, {line, {exit, Sh}}}) -> {{exited, status(Sh)}, {stop, Sh}};
-ending({value, {line, Outcome}}) -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
-ending({value, {job, Status}}) when is_binary(Status) -> {{exited, Status}, none};
-ending(killed) -> {failed, {diagnose, <<"rc: the line passed its heap limit\n">>}};
-ending(_Crashed) -> {failed, {diagnose, <<"rc: the line crashed\n">>}}.
+%% a background block's first is never the line's. Reason is the end of the
+%% process, read as erx_shell_runner:ending/1 reads it.
+ending(Reason) ->
+    case erx_shell_runner:ending(Reason) of
+        {value, {line, {exit, Sh}}} -> {{exited, status(Sh)}, {stop, Sh}};
+        {value, {line, Outcome}} -> {{exited, status(shell(Outcome))}, {continue, shell(Outcome)}};
+        {value, {job, Status}} -> {{exited, Status}, none};
+        killed -> {failed, {diagnose, <<"rc: the line passed its heap limit\n">>}};
+        crashed -> {failed, {diagnose, <<"rc: the line crashed\n">>}}
+    end.
 
 %% The shell an evaluator's outcome leaves.
 shell({ok, Sh}) -> Sh;
@@ -634,13 +637,14 @@ resume(Tag, S = #s{paused = Paused}) ->
 
 %% Ends every process of the job tagged Tag, its first process even before
 %% it has taken the job's leader, then resumes those it had paused, as
-%% `kill` of a stopped UNIX job continues it after the signal, and ends the
-%% leader. The first process's end still reaches first_ended/3.
+%% `kill` of a stopped UNIX job continues it after the signal, and closes the
+%% leader, which passes on the job's last output first (erx_shell_leader:close/1).
+%% The first process's end still reaches first_ended/3.
 terminate(Tag, S = #s{paused = Paused}) ->
     [exit(Pid, kill) || Pid <- firsts_of(Tag, S)],
     ok = erx_shell_leader:end_all(Tag),
     [resume_quietly(Pid) || Pid <- maps:get(Tag, Paused, [])],
-    exit(Tag, kill),
+    ok = erx_shell_leader:close(Tag),
     S#s{paused = maps:remove(Tag, Paused)}.
 
 firsts_of(Tag, #s{firsts = Firsts}) ->

@@ -13,7 +13,7 @@ on purpose: `crashy`, `yes` and `hog`.
 -include_lib("eunit/include/eunit.hrl").
 
 -erx_command(testcmd).
--erx_usage("testcmd crash | yes | hog").
+-erx_usage("testcmd crash | yes | hog | match WORD | pump WORD").
 
 -export([run/2]).
 
@@ -23,6 +23,11 @@ run([<<"crash">>], _Ctx) -> error(on_purpose);
 run([<<"yes">>], Ctx) -> yes(Ctx);
 run([<<"marker">>], _Ctx) -> runner_tests_marker ! {marker, self()}, ok;
 run([<<"hog">>], _Ctx) -> {error, length(lists:seq(1, 1 bsl 26))};
+run([<<"match">>, Word], _Ctx) -> <<"expected">> = Word, ok;
+run([<<"pump">>, Word], _Ctx) ->
+    %% A linked helper, as a pump is, that ends with the word in its reason.
+    _ = spawn_link(fun() -> exit({badmatch, Word}) end),
+    receive after infinity -> ok end;
 run(_Args, _Ctx) -> {error, usage}.
 
 yes(Ctx) -> erx_cmd:write(Ctx, <<"y\n">>), yes(Ctx).
@@ -189,11 +194,27 @@ runner_statuses_test() ->
     ?assertEqual(<<"no_facet">>, run_status([<<"needy">>], State)),
     ?assertEqual(<<"not found">>, run_status([<<"nosuch">>], State)),
     ?assertEqual(<<"usage">>, run_status([<<"testcmd">>], State)),
-    ?assertMatch(<<"{error,on_purpose}">>, run_status([<<"testcmd">>, <<"crash">>], State)),
+    ?assertEqual(<<"crashed">>, run_status([<<"testcmd">>, <<"crash">>], State)),
     ?assertEqual([{line, <<"needy: no_facet\n">>}, {line, <<"nosuch: not found\n">>},
-                  {line, <<"usage: testcmd crash | yes | hog\n">>},
-                  {line, <<"testcmd: crashed: {error,on_purpose}\n">>}],
+                  {line, <<"usage: testcmd crash | yes | hog | match WORD | pump WORD\n">>},
+                  {line, <<"testcmd: crashed\n">>}],
                  [erx_shell_pipe:get(Pipe) || _ <- [1, 2, 3, 4]]).
+
+%% A command that fails a match on a variable's value, or whose linked helper, as a
+%% pump is, ends with that value in its reason, ends `crashed`, and neither its status
+%% nor its diagnostic names the value: a crash's reason carries the shell's variables
+%% (erx_shell_runner:spawn_evaluator/3).
+a_crash_names_no_value_test_() ->
+    [{Source, ?_assertEqual({<<"crashed">>, {line, <<"testcmd: crashed\n">>}}, crash_seen(Source))}
+     || Source <- [<<"testcmd match $secret">>, <<"testcmd pump $secret">>]].
+
+crash_seen(Source) ->
+    Pipe = erx_shell_pipe:new(),
+    erx_shell_pipe:attach(Pipe, read, self()),
+    Shell = erx_shell_eval:new(#{<<"secret">> => [<<"hidden-value">>]}, erx_shell_runner:runner(),
+                               runner_state(#{}, {pipe, Pipe})),
+    {ok, Ran} = erx_shell_eval:run_source(Source, Shell),
+    {erx_shell_eval:status(Ran), erx_shell_pipe:get(Pipe)}.
 
 %% A command past its heap limit is killed and the shell goes on.
 runner_heap_limit_test_() ->

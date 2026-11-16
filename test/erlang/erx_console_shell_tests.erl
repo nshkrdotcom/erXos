@@ -30,7 +30,8 @@ the_end_of_input_ends_the_runtime_test() ->
 
 %% A tty that exits with its shell waits on the drain at the group's first exit, with
 %% how that exit says the shell ended, whether or not its input has ended: an exec that
-%% Ctrl-C ended by its signal, anything else by an exit status.
+%% Ctrl-C ended by its signal, anything else, a signal the ssh_line set does not list
+%% too, by an exit status.
 a_console_that_exits_drains_with_the_ending_test() ->
     Exit = {exit, fun(_) -> ok end},
     [?assertEqual({drain, Ending}, erx_console:shell_end(Exit, false, Reason, Ended))
@@ -41,7 +42,9 @@ a_console_that_exits_drains_with_the_ending_test() ->
                              {killed, {exited, 1}}, {{badarg, []}, {exited, 1}},
                              {shutdown, {exited, 1}}, {{shutdown, {exited, 256}}, {exited, 1}},
                              {{shutdown, {exited, -1}}, {exited, 1}},
-                             {{shutdown, {signaled, "sigint"}}, {exited, 1}}],
+                             {{shutdown, {signaled, "sigint"}}, {exited, 1}},
+                             {{shutdown, {signaled, sigkill}}, {exited, 1}},
+                             {{shutdown, {signaled, nosuch}}, {exited, 1}}],
         Ended <- [false, true]].
 
 %% The group's own exit after its first changes nothing: the status is the first's.

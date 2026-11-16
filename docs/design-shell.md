@@ -405,7 +405,9 @@ An Erlang command receives its arguments as binaries, its environment and
 working directory, its three standard streams, each the terminal, a
 file, a pipe end or a neighbouring Erlang stage, and its capabilities: the
 grants of its namespace and its facets. It returns `ok`, a usage error or
-another error; a crash is an error whose reason goes to standard error. A
+another error; a crash is an error whose diagnostic and status say only
+`crashed`, or `killed` past its heap limit, since its reason may carry
+the shell's variables. A
 command declares the facets it uses (`-erx_needs([inspect])`), so one run
 without them fails with `no_facet` before it starts, and its help says
 what it needs. The shell reads the session's facets for each command,
@@ -2417,7 +2419,18 @@ the tree, never adapted ([design.md](design.md#compatibility)).
 
 **Diagnostics.** `jobs` lists each job's stages, programs and state; the
 inspector shows the session's processes and its programs as ports under
-the session; a stage's crash reason, cut at 256 bytes, is its `$status`.
+the session. A crashed stage's `$status` is `crashed`, and one its heap
+limit or its job's end killed is `killed`, never the crash's reason: a
+reason and its stack carry the shell's variables, which must not reach a
+status, a diagnostic or a log. Every process that evaluates the shell's
+source or runs what it calls, a line, a job, a stage, a subshell, a
+backquote, an `&` block, an Erlang command or a program's starter, starts
+through one funnel, `erx_shell_runner:spawn_evaluator/3`, which sets its
+heap limit with no report, ends a crash with a fixed reason, and reads
+any other end, the exit of a linked pump included, as `crashed`, or
+`killed` when the end was a kill; the
+chokepoint check `evaluator-spawns` refuses any other spawn in the
+evaluator's modules.
 
 ## Security
 

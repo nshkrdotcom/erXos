@@ -117,6 +117,8 @@
 
 -export_type([input_event/0, first_shell/0, on_shell_end/0, shell_end/0, shell/0, config/0, terminal/0]).
 
+-include("generated/erx_abi.hrl").
+
 -type input_event() :: {data, unicode:unicode_binary()} | interrupt | suspend.
 %% The shell the console starts on its first group: the command shell, or none when
 %% init was told -noshell or -noinput, and `user` then gets the input.
@@ -808,15 +810,22 @@ on_shell_end(Config, Role, Kind) ->
 -doc """
 How a shell that ended for Reason ended, as a tty's master hears it: with the
 status the command shell's end carries (erx_shell:exit_with/1), or by the
-signal an exec's end carries when Ctrl-C ended it (erx_shell_script:command/2);
-with status 0 for a normal end, and 1 for any other, as for a shell that
-crashed or was killed.
+signal an exec's end carries when Ctrl-C ended it (erx_shell_script:command/2),
+one of the signal set ssh_line of abi/signals.txt, the signals a tty's master
+hears; with status 0 for a normal end, and 1 for any other, as for a shell
+that crashed or was killed or a signal the set does not list. So every ending
+a tty reports has the shape its master hears, and the session's line passes it
+on unchecked (erx_ssh_line_core:report/2).
 """.
 -spec shell_ending(term()) -> erx_prog:status().
 shell_ending(normal) -> {exited, 0};
 shell_ending({shutdown, {exited, Status}}) when is_integer(Status), Status >= 0, Status =< 255 ->
     {exited, Status};
-shell_ending({shutdown, {signaled, Signal}}) when is_atom(Signal) -> {signaled, Signal};
+shell_ending({shutdown, {signaled, Signal}}) when is_atom(Signal) ->
+    case lists:keymember(Signal, 1, ?ERX_SSH_LINE_SIGNAL_MEMBERS) of
+        true -> {signaled, Signal};
+        false -> {exited, 1}
+    end;
 shell_ending(_Reason) -> {exited, 1}.
 
 ended_by(Reason) ->

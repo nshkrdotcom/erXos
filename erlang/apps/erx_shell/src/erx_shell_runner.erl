@@ -55,11 +55,11 @@ does; a pattern character never matches a leading `.`, and a pattern
 that matches nothing stays as written.
 """.
 
--export([new/1, state/1, runner/0, spawn_evaluator/2, glob/2, facets/0, facets/3]).
+-export([new/1, state/1, runner/0, spawn_evaluator/3, ending/1, glob/2, facets/0, facets/3]).
 
 -include_lib("kernel/include/file.hrl").
 
--export_type([state/0]).
+-export_type([state/0, ending/0]).
 
 -type fd() :: erx_shell_lex:fd().
 -type state() :: #{cwd := binary(),
@@ -76,6 +76,9 @@ that matches nothing stays as written.
 %% references, past which it alone is killed (docs/design-shell.md, SH2).
 -define(MAX_HEAP_WORDS, 8 bsl 20).
 -define(MAX_STATUS, 256).
+
+%% How an evaluator's process ended (ending/1).
+-type ending() :: {value, term()} | crashed | killed.
 
 -doc """
 The runner and its state for the interactive layer: from `/`, with
@@ -128,11 +131,11 @@ state(#{cwd := _, fds := _, table := _, facets := _} = State) -> State.
 runner() -> fun guarded/2.
 
 %% The evaluator expects no request to throw: anything that escapes one
-%% is a fault of the unit, with a bounded text.
+%% is a fault of the unit, whose text names nothing of what was raised,
+%% since that may carry the shell's variables.
 guarded(Request, S) ->
     try request(Request, S)
-    catch Class:Reason -> {{fault, status_text(iolist_to_binary(
-                                         io_lib:format("~0tp", [{Class, Reason}], [{chars_limit, 256}])))}, S}
+    catch _Class:_Reason -> {{fault, <<"internal fault">>}, S}
     end.
 
 request({run, [Name | Args], Vars}, #{table := Table} = S) ->
@@ -166,7 +169,7 @@ request({background, Body}, S) ->
     InPlace = fun() ->
                       %% Nothing waits for it, so it is not monitored: its end
                       %% leaves no message behind.
-                      _ = spawn_evaluator(Run, [heap_limit()])
+                      _ = spawn_evaluator(Run, ?MAX_HEAP_WORDS, [])
               end,
     case maps:get(job_control, S, none) of
         {Shell, line} ->
@@ -230,12 +233,8 @@ program(Name, Image, Args, Vars, #{cwd := Cwd} = S) ->
     Ctx = #{name => Name, cwd => Cwd, env => Vars,
             stdin => stream(0, S), stdout => stream(1, S), stderr => stream(2, S)},
     case isolated(fun() -> erx_shell_program:run(Image, Args, Ctx) end) of
-        {crashed, Reason} ->
-            Text = status_text(iolist_to_binary(io_lib:format("~0tp", [Reason]))),
-            safe_say(Ctx, [Name, <<": crashed: ">>, Text, $\n]),
-            Text;
-        Status ->
-            Status
+        {value, Status} -> Status;
+        Ended -> ended(Ended, Ctx)
     end.
 
 %%% Erlang commands
@@ -260,19 +259,22 @@ command(#{name := Name, module := Module, usage := Usage, needs := Needs},
 job_control(#{job_control := {Shell, _Where}}) -> #{job_control => Shell};
 job_control(#{}) -> #{}.
 
-%% What run/2 gave, or how it stopped: a write it could not do, or a crash.
+%% What run/2 gave, or how it stopped: a write it could not do, or a crash,
+%% whose reason is not kept, since it carries the shell's variables.
 invoke(Module, Args, Ctx) ->
     try Module:run(Args, Ctx) of
         ok -> ok;
         {error, _} = Error -> Error;
-        Other -> {crashed, {bad_return, Other}}
+        _Other -> crashed
     catch
         throw:{erx_cmd_stop, Reason} -> {stopped, Reason};
-        Class:Reason -> {crashed, {Class, Reason}}
+        _Class:_Reason -> crashed
     end.
 
 %% A command's status and the diagnostic it did not write itself. A write
 %% on a pipe with no reader ends it quietly, as SIGPIPE does.
+outcome({value, Result}, Usage, Ctx) ->
+    outcome(Result, Usage, Ctx);
 outcome(ok, _Usage, _Ctx) ->
     <<>>;
 outcome({error, usage}, Usage, Ctx) ->
@@ -286,9 +288,14 @@ outcome({Kind, Reason}, _Usage, #{name := Name} = Ctx) when Kind =:= error; Kind
     Text = status_text(erx_cmd:format_error(Reason)),
     safe_say(Ctx, [Name, <<": ">>, Text, $\n]),
     Text;
-outcome({crashed, Reason}, _Usage, #{name := Name} = Ctx) ->
-    Text = status_text(iolist_to_binary(io_lib:format("~0tp", [Reason]))),
-    safe_say(Ctx, [Name, <<": crashed: ">>, Text, $\n]),
+outcome(Ended, _Usage, Ctx) ->
+    ended(Ended, Ctx).
+
+%% The status and diagnostic of a command or program that crashed or was
+%% killed: that word alone, never what it held.
+ended(Ended, #{name := Name} = Ctx) when Ended =:= crashed; Ended =:= killed ->
+    Text = atom_to_binary(Ended),
+    safe_say(Ctx, [Name, <<": ">>, Text, $\n]),
     Text.
 
 safe_say(Ctx, Bytes) ->
@@ -298,37 +305,45 @@ safe_say(Ctx, Bytes) ->
 status_text(<<Text:?MAX_STATUS/binary, _/binary>>) -> Text;
 status_text(Text) -> Text.
 
-%% Runs Fun in a process of its own with the heap limit and gives what it
-%% returned, or `{crashed, Reason}` when it crashed or was killed.
+%% Runs Fun in a process of its own with the heap limit and gives how it
+%% ended (ending/1).
 isolated(Fun) ->
-    {_Pid, Ref} = spawn_evaluator(Fun, [monitor, heap_limit()]),
-    receive
-        {'DOWN', Ref, process, _, {value, Result}} -> Result;
-        {'DOWN', Ref, process, _, Reason} -> {crashed, Reason}
-    end.
-
-heap_limit() ->
-    {max_heap_size, #{size => ?MAX_HEAP_WORDS, kill => true, error_logger => false,
-                      include_shared_binaries => true}}.
+    {_Pid, Ref} = spawn_evaluator(Fun, ?MAX_HEAP_WORDS, [monitor]),
+    receive {'DOWN', Ref, process, _, Reason} -> ending(Reason) end.
 
 %%% Pieces run apart
 
 -doc """
 Spawns Body, code that evaluates the shell's source or runs what it calls,
-with the spawn Options, as every process that runs such code is spawned: it
-ends `{value, Result}` with what Body returned, or `crashed` with no report
-if Body raised anything, since a crash's reason and stack carry the shell's
-variables, which must not reach a log or a status. A process killed, as by
-the heap limit, ends `killed`, which reports nothing either.
+as every process that runs such code is spawned: with a heap limit of
+HeapWords, counting the binaries it references, past which it alone is
+killed and nothing is logged (docs/design-shell.md, SH2), and with a monitor
+when Options holds `monitor`. It ends `{value, Result}` with what Body
+returned, or `crashed` with no report if Body raised anything, since a
+crash's reason and stack carry the shell's variables, which must not reach a
+log or a status. ending/1 reads its end.
 """.
--spec spawn_evaluator(fun(() -> term()), [term()]) -> pid() | {pid(), reference()}.
-spawn_evaluator(Body, Options) ->
-    spawn_opt(fun() -> exit(evaluated(Body)) end, Options).
+-spec spawn_evaluator(fun(() -> term()), pos_integer(), [monitor]) -> pid() | {pid(), reference()}.
+spawn_evaluator(Body, HeapWords, Options) ->
+    Heap = #{size => HeapWords, kill => true, error_logger => false, include_shared_binaries => true},
+    spawn_opt(fun() -> exit(evaluated(Body)) end, [{max_heap_size, Heap} | Options]).
 
 evaluated(Body) ->
     try {value, Body()}
     catch _Class:_Reason -> crashed
     end.
+
+-doc """
+How a process spawn_evaluator/3 started ended, from the reason of its end:
+`{value, Result}` with what its body returned, `killed` when it was killed,
+as by its heap limit or its job's end, and `crashed` for any other end. Any
+other end is a crash or the exit of a process linked to it, as a pump is,
+whose reason may carry the shell's variables; none of it is kept.
+""".
+-spec ending(term()) -> ending().
+ending({value, _Result} = Value) -> Value;
+ending(killed) -> killed;
+ending(_Crashed) -> crashed.
 
 %% Starts Body in a stage process on a copy of the state, once each pipe
 %% end it holds is attached to it, so a stage that ends at once still
@@ -338,7 +353,7 @@ start_apart(Body, S, Ends) ->
                                          receive go -> ok end,
                                          {Status, _} = Body(apart(S)),
                                          Status
-                                 end, [monitor, heap_limit()]),
+                                 end, ?MAX_HEAP_WORDS, [monitor]),
     [erx_shell_pipe:attach(Pipe, End, Pid) || {End, Pipe} <- Ends],
     Pid ! go,
     {Pid, Ref}.
@@ -346,9 +361,11 @@ start_apart(Body, S, Ends) ->
 %% A stage's status, or how it ended as one: `crashed`, or `killed`.
 await(_Pid, Ref) ->
     receive
-        {'DOWN', Ref, process, _, {value, Status}} -> Status;
         {'DOWN', Ref, process, _, Reason} ->
-            status_text(iolist_to_binary(io_lib:format("~0tp", [Reason])))
+            case ending(Reason) of
+                {value, Status} -> Status;
+                Ended -> atom_to_binary(Ended)
+            end
     end.
 
 capture(Body, S) ->

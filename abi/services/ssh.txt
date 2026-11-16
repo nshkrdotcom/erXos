@@ -21,8 +21,6 @@ service ssh_line 12
   operation job_hangup 8
   operation exited 9
   operation signaled 10
-# The signals a signaled names, each by its name in abi/signals.txt with sig before it,
-# as a program's end names it (docs/design-programs.md, "A program's end"); the channel
-# sends it as SSH's exit-signal, by the name without sig in capitals.
-enum ssh_line_signal u8
-  value sigint 1
+# The signals a signaled names are abi/signals.txt's signal set ssh_line, each by its name
+# with sig before it, as a program's end names it (docs/design-programs.md, "A program's
+# end"); the channel sends it as SSH's exit-signal, by the name without sig in capitals.

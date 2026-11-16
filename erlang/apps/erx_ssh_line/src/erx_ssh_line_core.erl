@@ -27,13 +27,11 @@ that file's default otherwise (term/1), as design-ssh.md has it, so
 no byte of the peer's reaches the shell's variables. A channel counts from
 its open (opened/3)
 until its tty ends (ended/2), and the tty's report of how its shell ended
-goes to that channel alone (channel/2).
+goes to that channel alone (report/2).
 """.
 
--export([new/0, exported/2, peer/1, request/3, term/1, opened/3, ended/2, report/3]).
+-export([new/0, exported/2, peer/1, request/3, term/1, opened/3, ended/2, report/2]).
 -export_type([core/0]).
-
--include("generated/erx_abi.hrl").
 
 %% `max_channels`: the channels one connection may hold open (design-ssh.md).
 -define(MAX_CHANNELS, 10).
@@ -111,19 +109,15 @@ opened(Tty, Channel, #{ttys := Ttys} = Core) -> Core#{ttys := Ttys#{Tty => Chann
 ended(Tty, #{ttys := Ttys} = Core) -> Core#{ttys := maps:remove(Tty, Ttys)}.
 
 -doc """
-Where the tty Tty's report that its shell ended Ending goes: to the channel
-whose tty it is, `{send, Channel}`, for an ending the channel hears, which is
-`{exited, Status}` with Status 0 to 255 or `{signaled, Signal}` with Signal a
-member of ssh_line_signal (abi/services/ssh.txt); `drop` for any other ending
-and for a pid the line holds no tty for.
+Where the tty Tty's report of how its shell ended goes: to the channel whose
+tty it is, `{send, Channel}`, or `drop` for a pid the line holds no tty for.
+The report is the session's own and has the shape the channel hears
+(erx_console:shell_ending/1), so the line passes it on unchecked; the
+channel checks it as it arrives from the session's domain (design-ssh.md).
 """.
--spec report(pid(), term(), core()) -> {send, pid()} | drop.
-report(Tty, Ending, #{ttys := Ttys}) ->
-    case {Ttys, heard(Ending)} of
-        {#{Tty := Channel}, true} -> {send, Channel};
-        _Other -> drop
+-spec report(pid(), core()) -> {send, pid()} | drop.
+report(Tty, #{ttys := Ttys}) ->
+    case Ttys of
+        #{Tty := Channel} -> {send, Channel};
+        #{} -> drop
     end.
-
-heard({exited, Status}) -> is_integer(Status) andalso Status >= 0 andalso Status =< 255;
-heard({signaled, Signal}) -> lists:keymember(Signal, 1, ?ERX_SSH_LINE_SIGNAL_MEMBERS);
-heard(_Ending) -> false.

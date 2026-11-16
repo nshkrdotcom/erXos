@@ -7149,6 +7149,17 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] shell, plain spawns that hold the shell's variables (design-shell.md, "Failure handling,
+  diagnostics and debuggability"): every evaluator process starts through
+  `erx_shell_runner:spawn_evaluator/3`, whose end names nothing, but a few processes that hold
+  variable data start otherwise, so a crash of one could quote a variable in its exit reason or
+  crash report: a program's handler (`erx_command_srv:perform/2`, `spawn(erx_prog_handler, ...)`,
+  with the program's environment), the pumps of a program's pipe ends (`erx_shell_program:pump/2`),
+  the pipe's server and its pumps (`erx_shell_pipe:new/0`, `from_binary/1` and `from_file/1`, with the bytes they carry),
+  and the exec's own process (`erx_shell_script:command/2`, a `proc_lib` spawn holding the first
+  variables). None of them evaluates the shell's source; each runs fixed code over what it holds. Fix by giving each
+  a fixed-reason end as the funnel has, or by `format_status/1` and `sensitive` where a report is
+  the risk.
 * [Low] funnel, a 'DOWN' is matched by reference alone (`liberx/erx_funnel.c`, the target rule for
   `ERX_FUNNEL_PAYLOAD_MONITOR_P_EXIT`; ERTS's `erl_proc_sig_queue.c`): the funnel checks that a monitor
   exit's `from` is the sending domain's and that its reference is the receiver's node's, but not that the

@@ -565,16 +565,17 @@ through each other's domain envelope and each checked by its receiver:
 | `job_sent` | channel to line | a `job_output` is unanswered; the line then reads the pipes again | ignored, as a late repeat |
 | `job_hangup` | channel to line | that atom; it holds from then on | not applicable; the line closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
 | `{exited, Status}` | line to channel | `Status` is an integer from 0 to 255 | the channel closes |
-| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of `ssh_line_signal` in `abi/services/ssh.txt`, `sigint` alone | the channel closes |
+| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of the signal set `ssh_line` in `abi/signals.txt`, `sigint` alone | the channel closes |
 
 `{exited, Status}` serves ttys too, and a tty has a second ending,
 `{signaled, Signal}`, for an exec that the tty's `Ctrl-C` ended, with
-`Signal` a name of the closed list `ssh_line_signal` in
-`abi/services/ssh.txt`, `sigint` alone, since `Ctrl-C` is the only
-signal that ends an exec on a tty. The line sends a tty's ending only
-in these two shapes, with `Status` from 0 to 255 and `Signal` in that
-list, and drops any other; the channel checks it against that list and
-closes on any other. FreeBSD's `sh -c` dies of the SIGINT
+`Signal` a name of the signal set `ssh_line` in
+`abi/signals.txt`, `sigint` alone, since `Ctrl-C` is the only
+signal that ends an exec on a tty. A tty's ending has only these two
+shapes, with `Status` from 0 to 255 and `Signal` in that set, because
+the console that makes it maps any other end to status 1
+(`erx_console:shell_ending/1`), and the line passes it on unchecked;
+the channel checks it against that set and closes on any other. FreeBSD's `sh -c` dies of the SIGINT
 that ends its command (`onint` in `bin/sh/error.c` of FreeBSD 14.2,
 lines 117-123), rather than exiting 130, the `$?` a parent shell gives
 a command SIGINT ended (`waitforjob` in `bin/sh/jobs.c`, line 1114),

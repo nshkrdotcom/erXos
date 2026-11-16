@@ -31,6 +31,7 @@ it starts, and one installed while the script runs serves the next command.
 %% `exit`, stopped on a fault of the language or did not parse.
 -type ending() :: {ok | exit | fault | syntax_error, Status :: binary()}.
 
+%% The evaluator's heap limit, so a runaway source ends it and never its caller (SH2).
 -define(MAX_HEAP_WORDS, 32 bsl 20).
 %% The longest value, all its words together, of a first variable (first_vars/1).
 -define(MAX_FIRST_VALUE, 256).
@@ -47,7 +48,7 @@ command shell's own).
 -spec run(iodata(), options()) -> ending().
 run(Source, Options) ->
     Evaluation = evaluation(iolist_to_binary(Source), shell(Options)),
-    {_Pid, Ref} = erx_shell_runner:spawn_evaluator(Evaluation, [monitor, heap_limit()]),
+    {_Pid, Ref} = erx_shell_runner:spawn_evaluator(Evaluation, ?MAX_HEAP_WORDS, [monitor]),
     receive {'DOWN', Ref, process, _, Reason} -> ending_of(Reason) end.
 
 %% The evaluator's shell for Options, at the calling process's terminal.
@@ -79,18 +80,23 @@ shell does at its end (erx_shell:exit_with/1).
 
 The command runs as one job under a job leader of its own (erx_shell_leader),
 so every process it starts, pipeline stages, subshells, backquotes and `&`
-blocks, ends with it, and the job's last output reaches the group before
-the command's end does (erx_shell_leader:close/1). Ctrl-C, which the group
-sends this process as the exit signal `interrupt`, ends them all and the
-command as SIGINT ends FreeBSD's `sh -c`, which dies of the signal itself
-(`onint` in bin/sh/error.c), not with status 130, the `$?` its parent
-shell gives it: this process ends `{shutdown, {signaled, sigint}}`, as a
-program a signal ended reads (docs/design-programs.md, "A program's end").
-Any other exit signal from the group, as at the tty's hangup, ends them and
-this process for the same reason. An exit signal from any other process is
-a message left unread. Exits are trapped before the leader and the
-evaluator start, so an interrupt that comes sooner ends this process with
-nothing started.
+blocks, ends with it. Whichever way the command ends, the job is closed
+first (erx_shell_leader:close/1), so its last output reaches the group
+before the command's end does. The command ends in one of three ways:
+
+* Its evaluator ends: this process ends with the source's final status
+  (erx_shell:exit_with/1), a crash or a kill read as a failure.
+* Ctrl-C, which the group sends this process as the exit signal
+  `interrupt`: this process ends `{shutdown, {signaled, sigint}}`, as a
+  program a signal ended reads (docs/design-programs.md, "A program's
+  end"), since FreeBSD's `sh -c` dies of the SIGINT itself (`onint` in
+  bin/sh/error.c), not with status 130, the `$?` its parent shell gives it.
+* Any other exit signal from the group, as at the tty's hangup: this
+  process ends for the same reason.
+
+An exit signal from any other process is a message left unread. Exits are
+trapped before the leader and the evaluator start, so an interrupt that
+comes sooner ends this process with nothing started.
 """.
 -spec command(binary(), vars()) -> pid().
 command(Command, Vars) when is_binary(Command) ->
@@ -101,21 +107,21 @@ exec(Command, Vars) ->
     Group = group_leader(),
     Shell = shell(#{vars => first_vars(Vars)}),
     Leader = erx_shell_leader:start(Group),
-    Evaluation = evaluation(Command, Shell),
-    {_Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, Evaluation,
-                                                    [heap_limit()]),
+    {_Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, evaluation(Command, Shell), ?MAX_HEAP_WORDS),
     ok = Go(),
-    receive
-        {'DOWN', Ref, process, _, Reason} ->
-            ok = erx_shell_leader:close(Leader),
-            {_Ending, Status} = ending_of(Reason),
+    Ended = receive
+                {'DOWN', Ref, process, _, Reason} -> {evaluated, Reason};
+                {'EXIT', Group, Signal} -> {group, Signal}
+            end,
+    ok = erx_shell_leader:close(Leader),
+    case Ended of
+        {evaluated, Evaluated} ->
+            {_Ending, Status} = ending_of(Evaluated),
             erx_shell:exit_with(Status);
-        {'EXIT', Group, interrupt} ->
-            ok = erx_shell_leader:close(Leader),
+        {group, interrupt} ->
             exit({shutdown, {signaled, sigint}});
-        {'EXIT', Group, Signal} ->
-            ok = erx_shell_leader:close(Leader),
-            exit(Signal)
+        {group, Other} ->
+            exit(Other)
     end.
 
 -doc """
@@ -137,21 +143,18 @@ first_value(Name, Words) when is_binary(Name), is_list(Words) ->
 
 %% The body of the evaluator's process for Source, which gives the source's
 %% ending; its process is spawned as every evaluator's is
-%% (erx_shell_runner:spawn_evaluator/2).
+%% (erx_shell_runner:spawn_evaluator/3).
 evaluation(Source, Shell) ->
     fun() -> ending(erx_shell_eval:run_source(Source, Shell)) end.
 
-%% The evaluator's heap limit, so a runaway source ends it and never its caller (SH2).
-heap_limit() ->
-    {max_heap_size, #{size => ?MAX_HEAP_WORDS, kill => true, error_logger => false,
-                      include_shared_binaries => true}}.
-
-%% The source's ending from its evaluator's end: the ending it gave, or a fault
-%% whose status says how it ended otherwise: `killed`, by the heap limit or the
-%% job's end, or `crashed`.
-ending_of({value, Ending}) -> Ending;
-ending_of(killed) -> {fault, <<"killed">>};
-ending_of(_Crashed) -> {fault, <<"crashed">>}.
+%% The source's ending from its evaluator's end (erx_shell_runner:ending/1):
+%% the ending it gave, or a fault whose status says how it ended otherwise:
+%% `killed`, by the heap limit or the job's end, or `crashed`.
+ending_of(Reason) ->
+    case erx_shell_runner:ending(Reason) of
+        {value, Ending} -> Ending;
+        Ended -> {fault, atom_to_binary(Ended)}
+    end.
 
 ending({ok, Shell}) -> {ok, erx_shell_eval:status(Shell)};
 ending({exit, Shell}) -> {exit, erx_shell_eval:status(Shell)};
