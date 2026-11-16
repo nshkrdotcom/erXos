@@ -3,8 +3,8 @@
 Storage in erXos is a few services in Erlang domains of their own, above
 the block driver, an Erlang process over the device NIF, and reached
 through facets like every other service: the system's read-only files on
-each slot's EROFS system partition, which the storage domain serves as
-the `system` tree, every package and release there a self-checking file
+each slot's EROFS system partition, which the storage domain that serves
+`system` serves as the `system` tree, every package there a self-checking file
 whose blocks are checked where they are consumed; read-write files
 on the data partition, in erXos's F2FS, with littlefs as the stopgap
 behind the same interface; FAT partitions for removable media and for
@@ -35,20 +35,21 @@ Decisions every reader of this document needs:
 * **Partitions are windows.** A domain reaches only the sectors of the
   windows granted to it, and each file system runs in a domain that holds
   a window on its own partition and nothing of the medium beyond it.
-* **One format per job, one server per partition.** The boot image holds
-  only what runs before the `system` tree is served, or when it cannot
-  be; each slot's system partition, one EROFS file system, holds the rest
-  of the system, which the storage domain serves read-only as the
-  `system` tree; the data partition holds what changes; and FAT holds
+* **One format per job, at most one server per partition.** The boot
+  image holds what the manifest names to run, every domain's release
+  among them, and no package; each slot's system partition, one EROFS
+  file system, holds the image's packages, which the storage domain that
+  serves `system` serves read-only as the `system` tree; the data
+  partition holds what changes; and FAT holds
   what is exchanged with other machines. A file a second domain must read
   is reached through a grant, as every file is
   ([design-files.md](design-files.md#overview)).
-* **Files check themselves; the partition does not.** Every package, and
-  every release outside the boot image, is a self-checking file: a header
-  that the boot image pins, an EROFS image and its hash tree, whose blocks
-  the reading domain checks. The system partition's own directory is
-  unauthenticated by design and parsed only by the storage domain, which
-  can therefore withhold a file but never change one.
+* **Files check themselves; the partition does not.** Every package is a
+  self-checking file: a header that the boot image pins, an EROFS image
+  and its hash tree, whose blocks the reading domain checks. The system
+  partition's own directory is unauthenticated by design and parsed only
+  by the storage domain that serves `system`, which can therefore
+  withhold a file but never change one.
 * **File systems and the driver are Erlang.** The
   block driver, the EROFS reader, erXos's F2FS, the FAT server and the
   slot writer are Erlang; the driver touches its device through the
