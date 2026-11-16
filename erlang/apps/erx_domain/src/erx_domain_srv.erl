@@ -1008,9 +1008,10 @@ keep_web_line(_Id, _Node, _Provides, State) ->
     State.
 
 mint(Id, DomainPid, Name, {files, Grants, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
+    mint_files(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
 mint(Id, DomainPid, Name, {files, Grants, Args, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end, Exports);
+    mint_files(Id, DomainPid, Name, Limits, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end,
+               Exports);
 mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
     case erx_facet:start(Callback, Grant#{grantee => Id, ends_with => [DomainPid, Behind]}, #{exports => Exports}) of
         {ok, Facet} ->
@@ -1027,12 +1028,14 @@ mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
 %% A files service's grant serves the domain alone, in its envelope and with its names,
 %% and ends with its domain pid; its supervisor's end ends it too. Grant starts it,
 %% with the grant's own argument where the service computed one at the mint
-%% (system_facet/4); a supervisor that ended while the service minted is a refusal.
-mint_files(Id, DomainPid, Name, Grant, Exports) ->
+%% (system_facet/4); a supervisor that ended while the service minted is a refusal. The
+%% facet goes to the domain with the rights of the row's Limits, those the grant serves
+%% (docs/design-files.md, "Rights beneath an entry").
+mint_files(Id, DomainPid, Name, Limits, Grant, Exports) ->
     Binding = #{client => Id, ends_with => DomainPid, exports => Exports},
     case try Grant(Binding) catch exit:Exit -> {error, {exit, Exit}} end of
         {ok, Pid} ->
-            {true, Pid};
+            {true, {Pid, erx_fs_grants:rights(Limits)}};
         {error, Reason} ->
             logger:error("erx_domain: domain ~b's files grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
             false

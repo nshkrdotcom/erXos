@@ -20,6 +20,7 @@ ns_test_() ->
       fun mount_refusals/0,
       fun an_app_mount_reads_the_package_through_its_record/0,
       fun an_app_mount_of_a_changed_package_answers_eio/0,
+      fun an_rx_app_mount_needs_an_rx_grant/0,
       fun app_mount_refusals/0,
       fun the_fid_closes_when_the_last_entry_of_the_image_goes/0,
       fun bind_roots_at_the_place_from_reaches/0,
@@ -31,6 +32,7 @@ ns_test_() ->
       fun a_grant_ended_while_the_process_was_down_ends_on_restart/0,
       fun a_malformed_request_answers_einval_and_changes_nothing/0,
       fun a_facet_mount_reads_the_registry_at_use/0,
+      fun a_facet_entry_takes_the_lesser_of_its_rights_and_its_grants/0,
       fun a_facet_grant_that_ends_leaves_the_table_and_survives_a_restart/0,
       fun facets_mount_only_where_granted/0,
       fun the_system_domain_trees_mount_at_their_places/0,
@@ -184,7 +186,7 @@ app_package(Bytes) ->
     {ok, Grant} = erx_fs:start_link(erx_fs_test_tree, [{observer, self()}, {name, <<"packages">>},
                                                       {file, <<"clock.app">>, Bytes}], rx),
     unlink(Grant),
-    persistent_term:put({erx, facets}, #{packages => Grant}),
+    persistent_term:put({erx, facets}, #{packages => {Grant, rx}}),
     {_, Layout} = package(),
     persistent_term:put(erx_connections_app, {ok, #{place => {packages, [<<"clock.app">>]}, layout => Layout,
                                                    start => {applications, [<<"clock">>]}}}),
@@ -217,6 +219,22 @@ an_app_mount_reads_the_package_through_its_record() ->
     [{regular, Names, Size, Seed} | _] = [Entry || {regular, _, _, _} = Entry <- erx_erofs_tests:expected()],
     ?assertEqual({ok, erx_erofs_tests:contents(Size, Seed)}, erx_erofs:read_file(Fs, Names)),
     ?assertEqual(ok, erx_ns:unmount(<<"/app">>)),
+    ?assertEqual(ok, erx_ns:mount({erofs, app}, <<"/app">>, [])),
+    ?assertMatch([_, #{point := [<<"app">>], rights := ro}], table()).
+
+%% The app mount rests on the grant its fid came through: rx only through a grant whose
+%% facet carries rx, so an rx mount through an ro or rw packages grant is refused with
+%% eacces before the grant is walked and before the table changes, and the same grant
+%% mounts the image ro.
+an_rx_app_mount_needs_an_rx_grant() ->
+    {Bytes, _} = package(),
+    Grant = app_package(Bytes),
+    [begin
+         persistent_term:put({erx, facets}, #{packages => {Grant, Rights}}),
+         ?assertEqual({error, eacces}, erx_ns:mount({erofs, app}, <<"/app">>, [rx])),
+         ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
+         ?assertEqual([], tree_calls())
+     end || Rights <- [ro, rw]],
     ?assertEqual(ok, erx_ns:mount({erofs, app}, <<"/app">>, [])),
     ?assertMatch([_, #{point := [<<"app">>], rights := ro}], table()).
 
@@ -284,17 +302,40 @@ a_facet_mount_reads_the_registry_at_use() ->
                  table()),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
     [First, Second] = [grant(), grant()],
-    persistent_term:put({erx, facets}, #{data => First}),
+    persistent_term:put({erx, facets}, #{data => {First, rw}}),
     ?assertMatch([_, #{provider := {grant, First, <<"data">>}, rights := rw},
                   #{provider := {grant, First, <<"data">>}, root := [<<"sub">>], rights := ro}], at_use()),
-    persistent_term:put({erx, facets}, #{data => Second, other => First}),
+    persistent_term:put({erx, facets}, #{data => {Second, rw}, other => {First, rw}}),
     ?assertMatch([_, #{provider := {grant, Second, _}}, #{provider := {grant, Second, _}}], at_use()),
     Remote = remote_pid(),
-    persistent_term:put({erx, facets}, #{data => Remote}),
+    persistent_term:put({erx, facets}, #{data => {Remote, rw}}),
     ?assertMatch([_, #{provider := {grant, Remote, _}}, #{provider := {grant, Remote, _}}], at_use()),
-    persistent_term:put({erx, facets}, #{data => not_a_pid}),
+    persistent_term:put({erx, facets}, #{data => {not_a_pid, rw}}),
+    ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
+    persistent_term:put({erx, facets}, #{data => First}),
     ?assertMatch([_, #{provider := ended}, #{provider := ended}], at_use()),
     ?assertEqual(#{}, maps:get(monitors, sys:get_state(erx_ns))).
+
+%% An entry's rights only lower its grant's: a resolution gives each entry of a facet the
+%% lesser of the rights its mount asked and those the registry's facet carries, where ro
+%% lies below rw and below rx, and rw and rx meet at ro. So /x, an rx entry over the rw
+%% data grant, writes nothing and runs nothing (F6), and an rx entry runs only over an rx
+%% grant. A registry value without rights, which no files facet is, answers eio.
+a_facet_entry_takes_the_lesser_of_its_rights_and_its_grants() ->
+    [ok = erx_ns:mount({facet, data}, Point, [{tree, <<"data">>}, Rights])
+     || {Point, Rights} <- [{<<"/data">>, rw}, {<<"/x">>, rx}, {<<"/r">>, ro}]],
+    ok = erx_ns:bind(<<"/x">>, <<"/b">>),
+    Grant = grant(),
+    Rights = fun(GrantRights) ->
+                     persistent_term:put({erx, facets}, #{data => {Grant, GrantRights}}),
+                     [Of || #{provider := {grant, Pid, <<"data">>}, rights := Of} <- at_use(), Pid =:= Grant]
+             end,
+    ?assertEqual([rw, ro, ro, ro], Rights(rw)),
+    ?assertEqual([ro, ro, ro, ro], Rights(ro)),
+    ?assertEqual([ro, rx, ro, rx], Rights(rx)),
+    persistent_term:put({erx, facets}, #{data => Grant}),
+    ?assertMatch([_, #{provider := ended}, #{provider := ended}, #{provider := ended}, #{provider := ended}],
+                 at_use()).
 
 %% A facet's grant that ends changes nothing in the table: the next lookup still sends to
 %% it and the client's own monitor on it answers eio, until the registry holds the
@@ -302,7 +343,7 @@ a_facet_mount_reads_the_registry_at_use() ->
 a_facet_grant_that_ends_leaves_the_table_and_survives_a_restart() ->
     ok = erx_ns:mount({facet, data}, <<"/data">>, [{tree, <<"data">>}, rw]),
     Grant = grant(),
-    persistent_term:put({erx, facets}, #{data => Grant}),
+    persistent_term:put({erx, facets}, #{data => {Grant, rw}}),
     Grant ! stop,
     wait_down(Grant),
     Before = settled(),

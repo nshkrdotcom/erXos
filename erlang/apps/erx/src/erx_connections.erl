@@ -380,7 +380,7 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
         {erx_origin, SystemId, {erx_connection_down, Peer, Reason}} when is_integer(Peer) ->
             records(Env, connection_down(Env, Peer, Reason, Held), Dropped);
         {erx_origin, SystemId, {erx_facets, Facets, Granted}} when is_map(Facets) ->
-            Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_pid(Facet)},
+            Valid = #{Name => Facet || Name := Facet <- Facets, is_atom(Name), is_facet(Facet)},
             register_facets(Valid),
             %% Kept before init hears of the facets, so the applications init then starts
             %% find the names erx:granted/0 reads.
@@ -389,10 +389,14 @@ records(#{kernel := Kernel, system := SystemId} = Env, Held, Dropped) ->
             records(Env, Held, Dropped);
         {erx_origin, SystemId, {erx_app, App}} when is_map(App), element(1, map_get(app, Env)) =:= waiting ->
             records(app_came(App, Env), Held, Dropped);
-        {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}}
-          when is_integer(Tag), is_atom(Name), is_pid(Facet) ->
-            install(Env, Tag, Name, Facet),
-            records(Env, Held, Dropped);
+        {erx_origin, SystemId, {erx_facets_install, Tag, Name, Facet}} when is_integer(Tag), is_atom(Name) ->
+            case is_facet(Facet) of
+                true ->
+                    install(Env, Tag, Name, Facet),
+                    records(Env, Held, Dropped);
+                false ->
+                    records(Env, Held, Dropped + 1)
+            end;
         {erx_connection_inserted, Peer, Port} ->
             records(Env, inserted(Env, Peer, Port, Held), Dropped);
         {{connection_ended, Peer}, Monitor, port, Port, Reason} ->
@@ -444,6 +448,12 @@ install(#{domain_pid := DomainPid}, Tag, Name, Facet) ->
     register_facets(#{Name => Facet}),
     DomainPid ! {erx_facets_installed, Tag},
     ok.
+
+%% A facet as the system domain sends it: a pid, or a files facet's pid with its grant's
+%% rights, which the domain service took from the manifest's facet row
+%% (docs/design-files.md, "Rights beneath an entry"). The registry keeps it as it came.
+is_facet({Pid, Rights}) -> is_pid(Pid) andalso (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx);
+is_facet(Facet) -> is_pid(Facet).
 
 %% The atoms of List, the ready answer's names of the facets the manifest grants the
 %% domain, ignoring any other element and an improper tail.

@@ -76,7 +76,7 @@ class ErxNsTest < Minitest::Test
     ["mounted({mount_app, Point, Rights}) ->\n", <<~'ERLANG']
       mounted({mount_layout, Point, Rights, {Facet, Names}, Layout}) ->
           maybe
-              {ok, Grant} ?= facet_grant(Facet),
+              {ok, Grant} ?= facet_grant(Facet, Rights),
               {ok, Fid} ?= erx_file_remote:open_fid(Grant, Names),
               {ok, Fs} ?= image(Grant, Fid, Layout),
               {ok, {mount, Point, {erofs, Fs}, Rights, {Grant, Fid}}}

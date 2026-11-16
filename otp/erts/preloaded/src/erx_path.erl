@@ -124,25 +124,35 @@ resolve(Path, Op, #{follow := Follow, willbedir := WillBeDir}, Table, Cwd,
 The table a resolution walks, made from the mounts as it starts: each entry
 of a facet, provider `{facet, Name, Tree}`, a bind of one included, is on
 the grant that `Facets`, the domain's facet registry, holds for `Name` at
-that moment, `{grant, Pid, Tree}`, or is `ended`, which answers `eio`, when
-the registry holds no pid for `Name` or is no map. Every other entry is as
-the table holds it. A facet's mount names the facet, never a pid, so a
-re-grant serves the next lookup and nothing has to follow the registry.
-This is the one function here that reads a provider, kept here because it
-is pure, preloaded and builds for the host tests; `prim_file:erx_table/0`
-calls it at each resolution.
+that moment, `{grant, Pid, Tree}`, with the lesser of the rights its mount
+asked and those the registry's facet carries, or is `ended`, which answers
+`eio`, when the registry holds no files facet `{Pid, Rights}` for `Name` or
+is no map. So a facet entry's rights never exceed its grant's, as an EROFS
+entry's do (design-files.md, "Rights beneath an entry"); a grant pid's entry has the rights its mount named. Every other
+entry is as the table holds it. A facet's mount names the facet, never a
+pid, so a re-grant serves the next lookup and nothing has to follow the
+registry. This is the one function here that reads a provider, kept here
+because it is pure, preloaded and builds for the host tests;
+`prim_file:erx_table/0` calls it at each resolution.
 """.
 -spec with_facets(table(), term()) -> table().
 with_facets(Table, Facets) ->
     [case Entry of
-         #{provider := {facet, Name, Tree}} ->
+         #{provider := {facet, Name, Tree}, rights := Asked} ->
              case Facets of
-                 #{Name := Pid} when is_pid(Pid) -> Entry#{provider := {grant, Pid, Tree}};
-                 _ -> Entry#{provider := ended}
+                 #{Name := {Pid, Rights}} when is_pid(Pid), (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx) ->
+                     Entry#{provider := {grant, Pid, Tree}, rights := lesser(Asked, Rights)};
+                 _ ->
+                     Entry#{provider := ended}
              end;
          #{} ->
              Entry
      end || Entry <- Table].
+
+%% The lesser of two rights: ro lies below rw and below rx, and rw and rx, which no
+%% grant holds together (F6), meet at ro.
+lesser(Rights, Rights) -> Rights;
+lesser(_Asked, _Rights) -> ro.
 
 -doc """
 Reads the text of a working directory as the place it names: `/` alone, or

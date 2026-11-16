@@ -157,7 +157,7 @@ serves the display's service.
                | {deadline, tag()}.
 -type action() :: {introduce, tag(), ServerId :: id(), GranteeId :: id()}
                 | {mint, tag(), Mint :: pid(), name(), GranteeId :: id(), Limits :: map()}
-                | {install, tag(), GranteeId :: id(), name(), Facet :: pid()}
+                | {install, tag(), GranteeId :: id(), name(), Facet :: erx:facet()}
                 | {arm, tag(), Milliseconds :: pos_integer()}
                 | {disarm, tag()}
                 | {refused, atom(), Detail :: tuple()}
@@ -338,7 +338,8 @@ on_event({minted, Origin, Tag, Reply}, State) ->
                 true ->
                     {ok, Facet} = Reply,
                     {_, Name} = Key,
-                    {[{install, Tag, GranteeId, Name, Facet}], set_grant(Key, {installing, Pair, Tag, Facet}, State)};
+                    {[{install, Tag, GranteeId, Name, installed_facet(Facet, Key, State)}],
+                     set_grant(Key, {installing, Pair, Tag, Facet}, State)};
                 false ->
                     fail_pending(Key, Pair, Tag, bad_reply, State)
             end;
@@ -495,6 +496,19 @@ mint_request({_, Name} = Key, {ServerId, GranteeId}, Tag, #{rows := Rows} = Stat
 %% no session for any other, whatever its facet row's limits hold.
 session_limits(Limits, true) -> Limits#{session => true};
 session_limits(Limits, false) -> maps:remove(session, Limits).
+
+%% The facet Pid of the grant Key as its installation carries it: for a files service,
+%% the pid with the rights of the grant's facet row, which the manifest states and no
+%% reply of the server's sets (docs/design-files.md, "Rights beneath an entry"); for any
+%% other service, the pid alone.
+installed_facet(Pid, {_, Name} = Key, #{files := Files} = State) ->
+    case lists:member(Name, Files) of
+        true ->
+            #{limits := Limits} = grant_entry(Key, State),
+            {Pid, erx_fs_grants:rights(Limits)};
+        false ->
+            Pid
+    end.
 
 cancel(Grant) ->
     case tag(Grant) of

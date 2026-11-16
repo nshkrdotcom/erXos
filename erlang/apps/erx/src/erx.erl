@@ -10,7 +10,7 @@ authority of its own.
 """.
 
 -export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0, app/0]).
--export_type([app_record/0]).
+-export_type([app_record/0, facet/0]).
 
 %%% Source lines: erx:source/1.
 
@@ -154,11 +154,15 @@ minted for it under a facet row of the manifest, installed whenever that
 domain is ready and replacing an older pid of the name
 (docs/design-system.md, "Facets a configured domain serves"). The system
 domain holds only the latter. A facet whose server ended is a dead pid until
-the server's next incarnation installs another.
+the server's next incarnation installs another. The registry holds a files
+facet with its grant's rights (facet/0); this answers its pid alone.
 """.
 -spec cap(atom()) -> pid() | undefined.
 cap(Name) when is_atom(Name) ->
-    maps:get(Name, caps(), undefined).
+    case persistent_term:get({erx, facets}, #{}) of
+        #{Name := Facet} -> pid_of(Facet);
+        #{} -> undefined
+    end.
 
 -doc """
 Every facet this domain holds, by name, each as cap/1 finds it. For a
@@ -168,7 +172,11 @@ facets.
 """.
 -spec caps() -> #{atom() => pid()}.
 caps() ->
-    persistent_term:get({erx, facets}, #{}).
+    #{Name => pid_of(Facet) || Name := Facet <- persistent_term:get({erx, facets}, #{})}.
+
+-spec pid_of(facet()) -> pid().
+pid_of({Pid, _Rights}) -> Pid;
+pid_of(Pid) -> Pid.
 
 -doc """
 The names of the facets of configured domains the manifest grants this
@@ -182,6 +190,14 @@ system domain included, which takes its names from the manifest.
 -spec granted() -> [atom()].
 granted() ->
     persistent_term:get({erx, granted}, []).
+
+-doc """
+A facet as the domain's registry holds it: its pid, or for a facet of a files
+service its pid with its grant's rights, as the manifest's facet row states
+them, the rights erx_path:with_facets/2 puts beneath each entry of the facet
+(docs/design-files.md, "Rights beneath an entry").
+""".
+-type facet() :: pid() | {pid(), ro | rw | rx}.
 
 -doc """
 The app's record, as the domain service sends it once the session's namespace

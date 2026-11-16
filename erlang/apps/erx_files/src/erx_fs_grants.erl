@@ -32,7 +32,7 @@ Of a facet row's limits and parameters a grant applies four (grant_options/1):
 
 -behaviour(supervisor).
 
--export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1]).
+-export([start_link/1, start_link/2, grant/3, grant/4, own/1, own/2, grant_options/1, rights/1]).
 %% The supervisor's callback and its child's start.
 -export([init/1, start_grant/3]).
 
@@ -110,6 +110,16 @@ own(Grants, Args) ->
     supervisor:start_child(Grants, [Args, #{rights => rw}]).
 
 -doc """
+The rights a facet row's Limits give its grant, `rw` where the row states none
+(abi/services/files.txt): the rights the grant serves, which grant_options/1
+checks, and those its facet carries to the grantee (docs/design-files.md,
+"Rights beneath an entry").
+""".
+-spec rights(map()) -> term().
+rights(Limits) ->
+    maps:get(rights, Limits, rw).
+
+-doc """
 The grant's rights and the erx_fs options a facet row's Limits give it, or
 `{error, einval}` for a row whose `max_request` is below 9P's least message size,
 whose `in_flight` is not positive, whose `max_heap_size` is below the emulator's
@@ -118,7 +128,7 @@ keeps erx_fs's bound, and rights it leaves out are `rw`.
 """.
 -spec grant_options(map()) -> {ok, map()} | {error, einval}.
 grant_options(Limits) ->
-    Rights = maps:get(rights, Limits, rw),
+    Rights = rights(Limits),
     InFlight = maps:get(in_flight, Limits, ?IN_FLIGHT_MAX),
     Msize = maps:get(max_request, Limits, ?MSIZE_MAX),
     Heap = maps:get(max_heap_size, Limits, none),

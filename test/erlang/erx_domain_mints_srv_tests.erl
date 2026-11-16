@@ -513,7 +513,7 @@ session_files_grant_test() ->
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
-        #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
+        #{start := {Grant, rw}} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
         ?assertEqual([start], maps:keys(Facets)),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
