@@ -24,14 +24,16 @@
 # volume, so the storage domain provides no mint for data, the grants stay idle and /data
 # answers eio.
 #
-# The system domain holds three units (docs/design-platforms.md, "Raspberry Pi 4 Model B"),
+# The system domain holds four units (docs/design-platforms.md, "Raspberry Pi 4 Model B"),
 # of one register page of the board each: the console's, the mini UART's page, which it
 # shares with the auxiliary SPI controllers that no driver here drives, and the host
 # link's, the PL011s' page, of which the host link uses UART3, both in the common part; and
 # rng, the RNG200, which no runtime drives and the root reads itself at boot when /chosen
 # carries no seed, at the window its row in the platform record states and only when the
 # firmware's tree names that window (docs/design-stopgap.md, "The Raspberry Pi 4", its
-# entropy item). The
+# entropy item); and watchdog, the power-management block's watchdog, which no runtime drives
+# either and the root's watchdog thread arms and reloads, at the window its row states and only
+# when the firmware's tree names that window (docs/design-platforms.md, "The watchdog"). The
 # console's driver is erx_mini_uart, which keeps the divisor the firmware set.
 #
 # The display domain holds the framebuffer's unit and runs the firmware framebuffer's
@@ -90,6 +92,9 @@ unit block
   holder @domain.storage
 unit rng
   placement "rng"
+  holder system
+unit watchdog
+  placement "watchdog"
   holder system
 # data: the card's data partition, whose sectors the medium layout gives (partition 0,
 # abi/medium.txt), read-write for the storage domain alone, as on QEMU virt.

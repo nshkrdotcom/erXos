@@ -51,9 +51,9 @@ module Erx
                  #{BACKEND}/park.c liberx/backend/core/park_table.c #{BACKEND}/group.c #{BACKEND}/irq.c #{BACKEND}/time.c #{BACKEND}/time_page.c #{BACKEND}/time_table.c
                  #{BACKEND}/entropy.c liberx/backend/core/entropy_line.c liberx/backend/core/entropy_take.c kernel/core/rng.c kernel/core/rng_seed.c kernel/crypto/blake3/blake3.c kernel/crypto/blake3/blake3_portable.c
                  kernel/crypto/chacha20/chacha.c
-                 #{BACKEND}/watchdog_thread.c #{BACKEND}/end.c #{BACKEND}/end_how.c liberx/backend/core/trace_ring.c #{BACKEND}/trace.c
+                 #{BACKEND}/watchdog_thread.c #{BACKEND}/pm_wdt.c #{BACKEND}/end.c #{BACKEND}/end_how.c liberx/backend/core/trace_ring.c #{BACKEND}/trace.c
                  #{BACKEND}/arch/aarch64/clock.c kernel/core/crash.c kernel/core/crash_frame.c kernel/core/log.c
-                 kernel/core/watchdog.c kernel/core/admit.c kernel/core/debug_log.c kernel/core/dispatch.c
+                 kernel/core/watchdog.c kernel/core/pm_wdt.c kernel/core/admit.c kernel/core/debug_log.c kernel/core/dispatch.c
                  build/gen/kernel/generated/abi_decode.c build/gen/kernel/generated/abi_run.c].freeze
     # What ERTS's lane port driver (erx_lane_drv.c) calls: the lanes, the funnel and the
     # ETF reader and writer, which hashes atoms with BLAKE3.

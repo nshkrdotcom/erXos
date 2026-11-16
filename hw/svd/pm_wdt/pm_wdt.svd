@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+     SPDX-License-Identifier: BSD-2-Clause
+
+     The watchdog of the BCM2711's power-management block (docs/design-platforms.md,
+     "The watchdog"), written by erXos from the clean-room facts record of the
+     power-management watchdog, which read only BSD-licensed sources. It holds the facts
+     that both of these give:
+
+     * FreeBSD's sys/arm/broadcom/bcm2835/bcm2835_wdog.c at release/14.2.0 (SHA-256
+       1bbf175f5de3fa8caa038f2c94546f300dca642cc9a9c114b1a4bca2b39c91ba,
+       BSD-2-Clause): the password, lines 50 and 53-54; WDOG's time field and its
+       units of 1/65536 s, lines 55-56 and 188; RSTC's reset configuration, lines
+       61-63; the registers 0x1c above the first register range of a node of
+       brcm,bcm2835-pm-wdt, lines 66-68, 84-91 and 138-141; arming, and every pat, as
+       WDOG then RSTC, lines 188-196.
+     * TF-A v2.12.0's plat/rpi/common/rpi3_pm.c (SHA-256
+       8939a249a10fab5c36e934d4370c1e4847a27521bb4870d1266667336d035778,
+       BSD-3-Clause): the offsets, lines 25 and 27; the password and the reset
+       configuration, lines 29-31; the same two writes, lines 227-233.
+
+     The window is the power-management block's, which the platform record states and
+     the tree confirms; this file gives offsets within it. Every access is an aligned
+     32-bit word. RSTC's bits that no source names are two fields kept as read; RSTS at
+     0x20 and the stop value 0x102 are not here, since erXos never writes them. -->
+<device schemaVersion="1.3">
+  <name>PM_WDT</name><version>1</version>
+  <description>BCM2711 power-management watchdog</description>
+  <addressUnitBits>8</addressUnitBits><width>32</width>
+  <peripherals>
+    <peripheral>
+      <name>PM_WDT</name><baseAddress>0</baseAddress>
+      <addressBlock><offset>0</offset><size>0x28</size><usage>registers</usage></addressBlock>
+      <registers>
+        <register>
+          <name>RSTC</name><ownedByNif>false</ownedByNif>
+          <description>PM_RSTC: reset control; a write takes effect only with PASSWD's KEY</description>
+          <addressOffset>0x1c</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>KEPT_LOW</name><description>Bits no source names; both drivers write them back as read</description>
+              <bitOffset>0</bitOffset><bitWidth>4</bitWidth>
+            </field>
+            <field>
+              <name>WRCFG</name><description>What the watchdog does when its time runs out</description>
+              <bitOffset>4</bitOffset><bitWidth>2</bitWidth>
+              <enumeratedValues><enumeratedValue><name>FULL_RESET</name><value>2</value></enumeratedValue></enumeratedValues>
+            </field>
+            <field>
+              <name>KEPT_HIGH</name><description>Bits no source names; both drivers write them back as read</description>
+              <bitOffset>6</bitOffset><bitWidth>18</bitWidth>
+            </field>
+            <field>
+              <name>PASSWD</name><description>The power-management block's password, with every write</description>
+              <bitOffset>24</bitOffset><bitWidth>8</bitWidth><access>write-only</access>
+              <enumeratedValues><name>PASSWORD</name><enumeratedValue><name>KEY</name><value>0x5a</value></enumeratedValue></enumeratedValues>
+            </field>
+          </fields>
+        </register>
+        <register>
+          <name>WDOG</name><ownedByNif>false</ownedByNif>
+          <description>PM_WDOG: the watchdog's time; a write with PASSWD's KEY starts the count from TIME again</description>
+          <addressOffset>0x24</addressOffset><access>read-write</access>
+          <fields>
+            <field>
+              <name>TIME</name><description>The time left, in units of 1/65536 s</description>
+              <bitOffset>0</bitOffset><bitWidth>20</bitWidth>
+            </field>
+            <field>
+              <name>PASSWD</name><description>The power-management block's password, with every write</description>
+              <bitOffset>24</bitOffset><bitWidth>8</bitWidth><access>write-only</access>
+              <enumeratedValues derivedFrom="PASSWORD"/>
+            </field>
+          </fields>
+        </register>
+      </registers>
+    </peripheral>
+  </peripherals>
+</device>

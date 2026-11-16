@@ -18,6 +18,7 @@
 #include "erx/abi.h"
 #include "erx/abi_reader.h"
 #include "erx/core/boot_pair.h"
+#include "erx/core/pm_wdt.h"
 #include "erx/device_kinds.h"
 #include "erx/release.h"
 #include "liberx/backend/api.h"
@@ -29,6 +30,7 @@
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/park.h"
+#include "liberx/backend/fiasco/pm_wdt.h"
 #include "liberx/backend/fiasco/rng200.h"
 #include "liberx/backend/fiasco/runtime_entry.h"
 #include "liberx/backend/fiasco/service.h"
@@ -368,6 +370,28 @@ board_seed(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco
 	if (!tree_path_set(row.path))
 		return ("the RNG200's record: its device-tree path is not a node path");
 	seeds->board = erx_fiasco_rng200_read(tree, tree_path, row.window, &seeds->board_read);
+	return (NULL);
+}
+
+/* Opens the board's hardware watchdog of the manifest's row (runtime_entry.h), as board_seed reads the RNG200. */
+const char *
+erx_fiasco_program_watchdog(const erx_dt_t *tree, const erx_manifest_view_t *manifest, erx_fiasco_pm_wdt_t *wdt,
+    erx_fiasco_board_wdt_t *found)
+{
+	erx_boot_row_t row;
+
+	*wdt = (erx_fiasco_pm_wdt_t){ .armed = false };
+	*found = ERX_FIASCO_BOARD_WDT_ABSENT;
+	if (!erx_boot_held_row(manifest, ERX_PM_WDT_COMPATIBLE, &row))
+		return (NULL);
+	if (!tree_path_set(row.path))
+		return ("the hardware watchdog's record: its device-tree path is not a node path");
+	*found = ERX_FIASCO_BOARD_WDT_UNCONFIRMED;
+	if (erx_dt_registers(tree, tree_path, ERX_PM_WDT_COMPATIBLE, row.window) != ERX_DT_REGS_OK)
+		return (NULL);
+	if (!erx_fiasco_pm_wdt_open(row.window, wdt))
+		return (NULL);
+	*found = ERX_FIASCO_BOARD_WDT_READY;
 	return (NULL);
 }
 

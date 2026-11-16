@@ -7192,6 +7192,22 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [High] stopgap, the Pi 4's hardware watchdog (`liberx/backend/fiasco/pm_wdt.c`): the root's watchdog
+  thread stops reloading once liberx's end path has taken an end (`erx_fiasco_end_taken`), but an end
+  Fiasco starts itself does not take it. In a kernel without the debugger and console input
+  (`FiascoConfig::RELEASE_UNSET`) a Fiasco panic resets through PSCI on the panicking CPU alone; BL31
+  writes WDOG with 10 ticks, and the watchdog thread on a CPU still running writes 4 s back every
+  second, so the board never resets. Development kernels stop every CPU in the debugger and are not
+  affected. Blocks any release on Fiasco. A fix by construction: read WDOG before each reload and stop
+  for good when it holds far less than a tick after our last write can leave, which needs the fact
+  that a WDOG read returns the time left (unverified in the facts record). A liberx end on another CPU
+  racing a reload can likewise delay its reset by one 4 s timeout, once.
+* [Medium] stopgap, system domain device access: the system domain's ERTS runs in the root task, so
+  `erx_device` may open any physical window (`service_task.c` checks only that the caller is the root)
+  and the device NIF's table holds `pm_wdt`'s RSTC and WDOG as generic registers (`ownedByNif false`).
+  A module the `erx_device` chokepoint admits can therefore stop or reprogram the Pi 4's hardware
+  watchdog, or write the rest of the power-management block. Marking both registers `ownedByNif true`
+  closes the NIF table route; the physical-window route needs the open checked against the manifest.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader

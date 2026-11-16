@@ -1679,6 +1679,38 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    and two nodes give `framebuffer absent ambiguous`. Record the root's
    line, since the format it names at the firmware's default depth of
    16 bits is unverified.
+6. The root's lines hold `erx: root task: board watchdog 4`: the tree
+   confirmed the power-management watchdog's row, and the root's watchdog
+   thread arms it with a 4 s timeout ([The watchdog](#the-watchdog)).
+   `board watchdog none: the tree does not confirm its record` instead
+   means the board runs without it. Then the hardware watchdog's own
+   checks, each timed from the event to BL31's banner of the next boot
+   in the console log:
+   * **A hang of the kernel resets.** Stop the whole machine in the
+     kernel debugger, which development builds keep (how its entry key
+     reaches it over the console is unverified on the board): no thread
+     runs, the watchdog is reloaded no more, and BL31's banner follows
+     within about 4 s.
+   * **Seeded: the arming skipped.** Build the card with the arming
+     skipped, the seeded fault `the arming skipped` of
+     `test/host/pm_wdt_test.rb` applied by hand to `kernel/core/pm_wdt.c`,
+     and stop it in the debugger the same way: the board must stay
+     stopped, with no BL31 banner for at least 30 s. A board that resets
+     anyway is reset by something else, and the first check proved
+     nothing.
+   * **A requested off becomes a reset.** In `erl`, `erlang:halt().` ends
+     with `erx: end off`; the board halts in the firmware and the armed
+     watchdog resets it, so BL31's banner follows within about 5 s.
+     The sources read predict otherwise: BL31's `SYSTEM_OFF` writes the
+     watchdog itself, with 10 ticks and the firmware's halt mark, so its
+     write replaces the 4 s arm and the reset it makes is the halt. A board
+     that stays halted fails the design, not the board; record which.
+
+   QEMU's `raspi4b` model checks none of this: its tree disables the
+   watchdog's node, since the model is not known to count a 4 s timeout
+   down or to take a reload, and the root says `board watchdog none`
+   there. The decision to write and the words written are checked on the
+   host, with seeded faults (`test/host/pm_wdt_test.rb`).
 
 **What the pass settles.** Typing works, so the mini UART raises its
 receive interrupt with bits 3:2 of its interrupt-enable register set, as
