@@ -145,3 +145,20 @@ erx_dom_lib_session(erx_dom_lib_t *lib, uint32_t id, uint32_t template, const ch
 	memset(&plan, 0, sizeof(plan));
 	return (status);
 }
+
+erx_status_t
+erx_dom_lib_app_session(erx_dom_lib_t *lib, uint32_t id, uint32_t entry, uint64_t memory, const char *name,
+    uint32_t name_len, const char *display, uint32_t display_len, erx_dom_pid_t domain_pid,
+    erx_dom_created_t *created)
+{
+	/* A plan holds a specification with its strings: too large for a stack. */
+	static erx_dom_plan_t plan;
+	erx_status_t status;
+
+	status = erx_dom_plan_app_session(&lib->view, id, entry, memory, name, name_len, display, display_len,
+	    domain_pid, &plan);
+	if (status == ERX_OK)
+		status = erx_dom_lib_apply(lib, &plan, created);
+	memset(&plan, 0, sizeof(plan));
+	return (status);
+}

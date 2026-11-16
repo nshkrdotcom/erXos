@@ -93,7 +93,7 @@ module Erx
         # session, never applying them.
         Chokepoints::Forbidden.new(
           name: 'dom-session-entries',
-          rule: "only the domain service, through #{DOM_NIF}, calls erx_dom_lib_session, and only #{DOM_BOOT} " \
+          rule: "only the domain service, through #{DOM_NIF}, calls erx_dom_lib_session or erx_dom_lib_app_session, and only #{DOM_BOOT} " \
                 'calls erx_dom_plan_session or erx_dom_plan_app_session, beside the manifest check\'s host planner, the host driver and the fuzz target; ' \
                 'no domain facet reaches either',
           design: 'docs/design-domains.md#principals-sessions-and-quotas',

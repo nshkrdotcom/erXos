@@ -396,4 +396,19 @@ erx_status_t	erx_dom_lib_session(erx_dom_lib_t *, uint32_t id, uint32_t template
 		    const char *name, uint32_t name_len, const char *display, uint32_t display_len,
 		    erx_dom_pid_t domain_pid, erx_dom_created_t *created) ERX_WARN_UNUSED_RESULT;
 
+/*
+ * An app's session's start (docs/design-packaging.md, "An app's session"):
+ * erx_dom_create of a session of the app in app entry `entry`, from the app
+ * template under the entry's principal, with `memory`, the declared memory
+ * of the app's record, for its own budget, under domain id `id`, domain
+ * pid `domain_pid`, the name_len bytes of `name` the domain service chose
+ * and the display_len bytes of `display`, its default display or none for
+ * 0, planned by erx_dom_plan_app_session and applied as erx_dom_lib_create
+ * applies a request's plan, under the caller's one library lock.
+ */
+erx_status_t	erx_dom_lib_app_session(erx_dom_lib_t *, uint32_t id, uint32_t entry,
+		    uint64_t memory, const char *name, uint32_t name_len, const char *display,
+		    uint32_t display_len, erx_dom_pid_t domain_pid,
+		    erx_dom_created_t *created) ERX_WARN_UNUSED_RESULT;
+
 #endif /* ERX_DOM_LIB_H */

@@ -25,8 +25,8 @@
  *
  * The process that registers is the one that hears of every end, and the
  * only one that may change the library: every entry that does (create,
- * configured_create, session_create, start, stop, retire, connect,
- * disconnect) asks
+ * configured_create, session_create, app_session_create, start, stop,
+ * retire, connect, disconnect) asks
  * caller_is_service first, under the lock, and answers {error, erights} to
  * any other caller. So only the process that registered drives the
  * library, and no domain the module made can end with no one to hear of
@@ -714,6 +714,43 @@ session_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	return (created_term(env, &created));
 }
 
+/*
+ * An app's session's start: creates a session of the app in app entry
+ * Entry, with Memory, its record's declared memory, under id Id, name Name,
+ * default display Display, a service name or <<>> for none, and domain pid
+ * DomainPid (erx_dom_lib_app_session). The library plans the app template
+ * for an app entry and no other, under an entry it bounds, never a template
+ * a request names; only the domain service may call it.
+ */
+static ERL_NIF_TERM
+app_session_create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
+{
+	erx_dom_created_t created;
+	erx_dom_pid_t domain_pid;
+	erx_status_t status;
+	ErlNifBinary name, display;
+	ErlNifUInt64 memory;
+	unsigned int id, entry;
+
+	if (argc != 6 || !enif_get_uint(env, argv[0], &id) || !enif_get_uint(env, argv[1], &entry) ||
+	    !enif_get_uint64(env, argv[2], &memory) ||
+	    !enif_inspect_binary(env, argv[3], &name) || name.size == 0 || name.size > ERX_DOM_NAME_MAX ||
+	    !enif_inspect_binary(env, argv[4], &display) || display.size > ERX_DOM_NAME_MAX ||
+	    !domain_pid_from(env, argv[5], &domain_pid))
+		return (enif_make_badarg(env));
+	if (lib == NULL)
+		return (status_error(env, ERX_ENOTSUP));
+	enif_mutex_lock(lib_lock);
+	status = caller_is_service(env) ?
+	    erx_dom_lib_app_session(lib, id, entry, memory, (const char *)name.data, (uint32_t)name.size,
+	    (const char *)display.data, (uint32_t)display.size, domain_pid, &created) :
+	    ERX_ERIGHTS;
+	enif_mutex_unlock(lib_lock);
+	if (status != ERX_OK)
+		return (status_error(env, status));
+	return (created_term(env, &created));
+}
+
 static ERL_NIF_TERM
 create_nif(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 {
@@ -1175,6 +1212,7 @@ static ErlNifFunc nif_funcs[] = {
 	{ "devices_nif", 0, devices_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "configured_create_nif", 3, configured_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 	{ "session_create_nif", 5, session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
+	{ "app_session_create_nif", 6, app_session_create_nif, ERL_NIF_DIRTY_JOB_CPU_BOUND },
 };
 
 ERL_NIF_INIT(erx_domain_lib, nif_funcs, load, NULL, NULL, NULL)

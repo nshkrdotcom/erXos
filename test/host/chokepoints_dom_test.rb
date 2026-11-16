@@ -30,6 +30,8 @@ class ChokepointsDomTest < Minitest::Test
     sessions = [rule('dom-session-entries')]
     assert_empty evaluate(sessions, { Rules::DOM_NIF => "erx_dom_lib_session(lib, id, t, n, l, p, &c);\n" })
     refute_empty evaluate(sessions, { Rules::DOM_LIFE => "erx_dom_lib_session(lib, id, t, n, l, p, &c);\n" })
+    assert_empty evaluate(sessions, { Rules::DOM_NIF => "erx_dom_lib_app_session(lib, id, e, m, n, l, d, k, p, &c);\n" })
+    refute_empty evaluate(sessions, { Rules::DOM_LIFE => "erx_dom_lib_app_session(lib, id, e, m, n, l, d, k, p, &c);\n" })
     refute_empty evaluate(sessions, { Rules::DOM_APPLY => "erx_dom_plan_session(v, id, t, n, l, p, &plan);\n" })
     refute_empty evaluate(sessions, { Rules::DOM_APPLY => "erx_dom_plan_app_session(v, id, e, m, n, l, p, &plan);\n" })
     found = evaluate(entries, { Rules::DOM_BOOT => "status = erx_dom_plan_partial(&lib->view, id, row, &plan);\n" })

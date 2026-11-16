@@ -28,18 +28,18 @@ is {error, enotsup}, register/0 included, and info/2 {error, ?ERX_ENOTSUP}. It d
 lock and fault thread live as long as the system domain.
 
 The registered process, the domain service, is also the only one that may
-change the library: create/1, configured/3, session/5, start/1, stop/2, retire/1,
+change the library: create/1, configured/3, session/5, app_session/6, start/1, stop/2, retire/1,
 connect/6 and disconnect/1 answer {error, erights} to any other caller, and
 so does crash/1, which reads a domain's crash dump. info/2 answers any
 caller, since a group's or budget's report holds none of the domain's data.
 """.
 
 -export([register/0, create/1, start/1, stop/2, retire/1, crash/1, info/2, connect/6, disconnect/1,
-         configured/0, configured/3, templates/0, apps/0, devices/0, session/5, code_object/2, code_drop/2,
-         end_commit/1]).
+         configured/0, configured/3, templates/0, apps/0, devices/0, session/5, app_session/6, code_object/2,
+         code_drop/2, end_commit/1]).
 -nifs([register_nif/0, create_nif/1, start_nif/1, stop_nif/2, retire_nif/1, crash_nif/1, info_nif/3, connect_nif/6,
        disconnect_nif/1, configured_nif/0, configured_create_nif/3, templates_nif/0, apps_nif/0, devices_nif/0,
-       session_create_nif/5, end_commit_nif/1]).
+       session_create_nif/5, app_session_create_nif/6, end_commit_nif/1]).
 -on_load(on_load/0).
 
 -include("generated/erx_abi.hrl").
@@ -315,6 +315,25 @@ session(Id, Template, Name, none, DomainPid) ->
 session(Id, Template, Name, Display, DomainPid) ->
     session_create_nif(Id, Template, Name, atom_to_binary(Display), DomainPid).
 
+-doc """
+An app's session's start (docs/design-packaging.md, "An app's session"):
+builds a session of the app in app entry Entry, from the app template
+under the entry's principal, with Memory, the declared memory of the app's
+record, for its own budget, as session/5 builds a template's session, under
+id Id, name Name, domain pid DomainPid and Display, its default display or
+none. The library plans no other template for an app entry, and refuses
+the start as erx_dom_plan_app_session does (include/erx/dom.h): einval for
+an entry past apps/0's max or a memory that is 0, not page-aligned or past
+the apps budget, elimit for an app already running a session, and enomem
+for a session the apps budget does not hold beside the others.
+""".
+-spec app_session(pos_integer(), non_neg_integer(), pos_integer(), binary(), atom(), pid()) ->
+          {ok, created()} | error().
+app_session(Id, Entry, Memory, Name, none, DomainPid) ->
+    app_session_create_nif(Id, Entry, Memory, Name, <<>>, DomainPid);
+app_session(Id, Entry, Memory, Name, Display, DomainPid) ->
+    app_session_create_nif(Id, Entry, Memory, Name, atom_to_binary(Display), DomainPid).
+
 -doc "A session's code object: {error, enotsup} until sessions exist.".
 -spec code_object(pos_integer(), non_neg_integer()) -> {ok, map()} | error().
 code_object(_Session, _Size) ->
@@ -368,6 +387,9 @@ devices_nif() ->
     erlang:nif_error(undef).
 
 session_create_nif(_Id, _Template, _Name, _Display, _DomainPid) ->
+    erlang:nif_error(undef).
+
+app_session_create_nif(_Id, _Entry, _Memory, _Name, _Display, _DomainPid) ->
     erlang:nif_error(undef).
 
 end_commit_nif(_How) ->
