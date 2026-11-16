@@ -7880,6 +7880,18 @@ document's "residual risks accepted" paragraph.
   the palette and a Return runs its selected offer. The reserved chord's overlay is the planned way to
   tell windows apart; a rule that a covered current window takes no Return is the cheaper fix if one is
   needed first.
+* [Low] network, a crash of a socket core's shell (`erlang/apps/erx_net_client/src/erx_gen_tcp.erl` and
+  `erx_gen_udp.erl`): `format_status/1` redacts the `#data{}`, but a crash's stack trace never passes
+  through it. A shell that ends on an action `perform/3` does not know, on a `{stop, Reason}` that is
+  not the last action, or on a crash inside the core's `step/2`, logs a `function_clause` or `badmatch`
+  whose top frame carries the remaining actions or the event and the whole `#data{}` or core, with the
+  peer's bytes held or in flight: in gen_statem's termination report, whose stack trace it logs
+  outside `format_status/1`, and in proc_lib's crash report, which also logs the mailbox (queued
+  `erx_net` pushes) and the process dictionary. The exit reason `{function_clause, Stacktrace}` also
+  reaches the shell's monitors and a waiting caller. Only a bug of a core reaches it. Fix: a logger
+  filter in the client's domain that rewrites such reports to names, classes and arities, as the WiFi
+  design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
+  takes the same shape.
 
 ## Planned features
 
