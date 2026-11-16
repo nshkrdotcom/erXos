@@ -1192,7 +1192,7 @@ introduce(_A, _B, #{lib := none} = State) ->
     {{error, enotsup}, State};
 introduce(A, B, #{core := Core, links := Links, lib := Lib, mints := Mints} = State) ->
     case {introducible(A, Core), introducible(B, Core)} of
-        {{ok, ReaderA, OriginA}, {ok, ReaderB, OriginB}} when A =/= B ->
+        {{ok, ReaderA, HoldsA}, {ok, ReaderB, HoldsB}} when A =/= B ->
             case erx_domain_links:phase(A, B, Links) of
                 up ->
                     {ok, State};
@@ -1201,7 +1201,7 @@ introduce(A, B, #{core := Core, links := Links, lib := Lib, mints := Mints} = St
                 none ->
                     case erx_domain_links:room(A, Links) andalso erx_domain_links:room(B, Links) of
                         true ->
-                            {Area, AreaReader} = connection_area({A, OriginA}, {B, OriginB}, Mints),
+                            {Area, AreaReader} = connection_area({A, HoldsA}, {B, HoldsB}, Mints),
                             Made = Lib:connect(A, B, ReaderA, ReaderB, Area, AreaReader),
                             connect(Made, A, B, ReaderA, ReaderB, State);
                         false -> {{error, system_limit}, State}
@@ -1221,21 +1221,22 @@ connection_area(PartyA, PartyB, Mints) ->
         {_Bytes, _Reader} = Area -> Area
     end.
 
-%% A domain that can be introduced, with its lane and its origin as the mint core's
+%% A domain that can be introduced, with its lane and what it holds as the mint core's
 %% pair_area/3 takes it: one built and not ended.
 introducible(Id, Core) ->
     case erx_domain_core:fetch(Id, Core) of
         {ok, #{state := Life, reader := Reader, origin := Origin, rows := Rows}}
           when Life =:= built; Life =:= running; Life =:= ready ->
-            {ok, Reader, area_origin(Origin, Rows)};
+            {ok, Reader, holds(Origin, Rows)};
         _ ->
             none
     end.
 
-%% A session's origin with the facet rows its plan gave it, not its template, so an app's
-%% session holds the pixel areas of the rows its admission kept and no other.
-area_origin({session, _Template}, Rows) -> {session, Rows};
-area_origin(Origin, _Rows) -> Origin.
+%% A session holds the facet rows its plan gave it, not its template's, so an app's
+%% session holds the pixel areas of the rows its admission kept and no other; any other
+%% domain is named by its origin.
+holds({session, _Template}, Rows) -> {rows, Rows};
+holds(Origin, _Rows) -> Origin.
 
 %% The library's answer to connecting A and B. Each party's connection_up carries the
 %% slots of its own side, its peer's side and its peer's bell, the label of its own bell,

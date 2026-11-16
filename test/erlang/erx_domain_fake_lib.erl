@@ -21,8 +21,8 @@
 %% the boot never starts and which makes one session at a time: another is refused
 %% with elimit, as the library refuses a principal's domain past its quota, until
 %% the session is retired. A session's teardown takes a while, as the library's
-%% does: its end comes ?SESSION_TEARDOWN_MS after its stop, to the service process that stopped
-%% it, so an end that trails a case never reaches a later case's service. A domain named lost has a side that has
+%% does: its end comes ?SESSION_TEARDOWN_MS after its stop. Every end goes to the service
+%% process that made the call, so an end that trails a case never reaches a later case's service. A domain named lost has a side that has
 %% ended by the time open_side answers, so its pid has no port to write a record
 %% into. Retire, as the library's, releases the domain whatever connections to other
 %% domains stand, but refuses with ebusy while its system connection stands, and a configured row has room for one domain until the retire of the
@@ -116,7 +116,7 @@ start(Id) ->
     case get({domain, Id}) of
         {_, Quiet} when Quiet =:= <<"silent">>; Quiet =:= <<"late">> -> ok;
         {_, Ends} when Ends =:= <<"overtaken">>; Ends =:= <<"behind">> ->
-            erx_domain_srv ! {domain_ended, Id, {halt, 0}, #{}};
+            self() ! {domain_ended, Id, {halt, 0}, #{}};
         {DomainPid, Name} -> DomainPid ! {erx_origin, Id, {erx_ready, ready_report(Name, Id)}}
     end,
     log({start, Id}).

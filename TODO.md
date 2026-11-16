@@ -101,40 +101,21 @@ it; git history is the record of completed work.
   the `packages` grant. `erx_pkg_medium` reads the whole
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
-* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
-  the app template, the session template naming no principal (`mf_none`), sized into the principal and
-  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
-  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
-  today. The session's plan (`erx_domain_core:app_session/4`, from the registry's record, which keeps
-  the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
-  `erx_dom_lib_app_session`) exist; no caller uses them yet. What remains: the domain service's
-  start of an app's session from its `erx_principal:app/2` record, which needs the app template's
-  facet rows by index (the library's `grants`, in facet-table order) and a mint core that grants a
-  session a subset of its template's rows, where `erx_domain_mints` grants every session of a
-  template all of them; `machine_principal` and the mints' parameters naming an app principal,
-  which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
-  signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
-  it; the record in the ready answer, whose place, layout and
-  applications the registry does not keep; the start service's package rows
-  (`erx_starter:packages/2`, which `erx_pkg` calls and nothing exports) and their keepers, the only
-  starters of an app's sessions (PK7), with a check that no other caller starts one; the app
-  principal's CPU group under an apps group, which the stopgap's flat groups leave out;
-  `erx_ns:mount/3` of an image file through `erx_verity`, which
-  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
-  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
-  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
-  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
-  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
-  and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
-  leave out; the session plan
-  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
-  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
-  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`,
+  the `app` script, the boot view's app entries (the check derives the app template from the `apps` row, so
+  QEMU virt's development image boots with four app entries, `erx_domain_lib:apps/0`'s max 4 at the
+  system's Erlang shell under HVF), the session's plan (`erx_domain_core:app_session/4`, with its host test
+  and seeded faults), the library's entry (`erx_domain_lib:app_session/6` over `erx_dom_lib_app_session`)
+  and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
+  `{Ref, app, App}` once the session's namespace is in place) exist. What remains: the start service's
+  package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
+  the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
+  apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
+  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
+  which `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's
+  `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
+  (`erx_app` ends with `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app`
+  script, which the runtime does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   `erx_principal:app_record()` and
   `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
@@ -142,6 +123,9 @@ it; git history is the record of completed work.
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
+* [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
+  `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
+  `{shutdown, {ended, Id}}` is meant; `hold/2` can map it, with an `erx_starter_tests` case for the path.
 * [Medium] apps, the domain library (`liberx/system/dom_core.c`, `dom_plan_in`): a request's plan
   (`erx_dom_plan_request`, `erx_domain_lib:create/1`) under an app entry's principal is not refused, so
   a domain that is not the app template can take the entry's one domain slot, against "neither entry

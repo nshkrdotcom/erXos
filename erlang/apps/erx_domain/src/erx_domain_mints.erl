@@ -175,10 +175,10 @@ serves the display's service.
                      windows := [name()],
                      areas := #{row() => [area()]},
                      deadline := pos_integer()}.
-%% A party of a pair as the domain service records it: its id and its origin, a
-%% configured row's, a session's with the facet rows its plan gave it (the session's
-%% record in erx_domain_core), or a request's.
--type party() :: {id(), request | {configured, row()} | {session, [erx_domain_core:session_row()]}}.
+%% A party of a pair as the domain service records it: its id and what it holds, a
+%% configured row's grants by its row, a session's facet rows, those its plan gave it
+%% (the session's record in erx_domain_core), or a request's domain nothing.
+-type party() :: {id(), request | {configured, row()} | {rows, [erx_domain_core:session_row()]}}.
 %% A windows grant's pixel area, as its grantee holds it: its server row and its bytes,
 %% whole pages.
 -type area() :: {Server :: row(), Bytes :: pos_integer()}.
@@ -233,7 +233,7 @@ display Name, a service of the windows interface of a configured domain:
 the services a session's start may name as its display (erx_domain_srv),
 so a start names only a display the session holds.
 """.
--spec granted([{name(), row() | system, map()}], term(), state()) -> boolean().
+-spec granted([erx_domain_core:session_row()], term(), state()) -> boolean().
 granted(Rows, Name, #{windows := Windows}) ->
     lists:member(Name, Windows) andalso lists:keymember(Name, 1, Rows).
 
@@ -432,13 +432,13 @@ start({Grantee, _Name} = Key, {ServerId, GranteeId} = Pair, Cancel,
 
 %% The pixel areas each configured row holds, by its grants of the windows services
 %% Windows. A template's grants are its sessions' facet rows, which each session's party
-%% carries (party_areas/2), and property 18 refuses a windows grant to the system domain,
+%% carries as {rows, Rows} (party_areas/2), and property 18 refuses a windows grant to the system domain,
 %% whose connections no introduction makes.
 areas(Windows, Grants) ->
-    Rows = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
-                                 fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end,
-                                 [Grant || {Grantee, _, _, _} = Grant <- Grants, is_integer(Grantee)]),
-    maps:map(fun(_Grantee, Held) -> windows_areas(Held, Windows) end, Rows).
+    ByGrantee = maps:groups_from_list(fun({Grantee, _, _, _}) -> Grantee end,
+                                      fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end,
+                                      [Grant || {Grantee, _, _, _} = Grant <- Grants, is_integer(Grantee)]),
+    maps:map(fun(_Grantee, Held) -> windows_areas(Held, Windows) end, ByGrantee).
 
 %% The areas of the facet rows Rows that grant a windows service of Windows: each row's
 %% pixels, or windows_pixels_default where its limits state none, rounded up to whole
@@ -450,8 +450,8 @@ windows_areas(Rows, Windows) ->
 pages(Bytes) -> (Bytes + ?ERX_PAGE_SIZE - 1) div ?ERX_PAGE_SIZE * ?ERX_PAGE_SIZE.
 
 -doc """
-The pixel area of the connection between parties A and B, each its id and its
-origin, as {Bytes, ReaderId}: the area of a windows grant whose server is one
+The pixel area of the connection between parties A and B, each its id and what
+it holds (party()), as {Bytes, ReaderId}: the area of a windows grant whose server is one
 party's row and which the other holds, by the manifest's grants to its row or,
 for a session, by the facet rows its plan gave it, read by the server; none for a
 pair no windows grant joins, a request's domain always among them. It reads
@@ -463,19 +463,19 @@ area in each direction; for two displays granted to each other, the lower server
 row's is the pair's.
 """.
 -spec pair_area(party(), party(), state()) -> {Bytes :: pos_integer(), ReaderId :: id()} | none.
-pair_area({IdA, OriginA}, {IdB, OriginB}, State) ->
+pair_area({IdA, HoldsA}, {IdB, HoldsB}, State) ->
     Found = lists:sort([{Server, Bytes, ReaderId}
-                        || {ReaderId, {configured, Server}, Other} <- [{IdA, OriginA, OriginB}, {IdB, OriginB, OriginA}],
+                        || {ReaderId, {configured, Server}, Other} <- [{IdA, HoldsA, HoldsB}, {IdB, HoldsB, HoldsA}],
                            {AreaServer, Bytes} <- party_areas(Other, State), AreaServer =:= Server]),
     case Found of
         [{_Server, Bytes, ReaderId} | _] -> {Bytes, ReaderId};
         [] -> none
     end.
 
-%% The pixel areas a party of origin Origin holds: a configured row's by the manifest's
-%% grants, a session's by its facet rows, and a request's domain none.
+%% The pixel areas a party holds: a configured row's by the manifest's grants, a
+%% session's by its facet rows, and a request's domain none.
 party_areas({configured, Row}, #{areas := Areas}) -> maps:get(Row, Areas, []);
-party_areas({session, Rows}, #{windows := Windows}) -> windows_areas(Rows, Windows);
+party_areas({rows, Rows}, #{windows := Windows}) -> windows_areas(Rows, Windows);
 party_areas(request, _State) -> [].
 
 %% The request to the server's mint for the grant Key and its operation Tag, with the

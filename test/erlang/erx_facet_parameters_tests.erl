@@ -48,7 +48,7 @@ the_pixel_charge_follows_the_row_test() ->
                                    grants => [G || {_, _, S, _} = G <- Grants, S =/= system],
                                    windows => [Name], owner => fun(_) -> ok end}),
     ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}},
-                                                         {6, {session, [{Name, Server, Limits}]}}, Mints)).
+                                                         {6, {rows, [{Name, Server, Limits}]}}, Mints)).
 
 forged_parameter_rows_are_refused_test() ->
     Forged = filelib:wildcard("refused-*.bin"),

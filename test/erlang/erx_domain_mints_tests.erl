@@ -141,17 +141,17 @@ other_pairs_have_no_area_test() ->
     Mints = windows([{?G, data, ?S, #{pixels => 4096}}, {{template, 0}, display, ?S, #{}}]),
     ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {6, {configured, ?G}}, Mints)),
     %% A session that holds no display row has no area, though its template is granted one.
-    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {session, []}}, Mints)),
-    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {session, [{data, ?S, #{pixels => 4096}}]}},
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {rows, []}}, Mints)),
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, {rows, [{data, ?S, #{pixels => 4096}}]}},
                                                   Mints)),
     ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?S}}, {9, request}, Mints)),
-    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?T}}, {9, {session, [{display, ?S, #{}}]}}, Mints)).
+    ?assertEqual(none, erx_domain_mints:pair_area({5, {configured, ?T}}, {9, {rows, [{display, ?S, #{}}]}}, Mints)).
 
 %% A session's area is its own row's, whatever its template is granted.
 session_pair_has_its_rows_pixels_test() ->
     Mints = windows([{{template, 0}, display, ?S, #{pixels => 3 * 4096}}]),
     Rows = [{data, system, #{}}, {display, ?S, #{pixels => 5 * 4096}}],
-    ?assertEqual({5 * 4096, 5}, erx_domain_mints:pair_area({9, {session, Rows}}, {5, {configured, ?S}}, Mints)).
+    ?assertEqual({5 * 4096, 5}, erx_domain_mints:pair_area({9, {rows, Rows}}, {5, {configured, ?S}}, Mints)).
 
 %% Two displays granted to each other share one connection: the lower server row's
 %% grant gives the pair its area (TODO.md, pair_area/3).
