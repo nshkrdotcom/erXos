@@ -105,7 +105,7 @@ The declaration forms are:
 | `reader NAME ROOT_LAYOUT MAX_BYTES` | bounded tables and references described below |
 | `translation NAME SOURCE TARGET` | a directed mapping for one named consumer context, from a closed enum or a base integer type to a closed enum; `erx_abi_translations` gives each as a function of its name from a source value to its target's value, or `none` |
 | `service NAME NUMBER` | a named interface, its operation identifiers and its typed manifest-parameter declarations; callable operations retain the admission contract of the service design |
-| `inspection SCHEMA` | the inspection schema, with its units, value types, stopgap reporters, kinds and paths as members described in [Inspection schema](#inspection-schema); exactly one, in `inspection.txt` |
+| `inspection SCHEMA` | the inspection schema, with its units, value types, backend reporters, kinds and paths as members described in [Inspection schema](#inspection-schema); exactly one, in `inspection.txt` |
 | `trap OPCODE IMMEDIATE` | the architecture's trap operation and its immediate, checked by its binding |
 | `reg ROLE REGISTERS` | the comma-separated architecture registers for `number`, `args`, `results` or `preserved`; no duplicate within a role |
 
@@ -564,7 +564,7 @@ with `prefix: true`.
 `inspection.txt` holds the one `inspection SCHEMA` declaration, SCHEMA
 being the `schema` number every inspection record carries
 ([design-live.md](design-live.md#inspection-records)). Its members, at
-two-space indentation, declare units, value types, stopgap reporters,
+two-space indentation, declare units, value types, backend reporters,
 trace rows, kinds and paths; a kind's attributes and a path's marks are at four
 spaces beneath it. The members have one namespace of their own. A member
 refers to another member by its bare name, and to a root `limit`,
@@ -582,8 +582,8 @@ its name, never by its position, so adding a member renumbers nothing.
 | `atoms NAME ATOM...` | one atom of a closed set |
 | `list NAME TYPE MAX` | at most MAX values of TYPE, MAX at most 1,000 |
 | `tuple NAME TYPE...` | two to 16 values of the listed types, in order |
-| `stopgap NAME CATEGORY LABEL SCOPE` | a reporter that stands in for the reporter category CATEGORY, `kernel`, `service` or `runtime`; LABEL is the quoted name renderers print for it and SCOPE the quoted statement of what it can see |
-| `trace ROW REPORTER` | a row of `erx:trace`'s stream ([design-live.md](design-live.md#tracing)) and the one reporter, a category or a stopgap, that its collector assigns to every event of the row; ROW names a namespace of its own, so the `kernel` row may share the category's name, and becomes an atom of `erx_schema` |
+| `backend NAME CATEGORY LABEL SCOPE` | a reporter that stands in for the reporter category CATEGORY, `kernel`, `service` or `runtime`; LABEL is the quoted name renderers print for it and SCOPE the quoted statement of what it can see |
+| `trace ROW REPORTER` | a row of `erx:trace`'s stream ([design-live.md](design-live.md#tracing)) and the one reporter, a category or a backend, that its collector assigns to every event of the row; ROW names a namespace of its own, so the `kernel` row may share the category's name, and becomes an atom of `erx_schema` |
 | `kind NAME` | an inspection kind; its `attr` members follow at four spaces |
 | `attr KEY TYPE reporters LIST visible CLASS build BUILD projections LIST` | an attribute of the kind, described below |
 | `path KIND SEGMENT...` | a path and the kind of its record, described below, with its marks at four spaces |
@@ -598,7 +598,7 @@ of its member names as an atom, or a `flags`, which is the set of its bit
 names. No type admits an arbitrary term or an atom from the input: names
 a domain reports are `text`. The generator refuses a type nested more
 than eight deep, as the web's `datum()` is
-([design-web.md](design-web.md#values)). Kinds, attribute keys, stopgap
+([design-web.md](design-web.md#values)). Kinds, attribute keys, backend
 reporter names, statuses and the atoms of `atoms`, `enum`, `flags` and
 the root-backed types become atoms of `erx_schema`, so a reader of a
 record refuses an unknown one without making it. A reported value
@@ -609,11 +609,11 @@ An attribute names its KEY and TYPE and four required properties, so
 adding one never exposes it by default:
 
 * `reporters`, a comma-separated list of the categories `kernel`,
-  `service` and `runtime` and the stopgap reporters that may report it.
-  A stopgap reporter is listed by its name, only on the attributes it
+  `service` and `runtime` and the backend reporters that may report it.
+  A backend reporter is listed by its name, only on the attributes it
   answers, so a validator refuses it anywhere else, and always beside
   the category it stands in for, so removing Fiasco leaves the
-  attribute declared for that category; a stopgap that no attribute
+  attribute declared for that category; a backend that no attribute
   and no `trace` row lists fails;
 * `visible`, the inspect facets that see it: `any`, every inspect facet;
   `owner`, a facet whose scope covers the path's owner, which for a path
@@ -703,22 +703,22 @@ presentation whose longest canonical text exceeds 4,096 bytes, the
 widget format's bound for it, or whose longest link, after the OSC 8
 string's `8;;`, exceeds that string's 4 KiB.
 
-A stopgap reporter appears in a record as `{stopgap, NAME}`. Its label
+A backend reporter appears in a record as `{backend, NAME}`. Its label
 and scope come from the schema, so a record carries no free text about
 who reported it, and a domain cannot invent a reporter. LABEL and SCOPE,
 like a unit's label, are printable ASCII, a label at most 255 bytes and a
 scope at most 1,024, and the generator refuses a label equal to a
-category's name or to another stopgap's label. A member's name is
+category's name or to another backend's label. A member's name is
 neither a category's, a built-in type's, `listing` nor `none`; a text's
 MAX is at most 65,536, a record's bound, and an `entries` MAX at most
-2^32 - 1. A stopgap reporter stands
-for a stopgap component that does the kernel's, a service's or a
-runtime's work in its place, such as the Phase 1 backend of `liberx`
+2^32 - 1. A backend reporter stands
+for a component behind an interface that does the kernel's, a service's or a
+runtime's work in its place, such as the Fiasco backend of `liberx`
 counting a budget's pages in the kernel's place
 ([design-fiasco.md](design-fiasco.md#reporting-a-budget)); replacing
 the component removes its declaration, and the attributes it reported
 come from the category it stood in for. An attribute lists at most one
-stopgap reporter for each category.
+backend reporter for each category.
 
 **Kernel reports.** `erx_object_info` writes one report layout per
 topic ([design-kernel.md](design-kernel.md#failure-handling-diagnostics-and-debuggability)).
@@ -745,10 +745,10 @@ field's bit is set; a byte array whose attribute is `text` and not
 lower-case hexadecimal, as the build identifier is written everywhere.
 Neither rule applies to an array of wider integers, which stays a list. No
 report layout names a
-reporter or a `partial` status. A field that a stopgap backend counts
+reporter or a `partial` status. A field that a backend counts
 only partly has its `reported` bit clear, and that backend names it
 through `liberx` in the inspector's own domain; its reporter is the one
-stopgap the attribute lists for `kernel`
+backend the attribute lists for `kernel`
 ([design-live.md](design-live.md#inspection-records)). The topic enum,
 the `flags` and the layouts are ordinary root declarations of
 `erx_abi.txt` and need no grammar of their own; the `call
@@ -761,8 +761,8 @@ inspection 1
   unit pages "pages"
   integer page_count 0 0xffffffffffffffff unit pages
   integer budget_id 1 0xffffffff
-  stopgap liberx_pool kernel "root pool" "pages of the root's pool: those handed out, carved budgets' included, and the pool's total and free; not the kernel's or sigma0's memory, page tables or mapping records"
-  stopgap liberx_trace kernel "liberx trace" "the root's parks, wakes, IRQ deliveries and task starts and ends; not test tasks' parks or the kernel's events"
+  backend liberx_pool kernel "root pool" "pages of the root's pool: those handed out, carved budgets' included, and the pool's total and free; not the kernel's or sigma0's memory, page tables or mapping records"
+  backend liberx_trace kernel "liberx trace" "the root's parks, wakes, IRQ deliveries and task starts and ends; not test tasks' parks or the kernel's events"
   trace backend liberx_trace
   trace kernel kernel
   kind budget
@@ -954,13 +954,13 @@ a `u8` length and at most 63 bytes, and its canonical text, a text of at
 most 4,096 bytes. A `status` property begins with its status block: the
 status as a `u8` (`ok` 0, `partial` 1, `unknown` 2, `unsupported` 3,
 `timeout` 4, `error` 5), the reporter as a `u8` (the application's own
-value 0, `kernel` 1, `service` 2, `runtime` 3, a stopgap 4), the
-stopgap's name as a `u8` length and at most 63 bytes, empty unless the
-reporter is a stopgap, and the timeout in milliseconds as a `u32`, 0
+value 0, `kernel` 1, `service` 2, `runtime` 3, a backend 4), the
+backend's name as a `u8` length and at most 63 bytes, empty unless the
+reporter is a backend, and the timeout in milliseconds as a `u32`, 0
 unless the status is `timeout`; the value follows only for `ok` and
 `partial`. A `key` property is never written. A reader refuses an
 unknown tag, kind, property, image type or enum value; a value outside
-its type; a property twice in one list; a stopgap name the inspection
+its type; a property twice in one list; a backend name the inspection
 schema does not declare; and bytes left over in a message. It keeps no
 state between messages, and nothing it decodes depends on a node's kind,
 so whether a node exists, takes a property or an event, or fits its
@@ -1208,7 +1208,7 @@ limits named `web_*`, its bounds. Each member declares one type:
 a `Uint8Array` and as a `MachineText`; `digits NAME MAX`, a decimal
 integer in its one canonical form (`0`, or digits without a leading zero
 after an optional minus), which TypeScript reads as a `bigint`;
-`stopgap NAME`, the name of a stopgap reporter the inspection schema
+`backend NAME`, the name of a backend reporter the inspection schema
 declares; `ui_record NAME MAX`, one record of the widget format's binary
 form, its `u32` length word included, which the widget format's own
 readers decode; `list NAME ELEMENT MAX`, a `u32` count and the elements;
@@ -2629,7 +2629,7 @@ The output families have explicit locations, shown relative to `build/gen/`:
 | `erlang/apps/erx/src/generated/erx_abi_enums.erl` | each enum's type and each enum attribute's predicate |
 | `tools/generated/abi.rb` | immutable values, source-driven packer encodings and host readers |
 | `fuzz/generated/` | entry points invoking production readers |
-| `web/src/generated/` | the web client's TypeScript: `web.txt`'s types, codec, limits and hash; `ui.txt`'s tables and the reader and writer of its binary form; the inspection schema's kinds, attribute names, units, stopgap reporters and `present` marks ([design-web.md](design-web.md#the-client)) |
+| `web/src/generated/` | the web client's TypeScript: `web.txt`'s types, codec, limits and hash; `ui.txt`'s tables and the reader and writer of its binary form; the inspection schema's kinds, attribute names, units, backend reporters and `present` marks ([design-web.md](design-web.md#the-client)) |
 | `erlang/apps/erx_win/src/erx_draw_codec.erl`, `include/erx/draw_codec.h`, `display/generated/erx_draw_codec.c` | the draw protocol's codec and its C twin |
 | `erlang/apps/erx_memdraw/src/erx_theme.erl`, `include/erx/theme.h`, `web/src/generated/theme.ts` | the theme's constants for the Erlang renderer and the display, `erx-lvgl` and the web client |
 | `erlang/apps/erx/src/generated/erx_input_codec.erl` | the input records' type, bounds check, reader and writer |
@@ -2666,7 +2666,7 @@ metadata, and in the inspection schema a report layout field or a
 `reported` bit named after no attribute of its kind that lists `kernel`,
 a field for a `derived` attribute, a `derived` input that names no
 attribute of the kind or a `derived` one, and an attribute that lists
-two stopgap reporters for one category. Each
+two backend reporters for one category. Each
 test expects its specific diagnostic and unchanged output files. Parsing arbitrary declaration bytes has its own bounded fuzz entry
 point and cannot publish files.
 

@@ -1228,9 +1228,9 @@ The root budget, each
 principal's budget, each domain's budgets and a session's pool for its
 programs are walls, so a domain's memory depends on nothing outside it
 but the kernel ([design-system.md](design-system.md#resource-policy)); an
-app principal's budget is elastic, with no guarantee and the wall's
-guarantee as its cap, under the wall all apps share, so apps share that wall's memory while each of their
-domains' budgets is still a wall
+app principal's budget is a wall too, carved from the wall all apps
+share when its session starts and destroyed when that session retires,
+so apps share that wall's memory by turns
 ([design-packaging.md](design-packaging.md#an-apps-principal)); a
 program's budget is elastic, with the pool as its cap, so a program
 spends what its siblings are not using, as a QNX process draws on the
@@ -8190,7 +8190,7 @@ areas of groups, image manifests, the time page, the trace record, the
 the device-secret page with its status, the labels the device and sealing
 secrets are derived under, the crash record, and the virtio rings that drivers
 share with their devices. The inspection fragment declares the semantic
-record/path/field types, units, bounds, reporter categories, stopgap
+record/path/field types, units, bounds, reporter categories, backend
 reporters and visibility requirements; service fragments declare operations, authority sources and
 request/reply bounds. They reference these shared declarations instead of
 copying them. The source marks each layout that is a

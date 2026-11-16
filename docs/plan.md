@@ -159,7 +159,7 @@ numbers are names; the table's order is the order.
 | M14 erXos's network stack, on QEMU | TLS, SSH and distribution sessions run over erXos's own TCP/IP stack, written in Erlang from FreeBSD's, on QEMU in 1b-G; the boards follow with M12 | estimated in its design document | 1b-G's prototype | G14 |
 | 1b-H M13 erXos's F2FS on QEMU | erXos's F2FS, written in Erlang, keeps a QEMU disk's files through power cuts and its images mount in the Linux guest; on the Pi 4 with M12 | 8,000 lines of Erlang, 2,000 of Ruby, 5,000 of tests ([design-f2fs.md](design-f2fs.md#stages)) | M6 | G13 |
 | 1b-I The Raspberry Pi 4 on Fiasco | the Pi 4 boots from its firmware to the shell on its console; a file synced on its SD card survives a power cut; its Ethernet carries UDP echo and a TCP transfer; the kiosk shows on its screen; a clock module on its header keeps the time across a power cut; every guarantee deferred | estimated per part before it starts; the designs give no figure | part (a): Phase 1; (b): 1b-E; (c): 1b-E and 1b-G; (d): 1b-C's part 3; (e): (a) and 1b-E | GR |
-| R1 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and three Fiasco patches (the clean-room interface header, writable or executable, eager FP switching), four if FD32's open decision carries the hardening of its entry, estimated before it starts; the milestones it takes carry their own figures | Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
+| R1 The first release, on Fiasco | a release build on QEMU `virt` and the Raspberry Pi 4 boots without the development banner, asks for a login and runs an installed app whose code is untrusted, which reaches no other domain, stops at its memory wall and spins in its own band without delaying the display or a driver; the release notes carry the downsides against erXos's kernel | the backend on Fiasco's own mechanisms and three Fiasco patches (the clean-room interface header, writable or executable, eager FP switching), four if the null-request bench shows that FD32's hardening of its entry costs nothing measurable, estimated before it starts; the milestones it takes carry their own figures | Phase 1b and track A, and the Fiasco forms of M9's kernel part's devices, the rest of track P, M10, M12, track D's parts 5 and 9 and M11's closure | the gates of the milestones it takes: GP, G12, GN-board |
 | Fiasco's scheduler stages | status words, deferred preemption, group park and group quotas, in that order, each measured before and after and kept only when its numbers pay; urgency within a band waits for a consumer | 2,000 to 4,050 lines of C++ in the fork, the policy in erXos's C17 cores (unverified estimates, [design-fiasco.md](design-fiasco.md#stages-beyond-bands)) | R1 | each stage, after R1, by its before-and-after numbers on Fiasco over the workloads G8 names (E-S1, E-S3 to E-S9); G8 itself is M8's, on erXos's kernel |
 | **Phase 2** | | | | |
 | Track K erXos's kernel | the pilot, then the kernel, booting R1's boot image and passing the conformance suite | 25,000 to 40,000 lines of C17, of which the capability core and the budget core exist; the pilot calibrates the figure | the pilot: M0, starting before Phase 1 is complete; the kernel in full: 1b-A | GK1, GK2, GK3 |
@@ -2157,9 +2157,9 @@ the guest's power cut and the next boot.
   target for its images, on the data partition
   ([design-storage.md](design-storage.md#read-write-storage)); its
   sub-space port form lands once track S's port driver (1b-B) exists, in the
-  storage domain, behind the same callback module; which form R1 ships
-  is an open decision
-  ([design-stopgap.md](design-stopgap.md#open-decisions)).
+  storage domain, behind the same callback module; R1 ships the NIF form
+  in the storage domain, under its release contract
+  ([design-stopgap.md](design-stopgap.md#release-contract)).
 * **Booting from the disk image.** The QEMU harness's normal boot, without
   trials: it plays the firmware, reads the record from the disk image with
   its slot parser, which has its fuzz target, boots the slot the record
@@ -2219,9 +2219,11 @@ neighbour answering. The release notes carry the downsides table.
   clean-room header that replaces `kobject_rpc.h`, the
   writable-or-executable patch, and the check that the image's link
   closure is all permissive, and the eager FP switch); the system-call
-  fuzz campaign; and the upstream security watch. Whether the build also
-  hardens Fiasco's entry against branch-predictor injection is FD32's
-  open decision ([design-fiasco.md](design-fiasco.md#open-decisions)).
+  fuzz campaign; and the upstream security watch. The build also
+  hardens Fiasco's entry against branch-predictor injection only if the
+  null-request bench on the Raspberry Pi 4 shows the patch costs nothing
+  measurable; otherwise FD32 stays a published downside
+  ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)).
 * **The user features.** Phase 1 and 1b and track A, and the
   user-facing milestones that otherwise wait for erXos's kernel, each in its Fiasco
   form with its criteria that need erXos's kernel left to that
@@ -2237,9 +2239,10 @@ neighbour answering. The release notes carry the downsides table.
   follows R1, since its copy-on-write children, store tracking and
   space copy (`erx_mem_child`, `erx_mem_dirty`, `erx_space_copy`) are
   refused on Fiasco (FD9).
-* **Two stopgaps, under release contracts.** littlefs, in the form its
-  open decision chooses, the storage domain's sub-space port as
-  recommended ([design-stopgap.md](design-stopgap.md#release-contract)),
+* **Two stopgaps, under release contracts.** littlefs, as a NIF in the
+  storage domain, with every grant of the data service rooted at its
+  client's principal's directory
+  ([design-stopgap.md](design-stopgap.md#release-contract)),
   and LVGL, as a program of its application's session
   ([design-display.md](design-display.md#lvgls-release-contract)). R1
   ships no other stopgap. R1 ships littlefs whatever G13 decides: M13's

@@ -1039,8 +1039,8 @@ erXos's kernel has no step between.
 module's whole mapping on Fiasco, and a range release on erXos's
 kernel.
 
-The stopgap's pool reports a domain's use as partial, with its reporter
-named, and the inspector shows it so.
+The Fiasco backend's pool reports a domain's use as partial, with its
+backend reporter named, and the inspector shows it so.
 
 ## The executable's own pages
 

@@ -1268,14 +1268,16 @@ another domain.
 * **littlefs serves the vault's partition** until erXos's F2FS, as it
   serves the data partition, a stopgap: a crafted partition can end the
   vault's storage domain, which leaves the vault `unavailable`, and a
-  defect in littlefs can lose a key file. While littlefs runs as the
-  storage domain's sub-space port neither reveals a key, since every
-  file is sealed under keys that storage domain never holds
-  ([design-storage.md](design-storage.md#read-write-storage)). In the NIF
-  form a memory defect in littlefs runs in a storage domain that holds
-  an unconfined DMA-capable block device, and so reaches the whole
-  machine, live keys included; which form R1 ships is an open decision
-  ([design-stopgap.md](design-stopgap.md#open-decisions)).
+  defect in littlefs can lose a key file. A crafted partition that only
+  damages files reveals no key, since every file is sealed under keys
+  that storage domain never holds
+  ([design-storage.md](design-storage.md#read-write-storage)). R1 ships
+  littlefs as a NIF, so a memory defect in littlefs runs in a storage
+  domain that holds an unconfined DMA-capable block device, and so
+  reaches the whole machine, live keys included, a published downside of
+  its [release contract](design-stopgap.md#release-contract); the
+  storage domain's sub-space port, littlefs's target placement, confines
+  it to the port and the volume the port holds.
 * **Offline guessing of passphrases.** Each principal's file, which is
   also the vault's only check of its passphrase, lives on the vault's
   partition, which only the vault's storage domain serves and nothing
@@ -2083,7 +2085,7 @@ published with the release.
 | pjdfstest, FreeBSD's `contrib/pjdfstest` at commit `b352368bfbe85aa73840c4b8d161bcffbc242ca3` | POSIX file-system semantics over erXos's F2FS and littlefs, under QEMU ([design-f2fs.md](design-f2fs.md#posix-suites)) | BSD-2-Clause | test tool, built only into test images | fetched at the pinned commit and SHA-256, built out of tree for erXos's POSIX layer |
 | `msantos/pkt` | an independent packet decoder, the fuzz targets' differential oracle for the stack's codecs | BSD-3-Clause | test tool, never in an image | fetched at a pinned commit and SHA-256, compiled out of the tree on the host's stock OTP |
 | fsimg, commit `807cd027` of https://github.com/stass/fsimg | writes every EROFS image erXos makes, verifies it, and is the oracle of the FAT server: it creates FAT images for the server to read and checks the images the server writes | BSD-2-Clause | **permanent** | fetched at a pinned commit and SHA-256 by the fetch step, built for the host out of tree by `tools/erx build fsimg`, a step of `make setup`; run as a subprocess by argument vector, never linked and never part of an image |
-| littlefs 2.11.3 | the read-write file system of the data partition and of the vault's partition until erXos's F2FS replaces it, as the storage domains' sub-space port, and in development builds also as a NIF of their Erlang release | BSD-3-Clause | **stopgap**, shipped in R1 under its release contract ([design-stopgap.md](design-stopgap.md#release-contract)) in the form its open decision chooses, the sub-space port as recommended, replaced by erXos's F2FS, in Erlang, at an installation that creates both partitions afresh | imported into `littlefs/` as erXos's code, its four source files and license only, with an origin file |
+| littlefs 2.11.3 | the read-write file system of the data partition and of the vault's partition until erXos's F2FS replaces it, as a NIF of the storage domains' Erlang release, in development builds and in R1, and in its target placement as the storage domains' sub-space port | BSD-3-Clause | **stopgap**, shipped in R1 as the NIF under its release contract ([design-stopgap.md](design-stopgap.md#release-contract)), replaced by erXos's F2FS, in Erlang, at an installation that creates both partitions afresh | imported into `littlefs/` as erXos's code, its four source files and license only, with an origin file |
 | OpenSSL 3.5 (3.5.9) | OTP's `crypto`, `ssl` and `ssh`, linked into the interpreter and BeamAsm images and never into the system domain's image ([design-crypto.md](design-crypto.md)); the vault's Argon2id (`ARGON2ID`, in OpenSSL since 3.2), HKDF and AES-256-GCM | Apache-2.0 | permanent; a long-term-support series, supported until 2030-04-08 ([research](research-boards-storage.md#cryptography-libraries)) | imported into `openssl/` as erXos's code, every directory its `Configure` reads but the bundled Perl module `Text::Template` (below), with an origin file recording the release tarball's SHA-256 and the two source edits (`crypto/armcap.c` reads CPU features through `getauxval`, and `rand_unix.c` seeds through a direct call of `getrandom`) and the emptied `external/perl/MODULES.txt`; configured with `--with-rand-seed=getrandom` and built with erXos's C library through one entry point of the top-level build |
 | Text::Template 1.56 (Mark Jason Dominus, released on CPAN by Michael Schout) | the template engine OpenSSL's `Configure` and make's generators load ([design-crypto.md](design-crypto.md#building-openssl)) | Artistic-1.0-Perl OR GPL-1.0-or-later (the terms of Perl 5) | permanent host tool, a Perl module that is never compiled into `libcrypto` or part of an image | fetched from CPAN at its pinned release and SHA-256 and unpacked out of tree under `build/third_party`; OpenSSL's `Configure` finds it through `PERL5LIB`, and the copy the OpenSSL release bundles is not imported |
 | toybox 0.8.15, with Ray Gardner's `wak` as its awk | the UNIX commands of the command shell and of programs | 0BSD | permanent | imported into `toybox/` as erXos's code, with an origin file; built as one multicall program over the POSIX-lite personality, its Linux-specific applets left out ([research](research-boards-storage.md#the-toolbox)) |

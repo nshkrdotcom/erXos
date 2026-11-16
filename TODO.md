@@ -42,8 +42,8 @@ it; git history is the record of completed work.
   installed app updates it the same way, the old one running until the new one passes and then stopped until
   its own `service NAME start` or `restart` or the next boot, since no publication applies `rc.conf`, `rm` removes it,
   keeping its data, which is named by app and signer, and `mount /apps/NAME.app DIR` shows its image
-  read-only; each app is a principal of its own, its budget elastic under the `apps` budget, as
-  design-kernel.md and design-system.md record.
+  read-only; each app is a principal of its own, its budget a wall carved from the `apps` budget at each
+  session's start and destroyed at that session's retire, as design-kernel.md and design-system.md record.
 * [High] apps, the manifest check's property 19
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), `tools/lib/erx/manifest.rb`: the
   stopgap check reads the `apps`, `package` and `signer` rows, derives the app template
@@ -92,6 +92,18 @@ it; git history is the record of completed work.
   `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
   widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the
   reader keeps) so the list is derived.
+* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
+  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
+  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
+  codec's layout.
+* [Medium] ABI, per-member enum attributes (fix the tool): the ABI spec language attaches no property to an
+  enum member, so which window roles of `mf_window_role` (`abi/manifest.txt`) are read-only and which belong
+  to the slot writer is written out twice, in the Ruby manifest check (`tools/lib/erx/manifest.rb`, its
+  slot-writer role list and `window_rights`'s read-only roles) and in `erx_blk_table:read_only/1`
+  (`erlang/apps/erx_blk/src/erx_blk_table.erl`). Extend the enum grammar with attributes per member, such as
+  `value system 8 read_only slot_writer=false`, each attribute declared once for its enum with a closed set
+  of values the generator validates, and generate them into Ruby and Erlang (which also gives Erlang enum
+  types), then delete both copies; a seeded member without a declared attribute fails the generator.
 * [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
   session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
   duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
@@ -494,15 +506,26 @@ it; git history is the record of completed work.
 * [High] R1, littlefs, `tools/fuzz`: the request fuzz target of the release contract's Requests row
   ([design-stopgap.md](docs/design-stopgap.md#release-contract)), `tools/fuzz/lfs_request_fuzz.c` with its seed
   generator `tools/fuzz/lfs_request_target.rb` beside `lfs_image_target.rb`, driving operation sequences through the
-  decoder of the form R1 ships (the NIF form's under an `enif_*` shim) into littlefs built with `erx_lfs_config`, at
+  NIF's argument decoder, under an `enif_*` shim, into littlefs built with `erx_lfs_config`, at
   its full `check-fuzz` budget under AddressSanitizer; seeded failure: `bin.size >= len` deleted from `get_path`
   (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c`).
-* [High] R1, littlefs, the production image's check: if R1 ships the port, refuse a release manifest that runs
-  `erx_lfs`'s NIF form, with a release manifest keeping the NIF form as its seeded failure
-  ([design-stopgap.md](docs/design-stopgap.md#release-contract), Placement); waits on the form's open decision.
-* [High] R1, littlefs, the placement test: if R1 ships the port, the driver_domains suite reads the port's space
-  through `/proc` and finds no handle but its channel and data area; a port given the storage domain's window as
-  well fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Placement).
+* [High] R1, littlefs, the release build's check (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`): refuse a
+  system release that names `erx_storage`, whose `erx_littlefs` loads the NIF, so no release runs littlefs in the
+  system domain, with a system release naming it as the seeded failure
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract), Placement).
+* [High] R1, littlefs (`littlefs/lfs.c`): a crafted image whose directory tail points back at itself, off the
+  list a mount walks, makes `lfs_dir_find` and `lfs_dir_read` loop forever on a dirty I/O thread, and every caller
+  of `/data` waits with it (`erx_lfs` calls have no timeout). Not reproduced. Apply the mount's cycle check
+  (`lfs_tortoise_detectcycles`) to both walks, `lfs_dir_read`'s state kept in the open directory since its walk
+  spans calls, so the walk fails with `LFS_ERR_CORRUPT`, which the NIF answers `{error, eio}`; add the seed to
+  `tools/fuzz/lfs_image_target.rb` and a host test, whose seeded failure leaves the check out of `lfs_dir_find`.
+  Blocks R1 ([design-stopgap.md](docs/design-stopgap.md#release-contract), Failure).
+* [High] R1, littlefs, the data service's grants (`erlang/apps/erx_storage/src/erx_lfs_mint.erl`, `erx_lfs.erl`):
+  root every `data` grant at its client's principal's directory, an app's at `apps/NAME/SIGNER/`, with the
+  owner checking each path against its grant's root, and the release case: a session of a second principal
+  opens a file of the first principal's directory and gets `enoent`; a grant minted at the volume's root fails
+  it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Grants). It closes the `data` items under
+  Security residuals (`rc.conf`, packages, the log's store) and gives `tree apps` its root.
 * [High] R1, littlefs, the restart-intensity test: the storage domain ended six times within 600 seconds is restarted
   five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is
   restarted, fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Failure).
@@ -543,13 +566,42 @@ it; git history is the record of completed work.
   `ERX_END_OFF`, `ERX_END_TRIAL` included, so no trial request is made. Refuse `ERX_END_TRIAL` with
   `ERX_ENOTSUP` while the boot value is `unknown` and otherwise make the platform's trial request before the
   reset, with the release case "trial" ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
-* [Medium] R1 on Fiasco, `liberx/backend/fiasco/end.c` (`erx_fiasco_end_watchdog`) and `service.c`
+* [High] R1 on Fiasco, `liberx/backend/fiasco/end.c` (`erx_fiasco_end_watchdog`) and `service.c`
   (`service_fault`): a missed pet and a root fault power the machine off rather than reset it, so a hung or
-  faulted boot never reaches the committed slot. Reset, as the end path says
+  faulted boot never reaches the committed slot and an unattended board stays off. Reset, as the end path
+  says, with a test that a missed pet ends with `erx: end reset`
   ([design-fiasco.md](docs/design-fiasco.md#the-end-path)).
-* [High] R1 on Fiasco, `fiasco/kernel`: FD32, hardening Fiasco's AArch64 entry against branch-target and
-  branch-history injection, is an open decision; the recommendation is to carry the patch, priced with the
-  null-request bench ([design-fiasco.md](docs/design-fiasco.md#open-decisions)).
+* [High] R1 on Fiasco, `fiasco/kernel`: FD32's entry patch, the firmware's `SMCCC_ARCH_WORKAROUND_1` and `_3`
+  at every entry from user mode and every switch between address spaces. Write it, time the null request on the
+  Raspberry Pi 4 with and without it ([todo-performance.md](docs/todo-performance.md)), and carry it only if the
+  patched median lies within the unpatched runs' spread; otherwise drop it and publish FD32
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] R1 on Fiasco, the Raspberry Pi 4's trial watchdog (`liberx/backend/fiasco/watchdog_thread.c`,
+  `config/platforms/raspi4b.json`): during a trial boot alone the root's watchdog thread arms the BCM2711's
+  power-management watchdog with a 4 s timeout and reloads it at every step, through a window of a platform
+  unit only the root maps, so a hang of Fiasco or of the root resets the board into the committed slot. Needs
+  the clean-room facts record of the watchdog, as the RNG200's; its case is on the board's manual checklist: a
+  development trial image whose root stops its watchdog thread once it armed the watchdog resets within the
+  timeout and boots the committed slot; seeded: the arming skipped, so the board stays hung
+  ([design-fiasco.md](docs/design-fiasco.md#the-watchdog)).
+* [High] apps, an app principal's wall on both kernels (`liberx/system/dom_boot.c`, `erx_domain_core.erl`):
+  the domain library carves each app principal's budget at boot as an elastic budget with no guarantee, which
+  Fiasco makes a wall of nothing. Carve none at boot; the domain service carves the principal's wall from
+  `apps` at each session's start, at the declared memory plus the session's outer budget, and destroys it
+  once that session has retired, with the tests of
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing) ("the principal's wall"). The
+  same file creates the `apps` budget and every manifest principal's budget with kind `ERX_BUDGET_ELASTIC` and
+  the guarantee equal to the cap, where the design makes each a wall, `ERX_BUDGET_WALL`.
+* [Medium] R1 on Fiasco, the space topics `handles` and `mappings` (`abi/erx_abi.txt`, `abi/inspection.txt`,
+  `liberx/backend/fiasco`): the paths `[domains, Id, capabilities]` and `[domains, Id, mappings]` and those
+  below a program, marked `build development`, the backend reporter `liberx_placements`, and the root's
+  answers from its placement records with each record's object partial; the LVGL renderer's confinement case
+  reads them through `/proc` ([design-fiasco.md](docs/design-fiasco.md#reporting-kernel-objects)).
+* [Low] inspection, the reporter kind `stopgap` becomes `backend` ([design-abi.md](docs/design-abi.md#inspection-schema)):
+  the `stopgap` member of `abi/inspection.txt` and its two declarations, the `stopgap` case of
+  `abi/protocols/web.txt`, `tools/lib/erx/abi_emit_inspection.rb` (`stopgaps/0`, `stopgap/1` and the
+  `{stopgap, Name}` reporter type), and the readers of `{stopgap, Name}` in Erlang and TypeScript
+  (`erx_kernel_records.erl`, `erx_render.erl`, `erx_web_value.erl`, `web/src/record.ts`).
 
 ## Stopgap replacements
 
@@ -561,11 +613,17 @@ it; git history is the record of completed work.
   the quota pool's pure core (WP58, commit `c38b3ada`). Phase 1 on a
   near-stock Fiasco does not use them. Track K reviews each against
   erXos's kernel's design and lands what it keeps.
-* [Medium] storage: replace littlefs, which runs in the storage domains of
-  the data partition and of the vault's partition, as a sub-space port or
-  as a NIF, whichever form R1 ships (an open decision of
-  [design-stopgap.md](docs/design-stopgap.md#open-decisions)),
-  with erXos's F2FS, written in Erlang, at parity over the file-semantics
+* [Medium] storage: littlefs's sub-space port, its next placement
+  ([design-stopgap.md](docs/design-stopgap.md#littlefs-in-the-storage-domain), "The port";
+  [design-storage.md](docs/design-storage.md#read-write-storage)): littlefs's C code in a sub-space of the
+  storage domain holding its channel and data area alone, so a memory error in it reaches the port and the
+  volume, not the storage domain's runtime, its DMA-capable block device or the vault's keys, which closes the
+  NIF form's published downside. It waits for track S's port driver (1b-B). With it: the confinement case,
+  the port's space read through `/proc` holding no handle but its channel and no mapping but its data area,
+  with a port given the storage domain's window as its seeded failure, and the production image's check
+  refusing a release manifest that runs the NIF form. No release waits for it.
+* [Medium] storage: replace littlefs, which runs as a NIF in the storage domains of
+  the data partition and of the vault's partition, with erXos's F2FS, written in Erlang, at parity over the file-semantics
   corpus, by gate G13. Nothing written under littlefs is converted: erXos's
   F2FS arrives by an installation, which creates both partitions afresh,
   and an update whose storage formats differ from the running system's is

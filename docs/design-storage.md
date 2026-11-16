@@ -59,9 +59,10 @@ Decisions every reader of this document needs:
   block driver, the EROFS reader, erXos's F2FS, the FAT server and the
   slot writer are Erlang; the driver touches its device through the
   device NIF, and hashing and checksums are C primitives
-  ([design.md](design.md#decisions)). littlefs, the stopgap, is C in a
-  sub-space port of the storage domain, the form a release ships under
-  its [release contract](design-stopgap.md#release-contract).
+  ([design.md](design.md#decisions)). littlefs, the stopgap, is C, in its
+  target placement a sub-space port of the storage domain; R1 ships it as
+  a NIF in the storage domain under its
+  [release contract](design-stopgap.md#release-contract).
 * **The block driver lives where the configuration puts the device.** In
   the default configuration the block device belongs to the storage
   domain and the driver runs there; on a board whose storage controller
@@ -1464,13 +1465,13 @@ has a design of its own, [design-f2fs.md](design-f2fs.md); in brief:
 * **Parity.** It replaces littlefs only at parity over the file-semantics
   test corpus, as every stopgap's replacement does.
 
-In Phase 1 littlefs instead runs as a NIF in the storage domain, behind the
-same `erx_fs` interface; its design is the littlefs section of
+In Phase 1 and in R1 littlefs instead runs as a NIF in the storage domain, behind the
+same `erx_fs` interface, R1's under its
+[release contract](design-stopgap.md#release-contract); its design is the littlefs section of
 [design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain), and
 the port below is the target.
 
-**littlefs, the stopgap** that R1 ships under its
-[release contract](design-stopgap.md#release-contract), runs in the same storage domain behind the same
+**littlefs, the stopgap**, in its target placement runs in the same storage domain behind the same
 `erx_fs` interface, as a **sub-space port** of the storage domain, with
 the shape of a program
 ([design-programs.md](design-programs.md#a-program-is-a-port)):

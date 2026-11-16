@@ -2961,8 +2961,9 @@ change only when a run moves, a capacity changes by more than a tenth, or
 **Budgets.** Each principal's budget is carved from the root budget at the
 manifest's size, as a wall, a budget whose cap is fixed equal to its
 guarantee ([design-kernel.md](design-kernel.md#budgets)), and so is the
-budget the manifest's `apps` row gives all apps to share, under which
-each app principal's budget is elastic with no guarantee
+budget the manifest's `apps` row gives all apps to share, from which
+each app principal's budget is carved as a wall when its session starts
+and destroyed when that session retires
 ([design-packaging.md](design-packaging.md#an-apps-principal)); each domain's
 two budgets from its principal's, side by side and each a wall:
 its own budget at its spec's `memory`, and its outer
@@ -2985,11 +2986,12 @@ admits or refuses every charge of a domain's at the domain's own budget,
 counts none of it against another domain's, no principal of the manifest
 spends beyond its own, and a domain's memory depends on nothing outside
 it but the kernel (K32,
-[design-kernel.md](design-kernel.md#budgets)). The one elastic budget
-the library carves is an app principal's, with no guarantee and the
-`apps` budget's guarantee as its cap, fixed for the boot; it holds
-nothing but its sessions' walls, so apps share the `apps` wall's memory
-and none of it reaches past that wall; and the library's grant
+[design-kernel.md](design-kernel.md#budgets)). An app principal's
+budget is a wall carved from the `apps` budget for each of its sessions
+and destroyed at that session's retire; it holds nothing but that
+session's walls, so apps share the `apps` wall's memory and none of it
+reaches past that wall. The library carves no elastic budget for a
+domain or a principal; and the library's grant
 table passes no budget with `DESTROY`, so no domain resizes a budget of
 its own (A7). The policy corrects the size of a domain it created at run
 time with `erx_budget_resize` through the domain library's
