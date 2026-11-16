@@ -33,7 +33,12 @@ them: the image's packages (`system`) and the data partition's `packages/`
 directory (`installed`), whose listing answers `{error, absent}` while the
 packages grant is not in place. Every call names erx_pkg_medium, since
 erx_starter calls no module given to it from outside (docs/design-apps.md,
-"Invariants"); the callbacks below are its contract.
+"Invariants"); the callbacks below are its contract, and every call goes
+through `medium/2`, which passes on each answer of the contract and makes
+every other one, `eof` among them, `{error, eio}`. A read is bounded here
+as well: a read at or past `ERX_PKG_BYTES_MAX`, the largest package, reads
+nothing, and one of more than `ERX_PKG_HEADER_MAX` bytes is answered short,
+as pread(2) answers.
 
 erx_pkg_io is never restarted (docs/design-packaging.md, "The package
 lifetime"): a restarted one could not know whether a request of its
@@ -43,6 +48,7 @@ predecessor was still on its way to storage.
 
 -export([start_link/0, request/1, lookup/2, read/5]).
 -export([init/1, handle_call/3, handle_cast/2]).
+-export_type([place/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -116,11 +122,14 @@ handle_call({lookup, Place, File}, _From, #{table := Table} = State) ->
 handle_call({read, _Place, _File, _Qid, Offset, Size}, _From, State)
   when not (is_integer(Offset) andalso Offset >= 0 andalso is_integer(Size) andalso Size >= 0) ->
     {reply, {error, einval}, State};
+handle_call({read, _Place, _File, _Qid, Offset, _Size}, _From, State)
+  when Offset >= ?ERX_PKG_BYTES_MAX ->
+    {reply, {ok, <<>>}, State};
 handle_call({read, Place, File, Qid, Offset, Size}, _From,
             #{table := Table} = State) ->
     Answer = case Table of
                  #{{Place, File} := #{qid := Qid, entry := Entry}} ->
-                     read_entry(Place, File, Entry, Offset, Size);
+                     read_entry(Place, File, Entry, Offset, min(Size, ?ERX_PKG_HEADER_MAX));
                  #{} ->
                      {error, eio}
              end,
@@ -143,25 +152,24 @@ handle_cast(_Message, State) ->
 %% A request of the lifetime that began last, which is alive.
 take({header, _, Place, File}, State) ->
     Answer = maybe
-        {ok, Length} ?= erx_pkg_medium:size(Place, File),
-        {ok, Bytes} ?= erx_pkg_medium:pread(Place, File, 0,
-                                            min(Length, ?ERX_PKG_HEADER_MAX)),
+        {ok, Length} ?= medium(size, [Place, File]),
+        {ok, Bytes} ?= medium(pread, [Place, File, 0, min(Length, ?ERX_PKG_HEADER_MAX)]),
         {ok, Length, Bytes}
     end,
     {Answer, State};
 take({list, _}, #{table := Table} = State) ->
-    case erx_pkg_medium:list(?ERX_PKG_SCAN_MAX) of
-        {ok, Names, false} = Answer when length(Names) =< ?ERX_PKG_SCAN_MAX ->
+    case medium(list, [?ERX_PKG_SCAN_MAX]) of
+        {ok, Names, false} = Answer ->
             Held = maps:from_list([{{installed, Name}, pending}
                                    || Name <- Names, erx_pkg_plan:package_file(Name)]),
             {Answer, State#{table := maps:merge(Table, Held)}};
-        {ok, Names, _} ->
-            {{ok, lists:sublist(Names, ?ERX_PKG_SCAN_MAX), true}, State};
+        {ok, _Names, true} = Answer ->
+            {Answer, State};
         {error, _} = Error ->
             {Error, State}
     end;
 take({delete, _, File}, #{table := Table} = State) ->
-    Answer = erx_pkg_medium:delete(File),
+    Answer = medium(delete, [File]),
     {Answer, State#{table := maps:remove({installed, File}, Table)}};
 take({path_entry, _, Place, File, Entry}, #{table := Table} = State) ->
     case erx_fs_version:draw() of
@@ -175,7 +183,7 @@ read_entry(_Place, _File, refused, _Offset, _Size) ->
     {error, eio};
 read_entry(Place, File, {accepted, Sha256, Length, Extent}, Offset, Size)
   when Offset < Extent ->
-    case erx_pkg_medium:pread(Place, File, 0, Length) of
+    case medium(pread, [Place, File, 0, Length]) of
         {ok, <<Header:Length/binary>>} ->
             case erx_bytes:sha256(Header) of
                 Sha256 ->
@@ -190,12 +198,41 @@ read_entry(Place, File, {accepted, Sha256, Length, Extent}, Offset, Size)
         {error, _} = Error -> Error
     end;
 read_entry(Place, File, {accepted, _, _, _}, Offset, Size) ->
-    erx_pkg_medium:pread(Place, File, Offset, Size).
+    medium(pread, [Place, File, Offset, Size]).
 
 tail(_Place, _File, Head, _Extent, 0) ->
     {ok, Head};
 tail(Place, File, Head, Extent, Size) ->
-    case erx_pkg_medium:pread(Place, File, Extent, Size) of
+    case medium(pread, [Place, File, Extent, Size]) of
         {ok, Rest} -> {ok, <<Head/binary, Rest/binary>>};
         {error, _} = Error -> Error
     end.
+
+%% The one route of every call on the medium: an answer of the callbacks'
+%% contract is passed on, a listing of at most ERX_PKG_SCAN_MAX names and a
+%% read of at most the bytes asked; every other answer is a storage failure.
+medium(Call, Args) ->
+    contract(Call, Args, call(Call, Args)).
+
+call(list, [Max]) -> erx_pkg_medium:list(Max);
+call(size, [Place, File]) -> erx_pkg_medium:size(Place, File);
+call(pread, [Place, File, Offset, Size]) -> erx_pkg_medium:pread(Place, File, Offset, Size);
+call(delete, [File]) -> erx_pkg_medium:delete(File).
+
+contract(list, [Max], {ok, Names, More} = Answer)
+  when is_list(Names), length(Names) =< Max, is_boolean(More) ->
+    case lists:all(fun is_binary/1, Names) of
+        true -> Answer;
+        false -> {error, eio}
+    end;
+contract(size, _Args, {ok, Length} = Answer) when is_integer(Length), Length >= 0 ->
+    Answer;
+contract(pread, [_Place, _File, _Offset, Size], {ok, Bytes} = Answer)
+  when is_binary(Bytes), byte_size(Bytes) =< Size ->
+    Answer;
+contract(delete, _Args, ok) ->
+    ok;
+contract(_Call, _Args, {error, Reason} = Answer) when is_atom(Reason) ->
+    Answer;
+contract(_Call, _Args, _Outside) ->
+    {error, eio}.

@@ -1,0 +1,89 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+-module(erx_pkg_medium).
+-moduledoc """
+The packages as storage holds them (docs/design-packaging.md, "Where a
+package lies"), the medium erx_pkg_io reads and deletes through, and only
+erx_pkg_io calls it.
+
+* **Installed packages** lie in the data partition's `packages/`
+  directory, which the storage domain serves as the files service
+  `packages`; the system domain reaches it through its grant, mounted at
+  `/packages` (erx_ns), and every request goes through the system domain's
+  file client, erx_file_remote, in erx_pkg_io's own process. While the
+  grant is not in place the path is the root's and the directory absent,
+  which the listing answers as `{error, absent}`.
+* **The image's packages**, on the stopgap, lie in the boot image's
+  domain release at `pkg/NAME.app` (docs/design-packaging.md, "Phase 1"),
+  read from the release like every file of it.
+
+Every answer is one of the erx_pkg_io callbacks' contract: a positioned
+read at or past the end of a file reads no bytes, as pread(2) does, and
+every failure is the file client's reason.
+""".
+-behaviour(erx_pkg_io).
+
+-export([list/1, size/2, pread/4, delete/1]).
+
+-include_lib("kernel/include/file.hrl").
+
+-define(INSTALLED, <<"/packages">>).
+
+-doc """
+At most `Max` entries of `packages/` and whether it holds more;
+`{error, absent}` while the packages grant is not in place.
+""".
+-spec list(pos_integer()) -> {ok, [binary()], boolean()} | {error, atom()}.
+list(Max) ->
+    case prim_file:list_dir_all(?INSTALLED) of
+        {ok, Names} -> {ok, [name(Name) || Name <- lists:sublist(Names, Max)], length(Names) > Max};
+        {error, enoent} -> {error, absent};
+        {error, _} = Error -> Error
+    end.
+
+-doc "The length of a package, which must be a regular file.".
+-spec size(erx_pkg_io:place(), binary()) -> {ok, non_neg_integer()} | {error, atom()}.
+size(Place, File) ->
+    case file:read_file_info(path(Place, File), [raw]) of
+        {ok, #file_info{type = regular, size = Size}} -> {ok, Size};
+        {ok, #file_info{}} -> {error, einval};
+        {error, _} = Error -> Error
+    end.
+
+-doc "At most `Size` bytes of a package from `Offset`; none at or past its end.".
+-spec pread(erx_pkg_io:place(), binary(), non_neg_integer(), non_neg_integer()) ->
+    {ok, binary()} | {error, atom()}.
+pread(Place, File, Offset, Size) ->
+    case file:open(path(Place, File), [read, raw, binary]) of
+        {ok, Fd} ->
+            try file:pread(Fd, Offset, Size) of
+                {ok, Bytes} -> {ok, Bytes};
+                eof -> {ok, <<>>};
+                {error, _} = Error -> Error
+            after
+                file:close(Fd)
+            end;
+        {error, _} = Error ->
+            Error
+    end.
+
+-doc "Delete an entry of `packages/`.".
+-spec delete(binary()) -> ok | {error, atom()}.
+delete(File) ->
+    file:delete(path(installed, File), [raw]).
+
+%% A file name is one entry of its directory, never a path: erx_pkg_io names
+%% only entries the listing gave or the manifest's package rows name, and a
+%% name of any other form fails to match.
+path(Place, File) when File =/= <<>>, File =/= <<".">>, File =/= <<"..">> ->
+    nomatch = binary:match(File, [<<"/">>, <<0>>]),
+    place(Place, File).
+
+place(installed, File) -> <<?INSTALLED/binary, $/, File/binary>>;
+place(system, File) -> filename:join([code:root_dir(), <<"pkg">>, File]).
+
+%% The file client gives a name it can decode as characters, and one it
+%% cannot as its bytes.
+name(Name) when is_binary(Name) -> Name;
+name(Name) -> unicode:characters_to_binary(Name).

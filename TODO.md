@@ -27,7 +27,7 @@ it; git history is the record of completed work.
   `-eval ok=application:start(erx_session,permanent),ok=application:start(erx_app,permanent)`, since
   `erx_app` depends on `erx_session`,
   its facet rows, the `packages` and `apps` rows) and the packed records of the three rows, which wait for the
-  storage service's `tree` parameter and its enforcement, a server of `packages`, the `apps` service freed
+  storage service's `tree` parameter for `tree apps` and its rooting, the `apps` service freed
   from the start table, and the app session below; clause 4, which needs
   `app_memory_default` and the derived template for property 12's planner; clause 5, which needs the
   package file check and the facts `erx_app_admit:admit/3` takes (the `apps` row with its app template's
@@ -39,26 +39,31 @@ it; git history is the record of completed work.
   leaving it out.
 * [High] apps, the package process at boot
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
-  the file check (`erx_pkg_header:check_file/2`), the recovery's plan, erx_pkg_io's path table and lifetime check,
-  and erx_pkg under erx_pkg_sup are built and tested on a simulated medium, but nothing starts them. What
-  remains: start erx_pkg_io as a permanent child and erx_pkg_sup as a temporary one of the start service's
-  supervisor, fed from the packed `package` and `signer` rows and the `apps` row's `max` once the manifest packs
-  them; `erx_pkg_medium`, the medium over the `packages` grant (`erx_file_remote`), declaring
-  `-behaviour(erx_pkg_io)` so the test stub and it meet one contract and, on the stopgap, the release's
-  `pkg/NAME.app`; a retry of the listing once the `packages` grant is in place, which the recovery now leaves
-  `unknown`; `erx_starter:packages/2` and the start table's package rows; registration
-  (`erx_principal:register_app/2`), stubbed in the tests, and the registry argument, which
-  erx_pkg reads as `erx_principal:app_registry/0`, a name the design does not give; the `apps` tree serving
-  `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]` and `[packages, Name]` in
-  `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute included; and the system_domain QEMU
-  cell. Also: the recovery runs in one `handle_continue`, so `erx_pkg:packages/0` waits for it to finish and
-  a `/proc/packages` read during it times out (drive one plan step per message instead); the log lines for a
-  refused package and an entry of no recognized form; one route for every medium answer in erx_pkg_io,
-  mapping one outside the contract (`eof` among them) to `eio`, and erx_pkg_io's own bound on a read's
-  offset and size; the lifetime taken from the caller rather than the request; and whether image header
-  reads wait for the `packages` grant. Registration's record holds the declared memory, which the `register`
-  action does not pass (`admitted()` carries the entry and signer, not the memory); add it before
-  `register_app/2` is built.
+  the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
+  every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
+  the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
+  erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. What remains:
+  the config, `erx_pkg:system_config/0`, answers `none`, since the packed manifest holds no `apps`, `package`
+  or `signer` record (the property 19 item above), so no boot runs the package process; once those records
+  exist it reads them, the development key among the signers in a development build. The principal
+  service's app registry, `erx_principal:register_app/2` and `app_registry/0`, does not exist (no
+  `erx_principal` module is in the tree), nor the domain library's app entries it registers into (the
+  app's session item below); its record takes admission's answer, which carries the declared memory.
+  `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
+  boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
+  otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
+  last set from erx_pkg as it starts rather than waiting for a publication); a retry of the listing once the `packages` grant is in place, which the
+  recovery leaves `unknown` (the first set then holds the image's packages only, and the installed ones come
+  in a later set, with no record, which `rc.conf` does not enable at that boot: a design question); the
+  `apps` tree serving `system/NAME.app` and `NAME.app` through erx_pkg_io; `/proc/packages` (`[packages]`
+  and `[packages, Name]` in `abi/inspection.txt`) from `erx_pkg:packages/0`, the `room` attribute
+  included; the system_domain QEMU cell; the log lines for a refused package and an entry of no recognized
+  form; the lifetime taken from the caller rather than the request; and whether image header reads wait for
+  the `packages` grant. A failed listing (`eio`, a storage domain's answer included) stops the lifetime as
+  a failed change does, so past erx_pkg_sup's intensity the image's packages are never published; a
+  listing failure should leave the scan `unknown` as an absent grant does. `erx_pkg_medium` reads the whole
+  directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
+  bounded read at a time (Phase 1: the storage domain is trusted).
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
   and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
   (`erx_domain_srv:grant_facets/4`). What remains: the domain library's `max` app entries in the principal
@@ -2622,9 +2627,10 @@ it; git history is the record of completed work.
   the ABI's reader language gains a count bound on an `args` string and string classes for an OTP
   application name and a relative path of plain names, with a seeded case each.
 * [Medium] apps, the SDK (`tools/lib/erx/sdk.rb`, `tools/erx sdk export`): the export writes `SDK.txt` and
-  `erlang/` (the public applications and `public.txt`) only. Not yet written: `sysroot/<arch>` (musl's
+  `erlang/` (the public applications and `public.txt`) and `host/erlang/ebin`
+  only. Not yet written: `sysroot/<arch>` (musl's
   headers, the draw layouts, `libc.a`, `liberx_program.a`, the builtins, the link script), `share/erxos/sdk.mk`,
-  `share/erxos/development.key`, `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
+  `host/bin` (`erx-app` with the Ruby it loads, `fsimg`, a host `erx-lvgl` and
   its descriptor-3 launcher), `erx_ui_host`, `erx-app test`, and `SDK.txt`'s minimum LLVM and `fsimg` version,
   which no source in the tree records yet (docs/design-packaging.md, "The SDK"). `erx_ui_host` takes option A
   of the advisors' review: while it runs it is the node's default display, `erx_ui:open/1` takes a window
@@ -2633,16 +2639,28 @@ it; git history is the record of completed work.
   exists; design-display.md ("The widget server", "Choosing a display") and design-packaging.md (two opens on
   one host) gain those sentences first. The design's public table names `erx_draw`, which the tree does not
   have; `sdk/public.txt` lists `erx_win` alone. Fix: build each with the next SDK packages, ahead of
-  `examples/dashboard`.
-* [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer packs what the app's directory
-  already holds. It does not yet compile `lib/APP/src` with `erlc`, run `DIR/Makefile`, check the program
-  with `erx_elf_plan`, sign with the SDK's development key when `--key` is absent, write the build record
-  beside `NAME.app`, or run `erx_pkg_header:check_file/2` on what it wrote (docs/design-packaging.md,
-  "Building and packing"). Each waits on the SDK (its public applications, development key and host
-  `erx_elf_plan`). Safe meanwhile: `--key` is required and a missing
-  `ebin/APP.app` or program is refused. Until the packer compiles with `+deterministic`, a prebuilt
-  `.beam` enters the package as given, with whatever host paths its compile information holds. Fix: add
-  each with the SDK package.
+  `examples/dashboard`. `host/bin/erx-app` waits on a choice: the packer's Ruby is not self-contained, since
+  `Erx::AppPackage.codec` plans the whole ABI with `ABI::Generator.plan` from `abi/` at run time (about seventy
+  generator files), `Erx::LineEscape` regenerates its tables through `Erx::Generated.ensure`, and `Erx::Fsimg`
+  finds fsimg by the tree's build record against `deps.lock`. Recommended fix: the packer reads the generated
+  host binding (`build/gen/tools/generated/abi.rb`, `tools/lib/erx/generated_abi.rb`) and the generated
+  terminal tables, which the export copies, `Erx::ErofsImage` takes the fsimg path it runs, and the export
+  copies `erx-app`, its handful of library files, those generated files and fsimg into `host/`; until then
+  `tools/erx-app`, which finds its SDK at `../..`, runs from no SDK.
+* [Medium] apps, `erx-app pack` (`tools/lib/erx/app_pack.rb`): the packer
+  compiles `lib/APP/src`, signs with the host's development package key by default and runs the file check, but
+  does not yet run `DIR/Makefile`, check the program with `erx_elf_plan`, or write the build record beside
+  `NAME.app` (docs/design-packaging.md, "Building and packing"). Each waits on the SDK (`sdk.mk` and a host
+  `erx_elf_plan`). Safe meanwhile: a missing program is refused, and a prebuilt `bin/`, or the `ebin/` of an
+  application without `src/`, enters the package as given, with whatever host paths a beam's compile
+  information holds. Also open: the packer runs the first `erlc` on PATH without checking that it is the
+  OTP release `SDK.txt` names, so a beam another release compiled fails only when the app starts; erlc's
+  environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
+  `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
+  shows only as the runner's log path. The image build does not yet carry the public half of its builder's
+  development package key as the `development` signer (docs/design-packaging.md, "Adding an app to an
+  image"), so no development image trusts an installed package yet; it lands with `tools/erx pack --app`.
+  Fix: add each with the SDK package.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
@@ -6717,14 +6735,20 @@ to the corpus and follow rc
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
   time page. A Phase 1 residual, not fixed in the stopgap.
-* [Medium] WiFi credentials before the vault, development builds only
-  ([design-wifi.md](docs/design-wifi.md#credentials)): the networks'
-  PMKs and SAE PTs sit unsealed in the `credentials` file of the WiFi
-  domain's own directory on the data partition, readable by any session
-  that holds the data partition's tree and from a copy of the medium.
-  It blocks release. The vault's state slot for `wifi`, shared with the
-  Bluetooth design's bonds, closes it, and the release manifest check
-  refuses the development store.
+* [Medium] WiFi's key holder before its release placement, development
+  builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
+  the holder runs as a process of the WiFi domain, so the networks'
+  PMKs and SAE PTs are in the domain that parses the air, and they sit
+  unsealed in the `keys` file of the WiFi domain's own directory on the
+  data partition, readable by any session that holds the data
+  partition's tree and from a copy of the medium; a break of the WiFi
+  domain can also write that file, so enroll a network, and a `pending`
+  Transition Disable mark is lost with the domain's restart. No
+  passphrase enters the domain: `wlankey` derives in the session. It
+  blocks release. The vault's purpose closes it
+  ([design-wifi.md](docs/design-wifi.md#decisions), 1), and the
+  release manifest check refuses a `wifi` row without `wpa_key` or with
+  `wpa_admin`.
 * [Medium] WiFi, SAE not constant-time throughout
   ([design-wifi.md](docs/design-wifi.md#security)): `crypto:sae_pt/3`,
   `sae_commit/5` and `sae_key/5` multiply in constant time, but their
@@ -6821,6 +6845,17 @@ to the corpus and follow rc
   enabling or disabling declared rows and moving a display among rows whose templates are granted it. It cannot
   add a row or widen a grant. Closed by rooting each `data` grant at its principal's or service's directory,
   with the test that a session holding `data` finds no `etc/` under its `/data`.
+* [Medium] packages on the stopgap ([design-packaging.md](docs/design-packaging.md#where-a-package-lies)),
+  `erlang/apps/erx_storage/src/erx_lfs.erl`: a `packages` grant reaches the volume's `packages/` directory alone,
+  but a `data` grant still covers the whole volume, so every domain holding `data` can add, rewrite or remove an
+  installed package at `/data/packages`, past the package process. A changed package fails its header check or,
+  from M11, `erx_verity`'s; a removed one is withheld. Closed by rooting each `data` grant at its principal's
+  directory, with the test that a session holding `data` finds no `packages/` under its `/data`. The tree has
+  three more gaps: every grant of it is read-write, since no facet row can make an `erx_fs` grant read-only yet,
+  so the app template's derived row needs that before it lands; the owner trusts any path a grant hands it, so
+  the rooting rests on `erx_fs_grant` building nodes only from the callbacks' answers (`erx_lfs` should check
+  each path against its grant's root, as `tree apps` will need); and a file at `/packages`, or a directory a
+  full volume cannot make, leaves the tree failing its requests without a diagnostic at attach.
 * [Medium] system log on the stopgap ([design-log.md](docs/design-log.md#the-store)): a development build's `data`
   grant to `root`'s sessions covers the whole of `/data`, read-write, so those sessions reach the log's store at
   `/data/log` past `erx_logfs`: they can rewrite, truncate or forge either family, the kernel's included, so the
@@ -8383,3 +8418,14 @@ document's "residual risks accepted" paragraph.
   intensity the log service stays down and the machine runs on, as without `erx_console`. Revisit at the security
   closure ([plan.md](docs/plan.md#m11-security-closure)), where a release build may prefer ending the machine with
   a crash record.
+
+* [Low] WiFi, a release front end cannot read the verdicts
+  ([design-wifi.md](docs/design-wifi.md#control-and-inspection)): the
+  verdicts, the saved networks and the failure reasons are `visible
+  all`, and in a release build no session has the machine-wide scope
+  ([design-live.md](docs/design-live.md#inspection)), so a front end in
+  root's session offers a passphrase for every protected network and
+  cannot say which are saved or why a join failed; the system shell
+  reads them. An inspection scope for the holder of a service's
+  administrative facet would close it, a change to design-live.md's
+  scopes.

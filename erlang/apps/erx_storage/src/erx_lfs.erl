@@ -3,7 +3,7 @@
 
 -module(erx_lfs).
 -moduledoc """
-The domain's `/data`: the `erx_fs` callback module over littlefs, the stopgap
+The data partition's trees: the `erx_fs` callback module over littlefs, the stopgap
 read-write file system (docs/design-stopgap.md#littlefs-in-the-storage-domain),
 on one window of the block service.
 
@@ -34,6 +34,18 @@ that is gone does. Nothing is retried or remounted within the domain. The
 domain service's restart gives the domain the device again and mounts the
 volume afresh, so no write of the failed volume can race a later one.
 
+**Trees.** The volume holds the trees the storage domain serves
+(docs/design-storage.md, "Interfaces"), each a files service of its name:
+`data`, the whole volume, and `packages`, the volume's `packages/` directory
+of installed app packages (docs/design-packaging.md, "Where a package
+lies"). tree_root/1 is the one table of them. A grant names its tree in
+init/1 and roots there, and nothing it sends names a node above that root:
+the grant answers `..` itself, staying at its root (erx_fs_grant), and every
+path the owner makes extends a node the grant already holds by one name that
+is neither `.` nor `..` (child/2). The mount makes each tree's directory the
+volume lacks; one it cannot make is logged and costs only its own tree, whose
+requests then fail, never the volume or the `data` tree.
+
 Nodes are paths from the volume's root, `<<"/">>` and `<<"/a/b">>`, and a
 handle is `{dir, Path}` or `{file, Path, Slot}`. littlefs stores no file
 numbers, so the owner draws a qid path from the domain's counter the first
@@ -52,12 +64,11 @@ only on a request that carries the reference.
 
 -include("generated/erx_abi.hrl").
 
--export([start_link/2, owner/1, worker/2]).
+-export([start_link/2, owner/1, worker/2, trees/0]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1,
          clunk/2, read_mode/0, write/4, make/4, setattr/3, unlink/4, rename/5,
          fsync/2]).
 
--define(TREE, <<"data">>).
 -define(ROOT, <<"/">>).
 -define(BLOCK_SIZE, 4096).
 -define(SECTOR_SIZE, 512).
@@ -132,7 +143,7 @@ owner({start, Parent, Role, Name}) ->
             %% Acknowledged once mounted (mounted/3): the owner serves the
             %% mount's block requests in its loop, so it acknowledges there.
             Mounted = fun(Result, S) -> mounted(Result, Parent, S) end,
-            ?MODULE:owner(run(mount, fun erx_littlefs:mount/1, Mounted, State));
+            ?MODULE:owner(run(mount, fun mount/1, Mounted, State));
         {error, {refused, no_device}} ->
             %% No block driver: a machine without a disk, which has no line, or a disk
             %% erx_blk refused and has already logged. No second line either way.
@@ -232,6 +243,26 @@ done(Result, #owner{busy = {Alias, Then}} = State) ->
 reply(mount, _Reply) -> ok;
 reply(Alias, Reply) -> erlang:send(Alias, {?MODULE, Alias, Reply}).
 
+%% The worker's mount: the volume, then each tree's directory it lacks. Only the
+%% volume's own mount decides the answer: a directory that cannot be made, on a
+%% full volume say, is logged and leaves its tree failing its requests.
+mount(Vol) ->
+    case erx_littlefs:mount(Vol) of
+        ok -> make_roots(Vol, [tree_root(Tree) || Tree <- trees(), tree_root(Tree) =/= ?ROOT]);
+        Error -> Error
+    end.
+
+make_roots(_Vol, []) ->
+    ok;
+make_roots(Vol, [Root | Rest]) ->
+    case erx_littlefs:mkdir(Vol, Root) of
+        ok -> make_roots(Vol, Rest);
+        {error, eexist} -> make_roots(Vol, Rest);
+        {error, Reason} ->
+            log("cannot make ~s: ~p; its tree fails its requests", [Root, Reason]),
+            make_roots(Vol, Rest)
+    end.
+
 mounted(ok, Parent, State) ->
     log("volume mounted", []),
     proc_lib:init_ack(Parent, {ok, self()}),
@@ -314,8 +345,6 @@ log(Format, Arguments) ->
 %% Requests: each is littlefs work for the worker and what makes its reply
 %% ---------------------------------------------------------------------------
 
-plan(root, State) ->
-    plan({getattr, ?ROOT}, State);
 plan({walk, Dir, Name}, State) ->
     case child(Dir, Name) of
         {ok, Path} ->
@@ -477,8 +506,9 @@ listing(Dir, Offset, Entries, State) ->
 %% Paths and qids
 %% ---------------------------------------------------------------------------
 
-child(Dir, <<"..">>) -> {ok, parent(Dir)};
-child(Dir, <<".">>) -> {ok, Dir};
+%% The path of Dir's entry Name. A name is one plain entry, never `.` or `..`, so
+%% the path is always below Dir and a grant never reaches above its root.
+child(_Dir, Name) when Name =:= <<".">>; Name =:= <<"..">> -> {error, einval};
 child(_Dir, Name) when byte_size(Name) =:= 0 -> {error, einval};
 child(_Dir, Name) when byte_size(Name) > ?NAME_MAX -> {error, enametoolong};
 child(Dir, Name) ->
@@ -495,16 +525,6 @@ child(Dir, Name) ->
 
 join(?ROOT, Name) -> <<"/", Name/binary>>;
 join(Dir, Name) -> <<Dir/binary, "/", Name/binary>>.
-
-parent(?ROOT) ->
-    ?ROOT;
-parent(Path) ->
-    %% Names are bytes, not UTF-8, so the split is binary's, not string's.
-    {At, _} = lists:last(binary:matches(Path, <<"/">>)),
-    case At of
-        0 -> ?ROOT;
-        _ -> binary:part(Path, 0, At)
-    end.
 
 with_qid(Path, Kind, State, Reply) ->
     case qid(Path, Kind, State) of
@@ -589,7 +609,7 @@ lfs_flags(Flags) ->
 %% erx_fs's callbacks: one request to the owner each
 %% ---------------------------------------------------------------------------
 
-call({Pid, Secret}, Request) ->
+call({Pid, Secret, _Tree}, Request) ->
     Alias = erlang:monitor(process, Pid, [{alias, reply_demonitor}]),
     erlang:send(Pid, {?MODULE, Secret, Alias, Request}),
     receive
@@ -597,19 +617,29 @@ call({Pid, Secret}, Request) ->
         {'DOWN', Alias, process, _, _} -> {error, eio}
     end.
 
--doc false.
-init(Name) when is_atom(Name) ->
-    {Pid, Secret} = persistent_term:get({?MODULE, Name}),
-    true = Pid =:= whereis(Name),
-    {ok, {Pid, Secret}}.
+-doc "The trees of the volume, each served as the files service of its name.".
+-spec trees() -> [atom()].
+trees() -> [data, packages].
+
+%% Where each tree of trees/0 roots in the volume.
+tree_root(data) -> ?ROOT;
+tree_root(packages) -> <<"/packages">>.
 
 -doc false.
-root(Server) ->
-    case call(Server, root) of
-        {ok, #{qid := Qid}} -> {ok, ?TREE, ?ROOT, Qid};
+init({Name, Tree}) when is_atom(Name) ->
+    _ = tree_root(Tree),
+    {Pid, Secret} = persistent_term:get({?MODULE, Name}),
+    true = Pid =:= whereis(Name),
+    {ok, {Pid, Secret, Tree}}.
+
+-doc false.
+root({_Pid, _Secret, Tree} = Server) ->
+    Root = tree_root(Tree),
+    case call(Server, {getattr, Root}) of
+        {ok, #{qid := Qid}} -> {ok, atom_to_binary(Tree), Root, Qid};
         %% An owner that has ended still roots a tree, whose every
         %% request then answers eio.
-        _ -> {ok, ?TREE, ?ROOT, {?ERX_P9_QTDIR, 0, 0}}
+        _ -> {ok, atom_to_binary(Tree), Root, {?ERX_P9_QTDIR, 0, 0}}
     end.
 
 -doc false.

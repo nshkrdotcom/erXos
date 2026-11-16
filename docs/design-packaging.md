@@ -150,8 +150,8 @@ Decisions every reader of this document needs:
 **How do I make an app?** Write `app.txt`, put the app's OTP
 applications under `lib/` or its native program under `bin/`, and run
 `erx-app pack DIR`, which builds what needs building and writes
-`NAME.app`, signed with the SDK's development key unless `--key FILE`
-names another ([Building and packing](#building-and-packing)).
+`NAME.app`, signed with the host's development package key unless
+`--key FILE` names another ([Building and packing](#building-and-packing)).
 
 **How does it reach an image?** `tools/erx pack --app DIR` builds and
 packs the app, checks it against the image's manifest and adds it;
@@ -717,12 +717,13 @@ file check found.
 | placed by | `tools/erx pack --app` | `cp NAME.app /apps/` |
 | lies | in the system slot, in the package image, an EROFS image of package files that the manifest's `image` row records like the release's; the storage service serves its files read-only under `packages/image/` | in the data partition's `packages/` directory, which the storage service serves |
 | shown at | `/apps/system/NAME.app` | `/apps/NAME.app` |
-| header authenticated by | its SHA-256, which the manifest's `package` row records | a key of the manifest's `signer` rows, or in a development build the development key |
+| header authenticated by | its SHA-256, which the manifest's `package` row records | a key of the manifest's `signer` rows, or in a development build its builder's development package key |
 | changes | with a system update, as the slot does | by a copy into `/apps` or over a package there, or a removal there |
 
 A machine trusts only the signer keys the boot image carries: the
-manifest's `signer` rows, and in a development build the SDK's
-development key. Trust therefore changes only with a system update, and
+manifest's `signer` rows, and in a development build the public half of
+the development package key of the host that built it
+([The SDK](#the-sdk)). Trust therefore changes only with a system update, and
 no record a storage domain could rewrite adds a signer.
 
 The system domain and the app's session reach the file through the
@@ -1078,8 +1079,8 @@ DIR/share/             data the app reads at /app/share
 DIR/Makefile           optional: builds bin/ with the SDK's make variables
 ```
 
-* `erx-app pack DIR [--key FILE] [--output OUT]` compiles each `lib/APP/src` whose
-  sources are newer than their output with the host's stock OTP 29.1.2
+* `erx-app pack DIR [--key FILE] [--output OUT]` compiles each `lib/APP/src` afresh,
+  into a new `lib/APP/ebin` that replaces the old one whole, with the host's stock OTP 29.1.2
   `erlc`, `+deterministic`, against the SDK's public applications, and,
   when `DIR/Makefile` exists, runs `make` there with the SDK's variables.
   It then parses `app.txt`, checks that each application has its OTP
@@ -1088,9 +1089,11 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
   image from an mtree manifest with `fsimg`, computes the hash tree with
   the image's SHA-256 as its salt, writes the header with the
   SDK's ABI version and target, signs it with FILE's key or else the
-  SDK's development key, writes `NAME.app` in `OUT`, the current directory
+  host's development package key, which it makes the first time it needs
+  one ([The SDK](#the-sdk)), writes `NAME.app` in `OUT`, the current directory
   by default, with its build record beside it, and runs the file check on
-  what it wrote. The image holds the files below `bin/`, `share/` and each
+  what it wrote, under the signing key, before the package replaces any
+  `OUT/NAME.app`. The image holds the files below `bin/`, `share/` and each
   `lib/APP/ebin` and `lib/APP/priv`, but for names starting with `.`, which
   it leaves out, so a host's own files (`.DS_Store`, `._NAME`) never enter
   a package; it refuses a link or any file there that is neither a regular
@@ -1104,8 +1107,10 @@ DIR/Makefile           optional: builds bin/ with the SDK's make variables
 ### Adding an app to an image
 
 `tools/erx pack --app X [--enable NAME] [--signer FILE]` takes an app
-directory, which it packs with the SDK the tree exports, or a package
-file, which it takes as it is and builds nothing; a package from
+directory, which it packs with the SDK the tree exports into the build
+tree, running that SDK's own `host/bin/erx-app`, so the exported packer
+is the one path by which the tree packs an app, as it is a third party's;
+or a package file, which it takes as it is and builds nothing; a package from
 someone else is added as a file, and needs no trust in its signer. For
 each package the build:
 
@@ -1120,6 +1125,12 @@ each package the build:
    whose license is absent or not permissive enters only a local test
    image built to allow restricted inputs, never a production image or an
    image the website offers.
+
+A development image also trusts, as its `development` signer, the public
+half of the development package key of the host that builds it, the key
+with which that host's packer signs by default, so packages the image's
+builder packs install on it and no other developer's development key is
+trusted.
 
 `--signer FILE` adds a `signer` row, so a deployer's machine trusts the
 deployer's own key for packages installed later. The board's manifest
@@ -1240,7 +1251,7 @@ top supervisor, and not a significant one
 intensity is not restarted and does not end the application.
 `erx_pkg_io` is not under it: it is a child of the top supervisor, as
 above, started before `erx_pkg_sup`. `erx_pkg`'s `init` returns at
-once, and the recovery runs after it, in its `handle_continue`, so a
+once, and the recovery runs after it, one action per message, so a
 recovery that crashes is a restart of `erx_pkg` within `erx_pkg_sup`'s
 intensity, never a failed start of the application: a crash that a
 restart can absorb never resets the machine, at boot as later. Past
@@ -1455,9 +1466,24 @@ or `one` command, or at the next boot.
 | `sysroot/<arch>/include` | musl's headers as erXos ships them; the draw protocol's message layouts, generated from `abi/formats/draw.txt` |
 | `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins; the program link script |
 | `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, and the link line |
-| `share/erxos/development.key` | the development signing key, with which the packer signs by default and which only development builds trust |
 | `erlang/` | the public Erlang applications as `.app`, `.beam` and `include/` files, `public.txt`, the list of public functions as `Module:Function/Arity`, and `erx_ui_host` |
 | `host/bin/` | `erx-app`, the packer, and `fsimg`; `erx-lvgl` built for the host, for `erx_ui_host` |
+| `host/erlang/ebin` | `erx_bytes` for stock OTP 29.1.2, a model of the per-byte primitives that stock lacks, with which the packer runs the file check on the host |
+
+**The development package key.** No private key enters an SDK, which is
+handed to others. The packer makes its own development package key, an
+Ed25519 key, the first time it signs without `--key`: one per user and
+host, in `~/.erxos/package-key/development.key`, a file of mode 0600 in a
+directory of mode 0700, made in a fresh directory that is renamed into
+place, so no half-made key is ever in place. It is a key of its own,
+apart from the development login key
+([design-ssh.md](design-ssh.md#login-keys)) and the development update
+key ([design-storage.md](design-storage.md#system-updates)), so a
+package's seal stands for nothing else. A development image trusts the
+public half of its builder's key ([Adding an app to an
+image](#adding-an-app-to-an-image)), so a third party's packages are
+trusted only by the images that party builds, and the tree packs with the
+same key, since `tools/erx pack --app` runs the exported packer.
 
 **What is public, and what a package's compatibility key covers.**
 Admission refuses a package whose `ERX_ABI_VERSION` or target
@@ -1620,7 +1646,8 @@ declaration; the limits `app_memory_default`, `app_memory_min`,
 **Erlang**: `erx_pkg_header:decode/2`, `check_file/2` and `layout/2`,
 `erx_verity_tree:blocks/1`,
 `erx_app_admit:admit/3`, `erx_pkg_plan:install/3`, `remove/2` and
-`recover/2`, `erx_principal:register_app/2`; in a session, `erx_app`,
+`recover/2`, `erx_principal:register_app/2` and `app_registry/0`, the
+boot's registry of app principals that admission reads; in a session, `erx_app`,
 and `erx_ns:mount/3` with an image `{file, Path, Layout}`, `Layout` an
 authenticated layout or `header`.
 
@@ -1821,8 +1848,10 @@ storage domain; an app's code; an app directory on the build host.
   principal's entry also keeps its signer, and admission refuses another
   with `signer_changed`. Signer continuity costs no record: the
   directory's name is the record.
-* **Development builds** trust the SDK's development key, which every
-  developer has; they run trusted code only, and say so in their banner.
+* **Development builds** trust their builder's development package key,
+  which no tool copies off the building host, so a package another developer
+  packed is trusted only by the images that developer builds; they run
+  trusted code only, and say so in their banner.
   A release build trusts only its `signer` rows.
 * **An app's durable code is its package**: its principal's overlays stay
   in memory, so a storage domain cannot make an app run code its signer
@@ -2030,7 +2059,7 @@ this is not on the list.
 | **A launcher in Erlang for each native app** | The display already starts a program with a window and binds its draw and input files; `program` reaches that for every native app |
 | **A native window app draws into its buffer and presents through a pipe protocol, as `erx-lvgl` does** | It would be a second public path to the screen. `/dev/draw` is the designed one; the measurement on the watch list decides whether a faster one is needed |
 | **Signers trusted on first install, or added at run time** | The record of who is trusted would lie where the storage domain can rewrite it. Keys in the boot image cannot be |
-| **Unsigned packages in development builds** | A second mode in the header, the file check and the inspector, for nothing: the packer signs with the development key by default, which costs a developer nothing, and development builds trust that key |
+| **Unsigned packages in development builds** | A second mode in the header, the file check and the inspector, for nothing: the packer signs with the host's development package key by default, which costs a developer nothing, and the development builds that host makes trust that key |
 | **The package process stops an app's domains itself** | A keeper restarts a session after every end, so the app could start again during the deletion, and a removal would steer a lookup by principal name. The start service, the only starter of app sessions, ending the sessions of an app the published set drops removes both |
 | **A restarted `erx_pkg_io`, or a recovery that deletes temporary files while copies may still act** | A request of the ended run could reach the storage service after the new recovery had listed the directory, and a late rename could publish a file the new run never checked. One lifetime whose effects are taken only while it lives, by takers that are never restarted, closes that by construction |
 | **Removing an app's data with its package** | Deleting a package would destroy what the app wrote, which macOS and FreeBSD do not do, and a removal of two things needs a durable marker and a recovery to finish it. A purge is a separate, explicit act |
@@ -2060,8 +2089,8 @@ Decisions:
    of it and never resized; each session is walled; the build sums the
    image's enabled packages, and the kernel judges every start.
 3. **A machine trusts only the signer keys its boot image carries**:
-   the manifest's `signer` rows, and the development key in a development
-   build. Every package is signed.
+   the manifest's `signer` rows, and in a development build its builder's
+   development package key. Every package is signed.
 4. **Every app may read every package's bytes**, as stated in
    [Where a package lies](#where-a-package-lies).
 5. **Installed apps are `/apps/NAME.app` and the image's

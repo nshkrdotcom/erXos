@@ -4,8 +4,9 @@
 -module(erx_starter_sup).
 -moduledoc """
 The start service's supervision tree (docs/design-apps.md,
-"Concurrency"), rest_for_one over the `start` tree's grants (erx_starter_fs),
-which the system's table alone serves, and three children:
+"Concurrency"), rest_for_one over the package process's children
+(packages/1), then the `start` tree's grants (erx_starter_fs), which the
+system's table alone serves, and three children:
 
 1. the keepers' branch, erx_starter_keepers, a one_for_one supervisor of
    one erx_starter_row per enabled row that runs or is down, one keeper
@@ -147,7 +148,8 @@ init({top, Manifest, Directory}) ->
     %% Its shutdown waits for the file operation in progress (erx_starter_rc).
     Rc = #{id => rc, start => {erx_starter_rc, start_link, []}, shutdown => infinity},
     Table = #{id => table, start => {erx_starter, start_link, [Manifest, Directory]}},
-    {ok, {#{strategy => rest_for_one}, start_tree(Manifest) ++ [Keepers, Rc, Table]}};
+    {ok, {#{strategy => rest_for_one, auto_shutdown => any_significant},
+          packages(Manifest) ++ start_tree(Manifest) ++ [Keepers, Rc, Table]}};
 init(keepers) ->
     Records = #{id => records, start => {erx_starter_records, start_link, []},
                 restart => temporary, significant => true},
@@ -160,3 +162,20 @@ start_tree(system) ->
     [#{id => start_tree, start => {erx_starter_fs, start_link, []}, type => supervisor, shutdown => infinity}];
 start_tree(_Manifest) ->
     [].
+
+%% The package process's children (docs/design-packaging.md, "The package
+%% lifetime"), first, so no restart of a later child ends them: erx_pkg_io,
+%% never restarted, and significant, so its end shuts the tree down and so
+%% ends the start service's application, which the system release holds
+%% permanent, and the machine resets; then erx_pkg_sup, temporary and not
+%% significant, so its end past its intensity ends nothing else. A manifest
+%% with no apps row runs erx_pkg_io alone; the tests' tables run neither.
+packages(system) ->
+    Io = #{id => erx_pkg_io, start => {erx_pkg_io, start_link, []},
+           significant => true, restart => temporary},
+    [Io | package_process(erx_pkg:system_config())];
+packages(_Manifest) ->
+    [].
+
+package_process(none) -> [];
+package_process(Config) -> [erx_pkg_sup:child_spec(Config)].

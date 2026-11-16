@@ -3,14 +3,16 @@
 
 -module(erx_lfs_mint).
 -moduledoc """
-The mint of a littlefs volume's files service (docs/design-stopgap.md, "littlefs in
-the storage domain"): `data`, the storage domain's `/data` for the system domain and
-root's session. It is a child of erx_lfs_sup, started after the volume's owner, so it
-serves the volume already mounted, and it names itself the service's mint
-(erx_facet:provide/2) before the domain's ready report.
+The mint of the files service of one tree of a littlefs volume (docs/design-stopgap.md,
+"littlefs in the storage domain"; erx_lfs, "Trees"): `data`, the storage domain's `/data`
+for the system domain and root's session, or `packages`, the installed app packages
+(docs/design-packaging.md, "Where a package lies"). The service and the tree share their
+name, so a mint hands out grants of its own tree alone. It is a child of erx_lfs_sup,
+started after the volume's owner, so it serves the volume already mounted, and it names
+itself the service's mint (erx_facet:provide/2) before the domain's ready report.
 
 For each mint request in the system domain's envelope (mint_request/3) it starts one
-erx_fs grant of the volume's tree, read-write, whose client is the grantee's domain id,
+erx_fs grant of the service's tree, read-write, whose client is the grantee's domain id,
 so the grant takes frames only in that domain's envelope and with that domain's names
 (erx_fs_grant, S9). The grant exports itself to the grantee, with `send` alone, before
 its start returns, so no answer names a grant the grantee cannot reach; a refused export
@@ -30,8 +32,9 @@ and so the volume's, ends every grant. erx_fs_grants applies the facet row's lim
 -export([mint_init/2]).
 
 -doc """
-Starts the mint of the files service Service for the volume whose owner is registered
-as Name, linked to the caller, erx_lfs_sup. A machine without the volume starts no mint.
+Starts the mint of the files service Service, of the tree of that name, for the volume
+whose owner is registered as Name, linked to the caller, erx_lfs_sup. A machine without
+the volume starts no mint.
 """.
 -spec start_link(atom(), atom()) -> {ok, pid()} | ignore.
 start_link(Service, Name) when is_atom(Service), is_atom(Name) ->
@@ -42,7 +45,7 @@ start_link(Service, Name) when is_atom(Service), is_atom(Name) ->
 
 -doc false.
 mint_init(Parent, {Service, Name}) ->
-    {ok, Grants} = erx_fs_grants:start_link(erx_lfs, Name),
+    {ok, Grants} = erx_fs_grants:start_link(erx_lfs, {Name, Service}),
     ok = erx_facet:provide(Service, self()),
     proc_lib:init_ack(Parent, {ok, self()}),
     mint(erx_kernel_records:system_domain(), Service, Grants).

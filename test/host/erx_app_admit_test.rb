@@ -94,8 +94,9 @@ class ErxAppAdmitTest < Minitest::Test
      [package('a' * MAX_NAME), :development, :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
      [package('room_a'), :development, :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
      [package('min_memory', memory: Seeds.codec.constant('app_memory_min')), :development, :base,
-      ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
-     [package('max_memory', memory: 128 * MIB), :development, :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')]]
+      ok(1, [PACKAGES, DISPLAY, DATA], 'display', memory: Seeds.codec.constant('app_memory_min'))],
+     [package('max_memory', memory: 128 * MIB), :development, :base,
+      ok(1, [PACKAGES, DISPLAY, DATA], 'display', memory: 128 * MIB)]]
   end
 
   def refused
@@ -142,7 +143,7 @@ class ErxAppAdmitTest < Minitest::Test
       error(Tuple.new([:memory, (128 * MIB) + 1]))]]
   end
 
-  def ok(entry, rows, display) = Tuple.new([:ok, { entry: entry, rows: rows, display: display }])
+  def ok(entry, rows, display, memory: 64 * MIB) = Tuple.new([:ok, { entry: entry, rows: rows, display: display, memory: memory }])
   def error(reason) = Tuple.new([:error, reason])
 
   def term(value)

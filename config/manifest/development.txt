@@ -257,6 +257,14 @@ facet data_session
   reductions 100000
   period_ns 1000000000
   max_heap_size 262144
+# packages: the installed app packages, the data volume's packages/ directory, which the
+# storage domain serves as a files service of its own; each grant reaches that directory
+# alone (docs/design-packaging.md, "Where a package lies"). Its facet rows, the system
+# domain's read-write and the app template's read-only, are among the rows the build
+# derives from the apps row.
+service packages
+  server @domain.storage
+  interface files
 service net
   server @domain.network
   interface net

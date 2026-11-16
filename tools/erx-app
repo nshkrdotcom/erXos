@@ -5,22 +5,26 @@
 
 # The SDK's packer (docs/design-packaging.md, "Building and packing"):
 #
-#   erx-app pack DIR --key FILE [--output OUT]
+#   erx-app pack DIR [--key FILE] [--output OUT]
 #
-# writes DIR's app as NAME.app in OUT (the current directory by default), signed with
-# FILE's Ed25519 private key (PEM). A usage error exits 2, a refusal 1; a refusal's
-# message, which may name files of DIR, reaches the terminal through the line escaper.
+# writes DIR's app as NAME.app in OUT (the current directory by default), its sources
+# compiled with the erlc first on PATH, the host's stock OTP, and signed with FILE's
+# Ed25519 private key (PEM), or else the host's development package key, which it makes
+# in ~/.erxos/package-key the first time it needs one (Erx::PackageKey). It runs from
+# the SDK, whose host/bin it lies in. A usage error exits 2, a refusal 1; a refusal's message,
+# which may name files of DIR, reaches the terminal through the line escaper.
 
 require 'optparse'
 require_relative 'lib/erx/app_pack'
 require_relative 'lib/erx/line_escape'
+require_relative 'lib/erx/package_key'
 require_relative 'lib/erx/runner'
 
-root = File.expand_path('..', __dir__)
+root = File.expand_path('../..', __dir__)
 options = { output: Dir.pwd }
 parser = OptionParser.new do |opts|
-  opts.banner = 'usage: erx-app pack DIR --key FILE [--output OUT]'
-  opts.on('--key FILE', 'the Ed25519 private key the package is signed with') { |value| options[:key] = value }
+  opts.banner = 'usage: erx-app pack DIR [--key FILE] [--output OUT]'
+  opts.on('--key FILE', 'the Ed25519 private key the package is signed with, by default the host development package key') { |value| options[:key] = value }
   opts.on('--output OUT', 'where NAME.app is written') { |value| options[:output] = value }
 end
 
@@ -30,15 +34,22 @@ rescue OptionParser::ParseError => error
   warn("erx-app: #{error.message}\n#{parser.banner}")
   exit 2
 end
-unless command == 'pack' && directory && rest.empty? && options[:key]
+unless command == 'pack' && directory && rest.empty?
   warn(parser.banner)
   exit 2
 end
 
+abort('erx-app: it runs from the SDK, whose host/bin it lies in') unless File.file?(File.join(root, 'SDK.txt'))
+
 begin
+  erlc = ENV.fetch('PATH', '').split(File::PATH_SEPARATOR).map { |entry| File.expand_path('erlc', entry) }
+            .find { |candidate| File.file?(candidate) && File.executable?(candidate) } or
+    raise Erx::Error, 'no erlc on PATH; the packer compiles with the host stock OTP'
   runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
-  puts Erx::LineEscape.escape(Erx::AppPack.pack(directory: directory, signer: Erx::AppPackage::Signer.read(options[:key]),
-                                                output_directory: options[:output], runner: runner, root: root))
+  signer = options[:key] ? Erx::AppPackage::Signer.read(options[:key]) : Erx::PackageKey.ensure
+  puts Erx::LineEscape.escape(Erx::AppPack.pack(directory: directory, sdk: Erx::AppPack::Sdk.new(root: root, erlc: erlc),
+                                                signer: signer, output_directory: options[:output], runner: runner,
+                                                root: root))
 rescue Erx::Error => error
   abort("erx-app: #{Erx::LineEscape.escape(error.message)}")
 end

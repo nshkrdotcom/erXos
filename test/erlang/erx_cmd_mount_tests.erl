@@ -78,7 +78,7 @@ servers_answer_their_type_test() ->
     Dead = spawn(fun() -> ok end),
     Monitor = monitor(process, Dead),
     receive {'DOWN', Monitor, process, Dead, _} -> ok end,
-    {ok, #{type := Littlefs}} = erx_lfs:statfs({Dead, make_ref()}),
+    {ok, #{type := Littlefs}} = erx_lfs:statfs({Dead, make_ref(), data}),
     ?assertEqual([<<"procfs">>, <<"littlefs">>],
                  [erx_cmd_mount:type_name({magic, Type}) || Type <- [Proc, Littlefs]]).
 

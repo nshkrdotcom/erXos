@@ -39,7 +39,7 @@ class ErxStarterTest < Minitest::Test
               caught_by: 'one_end_past_the_intensity_leaves_the_row_down_and_others_up'),
     Fault.new(name: "a table whose crash restarts the keepers' branch",
               file: "#{APP}/erx_starter_sup.erl",
-              from: '#{strategy => rest_for_one}', to: '#{strategy => one_for_all}',
+              from: '#{strategy => rest_for_one, auto_shutdown', to: '#{strategy => one_for_all, auto_shutdown',
               caught_by: 'a_crash_of_the_table_ends_no_session'),
     Fault.new(name: 'a restarted table that ignores the recorded text and makes the manifest\'s rows',
               file: "#{APP}/erx_starter.erl",

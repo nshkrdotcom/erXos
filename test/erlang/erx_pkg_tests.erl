@@ -207,9 +207,32 @@ pending_test() ->
     Lifetime ! stop,
     Stranger ! stop.
 
+%% Every medium answer outside the callbacks' contract is eio, and erx_pkg_io
+%% lives on; a read past the largest package reads nothing.
+medium_route_test() ->
+    {Io, _Config} = setup([{listing, {ok, not_names, false}}]),
+    Lifetime = spawn(fun() -> receive stop -> ok end end),
+    ok = erx_pkg_io:request({begin_lifetime, Lifetime}),
+    ?assertEqual({error, eio}, erx_pkg_io:request({list, Lifetime})),
+    erx_pkg_medium:set(listing, {ok, [<<"clock.app">>, 7], false}),
+    ?assertEqual({error, eio}, erx_pkg_io:request({list, Lifetime})),
+    erx_pkg_medium:set(listing, {ok, [], false}),
+    ?assertEqual({ok, [], false}, erx_pkg_io:request({list, Lifetime})),
+    Header = fun() -> erx_pkg_io:request({header, Lifetime, installed, <<"clock.app">>}) end,
+    erx_pkg_medium:set(pread_answer, eof),
+    ?assertEqual({error, eio}, Header()),
+    erx_pkg_medium:set(pread_answer, {ok, <<0:(65537 * 8)>>}),
+    ?assertEqual({error, eio}, Header()),
+    erx_pkg_medium:set(pread_answer, {error, "not an atom"}),
+    ?assertEqual({error, eio}, Header()),
+    ?assert(is_process_alive(Io)),
+    ?assertEqual({ok, <<>>}, erx_pkg_io:read(installed, <<"clock.app">>, 1, 1 bsl 30, 1)),
+    Lifetime ! stop.
+
 overflow_test() ->
-    Names = [integer_to_binary(N) || N <- lists:seq(1, 1025)],
-    {_Io, Config} = setup([{listing, {ok, Names, false}}]),
+    %% A medium answers at most the names asked for, and whether more remain.
+    Names = [integer_to_binary(N) || N <- lists:seq(1, 1024)],
+    {_Io, Config} = setup([{listing, {ok, Names, true}}]),
     {ok, Sup} = erx_pkg_sup:start_link(Config),
     wait_recovered(),
     #{scan := Scan, packages := Records} = erx_pkg:packages(),
@@ -225,6 +248,20 @@ absent_grant_test() ->
     #{scan := Scan, packages := Records} = erx_pkg:packages(),
     ?assertEqual(unknown, Scan),
     ?assertEqual([{system, <<"dashboard.app">>}], maps:keys(Records)),
+    stop(Sup).
+
+%% The recovery runs one action per message: a call made during it waits for
+%% one action, here one slow header read, never for the whole recovery,
+%% whose five slow reads take longer than a call's timeout.
+answers_during_recovery_test_() ->
+    {timeout, 60, fun answers_during_recovery/0}.
+
+answers_during_recovery() ->
+    {_Io, Config} = setup([{pread_delay, 1200}]),
+    {ok, Sup} = erx_pkg_sup:start_link(Config),
+    timer:sleep(100),
+    ?assertMatch(#{scan := unknown, packages := #{}}, erx_pkg:packages()),
+    wait_until(fun() -> maps:get(scan, erx_pkg:packages()) =/= unknown end, 1000),
     stop(Sup).
 
 %% A failed change ends the lifetime; past erx_pkg_sup's intensity the

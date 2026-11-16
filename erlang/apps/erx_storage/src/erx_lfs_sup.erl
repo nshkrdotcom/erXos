@@ -3,63 +3,62 @@
 
 -module(erx_lfs_sup).
 -moduledoc """
-The domain's `/data` (docs/design-stopgap.md#littlefs-in-the-storage-domain):
-the volume's owner, `erx_lfs`, on the block service's data window; the
-grant that mounts it at `/data`; and the mint of `data`, the volume's files
-service to other domains (erx_lfs_mint). The owner starts once the volume has
-mounted, so a mount that fails fails the domain's boot before it reports
-ready, and the mint names itself the service's mint before that report.
-Every child is permanent and the restart intensity is 0: when
-any ends, as the owner does when the volume fails, this supervisor ends,
-and through erx_storage_sup the storage domain. Nothing is restarted here:
-the domain's restart mounts the volume afresh, so no later write races one
-the failed volume left outstanding. A machine without a data window starts
-none of them.
+The data partition's littlefs volume (docs/design-stopgap.md#littlefs-in-the-storage-domain):
+the volume's owner, `erx_lfs`, on the block service's data window; the grant
+that mounts its `data` tree at `/data` in this domain; and, for each tree of
+the volume (erx_lfs:trees/0), the mint of the files service of the tree's
+name, which hands other domains grants of that tree alone (erx_lfs_mint):
+`data`, and `packages`, the installed app packages
+(docs/design-packaging.md, "Where a package lies"). The owner starts once
+the volume has mounted, so a mount that fails fails the domain's boot before
+it reports ready, and each mint names itself its service's mint before that
+report. Every child is permanent and the restart intensity is 0: when any
+ends, as the owner does when the volume fails, this supervisor ends, and
+through erx_storage_sup the storage domain. Nothing is restarted here: the
+domain's restart mounts the volume afresh, so no later write races one the
+failed volume left outstanding. A machine without a data window starts none
+of them.
 """.
 
 -behaviour(supervisor).
 
--export([start_link/0, start_link/4, start_grant/2]).
+-export([start_link/0, start_grant/1]).
 -export([init/1]).
 
--doc "Starts `/data` on the data window, mounted at `/data`.".
+-define(NAME, erx_lfs).
+-define(POINT, <<"/data">>).
+
+-doc "Starts the volume on the data window, its `data` tree mounted at `/data`.".
 -spec start_link() -> supervisor:startlink_ret().
 start_link() ->
-    start_link(data, <<"/data">>, erx_lfs, data).
-
--doc """
-Starts a littlefs volume on the window of `Role`, its owner registered as `Name`,
-mounted at `Point` and served to other domains as the files service `Service`.
-""".
--spec start_link(erx_blk_table:role(), binary(), atom(), atom()) -> supervisor:startlink_ret().
-start_link(Role, Point, Name, Service) ->
-    supervisor:start_link(?MODULE, {Role, Point, Name, Service}).
+    supervisor:start_link(?MODULE, []).
 
 -doc false.
-init({Role, Point, Name, Service}) ->
+init([]) ->
     Flags = #{strategy => one_for_all, intensity => 0, period => 1},
-    Owner = #{id => owner, start => {erx_lfs, start_link, [Role, Name]},
+    Owner = #{id => owner, start => {erx_lfs, start_link, [data, ?NAME]},
               restart => permanent, shutdown => brutal_kill, type => worker,
               modules => [erx_lfs]},
-    Grant = #{id => grant, start => {?MODULE, start_grant, [Name, Point]},
+    Grant = #{id => grant, start => {?MODULE, start_grant, [?NAME]},
               restart => permanent, shutdown => brutal_kill, type => worker,
               modules => [erx_fs]},
-    Mint = #{id => mint, start => {erx_lfs_mint, start_link, [Service, Name]},
-             restart => permanent, shutdown => brutal_kill, type => worker,
-             modules => [erx_lfs_mint]},
-    {ok, {Flags, [Owner, Grant, Mint]}}.
+    Mints = [#{id => {mint, Tree}, start => {erx_lfs_mint, start_link, [Tree, ?NAME]},
+               restart => permanent, shutdown => brutal_kill, type => worker,
+               modules => [erx_lfs_mint]}
+             || Tree <- erx_lfs:trees()],
+    {ok, {Flags, [Owner, Grant | Mints]}}.
 
 -doc false.
--spec start_grant(atom(), binary()) -> {ok, pid()} | ignore | {error, term()}.
-start_grant(Name, Point) ->
+-spec start_grant(atom()) -> {ok, pid()} | ignore | {error, term()}.
+start_grant(Name) ->
     case whereis(Name) of
         undefined ->
             ignore;
         _ ->
             ok = code:ensure_modules_loaded([erx_fs, erx_fs_grant, erx_lfs, erx_littlefs]),
-            {ok, Grant} = erx_fs:start_link(erx_lfs, Name, rw),
-            _ = erx_ns:unmount(Point),
-            case erx_ns:mount(Grant, Point, [{tree, <<"data">>}, rw]) of
+            {ok, Grant} = erx_fs:start_link(erx_lfs, {Name, data}, rw),
+            _ = erx_ns:unmount(?POINT),
+            case erx_ns:mount(Grant, ?POINT, [{tree, <<"data">>}, rw]) of
                 ok ->
                     {ok, Grant};
                 {error, _} = Error ->
