@@ -88,9 +88,10 @@ fields(Input) ->
       host_key => HostKey, cookie => cookie(ServerKexinit)}.
 
 %% One string at the cursor and the bytes after it: its length is checked against
-%% what remains before binary:part/3 takes it.
+%% what remains before binary:part/3 takes it. The string is copied, so a field the
+%% facet keeps does not keep the input, and the shared secret in it, alive.
 string(<<Length:32, Rest/binary>>) when Length =< byte_size(Rest) ->
-    {binary:part(Rest, 0, Length), binary:part(Rest, Length, byte_size(Rest) - Length)};
+    {binary:copy(binary:part(Rest, 0, Length)), binary:part(Rest, Length, byte_size(Rest) - Length)};
 string(_) ->
     throw(badarg).
 
