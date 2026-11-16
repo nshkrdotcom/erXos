@@ -90,12 +90,12 @@ strings end at byte 7,847, marks 35 nodes `dma-coherent`, each of its 32
 virtio-mmio transports among them, and puts 32 bytes of `rng-seed` in
 `/chosen`.
 
-**What the code does today.** `bootstrap` holds the tree
-(`fiasco/bootstrap/server/src/erx_image.cc:257-260`, refusing a boot
+**How the stopgap hands over the tree.** `bootstrap` holds the tree
+(`fiasco/bootstrap/server/src/erx_image.cc:375-376`, refusing a boot
 without one) and copies `/chosen`'s `bootargs`, the node `stdout-path`
-names and the boot pair into the boot handoff record (`:304-316`;
+names and the boot pair into the boot handoff record (`:426-429`;
 `abi/kernel.txt:736-752`), which the root reads from a page `sigma0`
-pages to it read-only (`erx_image.cc:228-245`). Upstream `bootstrap`
+pages to it read-only (`erx_image.cc:292-298`). Upstream `bootstrap`
 also reserves the tree's bytes as a root region with no access sub-type
 (`dt.cc:264-287`) and writes its address into the kernel information
 page's `dt_addr` (`platform_dt-arm.h:67-70`, called from
@@ -104,11 +104,8 @@ a page fault in a root region only with the rights its sub-type grants
 (`l4re-core/sigma0/server/src/init_mem.cc:71-80`, `memmap.cc:158-180`,
 `mem_man.cc:266-277`), so the root can reach those bytes only through
 `sigma0`'s RAM request, which maps them writable and executable
-(`memmap.cc:124-128`), and
-nothing in the root does: the entropy generator's comment says Fiasco
-gives the root no device tree (`liberx/backend/fiasco/entropy.c:14-18`).
-The root's device records take every value from the manifest row, and
-no Pi 4 device has DMA memory in the code.
+(`memmap.cc:124-128`). The root reads the tree from the read-only copy whose range the
+handoff names (`liberx/backend/fiasco/root_open.c`, `erx_boot_tree`).
 
 The tree carries two copies of `libfdt`, each file under
 `GPL-2.0-or-later OR BSD-2-Clause` (`fiasco/libfdt/ORIGIN.md`;
