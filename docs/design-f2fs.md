@@ -941,8 +941,11 @@ structure and the rule, after writing nothing:
    checksum when `SB_CHKSUM` is set ([F 13]), under erXos's feature sets
    and their dependency, and when its `block_count` and the main area's
    end lie within the partition's window, which bounds every table the
-   mount loads by the partition itself; the first valid copy wins, and a
-   bad copy is logged and left as it is.
+   mount loads by the partition itself, and when its checkpoint area lies
+   after the superblock's two blocks and has the two segments the two
+   packs start ([F 19]), bounds Linux leaves out, so no pack reaches past
+   the area or over a superblock copy; the first valid copy
+   wins, and a bad copy is logged and left as it is.
 2. **The checkpoint pack**: both packs' first and last blocks; a pack is
    valid when both pass their CRC, its total is above 2 and at most 512,
    and both carry the same version; the later version under wrap-around
