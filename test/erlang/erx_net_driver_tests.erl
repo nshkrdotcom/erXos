@@ -83,6 +83,19 @@ flush() -> receive _ -> flush() after 0 -> ok end.
 %% Waits until the driver has handled every message sent before this call.
 settle(Driver) -> _ = erx_net_driver:counters(Driver), ok.
 
+%% Reads a value through Read every 10 ms until Done holds of it or 3 s have passed, and
+%% answers the last read for the case to assert on. A count kept by a process the case
+%% reaches only through others (a far end, a driver, a socket) follows no reply the case
+%% can wait on.
+polled(Read, Done) -> polled(Read, Done, erlang:monotonic_time(millisecond) + 3000).
+
+polled(Read, Done, Deadline) ->
+    Value = Read(),
+    case Done(Value) orelse erlang:monotonic_time(millisecond) >= Deadline of
+        true -> Value;
+        false -> timer:sleep(10), polled(Read, Done, Deadline)
+    end.
+
 nothing(Pattern) ->
     receive Msg when element(1, Msg) =:= Pattern -> {unexpected, Msg} after 50 -> nothing end.
 
@@ -268,11 +281,16 @@ udp_end_bounds_the_driver_queue_against_a_stranger() ->
     {ok, [{_, DriverPort}]} = erx_net_driver_ports(Driver),
     %% The driver takes nothing while the stranger sends, so only the socket's own
     %% {active, 64} bounds what reaches its mailbox: 64 datagrams and one udp_passive.
+    %% The socket fills the mailbox in its own time, so the case waits until it holds
+    %% those 65 and then gives the socket 200 ms more in which to pass the bound.
     ok = sys:suspend(Driver),
     [ok = gen_udp:send(Stranger, Loopback, DriverPort, <<0:480>>) || _ <- lists:seq(1, 1000)],
+    QueueLen = fun() -> {message_queue_len, Len} = process_info(Driver, message_queue_len), Len end,
+    Full = polled(QueueLen, fun(Len) -> Len >= 65 end),
     timer:sleep(200),
-    {message_queue_len, Most} = process_info(Driver, message_queue_len),
+    Most = QueueLen(),
     ok = sys:resume(Driver),
+    ?assert(Full >= 65),
     ?assert(Most =< 65),
     settle(Driver),
     ?assertMatch(#{stranger := N} when N > 0, erx_net_driver:counters(Driver)),
@@ -429,9 +447,11 @@ loopback_address_off_lo0_is_dropped() ->
         Ip = erx_ip4_wire:encode(#ip4{len = 20 + byte_size(Udp), ttl = 64, p = 17, src = ?PEER4,
                                       dst = <<127, 0, 0, 1>>}),
         Far ! {inject, Driver, <<?MAC/binary, ?PEER_MAC/binary, 16#0800:16, Ip/binary, Udp/binary>>},
-        settle(Driver),
+        %% The frame goes from the far end to the driver to en0's interface, which
+        %% counts the drop: no reply to the case follows it.
         [{en0, If, _}] = ets:lookup(erx_net_ifs, en0),
-        {ok, Counters} = erx_net_if:admin(If, counters),
+        Counters = polled(fun() -> {ok, C} = erx_net_if:admin(If, counters), C end,
+                          fun(C) -> maps:is_key(bad_addr, C) end),
         ?assertEqual(1, maps:get(bad_addr, Counters, 0)),
         ?assertEqual({error, timeout}, erx_gen_udp:recv(Rx, 0, 200)),
         ok = erx_gen_udp:close(Rx)
@@ -534,10 +554,7 @@ a_burst_reaches_its_connection_as_one_segment() ->
 credit_counts_segments() ->
     with_holder(16, fun(Far, Driver, If, Port, Credit) ->
         [Far ! {inject, Driver, {frames, burst(Port, 1000 + B * 800, 8)}} || B <- lists:seq(0, 9)],
-        settle(Driver),
-        _ = sys:get_state(If),
-        Held = lists:sum([frames_held(Item) || Item <- held_items(If)]),
-        ?assertEqual(16, Held),
+        ?assertEqual(16, held_frames(If, 16)),
         ?assertEqual(0, erx_net_credit:free(Credit))
     end).
 
@@ -567,6 +584,19 @@ burst(Port, Seq, N) ->
     [peer_segment(Port, Seq + 100 * I, I, payload(I)) || I <- lists:seq(0, N - 1)].
 
 payload(I) -> binary:copy(<<($a + I rem 26)>>, 100).
+
+%% The frames the interface hands the case: it waits up to 3 s for each item until Want
+%% frames are held, since the far end, the driver and the interface each pass them on in
+%% their own time, and then takes what follows within 200 ms, so a hold past Want shows.
+held_frames(If, Want) when Want =< 0 ->
+    lists:sum([frames_held(Item) || Item <- held_items(If)]);
+held_frames(If, Want) ->
+    receive
+        {items, If, Items} ->
+            N = lists:sum([frames_held(Item) || Item <- Items]),
+            N + held_frames(If, Want - N)
+    after 3000 -> 0
+    end.
 
 held_items(If) ->
     receive {items, If, Items} -> Items ++ held_items(If) after 200 -> [] end.
