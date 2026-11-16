@@ -4,5 +4,14 @@
 
 require_relative '../../test/fixtures/elf_fixture'
 
-# The parser of ELF executable headers.
-Erx::PackFuzz.declare_target(sources: ['liberx/elf_plan.c'], seeds: Erx::PackFuzz.prefix_seeds(ElfFixture.valid))
+# The parser of ELF executable headers, and a static position-independent executable's
+# relocation table: one valid of each, each header's prefixes, a table naming a symbol,
+# a position-independent file linked away from 0, and one whose executable segment has
+# a zero tail.
+zero_tail = ElfFixture.pie.tap { |bytes| ElfFixture.integer(bytes, 64 + 40, 8192) }
+seeds = Erx::PackFuzz.prefix_seeds(ElfFixture.valid)
+                     .merge(Erx::PackFuzz.prefix_seeds(ElfFixture.pie).transform_keys { |name| "pie-#{name}" })
+                     .merge('pie-symbol' => ElfFixture.pie(relocations: [ElfFixture.relocation(4352, 0, symbol: 1)]),
+                            'pie-origin' => ElfFixture.valid(dynamic: true, origin: 0x10000),
+                            'pie-zero-tail' => zero_tail)
+Erx::PackFuzz.declare_target(sources: ['liberx/elf_plan.c'], seeds: seeds)

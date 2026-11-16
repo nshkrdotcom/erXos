@@ -92,7 +92,8 @@ class AbiCallsTest < Minitest::Test
     schema = Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: @root))
     declarations = ["#include <stddef.h>", '#include "erx/abi.h"', '#include "musl/include/elf.h"']
     { 'erx_elf64_ehdr' => 'Elf64_Ehdr', 'erx_elf64_phdr' => 'Elf64_Phdr',
-      'erx_elf64_nhdr' => 'Elf64_Nhdr', 'erx_elf64_dyn' => 'Elf64_Dyn' }.each do |name, foreign|
+      'erx_elf64_nhdr' => 'Elf64_Nhdr', 'erx_elf64_dyn' => 'Elf64_Dyn',
+      'erx_elf64_rela' => 'Elf64_Rela' }.each do |name, foreign|
       type = schema.types.fetch(name)
       declarations << "_Static_assert(sizeof(#{name}_t) == sizeof(#{foreign}), \"#{name} size\");"
       type.fields.each do |field|
@@ -108,6 +109,7 @@ class AbiCallsTest < Minitest::Test
       declarations << "_Static_assert(#{Erx::ABI::Names.macro(name)} == #{foreign}, \"#{name}\");"
     end
     declarations << '_Static_assert(ERX_ARCH_ELF_MACHINE == EM_AARCH64, "machine");'
+    declarations << '_Static_assert(ERX_ARCH_ELF_RELATIVE == R_AARCH64_RELATIVE, "relative");'
     source = File.join(@directory, 'elf-oracle.c')
     File.write(source, declarations.join("\n") + "\n")
     record = run_command([@compiler, *@flags, '-c', source, '-o', File.join(@directory, 'elf-oracle.o')], name: 'elf-oracle')
