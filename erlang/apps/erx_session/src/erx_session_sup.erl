@@ -23,7 +23,7 @@ crash restarts a grant, which then serves new files.
 -include("generated/erx_abi.hrl").
 
 -export([start_link/0, init/1]).
--export([export_args/3]).
+-export([export_args/3, home/0]).
 
 -spec start_link() -> supervisor:startlink_ret().
 start_link() ->
@@ -69,6 +69,23 @@ principal and the manifest's name for any other; and the names Commands that
 """.
 -spec export_args(string(), node(), [binary()]) -> erx_session_export:args().
 export_args(Number, Node, Commands) ->
+    #{principal => #{name => user_name(Node), number => list_to_integer(Number)}, commands => Commands}.
+
+%% The login name of the session whose node is Node: the prefix of its node name.
+user_name(Node) ->
     [Name, _Host] = string:split(atom_to_binary(Node), <<"@">>),
     [Prefix, _N] = string:split(Name, <<"_">>, trailing),
-    #{principal => #{name => Prefix, number => list_to_integer(Number)}, commands => Commands}.
+    Prefix.
+
+-doc """
+The session's home (docs/design-files.md, "A user's home"): where its user's home
+is mounted, from the user's login name (export_args/3), with the mount's options,
+when the manifest grants the session `home` (erx:granted/0); `none` when it does
+not, as for an app's session.
+""".
+-spec home() -> {ok, {binary(), [erx_ns:option()]}} | none.
+home() ->
+    case lists:member(home, erx:granted()) of
+        true -> {ok, _} = erx_ns:home_place(user_name(node()));
+        false -> none
+    end.

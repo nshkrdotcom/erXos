@@ -95,7 +95,9 @@ changes come, and each delivery sends a process one message.
                       run_shell => fun((erx_console:shell()) -> ok | {error, term()}),
                       job_control => job_control(),
                       foreground => foreground(),
-                      vars => erx_shell_script:vars()}.
+                      vars => erx_shell_script:vars(),
+                      %% The working directory the shell starts in, / when absent.
+                      cwd => binary()}.
 %% How the shell tells the terminal relay who holds the terminal
 %% (erx_session_relay:foreground/3,4), on a terminal a relay serves.
 -type foreground() :: fun((erx_shell_jobs:target(), {pid(), non_neg_integer()}) -> term()).

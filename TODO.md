@@ -2357,6 +2357,25 @@ it; git history is the record of completed work.
   (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
   virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
 
+* [Medium] files, a user's home ([design-files.md](docs/design-files.md#building-binding-and-mounting),
+  "A user's home") and the principal's directory: the design keeps two per-principal places on the data
+  volume. design-files.md ("Building, binding and mounting", a session's `/data`), design-storage.md
+  ("Interfaces", each grant "rooted at a principal's directory") and the littlefs release contract
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract), its Grants row and its test of a second
+  principal's enoent) describe a `/data` rooted at the principal's directory, while the home is a `home`
+  grant at `/root` or `/home/NAME` and root's `data` is the whole volume. Fold one into the other and
+  change the three passages and the contract's test row together; the contract's Grants row also needs
+  every non-app session's `home` grant as littlefs input.
+* [Medium] domains, the system principal's name in grants (`erlang/apps/erx_domain/src/erx_domain_srv.erl`,
+  `principal_name/2`, `machine_principal`, `name_of/2`): a mint names the system principal `root`, its user
+  name, while the machine tree's grant names it `system`, and `name_of`'s comment still calls itself the
+  one lookup of a grant's principal name. One function should give the name every grant carries.
+* [Medium] manifest, the home rows (`tools/lib/erx/manifest.rb`, `home_facets`): the rows skip the app
+  template by its place, last among the sessions, instead of by `app_template?`, and no manifest test
+  checks that the app template has no `home` row and every other template one with `rw` and `tree home`;
+  a seeded `users = sessions.size` passes every test. Also refuse a source facet row of `home_service`,
+  which today passes the check and fails only when the grant starts (`erx_lfs:tree_root/1` has no `home`).
+
 * [Medium] storage and images, the development boot image is 68 MB (`kernel8.img` on the Pi 4 boot
   partition, 68,202,496 bytes) and stays in RAM for the whole boot; it also weighs on the Pi 4 secure-boot
   check item below. Three shrinks are open: 12.2 MB are byte-identical OTP files in both `system/lib` and

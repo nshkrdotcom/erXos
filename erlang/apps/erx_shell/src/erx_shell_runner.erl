@@ -91,7 +91,7 @@ each command (facets/0).
 -spec new(erx_shell:terminal()) -> {erx_shell_eval:runner(), state()}.
 new(Terminal = #{write := Write}) ->
     {Table, _Problems} = erx_shell_namespace:from_applications([erx_shell]),
-    S = state(#{cwd => <<"/">>, fds => #{0 => null, 1 => {tty, Write}, 2 => {tty, Write}},
+    S = state(#{cwd => maps:get(cwd, Terminal, <<"/">>), fds => #{0 => null, 1 => {tty, Write}, 2 => {tty, Write}},
                 table => Table, facets => fun facets/0}),
     JobControl = case Terminal of
                      #{job_control := Shell} -> {Shell, line};

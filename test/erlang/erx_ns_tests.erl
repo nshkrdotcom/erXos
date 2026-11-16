@@ -431,6 +431,16 @@ the_packages_place_is_the_system_domains_alone() ->
     ?assertEqual(ok, erx_ns:mount_facets([packages, system, data, apps, start, machine, line])),
     ?assertEqual([], [Entry || #{point := [<<"packages">> | _]} = Entry <- at_use()]).
 
+%% A user's home lies at FreeBSD's paths, root's at /root and any other user's at
+%% /home/NAME, and a name that is not one path name has none, so no name places a
+%% home above /home (docs/design-files.md, "A user's home").
+home_places_test() ->
+    Options = [{tree, <<"home">>}, rw],
+    ?assertEqual({ok, {<<"/root">>, Options}}, erx_ns:home_place(<<"root">>)),
+    ?assertEqual({ok, {<<"/home/clock">>, Options}}, erx_ns:home_place(<<"clock">>)),
+    [?assertEqual({error, einval}, erx_ns:home_place(Name))
+     || Name <- [<<>>, <<".">>, <<"..">>, <<"a/b">>, <<"/root">>, <<"../root">>, <<"a", 0, "b">>]].
+
 %% A facet is named by an atom, and its mount takes a grant's options; a pid of another
 %% domain is never mounted directly, only through a facet.
 facet_mount_refusals() ->

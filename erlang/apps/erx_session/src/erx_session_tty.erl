@@ -44,7 +44,7 @@ its end is the tty's hangup, as a pseudo-terminal master's close is
 then itself, its relay with it, and the session's other ttys run on.
 """.
 
--export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3]).
+-export([start_link/0, start_link/1, open/1, open_channel/3, start_channel/3, shell_of/3]).
 
 -export_type([run/0, channel/0]).
 
@@ -111,12 +111,29 @@ start_channel(Channel, #{run := Run, size := {Rows, Columns} = Size, vars := Var
                              on_shell_end => {exit, Notify},
                              size => {Columns, Rows},
                              driver => relay(Channel, #{size => Size}),
-                             first_shell => fun(Terminal) -> shell_of(Run, Terminal#{vars => Vars}) end}).
+                             first_shell => fun(Terminal) -> shell_of(Run, Terminal#{vars => Vars}, erx_session_sup:home()) end}).
 
-%% What runs on a tty's terminal: the command shell, or rc on one command, each
-%% with the terminal's first variables.
-shell_of(shell, Terminal) -> {erx_shell, server, [{erx_shell_runner, Terminal}]};
-shell_of({exec, Command}, #{vars := Vars}) -> {erx_shell_script, command, [Command, Vars]}.
+-doc """
+What runs on a tty's terminal: the command shell, or rc on one command, each
+with the terminal's first variables, and, for a session with a home, Home
+(erx_session_sup:home/0), `$home` set to the home's path and its working
+directory there, as FreeBSD's login(1) sets HOME and changes to the home
+(docs/design-files.md, "A user's home"); without one, from `/`.
+""".
+-spec shell_of(shell | {exec, binary()}, erx_shell:terminal(), {ok, {binary(), list()}} | none) -> mfa().
+shell_of(Run, Terminal, Home) ->
+    run_on(Run, at_home(Home, Terminal)).
+
+at_home(none, Terminal) ->
+    Terminal;
+at_home({ok, {Path, _Options}}, Terminal) ->
+    Vars = maps:get(vars, Terminal, #{}),
+    Terminal#{vars => Vars#{<<"home">> => [Path]}, cwd => Path}.
+
+run_on(shell, Terminal) ->
+    {erx_shell, server, [{erx_shell_runner, Terminal}]};
+run_on({exec, Command}, #{vars := Vars} = Terminal) ->
+    {erx_shell_script, command, [Command, Vars, maps:get(cwd, Terminal, <<"/">>)]}.
 
 %% A console of the session role driven by a relay for Master, the relay of the
 %% domain's line when Options says the console is that line, and whose first
@@ -125,7 +142,7 @@ start_console(Master, Options) ->
     RelayOptions = maps:with([domain_line], Options),
     erx_console:start_link(Options#{role => session,
                                     driver => relay(Master, RelayOptions),
-                                    first_shell => fun(Terminal) -> shell_of(shell, Terminal) end}).
+                                    first_shell => fun(Terminal) -> shell_of(shell, Terminal, erx_session_sup:home()) end}).
 
 %% The console's driver: a relay for Master, the console's line driver.
 relay(Master, RelayOptions) ->

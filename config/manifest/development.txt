@@ -260,6 +260,14 @@ facet data_session
   reductions 100000
   period_ns 1000000000
   max_heap_size 262144
+# home: the users' homes, the data volume's root/ and home/ directories, which the
+# storage domain serves as a files service of its own; each grant reaches its grantee's
+# own home alone. Its name is home_service (abi/manifest.txt), by which the build finds
+# it: its facet rows, one for each session template but the app template, are among
+# the rows the build derives (docs/design-files.md, "A user's home").
+service home
+  server @domain.storage
+  interface files
 # packages: the installed app packages, the data volume's packages/ directory, which the
 # storage domain serves as a files service of its own; each grant reaches that directory
 # alone (docs/design-packaging.md, "Where a package lies"). Its name is

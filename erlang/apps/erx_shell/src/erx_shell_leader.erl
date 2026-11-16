@@ -9,7 +9,7 @@ started outlives the shell or the exec it ran under. It stands in for the
 runtime's job tag (docs/design-shell.md, "Jobs and their tags"; TODO.md, "a
 job's processes are found by group leader"). The command shell starts one
 per job (erx_shell), and `rc -c` on a tty one for its whole command
-(erx_shell_script:command/2).
+(erx_shell_script:command/3).
 
 A process joins the job by having the leader as its group leader, which
 everything it spawns inherits, so membership needs no list: the processes a

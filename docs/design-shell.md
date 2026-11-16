@@ -188,7 +188,9 @@ what a terminal needs added:
   with `fn`; here documents with `<<`; redirection by descriptor number
   (`>`, `>>`, `<`, `>[2]file`, `>[2=1]`) and pipes of any descriptor
   (`|`, `|[2]`); `&` for a background job; globbing over the session's
-  namespace; `$status`, `$*`, `$home`, `$prompt`, and `$pid` and `$apid`,
+  namespace; `$status`, `$*`, `$home`, the session's home, where an
+  interactive shell starts ([design-files.md](design-files.md#building-binding-and-mounting),
+  "A user's home"), `$prompt`, and `$pid` and `$apid`,
   the process ids of the shell, which is the command server's 1, and of
   the last program of its last background job, empty when that job
   started none ([design-programs.md](design-programs.md)).

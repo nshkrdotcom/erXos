@@ -1597,6 +1597,56 @@ first answering any bytes the descriptor already holds, and only a new
 open reaches the re-grant, so a writer reopens its files after the
 server's domain restarts.
 
+**A user's home.** Every user has a home directory at FreeBSD's paths:
+root's is `/root` and every other user's `/home/NAME`, its login name.
+FreeBSD's `/home` is a symbolic link to `/usr/home`; erXos has no
+`/usr/home` and uses `/home` directly. A home lies on the data volume
+at the same path, `/data/root` and `/data/home/NAME`, and a session
+reaches it through a grant of its own, made by the mechanisms above
+and in [design-storage.md](design-storage.md#interfaces) with nothing
+added:
+
+* **The tree.** The storage domain serves the volume's homes as a files
+  service of their own, `home`, beside `data` and `packages`. A grant of
+  `home` is always rooted at one user's home: its facet row states the
+  files interface's tree `home` (`files_tree`), and `erx_lfs`'s
+  `subtree/3` roots it at the home of the user the mint request names,
+  the grantee's user name, which the domain service puts in every mint
+  request, `root` for the system principal as its sessions are named.
+  `erx_ns:home_place/1` refuses a name that is not one path name, so
+  no name reaches above `/home`, and maps `root` to `/root`. A grant
+  of `home` whose row states no tree has no root and is not started,
+  so no grant reaches the homes as a whole.
+* **The row.** The build derives a facet row `home`, read-write, of the
+  manifest's service named `home_service`, with `tree home`, for every
+  session template other than the app template, whose sessions have
+  their own directory among `apps/`
+  ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)).
+  Property 19 lets only the rows the build derives state a tree, so no
+  source row roots a home grant elsewhere, and every user's session
+  holds its home by construction.
+* **The entry.** A session mounts its `home` facet at its home's path,
+  which `erx_ns:home_place/1` makes from the session's login name, the
+  prefix of its node name
+  ([design-domains.md](design-domains.md#principals-sessions-and-quotas));
+  `place/1` gives `home` no place of its own, as it gives `packages`
+  none. The grant is rooted at the home and answers `..` at its root
+  itself, so a session that holds only `home` sees its own home and
+  nothing else of the volume. Root's session also holds `data`, the
+  whole volume, as the administrator, and reaches the other homes
+  under `/data/home` as FreeBSD's root does.
+* **Creation.** A home grant's start makes its directory when the
+  volume lacks it, `/home` before `/home/NAME`, through the owner's own
+  `make`, so a user's first login creates the home. A directory that
+  cannot be made leaves the grant's requests failing, as a tree root
+  the mount cannot make does.
+* **The shell.** Every shell a session starts on a tty, its console's,
+  a terminal's on a display or an SSH channel's, and every SSH exec,
+  starts with rc's `$home` set to the home's path and its working
+  directory there, as FreeBSD's `login(1)` sets `HOME` and changes to
+  the user's home ([design-shell.md](design-shell.md)). A session that
+  holds no `home` facet, an app's, keeps rc's default `$home`, `/`, and starts there.
+
 **Showing the table.** The command shell's `mount` prints one line for
 each entry of the table `prim_file:erx_table/0` answers, in FreeBSD's
 layout (`sbin/mount/mount.c`, `prmount`, FreeBSD 15.1):

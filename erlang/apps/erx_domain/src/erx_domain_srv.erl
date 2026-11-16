@@ -1564,15 +1564,25 @@ is_ready(Id, Core) ->
         _ -> false
     end.
 
-%% The name of the principal of grantee GranteeId, which its mint carries
+%% The user name of the principal of grantee GranteeId, which its mint carries
 %% (docs/design-system.md, "Facets a configured domain serves"): the system principal's
 %% for the system domain, and for any other the one its record names, a configured row's
-%% or a session's template's. The core mints only for a grantee that is ready.
+%% or a session's template's. A user name is the prefix of the principal's sessions,
+%% root for the system principal (erx_domain_core:session_prefix/3), and an app
+%% principal's name otherwise, so a grant rooted at a user's home is rooted where the
+%% user's login name says (docs/design-files.md, "A user's home"). The core mints only
+%% for a grantee that is ready.
 principal_name(?SYSTEM_ID, #{principals := #{system := System}} = State) ->
-    name_of(System, State);
+    user_name(System, State);
 principal_name(GranteeId, #{core := Core} = State) ->
     {ok, #{principal := Principal}} = erx_domain_core:fetch(GranteeId, Core),
-    name_of(Principal, State).
+    user_name(Principal, State).
+
+user_name(Principal, #{principals := #{system := System, names := Names}} = State) ->
+    case erx_domain_core:session_prefix(Principal, System, Names) of
+        {ok, Name} -> Name;
+        error -> name_of(Principal, State)
+    end.
 
 %% An introduction that settles at once is answered through the service's own queue as
 %% one that settles later is (reply/2), so the core takes each in the same way.
