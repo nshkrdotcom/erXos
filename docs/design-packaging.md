@@ -1722,8 +1722,8 @@ or `one` command, or at the next boot.
 | --- | --- |
 | `SDK.txt` | the erXos commit, `ERX_ABI_VERSION`, the target architecture, the OTP release (29.1.2), the minimum LLVM, `fsimg`'s version |
 | `sysroot/<arch>/include` | musl's headers as erXos ships them; the draw protocol's message layouts, generated from `abi/formats/draw.txt` |
-| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins; the program link script, which lays a static position-independent executable out from address 0 ([design-programs.md](design-programs.md#what-a-program-can-start), "An executable file") |
-| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, position-independent, and the link line, which links a static position-independent executable |
+| `sysroot/<arch>/lib` | `libc.a`; `liberx_program.a`, liberx's program layer and entry, prebuilt; the compiler's builtins, each built once, position-independent, as the boot image's programs use them; the task link script, with its base 0, which lays a static position-independent executable out as the boot image's programs are laid out ([design-programs.md](design-programs.md#what-a-program-can-start), "The executable's link") |
+| `share/erxos/sdk.mk` | make variables: the compiler and flags erXos's own programs build with, position-independent, and the link line, which links a static position-independent executable with no musl start file, `-pie --no-dynamic-linker -static -z norelro -z max-page-size=4096 --orphan-handling=error`, and never `-z pack-relative-relocs` |
 | `erlang/` | the public Erlang applications as `.app`, `.beam` and `include/` files, `public.txt`, the list of public functions as `Module:Function/Arity`, and `erx_ui_host` |
 | `host/bin/` | `erx-app`, the packer, and `fsimg`; `erx-lvgl` built for the host, for `erx_ui_host` |
 | `host/erlang/ebin` | `erx_bytes` for stock OTP 29.1.2, a model of the per-byte primitives that stock lacks, with which the packer runs the file check on the host |

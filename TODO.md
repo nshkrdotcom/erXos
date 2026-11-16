@@ -150,13 +150,22 @@ it; git history is the record of completed work.
   "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
   is only its load (`liberx/exec/load.c`, `erx_exec_load`: the object viewed and planned, the span
   reserved, segments mapped, copied and committed by a layout decided whole, relocations written), with no
-  program at `libexec/erx_exec` around it: the design does not yet say how the loader learns the object's
-  size, what block and register carry the startup message and its ranges to the executable, or how the
-  loader's own threads and backend state give way to the executable's `liberx` in the same space. The load trusts its object to be a sealed code object: it checks neither, the
-  stopgap maps a pool object read-execute, and the relocations are read again from the view, so a
-  writer of an unsealed object could move them [Medium, security residual]; the call that gives the size
-  should say sealed code or refuse. `load.c` runs in no test yet: the programs suite gets a guest case
-  with the fixture PIE and a failure part way (a budget too small for a child) when the program lands.
+  bootstrap around it (design-programs.md, "The loader's bootstrap" and "The executable's link";
+  design-stopgap.md, "An exec's entry"): not built are the exec record (`program_arg`'s `exec`, register
+  7, and the `erx_exec_record` layout in `abi/erx_abi.txt`; the port driver's create, write and map of it,
+  and the command server's keeping of the file's length), the loader's own C entry ahead of the helpers,
+  the exec entry, `erx_exec_release` in `liberx`'s start-up, the task script's base symbol and dynamic
+  sections, and the removal of `image` from the startup message (`abi/protocols/prog.txt`, the `image`
+  union). `load.c` plans the page-rounded view size, not the file's exact length (`load.c:92`, `:119`),
+  and `load.h`'s comment says the executable releases the view, which the loader releases itself before
+  the transfer. Unverified until a probe link: whether today's archives built `-fPIE` link as static PIE
+  with the task script, whether the fixed link gets an empty `PT_DYNAMIC` header, and whether one
+  release removes the loader's whole span on the stopgap. The load trusts its object to be a sealed code
+  object: it checks neither, the stopgap maps a pool object read-execute, and the relocations are read
+  again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
+  exec record names only an object the command server sealed. `load.c` runs in no test yet: the
+  programs suite gets the bootstrap's cases (design-programs.md, "Loading an executable") when the
+  program lands.
   So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
   lands. The session asks for code objects through the `code_objects` facet
