@@ -6896,10 +6896,12 @@ to the corpus and follow rc
   is recorded as `BSD-2-Clause`. Use `Attribution.erxos_addition?`, or a
   test of the same strength, once the audit's real inputs can be run
   against it.
-* [Low] build, import inventory (`tools/lib/erx/origin.rb`, `Origin#check`,
-  and `PackProvenance#imported_item`): a `changes` row whose hash no longer
-  matches still supplies the file's license when the file has an erXos
-  header; a stale row should be refused.
+* [Low] build, import inventory (`tools/lib/erx/pack_provenance.rb`,
+  `PackProvenance#imported_item`): a file captured after its tree's
+  `Origin#check` takes its `changes` row's license without comparing the
+  row's hash to the captured bytes; one Origin reader that returns a row only
+  for the bytes it records would serve this, `FiascoProvenance#attribute` and
+  `Glyphs` alike.
 * [Medium] build, notice check (`tools/lib/erx/pack_provenance.rb`,
   `attribute`; `tools/lib/erx/import_notices.rb`, `select`): the check that
   a selected import grant has a notice document looks at the whole
