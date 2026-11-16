@@ -207,6 +207,32 @@ class AbiSignalsTest < Minitest::Test
     assert_seeded_failure('abi/signals.txt', seed, /duplicate signal name iot/)
   end
 
+  # The signal set ssh_line reaches the Erlang header as its members by
+  # protocol name and number, so the SSH line's signals are the table's.
+  def test_signal_set_reaches_the_erlang_header
+    header = Erx::ABI::ErlangEmitter.outputs(schema_of(ROOT)).fetch('erlang/apps/erx/include/generated/erx_abi.hrl')
+    assert_includes header.lines, "-define(ERX_SSH_LINE_SIGNAL_MEMBERS, [{'sigint', 2}]).\n"
+  end
+
+  # Seeded faults: a signal set that names no signal, a reserved one or an
+  # unknown one, names one twice, is empty, or is declared twice fails
+  # generation.
+  def test_malformed_signal_sets_fail_generation
+    {
+      ->(text) { text.sub(/^signal_set ssh_line int$/, 'signal_set ssh_line nosuch') } =>
+        /signal set ssh_line names nosuch, no signal a program may name/,
+      ->(text) { text.sub(/^signal_set ssh_line int$/, 'signal_set ssh_line thr') } =>
+        /signal set ssh_line names thr, no signal a program may name/,
+      ->(text) { text.sub(/^signal_set ssh_line int$/, 'signal_set ssh_line int int') } =>
+        /duplicate signal in set ssh_line int/,
+      ->(text) { text.sub(/^signal_set ssh_line int$/, 'signal_set ssh_line') } =>
+        /expected signal_set NAME SIGNAL/,
+      ->(text) { text + "signal_set ssh_line hup\n" } => /duplicate signal set ssh_line/
+    }.each do |seed, message|
+      assert_seeded_failure('abi/signals.txt', seed, message)
+    end
+  end
+
   private
 
   # Generation of a copy of abi/ whose file the seed rewrote fails with message.

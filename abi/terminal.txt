@@ -27,3 +27,8 @@ token field \x 2 2 -
 width_zero_categories Mn Me Cf
 width_zero_exceptions 00AD
 width_wide W F
+# The terminal types a line may give a session's shell as its TERM
+# (docs/design-ssh.md, "Sessions, ttys and shells"), and the one it gives for
+# any name the list does not hold.
+term_types vt100 xterm xterm-256color
+term_default vt100

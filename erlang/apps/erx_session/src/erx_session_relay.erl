@@ -40,7 +40,8 @@ arrives before the core sees it, and drops a message it cannot take:
   no resend;
 * a message from the master arrives as `{erx_origin, D, Msg}` from a master
   in another domain, taken only when D is the master's domain, or plain
-  from a master in this domain, whose end hangs the tty up.
+  from a master in this domain; the master's end, in either domain, hangs the
+  tty up.
 
 The relay is its console's line and ends with it.
 """.
@@ -60,9 +61,11 @@ names it there. Only this module builds or reads one.
 """.
 -opaque open() :: {pid(), reference()}.
 
+%% Where the master is (origin/1), and the master as the relay watches it (watched/1).
+-type origin() :: none | {local, pid()} | {domain, pid(), non_neg_integer()}.
 -type master() :: none
                 | {local, pid(), reference()}   % in this domain, monitored
-                | {domain, pid(), non_neg_integer()}. % in domain D, enveloped
+                | {domain, pid(), non_neg_integer(), reference()}. % in domain D, monitored, enveloped
 
 -record(state, {
     core :: erx_session_relay_core:core(),
@@ -83,11 +86,13 @@ Starts a relay linked to the caller for Console, the console of the session
 role, and Master, the tty's master: a process of this domain, one of another
 domain, or `undefined` for none. With `domain_line` true in Options it is the
 relay of the domain's line, registered as erx_tty_owner; otherwise it holds
-no name.
+no name. Options' `size`, {Rows, Columns}, is the tty's first window size
+(erx_session_relay_core:new/2).
 """.
--spec start_link(pid(), pid() | undefined, #{domain_line => boolean()}) -> gen_server:start_ret().
+-spec start_link(pid(), pid() | undefined,
+                 #{domain_line => boolean(), size => {1..65535, 1..65535}}) -> gen_server:start_ret().
 start_link(Console, Master, Options) when is_pid(Console) ->
-    Init = {Console, origin(Master)},
+    Init = {Console, origin(Master), maps:with([size], Options)},
     case Options of
         #{domain_line := true} -> gen_server:start_link({local, ?NAME}, ?MODULE, Init, []);
         #{} -> gen_server:start_link(?MODULE, Init, [])
@@ -150,25 +155,30 @@ call(Relay, Request) -> gen_server:call(Relay, Request, infinity).
 -doc false.
 %% Origin is origin/1's, found in start_link's caller; a test of a master in
 %% another domain starts the server with it, as stock's emulator cannot name one.
-init({Console, Origin}) ->
+init({Console, Origin, TtyOptions}) ->
     Master = watched(Origin),
     announce(Master),
-    {ok, #state{core = erx_session_relay_core:new(Console, #{master => presence(Master)}),
+    {ok, #state{core = erx_session_relay_core:new(Console, TtyOptions#{master => presence(Master)}),
                 console = {Console, erlang:monitor(process, Console)},
                 master = Master}}.
 
 %% The master, if any, and where its messages come from: plain from a master in
-%% this domain, which the relay watches, so that its end hangs the tty up;
-%% enveloped from one in domain D, which says tty_hangup itself.
+%% this domain, enveloped from one in domain D.
+-spec origin(pid() | undefined) -> origin().
 origin(undefined) -> none;
 origin(Pid) when node(Pid) =:= node() -> {local, Pid};
 origin(Pid) when is_pid(Pid) -> {domain, Pid, erx:owner(Pid)}.
 
+%% The relay watches its master in either domain, so that the master's end hangs the
+%% tty up even when it says no tty_hangup: a crash of its connection, or the end of its
+%% domain, whose monitors then fire with noconnection.
+-spec watched(origin()) -> master().
+watched(none) -> none;
 watched({local, Pid}) -> {local, Pid, erlang:monitor(process, Pid)};
-watched(Origin) -> Origin.
+watched({domain, Pid, D}) -> {domain, Pid, D, erlang:monitor(process, Pid)}.
 
 master_pid({local, Pid, _Ref}) -> Pid;
-master_pid({domain, Pid, _D}) -> Pid.
+master_pid({domain, Pid, _D, _Ref}) -> Pid.
 
 presence(none) -> none;
 presence(_Master) -> present.
@@ -216,6 +226,8 @@ handle_info({'DOWN', Ref, process, Pid, _}, #state{console = {Pid, Ref}} = State
     {stop, normal, State};
 handle_info({'DOWN', Ref, process, Pid, _}, #state{master = {local, Pid, Ref}} = State) ->
     event({master, tty_hangup}, State);
+handle_info({'DOWN', Ref, process, Pid, _}, #state{master = {domain, Pid, _D, Ref}} = State) ->
+    event({master, tty_hangup}, State);
 handle_info({'DOWN', Ref, process, Pid, _}, #state{monitored = Monitored} = State) ->
     case Monitored of
         #{Pid := Ref} ->
@@ -234,7 +246,7 @@ handle_info({tty_write, From, Ref, Bytes}, State) when is_pid(From), is_referenc
     take_write({From, {Ref, ok}}, Bytes, State);
 handle_info({tty_drain, From, Ref}, State) when is_pid(From), is_reference(Ref) ->
     event({drain, {From, {Ref, ok}}}, State);
-handle_info({erx_origin, D, Message}, #state{master = {domain, _Pid, D}} = State) ->
+handle_info({erx_origin, D, Message}, #state{master = {domain, _Pid, D, _Ref}} = State) ->
     event({master, Message}, State);
 handle_info({erx_origin, _D, _Message}, State) ->
     {noreply, State};

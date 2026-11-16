@@ -13,8 +13,17 @@
 %% input is a binary of 1 to 4,096 bytes and each size within 1 to 65,535; after
 %% a hangup nothing is sent; and the bytes sent are, in order, a prefix of the
 %% bytes written and not dropped. At the end of a run, with every output taken,
-%% every write has been answered once. A failure raises
-%% {fuzz_failure, What, Detail}, What naming the property.
+%% every write has been answered once.
+%%
+%% The SSH line's requests (erx_ssh_line_core:request/3, docs/design-ssh.md,
+%% "Sessions, ttys and shells") are fed the same way: open_tty in its shape at
+%% and past every bound among arbitrary terms, from the peer's channel, a third
+%% domain's and a pid of no domain, to a line holding 0 to 11 channels. Every
+%% answer is an open, `limited` or `badarg`, and never a crash; an open names a
+%% channel of the peer's, a line holding fewer than ten, `shell` or a command of
+%% 1 to 32 KiB holding no NUL, and the size asked for, a side of zero taken as
+%% 24 rows or 80 columns. A failure raises {fuzz_failure, What, Detail}, What
+%% naming the property.
 -module(erx_tty_link_fuzz).
 -export([run/1]).
 
@@ -22,6 +31,10 @@
 -define(MAX_HELD, 4096).
 -define(MAX_INPUT, 4096).
 -define(MAX_SIDE, 65535).
+-define(REQUEST_ROUNDS, 4000).
+-define(MAX_CHANNELS, 10).
+-define(MAX_COMMAND, 32768).
+-define(PEER, 7).
 
 %% What the run has seen: the tty, the bytes written and not dropped, the bytes
 %% sent, the last output number, the writes not yet answered by writer, whether
@@ -33,6 +46,7 @@
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     lists:foreach(fun(_) -> round_of() end, lists:seq(1, ?ROUNDS)),
+    lists:foreach(fun(_) -> request_round() end, lists:seq(1, ?REQUEST_ROUNDS)),
     io:format("fuzz: ~p rounds ok~n", [?ROUNDS]).
 
 round_of() ->
@@ -217,3 +231,70 @@ message() ->
 side() -> pick([0, 1, 2, 24, 80, ?MAX_SIDE - 1, ?MAX_SIDE, ?MAX_SIDE + 1, -1, 1 bsl 64]).
 
 pick(Choices) -> lists:nth(rand:uniform(length(Choices)), Choices).
+
+%%% The SSH line's requests
+
+%% One request to a line exported to ?PEER that holds Held channels, and its answer
+%% checked against the request.
+request_round() ->
+    Held = rand:uniform(?MAX_CHANNELS + 2) - 1,
+    Core = lists:foldl(fun(N, C) -> erx_ssh_line_core:opened(pid(1000 + N), self(), C) end,
+                       erx_ssh_line_core:exported(?PEER, erx_ssh_line_core:new()), lists:seq(1, Held)),
+    Request = request(),
+    Answer = try erx_ssh_line_core:request(Request, fun owner/1, Core)
+             catch Class:Reason -> fail(request_crashed, {Request, Class, Reason})
+             end,
+    answered(Request, Held, Answer).
+
+answered({open_tty, Channel, Run, _Term, Rows, Columns} = Request, Held, {open_tty, Channel, #{run := Run, size := Size}}) ->
+    [fail(over_limit, {Held, Request}) || Held >= ?MAX_CHANNELS],
+    [fail(foreign_channel, Request) || owner(Channel) =/= ?PEER],
+    [fail(bad_run, Request) || not valid_run(Run)],
+    {R, C} = Size,
+    [fail(size_out_of_range, {Request, Size}) || not (side_ok(R) andalso side_ok(C))],
+    [fail(size_not_kept, {Request, Size}) || Size =/= {asked(Rows, 24), asked(Columns, 80)}];
+answered(Request, _Held, {open_tty, _, _} = Answer) ->
+    fail(open_not_asked, {Request, Answer});
+answered(_Request, _Held, {error, limited}) -> ok;
+answered(_Request, _Held, {error, badarg}) -> ok;
+answered(Request, _Held, Answer) ->
+    fail(unexpected_answer, {Request, Answer}).
+
+valid_run(shell) -> true;
+valid_run({exec, Command}) when is_binary(Command) ->
+    byte_size(Command) >= 1 andalso byte_size(Command) =< ?MAX_COMMAND andalso binary:match(Command, <<0>>) =:= nomatch;
+valid_run(_Run) -> false.
+
+side_ok(Side) -> is_integer(Side) andalso Side >= 1 andalso Side =< ?MAX_SIDE.
+
+asked(0, Default) -> Default;
+asked(Side, _Default) -> Side.
+
+%% The peer's channel is this process; pid 2 is of a third domain, any other of none.
+owner(Pid) when Pid =:= self() -> ?PEER;
+owner(Pid) when is_pid(Pid) -> case Pid =:= pid(2) of true -> 9; false -> 0 end.
+
+pid(N) -> list_to_pid("<0." ++ integer_to_list(N) ++ ".0>").
+
+request() ->
+    case rand:uniform(6) of
+        N when N =< 3 -> {open_tty, channel(), run(), term(), side_asked(), side_asked()};
+        4 -> {open_tty, channel(), run(), pick([<<"xterm">>, <<>>, rand:bytes(64), rand:bytes(65), "vt100", 42]),
+              side_asked(), side_asked()};
+        5 -> pick([{open_tty}, {open_tty, self(), shell}, {open_job, self(), shell},
+                   {open_tty, self(), shell, <<"vt100">>, 24, 80, extra}, ok, make_ref(), [open_tty]]);
+        6 -> {open_tty, self(), {exec, command()}, <<"vt100">>, side_asked(), side_asked()}
+    end.
+
+channel() -> pick([self(), self(), pid(2), pid(3), not_a_pid, 1]).
+
+run() -> pick([shell, shell, {exec, command()}, {exec, <<>>}, {exec, <<"a", 0, "b">>}, {exec, "ls"}, exec,
+               {exec, <<"a">>, x}, {shell}]).
+
+command() ->
+    Bytes = rand:bytes(pick([1, 2, 64, ?MAX_COMMAND - 1, ?MAX_COMMAND, ?MAX_COMMAND + 1])),
+    pick([Bytes, binary:replace(Bytes, <<0>>, <<"x">>, [global])]).
+
+term() -> pick([<<"vt100">>, <<"xterm-256color">>]).
+
+side_asked() -> pick([0, 0, 1, 24, 80, ?MAX_SIDE, ?MAX_SIDE + 1, -1, 1.0, undefined]).

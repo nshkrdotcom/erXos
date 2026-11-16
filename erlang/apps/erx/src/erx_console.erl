@@ -112,18 +112,24 @@
 
 -export([start_link/0, start_link/1, run_shell/1, run_shell/2, write/1, write/2, terminal/0, terminal/1]).
 -export([facet/0, add_session/2, login/0, login_session/0, connect/1, detach/0, first_group/0]).
--export([input/2, first_shell/1, after_first_shell/2, erlang_shell_group/1, console_driver/1]).
+-export([input/2, first_shell/1, shell_end/4, shell_ending/1, erlang_shell_group/1, console_driver/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
--export_type([input_event/0, first_shell/0, after_first_shell/0, shell/0, config/0, terminal/0]).
+-export_type([input_event/0, first_shell/0, on_shell_end/0, shell_end/0, shell/0, config/0, terminal/0]).
+
+-include("generated/erx_abi.hrl").
 
 -type input_event() :: {data, unicode:unicode_binary()} | interrupt | suspend.
 %% The shell the console starts on its first group: the command shell, or none when
 %% init was told -noshell or -noinput, and `user` then gets the input.
 -type first_shell() :: {erx_shell, console, []} | none.
-%% What follows the first group's end: a fresh command shell, or the runtime's end with
-%% this status once no input can come.
--type after_first_shell() :: restart | {halt, 0 | 1}.
+%% What a console does when its first shell ends (the config's `on_shell_end`): start
+%% it again, or report how the shell ended to Notify and stop.
+-type on_shell_end() :: restart | {exit, Notify :: fun((erx_prog:status()) -> term())}.
+%% What the console does with one exit of its first group (shell_end/4): start a fresh
+%% command shell, end the runtime with this status, wait for the relay's drain and then
+%% report this ending, or nothing, for the group's own exit after its first.
+-type shell_end() :: restart | {halt, 0 | 1} | {drain, erx_prog:status()} | ignore.
 %% A shell's start function, as group:start/3 takes it.
 -type shell() :: {module(), atom(), [term()]}.
 %% A terminal as a shell holds it: its write/1 and its run_shell/1.
@@ -156,6 +162,13 @@
 %% test starts leaves the group of the runtime's own driver (user_drv) alone. `none`
 %% neither starts nor takes one: a session's other ttys pass it, so `user` is the line's
 %% and lives as long as the line, whichever of the other ttys end.
+%% `on_shell_end` says what follows the first group's end on a session's tty whose
+%% driver is a relay: `restart`, the default, starts the shell again; `{exit, Notify}`,
+%% which a tty of an SSH channel passes (docs/design-ssh.md, "Sessions, ttys and
+%% shells"), waits until the relay's master has taken the tty's last output, calls
+%% Notify with how the shell ended (shell_ending/1) and stops, its relay with it.
+%% `size` is the terminal's first size as {Columns, Rows}, 80 by 24 by default; the
+%% driver's size reports change it from then on.
 -type config() :: #{role := system | session,
                     menu => boolean(),
                     principal => pos_integer(),
@@ -165,6 +178,8 @@
                     driver := fun((Console :: pid()) -> {ok, pid(), Kind :: boolean() | relay}),
                     line_owners => fun(() -> {ok, [pid()]} | {error, term()}),
                     first_shell := first_shell() | shell() | fun((terminal()) -> shell()),
+                    on_shell_end => on_shell_end(),
+                    size => {pos_integer(), pos_integer()},
                     user => replace | take | none}.
 
 -define(DEFAULT_SIZE, {80, 24}).
@@ -175,6 +190,10 @@
 
 -record(state, {role :: system | session,
                 first_shell :: first_shell() | shell(),
+                %% The config's `on_shell_end`, and once the first shell has ended on a
+                %% console that exits, the drain it waits on, with the ending Notify gets.
+                on_shell_end = restart :: on_shell_end(),
+                exiting = none :: none | {reference(), erx_prog:status()},
                 driver :: pid(),
                 %% The owners of the driver's shared lines, started before it: an owner's end is
                 %% the driver's (docs/design-shared-devices.md, "Lines inside a domain").
@@ -411,7 +430,8 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
                  end,
     %% As user_drv does for a line with no terminal on it: no editing, no echo and bytes
     %% as they are.
-    TTY = banner(Role, prim_tty:init_ssh(tty_options(Terminal), ?DEFAULT_SIZE, utf8), DriverPid),
+    Size = maps:get(size, Config, ?DEFAULT_SIZE),
+    TTY = banner(Role, prim_tty:init_ssh(tty_options(Terminal), Size, utf8), DriverPid),
     User = start_user(maps:get(user, Config, take)),
     Group = case FirstShell of
                 none -> User;
@@ -423,12 +443,13 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
                                      session -> none
                                  end,
                            first_shell = FirstShell,
+                           on_shell_end = on_shell_end(Config, Role, Kind),
                            driver = DriverPid,
                            line_owners = LineOwners,
                            base = Group,
                            user = User,
                            tty = TTY,
-                           size = ?DEFAULT_SIZE,
+                           size = Size,
                            terminal = Terminal,
                            menu = maps:get(menu, Config, Role =:= system),
                            principal = line_principal(Config),
@@ -498,15 +519,24 @@ first_shell(#{noshell := false, noinput := false}) -> {erx_shell, console, []};
 first_shell(#{}) -> none.
 
 -doc """
-What the console does when the shell of its first group ends for Reason, given
-whether its input has ended: while input may still come, it starts a fresh command
-shell, whatever the reason; once none can, it ends the runtime, with status 0 if the
-shell ended normally, as stock's shell halts at the end of its input, and 1 if not.
+What the console does with an exit of its first group for Reason, given its
+`on_shell_end`, whether it already waits on a drain, and whether its input has ended.
+A console that exits waits, at the group's first exit, for the relay's master to take
+the last output and then reports the ending that exit carries (shell_ending/1); the
+group's own exit after it changes nothing. A console that restarts starts a fresh
+command shell while input may still come, whatever the reason; once none can, it ends
+the runtime, with status 0 if the shell ended normally, as stock's shell halts at the
+end of its input, and 1 if not.
 """.
--spec after_first_shell(Reason :: term(), InputEnded :: boolean()) -> after_first_shell().
-after_first_shell(_Reason, false) -> restart;
-after_first_shell(normal, true) -> {halt, 0};
-after_first_shell(_Reason, true) -> {halt, 1}.
+-spec shell_end(on_shell_end(), Draining :: boolean(), Reason :: term(), InputEnded :: boolean()) ->
+          shell_end().
+shell_end({exit, _Notify}, false, Reason, _InputEnded) -> {drain, shell_ending(Reason)};
+shell_end({exit, _Notify}, true, _Reason, _InputEnded) -> ignore;
+shell_end(restart, _Draining, _Reason, false) -> restart;
+shell_end(restart, _Draining, normal, true) -> {halt, 0};
+%% The command shell's end with a status (erx_shell) is a normal end too.
+shell_end(restart, _Draining, {shutdown, {exited, _Status}}, true) -> {halt, 0};
+shell_end(restart, _Draining, _Reason, true) -> {halt, 1}.
 
 -doc """
 The group user_drv:whereis_group/0 reports, in which group:whereis_shell/0, and with
@@ -698,13 +728,17 @@ info({erx_console_written, {caller, From}}, State) ->
 info({erx_console_written, {Group, Reply}}, State) ->
     Group ! {reply, Reply, ok},
     {noreply, State};
+info({Ref, ok}, State = #state{exiting = {Ref, Ending}, on_shell_end = {exit, Notify}}) ->
+    Notify(Ending),
+    {stop, normal, State};
 info({'EXIT', User, Reason}, State = #state{user = User}) ->
     %% `user` ends only with its console or as the runtime stops (user_sup kills the
     %% system console's supervisor, and the console with it).
     {stop, Reason, State};
 info({'EXIT', Pid, Reason},
             State = #state{role = Role, driver = Driver, line_owners = LineOwners, base = Base, shells = Shells,
-                           first_shell = FirstShell, terminal = Terminal, input_ended = Ended}) ->
+                           first_shell = FirstShell, terminal = Terminal, input_ended = Ended,
+                           on_shell_end = OnEnd, exiting = Exiting}) ->
     LineEnded = Pid =:= Driver orelse lists:member(Pid, LineOwners),
     case lists:keytake(Pid, 1, Shells) of
         {value, {Pid, Caller, _Shell}, Others} ->
@@ -715,10 +749,18 @@ info({'EXIT', Pid, Reason},
             gen_server:reply(Caller, shell_ended(Reason)),
             {noreply, gets_input(State#state{shells = Others})};
         false when Pid =:= Base ->
-            %% The first group's shell has ended, and the group with it: a fresh one takes
-            %% the first group's place. The old group's own exit, which follows, names a
-            %% group the console no longer holds.
-            case after_first_shell(Reason, Ended) of
+            %% The first group's shell has ended, and the group with it. A fresh group
+            %% takes its place, and the old group's own exit, which follows, names a group
+            %% the console no longer holds; or a tty that exits with its shell sends its
+            %% ending once the relay's master has taken every byte the shell wrote (the
+            %% relay's drain), and the group's first exit carries how it ended.
+            case shell_end(OnEnd, Exiting =/= none, Reason, Ended) of
+                {drain, Ending} ->
+                    Ref = make_ref(),
+                    Driver ! {tty_drain, self(), Ref},
+                    {noreply, State#state{exiting = {Ref, Ending}}};
+                ignore ->
+                    {noreply, State};
                 restart ->
                     New = start_shell(FirstShell, Terminal),
                     {noreply, gets_input(State#state{base = New})};
@@ -756,6 +798,35 @@ info(Message, State = #state{user = User, line = Line})
     end;
 info(_Message, State) ->
     {noreply, State}.
+
+%% A session tty's `on_shell_end`, which only a relay's console may make
+%% `{exit, Notify}`, since only a relay answers the drain it waits on.
+on_shell_end(Config, Role, Kind) ->
+    case maps:get(on_shell_end, Config, restart) of
+        restart -> restart;
+        {exit, Notify} = Exit when Role =:= session, Kind =:= relay, is_function(Notify, 1) -> Exit
+    end.
+
+-doc """
+How a shell that ended for Reason ended, as a tty's master hears it: with the
+status the command shell's end carries (erx_shell:exit_with/1), or by the
+signal an exec's end carries when Ctrl-C ended it (erx_shell_script:command/2),
+one of the signal set ssh_line of abi/signals.txt, the signals a tty's master
+hears; with status 0 for a normal end, and 1 for any other, as for a shell
+that crashed or was killed or a signal the set does not list. So every ending
+a tty reports has the shape its master hears, and the session's line passes it
+on unchecked (erx_ssh_line_core:report/2).
+""".
+-spec shell_ending(term()) -> erx_prog:status().
+shell_ending(normal) -> {exited, 0};
+shell_ending({shutdown, {exited, Status}}) when is_integer(Status), Status >= 0, Status =< 255 ->
+    {exited, Status};
+shell_ending({shutdown, {signaled, Signal}}) when is_atom(Signal) ->
+    case lists:keymember(Signal, 1, ?ERX_SSH_LINE_SIGNAL_MEMBERS) of
+        true -> {signaled, Signal};
+        false -> {exited, 1}
+    end;
+shell_ending(_Reason) -> {exited, 1}.
 
 ended_by(Reason) ->
     erlang:display_string(stderr, lists:flatten(io_lib:format("erx_console: ended by ~p\r\n", [Reason]))).

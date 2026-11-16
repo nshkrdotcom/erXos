@@ -153,8 +153,21 @@ module Erx
             lines << enum_members(schema, type) << enum_guard(type)
           end
         end
+        schema.signals.sets.sort.each { |name, signals| lines << signal_set_members(schema, name, signals) }
         lines << tree_services(schema)
         (lines + ['', '-endif.', '']).join("\n")
+      end
+
+      # ?ERX_<SET>_SIGNAL_MEMBERS: a signal set of the signal table as
+      # {Name, Number} in number order, each by its protocol name (sigint), so
+      # a protocol that carries only those signals takes them from the table.
+      def signal_set_members(schema, set, signals)
+        name = "#{set}_signal_members"
+        raise SchemaError, "signal set member list #{name} collides with a constant" if schema.constants.key?(name)
+        raise SchemaError, "signal set #{set} collides with the enum #{set}_signal" if schema.types.key?("#{set}_signal")
+
+        members = signals.map { |signal| "{#{literal(atom("sig#{signal.name}"))}, #{signal.number}}" }
+        "-define(#{Names.macro(name)}, [#{members.join(', ')}])."
       end
 
       # ?ERX_TREE_SERVICES: the numbers of the abi/services interfaces declared

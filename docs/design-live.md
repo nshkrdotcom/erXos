@@ -838,9 +838,12 @@ later write at once with nothing sent, and the relay sends the tty's
 console `erx_console_eof` at once, whether or not a read waits, so the
 console ends every shell on the tty and then the tty ends, as a UNIX
 session ends with its terminal's
-hangup; the session's other ttys run on. A master in the tty's own domain
-is watched, and its end is the tty's hangup, as a pseudo-terminal master's
-close is.
+hangup; the session's other ttys run on. The relay watches its master in
+either domain, a master in another domain through a monitor its domain's
+funnel admits as for any pid that domain exported with `send`, and the
+master's end, its domain's end included, is the tty's hangup, as a
+pseudo-terminal master's close is, so a channel that ends without saying
+`tty_hangup` still ends its tty.
 
 **Many writers.** Every open may write, in any job and at any time. The owner
 serves writes in arrival order, and each writer's bytes stay in order. A write

@@ -534,7 +534,7 @@ domain, heard through that domain's envelope, and answers each `ok` or
   on it. From then on the tty and the channel exchange the six console
   messages, with `window-change` sent as `tty_size` and the channel's end
   or the connection's as `tty_hangup`. The shell's `TERM` is `Term` when
-  `abi/termcap` names it and `vt100` otherwise; a size of zero, which
+  `abi/terminal.txt` names it and `vt100` otherwise; a size of zero, which
   `pty-req` allows, is taken as 24 rows or 80 columns.
 * **`{open_job, Channel, Run}`** for a channel with no pseudo-terminal.
   The session starts the shell with standard input, output and error on
@@ -565,13 +565,34 @@ through each other's domain envelope and each checked by its receiver:
 | `job_sent` | channel to line | a `job_output` is unanswered; the line then reads the pipes again | ignored, as a late repeat |
 | `job_hangup` | channel to line | that atom; it holds from then on | not applicable; the line closes every end and ends the job's programs, as the relay ends a tty's shells at `tty_hangup` |
 | `{exited, Status}` | line to channel | `Status` is an integer from 0 to 255 | the channel closes |
+| `{signaled, Signal}` | line to channel, for a tty | `Signal` is a member of the signal set `ssh_line` in `abi/signals.txt`, `sigint` alone | the channel closes |
 
-`{exited, Status}` serves ttys too: the line sends it once what it
-started on the channel, the shell on the tty or the job, has ended and
-its last output has been taken, by `tty_taken` or `job_sent`, so it
-arrives after every byte of output. The channel then sends SSH's
-`exit-status`, its end of file and its close, and sends `tty_hangup` to
-a tty. One unanswered message each way bounds what either side holds for
+`{exited, Status}` serves ttys too, and a tty has a second ending,
+`{signaled, Signal}`, for an exec that the tty's `Ctrl-C` ended, with
+`Signal` a name of the signal set `ssh_line` in
+`abi/signals.txt`, `sigint` alone, since `Ctrl-C` is the only
+signal that ends an exec on a tty. A tty's ending has only these two
+shapes, with `Status` from 0 to 255 and `Signal` in that set, because
+the console that makes it maps any other end to status 1
+(`erx_console:shell_ending/1`), and the line passes it on unchecked;
+the channel checks it against that set and closes on any other. FreeBSD's `sh -c` dies of the SIGINT
+that ends its command (`onint` in `bin/sh/error.c` of FreeBSD 14.2,
+lines 117-123), rather than exiting 130, the `$?` a parent shell gives
+a command SIGINT ended (`waitforjob` in `bin/sh/jobs.c`, line 1114),
+and OpenSSH's `sshd` sends `exit-signal` for a command a signal ended
+(`session_exit_message` in `session.c`), so the client sees a signal,
+not an exit, on both systems. A hangup needs no ending, since the
+channel is gone by then.
+
+The line sends one ending once what it started on the channel, the
+shell on the tty or the job, has ended, every process it started has
+ended with it, and its last output has been taken, by `tty_taken` or
+`job_sent`, so the ending arrives after every byte of output. The
+channel then sends SSH's `exit-status` for `{exited, Status}`, or
+`exit-signal` for `{signaled, Signal}`, with the signal's name without
+`sig` in capitals (`INT`), no core dump, and an empty message and
+language tag; then its end of file and its close, and `tty_hangup` to a
+tty. One unanswered message each way bounds what either side holds for
 a channel to 32 KiB of input and 32 KiB of output beyond the client's own
 window, and a pipe's writer that waits for room carries back-pressure to
 the client's window.
@@ -899,7 +920,7 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
 | Interface | Between | Declared in |
 | --- | --- | --- |
 | `erx_ssh_login`: `cookie`, `key_ok`, `login_key`, `login_passphrase`, `logout` | the SSH domain and the system domain | `abi/services/ssh.txt`, citing [Logging in](#logging-in) |
-| `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_written`, `job_eof`, `job_output`, `job_sent`, `job_hangup` and `exited` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells) |
+| `erx_ssh_line`: `open_tty`, `open_job`, and a job's `job_input`, `job_written`, `job_eof`, `job_output`, `job_sent`, `job_hangup`, `exited`, and a tty's `signaled` | the SSH domain and a session it logged in | `abi/services/ssh.txt`, citing [Sessions, ttys and shells](#sessions-ttys-and-shells) |
 | the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |
@@ -1003,6 +1024,11 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   `version.h` `3605cf2244753b660a0d06f0946665f77ce2e446b367ecee5fe6e11db28318ff`,
   `auth2.c` `d4364911846a7296bc232660ae3427e45b6fc7726c5c7ff34c86c50ef9f5cdbf`,
   `monitor.c` `f6a0096c9ade1fd45a485099c73c07044fb2f8bdf3d3da993513b38490aeace1`.
+* `session.c` (`session_exit_message`), from FreeBSD's
+  `release/15.1.0-p6` `crypto/openssh/`, SHA-256
+  `3420f3f5bfb4bee8c8d96f08b04605b432f583044725f38e017be3a530c588e6`,
+  and from `https://raw.githubusercontent.com/openssh/openssh-portable/V_9_9_P2/`,
+  SHA-256 `05113a9413336600d055f19190c1a057bc164f57e215df240016478db1c4944e`.
 * From `https://www.rfc-editor.org/rfc/`: RFC 4252, "The Secure Shell
   (SSH) Authentication Protocol", section 7, `rfc4252.txt`
   `a36b882cf77b107335d49921b5e955b4ba78e253205dfbce5096ebc0e78bdf14`;

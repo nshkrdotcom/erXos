@@ -119,7 +119,7 @@ answer an apply by its token, hand the widget server a hit as
                      | {lost, term()} | stalled.
 
 -doc "A port's exit status on the host, or the program's end as its handler reports it on erXos.".
--type exit_status() :: non_neg_integer() | {exited, 0..255} | {signaled, atom()}.
+-type exit_status() :: non_neg_integer() | erx_prog:status().
 
 -doc """
 The renderer of a window of `Width` by `Height` in channel `Chan`, whose

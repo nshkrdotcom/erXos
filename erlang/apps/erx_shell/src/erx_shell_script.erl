@@ -17,19 +17,24 @@ command that declares a facet the session lacks fails with `no_facet` before
 it starts, and one installed while the script runs serves the next command.
 """.
 
--export([run/1, run/2, script/1, main/1]).
+-export([run/1, run/2, script/1, command/2, first_vars/1, main/1]).
 
--export_type([options/0, ending/0]).
+-export_type([options/0, vars/0, ending/0]).
 
 -type options() :: #{cwd => binary(),
                      fds => #{erx_shell_lex:fd() => erx_cmd:stream()},
-                     vars => #{binary() => [binary()]},
+                     vars => vars(),
                      applications => [atom()]}.
+%% Variables, each name with its value, a list of words.
+-type vars() :: #{binary() => erx_shell_eval:value()}.
 %% How a source ended, with the final `$status`: it ran to its end, ran
 %% `exit`, stopped on a fault of the language or did not parse.
 -type ending() :: {ok | exit | fault | syntax_error, Status :: binary()}.
 
+%% The evaluator's heap limit, so a runaway source ends it and never its caller (SH2).
 -define(MAX_HEAP_WORDS, 32 bsl 20).
+%% The longest value, all its words together, of a first variable (first_vars/1).
+-define(MAX_FIRST_VALUE, 256).
 
 -doc "Runs a source at the terminal, from `/`.".
 -spec run(iodata()) -> ending().
@@ -42,6 +47,12 @@ command shell's own).
 """.
 -spec run(iodata(), options()) -> ending().
 run(Source, Options) ->
+    Evaluation = evaluation(iolist_to_binary(Source), shell(Options)),
+    {_Pid, Ref} = erx_shell_runner:spawn_evaluator(Evaluation, ?MAX_HEAP_WORDS, [monitor]),
+    receive {'DOWN', Ref, process, _, Reason} -> ending_of(Reason) end.
+
+%% The evaluator's shell for Options, at the calling process's terminal.
+shell(Options) ->
     Leader = group_leader(),
     Terminal = {tty, fun(Bytes) -> file:write(Leader, Bytes) end},
     Fds = maps:get(fds, Options, #{0 => null, 1 => Terminal, 2 => Terminal}),
@@ -50,8 +61,7 @@ run(Source, Options) ->
     State = erx_shell_runner:state(#{cwd => maps:get(cwd, Options, <<"/">>), fds => Fds,
                                    table => Table, facets => fun erx_shell_runner:facets/0}),
     Vars = maps:merge(#{<<"home">> => [<<"/">>], <<"*">> => []}, maps:get(vars, Options, #{})),
-    Shell = erx_shell_eval:new(Vars, erx_shell_runner:runner(), State),
-    evaluate(iolist_to_binary(Source), Shell).
+    erx_shell_eval:new(Vars, erx_shell_runner:runner(), State).
 
 -doc "Runs the rc script at Path, at the terminal.".
 -spec script(file:name_all()) -> ending() | {error, file:posix()}.
@@ -61,16 +71,89 @@ script(Path) ->
         {error, Reason} -> {error, Reason}
     end.
 
-%% The evaluator's process: the source's ending, or the reason it was killed.
-evaluate(Source, Shell) ->
-    Limit = #{size => ?MAX_HEAP_WORDS, kill => true, error_logger => false,
-              include_shared_binaries => true},
-    {_Pid, Ref} = spawn_opt(fun() -> exit({ending, ending(erx_shell_eval:run_source(Source, Shell))}) end,
-                            [monitor, {max_heap_size, Limit}]),
-    receive
-        {'DOWN', Ref, process, _, {ending, Ending}} -> Ending;
-        {'DOWN', Ref, process, _, Reason} ->
-            {fault, iolist_to_binary(io_lib:format("~0tp", [Reason]))}
+-doc """
+Starts rc on Command at the terminal, as `rc -c Command` runs as a program
+(docs/design-shell.md, "rc as a program"): a group's shell for a tty that runs
+one command (erx_session_tty:open_channel/3), with the first variables Vars
+(first_vars/1), which ends with the command's exit status as the command
+shell does at its end (erx_shell:exit_with/1).
+
+The command runs as one job under a job leader of its own (erx_shell_leader),
+so every process it starts, pipeline stages, subshells, backquotes and `&`
+blocks, ends with it. Whichever way the command ends, the job is closed
+first (erx_shell_leader:close/1), so its last output reaches the group
+before the command's end does. The command ends in one of three ways:
+
+* Its evaluator ends: this process ends with the source's final status
+  (erx_shell:exit_with/1), a crash or a kill read as a failure.
+* Ctrl-C, which the group sends this process as the exit signal
+  `interrupt`: this process ends `{shutdown, {signaled, sigint}}`, as a
+  program a signal ended reads (docs/design-programs.md, "A program's
+  end"), since FreeBSD's `sh -c` dies of the SIGINT itself (`onint` in
+  bin/sh/error.c), not with status 130, the `$?` its parent shell gives it.
+* Any other exit signal from the group, as at the tty's hangup: this
+  process ends for the same reason.
+
+An exit signal from any other process is a message left unread. Exits are
+trapped before the leader and the evaluator start, so an interrupt that
+comes sooner ends this process with nothing started.
+""".
+-spec command(binary(), vars()) -> pid().
+command(Command, Vars) when is_binary(Command) ->
+    proc_lib:spawn_link(fun() -> exec(Command, Vars) end).
+
+exec(Command, Vars) ->
+    process_flag(trap_exit, true),
+    Group = group_leader(),
+    Shell = shell(#{vars => first_vars(Vars)}),
+    Leader = erx_shell_leader:start(Group),
+    {_Pid, Ref, Go} = erx_shell_leader:spawn_member(Leader, evaluation(Command, Shell), ?MAX_HEAP_WORDS),
+    ok = Go(),
+    Ended = receive
+                {'DOWN', Ref, process, _, Reason} -> {evaluated, Reason};
+                {'EXIT', Group, Signal} -> {group, Signal}
+            end,
+    ok = erx_shell_leader:close(Leader),
+    case Ended of
+        {evaluated, Evaluated} ->
+            {_Ending, Status} = ending_of(Evaluated),
+            erx_shell:exit_with(Status);
+        {group, interrupt} ->
+            exit({shutdown, {signaled, sigint}});
+        {group, Other} ->
+            exit(Other)
+    end.
+
+-doc """
+The first variables a terminal gives a shell or an exec (erx_shell's
+terminal `vars`, command/2), checked once as they arrive: each name a
+binary and each value a list of words, at most 256 bytes in all. A variable
+of another shape is a fault of the code that built the terminal, which ends
+the shell it was meant for.
+""".
+-spec first_vars(vars()) -> vars().
+first_vars(Vars) when is_map(Vars) ->
+    maps:map(fun first_value/2, Vars).
+
+first_value(Name, Words) when is_binary(Name), is_list(Words) ->
+    case lists:all(fun erlang:is_binary/1, Words) andalso iolist_size(Words) =< ?MAX_FIRST_VALUE of
+        true -> Words;
+        false -> error({bad_first_var, Name})
+    end.
+
+%% The body of the evaluator's process for Source, which gives the source's
+%% ending; its process is spawned as every evaluator's is
+%% (erx_shell_runner:spawn_evaluator/3).
+evaluation(Source, Shell) ->
+    fun() -> ending(erx_shell_eval:run_source(Source, Shell)) end.
+
+%% The source's ending from its evaluator's end (erx_shell_runner:ending/1):
+%% the ending it gave, or a fault whose status says how it ended otherwise:
+%% `killed`, by the heap limit or the job's end, or `crashed`.
+ending_of(Reason) ->
+    case erx_shell_runner:ending(Reason) of
+        {value, Ending} -> Ending;
+        Ended -> {fault, atom_to_binary(Ended)}
     end.
 
 ending({ok, Shell}) -> {ok, erx_shell_eval:status(Shell)};

@@ -68,6 +68,7 @@ made from them.
          ended/3, foreground/3, background/2, signal/3, reap/1, list/1]).
 -export([stop_own/3, foreground_tags/1]).
 -export([parse_spec/1, parse_kill/1, signal_names/0, valid_request/1, line_tag/1]).
+-export([exit_status/1]).
 -export([invariant/1, view/1]).
 
 -export_type([jobs/0, effect/0, result/0, spec/0, signal/0, target/0]).
@@ -479,6 +480,35 @@ valid_spec({id, Id}) -> is_integer(Id) andalso Id > 0;
 valid_spec(_Other) -> false.
 
 valid_signal(Signal) -> lists:member(Signal, [{Action, Name} || {Name, _, Action} <- ?SIGNALS]).
+
+-doc """
+The exit status that `$status`'s text Status gives a shell that ends as a
+program (docs/design-shell.md, "rc as a program"), read over the components
+between its `|`s: 0 when every one is empty; otherwise the last non-empty one
+decides, a decimal number from 0 to 255 being that status, a signal's name
+(`sigint`) the status of a program that signal ended, 128 and the signal's
+number, as FreeBSD's sh reports one, and anything else 1.
+""".
+-spec exit_status(binary()) -> 0..255.
+exit_status(Status) when is_binary(Status) ->
+    case [Part || Part <- binary:split(Status, <<"|">>, [global]), Part =/= <<>>] of
+        [] -> 0;
+        Parts -> component_status(lists:last(Parts))
+    end.
+
+component_status(Part) when byte_size(Part) =< 3 ->
+    case digits(Part) andalso binary_to_integer(Part) of
+        N when is_integer(N), N =< 255 -> N;
+        _ -> signal_status(Part)
+    end;
+component_status(Part) ->
+    signal_status(Part).
+
+signal_status(Part) ->
+    case lists:keyfind(upper(Part), 1, [{<<"SIG", Name/binary>>, N} || {Name, N, _} <- ?SIGNALS]) of
+        {_, N} -> 128 + N;
+        false -> 1
+    end.
 
 with_signal(error, _Jobs) -> usage;
 with_signal(_Signal, []) -> usage;

@@ -19,7 +19,7 @@ report (erx_web_line_app), and the system domain, when the host opens its
 `{export, Web}`: the line exports itself to domain Web with send and serves
 Web from then on, in place of any peer before it. The line takes that call
 only in the system domain's envelope, so no other domain, and no process
-of the session, chooses who reaches it (erx_domain:web_line/2).
+of the session, chooses who reaches it (erx_domain:line/3).
 
 From its peer it takes a request only as a call in the peer's envelope whose
 caller and alias are names of the peer's (as erx_facet checks a grantee's
