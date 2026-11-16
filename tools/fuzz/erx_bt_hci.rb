@@ -17,7 +17,8 @@ module ErxBtHciFuzz
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   HCI = 'erlang/apps/erx_bt/src/erx_hci.erl'
   FUZZ = 'test/erlang/erx_bt_hci_fuzz.erl'
-  # Each of the four runs takes about two seconds; tools/erx gives the whole runner 300.
+  # Each of the four runs takes about two seconds; each compile and run is under this
+  # deadline, and tools/erx gives the whole runner 300.
   DEADLINE_SECONDS = '60'
 
   # A seeded fault: the module's anchor replaced, and the error term the run must fail
@@ -77,7 +78,8 @@ module ErxBtHciFuzz
         File.join(work, File.basename(source)).tap { |path| File.binwrite(path, replaced.fetch(source)) }
       end
       include = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
-      output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', include, '-o', work, *sources, stdin_data: '')
+      output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERLC'), '-I', include,
+                                       '-o', work, *sources, stdin_data: '')
       raise output unless status.success?
 
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
