@@ -50,13 +50,12 @@ module Erx
     CRC32C_ANSWER = '{crc32c,"E3069283","2D78517F",badarg}'
     CRC32C_START = /\A(?:(?:\([a-z0-9_]+@[a-z0-9_.-]+\))?[0-9]+> )?\{crc32c,/n
     # The machine of a medium boot on platform's board: the development machine, with room
-    # for the medium manifest's two domains (manifest). RAM grows to 768 MiB, Fiasco keeping about
-    # 6% of it, and the root sits 192 MiB into RAM, as on the QEMU oracle's machine, so the
+    # for the medium manifest's two domains (manifest). RAM grows to 768 MiB, of which Fiasco keeps
+    # 48 MiB (Platform.fiasco_reserve), and the root sits 192 MiB into RAM, as on the QEMU oracle's machine, so the
     # archive, which carries the domain runtime images and the domain release, stays below it
     # where QEMU loads it and bootstrap need not move it; QEMU puts the device tree 128 MiB
     # into a machine this large (docs/design-platforms.md).
-    def self.machine(platform) = ProductionImage::Machine.development(platform).with(memory_mib: 768, fiasco_reserve_mib: 48,
-                                                                                         root_mib: 192)
+    def self.machine(platform) = ProductionImage::Machine.development(platform).with(memory_mib: 768, root_mib: 192)
     # The domain's own budget and its outer one: what native_domain's ERTS domain runs in.
     DOMAIN_MEMORY = 160 << 20
     DOMAIN_OUTER = 1 << 20
