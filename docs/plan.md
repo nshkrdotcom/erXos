@@ -2110,7 +2110,8 @@ the guest's power cut and the next boot.
   ([design-storage.md](design-storage.md#data-model)).
 * **Immutable code and files.** The block client, a local call in the
   system domain, `erx_verity:read/3` as the one funnel through which the
-  EROFS reader reads blocks, which passes them through unchecked until M11
+  EROFS reader reads blocks, over a mount's fid or over the `system`
+  window, which passes them through unchecked until M11
   adds the hash check inside it, and CRC-32C among the per-byte primitives,
   with its fuzz target
   ([design-runtime.md](design-runtime.md#per-byte-primitives));
@@ -3309,7 +3310,10 @@ the sub-spaces of a domain holding `SPACES`, and
 a domain that churns sub-spaces
 ([design-kernel.md](design-kernel.md#security)); the hash check of EROFS
 images: the packer's dm-verity version 1 hash tree for each image and the
-root hash, salt and data-block count in each package's header,
+root hash, salt and data-block count in each package's header, the
+system partition's tree, whose image length, tree layout, salt and root
+hash the boot image's manifest records and its `system_image` boot
+record carries,
 and the check inside `erx_verity:read/3`, the funnel M6 built, so the
 reader parses only blocks that passed their image's tree (E1), with the
 hash-checking reader's fuzz target

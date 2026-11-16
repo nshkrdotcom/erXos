@@ -50,7 +50,10 @@ Decisions every reader of this document needs:
   partition is one EROFS image with a hash tree of its own, whose root
   hash the manifest of the slot's boot image records, and the storage
   domain that serves `system` checks every block of it against that
-  root, so a storage domain can withhold a file but never change one.
+  root before its reader parses one, so a crafted medium reaches no
+  parser. Its clients still check each package's header and every block
+  of its image themselves, so a storage domain can withhold a file but
+  never change what a reader accepts.
 * **File systems and the driver are Erlang.** The
   block driver, the EROFS reader, erXos's F2FS, the FAT server and the
   slot writer are Erlang; the driver touches its device through the
@@ -172,7 +175,7 @@ commits by rewriting the record only once the trial is healthy.
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
 | **PW1.** Only storage domains and the slot writer hold windows: a file system reaches the medium only through a window on its own partition, no window but the slot writer's covers a boot partition or the record, and the one window on a system partition besides the slot writer's is the read-only window of the storage domain that serves `system`, on the booted slot's | a window is a process of the block driver that checks every request against the sectors the device service named for it; the device service derives windows from the medium layout of the ABI file, the system configuration's roles and the boot value, names the boot, system A, system B and record windows for the slot writer alone, and the one read-only `system` window for the domain the manifest's `system` window row names as its holder, on the system partition of the slot the boot value names, and names that one on no `unknown` boot; a file system holds a window's pid and nothing of the device, since only the block driver's modules call the device NIF, a build check; native code that parses a file system runs in a sub-space holding only its channel, so it reaches no window and no device | a window named by sectors from anything but the layout; a window named for a domain that is neither a storage domain nor the slot writer; a parser that calls the device NIF or holds another window; native file-system code in the driver's domain | a host test of the device service's derivation: no domain but a storage domain or the slot writer receives any window; the vault's storage domain receives the vault's partition alone; the principals' storage domain receives the data partition's; the holder of the `system` window, that domain or a storage domain of its own, receives the booted slot's system partition, read-only, and no system partition on an `unknown` boot ([design.md](design.md#chokepoint-checks)); the build check that only the block driver's modules reference `erx_device`, with a seeded violation; a test that every other request for those windows fails |
-| **E1.** The tree's code parses only EROFS blocks that passed a hash tree whose root the boot image pins: a package's, through a header the system domain's file check accepted, or the system partition's own, through the root hash the booted boot image's manifest records for it | the EROFS reader reads every block through the hash-checking reader, `erx_verity`, the only module that reads the fid of an EROFS file mount or the `system` window: it receives each block as a binary in the domain's own memory, checks it against the image's tree with the SHA-256 primitive and returns the binary only if it matches. Two modules open an image in it, and neither takes the layout from a caller. `erx_ns`'s process opens one for the one EROFS file mount, which takes no layout ([design-files.md](design-files.md#building-binding-and-mounting)), and takes it from one of two places the system domain fixed. For `app` it is the app's record, which the domain service fills from the answer of its file check, run with `{hash, H}` from a `package` row or `{signers, Keys}` from the manifest's keys, and sends the session over the runtime protocol. For `{header, Path}` it is the decoder's layout of the header bytes at the start of a file reached through the `apps` grant, which the `apps` tree serves only once their SHA-256 is the one it recorded when the file check accepted them (PK3 of [design-packaging.md](design-packaging.md#invariants)); a file reached through any other grant is refused with `einval`. E1 binds the code of the tree: a domain's own code can call any function of its runtime and parse what it likes, which harms only itself, and what that domain may run is bounded by the grant each mount's fid came through (F6 of [design-files.md](design-files.md#invariants)), which E1 does not need. The other module, the `system` backend, `erx_storage_system`, opens the system partition's image over the `system` window that PW1 gives to one storage domain, with the image's length and its tree's offset, length, salt and root hash from that domain's boot record, which the system domain writes from the manifest the boot image holds ([The `system` tree](#the-system-tree)) | a read path around the hash-checking reader; a check on a copy the server still holds rather than the domain's; a form of the EROFS mount that takes a layout, a root hash or header bytes from its caller; an image opened in `erx_verity` by a module other than those two; a `header` mount through any grant but `apps`; a `system` image opened with a root hash from anything but its boot record; a `system` window named for a second domain | `Erx::ErofsReads`, a cross-reference check over the target releases: no module but `erx_verity` reads a file mount's fid; the reader's modules reach a block only through `erx_verity:read/3`; no module but `erx_ns` and `erx_storage_system` opens an image in `erx_verity`; each rule with a seeded violation; a test that a `header` mount of a file reached through any grant but `apps` is refused with `einval`; a test with a flipped bit in each block, of a package and of the system partition's directory |
+| **E1.** The tree's code parses only EROFS blocks that passed a hash tree whose root the boot image pins: a package's, through a header the system domain's file check accepted, or the system partition's own, through the root hash the booted boot image's manifest records for it | the EROFS reader reads every block through the hash-checking reader, `erx_verity`, the only module that reads the fid of an EROFS file mount or the `system` window: it receives each block as a binary in the domain's own memory, checks it against the image's tree with the SHA-256 primitive and returns the binary only if it matches. Two modules open an image in it, and neither takes the layout from a caller. `erx_ns`'s process opens one for the one EROFS file mount, which takes no layout ([design-files.md](design-files.md#building-binding-and-mounting)), and takes it from one of two places the system domain fixed. For `app` it is the app's record, which the domain service fills from the answer of its file check, run with `{hash, H}` from a `package` row or `{signers, Keys}` from the manifest's keys, and sends the session over the runtime protocol. For `{header, Path}` it is the decoder's layout of the header bytes at the start of a file reached through the `apps` grant, which the `apps` tree serves only once their SHA-256 is the one it recorded when the file check accepted them (PK3 of [design-packaging.md](design-packaging.md#invariants)); a file reached through any other grant is refused with `einval`. E1 binds the code of the tree: a domain's own code can call any function of its runtime and parse what it likes, which harms only itself, and what that domain may run is bounded by the grant each mount's fid came through (F6 of [design-files.md](design-files.md#invariants)), which E1 does not need. The other module, the `system` backend, `erx_storage_system`, opens the system partition's image over the `system` window that PW1 gives to one storage domain, with the image's length and its tree's offset, length, salt and root hash from that domain's boot record, which the system domain writes from the manifest the boot image holds ([The `system` tree](#the-system-tree)) | a read path around the hash-checking reader; a check on a copy the server still holds rather than the domain's; a form of the EROFS mount that takes a layout, a root hash or header bytes from its caller; an image opened in `erx_verity` by a module other than those two; a `header` mount through any grant but `apps`; a `system` image opened with a root hash from anything but its boot record; a `system` window named for a second domain | `Erx::ErofsReads`, a cross-reference check over the target releases: no module but `erx_verity` reads a file mount's fid or the `system` window; the reader's modules reach a block only through `erx_verity:read/3`; no module but `erx_ns` and `erx_storage_system` opens an image in `erx_verity`; each rule with a seeded violation; a test that a `header` mount of a file reached through any grant but `apps` is refused with `einval`; a test with a flipped bit in each block, of a package and of the system partition's directory; a host test of `erx_storage_system`'s open over a fixture window holding a changed partition whose tree was rebuilt to match it, with the boot record naming the original root: every read answers `eio`, and seeded, an open that takes the root from the partition's own tree, which serves the changed files |
 | **U1.** Neither partition of the slot the machine runs from, nor of the slot a failed trial falls back to, is ever written | the slot writer allows a slot write only on `normal(C)` with the record naming `C`, and only to the other slot's boot and system partitions, which the medium layout pairs | a slot write allowed on any other boot value, or from a service's word; a pairing of partitions recorded anywhere but the layout | the exhaustive model of the update path, with each slot's two partitions written separately |
 | **U2.** The record names only the slot first installed or a slot that passed a healthy trial | the slot writer rewrites the record only on `trial(S)` with the record naming the other slot, naming `S`, and the update service asks for that only once the trial is healthy; no other boot value, a firmware's fallback boot included, allows a record write | a record write on a normal boot | the exhaustive model, with every boot value against every record |
 | **U3.** After a power cut, a crash or a hang at any point, the machine boots the committed slot, or the spare once as a requested trial | the record changes only by one sector, the trial's request is one-shot, and a hang during a trial ends in the watchdog's reset; the firmware runs the watchdog from power-on on a board configured as [design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record) describes, and on a board without that configuration a trial whose firmware stage hangs, before the kernel's first decision, needs a power cycle | a multi-sector record; a request that survives the trial | the model with a power cut after every write; runs on each board |
@@ -500,10 +503,12 @@ exchange:
   happens where the blocks
   are consumed, no storage domain or driver is trusted with it, a block
   cannot change between its check and its use, and the reader parses only
-  blocks that passed it. The partition's own directory has no tree: the
-  storage domain parses it as untrusted input, as it parses the data
-  partition, and what it lists decides only which file a name reaches,
-  never which bytes a reader accepts. The device service names the
+  blocks that passed it. The partition carries a hash tree of its own,
+  in the same format, whose root hash the manifest of the booted boot
+  image records, and the storage domain that serves `system` checks
+  every block of the partition against it, its directory included,
+  before its reader parses the block, so a block of a crafted partition
+  answers `eio` (E1). The device service names the
   `system` window only on the system partition of the slot that the boot
   value names, so when the boot value is `unknown` it names none, and that
   boot runs every domain from the boot image and no image package. The
@@ -1189,7 +1194,8 @@ The EROFS reader, `erx_erofs`, is Erlang, preloaded in the runtime image
 beside `prim_file`, so every domain has it and reads code from an EROFS
 image as early as from its release slice, without a release having to
 carry it. `erx_path` resolves a path to an EROFS mount, an entry whose
-provider is `{erofs, Image}`, with the reader answering its walks and
+provider is `{erofs, Image}`, where `Image` is the handle of the image
+the mount opened in `erx_verity`, with the reader answering its walks and
 link reads; the reader then serves the operation of the resolver's last
 action in the calling process, as `erx_file_remote` serves a grant
 ([design-files.md](design-files.md#erlang-clients-prim_file-and-erx_file_remote)),
@@ -1290,9 +1296,20 @@ dm-verity's format as a package's, and the manifest the slot's boot
 image holds records the image's length and the tree's offset, length,
 salt and root hash, which the update writes with the partition
 ([System updates](#system-updates)). The system domain hands them to the
-storage domain that serves `system` in a boot record of its own, beside
-the `-erx_record boot VALUE SLOT` record, so that domain reads no
-manifest. The backend opens the image in `erx_verity` over its
+storage domain that serves `system`, and to no other domain, in a boot
+record of its own, `-erx_record system_image`, beside the `-erx_record
+boot VALUE SLOT` record
+([design-stopgap.md](design-stopgap.md#the-booted-slot)), so that domain
+reads no manifest. The two belong to one slot: the boot value names the
+slot whose boot partition the firmware booted, and that partition holds
+the boot image and with it the manifest
+([design-platforms.md](design-platforms.md#data-model), "What the loader
+hands over"). How the Raspberry Pi firmware reports the partition after
+a `PARTITION_WALK` to another one is unverified
+([design-platforms.md](design-platforms.md#risks-and-open-questions));
+a report naming the other slot would pair the manifest's root hash with
+the other slot's partition, whose blocks would all answer `eio`, so the
+tree would serve no file, never a wrong one. The backend opens the image in `erx_verity` over its
 read-only `system` window (PW1) with that layout, so every block of the
 partition, its directory included, matches the root hash before the
 reader parses it (E1), and a block of a crafted partition answers `eio`.
@@ -1310,16 +1327,21 @@ reader does.
 
 The packer fixes what the tree holds: `NAME.app`, each image package of
 the slot, a self-checking file, and nothing else. Two rows of the
-manifest grant the tree, both `ro`
+manifest grant the tree
 ([design-packaging.md](design-packaging.md#the-apps-row), "the `system`
-rows"): the system domain's, from which the package process reads image
-packages' headers
+rows"): the system domain's, `ro`, from which the package process reads
+image packages' headers
 ([design-packaging.md](design-packaging.md#boot-and-recovery)), and the
-app template's, from which an app's session mounts its package.
+app template's, `rx`, from which an app's session mounts its package at
+`/app`. The `system` service has no place in `erx_ns`'s table of mount
+points, and a facet's mount refuses a facet that table does not name
+([design-files.md](design-files.md#building-binding-and-mounting)), so
+no code of a session reaches the tree by path, and a session reads it
+only through its one `app` mount.
 
 Nothing the directory says is believed past the storage domain. A
-hostile storage domain, or a crafted system partition that took it over,
-can list a file under another file's name, list one that is not there,
+hostile storage domain can list a file under another file's name, list
+one that is not there,
 hide one, or serve bytes that are not the file's. Every change is caught
 by a reader: the system domain's file check authenticates each image
 package's header against the SHA-256 its `package` row records, so a
@@ -1681,7 +1703,11 @@ writes leaves a spare whose manifest window holds what it held before,
 an earlier manifest or zeros, while the check of the spare covers both
 partitions' hashes, so the spare fails its check until an install has
 written both partitions and then the manifest; the committed slot was
-never written and still boots (U1, U3, U5). The storage domain serves
+never written and still boots (U1, U3, U5). The system partition's
+image carries its hash tree, and the manifest the update writes into the
+boot partition records the image's length and the tree's layout and
+root hash ([The `system` tree](#the-system-tree)), so the manifest
+pins the system partition as it pins the boot image. The storage domain serves
 the booted slot's system partition and the slot writer writes only the
 other slot's, so no write reaches a partition while it is served.
 
@@ -1723,7 +1749,8 @@ without one, the harness's deadline catches a hung kernel under QEMU. A
 fault of the system domain during a trial is a machine reset like any
 other, and the reset boots the committed slot. A trial is **healthy** when
 the slot it runs from passes its check against its manifest, the system
-release is ready, its health checks pass, and the update path itself
+partition's image opens in `erx_verity` against the root hash that
+manifest records, the system release is ready, its health checks pass, and the update path itself
 works: the slot writer answers and the update service reaches its source,
 so a committed system can always be updated again. Read-only health checks
 do not establish that a release's write path works: the release's
@@ -1976,13 +2003,15 @@ it takes.
 ## Security
 
 Every byte from a medium is untrusted, and so is every update until its
-signature checks. Every block of a package or a release is checked
-against its tree in the domain that consumes it (E1); file system images,
-the system partition's own directory among them, are parsed only in the
-storage domain over their own partition, with bounds checks and fuzz
-targets (PW1), so a hostile or crafted system partition can make the
-`system` tree withhold or misname a file, never change what a reader
-accepts ([The `system` tree](#the-system-tree)); the partition table is parsed by the driver's Erlang partition
+signature checks. Every block of a package's image is checked against
+its tree in the domain that consumes it, and every block of the system
+partition against the tree whose root the booted boot image's manifest
+records, in the storage domain that serves it, before either reader
+parses the block (E1), so a crafted system partition answers `eio`
+([The `system` tree](#the-system-tree)). The file system images parsed
+as untrusted input, the data partition's, FAT's and the vault's, are
+parsed only in the storage domain over their own partition, with bounds
+checks and fuzz targets (PW1); the partition table is parsed by the driver's Erlang partition
 process the same way. The parsers and the driver are Erlang, whose code
 cannot write outside its own heap, so a parsing bug fails a process
 instead of corrupting memory; the C that remains is the device shim

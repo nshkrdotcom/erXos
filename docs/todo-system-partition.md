@@ -39,10 +39,13 @@ that proves the code under test ran.
   layout and root hash of its boot record; the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
   tree larger than the partition, the manifest recording the image's
-  length and the tree's layout and root hash for the slot
-  (`abi/manifest.txt`), the system domain writing them into the serving
-  domain's boot record, and the update writing the tree and the manifest
-  with the partition; `Erx::ErofsReads` rules that the reader reaches
+  length and the tree's offset, length, salt and root hash for the slot
+  (a `system_image` layout of `abi/manifest.txt`, fields `image_length`,
+  `tree_offset`, `tree_length`, `salt` and `root_hash`, named by a
+  header field `system_image`), the domain library writing them as
+  `-erx_record system_image` into the arguments of the `system` window's
+  holder alone (design-stopgap.md, The booted slot), and the update
+  writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
   `erx_storage_system` open an image in it; the
   `system` service in `abi/services`, named `system_service` in
@@ -59,19 +62,24 @@ that proves the code under test ran.
   `Source` `app` (the place and layout of the app's record) or
   `{header, Path}` (only for a file reached through the `apps` grant),
   no form taking a layout, `erx_ns`'s process owning the fid, and the
-  mount's rights at most those of the grant its fid came through, so
-  `rx` only through the app template's `rx` `packages` and `system`
-  grants; `erx_ns.erl` has only `{erofs, Window}`. Test: the package
+  mount's rights `ro` or `rx` (`rw` refused with `einval`), `rx` only
+  through an `rx` grant, so only through the app template's `rx`
+  `packages` and `system` grants; `erx_ns:mount({facet, Name}, ...)`
+  refusing with `eacces` a facet the table of mount points does not name;
+  `erx_ns.erl` has only `{erofs, Window}`. Test: the package
   mounts' host test of design-packaging.md; seeded: a mount that takes
-  its rights from its options, which mounts a file of `/apps` `rx`, and a
+  its rights from its options, which mounts a file of `/apps` `rx`; a
+  mount bounded only by its grant's rights, which mounts it `rw`; a
   `header` mount judged by the path rather than the fid's grant, which
-  mounts a session-written `/tmp` file once `/tmp` is bound at `/apps`.
+  mounts a session-written `/tmp` file once `/tmp` is bound at `/apps`;
+  and a facet's mount that skips the table, which mounts `packages` `rx`
+  at `/p` and runs an upload's `tmp.K`.
 * [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
   `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
   `place(system, ..)`, `erx_principal`): the packer writes each image package
   to `apps/NAME.app` in the slot's system partition; the package process
   reads image packages' headers through the `system` grant; the app's
-  record names `/system/NAME.app`. Test: `ls /apps` on a kiosk image
+  record names `NAME.app` on the `system` grant. Test: `ls /apps` on a kiosk image
   shows the image's package, read-only; seeded: the package left in the
   boot image, which the packer check below must refuse.
 * [High] build, the boot image rule (`tools/lib/erx/production_image.rb`):
@@ -90,7 +98,8 @@ that proves the code under test ran.
   packages listed at `/apps/NAME.app`, read-only, a create of an image
   package's name answering `erofs`; an installed package whose name a
   system update gave to the image shadowed, kept on the data partition,
-  listed as `.NAME.app`, shown `shadowed` at `/proc/packages`, removable
+  listed as `.NAME.app`, shown `shadowed` at `[packages, Name, shadowed]`
+  of `/proc/packages`, removable
   there, and its data purged through `remove_app` with every other
   signer's of the name but `image`; nothing written on a trial boot
   ([design-packaging.md](design-packaging.md#boot-and-recovery)). Test: the

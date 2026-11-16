@@ -1206,9 +1206,14 @@ The filler:
 
 1. **Opens** the file through the program's namespace on every request,
    whatever the cache holds, with `lopen` for reading, after the
-   handler's **image check** for `code`: the grant the path resolved
-   through must carry `rx`. It takes the key from that grant and that
-   fid's `getattr`.
+   handler's **image check** for `code`: the namespace entry the path
+   resolved through must carry `rx`. An entry carries at most what its
+   provider allows, a grant's entry at most the grant's rights and an
+   EROFS mount `rx` only through an `rx` grant
+   ([design-files.md](design-files.md#building-binding-and-mounting)),
+   and a bind or a program's narrowed namespace only lowers it. It
+   takes the key from the grant beneath that entry and the opened fid's
+   `getattr`.
    So the cache never answers for a grant: a
    program whose grant cannot open the file for its use gets the open's
    error, `EACCES` for code through an `ro` grant, even when another

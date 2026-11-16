@@ -343,7 +343,8 @@ domain's node name and the system node's, its `args` and `env`, and the words th
 the row's own: `-erx_record build ID` with the boot image's build identifier, as the root's own page carries it, so
 every domain names the same build; one record per device it was given that has one, `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
 MEM_SIZE CLOCK COHERENT MAC`, the same record the root writes into the system domain's page for each device of a kind it holds ([Device records](#device-records)), or, for a framebuffer the root placed, `-erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT` ([design-device-tree.md](design-device-tree.md#facts-into-records)), and, when it holds a
-block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it ([The booted
+block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it, and, when the
+manifest's `system` window row names it, `-erx_record system_image` ([The booted
 slot](#the-booted-slot)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
 its unit shares lie in that device's window, and a line it shares with one is that device's IRQ object
 ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). PATH is the device-tree path of its manifest row, the name its driver gives it (`erx_device_record` returns it as `path`), a node path of at most `device_path_max` bytes (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the root's reader and the domain library's view refuse any other path (`erx_boot_device_path_valid`), and `erx_device_record` any other PATH word, so a name a driver shows holds no control or escape, and reaches a display only through that sink's escaping function; WINDOW_H, LINE_H and MEM_H are the installed objects' values in the holder's own handle
@@ -1834,6 +1835,12 @@ serves the window as the `system` tree, with the read-only `erx_fs`
 backend over `erx_erofs`, as on erXos's kernel
 ([design-storage.md](design-storage.md#the-system-tree)), and every other
 domain reaches its files through a grant. The driver reads no manifest.
+To that holder alone the domain library adds one record more, from the
+manifest's `system_image` fields, `-erx_record system_image LEN
+TREE_OFF TREE_LEN SALT ROOT`: the image's length and the tree's offset
+and length in bytes, in decimal, and the tree's salt and root hash in
+lowercase hex, with which `erx_storage_system` opens the image in
+`erx_verity` (E1 of [design-storage.md](design-storage.md#invariants)).
 
 ### The console
 
