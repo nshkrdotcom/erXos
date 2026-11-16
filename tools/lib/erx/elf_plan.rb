@@ -10,7 +10,8 @@ module Erx
   # The C planner alone interprets executable headers. This boundary checks the
   # shape and extents of its reply before Ruby copies any executable bytes.
   class ElfPlanner
-    FIELDS = %w[abi_version virtual_origin fixed_base span entry phdr_offset output_size flags phnum base_alignment loads].freeze
+    FIELDS = %w[abi_version virtual_origin fixed_base span entry phdr_offset output_size relocation_offset
+                relocation_count flags phnum base_alignment loads].freeze
     LOAD_FIELDS = %w[source_offset file_offset mem_offset file_size mem_size prot flags].freeze
 
     def initialize(helper:, runner:, codec:)

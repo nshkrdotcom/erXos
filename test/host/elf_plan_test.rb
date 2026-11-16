@@ -70,12 +70,12 @@ class ElfPlanTest < Minitest::Test
   end
 
   def test_dynamic_alignment_preserves_leading_residue
-    bytes = ElfFixture.valid(dynamic: true, origin: 0x11000,
+    bytes = ElfFixture.valid(dynamic: true, origin: 0x1000,
                              source_offset: 4096, alignment: 65536)
     status, output = plan(bytes)
     assert_equal 0, status, output
     value = Erx::JsonInput.parse(output)
-    assert_equal 0x10000, value.fetch('virtual_origin')
+    assert_equal 0, value.fetch('virtual_origin')
     assert_equal 65536, value.fetch('base_alignment')
     assert_equal 4096, value.fetch('loads').first.fetch('mem_offset')
     assert_equal 8192, value.fetch('span')
@@ -145,5 +145,78 @@ class ElfPlanTest < Minitest::Test
     bytes = ElfFixture.valid
     ElfFixture.integer(bytes, 24, 0x12000)
     reject(bytes, 'entry_not_executable')
+  end
+
+  # A static position-independent executable: the plan names its relocation table, whose
+  # entries the fuzz target reads back as offsets and addends inside a writable segment.
+  def test_position_independent_relocations_are_planned
+    status, output = plan(ElfFixture.pie)
+    assert_equal 0, status, output
+    value = Erx::JsonInput.parse(output)
+    assert_equal 0, value.fetch('flags')
+    assert_equal 12288, value.fetch('span')
+    assert_equal ElfFixture::RELA_OFFSET, value.fetch('relocation_offset')
+    assert_equal 3, value.fetch('relocation_count')
+  end
+
+  def test_fixed_executable_keeps_its_plan_without_relocations
+    status, output = plan(ElfFixture.valid)
+    assert_equal 0, status, output
+    value = Erx::JsonInput.parse(output)
+    assert_equal 1, value.fetch('flags')
+    assert_equal 0, value.fetch('relocation_count')
+  end
+
+  def test_relocation_tables_other_than_one_rela_table_are_refused
+    rela = [[7, ElfFixture::RELA_OFFSET], [8, 72], [9, 24]]
+    [17, 23, 36].each do |tag|
+      reject(ElfFixture.pie(tags: [*rela, [tag, ElfFixture::RELA_OFFSET]]), 'relocation_kind')
+    end
+    reject(ElfFixture.pie(tags: [*rela, [7, ElfFixture::RELA_OFFSET]]), 'relocation_table')
+    reject(ElfFixture.pie(tags: [[7, ElfFixture::RELA_OFFSET], [8, 72]]), 'relocation_table')
+    reject(ElfFixture.pie(tags: [[8, 72], [9, 24]]), 'relocation_table')
+    reject(ElfFixture.pie(tags: [[7, ElfFixture::RELA_OFFSET], [8, 72], [9, 16]]), 'relocation_table')
+    reject(ElfFixture.pie(tags: [[7, ElfFixture::RELA_OFFSET], [8, 70], [9, 24]]), 'relocation_table')
+  end
+
+  def test_symbol_and_other_relocation_types_are_refused
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(4352, 0, symbol: 1)]), 'relocation_symbol')
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(4352, 0, type: 257)]), 'relocation_type')
+  end
+
+  def test_relocation_targets_lie_aligned_inside_a_writable_segment
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(1024, 0)]), 'relocation_target')
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(4356, 0)]), 'relocation_target')
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(12288, 0)]), 'relocation_target')
+    reject(ElfFixture.pie(relocations: [ElfFixture.relocation(0xfffffffffffffff8, 0)]), 'relocation_target')
+  end
+
+  def test_relocation_table_must_lie_in_file_bytes_without_overflow
+    huge = 24 * (1 << 59)
+    reject(ElfFixture.pie(tags: [[7, ElfFixture::RELA_OFFSET], [8, huge], [9, 24]]), 'relocation_extent')
+    reject(ElfFixture.pie(tags: [[7, 0xfffffffffffffff0], [8, 24], [9, 24]]), 'relocation_extent')
+    # The table's bytes must be file bytes: the read-write segment's zero page holds none.
+    reject(ElfFixture.pie(tags: [[7, 8192], [8, 24], [9, 24]]), 'relocation_extent')
+  end
+
+  # A static position-independent executable is linked at 0, so its relocations' ELF
+  # addresses are offsets within its span.
+  def test_position_independent_origin_must_be_zero
+    reject(ElfFixture.valid(dynamic: true, origin: 0x10000), 'pie_origin')
+  end
+
+  # A read-only or executable segment whose memory outruns its file bytes has no
+  # correct mapping from the object: its zero tail would show file bytes.
+  def test_position_independent_nonwritable_zero_tail_is_refused
+    bytes = ElfFixture.pie
+    ElfFixture.integer(bytes, 64 + 40, 8192)
+    reject(bytes, 'load_zero_tail')
+  end
+
+  # A fixed loader applies no relocation, so a fixed file carrying a table is refused.
+  def test_fixed_executable_with_relocations_is_refused
+    bytes = ElfFixture.pie
+    ElfFixture.integer(bytes, 16, 2, width: 2)
+    reject(bytes, 'fixed_relocations')
   end
 end

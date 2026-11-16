@@ -10,6 +10,22 @@
 #include "erx/abi_reader.h"
 #include "erx/elf_plan.h"
 
+/*
+ * The dynamic section's DT_RELA, DT_RELASZ and DT_RELAENT values, each read
+ * once: seen holds the bit of each tag read.
+ */
+typedef struct erx_elf_rela_tags {
+	uint64_t	address;
+	uint64_t	size;
+	uint64_t	entry;
+	uint32_t	seen;
+} erx_elf_rela_tags_t;
+
+#define	ERX_ELF_RELA_ADDRESS	1u
+#define	ERX_ELF_RELA_SIZE	2u
+#define	ERX_ELF_RELA_ENTRY	4u
+#define	ERX_ELF_RELA_ALL	7u
+
 static bool erx_elf_fail(erx_elf_error_t *, const char *, uint64_t);
 static bool erx_elf_header(const uint8_t *, size_t, erx_elf64_ehdr_t *);
 static bool erx_elf_kernel_load(erx_elf_kernel_plan_t *,
@@ -22,8 +38,16 @@ static bool erx_elf_round(uint64_t, uint64_t, uint64_t *);
 static bool erx_elf_equal(const uint8_t *, const uint8_t *, size_t);
 static bool erx_elf_note(const uint8_t *, size_t, uint64_t,
     uint32_t *, erx_elf_error_t *);
+static bool erx_elf_rela_tag(erx_elf_rela_tags_t *, const erx_elf64_dyn_t *);
 static bool erx_elf_dynamic(const uint8_t *, size_t, uint64_t,
-    erx_elf_error_t *);
+    erx_elf_rela_tags_t *, erx_elf_error_t *);
+static bool erx_elf_file_view(const erx_elf_plan_t *, uint64_t, uint64_t,
+    uint64_t *);
+static bool erx_elf_writable(const erx_elf_plan_t *, uint64_t, uint64_t);
+static bool erx_elf_relocations(erx_elf_plan_t *, const uint8_t *,
+    const erx_elf_rela_tags_t *, erx_elf_error_t *);
+static erx_elf64_rela_t erx_elf_rela(const uint8_t *, const erx_elf_plan_t *,
+    uint64_t);
 static bool erx_elf_load(erx_elf_plan_t *, const erx_elf64_phdr_t *,
     size_t, erx_elf_error_t *);
 static bool erx_elf_phdr(const uint8_t *, size_t, const erx_elf64_ehdr_t *,
@@ -136,9 +160,39 @@ erx_elf_note(const uint8_t *bytes, size_t length, uint64_t file_offset,
 	return (true);
 }
 
+/* Records a DT_RELA, DT_RELASZ or DT_RELAENT value; false when one repeats. */
+static bool
+erx_elf_rela_tag(erx_elf_rela_tags_t *tags, const erx_elf64_dyn_t *dynamic)
+{
+	uint64_t *field;
+	uint32_t bit;
+
+	if (dynamic->d_tag == ERX_ELF_DT_RELA) {
+		field = &tags->address;
+		bit = ERX_ELF_RELA_ADDRESS;
+	} else if (dynamic->d_tag == ERX_ELF_DT_RELASZ) {
+		field = &tags->size;
+		bit = ERX_ELF_RELA_SIZE;
+	} else if (dynamic->d_tag == ERX_ELF_DT_RELAENT) {
+		field = &tags->entry;
+		bit = ERX_ELF_RELA_ENTRY;
+	} else {
+		return (true);
+	}
+	if ((tags->seen & bit) != 0)
+		return (false);
+	tags->seen |= bit;
+	*field = dynamic->d_value;
+	return (true);
+}
+
+/*
+ * The dynamic section up to DT_NULL: no dependency, no text relocation, and
+ * no relocation table but one DT_RELA table, whose tags land in tags.
+ */
 static bool
 erx_elf_dynamic(const uint8_t *bytes, size_t length, uint64_t file_offset,
-    erx_elf_error_t *error)
+    erx_elf_rela_tags_t *tags, erx_elf_error_t *error)
 {
 	erx_elf64_dyn_t dynamic;
 
@@ -156,8 +210,119 @@ erx_elf_dynamic(const uint8_t *bytes, size_t length, uint64_t file_offset,
 		    (dynamic.d_tag == ERX_ELF_DT_FLAGS &&
 		    (dynamic.d_value & ERX_ELF_DF_TEXTREL) != 0))
 			return (erx_elf_fail(error, "text_relocation", file_offset + offset));
+		if (dynamic.d_tag == ERX_ELF_DT_REL ||
+		    dynamic.d_tag == ERX_ELF_DT_RELR ||
+		    dynamic.d_tag == ERX_ELF_DT_JMPREL)
+			return (erx_elf_fail(error, "relocation_kind", file_offset + offset));
+		if (!erx_elf_rela_tag(tags, &dynamic))
+			return (erx_elf_fail(error, "relocation_table", file_offset + offset));
 	}
 	return (erx_elf_fail(error, "dynamic_terminator", file_offset));
+}
+
+/*
+ * The file offset of size bytes at a span offset, when they lie in one
+ * segment's file bytes.
+ */
+static bool
+erx_elf_file_view(const erx_elf_plan_t *plan, uint64_t address, uint64_t size,
+    uint64_t *offset)
+{
+	const erx_elf_load_t *load;
+
+	for (uint32_t index = 0; index < plan->nloads; index++) {
+		load = &plan->loads[index];
+		if (address >= load->segment.mem_offset &&
+		    size <= load->segment.file_size &&
+		    address - load->segment.mem_offset <=
+		    load->segment.file_size - size) {
+			*offset = load->source_offset +
+			    (address - load->segment.mem_offset);
+			return (true);
+		}
+	}
+	return (false);
+}
+
+/* Whether size bytes at a span offset lie inside one writable segment. */
+static bool
+erx_elf_writable(const erx_elf_plan_t *plan, uint64_t address, uint64_t size)
+{
+	const erx_image_segment_t *segment;
+
+	for (uint32_t index = 0; index < plan->nloads; index++) {
+		segment = &plan->loads[index].segment;
+		if (segment->prot == ERX_PROT_RW &&
+		    address >= segment->mem_offset &&
+		    size <= segment->mem_size &&
+		    address - segment->mem_offset <= segment->mem_size - size)
+			return (true);
+	}
+	return (false);
+}
+
+/* Entry index of a plan's relocation table, which the plan proved in the file. */
+static erx_elf64_rela_t
+erx_elf_rela(const uint8_t *bytes, const erx_elf_plan_t *plan, uint64_t index)
+{
+	erx_elf64_rela_t rela;
+
+	(void)erx_elf64_rela_decode(bytes + (size_t)(plan->relocation_offset +
+	    index * ERX_ELF64_RELA_SIZE), ERX_ELF64_RELA_SIZE, &rela);
+	return (rela);
+}
+
+/*
+ * The relocation table of a placed plan, checked whole before any entry is
+ * applied, for a file linked at 0, so ELF addresses are span offsets: one
+ * DT_RELA table of whole entries in one segment's file bytes,
+ * each the architecture's relative relocation, naming no symbol, whose
+ * eight-byte target is aligned and inside one writable segment. The table
+ * lies in the file, so its entries number at most the file's length over
+ * the entry size.
+ */
+static bool
+erx_elf_relocations(erx_elf_plan_t *plan, const uint8_t *bytes,
+    const erx_elf_rela_tags_t *tags, erx_elf_error_t *error)
+{
+	erx_elf64_rela_t rela;
+	uint64_t offset;
+
+	if (tags->seen == 0)
+		return (true);
+	if (tags->seen != ERX_ELF_RELA_ALL ||
+	    tags->entry != ERX_ELF64_RELA_SIZE ||
+	    tags->size % ERX_ELF64_RELA_SIZE != 0)
+		return (erx_elf_fail(error, "relocation_table", tags->address));
+	if (tags->address < plan->virtual_origin ||
+	    !erx_elf_file_view(plan, tags->address - plan->virtual_origin,
+	    tags->size, &offset))
+		return (erx_elf_fail(error, "relocation_extent", tags->address));
+	plan->relocation_offset = offset;
+	plan->relocation_count = tags->size / ERX_ELF64_RELA_SIZE;
+	for (uint64_t index = 0; index < plan->relocation_count; index++) {
+		rela = erx_elf_rela(bytes, plan, index);
+		offset = plan->relocation_offset + index * ERX_ELF64_RELA_SIZE;
+		if ((rela.r_info & UINT32_MAX) != ERX_ARCH_ELF_RELATIVE)
+			return (erx_elf_fail(error, "relocation_type", offset));
+		if ((rela.r_info >> 32) != 0)
+			return (erx_elf_fail(error, "relocation_symbol", offset));
+		if (rela.r_offset % sizeof(uint64_t) != 0 ||
+		    !erx_elf_writable(plan, rela.r_offset, sizeof(uint64_t)))
+			return (erx_elf_fail(error, "relocation_target", offset));
+	}
+	return (true);
+}
+
+erx_elf_relocation_t
+erx_elf_relocation(const uint8_t *bytes, const erx_elf_plan_t *plan,
+    uint64_t index)
+{
+	erx_elf64_rela_t rela;
+
+	rela = erx_elf_rela(bytes, plan, index);
+	return ((erx_elf_relocation_t){
+	    .offset = rela.r_offset, .addend = (uint64_t)rela.r_addend });
 }
 
 static bool
@@ -324,7 +489,10 @@ erx_elf_place(erx_elf_plan_t *plan, const erx_elf64_ehdr_t *header,
 		plan->flags = ERX_IMAGE_FIXED;
 		plan->base_alignment = ERX_PAGE_SIZE;
 	} else {
+		/* Linked at 0, so its relocations name span offsets. */
 		origin &= ~((uint64_t)plan->base_alignment - 1);
+		if (origin != 0)
+			return (erx_elf_fail(error, "pie_origin", origin));
 	}
 	plan->virtual_origin = origin;
 	previous = 0;
@@ -332,6 +500,14 @@ erx_elf_place(erx_elf_plan_t *plan, const erx_elf64_ehdr_t *header,
 	entry_found = false;
 	for (uint32_t index = 0; index < plan->nloads; index++) {
 		load = &plan->loads[index];
+		/*
+		 * A position-independent segment is mapped from the object, so only
+		 * a writable one, a copy-on-write child, can zero a tail.
+		 */
+		if (header->e_type == ERX_ELF_ET_DYN &&
+		    load->segment.prot != ERX_PROT_RW &&
+		    load->segment.file_size != load->segment.mem_size)
+			return (erx_elf_fail(error, "load_zero_tail", load->source_offset));
 		load->segment.mem_offset -= origin;
 		if (__builtin_add_overflow(load->segment.mem_offset,
 		    load->segment.mem_size, &end) ||
@@ -407,6 +583,7 @@ erx_elf_plan(const uint8_t *bytes, size_t length, uint64_t output_budget,
 	erx_elf64_phdr_t program;
 	erx_elf64_phdr_t phdr_hint;
 	erx_elf64_phdr_t dynamic, tls;
+	erx_elf_rela_tags_t rela_tags;
 	uint64_t metadata_work;
 	uint32_t notes;
 	bool has_phdr_hint, has_dynamic, has_tls;
@@ -420,6 +597,7 @@ erx_elf_plan(const uint8_t *bytes, size_t length, uint64_t output_budget,
 	has_phdr_hint = false;
 	has_dynamic = false;
 	has_tls = false;
+	rela_tags = (erx_elf_rela_tags_t){0};
 	metadata_work = 0;
 	for (uint16_t index = 0; index < header.e_phnum; index++) {
 		if (!erx_elf_phdr(bytes, length, &header, index, &program))
@@ -465,17 +643,22 @@ erx_elf_plan(const uint8_t *bytes, size_t length, uint64_t output_budget,
 				return (false);
 			if (program.p_type == ERX_ELF_PT_DYNAMIC &&
 			    !erx_elf_dynamic(bytes + (size_t)program.p_offset,
-			    (size_t)program.p_filesz, program.p_offset, error))
+			    (size_t)program.p_filesz, program.p_offset, &rela_tags,
+			    error))
 				return (false);
 		}
 	}
+	/* Only a position-independent file, linked at 0, has relocations. */
+	if (header.e_type == ERX_ELF_ET_EXEC && rela_tags.seen != 0)
+		return (erx_elf_fail(error, "fixed_relocations", dynamic.p_offset));
 	if (notes != 1)
 		return (erx_elf_fail(error, "missing_abi_note", 0));
 	if (!erx_elf_place(&plan, &header,
 	    has_phdr_hint ? &phdr_hint : NULL, output_budget, error))
 		return (false);
 	if ((has_dynamic && !erx_elf_metadata_mapped(&plan, &dynamic, false, error)) ||
-	    (has_tls && !erx_elf_metadata_mapped(&plan, &tls, true, error)))
+	    (has_tls && !erx_elf_metadata_mapped(&plan, &tls, true, error)) ||
+	    !erx_elf_relocations(&plan, bytes, &rela_tags, error))
 		return (false);
 	*result = plan;
 	return (true);

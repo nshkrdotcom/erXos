@@ -15,13 +15,20 @@
 typedef struct erx_elf_load erx_elf_load_t;
 typedef struct erx_elf_plan erx_elf_plan_t;
 typedef struct erx_elf_error erx_elf_error_t;
+typedef struct erx_elf_relocation erx_elf_relocation_t;
 
 struct erx_elf_load {
 	uint64_t	 source_offset;
 	erx_image_segment_t segment;
 };
 
-/* A complete value plan; source bytes stay immutable until it is applied. */
+/*
+ * A complete value plan; source bytes stay immutable until it is applied.
+ * Offsets are within the span, which starts at the placed base. The
+ * relocation table is the dynamic section's one DT_RELA table, checked whole:
+ * relocation_count entries at relocation_offset of the source bytes, each
+ * read with erx_elf_relocation.
+ */
 struct erx_elf_plan {
 	uint64_t	 virtual_origin;
 	uint64_t	 fixed_base;
@@ -29,6 +36,8 @@ struct erx_elf_plan {
 	uint64_t	 entry;
 	uint64_t	 phdr_offset;
 	uint64_t	 output_size;
+	uint64_t	 relocation_offset;
+	uint64_t	 relocation_count;
 	uint32_t	 flags;
 	uint32_t	 phnum;
 	uint32_t	 base_alignment;
@@ -45,13 +54,32 @@ bool erx_elf_plan(const uint8_t *, size_t, uint64_t,
     erx_elf_plan_t *, erx_elf_error_t *);
 
 /*
+ * One relative relocation of a plan: the loader writes base + addend, modulo
+ * 2^64, into the eight bytes at base + offset. The plan proved the eight bytes
+ * aligned and inside one writable segment.
+ */
+struct erx_elf_relocation {
+	uint64_t	offset;
+	uint64_t	addend;
+};
+
+/*
+ * Relocation index (below plan->relocation_count) of a plan, read from the
+ * same bytes erx_elf_plan accepted, which must stay unchanged, as a sealed
+ * code object does: the entry is not checked again, so other bytes or a
+ * larger index read and write out of bounds. A fixed plan has none.
+ */
+erx_elf_relocation_t erx_elf_relocation(const uint8_t *,
+    const erx_elf_plan_t *, uint64_t);
+
+/*
  * The plan of an image entry of the boot archive (liberx/image_plan.c): its
  * erx_image_manifest page and the segments after it, as the pack tool wrote
  * them from erx_elf_plan's plan. Each load's source_offset is its segment's
  * file_offset in the entry's bytes; virtual_origin is 0 and output_size the
  * entry's length. The loads, span, base and entry hold erx_elf_plan's
- * invariants; the plan carries no program-header table, so phdr_offset and
- * phnum are 0.
+ * invariants; the plan carries no program-header table and no relocation
+ * table, so phdr_offset, phnum and relocation_count are 0.
  */
 bool erx_image_plan(const uint8_t *, size_t, erx_elf_plan_t *,
     erx_elf_error_t *);

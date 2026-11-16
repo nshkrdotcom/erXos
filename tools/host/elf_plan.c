@@ -22,9 +22,11 @@ erx_print_plan(const erx_elf_plan_t *plan)
 	printf("{\"abi_version\":%u,\"virtual_origin\":%" PRIu64 ",\"fixed_base\":%" PRIu64
 	    ",\"span\":%" PRIu64 ",\"entry\":%" PRIu64
 	    ",\"phdr_offset\":%" PRIu64 ",\"output_size\":%" PRIu64
+	    ",\"relocation_offset\":%" PRIu64 ",\"relocation_count\":%" PRIu64
 	    ",\"flags\":%u,\"phnum\":%u,\"base_alignment\":%u,\"loads\":[",
 	    ERX_ABI_VERSION, plan->virtual_origin, plan->fixed_base, plan->span, plan->entry,
-	    plan->phdr_offset, plan->output_size, plan->flags, plan->phnum,
+	    plan->phdr_offset, plan->output_size, plan->relocation_offset,
+	    plan->relocation_count, plan->flags, plan->phnum,
 	    plan->base_alignment);
 	for (uint32_t index = 0; index < plan->nloads; index++) {
 		load = &plan->loads[index];
