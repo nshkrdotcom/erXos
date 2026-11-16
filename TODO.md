@@ -2058,6 +2058,11 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Low] stopgap Fiasco, bootstrap (`fiasco/bootstrap/server/src/platform/arm_virt.cc`): `init`
+  never calls `query_psci_method()`, so `reboot_psci` uses the default `Psci_smc`
+  (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
+  virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
+
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
@@ -8002,6 +8007,31 @@ document's "residual risks accepted" paragraph.
   filter in the client's domain that rewrites such reports to names, classes and arities, as the WiFi
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
+
+* [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
+  release kernel is configured without JDB and the kernel's console input, so a panic reboots
+  instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
+  but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
+  the release image build must take `Fiasco#build_release_kernel`'s kernel and extend the
+  provenance audit (`fiasco_provenance.rb`, which reads `build/fiasco/kernel`) and the build
+  memo to it. A panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
+  checks of `erx_handoff.cpp` among them, finds no reset method and loops forever
+  (`reset-arm-gen.cpp`). The kernel picks the PSCI conduit at run time from the device tree
+  (`CONFIG_ARM_PSCI_DYN`; QEMU virt says hvc, the Pi 4 SMC through BL31), and the device tree
+  is readable only after `Kip_init`, while the banner's handoff check runs in stage1. The fix
+  is to run `Kip_init` and `Dt::init` ahead of `Kmem_alloc::init` in stage2, fold the banner
+  and `check_descriptors` into one handoff step right after `Dt::init`, and have
+  `platform_reset` run Psci's own probe (without the ACPI fallback) when PSCI is not yet
+  detected; Fiasco's own stage1 and `Kip_init` panics stay a residual. The test boots a
+  release image whose handoff record is refused. The reboot rests on reading `kernel_panic.cc`, `thread.cpp`,
+  `terminate.cpp` and `reset-arm-gen.cpp` and on the configuration check; no release kernel
+  has panicked under QEMU. The test that settles it boots a release image whose kernel panics
+  after `Psci::init` with `-no-reboot` and expects QEMU to exit after the panic line, and one
+  whose handoff fails, once the early reset is fixed. Still in a release kernel and each a
+  question for the release: `CONFIG_RT_DBG`, which adds object naming and the kernel memory
+  statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
+  kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
+  access to the performance counters, which Fiasco's Kconfig marks for debugging only.
 
 ## Planned features
 
