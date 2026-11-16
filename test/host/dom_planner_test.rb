@@ -761,7 +761,7 @@ class DomPlannerTest < Minitest::Test
     # The services, in name order, each with its server's index in boot order (display 0,
     # network 1, storage 2, web 3) or none for the system domain: data, of files, display,
     # of windows, inspect, log, machine, of files, net, network_ctl, packages, of files,
-    # start, of files, storage_ctl and web.
+    # start, of files, storage_ctl, system, of files, and web.
     assert_equal ["service 0 name=data server=2 interface=#{interface.call('files')}",
                   "service 1 name=display server=0 interface=#{interface.call('windows')}",
                   "service 2 name=inspect server=none interface=#{interface.call('inspect')}",
@@ -772,7 +772,8 @@ class DomPlannerTest < Minitest::Test
                   "service 7 name=packages server=2 interface=#{interface.call('files')}",
                   "service 8 name=start server=none interface=#{interface.call('files')}",
                   "service 9 name=storage_ctl server=2 interface=#{interface.call('driver_control')}",
-                  "service 10 name=web server=3 interface=#{interface.call('web')}"],
+                  "service 10 name=system server=2 interface=#{interface.call('files')}",
+                  "service 11 name=web server=3 interface=#{interface.call('web')}"],
                  lines.grep(/\Aservice /)
   end
 
@@ -821,9 +822,11 @@ class DomPlannerTest < Minitest::Test
   # with its system window and system_image row taken out.
   def development_source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
 
+  # The source without the system window, and so without the system_image row and the
+  # system service its holder serves (property 19), which come and go with it.
   def without_system_image(source)
-    ManifestContextFixture.substitute(ManifestContextFixture.substitute(source, /^window system\n(?:  .*\n)*/, ''),
-                                      /^system_image\n  input @artifact.release\n/, '')
+    [/^window system\n(?:  .*\n)*/, /^system_image\n  input @artifact.release\n/, /^service system\n(?:  .*\n)*/]
+      .reduce(source) { |text, record| ManifestContextFixture.substitute(text, record, '') }
   end
 
   def admit_development(source)

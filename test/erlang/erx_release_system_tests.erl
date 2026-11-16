@@ -17,12 +17,13 @@ terms() ->
     {ok, Terms} = file:consult(filename:join(os:getenv("ERX_RELEASE_SYSTEM"), "system.terms")),
     maps:from_list(Terms).
 
-%% The partition Name, mounted under the record.
+%% The partition Name, opened under the record and mounted.
 mount(Name) ->
     #{record := Words} = terms(),
     {ok, Layout} = erx_device_record:system_image([Words]),
     {ok, Bytes} = file:read_file(filename:join(os:getenv("ERX_RELEASE_SYSTEM"), Name ++ ".img")),
-    erx_erofs:mount(erx_erofs_tests:window(Bytes), Layout, fun(_) -> ok end).
+    {ok, Image} = erx_verity:open(erx_erofs_tests:window(Bytes), Layout),
+    erx_erofs:mount(Image, fun(_) -> ok end).
 
 %% Every file of the release reads back through the tree as the host file holds it.
 release_files_read_through_the_tree_test() ->
