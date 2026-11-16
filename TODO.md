@@ -143,8 +143,7 @@ it; git history is the record of completed work.
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
   `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  `{not_supported, program}` until then).
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then).
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
@@ -167,8 +166,7 @@ it; git history is the record of completed work.
   the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
   which `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
-  (`erx_app` ends with `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app`
-  script, which the runtime does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   `erx_principal:app_record()` and
   `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
@@ -7821,9 +7819,8 @@ document's "residual risks accepted" paragraph.
   for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
 
-* [High] `examples/dashboard` full kiosk, `ssl` and `inets` (otp/lib has neither; `tools/lib/erx/release_files.rb`'s
-  `app` script lists `asn1`, `crypto` and `public_key` only) and the trust store (no `cacerts.pem` in
-  `public_key`'s `priv`, no `{unix, erxos}` row in `pubkey_os_cacerts`): the image has neither, which blocks a
+* [High] `examples/dashboard` full kiosk, the trust store and `httpc`'s bounds: no `cacerts.pem` in
+  `public_key`'s `priv` and no `httpc_bound` edit (the two items under "HTTPS clients" above), which block a
   real fetch of the live quotes on the target ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
