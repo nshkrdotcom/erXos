@@ -327,7 +327,7 @@ at boot until the storage domain has installed its grant
 ([design-files.md](design-files.md#building-binding-and-mounting)), so
 does `/var/log`, as a file system whose disk is not there. A walk,
 `getattr`, `open` and `read` of a name reach the same file of the store,
-in the grant's file processes with `erx_fs`'s `helper` read mode
+in the reader's grant
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)), so a
 stalled medium holds up that reader alone. Bytes, sizes and offsets are
 the stored file's, so a reader seeks, `tail -f` follows a growing file

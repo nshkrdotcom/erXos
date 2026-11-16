@@ -20,7 +20,7 @@ and a `gen_server` would act on a `system` message from it. It takes:
   it for the grant, and when the grant ends it drops the area and ends
   the grant's windows;
 * calls of its own domain's processes, in `gen_server`'s call shape: the
-  tree's callbacks, which run in the grants and their file processes, and
+  tree's callbacks, which run in the grants, and
   attach/2, the screen's;
 * input/2's records, the `DOWN`s of its grants, holders, screen and
   input sources, its repeat timer, and the `EXIT`s of its window
@@ -730,7 +730,11 @@ clipboard_open(Flags) ->
         true -> keep
     end.
 
+%% A read of mouse or kbd waits for a record, so the window process is its keeper
+%% (docs/design-files.md, "Serving: the `erx_fs` behaviour", "Waiting requests").
 -doc false.
+read({file, _Id, Proc, File}, _Offset, Count, _Fs) when File =:= mouse; File =:= kbd ->
+    {wait, Proc, {read, File, Count}};
 read({file, _Id, Proc, File}, Offset, Count, _Fs) ->
     call(Proc, {read, File, Offset, Count});
 read(clipboard, Offset, Count, #{winfs := Winfs}) ->
@@ -753,6 +757,9 @@ clunk(_Handle, _Fs) ->
 -doc false.
 write({file, Id, _Proc, wctl}, Offset, Data, #{winfs := Winfs, client := Client}) ->
     written(call(Winfs, {wctl, Client, Id, Data}), Offset, Data);
+write({file, _Id, Proc, ctl}, Offset, Data, _Fs) ->
+    %% A present waits for the screen, so the window process keeps the write.
+    {wait, Proc, {write, ctl, Offset, Data}};
 write({file, _Id, Proc, File}, Offset, Data, _Fs) ->
     written(call(Proc, {write, File, Offset, Data}), Offset, Data);
 write(clipboard, Offset, Data, #{winfs := Winfs}) ->

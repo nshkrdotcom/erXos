@@ -834,7 +834,7 @@ open asks it, as a read of an open of it does ([Identity](#apps));
 neither touches the installed package. An `lopen` for reading reads, as
 any open does.
 
-**Reads.** The `apps` tree's file process for an open sends each read
+**Reads.** The `apps` tree's `read` callback, in the reader's grant, sends each read
 to `erx_pkg_io`, naming the qid path of the package the open recorded
 ([Identity](#apps)). `erx_pkg_io`, as it takes the read, answers `eio`
 and sends nothing unless its path table holds that path for the name;
@@ -970,7 +970,7 @@ its data on macOS and deleting a package keeps a user's files on
 FreeBSD, so a package of the same name and signer copied in again finds
 its data where it was. An administrator removes the data on purpose with
 a purge, `service NAME purge`, which the start service's `ctl` takes as
-`purge NAME`; that file's owner hands it to the package process and
+`purge NAME`; that write's callback, in the writer's grant, hands it to the package process and
 awaits the answer itself, outside the start table
 ([design-apps.md](design-apps.md#concurrency)). The package process
 carries it out with the storage service's `remove_app` request on the
@@ -1323,8 +1323,8 @@ takes one request at a time and finishes the one it has begun before it
 takes another, and refuses with `eio`, doing nothing, a request whose
 lifetime has ended, which it tells with `erlang:is_process_alive/1`,
 since `erx_pkg`, `erx_pkg_io`, the start service and the `apps` tree's
-file processes all run in the system domain's one runtime. A **copy
-handle**, which the `apps` tree's file process for a copy holds, is the
+grants all run in the system domain's one runtime. A **copy
+handle**, the handle of the `apps` tree's open of a copy, is the
 pair of a lifetime and a slot, so its writes and its close are requests
 of that lifetime, refused once it has ended.
 
@@ -1742,7 +1742,7 @@ The reason of every refusal goes to the log. Who holds `start`, and so
 **The `apps` tree**, in the system domain, takes `lcreate`, `lopen`, `write`,
 `clunk`, `read`, `getattr`, `readdir` and `unlinkat` as [`/apps`](#apps)
 says, with the same errnos. Its `clunk` answers the copy's verdict,
-which the file service passes back to the client once the file's owner
+which the file service passes back to the client once the grant
 has run it
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
 
@@ -1806,7 +1806,7 @@ authenticated layout or `header`.
 | the domain service | the app's session: the kept rows, and the app's record, with its package's place and layout, sent once the session's namespace is in place |
 | the principal service | `register_app/1`, which takes the committed package, called at a committed install or update and at recovery; `app_registry/0`, the registry admission reads; no app principal is unregistered within a boot |
 | the start service ([design-apps.md](design-apps.md#the-start-table)) | its tree at `/etc/start`, holding `ctl`; the package rows after the manifest's; `packages/2`, answered once the dropped apps' sessions have ended and refused for an ended lifetime; the merge's grants for an app from its admission; `purge` in its `ctl` |
-| the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the file's owner has run it, after every request sent before it; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
+| the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the grant has run it, after every request sent before it through the fid; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
 | the shell ([design-shell.md](design-shell.md#commands)) | `cp` opens its target itself, copies in pieces as its info report needs, and reports a failed close of the target as it reports a failed write; `mount FILE DIR`, the EROFS mount of a package file with the layout of its own header; `service NAME purge` |
 | the storage service ([design-storage.md](design-storage.md#interfaces)) | the `packages` tree: the data partition's directory and the slot's package image read-only; `apps/` and `tree apps`, rooted at `apps/NAME/SIGNER/`; `remove_app` on the durability facet |
 | the EROFS reader | `erx_verity` reading an image from one fid of a file, which `erx_ns`'s process opens and owns and every reading process of the session sends its reads on, at an offset, with a layout given, for `/app`, or with the layout of the header read through the same fid, for the shell's `mount`, as well as from a block window |
@@ -1828,14 +1828,14 @@ It does no file operation itself: every request on `packages` and every
 request when it is done, so a slow storage domain delays a close, a
 removal or a walk, `getattr` or read of `/apps`, each of which waits
 behind a slow checkpoint `erx_pkg_io` has begun, but not the package
-set's answers or the start table. The `apps` tree's file owner for a
-copy waits for the package process's answer before it answers the close,
-as any tree's owner runs a file's requests in turn
-([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). The
+set's answers or the start table. The `apps` tree's `clunk` of a copy
+waits, in the closing client's grant, for the package process's answer
+before the grant answers the close, as a callback waits for its tree's
+processes ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). The
 package process waits for the start table at each publication, and the
 table never waits for the package process, so the two never wait on each
-other: a purge is awaited by the start service's `ctl` file owner, not
-by the table, and the package process takes it in turn with its closes
+other: a purge is awaited by the `ctl` write's callback in the writer's
+grant, not by the table, and the package process takes it in turn with its closes
 and removals, after the publication of the one it is carrying out
 ([design-apps.md](design-apps.md#concurrency)).
 

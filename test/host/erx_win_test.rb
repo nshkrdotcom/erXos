@@ -17,18 +17,18 @@ require_relative '../../tools/lib/erx/memdraw_build'
 # (Erx::MemdrawBuild.nif). erx's registry, erx_area and erx_log are stand-ins written
 # here, the stand-in erx_area's leases returned by a process that watches the holder,
 # and erx_win's fids, which prim_file draws on erXos, come from a counter of the
-# emulator's. Then each seeded fault of the dirty list and of the draw connection,
-# applied to a copy of its module, must fail the case named for it.
+# emulator's. Then each seeded fault, applied to a copy of its module, must fail the
+# case named for it.
 class ErxWinTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
   OTP = File.join(ROOT, 'build/oracle/jit/install/lib/erlang')
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
-  INCLUDES = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include].map { |dir| File.join(ROOT, dir) }.freeze
+  INCLUDES = %w[otp/lib/kernel/include build/gen/erlang/apps/erx/include erlang/apps/erx_files/include].map { |dir| File.join(ROOT, dir) }.freeze
   DISPLAY = %w[erx_display erx_screen erx_screen_core erx_wctl erx_window erx_winctl erx_winfs erx_wm
                erx_wm_single erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl]
-  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
+  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version erx_fs_waits].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
   CONN_SOURCE = 'erlang/apps/erx_win/src/erx_draw_conn.erl'
   CLIENT = %w[erx_win_core erx_win_sup erx_pixels erx_pixels_core erx_draw erx_draw_core
               erx_draw_image].map { |name| "erlang/apps/erx_win/src/#{name}.erl" } + [CONN_SOURCE]
@@ -111,12 +111,50 @@ class ErxWinTest < Minitest::Test
              replacement: '{error, _} = Refused -> Refused;',
              suite: 'erx_win_dev_tests',
              catching_case: 'the_clipboard_opens_on_a_fid_of_its_own_test'),
-    Seed.new(fault: 'a program /dev whose mouse relay never remakes image 0',
-             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
-             anchor: '_ = [erx_draw_conn:resized(Conn)',
-             replacement: '_ = [ok',
+    Seed.new(fault: "a connection that answers a program's r record before it remakes image 0",
+             path: CONN_SOURCE,
+             anchor: 'answer(Wait, Answer, Remade)',
+             replacement: '_ = Remade, answer(Wait, Answer, Conn)',
              suite: 'erx_win_dev_tests',
-             catching_case: 'a_resize_reaches_ctl_before_the_program_sees_its_r_test')
+             catching_case: 'a_resize_reaches_ctl_before_the_program_sees_its_r_test'),
+    Seed.new(fault: "a program's kbd read that waits for its record inside the callback",
+             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
+             anchor: "read({File, _}, Offset, Count, \#{window := \#{conn := Conn}}) when File =:= kbd; File =:= mouse ->\n" \
+                     "    %% A read that waits for a record waits at the draw connection, its keeper.\n" \
+                     "    {wait, Conn, {read, File, Offset, Count}};\n",
+             replacement: '',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test'),
+    Seed.new(fault: "a connection that never sends a program's flush on to the display",
+             path: CONN_SOURCE,
+             anchor: '{begun, Wait, _Read, Flushing} -> {noreply, flush(Wait, Conn#conn{waits = Flushing})};',
+             replacement: '{begun, _Wait, _Read, Flushing} -> {noreply, Conn#conn{waits = Flushing}};',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test'),
+    Seed.new(fault: "a connection that sends every read of its program on to the display at once",
+             path: CONN_SOURCE,
+             anchor: 'Sent = [Of || {Of, _Id} <- maps:values(Reads), Of =:= File],',
+             replacement: 'Sent = [],',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'waiting_kbd_reads_on_two_windows_leave_the_display_grant_free_test'),
+    Seed.new(fault: "a connection that sends a read waiting behind another on to the display",
+             path: CONN_SOURCE,
+             anchor: 'Sent = [Of || {Of, _Id} <- maps:values(Reads), Of =:= File],',
+             replacement: 'Sent = [],',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_read_flushed_behind_another_never_reaches_the_display_test'),
+    Seed.new(fault: "a program's handler that outlives its draw connection",
+             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
+             anchor: "        true = link(Conn),\n",
+             replacement: '',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'the_handler_and_its_dev_end_at_the_connection_s_end_test'),
+    Seed.new(fault: 'a window that hands a kbd read any record, whatever its count',
+             path: 'erlang/apps/erx_display/src/erx_window.erl',
+             anchor: '[{Wait, Count} || {Wait, {read, Of, Count}, waiting} <- erx_fs_waits:list(Waits),',
+             replacement: '[{Wait, 64} || {Wait, {read, Of, _}, waiting} <- erx_fs_waits:list(Waits),',
+             suite: 'erx_win_tests',
+             catching_case: 'a_short_kbd_read_leaves_its_record_test')
   ].freeze
 
   def setup
@@ -160,11 +198,11 @@ class ErxWinTest < Minitest::Test
 
   private
 
-  # The cases of suite EUnit reports failed: each case's report runs from its
-  # "suite: case..." line to the next, with the fixture's crash reports in between.
+  # The cases of suite EUnit reports failed or timed out: each case's report runs from
+  # its "suite: case..." line to the next, with the fixture's crash reports in between.
   def failed_cases(suite, output)
     output.split(/^  #{suite}: /).drop(1).filter_map do |report|
-      report[/\A\w+/] if report.include?('*failed*')
+      report[/\A\w+/] if report.include?('*failed*') || report.include?('*timed out*')
     end
   end
 

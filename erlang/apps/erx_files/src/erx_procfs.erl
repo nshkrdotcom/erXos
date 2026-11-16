@@ -15,7 +15,7 @@ erx:i/1 in the same domain does not.
 
 * **Handle.** init/1 takes the inspector to ask, erx_inspector:inspect/2
   or a host test's stand-in, and answers `Fs`, it and a counter of the
-  grant's open snapshots, shared by the grant and its file processes.
+  grant's open snapshots.
 * **Snapshots.** An open runs the inspector's query once: a `status` file
   holds its rendered record and a directory its entries, and reads see that
   snapshot until the clunk. The file of an append-only path, such as
@@ -37,8 +37,7 @@ go through that domain's inspect facet.
 -include("generated/erx_abi.hrl").
 
 -export([start_link/0]).
--export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1, clunk/2,
-         read_mode/0]).
+-export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1, clunk/2]).
 
 %% The tree's name, which a mount's {tree, Name} and attach's Aname name.
 -define(TREE, <<"proc">>).
@@ -103,9 +102,9 @@ open(Node, Flags, #{inspect := Inspect, snapshots := Snapshots}) ->
     end.
 
 %% Takes one of the grant's snapshots for TakeSnapshot's answer, and gives
-%% it back when there is no snapshot to hold. Opens run only in the grant's
-%% process, the counter's one adder; clunks, in file processes, only
-%% subtract, so the read and the add cannot race another add. A crash in the
+%% it back when there is no snapshot to hold. Opens and clunks run only in
+%% the grant's process, the counter's one user, so the read and the add
+%% cannot race another add. A crash in the
 %% inspector or the renderer answers eio, so it neither leaks a snapshot nor
 %% ends the grant.
 counted(Snapshots, TakeSnapshot) ->
@@ -193,9 +192,6 @@ clunk(_Handle, #{snapshots := Snapshots}) ->
     counters:sub(Snapshots, 1, 1),
     ok.
 
-%% A read is a part of a snapshot the open already took.
--doc false.
-read_mode() -> immediate.
 
 %% ---------------------------------------------------------------------------
 %% The inspector's answers

@@ -23,6 +23,6 @@
              erx_inflate, erx_pixels, erx_pixels_core, erx_png, erx_vt, erx_vt_width, erx_win,
              erx_win_app, erx_win_core, erx_win_sup]},
   {registered, [erx_win_sup, erx_pixels]},
-  {applications, [kernel, stdlib, erx, erx_memdraw]},
+  {applications, [kernel, stdlib, erx, erx_files, erx_memdraw]},
   {env, []},
   {mod, {erx_win_app, []}}]}.

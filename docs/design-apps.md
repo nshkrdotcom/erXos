@@ -719,7 +719,7 @@ for the actions that are not settings; the settings are `/etc/rc.conf`:
 
 | File | Read | Write |
 | --- | --- | --- |
-| `ctl` | nothing | one command a write, a line of at most 4,096 bytes: `start NAME`, `stop NAME`, `restart NAME`, `onestart NAME [display=D]`, `onestop NAME` and `onerestart NAME`, which the start service judges after its read of `rc.conf` ([How a command is judged](#how-a-command-is-judged)), and `purge NAME`, which the package process carries out ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)): `ctl`'s file owner hands it to the package process and awaits the answer itself, and the table never takes it ([Concurrency](#concurrency)). The line carries the caller's intent and nothing the caller judged: an ordinary `start` or `restart` acts on a row the read finds enabled, an ordinary `stop` on a row that runs or that the read finds enabled, and a `one` form on any row; each acts on the row it names alone. The write succeeds when the command does; a 9P write carries no text back, so a refusal answers an errno: `einval` for a line that does not parse, or a `display=` on a `onestart` of a row the read finds enabled; `enoent` for a name with no row; `enotsup` for an ordinary `start` or `restart` of a row the read finds not enabled, or an ordinary `stop` of one that runs nothing; `ealready` for a start of a row that runs; `esrch` for a stop of a row that runs nothing; `ebusy` for a display a kept row holds; `eperm` for a display the template is not granted; `eagain` until the boot has made the table; and `eio` for a failed start, for a `start`, `restart`, `onestart` or `onerestart` whose read cannot read `rc.conf`, or for a start service that ended during the command; a purge answers the package process's errno ([design-packaging.md](design-packaging.md#interfaces)). The reason goes to the log; a refused command changes nothing, so `/proc/apps` shows the row as it was |
+| `ctl` | nothing | one command a write, a line of at most 4,096 bytes: `start NAME`, `stop NAME`, `restart NAME`, `onestart NAME [display=D]`, `onestop NAME` and `onerestart NAME`, which the start service judges after its read of `rc.conf` ([How a command is judged](#how-a-command-is-judged)), and `purge NAME`, which the package process carries out ([design-packaging.md](design-packaging.md#where-an-apps-files-lie)): the write's callback, in the writer's grant, hands it to the package process and awaits the answer itself, and the table never takes it ([Concurrency](#concurrency)). The line carries the caller's intent and nothing the caller judged: an ordinary `start` or `restart` acts on a row the read finds enabled, an ordinary `stop` on a row that runs or that the read finds enabled, and a `one` form on any row; each acts on the row it names alone. The write succeeds when the command does; a 9P write carries no text back, so a refusal answers an errno: `einval` for a line that does not parse, or a `display=` on a `onestart` of a row the read finds enabled; `enoent` for a name with no row; `enotsup` for an ordinary `start` or `restart` of a row the read finds not enabled, or an ordinary `stop` of one that runs nothing; `ealready` for a start of a row that runs; `esrch` for a stop of a row that runs nothing; `ebusy` for a display a kept row holds; `eperm` for a display the template is not granted; `eagain` until the boot has made the table; and `eio` for a failed start, for a `start`, `restart`, `onestart` or `onerestart` whose read cannot read `rc.conf`, or for a start service that ended during the command; a purge answers the package process's errno ([design-packaging.md](design-packaging.md#interfaces)). The reason goes to the log; a refused command changes nothing, so `/proc/apps` shows the row as it was |
 
 Which templates hold the `start` grant is the manifest's: `root`'s in a
 development build, an administrator's in a release build; the build
@@ -805,13 +805,13 @@ or purge at a time, so a publication is the last step of an install,
 update or removal it has begun
 ([design-packaging.md](design-packaging.md#concurrency)). The table
 therefore never waits for the package process. `purge NAME` is not one
-of the table's operations: `ctl`'s file owner, the process `erx_fs`
-starts for the open file, which runs its writes in turn
+of the table's operations: the `ctl` write's callback, which runs in
+the writer's grant, one request of that client at a time
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)),
 hands the purge to the package process and awaits its answer itself,
 so a purge that waits behind an update waits while the table takes the
-update's publication, and a `ctl` command written after the purge waits
-for it as any later write of a file waits for the one before. A
+update's publication, and a `ctl` command the same client writes after
+the purge waits for it, as its grant's later requests do. A
 restarted table asks the package process for nothing: it takes the
 last package set from the records process below.
 
@@ -917,7 +917,7 @@ reported.
 | `rc.conf` is damaged, or names a row the manifest does not declare | the table's parser | bad lines are skipped and reported; the manifest's rows stand |
 | `rc.conf` is longer than 64 KiB | the table's reader | reported at `/proc/apps` as `too_long` and handled as a read that fails: as a file with no settings at boot, for the boot's package set's rows too, as in the first row, and as in the next row at a command |
 | a read of `rc.conf` fails at a command | `erx_starter_rc`'s answer | `start`, `restart`, `onestart` and `onerestart` answer `eio` and change nothing; `stop` and `onestop` are judged on the row as it was last applied and end the session that runs ([How a command is judged](#how-a-command-is-judged)); no other row changes, and the failure is logged and shown at `/proc/apps` |
-| a purge arrives while the package process carries out an install, update or removal | nothing: it is the order the package process takes them in | `ctl`'s file owner waits for the purge's answer while the table takes the operation's publication; the purge is carried out after it, and a later `ctl` write waits for the purge |
+| a purge arrives while the package process carries out an install, update or removal | nothing: it is the order the package process takes them in | the `ctl` write's callback waits in the writer's grant for the purge's answer while the table takes the operation's publication; the purge is carried out after it, and a later `ctl` write of the same client waits for the purge |
 | an edit is lost to a concurrent one | nothing: the last writer wins | the next read takes the last writer's text whole; `/proc/apps` shows which of each row's settings came from the file when it was applied |
 | the display domain restarts under a display's session | the domain service's grant record | the grant is minted again on the new incarnation, with the session mark |
 | the start service crashes | its supervisor | it restarts with the rows and the last package set the keepers' branch recorded; it reads `rc.conf` only to finish a boot the boot mark says is not done, and leaves any other row with no record `installed`; kept sessions go on, and stopped, down and installed rows stay so |
@@ -1176,7 +1176,7 @@ Decisions:
     domain is down starts what its build proved
     ([A read that cannot read the file](#the-start-table)).
 11. **The table never waits for the package process**, which waits for
-    the table at each publication: `ctl`'s file owner awaits a purge,
+    the table at each publication: a `ctl` write's callback awaits a purge,
     and a restarted table takes the last set from its records process
     ([Concurrency](#concurrency)).
 12. **Publishing an app applies nothing of `rc.conf`**: an install or an

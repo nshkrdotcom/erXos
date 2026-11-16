@@ -26,8 +26,11 @@ for it, and calls the holder's driver-control facet for a ctl write.
 * **Writes.** A write to `ctl` is one command (erx_devfs_core:command/1),
   whatever its offset, acted on within the write: the facet call waits up
   to erx_driver_ctl's own bound, and a call that fails or exits answers
-  `eio` and ends nothing here. The write runs in the file's process, so
-  writes to one open ctl run one at a time.
+  `eio` and ends nothing here. The write runs in the grant, which calls
+  every callback itself, so until the facet answers, every other request of
+  that grant, its clunks and flushes among them, waits behind it: the call
+  is the tree's bounded work, and its deadline the bound the grant may stop
+  for (docs/design-system.md, "The /dev tree").
 
 In Phase 1 the design's device service is the system domain's domain
 service: its supervisor starts the control tree with start_link/0, which
@@ -41,7 +44,7 @@ shell's. Nothing mounts the read-only tree yet.
 
 -export([start_link/0]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
-         statfs/1, clunk/2, read_mode/0]).
+         statfs/1, clunk/2]).
 
 %% The tree's name, which a mount's {tree, Name} and attach's Aname name.
 -define(TREE, <<"dev">>).
@@ -229,9 +232,6 @@ statfs(_Fs) ->
 clunk(_Handle, _Fs) ->
     ok.
 
-%% A read is a part of the text the open already took.
--doc false.
-read_mode() -> immediate.
 
 %% ---------------------------------------------------------------------------
 %% The catalogue and the services

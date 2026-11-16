@@ -281,6 +281,7 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
 
 * **The production image's `NOTICES` and Fiasco's audit** (`tools/lib/erx/production_image.rb`, Phase 1 stopgap): `NOTICES` is 0.8 MiB of the 23.6 MiB development boot image `tools/erx boot` builds, with each license text once, never released and touched page by page at boot, and one pack spends about 5 minutes re-auditing Fiasco on a loaded host. Measure: the root's boot time with and without those pages, and the audit's time on an idle host.
 
+* [Low] `erlang/apps/erx_win/src/erx_draw_conn.erl` (`pump/2`): the connection keeps one read of each input file at the display, so a program with several `kbd` reads waiting pays one round trip from the connection to its window per record where the window once held them all. Settled by the time from a burst of 100 keys to the last record read, with one read waiting against eight, on QEMU `virt` under HVF.
 * [Low] `liberx/backend/core/handles.c`, `liberx/backend/fiasco/object.c`: a create scans the object records and the caller's handle table from the start for the lowest free one, and a task's end scans every record, so n creates in one table cost O(n^2), and the root's table may reach 262,144 entries. Settled by the time of 10,000 creates and closes in the root, and of a task's end with 10,000 objects.
 * [Low] `liberx/program/pipe.c` (`erx_pipe_doorbell`), `liberx/program/fd.c` (`erx_prog_fd_find_end`): each ring of a pipe end's doorbell walks the program's live objects under the table lock to find the end, so a program with many ends pays that walk per ring. Settled by the time of a ring in a program holding 1,000 pipe ends against one holding two.
 * [Low] `liberx/system/dom_life.c` (`erx_dom_plan_unit_give`, `erx_dom_unit_check`): a unit's give carries each device's register ranges, about 1.2 KB a give and 10 KB a creation plan of eight gives, and the planner keeps a draft give and a window layout on the stack, the check a second layout, before the draft is copied into the plan. The system domain plans on its own service thread, whose stack depth for a creation is unmeasured. Settled by that thread's stack high-water mark across a configured creation of eight gives on QEMU `virt`.
@@ -299,8 +300,8 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   sink, on top of the message. Settled by the same bench at an interrupt rate a driver sees, with and without one environment
   kept per entry.
 * **`/tmp`'s hops per operation** (`erx_ramfs`, [design-tmp.md](design-tmp.md#where-tmp-runs)): a `/tmp`
-  operation is two or three local message round trips (the grant, the file's owner for an open file's reads and writes,
-  then the tree process; `erx_ramfs`'s reads run in the owner, with no helper), plus the NIF's resolve for a path operation, where a C provider in the NIF would cost one move to a dirty
+  operation is two local message round trips (the grant, then the tree process), plus the NIF's resolve for a path
+  operation, where a C provider in the NIF would cost one move to a dirty
   scheduler; a Common Test run writes its logs a line at a time. Measure, each number against another from the same
   runtime under the same accelerator: 10,000 line-sized `file:write/2` calls and 1,000 `file:read_file_info/1` and
   `file:read_file/1` calls of 4 KiB files on `/tmp`, against the same reads on the release file system, which the NIF
@@ -344,6 +345,17 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   second against littlefs; the fixes on the table are a write buffer per
   file held by the volume and drained by every checkpoint and `fsync`,
   and window requests larger than one block.
+* **[Medium] storage, F2FS runs one request of the volume at a time**
+  ([design-f2fs.md](design-f2fs.md#processes-and-ownership)): the volume
+  takes the next request, from any grant, only once the one under way
+  has answered, so a client reading one file waits behind another
+  client's long read, write or truncate of a different file, and the
+  block driver sees at most one request's blocks in flight. Settled by
+  `tools/erx bench fs` with two grants, one streaming 64 KiB reads of one
+  file and one appending to another, on QEMU under HVF and on the Pi 4's
+  SD card, reporting each client's throughput and worst latency against
+  either client alone; the fix on the table is running requests of
+  different files at once, ordered per file in the volume.
 * **[Low] storage, F2FS checkpoints without journals, the 512-block
   charge, and mount time** ([design-f2fs.md](design-f2fs.md#checkpoints)):
   every checkpoint writes whole NAT and SIT blocks for each changed entry,
@@ -1124,3 +1136,4 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   Settled by timing 1,000 opens and closes of one file against a static pool of `ERX_PROG_FDS_MAX` objects.
 * **[Low] shell, the console's one-byte reads.** The console reads one byte per ask while the group's line editor waits for a key ([design-shell.md](design-shell.md), the terminal relay), about six messages per typed byte. Settle it with the paste latency of 4 KiB at the prompt, under HVF at one CPU, against the same paste into a program that reads its tty raw; if it shows, the fix on the table is a read that answers every byte already buffered while the editor's state is plain insertion.
 * **[Low] display, `erx_font`'s advances on every line.** `erx_font:width/2` and `erx_font:runs/2` (`erlang/apps/erx_win/src/erx_font.erl`) turn the subfont's glyph list into a tuple of advances on each call, work in the subfont's glyph count (about 700 for a text role) for every line measured or drawn, beside the line's own work and a halving search of the pairs per neighbour. Settle it with a workload that lays out a window of `body` text through the Erlang renderer once that renderer exists, timing `width/2` and `runs/2` per line against the same with the tuple made once per subfont. The fix on the table is a subfont that holds its glyphs as a tuple, which `load/2` and the readers of `glyphs` would then take.
+* **[Low] display, a monitor for every relayed input read.** `erx_file_remote:send/2`, under `erx_win:send_read/4` and `send_flush/2`, monitors the display's grant for each read of `kbd` or `mouse` a program's draw connection relays and for each flush of one, where `exchange/2` monitors once for a whole batch, so each such read costs the session a monitor and a demonitor of a process in the display's domain, two more control frames each way. Settle it with the latency from a key's record at the display to the program's read, under HVF at one CPU, against a build whose connection holds one monitor of the grant for all its reads; if it shows, the fix on the table is a send that takes the caller's monitor.

@@ -515,6 +515,56 @@ and every read answers `eio` until the next `reset`. A loss of bytes is a
 loss of synchronization, which H4 answers with a reset anyway (Part A,
 section 4), so the line's one failure is the controller's restart.
 
+Every read and write of `data` that cannot finish at once, and every
+`reset`, is a waiting request whose keeper is the line's process, the
+one owner of its buffer and its driver
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"): the tree's `read` and `write` answer `{wait, Line,
+Request}` and return, and the line answers each when its bytes arrive,
+its driver has taken them or its reset is done. So the reader's read
+that waits for the controller never holds up the writer's command, on
+one `data` file through one grant, and a clunk or the Bluetooth
+domain's end settles a waiting read without taking bytes the next
+reader should have. A read waiting at a `reset` answers `eio`, and a
+write that arrives during one waits at the line until the reset
+answers.
+
+A request the line has begun is answered with what it did, flushed or
+not ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 3): a `reset` is begun at its first step, since
+stopping the driver already changes the line, and is answered when its
+last step is done; a `data` write is begun once its bytes are handed to
+the driver, and is answered with its count when the driver has taken
+them. Each step of a reset waits on a timer of the line's or on a
+process it monitors, so a reset ends; a data write may not
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 4):
+
+* a `reset` waits for the old driver's end, then for two notifications
+  of [The power line](#the-power-line), each at most 1 s at the device
+  service's firmware worker once the worker's earlier requests, each at
+  most 1 s, have run, and for the off and on times, and the fresh
+  driver's start programs its registers without waiting; a notification
+  that fails or times out answers the `reset` `eio` before its next
+  step;
+* a `data` write waits for the driver, which may hold bytes for as long
+  as a controller holds CTS off under `rts_cts` flow. Such a write ends
+  at the line's next `reset`, whose first step ends the driver and
+  answers the write `eio`, and the controller's side writes one at
+  every restart: the controller group's, which a command left
+  unanswered for 5 s forces ([Failure handling](#failure-handling)),
+  and a restarted Bluetooth domain's bring-up, whose first step it is
+  ([The bring-up](#the-bring-up)). So a write a controller holds delays
+  its fid's clunk, and the end of a grant whose domain has ended, until
+  that reset.
+
+A read waiting for bytes, and a write waiting behind a
+`reset`, have begun nothing, and a flush or a clunk answers them `eintr`
+at once. The line keeps them in one `erx_fs_waits` set, at most the
+grant's 64 requests in flight, each a read's count or a write's bytes
+of at most 64 KiB, beside its receive buffer, and its process's heap
+bound covers both.
+
 #### A reset
 
 `reset` takes the line through four steps, in this order, each finished
@@ -1294,7 +1344,10 @@ each ASCII the window composes from numbers and addresses alone:
 | `failed AA:BB:CC:DD:EE:FF REASON` | the pairing failed, with its reason ([Refusals](#refusals-and-error-results)) |
 | `closed timeout` | the time ran out |
 
-After `bonded`, `failed` or `closed`, the file ends. Clunking the fid, or
+After `bonded`, `failed` or `closed`, the file ends. A read that finds no
+line waits for one as a waiting request the window process keeps
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"). Clunking the fid, or
 the opener's end, closes the window at once, so no window outlives the
 person who opened it, by construction of the file protocol's fid
 lifetime ([design-files.md](design-files.md#fid-owners)). A window takes
@@ -1642,8 +1695,12 @@ its line at the system domain's `/proc`: bytes each way, breaks, resets.
   configuration writes are serialized there, and each `put` writes the
   whole state.
 * **The line service** serves one reader and writers in arrival order; the
-  Bluetooth domain has one of each. A `reset` holds both until it
-  answers; a read waiting at a `reset` answers `eio`.
+  Bluetooth domain has one of each. Its reads, writes and resets that
+  wait are waiting requests the line's process keeps, so a read that
+  waits holds up no write, and the grant in `erx_fs` waits on
+  neither ([The controller's line](#the-controllers-line)). A `reset`
+  holds both until it answers; a read waiting at a `reset` answers
+  `eio`.
 * **The device service** makes every firmware notification from its one
   firmware worker, so a power cycle and the VL805's notification never
   meet in the kernel, and its own process stays free to answer
@@ -1746,6 +1803,8 @@ Each passing case is paired with the seeded fault it must catch.
 | the store's table, against a fake store that answers each call as a test scripts it, and the development file over a fake data tree that fails a chosen step | a start whose `get` answers `unavailable` runs with no bonds, refuses pairing, a configuration write and `forget ADDRESS`, and puts nothing; a start that reads a blob that does not decode does the same and `forget all` then replaces it, after which pairing works; a start reading `none` makes the identity address and the first pairing's `put` keeps it; a `put` whose rename reached the medium but whose answer is `unavailable` fails the pairing, and the next pairing reads first and keeps the bond the failed one added; after every confirmed change and every read the domain's bonds are what the store's `get` returns | `unavailable` at the start read as `none`, which the first case finds as a pairing that overwrites the stored bonds; a domain that keeps its pre-put state after an unconfirmed `put`, which the rename case finds as the failed pairing's bond gone after the next pairing |
 | the line's `ctl` grammar | `reset` with and without newline accepted; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and a model device service | the four steps run in order; the driver's input during the on time is discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
+| the line service through a real `erx_fs` grant over a model driver, the reader and the writer opening one `data` file as the controller group does | a read sent on the empty line, then a command written: the write is answered within 1 s while the read waits, and the model driver's answer to the command reaches the read once; a `reset` during a waiting read answers it `eio`; the reader's clunk during a waiting read is answered within 1 s, and the next reader's read gets the next driver bytes whole | a line whose `read` waits inside its callback, which makes the write miss its deadline; a line that drops a flush of a waiting read, whose reader's clunk misses its deadline |
+| flushes of the line's begun and buffered requests, through the same grant, with a model device service that holds each power notification until the test releases it | a `reset` flushed at each of its four steps is answered only once its last step is done, with the reset's answer, then the flush; a write flushed after the model driver took its bytes is answered with its count; with bytes already in the receive buffer, a read and its flush sent in one batch answer the read with those bytes and then the flush, and a read flushed before bytes arrive answers `eintr`, after which the next read gets those bytes whole | a line that answers a flushed `reset` `eintr` while its steps run, which the first case finds answered before the power notification is released; a line that holds a read while bytes are buffered and answers it only at the driver's next input, which the third case finds answered `eintr` with the bytes still buffered |
 | the identity address | 10,000 addresses all have the static form and parse in Bumble's `Address` as static | the top bits cleared |
 | the controller group, over a model line (the I/O devices of its two files, which the group's reader and writer open through the open function the group's start takes in place of `file:open/2`, since on stock's emulator no namespace reaches a mounted tree: its `ctl` answers after a set delay, its `data` read waiting at a reset answers `eio`, and whose `data` plays a scripted controller), a model store and a model registry | the group reaches `ready` from its start and again after the controller process is killed; the first read of `data` comes after `ctl`'s answer; the identity address in the facts is the same before and after the restart; a link process killed while connected leads to one `HCI_Disconnect` of its handle with reason `0x13` on `data`; a `link_down` ends the link process, and a `to_link` for its name afterwards reaches no process; each live handle's Number Of Completed Packets count reaches its link as `{completed, Count}`; a `ctl` answering `eio` ends the group | the reader reading at its start, so its read meets the reset and the group restarts without reaching `ready`; the controller process making the address itself, so it changes across the restart; a link process's end ignored, so no Disconnect is written; the completion not passed to the link, so a link with a share of one never hands over its second notification |
 
@@ -1867,6 +1926,10 @@ list ([todo-performance.md](todo-performance.md)):
   `init => fresh` or `keep` from its record and performs the writes
   `erx_pl011:program/2` returns; the console's and the host link's
   records say `keep`, which is today's sequence.
+* **[design-files.md](design-files.md)**: waiting requests
+  ([Serving](design-files.md#serving-the-erx_fs-behaviour)), which the
+  line's `data` and `ctl` and the control tree's `pair` serve their
+  waits through.
 * **[plan.md](plan.md)**: a proposed track for Bluetooth.
 
 ## Alternatives considered

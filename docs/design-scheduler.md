@@ -1742,7 +1742,7 @@ in A that acts only for it.
    runtime, as a busy port blocks in stock ERTS. B's own quota is not
    spent while they wait, and A is asked for no more than B's facet
    admits.
-2. A's executors run B's facet and the file processes it spawns, charged
+2. A's executors run B's facet and the grant processes it spawns, charged
    to A's group and to the groups above it. Every nanosecond of this is
    A's, whatever B sends (S6), and A's quota per period caps it (S4).
 3. C's save arrives on C's lane; C triggers the lane's doorbell. The

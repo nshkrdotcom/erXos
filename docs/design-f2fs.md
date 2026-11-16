@@ -431,22 +431,32 @@ the domain's supervisor, with two kinds of process:
   cleaner](#space-and-the-cleaner)). It never makes a synchronous call
   after its start.
 * **The `erx_fs` processes** that run the callback module `erx_f2fs`: one
-  grant process per grant and one owner per open file, with their read
-  helpers ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
+  grant process per grant, which calls the callbacks itself
+  ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
   Each callback is one call to the volume process, and keeps nothing in
-  the calling process, as the behaviour requires. The tree's handle is
+  the calling process, as the behaviour requires; a read's call returns
+  once the window has answered its blocks, so it waits in its grant as a
+  read waits for its medium on a local file system. The tree's handle is
   the volume process's pid and a reference made at its start.
 
 A grant's requests reach the volume concurrently with every other
-grant's; the volume interleaves their block requests. `erx_fs`'s owner
-already orders each file's reads, writes and size changes, so the volume
-never sees two writes of one file at once.
-
+grant's, and the volume makes each request atomic, which design-files.md
+leaves to each tree
+([design-files.md](design-files.md#open-files-and-offsets)), by running
+one complete request at a time: it takes the next request, from any
+grant, only once the one under way has answered. Between the steps of
+the request under way it takes the window's answers to its block
+requests, which arrive as messages, and runs steps of its own, a
+checkpoint and cleaning, as a long truncate's checkpoint and
+foreground cleaning need, but no other client's request. So no two requests of the volume ever interleave,
+no read sees part of a write, and the volume keeps no order of its own
+for a file's requests. Running requests of different files at once is a
+measured question ([todo-performance.md](todo-performance.md)).
 The volume is linked to its supervisor, which runs at a restart
 intensity of 0 as littlefs's does: the end of the volume process, for a
 bug, a failed write or a failed flush, ends the storage domain, and the
-domain service's restart mounts afresh, which recovers. Every grant and
-owner fails its pending call with `eio`. A mount starts only once the
+domain service's restart mounts afresh, which recovers. Every grant
+fails its pending call with `eio`. A mount starts only once the
 window has answered every request of the volume it replaces; in the
 default configuration the window ends with the domain, and
 [design-storage.md](design-storage.md#read-write-storage) gives the rule
@@ -654,8 +664,8 @@ write does, with zeros from the new size to the block's end, and frees
 the slots and nodes past it through the same functions; a truncate to a
 block boundary needs no write. A truncate that frees many nodes sets the
 size and rewrites that block in its first step, frees at most 64 nodes
-in each step after it, and answers after its last, so the file's owner
-sends nothing else for the file meanwhile
+in each step after it, and answers after its last, and the volume runs
+no other request meanwhile
 ([Processes and ownership](#processes-and-ownership)). A checkpoint
 between its steps commits nodes past the size still mapped, which no
 read reaches and `fsck.f2fs` does not check ([T 61]), and a cut there
@@ -667,8 +677,8 @@ bytes it does not write first truncates the file to its old size**,
 through the same truncate. Such a step is a size raise by `setattr`, or
 a write that starts past the block holding the old size; a write that
 starts in that block or below it merges zeros, not the old block's
-bytes, wherever its block lies at or past the old size. The file's owner
-orders its writes and size changes, so nothing maps a slot of the file
+bytes, wherever its block lies at or past the old size. The volume runs
+one request at a time, so nothing maps a slot of the file
 between the truncate and the raise. Normally nothing lies past the old
 size, and the truncate reads only the path to it, which the raise needs
 anyway. So an extension shows zeros, after a restart as before one, as
@@ -683,7 +693,7 @@ extends a file is unverified; the oracle guest checks both
 
 **A read** is a lookup step that answers the block addresses of the range
 (holes and `NEW_ADDR` read as zeros, [C 12]) and the volume reads them;
-the helper's call returns the bytes. The read's addresses come from the
+the grant's call returns the bytes. The read's addresses come from the
 state at its step, and the touched rule keeps them unreused while the read
 is queued at the window behind no write to them.
 
@@ -900,7 +910,7 @@ residual.
 
 A freezing checkpoint ([design-storage.md](design-storage.md#interfaces))
 reaches the volume after `erx_fs` has closed mutation admission and every
-owner has finished the writes it admitted. The volume writes an unmount
+grant has finished the writes it admitted. The volume writes an unmount
 checkpoint, `UMOUNT` set and node summaries in the pack, and from its
 commit answers every mutation `erofs`. A checkpoint without a freeze, the
 vault's, is an ordinary checkpoint. Both answer only once their flush is
@@ -1269,7 +1279,7 @@ nothing above the callback module changes.
   keeping links and symlinks is a documented improvement over littlefs in
   the parity corpus. `xattr` answers `enotsup`. A device node, FIFO or
   socket Linux made shows in `readdir` and `getattr` and answers `open`
-  with `enotsup`. `read_mode` is `helper`.
+  with `enotsup`.
 * **Nodes and identity.** A node is a nid. A qid's path is the nid in the
   low 32 bits and `i_generation` in the high 32
   ([design-storage.md](design-storage.md#read-write-storage)), unique
@@ -2335,7 +2345,7 @@ watch list ([todo-performance.md](todo-performance.md)):
 * **Redistributing a converted inline directory's entries over the
   buckets its `i_dir_level` gives.** Rejected for setting the level to 0:
   entries keep their slots, so `readdir` offsets survive the conversion.
-* **Read helpers that read the window themselves.** Rejected: a read
+* **Grants that read the window themselves.** Rejected: a read
   issued by another process can reach the window after a write that
   reused its block; with the volume as the only client, the window's order
   is the volume's.

@@ -1306,6 +1306,12 @@ it; git history is the record of completed work.
 * [Low] `erlang/apps/erx_win/src/erx_draw_conn.erl`, [The draw connection](docs/design-display.md#the-draw-connection):
   a connection ends only with its window's holder; a window ended otherwise (its directory removed, its display
   lost) leaves it running, each present failing with `EIO`. End it when a present answers that the window is gone.
+* [Medium] `erlang/apps/erx_win/src/erx_draw_conn.erl`, `perform_write/2`: design-files.md ("A program's window")
+  promises that a `draw` write holds its grant's later requests for at most one present, but the write runs every
+  operation in its callback, each `v` waiting for its present, so a write alternating drawing and `v` holds the
+  grant, a `kbd` clunk among its requests, and the connection's input replies and flushes for several presents.
+  Give a draw write keeper handling that stays responsive between presents, or restate the promise and bound the
+  whole write's delay; add a regression with several drawing and `v` pairs in one write followed by a `kbd` clunk.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
   emulator](docs/design-display.md#the-terminal-emulator): the oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases
@@ -2222,14 +2228,6 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [Medium] `erx_fs` and `erx_window` (`erlang/apps/erx_files/src/erx_fs.erl`): a waiting `mouse` or `kbd` read cannot
-  be cancelled by the client's flush, since `erx_fs` has no helper mode, so the file's owner blocks and the flush
-  waits; a client reading `kbd` on a hidden window hangs. design-display.md says these reads are helper-mode reads that
-  wait for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: a `wctl` read answers at once; design-display.md ("The window
-  tree") says it waits for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
-  only by `erx_fs`'s one request per open file; give them a cap of their own.
 * [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
   `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
   C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
@@ -2248,11 +2246,54 @@ it; git history is the record of completed work.
 * [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
   `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
   needs an `rx` mount); the mount should take the facet's rights.
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
+  grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
+  which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
+  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
+  and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
+  keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
+  a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
+  which stops its whole grant, every other request, clunk and flush of it included, until the event comes, as each
+  wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
+  table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
+  supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
+* [Low] display client, a dropped grant's read (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `handle_info/2`'s
+  `dropped` clause): the end of a grant that sent the connection reads forgets them but leaves the one of each file
+  already at the display there, so the next read of that file waits until a record answers the dead one, and that
+  record goes nowhere. Unreachable while the connection has one grant, which shares its life (`start_window/1`'s
+  link); sending the display a flush of each such read makes it hold without the shared life.
+* [Low] display, a session's display grant (design-display.md, "The program's input"): a window takes at most two
+  of the grant's 64 requests in flight for its input, one for a present and one for a relayed `wctl`, `label` or
+  `clipboard` call, so a session whose `windows` quota passes 16 can still fill the grant with ordinary programs and
+  make a present answer `emfile`. State the count per window and bound the quota by it, or record the limit.
+* [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
+  design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
+  fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and
+  only `erx_fs_tests:a_grant_whose_client_ended_drains_test` covers the drain. Add a `client_end` event that checks no
+  reply follows it, each fid's clunk runs once and `drained/1` holds after settling, and seed that fault.
+* [Medium] Bluetooth line, held `data` writes (design-bluetooth.md, "The controller's line"): a write the line has
+  handed `erx_pl011` while the controller holds CTS off under `rts_cts` flow waits on the device with no deadline, so its
+  flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which
+  an idle domain, or one ended past its restart intensity, never sends. Give the driver's write a deadline that ends the
+  driver and answers `eio`, or bound it by the controller's 5 s command deadline.
+* [Medium] files, a lock table's end (design-files.md, "Locks"): `erx_fs_grants` ends every grant of its tree with the
+  table, the system domain's own grants included, which are not remounted (the `own/1,2` item below), and the table's
+  `max_heap_size` is not derived from a bound on the grants it serves. Name that bound and the heap it gives.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
   `EPERM` (no `setattr`); an open with `O_TRUNC` is the one way to empty it.
-* [Low] `erlang/apps/erx_display/src/erx_window.erl`: `kbd` gives only `c` records; `k` and `K` are not produced.
+* [Medium] display, the keepers' heaps (`erlang/apps/erx_display/src/erx_window.erl`,
+  `erlang/apps/erx_win/src/erx_draw_conn.erl`): design-files.md ("What waiting holds") has a keeper run under a
+  `max_heap_size` its tree sets from its counts, and design-display.md has the display set the window's ("The window
+  process") and the draw connection's cover its held reads beside its images ("The program's input"), but names
+  neither value, so both start with none. Name each in design-display.md (the window's from its 64 held requests of
+  at most 1,024 bytes, its pending input and its last present; the connection's from its 64 held reads and its
+  images, whose `erx_memdraw` memory a heap bound may not count, unverified) and set it.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: no test covers a flush or a clunk of a `ctl` write whose
+  present is in flight (answered with the present's answer, never `EINTR`) or of one waiting behind it (`EINTR`);
+  `never_answers/0` in `test/erlang/erx_winfs_tests.erl` holds such a present, with a seeded fault that drops
+  `began/2` in `pump/1`.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: the window table carries no label, so a decorating policy cannot
   see it.
 * [Low] `erlang/apps/erx_display/src/erx_screen.erl`: a present the core refuses (a rectangle past the coordinate limit
@@ -2863,11 +2904,6 @@ it; git history is the record of completed work.
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
   the host OTP.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl:229-244`, `run_job/3`): the
-  grant answers a client's clunk when it hands the clunk to the file's owner and drops the tree's `clunk`
-  answer, where design-files.md has every tree's `clunk` answer `ok` or an errno and the grant pass it back
-  once the owner has run it. Fix: the owner's clunk job answers with the callback's result, and the
-  behaviour's callback spec widens to `ok | {error, posix()}`; the test design-files.md names, with its seed.
 * [Medium] shell, `host` (`erlang/apps/erx_shell/src/erx_cmd_host.erl`, `run/2`): a name or server
   argument with an empty label or a label over 63 bytes (`host a..b`, `host .foo`, `host www .foo`)
   crashes the command with `function_clause` from `inet_dns:encode_labels`, which stock OTP 29.1.2
@@ -3272,12 +3308,15 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   Every exported step of the table settles on its own; one dispatching entry that always settles
   would make the rule hold for steps added later. `fg` resumes the job before the relay gives it
   the terminal.
-* [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx_session/src/erx_session_export.erl`): the
-  export answers every open of `/dev/tty` `enxio`, as [design-files.md](docs/design-files.md) ("Narrowing
-  for a program") has it, but no program handler makes a terminal's description in its place, an open of
-  its tty's relay through `erx_session_relay:open_writer/2` under the program's job
-  ([design-programs.md](docs/design-programs.md#the-terminal)), so a program's open of `/dev/tty`
-  (musl's `getpass`, a `ctermid` user) fails with `ENXIO`.
+* [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx/src/erx_prog_handler.erl`,
+  `erlang/apps/erx_session/src/erx_session_export.erl`): the export serves `tty` as a name alone and answers
+  every open of it `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
+  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an open
+  of its tty's relay through `erx_session_relay:open_writer/2` under the program's job, through which its
+  reads, writes, watches and controls go to the relay, never through the file protocol. Until it does, a
+  program's open of `/dev/tty` (musl's `getpass`, a `ctermid` user) fails with `ENXIO`, and its standard
+  streams reach the terminal only through its starter's pumps (the item under shell, `erx_shell_program`,
+  below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -4618,6 +4657,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   intensity, 1 restart in 5 s), so a bug that crashes the `/dev` grant twice within 5 s
   ends the system domain and resets the machine. Move it under a supervisor whose end
   the domain service survives, when the device service gets its own.
+* [Low] devices, `erx_devfs`, `/dev`'s ctl writes: the facet call is the control tree's bounded work, with
+  `erx_driver_ctl`'s 30 s deadline as the bound its grant may stop for (design-system.md, "The `/dev`
+  tree"), and that bound is per write, not per tree: the facet takes no other request while a start runs,
+  which nothing bounds (`erx_driver_ctl`'s moduledoc), so a second write queues behind the first and may
+  answer `eio` after 30 s of its own for an operation not yet begun; a start that never returns holds
+  the facet for good, and each later write then holds the grant 30 s before it answers `eio`. Bound the
+  driver's start where the facet waits for it.
 * [Low] devices, `erx_devfs`: `/dev` shows only the block device. Its `status` has no
   `path` line, because the catalogue that reaches Erlang has no device-tree path, and
   its `driver` line is `[unknown]`, because no facet says which process drives a unit.
@@ -4628,6 +4674,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   volume or, with a request of a volume of its own, writes any sector of the data window;
   a forged `done` answers one client's request with another's result. Tie each request to
   its volume in the NIF and tag each run with a fresh reference.
+* [High] storage, littlefs: one open does not see another's writes. Each open is a littlefs file of its own
+  (`lfs_file_t` in its slot), a write changes only the file it was made through
+  (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c:707`), and a read through another open of the same file stops at
+  that open's own recorded size and block chain (`littlefs/lfs.c:3505`), so running the volume's calls one at a time
+  in its worker does not show one open's write to another. design-files.md ("Serving", "Each tree makes its own
+  requests atomic") requires every open to see the file as it is, with only its access mode and position its own, and
+  OTP's `file_SUITE` checks it through a reader opened before the writes
+  (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`). Make the file's state shared across its opens in the
+  port, keeping access modes and positions per open, with tests of two opens reading and writing one file, disjoint
+  writes, a truncate and appends from both, regression first.
 * [Medium] storage, littlefs: a crafted image whose directory tail points back at itself,
   off the list mount checks, makes `lfs_dir_find` and `lfs_dir_read` loop forever on a
   dirty I/O thread, and every caller of `/data` waits with it (`erx_lfs` calls have no
@@ -4832,18 +4888,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   O(D^2); renames of two directories grow a path without bound. Cap a fid's path length (a walk past it refuses), or
   count steps per shared path suffix so a clone is one increment ([todo-performance.md](docs/todo-performance.md)).
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: the grant's hold bookkeeping (`held`, `steps`, `loose`) has
-  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`tree_holds/2`), `remove`
-  and `owner_down` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
+  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`kept_when_rejected/3`), `remove`
+  and an owner's `down/3` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
   `fid_table_model_test_` that the tree holds exactly the walked nodes the fids name after every step, and consider
   making the forget an effect `{forget, Node}` the shell performs, so the core sends nothing.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: an open file's owner process is one per grant, keyed by the node,
-  where `docs/design-files.md` starts one per open file on any grant; a file open through two grants of one tree has
-  two owners, so its requests are ordered against each other only by the tree. /tmp serves one grant per tree. Add
-  a per-tree registry of owners before a tree is served on more than one grant.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: no read helper exists, so an open file's owner calls `read` itself
-  whatever the module's `read_mode/0` says, and a read that waits for a medium holds up the file's other requests.
-  Build the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries) with the
-  first tree that answers `helper`.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which
   `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
   `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
@@ -4856,15 +4904,17 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   through a program's table, so that nothing on a window tree enters a program ("A program's window"): for example
   a description the program's handler opens through the program's own table for the starter, or one whose tree,
   part of its identity, the handler refuses when it is `windows`.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
-  leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
-  draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.
-  /tmp's clunk is one in-memory step. Defer the clunk's answer to the file process (counted in flight), or keep the
-  file in a closing state that new opens join, before a tree with a slow `clunk` is served.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`: `add_fid` and `end_fid` push effects into the grant's state, which
   every exported step must drain, and an owner's monitor is `pending` until the shell hands its reference back with
-  `monitored/3`, as an open file's owner is until `file_started/4`. Thread the effects through the step's return instead, so a step that both makes and ends one
+  `monitored/3`. Thread the effects through the step's return instead, so a step that both makes and ends one
   owner's fid can never emit `{demonitor, pending}`.
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`, the pure core: design-files.md ("Serving") has the core take
+  each callback result and return the callbacks to run as effects, but `call/3`, `unlinked/2`, `forget_loose/1` and
+  `close_fid/3` run callbacks themselves, as the module's own doc says ("The core calls the tree's callback module
+  itself"), so replaying a transition repeats an unlink or a clunk instead of reproducing an effect list, and
+  `test/erlang/erx_fs_core_model_tests.erl` counts clunks in the process dictionary. Make the grant's shell the
+  callbacks' one executor, feeding their results to pure transitions, and correct the module doc; the forget part
+  is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
   selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` says they are zero; and
@@ -6249,14 +6299,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the bridge reads the whole manifest at each session's start;
   design-live.md still says the host tool counts credit from its hello's
   first byte, where it now counts from the hello's reply.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl`,
-  `admit/4`): a flush of a deferred request only waits behind it, and no
-  grant abandons a request at a flush, as design-files.md's Flush allows;
-  so a deferred request whose file process never answers (a stuck job, a
-  waiting lock once locks are served) holds its slot at the grant, and its
-  tag at the host link bridge, until the session ends. Abandoning at a
-  flush (answer only the flush, drop the file process's late answer) lets
-  a flush free both.
 * [Medium] security residual, host link's 9P bridge
   (`erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`, `tree_grant/3`):
   the bridge uses the system domain's own grants and its tags bound, 64,
@@ -7592,7 +7634,7 @@ to the corpus and follow rc
   `flush/4` also costs a window's visible tiles times its 16 dirty
   rectangles.
 
-* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes an open file's answer `{erx_fs_file, Tag, Alias, Reply}` and an
+* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes a keeper's answer at its wait's alias and a fid
   owner's `DOWN` by matching Erlang references, which a process that can guess one can forge (`list_to_ref/1` on the
   server's node, a crafted external term from a client node). A forged answer can only answer the client's own request
   in flight early, and a forged `DOWN` clunk a fid early. Bind both to the sender when erXos's kernel carries a
@@ -7831,7 +7873,7 @@ document's "residual risks accepted" paragraph.
   names at any node. Settle it before the network carrier lands: give envelopes from
   network entries a `D` no domain id can equal, and add the test that a remote node of
   creation equal to a client's id is refused at its grant.
-* [Medium] File clients (`erx_file_remote.erl`, `collect/3`): an alias stays active
+* [Medium] File clients (`erx_file_remote.erl`, `arrived/1` and `take/2`): an alias stays active
   until its reply arrives and the wait while the server lives has no deadline, so a
   server of another domain can hold a request open and send its alias, or the
   caller's pid it was handed as the owner, messages of any other shape without limit;

@@ -60,6 +60,7 @@ spoiled(make, {ok, Node, Qid, Handle}) -> {ok, Node, bad_qid(Qid), Handle};
 spoiled(make, {ok, Node, Qid}) -> {ok, Node, bad_qid(Qid)};
 spoiled(readdir, {ok, [Entry | _]}) -> {ok, [Entry | not_a_list]};
 spoiled(unlink, ok) -> {error, etimedout};
+spoiled(clunk, ok) -> {error, etimedout};
 spoiled(_, Answer) -> Answer.
 
 %% A qid of the node's type whose path no u64 holds.

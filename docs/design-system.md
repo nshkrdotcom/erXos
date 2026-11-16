@@ -3523,7 +3523,18 @@ while no domain of that row holds the device, or its facet is not
 installed, a write fails with `enxio`. A start of a running driver fails
 with `ebusy`, and a driver that did not stop or start, or a call that
 did not complete, such as one to the facet of a holder that has ended
-and not yet restarted, with `eio`. Holding the path is holding the facet, as for every file server
+and not yet restarted, with `eio`. The facet call is the control tree's
+bounded work, a call to another service whose design names its
+deadline as the bound
+([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"), so the tree has no keeper: the call waits at most
+`erx_driver_ctl`'s 30 s deadline, the bound for which the tree's grant
+may stop answering its other requests, its clunks and flushes among
+them. Every holder of the grant holds the facet's control, so a write
+that holds the grant holds only requests of parties who could ask for
+that stop or start themselves. A write whose call times out answers
+`eio` for an operation the facet may still complete. Holding the path is
+holding the facet, as for every file server
 ([design.md](design.md#decisions)), so no write is checked against who
 wrote it, and the tree changes nothing the control facet could not change.
 Like every file grant, the tree's grant acts for whoever holds its pid, so
