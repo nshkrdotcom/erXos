@@ -430,7 +430,7 @@ other.
 | --- | --- | --- | --- |
 | **G1.** A client reaches only its own windows' pixels and input | a client's pixels lie in its own pixel area, which only that client's domain writes and only the display maps, read-only: the display maps no client's area into another domain and writes no pixel into any client's memory, so no path carries one client's pixels to another; a `present` names a range of the presenter's own area and is checked against that area's size, so it cannot name another client's memory; a window's files are a grant rooted at the client's directory of `erx_winfs`; a program is given a mapping of its own window's buffer and fids on its own window's directory, never the area or the grant ([Narrowing](design-files.md#narrowing-for-a-program)); a draw connection names images by ids it allocated and by image 0, its window, and the protocol has no message that names another connection's image; the router delivers each input event to one window: the policy chooses it for what starts something, what follows a down goes only to the window that got the down, and a window that has since been hidden receives of that only the ups ([The input router](#the-input-router)); under the single policy only the one shown window is chosen | an area mapped into a second client; a present checked against another grant's area; a program handed its session's whole area; a draw message that names or attaches to another connection's image; a grant rooted above the client's directory; a down, a repeat or a pointer move delivered to a hidden window | a client that presents every offset and size at and past the ends of its area, each one outside refused with `EINVAL` and nothing shown; two sessions whose grants list only their own windows; a program given one window that walks `..` and sibling names and reaches nothing, and whose writes outside its buffer's mapping fault in its own sub-space; a draw connection that sends every message type with every id of another connection, each refused with `ENOENT`; under the single policy with a second window of the named session and a window of another domain made, each of the two is hidden, its `kbd` receives nothing and its `wctl` write of `show` fails with `EINVAL`, where a seeded delivery to a hidden window fails it; when the shown window ends, the session's second window is shown and the other domain's stays hidden, and when that ends too the screen holds only the background until the session makes another, where a seeded policy that shows the most recent window or any domain's window fails it |
 | **G2.** Every image has one writer, no reader faults or leaves its image, and every pixel loop runs over a clipped rectangle | the screen image is written only by `erx_screen`; a client's buffer is written only by the client's domain, and in the display domain is read only by `erx_screen` and by the driver while a frame `erx_screen` handed it is outstanding, during which `erx_screen` writes no image of that frame; the display's mapping of an area is read-only, and the area is deleted only after the display has unmapped it ([The pixel area](#the-pixel-area)), so a read of it never faults, whatever the client does or however it ends; a buffer's size and layout are the display's own record, made from a checked `present`, and nothing of them is read from the area, so a client that writes while the display reads changes pixels of its own window and nothing else; an image is a NIF resource, freed by its destructor when no term refers to it, and `erx_memdraw` has no other free, so a window's end, a resize and an `f` drop a reference and never free memory another process holds; an image over an area keeps the area mapped while it lives; only `erx_memdraw:wrap/4` makes an image over memory it did not allocate, and it checks the range against the memory's size with checked arithmetic; every pixel loop of `erx_memdraw` walks a rectangle one of its checkers produced: a draw, the `erx_clip_t` that only `erx_draw_clip` produces from the operation's rectangles and the images' bounds; a load or read, a rectangle `rows_of` checked inside its image; an allocation's fill and a snapshot, the whole image `badrect` admitted | a second writer of the screen image; a read of a buffer whose area has been unmapped; a layout field read from the area; an explicit free of an image; an image over a range that passes its memory's end; a loop over an unclipped rectangle | the build checks over `erx_memdraw`'s sources and the call direction (Chokepoints); the differential test against the reference renderer with rectangles far outside every image; the display suite in hosted mode under ThreadSanitizer and ASan, with clients drawing, presenting, resizing and ending, and a client's domain killed while `erx_screen` composes from its buffer, where a seeded unmap of an area before its last image is freed makes ASan report, and a seeded `wrap/4` without its bound check fails the range cases |
-| **G3.** What a client makes the display domain spend is bounded by its grant | memory: the grant's `pixels` is the size of the client's pixel area, charged when the connection is made and never grown, and its `windows` bounds the client's window processes, each of which holds one present, at most 16 rectangles, a label and at most 4 KiB of pending `mouse` and of pending `kbd`; the display holds no image, font or tree of a client; a write carries at most the file protocol's 64 KiB, and a `ctl` or `wctl` line at most 1,024 bytes; `erx_screen` never waits on the driver, so its mailbox drains while a frame is with the device, and what it holds meanwhile is state, not a queue: the newest layout, which replaces the one before, and at most one waiting present for each live window, dropped when the window ends ([The screen](#the-screen-and-its-one-path-to-the-device)). CPU: a window has one present in flight; `erx_screen` gathers the presents that arrive while the device is busy into one frame and copies for each window at most its present's 16 rectangles, each clipped to the window's visible region, once a frame, so a client that presents as fast as it is answered costs one such copy for each frame of the device and delays no other window by more | a buffer the display allocates for a client; a window with two presents composed in one frame; an unbounded queue; a layout kept for each change instead of the newest; a waiting present kept after its window's end; a call to the driver that blocks `erx_screen`; a layout change that asks a client for work | a client that makes windows past its quota, refused with `EDQUOT`, with the domain's memory unchanged; against a driver model that never answers, a client that writes 100,000 `wctl` moves and makes and removes 100,000 windows leaves `erx_screen`'s message queue empty between messages and its heap within the bound computed from the windows quota, where a seeded `erx_screen` that calls the driver synchronously, or that keeps every layout, fails the bound; a client that floods presents from one window while another window's one present is answered within two frames, where a seeded window process that sends its next present before the last is answered fails it; the queue bounds of the data model |
+| **G3.** What a client makes the display domain spend is bounded by its grant | memory: the grant's `pixels` is the size of the client's pixel area, charged when the connection is made and never grown, and its `windows` bounds the client's window processes, each of which holds one present, at most 16 rectangles, a label and at most 4 KiB of pending `mouse` and of pending `kbd`, and a grant that carries `clipboard` has at most one copy of at most `windows_clipboard_bytes` while a fid is open for writing; the display holds no image, font or tree of a client; a write carries at most the file protocol's 64 KiB, and a `ctl` or `wctl` line at most 1,024 bytes; `erx_screen` never waits on the driver, so its mailbox drains while a frame is with the device, and what it holds meanwhile is state, not a queue: the newest layout, which replaces the one before, and at most one waiting present for each live window, dropped when the window ends ([The screen](#the-screen-and-its-one-path-to-the-device)). CPU: a window has one present in flight; `erx_screen` gathers the presents that arrive while the device is busy into one frame and copies for each window at most its present's 16 rectangles, each clipped to the window's visible region, once a frame, so a client that presents as fast as it is answered costs one such copy for each frame of the device and delays no other window by more | a buffer the display allocates for a client; a window with two presents composed in one frame; a second copy for one grant; an unbounded queue; a layout kept for each change instead of the newest; a waiting present kept after its window's end; a call to the driver that blocks `erx_screen`; a layout change that asks a client for work | a client that makes windows past its quota, refused with `EDQUOT`, with the domain's memory unchanged; against a driver model that never answers, a client that writes 100,000 `wctl` moves and makes and removes 100,000 windows leaves `erx_screen`'s message queue empty between messages and its heap within the bound computed from the windows quota, where a seeded `erx_screen` that calls the driver synchronously, or that keeps every layout, fails the bound; a client that floods presents from one window while another window's one present is answered within two frames, where a seeded window process that sends its next present before the last is answered fails it; the queue bounds of the data model |
 | **G4.** A presentation grants nothing | a presentation is a type and a canonical text; the terminal emulator's only actions on one are to insert its text as keyboard input and to highlight the presentations of the types an input context names; a widget's only action is the `{select, Type, Value}` event to its application; neither carries a facet, a grant or a capability, and the command that then runs is checked by the shell's facets as any typed command is ([Authority](design.md#authority)) | a terminal that calls a service for a clicked link; a widget server that performs the action a presentation names | a session without an inspect facet clicks a pid presentation and the inserted `i` command fails with `no_facet`; the link parser's fuzz target; a source check that `erx_term` and `erx_ui_server` call no facet |
 | **G5.** Attributed text in a window is displayed only through the line escape, and a program's output reaches its terminal window unchanged | a window's label, a widget's `present` text and a widget's text drawn from a record value are escaped by the displayer with `erx_text:escape_line/1` ([Attributed text](design-live.md#attributed-text)): the menu in the display domain, a renderer in the session; the terminal emulator takes its bytes from a tty, which changes nothing but what `termios` says (V1), and interprets them as a terminal does | a label drawn raw; a terminal emulator that filters a program's bytes | the attributed-text test corpus of design-live sent as a label, as a `present` text and as a record value in a widget; V1's byte test with a terminal window in place of the serial line |
 | **G6.** Nothing paints without a change or a transition a change started | the only path to the device is `erx_screen`, which composes on a window's present and on a change of the layout, and repaints from the buffers it already maps when the driver restarts or the panel wakes; the driver pushes only the rectangles it is given; no process of the display domain has a redraw timer; a renderer draws only for a change of its tree and for the frames of a transition that change started, each declared in the theme with a duration the generator bounds ([Motion](design-desktop-programs.md#motion)): the Erlang renderer has no timer and draws a transition's next frame at the answer of its last present, interpolating up to the transition's deadline, its start plus its duration, and ends it with one final present of its end state at the first answer at or after the deadline, and the LVGL program, whose only animations are the theme's transitions, blocks on its standard input until a record arrives or its next LVGL timer is due, which is only until a transition's deadline | a periodic repaint; a push of the whole screen for a small change; a transition that restarts at its end, or presents again after its final present; an LVGL timer that fires with no change and no transition before its deadline | an idle display for one minute makes no device request, counted at the driver, on the desktop and on a kiosk under LVGL, where a seeded animation in the LVGL build fails it; a press on a button under each renderer, against a window model that answers each present at once, at irregular times, or 300 ms late, makes presents only up to the first answer at or after the `press` deadline, the last of them drawing the end state, and none after, where a seeded transition that starts again at its end fails it, and a seeded renderer that stops at the deadline without a final present leaves the node short of its end state; a one-pixel change makes exactly one push of one rectangle; moving a window pushes exactly the area whose content changed |
@@ -2590,25 +2590,46 @@ and one at a nonzero offset fails with `EINVAL`, erXos's choice. The
 window ends with its holder, its directory or its grant, and holds
 nothing that outlives it: its buffer is its client's memory.
 
-**The clipboard.** `/clipboard` holds at most 1 MiB, `windows_clipboard_bytes` of
-`abi/services/windows.txt`, and a write that would
-take it past that is refused whole with `EFBIG`, leaving it as it was
-before that write,
-so nothing is ever truncated. It is a file as the file protocol has
-them: a read answers its bytes from the read's offset, a write replaces
-the bytes at its offset, and an open for writing with `O_TRUNC` empties
-it, so a copy is an open with `O_TRUNC` and its writes; an open with
-`O_APPEND` fails with `EINVAL`. `erx_winfs` applies each write whole, so
-writers that race lose no write, but a copy of several writes is not one
-step: a paste that races a copy can read part of it, and two copies that
-race can leave a mix of both. It is one display's,
-shared by every grant on that display whose facet row turns `clipboard`
-on, as X's selection is shared by a display's clients; `clipboard` is off
-unless the row turns it on (Security says with whom).
+**The clipboard.** `/clipboard` holds at most 1 MiB,
+`windows_clipboard_bytes` of `abi/services/windows.txt`, and nothing is
+ever truncated: a copy that would pass that fails whole and leaves the
+clipboard as it was. It is one display's, shared by every grant on that
+display whose facet row turns `clipboard` on, as X's selection is shared
+by a display's clients; `clipboard` is off unless the row turns it on
+(Security says with whom). It is a file as the file protocol has them,
+whose value changes only as a whole:
+
+* An open for reading takes the clipboard's value as it stands at the
+  open, and the fid reads that value from the read's offset, whatever is
+  copied meanwhile.
+* An open for writing makes a **copy** that belongs to the fid. Its
+  bytes start as the clipboard's value at the open, or empty when the
+  open has `O_TRUNC`, and each write replaces the copy's bytes at the
+  write's offset, as a write to a file does. A grant has at most one fid
+  open for writing; a second open for writing is refused with `EBUSY`.
+  So `erx_winfs` holds at most `windows_clipboard_bytes` for each grant
+  that carries `clipboard`, while a copy is made. An open with
+  `O_APPEND` fails with `EINVAL`.
+* The fid's close replaces the clipboard with the copy, whole and in one
+  step, when the close comes within the window below; it discards the
+  copy otherwise. A person's copy is an open, its writes and a close,
+  and the clipboard shows the old value or the new one, never a mix.
+* A copy fails at its first refused request: a write that would pass the
+  size, refused with `EFBIG`, or a request outside the window, refused
+  with `EACCES`. The fid keeps that errno, every later write on it
+  answers it and changes nothing, and its close discards the copy and
+  answers it. A failed copy leaves the clipboard as it was.
+* A fid that ends otherwise than at its close, by its owner's end or the
+  grant's, drops its copy.
+
+So a paste that races a copy reads the old value or the new one whole,
+two copies that race leave the value of the one that closes later, and a
+program that writes the clipboard and reads it back before closing reads
+the old value.
 
 The clipboard follows the keyboard and the person's last input.
-`erx_winfs` serves a request on `/clipboard`, an open, a read or a
-write, only when it comes through the grant that holds the window
+`erx_winfs` serves a request on `/clipboard`, an open, a read, a
+write or a close, only when it comes through the grant that holds the window
 taking the keyboard, the current window under the overlapping policy
 and the shown one under the single, and only within 500 ms
 (`windows_clipboard_ms` of `abi/services/windows.txt`) of a key's or
@@ -2617,7 +2638,7 @@ request fails with `EACCES` and changes nothing. The check is on every
 request, so a fid opened in time and kept reads and writes nothing
 later. The up counts as the down does, so a selection made by a drag
 copies at its release, and a command typed at a shell copies when it
-writes within that time of Return. A grant that does not hold the
+opens, writes and closes within that time of Return. A grant that does not hold the
 window taking the keyboard cannot use the clipboard, whether it holds
 other windows or none, and where the manifest alone proves that a grant
 never can, a configured domain's on a display under the single policy,
@@ -2629,14 +2650,15 @@ that window's grant (Security states what that leaves open). The 500 ms
 are provisional until a measurement on the Raspberry Pi 4 settles them
 ([todo-performance.md](todo-performance.md)).
 
-Each request is judged when it arrives, and a copy is its requests one
-by one. A copy whose open with `O_TRUNC` comes within the 500 ms and
-whose later write comes after them leaves the clipboard empty, and one
-whose second write comes after them leaves its first write's bytes in
-place; the late write fails with `EACCES`, which the program sees. A
-paste whose later read comes after them gets the bytes it read in time
-and then `EACCES`. Nothing of a request that fails is applied, so the
-clipboard holds what the requests that came in time made of it.
+Each request is judged when it arrives, and a copy is applied by its
+close. A copy whose open comes within the 500 ms and whose later write
+comes after them fails at that write with `EACCES`, and its close
+answers the same and leaves the clipboard as it was, as it does for a
+copy whose writes came in time and whose close comes after them. A
+paste whose later read comes after them gets the bytes it read in time,
+of the value at its open, and then `EACCES`. Nothing of a request that
+fails is applied, so the clipboard holds the old value or a copy that
+came in time whole.
 
 ### The draw connection
 
@@ -5189,23 +5211,41 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   clipped to the first placement. A `mkdir` of `screen` or `clipboard`
   fails with `EEXIST`.
 * **The clipboard's rule.** Against a router model with times as inputs,
-  the grant holding the current window writes `/clipboard` 100 ms after
-  a key's up in it and a second grant reads the bytes 100 ms after a
-  click in its window, once picked; the same write 600 ms after the up,
-  a read through a grant whose window is not current, a read through a
-  grant that holds another, shown window of the same display, and a read
-  through a grant that holds no window each fail with `EACCES` and leave
-  the clipboard as it was, where a seeded `erx_winfs` that checks the
-  grant and not the time fails the first and one that checks the time
-  and not the grant fails the second and third; a fid opened in time and
-  read again 600 ms later fails, where a seeded check made only at the
-  open fails it. A copy that straddles the boundary: an open with
-  `O_TRUNC` 450 ms after the up and a write at 550 ms leave the clipboard
-  empty and fail the write with `EACCES`, and two writes at 450 and
-  550 ms leave the first write's bytes and fail the second, where a
-  seeded `erx_winfs` that judges a write by the time of its fid's open
-  applies the late write; a paste whose reads come at 450 and 550 ms
-  gets the first read's bytes and then `EACCES`.
+  the grant holding the current window copies (an open with `O_TRUNC`,
+  a write and a close) 100 ms after a key's up in it and a second grant
+  reads the bytes 100 ms after a click in its window, once picked; the
+  same copy with its close 600 ms after the up, a read through a grant
+  whose window is not current, a read through a grant that holds another,
+  shown window of the same display, and a read through a grant that holds
+  no window each fail with `EACCES` and leave the clipboard as it was,
+  where a seeded `erx_winfs` that checks the grant and not the time
+  fails the first and one that checks the time and not the grant fails
+  the second and third; a fid opened in time and read again 600 ms later
+  fails, where a seeded check made only at the open fails it. A copy that
+  straddles the boundary leaves the old value: an open with `O_TRUNC`
+  450 ms after the up and a write at 550 ms fail the write and the close
+  with `EACCES`; two writes at 450 and 550 ms fail the second write and
+  the close; writes at 450 ms and a close at 550 ms fail the close; where
+  a seeded `erx_winfs` that judges a write by the time of its fid's open
+  applies the late write, one that applies each write to the clipboard as
+  it comes leaves the first write's bytes, and one that judges a copy by
+  its open replaces the clipboard at the late close. A paste whose reads
+  come at 450 and 550 ms gets the first read's bytes and then `EACCES`.
+* **The clipboard changes whole.** A reader that opens during a copy
+  reads the old value to its end, and one that opens after the close
+  reads the new value, where a seeded copy that writes through to the
+  clipboard shows the first reader a mix; two grants that interleave the
+  writes of their copies leave the value of the one that closes later,
+  whole, where a seeded `erx_winfs` with one copy shared by the grants
+  leaves a mix; a write that would pass `windows_clipboard_bytes` fails
+  with `EFBIG`, a later write on the fid fails the same, and the close
+  answers `EFBIG` and leaves the old value, where a seeded copy that
+  keeps the bytes before the refused write replaces the clipboard with
+  them; a grant's second open for writing fails with `EBUSY` while the
+  first fid is open and succeeds after its close, where a seeded
+  `erx_winfs` that allows two holds 2 MiB for the grant; a copy whose
+  fid's owner ends before the close leaves the old value and releases
+  its bytes.
 * **The `ctl` read.** A window that has not presented reads one line,
   its channel and `1/1`; after a present on the copy path, against a
   driver model that answers `taken` and `shown` `unknown`, its report
@@ -5773,8 +5813,8 @@ Decisions:
    cannot use the clipboard ([The window process](#the-window-process)).
    The rule restricts the clipboard to the focused grant and to recent
    input; it does not tell a copy or a paste from other input, which
-   would need a decision of its own (Security, Residuals). Whether a
-   copy replaces the clipboard as one step is open (below).
+   would need a decision of its own (Security, Residuals). A copy
+   replaces the clipboard whole at its close (decision 25).
 7. **The input context.** The shell announces the argument types each
    command accepts with `-erx_args`, so the terminal highlights the
    presentations a command can take.
@@ -5917,26 +5957,21 @@ Decisions:
     that raises the window under the pointer costs the next click
     nothing. The pointer's rule is a move since the window came under
     it, the touch's 200 ms, both from research-ui-synthesis.md's D3.
-
-Open decision:
-
-* **Whether a copy replaces the clipboard as one step.** Each request
-  is judged alone (The window process), so a copy that straddles the
-  500 ms leaves the clipboard empty or part-replaced, as a paste that
-  races a copy reads part of it and two copies that race leave a mix.
-  The alternative: the writes of a fid opened for writing build a copy
-  of the fid's own, at most `windows_clipboard_bytes`, one such fid for
-  each grant at a time, and its close replaces the clipboard whole when
-  the close too comes within the 500 ms, and discards it otherwise; an
-  open for reading reads the clipboard as it stood at the open. A failed
-  copy then leaves the person's last copy in place, and the races above
-  cannot happen; the cost is up to 1 MiB held for each grant during a
-  copy, which the manifest's sum of what a grant can make the display
-  hold would count, and a program that writes the clipboard and reads
-  it back before closing reads the old bytes. Recommendation: take the
-  alternative, since it removes three listed cases at once and loses no
-  data on a failed copy; it changes the file's accepted behaviour, so it
-  waits for that decision.
+25. **A copy replaces the clipboard in one step.** The writes of a fid
+    opened for writing build a copy of the fid's own, at most
+    `windows_clipboard_bytes`, one such fid for each grant at a time, and
+    its close replaces the clipboard whole when the close too comes
+    within the 500 ms, and discards the copy otherwise; an open for
+    reading reads the clipboard as it stood at the open
+    ([The window process](#the-window-process)). A failed copy leaves the
+    person's last copy in place, and a paste that races a copy, two
+    copies that race and a copy that straddles the 500 ms cannot leave
+    the clipboard empty, part-replaced or mixed. It costs up to 1 MiB
+    held for each grant that carries `clipboard` during a copy, which
+    G3 bounds and the manifest check's sum of what a grant makes the
+    display hold counts with the grant's `pixels`, and a program that
+    writes the clipboard and reads it back before closing reads the old
+    bytes.
 
 ## References
 
