@@ -89,6 +89,9 @@ enum hci_le_event_mask_bit u8
 
 # A status of success (Vol 1 Part F, as Part E, section 7, cites it for every command).
 limit hci_status_success u8 0x00
+# Unknown Connection Identifier (Vol 1 Part F, 2.2): a disconnect naming a handle the
+# controller has already let go.
+limit hci_status_unknown_connection u8 0x02
 # A Connection_Handle is 12 bits, from 0x000 to 0xEFF (5.4.2).
 limit hci_handle_max u16 0x0eff
 # LE Read Buffer Size reserves an LE_ACL_Data_Packet_Length from 0x0001 to 0x001A
@@ -120,6 +123,9 @@ limit bt_advertising_interval_us u32 100000
 # and 139), and the vendor command that starts the download, as the design cites it
 # (docs/design-bluetooth.md, "The hardware").
 limit bt_command_timeout_ms u32 5000
+# The line's reset (docs/design-bluetooth.md, "A reset"): two power notifications, each
+# answered within the mailbox's 1 s, and the 300 ms and 500 ms off and on times.
+limit bt_line_reset_timeout_ms u32 5000
 limit bt_patch_minidriver_ms u32 1000
 limit bt_patch_launch_ms u32 4000
 limit bt_patch_download_minidriver u16 0xfc2e

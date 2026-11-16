@@ -72,8 +72,9 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'a_completion_of_a_queued_packet_stops_test'),
     Seed.new(fault: 'the deadline armed only once the controller allows the command',
              module_path: CORE,
-             anchor: "    {idle, Due} ->\n",
-             replacement: "    {idle, _Due} when Core#core.allowed =:= 0 ->\n        {[], Core};\n    {idle, Due} ->\n",
+             anchor: "        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}\n",
+             replacement: "        _ when Core#core.allowed =:= 0 -> {[], Core};\n" \
+                          "        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}\n",
              catching_case: 'a_command_the_controller_never_allows_stops_on_its_deadline_test'),
     Seed.new(fault: 'the connection limit kept above the buffer count',
              module_path: CORE,
@@ -84,7 +85,27 @@ class ErxBtHciTest < Minitest::Test
              module_path: CORE,
              anchor: 'bringup(shared_buffers, {Length, Packets}, Core) when Length > 0, Packets > 0 ->',
              replacement: 'bringup(shared_buffers, {Length, Packets}, Core) when Length >= 27, Packets > 0 ->',
-             catching_case: 'shared_buffers_take_any_length_from_one_test')
+             catching_case: 'shared_buffers_take_any_length_from_one_test'),
+    Seed.new(fault: "a handle's disconnect kept after its Disconnection Complete, so it reaches the next peer",
+             module_path: CORE,
+             anchor: 'disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};',
+             replacement: 'disconnects = Core#core.disconnects}};',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a connection before the advertising enable's answer leaving advertising on",
+             module_path: CORE,
+             anchor: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise_overtaken, Command, Opcode};',
+             replacement: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise, Command, Opcode};',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'any failed disconnect taken as the handle gone',
+             module_path: CORE,
+             anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
+             replacement: '        _Failed -> {[], Core}',
+             catching_case: 'a_disconnect_is_asked_once_and_its_failure_stops_test'),
+    Seed.new(fault: "the line's reset under no deadline",
+             module_path: CORE,
+             anchor: '{[line_reset, {timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}],',
+             replacement: '{[line_reset],',
+             catching_case: 'a_line_reset_that_never_ends_stops_test')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit

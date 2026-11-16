@@ -697,7 +697,11 @@ status as its reason.
 
 1. **Reset the line.** Write `reset` to `ctl`. The controller is fresh
    from power-on where the platform has a power line, and the UART is
-   programmed afresh ([A reset](#a-reset)).
+   programmed afresh ([A reset](#a-reset)). The reset is under its own
+   deadline, `bt_line_reset_timeout_ms`, 5 s: two power notifications,
+   each answered within the mailbox's 1 s, and the off and on times, with
+   room to spare; a reset that has not answered by then ends the
+   controller process, so every step of the bring-up has a deadline.
 2. **`HCI_Reset`** (HCI 7.3.2).
 3. **Identify.** Read Local Version Information (7.4.1), Read Local
    Supported Commands (7.4.2), LE Read Local Supported Features Page 0
@@ -776,13 +780,21 @@ falls due, not when it is written, and runs through any time the
 controller allows none: a controller that answers
 `Num_HCI_Command_Packets` 0 and never follows with an opcode-0 event
 ends the controller process at the deadline. Which command is due is
-decided again whenever the controller allows one, so a disconnect for a
-handle that has gone, or advertising at the limit, is never sent. A
-command is in flight once the writer has it, and the writer takes the
-command before any queued packet: an answer to a command still waiting
-for the writer is a controller fault and ends the controller process. The
-core arms at most one deadline at a time, since a bring-up wait and a
-command never overlap: its step answers `{timer, Ms}` or `cancel_timer`,
+decided again on every step, and the command is chosen and taken only
+when the writer takes it, so a disconnect for a handle that has gone,
+even one the controller has since given a new peer, or advertising at
+the limit, is never sent. A link's disconnect stays with its handle,
+asked and then sent, until the handle's Disconnection Complete, so a
+second request is ignored and no request outlives the connection it was
+made for; Unknown Connection Identifier (Vol 1 Part F, 2.2) means the
+handle has gone, which Disconnection Complete reports or has reported,
+and any other failure ends the controller process. A command is in
+flight once the writer has it, and the writer takes the command before
+any queued packet: an answer to a command still waiting for the writer
+is a controller fault and ends the controller process. The core arms at
+most one deadline at a time, since the line's reset, a bring-up wait and
+a command are the states of one slot, so never two at once: its step
+answers `{timer, Ms}` or `cancel_timer`,
 and the controller process holds one Erlang timer for it, replacing or
 cancelling it as told and passing on a timeout only for the timer
 reference it holds, so the core never sees a stale one and its state
@@ -863,7 +875,10 @@ shortened rather than refused. The AD type values come from Bumble's
 
 When a connection completes, the controller stops advertising, as it does
 for connectable advertising, and the controller process enables it again
-while connections remain below the limit.
+while connections remain below the limit. A connection that completes
+while the enable is written and unanswered came from that enable, which
+the controller carried out before it answered, so the enable's answer
+leaves advertising off.
 
 ## Stage 2: the GATT server
 
@@ -1549,7 +1564,7 @@ Each passing case is paired with the seeded fault it must catch.
 | Core | Passes | Seeded fault that must fail it |
 | --- | --- | --- |
 | `erx_h4` | a stream cut at every byte offset splits into the same packets; an unknown indicator and an over-long ACL length are errors | the indicator check removed; the ACL length read as one byte |
-| `erx_bt_hci_core`, explored over every reachable state, until none is left (the state holds no timer token; the count of dropped events, a statistic, is explored to one) | every command waits for its answer, and an answer to one still queued for the writer ends the controller process; an opcode-0 event never moves the deadline; a duplicate handle and a connection past the limit each end the controller process; credits never go below zero and a Disconnection Complete returns a handle's outstanding packets; a completion for a dead handle, one beyond the packets a handle has given the writer and an answer naming another command each end the controller process; the writer is never given a second item before its acknowledgement, and at most one deadline is armed; every state before `ready` has its deadline armed, so every bring-up path from `reset` reaches `ready` or a stated reason, patching at most once; a command the controller never allows ends at its deadline; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1; advertising is on exactly while connections are below the limit in force | the command slot not cleared by Command Status; a handle kept live after its Disconnection Complete; a completion's count taken without the outstanding bound, so a forged report grows the credits; a completion's bound counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets, so removing the handle returns them, and the handle kept live stands in its place |
+| `erx_bt_hci_core`, explored over every state reachable from `start`, until none is left (the state holds no timer token; the count of dropped events, a statistic, is explored to one), and case by case | explored: the writer is never given a second item before its acknowledgement, and at most one deadline is armed; every state before `ready` has its deadline armed, the line's reset included, so every bring-up path reaches `ready` or a stated reason, patching at most once; an opcode-0 event never moves the deadline; credits never go below zero, and connections never pass the limit in force; a disconnect is written only for a handle whose disconnect was asked for since it last connected; advertising is never on at the limit, and with nothing written, sent or due it is on exactly while connections are below the limit; the controller process ends for exactly these reasons and no other: an answer naming another command, a deadline passed, a completion beyond the packets a handle has given the writer or for a dead handle, a connection past the limit, during the bring-up or on a live handle, a failed disconnect, a hardware error, a line reset not answered, a malformed event and a failed step. Case by case: an answer to a command due and not yet written ends the controller process; a Disconnection Complete returns a handle's outstanding packets; a command the controller never allows ends at its deadline; a second disconnect for a handle is ignored, Unknown Connection Identifier is the handle gone, and another failure ends the controller process; a disconnect waiting for the writer never reaches the handle's next peer; a connection before the enable's answer leaves advertising off; fewer buffers than the connection limit lower the limit; Read Buffer Size takes any length from 1 | the command slot not cleared by Command Status; a handle kept live after its Disconnection Complete; a completion's count taken without the outstanding bound, so a forged report grows the credits; a completion's bound counting packets still waiting for the writer; advertising not re-enabled after a disconnection; the deadline armed only once the controller allows the command; the connection limit kept above the buffer count; LE's 27-octet minimum applied to Read Buffer Size; a handle's disconnect kept after its Disconnection Complete, and a connection before the enable's answer leaving advertising on, each caught by the exploration; any failed disconnect taken as the handle gone; the line's reset under no deadline. Credits not returned at disconnection cannot be written: the free credits are derived from the live handles' outstanding packets, so removing the handle returns them, and the handle kept live stands in its place |
 | `erx_h4` against `bt_acl_rx_max` | a 251-octet ACL packet splits; a 252-octet one is an error, before and after the bring-up | the bound one octet too long. The bound taken from LE Read Buffer Size once known cannot be written: `split/1` takes no bound, only the constant |
 | `erx_bt_patch` | the records of a synthetic patch replay in order; a file with a truncated last record or a foreign opcode is refused whole, before any record is sent | the record length not checked against the bytes left |
 | `erx_gatt_db` | a table built from the declarations matches a hand-written expected table; the hash changes when a characteristic changes and not when the manifest lists rows in another order | services laid out in manifest order |

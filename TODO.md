@@ -6670,6 +6670,12 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] bluetooth, the packet the writer holds at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
+  the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the one
+  packet the writer already holds is on its way to the line and is written; if the controller has already given
+  the handle to a new peer, that packet reaches the new link. Narrow it in the link slice, where the link protocol
+  can tie each packet to its connection, for example by the writer checking the handle's connection at the write.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and

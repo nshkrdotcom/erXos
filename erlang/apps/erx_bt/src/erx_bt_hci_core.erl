@@ -10,18 +10,35 @@ input and the state and returns the actions the process performs and the next st
 
 **The bring-up** is a line of steps fixed by `new/1`: reset the line, `HCI_Reset`,
 identify, the patch where the configuration names one (its own reset and identify after
-it), the buffers, the configuration, then `ready`. Each command step waits for its
+it), the buffers, the configuration, then `ready`. The line's reset stops unless the
+line is ready within `bt_line_reset_timeout_ms`. Each command step waits for its
 Command Complete with status success; any other answer, or none within
 `bt_command_timeout_ms`, stops with the step and the status. The patched steps are
 distinct from the first ones, so the bring-up patches at most once.
 
-**One command in flight**: the slot is `idle`, `due` (a command waits for the
-controller's `Num_HCI_Command_Packets` to be at least one, Part E, 4.4) or `sent`.
-Which command is due is decided again on every step, so a disconnect for a handle that
-has gone, or advertising at the limit, is never sent. The command's deadline starts
-when it falls due and runs until its answer, so a controller that allows no command and
-never says otherwise stops on it. Command Complete or Command Status empties the slot;
-one with opcode 0 only updates the count, and one naming another opcode stops.
+**The slot** holds the one thing the one deadline guards, so a bring-up wait and a
+command are never both active:
+
+- `idle`: nothing, and no deadline armed;
+- `line_reset`: the line is being reset, until `line_ready`;
+- `wait`: a bring-up wait, which ends when its deadline passes;
+- `due`: a command is due and waits for the writer and for the controller's
+  `Num_HCI_Command_Packets` to be at least one (Part E, 4.4);
+- `{sent, Label, Command, Opcode}`: the writer has the command, until its answer.
+
+Which command is due is decided again on every step and taken only when it is handed to
+the writer, so a disconnect for a handle that has gone, even one the controller has given
+a new peer since, or advertising at the limit, is never sent. The command's deadline
+starts when it falls due and runs until its answer, so a controller that allows no
+command and never says otherwise stops on it. Command Complete or Command Status for the
+command sent empties the slot; one with opcode 0 only updates the count, and one naming
+any other opcode, the command due but not yet written included, stops.
+
+**Disconnects**: a link's disconnect stays with its handle, asked and then sent, until
+the handle's Disconnection Complete, so a second request for the handle is ignored and
+no request outlives the connection it was made for. A disconnect answered with a status
+other than success or Unknown Connection Identifier (the handle has gone, which
+Disconnection Complete reports or has reported) stops.
 
 **ACL credits** (Part E, 4.1.1): each live handle counts its packets in flight, and the
 free credits are the controller's buffer count less their sum, so a completion can never
@@ -32,23 +49,22 @@ buffers divided by the connection limit; a controller with fewer
 buffers than the limit lowers the limit to its buffer count, so every share is at least
 one buffer.
 
-**The writer** is given one item at a time, the next only after `written`: the command
-in the slot first, then the credited packets in order. A command is in flight only once
-the writer has it, so an answer to one still queued stops, and what waits for the line
-is the command slot and the credited packets, whatever the controller does.
+**The writer** is given one item at a time, the next only after `written`: the due
+command first, once the controller allows one, then the credited packets in order. A
+command is in flight only once the writer has it, so what waits for the line is the one
+due command and the credited packets, whatever the controller does.
 
 **Advertising** is on exactly while connections are below the limit: the controller
 stops it when a connection completes, and the core enables it again whenever the slot is
-free and connections are below the limit.
+free and connections are below the limit. A connection that completes while the enable
+is sent came from that enable, so the enable's answer leaves advertising off.
 
 Inputs and actions are terms; the process does the I/O and keeps the one deadline the
 core may have armed at a time: `{timer, Milliseconds}` arms it, `cancel_timer` disarms
 it, and `timeout` answers it, the process discarding a timer it cancelled or replaced
-by its reference (the design's "Commands and data credits"). A wait step and a command
-never overlap, so one deadline is enough, and the state holds no timer token. The
-patch arrives as
-records already read whole by `erx_bt_patch` (a later slice): this core sends what it is
-given.
+by its reference (the design's "Commands and data credits"), so the state holds no
+timer token. The patch arrives as records already read whole by `erx_bt_patch` (a later
+slice): this core sends what it is given.
 """.
 
 -include("generated/erx_abi.hrl").
@@ -77,8 +93,7 @@ given.
     manufacturer :: none | 0..16#FFFF,
     plan :: [step()],                          % the bring-up steps left; [] once ready
     stage = bringup :: bringup | ready,
-    waiting = none :: none | line | timer,     % a bring-up wait, under the deadline when timer
-    slot = idle :: idle | due | {queued, Label :: term(), erx_hci:command()}
+    slot = idle :: idle | line_reset | wait | due   % what the one deadline guards (moduledoc)
                  | {sent, Label :: term(), erx_hci:command(), Opcode :: 0..16#FFFF},
     allowed = 1 :: byte(),                     % Num_HCI_Command_Packets
     writer = idle :: idle | busy,
@@ -87,7 +102,7 @@ given.
     acl_tx_max = 0 :: 0..16#FFFF,
     links = #{} :: #{handle() => non_neg_integer()},  % packets in flight per live handle
     advertising = false :: boolean(),
-    disconnects = [] :: [{handle(), byte()}],
+    disconnects = [] :: [{handle(), Reason :: byte() | sent}],  % live handles only, until Disconnection Complete
     facts = #{} :: map(),
     dropped = 0 :: non_neg_integer()
 }).
@@ -149,21 +164,23 @@ step(Input, Core) ->
 
 stop(Reason) -> throw({stop, Reason}).
 
-input(start, #core{plan = [line_reset | Plan]} = Core) ->
-    {[line_reset], Core#core{plan = Plan, waiting = line}};
-input(line_ready, #core{waiting = line} = Core) ->
-    {[], Core#core{waiting = none}};
+input(start, #core{plan = [line_reset | Plan], slot = idle} = Core) ->
+    {[line_reset, {timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}], Core#core{plan = Plan, slot = line_reset}};
+input(line_ready, #core{slot = line_reset} = Core) ->
+    {[cancel_timer], Core#core{slot = idle}};
 input(written, #core{writer = busy} = Core) ->
     {[], Core#core{writer = idle}};
-input(timeout, #core{slot = {queued, Label, _}}) ->
+input(timeout, #core{slot = line_reset}) ->
+    stop(line_reset_timeout);
+input(timeout, #core{slot = wait} = Core) ->
+    {[], Core#core{slot = idle}};
+input(timeout, #core{slot = due} = Core) ->
+    %% A due slot always has a command due: every state step/2 returns has been pumped,
+    %% and command/1 empties the slot whenever due/1 names none.
+    {Label, _, _} = due(Core),
     stop({command_timeout, Label});
 input(timeout, #core{slot = {sent, Label, _, _}}) ->
     stop({command_timeout, Label});
-input(timeout, #core{slot = due} = Core) ->
-    {Label, _, _} = due(Core),
-    stop({command_timeout, Label});
-input(timeout, #core{waiting = timer} = Core) ->
-    {[], Core#core{waiting = none}};
 input({event, Event}, Core) ->
     event(Event, Core);
 input({acl, Handle, Boundary, _Broadcast, Data}, #core{links = Links} = Core) ->
@@ -214,7 +231,8 @@ event({disconnection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, _Reason}, #core{
     case is_map_key(Handle, Links) of
         true ->
             %% A packet still waiting for the writer is dropped with its handle, which the
-            %% controller may give the next peer.
+            %% controller may give the next peer, and so is the handle's disconnect. The
+            %% packet the writer already holds is on the line (TODO.md, security residuals).
             {[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),
                                               out = [Item || {Owner, _} = Item <- Core#core.out, Owner =/= Handle],
                                               disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};
@@ -259,9 +277,15 @@ connected(Handle, _Info, #core{links = Links}) when is_map_key(Handle, Links) ->
     stop({duplicate_handle, Handle});
 connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
-connected(Handle, Info, #core{links = Links, acl_tx_max = TxMax} = Core) ->
+connected(Handle, Info, #core{links = Links, acl_tx_max = TxMax, slot = Slot} = Core) ->
     {[{link_up, Handle, Info#{acl_tx_max => TxMax, share => share(Core)}}],
-     Core#core{links = Links#{Handle => 0}, advertising = false}}.
+     Core#core{links = Links#{Handle => 0}, advertising = false, slot = overtaken(Slot)}}.
+
+%% A connection while the advertising enable is sent came from that enable, which the
+%% controller has carried out and not yet answered: its answer must leave advertising
+%% off.
+overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise_overtaken, Command, Opcode};
+overtaken(Slot) -> Slot.
 
 %% Command Complete or Status for the command in the slot; opcode 0 only updates the
 %% count (Part E, 4.4).
@@ -270,17 +294,22 @@ answer(0, _Answer, Core) ->
 answer(Opcode, Answer, #core{slot = {sent, Label, Command, Opcode}} = Core) ->
     {Actions, Next} = answered(Label, Command, Answer, Core#core{slot = idle}),
     {[cancel_timer | Actions], Next};
-answer(Opcode, _Answer, #core{slot = {queued, _, _}}) ->
-    stop({answer_before_sent, Opcode});
 answer(Opcode, _Answer, _Core) ->
     stop({answer_to_other_command, Opcode}).
 
-%% A ready link's disconnect is answered by Command Status; a failure means the
-%% handle has already gone, which Disconnection Complete reports or has reported.
-answered({disconnect, _Handle}, _Command, _Answer, Core) ->
-    {[], Core};
+%% A disconnect is answered by Command Status (Part E, 7.1.6). Unknown Connection
+%% Identifier means the handle has gone, which Disconnection Complete reports or has
+%% reported, and the handle keeps its mark until then; any other failure stops.
+answered({disconnect, Handle}, Command, Answer, Core) ->
+    case outcome(Command, Answer) of
+        {ok, _} -> {[], Core};
+        {failed, ?ERX_HCI_STATUS_UNKNOWN_CONNECTION} -> {[], Core};
+        Failed -> stop({disconnect_failed, Handle, Failed})
+    end;
 answered(advertise, _Command, {complete, <<?ERX_HCI_STATUS_SUCCESS>>}, Core) ->
     {[], Core#core{advertising = true}};
+answered(advertise_overtaken, _Command, {complete, <<?ERX_HCI_STATUS_SUCCESS>>}, Core) ->
+    {[], Core};
 answered(Label, _Command, {status, Status}, _Core) ->
     stop({step_failed, Label, {command_status, Status}});
 answered(Label, Command, {complete, Return}, Core) ->
@@ -289,6 +318,11 @@ answered(Label, Command, {complete, Return}, Core) ->
         {failed, Status} -> stop({step_failed, Label, Status});
         malformed -> stop({step_failed, Label, malformed})
     end.
+
+%% A command's outcome from either answer.
+outcome(_Command, {status, ?ERX_HCI_STATUS_SUCCESS}) -> {ok, none};
+outcome(_Command, {status, Status}) -> {failed, Status};
+outcome(Command, {complete, Return}) -> erx_hci:return(name(Command), Return).
 
 name({vendor, _, _}) -> vendor;
 name(Command) when is_atom(Command) -> Command;
@@ -332,52 +366,56 @@ pump(Core) ->
     {Writes, Written} = feed(Commanded),
     {Steps ++ Commands ++ Writes, Written}.
 
-next_step(#core{stage = bringup, slot = idle, waiting = none, plan = [{wait, Milliseconds} | Plan]} = Core) ->
-    {[{timer, Milliseconds}], Core#core{plan = Plan, waiting = timer}};
-next_step(#core{stage = bringup, slot = idle, waiting = none, plan = []} = Core) ->
+next_step(#core{stage = bringup, slot = idle, plan = [{wait, Milliseconds} | Plan]} = Core) ->
+    {[{timer, Milliseconds}], Core#core{plan = Plan, slot = wait}};
+next_step(#core{stage = bringup, slot = idle, plan = []} = Core) ->
     {[{ready, facts(Core)}], Core#core{stage = ready}};
 next_step(Core) ->
     {[], Core}.
 
-%% The command due now, if any, its label and the state once it is taken: the bring-up's
-%% next step; once ready, a disconnect asked for, else advertising while connections
-%% are below the limit.
-due(#core{stage = bringup, waiting = none, plan = [{command, Label, Command} | Plan]} = Core) ->
+%% The command due now, if any: its label, the command and the state once it has been
+%% handed to the writer. In the bring-up, its next step; once ready, the first disconnect
+%% asked for and not yet sent, else advertising while connections are below the limit.
+due(#core{stage = bringup, plan = [{command, Label, Command} | Plan]} = Core) ->
     {Label, Command, Core#core{plan = Plan}};
-due(#core{stage = ready, disconnects = [{Handle, Reason} | Rest]} = Core) ->
-    {{disconnect, Handle}, {disconnect, Handle, Reason}, Core#core{disconnects = Rest}};
-due(#core{stage = ready, advertising = false, links = Links, limit = Limit} = Core) when map_size(Links) < Limit ->
-    {advertise, {le_set_advertising_enable, true}, Core};
+due(#core{stage = ready, disconnects = Disconnects} = Core) ->
+    case lists:search(fun({_Handle, Reason}) -> Reason =/= sent end, Disconnects) of
+        {value, {Handle, Reason}} ->
+            {{disconnect, Handle}, {disconnect, Handle, Reason},
+             Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, {Handle, sent})}};
+        false ->
+            advertise(Core)
+    end;
 due(_Core) ->
     none.
 
-%% The slot: a command falling due arms its deadline; it is queued for the writer once
-%% the controller allows one; and a due command no longer due disarms it.
-command(#core{slot = Slot} = Core) ->
-    case {Slot, due(Core)} of
-        {idle, none} ->
-            {[], Core};
-        {idle, Due} ->
-            {Actions, Next} = queue(Due, Core#core{slot = due}),
-            {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS} | Actions], Next};
-        {due, none} ->
-            {[cancel_timer], Core#core{slot = idle}};
-        {due, Due} ->
-            queue(Due, Core);
-        {_InFlight, _Due} ->
-            {[], Core}
-    end.
+advertise(#core{advertising = false, links = Links, limit = Limit} = Core) when map_size(Links) < Limit ->
+    {advertise, {le_set_advertising_enable, true}, Core};
+advertise(_Core) ->
+    none.
 
-queue({Label, Command, Taken}, #core{allowed = Allowed}) when Allowed > 0 ->
-    {[], Taken#core{slot = {queued, Label, Command}, allowed = Allowed - 1}};
-queue(_Due, Core) ->
+%% The slot, when free or due: a command falling due arms its deadline, and a due
+%% command no longer due disarms it.
+command(#core{slot = idle} = Core) ->
+    case due(Core) of
+        none -> {[], Core};
+        _ -> {[{timer, ?ERX_BT_COMMAND_TIMEOUT_MS}], Core#core{slot = due}}
+    end;
+command(#core{slot = due} = Core) ->
+    case due(Core) of
+        none -> {[cancel_timer], Core#core{slot = idle}};
+        _ -> {[], Core}
+    end;
+command(Core) ->
     {[], Core}.
 
-%% The writer takes the queued command first, which is then in flight, else the next
-%% packet.
-feed(#core{writer = idle, slot = {queued, Label, Command}} = Core) ->
+%% The writer, when idle, takes the due command once the controller allows one, which
+%% is decided and sent at that moment, else the next packet.
+feed(#core{writer = idle, slot = due, allowed = Allowed} = Core) when Allowed > 0 ->
+    {Label, Command, Taken} = due(Core),
     {Opcode, Parameters} = erx_hci:command(Command),
-    {[{write, erx_h4:command(Opcode, Parameters)}], Core#core{writer = busy, slot = {sent, Label, Command, Opcode}}};
+    {[{write, erx_h4:command(Opcode, Parameters)}],
+     Taken#core{writer = busy, slot = {sent, Label, Command, Opcode}, allowed = Allowed - 1}};
 feed(#core{writer = idle, out = [{_Handle, Packet} | Out]} = Core) ->
     {[{write, Packet}], Core#core{writer = busy, out = Out}};
 feed(Core) ->
