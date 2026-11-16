@@ -30,7 +30,7 @@ report through whole, and an `ignore` leaves the event as it was. Each function 
 is total over any term to keep that true.
 """.
 
--export([install/0, filter/2]).
+-export([primary_filters/0, filter/2]).
 
 -type summary() :: #{label => atom() | {atom(), atom()}, process => pid(), name => atom(),
                      class => error | exit | throw, reason => atom(),
@@ -39,15 +39,16 @@ is total over any term to keep that true.
 -define(IS_CLASS(C), (C =:= error orelse C =:= exit orelse C =:= throw)).
 
 -doc """
-Adds the filter to the runtime's primary filters, which every event of the runtime passes,
-so it covers every process of the domain. A second install, from an application that
-restarts, keeps the first.
+The primary filters this runtime takes at boot, ahead of any its configuration names: the
+filter in every domain but the system domain, whose reports are the trusted base's own, and
+none there. Logger's configuration at the kernel's start adds them (edit 57 of
+docs/design-runtime.md), before any application starts a process, so no domain has to ask.
 """.
--spec install() -> ok.
-install() ->
-    case logger:add_primary_filter(?MODULE, {fun ?MODULE:filter/2, []}) of
-        ok -> ok;
-        {error, {already_exist, ?MODULE}} -> ok
+-spec primary_filters() -> [{erx_report, logger:filter()}].
+primary_filters() ->
+    case erx_inspector:is_system_runtime() of
+        true -> [];
+        false -> [{?MODULE, {fun ?MODULE:filter/2, []}}]
     end.
 
 -doc "The filter: an OTP event as its summary, any other event left to the next filter.".

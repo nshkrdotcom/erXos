@@ -2439,8 +2439,8 @@ fields:
 
 * **Reports carry no term.** Every process of the WiFi domain is a
   `proc_lib` process, as OTP's behaviours are, so every report its end
-  makes is a logger event of OTP's domain. The application's start
-  installs the report filter, `erx_report`
+  makes is a logger event of OTP's domain. The domain takes the
+  report filter, `erx_report`, at boot
   ([design-log.md](design-log.md#reports-carry-no-term)), which rewrites
   every event of OTP's domain to names, classes and arities and drops
   every other term. So no report carries a term a process held,
@@ -2977,7 +2977,7 @@ under load. QEMU has no WiFi device for any machine.
   `erx_wifi_choose`, `erx_wifi_join`, `erx_wifi_memory`, `erx_wpa_key`,
   `erx_wpa_kdf`, `erx_sae`, `erx_wpa_conf`, `erx_wifi_keys`,
   `erx_wpa_holder`, `erx_wpa_arith`, `erx_wifi_keys_dev` and `erx_wifi_fs`,
-  with `erx_report` installed at the application's start; `erx_wpa_secret` and the `wlankey` command;
+  over the report filter `erx_report` the domain takes at boot; `erx_wpa_secret` and the `wlankey` command;
   `erx_ether` and `erx_net_ether` in `erx_net`.
 * Host tooling: the test access point's profiles and the harness
   command that starts hostapd with one.

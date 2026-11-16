@@ -27,7 +27,7 @@ controller_crash_unfiltered_carries_the_bytes_test() ->
     ?assert(lists:any(fun carries_mark/1, Events)).
 
 controller_crash_reports_carry_no_term_test() ->
-    ok = erx_report:install(),
+    ok = logger:add_primary_filter(erx_report, {fun erx_report:filter/2, []}),
     try
         Events = controller_crash(),
         ?assertEqual([], lists:filter(fun carries_mark/1, Events)),

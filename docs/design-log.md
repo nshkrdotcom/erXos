@@ -420,17 +420,32 @@ after which every later report would pass whole, and a filter that
 answers `ignore` leaves that event as it was. It does neither for an
 event of OTP's domain.
 
-A domain's primary filters are its runtime's, so a domain takes the
-filter when its application's start calls `erx_report:install/0`,
-before it starts a process: the Bluetooth domain's `erx_bt_app`
-([design-bluetooth.md](design-bluetooth.md#security)), the WiFi
-domain's ([design-wifi.md](design-wifi.md#security)) and the network
-domain's
-([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives)).
-The system domain installs none. What that leaves open (the system
-domain's relays, logger's forwarding of an event to its group leader's
-node before any filter runs, the legacy `error_logger` calls that carry
-no `otp` domain) is a security residual in TODO.md.
+A domain's primary filters are its runtime's, and every runtime but
+the system domain's takes the filter at boot: logger's configuration
+of the kernel, which runs at the kernel's start before any application
+starts a process, puts `erx_report:primary_filters/0` ahead of the
+filters the domain's configuration names (edit 57 of
+[design-runtime.md](design-runtime.md)). No domain asks for it, so none
+can forget it, and no filter the domain's configuration names sees an
+OTP report whole. The Bluetooth domain
+([design-bluetooth.md](design-bluetooth.md#security)), the WiFi domain
+([design-wifi.md](design-wifi.md#security)) and the network domain
+([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives))
+rely on it. Only an event logged before the kernel starts, by `init`
+and the code loader while no process of the domain runs, reaches the
+boot's simple handler unfiltered.
+
+The system domain takes none: its reports are the trusted base's own,
+and its operator debugs the trusted base from them whole. A process of
+the system domain that holds another domain's bytes, such as a relay,
+therefore keeps them out of its reports itself: out of its behaviour's
+termination report through its `format_status/1`, and out of the
+mailbox and dictionary a crash report quotes through
+`process_flag(sensitive, true)`. What is left open (a
+crash report of such a process, which quotes its mailbox; logger's
+forwarding of an event to its group leader's node before any filter
+runs; the legacy `error_logger` calls that carry no `otp` domain) is a
+security residual in TODO.md.
 
 The filter reaches only reports. An exit reason still reaches the
 monitors and links of the process that exits, and a waiting caller of

@@ -9,16 +9,12 @@ namespace (erx_ns:mount_facets/1), as a session's does. The `line` grant, which 
 domain service hands over in the ready answer before any application starts, has the
 place `/line` that erx_ns:place/1 gives it. Then it starts `erx_bt_sup`, whose controller
 group opens `/line/data` and `/line/ctl`.
-
-Before either it installs the report filter, `erx_report`, so no report of the domain
-carries a term its processes held (docs/design-log.md, "Reports carry no term").
 """.
 -behaviour(application).
 
 -export([start/2, stop/1]).
 
 start(_Type, _Args) ->
-    ok = erx_report:install(),
     ok = erx_ns:mount_facets(lists:usort(erx:granted() ++ maps:keys(erx:caps()))),
     erx_bt_sup:start_link().
 

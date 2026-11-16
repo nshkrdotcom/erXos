@@ -2649,13 +2649,8 @@ it; git history is the record of completed work.
   `lo0` with `ip4 => dhcp` fails `erx_net_if_core:new/1` with `function_clause`, and a binary name
   `<<"lo0">>` adds a second `lo0`. Take only a static `ip4` and `ingress` from a configured `lo0`,
   refuse the rest at `start_link` with a named error, and test it.
-* [Low] network, `erx_net_app` and `erx_net_driver`: the application's start does not install the
-  report filter `erx_report` (design-log.md, "Reports carry no term"; design-network-stack.md,
-  "What fails and what survives"), so a driver's crash report carries its mailbox (`proc_lib`),
-  and pending frames, on `lo0` local traffic, reach the log; `erx_net_loop:transmit/2` raises on
-  a zone whose bytes are not iodata where its doc says `malformed`. Install the filter at the
-  start, once no configuration runs the stack in the system domain, which installs none, and drop
-  a bad list as `malformed`.
+* [Low] network, `erx_net_loop:transmit/2`: it raises on a zone whose bytes are not iodata where
+  its doc says `malformed`; drop a bad list as `malformed`.
 * [Low] erx_net TCP ICMP (`erx_tcp_icmp`, `erx_tcp_input:tcp_mss`): an MTU a too-big
   report gives in SYN-SENT lowers the MSS until the SYN-ACK, which recomputes it from the
   path, so the first full-size segment is lost again; FreeBSD keeps it in the host cache
@@ -7114,16 +7109,21 @@ to the corpus and follow rc
 
 ## Security residuals
 
-* [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): the report filter is
-  installed by each domain's application start (`erx_bt_app` alone today), so processes that
-  start before it, the system domain, which installs none though its relays hold other
-  domains' bytes, and a domain whose start forgets the call log OTP's reports whole; nothing
-  tests the install. `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl:1906`) forwards an
-  event whose group leader is on another node before any primary filter runs, and OTP's legacy
-  `error_logger` calls (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no
-  `otp` domain, so both pass whole; so do erXos's own events that print a raw term. Install the
-  filter in every non-system domain's logger configuration (edit 57 of design-runtime.md), run
-  primary filters before remote forwarding, and decide whether the system domain takes it.
+* [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
+  system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
+  `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
+  is on another node before any primary filter runs; OTP's legacy `error_logger` calls
+  (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no `otp` domain; so do
+  erXos's own events that print a raw term; and in the system domain, which takes no filter, the
+  crash report of a process that holds another domain's bytes, such as a relay, quotes its
+  mailbox and its stack's arguments. The filter is an entry of the primary filter list, so a
+  filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
+  whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
+  moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
+  logged as its summary where stock OTP drops it. Make the rewrite a fixed stage of
+  `logger_backend:log_allowed/2` ahead of the list (edit 57), which closes all three, run it
+  before remote forwarding, and keep such bytes out of the system domain's crash reports
+  through the process's own `format_status/1`.
 
 * [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
   `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
@@ -7944,7 +7944,8 @@ document's "residual risks accepted" paragraph.
     the exchange's end, which the station's ordering of the holder's answers keeps from
     happening;
   - the join's state holds SAE's KCK while the exchange runs, so the station's process must
-    keep it out of crash reports, `sys` and `/proc` with the logger filter below;
+    keep it out of crash reports, `sys` and `/proc`, the first through the report filter
+    `erx_report` its domain takes at boot;
   - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
     exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
   - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
@@ -7964,11 +7965,7 @@ document's "residual risks accepted" paragraph.
     the seeded table;
   - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
     emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
-    semiblock are written beside their layout counts;
-  - ordering: the WiFi application's start must install `erx_report` (design-log.md,
-    "Reports carry no term") when it lands with
-    the first process that calls these cores, since a `function_clause` in `pmk/2` or
-    `build/4` carries the passphrase or the KCK in its arguments.
+    semiblock are written beside their layout counts.
 
 * [Low] WiFi station's choice (`erx_wifi_choose`;
   [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:

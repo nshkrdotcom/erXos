@@ -6301,7 +6301,7 @@ socket's exit reason is the exception's class and reason alone, so a
 `function_clause` never carries the control block into a log. OTP's
 own reports of the same exits, which print the mailbox and each frame's
 arguments, pass the report filter, `erx_report`, which the network
-domain's start installs
+domain takes at boot
 ([design-log.md](design-log.md#reports-carry-no-term)). A
 socket's `format_status` likewise leaves out its buffers, its
 reassembly queue and its generator, and a socket process's what it
