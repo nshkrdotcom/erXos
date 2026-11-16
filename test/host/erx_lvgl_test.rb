@@ -121,6 +121,38 @@ class LvglSubmoduleTest < Minitest::Test
     end
   end
 
+  # Records each git command and answers with the log it was given.
+  class RecordingRunner
+    attr_reader :commands
+
+    def initialize(log)
+      @log = log
+      @commands = []
+    end
+
+    def run(argv, **)
+      @commands << argv
+      { 'log' => @log }
+    end
+  end
+
+  # When git's configuration names a local path as the submodule's URL, git
+  # refuses the clone unless the file transport is allowed: the clone allows
+  # it for its own command and the status check does not.
+  def test_init_allows_the_file_transport_for_the_clone_alone
+    Dir.mktmpdir('erx-lvgl-submodule') do |root|
+      FileUtils.touch([File.join(root, '.git'), log = File.join(root, 'status')])
+      runner = RecordingRunner.new(log)
+      Erx::Lvgl.init(root: root, runner: runner)
+      Erx::Lvgl.send(:status, root: root, runner: runner)
+      assert_equal 2, runner.commands.size
+      clone, status = runner.commands
+      assert_equal ['git', '-c', 'core.fsmonitor=false', '-c', 'protocol.file.allow=always', '-C', root,
+                    'submodule', 'update', '--init', '--depth', '1', '--', Erx::Lvgl::SUBMODULE], clone
+      assert_empty status.grep(/protocol\.file/)
+    end
+  end
+
   # Lines as `git status --porcelain=v2 --ignore-submodules=none
   # --untracked-files=normal` prints them for the submodule: `1 XY S<c><m><u>
   # mH mI mW hH hI path`, or `u XY S... m1 m2 m3 mW h1 h2 h3 path`.
