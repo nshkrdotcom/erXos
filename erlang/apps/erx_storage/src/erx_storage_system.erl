@@ -16,8 +16,8 @@ domain that serves `system` serves the booted slot's system partition.
   the record itself, through erx_device_record:system_image/0, and only
   the mint calls it; the module exports no mount, but mount/3, which
   takes the record's answer from its caller, to the EUnit cases compiled
-  with `TEST`, and Erx::ErofsReads refuses a call of either from any other
-  module of the release. So no caller can hand the mount a layout, a root
+  with `TEST`, so a call of either from any other module of the release
+  fails with `undef`. So no caller can hand the mount a layout, a root
   hash or `unchecked`, and only the mint mounts the tree: every block the
   reader parses, the directories included, matched the root hash the boot
   image pins before it is parsed (E1), and a partition changed under a

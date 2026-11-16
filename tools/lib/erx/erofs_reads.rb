@@ -23,11 +23,6 @@ module Erx
   #   the type erx_verity:image(;
   # * in the reader's modules, a remote call or fun M:F/A on a module outside
   #   READER_MODULES, a remote call through a variable or a macro, and apply;
-  # * outside SYSTEM, a call erx_storage_system:mount( or a fun of it: only its mint
-  #   mounts the `system` tree, with the layout mount/1 reads from the module's own
-  #   boot record. That the module exports no mount to the release, mount/3 to its
-  #   EUnit cases alone, is a fact of its compiled exports, which
-  #   test/host/erx_storage_system_test.rb checks.
   #
   # Like the other text rules it catches a slip, not a call built from pieces.
   module ErofsReads
@@ -46,7 +41,6 @@ module Erx
     # A remote call or a fun M:F/A, its module a name, a variable or a macro.
     REMOTE = /(?<![A-Za-z0-9_@])(?<module>\??[A-Za-z_][A-Za-z0-9_@]*)\s*:\s*[a-z][A-Za-z0-9_@]*\s*[(\/]/
     APPLY = /(?<![A-Za-z0-9_@:])apply\s*\(/
-    SYSTEM_MOUNT = /(?<![A-Za-z0-9_@])erx_storage_system\s*:\s*mount\s*[(\/]/
 
     Violation = Data.define(:path, :line, :detail) do
       def to_s = "chokepoint erofs-reads: #{path}:#{line}: #{detail}"
@@ -61,16 +55,7 @@ module Erx
       files.select { |path, _| covers?(path) }.flat_map do |path, text|
         code = ErlangText.code(text)
         atoms = atoms_only(code)
-        names(path, code) + reader_calls(path, atoms) + system_mount_calls(path, atoms)
-      end
-    end
-
-    def system_mount_calls(path, code)
-      return [] if path == SYSTEM
-
-      code.to_enum(:scan, SYSTEM_MOUNT).map do
-        Violation.new(path: path, line: line_of(code, Regexp.last_match.begin(0)),
-                      detail: "only #{SYSTEM}'s mint mounts the system tree")
+        names(path, code) + reader_calls(path, atoms)
       end
     end
 

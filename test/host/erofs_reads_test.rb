@@ -11,13 +11,11 @@ require_relative '../../tools/lib/erx/erofs_reads'
 # erx_verity:read/3 and that no other module reaches erx_verity's store
 # (docs/design-storage.md, invariant E1): the tree passes, and each seeded way
 # around the funnel fails, and so does an open of an image by any module but
-# erx_ns and erx_storage_system, the reader's included, and a mount of the `system`
-# tree with a layout its caller hands it.
+# erx_ns and erx_storage_system, the reader's included.
 class ErofsReadsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   READER = 'otp/erts/preloaded/src/erx_erofs.erl'
   SERVICE = 'erlang/apps/erx_files/src/seeded.erl'
-  SYSTEM = 'erlang/apps/erx_storage/src/erx_storage_system.erl'
 
   def lines_of(files) = Erx::ErofsReads.violations(files).map { |violation| [violation.path, violation.line] }
 
@@ -66,17 +64,6 @@ class ErofsReadsTest < Minitest::Test
            "-type t() :: erx_verity:tree().\n"
     assert_equal [[READER, 1], [READER, 2], [READER, 3], [READER, 4]], lines_of(READER => text)
     assert_empty lines_of(SERVICE => "f(I) -> erx_erofs:mount(I, fun log/1).\ng() -> fun erx_erofs:mount/2.\n")
-  end
-
-  # Only erx_storage_system's mint mounts the `system` tree, with the layout the module
-  # reads from its own boot record (E1): a call or a fun of its mount, quoted or not, in
-  # any other module of the release fails, and in its EUnit cases passes.
-  def test_no_other_module_mounts_the_system_tree
-    text = "f(W) -> erx_storage_system:mount(W, [], fun log/1).\ng() -> fun 'erx_storage_system':'mount'/3.\n" \
-           "h(W) -> erx_storage_system:mount(W).\ni() -> erx_storage_system:start_mint().\n"
-    assert_equal [[SERVICE, 1], [SERVICE, 2], [SERVICE, 3]], lines_of(SERVICE => text)
-    assert_empty lines_of(SYSTEM => "f(W) -> erx_storage_system:mount(W).\n")
-    assert_empty lines_of('test/erlang/erx_storage_system_tests.erl' => text)
   end
 
   def test_the_funnel_itself_and_files_outside_the_scope_pass
