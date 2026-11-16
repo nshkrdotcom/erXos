@@ -7108,6 +7108,13 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
+  (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
+  step's actions with a loop of their own rather than `erx_core:perform/3`; the first two match a
+  bare `stop` with `[stop | _]`, dropping any action after it where the one loop refuses it. Move
+  each to `{stop, Reason}` and the one loop, then add a source check that no module but
+  `erx_core` has a clause on a stop at a list's head.
+
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): the report filter is
   installed by each domain's application start (`erx_bt_app` alone today), so processes that
   start before it, the system domain, which installs none though its relays hold other

@@ -33,11 +33,6 @@ ends it, and the group's restart resets the line and the controller.
 -export([start_link/0, facts/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
-%% For erx_bt_hci_tests: the edge's refusal of a stop that is not last.
--ifdef(TEST).
--export([perform_all/2]).
--endif.
-
 %% Remote User Terminated Connection (bumble/hci.py, line 752): a link's end.
 -define(LINK_ENDED, 16#13).
 
@@ -147,25 +142,17 @@ step_noreply(Input, State) ->
         {stop, Reason} -> {stop, Reason, State}
     end.
 
-%% Steps each input in order at the clock, performing its actions, then sets the wake-up
-%% timer at the core's deadline.
+%% Steps each input in order at the clock, performing its actions through erx_core's loop,
+%% where a stop, always the last, ends the process; then sets the wake-up timer at the
+%% core's deadline.
 steps([], State) ->
     {ok, wake_up(State)};
 steps([Input | Inputs], #hci{core = Core} = State) ->
     {Next, Actions} = erx_bt_hci_core:step(Input, erlang:monotonic_time(millisecond), Core),
-    case perform_all(Actions, State#hci{core = Next}) of
-        {ok, Performed} -> steps(Inputs, after_input(Input, Performed));
-        {stop, _Reason} = Stop -> Stop
+    case erx_core:perform(Actions, fun perform/2, State#hci{core = Next}) of
+        {continue, Performed} -> steps(Inputs, after_input(Input, Performed));
+        {stop, Reason, _Performed} -> {stop, Reason}
     end.
-
-%% Performs a step's actions in order; a stop, always the last, ends the process. A stop
-%% with actions after it is the core's fault, refused here before any action after it
-%% is performed, with a reason that carries no state: error/1's stack trace names the
-%% function's arity, not its arguments.
-perform_all([{stop, Reason}], _State) -> {stop, Reason};
-perform_all([{stop, _Reason} | _After], _State) -> error(stop_not_last);
-perform_all([Action | Actions], State) -> perform_all(Actions, perform(Action, State));
-perform_all([], State) -> {ok, State}.
 
 %% The line's reset answered: the reader's first acknowledgement.
 after_input(line_ready, State) ->

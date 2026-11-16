@@ -29,7 +29,6 @@ class ErxBtHciTest < Minitest::Test
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   CORE = 'erlang/apps/erx_bt/src/erx_bt_hci_core.erl'
   PATCH = 'erlang/apps/erx_bt/src/erx_bt_patch.erl'
-  HCI = 'erlang/apps/erx_bt/src/erx_bt_hci.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
@@ -152,12 +151,7 @@ class ErxBtHciTest < Minitest::Test
                      "        \#{Handle := {Serial, InFlight}} -> {current, InFlight};",
              replacement: "current({Handle, _Serial}, #core{links = Links}) ->\n    case Links of\n" \
                           "        \#{Handle := {_, InFlight}} -> {current, InFlight};",
-             catching_case: 'explored_core_keeps_its_invariants_test_'),
-    Seed.new(fault: 'a stop with an action after it performed as an action',
-             module_path: HCI,
-             anchor: "perform_all([{stop, _Reason} | _After], _State) -> error(stop_not_last);\n",
-             replacement: '',
-             catching_case: 'stop_not_last_refused_test')
+             catching_case: 'explored_core_keeps_its_invariants_test_')
   ].freeze
 
   def test_bluetooth_cases_pass_under_eunit
@@ -178,12 +172,10 @@ class ErxBtHciTest < Minitest::Test
 
   private
 
-  # The modules, with replaced ones in place of the application's own, then the cases;
-  # erx_bt_hci is compiled again with TEST defined, which exports its edge's loop.
+  # The modules, with replaced ones in place of the application's own, then the cases.
   def run_cases(replaced)
     Dir.mktmpdir('erx-bt-hci-test') do |work|
-      edge = { HCI => File.read(File.join(ErlangBuild::ROOT, HCI)) }.merge(replaced)
-      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: edge, defines: %w[TEST])
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
                       '-eval', 'halt(case eunit:test([erx_bt_hci_tests, erx_bt_patch_tests], [verbose]) of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')

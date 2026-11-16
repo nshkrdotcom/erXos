@@ -197,30 +197,36 @@ sae_step(#{sae := Sae0, proof := Proof} = Join, Event, Ctx) ->
             {[], count(Check, Join#{sae := Sae})};
         {Sae, SaeActions} ->
             Tested = case erx_sae:tested(Sae) of true -> tested; false -> Proof end,
-            sae_actions(SaeActions, Join#{sae := Sae, proof := Tested}, [], Ctx)
+            sae_actions(SaeActions, Join#{sae := Sae, proof := Tested}, Ctx)
     end.
 
 %% The exchange's actions, in order, as the join's. Its frames and requests become the
 %% chip's and the key holder's, its deadline the join's, and its end, the last, the
-%% auth result. A list outside erx_sae's contract is refused with error/1, whose stack
-%% trace names no argument, since the join holds the exchange's keys.
-sae_actions([{stop, accepted}], #{ref := Ref} = Join, Acc, #{now := Now}) ->
-    {lists:reverse(Acc, [{chip, {auth_result, Ref, ok}}]),
-     Join#{sae := accepted, proof := proved, deadline := Now + ?CONNECT_MS}};
-sae_actions([{stop, {failed, Class}}], #{ref := Ref} = Join, Acc, Ctx) ->
-    {Ended, Idle} = finish(Join, Class, sae_failed, Ctx),
-    {lists:reverse(Acc, [{chip, {auth_result, Ref, failed}} | Ended]), Idle};
-sae_actions([{stop, _} | _], _Join, _Acc, _Ctx) ->
-    error(stop_not_last);
-sae_actions([{deadline, Deadline} | Rest], Join, Acc, Ctx) ->
-    sae_actions(Rest, Join#{deadline := Deadline}, Acc, Ctx);
-sae_actions([{auth_frame, Frame} | Rest], #{ref := Ref} = Join, Acc, Ctx) ->
-    sae_actions(Rest, Join, [{chip, {auth_frame, Ref, Frame}} | Acc], Ctx);
-sae_actions([{keys, Request} | Rest], #{ref := Ref} = Join, Acc, Ctx) ->
-    sae_actions(Rest, Join, [{keys, Ref, Request} | Acc], Ctx);
-sae_actions([], Join, Acc, _Ctx) ->
-    {lists:reverse(Acc), Join};
-sae_actions(_Actions, _Join, _Acc, _Ctx) ->
+%% auth result. erx_core's loop walks them, refusing a stop that is not last; an action or
+%% an end outside erx_sae's contract is refused with error/1, whose stack trace names no
+%% argument, since the join holds the exchange's keys.
+sae_actions(SaeActions, #{ref := Ref} = Join, #{now := Now} = Ctx) ->
+    case erx_core:perform(SaeActions, fun sae_action/2, {Join, []}) of
+        {continue, {Next, Acc}} ->
+            {lists:reverse(Acc), Next};
+        {stop, accepted, {Next, Acc}} ->
+            {lists:reverse(Acc, [{chip, {auth_result, Ref, ok}}]),
+             Next#{sae := accepted, proof := proved, deadline := Now + ?CONNECT_MS}};
+        {stop, {failed, Class}, {Next, Acc}} ->
+            {Ended, Idle} = finish(Next, Class, sae_failed, Ctx),
+            {lists:reverse(Acc, [{chip, {auth_result, Ref, failed}} | Ended]), Idle};
+        {stop, _Other, _Done} ->
+            error(sae_contract)
+    end.
+
+%% One action of the exchange, into the join and the join's actions, newest first.
+sae_action({deadline, Deadline}, {Join, Acc}) ->
+    {Join#{deadline := Deadline}, Acc};
+sae_action({auth_frame, Frame}, {#{ref := Ref} = Join, Acc}) ->
+    {Join, [{chip, {auth_frame, Ref, Frame}} | Acc]};
+sae_action({keys, Request}, {#{ref := Ref} = Join, Acc}) ->
+    {Join, [{keys, Ref, Request} | Acc]};
+sae_action(_Action, _Done) ->
     error(sae_contract).
 
 %% ---- The key holder's answers ----

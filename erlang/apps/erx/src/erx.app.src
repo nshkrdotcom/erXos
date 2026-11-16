@@ -45,6 +45,7 @@
              erx_console_keys,
              erx_console_menu,
              erx_console_sup,
+             erx_core,
              erx_device,
              erx_device_record,
              erx_dist,
