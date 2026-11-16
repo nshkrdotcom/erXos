@@ -14,8 +14,9 @@
 %% each is pure but for an image's mount, which reads the image.
 %%
 %% An EROFS image mounts from the block service's window on it, read-only: the change
-%% mounts the image with erx_erofs:mount/3 once the point and options pass, and the
-%% entry holds that mount as its provider, so the table holds only mounts erx_ns made.
+%% opens the image unchecked and mounts it with erx_erofs:mount/2 once the point and
+%% options pass, and the entry holds that mount as its provider, so the table holds only
+%% mounts erx_ns made.
 %% A mount that fails answers its error, and its diagnostic goes to the kernel log, as
 %% does the diagnostic of every later operation that fails on the image.
 %%
@@ -374,11 +375,10 @@ ended(Pid, Table) ->
 %% The mount runs in erx_ns's process or change/2's caller, and its log in whatever
 %% process reads a path on the image.
 
-%% A checked change with its image mounted: the mount's entry change, or the reader's
-%% error once its diagnostic, fixed text and numbers of the reader's, is in the kernel
-%% log with the window's pid. Every other change is ready as it is.
+%% A checked change with its image mounted: the mount's entry change, or the error once
+%% its diagnostic, fixed text and numbers, is in the kernel log with the window's pid. Every other change is ready as it is.
 mounted({mount_image, Point, Window}) ->
-    case erx_erofs:mount(Window, unchecked, fun ?MODULE:image_log/1) of
+    case mount_window(Window) of
         {ok, Fs} ->
             {ok, {mount, Point, {erofs, Fs}, ro}};
         {error, Reason, Diagnostic} ->
@@ -387,6 +387,13 @@ mounted({mount_image, Point, Window}) ->
     end;
 mounted(Checked) ->
     {ok, Checked}.
+
+%% The mount of the window's image, opened unchecked, or the error and its diagnostic.
+mount_window(Window) ->
+    case erx_verity:open(Window, unchecked) of
+        {ok, Image} -> erx_erofs:mount(Image, fun ?MODULE:image_log/1);
+        {error, eio} -> {error, eio, <<"erofs: the image did not open">>}
+    end.
 
 %% The kernel log line of an operation that failed on a mounted image, which runs in the
 %% process that read the path: a fun of an exported function, so a reload of this module

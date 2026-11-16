@@ -10,7 +10,7 @@ read-only image in the calling process, written from the format's header,
 It implements what the packer's fsimg options write, and more: 4 KiB blocks,
 compact and extended inodes, the plain and inline data layouts, regular
 files, directories and symbolic links, no compression. It steps over an
-inode's inline extended attributes and serves none. `mount/3` refuses an
+inode's inline extended attributes and serves none. `mount/2` refuses an
 image with an incompatible feature bit, naming the bits, an extended
 superblock, another block or directory block size, or a bad superblock
 CRC-32C; an inode with another data layout (compressed or chunked) or of
@@ -33,13 +33,14 @@ by its names and the image's size; nothing recurses on the image's data.
 It calls only BIFs, since it runs in whatever process reads a path, the
 code server included.
 
-`mount/3` opens the image through the funnel from the block service's
-window on it; `erx_ns` mounts the result in the namespace, `prim_file`
-calls the operations below on the names `erx_path` resolves there, and an
-open file of the image is `erx_erofs_file`'s.
+`mount/2` takes an image the funnel opened, which only `erx_ns` and
+`erx_storage_system` open: `erx_ns` mounts the result in the namespace,
+where `prim_file` calls the operations below on the names `erx_path`
+resolves and an open file of the image is `erx_erofs_file`'s, and
+`erx_storage_system` serves it as the `system` tree.
 """.
 
--export([mount/3, walk/2, read_link/2, read_file_info/2, file_info/2,
+-export([mount/2, walk/2, read_link/2, read_file_info/2, file_info/2,
          list_dir/2, read_file/2, pread/4]).
 -export_type([fs/0, kind/0, info/0]).
 
@@ -90,20 +91,14 @@ open file of the image is `erx_erofs_file`'s.
 -define(FAIL(Posix, Text, Args), throw({?MODULE, Posix, Text, Args})).
 
 -doc """
-Mounts the image the block service's window `Window` holds, checked
-against `Tree`: opens it through the funnel, reads block 0, checks the
-superblock and the root directory, and returns the mount, or the error and
-its diagnostic. `Log` receives the diagnostic of every later failed
+Mounts `Image`, which the funnel opened: reads block 0 through
+the funnel, checks the superblock and the root directory, and returns the
+mount, or the error and its diagnostic. Anything but an open image fails
+at that first read. `Log` receives the diagnostic of every later failed
 operation.
 """.
--spec mount(pid(), erx_verity:tree(), log()) -> {ok, fs()} | {error, posix(), binary()}.
-mount(Window, Tree, Log) when is_function(Log, 1) ->
-    case erx_verity:open(Window, Tree) of
-        {ok, Image} -> mount_image(Image, Log);
-        {error, eio} -> {error, eio, <<"erofs: the window did not answer its length">>}
-    end.
-
-mount_image(Image, Log) ->
+-spec mount(erx_verity:image(), log()) -> {ok, fs()} | {error, posix(), binary()}.
+mount(Image, Log) when is_function(Log, 1) ->
     Probe = #fs{image = Image, log = Log, blocks = 1, meta = 0, root = 0,
                 epoch = 0, nsec = 0, compact_mtime = false},
     try

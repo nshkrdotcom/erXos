@@ -7491,7 +7491,11 @@ to the corpus and follow rc
 * [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads the blocks
   of an image mounted without a layout, `erx_ns`'s window mounts, unchecked
   until M11 ([design-storage.md](docs/design-storage.md), E1), so a swapped
-  medium or a flipped bit reaches the parser; an image opened with a layout
+  medium or a flipped bit reaches the parser. `erx_ns` takes the window from
+  its caller, so a module of the storage domain can mount the `system` window
+  this way (`erx_blk_service:window(system)`) and read the partition without
+  its root hash; deleting the window mounts
+  ([todo-system-partition.md](docs/todo-system-partition.md)) closes it; an image opened with a layout
   is checked inside `erx_verity:read/3`.
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the

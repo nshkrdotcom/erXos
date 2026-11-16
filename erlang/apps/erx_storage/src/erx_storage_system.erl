@@ -99,10 +99,18 @@ directory, the reason handed to `Log`.
 mount(Window, Record, Log) ->
     case Record of
         {ok, Layout} ->
-            mounted(erx_erofs:mount(Window, Layout, Log), Log);
+            mounted(mount_window(Window, Layout, Log), Log);
         {error, {bad_device_record, Reason}} ->
             _ = Log(iolist_to_binary(["no system tree: ", Reason])),
             none
+    end.
+
+%% The mount of the window's image, opened against Layout, its later diagnostics handed
+%% to Log, or the error and its diagnostic.
+mount_window(Window, Layout, Log) ->
+    case erx_verity:open(Window, Layout) of
+        {ok, Image} -> erx_erofs:mount(Image, Log);
+        {error, eio} -> {error, eio, <<"no system tree: the image did not open">>}
     end.
 
 mounted({ok, Fs}, Log) ->

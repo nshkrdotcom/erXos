@@ -50,9 +50,9 @@ clean(Name, Bytes) ->
     %% Every fixture asks for its superblock checksum, so the fixer must leave
     %% each one as it is, whatever cases the seed draws.
     fix_crc(Bytes) =:= Bytes orelse fail(crc_fixer, Name),
-    Window = erx_erofs_tests:window(Bytes),
+    {ok, Image} = erx_erofs_tests:open(Bytes),
     try
-        {ok, Fs} = erx_erofs:mount(Window, unchecked, fun(Line) -> self() ! {log, Line} end),
+        {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
         erx_erofs_tests:agrees(Fs, erx_erofs_tests:owner(Name))
     catch
         Class:Reason -> fail(mismatch, {Name, Class, Reason})
@@ -70,17 +70,17 @@ mutated(Images, Names) ->
             end,
     %% Blocks read by the current operation, and whether it went past the bound.
     Reads = atomics:new(2, []),
-    Window = erx_erofs_tests:window(Bytes, fun(_, Count, Part) ->
-                                                      case atomics:add_get(Reads, 1, Count) of
-                                                          N when N > ?READS_MAX ->
-                                                              atomics:put(Reads, 2, 1),
-                                                              {error, unbounded};
-                                                          _ -> {ok, Part}
-                                                      end
-                                              end),
+    {ok, Image} = erx_erofs_tests:open(Bytes, fun(_, Count, Part) ->
+                                                         case atomics:add_get(Reads, 1, Count) of
+                                                             N when N > ?READS_MAX ->
+                                                                 atomics:put(Reads, 2, 1),
+                                                                 {error, unbounded};
+                                                             _ -> {ok, Part}
+                                                         end
+                                                 end),
     Case = {Name, Mutations, Fixed},
     try
-        case guarded(Case, fun() -> erx_erofs:mount(Window, unchecked, fun(Line) -> self() ! {log, Line} end) end) of
+        case guarded(Case, fun() -> erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end) end) of
             {ok, Fs} ->
                 checksummed(Bytes) andalso superblock_changed(Clean, Bytes) andalso not Fixed
                     andalso fail(crc, Case),

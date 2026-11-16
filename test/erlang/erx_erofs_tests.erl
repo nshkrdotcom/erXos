@@ -56,7 +56,8 @@ expected() ->
 contents(Size, Seed) -> << <<((I * 7 + Seed) band 255)>> || I <- lists:seq(0, Size - 1) >>.
 
 mount(Name) ->
-    {ok, Fs} = erx_erofs:mount(window(fixture(Name)), unchecked, fun(Line) -> self() ! {log, Line} end),
+    {ok, Image} = open(fixture(Name)),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
     Fs.
 
 logged() ->
@@ -119,7 +120,8 @@ walks_end_as_the_resolver_reads_them_test() ->
 %% Refusals at mount, each with its diagnostic.
 
 refused(Bytes) ->
-    erx_erofs:mount(window(Bytes), unchecked, fun(_) -> ok end).
+    {ok, Image} = open(Bytes),
+    erx_erofs:mount(Image, fun(_) -> ok end).
 
 compression_is_refused_naming_its_bits_test() ->
     ?assertEqual({error, enotsup, <<"erofs: block 0: incompatible feature bits 0x1 are not implemented">>},
@@ -141,13 +143,13 @@ superblock_test_() ->
 malformed_blocks_fail_the_operation_test() ->
     Bytes = fixture("compact"),
     Gate = atomics:new(1, []),
-    Window = window(Bytes, fun(_, Count, Part) ->
-                                      case atomics:get(Gate, 1) of
-                                          0 -> {ok, Part};
-                                          _ -> {ok, binary:copy(<<255>>, Count * ?BLOCK)}
-                                      end
-                              end),
-    {ok, Fs} = erx_erofs:mount(Window, unchecked, fun(Line) -> self() ! {log, Line} end),
+    {ok, Image} = open(Bytes, fun(_, Count, Part) ->
+                                         case atomics:get(Gate, 1) of
+                                             0 -> {ok, Part};
+                                             _ -> {ok, binary:copy(<<255>>, Count * ?BLOCK)}
+                                         end
+                                 end),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
     atomics:put(Gate, 1, 1),
     ?assertEqual({error, eio}, erx_erofs:read_file(Fs, [<<"small">>])),
     <<"erofs: inode 36: unknown format bits 0xFFFF">> = logged(),
@@ -189,8 +191,11 @@ funnel_opens_only_a_window_test() ->
     ?assertEqual({error, eio}, erx_verity:open(not_a_pid, unchecked)),
     Wrong = spawn(fun() -> receive {'$gen_call', From, info} -> gen:reply(From, {ok, #{}}) end end),
     ?assertEqual({error, eio}, erx_verity:open(Wrong, unchecked)),
-    ?assertMatch({error, eio, <<"erofs: the window did not answer its length">>},
-                 erx_erofs:mount(Gone, unchecked, fun(_) -> ok end)),
+    %% The reader mounts only an image the funnel opened: a window or its bytes fail
+    %% at the first read.
+    Compact = fixture("compact"),
+    [?assertEqual({error, eio, <<"erofs: blocks 0+1 failed to read">>}, erx_erofs:mount(NotOpened, fun(_) -> ok end))
+     || NotOpened <- [window(Compact), Compact]],
     %% A window of 20 blocks and 7 sectors is 20 blocks long.
     {ok, Odd} = open(binary:copy(<<1>>, 20 * ?BLOCK + 7 * ?SECTOR)),
     {ok, _} = erx_verity:read(Odd, 19, 1),
@@ -399,7 +404,8 @@ verity_refused_layouts_test_() ->
 %% The reader over a checked image serves the tree as over the image unchecked.
 verity_checked_mount_test() ->
     {Bytes, Layout} = verity_case("erofs"),
-    {ok, Fs} = erx_erofs:mount(window(Bytes), Layout, fun(Line) -> self() ! {log, Line} end),
+    {ok, Image} = erx_verity:open(window(Bytes), Layout),
+    {ok, Fs} = erx_erofs:mount(Image, fun(Line) -> self() ! {log, Line} end),
     agrees(Fs, owner("compact")).
 
 %% A read whose blocks' hashes lie in both blocks of the lowest level checks each block
