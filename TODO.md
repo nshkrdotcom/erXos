@@ -8817,11 +8817,17 @@ document's "residual risks accepted" paragraph.
   out at its caller and still be posted later, a second way into the timed-out-write item above.
 * [Low] abi/formats/mbr.txt: `erx_mbr_entry` declares alignment 4, but entries lie at 446 + 16i on the medium;
   declare 1 if the generator accepts it, so no C reader casts a sector buffer to the struct.
-* [Low] erx_blk_table: a data partition past 2 TiB, which an MBR cannot describe, is refused as `{mbr, 4, sectors}`
-  rather than as a data length the table cannot hold.
+* [Low] erx_blk_table: a data partition whose extended partition, from system A's record at sector 548,864, would
+  pass 2^32 - 1 sectors (about 2 TiB less 834 MiB), which an MBR cannot describe, is refused as
+  `{mbr, 4, sectors}` rather than as a data length the table cannot hold.
+* [Medium] abi/medium.txt: every partition start and record sector is written down, though each follows from the
+  order, the lengths and the 1 MiB before each extended boot record; only `layout_is_consistent_test` in
+  `test/erlang/erx_blk_table_tests.erl` checks they agree. The ABI generator should derive them (or check those
+  written), and the order of the logical partitions, now listed in both `erx_blk_table` and `MediumImage`, should
+  come from the file.
 * [Low] erx_blk_window: a request for more sectors than one device request carries (`erx_blk_request:max_sectors/0`)
   is refused with `einval` rather than split, so every client splits its own.
-* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 512 MiB, the vault's
+* [Medium] abi/medium.txt: the medium layout's sizes (the record's partition 8 MiB, each slot 512 MiB (boot 128 MiB, system 383 MiB), the vault's
   partition 64 MiB, the data partition at least 128 MiB, every boundary on 1 MiB) are settled, but not yet checked
   against the slot images' sizes (the plan's decision gate on uncompressed slots) or the Pi firmware's needs of the
   record's and the slots' FAT partitions; each slot's signature window is not in the layout yet.

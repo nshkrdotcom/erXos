@@ -17,10 +17,10 @@ module Erx
   #
   # The slot parser, choose, takes the record's sector and the first bytes of the
   # chosen slot's bootable file, both of which a guest may have written, and answers
-  # where on the medium the bootable file lies: from the slot's medium_slot_boot_start
+  # where on the medium the bootable file lies: from the boot partition's medium_slot_boot_start
   # for the length its boot header's image_size records. It refuses an unreadable
   # record, a header without its magic, and a length shorter than the header or
-  # reaching past the slot's end. read applies it to a medium file and extract copies
+  # reaching past the boot partition's end. read applies it to a medium file and extract copies
   # the file it names. tools/fuzz/boot_record.rb is its fuzz target.
   module BootRecord
     CODEC = ABI::Generated::CODEC
@@ -30,14 +30,14 @@ module Erx
     MAGIC = CODEC.fixed_bytes('arch_boot_magic')
 
     # Each slot: the text of the record that commits it, its partition's number as
-    # firmware names it in /chosen/bootloader/partition, and its first sector.
+    # firmware names it in /chosen/bootloader/partition, and its boot partition's first sector.
     Slot = Data.define(:name, :text, :partition, :start)
     SLOTS = %w[a b].to_h do |name|
       [name.to_sym, Slot.new(name: name.to_sym, text: CODEC.fixed_bytes("medium_record_#{name}").b.freeze,
                              partition: CODEC.constant("medium_slot_#{name}_partition"),
-                             start: CODEC.constant("medium_slot_#{name}_start"))]
+                             start: CODEC.constant("medium_boot_#{name}_start"))]
     end.freeze
-    SLOT_SECTORS = CODEC.constant('medium_slot_sectors')
+    SLOT_SECTORS = CODEC.constant('medium_boot_sectors')
     # The record's and the bootable file's places on the medium, in bytes.
     RECORD_OFFSET = (CODEC.constant('medium_record_start') + CODEC.constant('medium_record_select_start')) * SECTOR_BYTES
     BOOT_START = CODEC.constant('medium_slot_boot_start')

@@ -115,13 +115,14 @@ class BootPartitionTest < Minitest::Test
       # reader and checker: the record volume holds autoboot.txt, medium_record_a, and the
       # slot volume the layout's files with the bytes the layout gave them. The raw
       # sectors agree: the record at its sector, kernel8.img at the slot's boot start, the
-      # EROFS image at 128 MiB into the slot and the data volume at its partition's start.
+      # EROFS image at system A's start and the data volume at its partition's start.
       image = written.path
       assert_equal 1 << 31, File.size(image)
       assert_equal "\x55\xAA".b, File.binread(image, 2, 510)
       assert_equal [0x0e, 0x0c, 0x0c, 0x0f], (0..3).map { |index| File.binread(image, 1, 446 + (index * 16) + 4).ord }
       sector = Erx::MediumImage::SECTOR_BYTES
-      slot_start = Erx::MediumImage.constant('slot_a_start') * sector
+      slot_start = Erx::MediumImage.constant('boot_a_start') * sector
+      system_start = Erx::MediumImage.constant('system_a_start') * sector
       record_volume = cut(image, root, 'record.fat', Erx::MediumImage.constant('record_start') * sector, Erx::PiMedium::RECORD_BYTES)
       slot_volume = cut(image, root, 'slot.fat', slot_start, Erx::PiMedium::SLOT_FAT_BYTES)
       fsimg('Wd', '-f', record_volume)
@@ -133,7 +134,7 @@ class BootPartitionTest < Minitest::Test
       assert_equal 'kernel', fsimg('x', '-O', '-f', slot_volume, 'kernel8.img')
       assert_equal Erx::BootRecord.sector(:a), File.binread(image, sector, Erx::BootRecord::RECORD_OFFSET)
       assert_equal 'kernel', File.binread(image, 6, slot_start + Erx::PiMedium::BOOT_PLACE)
-      assert_equal EROFS, File.binread(image, EROFS.bytesize, slot_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
+      assert_equal EROFS, File.binread(image, EROFS.bytesize, system_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
       assert_equal VOLUME, File.binread(image, VOLUME.bytesize, Erx::MediumImage.constant('data_start') * sector)
 
       # The record is an assembled receipt: the card, each file of the partition by its
@@ -240,8 +241,8 @@ class BootPartitionTest < Minitest::Test
       output = File.join(root, 'image')
       Dir.mkdir(output)
       written = write(root, output, plan(root), erofs: nil)
-      slot_start = Erx::MediumImage.constant('slot_a_start') * Erx::MediumImage::SECTOR_BYTES
-      empty = File.binread(written.path, EROFS.bytesize, slot_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
+      system_start = Erx::MediumImage.constant('system_a_start') * Erx::MediumImage::SECTOR_BYTES
+      empty = File.binread(written.path, EROFS.bytesize, system_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
       assert_equal EROFS.bytesize, empty.count("\0")
       components = JSON.parse(File.read(written.record)).fetch('components').map { |part| part.fetch('path') }
       assert_includes components, 'data.lfs'

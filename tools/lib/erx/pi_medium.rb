@@ -22,11 +22,11 @@ module Erx
   #   (medium_record_select_start), the data area's first cluster; the reset count's
   #   sector (medium_record_count_start) lies in the reserved area, which fsimg leaves
   #   zero, and is not written, since abi/medium.txt defines no encoding of the count;
-  # * slot A: a FAT32 of the slot's first 128 MiB holding the boot files, with
-  #   kernel8.img placed by fsimg at medium_slot_boot_start, so the QEMU harness and the
-  #   slot writer find it without parsing FAT, and after it the release's EROFS image at
-  #   ReleaseMedium::SLOT_IMAGES_START;
-  # * slot B and the vault's partition empty, and the data partition a fresh littlefs
+  # * boot A: a FAT32 of the whole partition holding the boot files, with kernel8.img
+  #   placed by fsimg at medium_slot_boot_start, so the QEMU harness and the slot writer
+  #   find it without parsing FAT;
+  # * system A: the release's EROFS image where ReleaseMedium places a slot's image;
+  # * boot B, system B and the vault's partition empty, and the data partition a fresh littlefs
   #   volume (DataVolume) running to the medium's end.
   #
   # The medium's length is a power of two, the smallest that holds the layout's minimum
@@ -43,8 +43,8 @@ module Erx
     # Byte offsets inside the record volume: the record and the reset count.
     RECORD_PLACE = MediumImage.constant('record_select_start') * SECTOR_BYTES
     COUNT_OFFSET = MediumImage.constant('record_count_start') * SECTOR_BYTES
-    # Slot A's FAT ends where the slot's EROFS images start.
-    SLOT_FAT_BYTES = ReleaseMedium::SLOT_IMAGES_START
+    # Slot A's FAT fills its boot partition.
+    SLOT_FAT_BYTES = MediumImage.constant('boot_sectors') * SECTOR_BYTES
     BOOT_PLACE = MediumImage.constant('slot_boot_start') * SECTOR_BYTES
     # Every time in either volume is 1980-01-01, FAT's first representable date, so the
     # bytes are reproducible.
@@ -54,8 +54,8 @@ module Erx
     # * The record volume: 512-byte clusters make its 5 MiB data area 10,240 clusters, a
     #   FAT16 by count, and the record one cluster of its own.
     # * Slot A's volume: 1 KiB clusters make 124 MiB of data area some 127,000 clusters,
-    #   a FAT32 by count as the slot's partition type (0x0c) says; 2 KiB would make it a
-    #   FAT16.
+    #   a FAT32 by count as the boot partition's type (medium_boot_type, 0x0c) says;
+    #   2 KiB would make it a FAT16.
     RECORD_FORMAT = ['-F', 'fat16', *EPOCH, '-s', RECORD_BYTES.to_s, '-L', 'ERXREC', '-o', 'cluster=512'].freeze
     SLOT_FORMAT = ['-F', 'fat32', *EPOCH, '-s', SLOT_FAT_BYTES.to_s, '-L', 'ERXOS', '-o', 'cluster=1024'].freeze
     RECORD_VOLUME = [*RECORD_FORMAT, '-o', "place=/#{RECORD_FILE}@#{RECORD_PLACE}"].freeze
@@ -129,13 +129,13 @@ module Erx
     end
 
     # The card's pieces by sector: the record volume filling its partition, slot A's
-    # volume from the slot's start, the EROFS image, if any, where ReleaseMedium places a
-    # slot's one image, and the data volume's leading blocks.
+    # volume filling boot A, the EROFS image, if any, where ReleaseMedium places a slot's
+    # one image in system A, and the data volume's leading blocks.
     def pieces(record:, slot:, erofs:, volume:)
-      slot_start = MediumImage.constant('slot_a_start')
-      image = erofs ? { slot_start + (ReleaseMedium.image_extent(erofs).slot_offset / SECTOR_BYTES) => piece(erofs) } : {}
+      system_start = MediumImage.constant('system_a_start')
+      image = erofs ? { system_start + (ReleaseMedium.image_extent(erofs).slot_offset / SECTOR_BYTES) => piece(erofs) } : {}
       { MediumImage.constant('record_start') => piece(record),
-        slot_start => piece(slot),
+        MediumImage.constant('boot_a_start') => piece(slot),
         **image,
         **DataVolume.pieces(volume) }
     end

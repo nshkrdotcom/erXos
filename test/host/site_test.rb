@@ -308,7 +308,7 @@ class SiteTest < Minitest::Test
         end
         assert_equal content.bytesize, at
       end
-      assert_equal [0, Erx::MediumImage.constant('extended_start'), Erx::MediumImage.constant('data_ebr')]
+      assert_equal [0, *%w[system_a_ebr system_b_ebr vault_ebr data_ebr].map { |name| Erx::MediumImage.constant(name) }]
                      .map { |sector| [sector * 512, 512] } + [[Erx::MediumImage.constant('data_start') * 512, VOLUME.bytesize]],
                    disk.fetch(:extents)
     end

@@ -13,16 +13,6 @@ image holds what the manifest names to run and no package. Index:
 Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
-* [High] storage, the medium layout (`abi/medium.txt`,
-  `tools/lib/erx/release_medium.rb`, `tools/lib/erx/pi_medium.rb`): rows for
-  boot A and boot B as primary entries 2 and 3, 128 MiB each, and system A
-  and system B as the extended partition's first two logical partitions,
-  383 MiB each, each behind an extended boot record, so the vault's and the
-  data partition's sectors stay where they are; the boot partition's type
-  replaces `medium_slot_type`. The driver's table admission
-  (`erx_blk_table`) reads exactly four extended boot records. Test: a host
-  test that the admitted table equals the layout; seeded: a fifth chained
-  record, which admission must refuse.
 * [High] storage, window roles (`abi/manifest.txt`, `erx_blk_table`,
   `tools/lib/erx/manifest.rb` property 8, `liberx/system/dom_apply.c`):
   roles boot A, boot B, system, system A and system B in place of slot A,

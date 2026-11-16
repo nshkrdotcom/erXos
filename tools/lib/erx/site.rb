@@ -151,7 +151,7 @@ module Erx
     # a fresh littlefs volume of that partition (DataVolume.format). Making
     # the disk is the page's installation, the one step that formats /data,
     # since the guest's mount never does. erx_blk_table admits it. Only the
-    # partition table's three records and the volume hold bytes.
+    # partition table's five records and the volume hold bytes.
     def fresh_medium(volume:)
       pieces = MediumImage.records(data_sectors:).merge(MediumImage.constant('data_start') => volume)
       disk(pieces:, capacity: MediumImage.sectors(data_sectors:) * SECTOR_BYTES)

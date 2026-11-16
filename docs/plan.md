@@ -2105,7 +2105,7 @@ the guest's power cut and the next boot.
   the stopgap's driver profile, which M9's kernel part replaces with
   virtio-pci behind
   the IOMMU and M11 refuses unless configured; partition windows in the
-  block service, with the partition table, its two extended boot records
+  block service, with the partition table, its four extended boot records
   included, and its fuzz target
   ([design-storage.md](design-storage.md#data-model)).
 * **Immutable code and files.** The block client, a local call in the

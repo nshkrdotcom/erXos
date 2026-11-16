@@ -2295,7 +2295,7 @@ stock OTP over an image's file and in a domain under QEMU. The FAT server
 is checked by fsimg, which creates the images it reads and verifies the
 images it writes. Nothing of EROFS or FAT is checked against Linux.
 
-Fuzz targets cover the partition table with its two extended
+Fuzz targets cover the partition table with its four extended
 boot records, EROFS, F2FS, FAT and littlefs images, the hash-checking
 reader, the driver's completion decoder, update manifests, the
 boot-selection record and the QEMU harness's slot parser, each built for

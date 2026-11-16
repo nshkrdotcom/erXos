@@ -40,7 +40,9 @@ class ReleaseMediumTest < Minitest::Test
 
   def runner(directory) = Erx::Runner.new(owner_root: directory, log_dir: File.join(directory, 'logs'))
 
-  def slot_bytes = CODEC.constant('medium_slot_sectors') * SECTOR
+  def boot_bytes = CODEC.constant('medium_boot_sectors') * SECTOR
+
+  def system_bytes = CODEC.constant('medium_system_sectors') * SECTOR
 
   def file(name, length) = Release::SlotFile.new(name: name, path: "/#{name}", length: length)
 
@@ -56,9 +58,9 @@ class ReleaseMediumTest < Minitest::Test
   end
 
   def test_a_slot_that_cannot_hold_its_files_is_refused
-    room = Release::SLOT_IMAGES_START - (CODEC.constant('medium_slot_boot_start') * SECTOR)
+    room = boot_bytes - (CODEC.constant('medium_slot_boot_start') * SECTOR)
     assert Release.slot_plan(boot: file('boot', room), images: [])
-    fits = slot_bytes - Release::SLOT_IMAGES_START
+    fits = system_bytes - Release::SLOT_IMAGES_START
     [[room + 1, []], [0, []], [4096, [file('release', 4097)]], [4096, [file('release', fits + SECTOR)]],
      [4096, [file('release', 4096), file('release', 4096)]]].each do |boot, images|
       assert_raises(Erx::Error, [boot, images].inspect) { Release.slot_plan(boot: file('boot', boot), images: images) }
@@ -68,14 +70,14 @@ class ReleaseMediumTest < Minitest::Test
 
   def test_a_piece_outside_one_window_or_over_another_is_refused
     Dir.mktmpdir('erx-release-medium-') do |directory|
-      slot_a = CODEC.constant('medium_slot_a_start')
+      slot_a = CODEC.constant('medium_boot_a_start')
       assert_raises(Erx::Error) { Medium.create(directory: directory, name: 'a.img', pieces: { 1 => 'x' * SECTOR }) }
       assert_raises(Erx::Error) { Medium.create(directory: directory, name: 'b.img', pieces: { slot_a - 1 => 'x' * 1024 }) }
       assert_raises(Erx::Error) do
         Medium.create(directory: directory, name: 'c.img', pieces: { slot_a => 'x' * 1024, slot_a + 1 => 'y' * SECTOR })
       end
-      # A piece that runs from slot A's last sector into slot B's first lies in no one window.
-      slot_b = CODEC.constant('medium_slot_b_start')
+      # A piece that runs from boot A's last sector into boot B's first lies in no one window.
+      slot_b = CODEC.constant('medium_boot_b_start')
       assert_raises(Erx::Error) { Medium.create(directory: directory, name: 'd.img', pieces: { slot_b - 1 => 'x' * 1024 }) }
       # A file whose length is not the one its piece was planned with is refused, and the
       # failed write leaves nothing at the medium's name.
@@ -136,12 +138,13 @@ class ReleaseMediumTest < Minitest::Test
       assert_equal Medium.windows(data_sectors: first.data_sectors).map { |window| [window.role, window.start, window.sectors] },
                    admitted(first.path)
 
-      slot = CODEC.constant('medium_slot_a_start') * SECTOR
+      boot_a = CODEC.constant('medium_boot_a_start') * SECTOR
+      system_a = CODEC.constant('medium_system_a_start') * SECTOR
       image = first.slot.images.fetch(0)
       assert_equal ['release', File.size(first.erofs)], [image.file.name, image.file.length]
       File.open(first.path, 'rb') do |medium|
-        assert_equal File.binread(boot), medium.pread(File.size(boot), slot + first.slot.boot.slot_offset)
-        assert_equal File.binread(first.erofs), medium.pread(image.file.length, slot + image.slot_offset)
+        assert_equal File.binread(boot), medium.pread(File.size(boot), boot_a + first.slot.boot.slot_offset)
+        assert_equal File.binread(first.erofs), medium.pread(image.file.length, system_a + image.slot_offset)
         zeros(first).each { |offset| assert_equal "\0".b * SECTOR, medium.pread(SECTOR, offset), "sector #{offset / SECTOR}" }
         # Installation formatted the data partition: its fresh volume from the first sector.
         volume = File.binread(first.volume.path)
@@ -152,7 +155,7 @@ class ReleaseMediumTest < Minitest::Test
       end
 
       assert_equal files.transform_values { |source| File.binread(source) },
-                   extract(first.path, offset: slot + image.slot_offset, directory: directory)
+                   extract(first.path, offset: system_a + image.slot_offset, directory: directory)
     end
   end
 
@@ -223,13 +226,13 @@ class ReleaseMediumTest < Minitest::Test
     [Erx::ReleaseMedium.write(built: built, directory: directory, volume: volume, data_sectors: data_sectors), artifacts]
   end
 
-  # The windows erx_blk_table admits from the medium's three records.
+  # The windows erx_blk_table admits from the medium's five records.
   def admitted(path)
     Dir.mktmpdir('erx-release-medium-table-') do |work|
       ErlangBuild.compile(work, applications: %w[erx erx_blk])
       script = 'Path = os:getenv("ERX_MEDIUM"), {ok, F} = file:open(Path, [read, raw, binary]), ' \
                'Records = [element(2, file:pread(F, S * 512, 512)) || {_, S} <- erx_blk_table:records()], ' \
-               '{ok, W} = apply(erx_blk_table, admit, [filelib:file_size(Path) div 512 | Records]), ' \
+               '{ok, W} = erx_blk_table:admit(filelib:file_size(Path) div 512, Records), ' \
                'io:format("~w~n", [W]), halt(0).'
       output, status = Open3.capture2e({ 'ERX_MEDIUM' => path }, 'gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'),
                                        '-noshell', '-pa', work, '-eval', script, chdir: work, stdin_data: '')
@@ -239,9 +242,12 @@ class ReleaseMediumTest < Minitest::Test
   end
 
   # Byte offsets that must read as zeros: the first and last sector of every window but
-  # slot A, and of slot A's gaps before, between and after its two pieces.
+  # boot A and of system B, boot A's gaps before and after the bootable file, and system
+  # A's after the image.
   def zeros(written)
-    slot_a = CODEC.constant('medium_slot_a_start') * SECTOR
+    slot_a = CODEC.constant('medium_boot_a_start') * SECTOR
+    system_a = CODEC.constant('medium_system_a_start') * SECTOR
+    system_b = CODEC.constant('medium_system_b_start') * SECTOR
     image = written.slot.images.fetch(0)
     boot_start = slot_a + written.slot.boot.slot_offset
     boot_end = boot_start + written.slot.boot.file.length
@@ -250,8 +256,9 @@ class ReleaseMediumTest < Minitest::Test
     # The data window's first sector holds the fresh volume.
     starts = windows.reject { |window| window.role == :data }.map(&:start)
     [*starts.map { |start| start * SECTOR }, *windows.map { |window| window.last * SECTOR },
-     slot_a, boot_start - SECTOR, gap_start, slot_a + image.slot_offset - SECTOR,
-     slot_a + image.slot_offset + image.file.length, slot_a + slot_bytes - SECTOR]
+     slot_a, boot_start - SECTOR, gap_start, slot_a + boot_bytes - SECTOR,
+     system_a + image.slot_offset + image.file.length, system_a + system_bytes - SECTOR,
+     system_b, system_b + system_bytes - SECTOR]
   end
 
   # The image that starts offset bytes into path, verified by fsimg and extracted by it

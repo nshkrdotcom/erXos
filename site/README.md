@@ -94,7 +94,7 @@ ruby tools/build_site.rb --no-card [--image IMAGE] [--serve 8000]
   installation: the guest's mount never formats, so the build formats
   `/data`'s volume with the host formatter (`Erx::DataVolume`). The medium
   is 1.2 GiB, since the layout fixes where the data partition starts, but
-  only its partition table's three records and the volume's first blocks
+  only its partition table's five records and the volume's first blocks
   hold bytes, so it is published as `disk-<digest>.bin`, those bytes, and
   `boot.json` lists the extents they fill.
 * `--card CARD` is the Raspberry Pi 4's card, by default

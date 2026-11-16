@@ -8,7 +8,7 @@ require 'tmpdir'
 require_relative '../lib/erx/generated'
 
 # The fuzz target of the block driver's parse of the boot medium's partition table,
-# erx_blk_table:admit/4, and of a window's check, place/3, compiled from source and run
+# erx_blk_table:admit/2, and of a window's check, place/3, compiled from source and run
 # alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's), so it needs no hosted
 # build. It runs the module as it is, then a copy that admits a data partition running
 # past the medium's end, which must fail: that shows the reference holds the data
@@ -35,7 +35,7 @@ module ErxBlkTableFuzz
     output, status = fuzz(source.sub(WITHIN, ANYWHERE), seed: seed)
     abort("admitting a data partition past the medium passed:\n#{output}") if status.success? ||
                                                                      !output.include?('disagrees_with_reference')
-    puts 'erx_blk_table:admit/4 agrees with its reference, and admitting a data partition past the medium does not'
+    puts 'erx_blk_table:admit/2 agrees with its reference, and admitting a data partition past the medium does not'
   end
 
   # In a directory of its own, which also takes the crash dump of a failed round.

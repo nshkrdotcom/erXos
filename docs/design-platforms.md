@@ -1238,11 +1238,12 @@ The 5 MiB data area in 512-byte clusters is 10,240 clusters, a FAT16 by
 the cluster count the FAT specification sets
 ([design-storage.md](design-storage.md#references)). The partition
 starts 1 MiB into the medium (`medium_record_start`), so it ends at
-9 MiB, and slot A starts at 12 MiB (`medium_slot_a_start`, sector
+9 MiB, and boot A starts at 12 MiB (`medium_boot_a_start`, sector
 24,576); `abi/medium.txt` holds these values and the later partitions'
 starts. The record has two
-encodings, `medium_record_a` while slot A, the medium's second partition,
-is committed and `medium_record_b` while slot B, its third, is. Each is
+encodings, `medium_record_a` while slot A, whose boot partition is the
+medium's second, is committed and `medium_record_b` while slot B, whose boot
+partition is its third, is. Each is
 followed by zeros to the end of the sector, and both have the same length,
 since a commit rewrites the sector and never the FAT's directory entry
 that records the file's length. Each is the Raspberry Pi firmware's
@@ -1333,7 +1334,7 @@ length (`image_size` of the header,
 [design-arch-aarch64.md](design-arch-aarch64.md#boot-entry)). The harness's
 slot parser reads the record's sector and the chosen slot's boot header,
 refuses an unreadable record, a header without its magic, and a length
-shorter than the header or running past the slot's end, since a guest
+shorter than the header or running past the boot partition's end, since a guest
 may have written either, and has a fuzz target. The harness copies that
 many bytes out of the slot into a file of its own for `-kernel`, attaches
 the medium as the guest's raw block device, and writes
@@ -1684,7 +1685,7 @@ tree the firmware made from the partition's tree and `uart3` overlay is
 the one erXos expects. Anything at all after BL31 on this card also means
 the bootloader read `autoboot.txt` from the record's FAT16 in partition 1
 and booted slot A's FAT32 in partition 2, since partition 1 holds no boot
-files (slot A's volume covers only its partition's first 128 MiB); the
+files (boot A's volume is the whole of its partition, 128 MiB); the
 bootloader's version, from its own log or from a running system, goes
 into the board's port as the oldest that honours `autoboot.txt`. A
 board whose bootloader stops before BL31 with this card and boots an

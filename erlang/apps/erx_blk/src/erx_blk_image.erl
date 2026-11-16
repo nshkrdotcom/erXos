@@ -17,11 +17,12 @@
 %%   2. it reads each such image: its name, format, data_bytes and extents;
 %%   3. place/2 turns each image into a window of role {image, Name} in the slot, or a
 %%      refusal.
-%% An extent's slot_offset and length are bytes from the slot's start. Phase 1 serves an
+%% An extent's slot_offset and length are bytes from the start of the slot's system
+%% partition, which holds the slot's images (abi/medium.txt). Phase 1 serves an
 %% image of format erofs_unchecked in one extent, whose window is its data alone
 %% (docs/design-abi.md). Each other image is refused by name with why, and the rest are
 %% served: format for another format, extent_count for more than one extent,
-%% extent_bounds for an extent that is not whole sectors inside the slot, and length for
+%% extent_bounds for an extent that is not whole sectors inside that partition, and length for
 %% one that is not data_bytes long. Phase 1 has one block device, the one the service
 %% drives; the packer's check (docs/design-stopgap.md, "The Phase 1 manifest check") puts
 %% every image and its window on it, so the device fields are not read.
@@ -83,7 +84,7 @@ place(#{name := Name, format := ?ERX_MF_IMAGE_FORMAT_EROFS_UNCHECKED, data_bytes
         extents := [{Offset, Length}]}, Slot) ->
     Sector = ?ERX_VIRTIO_BLK_SECTOR_SIZE,
     case Offset rem Sector =:= 0 andalso Length rem Sector =:= 0 andalso Length > 0
-         andalso Offset + Length =< ?ERX_MEDIUM_SLOT_SECTORS * Sector of
+         andalso Offset + Length =< ?ERX_MEDIUM_SYSTEM_SECTORS * Sector of
         false -> {error, {Name, extent_bounds}};
         true when Length =/= Bytes -> {error, {Name, length}};
         true -> {ok, {{image, Name}, slot_start(Slot) + Offset div Sector, Length div Sector}}
@@ -128,5 +129,5 @@ extents(View, Index, Count, Extents) ->
             Error
     end.
 
-slot_start(slot_a) -> ?ERX_MEDIUM_SLOT_A_START;
-slot_start(slot_b) -> ?ERX_MEDIUM_SLOT_B_START.
+slot_start(slot_a) -> ?ERX_MEDIUM_SYSTEM_A_START;
+slot_start(slot_b) -> ?ERX_MEDIUM_SYSTEM_B_START.

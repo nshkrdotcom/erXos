@@ -3,9 +3,9 @@
 
 %% The block driver's partition process (docs/design-storage.md, "The block driver" and
 %% "The boot medium's table"), under erx_blk_sup after the device process. It reads the
-%% three records of the partition table through erx_blk, admits them with
-%% erx_blk_table:admit/4, and starts one window, erx_blk_window, per partition the layout
-%% names: the boot-selection record's, slot A's, slot B's, the vault's and the data
+%% five records of the partition table through erx_blk, admits them with
+%% erx_blk_table:admit/2, and starts one window, erx_blk_window, per partition the layout
+%% names: the boot-selection record's, boot A's, boot B's, the vault's and the data
 %% partition's. A table that differs from the layout in anything but the data partition's
 %% length, a medium too small for the layout, a record the device does not return and a
 %% machine without a block device each leave the service with no window and one line in
@@ -151,8 +151,8 @@ admit() ->
     maybe
         {ok, #{capacity := Capacity}} ?= device(catch_exit(fun erx_blk:info/0)),
         ok ?= erx_blk_table:check_capacity(Capacity),
-        {ok, [Mbr, VaultEbr, DataEbr]} ?= read_records(erx_blk_table:records(), []),
-        erx_blk_table:admit(Capacity, Mbr, VaultEbr, DataEbr)
+        {ok, Records} ?= read_records(erx_blk_table:records(), []),
+        erx_blk_table:admit(Capacity, Records)
     end.
 
 read_records([], Read) ->

@@ -2377,11 +2377,11 @@ module Erx
         end
       end
 
-      # design-abi.md: nonempty, sorted and disjoint whole sectors, relative to the slot's
-      # start and inside it.
+      # design-abi.md: nonempty, sorted and disjoint whole sectors, relative to the start of
+      # the slot's system partition and inside it.
       def checked_extents(artifact)
         sector = @codec.constant('mbr_sector_size')
-        slot = @codec.constant('medium_slot_sectors') * sector
+        slot = @codec.constant('medium_system_sectors') * sector
         extents = artifact['extents']
         invalid('an image has at least one extent', 8, 'image.input') unless extents.is_a?(Array) && !extents.empty?
         extents.each_with_object([]) do |extent, placed|
