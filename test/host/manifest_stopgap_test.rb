@@ -866,9 +866,14 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
   end
 
+  # The development manifest without its apps row, whose own check of the system service
+  # (app_facets) would otherwise answer the seeds of the system window's first.
+  def appless = Erx::Manifest::Edit.without_apps(@source)
+
   def test_a_system_service_of_another_interface_is_refused
-    source = changed(@source.sub("service system\n  server @domain.storage\n  interface files",
-                                 "service system\n  server @domain.storage\n  interface driver_control"))
+    source = appless.sub("service system\n  server @domain.storage\n  interface files",
+                         "service system\n  server @domain.storage\n  interface driver_control")
+    refute_equal appless, source
     refused(Erx::Manifest::Invalid, 19, 'service.interface', source, message: /of the files interface/)
   end
 
@@ -876,12 +881,30 @@ class ManifestStopgapTest < Minitest::Test
   # another server, since property 5 refuses two names alike on one server first.
   def test_a_second_system_service_is_refused
     second = "service system_again\n  name \"system\"\n  server @domain.network\n  interface files\n"
-    refused(Erx::Manifest::Invalid, 19, 'service.name', @source + second, message: /holds one service named system/)
+    refused(Erx::Manifest::Invalid, 19, 'service.name', appless + second, message: /a system window holds one service named system/)
+    refused(Erx::Manifest::Invalid, 19, 'service.name', @source + second, message: /an apps row holds one service named system/)
+  end
+
+  # The apps row's system_facet is a facet index, never absent (docs/design-abi.md), so a
+  # manifest with an apps row and no system tree, whose image packages' /app no session
+  # could mount, is refused at build.
+  def test_an_apps_row_without_the_system_service_is_refused
+    source = changed(@source.sub(/^window system\n(?:  .*\n)*/, '').sub("system_image\n  input @artifact.release\n", '')
+                            .sub(/^service system\n(?:  .*\n)*/, ''))
+    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /an apps row holds one service named system/)
+  end
+
+  # The service with no window, with the apps row and without it.
+  def test_the_system_service_without_a_system_window_is_refused
+    windowless = ->(text) { text.sub(/^window system\n(?:  .*\n)*/, '').sub("system_image\n  input @artifact.release\n", '') }
+    refused(Erx::Manifest::Invalid, 19, 'apps', windowless.call(@source), message: /apps row needs a system window/)
+    refused(Erx::Manifest::Invalid, 19, 'service.name', windowless.call(appless), message: /without a system window holds no/)
   end
 
   def test_a_system_window_without_the_system_service_is_refused
-    source = changed(@source.sub(/^service system\n(?:  .*\n)*/, ''))
-    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /holds one service named system/)
+    source = appless.sub(/^service system\n(?:  .*\n)*/, '')
+    refute_equal appless, source
+    refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /a system window holds one service named system/)
   end
 
   # The storage domain mounts the system window through the system_image row's image

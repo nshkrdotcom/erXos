@@ -302,9 +302,8 @@ layout erx_mf_display wire_le 4 16
 # The apps row (docs/design-packaging.md, "The apps row"), at most one: the budget all
 # apps share, how many apps a boot holds, the app template the build derives from it
 # (the session row naming no principal) and that template's packages and system facet
-# rows, the system row absent (0xffffffff) in a manifest that holds no service named
-# system_service, and its services, the rows of app_services it owns, each the index of a service an app
-# may name in its needs and of the facet row granted to the template for it. The boot
+# rows, and its services, the rows of app_services it owns, each the index of a
+# service an app may name in its needs and of the facet row granted to the template for it. The boot
 # view checks once that the indices name those rows and that the template holds no
 # other facet row, each named once (docs/design-packaging.md, "The template's rows by
 # index").
@@ -621,7 +620,7 @@ reader manifest erx_manifest @manifest_bytes_max
   partition apps[].services.offset apps[].services.count app_services
   index apps[].app_template sessions
   index apps[].packages_facet facets
-  index apps[].system_facet facets absent 0xffffffff
+  index apps[].system_facet facets
   index app_services[].service services
   index app_services[].facet facets
   string packages[].name.offset packages[].name.length strings identifier 63 empty no

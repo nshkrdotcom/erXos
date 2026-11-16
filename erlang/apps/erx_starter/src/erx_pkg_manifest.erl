@@ -89,14 +89,9 @@ apps(View, [#{memory := Memory, max := Max, packages_facet := Packages, system_f
     #{memory => Memory,
       max => Max,
       packages_row => Packages,
-      system_row => system_row(System),
+      system_row => System,
       services => [service(View, element(Index + 1, Services), Facet)
                    || #{service := Index, facet := Facet} <- rows(View, app_services)]}.
-
-%% The template's grant of the `system` tree, none in a manifest that holds no
-%% service named `system_service`.
-system_row(?ERX_MF_NONE) -> none;
-system_row(Row) -> Row.
 
 service(View, #{interface := Interface} = Row, Facet) ->
     #{name => name(View, Row),

@@ -23,17 +23,17 @@ key(Byte) ->
 
 %% The apps row of AbiManifestFixture.packages with max Max: the app
 %% template's packages row is facet 2, not facet 1, granted to the system
-%% domain, and its display and data rows are 3 and 4, not facet 0, which
-%% grants display to the other template.
+%% domain, its display and data rows are 3 and 4, not facet 0, which grants
+%% display to the other template, and its system row is 5.
 apps(Max) ->
-    #{memory => ?MIB, max => Max, packages_row => 2, system_row => none,
+    #{memory => ?MIB, max => Max, packages_row => 2, system_row => 5,
       services => [#{name => <<"display">>, windows => true, row => 3},
                    #{name => <<"data">>, windows => false, row => 4}]}.
 
 %% The names of its principal, domain, services and facet rows, sorted.
 reserved() ->
     [<<"data">>, <<"display">>, <<"kiosk_display">>, <<"packages">>, <<"pkg_admin">>,
-     <<"root">>, <<"spare">>, <<"storage">>].
+     <<"root">>, <<"spare">>, <<"storage">>, <<"system">>].
 
 packages() ->
     [#{name => <<"clock">>, sha256 => key(16#ab), enabled => true},

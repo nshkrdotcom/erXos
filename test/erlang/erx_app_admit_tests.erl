@@ -43,12 +43,12 @@ checked(Header, Signer) ->
 %% The facts of a manifest whose apps row offers two windows services and
 %% one data service to at most four apps sharing 128 MiB, and whose image
 %% carries the package kiosk. The row indices are those
-%% test/host/erx_app_admit_test.rb names: packages 7, display 8, data 9 and
-%% panel 10. Its system principal is system, as the shipped manifests'.
+%% test/host/erx_app_admit_test.rb names: packages 7, display 8, data 9,
+%% panel 10 and system 11. Its system principal is system, as the shipped manifests'.
 manifest(no_apps) ->
     (manifest(base))#{apps := none};
 manifest(_) ->
-    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7, system_row => none,
+    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7, system_row => 11,
                 services => [#{name => <<"display">>, windows => true, row => 8},
                              #{name => <<"data">>, windows => false, row => 9},
                              #{name => <<"panel">>, windows => true, row => 10}]},
