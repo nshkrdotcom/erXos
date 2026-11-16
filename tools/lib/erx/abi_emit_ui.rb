@@ -43,7 +43,7 @@ module Erx
           -module(erx_ui_schema).
           -moduledoc "The widget format's tables and validate/2, the validator of whole widget trees.".
           -export([version/0, validate/2, kinds/0, kind/1, properties/0, property/1, images/0]).
-          -export_type([tree/0, reason/0, where/0]).
+          -export_type([tree/0, reason/0, where/0, property_info/0, value_type/0]).
 
           %% A renderer lays a tree out recursively on a fixed stack, so no tree is
           %% deeper; ui_children bounds the children of one node.
@@ -58,6 +58,19 @@ module Erx
           %% key, which a printer shows through its line escape.
           -type path() :: [non_neg_integer()].
           -type where() :: path() | {path(), Property :: term()}.
+          %% What property/1 answers, as docs/design-display.md, "Widget trees",
+          %% explains it.
+          -type property_info() :: \#{number := 1..255, type := value_type(), common := boolean(),
+                                      status := boolean(), detail := state | none,
+                                      default => integer() | boolean() | atom()}.
+          -type value_type() :: item_type()
+                              | {bytes, MaxBytes :: non_neg_integer()}
+                              | {list, Item :: item_type(), MaxItems :: non_neg_integer(), None :: boolean()}
+                              | {image, [atom()]}
+                              | boolean | key | event | presentation.
+          -type item_type() :: {integer, Min :: integer(), Max :: integer()}
+                             | {text, MaxBytes :: non_neg_integer()}
+                             | {enum, [atom()]}.
 
           -spec version() -> pos_integer().
           version() -> #{ui.version}.
@@ -84,9 +97,12 @@ module Erx
           properties() ->
           #{wrap(ui.properties.map { |property| atom(property.name) }, '    [', ']')}.
 
-          %% A property's number and type, whether every kind takes it, whether it
-          %% carries a status, its event detail, and the value its absence means.
-          -spec property(atom()) -> map() | error.
+          -doc """
+          The declaration of the property Property in abi/formats/ui.txt, or error
+          for a name it does not declare; docs/design-display.md, "Widget trees",
+          explains each key of property_info().
+          """.
+          -spec property(Property :: atom()) -> property_info() | error.
           #{properties.join}property(_Property) -> error.
 
           %% Each image type's atom, number and media type.

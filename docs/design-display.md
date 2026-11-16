@@ -1548,6 +1548,30 @@ of the web, since the generator checks every kind's largest `insert`
 against it ([design-web.md](design-web.md#uis-the-browser-renderer)); a
 larger picture goes in a draw window.
 
+An app reads the schema's types and bounds through
+`erx_ui_schema:property(Name)`, the one table function the SDK makes
+public ([design-packaging.md](design-packaging.md#the-sdk)). It answers
+`error` for a name `ui.txt` does not declare. Otherwise it answers a map,
+the module's `property_info()`, with these keys:
+
+* `number`: the property's number on the wire, 1 to 255;
+* `type`: its value type, below;
+* `common`: whether every kind takes it;
+* `status`: whether its value may also be an `attr()` that carries one;
+* `detail`: `state` for an event whose detail is its kind's state value,
+  and `none` otherwise;
+* `default`: present only when the property's absence means a value.
+  It is that value: an integer, a boolean or an enum's atom.
+
+A value type, the module's `value_type()`, is one of:
+
+* `{integer, Min, Max}`, `{text, MaxBytes}` or `{bytes, MaxBytes}`;
+* `{enum, Atoms}` or `{image, Atoms}`, the atoms in number order;
+* `{list, Item, MaxItems, None}`: `Item` is an integer, text or enum
+  type, and `None` says whether the atom `none` may also be an item,
+  which only a list of integers allows;
+* `boolean`, `key`, `event` or `presentation`.
+
 A node's **identity** across trees is its parent's identity, its kind,
 its fixed properties, and its `key` when present or its index among its
 siblings otherwise, React's rule. Keys are unique among one node's
