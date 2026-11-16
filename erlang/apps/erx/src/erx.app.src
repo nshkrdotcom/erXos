@@ -93,7 +93,6 @@
              erx_trace_ring,
              erx_tracer,
              erx_tty_master,
-             erx_verity_tree,
              erx_virtio,
              erx_watchdog,
              erx_web_proto]},

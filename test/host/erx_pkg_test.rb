@@ -21,7 +21,7 @@ require_relative '../../tools/fuzz/package_seeds'
 class ErxPkgTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
-  SOURCES = (%w[erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
+  SOURCES = (%w[erlang/apps/erx/src/erx_pkg_header.erl otp/erts/preloaded/src/erx_verity_tree.erl
                 build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
                 erlang/apps/erx_domain/src/erx_app_admit.erl erlang/apps/erx_domain/src/erx_domain_core.erl
                 erlang/apps/erx_domain/src/erx_ident.erl erlang/apps/erx_files/src/erx_fs_version.erl

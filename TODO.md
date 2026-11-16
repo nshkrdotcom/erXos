@@ -5100,9 +5100,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   that does not answer, or any local pid passed as one, holds every mount, bind and unmount of the
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
-* [Medium] runtime, `erx_verity`: blocks pass through unchecked until the image's hash tree is written and
-  checked in `checked/1` (M11), which takes each level's place from `erx_verity_tree:levels/1`, a module
-  that then moves from `erlang/apps/erx` into the preloaded set beside `erx_verity`; there is no cache, neither of checked blocks nor the reader's ETS table
+* [Medium] runtime, `erx_verity`: an image opened with a layout is checked against its tree, but
+  `erx_ns`'s window mounts (`mount_image`) have no layout and open `unchecked`, so their blocks pass
+  through unchecked until M11; the layout `erx_verity:open/2` takes is a third map of the same
+  layout beside `erx_pkg_header:layout()` (which adds `image_offset`) and
+  `erx_device_record:system_image()`, to fold into one type `erx_verity_tree` owns, with
+  `image_offset` read by the funnel; there is no cache, neither of checked tree blocks, so each read
+  fetches its tree path again, nor the reader's ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only
   to the reader's mount log function.
@@ -7494,10 +7498,11 @@ to the corpus and follow rc
   (`erlang/apps/erx/src/erx_console.erl`).
 
 
-* [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads blocks
-  unchecked until M11 adds the hash check inside `erx_verity:read/3`
-  ([design-storage.md](docs/design-storage.md), E1), so a swapped medium or a
-  flipped bit reaches the parser.
+* [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads the blocks
+  of an image mounted without a layout, `erx_ns`'s window mounts, unchecked
+  until M11 ([design-storage.md](docs/design-storage.md), E1), so a swapped
+  medium or a flipped bit reaches the parser; an image opened with a layout
+  is checked inside `erx_verity:read/3`.
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the
   count, including a web login, so a machine with a boot fault that lets

@@ -8,8 +8,10 @@ The layout of an EROFS image's dm-verity hash tree (docs/design-storage.md,
 given number of blocks takes. It is pure arithmetic in a module of its own,
 apart from the hash-checking funnel that holds an image's window, so the
 package decoder, `erx_pkg_header`, takes a package's tree length from the
-layout the hash check is to use, without naming the funnel, which only the
-EROFS reader may (docs/design-storage.md, invariant E1).
+layout the hash check uses, without naming the funnel, which
+only the EROFS reader may (docs/design-storage.md, invariant E1). It is
+preloaded beside the funnel, which runs in whatever process reads a path,
+the code server included, and like it calls no module.
 
 The tree is dm-verity's, format version 1, with SHA-256 and blocks of
 `ERX_EROFS_BLOCK_SIZE` bytes, each holding as many hashes as fit: its lowest
@@ -33,7 +35,7 @@ android-15.0.0_r1, SHA-256
 -doc "The blocks of the hash tree over an image of `ImageBlocks` blocks.".
 -spec blocks(pos_integer()) -> non_neg_integer().
 blocks(ImageBlocks) ->
-    lists:sum(levels(ImageBlocks)).
+    sum(levels(ImageBlocks), 0).
 
 -doc """
 The blocks of each level of the hash tree over an image of `ImageBlocks`
@@ -46,6 +48,10 @@ levels(1) ->
 levels(Blocks) when is_integer(Blocks), Blocks > 1 ->
     Level = blocks_for(Blocks),
     [Level | levels(Level)].
+
+%% lists:sum/1, which this module cannot call (lists is not preloaded).
+sum([], Sum) -> Sum;
+sum([Blocks | Levels], Sum) -> sum(Levels, Sum + Blocks).
 
 %% The blocks that hold one hash for each of Count blocks.
 blocks_for(Count) ->

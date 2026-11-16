@@ -19,12 +19,15 @@ module Erx
   # depends on, compiled by Erx::ErlangApps with the build's own flags and compiler, so its
   # beams are the image's; DIR/erlang/public.txt lists the public functions one
   # MODULE:FUNCTION/ARITY a line, a module line of sdk/public.txt expanded to the module's
-  # exports. DIR/host/erlang/ebin holds erx_bytes for stock OTP (test/erlang/host_bytes),
-  # which the packer's file check calls. No private key enters an SDK: its packer makes
+  # exports. DIR/host/erlang/ebin holds what the packer's file check calls outside the SDK's
+  # applications: erx_bytes for stock OTP (test/erlang/host_bytes) and the preloaded
+  # erx_verity_tree, the hash tree's layout. No private key enters an SDK: its packer makes
   # its own development key on the host that uses it (Erx::PackageKey).
   class Sdk
     PUBLIC = 'sdk/public.txt'
-    HOST_BYTES = 'test/erlang/host_bytes/erx_bytes.erl'
+    HOST_MODULES = %w[test/erlang/host_bytes/erx_bytes.erl otp/erts/preloaded/src/erx_verity_tree.erl].freeze
+    # Where erx_verity_tree's generated ABI header lies.
+    HOST_INCLUDE = 'build/gen/erlang/apps/erx/include'
     DEADLINE = 300
     IDENTIFIER = /\A[a-z][a-z0-9_]*\z/
 
@@ -126,7 +129,8 @@ module Erx
       File.write(File.join(work, 'SDK.txt'), description)
       host = File.join(work, 'host', 'erlang', 'ebin')
       FileUtils.mkdir_p(host)
-      @runner.run([@erlc, '+deterministic', '-o', host, File.join(@root, HOST_BYTES)],
+      @runner.run([@erlc, '+deterministic', '-I', File.join(@root, HOST_INCLUDE), '-o', host,
+                   *HOST_MODULES.map { File.join(@root, it) }],
                   name: 'sdk-host-bytes', deadline: DEADLINE, env: Oracle::CLEAN_ERLANG_ENV)
     end
 

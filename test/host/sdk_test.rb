@@ -85,6 +85,7 @@ class SdkTest < Minitest::Test
     assert_equal '29.1.2', record.fetch('otp')
     assert_match(/\A\h{40}(-dirty)?\z/, record.fetch('commit'))
     assert File.file?(File.join(sdk, 'host/erlang/ebin/erx_bytes.beam'))
+    assert File.file?(File.join(sdk, 'host/erlang/ebin/erx_verity_tree.beam'))
   end
 
   # An SDK is handed to others, so it carries no private key: its packer makes its own

@@ -6,18 +6,22 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/generated'
+require_relative '../../tools/lib/erx/app_package'
 
 # Runs test/erlang/erx_erofs_tests.erl, the EUnit cases of the EROFS reader and its
 # funnel, and of its open files, erx_erofs_file, against erx_erofs, erx_erofs_file and
 # erx_verity compiled from source with warnings as errors
 # on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies), over the fixture
-# images tools/erofs_fixtures.rb wrote with fsimg. The fuzz target,
+# images tools/erofs_fixtures.rb wrote with fsimg, and of the funnel's hash check over
+# trees the packer's writer, Erx::AppPackage#verity_tree, makes (write_verity_cases). erx_bytes
+# is the host stand-in (test/erlang/host_bytes). The fuzz target,
 # tools/fuzz/erx_erofs.rb, seeds the reader's faults.
 class ErxErofsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The generated sources and headers named here are in build/gen.
   Erx::Generated.ensure(root: ROOT)
-  SOURCES = %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_erofs.erl
+  SOURCES = %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_verity_tree.erl
+               otp/erts/preloaded/src/erx_erofs.erl test/erlang/host_bytes/erx_bytes.erl
                otp/erts/preloaded/src/erx_erofs_file.erl otp/erts/preloaded/src/erx_file_remote.erl
                build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_erofs_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDES = %w[build/gen/erlang/apps/erx/include otp/lib/kernel/include].flat_map { |dir| ['-I', File.join(ROOT, dir)] }.freeze
@@ -37,10 +41,33 @@ class ErxErofsTest < Minitest::Test
                                        stdin_data: '')
       return [output, status] unless status.success?
 
-      Open3.capture2e({ 'ERX_EROFS_FIXTURES' => FIXTURES }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
+      write_verity_cases(work)
+      Open3.capture2e({ 'ERX_EROFS_FIXTURES' => FIXTURES, 'ERX_VERITY_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
                       '-noshell', '-pa', work,
                       '-eval', 'halt(case eunit:test(erx_erofs_tests, [verbose]) of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end
+  end
+
+  # The hash check's cases: each image with its tree, as NAME.img, and the layouts in
+  # verity.terms as {NAME, Layout}. "levels" puts a block of 0xFF between image and tree.
+  def write_verity_cases(work)
+    salts = { 'levels' => "\x05".b * 7, 'one' => "\x09".b, 'erofs' => "\x01".b * 32 }
+    images = { 'levels' => (0...200).map { [it].pack('N') * 1024 }.join.b, 'one' => "\x07".b * 4096,
+               'erofs' => File.binread(File.join(FIXTURES, 'compact.img')) }
+    terms = images.map do |name, image|
+      tree = Erx::AppPackage.verity_tree(image, salt: salts.fetch(name))
+      gap = name == 'levels' ? "\xff".b * 4096 : ''.b
+      File.binwrite(File.join(work, "#{name}.img"), image + gap + tree.bytes)
+      layout = { image_length: image.bytesize, tree_offset: image.bytesize + gap.bytesize,
+                 tree_length: tree.bytes.bytesize, salt: salts.fetch(name), root_hash: tree.root_hash }
+      "{\"#{name}\", #{erlang_map(layout)}}.\n"
+    end
+    File.write(File.join(work, 'verity.terms'), terms.join)
+  end
+
+  def erlang_map(fields)
+    pairs = fields.map { |key, value| "#{key} => #{value.is_a?(String) ? "<<#{value.bytes.join(',')}>>" : value}" }
+    "\#{#{pairs.join(', ')}}"
   end
 end

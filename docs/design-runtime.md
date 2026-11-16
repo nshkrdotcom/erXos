@@ -3092,20 +3092,22 @@ System code is Erlang, drivers included
 not: a small set of C primitives in every runtime image does it, each with
 a fuzz target and a differential test against a reference on the host. The
 primitives of `erx_bytes` are BIFs of erXos's ERTS, registered in its
-`bif.tab`; `erx_verity`, the device copies and the pipe copy are NIFs.
+`bif.tab`; the device copies and the pipe copy are NIFs. The hash check
+of EROFS images is no primitive: `erx_verity` is Erlang, preloaded,
+running in the calling process over the SHA-256 built-ins
+([design-storage.md](design-storage.md#reading-erofs-images)).
 Erlang does everything done once per packet, per block and per file
 around them.
 
 | Primitive | Does | Used by | Reference |
 | --- | --- | --- | --- |
-| `erx_bytes:sha256/1`, with `sha256_init/0`, `sha256_update/2` and `sha256_final/1` for streams | SHA-256 (FIPS 180-4) | the code server's blob checks, the hash-checking primitive, the update service | the specification's test vectors; OTP's `crypto:hash/2` on the host |
+| `erx_bytes:sha256/1`, with `sha256_init/0`, `sha256_update/2` and `sha256_final/1` for streams | SHA-256 (FIPS 180-4) | the code server's blob checks, `erx_verity`'s hash check, the update service | the specification's test vectors; OTP's `crypto:hash/2` on the host |
 | `erx_bytes:ed25519_verify/3` | checks an Ed25519 signature (RFC 8032, with SHA-512) of a message by a public key under the acceptance rules of [design-ssh.md](design-ssh.md#logging-in): `erx_ed25519.c` refuses a key or an `R` that is not the canonical encoding of its point, then Monocypher's `crypto_ed25519_check` refuses a point not on the curve and a scalar not below the group's order and checks the cofactored group equation; its time depends only on its inputs, which are public | the package process's check of an installed package's seal ([design-packaging.md](design-packaging.md#the-package)), the update service | RFC 8032's test vectors; OpenSSL on the host; signatures over non-canonical and small-order points built by the host test |
 | `erx_bytes:crc32c/2` | CRC-32C, continuing from a given value | the EROFS reader's superblock check | RFC 3720's test values; a table-driven model in Erlang |
 | `erx_bytes:inet_csum/2` and `inet_csum_update/3` | the Internet checksum of RFC 1071 over iodata, as the folded 16-bit sum, continuing from the sum of bytes before it of even length; and RFC 1624's incremental update (its equation 3) of a checksum field when an even-aligned run of bytes changes | the network stack | RFC 1071's and RFC 1624's examples; a straightforward Erlang model |
 | `erx_bytes:siphash24/2` | SipHash-2-4 with a 16-byte key over iodata, as a 64-bit integer | the network stack: initial sequence numbers, timestamp offsets, SYN cookies and the stream of its random generator, `erx_net_rand` ([design-network-stack.md](design-network-stack.md#where-c-is-used-and-what-is-measured)) | the SipHash paper's test vectors; an Erlang model |
 | `erx_bytes:tcp_merge/1`, with `tcp_merge_limit/0` | the merge of a batch of received Ethernet frames, FreeBSD's large receive offload rule: in-order TCP segments of one flow with right checksums become one unit of their first and last frames and payloads, and every frame leaves with its network sum | the network stack's interface, before it classifies ([design-network-fastpath.md](design-network-fastpath.md#the-merge)) | an Erlang model, `erx_tcp_merge_model`, over random batches; its fuzz target's oracle |
 | `erlang:crc32/2`, ERTS's own | CRC-32, through ERTS's bundled zlib | F2FS's checksums | the host's stock OTP |
-| `erx_verity:check/3` | checks blocks of an EROFS image, given as binaries with their block numbers, against the image's dm-verity tree, keeping the tree's checked blocks in a bounded cache, and returns `{ok, Blocks}` with only blocks that matched, or `{error, eio}` naming the first that did not; the tree's layout, root and salt come from the image's record in the system configuration, in the layout `erx_verity_t` of the ABI file ([design-storage.md](design-storage.md#data-model)) | the EROFS reader | the tests over trees the packer writes, and the reader's fuzz target |
 | `erx_device:post/4`'s copy | copies a request's `out` bytes into its pool buffer ([The device NIF](#the-device-nif)) | drivers | a byte-for-byte comparison |
 | `erx_device:complete/2`'s copy, and `complete/3`'s | copies a completed buffer's returned bytes into a fresh binary ([The device NIF](#the-device-nif)); `complete/3`, given an even offset, also returns the Internet checksum's one's-complement sum of each binary from that offset, computed over the bytes stored, each word loaded once, as `{ok, [{Tag, Bytes, Sum}]}` ([design-network-stack.md](design-network-stack.md#checksums-in-the-copy)) | drivers; `complete/3` the network's | a byte-for-byte comparison; for the sum, `erx_bytes:inet_csum/2` over the binary |
 | `erx_device:post_frame/5`'s copy | copies a frame's binaries into a pool buffer, finishing a delayed Internet checksum in the same pass through the network's `erx_inet_copy_sum` ([design-network-stack.md](design-network-stack.md#checksums-in-the-copy)), or cuts a run of TCP segments into frames as it copies them, summing each frame's checksums ([The device NIF](#the-device-nif)) | the network's virtio transport | the bytes of the same frame encoded with its checksum complete, and `erx_net_frame:cut/1`, byte for byte ([design-network-fastpath.md](design-network-fastpath.md#tests)) |
@@ -3161,8 +3163,8 @@ around them.
   backend checks every length, the `badarg` cases and that a failed read
   raises.
 * **Only checked blocks reach the reader.** The EROFS reader takes blocks
-  from `erx_verity:check/3` alone, and the check runs over a private copy
-  the reader fetched, so no Erlang code parses an unchecked block of an
+  from `erx_verity:read/3` alone, whose check, Erlang in the calling
+  process, runs over the private copy it fetched, so no Erlang code parses an unchecked block of an
   image ([design-storage.md](design-storage.md#invariants), E1).
 * **The CPU's instructions.** The hash and checksum primitives use the
   CPU's CRC and SHA-256 instructions behind the architecture layer where

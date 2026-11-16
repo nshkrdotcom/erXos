@@ -22,7 +22,7 @@ class ErxAppAdmitTest < Minitest::Test
   DOMAIN_CORE = File.join(ROOT, 'erlang/apps/erx_domain/src/erx_domain_core.erl')
   SOURCES = [MODULE, DOMAIN_CORE] +
             %w[erlang/apps/erx_domain/src/erx_ident.erl
-               erlang/apps/erx/src/erx_pkg_header.erl erlang/apps/erx/src/erx_verity_tree.erl
+               erlang/apps/erx/src/erx_pkg_header.erl otp/erts/preloaded/src/erx_verity_tree.erl
                build/gen/erlang/apps/erx/src/generated/erx_pkg_reader.erl
                test/erlang/erx_app_admit_tests.erl].map { |path| File.join(ROOT, path) }.freeze
   INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')

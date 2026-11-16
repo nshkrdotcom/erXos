@@ -1234,8 +1234,8 @@ parallel.
    block it needs, checked; otherwise it sends positioned reads on the mount's fid to the file's
    server, waits for the reply, which arrives as a
    message, and hands each block with its tree blocks to
-   `erx_verity:check/3`, the runtime's pure check of a supplied block
-   against the tree with the SHA-256 primitive
+   its pure check, `check/3`, of the supplied blocks against the tree,
+   level by level from the root hash down, with the SHA-256 built-ins
    ([design-runtime.md](design-runtime.md#per-byte-primitives)); it keeps
    the tree's blocks in its cache and returns the data blocks, or
    `{error, eio}`. Only the caller waits, in Erlang, so no scheduler
