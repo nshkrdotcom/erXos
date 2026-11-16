@@ -102,7 +102,7 @@ class RuntimeBuildTest < Minitest::Test
     end
   end
 
-  # The checked-in serving list of the test tree.
+  # What the stand-in xref reaches and the serving module keeps.
   SERVING_LIST = %w[binary erx_fs erx_ramfs].freeze
 
   class FakeOracle
@@ -149,22 +149,20 @@ class RuntimeBuildTest < Minitest::Test
     write_otp(Runtime::XCOMP_FILE, 'stock')
     Runtime::LIBERX_SOURCES.each { |path| write_tree(path, 'stock') }
     # erXos's applications, test-only ones included, each with its resource file and no
-    # modules but erx_files' serving list: the build refuses a tree without them, and the
-    # recording runner compiles nothing.
+    # modules: the build refuses a tree without them, and the recording runner compiles
+    # nothing.
     [*ErlangApps::APPLICATIONS, *ErlangApps::TEST_ONLY].each do |application|
-      modules = application == 'erx_files' ? 'erx_ramfs_serving' : ''
       write_tree(File.join(ErlangApps.source(application), 'src', "#{application}.app.src"),
-                 "{application, #{application}, [{modules, [#{modules}]}]}.\n")
+                 "{application, #{application}, [{modules, []}]}.\n")
     end
-    write_tree(Erx::ServingSet::GENERATED, Erx::ServingSet.render(SERVING_LIST))
     write_otp('erts/preloaded/src/Makefile', "PRE_LOADED_ERL_MODULES = \\\n\tinit \\\n\terlang\n\n" \
                                               "PRE_LOADED_BEAM_MODULES = \\\n\tprim_eval\n")
     @generated = FakeGenerated.new
     @generated.files = { File.join('otp', GRAMMAR) => 'generated' }
     @output = Runtime.output(root: @root)
     @runner = RecordingRunner.new(@output, log_dir: File.join(@root, 'logs'))
-    # What xref answers in a tree whose serving list is current: the list, preloaded
-    # modules and the name of a fun call, which the check leaves out.
+    # What xref answers: the list, preloaded modules and the name of a fun call, which the
+    # build leaves out.
     @runner.serving_reached = [*SERVING_LIST, 'erlang', 'prim_eval', Erx::ServingSet::FUN_CALL].shuffle(random: Random.new(1))
   end
 
@@ -189,20 +187,28 @@ class RuntimeBuildTest < Minitest::Test
 
   def configured? = @runner.steps.include?('runtime-configure')
 
-  # The build reads xref's answer back from the step's log, so it runs as every other
-  # step does, and refuses a serving list the beams have outgrown or left behind.
-  def test_the_build_holds_the_serving_list_to_what_xref_reaches
+  # The build reads xref's answer back from the step's log, as every step runs, and
+  # derives the serving module from it: the source in the build tree lists the modules
+  # reached, less the preloaded ones and the fun call, it is compiled into erx_files and
+  # erx_files' application file lists it. The tree holds no copy of the list.
+  def serving_modules
+    File.read(File.join(@root, Erx::ServingSet::SOURCE))[/^modules\(\) ->\n\s*\[([^\]]*)\]\./m, 1].split(',').map(&:strip)
+  end
+
+  def test_the_build_derives_the_serving_module_from_what_xref_reaches
     build
     assert_includes @runner.steps, 'serving-set'
     assert_equal Erx::Oracle::CLEAN_ERLANG_ENV, @runner.options.fetch('serving-set').fetch(:env)
+    assert_includes @runner.steps, 'erlang-app-erx_ramfs_serving'
+    assert_equal SERVING_LIST, serving_modules
+    assert_includes @runner.argvs.fetch('erlang-app-erx_ramfs_serving'), Erx::ServingSet::SOURCE
+    listed = Erx::ErlangApps.modules_of(File.read(File.join(@output.root, 'lib/erx_files/ebin/erx_files.app')), label: 'erx_files.app')
+    assert_equal ['erx_ramfs_serving'], listed
+    refute_path_exists File.join(TREE, 'erlang/apps/erx_files/src/erx_ramfs_serving.erl')
 
     @runner.serving_reached += ['ets']
-    error = assert_raises(Erx::Error) { build }
-    assert_includes error.message, "is stale: missing ets; extra ; run"
-
-    @runner.serving_reached -= %w[ets binary]
-    error = assert_raises(Erx::Error) { build }
-    assert_includes error.message, "is stale: missing ; extra binary; run"
+    build
+    assert_equal [*SERVING_LIST, 'ets'].sort, serving_modules
   end
 
   # design-runtime.md keeps runtime_tools, so dbg is built with kernel, stdlib and
@@ -211,7 +217,7 @@ class RuntimeBuildTest < Minitest::Test
     build
     assert_includes @runner.steps, 'runtime-runtime_tools-src'
     assert_equal [*%w[kernel stdlib compiler runtime_tools asn1 crypto].map { |application| "lib/#{application}/src" },
-                  'lib/public_key/asn1', 'lib/public_key/src', 'lib/ssh/src'],
+                  'lib/public_key/asn1', 'lib/public_key/src', 'lib/ssh/src', 'lib/ssl/src', 'lib/inets/src'],
                  @runner.directories
   end
 

@@ -432,7 +432,7 @@ module Erx
     end
 
     def erxos_source(application, base)
-      module_path = ErlangApps.modules(root: @root, application: application).find { |path| File.basename(path, '.erl') == base }
+      module_path = [*ErlangApps.modules(root: @root, application: application), *ErlangApps.derived_sources(application)].find { |path| File.basename(path, '.erl') == base }
       module_path && File.join(@root, module_path)
     end
 

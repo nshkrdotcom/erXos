@@ -18,7 +18,6 @@
              erx_procfs_core,
              erx_ramfs,
              erx_ramfs_core,
-             erx_ramfs_serving,
              erx_ramfs_sup]},
   {registered, [erx_ramfs]},
   {applications, [kernel, stdlib, erx]},
