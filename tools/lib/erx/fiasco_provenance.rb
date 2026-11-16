@@ -4,6 +4,7 @@
 
 require 'json'
 require 'tmpdir'
+require 'fileutils'
 require_relative 'pack_provenance'
 require_relative 'runner'
 require_relative 'bounded_file'
@@ -36,30 +37,73 @@ module Erx
     ERXOS_NOTICE = Attribution::ERXOS_NOTICE
     ERXOS_HEADER_LINES = 8
 
-    # The reviewed generated files of each build kind's link closure, in one
-    # file: the recipes they are made from, which both kinds share, and a
-    # section per kind (BuildKind) with the keys and the number of generated
-    # files named here. Only a development build's fixes an image's construction.
+    # The reviewed generated files of the development build's link closure: the
+    # recipes they are made from and, in its development section, how each is
+    # made and the hashes of the outputs and build inputs that hold it. A
+    # release kernel's generated files are made by the same rules; its audit
+    # reads the section's kernel entries in its own directory, unpinned.
     GENERATION_PROFILE = 'config/provenance/fiasco-generation.json'
-    GENERATION_SECTIONS = {
-      BuildKind::DEVELOPMENT => { 'keys' => %w[compile_dependencies image inputs profiles], 'profiles' => 8 }.freeze,
-      BuildKind::RELEASE => { 'keys' => %w[compile_dependencies inputs profiles], 'profiles' => 4 }.freeze
-    }.freeze
+    GENERATION_KEYS = %w[compile_dependencies image inputs profiles].freeze
 
-    # The license terms a release kernel may carry (docs/design.md, the
-    # dependency table): an expression LicenseExpression.permissive? accepts, or
-    # GCC's on the cross gcc's headers the external registry records
-    # (gcc_registry, GCC_HEADERS).
-    def self.non_permissive(sources, toolchain:)
-      sources.filter_map do |source|
-        license = source['license']
-        # A record without a license is derived (a generated file, whose sources
-        # are recorded beside it) or unresolved, which blocks the audit.
-        next if license.nil? || LicenseExpression.permissive?(license)
-        next if license == GCC_LICENSE && toolchain.include?(source.fetch('path'))
+    # How the audit of one build kind runs. kernel is the kernel directory it
+    # reads (Fiasco.kernel_directory). users is whether it also reads what a
+    # development image packs beside the kernel: the users' executables, their
+    # staged sources and archive record, and the image itself. pinned is
+    # whether the generation profile's hashes hold the generated files and the
+    # host tools and configuration that made them. check is what the audit
+    # must establish (certify): :receipt, the development build's receipt for
+    # its image, or :permissive, a release kernel's license gate
+    # (check_permissive). distribution is the report's statement of where the
+    # build may go, nil for a release kernel, whose gate decides that.
+    Plan = Data.define(:kind, :kernel, :users, :pinned, :check, :distribution)
 
-        [source.fetch('path'), license]
+    def self.plan(root:, kind:)
+      require_relative 'fiasco'
+      kernel = Fiasco.kernel_directory(root: root, kind: kind)
+      if BuildKind.development?(kind)
+        Plan.new(kind: kind, kernel: kernel, users: true, pinned: true, check: :receipt,
+                 distribution: 'project-only: non-permissive stopgap Fiasco')
+      else
+        Plan.new(kind: kind, kernel: kernel, users: false, pinned: false, check: :permissive, distribution: nil)
       end
+    end
+
+    # What a release kernel that passed its gate leaves beside itself.
+    PASS_RECORD = 'license-check.json'
+
+    # The linked sources a release kernel may not carry, each with its license
+    # or 'no license'. A source carries an expression LicenseExpression.permissive?
+    # accepts, or GCC's on a cross gcc header the external registry records
+    # (gcc_registry, GCC_HEADERS) (docs/design.md, the dependency table). A
+    # record without a license passes only as configuration, which carries no
+    # code, or as a file made from records the closure holds (ancestry), each of
+    # which is checked as a source of its own.
+    def self.non_permissive(sources, toolchain:)
+      recorded = sources.to_h { |source| [source.fetch('path'), source] }
+      sources.filter_map do |source|
+        path = source.fetch('path')
+        license = source['license']
+        if license
+          next if LicenseExpression.permissive?(license)
+          next if license == GCC_LICENSE && toolchain.include?(path)
+
+          [path, license]
+        elsif source['role'] != 'configuration'
+          made_from = ancestry(source)
+          next if !made_from.empty? && made_from.all? { |ancestor| recorded.key?(ancestor) && recorded.fetch(ancestor)['state'] != 'unresolved' }
+
+          [path, 'no license']
+        end
+      end
+    end
+
+    # The paths of the sources a record without a license is made from: a
+    # module's sources (generated_from), a fixed generator's code, and the
+    # sources of the objects it reads, through compound objects.
+    def self.ancestry(record)
+      references = record.values_at('generated_from', 'code', 'sources').compact.flatten
+      references.map { |reference| reference.fetch('path') } +
+        record.values_at('objects', 'components').compact.flatten.flat_map { |object| ancestry(object) }
     end
 
     # compiler, when the build compiled the C17 cores, is the clang that
@@ -68,14 +112,13 @@ module Erx
     # the build's own when Fiasco passes it, else CrossToolchain.find's when
     # first needed; their ar reads the archives unless archive_program names
     # another.
-    # kind is the build kind (BuildKind) whose kernel the audit reads, in
-    # Fiasco.kernel_directory, with that kind's generation profile.
-    def initialize(root:, runner:, kind: BuildKind::DEVELOPMENT, external: [], archive_program: nil, compiler: nil, cross: nil)
-      require_relative 'fiasco'
+    # kind is the build kind (BuildKind) whose kernel the audit reads; its
+    # Plan says how.
+    def initialize(root:, runner:, kind:, external: [], archive_program: nil, compiler: nil, cross: nil)
       @root = File.realpath(root)
       @build = File.join(@root, 'build/fiasco')
-      @kind = BuildKind.fetch(kind)
-      @kernel = Fiasco.kernel_directory(root: @root, kind: @kind)
+      @plan = self.class.plan(root: @root, kind: BuildKind.fetch(kind))
+      @kernel = @plan.kernel
       @runner = runner
       @compiler = compiler
       @cross = cross
@@ -103,7 +146,7 @@ module Erx
     # kernel is the build kind's; a development build adds its image's users.
     def executable_maps
       kernel = { 'kernel' => [File.join(@kernel, 'fiasco'), File.join(@kernel, 'fiasco.map')] }
-      return kernel unless BuildKind.development?(@kind)
+      return kernel unless @plan.users
 
       kernel.merge(USER_MAPS.transform_values { |paths| paths.map { |path| File.join(@build, path) } })
     end
@@ -139,7 +182,7 @@ module Erx
         programs = tools.to_h { |tool| [tool.fetch('program'), tool.fetch('path')] }
         @image_objcopy = programs.fetch(cross_toolchain.program('objcopy'))
         @image_perl = programs.fetch('perl')
-        image = audit_image(executables) if BuildKind.development?(@kind)
+        image = audit_image(executables) if @plan.users
         @bytes.each do |path, snapshot|
           unless BoundedFile.read(path, maximum: PackProvenance::MAX_METADATA) == snapshot
             raise Error, "Fiasco audit input changed: #{label(path)}"
@@ -149,12 +192,14 @@ module Erx
       @inputs.verify if @inputs
       report = { 'version' => 1, 'kind' => 'fiasco-link-audit',
         'state' => @unresolved.empty? ? 'complete' : 'blocked',
-        'distribution' => 'project-only: non-permissive stopgap Fiasco',
+        'build_kind' => @plan.kind, 'distribution' => @plan.distribution,
         'generation_profile' => reference(@generation_profile),
         'build_inputs' => @inputs && @inputs.reference,
         'license_notices' => license_notices,
         'tools' => tools, 'image' => image, 'executables' => executables, 'sources' => @sources.values.sort_by { |item| item.fetch('path') },
-        'unresolved' => @unresolved.uniq.sort }.freeze
+        'unresolved' => @unresolved.uniq.sort }
+      report = report.except('distribution') unless @plan.distribution
+      report.freeze
       @audit_complete = report.fetch('state') == 'complete'
       report
     rescue KeyError, Errno::ENOENT, Errno::EACCES, Errno::ENOTDIR, ArgumentError => error
@@ -175,6 +220,19 @@ module Erx
                    refused.map { |path, license| "#{path} (#{license})" }.join(', ')
     end
 
+    # Audits the build and records what its plan's check establishes: a
+    # development build's receipt (record_receipt), or a release kernel's pass
+    # record (certify_release). Returns the record's path.
+    def certify
+      case @plan.check
+      in :receipt
+        capture_construction
+        record_receipt(audit)
+      in :permissive
+        certify_release
+      end
+    end
+
     def capture_construction
       require_relative 'fiasco'
       load_build_inputs
@@ -191,7 +249,7 @@ module Erx
       emit.call(kernel, '.erx-bootstrap-inputs', 'OBJ_BOOTSTRAP',
                 ['-f', File.join(source, 'src/Makefile.sub2'),
                  "srcdir=#{source}/src", "objbase=#{kernel}"])
-      return unless BuildKind.development?(@kind)
+      return unless @plan.users
 
       emit.call(File.join(@build, 'users/pkg/l4re-core/minimal_l4re/OBJ-arm64_armv8a-std-l4f'),
                 '.erx-archive-inputs', 'OBJS_libc_minimal_l4re.a', [])
@@ -260,15 +318,34 @@ module Erx
       audit_bytes = self.class.canonical_report(report)
       receipt = { 'version' => 1, 'kind' => 'fiasco', 'artifact' => report.fetch('image').fetch('artifact'),
                   'audit' => { 'path' => 'build/fiasco/provenance.json', 'sha256' => Digest::SHA256.hexdigest(audit_bytes) } }
-      [[audit_path, audit_bytes], [receipt_path, JSON.generate(receipt) + "\n"]].each do |path, bytes|
-        raise Error, 'Fiasco receipt destination is a symlink' if File.symlink?(path)
-        Dir.mktmpdir('.receipt-', @build) do |directory|
-          temporary = File.join(directory, 'output')
-          File.binwrite(temporary, bytes)
-          File.rename(temporary, path)
-        end
-      end
+      write_record(audit_path, audit_bytes)
+      write_record(receipt_path, JSON.generate(receipt) + "\n")
       receipt_path
+    end
+
+    # Writes PASS_RECORD, naming the build kind and the kernel bytes the audit
+    # read, once the kernel passes check_permissive. The release build
+    # (Fiasco#build_release_kernel) removes the kernel and any record unless
+    # this returns.
+    def certify_release
+      capture_construction
+      report = audit
+      check_permissive(report)
+      artifact = report.fetch('executables').find { |executable| executable.fetch('name') == 'kernel' }.fetch('artifact')
+      record = File.join(@kernel, PASS_RECORD)
+      write_record(record, JSON.generate({ 'version' => 1, 'kind' => 'fiasco-license-check', 'build_kind' => @plan.kind,
+                                           'kernel' => artifact, 'state' => 'passed' }) + "\n")
+      record
+    end
+
+    # Replaces path by bytes in one rename, refusing a symlink in its place.
+    def write_record(path, bytes)
+      raise Error, "Fiasco record destination is a symlink: #{label(path)}" if File.symlink?(path)
+      Dir.mktmpdir('.receipt-', File.dirname(path)) do |directory|
+        temporary = File.join(directory, 'output')
+        File.binwrite(temporary, bytes)
+        File.rename(temporary, path)
+      end
     end
 
     # Permission comes from this producer's actual reads and fixed output
@@ -373,56 +450,38 @@ module Erx
     def load_generation_profiles
       @generation_profile = File.join(@root, GENERATION_PROFILE)
       profile = JsonInput.parse(read(@generation_profile), max_bytes: 1024 * 1024, label: 'Fiasco generation profile')
-      shape = GENERATION_SECTIONS.fetch(@kind)
-      section = profile.is_a?(Hash) && profile[@kind]
-      unless profile.is_a?(Hash) && profile.keys.sort == (%w[recipes version] + GENERATION_SECTIONS.keys).sort && profile['version'] == 1 &&
+      generation = profile.is_a?(Hash) && profile[BuildKind::DEVELOPMENT]
+      unless profile.is_a?(Hash) && profile.keys.sort == ['recipes', 'version', BuildKind::DEVELOPMENT].sort && profile['version'] == 1 &&
              profile['recipes'].is_a?(Hash) && profile['recipes'].size.between?(1, 8192) &&
-             section.is_a?(Hash) && section.keys.sort == shape.fetch('keys')
+             generation.is_a?(Hash) && generation.keys.sort == GENERATION_KEYS &&
+             generation['profiles'].is_a?(Hash) && generation['profiles'].size.between?(1, 64) &&
+             generation['compile_dependencies'].is_a?(Hash) &&
+             generation['compile_dependencies'].size <= 64 && generation['inputs'].is_a?(Hash) && generation['inputs'].size.between?(1, 8192) &&
+             generation['image'].is_a?(Hash) && generation['image'].keys.sort == %w[entry qemu_command] && generation['image']['entry'] == 'banner' &&
+             generation['image']['qemu_command'].is_a?(String) && generation['image']['qemu_command'].ascii_only? &&
+             !generation['image']['qemu_command'].match?(/[\x00-\x1f\x7f]/)
         raise Error, 'invalid fixed Fiasco generation profile'
       end
-      # This kind's view: its section and the shared recipes.
-      @generation = section.merge('recipes' => profile.fetch('recipes'))
-      unless @generation['profiles'].is_a?(Hash) && @generation['profiles'].size == shape.fetch('profiles') &&
-             @generation['compile_dependencies'].is_a?(Hash) &&
-             @generation['compile_dependencies'].size <= 64 && @generation['inputs'].is_a?(Hash) && @generation['inputs'].size.between?(1, 8192) &&
-             (!@generation.key?('image') ||
-              (@generation['image'].is_a?(Hash) && @generation['image'].keys.sort == %w[entry qemu_command] && @generation['image']['entry'] == 'banner' &&
-               @generation['image']['qemu_command'].is_a?(String) && @generation['image']['qemu_command'].ascii_only? &&
-               !@generation['image']['qemu_command'].match?(/[\x00-\x1f\x7f]/)))
-        raise Error, 'invalid fixed Fiasco generation profile'
-      end
-      @generation.fetch('compile_dependencies').each do |object, dependency|
+      generation = generation.merge('recipes' => profile.fetch('recipes'))
+      check_generation_shape(generation)
+      @generation = @plan.pinned ? generation : kernel_generation(generation)
+      check_recipes
+      check_generation_pins if @plan.pinned
+    end
+
+    def check_generation_shape(generation)
+      generation.fetch('compile_dependencies').each do |object, dependency|
         unless object.is_a?(String) && dependency.is_a?(String) && object.end_with?('.o') && dependency.end_with?('.d')
           raise Error, 'invalid fixed compiler dependency record'
         end
-        project_input('build/fiasco/' + object)
-        project_input('build/fiasco/' + dependency)
       end
-      @generation.fetch('recipes').each do |relative, expected|
-        path = project_input(relative)
-        raise Error, "stale Fiasco generation recipe: #{relative}" unless digest(path) == expected
-        # The users build stages its sources in build/fiasco/source; a release
-        # kernel is built alone, from the kernel part, and stages none.
-        if BuildKind.development?(@kind) && relative.start_with?('fiasco/') && !relative.start_with?('fiasco/kernel/')
-          part, suffix = relative.delete_prefix('fiasco/').split('/', 2)
-          staged = part == 'mk' ? File.join(@build, 'source', suffix) : File.join(@build, 'source/pkg', part, suffix)
-          raise Error, "stale staged Fiasco recipe: #{relative}" unless digest(staged) == expected
-        end
-      end
-      @generation.fetch('inputs').each do |relative, expected|
+      generation.fetch('inputs').each_value do |expected|
         unless expected.is_a?(Hash) && expected.keys.sort == %w[mode sha256] && %w[binary text].include?(expected['mode']) &&
                expected['sha256'].is_a?(String) && expected['sha256'].match?(/\A[0-9a-f]{64}\z/)
           raise Error, 'invalid fixed generation input record'
         end
-        bytes = read(project_input(relative))
-        if expected.fetch('mode') == 'text'
-          raise Error, 'literal project marker in a build input' if bytes.include?('${PROJECT_ROOT}'.b)
-          bytes = bytes.gsub(@root.b, '${PROJECT_ROOT}'.b)
-        end
-        raise Error, "changed fixed generation input: #{relative}" unless Digest::SHA256.hexdigest(bytes) == expected.fetch('sha256')
       end
-      @generation.fetch('profiles').each do |relative, profile|
-        project_input('build/fiasco/' + relative)
+      generation.fetch('profiles').each_value do |profile|
         unless profile.is_a?(Hash) && profile.keys.sort == %w[code configuration metadata object_list objects output_sha256 role tools] &&
                %w[code configuration object].include?(profile['role']) && profile['output_sha256'].is_a?(String) &&
                profile['output_sha256'].match?(/\A[0-9a-f]{64}\z/) &&
@@ -433,11 +492,63 @@ module Erx
           profile.fetch('code') + profile.fetch('objects') + profile.fetch('object_list')
         raise Error, 'fixed generation profile has no input ancestry' if ancestry.empty?
         %w[configuration metadata tools].each do |role|
-          unless profile.fetch(role).all? { |path| @generation.fetch('inputs').key?(path) || @generation.fetch('recipes').key?(path) }
+          unless profile.fetch(role).all? { |path| generation.fetch('inputs').key?(path) || generation.fetch('recipes').key?(path) }
             raise Error, 'unregistered fixed generation input'
           end
         end
       end
+    end
+
+    # Each recipe's bytes, a fact about the tree that ties the profile's account
+    # of a generated file to the rule that makes it, for every kind; and, when
+    # the audit reads the users, the copy their build staged.
+    def check_recipes
+      @generation.fetch('recipes').each do |relative, expected|
+        path = project_input(relative)
+        raise Error, "stale Fiasco generation recipe: #{relative}" unless digest(path) == expected
+        if @plan.users && relative.start_with?('fiasco/') && !relative.start_with?('fiasco/kernel/')
+          part, suffix = relative.delete_prefix('fiasco/').split('/', 2)
+          staged = part == 'mk' ? File.join(@build, 'source', suffix) : File.join(@build, 'source/pkg', part, suffix)
+          raise Error, "stale staged Fiasco recipe: #{relative}" unless digest(staged) == expected
+        end
+      end
+    end
+
+    # The development build's pins: every generated file and compiler record the
+    # profile names is present, and each build input has the recorded bytes. A
+    # release kernel's entries are read only where its link closure reaches them.
+    def check_generation_pins
+      @generation.fetch('compile_dependencies').each do |object, dependency|
+        project_input('build/fiasco/' + object)
+        project_input('build/fiasco/' + dependency)
+      end
+      @generation.fetch('profiles').each_key { |relative| project_input('build/fiasco/' + relative) }
+      @generation.fetch('inputs').each do |relative, expected|
+        bytes = read(project_input(relative))
+        if expected.fetch('mode') == 'text'
+          raise Error, 'literal project marker in a build input' if bytes.include?('${PROJECT_ROOT}'.b)
+          bytes = bytes.gsub(@root.b, '${PROJECT_ROOT}'.b)
+        end
+        raise Error, "changed fixed generation input: #{relative}" unless Digest::SHA256.hexdigest(bytes) == expected.fetch('sha256')
+      end
+    end
+
+    # The development section's entries for the development kernel's generated
+    # files, moved into this plan's kernel directory: every kernel's are made by
+    # the same rules, from its own build's files. The recipes stay for the
+    # recipe check; no hash of the development build holds them.
+    def kernel_generation(generation)
+      from = Fiasco.kernel_directory(root: @root, kind: BuildKind::DEVELOPMENT).delete_prefix(@build + '/') + '/'
+      to = @kernel.delete_prefix(@build + '/') + '/'
+      move = ->(relative) { relative.start_with?(from) ? to + relative.delete_prefix(from) : relative }
+      move_input = ->(input) { input.start_with?('build/fiasco/') ? 'build/fiasco/' + move.call(input.delete_prefix('build/fiasco/')) : input }
+      in_kernel = ->(entries) { entries.select { |relative, _| relative.start_with?(from) } }
+      { 'recipes' => generation.fetch('recipes'),
+        'compile_dependencies' => in_kernel.call(generation.fetch('compile_dependencies'))
+                                           .to_h { |object, dependency| [move.call(object), move.call(dependency)] },
+        'profiles' => in_kernel.call(generation.fetch('profiles')).to_h do |relative, profile|
+          [move.call(relative), profile.to_h { |role, value| [role, value.is_a?(Array) ? value.map(&move_input) : value] }]
+        end }
     end
 
     def project_input(relative)
@@ -457,7 +568,9 @@ module Erx
       relative = path.delete_prefix(@build + '/')
       profile = @generation && @generation.fetch('profiles')[relative]
       return nil unless profile
-      raise Error, "unsupported generated output: #{relative}" unless digest(path) == profile.fetch('output_sha256')
+      if @plan.pinned && digest(path) != profile.fetch('output_sha256')
+        raise Error, "unsupported generated output: #{relative}"
+      end
       record = reference(path).merge('role' => profile.fetch('role'), 'profile' => reference(@generation_profile))
       # Install the node before following header dependencies; generated layout
       # headers and their compiled type definitions can refer to each other.

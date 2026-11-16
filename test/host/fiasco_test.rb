@@ -8,6 +8,7 @@ require 'rubygems/package'
 require 'stringio'
 require 'zlib'
 require_relative '../../tools/lib/erx/fiasco'
+require_relative '../../tools/lib/erx/fiasco_provenance'
 
 class FiascoTest < Minitest::Test
   # The recording runner resolves a configuration by copying it, so the
@@ -30,9 +31,7 @@ class FiascoTest < Minitest::Test
     # The release kernel's license check is the link audit's, which
     # fiasco_provenance_test.rb covers; here it accepts every kernel.
     AcceptingAudit = Data.define do
-      def capture_construction = nil
-      def audit = {}
-      def check_permissive(_report) = nil
+      def certify = nil
     end
 
     def provenance_auditor(kind:) = AcceptingAudit.new
@@ -190,6 +189,25 @@ class FiascoTest < Minitest::Test
     assert_includes names, 'fiasco-kernel-release-build'
     refute_includes names, 'fiasco-kernel-build'
     refute File.exist?(File.join(@directory, 'build/fiasco/kernel'))
+  end
+
+  # A release kernel stays only beside its pass record: an earlier record goes
+  # before the build, and a kernel whose audit fails is removed with it.
+  def test_a_refused_release_kernel_is_removed_with_any_pass_record
+    directory = Erx::Fiasco.kernel_directory(root: @directory, kind: Erx::BuildKind::RELEASE)
+    record = File.join(directory, Erx::FiascoProvenance::PASS_RECORD)
+    FileUtils.mkdir_p(directory)
+    File.write(record, 'an earlier pass')
+    @fiasco.build_release_kernel(jobs: 2)
+    refute File.exist?(record)
+    File.write(File.join(directory, 'fiasco'), 'refused kernel')
+    File.write(record, 'an earlier pass')
+    refusing = Object.new
+    refusing.define_singleton_method(:certify) { raise Erx::Error, 'the kernel links sources a release may not carry' }
+    @fiasco.define_singleton_method(:provenance_auditor) { |kind:| refusing }
+    assert_raises(Erx::Error) { @fiasco.build_release_kernel(jobs: 2) }
+    refute File.exist?(File.join(directory, 'fiasco'))
+    refute File.exist?(record)
   end
 
   # Seeded fault: a development defconfig that turns the debugger on would
