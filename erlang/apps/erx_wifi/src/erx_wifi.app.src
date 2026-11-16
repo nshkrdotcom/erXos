@@ -2,13 +2,14 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% erXos's WiFi (docs/design-wifi.md): the WiFi domain's chip, station and
-%% supplicant. Its first modules are the supplicant's pure cores, erx_wpa_kdf, the
+%% supplicant. Its first modules are pure cores: the station's choice and failure
+%% memory, erx_wifi_choose and erx_wifi_memory, and the supplicant's erx_wpa_kdf, the
 %% key arithmetic over OTP's crypto, and erx_wpa_key, the EAPOL-Key codec; they
 %% start no process.
 {application, erx_wifi,
  [{description, "erXos WiFi"},
   {vsn, "1"},
-  {modules, [erx_wpa_kdf, erx_wpa_key]},
+  {modules, [erx_wifi_choose, erx_wifi_memory, erx_wpa_kdf, erx_wpa_key]},
   {registered, []},
   {applications, [kernel, stdlib, crypto, erx]},
   {env, []}]}.

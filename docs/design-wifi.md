@@ -1033,7 +1033,7 @@ lifecycle around them:
 
 | Part | Interface | Decides | Keeps |
 | --- | --- | --- | --- |
-| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [Verdict], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
+| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [{Bss, Verdict}], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
 | the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Actions, Join}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
 | the failure memory, `erx_wifi_memory` | `fail/3`, `ok/2`, `held/3` | which BSS and which secret failed lately, and until when each is held | a bounded map |
 | the lifecycle, in `erx_wifi_sta` | the step above | whether the radio is up, when to scan, when to ask the choice, and the `ctl` commands | the configuration, the names, the marks it has learned, the scan table, `want` |
@@ -1149,7 +1149,7 @@ station cannot then tell a network it has no secret for from one whose
 secret it cannot reach, so it says neither.
 
 **The pick** is the candidate of the highest `priority`, then the
-strongest signal. A held BSS is never the pick.
+strongest signal, then the lowest address. A held BSS is never the pick.
 
 **Failure never changes admission.** `admit/4` takes no memory, so what
 is admitted, and with which AKM and PMF, is the same after any history
@@ -1313,7 +1313,7 @@ A held BSS, and every BSS of an SSID whose secret is held, is not a
 candidate until the hold ends; the verdict says which and until when.
 Holds are compared with the time at each choice, so the memory has no
 timer of its own, as iwd's blocklist has none (iwd fact 20). It holds at
-most 32 BSS records, dropping the one whose hold ends first, and one
+most 32 BSS records, dropping, of the others, the one whose hold ends first, and one
 record per SSID with a secret. A restart of the domain empties it.
 
 What the memory is for:

@@ -7454,6 +7454,18 @@ document's "residual risks accepted" paragraph.
     the first process that calls these cores, since a `function_clause` in `pmk/2` or
     `build/4` carries the passphrase or the KCK in its arguments.
 
+* [Low] WiFi station's choice (`erx_wifi_choose`;
+  [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:
+  - the BSS record carries no group management cipher, so a PMF BSS that offers
+    BIP-GMAC-256 rather than BIP-CMAC-128 is admitted and then fails its join; admission
+    could refuse it `cipher_unsupported` once the scan's element parser reads that field;
+  - the blocks a view holds must have every key filled in: `erx_wpa_conf` fills a parsed
+    block over `erx_wifi_choose:default_block/0`, the one statement of the defaults, and
+    a block without `priority` or `ieee80211w` is not refused by the choice itself;
+  - the generated-view property counts none of the cases it reaches (picks, `bss` and
+    `secret_failed` holds, SSIDs marked by the names), so a generator change that stops
+    reaching one goes unnoticed.
+
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
