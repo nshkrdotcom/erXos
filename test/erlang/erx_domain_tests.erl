@@ -1059,6 +1059,8 @@ killed_session_restarts() ->
     Id = erx_domain:id(First),
     ?assertEqual({session, Id, 0, <<"root_1">>, none}, next_call()),
     _ = [next_call() || _ <- [open_side, export, start]],
+    %% The session's code_objects facet, which every session holds, exports itself to it.
+    ?assertEqual({export, Id, [send]}, next_call()),
     Ref = monitor(process, erx_domain:pid(First)),
     ok = erx_domain:stop(First, kill),
     ?assertEqual(killed, receive {'DOWN', Ref, process, _, Why} -> Why after 5000 -> timeout end),

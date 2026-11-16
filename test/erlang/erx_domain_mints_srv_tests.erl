@@ -464,23 +464,33 @@ answers(Pids, Answers) ->
 %% A session's template granted inspect by the manifest, a service the system domain
 %% serves, finds the inspect facet in its ready answer, bound to the session and within
 %% the grant's limits; a template the manifest grants nothing finds none
-%% (docs/design-live.md, "The inspect service").
+%% (docs/design-live.md, "The inspect service"). Beside it, each holds the code_objects
+%% facet every session gets (session_code_objects_test).
 session_inspect_test() ->
     Started = inspect_setup([{{template, 0}, inspect, system, #{in_flight => 2}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         #{inspect := Facet} = Facets = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
-        ?assertEqual([inspect], maps:keys(Facets)),
+        ?assertEqual([code_objects, inspect], lists:sort(maps:keys(Facets))),
         ?assertMatch(#{grantee := Id, in_flight := 2}, erx_facet:info(Facet))
     after
         inspect_cleanup(Started)
     end.
 
-session_without_inspect_test() ->
+%% A session the manifest grants nothing holds the code_objects facet alone, by the domain
+%% service's own policy, bound to the session itself and within the service's own limits
+%% (docs/design-system.md, "The code_objects facet"); a domain made on request, which
+%% the manifest grants nothing either, holds none.
+session_code_objects_test() ->
     Started = inspect_setup([]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
-        ?assertEqual(#{}, maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})))
+        #{code_objects := Facet} = Facets = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        ?assertEqual([code_objects], maps:keys(Facets)),
+        ?assertMatch(#{grantee := Id, max_request := ?ERX_CODE_OBJECTS_MAX_REQUEST, in_flight := 4},
+                     erx_facet:info(Facet)),
+        {ok, {erx_domain, Made, _, _}} = erx_domain:create(#{boot => <<"base">>, name => <<"made">>, memory => 4096}),
+        ?assertEqual(#{}, maps:get(domain_pid(Made), answers([domain_pid(Made)], #{})))
     after
         inspect_cleanup(Started)
     end.
@@ -514,7 +524,7 @@ session_files_grant_test() ->
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
         DomainPid = domain_pid(Id),
         #{start := Grant} = Facets = maps:get(DomainPid, answers([DomainPid], #{})),
-        ?assertEqual([start], maps:keys(Facets)),
+        ?assertEqual([code_objects, start], lists:sort(maps:keys(Facets))),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)]),
         %% The grant exports itself to the session, after the session's start.
         ok = await_call({start, Id}),
@@ -534,7 +544,7 @@ session_without_files_grant_test() ->
     Started = {_, _, Grants} = files_setup([{{template, 1}, start, system, #{max_request => 131072}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
-        ?assertEqual(#{}, maps:get(domain_pid(Id), answers([domain_pid(Id)], #{}))),
+        ?assertEqual([code_objects], maps:keys(maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})))),
         ?assertEqual([], supervisor:which_children(Grants))
     after
         files_cleanup(Started)
@@ -781,6 +791,9 @@ app_session() ->
         PidA ! {erx_origin, 5, {erx_facet_minted, Tag, {ok, pid('a@erxos', 5, 7)}}},
         {Before, {_, install, Tag, clip, _}} = received(Pid7, fun({_, install, _, _, _}) -> true end, []),
         ?assertEqual([[clip]], [Granted || {_, facets, _, Granted} <- Before]),
+        %% An app's session holds the code_objects facet too, bound to itself.
+        [#{code_objects := CodeObjects}] = [Facets || {_, facets, Facets, _} <- Before],
+        ?assertMatch(#{grantee := 7}, erx_facet:info(CodeObjects)),
         ?assertEqual(none, answer(Ref, 200)),
         Pid7 ! {erx_origin, 7, {erx_facets_installed, Tag}},
         ?assertMatch({ok, {erx_domain, 7, _, Pid7}}, answer(Ref, 2000)),

@@ -155,8 +155,7 @@ it; git history is the record of completed work.
   grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`;
   those answer `enotsup`, since the domain library has no `erx_dom_code_object` or `erx_dom_code_drop` over
   `erx_mem_create_paged`, no per-session table bounded at `code_objects_max`, and no close of a session's
-  code-object handles at its retire. The facet's decoder (`erx_code_objects_facet:decode/1`) has EUnit cases
-  but no fuzz target. The command server's holds (fill, start,
+  code-object handles at its retire. The command server's holds (fill, start,
   row) decide every drop (design-programs.md, "Holds and drops"). Links: a package mount answers `enotsup`
   for a link inode, since a package holds no links (design-storage.md, "Reading EROFS images"), but today
   the reader checks only the header's text (`relative_path`) and only the host packer refuses links, so the

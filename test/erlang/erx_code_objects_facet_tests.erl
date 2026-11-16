@@ -9,6 +9,7 @@
 -module(erx_code_objects_facet_tests).
 
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 decode_takes_the_two_operations_test() ->
     ?assertEqual({ok, {create, 4096}}, erx_code_objects_facet:decode({create, 4096})),
@@ -32,3 +33,16 @@ admit_forwards_with_the_grantee_test() ->
     %% A request that names another session is no operation of the interface.
     ?assertEqual({refuse, badarg, State}, erx_code_objects_facet:admit({create, 9, 8192}, self(), State)),
     ?assertEqual({refuse, badarg, State}, erx_code_objects_facet:admit({drop, 9, 3}, self(), State)).
+
+%% The largest request a session can send, a create of a size below 2^64 with the
+%% largest grantee, from a caller whose pid and alias, a reference of five words, the
+%% most one has, each carry a node name of 255 bytes, the longest an atom holds, fits
+%% the facet's max_request (abi/services/code_objects.txt), so erx_facet never drops a
+%% request the interface takes.
+largest_request_fits_max_request_test() ->
+    Node = binary:copy(<<"n">>, 255),
+    Pid = binary_to_term(<<131, 88, 119, 255, Node/binary, 0:32, 0:32, 16#ffffffff:32>>),
+    Alias = binary_to_term(<<131, 90, 5:16, 119, 255, Node/binary, 16#ffffffff:32, 0:160>>),
+    Envelope = {erx_origin, (1 bsl 32) - 1, {'$gen_call', {Pid, [alias | Alias]}, {create, (1 bsl 64) - 1}}},
+    ?assertEqual(114 + 2 * 255, erlang:external_size(Envelope)),
+    ?assert(erlang:external_size(Envelope) =< ?ERX_CODE_OBJECTS_MAX_REQUEST).

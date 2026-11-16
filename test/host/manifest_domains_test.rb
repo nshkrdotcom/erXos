@@ -215,6 +215,27 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # A facet row of the code_objects interface is refused whoever its grantee, a
+  # configured domain or a template: the domain service grants every session that facet
+  # itself, with its own limits.
+  def test_a_code_objects_facet_row_is_refused
+    objects = service('code_objects', 'system').sub('interface 1', 'interface code_objects')
+    assert_equal [11], rows(@codec.open('manifest', admit(@source + objects).bytes), 'services').map { |row| row.fetch('interface') }
+    { @source => '@domain.alpha', with_session(self.class.session) => '@session.system' }.each do |source, grantee|
+      refused(Erx::Manifest::Invalid, 8, 'facet.service', source + objects + facet('objects', grantee, '@service.code_objects'))
+    end
+  end
+
+  # The code_objects service is served once, under that name, by the system domain: the
+  # name and server the domain service grants every session's facet under.
+  def test_the_code_objects_service_is_the_system_domain_s_alone
+    objects = service('code_objects', 'system').sub('interface 1', 'interface code_objects')
+    [objects.sub('server system', 'server @domain.alpha'), objects.sub('service code_objects', 'service objects'),
+     objects + objects.sub('service code_objects', 'service objects')].each do |row|
+      refused(Erx::Manifest::Invalid, 8, 'service.interface', @source + row)
+    end
+  end
+
   def test_an_interface_name_no_fragment_declares_is_refused
     source = @source + service('ctl', '@domain.beta').sub('interface 1', 'interface driver_ctl')
     error = assert_raises(Erx::ABI::SchemaError) { admit(source) }

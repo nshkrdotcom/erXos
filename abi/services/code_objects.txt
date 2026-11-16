@@ -11,8 +11,17 @@
 # erx_code_objects_facet:decode/1 refuses anything else with {error, badarg}. The
 # grantee is the facet's, never the request's, so a session makes objects only from its
 # own budget and drops only its own. code_objects_max is the domain library's bound on
-# one session's live code objects, the design's file_objects.
+# one session's live code objects, which the command server's table keeps within.
+# code_objects_max_request is the facet's max_request, which erx_facet holds a request's
+# whole envelope to: {erx_origin, D, {'$gen_call', {Pid, [alias | Alias]}, Request}}
+# encodes in at most 114 + 2L bytes for a caller whose node name is L bytes, which its
+# pid and its alias, a reference of up to five words, each carry, with D below 2^32 and
+# Request a create of a size below 2^64, the largest. A node name is ASCII, built from
+# erx_ident identifiers, and an atom of at most 255 characters, so 624 at most; the
+# limit doubles past that to the next power of two, so an encoding that grows a little
+# between OTP releases still fits.
 service code_objects 11
   operation create 1
   operation drop 2
 limit code_objects_max u32 256
+limit code_objects_max_request u32 1024

@@ -234,10 +234,11 @@ module Erx
     # among them, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
     # What every report line of clock's sessions says (erx_clock_test:report/0): a
-    # session of clock holding the data grant alone, erx:cap(start) undefined, no /etc/start,
+    # session of clock holding the code_objects facet every session gets and the data grant,
+    # erx:cap(start) undefined, no /etc/start,
     # and /data listed.
     # Each anchored at the kernel log record's own prefix, which no echo of a typed line has.
-    CLOCK_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,#{PRINCIPAL}_[0-9]+@erxos,\[data\],true,\{error,enoent\},ok\}/n
+    CLOCK_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,#{PRINCIPAL}_[0-9]+@erxos,\[code_objects,data\],true,\{error,enoent\},ok\}/n
     ANY_REPORT = /space [0-9]+: notice: erx_clock_test: \{clock_report,/n
     TIMED_OUT = /space [0-9]+: notice: erx_clock_test: \{clock_report,[^,]+,timeout\}/n
     # Any line of the app's, its start's among them, or any line naming a node of

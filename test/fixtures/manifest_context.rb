@@ -138,10 +138,10 @@ module ManifestContextFixture
   # sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
                     /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/].freeze
-  # The services the system domain serves: inspect, start and machine, to session templates
-  # alone, and log, which no facet row grants.
-  SYSTEM_SERVICES = [/^service inspect\n(?:  .*\n)*/, /^service start\n(?:  .*\n)*/,
-                     /^service machine\n(?:  .*\n)*/, /^service log\n(?:  .*\n)*/].freeze
+  # A service the system domain serves (inspect, start and machine, to session templates
+  # alone; log and code_objects, which no facet row grants), by its server line, so a new
+  # one goes with the rest.
+  SYSTEM_SERVICE = /^service \S+\n  server system\n(?:  .*\n)*/
   DOMAIN_HOLDER = /^  holder @domain\.(?:storage|network)$/
 
   # The development manifest as the domain tests start from it: without its session
@@ -154,9 +154,11 @@ module ManifestContextFixture
     with_quota(without_system_services(templateless), 0)
   end
 
-  # source without SYSTEM_SERVICES, for a source whose session facets are gone.
+  # source without every SYSTEM_SERVICE, for a source whose session facets are gone.
   def without_system_services(source)
-    SYSTEM_SERVICES.reduce(source) { |text, service| substitute(text, service, '') }
+    raise ArgumentError, "the manifest has no match for #{SYSTEM_SERVICE.inspect}" unless source.match?(SYSTEM_SERVICE)
+
+    source.gsub(SYSTEM_SERVICE, '')
   end
 
   # source without its configured domains, storage, network, web and display: their rows
