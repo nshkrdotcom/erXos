@@ -4762,8 +4762,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `FLAGS` are reused; hash the flags into the rule or delete the objects when they change.
   (3) `setup.rb`: the source steps' `deadline: 300` is never used. (4)
   `leftovers` reads the flavour out of `step.argv`;
-  store it on `Step`. `ERX_SOURCE_CACHE` names `build/third_party` but setup reads the sibling
-  `build/downloads` (`archive_directory`); name the directory actually read.
+  store it on `Step`.
 * [Low] `test/oracle/common_test/test_server_ctrl.erl` (`file:set_cwd` in `run_test_case` and three other sites),
   `tools/lib/erx/oracle_suites.rb` (`ERXOS_LOG_CAP`): on erXos Common Test's logs have a RAM file system of their own
   (`/ct-logs`, 256 MiB), apart from `/tmp` where each `priv_dir` and `data_dir` is, so a suite that fills `/tmp` fails
