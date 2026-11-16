@@ -36,7 +36,8 @@ as FreeBSD's `uhub_reattach_port` frees the old child before it reads the
 fresh status (sys/dev/usb/usb_hub.c:625-637, release/15.1.0, 95719d8a); a
 status that agrees with the state leaves the port as it is.
 
-**Power.** A hub's ports start `off`. The core powers each, one request
+**Power.** A hub's ports start `off`, and a hub more than five tiers below
+the root, `usb_hub_depth_max`, keeps them so. The core powers each, one request
 at a time, and the hub's power-good time, `bPwrOn2PwrGood` times 2 ms
 plus FreeBSD's 20 ms (usb_hub.c:1280-1281, usb.h:124 and 624), runs from
 the last one's answer; FreeBSD waits it after each port (usb_hub.c:1512),
@@ -162,7 +163,7 @@ multi-TT interface was selected.
                 | {deadline, ms()}.
 
 -type hub() :: #{parent := root | {hub, full | high}, power_good := ms(),
-                 power := powering | {good_at, ms()} | good, multi_tt := boolean(),
+                 power := powering | {good_at, ms()} | good | unpowered, multi_tt := boolean(),
                  ports := #{port_no() => port_state()}, pending := ordsets:ordset(target()),
                  op := none | {target(), op()}, clears := [{target(), atom()}], reporter := none | term()}.
 
@@ -176,7 +177,7 @@ multi-TT interface was selected.
 -doc "The bus of a controller whose root hub has RootPorts ports, every port `off`.".
 -spec new(port_no()) -> state().
 new(RootPorts) when is_integer(RootPorts), RootPorts >= 1, RootPorts =< 255 ->
-    #{hubs => #{root => hub(root, RootPorts, ?ROOT_POWER_GOOD_UNITS, false)},
+    #{hubs => #{root => hub(root, RootPorts, ?ROOT_POWER_GOOD_UNITS, false, powering)},
       devices => #{}, waiting => [], next => {device, 1}}.
 
 -doc "The actions the bus process performs on Event, handled at Now, and the next state.".
@@ -250,7 +251,8 @@ addressed(Ref, {ok, _Address}, State) ->
 addressed(Ref, {error, Reason}, State) ->
     fail_device(Ref, {address, Reason}, State).
 
-configured(Ref, #{port := {Id, N}, speed := Speed}, Config = #{functions := Functions}, State0) ->
+configured(Ref, #{port := {Id, N}, speed := Speed, route := Route}, Config = #{functions := Functions},
+           State0) ->
     case {Config, Speed} of
         {#{hub := #{}}, super} ->
             fail_device(Ref, superspeed_hub, State0);
@@ -258,16 +260,25 @@ configured(Ref, #{port := {Id, N}, speed := Speed}, Config = #{functions := Func
             then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0));
         {#{hub := #{ports := Ports, power_good := Units, multi_tt := MultiTT}}, _} ->
             #{hubs := Hubs} = State0,
-            Hub = hub({hub, hub_speed(Speed)}, Ports, Units, MultiTT),
+            Hub = hub({hub, hub_speed(Speed)}, Ports, Units, MultiTT, hub_power(Route)),
             then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0#{hubs := Hubs#{Ref => Hub}}))
     end.
 
 hub_speed(high) -> high;
 hub_speed(_LowOrFull) -> full.
 
-hub(Parent, Ports, PowerGoodUnits, MultiTT) ->
+%% A hub more than usb_hub_depth_max tiers below the root keeps every port `off`:
+%% a slot context's route string holds five tiers below the root port, four bits a
+%% tier, so no device below such a hub could be addressed (docs/design-usb.md, "What
+%% a device can make the domain spend"). An `unpowered` hub issues no port operation
+%% (next_op's first clause), so its ports never leave `off` and its hub function's
+%% first report stays unanswered: one transfer, then nothing.
+hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;
+hub_power(_Route) -> powering.
+
+hub(Parent, Ports, PowerGoodUnits, MultiTT, Power) ->
     #{parent => Parent, power_good => PowerGoodUnits * ?POWER_GOOD_UNIT_MS + ?EXTRA_POWER_UP_MS,
-      power => powering, multi_tt => MultiTT,
+      power => Power, multi_tt => MultiTT,
       ports => maps:from_keys(lists:seq(1, Ports), off), pending => lists:seq(1, Ports),
       op => none, clears => [], reporter => none}.
 
@@ -531,6 +542,8 @@ run_hub(Id, Hub0, Now) ->
 %% a port given up, the turn holder's reset, then a status read once powered.
 %% A resetting port's reads are queued in `pending` with the hub's other reads,
 %% so a report is answered only once they are done as well.
+next_op(_Id, Hub = #{power := unpowered}, _Now) ->
+    {[], Hub};
 next_op(Id, Hub = #{clears := [{Target, Change} | _]}, _Now) ->
     issue(Id, Target, {clear, Change}, Hub);
 next_op(Id, Hub = #{power := powering, ports := Ports, power_good := PowerGood}, Now) ->

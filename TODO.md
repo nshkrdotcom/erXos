@@ -6502,10 +6502,6 @@ to the corpus and follow rc
   address is still being set. The design's transaction-translator argument wants the turn held until that answer,
   or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
   decides which.
-* [Medium] USB, the bus core's hub depth (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  `usb_hub_depth_max` is not applied, so a hub more than 5 tiers below the root has its ports powered and its
-  children enumerated with a route of 6 tiers, which the slot context's route string cannot hold. A hub past the
-  limit is to be configured with its ports never powered, with a case that builds the chain.
 * [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
   the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
   new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.

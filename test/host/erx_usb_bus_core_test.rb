@@ -63,7 +63,11 @@ class ErxUsbBusCoreTest < Minitest::Test
     Seed.new(fault: "a hub given up handing on the turn a port below it held",
              anchor: 'holds_turn_below(Old, State)}',
              replacement: 'holds_turn(Old)}',
-             catching_case: 'a_hub_given_up_keeps_its_childs_turn_test')
+             catching_case: 'a_hub_given_up_keeps_its_childs_turn_test'),
+    Seed.new(fault: 'a hub six tiers below the root powering its ports',
+             anchor: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;',
+             replacement: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX + 1 -> unpowered;',
+             catching_case: 'a_hub_past_the_depth_limit_keeps_its_ports_off_test')
   ].freeze
 
   def test_bus_core_cases_pass_under_eunit
