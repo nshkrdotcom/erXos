@@ -6,31 +6,33 @@
 The pure core of one `erx_fs` grant (docs/design-files.md#serving-the-erx_fs-behaviour).
 
 A grant serves one client domain's requests on one tree. This module holds
-everything the grant knows, its fid table, the owners it monitors, its open
-files and the requests it has in flight, and decides each step:
-`handle_frame/2` takes one message the grant received and returns the effects
-to perform, in order, and the next state. `erx_fs`, the process shell,
-performs them:
+everything the grant knows, its fid table, the owners it monitors and the
+requests it has in flight, and decides each step: `handle_frame/2` takes one
+message the grant received and returns the effects to perform, in order, and
+the next state. `erx_fs`, the process shell, performs them:
 
 * `{reply, Alias, Reply}`: send `{erx_9p, Alias, Reply}` to `Alias`;
 * `{monitor, Owner}`: monitor `Owner` and hand the reference back with
   `monitored/3` before the next step;
 * `{demonitor, Ref}`: `erlang:demonitor(Ref, [flush])`;
-* `{start_file, Node, Module, Fs}`: start the file process,
-  linked to the grant, and hand its pid and tag back with `file_started/4`
-  before the next step;
-* `{run, Process, Tag, Job}`: send `{Tag, Job}` to a file process,
-  which performs it with `run_job/3`.
+* `{wait, Alias, Keeper, Request}`: monitor `Keeper` with an alias that its
+  first reply deactivates, send it the request (erx_fs_waits.hrl), and hand
+  the alias back with `waiting/3` before the next step;
+* `{flush, Keeper, KeeperAlias}`: send `Keeper` the flush of the request it
+  holds under that alias.
 
-The core calls the tree's callback module directly for everything but an open
-file's reads, writes, listings, size changes, syncs and clunks, which its file process
-runs in turn and answers with `{erx_fs_file, Tag, Alias, Reply}`; a walk asks
-the tree one name at a time and each answer decides the next question. The core
-reads no other state and sends nothing. Every callback receives the tree's
-handle `Fs`, which `init/1` answered and which never changes, and answers only
-its result, never a next state, so the grant and its file processes call one
-tree; an answer that is none of its callback's shapes reaches the client as
-`eio`, through `failed/1` or the grammar's reply check in `finish/5`.
+The core calls the tree's callback module itself, for every request, one at
+a time, in the order the requests arrive; a walk asks the tree one name at a
+time and each answer decides the next question. A read or a write that must
+wait for an event answers `{wait, Keeper, Request}`, and the request goes to
+its keeper, which answers it later through `answered/3`, or ends and is
+seen through `down/3`, while the grant goes on with its client's other
+requests. The core reads no other state and sends nothing. Every callback
+receives the tree's handle `Fs`, which `init/1` answered and which never
+changes, and answers only its result, never a next state; an answer that
+is none of its callback's shapes reaches the client as `eio`, through
+`failed/1` or the grammar's reply check in `finish/5`, and a keeper's answer
+is held to the same shapes and the same check.
 
 Every frame passes one funnel, `decode/2`, which takes the grant's rights:
 dispatch receives only requests the funnel admitted, so a writing request on a
@@ -39,11 +41,9 @@ read-only grant never reaches a callback (F5).
 The fid table is the one record of which fids are alive. Each fid has an owner,
 fixed for its life; `owners` maps each owner of a live fid to its monitor and
 its set of fids, and holds no other process, so the grant never monitors more
-processes than it holds fids (F10, design-files.md#fid-owners). `files` maps
-each node open through one of the grant's fids to its file process and its
-count of opened fids; `end_fid/2`, the one place a fid ends, releases its open,
-so the grant never holds more open files than opened fids, and a file process
-ends with its file's last clunk.
+processes than it holds fids (F10, design-files.md#fid-owners). An opened
+fid keeps the handle its open answered; `close_fid/2`, the one place a fid
+ends, runs the tree's `clunk` of that handle.
 
 A tree that offers `forget/2` holds each node its `walk/3` answers for the
 grant until the grant forgets it. `held` records those nodes, and `steps`
@@ -56,10 +56,10 @@ fids name, whichever way the step went: a walk that stopped, a reply the
 check rejected, a clunk, `..`, an owner's end.
 """.
 
--export([new/1, handle_frame/2, monitored/3, owner_down/3, file_started/4,
-         file_answer/4, run_job/3, defer/3, complete/3, info/1]).
+-export([new/1, handle_frame/2, monitored/3, waiting/3, answered/3, down/3,
+         defer/3, complete/3, info/1]).
 
--export_type([grant/0, effect/0, job/0, rights/0, client/0]).
+-export_type([grant/0, effect/0, rights/0, client/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -99,32 +99,31 @@ check rejected, a clunk, `..`, an owner's end.
 -record(owner, {monitor :: reference() | pending,
                 fids :: #{fid() => []}}).
 
-%% An open file: its file process, the tag its answers carry, both `pending`
-%% from the step that opened it until the shell hands them back with
-%% file_started/4, and the number of the grant's fids open on it.
--record(file, {process :: pid() | pending,
-               tag :: reference() | pending,
-               opens :: pos_integer()}).
-
-%% A request answered outside the grant's step, the flushes waiting on it, and
-%% the tag of the file process that answers it (none for one deferred by defer/3).
+%% A request answered outside the grant's step and the flushes waiting on it.
+%% `by` is the keeper that holds it and the keeper alias, the alias of the
+%% grant's monitor of that keeper, `unsent` from the step that handed the
+%% request over until the shell hands the alias back with waiting/3; none for
+%% one deferred by defer/3. `keepers` maps each keeper alias to the client's
+%% alias of the request it names.
 -record(pending, {request :: tuple(), flushes :: [reference()],
-                  by = none :: reference() | none}).
+                  by = none :: {keeper, pid(), reference() | unsent} | none}).
+
 
 -record(grant, {module :: module(),
                 fs :: term(),
                 rights :: rights(),
                 client :: client(),
+                self :: pid(),
                 pool :: pos_integer(),
                 in_flight_max :: 1..?IN_FLIGHT_MAX,
                 msize_max :: ?MSIZE_MIN..?MSIZE_MAX,
                 fids = #{} :: #{fid() => #fid{}},
                 owners = #{} :: #{pid() => #owner{}},
-                files = #{} :: #{term() => #file{}},
                 steps = #{} :: #{term() => pos_integer()},
                 held = #{} :: #{term() => []},
                 loose = [] :: [term()],
                 pending = #{} :: #{reference() => #pending{}},
+                keepers = #{} :: #{reference() => reference()},
                 in_flight = 0 :: non_neg_integer(),
                 refused = 0 :: non_neg_integer(),
                 effects = [] :: [effect()]}).
@@ -133,13 +132,8 @@ check rejected, a clunk, `..`, an owner's end.
 -type effect() :: {reply, reference(), term()}
                 | {monitor, pid()}
                 | {demonitor, reference()}
-                | {start_file, Node :: term(), module(), Fs :: term()}
-                | {run, pid(), reference(), job()}.
-%% What a file process performs: a request it answers to Alias, or the
-%% clunk of one of its handles, the last of which ends it.
--type job() :: {answer, reference(), call()}
-             | {clunk, Handle :: term()}
-             | {last_clunk, Handle :: term()}.
+                | {wait, Alias :: reference(), Keeper :: pid(), Request :: term()}
+                | {flush, Keeper :: pid(), KeeperAlias :: reference()}.
 -type call() :: {read, Handle :: term(), non_neg_integer(), pos_integer()}
               | {write, Handle :: term(), non_neg_integer(), binary()}
               | {readdir, Handle :: term(), non_neg_integer(), pos_integer()}
@@ -147,12 +141,13 @@ check rejected, a clunk, `..`, an owner's end.
               | {setattr, Handle :: term(), map()}.
 
 -doc """
-A grant with no fids. `rights` is the grant's (`ro`, `rw` or `rx`); a tree
-whose module has no `write/4` callback is read-only whatever they say (F5).
-`client` is the domain the grant serves, `own` for the server's own domain or
-another domain's id, `pool` its fid bound, `in_flight` the most requests it
-holds at once (64 at most, and the default) and `msize` the largest message size
-it agrees to (4,096 to 65,560, the default).
+A grant with no fids, served by the calling process. `rights` is the grant's
+(`ro`, `rw` or `rx`); a tree whose module has no `write/4` callback is
+read-only whatever they say (F5). `client` is the domain the grant serves,
+`own` for the server's own domain or another domain's id, `pool` its fid
+bound, `in_flight` the most requests it holds at once (64 at most, and the
+default) and `msize` the largest message size it agrees to (4,096 to 65,560,
+the default).
 """.
 -spec new(#{module := module(), fs := term(), rights := rights(),
             client := client(), pool => pos_integer(),
@@ -167,14 +162,14 @@ new(#{module := Module, fs := Fs, rights := Rights, client := Client} = Options)
     MsizeMax = maps:get(msize, Options, ?MSIZE_MAX),
     true = is_integer(MsizeMax) andalso MsizeMax >= ?MSIZE_MIN andalso MsizeMax =< ?MSIZE_MAX,
     Writes = erlang:function_exported(Module, write, 4),
-    #grant{module = Module, fs = Fs, client = Client, pool = Pool,
+    #grant{module = Module, fs = Fs, client = Client, self = self(), pool = Pool,
            in_flight_max = InFlightMax, msize_max = MsizeMax,
            rights = effective_rights(Rights, Writes)}.
 
 effective_rights(rw, false) -> ro;
 effective_rights(Rights, _) -> Rights.
 
--doc "One message the grant received, other than an owner's `DOWN` or a file process's answer.".
+-doc "One message the grant received, other than a `DOWN` or a keeper's answer.".
 -spec handle_frame(term(), grant()) -> {[effect()], grant()}.
 handle_frame(Frame, Grant) ->
     case decode(Frame, Grant) of
@@ -193,66 +188,53 @@ monitored(Owner, Ref, #grant{owners = Owners} = Grant) ->
     Grant#grant{owners = Owners#{Owner := Record#owner{monitor = Ref}}}.
 
 -doc """
-An owner's `DOWN`: every fid it still owns ends, as if it had sent the clunks.
-A `DOWN` whose reference is not the owner's monitor changes nothing.
+The keeper alias the shell made for a `{wait, ClientAlias, Keeper, Request}`
+effect: the alias of its monitor of `Keeper`, which it sent the request with.
 """.
--spec owner_down(reference(), pid(), grant()) -> {[effect()], grant()}.
-owner_down(Ref, Owner, #grant{owners = Owners} = Grant) ->
-    case Owners of
-        #{Owner := #owner{monitor = Ref, fids = Fids}} ->
+-spec waiting(reference(), reference(), grant()) -> grant().
+waiting(ClientAlias, KeeperAlias, #grant{pending = Pending, keepers = Keepers} = Grant) ->
+    #{ClientAlias := #pending{by = {keeper, Keeper, unsent}} = Record} = Pending,
+    Grant#grant{pending = Pending#{ClientAlias := Record#pending{by = {keeper, Keeper, KeeperAlias}}},
+                keepers = Keepers#{KeeperAlias => ClientAlias}}.
+
+-doc """
+A keeper's answer to the request it holds under `KeeperAlias`, held to the
+shapes of the request's callback and to the grammar's reply check as an
+answer made at once is. An answer to no alias the grant waits on answers
+nothing and is counted as refused, as any other message the grant cannot take.
+""".
+-spec answered(reference(), term(), grant()) -> {[effect()], grant()}.
+answered(KeeperAlias, Result, #grant{keepers = Keepers, pending = Pending} = Grant) ->
+    case maps:take(KeeperAlias, Keepers) of
+        {ClientAlias, Rest} ->
+            #{ClientAlias := #pending{request = Request}} = Pending,
+            complete(ClientAlias, shaped(element(1, Request), Result), Grant#grant{keepers = Rest});
+        error ->
+            drain(count_refusal(Grant))
+    end.
+
+-doc """
+A `DOWN`: a keeper's end answers the request it held `eio`, since what was
+done for it is not known; an owner's ends every fid it still owns, as if it
+had sent the clunks. A `DOWN` of no monitor the grant holds changes nothing.
+""".
+-spec down(reference(), pid(), grant()) -> {[effect()], grant()}.
+down(Ref, Pid, #grant{keepers = Keepers, owners = Owners} = Grant) ->
+    case {Keepers, Owners} of
+        {#{Ref := Alias}, _} ->
+            complete(Alias, {error, eio}, Grant#grant{keepers = maps:remove(Ref, Keepers)});
+        {_, #{Pid := #owner{monitor = Ref, fids = Fids}}} ->
             drain(lists:foldl(fun end_fid/2, Grant, maps:keys(Fids)));
-        #{} ->
+        _ ->
             {[], Grant}
     end.
 
--doc """
-The file process the shell started for a `{start_file, Node, _, _}` effect,
-and the tag its answers carry.
-""".
--spec file_started(term(), pid(), reference(), grant()) -> grant().
-file_started(Node, Process, Tag, #grant{files = Files} = Grant) ->
-    #{Node := #file{process = pending} = File} = Files,
-    Grant#grant{files = Files#{Node := File#file{process = Process, tag = Tag}}}.
-
--doc """
-A file process's answer to the request it was sent to `Alias`. One whose tag is
-not the tag of the file process the request went to answers nothing and is counted
-as refused, as any other message the grant cannot take.
-""".
--spec file_answer(reference(), reference(), term(), grant()) -> {[effect()], grant()}.
-file_answer(Tag, Alias, Reply, #grant{pending = Pending} = Grant) ->
-    case Pending of
-        #{Alias := #pending{by = Tag}} when is_reference(Tag) -> complete(Alias, Reply, Grant);
-        #{} -> drain(count_refusal(Grant))
-    end.
-
--doc """
-What a file process does with one job, calling `Module` with the tree's
-handle `Fs`: `{answer, Alias, Reply}` for a request, whose reply goes to the
-grant; `continue` after a clunk; `stop` after the file's last clunk, when the
-file process ends. A clunk's answer is not used: the grant answered the
-client's clunk when it sent the job.
-""".
--spec run_job(job(), module(), term()) -> {answer, reference(), term()} | continue | stop.
-run_job({answer, Alias, Call}, Module, Fs) ->
-    {answer, Alias, call(Call, Module, Fs)};
-run_job({clunk, Handle}, Module, Fs) ->
-    _ = Module:clunk(Handle, Fs),
-    continue;
-run_job({last_clunk, Handle}, Module, Fs) ->
-    _ = Module:clunk(Handle, Fs),
-    stop.
-
+%% A request on an open file, its answer or, for a read or a write, a wait.
+-spec call(call(), module(), term()) -> term().
 call({read, Handle, Offset, Count}, Module, Fs) ->
-    case Module:read(Handle, Offset, Count, Fs) of
-        {ok, Data} -> {ok, Data};
-        Other -> failed(Other)
-    end;
+    may_wait(read, Module:read(Handle, Offset, Count, Fs));
 call({write, Handle, Offset, Data}, Module, Fs) ->
-    case Module:write(Handle, Offset, Data, Fs) of
-        {ok, Count, At} -> {ok, Count, At};
-        Other -> failed(Other)
-    end;
+    may_wait(write, Module:write(Handle, Offset, Data, Fs));
 call({readdir, Handle, Offset, Count}, Module, Fs) ->
     case Count div packed_entry(<<>>) of
         0 ->
@@ -267,6 +249,15 @@ call({fsync, Handle}, Module, Fs) ->
     done(optional(Module, fsync, [Handle, Fs], ok));
 call({setattr, Handle, Attr}, Module, Fs) ->
     done(optional(Module, setattr, [{open, Handle}, Attr, Fs], {error, eperm})).
+
+%% A read or a write waits when its callback answers so; its answer, now or
+%% from its keeper, is one of the callback's shapes or failed.
+may_wait(_, {wait, Keeper, Request}) -> {wait, Keeper, Request};
+may_wait(Operation, Answer) -> shaped(Operation, Answer).
+
+shaped(read, {ok, Data}) -> {ok, Data};
+shaped(write, {ok, Count, At}) -> {ok, Count, At};
+shaped(_, Other) -> failed(Other).
 
 %% The answer of a callback that answers ok or an error.
 done(ok) -> ok;
@@ -338,11 +329,11 @@ complete(Alias, Reply, #grant{pending = Pending, in_flight = InFlight} = Grant) 
 
 -doc "What the grant holds, for inspection and tests.".
 -spec info(grant()) -> #{fids := non_neg_integer(), owners := non_neg_integer(),
-                         files := non_neg_integer(), in_flight := non_neg_integer(),
+                         waiting := non_neg_integer(), in_flight := non_neg_integer(),
                          refused := non_neg_integer(), rights := rights()}.
-info(#grant{fids = Fids, owners = Owners, files = Files, in_flight = InFlight,
+info(#grant{fids = Fids, owners = Owners, keepers = Keepers, in_flight = InFlight,
             refused = Refused, rights = Rights}) ->
-    #{fids => map_size(Fids), owners => map_size(Owners), files => map_size(Files),
+    #{fids => map_size(Fids), owners => map_size(Owners), waiting => map_size(Keepers),
       in_flight => InFlight, refused => Refused, rights => Rights}.
 
 %% The funnel. Every message from another domain arrives in the envelope of
@@ -414,7 +405,8 @@ end_fid_whatever_the_outcome(_, Grant) -> Grant.
 %% deferred request still holds is refused, since the client could not tell
 %% the two answers apart. A flush of a request not in flight is answered at
 %% once, at the bound too, since it holds nothing; one that must wait for its
-%% request takes a slot.
+%% request takes a slot, and the flush of a request a keeper holds follows
+%% it to the keeper.
 admit(Alias, _, Request, #grant{pending = Pending} = Grant)
   when is_map_key(Alias, Pending) ->
     finish(Alias, Request, {error, einval}, Grant);
@@ -425,15 +417,16 @@ admit(Alias, _, Request, #grant{in_flight = InFlight, in_flight_max = Max} = Gra
   when InFlight >= Max ->
     finish(Alias, Request, {error, emfile}, Grant);
 admit(Alias, _, {flush, OldTag}, #grant{pending = Pending, in_flight = InFlight} = Grant) ->
-    #{OldTag := #pending{flushes = Flushes} = Record} = Pending,
+    #{OldTag := #pending{flushes = Flushes, by = By} = Record} = Pending,
     Waiting = Record#pending{flushes = [Alias | Flushes]},
-    {[], Grant#grant{pending = Pending#{OldTag := Waiting}, in_flight = InFlight + 1}};
+    drain(flush_at_keeper(By, Grant#grant{pending = Pending#{OldTag := Waiting},
+                                          in_flight = InFlight + 1}));
 admit(Alias, Owner, Request, Grant) ->
     Directories = erx_9p_grammar:directory_fids(Request),
     case lists:all(fun(Fid) -> directory_or_unheld(Fid, Grant) end, Directories) of
         true ->
             case dispatch(Owner, Request, Grant) of
-                {{to_file, Node, Call}, Grant1} -> drain(to_file(Alias, Request, Node, Call, Grant1));
+                {wait, Keeper, Held, Grant1} -> hand_over(Alias, Request, Keeper, Held, Grant1);
                 {Reply, Grant1} -> finish(Alias, Request, Reply, Grant1, Grant)
             end;
         false ->
@@ -455,30 +448,45 @@ directory_or_unheld(Fid, #grant{fids = Fids}) ->
         #{} -> true
     end.
 
-%% A request on an open file goes to the file process, in flight until its
-%% answer arrives through file_answer/4.
-to_file(Alias, Request, Node, Call, #grant{files = Files} = Grant) ->
-    #{Node := #file{process = Process, tag = Tag}} = Files,
-    #grant{effects = Effects} = Grant1 = defer(Alias, Request, Tag, Grant),
-    Grant1#grant{effects = [{run, Process, Tag, {answer, Alias, Call}} | Effects]}.
+%% A request whose callback answered {wait, Keeper, Held} goes to Keeper, in
+%% flight until Keeper answers it (answered/3) or ends (down/3). A keeper
+%% that is not a process of the server's own runtime, or is the grant
+%% itself, which would never answer, is eio.
+hand_over(Alias, Request, Keeper, Held, #grant{self = Self} = Grant)
+  when is_pid(Keeper), node(Keeper) =:= node(), Keeper =/= Self ->
+    #grant{effects = Effects} = Grant1 = defer(Alias, Request, {keeper, Keeper, unsent}, Grant),
+    drain(Grant1#grant{effects = [{wait, Alias, Keeper, Held} | Effects]});
+hand_over(Alias, Request, _, _, Grant) ->
+    finish(Alias, Request, {error, eio}, Grant).
+
+%% The keeper that holds a flushed request hears of the flush after the
+%% request, since both come from the grant; it answers the request, and
+%% complete/3 then the flush.
+flush_at_keeper({keeper, Keeper, KeeperAlias}, #grant{effects = Effects} = Grant)
+  when is_reference(KeeperAlias) ->
+    Grant#grant{effects = [{flush, Keeper, KeeperAlias} | Effects]};
+flush_at_keeper(none, Grant) ->
+    Grant.
 
 %% Every answer leaves through here, held to its request by the grammar's
 %% reply check. An operation is built whole before it is kept: dispatch/3
 %% answers its reply with the grant it would leave (Built), and only a reply
 %% the check accepts keeps it. A reply the check rejects reaches the client
 %% as eio and keeps the grant as it was before the request (Before), its
-%% effects included, as a refusal does; a remove or a clunk still ends its fid.
+%% effects included, as a refusal does; a remove or a clunk still ends its fid,
+%% and keeps the grant it built, whose fid's end ran the tree's clunk, which
+%% cannot be undone (kept_when_rejected/3).
 %% Every qid the grant records travels in the reply that records it (attach,
 %% walk, lcreate), so a callback's malformed answer, a qid included, leaves
-%% no fid, open or file process behind. Callers of finish/4 have nothing to
-%% undo: a refusal, or an answer from a file process.
+%% no fid or open behind. Callers of finish/4 have nothing to undo: a
+%% refusal, or a keeper's answer.
 finish(Alias, Request, Reply, Grant) ->
     finish(Alias, Request, Reply, Grant, Grant).
 
 finish(Alias, Request, Reply, Built, Before) ->
     {Checked, Grant} = case accepted(Request, Reply) of
                            true -> {Reply, Built};
-                           false -> {{error, eio}, tree_holds(Built, Before)}
+                           false -> {{error, eio}, kept_when_rejected(Request, Built, Before)}
                        end,
     Ended = end_fid_whatever_the_outcome(Request, Grant),
     Grant1 = case Checked of
@@ -490,7 +498,9 @@ finish(Alias, Request, Reply, Built, Before) ->
 
 %% The holds a step took stay taken when its grant is dropped: they are the
 %% tree's, and drain/1 forgets those no fid of Before names.
-tree_holds(#grant{held = Held, loose = Loose}, Before) ->
+kept_when_rejected({clunk, _}, Built, _) -> Built;
+kept_when_rejected({remove, _}, Built, _) -> Built;
+kept_when_rejected(_, #grant{held = Held, loose = Loose}, Before) ->
     Before#grant{held = Held, loose = Loose}.
 
 %% A refusal of a frame the grammar did not decode (Request none) is the
@@ -519,9 +529,10 @@ forget_loose(#grant{loose = Loose, held = Held, steps = Steps, module = Module, 
     _ = [optional(Module, forget, [Node, Fs], ok) || Node <- Unnamed],
     Grant#grant{held = maps:without(Unnamed, Held), loose = []}.
 
-%% Each admitted operation, as {Reply, Grant}, or {{to_file, Node, Call}, Grant}
-%% for one the file process answers. Every fid a request names is looked
-%% up here; a fid the grant does not hold is ebadf.
+%% Each admitted operation, as {Reply, Grant}, or {wait, Keeper, Request,
+%% Grant} for a read or a write its tree's keeper answers: only on_open/3
+%% builds that shape, from call/3, so no other callback's answer is a wait. Every fid a
+%% request names is looked up here; a fid the grant does not hold is ebadf.
 dispatch(_, {version, Msize, Version}, #grant{msize_max = Max} = Grant) ->
     {version(Msize, Version, Max), Grant};
 dispatch(Owner, {attach, Fid, Afid, _, Aname, _}, Grant) ->
@@ -538,7 +549,7 @@ dispatch(_, {statfs, Fid}, Grant) ->
     on_node(Fid, Grant, fun(_, Module, Fs) -> Module:statfs(Fs) end);
 dispatch(_, {clunk, Fid}, Grant) ->
     case held(Fid, Grant) of
-        true -> {ok, end_fid(Fid, Grant)};
+        true -> close_fid(Fid, Grant);
         false -> {{error, ebadf}, Grant}
     end;
 dispatch(_, {lopen, Fid, Flags}, Grant) ->
@@ -581,10 +592,10 @@ dispatch(_, {renameat, OldDfid, OldName, NewDfid, NewName}, Grant) ->
             {{error, ebadf}, Grant}
     end;
 dispatch(_, {setattr, Fid, Attr}, #grant{fids = Fids} = Grant) ->
-    %% A size change through an opened fid is decided by that open's access,
-    %% in turn with the file's writes; through an unopened fid, by the node's.
+    %% A size change through an opened fid is decided by that open's access;
+    %% through an unopened fid, by the node's.
     case Fids of
-        #{Fid := #fid{open = {open, Node, Handle}}} -> {{to_file, Node, {setattr, Handle, Attr}}, Grant};
+        #{Fid := #fid{open = {open, _, _}}} -> on_open(Fid, Grant, fun(Handle) -> {setattr, Handle, Attr} end);
         #{} -> change_on_node(Fid, Grant, setattr, fun(Node) -> [{node, Node}, Attr] end)
     end;
 dispatch(_, _, Grant) ->
@@ -780,9 +791,13 @@ on_node(Fid, #grant{module = Module, fs = Fs} = Grant, Read) ->
 
 %% An operation of an open file needs an opened fid; an unopened one has no
 %% handle to give it (ebadf).
-on_open(Fid, #grant{fids = Fids} = Grant, Call) ->
+on_open(Fid, #grant{fids = Fids, module = Module, fs = Fs} = Grant, Call) ->
     case Fids of
-        #{Fid := #fid{open = {open, Node, Handle}}} -> {{to_file, Node, Call(Handle)}, Grant};
+        #{Fid := #fid{open = {open, _, Handle}}} ->
+            case call(Call(Handle), Module, Fs) of
+                {wait, Keeper, Request} -> {wait, Keeper, Request, Grant};
+                Answer -> {Answer, Grant}
+            end;
         #{} -> {{error, ebadf}, Grant}
     end.
 
@@ -830,7 +845,7 @@ new_fid_admissible(Fid, #grant{fids = Fids, pool = Pool}) ->
     end.
 
 %% With set_path/3 and opened/4, the only functions that change the fid
-%% table; these two also change the owners
+%% table; add_fid/4 and close_fid/2 also change the owners
 %% and their monitors: an owner is recorded, and monitored, exactly while it
 %% owns a fid.
 add_fid(Fid, Owner, Path, #grant{fids = Fids, owners = Owners, effects = Effects} = Grant) ->
@@ -843,18 +858,27 @@ add_fid(Fid, Owner, Path, #grant{fids = Fids, owners = Owners, effects = Effects
                          effects = [{monitor, Owner} | Effects]}
     end.
 
-end_fid(Fid, #grant{fids = Fids, owners = Owners} = Grant) ->
+%% Ends a fid, as {Closed, Grant}: Closed is ok for an unopened fid, and for
+%% an opened one what the tree's clunk of its handle answered, ok or the
+%% errno of what the close could not complete. The fid ends either way.
+close_fid(Fid, #grant{fids = Fids, owners = Owners} = Grant) ->
     {#fid{owner = Owner, open = Open, path = Path}, Fids1} = maps:take(Fid, Fids),
     #{Owner := #owner{monitor = Ref, fids = Owned} = Record} = Owners,
-    #grant{effects = Effects} = Grant1 =
-        released(Open, repath(Path, [], Grant#grant{fids = Fids1})),
+    #grant{effects = Effects} = Grant1 = repath(Path, [], Grant#grant{fids = Fids1}),
+    Closed = closed(Open, Grant1),
     case maps:remove(Fid, Owned) of
         Left when map_size(Left) =:= 0 ->
-            Grant1#grant{owners = maps:remove(Owner, Owners),
-                         effects = [{demonitor, Ref} | Effects]};
+            {Closed, Grant1#grant{owners = maps:remove(Owner, Owners),
+                                  effects = [{demonitor, Ref} | Effects]}};
         Left ->
-            Grant1#grant{owners = Owners#{Owner := Record#owner{fids = Left}}}
+            {Closed, Grant1#grant{owners = Owners#{Owner := Record#owner{fids = Left}}}}
     end.
+
+%% A fid's end whose answer no one is sent: an owner's end, a remove, a
+%% refused clunk.
+end_fid(Fid, Grant) ->
+    {_, Grant1} = close_fid(Fid, Grant),
+    Grant1.
 
 end_fid_if_held(Fid, Grant) ->
     case held(Fid, Grant) of
@@ -862,31 +886,13 @@ end_fid_if_held(Fid, Grant) ->
         false -> Grant
     end.
 
-%% With file_started/4, the only functions that change the open files: a fid's open starts the
-%% file process at the file's first open, and its end sends that process the
-%% handle's clunk, the last of which ends the process. The clunk runs after
-%% every request already sent to the process, so no request meets a clunked handle.
-opened(Fid, Node, Handle, #grant{fids = Fids, files = Files, module = Module, fs = Fs,
-                                 effects = Effects} = Grant) ->
+%% An opened fid keeps its open's handle, its one name: two opens whose
+%% handles are equal stay two opens, each clunked once, at its fid's end.
+opened(Fid, Node, Handle, #grant{fids = Fids} = Grant) ->
     #{Fid := Record} = Fids,
-    Grant1 = Grant#grant{fids = Fids#{Fid := Record#fid{open = {open, Node, Handle}}}},
-    case Files of
-        #{Node := #file{opens = Opens} = File} ->
-            Grant1#grant{files = Files#{Node := File#file{opens = Opens + 1}}};
-        #{} ->
-            Grant1#grant{files = Files#{Node => #file{process = pending, tag = pending, opens = 1}},
-                         effects = [{start_file, Node, Module, Fs} | Effects]}
-    end.
+    Grant#grant{fids = Fids#{Fid := Record#fid{open = {open, Node, Handle}}}}.
 
-released(none, Grant) ->
-    Grant;
-released({open, Node, Handle}, #grant{files = Files, effects = Effects} = Grant) ->
-    #{Node := #file{process = Process, tag = Tag, opens = Opens} = File} = Files,
-    case Opens of
-        1 ->
-            Grant#grant{files = maps:remove(Node, Files),
-                        effects = [{run, Process, Tag, {last_clunk, Handle}} | Effects]};
-        _ ->
-            Grant#grant{files = Files#{Node := File#file{opens = Opens - 1}},
-                        effects = [{run, Process, Tag, {clunk, Handle}} | Effects]}
-    end.
+closed(none, _) ->
+    ok;
+closed({open, _, Handle}, #grant{module = Module, fs = Fs}) ->
+    done(Module:clunk(Handle, Fs)).

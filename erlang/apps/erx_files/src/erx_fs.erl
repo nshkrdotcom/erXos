@@ -9,9 +9,10 @@ The `erx_fs` behaviour and the process that serves one grant
 A file server is a callback module of this behaviour, which calls back for its
 tree; `erx_fs` owns the protocol, the fids and the checks. Each grant is one
 process that serves one client domain on one tree. It decides nothing itself:
-every message but an owner's `DOWN` goes to `erx_fs_grant`'s funnel, and the
-process performs the effects the core returns, replies, monitors and
-demonitors, in order. Requests arrive as `{erx_9p, Alias, Owner, Request}`, a
+every message goes to `erx_fs_grant`, a `DOWN` to `down/3`, a keeper's answer
+to `answered/3` and every other message to the funnel, and the process
+performs the effects the core returns, in order: replies, monitors and
+demonitors, and the requests and flushes it sends to keepers. Requests arrive as `{erx_9p, Alias, Owner, Request}`, a
 client's of another domain in the envelope `{erx_origin, D, Frame}` that every
 message from another domain arrives in, and replies leave as
 `{erx_9p, Alias, Reply}` to `Alias`.
@@ -20,30 +21,33 @@ The grant is a plain `proc_lib` process, not a `gen_server`: whoever holds a
 grant's pid, a process of another domain included, can send it any term, and
 a `gen_server` would act on a `system` message (`sys:replace_state/2`,
 `sys:suspend/1`) or a call from it. This loop has one receive, and everything
-it receives but its owners' `DOWN`s and its open files' answers is a frame
-for the funnel.
+it receives but its `DOWN`s and its keepers' answers is a frame for the
+funnel.
 
-Each open file has a **file process**, the file's owner of
-docs/design-files.md, which the grant starts at the file's first open through
-it and which ends after its last clunk: it runs the requests of the file's
-opened fids (reads, writes, listings, size changes through an open, syncs
-and clunks) one at a time, in the order the grant sent them, and answers
-each to the grant. Requests on the node itself (opens, truncation through an
-unopened fid, `getattr`, `remove`) run in the grant; that every request is
-atomic against every other is the tree's to keep.
+The grant runs every callback itself, one at a time, in the order the
+requests arrive, and none waits for an event: a read or a write that must
+wait answers `{wait, Keeper, Request}`, and the grant hands the request to
+its keeper, a process of the tree, and goes on with its client's other
+requests ("Waiting requests" of docs/design-files.md). The grant monitors
+the keeper with an alias that the first reply deactivates and sends it the
+request; the keeper's one answer arrives through that alias, its end
+through the monitor, which answers the request `eio`. The messages between
+them are erx_fs_waits.hrl's. That every request is atomic against every
+other is the tree's to keep.
 
 `init/1` answers the tree's handle, `Fs`, which never changes: every callback
-receives it and none returns a new one, so the grant and every file process
-call the tree through the same handle, and a tree that changes keeps its
-nodes behind it, in a process or on a medium, where all of them reach the
+receives it and none returns a new one, and a tree that changes keeps its
+nodes behind it, in a process or on a medium, where every grant reaches the
 same tree. A callback's answer that is not one of its shapes reaches the
 client as `eio`.
 """.
 
 -export([start_link/3, start_link/4]).
--export([init/2, loop/2, file_loop/4]).
+-export([init/2, loop/2]).
 
--export_type([qid/0, attr/0, statfs/0, dirent/0, what/0]).
+-include("erx_fs_waits.hrl").
+
+-export_type([qid/0, attr/0, statfs/0, dirent/0, what/0, wait/0]).
 
 -type qid() :: {Type :: 0..255, Version :: 0..16#ffffffff,
                 Path :: 0..16#ffffffffffffffff}.
@@ -55,6 +59,7 @@ client as `eio`.
               | {symlink, Target :: binary()} | {link, Node :: term()}
               | {node, Mode :: non_neg_integer(), Major :: non_neg_integer(),
                  Minor :: non_neg_integer()}.
+-type wait() :: {wait, Keeper :: pid(), Request :: term()}.
 
 -callback init(Args :: term()) -> {ok, Fs :: term()}.
 %% The tree the grant roots in: its name, which attach's Aname must match, and its root.
@@ -69,25 +74,27 @@ client as `eio`.
               {ok, attr()} | {error, file:posix()}.
 -callback open(Node :: term(), Flags :: non_neg_integer(), Fs :: term()) ->
               {ok, Handle :: term()} | {error, file:posix()}.
+%% A read or a write that waits for an event answers {wait, Keeper, Request}:
+%% the tree's Keeper answers it later, through erx_fs_waits ("Waiting requests").
 -callback read(Handle :: term(), Offset :: non_neg_integer(),
                Count :: 1..65536, Fs :: term()) ->
-              {ok, binary()} | {error, file:posix()}.
+              {ok, binary()} | {error, file:posix()} | wait().
 -callback readdir(Handle :: term(), Offset :: non_neg_integer(),
                   Max :: 1..256, Fs :: term()) ->
               {ok, [dirent()]} | {error, file:posix()}.
 -callback readlink(Node :: term(), Fs :: term()) ->
               {ok, binary()} | {error, file:posix()}.
 -callback statfs(Fs :: term()) -> {ok, statfs()}.
--callback clunk(Handle :: term(), Fs :: term()) -> ok.
-%% A tree whose reads never wait for a medium answers immediate; absent: helper.
--callback read_mode() -> helper | immediate.
+%% ok, or the errno of what the close could not complete; the fid ends
+%% either way.
+-callback clunk(Handle :: term(), Fs :: term()) -> ok | {error, file:posix()}.
 %% A tree that writes adds these; one without them is read-only (F5). write's At is
 %% the offset the bytes were written at: the request's, or the file's end for an
 %% append fid (design-files.md, "Open files and offsets").
 -callback write(Handle :: term(), Offset :: non_neg_integer(), binary(),
                 Fs :: term()) ->
               {ok, Count :: non_neg_integer(), At :: non_neg_integer()}
-            | {error, file:posix()}.
+            | {error, file:posix()} | wait().
 %% A {file, ...} make answers with the open Handle; every other kind without.
 -callback make(Dir :: term(), Name :: binary(), What :: what(), Fs :: term()) ->
               {ok, Node :: term(), qid(), Handle :: term()}
@@ -106,13 +113,11 @@ client as `eio`.
               ok | {error, file:posix()}.
 -callback xattr(Node :: term(), Op :: term(), Fs :: term()) ->
               {ok, term()} | {error, file:posix()}.
--optional_callbacks([forget/2, read_mode/0, readlink/2, write/4, make/4, setattr/3,
+-optional_callbacks([forget/2, readlink/2, write/4, make/4, setattr/3,
                      unlink/4, rename/5, fsync/2, xattr/3]).
 
 %% What a grant's process may hold for its client, its fids and their paths,
-%% its owners and the requests in flight, binaries included, in words; and
-%% what each file process may hold, the jobs the grant sent it, of which at
-%% most 64 carry data.
+%% its owners and the requests in flight, binaries included, in words.
 -define(MAX_HEAP_WORDS, 4194304).
 
 -doc "Serves one grant of `Module`'s tree to the server's own domain.".
@@ -202,10 +207,10 @@ loop(Grant, ConnectionMonitor) ->
     receive
         {'DOWN', ConnectionMonitor, _PortOrProcess, _, _} when is_reference(ConnectionMonitor) ->
             exit({shutdown, connection_ended});
-        {'DOWN', Ref, process, Owner, _} when is_reference(Ref), is_pid(Owner) ->
-            ?MODULE:loop(perform(erx_fs_grant:owner_down(Ref, Owner, Grant)), ConnectionMonitor);
-        {erx_fs_file, Tag, Alias, Reply} when is_reference(Tag), is_reference(Alias) ->
-            ?MODULE:loop(perform(erx_fs_grant:file_answer(Tag, Alias, Reply, Grant)), ConnectionMonitor);
+        {'DOWN', Ref, process, Pid, _} when is_reference(Ref), is_pid(Pid) ->
+            ?MODULE:loop(perform(erx_fs_grant:down(Ref, Pid, Grant)), ConnectionMonitor);
+        ?ERX_FS_ANSWER(Ref, Result) when is_reference(Ref) ->
+            ?MODULE:loop(perform(erx_fs_grant:answered(Ref, Result, Grant)), ConnectionMonitor);
         Frame ->
             ?MODULE:loop(perform(erx_fs_grant:handle_frame(Frame, Grant)), ConnectionMonitor)
     end.
@@ -221,35 +226,10 @@ perform_effect({monitor, Owner}, Grant) ->
 perform_effect({demonitor, Ref}, Grant) ->
     erlang:demonitor(Ref, [flush]),
     Grant;
-perform_effect({start_file, Node, Module, Fs}, Grant) ->
-    Tag = make_ref(),
-    Heap = #{size => ?MAX_HEAP_WORDS, kill => true, include_shared_binaries => true},
-    Process = proc_lib:spawn_opt(?MODULE, file_loop, [self(), Tag, Module, Fs],
-                                 [link, {max_heap_size, Heap}]),
-    erx_fs_grant:file_started(Node, Process, Tag, Grant);
-perform_effect({run, Process, Tag, Job}, Grant) ->
-    erlang:send(Process, {Tag, Job}),
+perform_effect({wait, Alias, Keeper, Request}, Grant) ->
+    Ref = erlang:monitor(process, Keeper, [{alias, reply_demonitor}]),
+    erlang:send(Keeper, ?ERX_FS_WAIT({self(), Ref}, Request)),
+    erx_fs_grant:waiting(Alias, Ref, Grant);
+perform_effect({flush, Keeper, Ref}, Grant) ->
+    erlang:send(Keeper, ?ERX_FS_FLUSH({self(), Ref})),
     Grant.
-
-%% A file process: it runs its file's jobs one at a time, in the order the
-%% grant sent them, answers each request to the grant, and ends after the last
-%% clunk. It is linked to its grant, so a callback that crashes in it ends the
-%% grant, and the grant's end ends it. A message without its tag is dropped, so
-%% nothing but the grant's jobs reaches the tree through it.
--doc false.
--spec file_loop(pid(), reference(), module(), term()) -> ok.
-file_loop(Grant, Tag, Module, Fs) ->
-    receive
-        {Tag, Job} ->
-            case erx_fs_grant:run_job(Job, Module, Fs) of
-                {answer, Alias, Reply} ->
-                    erlang:send(Grant, {erx_fs_file, Tag, Alias, Reply}),
-                    ?MODULE:file_loop(Grant, Tag, Module, Fs);
-                continue ->
-                    ?MODULE:file_loop(Grant, Tag, Module, Fs);
-                stop ->
-                    ok
-            end;
-        _ ->
-            ?MODULE:file_loop(Grant, Tag, Module, Fs)
-    end.

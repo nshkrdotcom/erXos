@@ -66,7 +66,7 @@ only on a request that carries the reference.
 
 -export([start_link/2, owner/1, worker/2, trees/0]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4, statfs/1,
-         clunk/2, read_mode/0, write/4, make/4, setattr/3, unlink/4, rename/5,
+         clunk/2, write/4, make/4, setattr/3, unlink/4, rename/5,
          fsync/2]).
 
 -define(ROOT, <<"/">>).
@@ -661,10 +661,7 @@ statfs(Server) ->
     end.
 -doc false.
 clunk(Handle, Server) ->
-    _ = call(Server, {clunk, Handle}),
-    ok.
--doc false.
-read_mode() -> helper.
+    call(Server, {clunk, Handle}).
 -doc false.
 write(Handle, Offset, Data, Server) -> call(Server, {write, Handle, Offset, Data}).
 -doc false.

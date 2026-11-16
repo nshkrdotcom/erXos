@@ -334,31 +334,35 @@ fid_flood_stops_at_the_pool_test() ->
     stop(Grant).
 
 %% A clunk of an open fid refused at the in-flight bound, or sent to an alias a
-%% deferred request holds, still ends the fid and sends its file process the
-%% file's last clunk, so the tree's open, and the space the file keeps, goes.
+%% deferred request holds, still ends the fid and runs the tree's clunk of its
+%% handle, so the tree's open, and the space the file keeps, goes.
 refused_clunk_of_an_open_fid_ends_its_open_test() ->
-    {_, Core1} = core_frame(core(rw), {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
+    {module, _} = code:ensure_loaded(erx_fs_test_tree),
+    {ok, Fs} = erx_fs_test_tree:init([{observer, self()}]),
+    Core = erx_fs_grant:new(#{module => erx_fs_test_tree, fs => Fs, rights => rw, client => own}),
+    {_, Core1} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
     {_, Core2} = core_frame(Core1, {walk, 1, 2, []}),
-    {[{start_file, Node, _, _}, {reply, _, {ok, _, 0}}], Core3} =
+    {[{reply, _, {ok, _, 0}}], Core3} =
         core_frame(Core2, {lcreate, 2, <<"n">>, ?ERX_P9_O_RDWR, 8#644, 0}),
-    Tag = make_ref(),
-    Process = self(),
-    Core4 = erx_fs_grant:file_started(Node, Process, Tag, Core3),
+    receive {tree_make, _} -> ok after 2000 -> erlang:error(no_make) end,
+    flush_tree_calls(),
     Deferred = [make_ref() || _ <- lists:seq(1, 64)],
-    Full = lists:foldl(fun(Alias, Core) -> erx_fs_grant:defer(Alias, {getattr, 1, 0}, Core) end,
-                       Core4, Deferred),
+    Full = lists:foldl(fun(Alias, C) -> erx_fs_grant:defer(Alias, {getattr, 1, 0}, C) end,
+                       Core3, Deferred),
     %% At the bound; fid 1 stays with its owner, so the owner keeps its monitor.
-    {[{run, Process, Tag, {last_clunk, _}}, {reply, _, {error, emfile}}], Bound} =
-        core_frame(Full, {clunk, 2}),
-    ?assertMatch(#{fids := 1, owners := 1, files := 0, in_flight := 64}, erx_fs_grant:info(Bound)),
+    {[{reply, _, {error, emfile}}], Bound} = core_frame(Full, {clunk, 2}),
+    ?assertEqual([clunk], tree_calls()),
+    ?assertMatch(#{fids := 1, owners := 1, in_flight := 64}, erx_fs_grant:info(Bound)),
     %% Sent to an alias still in flight.
     [Held | _] = Deferred,
-    {[{run, Process, Tag, {last_clunk, _}}, {reply, Held, {error, einval}}], Aliased} =
+    {[{reply, Held, {error, einval}}], Aliased} =
         erx_fs_grant:handle_frame({erx_9p, Held, self(), {clunk, 2}}, Full),
-    ?assertMatch(#{fids := 1, files := 0}, erx_fs_grant:info(Aliased)),
+    ?assertEqual([clunk], tree_calls()),
+    ?assertMatch(#{fids := 1}, erx_fs_grant:info(Aliased)),
     %% A refused clunk of a fid the grant does not hold ends nothing.
     {[{reply, _, {error, emfile}}], Unheld} = core_frame(Full, {clunk, 9}),
-    ?assertMatch(#{fids := 2, files := 1}, erx_fs_grant:info(Unheld)).
+    ?assertEqual([], tree_calls()),
+    ?assertMatch(#{fids := 2}, erx_fs_grant:info(Unheld)).
 
 %% The in-flight bound and flush, on the pure core: requests answered outside
 %% the grant's step come with open files, so the core's hooks stand in here.
@@ -665,7 +669,7 @@ step({down, Owner}, #{alive := Alive, monitors := Monitors} = World, Owners) ->
     World1 = World#{alive := Alive#{Owner := false}, model := Model},
     case [Ref || {Ref, P} <- maps:to_list(Monitors), P =:= Pid] of
         [] -> World1;
-        [Ref] -> perform(erx_fs_grant:owner_down(Ref, Pid, world_core(World1)),
+        [Ref] -> perform(erx_fs_grant:down(Ref, Pid, world_core(World1)),
                          World1#{monitors := maps:remove(Ref, Monitors)}, Owners)
     end.
 
@@ -698,7 +702,7 @@ effect({monitor, Pid}, #{monitors := Monitors, alive := Alive} = World, Owners) 
     [Owner] = [O || {O, P} <- maps:to_list(Owners), P =:= Pid],
     case maps:get(Owner, Alive) of
         true -> World1#{monitors := Monitors#{Ref => Pid}};
-        false -> perform(erx_fs_grant:owner_down(Ref, Pid, world_core(World1)), World1, Owners)
+        false -> perform(erx_fs_grant:down(Ref, Pid, world_core(World1)), World1, Owners)
     end.
 
 check(#{core := Core, model := Model, monitors := Monitors}, Owners, Trace) ->
@@ -746,22 +750,6 @@ size_of(Grant, Fid) ->
     #{size := Size} = getattr(Grant, Fid),
     Size.
 
-%% The grant's links: its tree's process and one owner per open file.
-links(Grant) ->
-    {links, Links} = process_info(Grant, links),
-    length(Links).
-
-wait_for_links(Grant, Count) ->
-    wait_for_links(Grant, Count, 500).
-
-wait_for_links(Grant, Count, 0) ->
-    ?assertEqual(Count, links(Grant));
-wait_for_links(Grant, Count, Tries) ->
-    case links(Grant) of
-        Count -> ok;
-        _ -> timer:sleep(10), wait_for_links(Grant, Count, Tries - 1)
-    end.
-
 %% Two lcreates of one new name, sent before either is answered, both open
 %% the one file it names: the first makes it, the second opens it.
 two_openers_of_one_new_name_both_succeed_test() ->
@@ -775,8 +763,6 @@ two_openers_of_one_new_name_both_succeed_test() ->
     ?assertMatch({ok, Qid, 0}, answer(Second)),
     ?assertEqual({ok, 3, 0}, call(Grant, {write, 2, 0, <<"one">>})),
     ?assertEqual({ok, <<"one">>}, call(Grant, {read, 3, 0, 100})),
-    %% One owner for the file, beside the tree's process.
-    ?assertEqual(2, links(Grant)),
     stop(Grant).
 
 lcreate_with_exclusive_answers_eexist_test() ->
@@ -863,8 +849,8 @@ truncate_through_a_read_only_open_is_refused_test() ->
     ?assertEqual({ok, <<"he">>}, call(Grant, {read, 3, 0, 100})),
     stop(Grant).
 
-%% A process that ends with files open has its opened fids clunked, so each
-%% file's owner ends and the tree hears each clunk.
+%% A process that ends with files open has its opened fids clunked, and the
+%% tree hears each clunk.
 owner_end_clunks_its_open_fids_test() ->
     Grant = grant(rw),
     Parent = self(),
@@ -881,13 +867,12 @@ owner_end_clunks_its_open_fids_test() ->
                               receive stop -> ok end
                       end),
     receive opened -> ok after 2000 -> erlang:error(not_opened) end,
-    %% Two open files, one owner each, beside the tree's process.
-    ?assertEqual(3, links(Grant)),
     flush_tree_calls(),
     Client ! stop,
     receive {'DOWN', Ref, process, Client, _} -> ok end,
-    wait_for_links(Grant, 1),
     wait_for_monitors(Grant, 0),
+    %% A request behind the DOWN returns once the grant has taken the DOWN.
+    ?assertEqual({error, ebadf}, call(Grant, {clunk, 9})),
     ?assertEqual([clunk, clunk, clunk], [C || C <- tree_calls(), C =:= clunk]),
     stop(Grant).
 
@@ -999,44 +984,27 @@ dotdot_returns_through_renames_and_removals_test() ->
 %% A request sent to an alias another request still holds is refused, and the
 %% grant serves on.
 an_alias_in_flight_takes_no_second_request_test() ->
-    Grant = quiet_grant(),
-    {ok, _} = attach(Grant, 1),
-    {ok, []} = walk(Grant, 1, 2, []),
-    {ok, _, 0} = lcreate(Grant, 2, <<"d">>, ?O_RDWR),
+    {Grant, Keeper} = stream_grant(),
     Alias = alias([explicit_unalias]),
-    Grant ! {erx_9p, Alias, self(), {write, 2, 0, <<"x">>}},
-    Grant ! {erx_9p, Alias, self(), {write, 2, 0, <<"y">>}},
-    Replies = lists:sort([answer(Alias), answer(Alias)]),
+    Grant ! {erx_9p, Alias, self(), {read, 2, 0, 16}},
+    Grant ! {erx_9p, Alias, self(), {write, 3, 0, <<"y">>}},
+    ?assertEqual({error, einval}, answer(Alias)),
+    ok = erx_fs_stream_tree:hand(Keeper, <<"x">>),
+    ?assertEqual({ok, <<"x">>}, answer(Alias)),
     unalias(Alias),
-    ?assertMatch([{error, einval}, {ok, 1, 0}], Replies),
-    ?assertMatch({ok, <<_>>}, call(Grant, {read, 2, 0, 10})),
+    ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"z">>})),
     stop(Grant).
 
-%% The core's side of an open file's owner: a request on an open file goes to
-%% the owner, a flush waits for its answer, and only the owner's tag answers.
-file_owner_answers_through_its_tag_test() ->
-    Core = core(rw),
-    {_, Core1} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
-    {[{start_file, Node, erx_fs_test_tree, _}, {reply, _, {ok, _, 0}}], Core2} =
-        core_frame(Core1, {lcreate, 1, <<"n">>, ?O_RDWR, 8#644, 0}),
-    Tag = make_ref(),
-    Owner = self(),
-    Core3 = erx_fs_grant:file_started(Node, Owner, Tag, Core2),
-    Write = make_ref(),
-    {[{run, Owner, Tag, {answer, Write, {write, _, 0, <<"z">>}}}], Core4} =
-        erx_fs_grant:handle_frame({erx_9p, Write, self(), {write, 1, 0, <<"z">>}}, Core3),
-    Flush = make_ref(),
-    {[], Core5} = erx_fs_grant:handle_frame({erx_9p, Flush, self(), {flush, Write}}, Core4),
-    ?assertMatch(#{in_flight := 2, files := 1}, erx_fs_grant:info(Core5)),
-    {[], Core6} = erx_fs_grant:file_answer(make_ref(), Write, {ok, 1, 0}, Core5),
-    ?assertMatch(#{in_flight := 2, refused := 1}, erx_fs_grant:info(Core6)),
-    {Answered, Core7} = erx_fs_grant:file_answer(Tag, Write, {ok, 1, 0}, Core6),
-    ?assertEqual([{reply, Write, {ok, 1, 0}}, {reply, Flush, ok}], Answered),
-    ?assertMatch(#{in_flight := 0}, erx_fs_grant:info(Core7)),
-    %% The clunk of the file's last opened fid ends its owner.
-    {Clunked, Core8} = core_frame(Core7, {clunk, 1}),
-    ?assertMatch([{run, Owner, Tag, {last_clunk, _}} | _], Clunked),
-    ?assertMatch(#{files := 0, fids := 0}, erx_fs_grant:info(Core8)).
+%% A clunk answers what the tree's clunk answered, and the fid ends either way.
+a_clunk_answers_the_trees_clunk_test() ->
+    Grant = stale_grant([clunk]),
+    {ok, _} = attach(Grant, 1),
+    {ok, _} = walk(Grant, 1, 2, [<<"f">>]),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDWR}),
+    ?assertEqual({error, eio}, call(Grant, {clunk, 2})),
+    ?assertEqual({error, ebadf}, call(Grant, {clunk, 2})),
+    ?assertMatch({ok, [_]}, walk(Grant, 1, 2, [<<"a">>])),
+    stop(Grant).
 
 %% Callbacks' answers -----------------------------------------------------
 
@@ -1070,9 +1038,9 @@ answers_with_a_state_are_eio_in_the_grant_test() ->
     ?assert(is_process_alive(Grant)),
     stop(Grant).
 
-%% The same in a file process: each request is answered eio to the client, a
-%% clunk's answer is not used, and the grant goes on serving.
-answers_with_a_state_are_eio_in_a_file_process_test() ->
+%% The same for requests on an open file: each is answered eio to the client,
+%% a clunk included, whose fid ends anyway, and the grant goes on serving.
+answers_with_a_state_are_eio_on_an_open_file_test() ->
     Grant = stale_grant([read, write, readdir, setattr, clunk]),
     {ok, _} = attach(Grant, 1),
     {ok, _} = walk(Grant, 1, 2, [<<"f">>]),
@@ -1084,8 +1052,8 @@ answers_with_a_state_are_eio_in_a_file_process_test() ->
     {ok, _} = walk(Grant, 1, 3, []),
     {ok, _, _} = call(Grant, {lopen, 3, 0}),
     ?assertEqual({error, eio}, call(Grant, {readdir, 3, 0, 4096})),
-    ok = call(Grant, {clunk, 2}),
-    ok = call(Grant, {clunk, 3}),
+    ?assertEqual({error, eio}, call(Grant, {clunk, 2})),
+    ?assertEqual({error, eio}, call(Grant, {clunk, 3})),
     ?assertMatch({ok, [_]}, walk(Grant, 1, 4, [<<"a">>])),
     ?assert(is_process_alive(Grant)),
     stop(Grant).
@@ -1119,7 +1087,7 @@ malformed_core(Malformed) ->
 
 %% A malformed qid is answered eio and the grant keeps nothing of the answer:
 %% an attach records no fid and monitors no owner, a walk names no new fid,
-%% and an lcreate neither opens its fid nor starts a file process.
+%% and an lcreate does not open its fid.
 malformed_qids_change_nothing_test() ->
     {Attached, Root} = core_frame(malformed_core([root]), {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
     ?assertMatch([{reply, _, {error, eio}}], Attached),
@@ -1131,7 +1099,7 @@ malformed_qids_change_nothing_test() ->
     {_, Core3} = core_frame(Core2, {walk, 1, 3, []}),
     {Created, Core4} = core_frame(Core3, {lcreate, 3, <<"n">>, ?O_RDWR, 8#644, 0}),
     ?assertMatch([{reply, _, {error, eio}}], Created),
-    ?assertMatch(#{fids := 2, files := 0}, erx_fs_grant:info(Core4)),
+    ?assertMatch(#{fids := 2}, erx_fs_grant:info(Core4)),
     %% Fid 3 was not opened: it opens now.
     {Opened, _} = core_frame(Core4, {lopen, 3, 0}),
     ?assertMatch({reply, _, {ok, _, _}}, lists:last(Opened)).
@@ -1154,7 +1122,7 @@ malformed_qids_leave_the_grant_serving_test() ->
     ?assert(is_process_alive(Grant)),
     stop(Grant).
 
-%% A listing whose tail is not a list is answered eio by the file process,
+%% A listing whose tail is not a list is answered eio,
 %% and the grant goes on serving.
 improper_listing_is_eio_test() ->
     Grant = malformed_grant([readdir]),
@@ -1177,3 +1145,115 @@ rejected_remove_still_clunks_its_fid_test() ->
     ?assertEqual(ebadf, qid_of(Grant, 2)),
     ?assert(is_process_alive(Grant)),
     stop(Grant).
+
+%% A clunk or a remove whose tree answers an error 9P2000.L does not carry is
+%% answered eio, and the tree's clunk of the fid's open runs once.
+rejected_clunk_and_remove_clunk_once_test() ->
+    {ok, Grant} = erx_fs:start_link(erx_fs_stale_tree,
+                                    [{malformed, [clunk, unlink]}, {observer, self()}], rw),
+    unlink(Grant),
+    {ok, _} = attach(Grant, 1),
+    {ok, _} = walk(Grant, 1, 2, [<<"f">>]),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDWR}),
+    {ok, _} = walk(Grant, 1, 3, [<<"f">>]),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_RDWR}),
+    flush_tree_calls(),
+    ?assertEqual({error, eio}, call(Grant, {clunk, 2})),
+    ?assertEqual([clunk], tree_calls()),
+    ?assertEqual({error, eio}, call(Grant, {remove, 3})),
+    ?assertEqual([unlink, clunk], tree_calls()),
+    stop(Grant).
+
+%% Waiting requests ------------------------------------------------------
+
+%% A grant on erx_fs_stream_tree, whose reads wait at Keeper for the bytes the
+%% test hands it, with fid 1 at the root and fids 2 and 3 opened on the stream.
+stream_grant() ->
+    Keeper = erx_fs_stream_tree:start_keeper(),
+    {ok, Grant} = erx_fs:start_link(erx_fs_stream_tree, Keeper, rw),
+    unlink(Grant),
+    {ok, _} = attach(Grant, 1),
+    {ok, _} = walk(Grant, 1, 2, [<<"s">>]),
+    {ok, _} = walk(Grant, 1, 3, [<<"s">>]),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_WRONLY}),
+    {Grant, Keeper}.
+
+%% The reply to Alias within Timeout milliseconds, or none.
+reply_within(Alias, Timeout) ->
+    receive
+        {erx_9p, Alias, Reply} -> Reply
+    after Timeout ->
+        none
+    end.
+
+%% The regression of "Waiting requests": a read on the empty stream waits at
+%% the keeper while the grant answers a write on the other fid of the same
+%% stream, and the bytes then handed to the keeper answer the read, once.
+a_write_is_answered_while_a_read_waits_test() ->
+    {Grant, Keeper} = stream_grant(),
+    Read = send(Grant, self(), {read, 2, 0, 16}),
+    Write = send(Grant, self(), {write, 3, 0, <<"w">>}),
+    ?assertEqual({ok, 1, 0}, reply_within(Write, 1000)),
+    ?assertEqual(none, reply_within(Read, 0)),
+    ok = erx_fs_stream_tree:hand(Keeper, <<"abc">>),
+    ?assertEqual({ok, <<"abc">>}, reply_within(Read, 1000)),
+    ?assertEqual(none, reply_within(Read, 100)),
+    ?assertEqual([], erx_fs_stream_tree:held(Keeper)),
+    stop(Grant).
+
+%% A flush of a waiting read follows it to the keeper, which answers the read
+%% eintr; then the flush is answered.
+a_flush_of_a_waiting_read_reaches_its_keeper_test() ->
+    {Grant, Keeper} = stream_grant(),
+    Read = send(Grant, self(), {read, 2, 0, 16}),
+    Flush = send(Grant, self(), {flush, Read}),
+    ?assertEqual({error, eintr}, reply_within(Read, 1000)),
+    ?assertEqual(ok, reply_within(Flush, 1000)),
+    ok = erx_fs_stream_tree:hand(Keeper, <<"abc">>),
+    ?assertEqual(none, reply_within(Read, 100)),
+    ?assertEqual(ok, call(Grant, {clunk, 2})),
+    stop(Grant).
+
+%% The keeper's end answers the read it held eio, and the grant goes on.
+a_keepers_end_answers_its_reads_eio_test() ->
+    {Grant, Keeper} = stream_grant(),
+    Read = send(Grant, self(), {read, 2, 0, 16}),
+    ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"w">>})),
+    unlink(Keeper),
+    exit(Keeper, kill),
+    ?assertEqual({error, eio}, reply_within(Read, 1000)),
+    ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"w">>})),
+    stop(Grant).
+
+%% A grant on erx_fs_stream_tree whose keeper is Keeper, with fid 2 opened on
+%% the stream, as the core alone.
+stream_core(Keeper) ->
+    Core = erx_fs_grant:new(#{module => erx_fs_stream_tree, fs => Keeper, rights => rw,
+                              client => own}),
+    {_, Core1} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
+    {_, Core2} = core_frame(Core1, {walk, 1, 2, [<<"s">>]}),
+    {_, Core3} = core_frame(Core2, {lopen, 2, ?O_RDONLY}),
+    Core3.
+
+%% A keeper that is the grant itself, which would never answer, is eio at
+%% once; the core built here is served by this process.
+a_keeper_that_is_the_grant_is_eio_test() ->
+    ?assertMatch({[{reply, _, {error, eio}}], _},
+                 core_frame(stream_core(self()), {read, 2, 0, 16})).
+
+%% A keeper's answer is held to read's shapes, and reaches the client eio when
+%% it is none of them; a second answer to the same alias is refused.
+a_keepers_answer_is_held_to_its_shapes_test() ->
+    Keeper = spawn(fun() -> receive stop -> ok end end),
+    Alias = make_ref(),
+    {[{wait, Alias, Keeper, {read, 16}}], Core} =
+        erx_fs_grant:handle_frame({erx_9p, Alias, self(), {read, 2, 0, 16}}, stream_core(Keeper)),
+    Ref = make_ref(),
+    Waiting = erx_fs_grant:waiting(Alias, Ref, Core),
+    ?assertMatch(#{waiting := 1, in_flight := 1}, erx_fs_grant:info(Waiting)),
+    {[{reply, Alias, {error, eio}}], Answered} = erx_fs_grant:answered(Ref, {ok, 1, 0}, Waiting),
+    ?assertMatch(#{waiting := 0, in_flight := 0}, erx_fs_grant:info(Answered)),
+    {[], Late} = erx_fs_grant:answered(Ref, {ok, <<"late">>}, Answered),
+    ?assertMatch(#{refused := 2}, erx_fs_grant:info(Late)),
+    Keeper ! stop.

@@ -20,7 +20,7 @@ and a `gen_server` would act on a `system` message from it. It takes:
   it for the grant, and when the grant ends it drops the area and ends
   the grant's windows;
 * calls of its own domain's processes, in `gen_server`'s call shape: the
-  tree's callbacks, which run in the grants and their file processes, and
+  tree's callbacks, which run in the grants, and
   attach/2, the screen's;
 * input/2's records, the `DOWN`s of its grants, holders, screen and
   input sources, its repeat timer, and the `EXIT`s of its window

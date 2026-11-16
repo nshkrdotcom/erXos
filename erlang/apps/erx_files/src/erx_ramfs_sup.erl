@@ -14,8 +14,7 @@ none of them asks the code server for code while the code server may itself
 be waiting on `/tmp` (T6), starts the grant on the tree process, which it
 finds by its registered name, and mounts it at `/tmp`, after removing any
 entry an earlier instance left there. The
-grant's file owners are linked to it, so when the tree process, the grant or
-an owner ends, all of them end, `/tmp` restarts empty and is mounted again,
+grant is linked to it, so when the tree process or the grant ends, both end, `/tmp` restarts empty and is mounted again,
 and the old grant's open files answer `eio` to their clients.
 """.
 

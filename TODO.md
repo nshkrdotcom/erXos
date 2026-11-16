@@ -2115,29 +2115,26 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs.erl`, `file_loop/4`;
-  `erx_fs_grant.erl`, `run_job/3`, `admit/4`): design-files.md ("Serving", "One process per grant" and "Waiting
-  requests") has the grant call every callback itself and hand a read or write that waits for an event to the tree's
-  keeper, but the grant hands each open file's reads and writes to a file process of its own, which calls the
-  callback and waits in it, so a read that waits holds up the file's writes, clunks and flushes; a flush is never
-  passed to the tree, and a flush of a request in flight is answered `emfile` at the requests' bound
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, `admit/4`, `close_fid/2`): the
+  grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
+  which keeps it in `erx_fs_waits`, as design-files.md ("Serving", "Waiting requests", rules 1, 2, 4 and 6) has it,
+  but rule 5 is not built: a clunk or a `remove` of a fid whose requests a keeper still holds runs the tree's `clunk`
+  at once without flushing them, so such a request waits on an open the tree has closed, and the fid's number is free
+  before the clunk's answer; a flush of a request in flight is answered `emfile` at the requests' bound
   (`test/erlang/erx_fs_tests.erl`, the in-flight bound case, expects it) where the design admits one flush waiting
-  for each request; `admit/4` checks a new request's alias only against `pending`'s keys (`erx_fs_grant.erl:418`)
-  while waiting flushes live inside another request's record (line 427), so a request on a waiting flush's alias is
-  admitted and the alias later gets two answers, where the design keeps one table of live aliases and drops a frame
-  on one; a request on a request's live alias is answered `einval`, where the design drops it; the grant answers a
-  client's clunk when it hands it to the file process and drops the tree's `clunk` answer, where the design answers
-  the clunk with that answer once the callback has run (`erx_fs_grant.erl:229-244`); `abi/protocols/9p.txt`'s
-  `errors` lacks `eintr`. Delete the file process (`erx_fs.erl`: `file_loop/4` and the `start_file` effect;
-  `erx_fs_grant.erl`: `#file{}`, `file_started/4`, `file_answer/4`, the `run` effect and the `last_clunk` job), and
-  `read_mode/0` from the behaviour and from the six modules that define it (`erx_lfs` answering `helper`;
-  `erx_ramfs`, `erx_procfs`, `erx_machine_fs`, `erx_devfs` and `erx_starter_fs` answering `immediate`); build
-  `{wait, Keeper, Request}` and the clunk that settles its fid's waits first in the grant's core, and
-  `erx_fs_waits` (`hold/2`, `began/2`, `answer/3`, `info/2`, `list/1`), with the tests design-files.md lists,
-  regression first. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
+  for each request; `admit/4` checks a new request's alias only against `pending`'s keys while waiting flushes
+  live inside another request's record, so a request on a waiting flush's alias is admitted and the alias later
+  gets two answers, where the design keeps one table of live aliases and drops a frame on one; a request on a
+  request's live alias is answered `einval`, where the design drops it. Build the clunk that settles its fid's waits
+  first in the grant's core, and the one table of live aliases, with the tests design-files.md lists. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
   the `pair` file, a window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4`
   serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
-  `call/2`), so a client reading `kbd` on a hidden window cannot clunk or flush it, and a program's `/dev/kbd` and
+  `call/2`), so a client reading `kbd` on a hidden window stops its whole grant, every other request, clunk and
+  flush of it included, until a key comes, as each wait for an event left in a callback does now that callbacks run
+  in the grant: a `/dev/tty` write to a stopped tty (`erx_session_export:write/4`, `Tty(Bytes)`), the draw
+  connection's reads and writes (`erx_session_export.erl:296, 351`), and a `ctl` write to `/dev`'s driver files,
+  whose `erx_driver_ctl` stop, start or restart may take up to its 30 s call deadline (`erx_devfs.erl`, `control/3`);
+  and a program's `/dev/kbd` and
   `/dev/mouse` reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
   (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
   the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
@@ -4710,8 +4707,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   O(D^2); renames of two directories grow a path without bound. Cap a fid's path length (a walk past it refuses), or
   count steps per shared path suffix so a clone is one increment ([todo-performance.md](docs/todo-performance.md)).
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: the grant's hold bookkeeping (`held`, `steps`, `loose`) has
-  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`tree_holds/2`), `remove`
-  and `owner_down` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
+  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`kept_when_rejected/3`), `remove`
+  and an owner's `down/3` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
   `fid_table_model_test_` that the tree holds exactly the walked nodes the fids name after every step, and consider
   making the forget an effect `{forget, Node}` the shell performs, so the core sends nothing.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which

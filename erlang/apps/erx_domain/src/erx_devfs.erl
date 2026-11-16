@@ -41,7 +41,7 @@ shell's. Nothing mounts the read-only tree yet.
 
 -export([start_link/0]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
-         statfs/1, clunk/2, read_mode/0]).
+         statfs/1, clunk/2]).
 
 %% The tree's name, which a mount's {tree, Name} and attach's Aname name.
 -define(TREE, <<"dev">>).
@@ -229,9 +229,6 @@ statfs(_Fs) ->
 clunk(_Handle, _Fs) ->
     ok.
 
-%% A read is a part of the text the open already took.
--doc false.
-read_mode() -> immediate.
 
 %% ---------------------------------------------------------------------------
 %% The catalogue and the services

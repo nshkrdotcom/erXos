@@ -40,7 +40,7 @@ coordinator, which a test stands in for.
 
 -export([start_link/0, parse/1, errno/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4, readdir/4,
-         statfs/1, clunk/2, read_mode/0]).
+         statfs/1, clunk/2]).
 
 %% The service's name in the manifest, and the tree's name, which a mount's
 %% {tree, Name} and attach's Aname name.
@@ -169,8 +169,6 @@ statfs(_Fs) ->
 clunk(_Handle, _Fs) ->
     ok.
 
--doc false.
-read_mode() -> immediate.
 
 %% A node's qid is fixed, the same in every grant: the tree has two nodes.
 -spec qid(node_()) -> erx_fs:qid().

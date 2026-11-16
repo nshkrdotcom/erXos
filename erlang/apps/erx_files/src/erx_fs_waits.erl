@@ -11,7 +11,9 @@ took it to the tree process that owns the event, its keeper, as
 `{erx_fs_wait, Wait, Request}`: `Wait` is `{Grant, Alias}`, the grant's pid
 and an alias of the grant's monitor of the keeper that the first message
 to it deactivates, and `Request` is the tree's own term for what to do. A
-later `{erx_fs_flush, Wait}` from the same grant follows the request.
+later `{erx_fs_flush, Wait}` from the same grant follows the request. The
+three messages are defined once, in erx_fs_waits.hrl, which the grant, this
+module and every keeper include.
 
 The keeper keeps the requests in this set and answers them only through
 it, so the obligations every keeper shares live here:
@@ -35,6 +37,8 @@ not counted.
 """.
 
 -export([new/0, hold/2, began/2, answer/3, info/2, list/1]).
+
+-include("erx_fs_waits.hrl").
 
 -export_type([waits/0, wait/0]).
 
@@ -67,8 +71,8 @@ new() ->
 Holds the request of an `{erx_fs_wait, Wait, Request}` message, and monitors
 the grant that sent it unless the set holds a request of that grant already.
 """.
--spec hold({erx_fs_wait, wait(), term()}, waits()) -> waits().
-hold({erx_fs_wait, {Grant, Alias} = Wait, Request},
+-spec hold(?ERX_FS_WAIT(wait(), term()), waits()) -> waits().
+hold(?ERX_FS_WAIT({Grant, Alias} = Wait, Request),
      #waits{held = Held, grants = Grants, next_arrival = Arrival} = Waits)
   when is_pid(Grant), is_reference(Alias) ->
     Entry = #held{wait = Wait, request = Request, arrival = Arrival, state = waiting},
@@ -101,7 +105,7 @@ flushed or dropped meanwhile, is not answered.
 answer({_, Alias} = Wait, Result, #waits{held = Held} = Waits) ->
     case Held of
         #{Alias := #held{wait = Wait}} ->
-            erlang:send(Alias, {erx_fs_answer, Alias, Result}),
+            erlang:send(Alias, ?ERX_FS_ANSWER(Alias, Result)),
             forget(Wait, Waits);
         #{} ->
             Waits
@@ -123,7 +127,7 @@ Takes a message the keeper received that may be the set's:
 -spec info(term(), waits()) ->
           {flushed, waits()} | {begun, wait(), term(), waits()}
         | {dropped, waits()} | unknown.
-info({erx_fs_flush, {_, Alias} = Wait}, #waits{held = Held} = Waits) ->
+info(?ERX_FS_FLUSH({_, Alias} = Wait), #waits{held = Held} = Waits) ->
     case Held of
         #{Alias := #held{wait = Wait, state = waiting}} ->
             {flushed, answer(Wait, {error, eintr}, Waits)};

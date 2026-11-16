@@ -3142,6 +3142,12 @@ recovers a value's exact bytes
   `list/1`, its requests in the order they arrived, each as `{Wait,
   Request, waiting | begun}`
   ([Serving](#serving-the-erx_fs-behaviour), "Waiting requests").
+  The three messages between a grant and a keeper, `{erx_fs_wait, Wait,
+  Request}`, `{erx_fs_flush, Wait}` and `{erx_fs_answer, Alias, Result}`,
+  are defined once, as the macros `ERX_FS_WAIT`, `ERX_FS_FLUSH` and
+  `ERX_FS_ANSWER` of `erx_files`' header `erx_fs_waits.hrl`, which `erx_fs`,
+  `erx_fs_waits` and every keeper include: a keeper matches `ERX_FS_WAIT`
+  in its receive to hand the message to `hold/2`.
   `erx_fs_locks` is a tree's lock table, a keeper of the grants' `lock`
   and `getlock` requests: `start_link/0`, and the release of a fid's
   locks a grant sends it at the fid's clunk ([Locks](#locks)).
