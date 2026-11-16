@@ -6,11 +6,13 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../fixtures/erlang_build'
+require_relative '../../tools/fuzz/erx_clock_facet'
 
 # Runs the clock service's EUnit cases (docs/design-time.md, "Verification and
 # testing", decide, restart and facet decode): test/erlang/erx_clock_core_tests.erl,
 # the Steps table and the set clause, and test/erlang/erx_clock_facet_tests.erl, the
-# facet's decoder, its operation/1 and the facet admitting only its grant's operations,
+# facet's decoder, its operation/1 and the facet admitting only its grant's operations
+# and outliving erx_clock's restart,
 # compiled from source on stock's emulator (ERX_ERL and ERX_ERLC, which make check
 # supplies). Then each seeded fault is compiled in place of its module, and the cases
 # must fail on it, which shows they exercise what they guard.
@@ -22,7 +24,8 @@ class ErxClockTest < Minitest::Test
   CORE = 'erlang/apps/erx/src/erx_clock_core.erl'
   FACET = 'erlang/apps/erx/src/erx_clock_facet.erl'
 
-  # Each fault: the module it is planted in, the text replaced and its replacement.
+  # Each fault: the module it is planted in, the text replaced and its replacement, or a
+  # list of texts each replaced by its partner in a list of replacements.
   Fault = Data.define(:name, :module, :from, :to)
   FAULTS = [
     Fault.new(name: 'a sample-only row admits set', module: FACET,
@@ -43,7 +46,10 @@ class ErxClockTest < Minitest::Test
     Fault.new(name: 'a step to its size rather than to W', module: CORE,
               from: '#{offset => W, step_ns => W - C,', to: '#{offset => W - C, step_ns => W - C,'),
     Fault.new(name: 'a step recorded without its source', module: CORE,
-              from: 'step_source := Source, steps := Steps + 1}', to: 'steps := Steps + 1}')
+              from: 'step_source := Source, steps := Steps + 1}', to: 'steps := Steps + 1}'),
+    Fault.new(name: "erx_clock's pid captured at mint", module: FACET,
+              from: ['{ok, #{grantee => Grantee}}.', 'whereis(erx_clock)} of'],
+              to: ['{ok, #{grantee => Grantee, clock => whereis(erx_clock)}}.', 'maps:get(clock, State)} of'])
   ].freeze
 
   def test_clock_cases_pass_under_eunit
@@ -58,14 +64,27 @@ class ErxClockTest < Minitest::Test
   def test_each_seeded_fault_is_caught
     FAULTS.each do |fault|
       text = File.read(File.join(ROOT, fault.module))
-      assert_equal 1, text.scan(fault.from).size, "#{fault.name}: its text must occur once in #{fault.module}"
+      pairs = Array(fault.from).zip(Array(fault.to))
+      pairs.each do |from, _to|
+        assert_equal 1, text.scan(from).size, "#{fault.name}: #{from} must occur once in #{fault.module}"
+      end
+      planted = pairs.reduce(text) { |planting, (from, to)| planting.sub(from, to) }
       Dir.mktmpdir('erx-clock-fault') do |work|
         ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS,
-                                  replaced: { fault.module => text.sub(fault.from, fault.to) })
+                                  replaced: { fault.module => planted })
         output, status = eunit(work)
         refute status.success?, "#{fault.name}: the cases passed with it:\n#{output}"
         assert_match(/Failed: [1-9]/, output, fault.name)
       end
+    end
+  end
+
+  # The fuzz target's seeded faults run only at the milestone gate; their texts are
+  # checked here, at every landing, so an edit of the decoder updates them too.
+  def test_fuzz_seeds_still_name_the_decoder
+    text = File.read(File.join(ROOT, FACET))
+    ErxClockFacetFuzz::SEEDS.each do |fault|
+      assert_equal 1, text.scan(fault.from).size, "fuzz seed #{fault.name}: its text must occur once in #{FACET}"
     end
   end
 

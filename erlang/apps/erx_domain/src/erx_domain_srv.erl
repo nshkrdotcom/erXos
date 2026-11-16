@@ -969,9 +969,10 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     %% finds erx_syslog at each request.
     {facet, erx_log_facet, Behind, Limits};
 system_facet(clock, {message, Behind, Limits}, _Principal, _State) ->
-    %% docs/design-time.md, "The clock facet": Behind is erx_clock, and the callback
-    %% checks the grant's operations, sample or set, against what it decodes.
-    {facet, erx_clock_facet, Behind, Limits#{behind => Behind}};
+    %% docs/design-time.md, "The clock facet": Behind is erx_clock's supervisor, and the
+    %% callback finds erx_clock at each request and checks the grant's operations, sample
+    %% or set, against what it decodes.
+    {facet, erx_clock_facet, Behind, Limits};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
 system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System}} = State) ->

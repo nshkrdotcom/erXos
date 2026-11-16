@@ -4,18 +4,20 @@
 -module(erx_clock).
 -moduledoc """
 The clock service (docs/design-time.md, "Who does what"), the wall clock's
-one authority, in the system domain only: it names itself with
-erx_facet:serve(clock, Pid), so the domain service mints each grantee's
-clock facet (erx_clock_facet) in front of it, and each facet ends with it.
-It is the one caller of erx_clock_nif:set_offset/1, which a chokepoint
-check holds (tools/lib/erx/chokepoint_rules/clock.rb).
+one authority, in the system domain only, registered as erx_clock. Its
+supervisor is the server of the `clock` interface (erx_facet:serve/2), so
+the domain service mints each grantee's clock facet (erx_clock_facet) in
+front of the supervisor, and each facet outlives the service's restarts,
+finding erx_clock by its name at each request. It is the one caller of
+erx_clock_nif:set_offset/1, which a chokepoint check holds
+(tools/lib/erx/chokepoint_rules/clock.rb).
 
 A facet forwards `{sample, Source, Sample}` or `{set, Source, W}`, Source
 the grantee's domain. For each the service reads the time page, takes
 erx_clock_core's decision, applies a step through the setter and answers
 the facet; it keeps the record that decision leaves and logs each applied
 set with the domain that asked for it. kernel's safe supervisor starts it
-before the domain service, which reads the name when it mints.
+before the domain service, which reads the server when it mints.
 """.
 -behaviour(gen_server).
 
@@ -25,18 +27,22 @@ before the domain service, which reads the name when it mints.
 -doc """
 Starts the service in the system domain, the erXos runtime whose boot page
 names the system domain's id and no system connection; `ignore` in every
-other runtime, which serves no clock.
+other runtime, which serves no clock. A supervisor calls it in its own
+process, so self() here is the supervisor, which names itself the server of
+`clock` again at each restart of the service, to the same effect.
 """.
 -spec start_link() -> gen_server:start_ret() | ignore.
 start_link() ->
     case erlang:system_info(os_type) =:= {unix, erxos} andalso erx_inspector:is_system_runtime() of
-        true -> gen_server:start_link(?MODULE, [], []);
-        false -> ignore
+        true ->
+            ok = erx_facet:serve(clock, self()),
+            gen_server:start_link({local, ?MODULE}, ?MODULE, [], []);
+        false ->
+            ignore
     end.
 
 -doc false.
 init([]) ->
-    ok = erx_facet:serve(clock, self()),
     %% The monotonic clock the page's offset is added to, as date reads it.
     {ok, erx_clock_core:new(os:perf_counter(nanosecond))}.
 

@@ -344,9 +344,10 @@ The special cases this removes:
 * **The clock service**, `erx_clock`, a system service of the system
   domain under the system release's supervisors, is the setting side. For
   each sample it reads the page through `erx_clock_nif:read/0`, runs
-  `erx_clock_core:decide/3`, a pure function from the sample, the page
-  and its record to an action and the next record, performs a step
-  through `erx_clock_nif:set_offset/1`, and answers the inspector for
+  `erx_clock_core:decide/4`, a pure function from the request, its
+  source domain, the page and its record to an action and the next
+  record, performs a step through `erx_clock_nif:set_offset/1`, and
+  answers the inspector for
   `/proc/time`. A crash restarts it with an empty record and loses only
   the record's history; no grant ends, and every decision reads the
   clock's state from the page ([What /proc shows](#what-proc-shows)).

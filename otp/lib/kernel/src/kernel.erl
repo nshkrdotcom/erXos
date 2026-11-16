@@ -322,8 +322,9 @@ init(safe) ->
                 type => worker,
                 modules => [erx_inspect_srv]},
 
-    %% erXos: the clock service, the wall clock's one authority, which names itself
-    %% with erx_facet:serve/2 before the domain service mints the clock facets
+    %% erXos: the clock service, the wall clock's one authority, whose start
+    %% names this supervisor the server of clock (erx_facet:serve/2) before the domain
+    %% service mints the clock facets, so they outlive the service's restarts
     %% (design-time.md, The clock facet); none but in the system domain.
     Clock = #{id => erx_clock,
               start => {erx_clock, start_link, []},

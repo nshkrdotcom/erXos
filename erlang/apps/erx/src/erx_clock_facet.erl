@@ -21,13 +21,15 @@ another operation or arity, a value outside its range or of another type.
 It creates no atom and never raises.
 
 It is also the clock facet's erx_facet callback, which the domain service
-mints for each grantee of `clock` in front of erx_clock. operation/1 names
-the operation of what decode/1 admits and nothing else, so the facet's check
-of the grant's operations and admit/3 cannot read one request two ways:
-a grant of `sample` alone refuses a set with `{error, eperm}` and a grant of
-`set` alone a sample. admit/3 forwards `{sample, Grantee, Sample}` or
-`{set, Grantee, W}`, with the grantee the facet was minted for, so the
-request never names its source.
+mints for each grantee of `clock` in front of erx_clock's supervisor.
+operation/1 names the operation of what decode/1 admits and nothing else,
+so the facet's check of the grant's operations and admit/3 cannot read one
+request two ways: a grant of `sample` alone refuses a set with
+`{error, eperm}` and a grant of `set` alone a sample. admit/3 forwards
+`{sample, Grantee, Sample}` or `{set, Grantee, W}`, with the grantee the
+facet was minted for, so the request never names its source, to the
+erx_clock registered at that moment, so a facet outlives the service's
+restarts; with none registered it refuses with `{error, unavailable}`.
 """.
 -behaviour(erx_facet).
 
@@ -60,19 +62,21 @@ operation(Request) ->
         {error, badarg} -> error
     end.
 
--spec init(erx_facet:grant()) -> {ok, #{grantee := pos_integer(), behind := pid()}}.
-init(#{grantee := Grantee, behind := Behind}) ->
-    {ok, #{grantee => Grantee, behind => Behind}}.
+-spec init(erx_facet:grant()) -> {ok, #{grantee := pos_integer()}}.
+init(#{grantee := Grantee}) ->
+    {ok, #{grantee => Grantee}}.
 
--spec admit(term(), pid(), #{grantee := pos_integer(), behind := pid()}) ->
+-spec admit(term(), pid(), #{grantee := pos_integer()}) ->
           {forward, pid(), {sample, pos_integer(), erx_clock_core:request()} | {set, pos_integer(), non_neg_integer()},
            map()}
-        | {refuse, badarg, map()}.
-admit(Request, _From, #{grantee := Grantee, behind := Behind} = State) ->
-    case decode(Request) of
-        {ok, {sample, _W, _Distance, _Stratum, _Server} = Sample} -> {forward, Behind, {sample, Grantee, Sample}, State};
-        {ok, {set, W}} -> {forward, Behind, {set, Grantee, W}, State};
-        {error, badarg} -> {refuse, badarg, State}
+        | {refuse, badarg | unavailable, map()}.
+admit(Request, _From, #{grantee := Grantee} = State) ->
+    case {decode(Request), whereis(erx_clock)} of
+        {{error, badarg}, _Clock} -> {refuse, badarg, State};
+        {{ok, _Decoded}, undefined} -> {refuse, unavailable, State};
+        {{ok, {sample, _W, _Distance, _Stratum, _Server} = Sample}, Clock} ->
+            {forward, Clock, {sample, Grantee, Sample}, State};
+        {{ok, {set, W}}, Clock} -> {forward, Clock, {set, Grantee, W}, State}
     end.
 
 address({A, B, C, D}) -> lists:all(fun(Byte) -> is_integer(Byte) andalso Byte >= 0 andalso Byte =< 255 end, [A, B, C, D]);

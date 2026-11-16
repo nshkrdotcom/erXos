@@ -4211,14 +4211,19 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   in a configured domain and an `erx_fs` grant check none, so such a row would grant
   every operation. The server's release is not checked to supply the service's
   interface.
-* [Medium] time, the clock facet (`erlang/apps/erx/src/erx_clock_facet.erl`): it has no fuzz target, though
-  [design-time.md](docs/design-time.md#verification-and-testing) names `erx_clock_facet_fuzz` with the seed "accepting a
-  Stratum of 0"; and it is bound to erx_clock's pid at its mint and ends with it, while the design has it forward to
-  the erx_clock registered at each request (as `erx_log_facet` does behind `erx_syslog_sup`), so one crash of the
-  service leaves every root session's `date` answering `eagain` until the session restarts. The setter's chokepoint
-  (`tools/lib/erx/chokepoint_rules/clock.rb`) is a text check of five spellings, not the call-graph check the design
-  names; a variable function name gets past it [Low]. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close
-  to the host time the PL031 seeds, where the design sets 2030 [Low].
+* [Medium] time, the clock service (`erlang/apps/erx/src/erx_clock.erl`, `otp/lib/kernel/src/kernel.erl`): the clock
+  facets stand in front of `kernel_safe_sup`, which `erx_clock:start_link/0` names the server of `clock` because a
+  supervisor runs a child's start in its own process, while the log facets stand in front of `erx_syslog_sup`, which
+  serves `log` from its own `init/1`: one property, two mechanisms, and `start_link/0` called from anywhere else would
+  serve its caller. Since the facet now outlives the service's restarts, a request that crashed `erx_clock` could be
+  re-sent at once, and five such crashes an hour end `kernel_safe_sup` and with it the system domain; none is known
+  (`decode/1` is total, `request/3` matches `erx_clock_nif:read/0`'s spec, the C side unchecked). An `erx_clock_sup`
+  mirroring `erx_syslog_sup`, with its own intensity, fixes both, and design-time.md should name what a clock facet
+  ends with.
+* [Low] time, the clock setter's chokepoint (`tools/lib/erx/chokepoint_rules/clock.rb`): it is a text check of five
+  spellings, not the call-graph check [design-time.md](docs/design-time.md) names; a variable function name gets past
+  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close to the host time the PL031 seeds, where the design
+  sets 2030.
 * [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
   exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
   its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
