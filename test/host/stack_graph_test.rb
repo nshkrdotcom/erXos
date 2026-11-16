@@ -16,8 +16,7 @@ require_relative '../fixtures/generated_tree'
 # call is a jump at both.
 class StackGraphTest < Minitest::Test
   FIXTURES = File.expand_path('../fixtures/stack_graph', __dir__)
-  TARGET_FLAGS = %w[-std=c17 -Wall -Wextra -Werror -pedantic --target=aarch64-none-elf -ffreestanding
-                    -mgeneral-regs-only -mno-outline-atomics -fstack-usage].freeze
+  TARGET_FLAGS = Erx::CoreArchive::TARGET_FLAGS
   # Sources that use no effect and call out only to memcpy and memset: the
   # pure cores and primitives, and the generated ABI reader the pack
   # validator calls, with the image planner it reads image entries by. A

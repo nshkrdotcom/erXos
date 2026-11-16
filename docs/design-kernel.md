@@ -8847,7 +8847,10 @@ function. So a direct call the proof cannot classify, a branch into the
 middle of a function or an image without its relocations fails the build
 rather than turning a function into a leaf; the binding names the
 instructions, the relocations and the link option
-([design-arch-aarch64.md](design-arch-aarch64.md#stack-proof)).
+([design-arch-aarch64.md](design-arch-aarch64.md#stack-proof)). The
+kernel's C, the C17 cores included, compiles with `-fno-jump-tables`, so
+the compiler never lowers a `switch` to a branch through a register,
+which the proof would refuse as a branch with no listed targets.
 
 | Entry | The stack it runs on |
 | --- | --- |
