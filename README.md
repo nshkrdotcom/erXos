@@ -296,6 +296,17 @@ Eshell V17.1.1 (type help(). for help)
   failure. A QEMU suite kills the block driver in the middle of a transfer
   and finds each kept file cut at a sync. An EROFS reader mounts read-only
   images.
+* The build writes a slot's system partition, an EROFS image of the system
+  release's files with its dm-verity hash tree after it, and the manifest's
+  `system_image` row records the tree. On a guest, the `medium_boot` QEMU
+  suite reads a release file from the partition through the hash-checking
+  reader. `erx_storage_system`, the read-only backend that will serve the
+  partition's `apps/` as the `system` tree, is tested on the host: every
+  block the EROFS reader parses, directories included, is checked against
+  the tree's root hash first, and a block that does not match answers
+  `eio`. The partition holds no `apps/` yet, so a booted system serves an
+  empty `system` tree to no one. Packages still ride in the boot image,
+  and no slot writer or update is built to write the partition.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
   and segment tables, journals, inodes and directory entries, and a mount
   core picks the superblock copy and checkpoint pack and decides the mount
