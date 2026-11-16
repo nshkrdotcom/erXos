@@ -41,6 +41,8 @@ Of a facet row's limits and parameters a grant applies four (grant_options/1):
 -define(IN_FLIGHT_MAX, 64).
 -define(MSIZE_MIN, 4096).
 -define(MSIZE_MAX, 65560).
+%% The limits an own grant (own/1,2) starts with, from which its facet's rights follow.
+-define(OWN, #{rights => rw}).
 
 -doc """
 Starts the supervisor of the grants of the tree Module serves from Args, linked to
@@ -93,21 +95,24 @@ grant(Grants, Limits, #{client := Client, ends_with := _, exports := _} = Bindin
 -doc """
 One grant under Grants, a supervisor start_link/2 started, for the server's own
 domain, with erx_fs's own bounds: the grant a system domain's files service
-mounts in that domain's own namespace (erx_ns:mount_own/2). It is exported to
-no one, ends with Grants and, a temporary child as every grant is, is not
-restarted when it ends alone (TODO.md).
+mounts in that domain's own namespace (erx_ns:mount_own/2), returned as
+`{Pid, rw}`, facet/2's value. It is exported to no one, ends with
+Grants and, a temporary child as every grant is, is not restarted when it ends
+alone (TODO.md).
 """.
--spec own(pid()) -> {ok, pid()}.
+-spec own(pid()) -> {ok, {pid(), rw}}.
 own(Grants) ->
-    supervisor:start_child(Grants, [#{rights => rw}]).
+    owned(supervisor:start_child(Grants, [?OWN])).
 
 -doc """
 As own/1, for a supervisor start_link/1 started, whose grant's tree starts
 from Args.
 """.
--spec own(pid(), term()) -> {ok, pid()}.
+-spec own(pid(), term()) -> {ok, {pid(), rw}}.
 own(Grants, Args) ->
-    supervisor:start_child(Grants, [Args, #{rights => rw}]).
+    owned(supervisor:start_child(Grants, [Args, ?OWN])).
+
+owned({ok, Pid}) -> {ok, facet(Pid, ?OWN)}.
 
 -doc """
 The facet of the grant Pid as the grantee's registry holds it (erx:facet/0):

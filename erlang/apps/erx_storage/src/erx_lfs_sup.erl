@@ -56,16 +56,7 @@ start_grant(Name) ->
             ignore;
         _ ->
             ok = code:ensure_modules_loaded([erx_fs, erx_fs_grant, erx_lfs, erx_littlefs]),
-            {ok, Grant} = erx_fs:start_link(erx_lfs, {Name, data}, rw),
-            _ = erx_ns:unmount(?POINT),
-            case erx_ns:mount(Grant, ?POINT, [{tree, <<"data">>}, rw]) of
-                ok ->
-                    {ok, Grant};
-                {error, _} = Error ->
-                    unlink(Grant),
-                    exit(Grant, kill),
-                    Error
-            end
+            erx_fs:start_mounted(erx_lfs, {Name, data}, rw, ?POINT, <<"data">>)
     end.
 
 -doc false.

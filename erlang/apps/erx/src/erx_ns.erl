@@ -87,7 +87,7 @@
 %% A change as the process receives it, from this module's functions or from any other
 %% process, so every field is checked before it changes anything. A bind's source is
 %% the place it reached, an absolute path of plain names.
--type request() :: {mount, To :: binary(), pid() | {erofs, app} | {facet, atom()}, [option()]}
+-type request() :: {mount, To :: binary(), {pid(), rights()} | {erofs, app} | {facet, atom()}, [option()]}
                  | {bind, From :: binary(), To :: binary(), [] | [ro]}
                  | {unmount, To :: binary()}.
 %% A change once checked against the table, with its paths as plain names.
@@ -109,10 +109,13 @@ start_link() ->
 start_link(Prim) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Prim, []).
 
-%% Mounts the grant Pid at To, a local process. Options name the tree the grant roots in,
-%% {tree, Name}, once, and at most one of ro, rw and rx, ro when none is given. The
-%% caller started the grant and names the rights it started it with, or fewer; nothing
-%% here compares them with the grant's (docs/design-files.md, "Rights beneath an entry").
+%% Mounts at To the grant {Pid, Rights}, a local process and the rights it was started
+%% with, as what started it builds the pair (erx_fs:start_mounted/5, erx_fs_grants:own/1,2,
+%% whose answer is erx_fs_grants:facet/2's value). Options name
+%% the tree the grant roots in, {tree, Name}, once, and at most one of ro, rw and rx, ro
+%% when none is given; the entry has the lesser of those and Rights (erx_path:lesser/2),
+%% as a facet's entry has at each resolution, so it never exceeds its grant's
+%% (docs/design-files.md, "Rights beneath an entry").
 %%
 %% Or mounts at To, with the same options, the facet Name, {facet, Name}: whatever grant
 %% the domain's facet registry holds for Name when a path under To is resolved, a grant
@@ -120,11 +123,10 @@ start_link(Prim) ->
 %%
 %% Or mounts at To the session's own package, {erofs, app}, the image of the file the
 %% app's record names, read-only with no option or ro, or read and execute with rx.
--spec mount(pid() | {facet, atom()} | {erofs, app}, file:name_all(), [option()]) -> ok | {error, reason()}.
-mount({erofs, Source}, To, Options) ->
-    request(fun() -> {mount, text(To), {erofs, Source}, Options} end);
-mount(Pid, To, Options) ->
-    request(fun() -> {mount, text(To), Pid, Options} end).
+-spec mount({pid(), rights()} | {facet, atom()} | {erofs, app}, file:name_all(), [option()]) ->
+          ok | {error, reason()}.
+mount(Source, To, Options) ->
+    request(fun() -> {mount, text(To), Source, Options} end).
 
 %% Mounts each facet of Names, the facets the domain holds or the manifest grants it
 %% (erx:caps/0 and erx:granted/0, or the manifest itself in the system domain), at its
@@ -144,14 +146,15 @@ mount_facets([Name | Rest]) ->
 mount_facet(none, _Name) -> ok;
 mount_facet({Point, Options}, Name) -> mount({facet, Name}, Point, Options).
 
-%% Mounts Grant, a grant of the tree Name that this domain serves for its own domain
-%% (erx_fs_grants:own/1,2), at Name's place, where a domain that holds the facet Name mounts it, after removing
+%% Mounts Grant, {Pid, Rights}, a grant of the tree Name that this domain serves for its
+%% own domain (erx_fs_grants:own/1,2), at Name's place, where a domain that holds the
+%% facet Name mounts it, with the place's rights lowered to Rights (mount/3), after removing
 %% any entry an earlier instance of the tree left there (docs/design-shell.md,
 %% "Interfaces"). So the system domain reaches each files service it serves by the path
 %% its sessions do. A Name with no place fails to match: a tree that serves itself has
 %% one.
--spec mount_own(atom(), pid()) -> ok | {error, reason()}.
-mount_own(Name, Grant) when is_pid(Grant) ->
+-spec mount_own(atom(), {pid(), rights()}) -> ok | {error, reason()}.
+mount_own(Name, Grant) ->
     {Point, Options} = place(Name),
     _ = unmount(Point),
     mount(Grant, Point, Options).
@@ -270,9 +273,10 @@ watched(Table, Monitors) ->
 %% A change checked against the table: a mount's options before its point and its tree
 %% after it, a bind's source before its point.
 -spec checked(term(), table()) -> {ok, checked()} | {error, reason()}.
-checked({mount, To, Pid, Options}, Table) when is_pid(Pid), node(Pid) =:= node() ->
+checked({mount, To, {Pid, Granted}, Options}, Table) when is_pid(Pid), node(Pid) =:= node() ->
     maybe
-        {ok, Tree, Rights} ?= mount_options(Options, undefined, undefined),
+        {ok, Tree, Asked} ?= mount_options(Options, undefined, undefined),
+        {ok, Rights} ?= lowered(Asked, Granted),
         {ok, Point} ?= new_point(To, Table),
         ok ?= tree(Tree),
         {ok, {mount, Point, {grant, Pid, Tree}, Rights}}
@@ -321,6 +325,14 @@ mount_options([Rights | Rest], Tree, undefined) when Rights =:= ro; Rights =:= r
     mount_options(Rest, Tree, Rights);
 mount_options(_Options, _Tree, _Rights) ->
     {error, einval}.
+
+%% A grant pid's entry: the lesser of the rights its mount asked and those its grant was
+%% started with; einval for a grant of rights erx_path:lesser/2 does not order.
+lowered(Asked, Granted) ->
+    case erx_path:lesser(Asked, Granted) of
+        none -> {error, einval};
+        Rights -> {ok, Rights}
+    end.
 
 %% An image is never written: its mount is ro, or rx to run what it holds.
 image_rights([]) -> {ok, ro};

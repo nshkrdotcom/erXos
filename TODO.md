@@ -7210,14 +7210,6 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
-* [Medium] files, a grant pid's mount rights, `erlang/apps/erx/src/erx_ns.erl` (`checked/2`;
-  [design-files.md](docs/design-files.md#building-binding-and-mounting), "Rights beneath an entry"): a
-  mount of a local grant pid takes its rights from its options and compares them with nothing, so that the
-  entry's rights stay within the grant's rests on each caller (`erx_lfs_sup`, `erx_ramfs_sup`, `erx_procfs`,
-  `erx_devfs`, `erx_ns:mount_own/2`), all correct; one that mounts an `rw` grant `rx` would let the image
-  check run a file written through it. Only the domain's own code mounts by pid. Make the mount take the
-  grant as `{Pid, Rights}` from what started it (`erx_fs_grants:facet/2`'s value) and lower the entry with
-  `erx_path`'s `lesser/2`, as a facet's entry is.
 * [High] files, the app mount's rights, `tools/lib/erx/manifest.rb` (`app_facets`;
   [design-files.md](docs/design-files.md#building-binding-and-mounting)): the app template's `packages`
   row is `ro`, so `erx_ns` refuses an installed package's `rx` `/app` mount with `eacces` and no

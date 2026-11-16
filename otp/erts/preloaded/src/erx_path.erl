@@ -49,7 +49,7 @@ functions and the two callbacks, and reads no state but its arguments, so a
 table changed while it runs is not seen by it.
 """.
 
--export([resolve/6, cwd/1, target_place/1, listing/3, with_facets/2]).
+-export([resolve/6, cwd/1, target_place/1, listing/3, with_facets/2, lesser/2]).
 -export_type([name/0, place/0, entry/0, table/0, op/0, flags/0, kind/0,
               reply/0, callbacks/0, action/0, resume/0]).
 
@@ -128,7 +128,8 @@ that moment, `{grant, Pid, Tree}`, with the lesser of the rights its mount
 asked and those the registry's facet carries, or is `ended`, which answers
 `eio`, when the registry holds no files facet `{Pid, Rights}` for `Name` or
 is no map. So a facet entry's rights never exceed its grant's, as an EROFS
-entry's do (design-files.md, "Rights beneath an entry"); a grant pid's entry has the rights its mount named. Every other
+entry's and a grant pid's do (design-files.md, "Rights beneath an entry");
+`erx_ns` lowers a grant pid's entry by `lesser/2` when it mounts it. Every other
 entry is as the table holds it. A facet's mount names the facet, never a
 pid, so a re-grant serves the next lookup and nothing has to follow the
 registry. This is the one function here that reads a provider, kept here
@@ -154,11 +155,17 @@ with_facets(Table, Facets) ->
 on_grant(Entry, _Pid, _Tree, none) -> Entry#{provider := ended};
 on_grant(Entry, Pid, Tree, Rights) -> Entry#{provider := {grant, Pid, Tree}, rights := Rights}.
 
-%% The lesser of the rights an entry asked and its grant's: ro lies below rw and below
-%% rx, and rw and rx, which no grant holds together (F6), meet at ro. Rights outside the
-%% table are none, so a member files_rights gains is never taken for ro; erx_ns_tests
-%% orders every pair of ?ERX_FILES_RIGHTS_MEMBERS, so such a member fails that test
-%% until the table orders it.
+-doc """
+The lesser of the rights an entry asked and its grant's, the one order of
+rights both kinds of grant entry are lowered by: a facet's here at each
+resolution, a grant pid's in `erx_ns` when it is mounted. `ro` lies below
+`rw` and below `rx`, and `rw` and `rx`, which no grant holds together (F6),
+meet at `ro`. Rights outside the table are `none`, so a member
+`files_rights` gains is never taken for `ro`; erx_ns_tests orders every pair
+of `?ERX_FILES_RIGHTS_MEMBERS`, so such a member fails that test until the
+table orders it.
+""".
+-spec lesser(term(), term()) -> ro | rw | rx | none.
 lesser(ro, ro) -> ro;
 lesser(ro, rw) -> ro;
 lesser(ro, rx) -> ro;
