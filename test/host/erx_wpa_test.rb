@@ -39,7 +39,11 @@ class ErxWpaTest < Minitest::Test
              replacement: '', failure: /key_data_padding_ends_the_elements_test_.*failed/m),
     Seed.new(fault: "the IGTK's key id bound dropped", path: KEY,
              anchor: '    require(Id >= ?ERX_WPA_IGTK_KEY_ID_MIN andalso Id =< ?ERX_WPA_IGTK_KEY_ID_MAX, {key_id, igtk}),',
-             replacement: '    ok,', failure: /key_data_refuses_malformed_kdes_test_.*failed/m)
+             replacement: '    ok,', failure: /key_data_refuses_malformed_kdes_test_.*failed/m),
+    Seed.new(fault: "HMAC-SHA1's MIC cut from its end", path: KDF,
+             anchor: 'binary:part(crypto:mac(hmac, sha, Kck, Frame), 0, ?ERX_WPA_MIC_SIZE)',
+             replacement: 'binary:part(crypto:mac(hmac, sha, Kck, Frame), 4, ?ERX_WPA_MIC_SIZE)',
+             failure: /hmac_sha1_mic_matches_rfc2202_test_.*failed/m)
   ].freeze
 
   def test_eunit_cases_pass

@@ -1055,8 +1055,13 @@ firmware, which starts with none.
 * **Message 1** is taken in `keys` or `open`, since an access point may
   rekey with a new message 1 (`:201-208`), with a counter above the
   watermark. The station draws its SNonce from `crypto:strong_rand_bytes/1`,
-  sets the pending PTK and answers message 2 with its RSN element. The
-  watermark does not move.
+  sets the pending PTK and answers message 2 with its RSN element and,
+  when its association request carried one, its RSNXE, each as that
+  request carried it (`wpa.c:1107-1110`): the access point compares
+  both with the association request's and deauthenticates on a
+  difference (`wpa_auth.c:4085-4099`). For erXos's AKMs the station's
+  RSNXE is the hash-to-element bit of an SAE join and is absent for PSK
+  (`wpa_ie.c:416-479`). The watermark does not move.
 * **Message 3** is taken only with a pending PTK; a counter above the
   watermark; the pending ANonce (`:395-398`); a valid MIC under the
   pending PTK's KCK (`:403-409`); encrypted key data that unwraps under

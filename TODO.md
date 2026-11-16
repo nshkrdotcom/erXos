@@ -7398,16 +7398,14 @@ document's "residual risks accepted" paragraph.
 
 * [Medium] WiFi supplicant cores (`erlang/apps/erx_wifi`, `erx_wpa_kdf`, `erx_wpa_key`;
   [design-wifi.md](docs/design-wifi.md#the-supplicant)), left by the first slice:
-  - message 2 carries only the RSN element; wpa_supplicant adds the association's RSNXE
-    (`rsn_supp/wpa.c:1107-1110`) and hostapd deauthenticates when it is missing
-    (`src/ap/wpa_auth.c:4085-4099`), so SAE with hash-to-element needs `build(message_2, ...)`
-    to take the association's elements, and design-wifi.md's "answers message 2 with its RSN
-    element" the same correction;
-  - the HMAC-SHA1-128 MIC and the bytes the MIC covers have no independent oracle: add an
-    RFC 2202 vector cut to 16 bytes and a recorded hostapd message 3 checked through
-    `decode`, `mic_input` and `check_mic`, each with a seeded fault;
-  - the modules' header comments become `-moduledoc` and each export gets a `-doc`
-    (docs/style.md, Erlang);
+  - the bytes the MIC covers have no independent oracle: a recorded message 3 from hostapd
+    (a capture, or one built by hostapd's own code on the host) checked through `decode`,
+    `mic_input` and `check_mic`, with a seeded fault; wpa_supplicant 2.12's tarball carries
+    no such frame (its hwsim tests are not in it);
+  - the join slice gives `build(message_2, ...)` the station's own RSNXE, the hash-to-element
+    bit of an SAE join, exactly as its association request carried it;
+  - `build/4` takes an untyped `map()`: a caller that leaves out a key gets a `function_clause`
+    whose arguments carry the KCK; a map type per message kind lets Dialyzer catch it;
   - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
     (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
     wpa_supplicant's behavior);

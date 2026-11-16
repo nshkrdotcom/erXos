@@ -6,7 +6,8 @@
 %% wpa_supplicant 2.12 carries them in src/crypto/crypto_module_tests.c (lines
 %% 1158-1257); the KDF-SHA256 PTK vector of IEEE Std 802.11-2024 J.13, as
 %% src/common/common_module_tests.c carries it (lines 685-737); AES-CMAC against
-%% RFC 4493, section 4; and AES key unwrap against RFC 3394, section 4.
+%% RFC 4493, section 4; HMAC-SHA1-128 against RFC 2202, section 3; and AES key
+%% unwrap against RFC 3394, section 4.
 -module(erx_wpa_kdf_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -70,6 +71,19 @@ cmac_mic_matches_rfc4493_test_() ->
             [{"6bc1bee22e409f96e93d7e117393172a", "070a16b46b4d4144f79bdd9dd04a287c"},
              {"6bc1bee22e409f96e93d7e117393172aae2d8a571e03ac9c9eb76fac45af8e5130c81c46a35ce411",
               "dfa66747de9ae63030ca32611497c827"}]].
+
+%% RFC 2202's HMAC-SHA-1 test cases 1, 2, 5 and 6, cut to their first 16 bytes, as the
+%% MIC of an AKM whose MIC is HMAC-SHA1-128; case 5 is the RFC's own truncation case,
+%% whose digest-96 is a prefix of the MIC.
+hmac_sha1_mic_matches_rfc2202_test_() ->
+    Large = binary:copy(<<16#aa>>, 80),
+    [?_assertEqual(binary:part(h(Digest), 0, 16), erx_wpa_kdf:mic(?ERX_IEEE80211_AKM_PSK, Key, Data))
+     || {Key, Data, Digest} <-
+            [{binary:copy(<<16#0b>>, 20), <<"Hi There">>, "b617318655057264e28bc0b6fb378c8ef146be00"},
+             {<<"Jefe">>, <<"what do ya want for nothing?">>, "effcdf6ae5eb2fa2d27416d5f184df9c259a7c79"},
+             {binary:copy(<<16#0c>>, 20), <<"Test With Truncation">>, "4c1a03424b55e07fe7f27be1d58bb9324a9a5a04"},
+             {Large, <<"Test Using Larger Than Block-Size Key - Hash Key First">>,
+              "aa4ae5e15272d00e95705637ce8a3b55ed402112"}]].
 
 check_mic_refuses_a_changed_or_short_mic_test() ->
     Kck = binary:copy(<<7>>, 16),

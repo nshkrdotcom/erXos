@@ -1,17 +1,20 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The EAPOL-Key codec (docs/design-wifi.md, "The supplicant" and "Untrusted input"):
-%% decode/1 reads a frame an access point sent through the chip, key_data/1 reads its
-%% key data's elements and KDEs once erx_wpa_kdf has unwrapped them, and build/4 makes
-%% the station's messages 2 and 4 and group message 2 with their MIC. Every byte read
-%% here is hostile: each length is checked before it is used, nothing creates an atom,
-%% and a malformed frame is an error naming the rule it broke, never a crash.
-%%
-%% The layouts are abi/formats/ieee80211.txt's, read through erx_abi_packed. This
-%% module decides nothing about the handshake: which message a frame is, its replay
-%% counter's order and its MIC's validity are the station's, which holds the keys.
 -module(erx_wpa_key).
+
+-moduledoc """
+The EAPOL-Key codec (docs/design-wifi.md, "The supplicant" and "Untrusted input"):
+decode/1 reads a frame an access point sent through the chip, key_data/1 reads its
+key data's elements and KDEs once erx_wpa_kdf has unwrapped them, and build/4 makes
+the station's messages 2 and 4 and group message 2 with their MIC. Every byte read
+here is hostile: each length is checked before it is used, nothing creates an atom,
+and a malformed frame is an error naming the rule it broke, never a crash.
+
+The layouts are abi/formats/ieee80211.txt's, read through erx_abi_packed. This
+module decides nothing about the handshake: which message a frame is, its replay
+counter's order and its MIC's validity are the station's, which holds the keys.
+""".
 
 -include("generated/erx_abi.hrl").
 
@@ -37,8 +40,10 @@
 
 -define(EAPOL_HEADER, ?ERX_EAPOL_KEY_OFF_DESCRIPTOR).
 
-%% A received EAPOL frame to its EAPOL-Key fields, or the rule it broke. Bytes after
-%% the EAPOL body, an Ethernet frame's padding, are not part of the frame.
+-doc """
+A received EAPOL frame to its EAPOL-Key fields, or the rule it broke. Bytes after
+the EAPOL body, an Ethernet frame's padding, are not part of the frame.
+""".
 -spec decode(binary()) -> {ok, key()} | {error, error()}.
 decode(Bytes) when is_binary(Bytes) ->
     try
@@ -73,17 +78,21 @@ fields(Bytes) ->
       key_length => KeyLength, replay_counter => Counter, nonce => Nonce, rsc => Rsc,
       mic => Mic, data => Data, frame => Frame}.
 
-%% The bytes the MIC covers: the frame with its MIC field zero.
+-doc """
+The bytes the MIC covers: the frame with its MIC field zero.
+""".
 -spec mic_input(key()) -> binary().
 mic_input(#{frame := Frame}) ->
     <<Head:?ERX_EAPOL_KEY_OFF_MIC/binary, _:?ERX_WPA_MIC_SIZE/binary, Tail/binary>> = Frame,
     <<Head/binary, 0:(?ERX_WPA_MIC_SIZE * 8), Tail/binary>>.
 
-%% Plain key data, as sent or as unwrapped, to the elements the station uses. A KDE of
-%% another type or OUI is skipped; a GTK or IGTK KDE of a length other than CCMP-128's
-%% and BIP-CMAC-128's, or a second one, is an error. The padding of encrypted key
-%% data, 0xdd then zero bytes, is the sequence's end marker in
-%% abi/formats/ieee80211.txt, so the walk reads nothing after its start.
+-doc """
+Plain key data, as sent or as unwrapped, to the elements the station uses. A KDE of
+another type or OUI is skipped; a GTK or IGTK KDE of a length other than CCMP-128's
+and BIP-CMAC-128's, or a second one, is an error. The padding of encrypted key
+data, 0xdd then zero bytes, is the sequence's end marker in
+abi/formats/ieee80211.txt, so the walk reads nothing after its start.
+""".
 -spec key_data(binary()) -> {ok, key_data()} | {error, error()}.
 key_data(Bytes) when is_binary(Bytes) ->
     try
@@ -114,15 +123,22 @@ take({vendor, <<?ERX_WPA_KDE_OUI:24, Type, Kde/binary>>}, Data) when Type =:= ?E
 take({vendor, _Other}, Data) ->
     Data.
 
-%% The station's message of a kind, with its MIC under the KCK: message 2 carries the
-%% SNonce and the station's RSN element, and Secure on a rekey, when a PTK is already
-%% installed; message 4 and group message 2 carry neither nonce nor key data and set
-%% Secure. Each echoes the replay counter of the message it answers, as wpa_supplicant's
-%% replies do (rsn_supp/wpa.c, lines 655-690, 2420-2445 and 3140-3170).
+-doc """
+The station's message of a kind, with its MIC under the KCK: message 2 carries the
+SNonce, the station's RSN element and, when its association request carried one, its
+RSNXE (rsn_supp/wpa.c, lines 1107-1110), both as the association request carried
+them, since the access point compares each and deauthenticates on a difference
+(ap/wpa_auth.c, lines 4085-4099); and Secure on a rekey, when a PTK is already
+installed. Message 4 and group message 2 carry neither nonce nor key data and set
+Secure. Each echoes the replay counter of the message it answers, as wpa_supplicant's
+replies do (rsn_supp/wpa.c, lines 655-690, 2420-2445 and 3140-3170).
+""".
 -spec build(message_2 | message_4 | group_2, erx_wpa_kdf:akm(), <<_:128>>, map()) -> binary().
-build(message_2, Akm, Kck, #{replay_counter := Counter, snonce := SNonce, rsn := Rsn, rekey := Rekey}) ->
+build(message_2, Akm, Kck, #{replay_counter := Counter, snonce := SNonce, rsn := Rsn, rsnxe := Rsnxe,
+                             rekey := Rekey}) ->
     Secure = case Rekey of true -> ?ERX_WPA_KEY_INFO_SECURE; false -> 0 end,
-    frame(Akm, Kck, ?ERX_WPA_KEY_INFO_PAIRWISE bor Secure, Counter, SNonce, Rsn);
+    Data = case Rsnxe of none -> Rsn; _ -> <<Rsn/binary, Rsnxe/binary>> end,
+    frame(Akm, Kck, ?ERX_WPA_KEY_INFO_PAIRWISE bor Secure, Counter, SNonce, Data);
 build(message_4, Akm, Kck, #{replay_counter := Counter}) ->
     frame(Akm, Kck, ?ERX_WPA_KEY_INFO_PAIRWISE bor ?ERX_WPA_KEY_INFO_SECURE, Counter, zero_nonce(), <<>>);
 build(group_2, Akm, Kck, #{replay_counter := Counter}) ->

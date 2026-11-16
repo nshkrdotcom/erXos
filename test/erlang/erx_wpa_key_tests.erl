@@ -100,25 +100,29 @@ key_data_refuses_malformed_kdes_test_() ->
      ?_assertEqual({error, {duplicate, rsn}}, erx_wpa_key:key_data(<<(rsn())/binary, (rsn())/binary>>))].
 
 %% Message 2 for each AKM: Key Information of its version, pairwise and MIC, Secure
-%% only on a rekey; key length 0; the counter echoed; the SNonce; the RSN element as
-%% key data; a MIC over the frame with the MIC zero that checks under the KCK.
+%% only on a rekey; key length 0; the counter echoed; the SNonce; the RSN element, and
+%% the station's RSNXE after it when it has one, as key data; a MIC over the frame with
+%% the MIC zero that checks under the KCK.
 message_2_carries_the_replys_fields_test_() ->
     [fun() ->
              SNonce = binary:copy(<<16#5a>>, 32),
              Frame = erx_wpa_key:build(message_2, Akm, ?KCK,
-                                       #{replay_counter => 7, snonce => SNonce, rsn => rsn(), rekey => Rekey}),
+                                       #{replay_counter => 7, snonce => SNonce, rsn => rsn(), rsnxe => Rsnxe,
+                                         rekey => Rekey}),
              {ok, Key} = erx_wpa_key:decode(Frame),
              Secure = Rekey,
              ?assertMatch(#{descriptor_version := Version, pairwise := true, mic_present := true, secure := Secure,
                             ack := false, install := false, key_length := 0, replay_counter := 7}, Key),
              ?assertEqual(SNonce, maps:get(nonce, Key)),
-             ?assertEqual(rsn(), maps:get(data, Key)),
+             ?assertEqual(Data, maps:get(data, Key)),
+             ?assertMatch({ok, #{rsnxe := Rsnxe}}, erx_wpa_key:key_data(Data)),
              <<1, 3, _/binary>> = Frame,
              ?assert(erx_wpa_kdf:check_mic(Akm, ?KCK, erx_wpa_key:mic_input(Key), maps:get(mic, Key)))
      end
      || {Akm, Version} <- [{?ERX_IEEE80211_AKM_PSK, 2}, {?ERX_IEEE80211_AKM_PSK_SHA256, 3},
                            {?ERX_IEEE80211_AKM_SAE, 0}],
-        Rekey <- [false, true]].
+        Rekey <- [false, true],
+        {Rsnxe, Data} <- [{none, rsn()}, {<<244, 1, 16#20>>, <<(rsn())/binary, 244, 1, 16#20>>}]].
 
 message_4_and_group_2_carry_no_nonce_or_data_test() ->
     {ok, Four} = erx_wpa_key:decode(erx_wpa_key:build(message_4, ?ERX_IEEE80211_AKM_PSK, ?KCK, #{replay_counter => 8})),
