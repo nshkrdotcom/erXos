@@ -284,7 +284,10 @@ manifest holds:
 * **Each configured domain:** its name; its principal; its kind (`service`
   or `secret`); its runtime image and release, as boot-image entries; its
   own and outer budgets, grant, lane size, `connections` quota and crash
-  area; whether it holds `SPACES`, and its sub-space group's grant; its
+  area; whether it holds `SPACES`, and its sub-space group's grant; on
+  Fiasco, its priority band, its CPU set, and its thread, object and
+  mapping limits, which bound what it can make the root hold for it
+  ([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14); its
   restart intensity, the seconds its runtime has to report ready (its
   boot timeout, 60 unless the row says otherwise, a default sessions and
   create requests share, long enough for an emulated machine), whether

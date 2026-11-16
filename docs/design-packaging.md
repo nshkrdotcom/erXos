@@ -82,7 +82,11 @@ Decisions every reader of this document needs:
 * **An app names what it needs; the `apps` row bounds it.** The
   declaration names services, an amount of memory and its code. It has
   no field for a facet parameter, a quota or a grant, so nothing an app
-  declares can reach past the row. Admission is one pure Erlang function
+  declares can reach past the row. On Fiasco an app's session also has
+  thread, object and mapping limits (FD14 of
+  [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)),
+  which come from the `apps` row as its memory does, so the declaration
+  names none of them. Admission is one pure Erlang function
   that the build runs on the host and the system domain runs on the
   machine.
 * **Memory is the kernel's to refuse.** All apps draw on one budget, the

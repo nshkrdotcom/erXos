@@ -1026,7 +1026,8 @@ budget, created and filled through a scratch mapping before the swap, so
 it is funded before anything is released; the swap then releases the
 module's mapping, reserves its range again and maps the object there.
 Between the release and the new mapping the module's code is unmapped,
-and that window is a residual of Fiasco, recorded and not worked
+and that window is a published downside of Fiasco (FD34 of
+[design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)), not worked
 around, with two ways to end the domain: a refusal at either of the last
 two steps, which cannot be undone in user mode, so the runtime ends the
 domain with a diagnostic naming the module; and a read of the module's

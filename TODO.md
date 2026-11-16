@@ -56,7 +56,7 @@ it; git history is the record of completed work.
   packages' session outer budgets in the `apps` budget sum, an enabled row meeting property 17's display
   and planning clauses, and admission on the host (`erx_app_admit:admit/3` on the packed manifest);
   clause 1's inspect scope; clause 2's counts in the principal table, the session-name atoms and each
-  server's connections, which Fiasco check sums for no principal (QEMU virt's manifest reckons the
+  server's connections, which the Phase 1 manifest check sums for no principal (QEMU virt's manifest reckons the
   storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
   and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
   over distinct grantee and server pairs against each server's quota and `max_connections`); and the
@@ -438,9 +438,12 @@ it; git history is the record of completed work.
 * [High] R1 on Fiasco, `liberx/backend/fiasco` and the manifest: priority bands, CPU sets and per-domain
   thread limits from each domain's manifest row, applied at every thread's start, a create past the limit
   `ERX_ELIMIT` ([design-fiasco.md](docs/design-fiasco.md#bands)).
-* [Medium] R1 on Fiasco, `liberx/backend/fiasco`: whole-space pause and resume by the root, stopping each
-  thread by an artificial exception and answering its fault only at the resume, for `fork`'s copy and job
-  control ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco`: whole-space pause and resume by the root, for `fork`'s copy
+  and job control: the request answered only once every thread is held, the root never waiting for a thread;
+  each thread not already held stopped by `ex_regs` with `Exr_cancel` and `Exr_trigger_exception`, its
+  exception reply kept until the resume, `liberx`'s wait and call stubs retrying a cancelled wait or call, and a
+  space whose threads do not all arrive within the deadline ended, with no Fiasco patch
+  ([design-fiasco.md](docs/design-fiasco.md#threads-bands-and-stops), FD21).
 * [High] R1 on Fiasco, `liberx/backend/fiasco`: DMA spaces behind the IOMMU for each confined device, and
   MSIs through Fiasco's interrupt manager; whether QEMU's SMMUv3 works with Fiasco's binding under HVF is
   unverified ([design-fiasco.md](docs/design-fiasco.md#devices)).
@@ -451,10 +454,12 @@ it; git history is the record of completed work.
 * [Medium] R1 on Fiasco, `fiasco/kernel`: Fiasco's map refuses a user mapping writable and executable at
   once, with a test whose seeded failure removes the check; an estimate of tens of lines, unverified
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
-* [High] R1 on Fiasco, `tools/lib/erx/fiasco_config.rb`: the release configuration (the kernel debugger off,
-  every option without a consumer off) and its check, which fails a release build with the debugger on; the
-  landing gate boots the release configuration beside the development one
-  ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] R1 on Fiasco, `tools/lib/erx/fiasco_config.rb`: the release configuration as an exact allowlist, as
+  the development one is (the debugger off; the fixed-priority scheduler, `EXPLICIT_REPLY_CAPS` and `IOMMU`
+  kept; `PAGEFAULT_TRAMPOLINE`, `ALIEN`, `IRQ_DIRECT_INJECT`, `UART_CHECKSUM` and every other option without a
+  consumer off), and its check, which fails an option off the list and a release build with the debugger on;
+  the landing gate boots the release configuration once, a smoke test, and the milestone gate runs the QEMU
+  suites on it ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
 * [High] R1 on Fiasco, `test/guest`: the system-call fuzz campaign, a test domain invoking every slot of its
   object space with random operations, words and typed items from many threads, checking that the root and a
   neighbour still answer and no outside memory changed; its seeded failure is a removed bound in an IRQ
@@ -463,9 +468,35 @@ it; git history is the record of completed work.
   Kernkonzept's `fiasco` commits since the last one recorded, backporting each fix reachable in erXos's
   configuration ([design-fiasco.md](docs/design-fiasco.md#upstream-security-fixes)).
 * [Medium] R1 on Fiasco, the release build: a check that fails when any file of the release image's link
-  closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, its seeded
-  failure a release build with the debugger on
+  closure (kernel, `bootstrap`, `sigma0`) is recorded with a license that is not permissive, headers
+  included, with two seeded failures: a release build with the debugger on, and one with the original
+  `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it; the check also
+  settles whether the toolchain's `libgcc` links into `bootstrap` or `sigma0` (`fiasco/mk/mk/Makeconf:505-506`)
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
+* [High] R1 on Fiasco, `liberx/backend/fiasco` and `abi/manifest.txt`: per-domain object and mapping limits
+  beside the thread limit, in each domain's manifest row (an app's session takes its limits from the `apps`
+  row, as [design-packaging.md](docs/design-packaging.md) says), with no
+  table of the root's shared between domains; the machine-wide tables (`irq.c:60`'s `irq_objects`, the page
+  index's labels) become shares of each domain's row, a create or map past a limit `ERX_ELIMIT`, and the domain
+  service admits a domain only when the root's kernel memory and tables have its cost left
+  ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets), FD14;
+  [design-system.md](docs/design-system.md#the-manifest) lists the fields).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco`: the root takes a task's free slots oldest-freed first, with the
+  *Slot reuse* case ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots), FD1).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:747-750`): a memory object records its
+  `ERX_MEM_JIT` flag at its create, and `erx_mem_copy` refuses a JIT object with `ERX_ETYPE`, as the call table
+  says ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:515-526`): `erx_image_map` answers
+  `ERX_ENOMEM` for any failure of the slice lookup or of a segment's share or load; pass on the slice's and the
+  reserve's own statuses ([design-fiasco.md](docs/design-fiasco.md#the-call-table)).
+* [Medium] R1 on Fiasco, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_WALL` case): the
+  setter takes no handle, its dispatch passes the body the request's `wall_ns` alone, and it checks no right,
+  so any task sets the wall clock. Make it a call on the time page's handle that checks `WRITE` and answers
+  `ERX_ERIGHTS` without it, with the release case "the wall clock"
+  ([design-fiasco.md](docs/design-fiasco.md#the-releases-cases), [design-time.md](docs/design-time.md#phase-1)).
+* [High] R1 on Fiasco, `fiasco/kernel`: FD32, hardening Fiasco's AArch64 entry against branch-target and
+  branch-history injection, is an open decision; the recommendation is to carry the patch, priced with the
+  null-request bench ([design-fiasco.md](docs/design-fiasco.md#open-decisions)).
 
 ## Stopgap replacements
 
@@ -538,10 +569,10 @@ it; git history is the record of completed work.
   `erx_entry_step` (`docs/design-kernel.md`), with a build check that no
   other route into the kernel exists (the pending `vector-route` rule).
   Phase 1 uses Fiasco's own routes and has none of this.
-* [Medium] stopgap, untested glue paths: `erx_log_lock` has never run under
+* [Medium] Fiasco backend, untested glue paths: `erx_log_lock` has never run under
   contention, since the probe has one thread and no call makes another, and
   nothing exercises the alien and vCPU-user guard in `Thread::arm_esr_entry`.
-* [Medium] stopgap, `erx_debug_log` on the target: until the root service
+* [Medium] Fiasco backend, `erx_debug_log` on the target: until the root service
   lands, `liberx/backend/fiasco/log.c` runs the kernel's dispatch core in the
   root task with one static public UTCB, a hand-written copy of the generated
   stub, and `liberx/backend/fiasco/arch/aarch64/generated/trap.c` and `utcb.c`
@@ -558,14 +589,14 @@ it; git history is the record of completed work.
   names `Space::erx_log`, which is gone, so it no longer compiles.
   `tools/lib/erx/glue_imports.rb`'s `OUT_OF_BUILD` repeats
   `Modules.generic` by hand.
-* [Medium] stopgap, native boot's seeded failures: `user_ptr` left 0, the
+* [Medium] Fiasco backend, native boot's seeded failures: `user_ptr` left 0, the
   archive's sub-type removed and shutdown removed were each run by hand and
   failed as [the verification table](docs/design-fiasco.md#verification) says;
   nothing in the tree repeats them, as `check-qemu-mutant` does for the debug
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
-* [Low] stopgap, the crash suite's end-path row: `erx_machine_end` runs only with
+* [Low] Fiasco backend, the crash suite's end-path row: `erx_machine_end` runs only with
   `ERX_END_OFF`; under `-no-reboot` both ends exit QEMU, so the suite cannot tell
   them apart, and the refusal of a bad `how` has no case.
 * [Low] tooling, `tools/lib/erx/native_crash.rb`: the pc check asks only that the pc is at or
@@ -599,7 +630,7 @@ it; git history is the record of completed work.
   entry and the Erlang log reader, which arrive with M3; each gets its body and a `test/guest/function_api` row then.
   The pool counts pages for the root's one budget only, which the budget topic names `ERX_CAP_SELF`; a count for
   each budget follows `erx_budget_create`'s body.
-* [Low] stopgap, `test/guest/native_task/guest.c`, `request_against_exit`: no seed shows the dropped-request
+* [Low] Fiasco backend, `test/guest/native_task/guest.c`, `request_against_exit`: no seed shows the dropped-request
   count can move, as the thread deletion seed stops the suite at its earlier `service` case.
 * [Low] Fiasco backend, `liberx/backend/fiasco`, fault gates: each space's `dropped` counter of records lost after its gate was
   destroyed has no reader until the inspector reads it at SV4.
@@ -614,13 +645,13 @@ it; git history is the record of completed work.
   receive on into a free slot, and free the kept slots once the task's teardown has deleted its threads, whose
   cancelled calls empty them. A gateless fault or a thread that stops its own task (`ERX_FIASCO_NO_REPLY`) warns
   the same way when the killed thread has not yet emptied its slot by the service's next receive.
-* [Low] stopgap, `tools/lib/erx/native_semaphore_race.rb`: the race runs under TCG at 4 CPUs only, as every
+* [Low] Fiasco backend, `tools/lib/erx/native_semaphore_race.rb`: the race runs under TCG at 4 CPUs only, as every
   seed under `make check-native-seeds` does, and no gate runs it under HVF.
 * [Medium] Fiasco backend, `test/fixtures/fiasco_park_driver.c`: the exhaustive model reads the core rather than
   the status mirror, so `parked` not mirrored and a slot epoch mirrored relaxed pass every mode. It has one waker in flight, and judges a lost wake only with
   no event or timeout left, so a stuck absorb with no work passes. A two-waker variant and a check of every
   quiet state passed the core by hand (623,596 and 287,527 states) and should replace them.
-* [Low] stopgap, `test/guest/native_threads/guest.c` and `test/guest/function_api/cases.c`,
+* [Low] Fiasco backend, `test/guest/native_threads/guest.c` and `test/guest/function_api/cases.c`,
   `park_timeout_races_wake`: between its racing parks and its quiet ones the helper waits through `settle`,
   a umtx wait on the semaphore the park shares, so an up the race left over returns that wait early and is
   gone before the quiet park looks. The quiet park catches only an up arriving after `settle`; a wait that
@@ -633,7 +664,7 @@ it; git history is the record of completed work.
   object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
   root maps RX into a child made without `ERX_SPACE_JIT`. No single mapping is ever writable and executable,
   but code-making does not yet follow from the image.
-* [Low] stopgap, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
+* [Low] Fiasco backend, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
   `mprotect` over one `ENOTSUP`, where FreeBSD does both; nothing reaches it until musl maps objects.
 * [Low] stopgap, `liberx/backend/fiasco/runtime_entry.c` (`tree_facts`): the root accepts the firmware's tree
 * [Medium] Fiasco backend, `liberx/backend/fiasco/service_task.c` (`erx_fiasco_task_mem_dma_body`) and the contiguous
@@ -651,7 +682,7 @@ it; git history is the record of completed work.
   library's view, which the program's start builds (`library_view`) and the root without a program
   (`root_no_program.c`, which shares `root.c`) never builds. Accepting in step 4 alone would only move a refused
   tree's stop earlier. Build the library's view in step 4, in `root_boot`, and accept the tree there with it.
-* [Low] stopgap, `liberx/system/dom_apply.c` (`apply_give_step`): `erx_mem_create_contiguous_in` places a
+* [Low] Fiasco backend, `liberx/system/dom_apply.c` (`apply_give_step`): `erx_mem_create_contiguous_in` places a
   device's run only inside its DMA range, and a holder's give whose range does not cover the pool (`ERX_ERANGE`)
   fails, so the holder's domain is refused, where the root's own give (`device_memory` in
   `liberx/backend/fiasco/runtime_entry.c`) gives the device no memory with the reason `outside` and
@@ -659,7 +690,7 @@ it; git history is the record of completed work.
   programmed I/O. It fails safe, and does not happen on a supported board: the pool is the lowest RAM `sigma0`
   has free, inside every range the manifests' trees give. An object the check after creation still refuses
   stays unused for the boot's life, in the root's table or, unnamed by its record, in the holder's.
-* [Medium] stopgap, `liberx/system/dom_apply.c` (`apply_memory_inside`, `apply_given_words`): a holder's
+* [Medium] Fiasco backend, `liberx/system/dom_apply.c` (`apply_memory_inside`, `apply_given_words`): a holder's
   memory refused after it is made (`outside`) prints no line, while `tree_facts` already printed the row's
   range, and a refused `erx_mem_dma_addr` reads as no memory rather than as the backend error the root's own
   give stops on; [design-device-tree.md](docs/design-device-tree.md) ("Concurrency and failure") wants one
@@ -689,7 +720,7 @@ it; git history is the record of completed work.
   `erx_space_protect` over mapped registers or a mapped run returns `ERX_OK` and puts a fresh pool page there, and a decommit or release leaves the
   mapping reachable. No caller does either. Nothing tests a task that ends holding a physical or contiguous object, so `vm_give`'s address check and
   the index's room for run pages stay untested. A restarted driver spends device window pages and contiguous runs each life, since neither comes back.
-* [Low] stopgap, `liberx/backend/hosted/vm.c`: `erx_mem_create` and `erx_vm_map` have no hosted body, which the call table's row asks for, so
+* [Low] hosted backend, `liberx/backend/hosted/vm.c`: `erx_mem_create` and `erx_vm_map` have no hosted body, which the call table's row asks for, so
   `test/guest/function_api` holds no shared object's case and its device cases stay native alone.
 * [Low] `otp/erts/emulator/beam/erl_process.c`: the safe point of `docs/design-runtime.md`, "Scheduling", handles the ready list only: its
   capacity and urgency steps land with the adapter that publishes them.
@@ -792,7 +823,7 @@ it; git history is the record of completed work.
 * [Medium] `abi/manifest.txt`, `liberx/system/dom_core.c`, `erlang/apps/erx_display/src/erx_winfs.erl`, [A display's
   session](docs/design-display.md#a-displays-session): a display's manifest entry carries no `display_keymap`,
   `display_repeat_delay_ms`, `display_repeat_period_ms` or reserved chord, and the domain service puts none of
-  them in the display domain's environment, so `erx_winfs` starts the router with Fiasco defaults: keymap
+  them in the display domain's environment, so `erx_winfs` starts the router with its built-in defaults: keymap
   `us`, a repeat delay of 500 ms and a period of 126 ms, and no chord. Add the entry's fields, the environment
   variables and their reading, and check the repeat values against the entry's as the router's tests require.
 * [Medium] `test/erlang/erx_input_tests.erl`, [Verification and testing](docs/design-display.md#verification-and-testing)
@@ -1689,7 +1720,7 @@ it; git history is the record of completed work.
   `openjdk` (or take `ERX_JAVA`) and pass it to the build, failing with a diagnostic naming it.
 * [Low] tooling, `make check-reproducible`: both builds of OTP and musl run at one path, so a path
   of theirs that reached the image would not show.
-* [Low] stopgap, `tools/lib/erx/native_root.rb`: musl's headers are system headers to the root's compile, so a compile record leaves them out and nothing audits them for the root's objects.
+* [Low] Fiasco backend, `tools/lib/erx/native_root.rb`: musl's headers are system headers to the root's compile, so a compile record leaves them out and nothing audits them for the root's objects.
 * [Medium] Fiasco backend, `liberx/backend/fiasco/root.c`: the root writes no `erx_boot_info` page for a test task, though [Boot handoff](docs/design-fiasco.md#boot-handoff) says it does, and it seeds no `rng.c`.
 * [Medium] tooling, `tools/lib/erx/oracle_qemu.rb`: the suites' events reach the host on the
   console's serial line, which the kernel, the root and ERTS's C output also write, at any
@@ -1709,13 +1740,13 @@ it; git history is the record of completed work.
   per-entry test flags in the packer (ORed into the header, checked against the entries by
   `erx_index_check`); every packer then marks its test image, and the lexical
   `test-image-builder` check (`Checks::TEST_IMAGE_BUILDERS`) can go.
-* [Medium] stopgap, `tools/lib/erx/production_image.rb`: the root's link attributes `libl4sys.p.a`,
+* [Medium] Fiasco backend, `tools/lib/erx/production_image.rb`: the root's link attributes `libl4sys.p.a`,
   `libsigma0.a` and the boot cores whole, under a license the recipe states, and its dependency
   files leave out Fiasco's and the compiler's headers. The boot cores are stated as BSD-2-Clause
   though the root takes BLAKE3's objects from them (BLAKE3's text is present only through the
   audit and its header). `CoreArchive::Built.objects` maps cores to objects, so per-member records
   are within reach for them; this comes before any distribution.
-* [Medium] stopgap, `tools/lib/erx/pack_provenance.rb`: an `assembled` receipt binds its artifact to
+* [Medium] Fiasco backend, `tools/lib/erx/pack_provenance.rb`: an `assembled` receipt binds its artifact to
   its components only by being written. The image packs `users/bin/.../sigma0` while Fiasco's audit
   reads the unstripped `OBJ-.../sigma0`, so a stale installed `sigma0` would pass. The audit should
   record the installed file and how it derives from the audited one.
@@ -2095,10 +2126,10 @@ it; git history is the record of completed work.
 * [Medium] log facet, `abi/services/log.txt`, the manifests, `erx_log_h` and `erlang/apps/erx/src/erx_syslog.erl`: the service serves `{write, Grantee, Records}`, the domain service mints `erx_log_facet` for `log`, and the manifests declare the `log` service, served by the system domain, but no facet row grants it yet, so other domains' proxies still write each record into the kernel ring ([design-log.md](docs/design-log.md#writing)). Land together: the manifest rows; a floor limit in `log.txt` that a row's `max_request` holds one `write` of `log_write_max` records of `log_write_text_max` bytes, checked as `inspect_max_frame_min` is (a row below it drops legal writes unanswered); the proxy's `write`; and the grantee's principal and name from the domain service, which `erx_syslog` shows as `unknown` until then. The floor follows the proxy's batch, at most 16 KiB of text plus its encoding (design-log.md, "The proxy"), not `log_write_max` full records; design-log.md's default `max_request` of 16 KiB is that text alone and must grow by the encoding's overhead.
 * [Low] runtime, `erx_log_nif.c` `read_lines`: a record that fails the reader's checks ends the window, and the console's line says so without saying how many records after it were dropped.
 * [Low] Fiasco backend, `liberx/backend/fiasco/end.c`: the watchdog's end skips the debug log's parked records, as the service may be mid-write, so a missed pet after the console handoff loses the records the console had not read. At any end, lines the console has read but its driver has not yet written are lost uncounted, and the end's own drain can interleave with the driver's bytes on the UART.
-* [Low] stopgap, `tools/lib/erx/glue_imports.rb` reads what the compiler left
+* [Low] Fiasco backend, `tools/lib/erx/glue_imports.rb` reads what the compiler left
   out of line: a change of inlining can move a symbol such as
   `_ZN13Irq_chip_soft7sw_chipE` on or off the list and fail the build.
-* [Medium] stopgap, the debug-log probe's report: `tools/erx check-debug-log`
+* [Medium] Fiasco backend, the debug-log probe's report: `tools/erx check-debug-log`
   compares its own transcript, because the conformance guest's protocol
   needs lines that start with `erx-test:`, and a program's only output here
   is a log record with the kernel's prefix. `debug_log.statuses` stays `pending` in the
@@ -2109,14 +2140,20 @@ it; git history is the record of completed work.
   ([design-display.md](docs/design-display.md#dependencies)). It blocks
   no release: R1 ships LVGL under its release contract
   ([design-display.md](docs/design-display.md#lvgls-release-contract)).
-* [Low] docs, the C17 cores' seam with Fiasco's glue: no design section describes it, though
-  `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11`,
-  `tools/lib/erx/glue_imports.rb:10` and `tools/lib/erx/chokepoint_rules.rb:12` cite a
-  `docs/design-stopgap.md` "Interfaces" that no longer exists, `chokepoint_rules.rb`'s
-  `STOPGAP` design link names `docs/design-stopgap.md#invariants`, and
-  `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Write the seam into
-  [design-fiasco.md](docs/design-fiasco.md) and point the citations and the rule's link at it.
-* [Low] stopgap, the host link's boot word: the host link is opt-in through
+* [Low] comments, the C17 cores' seam with Fiasco's glue: [design-fiasco.md](docs/design-fiasco.md#interfaces)
+  "Interfaces" describes it, but `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11`,
+  `tools/lib/erx/glue_imports.rb:10` and `tools/lib/erx/chokepoint_rules.rb:12` cite a `docs/design-stopgap.md` "Interfaces" that does not exist,
+  `chokepoint_rules.rb`'s `STOPGAP` design link names `docs/design-stopgap.md#invariants`, and
+  `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Point them at design-fiasco.md's
+  "Interfaces". The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
+  `kern/arm/64/fpu-arm.cpp:1-2` and the other files that carry "lazy FP switching is deleted") cite only
+  design-kernel.md; point them at design-fiasco.md's "The release's Fiasco build" too.
+* [Medium] build, `tools/lib/erx/production_image.rb:1906-1909`: the root's link records `libl4sys.p.a` and
+  `libsigma0.a` with status `stopgap`, though the dependency table marks Fiasco's `l4re-core` parts `release`;
+  the status sets of `tools/lib/erx/dependencies.rb:88` and `tools/lib/erx/toolchain_provenance.rb:72` admit
+  only `permanent` and `stopgap`, two copies of one fact. Give the status set one source that includes
+  `release`, record both archives as `release`, and test a record with an unknown status refused.
+* [Low] Fiasco backend, the host link's boot word: the host link is opt-in through
   `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`,
   `liberx/backend/core/boot_manifest.c`), because the root takes the host
   link's UART from the manifest's device-tree path without looking for it in
@@ -2124,7 +2161,7 @@ it; git history is the record of completed work.
   domain at the driver's first read. The word goes once erXos's kernel finds
   the UART in the device tree and the root hands the record only for a UART
   that is there ([design-fiasco.md](docs/design-fiasco.md#the-command-line)).
-* [Medium] stopgap, cross-CPU signal delivery ([vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco)):
+* [Medium] Fiasco backend, cross-CPU signal delivery ([vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco)):
   a delivery from another CPU reaches the target's home CPU as a cross-CPU request (`fiasco/kernel/src/kern/irq.cpp:1003-1007`,
   `:942-972`), read in source only; how that request's interrupt brings a thread running in user mode on the remote CPU
   to the upcall was not read. Unverified until `native_signal` runs at 4 CPUs; if it fails, the signal waits for the
@@ -2134,12 +2171,12 @@ it; git history is the record of completed work.
   outside the entry macro and the backend's depth-zero call path runs with events enabled and leaves a signal queued
   until the thread's next return through them, silently. The chokepoint check that keeps the backend's kernel calls
   in a program behind those two paths is not built; build it with the vCPU row, with a seeded direct call it catches.
-* [Low] stopgap, signals during musl's own waits: Fiasco ends no semaphore down for an event
+* [Low] Fiasco backend, signals during musl's own waits: Fiasco ends no semaphore down for an event
   (`fiasco/kernel/src/kern/semaphore.cpp:175-179`, `receiver.cpp:663-664`), so a signal for a thread in a condition
   variable's, a mutex's or `sem_wait`'s wait runs only when the wait ends, and `sem_wait` never fails with `EINTR`.
   erXos's kernel ends the wait with `ERX_EINTR`; nothing to do on Fiasco but record the cases `libc-test` and the
   Open POSIX Test Suite show.
-* [Low] stopgap, vCPU arming, not read in source: `ex_regs` on an armed thread and the teardown of an armed thread's
+* [Low] Fiasco backend, vCPU arming, not read in source: `ex_regs` on an armed thread and the teardown of an armed thread's
   Fiasco state area in the task's second kernel-user area. Read both before the vCPU row lands, and arm a thread only
   after its start, as the thread-start path of [Signals in liberx](docs/design-programs.md#signals-in-liberx) does.
 * [Medium] network, `erx_net_admit` ([design-network-stack.md](docs/design-network-stack.md#the-grants-contract)):
@@ -3318,7 +3355,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   count only real ends. A signal that reaches a handler before its start is carried out once the program
   runs, but `{erx_job, pause}` and `{erx_read, _, _}` are dropped with the handler's other unknown messages,
   so a job paused in that window runs its program (the `erx_prog_handler` item below).
-* [Medium] stopgap, `sys/erxos/erx_program_drv.c` (`PROGRAM_IMAGE_CAP_LIMIT`) and
+* [Medium] Fiasco backend, `sys/erxos/erx_program_drv.c` (`PROGRAM_IMAGE_CAP_LIMIT`) and
   `liberx/backend/fiasco/object.c` (`erx_fiasco_object_task_open`): a program's image is made with a
   table of `caps_max` capabilities, so it holds every copy of its pipe hand-offs, and the Fiasco
   backend grows the table as it fills from `erx_fiasco_vm_records`, whose pages come from
@@ -3905,7 +3942,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   with `ERX_ETYPE`, on the hosted backend too.
 
 * [Medium] Fiasco backend, `liberx/backend/fiasco/budget.c` (`budget_takes`): a budget's end takes a group charged to it while the group's home task still runs, when that task's space is charged elsewhere, so the home loses its group and its doorbells stop delivering; design-fiasco.md's "Budgets and groups as records" says the first sweep stops the home task of every such group instead. Any task can now build this. Either stop the home in the spaces sweep, or refuse at `erx_fiasco_group_admit` a home whose space is not below the group's budget; add a native_space case first.
-* [Low] stopgap, native_space and native_task suites: no case checks that a task's end frees the budgets, groups and doorbells it made (the drain path), since the root's checks count pool pages only, not IRQ slots or object records; add a root-side count of live IRQ slots and records.
+* [Low] Fiasco backend, native_space and native_task suites: no case checks that a task's end frees the budgets, groups and doorbells it made (the drain path), since the root's checks count pool pages only, not IRQ slots or object records; add a root-side count of live IRQ slots and records.
 * [Medium] liberx Fiasco backend, `liberx/backend/fiasco/task_refused.c`: in a task,
   `erx_vm_free_pages` reports 0 while commits through the service still succeed, an
   invented count that `api.h`'s exact contract does not allow; it should answer
@@ -4675,7 +4712,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   digested once per `compile_all` and a dependency's change during a compile is caught by mtime only; two builds
   storing one key race (`Errno::ENOTEMPTY`). Switch the memo to `-MD`, re-digest before storing, and treat a lost
   rename as success; none of these arise in the tree today.
-* [Medium] stopgap, `test`: the `medium_boot` suite's `release-shell` checkpoint timed out on the first run after a
+* [Medium] tests, `test`: the `medium_boot` suite's `release-shell` checkpoint timed out on the first run after a
   fresh tree twice (master ee3bfe47 and branch mb-incr), the 1-CPU boot's serial log showing the shell's banner
   interleaved with the domain ERTS's "hold executor slots" line; the next runs passed. Find whether the checkpoint
   needs a whole line that concurrent console writers can split.
@@ -5750,12 +5787,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   race polls instead of parking, so the handshakes' orderings rest on the
   M5 herd7 litmus tests; add a threaded mode in which both parties park on
   `need` and `wake` under a deadline.
-* [Low] stopgap bootstrap, `fiasco/bootstrap/server/src/erx_image.cc` (`erx_boot_args_cut`): a command line over
+* [Low] Fiasco bootstrap, `fiasco/bootstrap/server/src/erx_image.cc` (`erx_boot_args_cut`): a command line over
   `ERX_BOOT_STRINGS_MAX` (2,048 bytes) is cut at its last whole word without a word on the console, where
   docs/design-kernel.md ("Configuration") says the boot reports the cut. Handed a 2,375-byte line naming every stdlib
   suite, the QEMU oracle's guest ran only the suites named in its first 2,048 bytes, and its serial log said nothing. Print the cut, with both lengths, and
   check the line in a boot transcript test.
-* [Low] stopgap bootstrap, overlapping RAM regions:
+* [Low] Fiasco bootstrap, overlapping RAM regions:
   `Region_list::optimize` (`fiasco/bootstrap/server/src/region.cc`)
   merges a region into its predecessor by setting the predecessor's end to
   the region's end, so a region wholly inside its predecessor shrinks the
@@ -6841,7 +6878,7 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
-* [Medium] stopgap, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): Fiasco's root reads the
+* [Medium] Fiasco backend, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): Fiasco's root reads the
   PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
   certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
   Today the page starts zeroed and the wall clock reads 1970-01-01.
@@ -6948,7 +6985,7 @@ to the corpus and follow rc
   gives them values from `erx_pool_plan` (`docs/design-kernel.md`) and a
   reader in erXos's kernel, and settles where `kip_size` and the kernel's
   alignment live; they are limits of `abi/erx_abi.txt` today.
-* [Medium] stopgap boot, `kernel/core/boot_place.c`: `bootstrap` places two
+* [Medium] Fiasco boot, `kernel/core/boot_place.c`: `bootstrap` places two
   entries the target design does not have, `boot/sigma0` and `boot/stopgap-root`,
   because the kernel still starts sigma0 and a root task from its information
   page; sigma0 pages that root with read, write and execute over its
@@ -6957,24 +6994,24 @@ to the corpus and follow rc
   `tools/lib/erx/boot_image.rb` when the kernel maps the root task from the
   startup plan. `tools/lib/erx/boot_image.rb` builds on the structural fixture's
   unadmitted manifest until production packing lands.
-* [Medium] stopgap boot, `kernel/core/boot_place.c`: the handoff record's
+* [Medium] Fiasco boot, `kernel/core/boot_place.c`: the handoff record's
   `pool_usable`, `pool_heap` and `pool_regions` are zero and `kmemsize` keeps
   Fiasco's default until `erx_pool_plan` and `abi/backend/fiasco.txt` land; the
   kernel does not read them yet. `kip_size` and the kernel's alignment are limits
   of `abi/erx_abi.txt` until that backend file exists to hold them.
-* [Medium] stopgap boot, `fiasco/bootstrap/server/src/init_kip.cc`: `init_kip_md`
+* [Medium] Fiasco boot, `fiasco/bootstrap/server/src/init_kip.cc`: `init_kip_md`
   writes the memory descriptors at the offset the kernel image's information page
   names, unchecked against the view's size or its count, though
   [design-fiasco.md](docs/design-fiasco.md#boot-handoff) says within the view.
   Only a kernel image whose hash matched gets there, and a kernel image already
   runs in kernel mode, so this is a crash on a bad build and no gain. Check the
   offset and count in the plan or just before the write, with a fixture.
-* [Medium] stopgap boot, `tools/lib/erx/boot_image_check.rb`: two cases of the
+* [Medium] Fiasco boot, `tools/lib/erx/boot_image_check.rb`: two cases of the
   verification table are not run on QEMU: a single file whose header asks QEMU to
   place it away from `bootstrap`'s link address, and a boot with the validator
   removed. The first needs the harness to expect a deadline, the second a seeded
   first stage.
-* [Low] stopgap boot, `fiasco/bootstrap`: the inherited image tools and module
+* [Low] Fiasco boot, `fiasco/bootstrap`: the inherited image tools and module
   code (`build.pl`, `exec.cc`, `module.cc`, `boot_modules.cc`, `mod_info.cc`,
   `uncompress.cc`, `mk/tool/imagebuilder`) are unbuilt and the other platforms'
   sources still name them. Delete them or fix those platforms with the first
@@ -7346,11 +7383,6 @@ to the corpus and follow rc
   ntpd uses, or anyone on the path to it, sets the wall clock to any time after the release's floor date at a
   cold start and then walks it by up to 1000 s every two polls, and can forge `DENY`; certificate validity
   checks follow the clock. Network Time Security (RFC 8633 section 4.3) is the remedy, with a design of its own.
-* [Low] Fiasco backend, `liberx/backend/fiasco/service.c` (the `ERX_FIASCO_CALL_TIME_SET_WALL` case, lines 385-386):
-  the dispatch passes the body the request's `wall_ns` alone, never its `caller`, and checks no right, so any
-  task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
-  `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
-  time page. A Phase 1 residual, not fixed in Fiasco.
 * [Medium] WiFi's key holder before its release placement, development
   builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
   the holder runs as a process of the WiFi domain, so the networks'
@@ -7998,7 +8030,7 @@ document's "residual risks accepted" paragraph.
   adds the queue quota (design-runtime.md edit 15), the funnel delivers every authorised frame whatever the target
   process already holds queued, so a peer can grow any process's queue it can name without bound, and two domains
   that send toward each other in a cycle grow each other's queues with nothing to stop them. RT8's quota leaves the
-  next frame in the lane at a process at its quota; Fiasco has no bound here. The lane driver's finish
+  next frame in the lane at a process at its quota; until it lands nothing bounds the queue. The lane driver's finish
   pauses there too, as at any time (design-runtime.md, "Connections in ERTS"); until the quota lands that clause
   of the finish has nothing to act on.
 * [Low] domains, control records (`erlang/apps/erx_domain/src/erx_domain_links.erl`, the system
@@ -8382,7 +8414,7 @@ document's "residual risks accepted" paragraph.
   ([design-platforms.md](docs/design-platforms.md#the-watchdog)); a reload from the root would rebuild a
   kernel mechanism in user mode. Residual until M12: the unattended board's `config.txt` sets the line
   once erXos's kernel runs there.
-* [Medium] stopgap, root task, `liberx/backend/fiasco/rng200.c` and every device read of the root: a device read
+* [Medium] Fiasco backend, root task, `liberx/backend/fiasco/rng200.c` and every device read of the root: a device read
   that never completes stops the root silently. On QEMU's `raspi4b` model the first read of the RNG200's CTRL
   never returned, while the mini UART's page, mapped the same way at the same point, read; the root stopped before
   its entropy line, with nothing on the console to say where, and the `raspi4b` suite timed out at
@@ -8401,7 +8433,7 @@ document's "residual risks accepted" paragraph.
   each (the soft resets at 0x04 and 0x08, the total bit count and its threshold at 0x0c and 0x10, the status at
   0x18) matter to a read after a cold boot. erXos's kernel's platform layer reads it through the same
   `kernel/core/rng200.c` ([design-platforms.md](docs/design-platforms.md#entropy-sources)).
-* [Low] stopgap, root task, `liberx/backend/fiasco/rng200.c` `erx_fiasco_rng200_read`: a FIFO_COUNT read that
+* [Low] Fiasco backend, root task, `liberx/backend/fiasco/rng200.c` `erx_fiasco_rng200_read`: a FIFO_COUNT read that
   fails inside the loop returns at once, past the erase of the local `word`, so the last secret word taken stays
   in the stack frame. The fix routes that failure through the one erase and return.
 * [Low] USB, DWC2 on QEMU `raspi4b` ([design-usb.md](docs/design-usb.md#dwc2)): `erx_dwc2`, a

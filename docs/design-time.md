@@ -356,8 +356,7 @@ The special cases this removes:
   that calls `erx_time_set_offset`, as `erx_watchdog_nif.c` is the one
   that pets the watchdog. On erXos's kernel only the system domain holds
   the time page's `WRITE` right, so wherever else the NIF is linked the
-  call fails; on Fiasco the call checks no right
-  ([Phase 1](#phase-1)).
+  call fails, on Fiasco as on erXos's kernel ([Phase 1](#phase-1)).
 
 Why an app and not the network domain: the network domain is the stack,
 an OTP application usable outside erXos, and the domain that parses every
@@ -764,14 +763,13 @@ shown there is one of the known atoms or its four bytes in hex.
 
 ## Phase 1
 
-On the Fiasco backend the setter is a service call that takes no
-capability and checks no right: the dispatch hands the request to the
-body without its caller (`liberx/backend/fiasco/service.c`, the
-`ERX_FIASCO_CALL_TIME_SET_WALL` case), so any task's call writes the
-page (`liberx/backend/fiasco/time_page.c`). That only the system domain
-sets the clock is therefore held by the chokepoint and the facet, not
-enforced, which is a residual of trusted code recorded in `TODO.md`;
-erXos's kernel checks `WRITE` on the time page. The range check of
+On the Fiasco backend the setter is a service call on the time page's
+handle: the root checks the caller's `WRITE` right on that handle and
+answers `ERX_ERIGHTS` without it, so only the system domain sets the
+clock, as on erXos's kernel, and the chokepoint and the facet stand
+behind that check rather than in its place
+([design-fiasco.md](design-fiasco.md#the-releases-cases), "the wall
+clock"). The range check of
 `erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
 boot is cold. On QEMU `virt` Fiasco's root reads the PL031 once at

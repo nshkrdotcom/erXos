@@ -6094,8 +6094,8 @@ where its runtime sets `-erx queue_quota`, and which domains do is an
 open decision ([Open decisions](#open-decisions), 1). Until RT8, the funnel
 delivers every authorised frame whatever its target already holds, so a
 flood that outruns a socket process grows its queue with nothing to stop
-it but the client domain's budget, the gap of Fiasco's funnel that
-`TODO.md` records.
+it but the client domain's budget, the funnel's gap that `TODO.md`
+records.
 
 **Answers from the grant.** The grant's reply to a call reaches its
 caller with the envelope already off, since `gen` owns call replies
