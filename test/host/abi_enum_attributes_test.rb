@@ -23,10 +23,10 @@ class AbiEnumAttributesTest < Minitest::Test
   ROLES = <<~ABI
     abi 1
     enum role u32
-      attribute read_only
+      attribute writable
       attribute writer
       value boot 1 writer
-      value system 2 read_only
+      value system 2 writable
       value data 3
   ABI
 
@@ -36,11 +36,11 @@ class AbiEnumAttributesTest < Minitest::Test
 
   def test_each_member_carries_the_attributes_its_line_names
     codec = Erx::ABI::Codec.new(schema(ROLES))
-    assert_equal({ 'read_only' => ['system'], 'writer' => ['boot'] }, codec.schema.types.fetch('role').attributes)
-    assert_equal [false, true, false], [1, 2, 3].map { |value| codec.attribute?('role', value, 'read_only') }
+    assert_equal({ 'writable' => ['system'], 'writer' => ['boot'] }, codec.schema.types.fetch('role').attributes)
+    assert_equal [false, true, false], [1, 2, 3].map { |value| codec.attribute?('role', value, 'writable') }
     assert_equal [true, false, false], [1, 2, 3].map { |value| codec.attribute?('role', value, 'writer') }
     assert_raises(Erx::ABI::DecodeError) { codec.attribute?('role', 2, 'hidden') }
-    assert_raises(Erx::ABI::DecodeError) { codec.attribute?('role', 4, 'read_only') }
+    assert_raises(Erx::ABI::DecodeError) { codec.attribute?('role', 4, 'writable') }
   end
 
   # Strict, as the spec rules ask: a name no attribute line declares fails generation,
@@ -78,39 +78,55 @@ class AbiEnumAttributesTest < Minitest::Test
         rights(_Term) -> no.
         main() ->
             io:format("~w~n", [[rights(T) || T <- [ro, rw, rx, r, rwx, read, 1, 2, 3, <<"ro">>, "ro", {ro}]]]),
-            io:format("~w~n", [[erx_abi_enums:mf_window_role_read_only(R) || {R, _} <- ?ERX_MF_WINDOW_ROLE_MEMBERS]]),
-            io:format("~w~n", [try erx_abi_enums:mf_window_role_read_only(record) catch error:Reason -> Reason end]),
+            io:format("~w~n", [[erx_abi_enums:mf_window_role_writable(R) || {R, _} <- ?ERX_MF_WINDOW_ROLE_MEMBERS]]),
+            io:format("~w~n", [try erx_abi_enums:mf_window_role_writable(record) catch error:Reason -> Reason end]),
             halt().
       ERLANG
       output = run_erlang(directory, [generated, File.join(directory, 'enum_use.erl')], 'enum_use')
       codec = Erx::ABI::Codec.new(tree_schema)
       roles = codec.schema.types.fetch('mf_window_role').members.sort_by { |_name, value| value }
-      read_only = roles.map { |_name, value| codec.attribute?('mf_window_role', value, 'read_only') }
+      writable = roles.map { |_name, value| codec.attribute?('mf_window_role', value, 'writable') }
       lines = output.lines
       assert_equal "[ro,rw,rx,no,no,no,no,no,no,no,no,no]\n", lines[0]
-      assert_equal "[#{read_only.join(',')}]\n", lines[1]
+      assert_equal "[#{writable.join(',')}]\n", lines[1]
       assert_match(/function_clause/, lines[2])
     end
   end
 
-  # One fact, both consumers: a copy of the ABI whose system role loses read_only lets the
-  # manifest check admit a writable system window and erx_blk_table treat a system window
-  # as writable, where the tree's ABI refuses the one and reports the other read-only. A
-  # consumer that kept its own list would not change.
-  def test_a_window_role_s_read_only_fact_changes_both_consumers
+  # One fact, both consumers: a copy of the ABI whose data role loses writable makes the
+  # manifest check refuse the development manifest's writable data window and
+  # erx_blk_table report a data window read-only, where the tree's ABI admits the one and
+  # reports the other writable. A consumer that kept its own list would not change.
+  def test_a_window_role_s_writable_fact_changes_both_consumers
     Dir.mktmpdir('erx-abi-roles-') do |root|
-      FileUtils.cp_r(File.join(ROOT, 'abi'), root)
-      path = File.join(root, 'abi/manifest.txt')
-      text = File.binread(path)
-      seeded = text.sub(/^(  value system 8 configured) read_only$/, '\1')
-      assert text != seeded, 'the system role carries read_only'
-      File.binwrite(path, seeded)
-      writable = manifest_source.sub(/(window system\n(?:  .*\n)*?)  rights read\n/, "\\1  rights read,write\n")
-      error = assert_raises(Erx::Manifest::Invalid) { admit(writable, Erx::ABI::Codec.new(tree_schema)) }
+      seed_roles(root) do |text|
+        text.sub(/^(  value data 6 configured) writable$/, '\1').tap { |seeded| assert text != seeded, 'data is writable' }
+      end
+      admit(manifest_source, Erx::ABI::Codec.new(tree_schema))
+      error = assert_raises(Erx::Manifest::Invalid) { admit(manifest_source, Erx::ABI::Codec.new(tree_schema(root))) }
       assert_equal 'window.rights', error.field
-      admit(writable, Erx::ABI::Codec.new(tree_schema(root)))
-      assert_equal "true\n", blk_read_only(tree_schema)
-      assert_equal "false\n", blk_read_only(tree_schema(root))
+      assert_equal "false\n", blk_read_only(tree_schema, 'data')
+      assert_equal "true\n", blk_read_only(tree_schema(root), 'data')
+    end
+  end
+
+  # Both attributes fail closed: a role added with neither is read-only and the slot
+  # writer's, so a window of it grants read alone and only the system domain holds it.
+  def test_a_window_role_added_without_attributes_is_read_only_and_the_system_domain_s
+    Dir.mktmpdir('erx-abi-roles-') do |root|
+      seed_roles(root) do |text|
+        text.sub(/^(  value verified_image 11 .*\n)/, "\\1  value probe 12\n").tap { |seeded| assert text != seeded, 'probe added' }
+      end
+      codec = Erx::ABI::Codec.new(tree_schema(root))
+      probe = ->(holder, rights) { manifest_source + "window probe\n  holder #{holder}\n  device \"/virtio_mmio@a003e00\"\n" \
+                                                    "  role probe\n  partition 0\n  rights #{rights}\n  image none\n" }
+      admit(probe.call('system', 'read'), codec)
+      refusals = { 'window.rights' => probe.call('system', 'read,write'),
+                   'window.holder' => probe.call('@domain.storage', 'read') }
+      refusals.each do |field, source|
+        assert_equal field, assert_raises(Erx::Manifest::Invalid, field) { admit(source, codec) }.field
+      end
+      assert_equal "true\n", blk_read_only(tree_schema(root), 'probe')
     end
   end
 
@@ -118,12 +134,9 @@ class AbiEnumAttributesTest < Minitest::Test
   # fat role loses the attribute refuses a fat window held by a configured domain.
   def test_a_window_role_s_configured_fact_changes_the_manifest_check
     Dir.mktmpdir('erx-abi-roles-') do |root|
-      FileUtils.cp_r(File.join(ROOT, 'abi'), root)
-      path = File.join(root, 'abi/manifest.txt')
-      text = File.binread(path)
-      seeded = text.sub(/^(  value fat 7) configured$/, '\1')
-      assert text != seeded, 'the fat role is configured'
-      File.binwrite(path, seeded)
+      seed_roles(root) do |text|
+        text.sub(/^(  value fat 7) configured/, '\1').tap { |seeded| assert text != seeded, 'fat is configured' }
+      end
       fat = manifest_source + "window seeded\n  holder @domain.storage\n  device \"/virtio_mmio@a003e00\"\n" \
                               "  role fat\n  partition 1\n  rights read\n  image none\n"
       admit(fat, Erx::ABI::Codec.new(tree_schema))
@@ -154,12 +167,20 @@ class AbiEnumAttributesTest < Minitest::Test
     end
   end
 
-  # erx_blk_table:read_only(system), compiled against the Erlang schema generates.
-  def blk_read_only(schema)
+  # A copy of the tree's abi/ under root, its abi/manifest.txt the block's rewrite of the
+  # tree's.
+  def seed_roles(root)
+    FileUtils.cp_r(File.join(ROOT, 'abi'), root)
+    path = File.join(root, 'abi/manifest.txt')
+    File.binwrite(path, yield(File.binread(path)))
+  end
+
+  # erx_blk_table:read_only(Role), compiled against the Erlang schema generates.
+  def blk_read_only(schema, role)
     Dir.mktmpdir('erx-abi-blk-') do |directory|
       generated = generate_erlang(schema, directory)
       run_erlang(directory, [generated, File.join(ROOT, 'erlang/apps/erx_blk/src/erx_blk_table.erl')],
-                 nil, eval: 'io:format("~w~n", [erx_blk_table:read_only(system)]), halt().')
+                 nil, eval: "io:format(\"~w~n\", [erx_blk_table:read_only(#{role})]), halt().")
     end
   end
 

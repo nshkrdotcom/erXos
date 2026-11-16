@@ -29,7 +29,7 @@
 %%
 %% Every write goes through erx_blk:write/3 to the driver's one write path, erx_blk_write,
 %% which is where the trial rule (U4) applies to it. A window adds one rule of its own: a
-%% window of a role abi/manifest.txt marks read_only (erx_blk_table:read_only/1), the
+%% window of a role abi/manifest.txt does not mark writable (erx_blk_table:read_only/1), the
 %% system window or one of role {image, Name} on an EROFS image (erx_blk_image) among them,
 %% is read-only and sends no write to the device.
 

@@ -2144,17 +2144,18 @@ the device service still verifies the machine before assigning the unit.
 Window roles are boot A 1, boot B 2, boot-selection record 3, reset
 count 4, vault 5, data 6, FAT 7, system 8, system A 9, system B 10 and
 verified image 11. `abi/manifest.txt` marks each role a configured domain
-may hold `configured` and each role whose window grants read alone
-`read_only`, and the manifest check and the block driver read those
-attributes.
+may hold `configured` and each role whose window may grant write
+`writable`, and the manifest check and the block driver read those
+attributes. Both fail closed: a role that carries neither is the slot
+writer's and read-only.
 Fixed-medium roles have `partition = 0`; the ABI medium layout
 determines their sectors, and a `system` window's are those of the
 system partition of the slot that the boot value names, so an `unknown`
 boot gives none.
 FAT names a primary partition numbered 1 through 4 on the selected
 removable device. Rights are read bit 0 and write
-bit 1, at least read; a `read_only` role's window grants read alone, and
-a manifest has at most one `system` window. No record
+bit 1, at least read; a window of a role not marked `writable` grants
+read alone, and a manifest has at most one `system` window. No record
 contains a caller-selected sector range. Role/holder checks still
 restrict boot partitions, system A and B and the records to the slot
 writer, the `system` window to a storage domain, whose holder is the

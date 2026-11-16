@@ -102,25 +102,26 @@ flags mf_device_flags u32
 # A partition window's role (docs/design-abi.md, "Devices and partition windows"): the
 # slots' boot and system partitions and the two records are the slot writer's, which
 # only the system domain holds in Phase 1 (docs/design-storage.md, PW1): a configured
-# domain holds only a configured role, so a role added without the attribute is the slot
-# writer's. system is the one window on the system partition of the slot the boot value
-# names, and an unknown boot has none. verified_image is a window on one EROFS image of
-# the booted slot (docs/todo-system-partition.md, deletions). A read_only role's window
-# grants read alone, and its block driver refuses every write to it.
+# domain holds only a configured role. A window of a role not marked writable grants
+# read alone, and its block driver refuses every write to it, so a role added with
+# neither attribute is the slot writer's and read-only. system is the one window on the
+# system partition of the slot the boot value names, and an unknown boot has none.
+# verified_image is a window on one EROFS image of the booted slot
+# (docs/todo-system-partition.md, deletions).
 enum mf_window_role u32
   attribute configured
-  attribute read_only
-  value boot_a 1
-  value boot_b 2
-  value boot_selection 3
-  value reset_count 4
-  value vault 5 configured
-  value data 6 configured
-  value fat 7 configured
-  value system 8 configured read_only
-  value system_a 9
-  value system_b 10
-  value verified_image 11 configured read_only
+  attribute writable
+  value boot_a 1 writable
+  value boot_b 2 writable
+  value boot_selection 3 writable
+  value reset_count 4 writable
+  value vault 5 configured writable
+  value data 6 configured writable
+  value fat 7 configured writable
+  value system 8 configured
+  value system_a 9 writable
+  value system_b 10 writable
+  value verified_image 11 configured
 flags mf_window_rights u32
   bit read 0
   bit write 1

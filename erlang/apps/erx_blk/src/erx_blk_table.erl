@@ -146,13 +146,13 @@ system_window(Slot) ->
 system_partition(a) -> {?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS};
 system_partition(b) -> {?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}.
 
-%% Whether a window of Role takes no write: a role abi/manifest.txt marks read_only. An
-%% image window is a verified_image window, and the record window, which holds the
-%% boot_selection and reset_count records, is read-only if either of them is.
+%% Whether a window of Role takes no write: a role abi/manifest.txt does not mark
+%% writable. An image window is a verified_image window, and the record window, which
+%% holds the boot_selection and reset_count records, is read-only if either of them is.
 -spec read_only(role()) -> boolean().
 read_only({image, _Name}) -> read_only(verified_image);
 read_only(record) -> read_only(boot_selection) orelse read_only(reset_count);
-read_only(Role) -> erx_abi_enums:mf_window_role_read_only(Role).
+read_only(Role) -> not erx_abi_enums:mf_window_role_writable(Role).
 
 %% The medium's first sector of a request for Count sectors from Sector of Window: einval
 %% for a request that names no sectors, erange for one that leaves the window.

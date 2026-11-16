@@ -2350,8 +2350,8 @@ module Erx
         rights = flags(record, 'rights', 'mf_window_rights')
         read = @codec.member('mf_window_rights', 'read')
         invalid('a window grants at least read', 8, 'window.rights') if (rights & read).zero?
-        read_only = @codec.attribute?('mf_window_role', role, 'read_only')
-        invalid('a window of a read-only role grants read alone', 8, 'window.rights') if read_only && rights != read
+        writable = @codec.attribute?('mf_window_role', role, 'writable')
+        invalid('a window of a role not marked writable grants read alone', 8, 'window.rights') if !writable && rights != read
         rights
       end
 
