@@ -427,6 +427,8 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 		return (erx_fiasco_cap_pass_body(decoded->task, decoded->caller, words));
 	case ERX_FIASCO_CALL_OBJECT_DESTROY:
 		return (erx_fiasco_object_destroy_body(decoded->task, ((const erx_fiasco_cap_request_t *)words)->cap));
+	case ERX_FIASCO_CALL_MEM_CHILD:
+		return (erx_fiasco_task_mem_child_body(decoded->task, words, &reply->first));
 	case ERX_FIASCO_CALL_MEM_SEAL:
 		return (erx_fiasco_task_mem_seal_body(decoded->task, ((const erx_fiasco_cap_request_t *)words)->cap));
 	case ERX_FIASCO_CALL_BUDGET_CREATE: {

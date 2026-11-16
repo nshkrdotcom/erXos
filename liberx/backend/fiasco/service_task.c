@@ -75,6 +75,7 @@ static bool	task_segment_share(uint32_t, uint32_t, const erx_elf_load_t *, uint6
 static int	task_image_slice(uint32_t, uint32_t *);
 static int	task_fill_pages(uint32_t, const void *);
 static int	task_fill_paged(uint32_t, const void *);
+static int	task_fill_child(uint32_t, const void *);
 static int	task_fill_physical(uint32_t, const void *);
 static int	task_fill_contiguous(uint32_t, const void *);
 
@@ -757,7 +758,9 @@ erx_fiasco_task_mem_create_body(uint32_t caller, const erx_fiasco_mem_create_req
 static int
 task_fill_pages(uint32_t object, const void *request)
 {
-	return (erx_fiasco_vm_object_create(object, ((const erx_fiasco_mem_create_request_t *)request)->size));
+	const erx_fiasco_mem_create_request_t *const pages = request;
+
+	return (erx_fiasco_vm_object_create(object, pages->size, (pages->flags & ERX_MEM_JIT) != 0));
 }
 
 int
@@ -776,6 +779,31 @@ task_fill_paged(uint32_t object, const void *request)
 	const erx_fiasco_mem_create_request_t *const paged = request;
 
 	return (erx_fiasco_vm_paged_create(object, paged->size, (paged->flags & ERX_MEM_CODE) != 0));
+}
+
+/* A child's request and its parent's record, which the fill reads. */
+typedef struct task_child {
+	const erx_fiasco_mem_child_request_t	*request;
+	uint32_t				parent;
+} task_child_t;
+
+int
+erx_fiasco_task_mem_child_body(uint32_t caller, const erx_fiasco_mem_child_request_t *request, uint64_t *mem)
+{
+	task_child_t child = { .request = request };
+	const int status = erx_fiasco_object_find(caller, request->parent, ERX_BACKEND_OBJECT_MEMORY, &child.parent);
+
+	if (status != ERX_OK)
+		return (status);
+	return (erx_fiasco_object_create(caller, ERX_BACKEND_OBJECT_MEMORY, request->budget, task_fill_child, &child, mem));
+}
+
+static int
+task_fill_child(uint32_t object, const void *request)
+{
+	const task_child_t *const child = request;
+
+	return (erx_fiasco_vm_child_create(object, child->parent, child->request->offset, child->request->size));
 }
 
 int

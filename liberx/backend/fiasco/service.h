@@ -90,6 +90,10 @@ int	erx_space_stop(uint64_t space, int64_t status);
  * A paged object (erx_mem_create_paged) maps nowhere until sealed and is never mapped
  * writable; erx_mem_supply copies into it as erx_mem_copy does until erx_mem_seal, and
  * then ERX_ERIGHTS. Only the root makes one with ERX_MEM_CODE, the one that may run.
+ * erx_mem_child copies size bytes of a slice or a sealed paged object from offset into
+ * a new object charged to budget, which maps read and write and never to run: another
+ * parent, a child's included, ERX_ETYPE; a size of 0 or a size or offset off a page
+ * ERX_EINVAL; a range past the parent's end ERX_ERANGE; and the copy's refusals.
  */
 int	erx_image_slice(uint64_t budget, uint64_t image, uint64_t first, uint64_t count, uint64_t *slice)
 	    ERX_WARN_UNUSED_RESULT;
@@ -101,6 +105,8 @@ int	erx_mem_create_paged(uint64_t budget, uint64_t size, uint32_t flags, uint64_
 int	erx_mem_supply(uint64_t mem, uint64_t offset, uint64_t src, uint64_t src_offset, uint64_t len)
 	    ERX_WARN_UNUSED_RESULT;
 int	erx_mem_seal(uint64_t mem) ERX_WARN_UNUSED_RESULT;
+int	erx_mem_child(uint64_t parent, uint64_t budget, uint64_t offset, uint64_t size, uint64_t *child)
+	    ERX_WARN_UNUSED_RESULT;
 
 /*
  * Handle calls (docs/design-stopgap.md, "Capabilities in Fiasco's object space"): a

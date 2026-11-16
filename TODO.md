@@ -150,8 +150,7 @@ it; git history is the record of completed work.
   "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
   does not exist (only `erx_elf_plan` does). So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
-  lands. Also needs the stopgap backend's `erx_mem_child`, an eager copy (design-stopgap.md, the call
-  table). The session asks for code objects through the `code_objects` facet
+  lands. The session asks for code objects through the `code_objects` facet
   (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which the domain service
   grants every session by its own policy and forwards to `erx_domain_lib:code_object/2` and `code_drop/2`;
   those answer `enotsup`, since the domain library has no `erx_dom_code_object` or `erx_dom_code_drop` over
@@ -576,8 +575,8 @@ it; git history is the record of completed work.
   launcher turns into the ended semaphore's slot without the service (`launcher.c`). It moves onto records with
   BK5's space tree (the 1b-A package plan). Until then its value overlaps object handles, so `erx_cap_close` or
   `erx_object_destroy` given a space handle acts on whatever entry has that number.
-* [Medium] security residual, `liberx/backend/fiasco/vm.c`: nothing records `ERX_MEM_JIT` on an object, so any
-  object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
+* [Medium] security residual, `liberx/backend/fiasco/vm_rules.c`: `erx_vm_map` lets every `erx_mem_create`
+  object run, not only a JIT one, so any such object maps read-write at one address and read-execute at another, a protect moves RW to RX freely, and the
   root maps RX into a child made without `ERX_SPACE_JIT`. No single mapping is ever writable and executable,
   but code-making does not yet follow from the image.
 * [Low] stopgap, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and

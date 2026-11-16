@@ -72,13 +72,21 @@ int	erx_fiasco_vm_body(uint32_t task, erx_backend_vm_op_t op, uint64_t addr, uin
  * The pages of the memory object whose record object.c took at this index, every page
  * taken at once (docs/design-stopgap.md, "Shared objects and the JIT alias"). No room
  * for it or no pages is ERX_ENOMEM, and then it holds nothing. object.c frees it.
+ * With jit it is a JIT object (ERX_MEM_JIT), which no copy or supply reads or writes.
  */
-int	erx_fiasco_vm_object_create(uint32_t object, uint64_t size) ERX_WARN_UNUSED_RESULT;
+int	erx_fiasco_vm_object_create(uint32_t object, uint64_t size, bool jit) ERX_WARN_UNUSED_RESULT;
 /*
  * A paged object at this index (erx_mem_create_paged): erx_fiasco_vm_object_create's
  * pages and results, mapped only once sealed and to run only with code.
  */
 int	erx_fiasco_vm_paged_create(uint32_t object, uint64_t size, bool code) ERX_WARN_UNUSED_RESULT;
+/*
+ * A child at this index of size bytes of the object at parent from offset
+ * (erx_mem_child): erx_fiasco_vm_child_rule's refusals, then the same pages and results
+ * as erx_fiasco_vm_object_create's, zero until the caller's copy fills
+ * them, and mapped read and write at most.
+ */
+int	erx_fiasco_vm_child_create(uint32_t object, uint32_t parent, uint64_t offset, uint64_t size) ERX_WARN_UNUSED_RESULT;
 /* Seals a paged object, sealed already or not; another kind of object is ERX_ETYPE. */
 int	erx_fiasco_vm_object_seal(uint32_t object) ERX_WARN_UNUSED_RESULT;
 /* Gives back a memory object's pages and label; nothing may map it any more. */
