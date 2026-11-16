@@ -121,12 +121,15 @@ stepped(Input, #window{core = Core, state = State} = W) ->
     {Next, Effects} = Core:step(Input, State),
     present(perform(Effects, W#window{state = Next})).
 
-%% Hands the toolkit the core's tree; a tree it refuses is a bug of the
-%% core, and ends the window with the toolkit's reason.
+%% Hands the toolkit the core's tree. A UI that ended while an input was
+%% ahead of its ui_down ends the window as the ui_down would; a tree the
+%% toolkit refuses is a bug of the core, and ends the window with the
+%% toolkit's reason, tagged, so it is never `normal`.
 present(#window{core = Core, state = State, ui = Ui} = W) ->
     case erx_ui:tree(Ui, Core:view(State)) of
         ok -> W;
-        {error, Reason} -> exit(Reason)
+        {error, closed} -> exit(shutdown);
+        {error, Reason} -> exit({tree_refused, Reason})
     end.
 
 %%% Effects.
