@@ -1014,7 +1014,9 @@ row the index of the facet row granted to the template for that service
 against its table. The boot view checks once, as it reads an untrusted
 manifest, that `app_template` is the session row naming no principal, the
 last, and that each of those facet rows is granted to that template for
-its service, `packages_facet` for the service named `packages_service`.
+its service, `packages_facet` for the service named `packages_service`,
+and that the template holds no other facet row, so an app's session
+reaches only the services the `apps` row names.
 `erx_pkg_manifest` reads the indices and searches for nothing, so the
 packer's host check and the boot cannot disagree about which session is
 the template or which rows are its grants, and a manifest the view

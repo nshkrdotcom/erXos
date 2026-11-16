@@ -65,6 +65,8 @@ static const char *boot_principals(erx_dom_lib_t *, const erx_manifest_view_t *,
 static const char *boot_apps(erx_dom_lib_t *, const erx_manifest_view_t *);
 static const char *boot_app_grants(const erx_dom_view_t *, const erx_manifest_view_t *);
 static bool	boot_app_grant(const erx_dom_view_t *, uint32_t, uint32_t, uint32_t);
+static bool	boot_app_holds(const erx_dom_view_t *, uint32_t, uint32_t);
+static bool	boot_app_names(const erx_manifest_view_t *, const erx_mf_apps_t *, uint32_t);
 static bool	boot_pages(uint64_t, uint64_t, erx_dom_range_t *);
 static bool	boot_compatible_is(const erx_manifest_view_t *, const erx_mf_device_t *, const char *);
 static bool	boot_reach(const erx_dom_device_entry_t *, erx_dom_range_t *);
@@ -772,8 +774,11 @@ boot_apps(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
  * once here so that every later reader of the indices, erx_pkg_manifest
  * among them, takes them as the build packed them: packages_facet grants
  * the template the service named packages_service, and each app_services
- * row's facet grants the template that row's service. The reader checked
- * each index against its table; boot_apps checked app_template.
+ * row's facet grants the template that row's service; and the template
+ * holds no facet row besides those, each named once, so an app's session
+ * reaches only the services the apps row names and admission sees each of
+ * them once. The reader checked each index against its table; boot_apps
+ * checked app_template.
  */
 static const char *
 boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
@@ -782,6 +787,7 @@ boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 	const erx_dom_service_t *service;
 	erx_mf_app_service_t granted;
 	erx_mf_apps_t row;
+	uint32_t held;
 
 	if (manifest->header.apps.count == 0)
 		return (NULL);
@@ -798,16 +804,52 @@ boot_app_grants(const erx_dom_view_t *view, const erx_manifest_view_t *manifest)
 		if (!boot_app_grant(view, row.app_template, granted.facet, granted.service))
 			return ("manifest: an app_services row's facet is not the app template's grant of its service");
 	}
+	/*
+	 * Every app's session holds what the template holds: the named rows and
+	 * nothing else, each named once, so the template holds exactly
+	 * 1 + app_services.count facets.
+	 */
+	held = 0;
+	for (uint32_t facet = 0; facet < view->nfacets; facet++) {
+		if (!boot_app_holds(view, row.app_template, facet))
+			continue;
+		if (!boot_app_names(manifest, &row, facet))
+			return ("manifest: the app template holds a facet the apps row does not name");
+		held++;
+	}
+	if (held != 1 + manifest->header.app_services.count)
+		return ("manifest: the apps row names one of the app template's facets twice");
 	return (NULL);
+}
+
+/* Whether the apps row names facet row facet: its packages_facet or an app_services row's facet. */
+static bool
+boot_app_names(const erx_manifest_view_t *manifest, const erx_mf_apps_t *row, uint32_t facet)
+{
+	erx_mf_app_service_t granted;
+
+	if (row->packages_facet == facet)
+		return (true);
+	for (uint32_t index = 0; index < manifest->header.app_services.count; index++)
+		if (erx_manifest_app_services_at(manifest, index, &granted) && granted.facet == facet)
+			return (true);
+	return (false);
 }
 
 /* Whether facet row facet grants session template template the service service. */
 static bool
 boot_app_grant(const erx_dom_view_t *view, uint32_t template, uint32_t facet, uint32_t service)
 {
+	return (boot_app_holds(view, template, facet) && view->facets[facet].service == service);
+}
+
+/* Whether facet row facet is granted to session template template. */
+static bool
+boot_app_holds(const erx_dom_view_t *view, uint32_t template, uint32_t facet)
+{
 	const erx_dom_facet_t *row = &view->facets[facet];
 
-	return (row->grantee_kind == ERX_MF_GRANTEE_SESSION && row->grantee == template && row->service == service);
+	return (row->grantee_kind == ERX_MF_GRANTEE_SESSION && row->grantee == template);
 }
 
 /*

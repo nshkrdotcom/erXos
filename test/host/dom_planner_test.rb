@@ -269,8 +269,10 @@ class DomPlannerTest < Minitest::Test
   # the app template the row names, which the check derives from QEMU virt's apps row,
   # and checks the row's indices once (docs/design-packaging.md, "The template's rows by
   # index"): an app_template naming root's template, a packages_facet naming the system
-  # domain's packages row and an app_services row whose facet grants the template
-  # another service are each refused, and so is a template with no apps row.
+  # domain's packages row, an app_services row whose facet grants the template
+  # another service, a packages_facet naming the template's grant of another service,
+  # a template holding a facet the row does not name and two app_services rows naming
+  # one facet are each refused, and so is a template with no apps row.
   def test_the_view_places_the_app_entries_from_the_rows_the_apps_row_names
     bytes = development_manifest
     apps = bytes.byteslice(400, 4).unpack1('V')
@@ -278,6 +280,7 @@ class DomPlannerTest < Minitest::Test
     template, packages = bytes.byteslice(apps + 12, 8).unpack('V2')
     first, count = bytes.byteslice(280, 8).unpack('V2')
     facets = (0...count).map { |index| bytes.byteslice(first + (index * 80), 80) }
+    refute_nil extra_facet(facets, template), 'no facet row of another template to regrant'
     system_packages = facets.index do |row|
       row.byteslice(12, 4) == facets.fetch(packages).byteslice(12, 4) &&
         row.byteslice(72, 4).unpack1('V') == @codec.member('mf_grantee', 'system')
@@ -288,13 +291,45 @@ class DomPlannerTest < Minitest::Test
                          'an apps row whose app_template is not the session template naming no principal'],
       'packages-facet' => [apps + 16, system_packages,
                            "the apps row's packages_facet is not the app template's grant of packages_service"],
+      'packages-display' => [apps + 16, bytes.byteslice(app_services + 4, 4).unpack1('V'),
+                             "the apps row's packages_facet is not the app template's grant of packages_service"],
       'service-facet' => [app_services + 4, packages,
-                          "an app_services row's facet is not the app template's grant of its service"] }
+                          "an app_services row's facet is not the app template's grant of its service"],
+      'extra-facet' => [first + (extra_facet(facets, template) * 80) + 8, template,
+                        'the app template holds a facet the apps row does not name'] }
       .each do |name, (at, value, reason)|
         assert_equal ["refused manifest: #{reason}"], view_lines(replaced_word(bytes, at, value), name)
       end
+    # The second app_services row repeats the first; the facet it named goes to a grantee without that service.
+    service, facet = bytes.byteslice(app_services, 8).unpack('V2')
+    moved = bytes.byteslice(app_services + 12, 4).unpack1('V')
+    grantee, kind = free_grantee(facets, facets.fetch(moved).byteslice(12, 4))
+    refute_nil grantee, 'no grantee lacks the service the second app_services row names'
+    twice = [[app_services + 8, service], [app_services + 12, facet], [first + (moved * 80) + 8, grantee],
+             [first + (moved * 80) + 72, kind]].reduce(bytes) { |copy, (at, value)| replaced_word(copy, at, value) }
+    assert_equal ["refused manifest: the apps row names one of the app template's facets twice"],
+                 view_lines(twice, 'service-twice')
     assert_equal ['refused manifest: an app template with no apps row'],
                  view_lines(AbiManifestFixture.session_template(principal: 0xffffffff), 'template-no-apps')
+  end
+
+  # The index of a facet row granted to another session template for a service the app
+  # template holds no facet of: regranted to the app template, it is a grant the apps
+  # row does not name.
+  def extra_facet(facets, template)
+    session = @codec.member('mf_grantee', 'session')
+    held = facets.select { |row| row.unpack('@8V @72V') == [template, session] }.map { |row| row.byteslice(12, 4) }
+    facets.index do |row|
+      row.unpack('@8V @72V') != [template, session] && row.byteslice(72, 4).unpack1('V') == session &&
+        !held.include?(row.byteslice(12, 4))
+    end
+  end
+
+  # A grantee, as [grantee, grantee_kind], of some facet row that holds no facet of
+  # service, the packed service index of a facet row.
+  def free_grantee(facets, service)
+    grantees = facets.map { |row| row.unpack('@8V @72V') }.uniq
+    grantees.find { |pair| facets.none? { |row| row.unpack('@8V @72V') == pair && row.byteslice(12, 4) == service } }
   end
 
   # bytes with the little-endian u32 at offset at replaced by value.

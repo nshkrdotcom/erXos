@@ -41,14 +41,18 @@ it; git history is the record of completed work.
   unsupported until the storage service's `tree` parameter roots a grant at the app's own directory
   (`tree apps`, [design-packaging.md](docs/design-packaging.md#where-an-apps-files-lie)); then `data`
   joins the development manifests' `services`.
-* [Medium] apps, the boot view checks the app template's named rows in one direction
-  (`liberx/system/dom_boot_view.c`, `boot_app_grants`): each row the `apps` row names must grant the
-  template its service, but the template may hold more facets than those, which every app session gets
-  and admission never sees, in a manifest the check did not pack. Requiring the template's facet count to
-  equal `1 + app_services.count` (with `boot_facet_repeats`) makes the named rows exactly its grants and
-  refuses two `app_services` rows of one service (which make `erx_app_admit:offered/2` raise
-  `case_clause`); the template's packages rights (ro) belong at the same check. Add a test case pointing
-  `packages_facet` at the template's display row, so the packages-name compare has a seed.
+* [Medium] apps, what the boot view guards of an app's authority (`liberx/system/dom_boot_view.c`,
+  `boot_app_grants`): it requires the template's facet rows to be exactly the rows the `apps` row names,
+  each once, but not what the `apps` row itself grants: a manifest the check did not pack could name
+  `start`, `apps` or `etc` among `app_services` (refused by `app_services_refused` in
+  `tools/lib/erx/manifest.rb`), an inspect or files service, parameters on the derived rows (`tree`, an
+  inspect scope, `rights rw` on packages) or inflated quantities, and every app's session would hold them.
+  Decide whether app authority is the build check's alone (property 19; design-system.md trusts the image
+  once the boot validator checked it), and then say so in design-packaging.md, or the view's too; then
+  the by-construction answer is that the manifest packs no template facet rows and the view derives them
+  from the `apps` row (packages `ro`, each service with its derived quantities), which needs the
+  parameter and quantity derivation the packer does today, and a generated name for the files `rights`
+  parameter (the header names only its members, `ERX_FILES_RIGHTS_RO`).
 * [Medium] apps, the app template is identified five ways: the packed `apps[].app_template`, which only
   `boot_apps` reads and requires to equal its own rule (the last template, naming no principal),
   `app_template?` and `sessions.size - 1` in `tools/lib/erx/manifest.rb`, and erx_starter's

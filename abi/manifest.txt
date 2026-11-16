@@ -286,8 +286,9 @@ layout erx_mf_display wire_le 4 16
 # (the session row naming no principal) and that template's packages facet row, and
 # its services, the rows of app_services it owns, each the index of a service an app
 # may name in its needs and of the facet row granted to the template for it. The boot
-# view checks once that the indices name those rows (docs/design-packaging.md, "The
-# template's rows by index").
+# view checks once that the indices name those rows and that the template holds no
+# other facet row, each named once (docs/design-packaging.md, "The template's rows by
+# index").
 layout erx_mf_apps wire_le 8 32
   field memory u64 0
   field max u32 8
