@@ -7482,8 +7482,8 @@ document's "residual risks accepted" paragraph.
   (`1/1`) and the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
   answers and `info/1`'s `period`, and `erx_win:report/1`
   ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
-  keyboard window's grant within `windows_clipboard_ms` of a key or button there, each request judged
-  alone, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
+  keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
+  clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
   `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
   ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
   colour-space chunks as sRGB; the `name` property, `erx_ui_query` and `erx_desk:reload/1`

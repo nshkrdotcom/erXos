@@ -652,7 +652,10 @@ violation fails the build with the property, the record and the field:
     grant of its service costs the display its `pixels`, or
     `windows_pixels_default` of `abi/services/windows.txt` where the
     facet row states none, rounded up to pages, and the side the display
-    reads for it, the display's own `lane` rounded up to pages; no facet
+    reads for it, the display's own `lane` rounded up to pages, and for
+    a grant whose facet row carries `clipboard`, the one copy it may hold
+    while a fid is open for writing, `windows_clipboard_bytes` rounded up
+    to pages; no facet
     row grants a display to the system domain, since its connection to
     the display is made by the display's creation, not by an
     introduction, and so carries no pixel area, which design-display.md
