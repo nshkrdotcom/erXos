@@ -2142,7 +2142,8 @@ it; git history is the record of completed work.
   (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
   the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
   id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
-  `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
+  `erx_file_remote`'s exchange split in its send and take halves (`send/2`, `take/2`, `send_flush/2`), and making
+  image 0 anew itself for an `r` record.
   Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
   requests in flight. The same change admits a clunk or `remove` at any bound and keeps the fid's number until the
   clunk is answered, answers a flush of a waiting clunk after it, has a grant whose client ended drain, and has the
@@ -7595,7 +7596,7 @@ document's "residual risks accepted" paragraph.
   names at any node. Settle it before the network carrier lands: give envelopes from
   network entries a `D` no domain id can equal, and add the test that a remote node of
   creation equal to a client's id is refused at its grant.
-* [Medium] File clients (`erx_file_remote.erl`, `collect/3`): an alias stays active
+* [Medium] File clients (`erx_file_remote.erl`, `arrived/1` and `take/2`): an alias stays active
   until its reply arrives and the wait while the server lives has no deadline, so a
   server of another domain can hold a request open and send its alias, or the
   caller's pid it was handed as the owner, messages of any other shape without limit;

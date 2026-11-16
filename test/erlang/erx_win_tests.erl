@@ -179,6 +179,34 @@ relay_test() ->
         ?assertError(function_clause, erx_win:write_at(Window, ctl, 0, <<"present">>))
     end).
 
+%% A draw connection keeps a program's kbd read while it serves others
+%% (docs/design-display.md, "Erlang clients"): send_read/4 answers at once, the
+%% display's reply arrives as a message reply/2 takes for its id, and a flush of
+%% the answered read is answered ok for its own id. ctl has no clause.
+send_read_test() ->
+    with(fun(_) ->
+        {ok, Window} = erx_win:open(?SERVICE, #{}),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
+        {ok, Read} = erx_win:send_read(Window, kbd, 0, 64),
+        ?assertMatch({ok, <<"k", _/binary>>}, answer(Read)),
+        {ok, Flush} = erx_win:send_flush(Window, Read),
+        ?assertEqual(ok, answer(Flush)),
+        ?assertError(function_clause, erx_win:send_read(Window, ctl, 0, 144)),
+        ?assertError(function_clause, erx_win:send_read(Window, wctl, 0, 64))
+    end).
+
+%% The answer to Id among the messages that arrive, as a keeper's loop takes it,
+%% passing the others by.
+answer(Id) ->
+    receive
+        Message ->
+            case erx_win:reply(Message, Id) of
+                {reply, Answer} -> Answer;
+                no_reply -> answer(Id)
+            end
+    after ?WAIT -> error(no_reply)
+    end.
+
 no_room_test() ->
     with(fun(#{grant := Grant}) ->
         {ok, _} = erx_win:open(?SERVICE, #{name => <<"first">>}),

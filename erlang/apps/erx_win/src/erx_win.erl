@@ -29,6 +29,17 @@ window's rectangle again and answers an image at the new size over the
 same buffer, clipped to it, allocating nothing; `resize/2` and `label/2`
 write `wctl` and `label`.
 
+**A program's input** (docs/design-display.md, "Erlang clients"). A
+program's draw connection keeps the program's reads of `kbd` and `mouse`
+while it serves the program's other requests. `send_read/4` sends such a
+read and answers its request id at once; the display's reply arrives as a
+message, which `reply/2` takes for that id, held to its request as every
+reply here is, and the end of the display's grant answers the read
+`{error, eio}`. `send_flush/2` sends the display a flush of the read an id
+names: the display answers the read first, with `{error, eintr}` or the
+record it had already taken, and then the flush, whose own id `reply/2`
+takes too.
+
 **A window over a range it does not own** (docs/design-display.md, "Erlang
 clients"). `open(Display, #{buffer => none})` makes the window and
 allocates nothing, so the window holds no buffer and its end frees none.
@@ -56,9 +67,10 @@ made, and an area with no room answers `{error, enomem}` after the
 -include("generated/erx_abi.hrl").
 
 -export([open/2, info/1, image/1, image_rect/1, chan/1, lease/2, present/2, present/3, mouse/1,
-         kbd/1, resized/1, resize/2, label/2, read_at/4, write_at/4]).
+         kbd/1, resized/1, resize/2, label/2, read_at/4, write_at/4, send_read/4, reply/2,
+         send_flush/2]).
 -export([clipboard/1, clipboard_open/2, clipboard_read/3, clipboard_write/3, clipboard_close/1]).
--export_type([window/0, options/0, buffer/0, info/0, clipboard/0]).
+-export_type([window/0, options/0, buffer/0, info/0, clipboard/0, request/0]).
 
 -define(O_RDONLY, 0).
 %% The display's name for its clipboard at the window tree's root.
@@ -206,6 +218,40 @@ as the display answers it, or its error.
           {ok, non_neg_integer(), non_neg_integer()} | {error, atom()}.
 write_at(#{tree := Tree, fids := Fids}, File, Offset, Bytes) when ?RELAYED(File), is_binary(Bytes) ->
     one(Tree, {write, map_get(File, Fids), Offset, Bytes}).
+
+-doc "A read `send_read/4` or a flush `send_flush/2` sent, not yet answered.".
+-opaque request() :: erx_file_remote:request_id().
+
+-doc """
+Sends a read of `Count` bytes at `Offset` of the window's `kbd` or `mouse`
+on the fid `open/2` opened, and answers its id without waiting for the
+display, which answers the read when a record arrives; `reply/2` takes
+the answer, which is `read_at/4`'s. A read the file protocol's grammar
+refuses is sent nowhere and answers `{error, einval}`.
+""".
+-spec send_read(window(), kbd | mouse, non_neg_integer(), non_neg_integer()) ->
+          {ok, request()} | {error, atom()}.
+send_read(#{tree := Tree, fids := Fids}, File, Offset, Count) when File =:= kbd; File =:= mouse ->
+    erx_file_remote:send(Tree, {read, map_get(File, Fids), Offset, Count}).
+
+-doc """
+`{reply, Answer}` when `Message`, a message the caller received, answers
+the request `Id`: the display's reply, `{error, eio}` for one outside the
+file protocol, or `{error, eio}` once the display's grant has ended with
+no reply. `no_reply` for any other message. An answered id is spent.
+""".
+-spec reply(term(), request()) -> {reply, ok | {ok, binary()} | {error, atom()}} | no_reply.
+reply(Message, Id) ->
+    erx_file_remote:take(Message, Id).
+
+-doc """
+Sends the display a flush of the read `Id` names, and answers the flush's
+own id, whose answer `reply/2` takes: `ok`, after the display has
+answered the read.
+""".
+-spec send_flush(window(), request()) -> {ok, request()} | {error, atom()}.
+send_flush(#{tree := Tree}, Id) ->
+    erx_file_remote:send_flush(Tree, Id).
 
 -doc """
 The display's clipboard opened on a fid of its own: the grant's tree and the
