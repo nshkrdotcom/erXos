@@ -2235,6 +2235,14 @@ it; git history is the record of completed work.
   in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
   drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
   view but should be refused at the declaration.
+* [Medium] apps, a refused `/app` mount (`erlang/apps/erx_app/src/erx_app.erl`, `start_app/2`): in the kiosk
+  suite's altered cell, whose image the verity read refuses, `erx_app` fails with `{mount, Reason}` and is
+  started again about every 0.2 s for as long as the guest runs, logging each attempt. The design ends the
+  session at its start with the reader's reason ([design-packaging.md](docs/design-packaging.md), the failure
+  table's "the image does not mount" row) and lets the start row's keeper restart it only within the row's
+  intensity, 5 ends in 600 s by default, after which the row is `down`
+  ([design-apps.md](docs/design-apps.md)); the restarts break that bound, so either they bypass the row's
+  supervisor or its intensity is not applied to this row.
 * [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
   `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
   needs an `rx` mount); the mount should take the facet's rights.
