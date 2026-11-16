@@ -450,7 +450,9 @@ it; git history is the record of completed work.
   F2FS arrives by an installation, which creates both partitions afresh,
   and an update whose storage formats differ from the running system's is
   refused ([design-storage.md](docs/design-storage.md#system-updates),
-  [plan.md](docs/plan.md)).
+  [plan.md](docs/plan.md)). It blocks no release: R1 ships littlefs
+  under its release contract
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract)).
 * [Medium] kernel, performance counters on Fiasco: the modified
   Fiasco builds with `CONFIG_PERF_CNT_USER=y`
   (`config/fiasco/kernel.defconfig`), so user mode reads the CPU's
@@ -2070,7 +2072,9 @@ it; git history is the record of completed work.
 * [Medium] display, LVGL renderer: replace LVGL on panels with the Erlang
   renderer once the parity test passes and the Erlang renderer's frame
   times match LVGL's on a 240x240 panel
-  ([design-display.md](docs/design-display.md#dependencies)).
+  ([design-display.md](docs/design-display.md#dependencies)). It blocks
+  no release: R1 ships LVGL under its release contract
+  ([design-display.md](docs/design-display.md#lvgls-release-contract)).
 * [Low] stopgap, the host link's boot word: the host link is opt-in through
   `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`,
   `liberx/backend/core/boot_manifest.c`), because the root takes the host
@@ -7431,7 +7435,8 @@ to the corpus and follow rc
   `/data/log` past `erx_logfs`: they can rewrite, truncate or forge either family, the kernel's included, so the
   store's one writer and its attribution hold only for what no such session touched. Development builds run
   trusted code alone. Closed by rooting each `data` grant at its principal's directory, with the test that a
-  session holding `data` finds no `log`.
+  session holding `data` finds no `log`; it blocks R1, whose littlefs release contract roots every grant
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract)).
 * [Medium] erx_logfs ([design-log.md](docs/design-log.md#security)): `/var/log` serves the store's bytes as stored.
   The log service stores only lines that passed the line escape, but a storage domain, or a holder of write access
   to `/data/log`, can put terminal controls in a stored file that `cat /var/log/messages` writes to a terminal.

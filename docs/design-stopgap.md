@@ -1,7 +1,8 @@
-# Stopgaps replaced before release
+# Stopgaps no other design carries
 
-Each component here is a stopgap: the roadmap replaces it before a release, so CLAUDE.md's rule
-for what a stopgap promises binds it and no release ships it. The kernel the first release ships,
+Each component here is a stopgap: the roadmap replaces it, and CLAUDE.md's rule for what a
+stopgap promises binds it. R1 ships littlefs, under [its release contract](#release-contract);
+a release ships no other stopgap of this document. The kernel the first release runs on,
 Fiasco, and `liberx`'s backend over it are [design-fiasco.md](design-fiasco.md)'s, and the
 sections of that backend named below are there.
 
@@ -23,7 +24,7 @@ driver and serves no `/data`. The Erlang side is the
 port's, and only the glue below differs. The storage domain serves the tree as the `data` service, of the `files`
 interface, whose facets the manifest grants to the system domain and to root's session template: each grant is
 read-write over the whole of `/data`, so every session of root's principal reads and writes all of it, which a
-development build's trusted code allows (property 16 of [design-system.md](design-system.md) holds both ends to the
+development build's trusted code allows and a release does not ([Release contract](#release-contract)) (property 16 of [design-system.md](design-system.md) holds both ends to the
 protocol's frame floor).
 
 A process running a dirty NIF cannot run its receive loop, so two share the work. The **owner** takes clients' requests, one at a time, and never
@@ -103,11 +104,37 @@ directory there.
 | **littlefs**: a file operation under `+SDio 1` with a block read in the callback completes | `complete` made a dirty NIF: the deadline fires |
 | littlefs: an injected block error fails that operation as unknown, and the next is `{error, eio}`; the driver killed under load: no later writes reach it, and after a reboot a file synced earlier is there; a littlefs worker killed ends the storage domain, whose restart mounts `/data` afresh with a file written earlier (the driver_domains suite); a block device process killed or shut down ends `erx_blk_sup`, and `storage_ctl`'s stop, start and restart do not (`erx_driver_ctl_tests`, on the host) | the error swallowed: success claimed. The owner resends: a later write is counted. Sync skipped: the file is lost. The driver restarted in place: `erx_blk_sup` outlives the kill |
 
-## Known gaps
+## Release contract
 
-* Any littlefs block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the volume again.
+R1 ships littlefs as the read-write file system of the data partition and of the vault's partition. Beyond what CLAUDE.md's
+rule for a stopgap promises, a release commits to this for every domain, trusted or not, and no more; a gap that breaks it
+blocks the release, and every other gap is a published downside below. A test marked *new* is written before the
+release; the others are [Verification](#verification)'s or the fuzz campaign's.
+
+| Commitment | What a release does | Test, and the seeded failure that proves it ran |
+| --- | --- | --- |
+| **Placement** | littlefs runs only as the storage domain's sub-space port ([design-storage.md](design-storage.md#read-write-storage)): single-threaded C under `liberx` in a sub-space holding its channel and the data area the storage domain maps into it, and nothing else. A release manifest has no NIF form; the NIF form above is a development build's | *new*: the port's sub-space holds no handle but its channel and data area (the driver_domains suite reads the port's space through `/proc`); a port given the storage domain's window as well fails it |
+| **Input** | the partition's bytes are untrusted, read only through littlefs's own bounds checks and checksums, and a mount that fails never writes or formats the partition ([A mount never formats](design-storage.md#read-write-storage)) | `tools/fuzz/lfs_image_fuzz.c` runs at its full `check-fuzz` budget under AddressSanitizer with no open finding before the release; *new*: a seeded bound removed from littlefs's directory-entry read makes it report |
+| **Failure** | a littlefs crash ends only its port, whose owner's supervisor restarts it once the window has answered the port's outstanding requests, and the port mounts the volume afresh; a block failure ends the storage domain, which the domain service restarts within its row's intensity (`restarts 5`, `restart_period_s 600`), and the restarted domain mounts the volume afresh; until then every request answers `{error, eio}`, nothing replays a request, and nothing resets the device in place ([Verification](#verification), [design-storage.md](design-storage.md)'s failure table) | *new*: the port killed under load: `/data` answers `eio`, then a file written earlier is read after the remount; a port restarted before its outstanding requests are answered fails. The block-failure cases of [Verification](#verification) |
+| **Durability** | a file synced before a driver kill or a power cut is present after the reboot; a write not yet synced may be lost | the driver killed under load ([Verification](#verification)); sync skipped loses the file |
+| **Grants** | the data service grants each client one tree rooted at its principal's directory, an app's at `apps/NAME/SIGNER/` and the `packages` service's at `packages/` ([design-storage.md](design-storage.md), "The storage services and the FAT server"; [design-packaging.md](design-packaging.md#where-a-package-lies)); the read-write grant over the whole volume to every session of root's principal is a development build's alone | *new*: a session of a second principal opens a file of the first principal's directory and gets `enoent`; a grant minted at the volume's root fails |
+| **Keys** | the vault's files are sealed under keys the storage domain never holds, so a crafted partition or a littlefs defect reveals no key ([design.md](design.md#residual-risks), "littlefs serves the vault's partition") | *new*: the vault's files read raw from the partition hold no key in the clear; a file written unsealed fails ([design-system.md](design-system.md#the-vault)) |
+
+**Published downsides.** A release states them with its notes:
+
+* a crafted or corrupt partition can end the port or the storage domain, and leaves its files unavailable; a partition that fails
+  every mount stays unavailable and is never formatted;
+* a defect in littlefs can lose files, a vault key file among them, which leaves that principal's vault `unavailable`; no key is
+  revealed;
+* any block error, deadline or driver restart ends the storage domain, and `/data` is unavailable until its restart has mounted the
+  volume again.
 
 ## Open decisions
 
 littlefs's protocol stays here while the system domain's form has a manifest that uses it, and `design-storage.md`, whose
 target text describes the port, states the placement and links to it.
+
+**Which form R1 ships.** The contract above ships the sub-space port, so a memory error in littlefs's C code reaches only the
+port's sub-space. The alternative is to ship the NIF form, which works today, with a further published downside: a littlefs
+memory error corrupts the storage domain's runtime, which holds every grant of the volume. Recommendation: ship the port; the
+port is the target placement, so the work is not throwaway.

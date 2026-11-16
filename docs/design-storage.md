@@ -7,7 +7,8 @@ each slot's EROFS system partition, which the storage domain that serves
 `system` serves as the `system` tree, every package there a self-checking file
 whose blocks are checked where they are consumed; read-write files
 on the data partition, in erXos's F2FS, with littlefs as the stopgap
-behind the same interface; FAT partitions for removable media and for
+behind the same interface, which R1 ships under its release contract
+([design-stopgap.md](design-stopgap.md#release-contract)); FAT partitions for removable media and for
 exchanging files with other machines; and system updates written to the
 spare of two slots and committed only after a healthy trial boot. This
 document is the medium's layout and formats, the block driver, the storage
@@ -59,7 +60,8 @@ Decisions every reader of this document needs:
   slot writer are Erlang; the driver touches its device through the
   device NIF, and hashing and checksums are C primitives
   ([design.md](design.md#decisions)). littlefs, the stopgap, is C in a
-  sub-space port of the storage domain.
+  sub-space port of the storage domain, the form a release ships under
+  its [release contract](design-stopgap.md#release-contract).
 * **The block driver lives where the configuration puts the device.** In
   the default configuration the block device belongs to the storage
   domain and the driver runs there; on a board whose storage controller
@@ -1467,7 +1469,8 @@ same `erx_fs` interface; its design is the littlefs section of
 [design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain), and
 the port below is the target.
 
-**littlefs, the stopgap**, runs in the same storage domain behind the same
+**littlefs, the stopgap** that R1 ships under its
+[release contract](design-stopgap.md#release-contract), runs in the same storage domain behind the same
 `erx_fs` interface, as a **sub-space port** of the storage domain, with
 the shape of a program
 ([design-programs.md](design-programs.md#a-program-is-a-port)):
