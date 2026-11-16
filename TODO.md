@@ -3174,9 +3174,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
   `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
   suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
-* [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
-  by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
-  generated limit.
 * [Low] ERTS, `sys/erxos/erx_program_drv.c`: the gate worker's 64 registrations (two a program) bound a
   session to 32 programs at once, each start past that refused with `elimit`.
 * [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,
