@@ -726,7 +726,9 @@ failure answering:
 The tree's layout, `erx_verity_tree`, is pure arithmetic in a module of
 its own, preloaded beside the hash check rather than inside it: it gives
 the blocks of each level, the decoder their sum and `erx_verity`'s check
-of each block their places, from one source, while no module but the
+of each block their places, from one source, and owns the one type of a
+layout, where an image and its tree lie, that the decoder and the boot
+record's reader make and the hash check opens, while no module but the
 EROFS reader names `erx_verity`
 ([design-storage.md](design-storage.md#reading-erofs-images)).
 

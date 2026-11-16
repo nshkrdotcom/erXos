@@ -49,20 +49,34 @@ class ErxErofsTest < Minitest::Test
     end
   end
 
-  # The hash check's cases: each image with its tree, as NAME.img, and the layouts in
-  # verity.terms as {NAME, Layout}. "levels" puts a block of 0xFF between image and tree.
-  # "deep", 16700 blocks under a tree of three levels, stores only its tree: the EUnit
-  # case's window makes each image block from its number, as numbered_blocks does.
+  # One case of the hash check: the image's salt and bytes, what lies before the image (as
+  # a package's header does) and between it and its tree, and whether NAME.img holds the
+  # image or only the tree.
+  VerityCase = Data.define(:salt, :image, :before, :gap, :stores_image) do
+    def initialize(salt:, image:, before: ''.b, gap: ''.b, stores_image: true) = super
+  end
+
+  # The hash check's cases, each written as NAME.img, and their layouts in verity.terms as
+  # {NAME, Layout}. "levels" puts a block of 0xFF between image and tree; "offset", a
+  # package's shape, a block of 0xEE before the image; "deep", 16700 blocks under a tree
+  # of three levels, stores only its tree: the EUnit case's window makes each image block
+  # from its number, as numbered_blocks does.
+  def verity_cases
+    { 'levels' => VerityCase.new(salt: "\x05".b * 7, image: numbered_blocks(200), gap: "\xff".b * 4096),
+      'offset' => VerityCase.new(salt: "\x0b".b * 3, image: numbered_blocks(130), before: "\xee".b * 4096),
+      'one' => VerityCase.new(salt: "\x09".b, image: "\x07".b * 4096),
+      'erofs' => VerityCase.new(salt: "\x01".b * 32, image: File.binread(File.join(FIXTURES, 'compact.img'))),
+      'deep' => VerityCase.new(salt: "\x03".b * 5, image: numbered_blocks(16_700), stores_image: false) }
+  end
+
   def write_verity_cases(work)
-    salts = { 'levels' => "\x05".b * 7, 'one' => "\x09".b, 'erofs' => "\x01".b * 32, 'deep' => "\x03".b * 5 }
-    images = { 'levels' => numbered_blocks(200), 'one' => "\x07".b * 4096,
-               'erofs' => File.binread(File.join(FIXTURES, 'compact.img')), 'deep' => numbered_blocks(16_700) }
-    terms = images.map do |name, image|
-      tree = Erx::AppPackage.verity_tree(image, salt: salts.fetch(name))
-      gap = name == 'levels' ? "\xff".b * 4096 : ''.b
-      File.binwrite(File.join(work, "#{name}.img"), name == 'deep' ? tree.bytes : image + gap + tree.bytes)
-      layout = { image_length: image.bytesize, tree_offset: image.bytesize + gap.bytesize,
-                 tree_length: tree.bytes.bytesize, salt: salts.fetch(name), root_hash: tree.root_hash }
+    terms = verity_cases.map do |name, verity_case|
+      verity_case => { salt:, image:, before:, gap:, stores_image: }
+      tree = Erx::AppPackage.verity_tree(image, salt: salt)
+      File.binwrite(File.join(work, "#{name}.img"), stores_image ? before + image + gap + tree.bytes : tree.bytes)
+      layout = { image_offset: before.bytesize, image_length: image.bytesize,
+                 tree_offset: before.bytesize + image.bytesize + gap.bytesize,
+                 tree_length: tree.bytes.bytesize, salt: salt, root_hash: tree.root_hash }
       "{\"#{name}\", #{erlang_map(layout)}}.\n"
     end
     File.write(File.join(work, 'verity.terms'), terms.join)

@@ -285,8 +285,9 @@ open_file_refusals_test() ->
 %% Erx::AppPackage#verity_tree, made (test/host/erx_erofs_test.rb writes them into the
 %% directory ERX_VERITY_CASES names): "levels", 200 distinct blocks under a tree of a
 %% one-block top and a two-block lowest level, with a block of 0xFF between the image and
-%% the tree; "one", one block and no tree, its block's hash the root; and "erofs", the
-%% compact fixture image. Every block must read as the image holds it, and any changed
+%% the tree; "offset", a package's shape, 130 blocks after a block of 0xEE, as a package's
+%% image lies after its header, and its tree after them; "one", one block and no tree, its
+%% block's hash the root; and "erofs", the compact fixture image. Every block must read as the image holds it, and any changed
 %% byte of a block, of a tree block on its path or of the root answer eio. "deep", a tree
 %% of three levels, is read in parts below.
 
@@ -322,9 +323,18 @@ flip_byte(Bytes, Offset) ->
 
 verity_good_image_reads_test_() ->
     [{Name, fun() ->
-                    {Bytes, #{image_length := Length} = Layout} = verity_case(Name),
-                    ?assertEqual({ok, binary:part(Bytes, 0, Length)}, read_image(Bytes, Layout))
-            end} || Name <- ["levels", "one", "erofs"]].
+                    {Bytes, #{image_offset := Offset, image_length := Length} = Layout} = verity_case(Name),
+                    ?assertEqual({ok, binary:part(Bytes, Offset, Length)}, read_image(Bytes, Layout))
+            end} || Name <- ["levels", "offset", "one", "erofs"]].
+
+%% The image's blocks are the window's from image_offset on: block 0 is the block after
+%% the header, the header is no block of the image, and its changed byte changes no read.
+verity_image_offset_test() ->
+    {Bytes, #{image_offset := Offset, image_length := Length} = Layout} = verity_case("offset"),
+    ?assertEqual({ok, [binary:part(Bytes, Offset, ?BLOCK)]}, read_one(Bytes, Layout, 0)),
+    ?assertEqual({ok, [binary:part(Bytes, Offset + 129 * ?BLOCK, ?BLOCK)]}, read_one(Bytes, Layout, 129)),
+    ?assertEqual({error, eio}, read_one(flip_byte(Bytes, Offset + 5), Layout, 0)),
+    ?assertEqual({ok, binary:part(Bytes, Offset, Length)}, read_image(flip_byte(Bytes, 5), Layout)).
 
 verity_flipped_data_block_test() ->
     {Bytes, Layout} = verity_case("levels"),
@@ -352,7 +362,7 @@ verity_wrong_root_test_() ->
                     {Bytes, #{root_hash := <<First, Rest/binary>>} = Layout} = verity_case(Name),
                     Wrong = Layout#{root_hash := <<(First bxor 1), Rest/binary>>},
                     ?assertEqual({error, eio}, read_image(Bytes, Wrong))
-            end} || Name <- ["levels", "one", "erofs"]].
+            end} || Name <- ["levels", "offset", "one", "erofs"]].
 
 %% A read stops at the image's last block, though the window holds the tree past it.
 verity_reads_stop_at_the_image_test() ->
@@ -377,8 +387,14 @@ verity_refused_layouts_test_() ->
                Layout#{salt := not_a_binary},
                Layout#{root_hash := <<0:248>>},
                maps:remove(salt, Layout),
-               Layout#{image_offset => 0}],
-    [?_assertEqual({error, eio}, erx_verity:open(window(Bytes), Bad)) || Bad <- Refused].
+               maps:remove(image_offset, Layout),
+               Layout#{image_offset := ?SECTOR},
+               Layout#{extra => 0}],
+    %% A package's tree that starts before its image ends.
+    {Package, #{image_offset := Offset, image_length := PackageLength} = PackageLayout} = verity_case("offset"),
+    Overlapping = PackageLayout#{tree_offset := Offset + PackageLength - ?BLOCK},
+    [?_assertEqual({error, eio}, erx_verity:open(window(Bytes), Bad)) || Bad <- Refused]
+        ++ [?_assertEqual({error, eio}, erx_verity:open(window(Package), Overlapping))].
 
 %% The reader over a checked image serves the tree as over the image unchecked.
 verity_checked_mount_test() ->

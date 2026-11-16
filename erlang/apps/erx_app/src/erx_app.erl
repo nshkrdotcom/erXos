@@ -35,7 +35,7 @@ The app's record, as the ready answer hands it (docs/design-packaging.md,
 its header's layout, and what it starts, as its header declares it.
 """.
 -type app_record() :: #{place := binary(),
-                        layout := erx_pkg_header:layout(),
+                        layout := erx_verity_tree:layout(),
                         start := erx_pkg_header:start()}.
 
 -doc """
@@ -45,7 +45,7 @@ own (effects/0): permanent, so a declared application's end ends the session; a
 host test passes a mount over a fixture directory and `temporary`, so a failed
 start ends only the case.
 """.
--type effects() :: #{mount := fun((binary(), erx_pkg_header:layout()) -> ok | {error, term()}),
+-type effects() :: #{mount := fun((binary(), erx_verity_tree:layout()) -> ok | {error, term()}),
                      root := string(),
                      type := permanent | temporary}.
 

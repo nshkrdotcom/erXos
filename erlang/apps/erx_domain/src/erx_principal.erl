@@ -46,7 +46,7 @@ where its package's file lies in the session's namespace, under its
 `packages` grant, its header's layout and what it starts.
 """.
 -type app_record() :: #{place := binary(),
-                        layout := erx_pkg_header:layout(),
+                        layout := erx_verity_tree:layout(),
                         start := erx_pkg_header:start()}.
 
 -doc """

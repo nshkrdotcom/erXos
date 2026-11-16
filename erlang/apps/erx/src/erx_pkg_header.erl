@@ -24,7 +24,7 @@ header before the signature.
 """.
 
 -export([decode/2, layout/2, check_file/2]).
--export_type([decoded/0, layout/0, start/0, reason/0, authority/0, signer/0, authenticator/0, checked/0,
+-export_type([decoded/0, start/0, reason/0, authority/0, signer/0, authenticator/0, checked/0,
               check_reason/0]).
 
 -include("generated/erx_abi.hrl").
@@ -36,14 +36,6 @@ header before the signature.
 -if(?ERX_PKG_HEADER_MAX rem ?BLOCK =/= 0).
 -error("pkg_header_max is not a multiple of the EROFS block size").
 -endif.
-
--doc "Where a package's image and hash tree lie in its file, in bytes.".
--type layout() :: #{image_offset := non_neg_integer(),
-                    image_length := pos_integer(),
-                    tree_offset := non_neg_integer(),
-                    tree_length := non_neg_integer(),
-                    salt := binary(),
-                    root_hash := binary()}.
 
 -doc "What a package starts: its Erlang applications, or its program with its arguments.".
 -type start() :: {applications, [binary(), ...]} | {program, binary(), [binary()]}.
@@ -63,7 +55,7 @@ architecture, the seal and the header's length, and the image's layout.
                      key := binary(),
                      signature := binary(),
                      header_length := pos_integer(),
-                     layout := layout()}.
+                     layout := erx_verity_tree:layout()}.
 
 -doc """
 Why a file is not a package: longer than `ERX_PKG_BYTES_MAX`; a header the
@@ -93,7 +85,7 @@ decode(Length, Bytes)
 
 -doc "The layout `decode/2` finds, after all of its checks.".
 -spec layout(non_neg_integer(), binary()) ->
-    {ok, layout()} | {error, reason()}.
+    {ok, erx_verity_tree:layout()} | {error, reason()}.
 layout(Length, Bytes) ->
     case decode(Length, Bytes) of
         {ok, #{layout := Layout}} -> {ok, Layout};

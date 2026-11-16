@@ -48,7 +48,7 @@
 -include("generated/erx_abi.hrl").
 
 -export([records/0, find/2, find/3, framebuffers/0, framebuffers/1, system_image/0, system_image/1]).
--export_type([spec/0, framebuffer/0, format/0, system_image/0]).
+-export_type([spec/0, framebuffer/0, format/0]).
 
 %% What erx_device:open/1 takes: a given device's objects, or a physical device's window and
 %% line, each with its clock for its driver.
@@ -65,11 +65,7 @@
 -type framebuffer() :: #{window := {object, non_neg_integer(), non_neg_integer(), pos_integer()},
                          width := pos_integer(), height := pos_integer(), stride := pos_integer(),
                          format := format()}.
-%% The booted slot's system partition as its storage domain opens it in erx_verity: the
-%% image's length and its hash tree's offset and length in bytes, the tree's salt and its
-%% root hash (docs/design-stopgap.md, "The booted slot").
--type system_image() :: #{image_length := non_neg_integer(), tree_offset := non_neg_integer(),
-                          tree_length := non_neg_integer(), salt := <<_:8, _:_*8>>, root_hash := <<_:256>>}.
+
 %% The simple-framebuffer binding's formats, the device-tree reader's table.
 -type format() :: a1r5g5b5 | a2r10g10b10 | a8b8g8r8 | a8r8g8b8 | r5g6b5 | r5g5b5a1 | r8g8b8 | x1r5g5b5
                 | x2r10g10b10 | x8r8g8b8 | x8b8g8r8.
@@ -92,23 +88,26 @@ framebuffers(Arguments) ->
     collect(fun framebuffer/1, [Words || ["framebuffer" | Words] <- Arguments], []).
 
 %% The system_image record among the boot records.
--spec system_image() -> {ok, system_image()} | {error, {bad_device_record, string()}}.
+-spec system_image() -> {ok, erx_verity_tree:layout()} | {error, {bad_device_record, string()}}.
 system_image() ->
     system_image(records()).
 
-%% Pure, as find/3 is. The domain library writes the record, `-erx_record system_image LEN
-%% TREE_OFF TREE_LEN SALT ROOT`, only to the storage domain that serves `system`, so exactly
-%% one record of exactly five words is taken: LEN, TREE_OFF and TREE_LEN decimals within 64
-%% bits, SALT 2 to 64 lowercase hex digits, an even count, and ROOT exactly 64. Any other
-%% shape, a second record and none are refused with the reason, and the caller then opens
-%% no image.
--spec system_image([[string()]]) -> {ok, system_image()} | {error, {bad_device_record, string()}}.
+%% Pure, as find/3 is. The record is the booted slot's system partition as its storage
+%% domain opens it in erx_verity (docs/design-stopgap.md, "The booted slot"), a layout
+%% whose image starts at the partition's byte 0. The domain library writes it,
+%% `-erx_record system_image LEN TREE_OFF TREE_LEN SALT ROOT`, only to the storage domain
+%% that serves `system`, so exactly one record of exactly five words is taken: LEN,
+%% TREE_OFF and TREE_LEN decimals within 64 bits, SALT 2 to 64 lowercase hex digits, an
+%% even count, and ROOT exactly 64. Any other shape, a second record and none are refused
+%% with the reason, and the caller then opens no image.
+-spec system_image([[string()]]) -> {ok, erx_verity_tree:layout()} | {error, {bad_device_record, string()}}.
 system_image(Arguments) ->
     case [Words || ["system_image" | Words] <- Arguments] of
         [[Length, TreeOffset, TreeLength, Salt, Root]] ->
             case {numbers([Length, TreeOffset, TreeLength]), hex(Salt, 1, ?ERX_VERITY_SALT_SIZE), hex(Root, ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)} of
                 {{ok, [L, O, T]}, {ok, S}, {ok, R}} ->
-                    {ok, #{image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
+                    {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S,
+                           root_hash => R}};
                 {error, _, _} ->
                     bad("a system_image record's length, tree offset or tree length is not a decimal number "
                         "of 64 bits");

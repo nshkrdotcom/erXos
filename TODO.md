@@ -5102,10 +5102,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   result the process applies once it checks the point again. No test.
 * [Medium] runtime, `erx_verity`: an image opened with a layout is checked against its tree, but
   `erx_ns`'s window mounts (`mount_image`) have no layout and open `unchecked`, so their blocks pass
-  through unchecked until M11; the layout `erx_verity:open/2` takes is a third map of the same
-  layout beside `erx_pkg_header:layout()` (which adds `image_offset`) and
-  `erx_device_record:system_image()`, to fold into one type `erx_verity_tree` owns, with
-  `image_offset` read by the funnel; there is no cache, neither of checked tree blocks, so each read
+  through unchecked until M11; there is no cache, neither of checked tree blocks, so each read
   fetches its tree path again, nor the reader's ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only

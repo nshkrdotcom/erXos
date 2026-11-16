@@ -234,7 +234,7 @@ system_image_words() ->
     ["system_image", "1048576", "1048576", "12288", ?SALT, ?ROOT].
 
 a_system_image_record_is_read_test() ->
-    ?assertEqual({ok, #{image_length => 1048576, tree_offset => 1048576, tree_length => 12288, salt => <<16#a5>>,
+    ?assertEqual({ok, #{image_offset => 0, image_length => 1048576, tree_offset => 1048576, tree_length => 12288, salt => <<16#a5>>,
                         root_hash => binary:decode_hex(<<?ROOT>>)}},
                  erx_device_record:system_image([["boot", "normal", "a"], system_image_words(),
                                                  ["given", "block", "virtio_mmio"]])).

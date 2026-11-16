@@ -8,9 +8,11 @@ EROFS images, and invariant E1): the one funnel through which the EROFS
 reader, `erx_erofs`, reaches an image's blocks.
 
 `open/2` takes the pid of the block service's window on the image and the
-image's layout: the image's length and its dm-verity hash tree's offset
-and length in the window, the tree's salt and its root hash. It asks the
-window its length, refuses a layout whose image is not whole blocks, whose
+image's layout, `erx_verity_tree:layout()`: the image's offset and length
+and its dm-verity hash tree's offset and length in the window, the tree's
+salt and its root hash. It asks the window its length, refuses a layout
+with another key, whose image is empty, does not start on a block or is
+not whole blocks, whose
 tree does not start on a block at or past the image's end, is not as long
 as `erx_verity_tree` gives for the image, or does not fit the window, and
 returns an opaque handle that holds the pid and the layout. Nothing in the
@@ -26,7 +28,7 @@ once: the data blocks asked for and, on each level of the tree, the blocks
 that hold their hashes. Each is a `gen_server` call with an alias of its
 own, so each answer is matched to its block whatever order they come in.
 Each answer must be a whole block, its block the one its alias names; then it checks the
-tree level by level, top first, in `check/3`: the top block against the
+tree level by level, top first, in `check/2`: the top block against the
 root hash, each lower block against its hash in the level above, and each
 data block against its hash in the lowest level, every hash the SHA-256 of
 the salt and the block. It returns the data blocks only if every one
@@ -46,7 +48,7 @@ closure (docs/plan.md, M11).
 """.
 
 -export([open/2, read/3]).
--export_type([image/0, tree/0, layout/0]).
+-export_type([image/0, tree/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -61,30 +63,36 @@ closure (docs/plan.md, M11).
 %% answers a device that did not is heard first.
 -define(ANSWER_WAIT, 40000).
 
-%% An open image: its window, its size in blocks and how its blocks are checked, either
-%% unchecked or the tree's salt, root hash and the window block where each of its levels
-%% starts, the lowest level first.
+%% An open image: its window, the window block that is the image's block 0, the image's
+%% size in blocks, and how its blocks are checked: unchecked, or against the tree's salt,
+%% its root hash and the window block where each level of the tree starts, the lowest
+%% first.
 -record(window, {pid :: pid(),
+                 base :: non_neg_integer(),
                  blocks :: non_neg_integer(),
-                 tree :: unchecked | #{salt := binary(), root_hash := <<_:256>>,
-                                       levels := [non_neg_integer()]}}).
+                 tree :: unchecked | checking()}).
+
+%% How an open image's blocks are checked against its tree.
+-type checking() :: #{salt := binary(), root_hash := <<_:256>>, starts := [non_neg_integer()]}.
 
 -doc "An open image: its window, which only this module reads through.".
 -opaque image() :: #window{}.
 
 -doc """
-Where the image and its hash tree lie in the window, in bytes: the image
-from byte 0, `image_length` bytes, and the tree, `tree_length` bytes from
-`tree_offset`, its levels top first; the tree's salt and its root hash.
-""".
--type layout() :: #{image_length := pos_integer(), tree_offset := non_neg_integer(),
-                    tree_length := non_neg_integer(), salt := binary(), root_hash := <<_:256>>}.
-
--doc """
 How the image's blocks are checked: against the tree a layout places, or
 `unchecked`, for a window that has no layout.
 """.
--type tree() :: layout() | unchecked.
+-type tree() :: erx_verity_tree:layout() | unchecked.
+
+%% Blocks First to Last of one level of a read, counted from the level's block 0, which
+%% is window block Base. The image's own blocks are the level below the tree's lowest.
+%% A read is a list of spans, the data blocks first and then the blocks on their path
+%% through the tree, the lowest level first; read/3 asks the window for the blocks in that
+%% order, and levels/3 takes the answers back by the same list.
+-type span() :: {Base :: non_neg_integer(), First :: non_neg_integer(), Last :: non_neg_integer()}.
+
+%% A level read: its blocks from index First, as a span named them.
+-type level() :: {First :: non_neg_integer(), Blocks :: [binary()]}.
 
 -doc """
 Opens the image the window `Window` holds under `Tree`, or answers
@@ -103,31 +111,32 @@ open(_, _) ->
     {error, eio}.
 
 opened(Pid, WindowBlocks, unchecked) ->
-    {ok, #window{pid = Pid, blocks = WindowBlocks, tree = unchecked}};
-opened(Pid, WindowBlocks, #{image_length := Length, tree_offset := TreeOffset,
+    {ok, #window{pid = Pid, base = 0, blocks = WindowBlocks, tree = unchecked}};
+opened(Pid, WindowBlocks, #{image_offset := Offset, image_length := Length, tree_offset := TreeOffset,
                             tree_length := TreeLength, salt := Salt, root_hash := <<_:256>> = Root} = Layout)
-  when map_size(Layout) =:= 5, is_integer(Length), Length > 0, Length rem ?BLOCK =:= 0,
-       is_integer(TreeOffset), TreeOffset >= Length, TreeOffset rem ?BLOCK =:= 0,
+  when map_size(Layout) =:= 6, is_integer(Offset), Offset >= 0, Offset rem ?BLOCK =:= 0,
+       is_integer(Length), Length > 0, Length rem ?BLOCK =:= 0,
+       is_integer(TreeOffset), TreeOffset >= Offset + Length, TreeOffset rem ?BLOCK =:= 0,
        TreeOffset div ?BLOCK =< WindowBlocks,
        is_integer(TreeLength), is_binary(Salt) ->
     Blocks = Length div ?BLOCK,
-    Levels = erx_verity_tree:levels(Blocks),
     TreeBlocks = erx_verity_tree:blocks(Blocks),
     case TreeLength =:= TreeBlocks * ?BLOCK andalso TreeOffset div ?BLOCK + TreeBlocks =< WindowBlocks of
         true ->
-            Starts = starts(reverse(Levels, []), TreeOffset div ?BLOCK, []),
-            {ok, #window{pid = Pid, blocks = Blocks,
-                         tree = #{salt => Salt, root_hash => Root, levels => Starts}}};
+            Lengths = erx_verity_tree:levels(Blocks),
+            Starts = starts(reverse(Lengths, []), TreeOffset div ?BLOCK, []),
+            {ok, #window{pid = Pid, base = Offset div ?BLOCK, blocks = Blocks,
+                         tree = #{salt => Salt, root_hash => Root, starts => Starts}}};
         false ->
             {error, eio}
     end;
 opened(_, _, _) ->
     {error, eio}.
 
-%% The window block where each level starts, the lowest first, from the levels' lengths
-%% top first, as they lie from the tree's first block At.
+%% The window block where each level starts, the lowest first, from the length of each
+%% level in blocks, top first, as they lie from the tree's first block At.
 starts([], _At, Starts) -> Starts;
-starts([Blocks | Levels], At, Starts) -> starts(Levels, At + Blocks, [At | Starts]).
+starts([Length | Lengths], At, Starts) -> starts(Lengths, At + Length, [At | Starts]).
 
 -doc """
 Returns `Count` blocks of the image from block `Block`, 1 to
@@ -136,42 +145,45 @@ Returns `Count` blocks of the image from block `Block`, 1 to
 `{error, eio}`.
 """.
 -spec read(image(), non_neg_integer(), pos_integer()) -> {ok, [binary()]} | {error, eio}.
-read(#window{pid = Pid, blocks = Blocks, tree = Tree}, Block, Count)
+read(#window{pid = Pid, base = Base, blocks = Blocks, tree = Tree}, Block, Count)
   when is_integer(Block), Block >= 0, is_integer(Count),
        Count >= 1, Count =< ?ERX_VERITY_READ_BLOCKS_MAX, Block + Count =< Blocks ->
     Last = Block + Count - 1,
-    Paths = paths(Tree, Block div ?HASHES, Last div ?HASHES),
-    Wanted = [{Block, Last} | [{Start + First, Start + End} || {Start, First, End} <- Paths]],
-    Requests = [{read, At * ?SECTORS, ?SECTORS} || {From, To} <- Wanted, At <- indexes(To, From, [])],
+    Spans = [{Base, Block, Last} | path(Tree, Block div ?HASHES, Last div ?HASHES)],
+    Requests = [{read, At * ?SECTORS, ?SECTORS} || Span <- Spans, At <- window_blocks(Span)],
     case call(Pid, Requests) of
-        {ok, Answers} -> checked(Tree, Block, Count, Paths, Answers);
+        {ok, Answers} -> checked(Tree, Spans, Answers);
         error -> {error, eio}
     end;
 read(_, _, _) ->
     {error, eio}.
 
-%% The blocks that hold the hashes of blocks First to Last of the level below, on each
-%% level, the lowest first: {Start, FirstIndex, LastIndex}, Start the level's first
-%% window block. An unchecked image needs none.
-paths(unchecked, _First, _Last) ->
-    [];
-paths(#{levels := Starts}, First, Last) ->
-    paths(Starts, First, Last, []).
+%% The window blocks a span names, in order.
+-spec window_blocks(span()) -> [non_neg_integer()].
+window_blocks({Base, First, Last}) -> indexes(Base + Last, Base + First, []).
 
-paths([], _First, _Last, Paths) ->
-    reverse(Paths, []);
-paths([Start | Starts], First, Last, Paths) ->
-    paths(Starts, First div ?HASHES, Last div ?HASHES, [{Start, First, Last} | Paths]).
+%% The spans of the tree blocks that hold the hashes of blocks First to Last of the level
+%% below, on each level, the lowest first. An unchecked image needs none.
+-spec path(unchecked | checking(), non_neg_integer(), non_neg_integer()) -> [span()].
+path(unchecked, _First, _Last) ->
+    [];
+path(#{starts := Starts}, First, Last) ->
+    path(Starts, First, Last, []).
+
+path([], _First, _Last, Spans) ->
+    reverse(Spans, []);
+path([Start | Starts], First, Last, Spans) ->
+    path(Starts, First div ?HASHES, Last div ?HASHES, [{Start, First, Last} | Spans]).
 
 %% The data blocks, once every answer is a whole block and, over a tree, every block
 %% matched its hash.
-checked(Tree, Block, Count, Paths, Answers) ->
+-spec checked(unchecked | checking(), [span(), ...], [term()]) -> {ok, [binary()]} | {error, eio}.
+checked(Tree, Spans, Answers) ->
     case whole(Answers, []) of
         {ok, Read} ->
-            {Data, TreeRead} = split(Count, Read, []),
-            case Tree of
-                unchecked -> {ok, Data};
-                #{} -> check(Tree, {Block, Data}, levels(Paths, TreeRead, []))
+            case {Tree, levels(Spans, Read, [])} of
+                {unchecked, [{_, Data}]} -> {ok, Data};
+                {#{}, Levels} -> check(Tree, Levels)
             end;
         error ->
             {error, eio}
@@ -184,27 +196,28 @@ whole([{ok, Block} | Answers], Blocks) when is_binary(Block), byte_size(Block) =
 whole(_, _) ->
     error.
 
-%% Each level's blocks read, as {FirstIndex, Blocks}, the top level first.
+%% The levels read, one for each span, from the blocks read in the spans' order: the
+%% reverse of that order, so the top level first and the data blocks last.
+-spec levels([span()], [binary()], [level()]) -> [level()].
 levels([], [], Levels) ->
     Levels;
-levels([{_Start, First, Last} | Paths], Read, Levels) ->
+levels([{_Base, First, Last} | Spans], Read, Levels) ->
     {Blocks, Rest} = split(Last - First + 1, Read, []),
-    levels(Paths, Rest, [{First, Blocks} | Levels]).
+    levels(Spans, Rest, [{First, Blocks} | Levels]).
 
-%% The pure check: each level of the tree, the top first, against the level above it,
-%% the root hash standing above the top as a level of one block holding one hash, and the
-%% data blocks against the lowest level. A level is {FirstIndex, Blocks}.
-check(#{salt := Salt, root_hash := Root}, Data, Levels) ->
-    check(Salt, {0, [Root]}, Levels, Data).
+%% The pure check of the levels read, the top first and the data blocks last: each level
+%% against the level above it, the root hash standing above the top as a level of one
+%% block holding one hash. It returns the last level's blocks, the data, when every block
+%% matched.
+-spec check(checking(), [level(), ...]) -> {ok, [binary()]} | {error, eio}.
+check(#{salt := Salt, root_hash := Root}, [_ | _] = Levels) ->
+    check(Salt, {0, [Root]}, Levels).
 
-check(Salt, Parent, [Level | Levels], Data) ->
+check(_Salt, {_First, Checked}, []) ->
+    {ok, Checked};
+check(Salt, Parent, [Level | Levels]) ->
     case matches(Salt, Parent, Level) of
-        true -> check(Salt, Level, Levels, Data);
-        false -> {error, eio}
-    end;
-check(Salt, Parent, [], {_, Blocks} = Data) ->
-    case matches(Salt, Parent, Data) of
-        true -> {ok, Blocks};
+        true -> check(Salt, Level, Levels);
         false -> {error, eio}
     end.
 

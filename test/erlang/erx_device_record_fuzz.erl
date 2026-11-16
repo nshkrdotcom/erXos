@@ -170,7 +170,7 @@ system_image_reference(Arguments) ->
             case {[decimal(Word, ?U64) || Word <- [Length, Offset, Tree]], lower_hex(Salt, "{1,32}"),
                   lower_hex(Root, "{32}")} of
                 {[L, O, T], S, R} when is_integer(L), is_integer(O), is_integer(T), is_binary(S), is_binary(R) ->
-                    {ok, #{image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
+                    {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
                 _ ->
                     {error, bad_device_record}
             end;
