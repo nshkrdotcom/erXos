@@ -333,73 +333,7 @@ fid_flood_stops_at_the_pool_test() ->
     wait_for_monitors(Grant, 1),
     stop(Grant).
 
-%% A clunk of an open fid refused at the in-flight bound, or sent to an alias a
-%% deferred request holds, still ends the fid and runs the tree's clunk of its
-%% handle, so the tree's open, and the space the file keeps, goes.
-refused_clunk_of_an_open_fid_ends_its_open_test() ->
-    {module, _} = code:ensure_loaded(erx_fs_test_tree),
-    {ok, Fs} = erx_fs_test_tree:init([{observer, self()}]),
-    Core = erx_fs_grant:new(#{module => erx_fs_test_tree, fs => Fs, rights => rw, client => own}),
-    {_, Core1} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
-    {_, Core2} = core_frame(Core1, {walk, 1, 2, []}),
-    {[{reply, _, {ok, _, 0}}], Core3} =
-        core_frame(Core2, {lcreate, 2, <<"n">>, ?ERX_P9_O_RDWR, 8#644, 0}),
-    receive {tree_make, _} -> ok after 2000 -> erlang:error(no_make) end,
-    flush_tree_calls(),
-    Deferred = [make_ref() || _ <- lists:seq(1, 64)],
-    Full = lists:foldl(fun(Alias, C) -> erx_fs_grant:defer(Alias, {getattr, 1, 0}, C) end,
-                       Core3, Deferred),
-    %% At the bound; fid 1 stays with its owner, so the owner keeps its monitor.
-    {[{reply, _, {error, emfile}}], Bound} = core_frame(Full, {clunk, 2}),
-    ?assertEqual([clunk], tree_calls()),
-    ?assertMatch(#{fids := 1, owners := 1, in_flight := 64}, erx_fs_grant:info(Bound)),
-    %% Sent to an alias still in flight.
-    [Held | _] = Deferred,
-    {[{reply, Held, {error, einval}}], Aliased} =
-        erx_fs_grant:handle_frame({erx_9p, Held, self(), {clunk, 2}}, Full),
-    ?assertEqual([clunk], tree_calls()),
-    ?assertMatch(#{fids := 1}, erx_fs_grant:info(Aliased)),
-    %% A refused clunk of a fid the grant does not hold ends nothing.
-    {[{reply, _, {error, emfile}}], Unheld} = core_frame(Full, {clunk, 9}),
-    ?assertEqual([], tree_calls()),
-    ?assertMatch(#{fids := 2}, erx_fs_grant:info(Unheld)).
-
-%% The in-flight bound and flush, on the pure core: requests answered outside
-%% the grant's step come with open files, so the core's hooks stand in here.
-in_flight_bound_test() ->
-    Core0 = core(rw),
-    {_, Core1} = core_frame(Core0, {attach, 1, ?NOFID, <<"u">>, ?TREE, 0}),
-    Deferred = [make_ref() || _ <- lists:seq(1, 64)],
-    Core2 = lists:foldl(fun(Alias, Core) ->
-                                erx_fs_grant:defer(Alias, {getattr, 1, 0}, Core)
-                        end, Core1, Deferred),
-    ?assertMatch({[{reply, _, {error, emfile}}], _},
-                 core_frame(Core2, {getattr, 1, 0})),
-    %% A refused remove still clunks its fid.
-    {[{demonitor, _}, {reply, _, {error, emfile}}], Core3} = core_frame(Core2, {remove, 1}),
-    ?assertMatch(#{fids := 0, owners := 0, in_flight := 64}, erx_fs_grant:info(Core3)),
-    %% So does a refused clunk: a clunk ends its fid even when refused.
-    {[{demonitor, _}, {reply, _, {error, emfile}}], Clunked} = core_frame(Core2, {clunk, 1}),
-    ?assertMatch(#{fids := 0, owners := 0, in_flight := 64}, erx_fs_grant:info(Clunked)),
-    [First | _] = Deferred,
-    {Effects, Core4} = erx_fs_grant:complete(First, {error, ebadf}, Core2),
-    ?assertEqual([{reply, First, {error, ebadf}}], Effects),
-    %% One slot free: a flush of a deferred request waits for its answer.
-    [_, Second | _] = Deferred,
-    Flush = make_ref(),
-    {[], Core5} = erx_fs_grant:handle_frame({erx_9p, Flush, self(), {flush, Second}}, Core4),
-    ?assertMatch(#{in_flight := 64}, erx_fs_grant:info(Core5)),
-    ?assertMatch({[{reply, _, {error, emfile}}], _}, core_frame(Core5, {flush, Second})),
-    %% A flush of a request not in flight holds nothing and passes the bound.
-    ?assertMatch({[{reply, _, ok}], _}, core_frame(Core5, {flush, make_ref()})),
-    {Answers, Core6} = erx_fs_grant:complete(Second, {error, ebadf}, Core5),
-    ?assertEqual([{reply, Second, {error, ebadf}}, {reply, Flush, ok}], Answers),
-    ?assertMatch(#{in_flight := 62}, erx_fs_grant:info(Core6)),
-    %% A flush of a request that is not in flight is answered at once.
-    ?assertMatch({[{reply, _, ok}], _}, core_frame(core(rw), {flush, make_ref()})).
-
-%% A core whose monitors the test performs: core_frame/2 hands every monitor
-%% effect back at once.
+%% A core of the test tree, served by the calling process.
 core(Rights) ->
     {module, _} = code:ensure_loaded(erx_fs_test_tree),
     {ok, Fs} = erx_fs_test_tree:init([]),
@@ -981,16 +915,18 @@ dotdot_returns_through_renames_and_removals_test() ->
     ?assertEqual({ok, [?A_QID, ?ROOT_QID]}, walk(Grant, 2, 4, [<<"..">>, <<"..">>])),
     stop(Grant).
 
-%% A request sent to an alias another request still holds is refused, and the
-%% grant serves on.
+%% A request sent to an alias another request still holds is dropped, since an
+%% answer would reach the alias as its earlier request's, and the grant serves
+%% on: the alias gets one answer, the read's.
 an_alias_in_flight_takes_no_second_request_test() ->
     {Grant, Keeper} = stream_grant(),
     Alias = alias([explicit_unalias]),
     Grant ! {erx_9p, Alias, self(), {read, 2, 0, 16}},
     Grant ! {erx_9p, Alias, self(), {write, 3, 0, <<"y">>}},
-    ?assertEqual({error, einval}, answer(Alias)),
+    ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"w">>})),
     ok = erx_fs_stream_tree:hand(Keeper, <<"x">>),
     ?assertEqual({ok, <<"x">>}, answer(Alias)),
+    ?assertEqual(none, reply_within(Alias, 100)),
     unalias(Alias),
     ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"z">>})),
     stop(Grant).
@@ -1226,15 +1162,20 @@ a_keepers_end_answers_its_reads_eio_test() ->
     ?assertEqual({ok, 1, 0}, call(Grant, {write, 3, 0, <<"w">>})),
     stop(Grant).
 
-%% A grant on erx_fs_stream_tree whose keeper is Keeper, with fid 2 opened on
-%% the stream, as the core alone.
+%% A grant on erx_fs_stream_tree whose keeper is Keeper, with fid 2, or each
+%% of Fids, opened on the stream, as the core alone.
 stream_core(Keeper) ->
+    stream_core(Keeper, [2]).
+
+stream_core(Keeper, Fids) ->
     Core = erx_fs_grant:new(#{module => erx_fs_stream_tree, fs => Keeper, rights => rw,
                               client => own}),
-    {_, Core1} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
-    {_, Core2} = core_frame(Core1, {walk, 1, 2, [<<"s">>]}),
-    {_, Core3} = core_frame(Core2, {lopen, 2, ?O_RDONLY}),
-    Core3.
+    {_, Attached} = core_frame(Core, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
+    lists:foldl(fun(Fid, C) ->
+                        {[{reply, _, {ok, [_]}}], C1} = core_frame(C, {walk, 1, Fid, [<<"s">>]}),
+                        {[{reply, _, {ok, _, _}}], C2} = core_frame(C1, {lopen, Fid, ?O_RDONLY}),
+                        C2
+                end, Attached, Fids).
 
 %% A keeper that is the grant itself, which would never answer, is eio at
 %% once; the core built here is served by this process.
@@ -1257,3 +1198,85 @@ a_keepers_answer_is_held_to_its_shapes_test() ->
     {[], Late} = erx_fs_grant:answered(Ref, {ok, <<"late">>}, Answered),
     ?assertMatch(#{refused := 2}, erx_fs_grant:info(Late)),
     Keeper ! stop.
+
+%% A clunk of a fid whose read waits flushes the read first: the read is
+%% answered eintr, then the clunk, and the tree's clunk runs when the keeper
+%% holds nothing of the fid (the stream tree's clunk answers ebusy otherwise).
+a_clunk_of_a_waiting_read_is_answered_after_its_eintr_test() ->
+    {Grant, Keeper} = stream_grant(),
+    Read = send(Grant, self(), {read, 2, 0, 16}),
+    Clunk = send(Grant, self(), {clunk, 2}),
+    ?assertEqual([{Read, {error, eintr}}, {Clunk, ok}], replies(2, 1000)),
+    ?assertEqual([], erx_fs_stream_tree:held(Keeper)),
+    ?assertEqual({error, ebadf}, call(Grant, {read, 2, 0, 16})),
+    ?assertMatch({ok, [_]}, walk(Grant, 1, 2, [<<"s">>])),
+    stop(Grant).
+
+%% The next N replies this process receives, in the order they came, each
+%% within Timeout milliseconds.
+replies(0, _) ->
+    [];
+replies(N, Timeout) ->
+    receive
+        {erx_9p, Alias, Reply} -> [{Alias, Reply} | replies(N - 1, Timeout)]
+    after Timeout ->
+        []
+    end.
+
+%% Bounds, in the grant's core (design-files.md, "Bounds"): 64 waiting reads
+%% fill the window, so a 65th request is emfile, yet a clunk of one of their
+%% fids is admitted and answered after that read's eintr, and its number is
+%% free once it is answered. A flush of each other read is then admitted and
+%% answered after its read; a second flush of one read is dropped and counted,
+%% and so is a request sent on the alias of a waiting flush, whose alias still
+%% gets one answer, the flush's.
+a_window_of_waiting_reads_is_still_flushed_and_clunked_test() ->
+    Keeper = erx_fs_stream_tree:start_keeper(),
+    Fids = lists:seq(2, 65),
+    {Reads, Full} = lists:mapfoldl(fun(Fid, C) -> wait_read(Fid, Keeper, C) end,
+                                   stream_core(Keeper, Fids), Fids),
+    ?assertMatch(#{waiting := 64, in_flight := 64}, erx_fs_grant:info(Full)),
+    ?assertMatch({[{reply, _, {error, emfile}}], _}, core_frame(Full, {getattr, 1, 0})),
+    %% A flush of a request not in flight holds nothing and passes the bound.
+    ?assertMatch({[{reply, _, ok}], _}, core_frame(Full, {flush, make_ref()})),
+    [{Read, At} | Others] = Reads,
+    Clunk = make_ref(),
+    {[{flush, Keeper, At}], Clunking} =
+        erx_fs_grant:handle_frame({erx_9p, Clunk, self(), {clunk, 2}}, Full),
+    {[{reply, Read, {error, eintr}}, {reply, Clunk, ok}], Clunked} =
+        erx_fs_grant:answered(At, {error, eintr}, Clunking),
+    ?assertMatch({[{reply, _, {ok, []}}], _}, core_frame(Clunked, {walk, 1, 2, []})),
+    {Flushes, Flushing} = lists:mapfoldl(fun({Alias, AtKeeper}, C) -> flush_read(Alias, AtKeeper, Keeper, C) end,
+                                         Clunked, Others),
+    [{Second, _} | _] = Others,
+    [FirstFlush | _] = Flushes,
+    %% The flushes wait beside the window, which holds the 63 reads.
+    #{refused := Refused, in_flight := 63} = erx_fs_grant:info(Flushing),
+    {[], Twice} = erx_fs_grant:handle_frame({erx_9p, make_ref(), self(), {flush, Second}}, Flushing),
+    {[], Reused} = erx_fs_grant:handle_frame({erx_9p, FirstFlush, self(), {getattr, 1, 0}}, Twice),
+    ?assertEqual(Refused + 2, maps:get(refused, erx_fs_grant:info(Reused))),
+    Done = lists:foldl(fun({{Alias, AtKeeper}, Flush}, C) ->
+                               {Answers, C1} = erx_fs_grant:answered(AtKeeper, {error, eintr}, C),
+                               ?assertEqual([{reply, Alias, {error, eintr}}, {reply, Flush, ok}], Answers),
+                               C1
+                       end, Reused, lists:zip(Others, Flushes)),
+    ?assertMatch(#{waiting := 0, in_flight := 0}, erx_fs_grant:info(Done)),
+    unlink(Keeper),
+    exit(Keeper, kill).
+
+%% A read of Fid that waits at Keeper, handed over as the shell hands it: as
+%% {Alias, KeeperAlias}, and the core that holds it.
+wait_read(Fid, Keeper, Core) ->
+    Alias = make_ref(),
+    {[{wait, Alias, Keeper, {read, 16}}], Core1} =
+        erx_fs_grant:handle_frame({erx_9p, Alias, self(), {read, Fid, 0, 16}}, Core),
+    At = make_ref(),
+    {{Alias, At}, erx_fs_grant:waiting(Alias, At, Core1)}.
+
+%% A flush of the read Alias holds at Keeper under KeeperAlias, which the core
+%% sends on to the keeper and answers later: as the flush's alias and the core.
+flush_read(Alias, KeeperAlias, Keeper, Core) ->
+    Flush = make_ref(),
+    {[{flush, Keeper, KeeperAlias}], Core1} =
+        erx_fs_grant:handle_frame({erx_9p, Flush, self(), {flush, Alias}}, Core),
+    {Flush, Core1}.

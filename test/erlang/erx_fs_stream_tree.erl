@@ -78,8 +78,14 @@ statfs(_) ->
     {ok, #{type => 0, bsize => 512, blocks => 0, bfree => 0, bavail => 0,
            files => 1, ffree => 0, fsid => 0, namelen => 255}}.
 
-clunk(_, _) ->
-    ok.
+%% A clunk runs only once its keeper holds no request: one that runs while a
+%% read of its fid still waits answers ebusy, so the case that clunks a fid
+%% whose read waits sees it.
+clunk(_, Keeper) ->
+    case held(Keeper) of
+        [] -> ok;
+        [_ | _] -> {error, ebusy}
+    end.
 
 %% The keeper: every request it holds is in Waits, and Bytes are the bytes the
 %% test handed it that no read has taken yet.

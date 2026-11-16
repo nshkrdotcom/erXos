@@ -2115,18 +2115,14 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, `admit/4`, `close_fid/2`): the
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs.erl`, `loop/2`; `erx_fs_grant.erl`, `flush_waits/4`): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
-  which keeps it in `erx_fs_waits`, as design-files.md ("Serving", "Waiting requests", rules 1, 2, 4 and 6) has it,
-  but rule 5 is not built: a clunk or a `remove` of a fid whose requests a keeper still holds runs the tree's `clunk`
-  at once without flushing them, so such a request waits on an open the tree has closed, and the fid's number is free
-  before the clunk's answer; a flush of a request in flight is answered `emfile` at the requests' bound
-  (`test/erlang/erx_fs_tests.erl`, the in-flight bound case, expects it) where the design admits one flush waiting
-  for each request; `admit/4` checks a new request's alias only against `pending`'s keys while waiting flushes
-  live inside another request's record, so a request on a waiting flush's alias is admitted and the alias later
-  gets two answers, where the design keeps one table of live aliases and drops a frame on one; a request on a
-  request's live alias is answered `einval`, where the design drops it. Build the clunk that settles its fid's waits
-  first in the grant's core, and the one table of live aliases, with the tests design-files.md lists. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
+  which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
+  aliases, as design-files.md ("Serving", "Waiting requests", rules 1, 2 and 4 to 6, "Bounds") has it, but a grant
+  whose client has ended exits at once (`erx_fs:loop/2`, its connection's `DOWN`) where the design has it drain,
+  clunking every fid by rule 5 before it ends; and the design does not bound a flush of a waiting flush, which the
+  core counts in the requests' window and answers `emfile` when the window is full (`flush_waits/4`). Build the drain
+  in the shell with its test, and state the flush-of-a-flush bound in design-files.md. It blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
   the `pair` file, a window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4`
   serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
   `call/2`), so a client reading `kbd` on a hidden window stops its whole grant, every other request, clunk and

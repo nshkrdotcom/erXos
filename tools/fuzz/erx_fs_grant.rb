@@ -30,13 +30,23 @@ module ErxFsGrantFuzz
   Fault = Data.define(:name, :from, :to)
   FAULTS = [
     Fault.new(name: 'a pool admitting one fid more',
-              from: 'map_size(Fids) >= Pool -> {error, emfile};', to: 'map_size(Fids) > Pool -> {error, emfile};'),
+              from: 'map_size(Fids) + map_size(Closing) >= Pool -> {error, emfile};',
+              to: 'map_size(Fids) + map_size(Closing) > Pool -> {error, emfile};'),
     Fault.new(name: "a grant taking any domain's names for another domain's",
               from: 'of_client(Name, Client) -> erx_dist:owner(Name) =:= Client.',
               to: 'of_client(Name, Client) -> erx_dist:owner(Name) > 0 andalso is_integer(Client).'),
     Fault.new(name: 'a flush kept from the keeper that holds its request',
-              from: 'Grant#grant{effects = [{flush, Keeper, KeeperAlias} | Effects]};',
-              to: 'Grant#grant{effects = Effects};')
+              from: 'effects = [{flush, Keeper, KeeperAlias} | Effects]};',
+              to: 'effects = Effects};'),
+    Fault.new(name: "a grant that checks only requests' aliases",
+              from: '{_, Alias, _, _} when is_map_key(Alias, Live) ->',
+              to: '{_, Alias, _, _} when is_map_key(Alias, Live), element(1, element(2, map_get(Alias, Live))) =:= held ->'),
+    Fault.new(name: 'a second flush answered ok at once',
+              from: '#{Old := #live{}} -> dropped(Grant);',
+              to: '#{Old := #live{}} -> finish(Alias, Request, ok, Grant);'),
+    Fault.new(name: "a clunk that runs without flushing its fid's waits",
+              from: "                [] ->\n                    run_clunk(Fid, Ending, Grant1);",
+              to: "                _ ->\n                    run_clunk(Fid, Ending, Grant1);")
   ].freeze
   DEADLINE_SECONDS = '300'
 

@@ -24,9 +24,14 @@
 %%   decode_reply/2 accepts it for that frame's request (an error reply, for a frame the
 %%   grammar refused); the core runs the same check before it replies, so what this adds
 %%   is the alias, the count and the order: a flush answered ok comes after what it flushed;
+%% * a frame sent to an alias that still awaits its reply, and a second flush of an alias
+%%   whose first flush still waits, are dropped: nothing answers them;
+%% * a clunk or a remove answered other than ebadf is answered when no request of its fid
+%%   is held at a keeper;
 %% * a wait names one of the sequence's keepers, a process of this node that is not the
 %%   grant; a flush the core admits for a request a keeper holds goes to that keeper, under
-%%   the request's reference, and a flush goes to a keeper only for a request it holds;
+%%   the request's reference, a flush goes to a keeper only for a request it holds, and
+%%   once for each;
 %% * a keeper's answer to a request it holds answers the request once: with the answer
 %%   when the grammar accepts it for the request, eio when not; a keeper's end answers each
 %%   request it held eio once; an answer to no request held answers nothing and counts as
@@ -36,7 +41,7 @@
 %%   and the requests it reports waiting are exactly those the shell holds at keepers;
 %% * at the end of a sequence, with every owner down and every request at a keeper answered
 %%   or its keeper ended, every frame that awaits a reply has had exactly one, and the
-%%   grant holds nothing.
+%%   grant holds nothing, no live alias included.
 %% The seed comes from make check-fuzz.
 
 -module(erx_fs_grant_fuzz).
@@ -61,9 +66,11 @@
 %% keepers its frames and tree name, the frames each of that domain's aliases awaits a
 %% reply for (each numbered in the order sent) and the replies it has had, the monitor it
 %% holds for each owner, each request held at a keeper by the reference of its wait, with
-%% the keeper, the alias and the request, and the references of the waits already settled.
+%% the keeper, the alias and the request, the references of the waits already settled, and
+%% those of the waits a flush was sent for.
 -record(shell, {core, client, owners, keepers, awaited = #{}, replies = #{}, sent = 0,
-                monitors = #{}, held = #{}, settled = [], aliases = [], pool, tally = #{}}).
+                monitors = #{}, held = #{}, settled = [], flushed = [], aliases = [], pool,
+                tally = #{}}).
 
 run([Seed]) ->
     rand:seed(exsss, {16#f5, 16#9a, list_to_integer(Seed)}),
@@ -123,16 +130,53 @@ step(Shell) ->
 %% One message to the core, with what the shell expects back for it.
 frame(Frame, #shell{core = Core} = Shell) ->
     {Effects, Core1} = ?CORE:handle_frame(Frame, Core),
-    forwarded(Frame, Effects, Shell),
-    effects(Effects, expect(Frame, Shell#shell{core = Core1})).
+    Expected = expected(Frame, Shell),
+    forwarded(Frame, Expected, Effects, Shell),
+    effects(Effects, expect(Expected, Effects, Shell#shell{core = Core1})).
 
-expect(Message, #shell{awaited = Awaited, client = Client} = Shell) ->
+%% What the shell expects of a frame: a reply to its alias, nothing for one the core may
+%% not answer, or that the core drops it, unanswered, for an alias that awaits a reply
+%% already, or as a second flush, the core admits, of an alias whose first flush still
+%% waits.
+expected(Message, #shell{client = Client} = Shell) ->
     Ours = fun(Alias) -> of_client(Alias, Client) end,
-    Expected = case ?G:decode_request_frame(frame_of(Message, Client)) of
-                   {ok, Alias, _, Request} -> Ours(Alias) andalso {Alias, {request, Request}};
-                   {error, Alias, _} -> Ours(Alias) andalso {Alias, refused};
-                   error -> false
-               end,
+    case ?G:decode_request_frame(frame_of(Message, Client)) of
+        {ok, Alias, Owner, Request} ->
+            %% A flush whose owner is not the client's is refused before it is looked at.
+            Ours(Alias) andalso
+                case live(Alias, Shell) orelse Ours(Owner) andalso second_flush(Request, Shell) of
+                    true -> {dropped, Alias};
+                    false -> {Alias, {request, Request}}
+                end;
+        {error, Alias, _} ->
+            Ours(Alias) andalso
+                case live(Alias, Shell) of
+                    true -> {dropped, Alias};
+                    false -> {Alias, refused}
+                end;
+        error ->
+            false
+    end.
+
+%% Whether Alias awaits the reply to a frame of its.
+live(Alias, #shell{awaited = Awaited, replies = Replies}) ->
+    length(maps:get(Alias, Awaited, [])) > length(maps:get(Alias, Replies, [])).
+
+%% Whether a flush names a live alias that a live flush already names: that flush waits
+%% for it, since a flush stays unanswered only while what it names does.
+second_flush({flush, Old}, #shell{awaited = Awaited} = Shell) ->
+    live(Old, Shell) andalso
+        lists:any(fun({Alias, Frames}) ->
+                          live(Alias, Shell) andalso element(2, lists:last(Frames)) =:= {request, {flush, Old}}
+                  end, maps:to_list(Awaited));
+second_flush(_, _) ->
+    false.
+
+expect({dropped, Alias}, Effects, Shell) ->
+    [R || {reply, A, R} <- Effects, A =:= Alias] =:= []
+        orelse error({check_failed, dropped_frame_answered, Alias, Effects}),
+    counted(dropped, Shell);
+expect(Expected, _, #shell{awaited = Awaited} = Shell) ->
     case Expected of
         {A, What} ->
             Sent = Shell#shell.sent,
@@ -144,10 +188,13 @@ expect(Message, #shell{awaited = Awaited, client = Client} = Shell) ->
 
 %% A flush of the client's that the core holds rather than answers, for a request a keeper
 %% holds, goes on to that keeper in the same step.
-forwarded(Frame, Effects, #shell{client = Client, held = Held}) ->
+forwarded(_, {dropped, _}, _, _) ->
+    true;
+forwarded(Frame, _, Effects, #shell{client = Client, held = Held, flushed = Flushed}) ->
     case ?G:decode_request_frame(frame_of(Frame, Client)) of
         {ok, Alias, _, {flush, Old}} ->
-            Flushes = [{flush, Keeper, Ref} || Ref := {Keeper, A, _} <- Held, A =:= Old],
+            Flushes = [{flush, Keeper, Ref} || Ref := {Keeper, A, _} <- Held, A =:= Old,
+                                               not lists:member(Ref, Flushed)],
             Answered = [Reply || {reply, A, Reply} <- Effects, A =:= Alias] =/= [],
             Forwarded = not of_client(Alias, Client) orelse Answered orelse Flushes -- Effects =:= [],
             Forwarded orelse error({check_failed, flush_kept_from_keeper, Old, Flushes, Effects});
@@ -179,10 +226,13 @@ effects([{wait, Alias, Keeper, Request} | Rest], #shell{core = Core, held = Held
     Ref = make_ref(),
     effects(Rest, counted({keeper, held}, Shell#shell{core = ?CORE:waiting(Alias, Ref, Core),
                                                       held = Held#{Ref => {Keeper, Alias, Asked}}}));
-effects([{flush, Keeper, Ref} | Rest], #shell{held = Held} = Shell) ->
+effects([{flush, Keeper, Ref} | Rest], #shell{held = Held, flushed = Flushed} = Shell) ->
+    lists:member(Ref, Flushed) andalso error({check_failed, flushed_twice, Keeper, Ref}),
     case Held of
-        #{Ref := {Keeper, _, _}} -> effects(Rest, counted({keeper, flushed}, Shell));
-        #{} -> error({check_failed, flush_of_no_held_request, Keeper, Ref})
+        #{Ref := {Keeper, _, _}} ->
+            effects(Rest, counted({keeper, flushed}, Shell#shell{flushed = [Ref | Flushed]}));
+        #{} ->
+            error({check_failed, flush_of_no_held_request, Keeper, Ref})
     end;
 effects([Effect | _], _) ->
     error({unexpected_effect, Effect}).
@@ -200,8 +250,21 @@ replied(Alias, Reply, #shell{awaited = Awaited, replies = Replies} = Shell) ->
     Flushes =:= [] orelse lists:any(fun({Sent, Old}) -> flushed_after(Old, Sent, Shell) end, Flushes)
         orelse error({check_failed, flush_answered_first, Alias, Flushes}),
     [What | _] = [W || W <- Waiting, valid_reply(W, Reply)],
+    settled_fid(lists:last(Waiting), Reply, Shell),
     Key = {case What of {request, R} -> element(1, R); refused -> refused end, outcome(Reply)},
     counted(Key, Shell#shell{replies = Replies#{Alias => Had}}).
+
+%% A clunk or a remove that ended its fid is answered once no request of the fid is held;
+%% one answered ebadf named no fid, or a closing one, and one answered einval or erofs
+%% may have been refused before the core looked at the fid, for an owner of another
+%% domain or a remove on a read-only grant, which a fid the core does not hold answers.
+settled_fid({request, {Ends, Fid}}, Reply, #shell{held = Held})
+  when (Ends =:= clunk orelse Ends =:= remove),
+       not (Reply =:= {error, ebadf} orelse Reply =:= {error, einval} orelse Reply =:= {error, erofs}) ->
+    Waiting = [Asked || _ := {_, _, Asked} <- Held, element(2, Asked) =:= Fid],
+    Waiting =:= [] orelse error({check_failed, clunk_before_its_fids_requests, Fid, Reply, Waiting});
+settled_fid(_, _, _) ->
+    true.
 
 flushed_after(Old, Sent, #shell{awaited = Awaited, replies = Replies}) ->
     Before = [S || {S, _} <- maps:get(Old, Awaited, []), S < Sent],
@@ -324,8 +387,8 @@ finished(Shell) ->
                        end, Shell, Shell#shell.owners),
     #shell{core = Core, awaited = Awaited, replies = Replies} = Done = settle_all(Down),
     Info = ?CORE:info(Core),
-    Empty = maps:with([fids, owners, waiting, in_flight], Info) =:=
-        #{fids => 0, owners => 0, waiting => 0, in_flight => 0},
+    Empty = maps:with([fids, owners, waiting, in_flight, aliases], Info) =:=
+        #{fids => 0, owners => 0, waiting => 0, in_flight => 0, aliases => 0},
     Empty orelse error({check_failed, held_at_the_end, Info}),
     Unanswered = [{Alias, Waiting} || Alias := Waiting <- Awaited,
                                       length(Waiting) =/= length(maps:get(Alias, Replies, []))],
