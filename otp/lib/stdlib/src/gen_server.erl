@@ -17,8 +17,9 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: the terminate report of a module that exports format_status/1
-%% shows its stack trace without arguments (edit 75).
+%% Modified by erXos: the terminate report of a process that hides its terms
+%% (gen:hides_terms/1) shows its stack trace without arguments, and one whose
+%% format_status crashed shows no sys log (edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -2782,8 +2783,8 @@ error_info(#server_data{name = Name, module = Mod}, State, Msg, From, Reason, ST
                 %% stacktrace is irrelevant.
                 maps:get(reason, Status);
            true ->
-                %% erXos, edit 75: a module that exports format_status/1 hides
-                %% its frames' arguments too (gen:report_stacktrace/2).
+                %% erXos, edit 75: a process that hides its terms hides its
+                %% frames' arguments too (gen:report_stacktrace/2).
                 {maps:get(reason, Status), gen:report_stacktrace(Mod, ST)}
         end,
 
@@ -2791,7 +2792,7 @@ error_info(#server_data{name = Name, module = Mod}, State, Msg, From, Reason, ST
                  name=>Name,
                  last_message=>maps:get(message,Status),
                  state=>maps:get('EXIT',Status,maps:get('$status',Status,maps:get(state,Status))),
-                 log=>format_log_state(Mod,maps:get(log,Status)),
+                 log=>format_log_state(Mod,shown_log(Status)),
                  reason=>ReportReason,
                  client_info=>client_stacktrace(From),
                  process_label=>proc_lib:get_label(self())},
@@ -2999,6 +3000,13 @@ format_log_multi(#{label:={gen_server,no_handle_info},
                 [Mod,Msg,Depth]
                     end,
     {Format,Args}.
+
+%% erXos, edit 75: when format_status crashed or gave an answer gen cannot use,
+%% the terminate report shows the sys log empty, where stock OTP shows it raw. The
+%% reason and the last message stay raw, as gen_server_SUITE:crash_in_format_status
+%% and throw_in_format_status require.
+shown_log(#{'EXIT' := _}) -> [];
+shown_log(#{log := Log}) -> Log.
 
 %% erXos, edit 75: a frame cut by gen:report_stacktrace/2 carries its arity.
 frame_arity(A) when is_integer(A) -> A;

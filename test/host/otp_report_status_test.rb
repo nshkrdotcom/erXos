@@ -9,15 +9,17 @@ require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/otp_report_status_tests.erl, the cases of edit 75 of
 # docs/design-runtime.md (docs/design-log.md, "Reports carry no term"), on stock's
-# emulator (ERX_ERL and ERX_ERLC) with the tree's proc_lib, gen, gen_server and
-# gen_statem compiled into the work directory and loaded over stock's at boot. Then each
+# emulator (ERX_ERL and ERX_ERLC) with the tree's proc_lib, gen, gen_server, gen_statem
+# and group compiled into the work directory and loaded over stock's at boot. Then each
 # seeded fault, applied to a copy of the tree's module, must fail the case named for it.
 class OtpReportStatusTest < Minitest::Test
   STDLIB = 'otp/lib/stdlib'
-  KERNEL_INCLUDE = 'otp/lib/kernel/include'
-  OTP_MODULES = %w[proc_lib gen gen_server gen_statem].map { |name| "#{STDLIB}/src/#{name}.erl" }.freeze
-  TESTS = %w[test/erlang/otp_report_status_tests.erl test/erlang/otp_report_status_hiding.erl
-             test/erlang/otp_report_status_crashing.erl].freeze
+  KERNEL = 'otp/lib/kernel'
+  OTP_MODULES = (%w[proc_lib gen gen_server gen_statem].map { |name| "#{STDLIB}/src/#{name}.erl" } +
+                 ["#{KERNEL}/src/group.erl"]).freeze
+  TESTS = %w[otp_report_status_tests otp_report_status_hiding otp_report_status_crashing
+             otp_report_status_crashing_server otp_report_status_changing]
+          .map { |name| "test/erlang/#{name}.erl" }.freeze
   DEADLINE_SECONDS = '120'
   HIDES = 'server_with_format_status_hides_the_secret_test'
 
@@ -28,14 +30,42 @@ class OtpReportStatusTest < Minitest::Test
              anchor: '        true -> report_frames(Stacktrace);',
              replacement: '        true -> Stacktrace;',
              catching_case: HIDES),
+    Seed.new(fault: "each frame's location kept", source: "#{STDLIB}/src/gen.erl",
+             anchor: '        Arity -> [{M, F, Arity, []} | report_frames(Frames)]',
+             replacement: '        Arity -> [{M, F, Arity, _Location} | report_frames(Frames)]',
+             catching_case: 'reason_and_location_carry_the_secret_test'),
     Seed.new(fault: "the crash report's mailbox kept", source: "#{STDLIB}/src/proc_lib.erl",
-             anchor: '                {HiddenInfo, {messages, []}, {dictionary, []}}',
-             replacement: '                {HiddenInfo, get_messages(self()), {dictionary, []}}',
+             anchor: '            hidden -> {{messages, []}, {dictionary, []}}',
+             replacement: '            hidden -> {get_messages(self()), {dictionary, []}}',
              catching_case: HIDES),
-    Seed.new(fault: "a crashed format_status shows the raw data", source: "#{STDLIB}/src/gen_statem.erl",
+    Seed.new(fault: 'a change of callback module not recorded', source: "#{STDLIB}/src/gen_statem.erl",
+             anchor: '            ok = gen:status_module_changed(Module),',
+             replacement: '            _ = Module,',
+             catching_case: 'statem_that_changes_to_a_hiding_module_hides_the_secret_test'),
+    Seed.new(fault: 'a crashed format_status shows the raw data', source: "#{STDLIB}/src/gen_statem.erl",
              anchor: %q(shown_status(#{'EXIT' := Failure} = Status) ->),
              replacement: %q(shown_status(#{'EXIT_' := Failure} = Status) ->),
-             catching_case: 'statem_whose_format_status_crashes_hides_the_secret_test')
+             catching_case: 'statem_whose_format_status_crashes_hides_the_secret_test'),
+    Seed.new(fault: 'a crashed format_status shows the raw sys log', source: "#{STDLIB}/src/gen_server.erl",
+             anchor: %q(shown_log(#{'EXIT' := _}) -> [];),
+             replacement: %q(shown_log(#{'EXIT_' := _}) -> [];),
+             catching_case: 'crashed_format_status_shows_no_log_test'),
+    Seed.new(fault: 'a cut frame given to length/1', source: "#{STDLIB}/src/gen_server.erl",
+             anchor: 'frame_arity(A) when is_integer(A) -> A;',
+             replacement: '',
+             catching_case: 'undef_of_a_hiding_server_formats_test'),
+    Seed.new(fault: "the group's typed input kept", source: "#{KERNEL}/src/group.erl",
+             anchor: '    maps:map(fun(data, #state{} = Data) -> hidden_input(Data);',
+             replacement: '    maps:map(fun(data, #state{} = Data) -> Data;',
+             catching_case: 'group_status_hides_the_input_test'),
+    Seed.new(fault: "a pushed request's typed input kept", source: "#{KERNEL}/src/group.erl",
+             anchor: '{State, hidden_input_state(PushedInput)}',
+             replacement: '{State, PushedInput}',
+             catching_case: 'group_status_hides_the_input_test'),
+    Seed.new(fault: "the group's postponed input kept", source: "#{KERNEL}/src/group.erl",
+             anchor: '                   [hidden_event(Event) || Event <- Events];',
+             replacement: '                   Events;',
+             catching_case: 'group_status_hides_the_input_test')
   ].freeze
 
   def test_report_cases_pass_under_eunit
@@ -77,7 +107,7 @@ class OtpReportStatusTest < Minitest::Test
       File.join(work, File.basename(source)).tap { |path| File.write(path, replaced.fetch(source)) }
     end
     output, status = Open3.capture2e(ENV.fetch('ERX_ERLC'), '-I', File.join(ErlangBuild::ROOT, STDLIB, 'include'),
-                                     '-I', File.join(ErlangBuild::ROOT, STDLIB, 'src'), '-I', File.join(ErlangBuild::ROOT, KERNEL_INCLUDE),
+                                     '-I', File.join(ErlangBuild::ROOT, STDLIB, 'src'), '-I', File.join(ErlangBuild::ROOT, KERNEL, 'include'),
                                      '-o', work, *sources,
                                      stdin_data: '')
     assert status.success?, output

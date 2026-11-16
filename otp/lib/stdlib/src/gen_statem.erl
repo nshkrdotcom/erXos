@@ -17,9 +17,10 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
-%% Modified by erXos: the terminate report of a module that exports format_status/1
-%% shows its stack trace without arguments, and a crash of format_status shows
-%% none of what it was asked to hide (edit 75).
+%% Modified by erXos: the terminate report of a process that hides its terms
+%% (gen:hides_terms/1) shows its stack trace without arguments, a change of the
+%% callback module changes which module decides that, and a crash of format_status
+%% shows none of what it was asked to hide (edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -4008,7 +4009,7 @@ loop_actions_list(
                             push_callback_module ->
                                 [NewModule | P#params.modules]
                         end,
-                    case get_callback_mode(P, NewModules) of
+                    case install_callback_modules(P, NewModules) of
                         #params{} = P_1 ->
                             {NextState,_NewData} = NextState_NewData,
                             Debug_1 =
@@ -4041,7 +4042,7 @@ loop_actions_list(
             if
                 StateCall ->
                     NewModules = tl(P#params.modules),
-                    case get_callback_mode(P, NewModules) of
+                    case install_callback_modules(P, NewModules) of
                         #params{} = P_1 ->
                             {NextState,_NewData} = NextState_NewData,
                             Debug_1 =
@@ -4833,6 +4834,18 @@ get_callback_mode(P, [Module | _] = Modules) ->
             callback_mode_result(P, Modules, CallbackModeResult);
         Class:Reason:Stacktrace ->
             {Class,Reason,Stacktrace}
+    end.
+
+%% erXos, edit 75: the actions change_callback_module, push_callback_module and
+%% pop_callback_module change the module whose format_status/1 speaks for the
+%% process in every report (gen:hides_terms/1).
+install_callback_modules(P, [Module | _] = Modules) ->
+    case get_callback_mode(P, Modules) of
+        #params{} = P_1 ->
+            ok = gen:status_module_changed(Module),
+            P_1;
+        Failure ->
+            Failure
     end.
 
 callback_mode_result(P, Modules, CallbackModeResult) ->

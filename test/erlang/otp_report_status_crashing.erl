@@ -14,11 +14,7 @@ init(Secret) ->
 
 callback_mode() -> handle_event_function.
 
-handle_event(cast, {hold, _Secret}, _State, _Data) ->
-    {keep_state_and_data, [postpone]};
-handle_event(cast, {fail, Secret}, _State, _Data) ->
-    self() ! {held, Secret},
-    otp_report_status_tests:fails(Secret),
-    keep_state_and_data.
+handle_event(Type, Content, State, Data) ->
+    otp_report_status_tests:handle_event(Type, Content, State, Data).
 
 format_status(_Status) -> error(format_status_crashed).

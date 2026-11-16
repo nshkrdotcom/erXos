@@ -440,7 +440,8 @@ and its operator debugs the trusted base from them whole. A process of
 the system domain that holds another domain's bytes, such as a relay,
 therefore keeps them out of its reports itself, by exporting
 `format_status/1` from its module (edit 75 of
-[design-runtime.md](design-runtime.md)). Its behaviour's termination
+[design-runtime.md](design-runtime.md)); a `gen_statem` that changes its
+callback module is reported by the module it changed to. Its behaviour's termination
 report then shows what that callback leaves of the state, the message,
 the log and the reason, and its crash report shows the reason as the
 callback leaves it when handed `#{reason => Reason}`; both show each
@@ -453,7 +454,8 @@ that holds none of those bytes. When it crashes, `gen_statem`'s report
 shows `gen`'s text for the crash and nothing of what the callback was
 asked to hide, but `gen_server`'s shows the raw reason and last
 message, as stock OTP does and OTP's own suite requires
-(`gen_server_SUITE:crash_in_format_status`). What is left open (the
+(`gen_server_SUITE:crash_in_format_status`), and an empty sys log, where
+stock OTP shows it raw. What is left open (the
 supervisor's report of a child's exit, which quotes the raw reason;
 logger's forwarding of an event to its group leader's node before any
 filter runs; the legacy `error_logger` calls that carry no `otp`

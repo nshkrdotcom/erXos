@@ -19,9 +19,9 @@
 %%
 %% Modified by erXos: a call's reply is also taken in the envelope of a message from
 %% another domain, {erx_origin, D, {Tag, Reply}} (edit 58). A call whose callee's
-%% domain ends, {domain_down, D, Info}, exits {nodedown, Node} (edit 64). A report of a
-%% process whose module exports format_status/1 shows its stack trace without arguments
-%% (report_stacktrace/2, edit 75).
+%% domain ends, {domain_down, D, Info}, exits {nodedown, Node} (edit 64). Whether a
+%% process keeps its terms out of its reports is decided here (hides_terms/1), and its
+%% reports show its stack trace without arguments (report_stacktrace/2, edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -47,7 +47,8 @@
 
 -export([init_it/6, init_it/7]).
 
--export([format_status_header/2, format_status/4, report_stacktrace/2]).
+-export([format_status_header/2, format_status/4]).
+-export([hides_terms/1, status_module_changed/1, hidden_error_info/4, report_stacktrace/2]).
 
 -export(['@wait_response_recv_opt'/3]).
 
@@ -843,18 +844,53 @@ format_status(Mod, Opt, Status, Args) ->
             Status
     end.
 
-%% erXos, edit 75: the stack trace a report shows of a process whose module
-%% exports format_status/1, and so hides what the process holds: each frame
-%% keeps its module, function and arity, as {M, F, Arity, []}, and loses its
-%% arguments and its location, either of which may hold any term of the
-%% process. The trace may be any term (erlang:raise/3 takes one from the
-%% caller), so whatever is not a frame is dropped. A module without
-%% format_status/1 keeps its trace whole, as stock OTP reports it. proc_lib's
-%% crash report and the terminate reports of gen_server and gen_statem show
-%% the trace through here (docs/design-log.md, "Reports carry no term").
+%% erXos, edit 75: the key of the process dictionary that names the callback
+%% module gen_statem last changed to (status_module_changed/1).
+-define(STATUS_MODULE, '$erx_status_module').
+
+%% erXos, edit 75: whether the calling process keeps the terms it holds out of
+%% its reports (docs/design-log.md, "Reports carry no term"). It does when the
+%% module that speaks for it exports format_status/1: the callback module
+%% gen_statem last changed to, if it changed, and otherwise Mod, the process's
+%% initial or callback module. proc_lib's crash report and the terminate
+%% reports of gen_server and gen_statem decide by this alone. A process that
+%% does not hide its terms is reported as stock OTP reports it.
+-spec hides_terms(Mod :: module()) -> boolean().
+hides_terms(Mod) ->
+    erlang:function_exported(status_module(Mod), format_status, 1).
+
+%% erXos, edit 75: gen_statem's callback module is now Mod.
+-spec status_module_changed(Mod :: module()) -> ok.
+status_module_changed(Mod) ->
+    put(?STATUS_MODULE, Mod),
+    ok.
+
+status_module(Mod) ->
+    case get(?STATUS_MODULE) of
+        undefined -> Mod;
+        Changed -> Changed
+    end.
+
+%% erXos, edit 75: the error_info of proc_lib's crash report of a process that
+%% hides its terms (hides_terms/1). Its reason passes through format_status/1
+%% as #{reason => Reason}; when the callback crashes or gives an answer
+%% format_status/4 cannot use, its text for that failure stands in for the
+%% reason. Its stack trace is cut as report_stacktrace/2 cuts it.
+-spec hidden_error_info(Mod :: module(), Class, Reason :: term(), Stacktrace :: term()) ->
+          {Class, term(), list()} when Class :: error | exit | throw.
+hidden_error_info(Mod, Class, Reason, Stacktrace) ->
+    Status = format_status(status_module(Mod), terminate, #{reason => Reason}, undefined),
+    {Class, maps:get('EXIT', Status, maps:get(reason, Status)), report_frames(Stacktrace)}.
+
+%% erXos, edit 75: the stack trace a report shows of a process. One that hides
+%% its terms (hides_terms/1) shows each frame's module, function and arity
+%% alone, as {M, F, Arity, []}: a frame's arguments and its location may hold
+%% any term of the process. The trace may be any term (erlang:raise/3 takes
+%% one from the caller), so whatever is not a frame is dropped. Any other
+%% process keeps its trace whole, as stock OTP reports it.
 -spec report_stacktrace(Mod :: module(), Stacktrace :: term()) -> term().
 report_stacktrace(Mod, Stacktrace) ->
-    case erlang:function_exported(Mod, format_status, 1) of
+    case hides_terms(Mod) of
         true -> report_frames(Stacktrace);
         false -> Stacktrace
     end.

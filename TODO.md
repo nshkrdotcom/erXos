@@ -7120,7 +7120,14 @@ to the corpus and follow rc
   child's raw exit reason (`supervisor.erl:318-324`, `:1426`), and with `error_logger_format_depth`
   set `proc_lib`'s `receive_messages/1` (`proc_lib.erl:1046`) takes the mailbox of a process that
   set `process_flag(sensitive, true)` and has no `format_status/1` into its crash report, which
-  stock OTP does too. The filter is an entry of the primary filter list, so a
+  stock OTP does too. Also whole in a process that hides its terms: `gen_server`'s
+  `no_handle_info` warning shows the raw message; `gen_event`'s report of a handler's crash shows
+  the raw stack trace; an exit reason `{Reason, Stack}` keeps its frames' arguments wherever it is
+  quoted, since exit reasons stay raw; process labels and logger metadata pass as they are; and
+  the protection rests on `'$initial_call'` and `'$erx_status_module'` in the process dictionary,
+  which the process itself can erase; and a process whose initial module is not the module
+  `gen_statem:enter_loop` or `gen_server:enter_loop` enters is decided by its initial module in
+  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). The filter is an entry of the primary filter list, so a
   filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
   whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
   moment or for good, and with `filter_default => stop` an OTP report no other filter logs is

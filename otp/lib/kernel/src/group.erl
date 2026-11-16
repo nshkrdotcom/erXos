@@ -20,7 +20,7 @@
 %% Modified by erXos: the driver's suspend (Ctrl-Z) and window-size change
 %% (winch) reach the shell; the group has one ask for input outstanding at
 %% most (ask/1), which the driver answers with {read, Ref, Chars}; format_status/1
-%% hides the shell history from the data (edit 75).
+%% hides the shell history and the input typed or waiting (edit 75).
 %%
 %% %CopyrightEnd%
 %%
@@ -169,14 +169,38 @@ init([Drv, Shell, Options]) ->
 
     {ok, init, State, {next_event, internal, [Shell, Options]}}.
 
-%% erXos, edit 75: the shell history is in the data, which gen_statem hands
-%% over beside the state name. Stock OTP matches the state name here and
-%% returns a record, which crashes on every call. Any other map, such
-%% as proc_lib's #{reason => Reason}, holds no history.
-format_status(#{data := #state{} = Data} = Status) ->
-    Status#{data := Data#state{ line_history = undefined }};
+%% erXos, edit 75: what the user typed stays out of the group's reports and of what
+%% format_status/1 gives sys:get_status: the shell history, the line being typed
+%% (the input state of the request in progress and of each request a nested one
+%% pushed, and buf, the keys read ahead of a request) and the driver's input
+%% waiting in the queue or postponed, each such event keeping its shape with its
+%% characters emptied. The
+%% sys log, which holds the same events, is shown empty. The data is beside the
+%% state name, as gen_statem hands it over; stock OTP matches the state name here
+%% and returns a record, which crashes on every call. Any other map, such as
+%% proc_lib's #{reason => Reason}, holds no input.
 format_status(Status) ->
-    Status.
+    maps:map(fun(data, #state{} = Data) -> hidden_input(Data);
+                (Key, Events) when Key =:= queue; Key =:= postponed ->
+                     [hidden_event(Event) || Event <- Events];
+                (log, _Log) -> [];
+                (_Key, Value) -> Value
+             end, Status).
+
+hidden_input(#state{ input = Input, input_queue = Pushed } = Data) ->
+    Data#state{ line_history = undefined, buf = [],
+                input = hidden_input_state(Input),
+                input_queue = queue:from_list([{State, hidden_input_state(PushedInput)}
+                                               || {State, PushedInput} <- queue:to_list(Pushed)]) }.
+
+hidden_input_state(#input_state{} = Input) ->
+    Input#input_state{ cont = hidden, lines = hidden, io_lib_state = hidden };
+hidden_input_state(undefined) ->
+    undefined.
+
+hidden_event({info, {Drv, {data, _Chars}}}) -> {info, {Drv, {data, []}}};
+hidden_event({info, {Drv, {read, Ref, _Chars}}}) -> {info, {Drv, {read, Ref, []}}};
+hidden_event(Event) -> Event.
 
 init(internal, [Shell, Options], State = #state{ dumb = Dumb }) ->
 
