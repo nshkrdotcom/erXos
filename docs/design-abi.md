@@ -1170,16 +1170,24 @@ router holds every record to and `encode/1` refuses with `badarg`
 outside; `encode/1`, one record's bytes; `decode/1`, which reads a
 stream's bytes into its records in order, the number it dropped and the
 bytes after the last whole record, fewer than one record, which the
-reader keeps for its next read; and `size/0`. A record whose tag no kind
-has, whose padding is not zero, or whose field is outside its type's
-range or members is dropped and counted, never decoded; the decoder
-makes no atom. Generation fails for a second `input` declaration or one
+reader keeps for its next read; `size/0`; and the clamps a driver
+applies to its device's values before it makes a record: `rel/1` and
+`wheel/1` hold a move and a wheel step to their fields' ranges, and
+`axis/3` clamps a position to a device axis's range, minimum below
+maximum, and spreads it across `input_axis`, which therefore starts at
+0; the module exports those three fields' types and checks
+(`is_input_rel/1` and the others), so no driver restates their bounds.
+A record whose tag no kind has, whose padding is not zero, or whose
+field is outside its type's range or members is dropped and counted,
+never decoded; the decoder makes no atom. Generation fails for a second `input` declaration or one
 outside `formats/input.txt`, an argument to it, a member other than
 `record`, a tag outside 1 to 255 or used twice, two kinds of one name
 with different numbers of words or the same words, a field name that is
 not an identifier without an underscore or is used twice in its kind,
 and a field type that is not a root scalar without an alignment or a
-root enum other than a flags type.
+root enum other than a flags type, and for an `input_rel`, `input_wheel`
+or `input_axis` that no field has or an `input_axis` that does not
+start at 0.
 
 ### Web protocol
 

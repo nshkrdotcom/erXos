@@ -489,7 +489,9 @@ seeded violation and each refusal with a seeded record:
 **The root startup rule** is a sanity check, not a proof: the root entry's
 loadable segments plus `system_baseline` fit `root_memory`, and `root_memory`
 fits the platform's RAM less `fiasco_reserve`. `fiasco_reserve` is a number in
-the platform record beside `ram_bytes`, the harness's RAM size. `sigma0`'s
+the platform record beside `ram_bytes`, the harness's RAM size, and equals the rule
+below on that RAM, which the tools check and from which every other machine they boot
+(a test machine with more RAM, the website's with less) takes its own. `sigma0`'s
 resource dump at 512 MiB on a 4-CPU HVF boot of the fork shows 33.8 MiB it does
 not offer the root: 32 MiB of kernel memory, the kernel's image, the device
 tree's 1 MiB and `sigma0` itself; at 160 MiB the kernel memory is 10 MiB, and
@@ -585,8 +587,7 @@ without `ERX_PACK_TEST_CODE` (`ProductionImage.check_test_scripts`, seeded in
 server boots `erx_echo_test` this way, to provide a service before its ready report.
 
 A test image may also name a larger machine (`ProductionImage::Machine`): its RAM,
-its `fiasco_reserve`, which grows with RAM because Fiasco sizes its kernel memory
-as 6% of it, a growth added to both `root_memory` and `system_baseline` of the
+from which its `fiasco_reserve` follows by Fiasco's rule (`Platform.fiasco_reserve`), a growth added to both `root_memory` and `system_baseline` of the
 development manifest, a growth of `/tmp`'s cap, and the root's place, the one
 address `liberx/backend/fiasco/root.ld` takes from the root's link; the rest of the
 added RAM widens the archive's room below RAM. The
@@ -601,7 +602,7 @@ room for the test images' archives beside `root_memory`. The site image, built f
 site manifest, is packed and checked on the site machine (`Machine.site`): 256 MiB with
 a 16 MiB reserve, the RAM the website's browser emulator gives its guest, since the
 guest's RAM is the tab's memory. `OracleQemu` boots on 2 GiB with a
-160 MiB reserve, the system domain 1 GiB larger and `/tmp`'s cap 160 MiB, since
+124 MiB reserve, the system domain 1 GiB larger and `/tmp`'s cap 160 MiB, since
 OTP's suites ask for more than the development baseline holds (compiler's
 `beam_ssa_check_SUITE` asks for a 98 MiB heap) and fill more of `/tmp` than its
 4 MiB (stdlib's group charges about 97 MiB).

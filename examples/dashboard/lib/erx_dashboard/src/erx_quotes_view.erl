@@ -16,7 +16,7 @@ Every text is the table's, a fixed word or a number formatted here; no
 byte of a response reaches the board.
 """.
 
--export([board/2, status/4, age/1]).
+-export([board/2, age/1]).
 
 -define(CREDIT, <<"Live quotes">>).
 
@@ -35,12 +35,10 @@ quote(Name, #{label := Label, decimals := Decimals} = Row, Quote, Sources, Now) 
     #{symbol => atom_to_binary(Name), name => Label, price => Price, change => Change,
       decimals => Decimals, status => status(Quote, Row, Sources, Now)}.
 
--doc """
-A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE] -
-AGE` while its value is at most three periods old, and `stale, AGE -
-CREDIT[, NOTE]` beyond, each of the last two followed by `: REASON` when
-the quote's last round failed. `Sources` are the table's source rows.
-""".
+%% A quote's status line: `waiting`, `no data: REASON`, `CREDIT[, NOTE] -
+%% AGE` while its value is at most three periods old, and `stale, AGE -
+%% CREDIT[, NOTE]` beyond, each of the last two followed by `: REASON` when
+%% the quote's last round failed. `Sources` are the table's source rows.
 -spec status(erx_quotes_core:quote(), erx_quotes_config:quote(),
              #{atom() => erx_quotes_config:source()}, integer()) -> binary().
 status(#{value := none, failure := none}, _Row, _Sources, _Now) ->

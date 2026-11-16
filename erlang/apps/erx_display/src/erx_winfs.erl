@@ -123,7 +123,6 @@ applied here, whole or not at all.
                 windows = [] :: [map()],
                 %% The session last passed to the policy.
                 session = none :: binary() | none,
-                screen_rect = none :: none | erx_wm:rect(),
                 chan = none :: none | binary(),
                 depth = none :: none | pos_integer(),
                 screen = none :: none | {pid(), reference()},
@@ -180,9 +179,11 @@ winfs_init(Parent, #{service := Service, policy := {Policy, Config}} = Options) 
     loop(State).
 
 -doc """
-For `erx_screen` at its start: records the screen of rectangle Rect and
-channel Chan, arranges the table for it, and answers the layout; `[]` with
-no window system.
+For `erx_screen` at its start: hands the input router the screen of
+rectangle Rect and channel Chan, arranges the table for it once the router
+has taken it, and answers the layout; `[]` with no window system, for a
+channel erx_chan does not parse, or when the router refuses the rectangle
+(an empty one), and in both refusals the old screen stays.
 """.
 -spec attach(erx_wm:rect(), binary()) -> erx_screen_core:layout().
 attach(Rect, Chan) ->
@@ -336,17 +337,10 @@ with_session(#winfs{grants = Grants, session = Last} = State) ->
 
 %% Calls ---------------------------------------------------------------------
 
-handle_call({attach, Rect, Chan}, Pid, #winfs{screen = Old} = State) ->
+handle_call({attach, Rect, Chan}, Pid, State) ->
     case erx_chan:parse(Chan) of
-        {ok, _Code, Depth} when tuple_size(Rect) =:= 4 ->
-            ok = demonitor_screen(Old),
-            Arranged = arrange(State#winfs{screen_rect = Rect, chan = Chan, depth = Depth,
-                                           screen = none}),
-            Screen = {Pid, erlang:monitor(process, Pid)},
-            Layout = layout(Arranged),
-            {{ok, Layout}, route({screen, Rect}, Arranged#winfs{screen = Screen, layout = Layout})};
-        _ ->
-            {{error, einval}, State}
+        {ok, _Code, Depth} -> attach_screen(Rect, Chan, Depth, Pid, State);
+        _ -> {{error, einval}, State}
     end;
 handle_call({walk, Client, Name}, _Pid, State) ->
     {case find(Client, Name, State) of
@@ -396,6 +390,23 @@ find(Client, Name, #winfs{windows = Windows}) ->
         [] -> error
     end.
 
+%% The router is handed the screen first and alone decides whether it is one: taken, the
+%% table is arranged for it and the attacher becomes the screen; refused, as an empty
+%% rectangle is, the old screen stays and the router has counted the drop. The router
+%% holds none only before the first screen, so none is never a screen taken.
+attach_screen(Rect, Chan, Depth, Pid, #winfs{screen = Old} = State) ->
+    Routed = route({screen, Rect}, State),
+    case screen_rect(Routed) of
+        Rect when Rect =/= none ->
+            ok = demonitor_screen(Old),
+            Arranged = arrange(Routed#winfs{chan = Chan, depth = Depth, screen = none}),
+            Layout = layout(Arranged),
+            {{ok, Layout}, Arranged#winfs{screen = {Pid, erlang:monitor(process, Pid)},
+                                          layout = Layout}};
+        _Kept ->
+            {{error, einval}, Routed}
+    end.
+
 demonitor_screen(none) -> ok;
 demonitor_screen({_Pid, Ref}) -> true = erlang:demonitor(Ref, [flush]), ok.
 
@@ -438,8 +449,9 @@ make_window(Grant, Client, Name, Owner, #winfs{grants = Grants} = State) ->
     end.
 
 new_window(Grant, #{client := Client, area := Area}, Name, Owner, State) ->
-    #winfs{next_id = Id, chan = Chan, depth = Depth, screen_rect = Screen, windows = Windows,
+    #winfs{next_id = Id, chan = Chan, depth = Depth, windows = Windows,
            policy = Policy, policy_state = PolicyState, session = Session} = State,
+    Screen = screen_rect(State),
     {ok, Proc} = erx_window:start_link(#{id => Id, chan => Chan, depth => Depth, area => Area}),
     Row = #{id => Id, dir => {Client, Name}, holder => Owner, rect => Screen, state => hidden,
             proc => Proc, grant => Grant, monitor => erlang:monitor(process, Owner)},
@@ -456,7 +468,8 @@ new_window(Grant, #{client := Client, area := Area}, Name, Owner, State) ->
 %% Why a mkdir may not make its window, or ok. The name is looked up before any limit,
 %% as FreeBSD's mkdir finds an existing name before it checks a quota.
 refusal(Grant, #{client := Client, windows := Quota}, Name,
-        #winfs{screen_rect = Screen, next_id = Id, windows = Windows} = State) ->
+        #winfs{next_id = Id, windows = Windows} = State) ->
+    Screen = screen_rect(State),
     Held = length([W || W = #{grant := G} <- Windows, G =:= Grant]),
     Exists = Name =:= ?CLIPBOARD orelse find(Client, Name, State) =/= error,
     if
@@ -477,8 +490,9 @@ log_ids_spent(_Id) ->
 
 %% A wctl write: the parsed command is a place request, which the policy may refuse.
 place_request(Client, Id, Bytes, State) ->
-    #winfs{windows = Windows, screen_rect = Screen, session = Session, policy = Policy,
+    #winfs{windows = Windows, session = Session, policy = Policy,
            policy_state = PolicyState} = State,
+    Screen = screen_rect(State),
     case {erx_wctl:parse(Bytes), [W || W = #{id := I, dir := {C, _}} <- Windows, I =:= Id, C =:= Client]} of
         {{ok, Command}, [_]} when Screen =/= none ->
             case Policy:place(Command, Id, Windows, Screen, Session, PolicyState) of
@@ -570,12 +584,20 @@ end_window(Id, #winfs{windows = Windows} = State) ->
 
 %% The table ------------------------------------------------------------------
 
-arrange(#winfs{screen_rect = none} = State) ->
-    State;
-arrange(#winfs{windows = Windows, screen_rect = Screen, session = Session, policy = Policy,
+%% The screen is the router's: it alone decides what it takes as one, so the table and
+%% the policy's input see the same screen.
+screen_rect(#winfs{input = Input}) ->
+    erx_input:screen(Input).
+
+arrange(#winfs{windows = Windows, session = Session, policy = Policy,
                policy_state = PolicyState} = State) ->
-    {Table, PolicyState1} = Policy:arrange(Windows, Screen, Session, PolicyState),
-    commit(Table, State#winfs{policy_state = PolicyState1}).
+    case screen_rect(State) of
+        none ->
+            State;
+        Screen ->
+            {Table, PolicyState1} = Policy:arrange(Windows, Screen, Session, PolicyState),
+            commit(Table, State#winfs{policy_state = PolicyState1})
+    end.
 
 %% Takes the policy's table: each window whose rectangle or state changed is told; the
 %% loop hands the screen the layout. The policy keeps every field it does not
@@ -613,8 +635,8 @@ present(#winfs{screen = none} = State) ->
     State.
 
 %% The shown windows, topmost first, with their decorations.
-layout(#winfs{windows = Windows, screen_rect = Screen, policy = Policy, policy_state = PolicyState}) ->
-    Decorations = maps:from_list(Policy:decorate(Windows, Screen, PolicyState)),
+layout(#winfs{windows = Windows, policy = Policy, policy_state = PolicyState} = State) ->
+    Decorations = maps:from_list(Policy:decorate(Windows, screen_rect(State), PolicyState)),
     [#{id => Id, proc => Proc, rect => Rect, decorations => maps:get(Id, Decorations, [])}
      || #{id := Id, proc := Proc, rect := Rect, state := shown} <- Windows].
 

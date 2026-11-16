@@ -70,7 +70,7 @@ then changes nothing. The pick a naming press made stays.
 -include("generated/erx_abi.hrl").
 
 -type item() :: erx_wm:menu_item().
--type command() :: resize | move | delete | hide.
+-type command() :: erx_wm:command().
 -type point() :: {erx_wm:coord(), erx_wm:coord()}.
 
 -doc """
@@ -104,6 +104,7 @@ the window to delete, or a move or resize cancelled.
 -define(MENU_BUTTON, 4).
 -define(ITEM_DX, 200).
 -define(ITEM_DY, (maps:get(line, erx_theme:role(body)) + 2 * erx_theme:space(s))).
+%% Every erx_wm:command(), in the menu's order, rio's.
 -define(COMMANDS, [resize, move, delete, hide]).
 
 -doc "The policy's initial state; a configuration with any key raises `badarg`.".

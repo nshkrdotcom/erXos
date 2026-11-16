@@ -192,9 +192,9 @@ module Erx
     # The C++ runtime archives' notices, in the fetched llvm-project tree.
     LIBCXX_NOTICES = { 'libc++.a' => 'libcxx/LICENSE.TXT', 'libc++abi.a' => 'libcxxabi/LICENSE.TXT' }.freeze
 
-    # The machine an image boots on: its board's platform record (Platform), its RAM, the part of it Fiasco keeps
-    # (fiasco_reserve, which grows with RAM, since Fiasco sizes its kernel memory as
-    # 6% of it), system_growth_mib, which is added to both root_memory and
+    # The machine an image boots on: its board's platform record (Platform), its RAM, from
+    # which the part Fiasco keeps follows (fiasco_reserve_mib, by Platform.fiasco_reserve),
+    # system_growth_mib, which is added to both root_memory and
     # system_baseline of the development manifest, and tmp_growth_mib, which is added
     # to /tmp's cap and is part of the system growth, since /tmp lives in the baseline,
     # and root_mib, the root task's place in MiB from the start of RAM (root_address),
@@ -209,24 +209,27 @@ module Erx
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one.
-    Machine = Data.define(:platform, :memory_mib, :fiasco_reserve_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
-      # The record's own machine: its RAM and fiasco_reserve, the root at NativeRoot's
+    Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
+      # The record's own machine: its RAM, the root at NativeRoot's
       # development place.
       def self.development(platform)
-        new(platform: platform, memory_mib: platform.memory_mib, fiasco_reserve_mib: platform.fiasco_reserve_mib,
+        new(platform: platform, memory_mib: platform.memory_mib,
             system_growth_mib: 0, tmp_growth_mib: 0, root_mib: NativeRoot::DEVELOPMENT_ROOT_MIB)
       end
 
       # The machine the website's emulator boots the site image on: the RAM site/terminal.js
-      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), Fiasco's
-      # part of it at 6%, rounded up, and the root at the development place.
-      def self.site(platform) = development(platform).with(memory_mib: 256, fiasco_reserve_mib: 16)
+      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
+      # at the development place.
+      def self.site(platform) = development(platform).with(memory_mib: 256)
 
       def initialize(platform:, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
 
         super
       end
+
+      # The part of the RAM Fiasco keeps as its kernel memory.
+      def fiasco_reserve_mib = Platform.fiasco_reserve(memory_mib << 20) >> 20
 
       # The root's place, with room for the root's image (about 5 MiB) before RAM ends.
       def root_address

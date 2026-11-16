@@ -129,6 +129,41 @@ module Erx
         types(input).map { |type| type.is_a?(ScalarType) ? scalar_functions(type) : enum_functions(type) }
       end
 
+      # The scalar type NAME of a record's field, whose range a driver's value is
+      # held to by the clamps of clamp_functions (one of Input::CLAMPED, which
+      # Input.validate makes some field's type).
+      def scalar(input, name) = types(input).find { |type| type.name == name }
+
+      # rel/1, wheel/1 and axis/3: a device's value held to a record's field, so
+      # every driver clamps and scales as the bounds of valid/1 require.
+      def clamp_functions(input)
+        rel = scalar(input, 'input_rel')
+        wheel = scalar(input, 'input_wheel')
+        axis = scalar(input, 'input_axis')
+
+        <<~ERLANG.chomp
+          -doc "A device's relative move held to a pointer record's range.".
+          -spec rel(integer()) -> input_rel().
+          rel(Value) when is_integer(Value) ->
+              min(max(Value, #{rel.minimum}), #{rel.maximum}).
+
+          -doc "A device's wheel steps held to a wheel record's range.".
+          -spec wheel(integer()) -> input_wheel().
+          wheel(Steps) when is_integer(Steps) ->
+              min(max(Steps, #{wheel.minimum}), #{wheel.maximum}).
+
+          -doc """
+          Value of a device's axis whose range is Min..Max, Min below Max:
+          clamped to that range and spread across a record's axis, 0 at Min
+          and #{axis.maximum} at Max.
+          """.
+          -spec axis(integer(), integer(), integer()) -> input_axis().
+          axis(Value, Min, Max)
+            when is_integer(Value), is_integer(Min), is_integer(Max), Min < Max ->
+              (min(max(Value, Min), Max) - Min) * #{axis.maximum} div (Max - Min).
+        ERLANG
+      end
+
       def scalar_functions(type)
         <<~ERLANG.chomp
           is_#{type.name}(Value) ->
@@ -169,9 +204,14 @@ module Erx
           decode/1 reads a stream's bytes and drops, and counts, each record
           whose tag, padding or field is outside them, so a bad record costs only
           itself; encode/1 writes one record. The decoder makes no atom.
+          rel/1, wheel/1 and axis/3 hold a device's values to a record's fields,
+          so every driver clamps and scales them alike, and the types and
+          checks of those fields (#{Input::CLAMPED.join(', ')}) are a driver's
+          to name, so no driver restates their bounds.
           """.
-          -export([size/0, decode/1, encode/1, valid/1]).
-          -export_type([record/0]).
+          -export([size/0, decode/1, encode/1, valid/1, rel/1, wheel/1, axis/3]).
+          -export([#{Input::CLAMPED.map { |name| "is_#{name}/1" }.join(', ')}]).
+          -export_type([record/0, #{Input::CLAMPED.map { |name| "#{name}/0" }.join(', ')}]).
 
           %% The design names a driver's record record(), as "Input events" spells it.
           -compile({nowarn_redefined_builtin_type, {record, 0}}).
@@ -220,6 +260,8 @@ module Erx
           -doc "Whether a term is a record within the bounds of record().".
           -spec valid(term()) -> boolean().
           #{valid_clauses(input).join(";\n")}.
+
+          #{clamp_functions(input)}
 
           #{type_functions(input).join("\n\n")}
         ERLANG

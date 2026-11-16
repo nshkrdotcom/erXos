@@ -28,7 +28,7 @@ class PlatformTest < Minitest::Test
   def test_the_development_record_states_virts_ram
     assert_equal 'qemu-virt', VIRT.name
     assert_equal 0x4000_0000, VIRT.ram_first
-    assert_equal [512, 32], [VIRT.memory_mib, VIRT.fiasco_reserve_mib]
+    assert_equal [512, 32 << 20], [VIRT.memory_mib, VIRT.record.fetch('fiasco_reserve')]
     assert_equal 'config/manifest/qemu-virt-development.txt', VIRT.manifest_path
     assert File.file?(File.join(ROOT, VIRT.manifest_path))
     assert_equal %w[web display], VIRT.record.fetch('site_leaves_out')
@@ -85,9 +85,27 @@ class PlatformTest < Minitest::Test
     end
   end
 
+  # Fiasco keeps 6% of RAM, at most 3328 MiB, rounded up to its 2 MiB superpage: on
+  # virt's 512 MiB 30.72 MiB rounds up to 32, on the smallest Pi 4's 948 MiB 56.88 to 58,
+  # on 2 GiB 122.88 to 124, and past about 55 GiB the cap holds.
+  def test_fiasco_keeps_six_per_cent_of_ram_on_superpages
+    { 112 => 8, 256 => 16, 512 => 32, 896 => 54, 948 => 58, 2048 => 124, 65_536 => 3328 }.each do |ram_mib, reserve_mib|
+      assert_equal reserve_mib << 20, Erx::Platform.fiasco_reserve(ram_mib << 20), "#{ram_mib} MiB"
+    end
+  end
+
+  # A record whose fiasco_reserve is not Fiasco's rule on its RAM is refused, by name.
+  def test_a_reserve_other_than_fiascos_rule_is_refused
+    [30, 34].each do |mib|
+      error = assert_raises(Erx::Error) { Erx::Platform.new(name: 'qemu-virt', record: record(fiasco_reserve: mib << 20)) }
+      assert_equal "config/platforms/qemu-virt.json: fiasco_reserve must be Fiasco's kernel memory on ram_bytes, 32 MiB",
+                   error.message
+    end
+  end
+
   def test_a_ram_number_that_is_not_whole_mib_is_refused
     [{ ram_first: 0x4000_1000 }, { ram_first: -(1 << 20) }, { ram_first: '1073741824' }, { ram_bytes: 0 },
-     { fiasco_reserve: 4096 }, { fiasco_reserve: VIRT.record.fetch('ram_bytes') }].each do |change|
+     { fiasco_reserve: 4096 }].each do |change|
       assert_raises(Erx::Error, change.inspect) { Erx::Platform.new(name: 'qemu-virt', record: record(**change)) }
     end
   end

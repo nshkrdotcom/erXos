@@ -235,6 +235,26 @@ single_policy() ->
     ?assertEqual({error, eio}, answered(HiddenRead)),
     stop(World).
 
+an_empty_screen_is_refused_and_the_old_one_kept_test_() ->
+    {timeout, 60, fun empty_screen/0}.
+
+%% The router decides what a screen is: an attach of an empty rectangle is refused, and the
+%% window system keeps the screen it had, so a mkdir still makes a shown window over all of it
+%% and the layout goes to erx_screen, not to the refused attacher.
+empty_screen() ->
+    World = start(answer),
+    Session = mint(?SESSION, #{session => true, windows => 1}),
+    ?assertEqual([], erx_winfs:attach({0, 0, 0, ?HEIGHT}, <<"x8r8g8b8">>)),
+    {ok, _} = mkdir(Session, <<"w">>),
+    Wctl = open(Session, 2, <<"w">>, <<"wctl">>, ?O_RDWR),
+    {ok, Text} = read(Session, Wctl),
+    ?assertMatch([<<"0">>, <<"0">>, <<"8">>, <<"4">> | _], string:lexemes(Text, " ")),
+    ?assertEqual(<<"visible">>, state(Session, Wctl)),
+    receive {'$gen_cast', {layout, _} = Layout} -> error({layout_to_the_attacher, Layout})
+    after ?QUIET -> ok
+    end,
+    stop(World).
+
 shown_soon(Grant, Fid) ->
     shown_soon(Grant, Fid, 50).
 

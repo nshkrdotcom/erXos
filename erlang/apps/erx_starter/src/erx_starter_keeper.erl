@@ -39,6 +39,7 @@ service it serves and is refused without making one.
 
 -export([start_link/2]).
 -export([keep/2]).
+-export_type([who/0]).
 
 %% Whose session a keeper holds: a manifest principal's, by its number, or an app's, by
 %% its name.

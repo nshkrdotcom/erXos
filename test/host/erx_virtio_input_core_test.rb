@@ -18,15 +18,14 @@ require_relative '../../tools/lib/erx/abi'
 # which the router makes itself; one that resumes at once after SYN_DROPPED, folding the
 # tail of an update whose start is lost; one that sends a press before the moves ahead of
 # it, so it lands where the pointer was; one that sums moves without its range check, so
-# a sum overflows a record; and one that normalizes over one step too many, so an axis's
-# maximum falls short of the record's.
+# a sum overflows a record; one that takes an axis's range one too long, so its maximum
+# falls short of the record's; and one that sums a wheel step unclamped (the clamping and
+# scaling themselves are erx_input_codec's, whose own cases check them).
 #
 # The module takes every evdev code from abi/formats/evdev.txt and a record's bounds from
-# abi/formats/input.txt, while the cases write each number out. So two more seeded faults
-# edit a copy of a table instead of the module, with erx_abi.hrl generated again from that
-# copy: REL_WHEEL given REL_HWHEEL's code must fail the case that turns a wheel, and a
-# wheel's record range narrowed must fail the case that clamps one. (A range widened past
-# the wire type of its scalar in input.txt is refused by the generator itself.)
+# abi/formats/input.txt, while the cases write each number out. So one more seeded fault
+# edits a copy of a table instead of the module, with erx_abi.hrl generated again from that
+# copy: REL_WHEEL given REL_HWHEEL's code must fail the case that turns a wheel.
 class ErxVirtioInputCoreTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The application holding the module, compiled whole with those it depends on (ErlangBuild), the module and the cases.
@@ -57,13 +56,21 @@ class ErxVirtioInputCoreTest < Minitest::Test
              replacement: '{[{key, Edge, Code} | Kept], Next}',
              catching_case: 'a_press_lands_after_the_moves_before_it_test'),
     Seed.new(fault: 'a fold that sums moves without its range check',
-             anchor: 'case is_rel(SX + DX) andalso is_rel(SY + DY) of',
+             anchor: 'case erx_input_codec:is_input_rel(SX + DX) andalso erx_input_codec:is_input_rel(SY + DY) of',
              replacement: 'case true of',
              catching_case: 'two_moves_of_the_range_maximum_are_sent_as_two_test'),
-    Seed.new(fault: 'a position normalized over one step too many',
-             anchor: '* ?ERX_INPUT_AXIS_MAX div (Max - Min).',
-             replacement: '* ?ERX_INPUT_AXIS_MAX div (Max - Min + 1).',
+    Seed.new(fault: 'a fold that sums wheel steps without its range check',
+             anchor: 'case erx_input_codec:is_input_wheel(Sum + Steps) of',
+             replacement: 'case true of',
+             catching_case: 'wheel_steps_are_clamped_then_summed_test'),
+    Seed.new(fault: "an axis's range taken one too long",
+             anchor: '{erx_input_codec:axis(V, Min, Max), Y}',
+             replacement: '{erx_input_codec:axis(V, Min, Max + 1), Y}',
              catching_case: 'an_axis_minimum_and_maximum_normalize_to_0_and_65535_test'),
+    Seed.new(fault: 'a wheel step summed unclamped',
+             anchor: 'wheel(erx_input_codec:wheel(V), F);',
+             replacement: 'wheel(V, F);',
+             catching_case: 'wheel_steps_are_clamped_then_summed_test'),
     Seed.new(fault: "an axis bound read from its register unsigned",
              anchor: '<<Value:32/signed>> = <<Word:32>>,',
              replacement: '<<Value:32>> = <<Word:32>>,',
@@ -75,11 +82,6 @@ class ErxVirtioInputCoreTest < Minitest::Test
                   seed: Seed.new(fault: "the wheel read from the horizontal wheel's code",
                                  anchor: 'limit evdev_rel_wheel u16 0x08',
                                  replacement: 'limit evdev_rel_wheel u16 0x06',
-                                 catching_case: 'wheel_steps_are_clamped_then_summed_test')),
-    TableSeed.new(table: 'abi/formats/input.txt',
-                  seed: Seed.new(fault: "a wheel's record range narrowed",
-                                 anchor: 'limit input_wheel_max i32 127',
-                                 replacement: 'limit input_wheel_max i32 63',
                                  catching_case: 'wheel_steps_are_clamped_then_summed_test'))
   ].freeze
 
