@@ -57,8 +57,8 @@ class ErxSaeTest < Minitest::Test
                           'when Phase =:= committed; Phase =:= keying ->',
              failure: failed('second_commit_while_keying_dropped')),
     Seed.new(fault: "the holder's bad_element leaving the exchange keying",
-             anchor: '{[], Sae#{phase := committed, peer := none}, {drop, bad_element}}',
-             replacement: '{[], Sae, {drop, bad_element}}',
+             anchor: '{Sae#{phase := committed, peer := none}, [{drop, bad_element}]}',
+             replacement: '{Sae, [{drop, bad_element}]}',
              failure: failed('off_curve_element_dropped_then_genuine_commit'))
   ].freeze
 

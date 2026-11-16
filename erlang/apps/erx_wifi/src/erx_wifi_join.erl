@@ -7,7 +7,7 @@
 The join machine (docs/design-wifi.md, "Joining", "The supplicant"): one join, from
 the lifecycle's pick to an open port and until the link ends. step/3 is a pure
 function of the join, one event and a context of the time and 32 random bytes; it
-returns the actions for the station's process to perform and the next join.
+returns the next join and the actions for the station's process to perform.
 
 table/0 is the one statement of the machine's edges. step/3 checks the event's join
 reference first, then looks up the event's cell for the current state: an empty cell
@@ -189,27 +189,39 @@ sae_event(sae, {auth_tx, _, Status}, Join, Ctx) -> sae_step(Join, {auth_tx, Stat
 %% Once the exchange is accepted, only the connect's confirmation is awaited.
 sae_step(#{sae := accepted}, _Event, _Ctx) ->
     {drop, sae_done};
-sae_step(#{sae := Sae0, ref := Ref, proof := Proof} = Join, Event, #{now := Now} = Ctx) ->
-    {SaeActions, Sae, Outcome} = erx_sae:step(Sae0, Event, Ctx),
-    Actions = [sae_action(Ref, Action) || Action <- SaeActions],
-    Tested = case erx_sae:tested(Sae) of true -> tested; false -> Proof end,
-    case Outcome of
+sae_step(#{sae := Sae0, proof := Proof} = Join, Event, Ctx) ->
+    case erx_sae:step(Sae0, Event, Ctx) of
         %% The exchange a drop returns is kept: unchanged, but after the holder's
         %% `bad_element`, which returns it to before the commit it dropped.
-        {drop, Check} ->
+        {Sae, [{drop, Check}]} ->
             {[], count(Check, Join#{sae := Sae})};
-        {running, Deadline} ->
-            {Actions, Join#{sae := Sae, proof := Tested, deadline := Deadline}};
-        accepted ->
-            {Actions ++ [{chip, {auth_result, Ref, ok}}],
-             Join#{sae := accepted, proof := proved, deadline := Now + ?CONNECT_MS}};
-        {failed, Class} ->
-            {Ended, Idle} = finish(Join#{sae := Sae}, Class, sae_failed, Ctx),
-            {Actions ++ [{chip, {auth_result, Ref, failed}} | Ended], Idle}
+        {Sae, SaeActions} ->
+            Tested = case erx_sae:tested(Sae) of true -> tested; false -> Proof end,
+            sae_actions(SaeActions, Join#{sae := Sae, proof := Tested}, [], Ctx)
     end.
 
-sae_action(Ref, {auth_frame, Frame}) -> {chip, {auth_frame, Ref, Frame}};
-sae_action(Ref, {keys, Request}) -> {keys, Ref, Request}.
+%% The exchange's actions, in order, as the join's. Its frames and requests become the
+%% chip's and the key holder's, its deadline the join's, and its end, the last, the
+%% auth result. A list outside erx_sae's contract is refused with error/1, whose stack
+%% trace names no argument, since the join holds the exchange's keys.
+sae_actions([{stop, accepted}], #{ref := Ref} = Join, Acc, #{now := Now}) ->
+    {lists:reverse(Acc, [{chip, {auth_result, Ref, ok}}]),
+     Join#{sae := accepted, proof := proved, deadline := Now + ?CONNECT_MS}};
+sae_actions([{stop, {failed, Class}}], #{ref := Ref} = Join, Acc, Ctx) ->
+    {Ended, Idle} = finish(Join, Class, sae_failed, Ctx),
+    {lists:reverse(Acc, [{chip, {auth_result, Ref, failed}} | Ended]), Idle};
+sae_actions([{stop, _} | _], _Join, _Acc, _Ctx) ->
+    error(stop_not_last);
+sae_actions([{deadline, Deadline} | Rest], Join, Acc, Ctx) ->
+    sae_actions(Rest, Join#{deadline := Deadline}, Acc, Ctx);
+sae_actions([{auth_frame, Frame} | Rest], #{ref := Ref} = Join, Acc, Ctx) ->
+    sae_actions(Rest, Join, [{chip, {auth_frame, Ref, Frame}} | Acc], Ctx);
+sae_actions([{keys, Request} | Rest], #{ref := Ref} = Join, Acc, Ctx) ->
+    sae_actions(Rest, Join, [{keys, Ref, Request} | Acc], Ctx);
+sae_actions([], Join, Acc, _Ctx) ->
+    {lists:reverse(Acc), Join};
+sae_actions(_Actions, _Join, _Acc, _Ctx) ->
+    error(sae_contract).
 
 %% ---- The key holder's answers ----
 

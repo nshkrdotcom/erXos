@@ -6,8 +6,8 @@
 -moduledoc """
 SAE's exchange as the join machine sees it (docs/design-wifi.md, "SAE and
 protected management frames"): new/1 makes an exchange for one join, and step/3
-takes each of its events and returns the actions to perform, the exchange, and an
-outcome the join machine acts on. tested/1 says whether a guess of the secret could
+takes each of its events and returns the exchange and the actions to perform, in
+order. tested/1 says whether a guess of the secret could
 now be tested offline from what the station sent, the `secret` class's condition
 ("Joining", "How a join ends").
 
@@ -28,17 +28,21 @@ holder works: `committing` while it makes the commit, and `keying` while it make
 KCK of the peer's commit. In `keying` every other commit is dropped, so the confirm is
 always over the commit whose KCK it is; the holder's `bad_element` drops the commit
 asked about and returns the exchange to `committed`, as it was before that commit, for
-the peer's genuine one. The contract a step keeps, which erx_wifi_join's table checks:
-`{auth_tx, _}` never ends the exchange, and `{drop, Check}` comes with no action and
+the peer's genuine one. An action is `{auth_frame, Frame}`, a frame to send; `{keys, Request}`, whose answer
+the next step receives as `{key, Answer}`; `{deadline, Deadline}`, the last action of a
+step that keeps the exchange going, until the time Deadline, when the join machine
+gives it `deadline`; `{drop, Check}`, a step's only action when it refuses its event;
+or `{stop, accepted}` once each side proved the secret, or `{stop, {failed, Class}}`,
+each a step's only action and the exchange's end. The contract a step keeps, which
+erx_wifi_join's table checks: `{auth_tx, _}` never ends the exchange, and a drop leaves
 the exchange unchanged, but for `bad_element`'s return to `committed`; the join machine
-keeps the exchange and counts the drop as any refused event. An action is `{auth_frame, Frame}`, a frame to send, or `{keys, Request}`,
-whose answer the next step receives as `{key, Answer}`.
+keeps the exchange and counts the drop as any refused event.
 """.
 
 -include("generated/erx_abi.hrl").
 
 -export([new/1, step/3, tested/1]).
--export_type([sae/0, event/0, outcome/0, action/0]).
+-export_type([sae/0, event/0, action/0]).
 
 %% erXos's limits ("Joining", "Deadlines"): the exchange within 5 s of its start, each
 %% frame sent again 1 s after it was last sent, at most twice.
@@ -59,11 +63,8 @@ whose answer the next step receives as `{key, Answer}`.
                    token := binary() | none, kck := <<_:256>> | none, send_confirm := 0..65535}.
 -type event() :: start | {auth_frame, binary()} | {auth_tx, ok | failed} | {key, erx_wifi_keys:answer()}
                | deadline.
--type action() :: {auth_frame, binary()} | {keys, erx_wifi_keys:request()}.
-%% `{running, Deadline}` keeps the exchange going until the time Deadline, when the
-%% join machine gives it `deadline`; `{drop, Check}` refuses the event; `accepted`
-%% means each side proved the secret.
--type outcome() :: {running, integer()} | {drop, atom()} | accepted | {failed, secret | bss}.
+-type action() :: {auth_frame, binary()} | {keys, erx_wifi_keys:request()} | {deadline, integer()}
+                | {drop, atom()} | {stop, accepted | {failed, secret | bss}}.
 
 -doc """
 The exchange of one join: the SSID, the station's address and the BSS's, and the
@@ -78,12 +79,12 @@ new(#{ssid := Ssid, spa := Spa, aa := Aa} = Join)
       token => none, kck => none, send_confirm => 0}.
 
 -doc "One event of the exchange, at the time in Ctx.".
--spec step(sae(), event(), #{now := integer(), _ => _}) -> {[action()], sae(), outcome()}.
+-spec step(sae(), event(), #{now := integer(), _ => _}) -> {sae(), [action()]}.
 step(Sae, Event, #{now := Now}) ->
     try
         event(Sae, Event, Now)
     catch
-        throw:{drop, Check} -> {[], Sae, {drop, Check}}
+        throw:{drop, Check} -> {Sae, [{drop, Check}]}
     end.
 
 -doc "Whether the station sent its confirm and no peer confirm has verified.".
@@ -95,8 +96,8 @@ tested(#{phase := Phase}) ->
 
 event(#{phase := nothing, ssid := Ssid, spa := Spa, aa := Aa} = Sae, start, Now) ->
     Ends = Now + ?EXCHANGE_MS,
-    {[{keys, erx_wifi_keys:sae_commit(Ssid, Spa, Aa)}], Sae#{phase := committing, ends := Ends, next := Ends},
-     {running, Ends}};
+    {Sae#{phase := committing, ends := Ends, next := Ends},
+     [{keys, erx_wifi_keys:sae_commit(Ssid, Spa, Aa)}, {deadline, Ends}]};
 event(#{phase := committing} = Sae, {key, {ok, Scalar, Element}}, Now)
   when byte_size(Scalar) =:= ?SCALAR, byte_size(Element) =:= 2 * ?SCALAR ->
     transmit(Sae#{phase := committed, own := #{scalar => Scalar, element => Element}, resent := 0}, Now);
@@ -105,26 +106,26 @@ event(#{phase := keying} = Sae, {key, {ok, Kck}}, Now) when byte_size(Kck) =:= ?
 %% The peer's element is off the curve: its commit is dropped as a failed check drops
 %% one, and the exchange is again the one before it, `committed` with no peer commit.
 event(#{phase := keying} = Sae, {key, {error, bad_element}}, _Now) ->
-    {[], Sae#{phase := committed, peer := none}, {drop, bad_element}};
+    {Sae#{phase := committed, peer := none}, [{drop, bad_element}]};
 event(#{phase := Phase} = Sae, {key, {error, _}}, _Now) when Phase =:= committing; Phase =:= keying ->
-    {[], Sae, {failed, bss}};
+    {Sae, [{stop, {failed, bss}}]};
 event(_Sae, {key, _}, _Now) ->
     throw({drop, unasked_answer});
 event(Sae, {auth_tx, _}, _Now) ->
-    {[], Sae, running(Sae)};
+    {Sae, [deadline(Sae)]};
 event(Sae, {auth_frame, Frame}, Now) ->
     frame(Sae, header(Frame), Now);
 event(#{ends := Ends} = Sae, deadline, Now) when Now >= Ends ->
-    {[], Sae, {failed, class(Sae)}};
+    {Sae, [{stop, {failed, class(Sae)}}]};
 %% Only a committed or confirmed exchange sends its frame again; a `keying` one waits,
 %% since the peer's commit has answered the station's.
 event(#{phase := Phase, resent := Resent} = Sae, deadline, Now)
   when Resent < ?RESENDS, (Phase =:= committed orelse Phase =:= confirmed) ->
     transmit(Sae#{resent := Resent + 1}, Now);
 event(#{ends := Ends} = Sae, deadline, _Now) ->
-    {[], Sae#{next := Ends}, {running, Ends}}.
+    {Sae#{next := Ends}, [{deadline, Ends}]}.
 
-running(#{next := Next}) -> {running, Next}.
+deadline(#{next := Next}) -> {deadline, Next}.
 
 class(Sae) ->
     case tested(Sae) of
@@ -137,7 +138,7 @@ class(Sae) ->
 transmit(#{ends := Ends} = Sae0, Now) ->
     {Frame, Sae} = outgoing(Sae0),
     Next = min(Now + ?RESEND_MS, Ends),
-    {[{auth_frame, Frame}], Sae#{next := Next}, {running, Next}}.
+    {Sae#{next := Next}, [{auth_frame, Frame}, {deadline, Next}]}.
 
 outgoing(#{phase := committed, own := #{scalar := Scalar, element := Element}, identifier := Id, token := Token} = Sae) ->
     {<<?HEADER(?ERX_SAE_TRANSACTION_COMMIT, ?ERX_IEEE80211_STATUS_SAE_HASH_TO_ELEMENT),
@@ -174,7 +175,7 @@ frame(Sae, {?ERX_SAE_TRANSACTION_COMMIT, ?ERX_IEEE80211_STATUS_ANTI_CLOGGING_TOK
 frame(Sae, {?ERX_SAE_TRANSACTION_CONFIRM, ?ERX_IEEE80211_STATUS_SUCCESS, Body}, _Now) ->
     peer_confirm(Sae, Body);
 frame(Sae, {?ERX_SAE_TRANSACTION_COMMIT, ?ERX_IEEE80211_STATUS_UNKNOWN_PASSWORD_IDENTIFIER, _Body}, _Now) ->
-    {[], Sae, {failed, secret}};
+    {Sae, [{stop, {failed, secret}}]};
 %% A commit with status 0 is hunting-and-pecking's, which the station never offers.
 frame(_Sae, {_Transaction, ?ERX_IEEE80211_STATUS_SUCCESS, _Body}, _Now) ->
     throw({drop, sae_malformed});
@@ -184,7 +185,7 @@ frame(_Sae, {_Transaction, ?ERX_IEEE80211_STATUS_SUCCESS, _Body}, _Now) ->
 %% has already answered the commit it would ask to repeat.
 frame(Sae, {Transaction, _Status, _Body}, _Now)
   when Transaction =:= ?ERX_SAE_TRANSACTION_COMMIT; Transaction =:= ?ERX_SAE_TRANSACTION_CONFIRM ->
-    {[], Sae, {failed, class(Sae)}};
+    {Sae, [{stop, {failed, class(Sae)}}]};
 frame(_Sae, _Frame, _Now) ->
     throw({drop, sae_malformed}).
 
@@ -199,11 +200,11 @@ peer_commit(#{phase := committed, ssid := Ssid, own := Own} = Sae, Body) ->
     Groups = [Group || <<Group:16/little>> <= Rejected],
     case lists:member(?ERX_SAE_GROUP, Groups) of
         true ->
-            {[], Sae, {failed, bss}};
+            {Sae, [{stop, {failed, bss}}]};
         false ->
             #{scalar := Scalar, element := Element} = Peer,
-            {[{keys, erx_wifi_keys:sae_key(Ssid, Scalar, Element, Rejected)}], Sae#{phase := keying, peer := Peer},
-             running(Sae)}
+            {Sae#{phase := keying, peer := Peer},
+             [{keys, erx_wifi_keys:sae_key(Ssid, Scalar, Element, Rejected)}, deadline(Sae)]}
     end;
 peer_commit(_Sae, _Body) ->
     throw({drop, sae_unexpected}).
@@ -270,8 +271,8 @@ token_request(_Sae, _Body, _Now) ->
 peer_confirm(#{phase := confirmed, kck := Kck, own := Own, peer := Peer} = Sae,
              <<Sc:16/little, Confirm:?ERX_SAE_KCK_SIZE/binary, _Elements/binary>>) ->
     case crypto:hash_equals(confirm(Kck, Sc, Peer, Own), Confirm) of
-        true -> {[], Sae#{phase := accepted}, accepted};
-        false -> {[], Sae, {failed, secret}}
+        true -> {Sae#{phase := accepted}, [{stop, accepted}]};
+        false -> {Sae, [{stop, {failed, secret}}]}
     end;
 peer_confirm(#{phase := confirmed}, _Body) ->
     throw({drop, sae_malformed});

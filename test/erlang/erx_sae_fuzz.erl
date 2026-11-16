@@ -51,29 +51,29 @@ round_of(#{states := States, frames := Frames} = World) ->
     Result = guarded(Name, Frame, fun() -> erx_sae:step(Sae, {auth_frame, Frame}, #{now => 0}) end),
     check_outcome(Name, Sae, Frame, Result, World).
 
-check_outcome(_Name, Sae, Frame, {[], Sae1, {drop, Check}}, _World) ->
+check_outcome(_Name, Sae, Frame, {Sae1, [{drop, Check}]}, _World) ->
     check(Sae1 =:= Sae andalso lists:member(Check, ?CHECKS), drop_changed_nothing, Frame),
     {dropped, Check};
 %% An end is `secret` once the station has confirmed or for an unknown password
 %% identifier in a commit, else `bss`.
 check_outcome(Name, _Sae, <<_:2/binary, Transaction:16/little, Status:16/little, _/binary>> = Frame,
-              {[], _, {failed, Class}}, _World) ->
+              {_, [{stop, {failed, Class}}]}, _World) ->
     Expected = case Name =:= confirmed orelse {Transaction, Status} =:= {1, 123} of true -> secret; false -> bss end,
     check(Class =:= Expected, failure_class, Frame),
     failed;
-check_outcome(confirmed, _Sae, Frame, {[], _, accepted}, #{ap := Ap}) ->
+check_outcome(confirmed, _Sae, Frame, {_, [{stop, accepted}]}, #{ap := Ap}) ->
     <<_:6/binary, Sc:16/little, _/binary>> = Frame,
     check(byte_size(Frame) >= 40 andalso binary:part(Frame, 0, 40) =:= erx_sae_peer:ap_confirm(Ap, Sc),
           accepted_only_the_peers_confirm, Frame),
     accepted;
-check_outcome(Name, _Sae, Frame, {[{keys, {sae_key, Request}}], Keying, {running, Deadline}}, World)
+check_outcome(Name, _Sae, Frame, {Keying, [{keys, {sae_key, Request}}, {deadline, Deadline}]}, World)
   when Name =:= committed; Name =:= identified ->
     check_commit_taken(Name, Frame, Request, World),
     check(Deadline =< 5000 andalso not erx_sae:tested(Keying), keying_runs_untested, Frame),
-    check({[], Keying, {drop, sae_unexpected}} =:= erx_sae:step(Keying, {auth_frame, Frame}, #{now => 0}),
+    check({Keying, [{drop, sae_unexpected}]} =:= erx_sae:step(Keying, {auth_frame, Frame}, #{now => 0}),
           keying_drops_a_commit, Frame),
     case Request of #{rejected := <<>>} -> keyed; _ -> keyed_with_list end;
-check_outcome(Name, _Sae, Frame, {[{auth_frame, Sent}], _, {running, Deadline}}, #{own := Own})
+check_outcome(Name, _Sae, Frame, {_, [{auth_frame, Sent}, {deadline, Deadline}]}, #{own := Own})
   when Name =:= committed; Name =:= identified ->
     Prefix = <<Own/binary, (identifier_element(Name))/binary>>,
     check(binary:longest_common_prefix([Sent, Prefix]) =:= byte_size(Prefix) andalso Deadline =< 5000,
@@ -142,9 +142,9 @@ world() ->
     true = binary:part(CommitI, 0, ?COMMIT_FIELDS) =:= binary:part(Commit, 0, ?COMMIT_FIELDS),
     Ap0 = ap(#{}, <<41:256>>),
     {[ApCommit], Ap} = erx_sae_peer:ap_take(Commit, Ap0),
-    {[{keys, Ask}], K, _} = erx_sae:step(S, {auth_frame, ApCommit}, #{now => 0}),
+    {K, [{keys, Ask}, {deadline, _}]} = erx_sae:step(S, {auth_frame, ApCommit}, #{now => 0}),
     {Answer, _} = erx_sae_peer:holder(Ask, H),
-    {[{auth_frame, _Confirm}], C, _} = erx_sae:step(K, {key, Answer}, #{now => 0}),
+    {C, [{auth_frame, _Confirm}, {deadline, _}]} = erx_sae:step(K, {key, Answer}, #{now => 0}),
     Listed = erx_sae_peer:ap_commit(ap(#{rejected => <<20:16/little, 21:16/little>>}, <<43:256>>)),
     Downgrade = erx_sae_peer:ap_commit(ap(#{rejected => <<20:16/little, 19:16/little>>}, <<47:256>>)),
     Longest = erx_sae_peer:ap_commit(ap(#{rejected => binary:copy(<<20:16/little>>, 127)}, <<53:256>>)),
@@ -165,11 +165,11 @@ world() ->
 
 committed(Identifier) ->
     Sae = erx_sae:new(Identifier#{ssid => ?SSID, spa => ?SPA, aa => ?AA}),
-    {[{keys, Ask}], S0, _} = erx_sae:step(Sae, start, #{now => 0}),
+    {S0, [{keys, Ask}, {deadline, _}]} = erx_sae:step(Sae, start, #{now => 0}),
     {U1, U2} = erx_sae_peer:hashed_values(?SSID, <<"mekmitasdigoat">>, <<>>),
     Holder = erx_sae_peer:holder_new(erx_sae_peer:pt(U1, U2), [{<<N:256>>, <<(N + 7):256>>} || N <- [1, 11]]),
     {Answer, H} = erx_sae_peer:holder(Ask, Holder),
-    {[{auth_frame, Commit}], S, _} = erx_sae:step(S0, {key, Answer}, #{now => 0}),
+    {S, [{auth_frame, Commit}, {deadline, _}]} = erx_sae:step(S0, {key, Answer}, #{now => 0}),
     {S, H, Commit}.
 
 ap(Config, Rand) ->
