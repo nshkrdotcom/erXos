@@ -1862,7 +1862,8 @@ tree answers `eio`, as on a boot that names no `system` window: the
 image packages are absent and nothing reads an unchecked block. The
 manifest check refuses a manifest with a `system` window row and no
 `system_image` fields, or with an empty salt, so a built image never
-takes that path. Its host test covers a well-formed record, each word
+takes that path, and refuses `system_image` fields with no `system`
+window row, which would reach no holder. Its host test covers a well-formed record, each word
 malformed in turn, a missing word, an extra word, a second record and
 none, seeded with a reader that takes ROOT of any length, which the
 short-root case catches.

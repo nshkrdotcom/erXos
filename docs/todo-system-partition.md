@@ -27,8 +27,7 @@ that proves the code under test ran.
   `tree_offset`, `tree_length`, `salt` and `root_hash`, named by a
   header field `system_image`), the domain library writing them as
   `-erx_record system_image` into the arguments of the `system` window's
-  holder alone (design-stopgap.md, The booted slot), the manifest check
-  refusing a `system` window row without the fields, and the update
+  holder alone (design-stopgap.md, The booted slot), and the update
   writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
   `erx_storage_system` open an image in it; the

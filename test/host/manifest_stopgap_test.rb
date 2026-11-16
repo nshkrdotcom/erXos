@@ -828,6 +828,18 @@ class ManifestStopgapTest < Minitest::Test
     end
   end
 
+  # The storage domain mounts the system window through the system_image row's image
+  # length, tree and root hash, so neither comes without the other.
+  def test_a_system_window_without_a_system_image_row_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
+            message: /system_image row/)
+  end
+
+  def test_a_system_image_row_without_a_system_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
+            message: /system window it describes/)
+  end
+
   def test_a_fat_window_must_name_a_primary_partition
     [0, 5].each do |partition|
       refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'fat', partition: partition))
@@ -953,14 +965,24 @@ class ManifestStopgapTest < Minitest::Test
   # record describes it is refused.
   def test_a_system_image_the_record_cannot_describe_is_refused
     tree = ManifestContextFixture.images.fetch('release').fetch('tree')
-    [{ 'extents' => [{ 'slot_offset' => 4096, 'length' => 8192 }] }, { 'tree' => nil }, { 'tree' => tree.merge('offset' => 12_288) },
-     { 'tree' => tree.merge('length' => 100) }, { 'tree' => tree.merge('salt' => 'AB') }, { 'tree' => tree.merge('root_hash' => '00') },
-     { 'tree' => tree.merge('length' => 1_048_576 * 512) }].each do |change|
+    [{ 'extents' => [{ 'slot_offset' => 4096, 'length' => 8192 }] }, { 'tree' => nil },
+     { 'tree' => tree.merge('offset' => 12_288) }, { 'tree' => tree.merge('length' => 100) },
+     { 'tree' => tree.merge('salt' => 'AB') }, { 'tree' => tree.merge('salt' => '') },
+     { 'tree' => tree.merge('root_hash' => '00') }, { 'tree' => tree.merge('length' => 1_048_576 * 512) }].each do |change|
       release = ManifestContextFixture.images.fetch('release').merge(change)
       against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
       refused(Erx::Manifest::Invalid, 8, 'system_image.input', @source, against)
     end
   end
+
+# With no verified image sharing the release artifact, the system_image record alone
+# reads its extents, and a refusal of them names that record.
+def test_a_system_image_with_no_extents_is_refused_under_its_own_field
+  source = changed(@source.sub(/^image release\n(?:  .*\n)*/, '').sub(/^window release\n(?:  .*\n)*/, ''))
+  release = ManifestContextFixture.images.fetch('release').merge('extents' => [])
+  against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
+  refused(Erx::Manifest::Invalid, 8, 'system_image.input', source, against, message: /at least one extent/)
+end
 
   def test_a_second_system_image_row_is_refused
     refused(Erx::Manifest::Invalid, 8, 'system_image', @source + "system_image\n  input @artifact.release\n")

@@ -808,6 +808,16 @@ it; git history is the record of completed work.
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
   (`board_tree.rb`) would make the window's isolation hold by construction.
+* [Medium] `tools/lib/erx/manifest.rb`, `EmptyNative#check_mode` and `Stopgap#check_mode`'s partial path: each
+  lists the record kinds it refuses, so a record kind the grammar gains is admitted in an empty-native or
+  partial boot until someone adds it to the list (and in an empty-native boot left out of the packed manifest,
+  whose `check_and_place` packs nothing). Make each mode an allowlist of the kinds it takes, every other
+  kind refused, keeping each refused kind's property and reason in one table per mode.
+* [Medium] `tools/lib/erx/release_medium.rb`, `system_partition`: its refusal of an image and tree larger than
+  the system partition has no test, because reaching it takes an image near the partition's 383 MiB
+  (`medium_system_sectors`), which the function reads whole and hashes. Take the partition's size from
+  `MediumImage` once and pass it through `system_partition`, `image_extent` and `image_extents`, which each read
+  it today, and test the refusal on a small partition.
 * [Low] `tools/lib/erx/device_give.rb` and `system_domain.rb`, `ARGS_LINE`, `RESTARTS_LINE`, `CONNECTIONS_LINE`
   and `PEER_ROW`: each harness's row is `MediumBoot::DOMAIN_ROW` changed by regular expressions on its text,
   outside `Manifest::Edit`, which edits only a whole manifest (it needs the machine record). Build the rows from
