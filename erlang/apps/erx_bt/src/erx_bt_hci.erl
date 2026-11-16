@@ -33,6 +33,11 @@ ends it, and the group's restart resets the line and the controller.
 -export([start_link/0, facts/0]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
+%% For erx_bt_hci_tests: the edge's refusal of a stop that is not last.
+-ifdef(TEST).
+-export([perform_all/2]).
+-endif.
+
 %% Remote User Terminated Connection (bumble/hci.py, line 752): a link's end.
 -define(LINK_ENDED, 16#13).
 

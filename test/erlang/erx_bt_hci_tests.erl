@@ -635,6 +635,21 @@ check_completions_passed({event, {number_of_completed_packets, Pairs}}, #world{n
 check_completions_passed(_Input, _World, _Actions) ->
     ok.
 
+%% erx_bt_hci, the core's edge.
+
+%% A stop with an action after it is the core's fault: the edge refuses it before
+%% performing the action, here a write, which would raise badarg since no line process
+%% is registered, and its stack trace names perform_all/2's arity, not the bytes of the
+%% write it was passed.
+stop_not_last_refused_test() ->
+    Bytes = <<1, 3, 16#0C, 0>>,
+    try erx_bt_hci:perform_all([{stop, ended}, {write, Bytes}], no_state) of
+        Result -> error({performed, Result})
+    catch
+        error:stop_not_last:Stack ->
+            ?assertMatch([{erx_bt_hci, perform_all, 2, _} | _], Stack)
+    end.
+
 %% Helpers: a core driven by a controller that answers every command well, at time 0.
 
 step(Input, Core) -> erx_bt_hci_core:step(Input, 0, Core).
