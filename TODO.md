@@ -2667,14 +2667,6 @@ it; git history is the record of completed work.
   (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside `AppPack.describe`; and
   `tools/erx app run DIR`.
   Fix: each with its own package.
-* [High] security residual, the website image's build record (`tools/build_site.rb`, `tools/lib/erx/site.rb`,
-  `Site.inventory`; [design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)): the site takes
-  its `image.boot` from a URL and checks only the SHA-256 given beside it, so an image `tools/erx pack --app X
-  --local` made, a GPL-2.0 package inside, would be published if handed to it; the card is checked against its
-  build record, the image against none. Fix: `tools/erx boot --without-web` writes the image's build record
-  (its SHA-256, the commit with no changes, the build facts' configuration and its package count), and
-  `Site.inventory` refuses a missing record, one of another image or commit, a `-local` configuration or any
-  package, with the test that feeds such a record.
 * [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
 * [Medium] apps, the development manifests' `apps` row (`config/manifest/*-development.txt`): each board grows four
   sums by hand for the row (the display domain's outer budget by `max` pixel areas and lanes, the system

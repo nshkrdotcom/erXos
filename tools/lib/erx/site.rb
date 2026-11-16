@@ -12,6 +12,7 @@ require 'zlib'
 require_relative 'boot_partition'
 require_relative 'bounded_file'
 require_relative 'error'
+require_relative 'image_record'
 require_relative 'json_input'
 require_relative 'medium_image'
 require_relative 'site_v64'
@@ -19,9 +20,10 @@ require_relative 'site_v64'
 module Erx
   # Assembles the static website in build/site from five inputs: the page
   # sources in site/, a v64 tree SiteV64 built (the emulator the page runs
-  # erXos on, with its license notices), an erXos boot image, the Raspberry
-  # Pi 4's card with its build record (BootPartition), and the source both
-  # were built from. None of the built files is checked in.
+  # erXos on, with its license notices), an erXos boot image with its build
+  # record (ImageRecord), the Raspberry Pi 4's card with its own
+  # (BootPartition), and the source both were built from. None of the built
+  # files is checked in.
   #
   # It also makes the disk the page attaches to the machine as its virtio
   # block device, on the virtio-mmio slot where the QEMU harness attaches
@@ -156,51 +158,54 @@ module Erx
     end
 
     # The card's build record, parsed from the bytes of a BootPartition
-    # receipt, once it names sha256 as its card's, names source's commit as
-    # the one the card was built from with no changes, and holds no absolute
-    # path (BootPartition.check_record). The page links source as the card's,
-    # so a record of another card or commit, of a changed tree, of a tree
-    # that was no checkout, or one that would publish a host's paths, is
-    # refused; so is a tag as source, which the record's commit cannot be
-    # checked against here (the workflow resolves its tag to the commit).
-    def card_record(bytes, sha256:, source:)
-      unless COMMIT.match?(source.ref)
-        raise Error, "the card's source must be given as its 40-hex commit, which its build record names, not #{source.ref}"
-      end
-
+    # receipt, once it names sha256 as its card's, names commit as the one
+    # the card was built from with no changes, and holds no absolute path
+    # (BootPartition.check_record). The page links commit as the card's
+    # source, so a record of another card or commit, of a changed tree, of a
+    # tree that was no checkout, or one that would publish a host's paths, is
+    # refused.
+    def card_record(bytes, sha256:, commit:)
       record = JsonInput.parse(bytes, max_bytes: MAX_CARD_RECORD, label: "the card's build record")
       artifact = { 'path' => BootPartition::IMAGE, 'sha256' => sha256 }
       unless record.is_a?(Hash) && record['artifact'] == artifact
         raise Error, "the card's build record is not of this card, #{BootPartition::IMAGE} with SHA-256 #{sha256}"
       end
-      unless record['source'] == { 'commit' => source.ref, 'dirty' => false }
-        raise Error, "the card's build record does not name #{source.ref}, with no changes, as the source it was built from"
+      unless record['source'] == { 'commit' => commit, 'dirty' => false }
+        raise Error, "the card's build record does not name #{commit}, with no changes, as the source it was built from"
       end
 
       BootPartition.check_record(record)
     end
 
     # Reads the inputs' sizes and digests and decides which file goes where.
-    # Raises Erx::Error naming the first missing input, or for a card whose
-    # build record is not its own or not of source (card_record). card and
-    # card_record are both paths or both nil; nil is a build without the
+    # Raises Erx::Error naming the first missing input, for an image whose
+    # build record (image_record) does not let it be published
+    # (ImageRecord.check), or for a card whose build record is not its own or
+    # not of source (card_record). Both records name the commit they were
+    # built from, so source must be a commit, not a tag, which they cannot be
+    # checked against here (the workflow resolves its tag to the commit). card
+    # and card_record are both paths or both nil; nil is a build without the
     # Raspberry Pi 4's card, for a local preview (tools/build_site.rb
     # --no-card), whose page has no card section and whose boot.json has no
-    # card entry.
-    def inventory(root:, v64:, image:, card:, card_record:, source:, disk:)
+    # card entry; the image is checked the same with a card or without.
+    def inventory(root:, v64:, image:, image_record:, card:, card_record:, source:, disk:)
       raise Error, 'the card and its build record are given both or neither' unless card.nil? == card_record.nil?
+      unless COMMIT.match?(source.ref)
+        raise Error, "the image's source must be given as its 40-hex commit, which its build records name, not #{source.ref}"
+      end
 
       page = PAGE_FILES.to_h { |name| [name, File.join(root, 'site', name)] }
       emulator = SiteV64::TARGETS.transform_values { |path| File.join(v64, path) }
       notices = SiteV64::NOTICES.transform_values { |path| File.join(v64, path) }
-      missing = [*page.values, *emulator.values, *notices.values, image, card, card_record].compact.reject { |path| File.file?(path) }
+      missing = [*page.values, *emulator.values, *notices.values, image, image_record, card, card_record].compact.reject { |path| File.file?(path) }
       raise Error, "site input missing: #{missing.first}" unless missing.empty?
 
       digest = ->(path) { Digest::SHA256.file(path).hexdigest }
       image_sha256 = digest.(image)
+      ImageRecord.check(BoundedFile.read(image_record, maximum: ImageRecord::MAX_BYTES), sha256: image_sha256, commit: source.ref)
       disk_sha256 = Digest::SHA256.hexdigest(disk.content)
       card_sha256 = card && digest.(card)
-      record = card && card_record(BoundedFile.read(card_record, maximum: MAX_CARD_RECORD), sha256: card_sha256, source:)
+      record = card && card_record(BoundedFile.read(card_record, maximum: MAX_CARD_RECORD), sha256: card_sha256, commit: source.ref)
       names = { 'terminal.js' => digest_name('terminal.js', digest.(page.fetch('terminal.js'))),
                 'image' => "image-#{image_sha256[0, 16]}.boot.gz", 'disk' => "disk-#{disk_sha256[0, 16]}.bin" }
               .merge(card ? { 'card' => "sdcard-#{card_sha256[0, 16]}.img.xz",

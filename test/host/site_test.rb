@@ -14,8 +14,8 @@ require_relative '../../tools/lib/erx/runner'
 
 class SiteTest < Minitest::Test
   # The website's build has no --local switch (docs/design-packaging.md, "Adding an app to
-  # an image"), so it can never be asked for a local test image's restricted packages. The
-  # image file it is handed is not yet checked (TODO.md, the website image's build record).
+  # an image"), so it can never be asked for a local test image's restricted packages, and
+  # the image it is handed must come with its build record (ImageRecord.check).
   def test_the_site_build_refuses_local
     _, error, status = Open3.capture3(RbConfig.ruby, File.expand_path('../../tools/build_site.rb', __dir__), '--local',
                                       stdin_data: '')
@@ -31,8 +31,8 @@ class SiteTest < Minitest::Test
   # boot.json's image entry as render_index reads it.
   IMAGE = { image: 'i.boot.gz', compressed_bytes: 17_482_936, compressed_sha256: 'y' }.freeze
 
-  # A fake tree: site/ sources, a built v64 tree with its notices, an image,
-  # and a card with its build record.
+  # A fake tree: site/ sources, a built v64 tree with its notices, an image
+  # with its build record, and a card with its own.
   def with_inputs
     Dir.mktmpdir('erx-site-') do |root|
       files = Erx::Site::PAGE_FILES.to_h { |name| ["site/#{name}", name] }
@@ -45,6 +45,7 @@ class SiteTest < Minitest::Test
       end
       image = File.join(root, 'image.boot')
       File.binwrite(image, "erXos image\0" * 1000)
+      write_image_record(image)
       File.binwrite(File.join(root, 'sdcard.img'), "erXos card\0" * 1000)
       write_card_record(root)
       yield root, image
@@ -63,6 +64,17 @@ class SiteTest < Minitest::Test
     File.write(File.join(root, 'sdcard.img.receipt.json'), JSON.generate(record))
   end
 
+  # The image's build record beside image, as the image build writes one (ImageRecord.write):
+  # of COMMIT with no changes, the website's configuration unless local, and packages.
+  def write_image_record(image, local: false, packages: [])
+    revision = Erx::SourceRevision::Revision.new(count: 42, hash: COMMIT[0, 12], commit: COMMIT, dirty: false,
+                                                 committed_at: Time.at(1_794_160_931).utc)
+    configuration = Erx::BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'development', local:)
+    facts = Erx::BuildFacts::Facts.new(revision: revision.to_s, date: 1_794_160_931, configuration:,
+                                       kernel: 'fiasco-50bbe8a98119')
+    Erx::ImageRecord.write(image:, revision:, facts:, packages:)
+  end
+
   # Erx::Site.publish with a runner whose logs go to a directory of their own.
   def publish(plan, out:)
     Dir.mktmpdir('erx-site-logs-') do |logs|
@@ -70,10 +82,33 @@ class SiteTest < Minitest::Test
     end
   end
 
-  def inventory(root, image, ref: COMMIT, card: File.join(root, 'sdcard.img'),
+  def inventory(root, image, ref: COMMIT, image_record: Erx::ImageRecord.path(image), card: File.join(root, 'sdcard.img'),
                 card_record: File.join(root, 'sdcard.img.receipt.json'))
-    Erx::Site.inventory(root:, v64: File.join(root, 'v64'), image:, card:, card_record:,
+    Erx::Site.inventory(root:, v64: File.join(root, 'v64'), image:, image_record:, card:, card_record:,
                         source: Erx::Site.source(ref), disk: Erx::Site.fresh_medium(volume: VOLUME))
+  end
+
+  # The image is published only with its build record, which the image build writes
+  # beside it. Seeded faults: no record, a record of another image (the image changed
+  # after its record was written), a local test image's record, and the record of an
+  # image that carries a package are refused, with a card or without, and nothing is built.
+  def test_an_image_without_its_own_clean_record_is_refused
+    with_inputs do |root, image|
+      record = Erx::ImageRecord.path(image)
+      { 'no record' => [-> { File.delete(record) }, /site input missing: .*image\.boot\.receipt\.json/],
+        'another image' => [-> { File.binwrite(image, 'another image') }, /not of this image/],
+        'a local test image' => [-> { write_image_record(image, local: true) }, /development-local.*local test image/],
+        'a package' => [-> { write_image_record(image, packages: [{ 'path' => 'domain/pkg/doom.app', 'sha256' => 'd' * 64 }]) },
+                        /package/] }.each do |fault, (seed, message)|
+        seed.call
+        [{}, { card: nil, card_record: nil }].each do |card|
+          error = assert_raises(Erx::Error, fault) { inventory(root, image, **card) }
+          assert_match message, error.message, fault
+        end
+        write_image_record(image)
+      end
+      refute File.exist?(File.join(root, 'build/site'))
+    end
   end
 
   # The page boots the site image, which the image build packs and checks on the site
@@ -202,7 +237,8 @@ class SiteTest < Minitest::Test
     refute_match(/no-card|no_card/, workflow)
     commands = workflow.lines.grep(/^\s*run: ruby tools\/build_site\.rb/)
     assert_equal 1, commands.size
-    assert_match(/--card sdcard\.img --card-record sdcard\.img\.receipt\.json/, commands.first)
+    assert_match(/--image image\.boot --image-record image\.boot\.receipt\.json --card sdcard\.img --card-record sdcard\.img\.receipt\.json/,
+                 commands.first)
   end
 
   # Seeded faults: a record of another card (one digit of its SHA-256 off), one that
@@ -331,6 +367,7 @@ class SiteTest < Minitest::Test
       out = File.join(root, 'build/site')
       first = publish(inventory(root, image), out:)
       File.binwrite(image, 'another image')
+      write_image_record(image)
       second = publish(inventory(root, image), out:)
 
       refute_equal first.fetch(:image), second.fetch(:image)
@@ -486,16 +523,17 @@ class SiteTest < Minitest::Test
     steps = workflow.dig('jobs', 'build', 'steps')
     check = steps.find { |step| step['name'] == 'Check the inputs' }.fetch('run')
     good = { 'IMAGE_SHA256' => 'a' * 64, 'IMAGE_SOURCE' => COMMIT, 'CARD_XZ_SHA256' => 'b' * 64,
-             'CARD_RECORD_SHA256' => 'c' * 64 }
+             'CARD_RECORD_SHA256' => 'c' * 64, 'IMAGE_RECORD_SHA256' => 'e' * 64 }
     assert system(good, 'bash', '-e', '-c', check, out: File::NULL, err: File::NULL)
     [{ 'IMAGE_SHA256' => 'A' * 64 }, { 'IMAGE_SHA256' => "#{'a' * 64}\nb" }, { 'IMAGE_SHA256' => 'a' * 63 },
      { 'CARD_XZ_SHA256' => 'b' * 63 }, { 'CARD_XZ_SHA256' => '' }, { 'CARD_RECORD_SHA256' => 'C' * 64 },
-     { 'CARD_RECORD_SHA256' => '' }, { 'IMAGE_SOURCE' => '../x' }, { 'IMAGE_SOURCE' => 'v1 x' }, { 'IMAGE_SOURCE' => '' }].each do |bad|
+     { 'CARD_RECORD_SHA256' => '' }, { 'IMAGE_RECORD_SHA256' => 'E' * 64 }, { 'IMAGE_RECORD_SHA256' => '' },
+     { 'IMAGE_SOURCE' => '../x' }, { 'IMAGE_SOURCE' => 'v1 x' }, { 'IMAGE_SOURCE' => '' }].each do |bad|
       refute system(good.merge(bad), 'bash', '-e', '-c', check, out: File::NULL, err: File::NULL), bad.inspect
     end
-    # Each download is checked against its digest, the card's record as well as the compressed
-    # card, and capped in size.
-    { 'Download the erXos image' => 1, "Download the Raspberry Pi 4's card" => 2 }.each do |name, checked|
+    # Each download is checked against its digest, each build record as well as the image and
+    # the compressed card, and capped in size.
+    { 'Download the erXos image' => 2, "Download the Raspberry Pi 4's card" => 2 }.each do |name, checked|
       run = steps.find { |step| step['name'] == name }.fetch('run')
       assert_equal checked, run.scan('sha256sum --check --strict').size, name
       assert_equal run.scan('curl ').size, run.scan('--max-filesize').size, name
