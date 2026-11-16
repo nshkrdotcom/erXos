@@ -546,7 +546,7 @@ A new checkout or git worktree needs its sources, the stock OTP oracle and
 the native runtime built before `make check` can run. One command does it:
 
 ```sh
-ERX_SOURCE_CACHE=/path/to/other/checkout/build/third_party make setup
+ERX_SOURCE_CACHE=/path/to/other/checkout/build/downloads make setup
 ```
 
 `make setup` (`tools/erx setup --jobs N`) runs, in order: every source
@@ -561,9 +561,12 @@ skipped, so a second run does nothing. Each build runs under a deadline
 with its own log in `build/logs/`.
 
 It never downloads. `ERX_SOURCE_CACHE` names another checkout's
-`build/third_party`; the archives in the `downloads` directory beside it
-are copied only after their SHA-256 matches `deps.lock`. Without it, the
-sources must already be there from `make fetch`. It does not fetch
+`build/downloads`; its archives are copied only after their SHA-256 matches
+`deps.lock`. Without it, the sources must already be there from `make fetch`.
+`tools/erx fetch --cache DIR` does the same for every source at once, with DIR the other checkout's
+`build/downloads`: it fills each source the cache holds, names each it does
+not, and leaves an OCI image (the Docker cache holds those) to
+`tools/erx fetch --source ID`. Setup does not fetch
 `arm-registers`, `tla-tools`, `herdtools7` or the oracle image
 (`Erx::Setup::SKIPPED_SOURCES`): only `tools/erx sysreg refresh` reads
 the first, only `make check-tla` uses the second, only
