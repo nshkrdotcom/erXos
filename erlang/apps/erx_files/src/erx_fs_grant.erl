@@ -75,7 +75,7 @@ check rejected, a clunk, `..`, an owner's end.
 %% The most entries one readdir callback is asked for.
 -define(DIRENTS_PER_CALL, 256).
 
--type rights() :: ro | rw | rx.
+-type rights() :: erx_abi_enums:files_rights().
 %% The domain a grant serves: the server's own, or another by its domain id.
 -type client() :: own | pos_integer().
 -type fid() :: 0..16#fffffffe.
@@ -185,7 +185,7 @@ the default).
             client := client(), pool => pos_integer(),
             in_flight => 1..?IN_FLIGHT_MAX, msize => ?MSIZE_MIN..?MSIZE_MAX}) -> grant().
 new(#{module := Module, fs := Fs, rights := Rights, client := Client} = Options)
-  when (Rights =:= ro orelse Rights =:= rw orelse Rights =:= rx),
+  when ?ERX_IS_FILES_RIGHTS(Rights),
        Client =:= own orelse is_integer(Client) andalso Client > 0 ->
     Pool = maps:get(pool, Options, ?DEFAULT_POOL),
     true = is_integer(Pool) andalso Pool > 0,

@@ -158,7 +158,7 @@ session code and the program's own driver.
 %% absolute path the program reaches with its rights there, the program's
 %% working directory, its data area's slots, and, for a program with a window,
 %% the display it is opened on, the name of the session's grant of it.
--type files() :: #{table := erx_path:table(), within := all | [{binary(), ro | rw | rx}],
+-type files() :: #{table := erx_path:table(), within := all | [{binary(), erx_abi_enums:files_rights()}],
                    cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX, window => atom()}.
 -type slot() :: non_neg_integer().
 %% An open-file description, a session process the effect side made.
@@ -412,7 +412,7 @@ narrowed(Table, Within) when is_list(Within) ->
 narrowed(_Table, _Within) ->
     {error, einval}.
 
-narrowed_entries(Table, {Path, Rights}) when Rights =:= ro; Rights =:= rw; Rights =:= rx ->
+narrowed_entries(Table, {Path, Rights}) when ?ERX_IS_FILES_RIGHTS(Rights) ->
     case erx_path:cwd(Path) of
         {ok, Place} -> narrowed_at(deepest_entry(Table, Place), Place, Rights, Table);
         error -> {error, einval}
