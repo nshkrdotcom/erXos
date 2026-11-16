@@ -48,8 +48,7 @@
 #include <stdlib.h>
 #include <string.h>
 
-#include <ft2build.h>
-#include FT_FREETYPE_H
+#include <freetype/freetype.h>
 
 /* The largest SIZE, in pixels per em. */
 #define MAX_SIZE	256
