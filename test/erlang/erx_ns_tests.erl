@@ -382,22 +382,26 @@ a_facet_grant_that_ends_leaves_the_table_and_survives_a_restart() ->
 %% system domain's service and a session's application pass it): with no data facet
 %% granted there is no mount, so /data is the root's own entry, which a FreeBSD mount
 %% point with nothing mounted on it also shows; a name with no mount point mounts
-%% nothing. With data granted and its grant not yet installed, /data is the facet's
-%% mount, which answers eio, and never falls through to the root beneath it.
+%% nothing: so an app's session, which holds packages and system for its own package,
+%% mounts neither (docs/design-packaging.md, "An app's session"). With data granted
+%% and its grant not yet installed, /data is the facet's mount, which answers eio, and
+%% never falls through to the root beneath it.
 facets_mount_only_where_granted() ->
     ?assertEqual(ok, erx_ns:mount_facets([])),
-    ?assertEqual(ok, erx_ns:mount_facets([echo])),
+    ?assertEqual(ok, erx_ns:mount_facets([echo, packages, system])),
     ?assertEqual([?RELEASE], at_use()),
     ?assertEqual(ok, erx_ns:mount_facets([echo, data])),
     ?assertEqual([?RELEASE, #{point => [<<"data">>], provider => ended, root => [], rights => rw}], at_use()).
 
-%% The system domain's files services, start and machine, have their places too: a
-%% session that holds their facets mounts each where the system domain mounts its own
-%% grant of it (docs/design-shell.md, "Interfaces"). The start service's tree mounts at
-%% /etc/start, so that /apps holds apps alone: a name apps has no place.
+%% The system domain's files services, apps, start and machine, have their places too:
+%% a session that holds their facets mounts each where the system domain mounts its own
+%% grant of it (docs/design-shell.md, "Interfaces"). The apps tree mounts at /apps, read
+%% and written as /data is (docs/design-packaging.md, "/apps"), and the start service's
+%% tree at /etc/start, so that /apps holds apps alone.
 the_system_domain_trees_mount_at_their_places() ->
     ?assertEqual(ok, erx_ns:mount_facets([apps, inspect, machine, start])),
-    ?assertEqual([?RELEASE, #{point => [<<"machine">>], provider => ended, root => [], rights => rw},
+    ?assertEqual([?RELEASE, #{point => [<<"apps">>], provider => ended, root => [], rights => rw},
+                  #{point => [<<"machine">>], provider => ended, root => [], rights => rw},
                   #{point => [<<"etc">>, <<"start">>], provider => ended, root => [], rights => rw}],
                  at_use()).
 

@@ -162,18 +162,23 @@ mount_own(Name, Grant) ->
 %% Where the tree of each service Name mounts, on the tree of its own name, with rw as
 %% the entry's own rights, which a resolution lowers to the rights the facet's grant
 %% carries (erx_path:with_facets/2), so a domain writes there only through an rw grant:
-%% data, the storage domain's tree, at /data, and its packages, the installed app
-%% packages, at /packages (docs/design-packaging.md, "Where a package lies";
-%% erx_pkg_medium); the system domain's files services: the start service's tree,
-%% start, at /etc/start, and the domain service's machine at /machine
-%% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request").
-%% /data is also an empty directory of every release, so a domain not granted data
-%% lists it as empty (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a
-%% domain that holds no packages, start or machine facet has no such path, enoent, nor
-%% has a session, which never mounts packages (erx_session_app:mounts/2).
+%% data, the storage domain's tree, at /data; the system domain's files services: the
+%% package application's apps tree at /apps (docs/design-packaging.md, "/apps"), the
+%% start service's tree, start, at /etc/start, and the domain service's machine at
+%% /machine (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's
+%% request"). /data is also an empty directory of every release, so a domain not
+%% granted data lists it as empty (ReleaseFiles::MOUNT_POINTS,
+%% tools/lib/erx/release_files.rb); a domain that holds no apps, start or machine facet
+%% has no such path, enoent.
+%%
+%% The packages and system facets have no place, so no domain's mount_facets/1, a
+%% session's included, mounts either: an app's session reaches them by erx:cap/1, its
+%% {erofs, app} mount or an entry its own code puts in its table
+%% (docs/design-packaging.md, "An app's session"), and the
+%% system domain mounts its packages grant itself (erx_domain_srv).
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
-place(packages) -> {<<"/packages">>, [{tree, <<"packages">>}, rw]};
+place(apps) -> {<<"/apps">>, [{tree, <<"apps">>}, rw]};
 place(start) -> {<<"/etc/start">>, [{tree, <<"start">>}, rw]};
 place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
 place(_Name) -> none.

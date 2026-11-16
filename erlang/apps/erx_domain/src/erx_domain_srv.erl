@@ -298,8 +298,10 @@ booted(#{lib := Lib} = State) ->
                                            [Grant || {Row, _, _, _} = Grant <- System, is_integer(Row)]),
             %% The system domain's own facets of configured domains: /data only where the
             %% manifest grants the system domain data (docs/design-files.md, "A facet's
-            %% mount").
-            ok = erx_ns:mount_facets(erx_domain_mints:granted_names(system, Mints)),
+            %% mount"), and the installed packages, which have no place, at /packages.
+            Granted = erx_domain_mints:granted_names(system, Mints),
+            ok = erx_ns:mount_facets(Granted),
+            ok = mount_packages(Granted),
             State#{core := erx_domain_core:new(Host), configured := Configured, mints := Mints, served := Served,
                    facet_rows := lists:enumerate(0, maps:get(grants, Boot, [])), files := Files,
                    templates := maps:from_list([{P, T} || #{principal := P} = T <- Templates])};
@@ -1627,3 +1629,13 @@ throttle(_Now, {Start, Lines, Held}) when Lines < ?MINT_LOG_BURST ->
     {log, {Start, Lines + 1, Held}};
 throttle(_Now, {Start, Lines, Held}) ->
     {quiet, {Start, Lines, Held + 1}}.
+
+%% The system domain's packages grant at /packages, where erx_pkg_medium reads and writes
+%% the installed packages (docs/design-packaging.md, "Where a package lies"), when the
+%% manifest grants it, as a board with an apps row does. erx_ns:place/1 gives packages no
+%% place, so no session's mount_facets/1 mounts it; this is its one mount.
+mount_packages(Granted) ->
+    case lists:member(packages, Granted) of
+        true -> erx_ns:mount({facet, packages}, <<"/packages">>, [{tree, <<"packages">>}, rw]);
+        false -> ok
+    end.
