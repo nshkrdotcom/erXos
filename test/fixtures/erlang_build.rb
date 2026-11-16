@@ -114,5 +114,5 @@ module ErlangBuild
     output, status = Open3.capture2e(Erx::Oracle::CLEAN_ERLANG_ENV, *command, chdir: ROOT, stdin_data: '')
     raise Error, "erlc failed (#{status}):\n#{output}" unless status.success?
   end
-  private_class_method :modules, :with_dependencies, :dependencies, :applications_beams, :compile_applications, :written, :erlc
+  private_class_method :modules, :dependencies, :applications_beams, :compile_applications, :written, :erlc
 end
