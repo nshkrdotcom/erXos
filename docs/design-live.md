@@ -328,7 +328,7 @@ place, so the root's budget's `used` is `{{stopgap, liberx_pool},
 {partial, Pages}}`, which a renderer prints as the value `[partial]`
 with the reporter `root pool`, and a budget carved from it reports
 `used` as `unsupported`
-([design-stopgap.md](design-stopgap.md#reporting-a-budget)). The schema
+([design-fiasco.md](design-fiasco.md#reporting-a-budget)). The schema
 declares each stopgap reporter with the category it stands in for, its
 label, the scope of what it sees and the attributes it may report; a
 record carries only its name, an atom of `erx_schema`. A value the
@@ -1359,7 +1359,7 @@ figure prints its number with its reporter named by the inspection
 schema's label, through the line escape: when every number of a line
 is partial under one reporter, the line's label names it once, and
 otherwise each partial figure names its own after it, so an `ok`
-number beside it never reads as partial. On the stopgap kernel the
+number beside it never reads as partial. On the Fiasco kernel the
 memory figures and `used` are the `liberx` pool's partial counts, so
 the header reads `Mem (root pool): 118M Total, 74M Free` and `Domain
 4 budget (root pool): 44M Used, - Guarantee [unsupported], - Cap
@@ -2023,7 +2023,7 @@ a runtime report trusted or let a decoder bypass the output escaper
   ([design-kernel.md](design-kernel.md#trace-ring)); `erx_tracer` drains
   it with `erx_trace_read`. A park or a wake has one source, the layer
   that carries it out: the kernel's ring, or on the stopgap the backend's
-  ([design-stopgap.md](design-stopgap.md#the-trace-ring)). The runtime
+  ([design-fiasco.md](design-fiasco.md#the-trace-ring)). The runtime
   adapter adds to ERTS's trace only what it alone sees: capacity changes,
   yield requests honoured, refusals, connection closes and unheld frames
   ([design-runtime.md](design-runtime.md#failure-handling-diagnostics-and-debuggability)).
@@ -2080,7 +2080,7 @@ records](#inspection-records)):
 | Row | Reporter | On erXos's kernel | On the stopgap |
 | --- | --- | --- | --- |
 | `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since the stopgap offers no lanes |
-| `backend` | `{stopgap, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-stopgap.md](design-stopgap.md#the-trace-ring)) |
+| `backend` | `{stopgap, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-fiasco.md](design-fiasco.md#the-trace-ring)) |
 | `kernel` | `kernel` | each CPU's ring, read with `erx_trace_read` | one `unsupported` line, from `erx_trace_read`'s `ERX_ENOTSUP` |
 
 A row whose call answers `ERX_ENOTSUP` is shown as `unsupported` when
@@ -2351,7 +2351,7 @@ socket
 (`-serial unix:build/qemu/RUN/hostlink.sock,server=on,wait=off` after the
 console's `-serial`, in the run's owner-only directory). On the stopgap the
 root hands the host link's device record only under `erx.hostlink=1`
-([design-stopgap.md](design-stopgap.md#the-command-line)), which the harness
+([design-fiasco.md](design-fiasco.md#the-command-line)), which the harness
 adds with the second `-serial`.
 
 The transport has one trusted physical or local peer. The harness creates
@@ -3087,7 +3087,7 @@ determinism test of the generated tree.
   without it is, and its mailbox still shows in `process_info`, on the
   hosted runtime. The stopgap's
   ring and its four-CPU case are in
-  [design-stopgap.md](design-stopgap.md#verification).
+  [design-fiasco.md](design-fiasco.md#verification).
 * **Host link:** session replacement; a recorded hello and its calls
   replayed after a machine reset with entropy `good`, which match no
   session; a retried call executed once; 64 calls executing when a 65th

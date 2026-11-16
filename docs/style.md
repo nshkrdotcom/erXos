@@ -5,7 +5,7 @@ express an operation. C follows FreeBSD `style(9)` (Kernel Normal
 Form), Erlang follows the conventions of the Erlang/OTP sources, and Ruby
 follows the community Ruby style; the project conventions below take
 precedence over all three. These rules apply to code erXos writes. Imported
-code (OTP, musl and the stopgap Fiasco fork) keeps its own style and license
+code (OTP, musl and the Fiasco fork) keeps its own style and license
 notices, and an edit to an imported file follows that file's style. This
 guide is engineering practice: it binds how the code is written, not what it
 computes.

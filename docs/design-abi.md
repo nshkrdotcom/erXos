@@ -715,7 +715,7 @@ MAX is at most 65,536, a record's bound, and an `entries` MAX at most
 for a stopgap component that does the kernel's, a service's or a
 runtime's work in its place, such as the Phase 1 backend of `liberx`
 counting a budget's pages in the kernel's place
-([design-stopgap.md](design-stopgap.md#reporting-a-budget)); replacing
+([design-fiasco.md](design-fiasco.md#reporting-a-budget)); replacing
 the component removes its declaration, and the attributes it reported
 come from the category it stood in for. An attribute lists at most one
 stopgap reporter for each category.

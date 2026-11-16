@@ -725,7 +725,7 @@ cross-CPU requests and stores to the status area. The core lives in
 `kernel/sched/` and builds for the host and for erXos's kernel. The
 stopgap does not run it: Fiasco schedules itself, and a group on the
 stopgap is a backend record that gives readiness only
-([design-stopgap.md](design-stopgap.md#the-call-table)).
+([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 **What each section binds.** A configuration names the rung of the ladder
 that needs the mechanism. A frozen section's shape is decided and it is
@@ -938,7 +938,7 @@ the period ends; the dispatch arms that instant as one deadline of the
 CPU's one-shot timer, and the deadline's handler feeds `DEADLINE` and
 picks when the answer has changed. On the stopgap the share and the step
 are unsupported, per the backend's table
-([design-stopgap.md](design-stopgap.md#the-call-table)).
+([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 *A kill is a decision.* The kill of the thread running on the CPU, its
 own exit, a stop of its own space, or a kill that a cross-CPU request
@@ -1106,7 +1106,7 @@ own context are charged the same way. A stopped thread's remaining kernel work
 cannot start another user request, since it never returns to user mode
 ([design-kernel.md](design-kernel.md#threads-and-faults)). On the
 stopgap the finishing share is unsupported, per the backend's table
-([design-stopgap.md](design-stopgap.md#deletion)).
+([design-fiasco.md](design-fiasco.md#deletion)).
 
 **Reclamation.** Emptying and destroying a stopped space run in the
 calls that ask for them, charged to their callers as any call is
@@ -1567,7 +1567,7 @@ execution context alone; `Context::schedule_switch_to_locked` switches
 both). erXos's own kernel charges every interval to the running thread's
 group, so a server never runs on its caller's time at all. On the
 stopgap IPC calls are refused, per the backend's table
-([design-stopgap.md](design-stopgap.md#ipc-gates-and-where-transfer-fits)),
+([design-fiasco.md](design-fiasco.md#ipc-gates-and-where-transfer-fits)),
 and there is no direct switch to take. Neither kernel carries a
 donation across a preemption or down a chain of calls, and neither
 resolves anything at a decision but the running thread's own group
@@ -1905,7 +1905,7 @@ stalling it.
 On the stopgap a group is a record in `liberx`'s Fiasco backend and gives
 readiness only; quotas, urgency resolution, charging, shared areas and the
 finishing share are unsupported, per the backend's table
-([design-stopgap.md](design-stopgap.md#the-call-table)), and threads run on
+([design-fiasco.md](design-fiasco.md#the-call-table)), and threads run on
 Fiasco's fixed priorities, each at its domain's band
 ([design-fiasco.md](design-fiasco.md#the-scheduler-on-fiasco)). The
 features of configurations C0 to C2 are erXos's kernel's alone
@@ -2202,7 +2202,7 @@ client's.**
   reservation and the arithmetic at once, and leaves a scheduler whose
   only path is the running thread's own group. The stopgap builds no
   direct switch: it refuses IPC calls, per the backend's table
-  ([design-stopgap.md](design-stopgap.md#ipc-gates-and-where-transfer-fits)).
+  ([design-fiasco.md](design-fiasco.md#ipc-gates-and-where-transfer-fits)).
 
 **Scheduler activations and other upcall interfaces.**
 
@@ -2255,7 +2255,7 @@ client's.**
 * *Why it lost.* erXos chose Fiasco's process model, and the scheduler
   is simpler for it: a wait sleeps on the thread's own stack and continues
   where it stopped, so no call needs a restart protocol and no decision
-  unwinds one, and erXos's kernel keeps the model the stopgap Fiasco runs. Latency favours the process
+  unwinds one, and erXos's kernel keeps the model Fiasco runs. Latency favours the process
   model too: Fluke's fully preemptible process model kept a periodic
   thread's worst latency at 19.6 microseconds, against 7.4 ms in either
   model without preemption points, at 5 to 20% of throughput (cited, on a
@@ -2397,7 +2397,7 @@ client's.**
 | cross-CPU wakes under HVF are slow | unknown | wake latency above budget, felt as messaging latency | E-S4; executors stay pinned and a busy runtime finds work without wakes |
 | quotas at 10 ms periods make a throttled domain's latency jumpy | medium | p99 latency for capped domains | E-S7 tunes periods and draw quanta; policy prefers capacity over tight caps |
 | refill once per period lets a burst that straddles a boundary use up to twice the quota in one period's span, and local slices strand quota on CPUs a group left | medium | short-term isolation between groups | E-S7 measures both and decides whether a CPU that goes idle returns its local quota to the pool; sporadic replenishment, as in seL4's scheduling contexts, is the fallback |
-| slices and quota enforcement exist only on erXos's kernel | high on the stopgap | the stopgap enforces no quotas and has no slices; on erXos's kernel charges are exact to the clock | the backend's table says what the stopgap carries ([design-stopgap.md](design-stopgap.md#the-call-table)); erXos's kernel uses one-shot timers |
+| slices and quota enforcement exist only on erXos's kernel | high on the stopgap | the stopgap enforces no quotas and has no slices; on erXos's kernel charges are exact to the clock | the backend's table says what the stopgap carries ([design-fiasco.md](design-fiasco.md#the-call-table)); erXos's kernel uses one-shot timers |
 | two runtimes in one space share a group | low | contention and taken wake-ups inside one space | the kernel keeps a group's executors in one space and its ready list to executors; a space that runs two runtimes gives each a group of its own |
 
 Open questions:

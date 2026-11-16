@@ -495,7 +495,7 @@ development build takes packages with no edit. The website's image
 carries none: `Platform#site_manifest_source` leaves the row out of the
 site manifest it makes from the development one, with the room it took,
 as it leaves out the domains `site_leaves_out` names
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)), since the site manifest has
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)), since the site manifest has
 no display domain for `services` to name and the site machine's 256 MiB
 no room for the row's memory. The Raspberry Pi 4's card, the medium of a
 board the firmware boots from a boot partition, is the other image the

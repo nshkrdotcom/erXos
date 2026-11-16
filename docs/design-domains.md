@@ -330,34 +330,34 @@ call ([design-runtime.md](design-runtime.md#liberx)).
 ## On the stopgap
 
 Until erXos's kernel is written, domains and their connections run on the
-stopgap Fiasco behind the same kernel interface
-([design-stopgap.md](design-stopgap.md)). Everything this document
+Fiasco behind the same kernel interface
+([design-fiasco.md](design-fiasco.md)). Everything this document
 specifies above `liberx` is the same code on both: the domain service, the
 funnel, the peer, exports, introductions, the wake handshake and the
 domain library's creation plan. What stands behind the kernel calls is a
-row of [the stopgap's call table](design-stopgap.md#the-call-table) each:
+row of [the stopgap's call table](design-fiasco.md#the-call-table) each:
 
 * a connection's sides are memory objects of the root task's pool, which
   the domain library creates and passes; each party's `liberx` maps its
   own side writable and the peer's read-only, a request the root service
   performs at the rights asked for, and destroying a side revokes it in
   every task that maps it
-  ([Sharing memory between tasks](design-stopgap.md#sharing-memory-between-tasks));
+  ([Sharing memory between tasks](design-fiasco.md#sharing-memory-between-tasks));
 * a bell is an IRQ object that the domain library creates and binds to
   the consumer's group, whose deliveries reach the consumer task's
   readiness dispatcher, and any holder triggers it
-  ([Interrupts and readiness](design-stopgap.md#interrupts-and-readiness));
+  ([Interrupts and readiness](design-fiasco.md#interrupts-and-readiness));
 * the domain library installs a connection's objects into both parties
   with `erx_cap_pass` from its own table into a space it created
-  ([Passing a handle](design-stopgap.md#passing-a-handle)); passing at an
+  ([Passing a handle](design-fiasco.md#passing-a-handle)); passing at an
   IPC rendezvous stays refused, and no connection needs it;
 * a domain's space is a Fiasco task that the root service creates with its
   parent recorded and ends with its sub-spaces, children first; its exit
   record carries the exit status, or `crash`
-  ([Spaces, parents and exit records](design-stopgap.md#spaces-parents-and-exit-records));
+  ([Spaces, parents and exit records](design-fiasco.md#spaces-parents-and-exit-records));
 * budgets and groups are records with nothing charged or enforced, and
   every field of a domain's budgets, `used` included, reports `unsupported`
-  ([Budgets and groups as records](design-stopgap.md#budgets-and-groups-as-records)).
+  ([Budgets and groups as records](design-fiasco.md#budgets-and-groups-as-records)).
 
 D1 to D7, D9, D13 and D17 hold on the stopgap for every domain whose
 runtime goes through `liberx`. D1 to D6, D9 and D13 rest on user-mode code.
@@ -368,7 +368,7 @@ so a dead domain's write position is final when its end is reported. What
 the stopgap lacks there is a bound on how long a stop takes, since the one
 service thread carries it out among every other request (K18); that bound
 and the tests under hostile load are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)). D12's
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). D12's
 limits are the runtime's own and hold, but the memory they bound is
 charged to budgets that are records, so D12's assertions about budgets
 report `unsupported`. D16 holds in part: each side has one writer because
@@ -3109,7 +3109,7 @@ from a control slot, and the agent acts only on the system domain's.
   Reason}}` when the runtime fails to boot, and `{error, timeout}` when
   `boot_timeout` passes first.
 * `release` names a boot script of the boot image's one domain release,
-  `bin/<release>.boot` ([design-stopgap.md](design-stopgap.md#the-production-image)),
+  `bin/<release>.boot` ([design-fiasco.md](design-fiasco.md#the-production-image)),
   whose release file lists the applications the domain boots; the release
   stores each application's files once for every script. The domain
   service binds it: the runtime's init arguments begin with `-boot

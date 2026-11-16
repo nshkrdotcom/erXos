@@ -54,7 +54,7 @@ the system-register accessors of `hw/sysreg/aarch64.json` complete it.
 Outside the kernel, ERTS's own AArch64 code, BeamAsm's back end and
 musl's architecture layer are AArch64 code behind their own seams
 ([design.md](design.md#portability)). The
-stopgap Fiasco runs on the same architecture, built for EL1 with
+Fiasco runs on the same architecture, built for EL1 with
 `CONFIG_CPU_VIRT` off, since its EL2 build does not boot under HVF
 ([research](research-hierarchical-scheduling.md#fiasco-under-hvf)).
 

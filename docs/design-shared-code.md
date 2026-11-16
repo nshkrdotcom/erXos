@@ -388,7 +388,7 @@ of what is shared.
 build host, with TCG in deterministic mode (`erx.det=1`) and QEMU's
 semihosting enabled for user mode
 (`-semihosting-config enable=on,target=native,userspace=on`). The image
-holds the stopgap kernel; a small native **build root** that links
+holds the Fiasco kernel; a small native **build root** that links
 `liberx`'s domain library, as the `native_domain` suite's root does
 (`tools/lib/erx/native_domain.rb`, `test/guest/native_domain/guest.c`);
 the `runtimes/emu` file the boot image will carry; and a release of
@@ -1004,11 +1004,11 @@ runs.
 
 The stopgap backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root
-(`docs/design-stopgap.md:519`), so every domain that maps the image shares
+(`docs/design-fiasco.md:519`), so every domain that maps the image shares
 its frames, and the physical saving is real on the stopgap.
 
 **One mapping per module is the stopgap's shape.** The stopgap cannot map
-over a mapping or cut one (`docs/design-stopgap.md:517`), so the domain
+over a mapping or cut one (`docs/design-fiasco.md:517`), so the domain
 library maps the header and lists with one mapping, each module's code
 chunk with one mapping of its own, and the literal part with one: about
 250 mapping records for the image, well under the 65,536 a space allows
@@ -1049,7 +1049,7 @@ maps the read-only and read-execute segments from the boot archive's own
 pages, through one slice per entry that the root keeps, charged to the
 root, and copies only the writable segments into each space, as the
 `erx_image_slice` and `erx_image_map` row of
-[design-stopgap.md](design-stopgap.md) says. Every domain that runs
+[design-fiasco.md](design-fiasco.md) says. Every domain that runs
 `runtimes/emu` holds one physical copy of its text and read-only data.
 
 The two fit together without touching:
@@ -1188,7 +1188,7 @@ its seeds stay local.
   with read and execute; the inspector then shows execute and the test
   fails. That a slice is never writable is the slice calls' own property
   on both kernels (on the stopgap, a write right on a slice is
-  `ERX_ERIGHTS`, `docs/design-stopgap.md:519`), tested with them, not
+  `ERX_ERIGHTS`, `docs/design-fiasco.md:519`), tested with them, not
   here.
 * **Tracing is private and stock.** Domain A sets a local trace pattern on
   a function of an imaged module that a looping process in A calls
@@ -1400,7 +1400,7 @@ collector.
   of its runtime limits.
 * [design-kernel.md](design-kernel.md): the boot image and its slices,
   virtual memory and placement, copy-on-write children, K4 and K8.
-* [design-stopgap.md](design-stopgap.md): the call table of Phase 1, and
+* [design-fiasco.md](design-fiasco.md): the call table of Phase 1, and
   `erx_image_map`, which shares the executable's read-only segments.
 * [design-live.md](design-live.md): the host link, its transports and
   their estimated throughput.

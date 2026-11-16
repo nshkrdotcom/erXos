@@ -467,7 +467,7 @@ does not bound the archive: when the root lands on the archive where the
 loader left it, bootstrap moves the archive, whole, behind the root and
 clear of the device tree, as stock Fiasco's bootstrap moves its modules
 behind the ELF images it loads
-([design-stopgap.md](design-stopgap.md#boot-handoff)). On QEMU `virt`,
+([design-fiasco.md](design-fiasco.md#boot-handoff)). On QEMU `virt`,
 whose tree lies right behind the file, the moved archive goes behind the
 tree too, so a file that passes the root's place needs RAM for its archive
 twice, and is bounded by about half of RAM above the root's place; on a
@@ -984,7 +984,7 @@ generator at boot
 [research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
 On the Raspberry Pi 4 under the stopgap, the root reads it on the same
 condition and seeds its generator from it
-([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)). The
+([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)). The
 generator's registers and its read sequence are not stated here: they
 come from a clean-room facts record of the RNG200, written before the
 driver.
@@ -1267,7 +1267,7 @@ in one cluster, so the firmware reads the record through the FAT and
 every other reader, the slot writer and the QEMU harness, reads the
 sector; it then writes the reset count's first value into its sector of
 the reserved area, which fsimg leaves zero, and checks the placement as
-[design-stopgap.md](design-stopgap.md#the-raspberry-pi-4) describes; and
+[design-fiasco.md](design-fiasco.md#the-raspberry-pi-4) describes; and
 it writes `normal(A)`, `medium_record_a`, to a new medium.
 
 **On the Raspberry Pi** the record is the firmware's `autoboot.txt` and the
@@ -1563,7 +1563,7 @@ board alone.
 
 ### The Raspberry Pi 4 on the stopgap
 
-Before erXos's kernel exists, the Raspberry Pi 4 runs the stopgap Fiasco
+Before erXos's kernel exists, the Raspberry Pi 4 runs Fiasco
 behind the same interface, booted by the same firmware and the same BL31,
 with the console, the host link, the manifest and the Erlang drivers this
 document gives it. Fiasco's generic platform takes PSCI from BL31 and its
@@ -1574,7 +1574,7 @@ a reset, no trial is requested and no device secret is read. The root
 reads the random generator when `/chosen` holds no seed ([Entropy
 sources](#entropy-sources)). The early console's role passes to Fiasco's own
 console on the same UART, and a board's end goes through BL31's PSCI as
-it does on erXos's kernel. [design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)
+it does on erXos's kernel. [design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)
 describes that shape, and M12 of [plan.md](plan.md#m12-storage-networking-boards)
 adds the kernel's items on erXos's kernel.
 

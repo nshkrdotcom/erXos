@@ -1474,8 +1474,8 @@ which nothing else can write, and drops and counts any frame outside the
 grammar of the protocol.
 
 **On the stopgap.** The nine steps are the same code. Behind step 6, the
-stopgap Fiasco's backend carries the port driver's plan as rows of its call
-table ([design-stopgap.md](design-stopgap.md#the-call-table)): the anchor
+Fiasco's backend carries the port driver's plan as rows of its call
+table ([design-fiasco.md](design-fiasco.md#the-call-table)): the anchor
 and each image are Fiasco tasks that the root service creates at the
 session's request, recording the parent and ending a space's sub-spaces,
 children first, when it ends; the program's budget and group are records,
@@ -1496,7 +1496,7 @@ user-mode code, so P1 and the narrowed-program tests hold on the stopgap
 for a program that goes through `liberx`; the parts of P2, P9, P10 and
 P11 that rest on the kernel, and any hold on a program that bypasses
 `liberx`, are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)). Pauses and
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). Pauses and
 signals have stopgap forms of their own ([Job control](#job-control),
 [Signals in liberx](#signals-in-liberx)).
 
@@ -2125,10 +2125,10 @@ The executors of runtimes never take this path: the kernel refuses to arm an
 executor for vCPU upcalls, so preemption still never runs runtime code
 ([design-scheduler.md](design-scheduler.md#the-runtime-contract)).
 
-**On the stopgap.** Upcalls on the stopgap Fiasco are the backend's
+**On the stopgap.** Upcalls on Fiasco are the backend's
 `erx_vcpu_control` and `erx_vcpu_resume` over Fiasco's own vCPU
 interface, which carries them with no change to Fiasco's kernel
-([vCPU upcalls on Fiasco](design-stopgap.md#vcpu-upcalls-on-fiasco)),
+([vCPU upcalls on Fiasco](design-fiasco.md#vcpu-upcalls-on-fiasco)),
 so handlers run on the stopgap and signals behave as this section
 describes. Fiasco takes a queued event at fewer places than erXos's
 kernel, and one rule of `liberx` makes up the difference: **a program's
@@ -3292,7 +3292,7 @@ define it.
   hold is `EBADF`, never the console, so a program writes only where its
   session gave it descriptors. ERTS, the root and the test tasks link an
   empty seam, which takes no call
-  ([design-stopgap.md](design-stopgap.md#musl-over-the-backend)).
+  ([design-fiasco.md](design-fiasco.md#musl-over-the-backend)).
 * **Processes.** `posix_spawn` and `posix_spawnp` are the spawn request.
   The child inherits every descriptor without `FD_CLOEXEC`, each pipe end
   as an end the session's pipe server makes for it, and each file as an
@@ -3441,7 +3441,7 @@ define it.
   objects](#file-objects)), so later
   writes to the file do not show through the mapping, which POSIX leaves
   unspecified, and the part of the range past the file's end reads as
-  zeros; how the stopgap kernel, which has no copy-on-write children, does
+  zeros; how the Fiasco kernel, which has no copy-on-write children, does
   without them is in its scope table
   ([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
   A `MAP_SHARED` mapping of a file is the second tier's: it maps the

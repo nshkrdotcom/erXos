@@ -408,7 +408,7 @@ a shared page nor a shared line reaches it.
 
 On the stopgap the root hands the kernel log to the console when the
 console service first takes it, not when a page is first mapped
-([design-stopgap.md](design-stopgap.md#the-console)), so a sibling's
+([design-fiasco.md](design-fiasco.md#the-console)), so a sibling's
 mapping of the console's page hands nothing over.
 
 ## Interfaces

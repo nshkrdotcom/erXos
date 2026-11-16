@@ -78,7 +78,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   else runs in user mode, the runtimes included. erXos's own kernel
   follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*. Until it is
   written, a near-stock Fiasco stands in behind the same interface.
-  ([kernel](docs/design-kernel.md), [stopgap](docs/design-stopgap.md))
+  ([kernel](docs/design-kernel.md), [stopgap](docs/design-fiasco.md))
 * **Two-level scheduling, one CPU authority.** The kernel grants CPU time
   to groups of threads. Each runtime schedules its processes on the
   threads its group pays for, without a kernel call. The kernel enforces
@@ -166,7 +166,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
 ## Current status
 
 erXos is in Phase 1 of the [roadmap](docs/plan.md): the system is up on the
-stopgap Fiasco kernel, and Phase 1b moves the user-facing parts into
+Fiasco kernel, and Phase 1b moves the user-facing parts into
 domains of their own. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
@@ -203,7 +203,7 @@ Eshell V17.1.1 (type help(). for help)
 
 **Kernel and domains**
 
-* ERTS runs in user mode as the system domain on the stopgap Fiasco, behind
+* ERTS runs in user mode as the system domain on Fiasco, behind
   `liberx`; OTP 29.1.2 and musl live in the tree, modified.
 * Domains each run their own ERTS (interpreter or BeamAsm) in an address
   space of their own. The domain service starts the manifest's domains

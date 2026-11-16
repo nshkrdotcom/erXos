@@ -202,7 +202,7 @@ It holds a **login facet** of the system domain's `erx_web_login`, whose
 two operations are `login` and `logout`. It holds no inspect, trace,
 console or shell facet.
 
-**On the stopgap.** The web domain runs on the stopgap Fiasco as designed:
+**On the stopgap.** The web domain runs on Fiasco as designed:
 a configured domain holding its login facet, reached through the host
 tool's front end over the host link, and through the network front end
 once the network domain gives it a network facet. Nothing in this document

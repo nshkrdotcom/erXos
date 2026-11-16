@@ -36,7 +36,7 @@ continues ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy));
 on the stopgap the seed is the counter and `/chosen`'s seeds where the
 device tree carries them; where it carries none, the Raspberry Pi 4 adds
 its RNG200 and other boards use the counter alone
-([design-stopgap.md](design-stopgap.md#the-call-table)).
+([design-fiasco.md](design-fiasco.md#the-call-table)).
 
 ERTS is built once per execution flavour, as the interpreter and as
 BeamAsm, and each build is linked into the runtime images that use it
@@ -634,7 +634,7 @@ clock's state is `/proc/time/status`'s `state`: `unset`, `boot` or `set`
 
 | Machine | Wall clock at boot |
 | --- | --- |
-| QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-stopgap.md](design-stopgap.md#deterministic-mode)) |
+| QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-fiasco.md](design-fiasco.md#deterministic-mode)) |
 | the stopgap, on QEMU `virt` | the PL031's reading, which the stopgap's root takes once at boot into the time page, as erXos's kernel does, so `state` is `boot`, and QEMU's clock starts as in the row above |
 | the stopgap, on the Raspberry Pi 4 without a module | 1970-01-01, `unset`: the board has no real-time clock and nothing sets the clock ([design-time.md](design-time.md#phase-1)) |
 | the Raspberry Pi 4 with a DS3231 module | the module's time, read at `/dev/rtc/time` by the system domain's wall-clock keeper ([design-header-io.md](design-header-io.md#devrtc)), so `state` is `set` |

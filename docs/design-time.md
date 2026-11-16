@@ -780,7 +780,7 @@ has no real-time clock of its own: wall time counts from 1970-01-01 until
 the wall-clock keeper sets it from a DS3231 module
 ([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
-([design-stopgap.md](design-stopgap.md), "The hosted backend"), so its
+([design-fiasco.md](design-fiasco.md), "The hosted backend"), so its
 `state` is `boot`; its setter answers `ERX_ENOTSUP`. The tree's hosted
 backend defines no setter at all, a gap recorded in `TODO.md`.
 
@@ -951,7 +951,7 @@ These were open and are settled as stated here:
 
 * erXos's designs, linked where used: design-kernel.md ("Time"),
   design-network-stack.md, design-system.md, design-apps.md,
-  design-log.md, design-domains.md, design-runtime.md, design-stopgap.md,
+  design-log.md, design-domains.md, design-runtime.md, design-fiasco.md,
   design-crypto.md.
 * erXos's tree: `liberx/backend/fiasco/time_page.c`,
   `liberx/backend/fiasco/time.h`, `liberx/backend/fiasco/service.c`,

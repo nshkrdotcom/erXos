@@ -978,9 +978,9 @@ program's. The session's own processes get their pipes the same way,
 without an install, since the capabilities stay in the session's table.
 
 **On the stopgap.** The pipe server, the handler and `liberx` are the same
-code. On the stopgap Fiasco each create, bind, install and map is a
+code. On Fiasco each create, bind, install and map is a
 request to the backend's root service, each a row of
-[its call table](design-stopgap.md#the-call-table): the lane and the lock
+[its call table](design-fiasco.md#the-call-table): the lane and the lock
 page are memory objects of the root's pool, which each holder's `liberx`
 maps into its own task; the doorbells are IRQ objects the program's port
 driver binds to the program's group, whose deliveries reach the program task's
@@ -993,7 +993,7 @@ ends its `liberx` was told of, and maps them as step 3 says, because its
 `liberx` does so. That a program which bypasses `liberx` cannot widen
 them, that `TRIGGER` comes without the right to bind, and the ownership
 of ends as a kernel fact are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)). End of
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). End of
 stream follows from the session's records of holders, user-mode code, and
 holds on both.
 
@@ -1328,7 +1328,7 @@ area do:
 | the lock page | none | `READ`, `WRITE` and `MAP` |
 | a doorbell | `TRIGGER` on every read end's | `TRIGGER` on every write end's and every other read end's |
 
-No copy carries `DUP`, `GIVE` or `DESTROY`. The stopgap Fiasco records no
+No copy carries `DUP`, `GIVE` or `DESTROY`. Fiasco records no
 rights per handle, so there a copy missing `MAP` still maps; erXos's
 kernel refuses the map, which is why the table names `MAP` and the host
 test of `copies/1` below checks it.

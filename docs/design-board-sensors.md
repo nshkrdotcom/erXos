@@ -159,7 +159,7 @@ the trial request, the boot-time key read and the firmware notification
 are designed ([design-platforms.md](design-platforms.md#trial-requests),
 [design-usb.md](design-usb.md#the-vl805s-firmware)) but not built;
 Fiasco's `rpi` platform, which asks the mailbox for memory, is not used
-on the stopgap ([design-stopgap.md](design-stopgap.md)); and the only
+on the stopgap ([design-fiasco.md](design-fiasco.md)); and the only
 mailbox user in the tree is the QEMU suite's framebuffer stand-in,
 `test/raspi4b/firmware_fb.c`, which runs before BL31 and is never packed.
 
@@ -883,7 +883,7 @@ This design lands only with these edits to the documents that own them:
 | [design-platforms.md](design-platforms.md) | the Pi 4's firmware requests; the board pass's sensors step |
 | [design-system.md](design-system.md), "Devices" | the device service's `firmware_rows/1` and `firmware_read/1`, served through its firmware worker, and the sensor driver among the worker's callers |
 | [design-abi.md](design-abi.md), `abi/erx_abi.txt`, `abi/manifest.txt` | the status `proto`, `ERX_EPROTO`; the firmware request record in the system manifest; `abi/formats/vc_property.txt` with `fw_reading` and `fw_throttle`'s span; the `sensors` kind, its units and `@fw_throttle` in the inspection schema |
-| [design-stopgap.md](design-stopgap.md) | the backend's implementation of the call in the root, with the answer window |
+| [design-fiasco.md](design-fiasco.md) | the backend's implementation of the call in the root, with the answer window |
 | [design-live.md](design-live.md), "The /proc tree" | `/proc/sensors/status` among the paths |
 | [design-runtime.md](design-runtime.md), its ERTS changes and "NIFs and blocking" | `beam/beam_common.c`: a dirty NIF is charged its elapsed time on either pool, the dirty I/O branch's one reduction a call removed |
 | [design-scheduler.md](design-scheduler.md#service-work) and [design-domains.md](design-domains.md#facets), "Admission by measured reductions" | a call a service's process makes on a dirty I/O scheduler counts at its elapsed time, and a request one of the service's processes hands to another is charged that process's reductions too, returned with its answer |

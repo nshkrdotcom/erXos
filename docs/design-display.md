@@ -1951,7 +1951,7 @@ driver's sequence: open, identify, the event queue, negotiate, the
 configuration's reads, the line, and every buffer of the event queue
 posted. It sends its records under its device record's PATH, the
 device-tree path the board's device table gives the transport
-([design-stopgap.md](design-stopgap.md#device-records)), never under the
+([design-fiasco.md](design-fiasco.md#device-records)), never under the
 device's own `ID_NAME`: the path is the table's, fixed and known to the
 manifest before boot, and a device's name is text the device writes,
 untrusted and the same for every QEMU keyboard ([facts
@@ -2261,7 +2261,7 @@ times and chord:
   none while there is no screen;
 * for each source, its device's name, the device-tree path its
   device record carries
-  ([design-stopgap.md](design-stopgap.md#device-records)), and what it holds: each key with
+  ([design-fiasco.md](design-fiasco.md#device-records)), and what it holds: each key with
   the runes and the modifiers of its down and the window its down went
   to, or none; each button; each touch slot;
 * the **gesture**, while any source holds a button or a touch: its
@@ -4694,14 +4694,14 @@ inspector schema supplies the types
 
 ## On the stopgap
 
-The display runs on the stopgap Fiasco as designed, with trusted
-domains, and what differs is what the stopgap's kernel does not enforce
+The display runs on Fiasco as designed, with trusted
+domains, and what differs is what the Fiasco kernel does not enforce
 or its devices do not allow:
 
 * **The pixel area** is a memory object of the root task's pool, made
   and passed by the domain library in the connection's plan, as a
   connection's sides are
-  ([Sharing memory between tasks](design-stopgap.md#sharing-memory-between-tasks)).
+  ([Sharing memory between tasks](design-fiasco.md#sharing-memory-between-tasks)).
   The display's `liberx` maps it read-only and the client's read-write;
   nothing holds a domain that bypasses `liberx`, and its charge to the
   display's budget is a record.
@@ -4870,7 +4870,7 @@ the window and the reason.
   its two pipe ends and its window's buffer; what it reads was written
   by its own session's widget server, and what it reports is checked in
   Erlang before anything is presented.
-* **On the stopgap.** QEMU `virt` under the stopgap Fiasco, as the harness
+* **On the stopgap.** QEMU `virt` under Fiasco, as the harness
   starts it, has no IOMMU, so virtio-gpu and virtio-input attach over
   virtio-mmio and are unconfined. The development manifest gives them to
   the display domain, the Phase 1 manifest check allows that in a

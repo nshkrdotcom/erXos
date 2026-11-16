@@ -409,7 +409,7 @@ call is `badarg` with nothing applied.
 
 **The record.** Each DMA device's catalogue entry, and from it the
 `given` record its holder reads
-([design-stopgap.md](design-stopgap.md#device-records)), carries two
+([design-fiasco.md](design-fiasco.md#device-records)), carries two
 facts the root reads at boot from the device tree the firmware handed
 over, with the reader of [design-device-tree.md](design-device-tree.md):
 
@@ -482,7 +482,7 @@ the entry's offset, `dma_bus - dma_cpu`, for `erx_mem_dma_addr`; a device
 whose range is absent, or whose object's pages would fall outside it,
 gets no DMA memory, and the root prints a line naming the device, its
 range and the pool's physical address
-([design-stopgap.md](design-stopgap.md#the-pool)). EMMC2 has DMA memory
+([design-fiasco.md](design-fiasco.md#the-pool)). EMMC2 has DMA memory
 on both kernels, at the range the firmware wrote for the board's
 revision.
 

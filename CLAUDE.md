@@ -104,10 +104,10 @@ These shape every design and change; the rules below apply them.
   modified Fiasco, QEMU), then replaces or reshapes them one at a time where
   that pays. Do not build our own replacement for a stopgap before the
   system works unless the stopgap blocks progress.
-* **Seams, not rewrites.** Every stopgap sits behind one of our own internal
-  interfaces, so replacing it is a change behind that interface and nothing
-  above it moves. The kernel interface, the boot image format, the host link
-  protocol and the inspector schema are ours from day one; a stopgap never
+* **Seams, not rewrites.** Every stopgap, and Fiasco, sits behind one of
+  our own internal interfaces, so replacing it is a change behind that
+  interface and nothing above it moves. The kernel interface, the boot image format, the host link
+  protocol and the inspector schema are ours from day one; neither ever
   leaks its own data model or ABI to Erlang code or to users.
 * **Development builds** run only trusted code until the security closure
   of [docs/plan.md](docs/plan.md). Their boot banner says
@@ -153,27 +153,31 @@ These shape every design and change; the rules below apply them.
   the policy of its patches among them; the kernel stack proof and the
   kernel-side chokepoints check those cores, and the rest waits for
   erXos's kernel.
-* **What a stopgap promises.** Its design commits only to what the
+* **What a stopgap promises.** A stopgap is a component the roadmap
+  replaces before a release (littlefs, LVGL and the others the
+  dependency table marks `stopgap`). Its design commits only to what the
   milestone using it needs and its tests check: no memory errors, no
   deadlock, and the results of the calls it offers, for trusted
-  workloads. A stopgap a release ships, as R1 ships Fiasco, also
-  commits to what its design's contract promises for untrusted
-  workloads ([docs/design-fiasco.md](docs/design-fiasco.md#contract)),
-  and no more. A call it does not offer fails with `ERX_ENOTSUP`, a value
+  workloads. A call it does not offer fails with `ERX_ENOTSUP`, a value
   it cannot measure is reported as unsupported or partial with its
   reporter named, and no weakness of the stopgap is worked around unless
   the work is cheap or needed for its replacement anyway. Latency bounds,
   fairness, exact accounting and progress against hostile load belong to
   the component that replaces it; on the stopgap they are recorded as
-  residuals, or as published downsides for one a release ships, not
-  engineered into inherited code. Its reviews check those
+  residuals, not engineered into inherited code. Its reviews check those
   commitments, not the target design's.
-* **Nothing ships until I say so.** A release ships only the stopgaps its
-  milestone names: R1 ships on Fiasco, with the others its system still
-  uses. Each such stopgap meets its design's release contract, and every
-  gap beyond it is a published downside or a residual that blocks the
-  release. Every other stopgap stays out of production, so polishing it is
-  throwaway work, even where untrusted input reaches it. What we need is
+* **What Fiasco promises.** Fiasco is the kernel R1 ships, and its
+  commitments are the release contract of
+  [docs/design-fiasco.md](docs/design-fiasco.md#contract), for trusted
+  and untrusted workloads, and no more. What it lacks against erXos's
+  kernel is a row of that document's downsides, published with the
+  release, not a residual that blocks it; its reviews check that contract,
+  not erXos's kernel's design.
+* **Nothing ships until I say so.** A release ships no stopgap: R1 ships
+  on Fiasco, whose status is `release`, and the roadmap replaces every
+  stopgap its system uses before it. Every stopgap stays out of
+  production, so polishing it is throwaway work, even where untrusted
+  input reaches it. What we need is
   to know where its gaps are: each is recorded accurately as a residual,
   and does not have to be fixed.
 * **No backward compatibility in development.** Until a release promises
@@ -195,19 +199,23 @@ Third-party components are allowed when they pay for themselves.
   replaces it. It is marked `stopgap` in the dependency table and has a
   `TODO.md` item to replace it. A stopgap under any license other than a
   permissive one (LGPL included) blocks any distribution outside the
-  project, in source or binary form, until it is replaced, or until the
-  parts under that license are out of what is distributed: R1's Fiasco
-  ships only a build whose link closure is permissive, which a release
-  build check proves. The one
+  project, in source or binary form, until it is replaced. The one
   exception is the images the website offers (the browser demo and the
   board cards), each distributed with its source offered.
+* **Release components.** A component a release ships and a later phase
+  replaces, as R1 ships Fiasco and Phase 2 replaces it with erXos's
+  kernel, is marked `release` in the dependency table. Its replacement is
+  planned in [docs/plan.md](docs/plan.md), what it lacks against that
+  replacement is published with the release, and a release ships only a
+  build of it whose link closure is permissive, which a release build
+  check proves.
 * **Design first, then fit what exists.** Assume every dependency can be
   modified. Arrive at the elegant, clear design first, unconstrained by what
   existing code does or assumes; only then work out how to reach it with as
   little modification of existing code as possible.
 * **Code erXos modifies or ships enters the tree as erXos's code.** OTP
   29.1.2's source (ERTS and the applications erXos ships), musl, the Fiasco
-  fork that serves as the stopgap kernel and the first release's kernel,
+  fork that is the first release's kernel,
   littlefs, OpenSSL, ctaes, the
   BLAKE3, ChaCha20 and SHA-2 cores, libmemdraw, and toybox with `wak`
   live in the tree, keep their license notices and change by ordinary
@@ -235,14 +243,14 @@ Third-party components are allowed when they pay for themselves.
   browser-side dependency of the web client may have a TypeScript API
   instead. A permanent copyleft dependency needs explicit agreement first.
   OFL-1.1 is allowed for font data only.
-* Record every dependency, with its purpose, license and status (`permanent`
-  or `stopgap`), in the dependency table of [docs/design.md](docs/design.md).
+* Record every dependency, with its purpose, license and status (`permanent`,
+  `release` or `stopgap`), in the dependency table of [docs/design.md](docs/design.md).
 * External tools are invoked as subprocesses, never linked: the compilers
   and linkers, QEMU, the stock host OTP build that bootstraps the cross
   build and serves as the behavioral oracle, `dtc`, and the LLVM binary
   tools.
 * **New code is C17, Erlang and Ruby. No Rust, and no new C++.** The one
-  exception is the stopgap Fiasco fork: kernel objects, scheduler hooks and
+  exception is the Fiasco fork, the release kernel: kernel objects, scheduler hooks and
   the patches [docs/design-fiasco.md](docs/design-fiasco.md) lists (the
   clean-room header that replaces `kobject_rpc.h`, the
   writable-or-executable check in its map), each integrating with its
@@ -264,7 +272,7 @@ Third-party components are allowed when they pay for themselves.
   * `make`, minimal POSIX shell and linker scripts for build glue.
   * Inherited code keeps its languages and may be edited: OTP's BeamAsm JIT
     and asmjit (C++) with OTP's Perl generators and autoconf machinery, and
-    the stopgap Fiasco (C++) with its Perl preprocessor and make system.
+    Fiasco (C++), the release kernel, with its Perl preprocessor and make system.
     Thin C shims onto inherited C++ are allowed. Inherited build machinery
     stays behind erXos's top-level build, so replacing it later is a change
     behind one seam.
@@ -569,7 +577,7 @@ scripts live in `~/erxos-scratch/tools/`.
 * Follow the [style guide](docs/style.md). It covers C, assembly, Erlang and
   Ruby layout, naming, `_t` typedefs, comments, the BSD memory primitives,
   and the rules for kernel and freestanding code.
-* **The stopgap Fiasco keeps its own style.** Its inherited C++, and the
+* **Fiasco, the release kernel, keeps its own style.** Its inherited C++, and the
   C++ of the patches and scheduler stages
   [docs/design-fiasco.md](docs/design-fiasco.md) lists, are exempt
   from the kernel-construction rules below: the stack proof,
@@ -580,8 +588,8 @@ scripts live in `~/erxos-scratch/tools/`.
 * Watch the argument order of `bcopy(src, dst, n)`, the opposite of `memcpy`.
   Flag it in code review.
 * **Trust placement.** Only the kernel runs in kernel mode: erXos's own C
-  microkernel, or until it replaces it, the modified Fiasco the first
-  release ships on. Every runtime runs in user mode, including the system
+  microkernel, or until it replaces it, the modified Fiasco that is the
+  first release's kernel. Every runtime runs in user mode, including the system
   domain's ERTS, which runs the trusted Erlang system services. Mechanism
   that every domain's isolation depends on lives in the kernel; on
   Fiasco it lives in the kernel and in the system domain's root service,
@@ -860,10 +868,10 @@ within about 20 percent of the length, write plain code.
     deterministic-mode transcript and a boot smoke test, and Linux hosts
     are not tested until the plan reaches them. A failure seen
     under one accelerator only is still a bug until explained.
-  * **Replacing a stopgap is gated on parity.** The replacement is run
-    differentially against the stopgap over the test corpus; every
+  * **Replacing a stopgap, or Fiasco, is gated on parity.** The
+    replacement is run differentially against what it replaces over the test corpus; every
     difference is a bug in the replacement, a documented improvement with a
-    test, or a bug in the stopgap recorded as such.
+    test, or a bug in the replaced component recorded as such.
   * **Never fabricate.** The inspector and every report show unknown,
     partial, unsupported and timed-out results as such, and each status has
     a test.

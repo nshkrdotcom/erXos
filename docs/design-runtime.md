@@ -86,7 +86,7 @@ Decisions every reader of this document needs:
   ([NIFs and blocking](#nifs-and-blocking)).
 * **`liberx` is the only way to the kernel.** It wraps every kernel call,
   generated from `abi/erx_abi.txt`, with three backends: erXos's kernel, the
-  stopgap Fiasco, and a hosted implementation on macOS for development
+  Fiasco, and a hosted implementation on macOS for development
   under the sanitizers. Its call stubs hand the kernel values alone:
   registers, fields of the calling thread's UTCB, or a memory window, a
   memory object's capability with an offset and a length; no stub passes
@@ -2385,7 +2385,7 @@ domain's namespace may have the single row `/`, and an EROFS image or a
 file server, `/tmp`'s among them, add rows without moving a caller of `prim_file`. How the index is
 read is `erx_release_entry`, a `liberx` call: over `erx_pack_entry_at` and
 `erx_pack_path_at` on Phase 1's backends, hosted included
-([design-stopgap.md](design-stopgap.md#boot-information)), and over
+([design-fiasco.md](design-fiasco.md#boot-information)), and over
 `erx_object_info(release, ERX_INFO_IMAGE_ENTRY, ...)` on erXos's kernel, which
 keeps the index unmapped ([design-kernel.md](design-kernel.md#the-boot-image)).
 There the kernel's first use of a file holds the hash's verdict, and
@@ -2493,7 +2493,7 @@ itself, and a caller whose owner has gone. All of them use
   kernel, below: each thread gathers a line (`liberx/backend/core/line_gather.c`)
   and logs it with `erx_debug_log`, so a line reaches the console whole, as a record
   of the domain's space, through the console's one sink
-  ([design-stopgap.md](design-stopgap.md#the-console)). In the system domain it is
+  ([design-fiasco.md](design-fiasco.md#the-console)). In the system domain it is
   the seam's console write, which reaches the UART at once, unchanged, and can
   interleave with the driver's writes at any byte.
 * On erXos's kernel, it gathers a line in a buffer of the calling thread, as long
@@ -2576,7 +2576,7 @@ It assumes 80 by 24 until a driver reports a size, and a UART driver reports non
 names the console's peripheral, and `erx_console` starts that peripheral's driver: the
 root writes the console UART's record from the device entry `machine.console` names, and
 the hosted entry writes `-erx_record console stdio`, which names `erx_stdio`
-([design-stopgap.md](design-stopgap.md#the-console)). The console refuses a peripheral it
+([design-fiasco.md](design-fiasco.md#the-console)). The console refuses a peripheral it
 has no driver for, and the boot fails with the reason, so no record word becomes an atom.
 
 **Which input bytes mean something.** `erx_console` takes three bytes out of the
@@ -2691,7 +2691,7 @@ makes the line shared
 ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)),
 its peripheral's name in the CMSIS-SVD source, its device-tree path,
 the name its driver gives it and the NIF does not read
-([design-stopgap.md](design-stopgap.md#device-records)), whether it is
+([design-fiasco.md](design-fiasco.md#device-records)), whether it is
 coherent, and which descriptor forms of the ABI file it uses
 ([design-device-dma.md](design-device-dma.md#device-addresses-and-reach)).
 
@@ -3158,7 +3158,7 @@ around them.
   that `badarg` already refuses, since the generator is seeded before any
   domain runs; on the stopgap it also fails when the backend cannot
   reach its generator service
-  ([design-stopgap.md](design-stopgap.md#the-call-table)). How good the
+  ([design-fiasco.md](design-fiasco.md#the-call-table)). How good the
   seed is belongs to the machine, not to a call: `entropy_quality` in the
   machine information and the boot banner report it, a release build
   refuses a weak seed at boot, and the stopgap's banner names the seeds it
@@ -3428,7 +3428,7 @@ installed. ERTS never calls `pthread_cancel`. The stopgap backend refuses
 `erx_thread_stop` and its siblings with `ERX_ENOTSUP`
 (`liberx/backend/core/refused.c`), so on Phase 1 a cancel acts at the
 target's next cancellation point, as
-[design-stopgap.md](design-stopgap.md) states.
+[design-fiasco.md](design-fiasco.md) states.
 
 ### What ERTS imports
 
@@ -3536,7 +3536,7 @@ layers:
   convention of the architecture's `abi/arch/<arch>.txt`.
   The `fiasco` backend maps each call onto the near-stock Fiasco's
   invocations from user mode, and refuses what Fiasco cannot offer
-  ([design-stopgap.md](design-stopgap.md)).
+  ([design-fiasco.md](design-fiasco.md)).
   The `hosted` backend implements the interface inside a macOS process:
   spaces are the process, threads are pthreads, memory objects are
   `mmap`ped regions, umtx waits are `os_sync_wait_on_address`, groups and
@@ -3733,8 +3733,8 @@ or beside it, in a closed set of places, and anything else that differs is a bug
 
 | What differs | Where | Why it stays there |
 | --- | --- | --- |
-| Who fills the boot information page and calls `erx_runtime_main` | the entry: `liberx/backend/fiasco/runtime_entry.c` and `runtime_main.c`, `liberx/backend/hosted/start.c` | ERTS's start reads only the page ([design-stopgap.md](design-stopgap.md#boot-information)) |
-| The bodies of `liberx`'s calls | `liberx/backend/fiasco`, `liberx/backend/hosted` | one function API, one test set, the differences listed in [The hosted backend](design-stopgap.md#the-hosted-backend) |
+| Who fills the boot information page and calls `erx_runtime_main` | the entry: `liberx/backend/fiasco/runtime_entry.c` and `runtime_main.c`, `liberx/backend/hosted/start.c` | ERTS's start reads only the page ([design-fiasco.md](design-fiasco.md#boot-information)) |
+| The bodies of `liberx`'s calls | `liberx/backend/fiasco`, `liberx/backend/hosted` | one function API, one test set, the differences listed in [The hosted backend](design-fiasco.md#the-hosted-backend) |
 | The C library under the import list | musl, libSystem | [What ERTS imports](#what-erts-imports) checks both links against one list |
 | The console's driver process and its NIF | `erx_stdio_nif`, in the hosted image's static NIF list | [The console and standard I/O](#the-console-and-standard-io) |
 | Compile and link lines, and configure's answers about the C library | one cross-compile file per target | below |
@@ -4017,7 +4017,7 @@ instead, and is no node.
 | Child | In erXos |
 | --- | --- |
 | `code_server`, `file_server_2`, `on_load` | stock: the first two over `erl_prim_loader` and the release file system |
-| `erx_watchdog` | [design-stopgap.md](design-stopgap.md#the-watchdog) |
+| `erx_watchdog` | [design-fiasco.md](design-fiasco.md#the-watchdog) |
 | `erx_syslog_sup` | the system log's service, temporary as `user` is, in the system domain alone; it makes the kernel log's first take before `user` starts the console's driver ([design-log.md](design-log.md#service-lifetime-and-restart)) |
 | `inet_db`, `erl_signal_server`, `logger_sup`, `kernel_config`, `kernel_refc`, `kernel_safe_sup` | stock: `inet_db`'s lookup is `file`, its hosts table, then `dns` once the domain holds a network grant, through `inet_res` over `gen_udp` with the name servers and search list from the grant's `resolver` operation ([design-network-stack.md](design-network-stack.md#name-resolution)); with no grant there is no resolver and no `inet_gethost`, `inet_gethost_native` answering `{error, notsup}` for a well-formed lookup, `localhost` too when this module is asked directly, since none ran, where stock answers `{error, notfound}` for a name its resolver does not know; `inet`'s calls read any error as not found and still answer `nxdomain`, and the difference is `inet_SUITE:t_gethostnative`'s, which accepts neither; and `inet_config` finding no UDP port names the host `nohost` |
 | `standard_error` | stock's I/O protocol over descriptor 2 (edit 39) |
@@ -4480,7 +4480,7 @@ own domain, so a runtime that lies harms only itself.
 
 **The port's seams.** Each passing case is paired with the seeded failure that
 shows it ran. Hosted cases run under ASan once per batch, and the native ones are
-listed in [design-stopgap.md](design-stopgap.md#verification).
+listed in [design-fiasco.md](design-fiasco.md#verification).
 
 | Case | Seeded failure, and what it shows |
 | --- | --- |

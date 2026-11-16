@@ -517,7 +517,7 @@ violation fails the build with the property, the record and the field:
     ([Devices](#devices), Units), and admits a configured row only when
     its arguments and environment leave room in its boot page's strings
     for what the library adds there
-    ([Boot information](design-stopgap.md#boot-information)), so a
+    ([Boot information](design-fiasco.md#boot-information)), so a
     placement or a row the boot would refuse fails the build. The
     production build always runs the planner; a check without one plans
     nothing for an empty set of children, and fails closed for a
@@ -632,7 +632,7 @@ violation fails the build with the property, the record and the field:
     beside the boot view's other reserve, since the library adds it to
     every session a start row starts
     ([design-apps.md](design-apps.md#start-flags),
-    [Boot information](design-stopgap.md#boot-information)). Seeded
+    [Boot information](design-fiasco.md#boot-information)). Seeded
     violations: a check that plans the enabled rows alone, which admits
     a system principal whose memory holds its start row but not root's
     console session beside it; a board source that grants `etc`
@@ -1553,7 +1553,7 @@ baseline remains the manifest's; runtime changes do not edit it.
       node name, the system domain's node name and id as the peer of its
       first connection, the number and serial of the domain pid the
       request names, and each given device's record
-      ([Boot information](design-stopgap.md#boot-information))
+      ([Boot information](design-fiasco.md#boot-information))
       ([design-runtime.md](design-runtime.md#data-model));
    7. create the first thread, a worker in the domain's group, with the
       boot information page's address as its argument, stopped;
@@ -1628,8 +1628,8 @@ by construction and no caller retries.
 **On the stopgap.** The plan, its checks and its undo are the same code.
 Each step's kernel call is a request to the stopgap's root service, the
 one owner of every Fiasco object, served on its one thread
-([design-stopgap.md](design-stopgap.md#the-root-service)), each a row of
-[its call table](design-stopgap.md#the-call-table): step 1's budgets and
+([design-fiasco.md](design-fiasco.md#the-root-service)), each a row of
+[its call table](design-fiasco.md#the-call-table): step 1's budgets and
 step 3's group are records with nothing charged or enforced, so K32's
 walls do not hold; step 2's space is a Fiasco task with its parent and
 fault gate recorded, so the domain's end ends its sub-spaces, and its
@@ -1644,7 +1644,7 @@ connection's objects because only an object's creator may destroy it,
 and it maps the system domain's side read-only because its own `liberx`
 asks for that. That a domain which bypasses `liberx` is held to step 6's
 rights and that its charges stay within its walls are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)); what the
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)); what the
 stopgap means for connections and for the domains' invariants, D7 and D17
 included, is in [design-domains.md](design-domains.md#on-the-stopgap).
 
@@ -3241,7 +3241,7 @@ nothing), and passes them to the holding domain, whose
 driver maps the window and binds the line to its own group, so the line's
 deliveries reach that task's readiness dispatcher; no device object is
 created from a task other than the root
-([Device records](design-stopgap.md#device-records)). At the holder's end
+([Device records](design-fiasco.md#device-records)). At the holder's end
 the library deletes the window's and the line's objects and keeps the
 contiguous memory for the restarted holder, as this section says of any
 unconfined device. QEMU `virt`, as the harness starts it, has no IOMMU
@@ -3269,7 +3269,7 @@ this section describes. Every driver's DMA reaches all memory,
 so a driver, or a domain that parses hostile bytes beside one, can reach
 every domain through its device. DMA windows, MSIs and the lifetime of
 device buffers are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)), and moving
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)), and moving
 a device to virtio-pci behind the IOMMU then changes its device record and
 its DMA profile, not its driver.
 
@@ -3617,11 +3617,11 @@ sDDF driver may run as a stopgap shim, imported as erXos's code with an
 origin file, under a row of its own
 ([design.md](design.md#dependencies)).
 
-A measurement taken on the stopgap Fiasco admits no native driver. There
+A measurement taken on Fiasco admits no native driver. There
 an interrupt reaches its driver through a dispatcher thread, and its
 acknowledgement, like most kernel calls, is a request to the root
 service, which serves the whole machine on one thread
-([design-stopgap.md](design-stopgap.md#interrupts-and-readiness)), so an
+([design-fiasco.md](design-fiasco.md#interrupts-and-readiness)), so an
 Erlang driver that misses a device's timing there may be missing the
 stopgap's, and a shim admitted on that number would work around the
 stopgap rather than the device. Such a measurement is recorded with the

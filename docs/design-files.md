@@ -1356,7 +1356,7 @@ and, with the tree held still, every outcome is the reference model's
 ([Verification](#verification-and-testing)). Nothing of this is in the
 kernel: the resolver is preloaded Erlang in a user-mode runtime, the
 same code in both phases of [plan.md](plan.md), so nothing here touches
-the stopgap kernel or works around a gap of it.
+the Fiasco kernel or works around a gap of it.
 
 **Listings across mounts.** A directory's listing is its provider's
 entries, plus an entry of kind `directory` for every mount point directly

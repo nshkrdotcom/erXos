@@ -294,7 +294,7 @@ under `fiasco/kernel/src/kern/arm/`). QEMU `virt`'s MSI frame raises
 ordinary wired lines, which Fiasco binds as it binds any line, so the
 root can make an MSI as it makes a line; [The Phase 1 part](#the-phase-1-part)
 says what the backend and the check become
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)).
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)).
 
 ### What the tree does today
 
@@ -1091,7 +1091,7 @@ parts propose ([plan.md](plan.md#track-u-usb)):
   position, and the give's body creates the register window over the BAR
   the catalogue entry records, the IRQ object, and the device's
   contiguous memory, all in the root, as for any device another domain
-  holds ([design-stopgap.md](design-stopgap.md#device-records)). The
+  holds ([design-fiasco.md](design-fiasco.md#device-records)). The
   VL805's contiguous memory is made with `erx_mem_create_contiguous_in`
   inside the function's DMA facts, its bridge's DMA range cut at the
   row's `dma_limit` ([design-pcie.md](design-pcie.md#dma)), as the give
@@ -2634,13 +2634,13 @@ recorded here as the design's and in `TODO.md` when the code lands:
 
 * **No isolation between tasks.** The stopgap promises none: a task that
   bypasses `liberx` is stopped by nothing
-  ([design-stopgap.md](design-stopgap.md#what-phase-1-code-must-not-assume)).
+  ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).
   The PCIe domain, the USB domain and the display domain are apart by
   convention. The containment cases of R4 whose verdict is user-mode
   code's, a function's answer to a malformed descriptor, report or CSW,
   run and count on the stopgap.
 * **No kernel-enforced bounds.** Budgets are records on the stopgap
-  ([design-stopgap.md](design-stopgap.md#what-phase-1-defers)), so
+  ([design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)), so
   nothing holds the USB domain to its memory or CPU budget, and nothing
   protects a neighbour's latency from it: the root's one service thread
   carries every doorbell and acknowledgement. Only the cases that check
@@ -2705,11 +2705,11 @@ of [design-platforms.md](design-platforms.md#dma); the Pi 4's PCIe
 domain and the VL805's placement in property 3 of
 [design-system.md](design-system.md#the-manifest), in the Phase 1
 manifest check's property 3 of
-[design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check), and
+[design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check), and
 in the platform table, the DMA facts and the placement table of
 [design-platforms.md](design-platforms.md#what-the-manifest-says); the
 stopgap's `ERX_IRQ_MSI` over the lines of an MSI frame in
-[design-stopgap.md](design-stopgap.md#the-call-table); `no_flush` as
+[design-fiasco.md](design-fiasco.md#the-call-table); `no_flush` as
 `enotsup` in the transport and window contracts of
 [design-storage.md](design-storage.md#data-model); and the mount's
 admission by its flush, read-only for a medium that cannot flush, in
@@ -2722,7 +2722,7 @@ here so that none is lost:
 | [design-system.md](design-system.md) and `abi/manifest.txt` | a `usb` device role; a `drive` field in `erx_mf_window`, set exactly when the window's device has the `usb` role; the manifest check proves at most `usb_drives_max` drives a controller, each (device, drive, partition) once, and a USB domain in a release build holding its controller's unit alone and serving no file system (property 9) |
 | [design-system.md](design-system.md), "PCIe" | the bridge driver's request for the VL805's firmware notification with `pci_bus:firmware/1`, which the device service makes through `erx_domain_lib:pci_firmware/1` with the bridge's resource, marking the bridge `firmware_lost` at a timeout, and answers its result ([design-pcie.md](design-pcie.md#facets)) ([The VL805's firmware](#the-vl805s-firmware)) |
 | [design-system.md](design-system.md), "Units" and "PCIe" | a USB device is a sub-device of its controller's unit and enters no catalogue |
-| [design-stopgap.md](design-stopgap.md) | the give of a PCIe function on a configured row; `erx_firmware_request` in the root, with its page, deadline and results as [The VL805's firmware](#the-vl805s-firmware) says; the residuals of [On the stopgap](#on-the-stopgap) in its deferred table, Fiasco's presumed SError among them |
+| [design-fiasco.md](design-fiasco.md) | the give of a PCIe function on a configured row; `erx_firmware_request` in the root, with its page, deadline and results as [The VL805's firmware](#the-vl805s-firmware) says; the residuals of [On the stopgap](#on-the-stopgap) in its deferred table, Fiasco's presumed SError among them |
 | [design-platforms.md](design-platforms.md) | the BCM2711 among the PCIe bridges, with the facts of [The BCM2711 bridge](#the-bcm2711-bridge): its bring-up, its link check, its bus-0 and bus-1 rules, its inbound limit and its INTA to INTD on SPIs 143 to 146; the Pi 4's INTx; the trial request's wait for a notification in flight; the EEPROM's boot order of the microSD card alone among what the board's installation writes |
 | [design-kernel.md](design-kernel.md) | `erx_firmware_request(resource (CARVE), index)` in the call table's machine family and its own section: the resource carved with `ERX_CARVE_DEVICE` from a device entry the platform record names with notifications, the index choosing one of them, held only by the root task since resources never pass; its one tag and value from the platform; its poll of at most 1 s with preemption points between reads, `ERX_EWOULDBLOCK` from an executor; its results, `ERX_OK`, `ERX_ENOTSUP` for a firmware answer other than success and for a resource or platform without a notification, `ERX_ETIMEDOUT` for no answer and for every call after one, `ERX_EBUSY` while another mailbox request is in flight; its buffer, a page of the kernel's own that nothing else uses and that a timed-out request leaves to the firmware for the boot; the one mailbox routine that serves one request at a time and takes as an answer only the word naming the request's own buffer; and the trial request's wait for a notification in flight ([The VL805's firmware](#the-vl805s-firmware)) |
 | [design-device-tree.md](design-device-tree.md) | the line a closed bus's `interrupt-map` routes for a position, in the platform facts and the device-tree fuzz target |
