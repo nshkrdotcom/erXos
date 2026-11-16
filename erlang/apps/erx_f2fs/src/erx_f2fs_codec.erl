@@ -50,7 +50,7 @@ first bit most significant.
 -export([superblock/1, checkpoint/1, checkpoint_copy/1, checkpoint/3,
          orphan_block/1, nat_block/1, nat_journal/1, sit_block/2,
          sit_journal/1, summary_block/1, compact_summaries/2, inode/3,
-         dentry_block/1, crc/2]).
+         dentry_block/1, crc/2, extra_attr_features/0]).
 -export_type([superblock/0, checkpoint/0, nat_entry/0, sit_entry/0,
               summary/0, inode/0, dentries/0, failure/0]).
 
@@ -257,6 +257,14 @@ name's run of slots answered once, at its first slot ([F 60]).
 -spec dentry_block(binary()) -> {ok, dentries()} | {error, failure()}.
 dentry_block(Block) ->
     decode(dentry_block, fun() -> require_block(Block), dentries(Block) end).
+
+-doc """
+The features whose inodes Linux reads only with EXTRA_ATTR set ([F 41]),
+as a mask of the feature word: a superblock with one of them needs
+EXTRA_ATTR too.
+""".
+-spec extra_attr_features() -> non_neg_integer().
+extra_attr_features() -> ?NEED_EXTRA_ATTR.
 
 -doc """
 F2FS's CRC-32 of Data continued from Seed ([F 49]): the reflected
