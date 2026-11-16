@@ -285,7 +285,7 @@ clients](#native-clients-liberxs-file-client)).
 | --- | --- | --- | --- |
 | **F1.** A path never reaches a file server the domain does not hold | a request is a frame on the lane from the client's domain to the server's, addressed to a grant pid; the server's funnel admits a frame only to a pid its runtime exported to the domain that lane belongs to, with `send` ([design-domains.md](design-domains.md#invariants) D3); a grant's pid reaches a domain only through the system domain's introduction of the two; a namespace entry stores only a pid | a request path that names servers by anything but a pid; a server that acts on a pid named inside a request; a runtime that exported a grant to a domain the server did not make it for | a domain test mounts a pid its domain was never introduced to and finds every request fails with `eio`; the funnel's export tests |
 | **F2.** No request reaches above its grant's root | a grant's root is fixed at the server when the grant is made; a walk of `..` at the root stays at the root, as 9P's walk(5) specifies and 9P2000.L keeps, and the grammar refuses a name holding `/` or NUL; the server follows no link during a walk or an open, so a link's text is resolved by the client through its own namespace; erXos's clients send neither `.` nor `..`, since both act on the client's place (F11) and every walk `erx_path` asks for carries only plain names, and the client's one request function refuses a walk that names `.`, `..` or an empty name | a server that accepts `/` inside a name, walks above its root on `..`, follows a link during a walk or an open, or roots a grant from anything the client sends after it is made | the resolver's fuzz target and properties; the grammar's refusals; an `erx_fs` test that walks `..` from the root and from below it, and whose links point above the root, at other mounts and in loops |
-| **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only entries of its starter's table, each on the provider of the starter's entry, rooted at or below that entry's root, with rights no wider than the starter's there, and walks for it only names the resolver produced over that table; no entry on a window tree passes to any program, and every description a program holds was opened through a program's table, so none lies on one; the one addition, for a program its starter starts with a window, is a `/dev` tree of the session's own that serves that window's files through the session's own grant of the display the starter names, less the window's `ctl` ([A program's window](#a-programs-window)), which the starter could open itself | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program, records wider rights than its starter's, carries an entry on a window tree into a program's table, or admits into a program's open table a description that no program's table opened | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's, and that no program's table holds an entry whose tree is `windows` |
+| **F3.** Rearranging a namespace or narrowing it for a program never adds authority | `bind` copies an entry that exists, narrowed to a subtree; `unmount` removes one; `mount` takes a pid, which by F1 reaches only what the domain holds; a handler gives a program only entries of its starter's table, each on the provider of the starter's entry, rooted at or below that entry's root, with rights no wider than the starter's there, and walks for it only names the resolver produced over that table; no entry on a window tree passes to any program, and every description a program holds was opened through a program's table, so none lies on one; the one addition, for a program its starter starts with a window, is a `/dev` tree of the session's own that serves that window's files through the session's own grant of the display the starter names, less the window's `ctl`, which the starter could open itself, in place of the export's `/dev`, which every program reaches, and of any entry at exactly `/dev`, whose rights cap it ([A program's window](#a-programs-window)) | an operation that creates a pid or a fid beyond its source; a handler that walks `..` for a program, records wider rights than its starter's, carries an entry on a window tree into a program's table, or admits into a program's open table a description that no program's table opened | property tests over sequences of operations: the set of pids in the table only shrinks or gains pids the domain already held; a property test over chains of spawns that every program's mounts lie within, and carry rights within, its starter's, and that no program's table holds an entry whose tree is `windows` |
 | **F4.** A client spends a server's CPU and memory only within the server's admission | the protocol checks fid, request, payload and lock bounds before any callback; a grant is one process with a `max_heap_size` that counts its binaries, so what it holds for its client is bounded by its fid pool times the server's per-fid bound; the server runs on its own group's grant and its grant processes schedule among themselves as Erlang processes do, so a flooding client fills its own lane and waits in its own runtime ([design-domains.md](design-domains.md#connections), [design-scheduler.md](design-scheduler.md#service-work)); a blocking lock waits as a pending request of the file's owner, within the client's requests in flight, and nothing in the server blocks | a callback before admission; a grant that holds unbounded state for one fid; a server thread that runs on a client's time; a request whose work grows with the client's input outside the grammar's bounds | hostile-client tests below: fid floods, lock floods, retained `/proc` results, a tiny expensive request, a client that never drains its replies |
 | **F5.** A read-only grant never writes | a grant with rights `ro` or `rx` refuses with `erofs`, as part of decoding the request and so before any callback, every operation the protocol's table marks as writing: `lopen` for writing or with truncation, `lcreate` whatever its flags, since whether it creates a file only the server learns, `write`, `setattr`, `remove`, `unlinkat`, `rename`, `renameat`, `link`, `symlink`, `mknod`, `mkdir`, `xattrcreate`, and a write lock | an operation added to the table and not marked; a request that reaches the grant's dispatch by a path other than its decoding funnel | the refusal set is generated from the protocol's operation table, each operation marked as reading or writing; a test of every writing operation through a read-only grant |
 | **F6.** No grant carries write and execute together, and a session runs only what it read through an `rx` mount, the file-level twin of K8 | a grant's rights are one of `ro`, `rw` and `rx`, a type with no value for both; an `rx` grant writes nothing (F5); a handler gives a program rights within its starter's, and the session's command server fills a code object only from a fid the handler opened through a mount whose rights are `rx` ([design-programs.md](design-programs.md#file-objects)) | a rights representation with separate write and execute bits; a code object filled from a fid on an `ro` or `rw` mount | the grammar's rights type; a test that running a file through an `ro` and through an `rw` mount fails with `EACCES` and that an `rx` grant refuses every writing operation |
@@ -1728,6 +1728,24 @@ handler, after building the program's table:
    <<"export">>}` with `root` `[<<"dev">>]` and rights `rw`, in place of
    every entry at exactly `/dev`, or beside the others when the
    narrowing left none.
+
+Step 4 drops what it replaces, so the entry is measured against the
+entries at exactly `/dev`, since rights only shrink (F3). With none
+there, `/dev` is the export's, whose names reach every program whatever
+its narrowing ([Where the export and a grant meet](#narrowing-for-a-program)),
+and the window's tree stands in its place, so the entry widens nothing
+and the window starts. That is the case of a session that has mounted
+nothing at `/dev`: its table, like the boot table that holds the release
+slice at `/`, read-only, alone
+(`otp/erts/preloaded/src/prim_file.erl:974-975`), has no entry there,
+and an entry above `/dev`, such as that read-only root, does not cap the
+entry. An entry at exactly `/dev`, the starter's or one its narrowing
+left, caps it: a
+program draws by writing `draw`, so a window is useful only at `rw`, and
+a table with an entry at exactly `/dev` that cannot write refuses the
+start with `EACCES` when the handler builds the program's table, before
+step 1 opens anything, rather than start a window nothing can draw to
+(`erx_prog_handler_core:writes_dev/2`).
 
 The handler does not yet join the export and a grant at `/dev` ([Where
 the export and a grant meet](#narrowing-for-a-program), TODO.md), so a
@@ -3261,7 +3279,19 @@ report, so a passing run shows the code under test ran.
   `mkdir` make. A starter's table with an entry at `/dev/kbd/x` refuses
   the start with `EINVAL`, and the window, the connection and the grant
   end as in the lifetime case below; seeded: a check of exact points
-  only, which starts it.
+  only, which starts it. In the handler's core tests, over a table shaped
+  like a session's, the release slice read-only at `/`: a table with no
+  entry at `/dev`, a narrowing to `/data` alone, a read-write entry at
+  exactly `/dev` and a narrowing to `/dev` read-write each start a
+  windowed program, as does a read-only entry at `/dev` on a window
+  tree, which passes to no program; a read-only or `rx` entry at exactly
+  `/dev`, a narrowing to `/dev` read-only and one to `/` read-only each
+  refuse it with `EACCES` before the `window` action, and with an entry
+  at `/dev/kbd` beside the read-only one the start is refused with
+  `EINVAL` first; seeded: a core that admits the
+  table whatever its rights at `/dev`, which starts the read-only cases,
+  and one that measures against the deepest entry covering `/dev`, which
+  refuses the table with no entry there.
 * A window removed under a running program: the test removes `w1`
   through the session's grant on the fixture and makes another window
   named `w1`, and the program's next read of `/dev/label` and write of

@@ -105,7 +105,8 @@ beyond a pipe's read ends, `enfile` at the session's pipes quota,
 `enodev` for a buffer in a domain where no pixel allocator runs,
 `einval` for a buffer in an area the domain does not share with `Peer`,
 `einval` for a window beside a buffer or for a table with no room for the
-window's `/dev`, `enodev` for a window in a domain without the display
+window's `/dev`, `eacces` for a window whose program's table holds an entry
+at `/dev` itself that cannot write, `enodev` for a window in a domain without the display
 client or with no grant of the display, the display's or the connection's
 errno for a window they refuse, `eio` for a `/dev` tree that does not start,
 `enomem` (for a pipe server that is gone too), `eio` when the handler

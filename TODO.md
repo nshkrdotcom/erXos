@@ -776,7 +776,9 @@ it; git history is the record of completed work.
   ([design-system.md](docs/design-system.md#the-manifest)), and a program's handler joins the session's export and
   its grant at `/etc` and `/dev` ([design-files.md](docs/design-files.md#narrowing-for-a-program)), so a native
   editor reaches `rc.conf`, and a program with a window keeps a grant the session mounts at `/dev`, which its
-  own `/dev` replaces until then ([design-files.md](docs/design-files.md#a-programs-window)). This removes the A5c residuals of an `enable` interrupted during its write and of the
+  own `/dev` replaces until then ([design-files.md](docs/design-files.md#a-programs-window)); the join keeps
+  that grant at its own rights, so it also decides whether a windowed start still refuses a read-only entry at
+  exactly `/dev` (`erx_prog_handler_core:writes_dev/2`), a cap that follows from the replacement. This removes the A5c residuals of an `enable` interrupted during its write and of the
   stopped mark.
 * [Low] The start table's first `rc.conf` read waits for the system domain's namespace to be in place
   (`erx_domain:system_namespace/0`), but a storage domain that ends once during boot, or misses the mint
@@ -3000,11 +3002,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   session's variable and kept in `erx_prog_self_t`, would carry it as `pgid` carries the job;
   design-programs decides first. `getpid` likewise answers 1 rather than the startup message's
   `pid`.
-* [Medium] session, `erx_prog_handler_core:window_dev/2`: a program's own `/dev` entry is always `rw`
-  (docs/design-files.md, "A program's window", step 4), so a program its starter narrowed to `/dev`
-  read-only, or away from `/dev`, writes `/dev/tty` through it. Decide whether the entry's rights are
-  capped at the narrowed `/dev` entry's (which leaves `draw` unwritable for an `ro` narrowing) or whether
-  the design records why `rw` is right.
 * [Medium] tests, a program's window (docs/design-files.md, Verification, "A program's window" and the
   cases after it): `test/erlang/erx_win_dev_tests.erl` covers the display's side over a real `erx_winfs`
   with the test as the tree's 9P client: the corpus as plain-name walks, a window removed and remade (its
@@ -3016,6 +3013,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erx_session_export`: each open of a program's `/dev/clipboard` holds one fid on the
   session's display grant, so a program and its children can hold up to their tree's pool of them and
   make the session's other window opens fail at the display grant's pool.
+* [Medium] session, a program's `/dev` (docs/design-files.md, "A program's window"): each open of a
+  relayed window file (`kbd`, `mouse`, `wctl`, `label`) holds a fid on the session's grant of the
+  display, and each read of `kbd` or `mouse` waits there as a request in flight until the window has
+  input. A program and its children can open and read until they fill that grant's fid pool or its
+  requests in flight, and the session's other windows, the shell's included, then fail their opens and
+  reads at the display grant. Bound what one program's tree may hold on the session's grant (a share of
+  the pool per tree, or a grant of the display per windowed program), as the clipboard item above needs
+  too.
 * [Medium] session, `erx_session_export`: the export serves the fixed tree alone. The tree of each of
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands

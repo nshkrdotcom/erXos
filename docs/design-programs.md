@@ -714,7 +714,13 @@ the window's `kbd`, `mouse`, `wctl` and `label` at `/dev/draw`,
 failure refuses the start, and the window, the connection and the tree
 end with the handler, as below. The window and a buffer are two ways to draw,
 and a spec names at most one of them: one that names both is refused
-with `EINVAL`. A domain without the display's client side, and a
+with `EINVAL`. The program's `/dev` is read-write, and rights only
+shrink, so a program's table with an entry at exactly `/dev` that cannot
+write refuses a window with `EACCES` before the window is opened; a table
+with no entry there, a session's own with its release slice read-only at
+`/`, gets the window, whose `/dev` stands in for the export's, which
+every program reaches ([design-files.md](design-files.md#a-programs-window)).
+A domain without the display's client side, and a
 display the session holds no `windows` grant on, refuse a window with
 `ENODEV`; a window the display refuses refuses the start with the
 display's errno, as `erx_win:open/2` answers it

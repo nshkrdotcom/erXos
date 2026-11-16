@@ -253,7 +253,8 @@ entry at or below one of the names of exported/1, a window beside a buffer,
 or a window for a table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev`,
 which cannot take the window's `/dev`; `{error, enoent}` for a
 narrowing path that no entry of the table holds; or `{error, eacces}` for
-rights the starter does not hold there.
+rights the starter does not hold there, or for a window whose program's
+table holds an entry at `/dev` itself that cannot write.
 """.
 -spec new(term(), term(), files()) -> {ok, core(), [action()]} | {error, einval | enoent | eacces}.
 new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots} = Files)
@@ -307,29 +308,57 @@ exported({window, Display}) when is_atom(Display) ->
 drawn_once(none, _Fds) -> true;
 drawn_once({window, _}, Fds) -> [Buffer || {_, {buffer, _, _}} = Buffer <- Fds] =:= [].
 
-%% The program's table (docs/design-files.md, "Narrowing for a program").
-%% An entry on a window tree passes to no program, whatever its point, and a
-%% bind of one keeps its source's provider, so it is dropped too. An entry at
-%% or below one of the export's names would hide that name or put a mount
-%% beneath a file, so it refuses the start. A program with a window gets its
-%% own /dev in place of every entry at /dev itself once the window is open
-%% (window_dev/2), so its table must have room for that entry.
+%% The program's table (docs/design-files.md, "Narrowing for a program"):
+%% the narrowed table less every entry on a window tree, which passes to no
+%% program whatever its point, as a bind of one keeps its source's provider,
+%% unless refusal/2 finds a reason the program cannot be started on it.
 program_table(Table, Within, Window) ->
     case narrowed(Table, Within) of
         {ok, Narrowed} ->
             Kept = [Entry || Entry <- Narrowed, not on_window_tree(Entry)],
-            Names = [[atom_to_binary(Dir), Name] || Dir := Names <- exported(Window), Name <- Names],
-            Hides = fun(#{point := Point}) -> lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names) end,
-            case lists:any(Hides, Kept) orelse not room_for_dev(Window, Kept) of
-                false -> {ok, Kept};
-                true -> {error, einval}
+            case refusal(Window, Kept) of
+                none -> {ok, Kept};
+                Errno -> {error, Errno}
             end;
         {error, _} = Refused ->
             Refused
     end.
 
+%% The first reason, in this order, that a program cannot be started on Table,
+%% or none. An entry at or below one of the export's names would hide that
+%% name or put a mount beneath a file. A program with a window gets its own
+%% /dev in place of every entry at /dev itself once the window is open
+%% (window_dev/2), so its table must have room for that entry, and the
+%% entries it replaces must let it write, as writes_dev/2 says.
+refusal(Window, Table) ->
+    Refusals = [{hides_export(Window, Table), einval},
+                {not room_for_dev(Window, Table), einval},
+                {not writes_dev(Window, Table), eacces}],
+    case [Errno || {true, Errno} <- Refusals] of
+        [] -> none;
+        [Errno | _] -> Errno
+    end.
+
+hides_export(Window, Table) ->
+    Names = [[atom_to_binary(Dir), Name] || Dir := Names <- exported(Window), Name <- Names],
+    Hides = fun(#{point := Point}) -> lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names) end,
+    lists:any(Hides, Table).
+
 room_for_dev(none, _Table) -> true;
 room_for_dev({window, _}, Table) -> length(without_dev(Table)) < ?ERX_NS_MOUNTS_MAX.
+
+%% Whether a program with a window may write its own /dev, which is rw: every
+%% entry window_dev/2 replaces must be rw, since rights only shrink and step 4
+%% of "Starting" drops what it replaces (docs/design-files.md, "A program's
+%% window"), so a program draws only where its starter let it write /dev.
+%% With no entry at /dev itself, /dev is the export's, whose names reach every
+%% program whatever its narrowing ("Narrowing for a program"), so the window's
+%% /dev widens nothing; an entry above /dev, such as the release slice's
+%% read-only root, does not cap it.
+writes_dev(none, _Table) -> true;
+writes_dev({window, _}, Table) -> lists:all(fun(Rights) -> Rights =:= rw end, dev_rights(Table)).
+
+dev_rights(Table) -> [Rights || #{rights := Rights} <- Table -- without_dev(Table)].
 
 %% The program's table with its own /dev tree's grant at /dev, in place of
 %% every entry at /dev itself (docs/design-files.md, "A program's window").

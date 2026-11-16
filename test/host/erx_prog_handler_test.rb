@@ -44,6 +44,15 @@ class ErxProgHandlerTest < Minitest::Test
     'a window check against the export names of a program without a window' =>
       Mutant.new(file: CORE, original: '|| Dir := Names <- exported(Window), Name <- Names]',
                  replacement: '|| Dir := Names <- exported(), Name <- Names]', caught_by: 'window_test_'),
+    'a window whose /dev entry is not capped at a read-only entry at /dev itself' =>
+      Mutant.new(file: CORE, original: '{not writes_dev(Window, Table), eacces}', replacement: '{false, eacces}',
+                 caught_by: 'window_test_'),
+    'a window capped at the deepest entry covering /dev, which refuses a table with none at /dev' =>
+      Mutant.new(file: CORE,
+                 original: 'writes_dev({window, _}, Table) -> lists:all(fun(Rights) -> Rights =:= rw end, dev_rights(Table)).',
+                 replacement: 'writes_dev({window, _}, Table) -> ' \
+                              'case deepest_entry(Table, [<<"dev">>]) of #{rights := rw} -> true; _ -> false end.',
+                 caught_by: 'window_test_'),
     'a window admitted to a table with no room for its /dev' =>
       Mutant.new(file: CORE, original: 'length(without_dev(Table)) < ?ERX_NS_MOUNTS_MAX',
                  replacement: 'length(without_dev(Table)) =< ?ERX_NS_MOUNTS_MAX', caught_by: 'window_test_'),

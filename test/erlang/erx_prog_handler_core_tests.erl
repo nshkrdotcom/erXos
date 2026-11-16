@@ -288,12 +288,18 @@ export_names_test_() ->
 %% the place of every entry at /dev; a window beside a buffer, an entry at or
 %% below one of the window's names and a table with no room for /dev refuse.
 window_test_() ->
+    NewOn = fun(Entries, Fds, Display) ->
+                    erx_prog_handler_core:new(?PID, Fds, (files())#{table := ?TABLE ++ Entries, window => Display})
+            end,
     Bind = fun(Point) -> #{point => Point, provider => {grant, self(), <<"t">>}, root => [], rights => rw} end,
     Grant = list_to_pid("<0.4242.0>"),
     Dev = #{point => [<<"dev">>], provider => {grant, Grant, <<"export">>}, root => [<<"dev">>], rights => rw},
-    New = fun(Entries, Fds) ->
-                  erx_prog_handler_core:new(?PID, Fds, (files())#{table := ?TABLE ++ Entries, window => display})
-          end,
+    New = fun(Entries, Fds) -> NewOn(Entries, Fds, display) end,
+    Narrowed = fun(Within) ->
+                       Table = ?TABLE ++ [Bind([<<"data">>]), Bind([<<"dev">>])],
+                       erx_prog_handler_core:new(?PID, [], (files())#{table := Table, within => Within,
+                                                                      window => display})
+               end,
     {ok, C0, [holder]} = New([Bind([<<"data">>]), Bind([<<"dev">>]), Bind([<<"dev">>, <<"usb">>])], []),
     {C1, Window} = erx_prog_handler_core:step(C0, {holder, ok}),
     {C2, Start} = erx_prog_handler_core:step(C1, {windowed, Grant}),
@@ -304,8 +310,7 @@ window_test_() ->
     [?_assertEqual([{window, display}], Window),
      %% A display may be named none: it still gets its window.
      ?_assertMatch({_, [{window, none}]},
-                   erx_prog_handler_core:step(element(2, erx_prog_handler_core:new(?PID, [], (files())#{window => none})),
-                                              {holder, ok})),
+                   erx_prog_handler_core:step(element(2, NewOn([], [], none)), {holder, ok})),
      ?_assertEqual([{start, []}], Start),
      ?_assertEqual(?TABLE ++ [Bind([<<"data">>]), Bind([<<"dev">>, <<"usb">>]), Dev], Table),
      ?_assertEqual([holder_drop, {answer, {error, enodev}}], Refused),
@@ -315,7 +320,28 @@ window_test_() ->
      ?_assertMatch({ok, _, _}, erx_prog_handler_core:new(?PID, [], (files())#{table := ?TABLE ++ [Bind([<<"dev">>, <<"kbd">>, <<"x">>])]})),
      ?_assertEqual({error, einval}, New(Full, [])),
      ?_assertMatch({ok, _, _}, New(tl(Full) ++ [Bind([<<"dev">>])], [])),
-     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [], (files())#{window => "d"}))].
+     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [], (files())#{window => "d"})),
+     %% Rights only shrink: the window's /dev entry is rw and replaces the
+     %% entries at /dev itself, so one that is read-only there, the starter's or
+     %% left by a narrowing to /dev or to / read-only, refuses the start before
+     %% anything is made. A table with no entry at /dev, as a session's is with
+     %% its release slice read-only at / alone, leaves /dev to the export, which
+     %% every program reaches, and starts; so does a narrowing away from /dev.
+     ?_assertMatch({ok, _, [holder]}, New([], [])),
+     ?_assertMatch({ok, _, [holder]}, New([Bind([<<"data">>])], [])),
+     ?_assertMatch({ok, _, [holder]}, New([Bind([<<"dev">>])], [])),
+     ?_assertEqual({error, eacces}, New([(Bind([<<"dev">>]))#{rights := ro}], [])),
+     ?_assertEqual({error, eacces}, New([(Bind([<<"dev">>]))#{rights := rx}], [])),
+     %% An entry on a window tree passes to no program, so it caps nothing; and
+     %% an entry that hides one of the window's names refuses with einval first.
+     ?_assertMatch({ok, _, [holder]},
+                   New([(Bind([<<"dev">>]))#{provider := {grant, self(), ?ERX_WINDOWS_TREE_BYTES}, rights := ro}],
+                       [])),
+     ?_assertEqual({error, einval}, New([(Bind([<<"dev">>]))#{rights := ro}, Bind([<<"dev">>, <<"kbd">>])], [])),
+     ?_assertEqual({error, eacces}, Narrowed([{<<"/dev">>, ro}])),
+     ?_assertEqual({error, eacces}, Narrowed([{<<"/">>, ro}])),
+     ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/data">>, rw}])),
+     ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/dev">>, rw}]))].
 
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
