@@ -3373,8 +3373,8 @@ box its children are placed in, which is `Rect` less the `pad` on each
 side, and for a `scroll` as tall as its children need.
 `Measure(Kind, Props)` is the renderer's pure function giving a
 widget's measured size, without its pad, such as its text's extent
-in the subfont it loaded, so the layout reads no font and is a pure
-function of its arguments. It trusts its tree: the widget server
+in the subfont it loaded, its kerning included, so the layout reads
+no font and is a pure function of its arguments. It trusts its tree: the widget server
 validated it whole with `erx_ui_schema` before any of it reached the
 renderer, so every property is in range and the depth bound of 64
 bounds the layout's recursion.
@@ -4016,6 +4016,13 @@ it already lies, so a glyph's index is its index in the subfont. The
 reader checks the whole file before it makes a message, so loading a
 file it accepts fails only for the connection's own reasons: a channel the
 connection does not support, an image past its size limits, or its quota.
+A subfont may end with a section of kerning pairs, erXos's own, which
+a stock Plan 9 reader never reads; `erx_font` checks it with the rest
+of the file and keeps it, and it never reaches the connection:
+`erx_font:width/2` and `erx_font:runs/2` place a line of glyphs by the
+pairs through `erx_pen`, and each run of the line is one `s` message, so
+the draw server applies no kerning and its messages stay Plan 9's
+([design-desktop-programs.md](design-desktop-programs.md#kerning)).
 
 ## Interfaces
 

@@ -444,7 +444,8 @@ subfont is a subfont like any other, and
 message then draws each glyph with its cache entry as the mask, which
 `libmemdraw` reads as coverage, so text is anti-aliased with no change
 below `erx_font`. The same step writes LVGL's bitmap font form of each
-role from the same coverage, so the two renderers draw the same glyphs,
+role from the same coverage and kerning pairs ([Kerning](#kerning)), so
+the two renderers draw the same glyphs at the same places,
 and the `body` role's glyphs a third time as generated data for the
 window manager's menu, an Erlang module of each glyph's metrics beside
 its raw `k8` rows, which the menu loads with `erx_memdraw:load/3`, so
@@ -480,6 +481,190 @@ A character outside the theme's ranges has no glyph: the renderer draws
 the replacement box of the role's size. The ranges cover Latin scripts
 and the line escape's tokens, which are ASCII; other scripts are a later
 range of the theme, with a font that covers them.
+
+### Kerning
+
+A subfont's glyph table gives each glyph one advance (font(7)), so two
+glyphs side by side stand the sum of their advances apart. Inter is
+spaced for its kerning, and its kerning is not in a legacy `kern` table,
+which its fonts do not have, but in the `kern` feature of the `GPOS`
+table: three pair adjustment lookups, which the `DFLT` and `latn`
+scripts share, one of them behind an extension lookup, each holding
+subtables of single pairs (format 1) and of glyph classes (format 2),
+every value an advance of the first glyph (value format 4, none for the
+second). Without it, `AV` in the `body` role is 18 pixels wide where the
+font's own spacing puts it at 17.05, and `To` 16 where it puts 15.17.
+
+Read over the theme's ranges with a reader written for this design from
+the OpenType specification ([References](#references)), the pairs whose
+kerned advance differs, by the rounding rule below, from the plain one
+are:
+
+| Role | Font and size | Pairs | Adjustments, in pixels |
+| --- | --- | --- | --- |
+| `body` | Regular, 13 | 7,697 | -2 to 2 |
+| `caption` | Regular, 11 | 5,369 | -2 to 1 |
+| `numeric` | Medium, 13 | at most 7,322 | -3 to 2 |
+| `heading` | SemiBold, 15 | 8,827 | -3 to 2 |
+| `title` | SemiBold, 20 | 9,999 | -4 to 3 |
+| `display` | SemiBold, 48 | at most 13,774 | -9 to 7 |
+
+The two counts marked "at most" were read with the proportional digits,
+which those roles replace by tabular ones. Inter's tabular figures,
+`zero.tf` to `nine.tf`, take part in no pair of any of the three fonts,
+while its proportional digits take part in twelve pairs among
+themselves, so the tabular roles kern their letters and their digits
+keep one advance with no rule of the step's. No role is monospace, so
+every role is kerned. The terminal draws from `fixed`, a font of cells
+whose subfonts have no pairs.
+
+**The construction.** A pair is an adjustment, in whole pixels, of the
+first glyph's advance when the second glyph follows it: the pen moves
+from glyph a to the next glyph b by width(a) + kern(a, b), and by
+width(a) where no pair names the two. The glyph step computes each
+role's pairs once, from the font's `GPOS` table, and writes them beside
+the glyphs in each form it writes: the subfont file, the menu's module
+and the LVGL font. Every renderer moves its pen by that one rule. What
+the design needs follows from it:
+
+* the font is the one source: nothing is kerned by hand and no table is
+  checked in; the browser draws type with its own shaper, which kerns
+  from the font it draws with;
+* a kerned advance is an advance: the adjustment is chosen so that
+  width(a) + kern(a, b) is the font's exact kerned advance rounded half
+  up, as width(a) is the exact advance rounded half up, and it lies in
+  the advance's range, 0 to 255, so whatever a reader holds true of
+  advances holds of kerned ones, and the pen never moves backward;
+* pairs name only drawn glyphs: no pair names a glyph of width 0, which
+  a reader takes as missing, so a replacement box never kerns and no
+  renderer asks whether it should;
+* a stock Plan 9 reader still reads a kerned subfont: the pairs follow
+  the glyph table, and plan9port's `readsubfonti` reads the image, the
+  header and the n + 1 entries and stops (plan9port at commit
+  `1f13969`, `src/libdraw/readsubfont.c`, lines 17-31), so it never
+  reads them.
+
+**Where the pairs come from.** `erx-raster` reports, beside each
+glyph's coverage, the font's index of the glyph, and after the glyphs
+the font's `GPOS` table as bytes, read through FreeType's
+`FT_Load_Sfnt_Table` (`include/freetype/tttables.h`, line 758), and
+whether the font has a legacy `kern` table. `Erx::Gpos`, a reader in
+`tools/lib/erx`, takes the table and the role's glyph indices and
+returns, in font units, the kerning of every ordered pair of the role's
+drawn glyphs that is not 0, as the OpenType specification applies it:
+
+* from the default language system of the `latn` script, or of `DFLT`
+  when the font has no `latn` script, every feature tagged `kern`; a
+  font with neither has no pairs;
+* those features' lookups in the order of the lookup list, each adding
+  its value to the pair's, as a client processes the lookups of the
+  features it applies ("Features and lookups");
+* within a lookup, its subtables in order, the first that matches
+  giving the lookup's value ("Lookup table"): a format 1 subtable
+  matches when its coverage holds the first glyph and that glyph's pair
+  set holds the second, and a format 2 subtable when its coverage holds
+  the first glyph, the second glyph's class being 0 when its class
+  definition does not list it;
+* an extension lookup (type 9) read as the pair adjustment it wraps;
+* the lookup flags left unread: they choose glyphs to skip between the
+  two of a pair, bases, ligatures or marks by the `GDEF` table's classes
+  (common table formats, "Lookup table"), and the text path kerns
+  adjacent characters, each drawn as one spacing glyph; no code point of
+  the theme's ranges maps to a mark in any of the three fonts.
+
+FreeType has a reader of its own, `TT_CONFIG_OPTION_GPOS_KERNING`, which
+its build leaves off (`include/freetype/config/ftoption.h`, lines
+827-838) and which `FT_Get_Kerning` would use for a font without a
+`kern` table. It takes the first subtable that matches across all the
+`kern` lookups instead of adding the lookups' values
+(`src/sfnt/ttgpos.c`, lines 944-981), and so gives 0 for 529 of Inter
+Regular's pairs over the theme's ranges and 568 of Medium's and of
+SemiBold's whose kerning another lookup gives: `"` followed by `,` is
+-168 units in the font, from the second lookup, and 0 by FreeType's
+rule, the first lookup's class value. It also drops every pair of a font
+one of whose `kern` lookups is not a pair adjustment (lines 677-678).
+So the step reads the table itself, in Ruby, where an offset past the
+table is a typed error and the reader is tested against tables built in
+the test; the font is a build input from the tree, checked against its
+recorded hash, not input from a domain, so the reader has no fuzz
+target.
+
+**Rounding and bounds.** With a the glyph's advance as FreeType gives it
+(26.6 pixels, divided by 64) and k the pair's kerning scaled exactly,
+k = units x size / units per em, a pair's adjustment is
+floor(a + k + 1/2) minus floor(a + 1/2), and a pair is kept when that
+is not 0. So `Ty` at 13
+pixels, -0.81 pixels in the font, has no pair: T's advance, 8.39, and
+its kerned advance, 7.58, both round to 8, and the pair's width stays
+15, the nearest whole pixel to the font's 14.89. The step refuses an
+adjustment outside a signed byte and a kerned advance outside 0 to 255,
+so no pair is cut to fit; Inter comes nowhere near either. The pairs
+have no count limit of their own: strict order over n glyphs allows at
+most n x n, and each reader matches the count against the bytes present.
+
+**The pair section.** When a role has pairs, its subfont file goes on
+after the glyph table with two fields of the subfont header's form, the
+word `kern` and the pair count k, then k entries of 5 bytes: the first
+glyph's index and the second's, two bytes each, low byte first as a
+glyph's x is, and the adjustment, a signed byte as a glyph's left is.
+The entries ascend strictly by the first index and then the second. A
+subfont without pairs ends at its glyph table, as `fixed` does. The
+body role's section is about 38 KiB and the display role's about 69
+KiB.
+
+`erx_font` checks the section with the rest of the file and refuses
+the whole file, with the reason `kern`, for a count of 0, entries short
+of the count or bytes after them, an index at or past the glyph count, a
+pair not above the one before it, an adjustment of 0, a pair naming a
+glyph of width 0, and a kerned advance outside 0 to 255; bytes after the
+glyph table that do not begin with the `kern` field stay `trailing`. It
+keeps the entries as the file's bytes and finds a pair by halving them,
+so a subfont costs its own size and no more.
+
+**The text path.** The rule has one implementation, `erx_pen`, a pure
+module of `erx_memdraw`, which both sides of the display take:
+`erx_pen:place(Glyphs, Advance, Kern)` returns each glyph's pen offset
+from the line's start and the line's width, adding Kern(A, B) to A's
+advance. Each reader of the pairs calls it:
+
+* `erx_font:width/2` and `erx_font:runs/2` place a line of a subfont's
+  glyph indices. The Erlang renderer measures text with the first, and
+  draws with the second, which cuts the line where an adjustment is not
+  0 into runs, each with its offset; each run is one `s` message at its
+  offset, its source point moved by the same amount. A line without
+  pairs is one run, one message, and the draw server, which advances
+  each glyph by its cache entry's width, applies no kerning and its
+  messages stay Plan 9's. Kerned text is drawn with `s` over the
+  background the renderer has filled, never with `x`, whose background
+  per message would leave a positive adjustment's columns unfilled. A
+  character outside the ranges is a replacement box between two lines of
+  glyphs, and no pair spans it.
+* `erx_menu_glyphs` exports `kern/2`, the adjustment of two characters,
+  0 for any pair the module does not list, one clause a pair, generated
+  from the same subfont value as `glyph/1`; `erx_wm_menu` places a
+  label's glyphs with `erx_pen` and draws each through its mask.
+* The LVGL font of a role carries its pairs as LVGL's pair table
+  (`lv_font_fmt_txt_kern_pair_t`, `include/lvgl/font/lv_font_fmt_txt.h`,
+  lines 113-126): the glyph ids as 16-bit pairs in the same order, the
+  adjustments as its values, a kern scale of 256 and each advance
+  written as its whole pixels times 16. LVGL adds the value times the
+  scale over 16 to the advance, in sixteenths of a pixel, and rounds to
+  a whole pixel (`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 239-256),
+  which gives width(a) + kern(a, b) exactly, and its pen takes the next
+  character's pair whenever a font's kerning is not
+  `LV_FONT_KERNING_NONE` (`src/font/lv_font.c`, lines 135-141).
+* `theme.ts` carries no pairs: the browser's shaper applies the font's
+  kerning, CSS's `font-kerning` at `normal`.
+
+**What the step refuses.** Beyond the refusals of the glyph step above,
+a role whose font has a legacy `kern` table, whose kerning would then
+have two sources, or whose `GPOS` table, under a `kern` feature, has a
+lookup that is not a pair adjustment, a pair adjustment of a format
+other than 1 or 2, value formats other than an advance of the first
+glyph and nothing of the second, an offset or count that reaches past
+the table, or a class at or past its subtable's class count; and a pair
+whose adjustment or kerned advance leaves its range, as above. Each
+names the role, the lookup and the subtable.
 
 ### Spacing and layout
 
@@ -620,6 +805,7 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 | --- | --- | --- | --- |
 | anti-aliased text | glyphs from `fixed`, 1-bit | Montserrat 14 only | the glyph step: `k8` subfonts and LVGL fonts of every role, from one rasterisation |
 | a type scale | one size | one size | the theme's roles, and the `role` property |
+| kerning | none: a subfont gives one advance a glyph | Montserrat's own classes | the glyph step's pairs from each font's `GPOS`, in every form it writes ([Kerning](#kerning)) |
 | rounded corners, borders | none | yes | `erx_mask`'s corner masks, in the Erlang renderer |
 | soft shadows | none | yes | `erx_mask`'s shadow masks, in the Erlang renderer |
 | graphs | no kind | chart widget | the `graph` kind; `erx_mask`'s stroke and area masks in the Erlang renderer, `lv_chart` in LVGL |
@@ -1211,6 +1397,56 @@ paths in `icons.txt`, a straight stroke of an icon covers each column
 by the stroke's width, and the menu's glyph module loads with
 `erx_memdraw:load/3`; a seeded icon without paths fails the generator.
 
+**Kerning, on the host.** Each test is paired with the seeded fault it
+must catch:
+
+* `Erx::Gpos` over a `GPOS` table the test builds, whose expected
+  values follow from its construction: a `kern` feature of two lookups,
+  the first an extension lookup wrapping a format 1 subtable and a
+  format 2 subtable, the second a format 2 subtable; one pair is given
+  by both lookups and must read as their sum, one is covered by the
+  first lookup's format 1 subtable without its second glyph and must
+  read as the format 2 subtable's class value, and one has a second
+  glyph that no class definition lists and must read as class 0's
+  value. A seeded reader that stops at the first lookup that matches,
+  FreeType's rule, fails the sum, and one that stops at a format 1
+  subtable whose coverage holds the first glyph fails the second case.
+* The same table cut short, with a value format of placement, with a
+  lookup of type 1 under `kern`, and a font with a legacy `kern` table,
+  are each refused with the step's typed error; a seeded reader without
+  its bound on offsets fails the first with another error.
+* Inter Regular in the `body` role, against the font's kerning: the
+  step's values for `AV`, `To`, `Ty` and `",` are -140, -160, -128 and
+  -168 units, each the one lookup's value or, for `",`, the sum of the
+  first lookup's 0 and the second's -168, as read for this design; the
+  width that `erx_font:width/2` gives each two-character string, from
+  `body.subfont` as `erx_font` parses it, equals the one computed from
+  `erx-raster`'s advances and those units by the rounding rule in exact
+  arithmetic, 17, 15, 15 and 9 pixels, so `Ty`'s pair is absent; the
+  same at the `title` role's 20 pixels gives `Ty` a pair. A seeded step
+  that writes the adjustment with the wrong sign, or rounds k on its own
+  rather than the kerned advance, fails these widths.
+* `erx_font` refuses each fault of the pair section with `kern`, an
+  index at the glyph count among them, and accepts a section whose last
+  index is one below it; a seeded reader with the bound off by one
+  accepts the first. Its fuzz target writes pair sections in one round
+  in four, and checks that every accepted file's pairs ascend, name
+  drawn glyphs and keep every kerned advance in 0 to 255.
+* `erx_pen` places `AV` with V at A's advance plus the pair's
+  adjustment; `erx_font:runs/2` cuts a line with one pair into two runs,
+  and their `s` messages stepped through `erx_draw_core` draw every
+  glyph at the offset `erx_pen` gives it, where a seeded `runs/2` that
+  cuts but does not move the second run fails; a line without pairs is
+  one message.
+* The `numeric` and `display` subfonts hold no pair naming a digit, and
+  the menu module's `kern/2` equals `body.subfont`'s pairs taken to
+  their characters, where a seeded module keyed by glyph index fails.
+* Through LVGL's own font code on the host, the `body` font's `A`
+  before `V` advances by A's width plus the pair's adjustment, where a
+  seeded kern scale of 16 fails.
+* Two runs of the glyph step write byte-identical files, pair sections
+  included.
+
 **The widget format additions.** The validator refuses a `role` on a
 kind that does not take it, `icons` of another length than `items`, a
 sample outside `min` and `max`, and a 241st sample, each with its reason
@@ -1259,7 +1495,7 @@ this part starts:
 | Component | Purpose | License | Status |
 | --- | --- | --- | --- |
 | Inter 4.1, Regular, Medium and SemiBold static TrueType fonts | the type of every role of the theme, rasterised by the glyph step into `k8` subfonts and LVGL fonts | OFL-1.1, font data only; the license text at tag `v4.1` names no Reserved Font Name (`LICENSE.txt`, SHA-256 `262481e844521b326f5ecd053e59b98c8b2da78c8ee1bdbb6e8174305e54935a`, fetched from `https://raw.githubusercontent.com/rsms/inter/v4.1/LICENSE.txt`) | permanent; the three font files are in the tree at `display/fonts/inter/` with the license and an `ORIGIN.md` recording the release archive, `https://github.com/rsms/inter/releases/download/v4.1/Inter-4.1.zip`, SHA-256 `9883fdd4a49d4fb66bd8177ba6625ef9a64aa45899767dde3d36aa425756b11e` |
-| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
+| FreeType 2.15.0 | the glyph step's rasteriser of the fonts' glyphs and of the icons' stroked paths, and its loader of each glyph's index and of a font's `GPOS` table, linked into erXos's host program `erx-raster` | FreeType License (FTL) or GPL-2.0-or-later, at the user's choice (`LICENSE.TXT`, SHA-256 `bd36c8b474855fa294c2ec5c184544478ef3720aad37d65a6296a4f264fd2d3b`); erXos uses it under the FTL, a BSD-style license (`docs/FTL.TXT`, SHA-256 `5a5ee54c5001bbad1cdc1a57cc3dd4c42199b2da09d39c7ee41fab002d02967f`), whose credit and binary-distribution clauses bind a program that contains FreeType, which no image does; its gzip module, which the `sfnt` module's WOFF and SVG-table readers link, is under the zlib license, compatible with the FTL (`LICENSE.TXT`, lines 35-36) | permanent build tool, never part of an image; `freetype-2.15.0.tar.xz` from `https://download.savannah.gnu.org/releases/freetype/`, SHA-256 `93cd47eb719c325107f2d3cf087d06299e944c3b48a40b55537302304dea1dd5`, fetched by the explicit fetch step and verified against that hash, compiled out of tree by erXos's own compiler invocations (`Erx::Raster::Build`) |
 
 The icon set is erXos's own work, rasterised through FreeType with the
 fonts. What an image carries from the glyph step is the coverage of
@@ -1280,6 +1516,12 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
+| FreeType's own `GPOS` kerning (`TT_CONFIG_OPTION_GPOS_KERNING`) and `FT_Get_Kerning` | no reader to write, but it takes the first matching subtable across the `kern` lookups instead of adding them, and so loses 529 to 568 of Inter's pairs per font over the theme's ranges ([Kerning](#kerning)) |
+| HarfBuzz as a pinned host tool | a full shaper, correct by construction, but a large C++ dependency whose only use would be the values of single pairs, read back through `hb-shape` and filtered of every other feature it applies |
+| The `GPOS` reader in C inside `erx-raster` | the same rules in a language where every offset is a memory-safety question, with a fuzz target of its own; Ruby makes an offset past the table a typed error, and the step's other decisions, rounding among them, are already Ruby |
+| The pairs in a sibling file beside each subfont | two files a reader must load and keep together, for nothing a stock Plan 9 reader needs: it ignores what follows the glyph table |
+| Kerning in the draw server, a pair table loaded into a font cache | a new message and a new kind of data in the display domain, charged to a connection's quota, to save a few `s` messages per kerned line; the client already knows the pairs |
+| A class table, as `GPOS` and LVGL's class form store kerning | smaller for Inter, but two class maps, a matrix and the exceptions of format 1 folded into extra classes, where a sorted list of pairs is one table that every reader searches the same way |
 
 ## Decisions
 
@@ -1341,6 +1583,13 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
     linked only into erXos's host program `erx-raster`, which rasterises
     the fonts' glyphs and strokes and rasterises the icons. Nothing of
     FreeType enters an image.
+12. **Kerning travels with the subfont.** Each role's pairs, read from
+    its font's `GPOS` table by the glyph step's own reader and rounded
+    so that a kerned advance is an advance, follow the glyph table in a
+    section of erXos's that a stock Plan 9 reader never reads, and are
+    written again into the menu's module and the LVGL font; the client
+    applies them, one `s` message per run, so the draw protocol is
+    unchanged ([Kerning](#kerning)).
 
 ## Open decisions
 
@@ -1354,6 +1603,15 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    property's bound at a whole character or token and ends it with an
    ellipsis, and the parity test carries control-heavy texts of every
    bound; no program cuts for a renderer.
+2. **An independent shaper as the kerning test's oracle.** The values
+   the kerning tests expect of Inter were read for this design by a
+   reader outside the tree, and the reader's rules are pinned by a table
+   the test builds ([Verification](#verification-and-testing)); no
+   shaper has checked them. HarfBuzz, pinned and built out of tree as a
+   test-only tool, would check every pair of every role, at the cost of
+   a C++ dependency used by one test. Recommendation: not now; take it
+   when a second font or script enters the theme, where a shaper's rules
+   (script itemisation, marks) begin to matter.
 
 ## References
 
@@ -1373,8 +1631,34 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 * `display/libmemdraw/draw.c`, lines 486-500 and 1065
 * LVGL 9.6.0: `include/lvgl/config/lv_conf_internal.h`, lines 674-684
   and 2670-2680; `lv_conf_template.h`, lines 281-284;
-  `src/widgets/chart/lv_chart.c`, line 424
-* Inter 4.1, `LICENSE.txt` at tag `v4.1` (SHA-256 above)
+  `src/widgets/chart/lv_chart.c`, line 424;
+  `include/lvgl/font/lv_font_fmt_txt.h`, lines 33, 40, 113-126 and 174-175
+  (SHA-256
+  `a2f128f0f7311f6e4d9e526f0634ba891b188600fa6479cf7067533b122fa323`);
+  `src/font/fmt_txt/lv_font_fmt_txt.c`, lines 239-256 and 385-441
+  (SHA-256
+  `c2b4ea830a6de5e0e04e52c0c5d46b3e3a12c695861d94f1bfef3b8da74b4207`);
+  `src/font/lv_font.c`, lines 135-141 (SHA-256
+  `508e45e0ae53a28c91f02598ea6beedb6958992a0a2171853d372481705ea7c9`)
+* Inter 4.1, `LICENSE.txt` at tag `v4.1` (SHA-256 above); the kerning
+  figures of [Kerning](#kerning) were read from the three font files of
+  `display/fonts/inter/` on 2026-11-15 with a scratch reader outside the
+  tree that follows the OpenType rules listed there
+* OpenType 1.9.1, Microsoft Learn: "GPOS -- Glyph Positioning Table",
+  `https://learn.microsoft.com/en-us/typography/opentype/spec/gpos`,
+  dated 2024-05-29 (SHA-256 of the page as fetched
+  `c5cf5b88d4c5fda671f0f3e8cc1a82c2400a5748e85a322f5dacf99cffdfa610`):
+  "Lookup type 2 subtable: pair adjustment positioning" and the
+  positioning extension; "OpenType layout common table formats",
+  `https://learn.microsoft.com/en-us/typography/opentype/spec/chapter2`,
+  dated 2024-07-06 (SHA-256
+  `3e595f99262e2c50e23a023e1ce751e0a530c67a70d23d2a907f357d86b86225`):
+  "Features and lookups", where lookups are processed in lookup list
+  order, and "Lookup table", where the first subtable that matches ends
+  a lookup and the lookup flags choose the glyphs to skip
+* plan9port at commit `1f13969`: `src/libdraw/readsubfont.c`, lines
+  17-31 (SHA-256
+  `db1b97824796a9413d491bcc9c742c8528c49b04c686e3a4ad87a09ee93fc55f`)
 * FreeBSD `usr.bin/Makefile` at commit `95719d8a895b`, lines 95 and 189
 * plan9port at commit `1f13969`: `man/man7/font.7` (SHA-256
   `fe1ca23bb73034dbf98d330127f636ce18c7453014fee3554a872790385c5688`)
@@ -1402,4 +1686,13 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
   `include/freetype/ftoutln.h`, line 496 (SHA-256
   `db0585ea338debdb9b721adc5f6d138ec7f88df30ff44cf6fb3cac79a70982f8`);
   `src/smooth/ftgrays.c`, lines 45-48 and 63 (SHA-256
-  `4ed0d154876ae4caf440224a04df9dc3f4bedd82e2b0fbb7e016de1d718c5379`)
+  `4ed0d154876ae4caf440224a04df9dc3f4bedd82e2b0fbb7e016de1d718c5379`);
+  `include/freetype/tttables.h`, line 758 (SHA-256
+  `7fd1ce25de661e802dbff67ad5e9927bcdef1730527a5d453120586f13698280`);
+  `include/freetype/config/ftoption.h`, lines 827-838 (SHA-256
+  `2115ceb051433d1596a63649923ace29441debd9f10de43c4c61259fc7b81384`);
+  `src/sfnt/ttgpos.c`, lines 263-264, 350, 488, 677-678 and 944-981
+  (SHA-256
+  `48f0eb6f7e82bcbc5a6028f8deb137c26688b78260ce9404e2fb8ae004ef8009`);
+  `src/truetype/ttdriver.c`, lines 229-240 (SHA-256
+  `af966a77d134481946ec79d157065c4871e0ed62e635d0a5307bfe629e44d1ef`)

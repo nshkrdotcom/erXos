@@ -1935,7 +1935,8 @@ it; git history is the record of completed work.
   gives only the messages' layouts), so it is not shared. Make it a fact of the draw format that `tools/gen_abi.rb`
   gives both `erx_draw_core` and the step, and refuse there. The theme's ranges hold 543 code points. The subfont
   format's own field limits, x in two bytes and rows in one, are written twice the same way (`Erx::Glyphs` `MAX_X`
-  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`): a spec of the subfont format would give both.
+  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`), and the pair section's limits (an adjustment in a signed byte, a kerned
+  advance in 0 to 255, design-desktop-programs "Kerning") need both too: a spec of the subfont format would give both.
 * [Medium] display, two splitters of pixels into `y` messages (`erlang/apps/erx_win/src/erx_font.erl` `tiles/3`,
   `erx_draw.erl` `band_rows/2`): `erx_font` cuts an image into tiles of columns and bands of rows of at most 8192
   bytes each, while `erx_draw:load/4` cuts only bands of rows, as many as fit a write (`?ERX_P9_IO_MAX` less the
