@@ -2085,7 +2085,10 @@ it; git history is the record of completed work.
   names it.
 * [Medium] desktop, the glyph step's output enters no runtime build (`build/glyphs`, `tools/lib/erx/erlang_apps.rb`):
   `erx_menu_glyphs.erl` is written beside the subfonts, and nothing compiles it into `erx_display`; the build would
-  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15).
+  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15). Its outputs declare
+  OFL-1.1 (Inter's glyph data); the release packer attributes a generated `build/` source by its SPDX line with
+  erXos's `LICENSE` as the notice and no font-data statement (`tools/lib/erx/pack_provenance.rb` `attribute`), so
+  it refuses them until the build that takes them in states them font data with Inter's `LICENSE.txt` as notice.
 * [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
   (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
