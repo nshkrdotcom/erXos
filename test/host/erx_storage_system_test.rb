@@ -26,6 +26,8 @@ require_relative '../fixtures/erlang_build'
 class ErxStorageSystemTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx_storage].freeze
+  # Compiled again with TEST, which exports mount/3 to the cases.
+  SYSTEM = 'erlang/apps/erx_storage/src/erx_storage_system.erl'
   TESTS = %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_verity_tree.erl
              otp/erts/preloaded/src/erx_erofs.erl test/erlang/host_bytes/erx_bytes.erl
              build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_erofs_tests.erl
@@ -39,9 +41,24 @@ class ErxStorageSystemTest < Minitest::Test
   # superblock's CRC-32C covers, so that only the hash check can catch a change there.
   PADS = (0...80).map { |index| format('pad-%04d-with-a-name-long-enough-to-fill-blocks.app', index) }.freeze
 
+# The module as the build compiles it, without TEST, exports no mount: the mint mounts
+  # the tree with mount/1, which reads the boot record itself (E1), and mount/3, which
+  # takes the record's answer from its caller, reaches only the cases.
+  def test_the_shipped_module_exports_no_mount
+    Dir.mktmpdir('erx-storage-system-shipped') do |work|
+      ErlangBuild.compile(work, applications: APPLICATIONS)
+      script = 'io:format("~w~n", [[A || {mount, A} <- erx_storage_system:module_info(exports)]]), halt().'
+      output, status = Open3.capture2e('gtimeout', '-k', '10', '60', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
+                                       '-eval', script, chdir: work, stdin_data: '')
+      assert status.success?, output
+      assert_equal '[]', output.strip
+    end
+  end
+
   def test_system_tree_cases_pass_under_eunit
     Dir.mktmpdir('erx-storage-system-test') do |work|
-      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, includes: INCLUDES)
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, includes: INCLUDES,
+                          replaced: { SYSTEM => File.read(File.join(ROOT, SYSTEM)) }, defines: %w[TEST])
       write_partitions(work)
       output, status = Open3.capture2e({ 'ERX_SYSTEM_CASES' => work }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
                                        '-noshell', '-pa', work,

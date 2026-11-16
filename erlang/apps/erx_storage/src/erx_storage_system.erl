@@ -12,13 +12,16 @@ domain that serves `system` serves the booted slot's system partition.
   of this domain's `-erx_record system_image` record: the image from the
   partition's byte 0 and its dm-verity tree's offset, length, salt and root
   hash, which the domain library wrote from the manifest the booted boot
-  image holds (docs/design-stopgap.md, "The booted slot"). Both forms take
-  the record words and read the layout through their one reader,
-  erx_device_record:system_image/1, so no caller can hand the mount a
-  layout, a root hash or `unchecked`: every block the reader parses, the
-  directories included, matched the root hash the boot image pins before
-  it is parsed (E1), and a partition changed under a rebuilt tree answers
-  `eio`. A record that is absent or refused, an image the reader refuses,
+  image holds (docs/design-stopgap.md, "The booted slot"). mount/1 reads
+  the record itself, through erx_device_record:system_image/0, and only
+  the mint calls it; the module exports no mount, but mount/3, which
+  takes the record's answer from its caller, to the EUnit cases compiled
+  with `TEST`, and Erx::ErofsReads refuses a call of either from any other
+  module of the release. So no caller can hand the mount a layout, a root
+  hash or `unchecked`, and only the mint mounts the tree: every block the
+  reader parses, the directories included, matched the root hash the boot
+  image pins before it is parsed (E1), and a partition changed under a
+  rebuilt tree answers `eio`. A record that is absent or refused, an image the reader refuses,
   and an image whose `apps/` is not a directory leave the tree `none`; the
   reason goes to the log once.
 * **Serving.** start_mint/0 starts the service's mint, erx_storage_mint, which
@@ -44,10 +47,14 @@ open `eio`, so it reaches no file.
 
 -include("generated/erx_abi.hrl").
 
--export([start_mint/0, mount/1, mount/3, log/1]).
+-export([start_mint/0, log/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4,
          statfs/1, clunk/2, read_mode/0]).
 -export_type([tree/0]).
+
+-ifdef(TEST).
+-export([mount/3]).
+-endif.
 
 %% The tree's name, which attach's Aname names, and the directory of the partition
 %% it roots at.
@@ -80,17 +87,17 @@ domain's `system_image` record, logging to the kernel log.
 """.
 -spec mount(pid()) -> tree().
 mount(Window) ->
-    mount(Window, erx_device_record:records(), fun ?MODULE:log/1).
+    mount(Window, erx_device_record:system_image(), fun ?MODULE:log/1).
 
 -doc """
-Mounts the image of `Window` with the layout of the `system_image` record
-among `Records`, boot records as erx_device_record:records/0 returns them,
-or answers `none` for a refused record, an image the reader refuses or one
-whose `apps/` is not a directory, the reason handed to `Log`.
+Mounts the image of `Window` with `Record`, the layout of the `system_image`
+record as erx_device_record:system_image/0 answers it, or answers `none` for
+a refused record, an image the reader refuses or one whose `apps/` is not a
+directory, the reason handed to `Log`.
 """.
--spec mount(pid(), [[string()]], fun((binary()) -> term())) -> tree().
-mount(Window, Records, Log) ->
-    case erx_device_record:system_image(Records) of
+-spec mount(pid(), erx_device_record:system_image(), fun((binary()) -> term())) -> tree().
+mount(Window, Record, Log) ->
+    case Record of
         {ok, Layout} ->
             mounted(erx_erofs:mount(Window, Layout, Log), Log);
         {error, {bad_device_record, Reason}} ->

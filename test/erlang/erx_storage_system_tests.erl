@@ -28,14 +28,16 @@ partition(Name) ->
     {ok, Bytes} = file:read_file(filename:join(Dir, Name ++ ".img")),
     {Bytes, [Words]}.
 
-%% The tree mounted on partition Name with its records, its log lines sent to the caller.
+%% The tree mounted on partition Name with the layout its records name, through mount/3,
+%% which the module exports to TEST alone, its log lines sent to the caller.
 open(Name) ->
     {Bytes, Records} = partition(Name),
     open(Bytes, Records).
 
 open(Bytes, Records) ->
     Self = self(),
-    erx_storage_system:mount(erx_erofs_tests:window(Bytes), Records, fun(Line) -> Self ! {log, Line} end).
+    erx_storage_system:mount(erx_erofs_tests:window(Bytes), erx_device_record:system_image(Records),
+                             fun(Line) -> Self ! {log, Line} end).
 
 %% An attached grant with Rights on Tree, fid 1 at its root.
 grant(Tree, Rights) ->

@@ -2493,13 +2493,15 @@ it; git history is the record of completed work.
   facet is started and exported, and the domain service drops a reply that comes after the
   request's deadline or after it cancelled the request (`erx_domain_mints`). The grant or
   facet minted for a dropped reply stays alive and exported to its grantee until the
-  connection between the two domains ends (the network grant, and a `data` grant of the
-  storage domain to any domain but the system domain) or the serving domain ends (the
+  connection between the two domains ends (the network grant, and a `data` or `system` grant of
+  the storage domain to any domain but the system domain) or the serving domain ends (the
   storage domain's `storage_ctl` facet, which ends only with its mint, and its `data`
-  grant to the system domain), since no
-  message withdraws a mint's answer. Give the domain service a withdrawal it sends the mint
-  for every request it stops waiting on, or have each grant end unless the grantee claims
-  it within the deadline.
+  and `system` grants to the system domain), since no message withdraws a mint's answer.
+  The `system` mint answers no grant until its mount of the tree ends, so a slow
+  `system` window can make its first grants miss the 10 s deadline
+  ([todo-performance.md](docs/todo-performance.md), the `system` mount's boot cost).
+  Give the domain service a withdrawal it sends the mint for every request it stops
+  waiting on, or have each grant end unless the grantee claims it within the deadline.
 * [Medium] storage, `erx_storage_mint` loop (`mint/3`): no host test drives the loop itself.
   `test/erlang/erx_storage_mint_tests.erl` covers `mint_request/3`, `erx_fs_grants:grant_options/1` and the
   answers `grant/5` gives, refusals included, but not that the loop (`mint/3`,

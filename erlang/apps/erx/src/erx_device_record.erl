@@ -48,7 +48,7 @@
 -include("generated/erx_abi.hrl").
 
 -export([records/0, find/2, find/3, framebuffers/0, framebuffers/1, system_image/0, system_image/1]).
--export_type([spec/0, framebuffer/0, format/0]).
+-export_type([spec/0, framebuffer/0, format/0, system_image/0]).
 
 %% What erx_device:open/1 takes: a given device's objects, or a physical device's window and
 %% line, each with its clock for its driver.
@@ -65,6 +65,9 @@
 -type framebuffer() :: #{window := {object, non_neg_integer(), non_neg_integer(), pos_integer()},
                          width := pos_integer(), height := pos_integer(), stride := pos_integer(),
                          format := format()}.
+
+%% The system_image record's layout, or why it was refused.
+-type system_image() :: {ok, erx_verity_tree:layout()} | {error, {bad_device_record, string()}}.
 
 %% The simple-framebuffer binding's formats, the device-tree reader's table.
 -type format() :: a1r5g5b5 | a2r10g10b10 | a8b8g8r8 | a8r8g8b8 | r5g6b5 | r5g5b5a1 | r8g8b8 | x1r5g5b5
@@ -88,7 +91,7 @@ framebuffers(Arguments) ->
     collect(fun framebuffer/1, [Words || ["framebuffer" | Words] <- Arguments], []).
 
 %% The system_image record among the boot records.
--spec system_image() -> {ok, erx_verity_tree:layout()} | {error, {bad_device_record, string()}}.
+-spec system_image() -> system_image().
 system_image() ->
     system_image(records()).
 
@@ -100,7 +103,7 @@ system_image() ->
 %% TREE_OFF and TREE_LEN decimals within 64 bits, SALT 2 to 64 lowercase hex digits, an
 %% even count, and ROOT exactly 64. Any other shape, a second record and none are refused
 %% with the reason, and the caller then opens no image.
--spec system_image([[string()]]) -> {ok, erx_verity_tree:layout()} | {error, {bad_device_record, string()}}.
+-spec system_image([[string()]]) -> system_image().
 system_image(Arguments) ->
     case [Words || ["system_image" | Words] <- Arguments] of
         [[Length, TreeOffset, TreeLength, Salt, Root]] ->

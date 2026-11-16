@@ -10,7 +10,7 @@ read-only image in the calling process, written from the format's header,
 It implements what the packer's fsimg options write, and more: 4 KiB blocks,
 compact and extended inodes, the plain and inline data layouts, regular
 files, directories and symbolic links, no compression. It steps over an
-inode's inline extended attributes and serves none. `mount/2` refuses an
+inode's inline extended attributes and serves none. `mount/3` refuses an
 image with an incompatible feature bit, naming the bits, an extended
 superblock, another block or directory block size, or a bad superblock
 CRC-32C; an inode with another data layout (compressed or chunked) or of
