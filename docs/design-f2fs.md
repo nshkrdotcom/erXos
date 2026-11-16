@@ -141,23 +141,7 @@ data log's summary, not in a node segment ([F 28]).
 Everything Linux and f2fs-tools are made to do in the oracle guest is
 observed as a black box, and their output is untrusted input to the host.
 
-### What the code does today
-
-littlefs 2.11.3 serves the data partition, as a NIF behind the `erx_fs`
-callback module `erx_lfs` of the `erx_storage` application
-(`erlang/apps/erx_storage/src/erx_lfs.erl`): an owner process takes the
-callbacks' requests one at a time, and a worker runs littlefs's
-operations, whose block callbacks the owner sends to the data window with
-`gen_server:send_request/2`. `fsync` is littlefs's file sync followed by
-the window's flush (`erx_lfs.erl` l.244-262). Any block failure ends the
-owner, and its supervisors, at a restart intensity of 0, end the storage
-domain, whose restart mounts the volume afresh
-(`erx_storage_sup.erl`). The installation formats the volume on the host
-with `tools/host/lfs_format.c` through `Erx::DataVolume`
-(`tools/lib/erx/data_volume.rb`), and the rest of a fresh volume is zeros.
-The durability facet's checkpoint and freeze
-([design-storage.md](design-storage.md#interfaces)) are specified but not
-built in `erx_lfs`.
+### The medium under the volume
 
 The block service's window (`erlang/apps/erx_blk/src/erx_blk_window.erl`)
 takes `{read, Sector, Count}`, `{write, Sector, Bytes}` and `flush` from
@@ -175,9 +159,6 @@ the superblock and 32-bit fields at odd offsets in NAT entries, summary
 entries and dentry slots ([F 1]), and the ABI's layout language states
 them in its packed storage
 ([design-abi.md](design-abi.md#packed-layouts)).
-`abi/formats/f2fs.txt` holds the superblock, the checkpoint header and
-the orphan block, and `erx_f2fs_codec`, in the `erx_f2fs` application,
-reads those three.
 
 ## Requirements
 
@@ -1466,6 +1447,19 @@ clean room's facts too.
   written, and the walk ends at the zeroed warm node block.
 
 ## Replacing littlefs
+
+Until the replacement, littlefs 2.11.3 serves the data partition, as a NIF behind the `erx_fs`
+callback module `erx_lfs` of the `erx_storage` application
+(`erlang/apps/erx_storage/src/erx_lfs.erl`): an owner process takes the
+callbacks' requests one at a time, and a worker runs littlefs's
+operations, whose block callbacks the owner sends to the data window with
+`gen_server:send_request/2`. `fsync` is littlefs's file sync followed by
+the window's flush (`erx_lfs.erl` l.244-262). Any block failure ends the
+owner, and its supervisors, at a restart intensity of 0, end the storage
+domain, whose restart mounts the volume afresh
+(`erx_storage_sup.erl`). The installation formats the volume on the host
+with `tools/host/lfs_format.c` through `Erx::DataVolume`
+(`tools/lib/erx/data_volume.rb`), and the rest of a fresh volume is zeros.
 
 The seam is the `erx_fs` callback module and the storage domain's
 supervisor: `erx_storage_sup`'s data child changes from `erx_lfs_sup` to
