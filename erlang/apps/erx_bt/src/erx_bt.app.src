@@ -1,0 +1,14 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The Bluetooth stack (docs/design-bluetooth.md). Its pure cores so far: erx_h4, H4
+%% framing over the controller's line; erx_hci, the HCI codec; and erx_bt_hci_core, the
+%% controller process's core: the bring-up, the command slot, ACL credits and
+%% advertising. The processes over them come with the domain.
+{application, erx_bt,
+ [{description, "erXos Bluetooth Low Energy"},
+  {vsn, "1"},
+  {modules, [erx_bt_hci_core, erx_h4, erx_hci]},
+  {registered, []},
+  {applications, [kernel, stdlib]},
+  {env, []}]}.

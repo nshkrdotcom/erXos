@@ -1,0 +1,125 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# Bluetooth's constants, the one home of every value the Bluetooth domain reads from or
+# writes to its controller (docs/design-bluetooth.md): H4's packet indicators, the HCI
+# commands and events the controller process uses, and the bounds a radio peer or the
+# controller cannot pass. A value erXos has no use for is not entered.
+#
+# The source is the Bluetooth Core Specification 6.3, its HTML edition, Vol 4 Part A
+# (UART transport) and Vol 4 Part E (HCI), sections cited; the hashes of the files read
+# are in docs/design-bluetooth.md, "Sources". Bumble v0.0.237 (34def7f1, Apache-2.0),
+# bumble/hci.py, lines 251-808, states the same codes. A value marked erXos's is the
+# design's own choice, not the specification's.
+
+# The HCI packet indicator before each packet on the line (Part A, section 2,
+# Table 2.1). Synchronous and ISO data are never enabled, so the host meets their
+# indicators only as a loss of synchronization (Part A, section 4).
+enum h4_indicator u8
+  value command 0x01
+  value acl 0x02
+  value synchronous 0x03
+  value event 0x04
+  value iso 0x05
+
+# An opcode is the OGF in its upper 6 bits and the OCF in its lower 10 (Part E, section
+# 5.4.1); erx_hci composes the two. The groups (7.1, 7.3, 7.4 and 7.8):
+limit hci_ocf_bits u8 10
+enum hci_ogf u8
+  value link_control 0x01
+  value controller 0x03
+  value informational 0x04
+  value le 0x08
+
+# The OCF of each command used, by group: Disconnect (7.1.6); Set Event Mask, Reset and
+# Host Buffer Size (7.3.1, 7.3.2, 7.3.39); Read Local Version Information, Read Local
+# Supported Commands [v1], Read Buffer Size and Read BD_ADDR (7.4.1, 7.4.2, 7.4.5,
+# 7.4.6); and the LE commands [v1] (7.8.1 to 7.8.9).
+enum hci_link_control_ocf u16
+  value disconnect 0x0006
+enum hci_controller_ocf u16
+  value set_event_mask 0x0001
+  value reset 0x0003
+  value host_buffer_size 0x0033
+enum hci_informational_ocf u16
+  value read_local_version 0x0001
+  value read_local_commands 0x0002
+  value read_buffer_size 0x0005
+  value read_bd_addr 0x0009
+enum hci_le_ocf u16
+  value le_set_event_mask 0x0001
+  value le_read_buffer_size 0x0002
+  value le_read_features 0x0003
+  value le_set_random_address 0x0005
+  value le_set_advertising_parameters 0x0006
+  value le_set_advertising_data 0x0008
+  value le_set_scan_response_data 0x0009
+  value le_set_advertising_enable 0x000a
+
+# The events the controller process decodes (7.7.5, 7.7.8 [v1], 7.7.14, 7.7.15, 7.7.16,
+# 7.7.19, 7.7.39 and 7.7.65), and the LE Meta subevents among them (7.7.65.1, 7.7.65.3
+# and 7.7.65.5). Any other event is counted and dropped.
+enum hci_event u8
+  value disconnection_complete 0x05
+  value encryption_change 0x08
+  value command_complete 0x0e
+  value command_status 0x0f
+  value hardware_error 0x10
+  value number_of_completed_packets 0x13
+  value encryption_key_refresh_complete 0x30
+  value le_meta 0x3e
+enum hci_le_subevent u8
+  value connection_complete 0x01
+  value connection_update_complete 0x03
+  value long_term_key_request 0x05
+
+# The bits of Set Event Mask's Event_Mask (7.3.1) and of LE Set Event Mask's
+# LE_Event_Mask [v1] (7.8.1) that enable the events above; the bring-up sets these and
+# no others. Command Complete, Command Status and Number Of Completed Packets cannot be
+# masked.
+enum hci_event_mask_bit u8
+  value disconnection_complete 4
+  value encryption_change 7
+  value hardware_error 15
+  value encryption_key_refresh_complete 47
+  value le_meta 61
+enum hci_le_event_mask_bit u8
+  value connection_complete 0
+  value connection_update_complete 2
+  value long_term_key_request 4
+
+# A status of success (Vol 1 Part F, as Part E, section 7, cites it for every command).
+limit hci_status_success u8 0x00
+# A Connection_Handle is 12 bits, from 0x000 to 0xEFF (5.4.2).
+limit hci_handle_max u16 0x0eff
+# LE Read Buffer Size reserves an LE_ACL_Data_Packet_Length from 0x0001 to 0x001A
+# (7.8.2): every controller takes at least 27 octets of data (5.4.2).
+limit hci_le_acl_length_min u16 27
+# LE Set Advertising Data and LE Set Scan Response Data carry 31 octets (7.8.7, 7.8.8).
+limit hci_advertising_data_max u8 31
+# LE Set Advertising Parameters (7.8.5): connectable undirected advertising (ADV_IND),
+# the random device address as the advertiser's own, all three channels (bits 0 to 2 of
+# the channel map), and the interval's unit, 0.625 ms.
+limit hci_advertising_type_ind u8 0x00
+limit hci_own_address_random u8 0x01
+limit hci_advertising_channels_all u8 0x07
+limit hci_advertising_interval_unit_us u32 625
+
+# erXos's bounds (docs/design-bluetooth.md, "What a radio peer can make the domain
+# spend"): the longest ACL packet the host accepts, which Host Buffer Size states, 4
+# octets of L2CAP header and ATT's MTU of 247; the most connections a row may allow; the
+# most ACL packets in flight to the controller; the host's packet count that Host Buffer
+# Size states, flow control from the controller staying off; and the advertising interval.
+limit bt_acl_rx_max u16 251
+limit bt_connections_max u8 4
+limit bt_acl_credits_max u8 8
+limit bt_host_acl_packets u16 8
+limit bt_advertising_interval_us u32 100000
+
+# erXos's deadlines (docs/design-bluetooth.md, "The bring-up"): every command's answer,
+# and the patch's two waits, NetBSD's (usr.sbin/btattach/init_bcm43xx.c, lines 123-125
+# and 139), and the vendor command that starts the download, as the design cites it
+# (docs/design-bluetooth.md, "The hardware").
+limit bt_command_timeout_ms u32 5000
+limit bt_patch_minidriver_ms u32 1000
+limit bt_patch_launch_ms u32 4000
+limit bt_patch_download_minidriver u16 0xfc2e
