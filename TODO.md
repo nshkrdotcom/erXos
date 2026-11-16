@@ -6735,14 +6735,17 @@ to the corpus and follow rc
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
   time page. A Phase 1 residual, not fixed in the stopgap.
-* [Medium] WiFi credentials before the vault, development builds only
-  ([design-wifi.md](docs/design-wifi.md#credentials)): the networks'
-  PMKs and SAE PTs sit unsealed in the `credentials` file of the WiFi
-  domain's own directory on the data partition, readable by any session
-  that holds the data partition's tree and from a copy of the medium.
-  It blocks release. The vault's state slot for `wifi`, shared with the
-  Bluetooth design's bonds, closes it, and the release manifest check
-  refuses the development store.
+* [Medium] WiFi's key holder before the vault, development builds only
+  ([design-wifi.md](docs/design-wifi.md#credentials)): the holder runs
+  as a process of the WiFi domain, so the networks' PMKs and SAE PTs
+  are in the domain that parses the air, and they sit unsealed in the
+  `keys` file of the WiFi domain's own directory on the data partition,
+  readable by any session that holds the data partition's tree and from
+  a copy of the medium. It blocks release. The vault's purpose for
+  WiFi's keys closes it, once the placement of the key holder is
+  decided ([design-wifi.md](docs/design-wifi.md#open-decisions), 1),
+  and the release manifest check refuses a `wifi` row without the key
+  facet.
 * [Medium] WiFi, SAE not constant-time throughout
   ([design-wifi.md](docs/design-wifi.md#security)): `crypto:sae_pt/3`,
   `sae_commit/5` and `sae_key/5` multiply in constant time, but their

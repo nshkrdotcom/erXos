@@ -308,12 +308,13 @@ level (defaults -80 and -82 dBm) until the pin is cleared, the station roams or 
 pinning client leaves the bus (`D station-api.txt` 173-188; `S iwd.config.rst` 136-150; `S
 station.c` 1846-1850).
 
-**26. Hidden networks.** A hidden network is joined only from a profile marked hidden. Its SSID is
-probed only when a hidden BSS appears in scan results, and the known hidden SSIDs are packed up to
-the radio's per-scan SSID limit (`S scan.c` 518-590, 1040-1060, 1999-2013). A one-time provisioning
-call finds and joins an open or PSK hidden network by SSID; 802.1X hidden networks must be
-provisioned by file; an SSID found as both open and PSK is refused as an overlap (`D
-station-api.txt` 52-107; `D knownnetwork-api.txt` 26-33).
+**26. Hidden networks.** A hidden network is joined only from a profile marked hidden. Scans made
+while autoconnecting probe for the known hidden SSIDs; periodic scans do so only after a hidden BSS
+has appeared in results; the SSIDs are packed up to the radio's per-scan SSID limit (`S station.c`
+1506-1515; `S scan.c` 518-590, 1040-1060, 1999-2013). A one-time provisioning call finds and joins
+an open or PSK hidden network by SSID; 802.1X hidden networks must be provisioned by file; an SSID
+found as both open and PSK is refused as an overlap (`D station-api.txt` 52-107; `D
+knownnetwork-api.txt` 26-33).
 
 **27. Disconnect and interface lifetime.** A user disconnect also turns autoconnect off for that
 device until the next user connect (`D station-api.txt` 15-23). Bringing the interface down removes
@@ -471,15 +472,15 @@ SAE, OWE and DPP is in user space in ell, from a BSD-licensed small ECC library 
 header). The TLS protocol itself is ell's own code (`E tls.c`, about 4000 lines). ARC4 for legacy
 TKIP key unwrapping is a local routine (`S crypto.c` 444-490).
 
-**46. Why.** No rationale was found in the documents read. The visible gains (inference): no
-OpenSSL or other crypto library, and the kernel's accelerated implementations for free (the
-start-up check names optional accelerated drivers, `S main.c` 285, 302-303, 312-319).
+**46. Why.** No rationale was found in the documents read. The visible gains (inference): no OpenSSL
+or other crypto library, and the kernel's accelerated implementations for free (the start-up check
+names optional accelerated drivers, `S main.c` 285, 302-303, 312-319).
 
 **47. Costs.** Linux only and dependent on kernel configuration; every primitive call is a
-system-call round trip, so PBKDF2 for the PSK (4096 iterations for each of two output blocks, each an HMAC update and
-digest read over the socket) is many thousands of calls (`S crypto.c` 556-586; `E cert-crypto.c`
-97-165; not measured, so unverified); that work and the PT derivation for two groups run
-synchronously on the event loop when a passphrase is set or loaded (`S network.c` 281-301,
+system-call round trip, so PBKDF2 for the PSK (4096 iterations for each of two output blocks, each
+an HMAC update and digest read over the socket) is many thousands of calls (`S crypto.c` 556-586; `E
+cert-crypto.c` 97-165; not measured, so unverified); that work and the PT derivation for two groups
+run synchronously on the event loop when a passphrase is set or loaded (`S network.c` 281-301,
 319-334); EAP-TLS is bounded by the kernel's asymmetric-key parsers (`S main.c` 367-377).
 
 ## 6. Regulatory, power, privacy, other modes
@@ -494,9 +495,9 @@ disabled-channel list may still change (`S wiphy.c` 948-960); see fact 14 for 6 
 quirk list (`S netdev.c` 6421-6438, 6472; `S iwd.config.rst` 475-478). Automatic power save delivery
 is listed as future work (`TODO` 195-200).
 
-**50. MAC address policy** (`S iwd.config.rst` 90-122; `S iwd.network.rst` 131-145). Probe
-requests use a random source while disconnected, when the hardware allows. The connection address is
-by default the permanent one; "once" randomises it at start-up or hot-plug; "per network" derives it
+**50. MAC address policy** (`S iwd.config.rst` 90-122; `S iwd.network.rst` 131-145). Probe requests
+use a random source while disconnected, when the hardware allows. The connection address is by
+default the permanent one; "once" randomises it at start-up or hot-plug; "per network" derives it
 from SHA-256 over the SSID and the permanent address, stable per network while hiding the permanent
 one; a profile may instead ask for a fresh random address on every connection, or a fixed address.
 Randomisation covers all six octets with the locally administered bit set, or only the last three
@@ -539,19 +540,15 @@ of their own (fact 10), an insecure rekey forces a reconnect (fact 41).
 transition-request parser shows (`S station.c` 3285-3374). A frame-fuzzing autotest exists
 (directory name only; contents not read).
 
-**57. Frames from the air are untrusted.** Parsers check lengths before reading, as the
-transition-request parser shows (`S station.c` 3285-3374). A frame-fuzzing autotest exists
-(directory name only; contents not read).
-
 ## 8. Testing
 
-**58. Unit tests.** 25 test programs with about 200 registered cases (count of registration calls):
+**57. Unit tests.** 25 test programs with about 200 registered cases (count of registration calls):
 crypto vectors (HMAC variants, PRF, KDF, CMAC, ARC4), element and MPDU parsing, SAE, EAPoL, EAP-SIM,
 MSCHAPv2, WSC, DPP, P2P, PMKSA, storage, data-rate estimation (`unit/` listing). The EAPoL tests
 drive the state machine with canned frames by replacing the transmit, nonce and key-install
 callbacks of fact 8 (`unit/test-eapol.c` 2164-2257).
 
-**59. Whole-system tests on simulated air.** About sixty scenario directories at the tag cover each
+**58. Whole-system tests on simulated air.** About sixty scenario directories at the tag cover each
 security mode and its options, SAE (anti-clogging, roaming, PMKSA), OWE transition, FT over 802.1X
 and FILS, pre-authentication, roam retry, neighbour reports, the blocklist, hidden and known
 networks, address randomisation, affinity, EAP variants with fragmentation, EAPoL and SA Query
@@ -565,23 +562,23 @@ the project's simulator daemon, whose frame rules match source, destination and 
 priority order and can set RSSI, drop or delay (`D hwsim-rules-api.txt` 1-75; `README` 246-264).
 Simulated radios cannot yet vary their capabilities (`TODO` 78-89).
 
-**60. What makes it testable.** Callback seams around the protocol cores (fact 8), a real reference
+**59. What makes it testable.** Callback seams around the protocol cores (fact 8), a real reference
 AP over simulated air, a debug interface to force BSSIDs and roams and watch internal events (fact
 9), and a netlink monitor that decodes nl80211 traffic and merges with an EAPoL capture (`README`
 197-243).
 
 ## 9. Weaknesses and lessons
 
-**61. Bound to Linux by construction.** nl80211, rtnetlink, AF_ALG, keyctl, sysfs and mac80211_hwsim
+**60. Bound to Linux by construction.** nl80211, rtnetlink, AF_ALG, keyctl, sysfs and mac80211_hwsim
 run through every layer, and ell's API is unstable (fact 3). Nothing sits behind a kernel-neutral
 interface.
 
-**62. Documents drift from code.** Read against 3.12's code: `D features.txt` claims scheduled
+**61. Documents drift from code.** Read against 3.12's code: `D features.txt` claims scheduled
 scans, a single agent, FT over the air only and highest-signal BSS choice (facts 15, 11, 24, 17); `D
 automatic-net-selection.txt` excludes never-connected networks (fact 19); the TODO still lists P2P,
 DPP and PMK caching as future work (`TODO` 179-186, 213-221, 246-252).
 
-**63. Open items the project lists.** Opportunistic Key Caching; automatic power save delivery;
+**62. Open items the project lists.** Opportunistic Key Caching; automatic power save delivery;
 802.11v network management beyond transition handling; TDLS; EAP-LEAP and EAP-OTP; WSC session
 overlap detection; the OCE features (FILS Discovery frames, Reduced Neighbor Reports, OCE scan
 flags, scanning channels 1, 6 and 11 first, RSSI-based association rejection, Extended BSS Load and
@@ -591,7 +588,7 @@ station.c` 3319-3326); the neighbour report that may come with a "suggested tran
 not used (`S station.c` 3578-3583); SAE groups 21, 25 and 26 do not work (`S sae.c` 172-178); OCV is
 off for FT (`S station.c` 1338-1342); the agent timeout is not configurable (`S agent.c` 66-72).
 
-**64. Other limits a designer should weigh.** Secrets are in clear on disk unless the experimental
+**63. Other limits a designer should weigh.** Secrets are in clear on disk unless the experimental
 encryption is on (fact 31); authorisation is per bus group, not per operation (fact 12); crypto
 blocks the event loop (fact 47); driver problems are handled by name lists someone must maintain
 (fact 55); AP mode has no enterprise security; hidden enterprise networks need a file; Hotspot 2.0

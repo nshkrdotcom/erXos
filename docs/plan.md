@@ -2755,7 +2755,9 @@ by side; (f) needs (b) and (c).
 * **(f) WiFi on the CYW43455.** The Pi's WiFi chip on the legacy SD
   controller, along [design-wifi.md](design-wifi.md): the storage
   domain's SDIO host serves the card through `sdio`, the WiFi domain
-  drives the chip and runs the station and its supplicant, and the
+  drives the chip and runs the station, a choice, a join machine and
+  a failure memory with the supplicant, a key holder answers each
+  join's secret steps, and the
   network domain carries `wlan0` over the medium the WiFi domain lends
   through `ether`. The fetch step pins the Cypress firmware, NVRAM and
   CLM files, and the Pi's image carries them in the WiFi application's
@@ -2769,18 +2771,28 @@ by side; (f) needs (b) and (c).
      back, `ver`, `cap` and the hardware address in the log and at
      `/proc`, and `wlan0` offered to the network domain with its link
      down, through `ether` and `erx_net_ether`.
-  3. **W2, scan.** `ifconfig wlan0 scan` lists the test access point in
-     FreeBSD's columns.
-  4. **W3, an open network.** DHCP, ping, UDP echo and a TCP transfer
+  3. **W2, scan.** The seam to the chip in 802.11's management
+     requests; `ifconfig wlan0 scan` lists the test access point in
+     FreeBSD's columns, and `/proc` shows each BSS with its verdict.
+  4. **W3, an open network.** The choice and the join machine with
+     its transition table; DHCP, ping, UDP echo and a TCP transfer
      over `wlan0`, as (c) runs them over GENET.
-  5. **W4, WPA2-PSK.** The 4-way and group handshakes on the host, each
-     key installed once, a group rekey survived; the network's secret
-     given through `ctl` and kept in the development credential store.
-  6. **W5, WPA3-SAE with PMF.** OTP `crypto`'s three SAE functions, SAE
-     with hash-to-element through the firmware's external
-     authentication, and PMF; it needs the firmware's `sae_ext`
-     capability, which W1 reads, and without it WPA3 is reported
-     unsupported.
+  5. **W4, WPA2-PSK.** The key holder's seam with the development
+     holder behind it; the 4-way and group handshakes on the host,
+     each PTK asked of the holder, each key installed once, a group
+     rekey survived; the network's secret given through `ctl`; the
+     failure memory, with a wrong passphrase shown as
+     `secret_rejected`.
+  6. **W5, WPA3-SAE with PMF.** OTP `crypto`'s three SAE functions
+     behind the holder, SAE with hash-to-element through the
+     firmware's external authentication, PMF, and the Transition
+     Disable mark; it needs the firmware's `sae_ext` capability,
+     which W1 reads, and without it WPA3 is reported unsupported.
+
+  The key holder's release form, the vault's purpose, is the vault's
+  work and waits for the decision
+  [design-wifi.md](design-wifi.md#open-decisions) records; W0 to W5
+  do not wait for it.
 
 **Dependencies.**
 
@@ -2802,8 +2814,9 @@ by side; (f) needs (b) and (c).
   the board; for W5, the firmware's `sae_ext`, or another licensed
   Cypress build that offers it
   ([design-wifi.md](design-wifi.md#sae-and-protected-management-frames));
-  a test access point, a FreeBSD host's hostapd or a commodity router,
-  offering open, WPA2 and WPA3 networks.
+  a test access point offering open, WPA2 and WPA3 networks: hostapd
+  2.12 started by the harness with the design's profiles on a host
+  with a radio, or until one serves, a commodity router set by hand.
 
 **Testing.**
 
@@ -2864,6 +2877,7 @@ by side; (f) needs (b) and (c).
   hostapd 2.12 on the FreeBSD x86-64 test host; a fake chip behind the
   `sdio` interface runs the WiFi domain in hosted mode and on QEMU
   `virt`, where the network stack's suites run over `wlan0` unchanged
+  and the station's scenarios run against a scripted air
   ([design-wifi.md](design-wifi.md#verification)).
 
 **Exit criteria.**
@@ -2911,14 +2925,18 @@ by side; (f) needs (b) and (c).
   passes and the LED and button answer the shell.
 * (f): on the board, W0's and W1's log lines; no scan before a country
   is configured; a scan listing the test access point; DHCP, ping, UDP echo and a TCP transfer on the open, the
-  WPA2 and, given `sae_ext`, the WPA3 network; a wrong passphrase refused
-  with its reason at `/proc`; the WiFi domain killed under load joining
+  WPA2 and, given `sae_ext`, the WPA3 network; a wrong passphrase shown
+  as `secret_rejected` at `/proc` and joined once the right one is
+  given; the WiFi domain killed under load joining
   again while `genet0` carries on; a 64 MiB write to `/data` beside a TCP
   transfer over `wlan0`, both completing; (b)'s power-cut checklist
-  passing with WiFi under load. Off the board, the station's exhaustive
-  exploration, retransmitted and replayed key messages among its events,
+  passing with WiFi under load. Off the board, the join machine's
+  exhaustive exploration, which takes every edge of its table and no
+  other, retransmitted and replayed key messages among its events,
+  the choice's properties, the key holder's tests,
   the Annex J and J.10 vectors, the differential against wpa_supplicant's
-  recordings and the network stack's suites over the fake chip pass, each
+  recordings, the scenarios against the scripted air and the network
+  stack's suites over the fake chip pass, each
   failing on its seeded fault; the WiFi parsers run their fuzz budgets
   clean.
 
