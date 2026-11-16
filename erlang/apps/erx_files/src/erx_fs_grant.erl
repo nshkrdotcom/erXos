@@ -59,7 +59,7 @@ check rejected, a clunk, `..`, an owner's end.
 """.
 
 -export([new/1, handle_frame/2, monitored/3, waiting/3, answered/3, down/3, client_ended/1,
-         drained/1, info/1]).
+         drained/1, info/1, in_flight_max/0]).
 
 -export_type([grant/0, effect/0, rights/0, client/0]).
 
@@ -396,6 +396,14 @@ info(#grant{fids = Fids, closing = Closing, owners = Owners, aliases = Live,
     #{fids => map_size(Fids) + map_size(Closing), owners => map_size(Owners),
       waiting => length([Alias || Alias := #live{what = {keeper, _}} <- Live]),
       in_flight => InFlight, aliases => map_size(Live), refused => Refused, rights => Rights}.
+
+-doc """
+The most requests a grant holds at once, the bound of `in_flight`, so a
+keeper can bound what one grant's waiting requests make it hold.
+""".
+-spec in_flight_max() -> pos_integer().
+in_flight_max() ->
+    ?IN_FLIGHT_MAX.
 
 %% The one pair of functions that add and remove live aliases, and with them
 %% count the requests' window: a held request takes a slot; a flush and a

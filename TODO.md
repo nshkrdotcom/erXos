@@ -2121,17 +2121,10 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
-  grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
-  which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
-  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
-  and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
-  keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
-  a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
-  which stops its whole grant, every other request, clunk and flush of it included, until the event comes, as each
-  wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
-  table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
-  supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
+* [Medium] files, the lock table (`erlang/apps/erx_files/src/erx_fs_grant.erl`): `erx_fs_locks`, the tree's lock
+  table and the keeper of blocking locks (design-files.md, "Locks", "Waiting requests"), does not exist yet (the grant
+  serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
+  `rest_for_one`, as design-files.md ("Locks") has it.
 * [Low] display client, a dropped grant's read (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `handle_info/2`'s
   `dropped` clause): the end of a grant that sent the connection reads forgets them but leaves the one of each file
   already at the display there, so the next read of that file waits until a record answers the dead one, and that
@@ -7674,20 +7667,21 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
-* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
-  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
-  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
-  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
-  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
-  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
-  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
-  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
-  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
-  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
-  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
-  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
-  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
-  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"): the line tree,
+  `erx_line_fs`, and its keeper, `erx_line`, are written and run in host tests over a model driver
+  (`test/erlang/erx_line_tests.erl`), but nothing serves them, so the controller group still runs only over a model
+  line. Missing: the line's start, which serves `erx_line_fs` through `erx_fs_grants` and `erx_facet:serve/2` as
+  `erx_machine_fs` does, under `erx_uart_sup` and its line groups; the `line_grant` checker and `device` parameter
+  values in `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`); `erx_ns:place(line)` (the
+  facet-name check refuses it until a manifest publishes `line`); `erx_pl011:program/2` with `init => fresh`,
+  which the line's driver start passes; and the power line's steps 2 and 4 of a reset, which `erx_line` does not
+  run, as on a platform with no power line.
+* [Medium] bluetooth, the line keeper's shape (`erlang/apps/erx_uart/src/erx_line.erl`): its decisions and effects
+  (the driver's sends, `exit/2`, the answers) are made in the same steps, so its tests are hand-picked cases rather
+  than an exhaustive exploration of reads, writes, resets, input, flushes and ends; split it into a pure core that
+  returns actions, as `erx_bt_hci_core` is, and explore it. With it: the reset waits for the old driver through the
+  link the start makes rather than a monitor it takes, the fresh driver's start blocks the keeper while it programs
+  the UART, and the heap bound's slack (`start_link/1`) is a round number, not derived from the grant's largest write.
 * [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
   docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
   one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is

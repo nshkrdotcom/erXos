@@ -525,9 +525,12 @@ its driver has taken them or its reset is done. So the reader's read
 that waits for the controller never holds up the writer's command, on
 one `data` file through one grant, and a clunk or the Bluetooth
 domain's end settles a waiting read without taking bytes the next
-reader should have. A read waiting at a `reset` answers `eio`, and a
-write that arrives during one waits at the line until the reset
-answers.
+reader should have. A `reset` begins when it arrives, unless another
+runs, ahead of every `data` write: each write sent before it, the one
+the driver holds and those still waiting, answers `eio`, as does each
+read waiting, since no byte of the last bring-up survives a reset; a
+read that arrives during one answers `eio`, and a write that arrives
+during one waits at the line until the reset answers.
 
 A request the line has begun is answered with what it did, flushed or
 not ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
