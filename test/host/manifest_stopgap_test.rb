@@ -837,6 +837,19 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 19, 'facet.service', @source + row, message: /only the derived system rows/)
   end
 
+  def test_a_system_service_of_another_interface_is_refused
+    source = changed(@source.sub("service system\n  server @domain.storage\n  interface files",
+                                 "service system\n  server @domain.storage\n  interface driver_control"))
+    refused(Erx::Manifest::Invalid, 19, 'service.interface', source, message: /of the files interface/)
+  end
+
+  # A second service record whose public name is system, under another label, on
+  # another server, since property 5 refuses two names alike on one server first.
+  def test_a_second_system_service_is_refused
+    second = "service system_again\n  name \"system\"\n  server @domain.network\n  interface files\n"
+    refused(Erx::Manifest::Invalid, 19, 'service.name', @source + second, message: /holds one service named system/)
+  end
+
   def test_a_system_window_without_the_system_service_is_refused
     source = changed(@source.sub(/^service system\n(?:  .*\n)*/, ''))
     refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /holds one service named system/)
