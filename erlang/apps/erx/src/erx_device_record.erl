@@ -20,7 +20,9 @@
 %% "Facts into records"): the handle of the object over the framebuffer's pages, the
 %% framebuffer's offset in them and its bytes, its geometry and its format's name, all from
 %% the firmware's device tree. The root writes it only for a framebuffer the tree placed in
-%% its row's window, so a domain whose firmware set none up finds `{ok, []}`.
+%% its row's window, so a domain whose firmware set none up finds `{ok, []}`. The storage
+%% domain that serves `system` finds a fourth, `-erx_record system_image`, read by
+%% system_image/0: the layout and root hash of the booted slot's system partition.
 %%
 %% In both device forms PATH is the device's device-tree path from its manifest row, its name
 %% (docs/design-system.md, "Devices"): a node path of the characters a device tree allows in
@@ -45,8 +47,8 @@
 
 -include("generated/erx_abi.hrl").
 
--export([records/0, find/2, find/3, framebuffers/0, framebuffers/1]).
--export_type([spec/0, framebuffer/0, format/0]).
+-export([records/0, find/2, find/3, framebuffers/0, framebuffers/1, system_image/0, system_image/1]).
+-export_type([spec/0, framebuffer/0, format/0, system_image/0]).
 
 %% What erx_device:open/1 takes: a given device's objects, or a physical device's window and
 %% line, each with its clock for its driver.
@@ -63,6 +65,11 @@
 -type framebuffer() :: #{window := {object, non_neg_integer(), non_neg_integer(), pos_integer()},
                          width := pos_integer(), height := pos_integer(), stride := pos_integer(),
                          format := format()}.
+%% The booted slot's system partition as its storage domain opens it in erx_verity: the
+%% image's length and its hash tree's offset and length in bytes, the tree's salt and its
+%% root hash (docs/design-stopgap.md, "The booted slot").
+-type system_image() :: #{image_length := non_neg_integer(), tree_offset := non_neg_integer(),
+                          tree_length := non_neg_integer(), salt := <<_:8, _:_*8>>, root_hash := <<_:256>>}.
 %% The simple-framebuffer binding's formats, the device-tree reader's table.
 -type format() :: a1r5g5b5 | a2r10g10b10 | a8b8g8r8 | a8r8g8b8 | r5g6b5 | r5g5b5a1 | r8g8b8 | x1r5g5b5
                 | x2r10g10b10 | x8r8g8b8 | x8b8g8r8.
@@ -83,6 +90,42 @@ framebuffers() ->
 -spec framebuffers([[string()]]) -> {ok, [framebuffer()]} | {error, {bad_device_record, string()}}.
 framebuffers(Arguments) ->
     collect(fun framebuffer/1, [Words || ["framebuffer" | Words] <- Arguments], []).
+
+%% The system_image record among the boot records.
+-spec system_image() -> {ok, system_image()} | {error, {bad_device_record, string()}}.
+system_image() ->
+    system_image(records()).
+
+%% Pure, as find/3 is. The domain library writes the record, `-erx_record system_image LEN
+%% TREE_OFF TREE_LEN SALT ROOT`, only to the storage domain that serves `system`, so exactly
+%% one record of exactly five words is taken: LEN, TREE_OFF and TREE_LEN decimals within 64
+%% bits, SALT 2 to 64 lowercase hex digits, an even count, and ROOT exactly 64. Any other
+%% shape, a second record and none are refused with the reason, and the caller then opens
+%% no image.
+-spec system_image([[string()]]) -> {ok, system_image()} | {error, {bad_device_record, string()}}.
+system_image(Arguments) ->
+    case [Words || ["system_image" | Words] <- Arguments] of
+        [[Length, TreeOffset, TreeLength, Salt, Root]] ->
+            case {numbers([Length, TreeOffset, TreeLength]), hex(Salt, 1, ?ERX_VERITY_SALT_SIZE), hex(Root, ?ERX_VERITY_HASH_SIZE, ?ERX_VERITY_HASH_SIZE)} of
+                {{ok, [L, O, T]}, {ok, S}, {ok, R}} ->
+                    {ok, #{image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
+                {error, _, _} ->
+                    bad("a system_image record's length, tree offset or tree length is not a decimal number "
+                        "of 64 bits");
+                {_, error, _} ->
+                    bad("a system_image record's salt is not 1 to " ++ integer_to_list(?ERX_VERITY_SALT_SIZE)
+                        ++ " bytes in lowercase hex");
+                {_, _, error} ->
+                    bad("a system_image record's root hash is not " ++ integer_to_list(?ERX_VERITY_HASH_SIZE)
+                        ++ " bytes in lowercase hex")
+            end;
+        [_] ->
+            bad("a system_image record is not five words: a length, a tree offset and length, a salt and a root hash");
+        [] ->
+            bad("no system_image record");
+        [_, _ | _] ->
+            bad("more than one system_image record")
+    end.
 
 %% Every boot record of this runtime's boot page, each the word list after one
 %% `-erx_record` flag, as init:get_argument/1 returns them, or [] when the page has none.
@@ -228,6 +271,19 @@ numbers(Words) ->
     case lists:all(fun(Result) -> Result =/= error end, Parsed) of
         true -> {ok, [Value || {ok, Value} <- Parsed]};
         false -> error
+    end.
+
+%% Lowercase hex digits spelling MinBytes to MaxBytes bytes, two digits a byte, as those
+%% bytes. The length is checked before the digits, so no word longer than the bound is decoded.
+hex(Word, MinBytes, MaxBytes) ->
+    case length(Word) of
+        Digits when Digits >= 2 * MinBytes, Digits =< 2 * MaxBytes, Digits rem 2 =:= 0 ->
+            case lists:all(fun(C) -> (C >= $0 andalso C =< $9) orelse (C >= $a andalso C =< $f) end, Word) of
+                true -> {ok, binary:decode_hex(list_to_binary(Word))};
+                false -> error
+            end;
+        _ ->
+            error
     end.
 
 %% Digits only, at most as many as the field's largest value has, so no word builds a large

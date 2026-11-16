@@ -224,3 +224,50 @@ a_record_s_path_names_its_device_test() ->
 bad_paths(Longest) ->
     [Longest ++ "a", "", "virtio_mmio@a003e00", "/virtio_mmio@a003e00\e[2J", "/virtio mmio", "/virtio_mmio\n",
      [$/, 16#661], "/virtio_mmio@a003e00:0", [$/, 0]].
+
+%% The system_image record (docs/design-stopgap.md, "The booted slot"): the image's length,
+%% the tree's offset and length in decimal, the salt and the root hash in lowercase hex.
+-define(ROOT, "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff").
+-define(SALT, "a5").
+
+system_image_words() ->
+    ["system_image", "1048576", "1048576", "12288", ?SALT, ?ROOT].
+
+a_system_image_record_is_read_test() ->
+    ?assertEqual({ok, #{image_length => 1048576, tree_offset => 1048576, tree_length => 12288, salt => <<16#a5>>,
+                        root_hash => binary:decode_hex(<<?ROOT>>)}},
+                 erx_device_record:system_image([["boot", "normal", "a"], system_image_words(),
+                                                 ["given", "block", "virtio_mmio"]])).
+
+%% Each number word at its bound, a salt of 32 bytes and one of 1 byte.
+system_image_bounds_test() ->
+    Longest = lists:duplicate(64, $f),
+    ?assertMatch({ok, #{image_length := 16#ffffffffffffffff, tree_offset := 0, tree_length := 0, salt := <<_:256>>}},
+                 erx_device_record:system_image([["system_image", ?U64_MAX, "0", "0", Longest, ?ROOT]])),
+    ?assertMatch({error, {bad_device_record, _}},
+                 erx_device_record:system_image([["system_image", "18446744073709551616", "0", "0", ?SALT, ?ROOT]])),
+    ?assertMatch({error, {bad_device_record, _}},
+                 erx_device_record:system_image([["system_image", "018446744073709551615", "0", "0", ?SALT, ?ROOT]])).
+
+%% Each word malformed in turn refuses the record with a stated reason.
+a_malformed_system_image_word_refuses_test() ->
+    Bad = [{2, ["", "-1", "+1", "0x10", "1 ", "1e3"]}, {3, ["", "x"]}, {4, ["", "18446744073709551616"]},
+           {5, ["", "a", "A5", "a5a", lists:duplicate(66, $a), "g0", " a5"]},
+           {6, [lists:sublist(?ROOT, 62), ?ROOT ++ "00", string:uppercase(?ROOT), "", lists:sublist(?ROOT, 63) ++ "g"]}],
+    [?assertMatch({error, {bad_device_record, [_ | _]}},
+                  erx_device_record:system_image([setelement_list(At, system_image_words(), Word)]))
+     || {At, Words} <- Bad, Word <- Words].
+
+a_missing_or_extra_system_image_word_refuses_test() ->
+    ?assertMatch({error, {bad_device_record, [_ | _]}},
+                 erx_device_record:system_image([lists:droplast(system_image_words())])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}},
+                 erx_device_record:system_image([system_image_words() ++ ["0"]])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([["system_image"]])).
+
+%% A second record refuses both, and none is a refusal too: the tree then serves nothing.
+a_second_or_no_system_image_record_refuses_test() ->
+    ?assertMatch({error, {bad_device_record, [_ | _]}},
+                 erx_device_record:system_image([system_image_words(), system_image_words()])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([["boot", "normal", "a"]])),
+    ?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([])).
