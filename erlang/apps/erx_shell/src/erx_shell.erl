@@ -319,7 +319,11 @@ wait(S = #s{group = Group, reading = Reading, firsts = Firsts, delivery = Delive
             %% outstanding the group answers it with `{error, interrupted}`
             %% instead (group.erl, `handle_info/3` on `interrupt`), so an
             %% interrupt that arrives while a line is read came before it,
-            %% and the table, with no line running, ignores it.
+            %% and the table, with no line running, ignores it. The
+            %% foreground's programs are sent SIGINT before the table's
+            %% effects end the job's Erlang processes, their starters
+            %% among them (docs/design-shell.md, "Job control").
+            [erx_command_srv:job(Tag, {signal, sigint}) || Tag <- erx_shell_jobs:foreground_tags(S#s.jobs)],
             next(table(erx_shell_jobs:interrupt(S#s.jobs), S));
         {Group, suspend} ->
             next(table(erx_shell_jobs:suspend(S#s.jobs), S));

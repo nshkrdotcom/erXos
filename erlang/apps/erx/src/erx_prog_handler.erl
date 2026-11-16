@@ -206,6 +206,9 @@ loop(#h{core = Core, port = Port, closed = Closed, starter = Starter, spec = #{p
                         {erx_prog_stop, Starter} -> stop;
                         {'DOWN', _, process, Starter, _} -> stop;
                         {'DOWN', Pipes, process, _, _} -> pipes_lost;
+                        %% The command server's, for a kill or the program's job.
+                        {erx_signal, Signal, _Sender} -> {signal, Signal};
+                        {erx_job, {signal, Signal}} -> {signal, Signal};
                         {erx_file_opened, Slot, Result} -> {file_opened, Slot, Result};
                         {erx_file_done, Slot, Result} -> {file_done, Slot, Result};
                         %% Nothing else is for the handler; it must not pile up.

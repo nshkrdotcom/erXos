@@ -2952,8 +2952,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   of its choosing, and the driver does not refuse one a live program already has. The programs suite's driver
   cases do so with pids 2 to 45 in the session whose server gives the suite's handler cases 2 to 4; it holds
   only because none of those three is an id a driver case gives pipe ends, an exception list. Reserve each
-  driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker, and add the
-  chokepoint check that only `erx_prog_handler` calls `erx_program:start/1` outside the tests.
+  driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
+  `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
+  suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
 * [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
   by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
   generated limit.
@@ -2962,10 +2963,9 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,
   so a session process that sends one forged drops a live row (its job's await answered early, a kill of it
   `esrch`; the id is still never given again); keeping each row's monitor reference and matching it would
-  count only real ends. A `{erx_job, _}`, `{erx_signal, _, _}` or `{erx_read, _, _}` that reaches a handler
-  before its start waits in its mailbox and is then dropped with the handler's other unknown messages, so a
-  job paused in that window runs its program; the handler's side of those messages
-  (the `erx_prog_handler` item below) should take them from the start on.
+  count only real ends. A signal that reaches a handler before its start is carried out once the program
+  runs, but `{erx_job, pause}` and `{erx_read, _, _}` are dropped with the handler's other unknown messages,
+  so a job paused in that window runs its program (the `erx_prog_handler` item below).
 * [Medium] stopgap, `sys/erxos/erx_program_drv.c` (`PROGRAM_IMAGE_CAP_LIMIT`) and
   `liberx/backend/fiasco/object.c` (`erx_fiasco_object_task_open`): a program's image is made with a
   table of `caps_max` capabilities, so it holds every copy of its pipe hand-offs, and the Fiasco
@@ -3173,8 +3173,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   ends and a window's buffer, forwards its notices and reports, and tells the starter its end; the command
   server (`erx_command_srv`) assigns its process id and spawns it. What remains: the program's requests
   other than `kill` and `probe`, a program as a starter (step 3's checks of its table), the handler's side of
-  the server's messages to a row's handler (`{erx_job, Action}`, carried out with the `job` cause,
-  `{erx_signal, Signal, Sender}`, and `{erx_read, Alias, Keys}`, which no handler answers yet, so
+  the server's messages to a row's handler (`{erx_job, pause}` and `{erx_job, resume}`, carried out with the
+  `job` cause, which no handler acts on, so `Ctrl-Z` pauses a line's Erlang processes and not its programs;
+  `{erx_signal, Signal, Sender}` and `{erx_job, {signal, Signal}}`, of which only `sigkill` acts, as a stop,
+  since the program protocol has no report that carries a signal into a program: `Ctrl-C` ends a program
+  through its starter's end (`sigkill`), `kill -INT` or `-TERM` of a program answers `ok` and does nothing,
+  and `-STOP` and `-CONT` likewise; and
+  `{erx_read, Alias, Keys}`, which no handler answers yet, so
   `erx_command_srv:read/2` gives every handler's value as `missing` after its whole wait), and the
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
@@ -6004,6 +6009,15 @@ to the corpus and follow rc
   the source's start, would hold that state in one place; split
   `outcome()` then into a unit's and a source's, since `run_unit` never
   gives `syntax_error` (`erlang/apps/erx_shell/src/erx_shell_parse.erl`).
+* [Medium] shell, `erx_shell_program`: a program's standard streams are pipes whose other ends pump
+  processes of its starter hold, writing to the shell's terminal, Erlang stage, file or nothing, and
+  feeding it from a stage or a file. docs/design-shell.md ("Starting programs") passes a redirection's
+  open file itself, sharing its offset, and opens `/dev/tty` for the terminal, which the terminal relay
+  serves; that needs a form of `erx_prog_handler:start/1` for an open file (keeping the rule that nothing
+  on a window tree enters a program) and the relay's tty readers. Until then a redirected program sees a
+  pipe (no `lseek`, `isatty` false), its standard output and error reach the terminal through two pumps
+  whose order between them is not kept, a program reading standard input from the terminal reads its
+  end at once, and the shell's `kill` of a job reaches its programs as their starter's end, `sigkill`.
 * [Medium] shell, a job's processes are found by group leader, not by
   job tag: until the runtime's job tags exist (docs/design-shell.md,
   "Jobs and their tags"), `erx_shell` runs each line and each `&` job

@@ -250,7 +250,12 @@ Eshell V17.1.1 (type help(). for help)
   no tty runs it yet.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
-  reaches only itself. The shell does not start programs yet. The file tree a program will see (`/bin`, `/dev`
+  reaches only itself. The command shell runs a program of the session's
+  `/bin` by name or as `/bin/NAME`, alone or in a pipeline with Erlang
+  commands: its standard streams are pipes to the terminal and its
+  neighbours, `$status` is its exit status or signal, and `Ctrl-C` ends
+  it. A program does not read the terminal yet, and a redirection reaches
+  it as a pipe, not the file. The file tree a program will see (`/bin`, `/dev`
   with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
