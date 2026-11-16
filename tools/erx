@@ -418,6 +418,8 @@ module Erx
                    name: 'fuzz-erx-rc-conf', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_apps_ctl.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-apps-ctl', deadline: 300, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-bt-hci', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-machine-ctl', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_blk_request.rb'), '--seed', options.fetch(:seed).to_s],

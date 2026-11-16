@@ -1,0 +1,344 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% The fuzz target of the controller's line (docs/design-bluetooth.md, "Fuzz targets"):
+%% erx_h4:split/1, erx_hci:event/2 and erx_hci:return/2, the readers of every byte a
+%% controller sends, which is hostile. A round takes one of them and an input this
+%% module writes from the specification's layouts (Core 6.3 Vol 4 Part A, section 2;
+%% Part E, sections 5.4 and 7), used as written, cut, mutated, given a reserved handle,
+%% or replaced by random bytes. Whatever arrives, no reader makes an atom or raises, and
+%% each answer is checked against what this module knows independently:
+%%
+%% * split/1 gives packets whose encodings, then the rest, are the input byte for byte;
+%%   no ACL packet longer than 251 octets (bt_acl_rx_max); a rest that is one
+%%   incomplete packet, by its own header; a written stream back as written, cut
+%%   anywhere; and an ACL length past the bound refused at its header, whatever data
+%%   follow it.
+%% * event/2 decodes a written event to the term written, and an event written with a
+%%   reserved handle (0xF00 to 0xFFF) as malformed; any event it decodes has exactly its
+%%   layout's length and handles from 0x000 to 0xEFF; malformed only for a code it
+%%   decodes, unknown only for one it does not.
+%% * return/2 answers a failed status as failed, and a success as decoded exactly when
+%%   it has its command's layout's length, the values read back as written.
+%%
+%% Every number is written out here, apart from erx_hci's code, so a layout misread
+%% there disagrees with this module. The seed comes from make check-fuzz.
+
+-module(erx_bt_hci_fuzz).
+-export([run/1]).
+
+-define(ROUNDS, 20000).
+-define(ACL_MAX, 251).
+-define(HANDLE_MAX, 16#EFF).
+%% The events erx_hci decodes, and the LE Meta subevents among them.
+-define(EVENTS, [16#05, 16#08, 16#0E, 16#0F, 16#10, 16#13, 16#30, 16#3E]).
+-define(LE_SUBEVENTS, [16#01, 16#03, 16#05]).
+%% The events this module writes, those with a handle first.
+-define(HANDLED, [disconnection_complete, encryption_change, encryption_key_refresh_complete,
+                  number_of_completed_packets, le_connection_complete, le_connection_update_complete,
+                  le_long_term_key_request]).
+-define(UNHANDLED, [command_complete, command_status, hardware_error, no_completed_packets, other_le_meta]).
+%% Each command named to return/2 and the length of its Command Complete's return
+%% parameters, status included (7.4.1, 7.4.2, 7.8.3, 7.4.6, 7.8.2, 7.4.5; the rest
+%% return their status alone).
+-define(RETURNS, [{read_local_version, 9}, {read_local_commands, 65}, {le_read_features, 9}, {read_bd_addr, 7},
+                  {le_read_buffer_size, 4}, {read_buffer_size, 8}, {reset, 1}, {set_event_mask, 1},
+                  {host_buffer_size, 1}, {le_set_event_mask, 1}, {le_set_random_address, 1},
+                  {le_set_advertising_parameters, 1}, {le_set_advertising_data, 1},
+                  {le_set_scan_response_data, 1}, {le_set_advertising_enable, 1}, {disconnect, 1},
+                  {vendor, 1}]).
+
+run([Seed]) ->
+    rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
+    %% Loaded before the first round counts atoms, since loading a module makes its atoms.
+    [{module, _} = code:ensure_loaded(Module) || Module <- [erx_h4, erx_hci, lists, binary]],
+    Readers = [split, event, return],
+    Outcomes = lists:foldl(fun(_, Tally) -> maps:update_with(round_of(pick(Readers)), fun(N) -> N + 1 end, 1, Tally) end,
+                           #{}, lists:seq(1, ?ROUNDS)),
+    Accepted = [{Reader, maps:get(Reader, Outcomes, 0)} || Reader <- Readers],
+    case lists:all(fun({_, N}) -> N >= ?ROUNDS div 10 end, Accepted) of
+        true -> io:format("fuzz: ~p rounds ok, ~p split, ~p events decoded, ~p returns decoded~n",
+                          [?ROUNDS | [N || {_, N} <- Accepted]]);
+        false -> error({too_few_accepted, Accepted})
+    end.
+
+%% One round of one reader: the reader's name when it accepted the input, `refused`
+%% when it did not.
+round_of(split) ->
+    {Input, Expected} = stream_case(),
+    Said = no_atoms(Input, fun() -> erx_h4:split(Input) end),
+    check_split(Input, Said),
+    case Expected of
+        {packets, Packets} -> split_back(Input, Packets, Said);
+        {acl_too_long, Length} -> Said =:= {error, {acl_too_long, Length}} orelse error({acl_over_bound, Input, Said});
+        none -> ok
+    end,
+    accepted(split, Said);
+round_of(event) ->
+    {Code, Parameters, Expected} = event_case(),
+    Said = no_atoms({Code, Parameters}, fun() -> erx_hci:event(Code, Parameters) end),
+    check_event(Code, Parameters, Said),
+    Expected =:= none orelse Said =:= Expected orelse error({decoded_wrongly, Code, Parameters, Said}),
+    accepted(event, Said);
+round_of(return) ->
+    {Name, Return, Expected} = return_case(),
+    Said = no_atoms({Name, Return}, fun() -> erx_hci:return(Name, Return) end),
+    check_return(Name, Return, Said),
+    Expected =:= none orelse Said =:= Expected orelse error({decoded_wrongly, Name, Return, Said}),
+    accepted(return, Said).
+
+no_atoms(Input, Read) ->
+    Atoms = erlang:system_info(atom_count),
+    Said = Read(),
+    erlang:system_info(atom_count) =:= Atoms orelse error({atoms_made, Input}),
+    Said.
+
+accepted(_Reader, {error, _}) -> refused;
+accepted(_Reader, malformed) -> refused;
+accepted(_Reader, {unknown, _}) -> refused;
+accepted(Reader, _) -> Reader.
+
+%% H4: a written stream as it is ({packets, P}); with an ACL header past the bound at
+%% its end and any part of its data ({acl_too_long, L}); mutated or random (none).
+stream_case() ->
+    Packets = [packet() || _ <- lists:seq(1, rand:uniform(7) - 1)],
+    Stream = iolist_to_binary([encode(Packet) || Packet <- Packets]),
+    case rand:uniform(6) of
+        N when N =< 2 -> {Stream, {packets, Packets}};
+        3 ->
+            Length = ?ACL_MAX + rand:uniform(300),
+            {<<Stream/binary, 2, (word(rand:uniform(16#1000) - 1, 0, 0)):16/little, Length:16/little,
+               (bytes(rand:uniform(Length + 8) - 1))/binary>>, {acl_too_long, Length}};
+        N when N =< 5 -> {mutate(Stream), none};
+        6 -> {bytes(rand:uniform(64) - 1), none}
+    end.
+
+packet() ->
+    case rand:uniform(2) of
+        1 -> {event, byte(), bytes(rand:uniform(256) - 1)};
+        2 -> {acl, rand:uniform(16#1000) - 1, rand:uniform(4) - 1, rand:uniform(4) - 1, bytes(rand:uniform(?ACL_MAX + 1) - 1)}
+    end.
+
+%% Part A, section 2, and Part E, sections 5.4.2 and 5.4.4.
+encode({event, Code, Parameters}) -> <<4, Code, (byte_size(Parameters)), Parameters/binary>>;
+encode({acl, Handle, Boundary, Broadcast, Data}) ->
+    <<2, (word(Handle, Boundary, Broadcast)):16/little, (byte_size(Data)):16/little, Data/binary>>.
+
+word(Handle, Boundary, Broadcast) -> Handle bor (Boundary bsl 12) bor (Broadcast bsl 14).
+
+check_split(Input, {Packets, Rest}) when is_list(Packets), is_binary(Rest) ->
+    lists:foreach(fun check_packet/1, Packets),
+    iolist_to_binary([[encode(Packet) || Packet <- Packets], Rest]) =:= Input orelse error({not_the_input, Input}),
+    incomplete(Rest) orelse error({rest_not_incomplete, Input, Rest});
+check_split(_Input, {error, {bad_indicator, Byte}}) when Byte =/= 2, Byte =/= 4 ->
+    ok;
+check_split(_Input, {error, {acl_too_long, Length}}) when Length > ?ACL_MAX ->
+    ok;
+check_split(Input, Said) ->
+    error({split_answer, Input, Said}).
+
+%% One packet that has not all arrived, read by its own header: an event's parameters
+%% short of its length, or an ACL packet's data short of its length. An ACL header past
+%% the bound left waiting for its data is the bound not checked at the header.
+incomplete(<<>>) -> true;
+incomplete(<<4, _Code, Length, Parameters/binary>>) -> byte_size(Parameters) < Length;
+incomplete(<<4, _/binary>> = Head) -> byte_size(Head) < 3;
+incomplete(<<2, _Word:16, Length:16/little, _/binary>> = Rest) when Length > ?ACL_MAX -> error({acl_over_bound, Rest});
+incomplete(<<2, _Word:16, Length:16/little, Data/binary>>) -> byte_size(Data) < Length;
+incomplete(<<2, _/binary>> = Head) -> byte_size(Head) < 5;
+incomplete(_Rest) -> false.
+
+check_packet({event, Code, Parameters}) when Code >= 0, Code =< 255, byte_size(Parameters) =< 255 ->
+    ok;
+check_packet({acl, _Handle, _Boundary, _Broadcast, Data} = Packet) when byte_size(Data) > ?ACL_MAX ->
+    error({acl_over_bound, Packet});
+check_packet({acl, Handle, Boundary, Broadcast, Data}) when Handle >= 0, Handle =< 16#FFF, Boundary >= 0,
+                                                           Boundary =< 3, Broadcast >= 0, Broadcast =< 3,
+                                                           is_binary(Data) ->
+    ok;
+check_packet(Packet) ->
+    error({ill_formed_packet, Packet}).
+
+%% A written stream reads back as written, whole and cut at any byte.
+split_back(Input, Packets, Said) ->
+    Said =:= {Packets, <<>>} orelse error({split_wrongly, Input, Said}),
+    Cut = rand:uniform(byte_size(Input) + 1) - 1,
+    <<Head:Cut/binary, Tail/binary>> = Input,
+    {First, Rest} = erx_h4:split(Head),
+    case erx_h4:split(<<Rest/binary, Tail/binary>>) of
+        {Second, <<>>} -> First ++ Second =:= Packets orelse error({cut_splits_differently, Input, Cut});
+        Second -> error({cut_splits_differently, Input, Cut, Second})
+    end.
+
+%% HCI events: {Code, Parameters, Term} for a written one, malformed for one written
+%% with a reserved handle, none for one mutated or random.
+event_case() ->
+    Live = rand:uniform(?HANDLE_MAX + 1) - 1,
+    case rand:uniform(6) of
+        N when N =< 2 -> written_event(pick(?HANDLED ++ ?UNHANDLED), Live);
+        N when N =< 4 -> {Code, Parameters, _} = written_event(pick(?HANDLED ++ ?UNHANDLED), Live),
+                         {Code, mutate(Parameters), none};
+        5 -> {Code, Parameters, _} = written_event(pick(?HANDLED), ?HANDLE_MAX + rand:uniform(16#FFF - ?HANDLE_MAX)),
+             {Code, Parameters, malformed};
+        6 -> {byte(), bytes(rand:uniform(32) - 1), none}
+    end.
+
+%% Each event of Part E, 7.7, from random fields, with the term it decodes to; the
+%% handle word's upper four bits are flags the decoder ignores.
+written_event(Kind, Handle) ->
+    Word = Handle bor ((rand:uniform(16) - 1) bsl 12),
+    Status = byte(),
+    case Kind of
+        command_complete ->
+            {Allowed, Opcode, Return} = {byte(), rand:uniform(16#10000) - 1, bytes(rand:uniform(253) - 1)},
+            {16#0E, <<Allowed, Opcode:16/little, Return/binary>>, {command_complete, Allowed, Opcode, Return}};
+        command_status ->
+            {Allowed, Opcode} = {byte(), rand:uniform(16#10000) - 1},
+            {16#0F, <<Status, Allowed, Opcode:16/little>>, {command_status, Status, Allowed, Opcode}};
+        disconnection_complete ->
+            Reason = byte(),
+            {16#05, <<Status, Word:16/little, Reason>>, {disconnection_complete, Status, Handle, Reason}};
+        encryption_change ->
+            Enabled = byte(),
+            {16#08, <<Status, Word:16/little, Enabled>>, {encryption_change, Status, Handle, Enabled}};
+        encryption_key_refresh_complete ->
+            {16#30, <<Status, Word:16/little>>, {encryption_key_refresh_complete, Status, Handle}};
+        hardware_error ->
+            {16#10, <<Status>>, {hardware_error, Status}};
+        number_of_completed_packets ->
+            %% The round's handle first; at most 63 pairs, so the parameters fit in 255
+            %% octets.
+            Others = [rand:uniform(?HANDLE_MAX + 1) - 1 || _ <- lists:seq(1, rand:uniform(63) - 1)],
+            Counts = [rand:uniform(16#10000) - 1 || _ <- [Handle | Others]],
+            Written = lists:zip([Word | Others], Counts),
+            {16#13, <<(length(Written)), << <<W:16/little, C:16/little>> || {W, C} <- Written >>/binary>>,
+             {number_of_completed_packets, lists:zip([Handle | Others], Counts)}};
+        no_completed_packets ->
+            {16#13, <<0>>, {number_of_completed_packets, []}};
+        le_connection_complete ->
+            [Role, PeerType, Accuracy] = [byte() || _ <- [role, peer_type, accuracy]],
+            Peer = bytes(6),
+            [Interval, Latency, Timeout] = [rand:uniform(16#10000) - 1 || _ <- [interval, latency, timeout]],
+            {16#3E, <<16#01, Status, Word:16/little, Role, PeerType, (reverse(Peer))/binary, Interval:16/little,
+                      Latency:16/little, Timeout:16/little, Accuracy>>,
+             {le_connection_complete, Status, Handle, #{role => Role, peer_type => PeerType, peer => Peer,
+                                                        interval => Interval, latency => Latency, timeout => Timeout}}};
+        le_connection_update_complete ->
+            {16#3E, <<16#03, Status, Word:16/little, (bytes(6))/binary>>, {le_connection_update_complete, Status, Handle}};
+        le_long_term_key_request ->
+            {Random, Ediv} = {bytes(8), rand:uniform(16#10000) - 1},
+            {16#3E, <<16#05, Word:16/little, Random/binary, Ediv:16/little>>, {le_long_term_key_request, Handle, Random, Ediv}};
+        other_le_meta ->
+            Subevent = pick([S || S <- lists:seq(0, 255), not lists:member(S, ?LE_SUBEVENTS)]),
+            {16#3E, <<Subevent, (bytes(rand:uniform(20) - 1))/binary>>, {unknown, {le_meta, Subevent}}}
+    end.
+
+check_event(Code, Parameters, malformed) ->
+    lists:member(Code, ?EVENTS) orelse error({malformed_unknown_code, Code, Parameters});
+check_event(Code, Parameters, {unknown, {le_meta, Subevent}}) ->
+    Code =:= 16#3E andalso not lists:member(Subevent, ?LE_SUBEVENTS) andalso binary:first(Parameters) =:= Subevent
+        orelse error({unknown_subevent_wrongly, Parameters});
+check_event(Code, _Parameters, {unknown, Code}) ->
+    not lists:member(Code, ?EVENTS) orelse error({known_code_unknown, Code});
+check_event(Code, Parameters, Term) ->
+    layout(Term) =:= Code orelse error({wrong_kind, Code, Term}),
+    byte_size(Parameters) =:= length_of(Code, Parameters) orelse error({length_disagrees, Code, Parameters, Term}),
+    lists:all(fun(Handle) -> Handle >= 0 andalso Handle =< ?HANDLE_MAX end, handles(Term))
+        orelse error({reserved_handle, Code, Parameters, Term}).
+
+%% The code each decoded term comes from.
+layout({command_complete, _, _, _}) -> 16#0E;
+layout({command_status, _, _, _}) -> 16#0F;
+layout({disconnection_complete, _, _, _}) -> 16#05;
+layout({encryption_change, _, _, _}) -> 16#08;
+layout({encryption_key_refresh_complete, _, _}) -> 16#30;
+layout({hardware_error, _}) -> 16#10;
+layout({number_of_completed_packets, _}) -> 16#13;
+layout({le_connection_complete, _, _, _}) -> 16#3E;
+layout({le_connection_update_complete, _, _}) -> 16#3E;
+layout({le_long_term_key_request, _, _, _}) -> 16#3E;
+layout(Term) -> error({not_an_event, Term}).
+
+%% Each layout's length (7.7.5, 7.7.8, 7.7.14, 7.7.15, 7.7.16, 7.7.19, 7.7.39, 7.7.65.1,
+%% 7.7.65.3, 7.7.65.5); Command Complete's return parameters take whatever follows.
+length_of(16#05, _) -> 4;
+length_of(16#08, _) -> 4;
+length_of(16#0E, Parameters) -> max(3, byte_size(Parameters));
+length_of(16#0F, _) -> 4;
+length_of(16#10, _) -> 1;
+length_of(16#13, <<Count, _/binary>>) -> 1 + 4 * Count;
+length_of(16#30, _) -> 3;
+length_of(16#3E, <<16#01, _/binary>>) -> 19;
+length_of(16#3E, <<16#03, _/binary>>) -> 10;
+length_of(16#3E, <<16#05, _/binary>>) -> 13;
+length_of(Code, Parameters) -> error({no_layout, Code, Parameters}).
+
+handles({number_of_completed_packets, Pairs}) -> [Handle || {Handle, _} <- Pairs];
+handles({Kind, _, Handle, _}) when Kind =:= disconnection_complete; Kind =:= encryption_change;
+                                   Kind =:= le_connection_complete -> [Handle];
+handles({Kind, _, Handle}) when Kind =:= encryption_key_refresh_complete;
+                                Kind =:= le_connection_update_complete -> [Handle];
+handles({le_long_term_key_request, Handle, _, _}) -> [Handle];
+handles(_) -> [].
+
+%% Command Complete returns: {Name, Return, Decoded} for a success written in its
+%% layout or a failure; {Name, Return, none} for a success of any other length.
+return_case() ->
+    {Name, Length} = pick(?RETURNS),
+    case rand:uniform(3) of
+        1 -> Fields = bytes(Length - 1), {Name, <<0, Fields/binary>>, {ok, value(Name, Fields)}};
+        2 -> Status = rand:uniform(255), {Name, <<Status, (bytes(rand:uniform(70) - 1))/binary>>, {failed, Status}};
+        3 -> {Name, success_of_length(rand:uniform(72) - 1), none}
+    end.
+
+%% The values a success returns, read from its fields as the sections lay them out.
+value(read_local_version, <<HciVersion, HciSubversion:16/little, LmpVersion, Company:16/little, LmpSubversion:16/little>>) ->
+    #{hci_version => HciVersion, hci_subversion => HciSubversion, lmp_version => LmpVersion, company => Company,
+      lmp_subversion => LmpSubversion};
+value(read_local_commands, Commands) -> Commands;
+value(le_read_features, Features) -> Features;
+value(read_bd_addr, Address) -> reverse(Address);
+value(le_read_buffer_size, <<Length:16/little, Packets>>) -> {Length, Packets};
+value(read_buffer_size, <<Length:16/little, _, Packets:16/little, _:16>>) -> {Length, Packets};
+value(_StatusOnly, <<>>) -> done.
+
+%% A status of success then random bytes, Length in all.
+success_of_length(0) -> <<>>;
+success_of_length(Length) -> <<0, (bytes(Length - 1))/binary>>.
+
+check_return(_Name, <<>>, malformed) ->
+    ok;
+check_return(_Name, <<Status, _/binary>>, {failed, Status}) when Status =/= 0 ->
+    ok;
+check_return(Name, <<0, _/binary>> = Return, Said) ->
+    {Name, Length} = lists:keyfind(Name, 1, ?RETURNS),
+    case Said of
+        {ok, _} when byte_size(Return) =:= Length -> ok;
+        malformed when byte_size(Return) =/= Length -> ok;
+        _ -> error({return_length_disagrees, Name, Return, Said})
+    end;
+check_return(Name, Return, Said) ->
+    error({return_answer, Name, Return, Said}).
+
+reverse(Bytes) -> list_to_binary(lists:reverse(binary_to_list(Bytes))).
+
+%% Damage at one place: a byte removed, inserted or replaced, the first byte replaced
+%% (a count or a subevent), or the input cut short.
+mutate(<<>>) ->
+    bytes(rand:uniform(8));
+mutate(Input) ->
+    At = rand:uniform(byte_size(Input)) - 1,
+    <<Before:At/binary, Byte, After/binary>> = Input,
+    case rand:uniform(5) of
+        1 -> <<Before/binary, After/binary>>;
+        2 -> <<Before/binary, (byte()), Byte, After/binary>>;
+        3 -> <<Before/binary, (byte()), After/binary>>;
+        4 -> <<_, Tail/binary>> = Input, <<(byte()), Tail/binary>>;
+        5 -> Before
+    end.
+
+byte() -> rand:uniform(256) - 1.
+
+bytes(Count) -> << <<(byte())>> || _ <- lists:seq(1, Count) >>.
+
+pick(List) -> lists:nth(rand:uniform(length(List)), List).

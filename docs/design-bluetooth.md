@@ -1568,7 +1568,8 @@ Each passing case is paired with the seeded fault it must catch.
 
 ### Fuzz targets
 
-`erx_h4`, the HCI event decoder, the L2CAP reassembly and frame decoder,
+`erx_h4`, the HCI event decoder and its Command Complete returns
+(`erx_hci:event/2`, `return/2`), the L2CAP reassembly and frame decoder,
 the LE signaling decoder, `erx_att`, `erx_smp`, `erx_bt_state`, the line
 service's `ctl` grammar, the control tree's `pair` and `ctl` grammars,
 and the `ble` facet's request decoder; in the HID stage, the advertising
