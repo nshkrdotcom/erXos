@@ -5,13 +5,17 @@
 require 'digest'
 require 'find'
 require 'fileutils'
+require 'json'
 require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
+require_relative '../../tools/lib/erx/manifest'
+require_relative '../../tools/lib/erx/platform'
 require_relative '../../tools/lib/erx/release_medium'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/generated'
 require_relative '../fixtures/erlang_build'
+require_relative '../fixtures/manifest_context'
 
 # The packer's disk image for QEMU: the EROFS image fsimg writes, slot A's plan, and
 # the medium MediumImage.release writes, read back three independent ways: the table by
@@ -127,8 +131,11 @@ class ReleaseMediumTest < Minitest::Test
       first, artifacts = written(boot, release, File.join(directory, 'first'))
       second, = written(boot, release, File.join(directory, 'second'))
       extents = first.slot.images.map { |extent| { 'slot_offset' => extent.slot_offset, 'length' => extent.file.length } }
-      assert_equal({ 'release' => { 'kind' => 'erofs_image', 'extents' => extents } }, artifacts,
-                   'the manifest records the image where the medium holds it')
+      tree = Erx::AppPackage.image_tree(File.binread(first.erofs))
+      recorded = { 'offset' => extents.fetch(0).fetch('length'), 'length' => tree.bytes.bytesize,
+                   'salt' => Digest::SHA256.hexdigest(File.binread(first.erofs)), 'root_hash' => tree.root_hash.unpack1('H*') }
+      assert_equal({ 'release' => { 'kind' => 'erofs_image', 'extents' => extents, 'tree' => recorded } }, artifacts,
+                   'the manifest records the image and its tree where the medium holds them')
 
       assert_equal Digest::SHA256.file(first.path), Digest::SHA256.file(second.path), 'two writes differ'
       FileUtils.mkdir_p(File.join(directory, 'fresh'))
@@ -145,6 +152,7 @@ class ReleaseMediumTest < Minitest::Test
       File.open(first.path, 'rb') do |medium|
         assert_equal File.binread(boot), medium.pread(File.size(boot), boot_a + first.slot.boot.slot_offset)
         assert_equal File.binread(first.erofs), medium.pread(image.file.length, system_a + image.slot_offset)
+        assert_equal tree.bytes, medium.pread(tree.bytes.bytesize, system_a + recorded.fetch('offset')), 'the tree follows the image'
         zeros(first).each { |offset| assert_equal "\0".b * SECTOR, medium.pread(SECTOR, offset), "sector #{offset / SECTOR}" }
         # Installation formatted the data partition: its fresh volume from the first sector.
         volume = File.binread(first.volume.path)
@@ -199,6 +207,36 @@ class ReleaseMediumTest < Minitest::Test
     end
   end
 
+  # The system partition as its storage domain reads it: system A of the medium the
+  # packer writes, mounted through its tree with erx_verity and erx_erofs:mount/3
+  # (test/erlang/erx_release_system_tests.erl) under the words of the system_image record
+  # the development manifest packs from the image's artifact, as the domain library
+  # writes them, every file of the release read back. Seeded: one bit of the tree
+  # flipped, which the mount answers eio.
+  def test_the_system_partition_reads_through_its_tree_under_the_manifest_record
+    Dir.mktmpdir('erx-release-system-') do |directory|
+      files = tree(File.join(directory, 'input'))
+      boot = File.join(directory, 'image.boot')
+      File.binwrite(boot, Random.new(7).bytes(MIB))
+      release = files.map { |path, source| { 'path' => path, 'artifact' => source } }
+      medium, artifacts = written(boot, release, File.join(directory, 'medium'))
+      row = system_image_row(artifacts)
+      length = row.fetch('tree_offset') + row.fetch('tree_length')
+      partition = File.open(medium.path, 'rb') { |file| file.pread(length, CODEC.constant('medium_system_a_start') * SECTOR) }
+      cases = File.join(directory, 'cases')
+      Dir.mkdir(cases)
+      File.binwrite(File.join(cases, 'good.img'), partition)
+      File.binwrite(File.join(cases, 'flipped.img'), partition.dup.tap { |bytes| flip(bytes, row.fetch('tree_offset')) })
+      words = ['system_image', *row.values_at('image_length', 'tree_offset', 'tree_length').map(&:to_s),
+               row.fetch('salt').byteslice(0, row.fetch('salt_length')).unpack1('H*'), row.fetch('root_hash').unpack1('H*')]
+      # Erlang reads each string as its list of bytes, which Array#inspect spells.
+      listed = files.map { |path, source| "{#{path.bytes.inspect}, #{source.bytes.inspect}}" }
+      File.write(File.join(cases, 'system.terms'),
+                 "{record, [#{words.map { |word| word.bytes.inspect }.join(', ')}]}.\n{files, [#{listed.join(', ')}]}.\n")
+      eunit(cases, 'erx_release_system_tests')
+    end
+  end
+
   private
 
   # A small release-like tree: nested directories, an empty file and a multi-block file.
@@ -211,6 +249,42 @@ class ReleaseMediumTest < Minitest::Test
       FileUtils.mkdir_p(directory)
       File.binwrite(source, Random.new(index).bytes(size))
       [path, source]
+    end
+  end
+
+  # The one system_image row the development manifest packs from artifacts, the
+  # fixture's other artifacts beside them.
+  def system_image_row(artifacts)
+    codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::Sources.read(root: ROOT)))
+    arguments = ManifestContextFixture.arguments(codec)
+    platform = JSON.parse(File.read(File.join(ROOT, 'config/platforms/qemu-virt.json')))
+    context = Erx::Manifest::Context.new(**arguments, platform: platform, build_kind: 'development',
+                                                      artifacts: arguments.fetch(:artifacts).merge(artifacts))
+    source = Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT)
+    bytes = Erx::Manifest.admit(source: source, codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
+    view = codec.open('manifest', bytes)
+    assert_equal 1, view.count('system_image')
+    view.fetch('system_image', 0)
+  end
+
+  def flip(bytes, at) = bytes.setbyte(at, bytes.getbyte(at) ^ 1)
+
+  # Runs module's EUnit cases over the cases in directory, compiled from source with the
+  # reader's modules.
+  def eunit(directory, module_name)
+    Dir.mktmpdir('erx-release-system-build-') do |work|
+      ErlangBuild.compile(work, applications: %w[erx],
+                                tests: %w[otp/erts/preloaded/src/erx_verity.erl otp/erts/preloaded/src/erx_verity_tree.erl
+                                          otp/erts/preloaded/src/erx_erofs.erl test/erlang/host_bytes/erx_bytes.erl
+                                          build/gen/otp/erts/preloaded/src/erx_9p_grammar.erl test/erlang/erx_erofs_tests.erl
+                                          test/erlang/erx_release_system_tests.erl],
+                                includes: [File.join(ROOT, 'otp/lib/kernel/include')])
+      output, status = Open3.capture2e({ 'ERX_RELEASE_SYSTEM' => directory }, 'gtimeout', '-k', '10', '120', ENV.fetch('ERX_ERL'),
+                                       '-noshell', '-pa', work,
+                                       '-eval', "halt(case eunit:test(#{module_name}, [verbose]) of ok -> 0; _ -> 1 end)",
+                                       chdir: work, stdin_data: '')
+      assert status.success?, output
+      assert_match(/^  2 tests passed\./, output)
     end
   end
 
@@ -243,7 +317,7 @@ class ReleaseMediumTest < Minitest::Test
 
   # Byte offsets that must read as zeros: the first and last sector of every window but
   # boot A and of system B, boot A's gaps before and after the bootable file, and system
-  # A's after the image.
+  # A's after the image's tree.
   def zeros(written)
     slot_a = CODEC.constant('medium_boot_a_start') * SECTOR
     system_a = CODEC.constant('medium_system_a_start') * SECTOR
@@ -257,9 +331,12 @@ class ReleaseMediumTest < Minitest::Test
     starts = windows.reject { |window| window.role == :data }.map(&:start)
     [*starts.map { |start| start * SECTOR }, *windows.map { |window| window.last * SECTOR },
      slot_a, boot_start - SECTOR, gap_start, slot_a + boot_bytes - SECTOR,
-     system_a + image.slot_offset + image.file.length, system_a + system_bytes - SECTOR,
+     system_a + tree_end(written), system_a + system_bytes - SECTOR,
      system_b, system_b + system_bytes - SECTOR]
   end
+
+  # Where the system partition's tree ends, in bytes from the partition's start.
+  def tree_end(written) = Release.system_partition(written.erofs).then { |system| system.tree_offset + system.tree.bytes.bytesize }
 
   # The image that starts offset bytes into path, verified by fsimg and extracted by it
   # below directory: each regular file's path inside the image and its bytes.

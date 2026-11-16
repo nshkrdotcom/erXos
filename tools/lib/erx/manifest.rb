@@ -1167,7 +1167,7 @@ module Erx
         %w[domain session partial_boot].each do |kind|
           unsupported('child domain planning is unavailable', kind) unless records(kind).empty?
         end
-        %w[window service facet introduce image liveness display apps package signer].each do |kind|
+        %w[window service facet introduce image system_image liveness display apps package signer].each do |kind|
           invalid('empty native boot has no service or child assignments', 9, kind) unless records(kind).empty?
         end
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
@@ -1214,6 +1214,7 @@ module Erx
         %w[service facet introduce liveness display].each do |kind|
           invalid('a partial boot runs no services', 2, kind) unless records(kind).empty?
         end
+        invalid('a partial boot has no domain to hold the system partition', 8, 'system_image') unless records('system_image').empty?
       end
 
       def check_device(device)
@@ -1261,6 +1262,7 @@ module Erx
         check_facets_supported
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
         rows['windows'] = normalize_windows(rows)
+        rows['system_image'] = system_image_rows
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -1625,6 +1627,36 @@ module Erx
         size = @codec.constant('signer_key_bytes')
         invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
         [{ 'key' => key.bytes }]
+      end
+
+      # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"),
+      # packed as its one system_image record from the erofs_image artifact the nameless
+      # system_image row's input names, as ReleaseMedium.image records it: the image one
+      # extent from the partition's start (checked_extents keeps it inside the partition),
+      # and its tree, whole blocks from where the image ends and inside the partition,
+      # with a salt of at most 32 bytes and a 32-byte root hash in lowercase hex. None
+      # without the row.
+      def system_image_rows
+        record = records('system_image').first
+        return [] unless record
+
+        artifact = artifact(record, 'input', 'erofs_image', property: 8, field: 'system_image.input')
+        extents = checked_extents(artifact)
+        invalid('the system image is one extent at its partition\'s start', 8, 'system_image.input') unless
+          extents.size == 1 && extents.first.fetch('slot_offset').zero?
+        length = extents.first.fetch('length')
+        tree = artifact['tree']
+        case tree.is_a?(Hash) && tree.values_at('offset', 'length', 'salt', 'root_hash')
+        in [Integer => offset, Integer => bytes, /\A(?:[0-9a-f]{2}){0,32}\z/ => salt, /\A[0-9a-f]{64}\z/ => root]
+          partition = @codec.constant('medium_system_sectors') * @codec.constant('mbr_sector_size')
+          invalid('the system image\'s tree is whole blocks from the image\'s end, inside the partition', 8, 'system_image.input') unless
+            offset == length && !bytes.negative? && (bytes % @codec.constant('page_size')).zero? && offset + bytes <= partition
+        else
+          invalid('the system image\'s tree names its offset, length, salt and root hash', 8, 'system_image.input')
+        end
+        salt = [salt].pack('H*')
+        [{ 'image_length' => length, 'tree_offset' => offset, 'tree_length' => bytes, 'salt_length' => salt.bytesize,
+           'reserved' => 0, 'salt' => salt.ljust(32, "\0").bytes, 'root_hash' => [root].pack('H*').bytes }]
       end
 
       # A package row as the manifest packs it (erx_mf_package).

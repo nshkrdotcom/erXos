@@ -2,7 +2,9 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require_relative 'app_package'
 require_relative 'boot_record'
+require_relative 'bounded_file'
 require_relative 'data_volume'
 require_relative 'erofs_image'
 require_relative 'error'
@@ -13,7 +15,8 @@ module Erx
   # file's medium layout (MediumImage) whose slot A holds a production image's bootable
   # file in its boot partition and the release's EROFS image in its system partition,
   # which fsimg writes from the system release's files at the paths the boot image's
-  # archive gives them (ProductionImage::Built#release). The boot-selection record
+  # archive gives them (ProductionImage::Built#release), followed by the image's dm-verity
+  # tree (system_partition). The boot-selection record
   # commits slot A (BootRecord.sector), and the rest of its partition, slot B and the
   # vault's partition hold zeros. The data partition holds a fresh littlefs volume (DataVolume): writing a
   # medium is installation, the one step that formats /data, since the guest's mount
@@ -39,6 +42,12 @@ module Erx
     Extent = Data.define(:file, :slot_offset)
     # A slot's contents: the bootable file's extent and each EROFS image's, in order.
     SlotPlan = Data.define(:boot, :images)
+    # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"): the
+    # release's EROFS image at its Extent, from the partition's start, and its dm-verity
+    # tree (AppPackage.image_tree), whose whole blocks start where the image ends.
+    SystemPartition = Data.define(:image, :tree) do
+      def tree_offset = image.slot_offset + image.file.length
+    end
     # The medium as written: its path, the EROFS image's path beside it, its data
     # partition's length, slot A's plan and the data partition's fresh volume
     # (DataVolume.format). A boot of the image boots it with a medium as its disk: this
@@ -85,14 +94,41 @@ module Erx
     end
 
     # Writes the system release's EROFS image, EROFS in directory, from entries, the
-    # release's entries (ProductionImage::Built#release). Returns its path and the artifacts
-    # the packer hands the manifest check: the image under the name the manifest's input
-    # names, with its one extent in the slot.
+    # release's entries (ProductionImage::Built#release); the file holds the image alone.
+    # Returns its path and the artifacts the packer hands the manifest check: the image
+    # under the name the manifest's input names, with its one extent in the slot and the
+    # tree the system partition holds after it, its offset from the partition's start, its
+    # length, and its salt and root hash in lowercase hex.
     def image(entries:, directory:, runner:)
       path = ErofsImage.new(runner: runner).write(files: files(entries), name: IMAGE, output: File.join(directory, EROFS))
+      system = system_partition(path)
+      extents = [{ 'slot_offset' => system.image.slot_offset, 'length' => system.image.file.length }]
+      tree = { 'offset' => system.tree_offset, 'length' => system.tree.bytes.bytesize,
+               'salt' => system.tree.salt.unpack1('H*'), 'root_hash' => system.tree.root_hash.unpack1('H*') }
+      [path, { IMAGE => { 'kind' => 'erofs_image', 'extents' => extents, 'tree' => tree } }]
+    end
+
+    # The system partition of the release's EROFS image at path: the image where
+    # image_extent places it and the tree over its bytes. An image and tree that leave the
+    # partition are refused.
+    def system_partition(path)
       extent = image_extent(path)
-      extents = [{ 'slot_offset' => extent.slot_offset, 'length' => extent.file.length }]
-      [path, { IMAGE => { 'kind' => 'erofs_image', 'extents' => extents } }]
+      system_bytes = MediumImage.constant('system_sectors') * SECTOR_BYTES
+      partition = SystemPartition.new(image: extent, tree: AppPackage.image_tree(BoundedFile.read(path, maximum: system_bytes)))
+      raise Error, "the image #{IMAGE} and its tree leave their slot" if partition.tree_offset + partition.tree.bytes.bytesize > system_bytes
+
+      partition
+    end
+
+    # The pieces of the system partition of the EROFS image at path, by sector from the
+    # medium's start for a partition starting at sector start: the image, then its tree
+    # when the image is more than one block and so has one. Both medium writers place the
+    # partition through this function.
+    def system_pieces(path, start:)
+      system = system_partition(path)
+      image = { start + (system.image.slot_offset / SECTOR_BYTES) => MediumImage::FilePiece.new(path: path, length: system.image.file.length) }
+      tree = system.tree.bytes.empty? ? {} : { start + (system.tree_offset / SECTOR_BYTES) => system.tree.bytes }
+      image.merge(tree)
     end
 
     # Where a slot holds the system release's EROFS image at path, the slot's one image:
@@ -117,15 +153,17 @@ module Erx
     end
 
     # Writes the medium, NAME in directory, whose slot A holds plan's files, the bootable
-    # file in boot A and the images in system A, whose boot-selection record commits slot
-    # A and whose data partition holds volume; returns its path. A boot that may write its
-    # medium takes a fresh one from the plan and volume of the release medium written once.
+    # file in boot A and the one image in system A as its system partition
+    # (system_pieces), whose boot-selection record commits slot A and whose data partition
+    # holds volume; returns its path. A boot that may write its medium takes a fresh one
+    # from the plan and volume of the release medium written once.
     def medium(plan, directory:, data_sectors:, volume:)
-      placed = [[MediumImage.constant('boot_a_start'), plan.boot],
-                *plan.images.map { |image| [MediumImage.constant('system_a_start'), image] }]
-      pieces = placed.to_h do |start, extent|
-        [start + (extent.slot_offset / SECTOR_BYTES), MediumImage::FilePiece.new(path: extent.file.path, length: extent.file.length)]
-      end
+      raise Error, 'a release medium holds one image' unless plan.images.size == 1
+
+      boot = plan.boot
+      pieces = { MediumImage.constant('boot_a_start') + (boot.slot_offset / SECTOR_BYTES) =>
+                   MediumImage::FilePiece.new(path: boot.file.path, length: boot.file.length),
+                 **system_pieces(plan.images.fetch(0).file.path, start: MediumImage.constant('system_a_start')) }
       pieces[BootRecord::RECORD_OFFSET / SECTOR_BYTES] = BootRecord.sector(:a)
       pieces.merge!(DataVolume.pieces(volume))
       MediumImage.create(directory: directory, name: NAME, data_sectors: data_sectors, pieces: pieces)

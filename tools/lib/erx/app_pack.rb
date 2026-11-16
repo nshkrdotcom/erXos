@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
-require 'digest'
 require 'fileutils'
 require 'tmpdir'
 require_relative 'app_package'
@@ -172,10 +171,9 @@ module Erx
     # hash tree.
     def package(declaration, image:, signer:)
       block = AppPackage.block
-      salt = Digest::SHA256.digest(image)
-      tree = AppPackage.verity_tree(image, salt: salt)
+      tree = AppPackage.image_tree(image)
       header = AppPackage.header(declaration, image_blocks: image.bytesize / block,
-                                              tree_blocks: tree.bytes.bytesize / block, salt: salt,
+                                              tree_blocks: tree.bytes.bytesize / block, salt: tree.salt,
                                               root_hash: tree.root_hash, signer: signer)
       bytes = header.ljust(((header.bytesize + block - 1) / block) * block, "\0") + image + tree.bytes
       limit = AppPackage.codec.constant('pkg_bytes_max')
