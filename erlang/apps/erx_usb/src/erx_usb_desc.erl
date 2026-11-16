@@ -5,7 +5,8 @@
 -moduledoc """
 The USB descriptor decoder (docs/design-usb.md, "Descriptors"): turns the
 bytes a device returns to GET_DESCRIPTOR during enumeration into maps the
-claim and the bus core read. It decodes the device descriptor, a
+claim and the bus core read. It decodes the device descriptor and its
+first 8 bytes, a configuration's length from its header and the
 configuration with its interface, endpoint, SuperSpeed endpoint companion
 and HID descriptors, a hub descriptor, a string descriptor and the
 language table.
@@ -50,7 +51,8 @@ decoder answers `{ok, Value}` or `{error, Reason}` and never raises, which
 through one `throw` caught in decoded/1. No atom is made from input.
 """.
 
--export([device/1, configuration/1, hub/1, string/1, languages/1, language/1]).
+-export([device/1, device_head/1, configuration_length/1, configuration/1, hub/1, string/1, languages/1,
+         language/1]).
 
 -export_type([device/0, configuration/0, setting/0, endpoint/0, companion/0, hid/0,
               hub/0, reason/0]).
@@ -124,6 +126,21 @@ and its companion when one followed it.
 device(Bytes) when is_binary(Bytes) -> decoded(fun() -> device_fields(Bytes) end).
 
 -doc """
+A device descriptor's first `usb_device_descriptor_head` bytes, of type 1
+with a `bLength` of 18: its `bMaxPacketSize0`, which a full-speed EP0's
+packet size needs before the whole descriptor can be read.
+""".
+-spec device_head(binary()) -> {ok, byte()} | {error, reason()}.
+device_head(Bytes) when is_binary(Bytes) -> decoded(fun() -> device_head_fields(Bytes) end).
+
+-doc """
+A configuration's `wTotalLength`, from 9 to `usb_config_max`, read from
+its 9-byte header of type 2, which is all the bytes given need hold.
+""".
+-spec configuration_length(binary()) -> {ok, 9..?ERX_USB_CONFIG_MAX} | {error, reason()}.
+configuration_length(Bytes) when is_binary(Bytes) -> decoded(fun() -> total_length(Bytes) end).
+
+-doc """
 A configuration from its header on: the header must be 9 bytes of type 2
 with `wTotalLength` from 9 to `usb_config_max`, and the bytes given must
 hold all `wTotalLength`; bytes past it are not read.
@@ -184,20 +201,32 @@ device_fields(<<Length, ?ERX_USB_DESCRIPTOR_TYPE_DEVICE, Usb:16/little, Class, S
 device_fields(_) ->
     refuse(malformed_descriptor).
 
+device_head_fields(<<?ERX_USB_DEVICE_DESCRIPTOR_SIZE, ?ERX_USB_DESCRIPTOR_TYPE_DEVICE, _Usb:16, _Class,
+                     _Subclass, _Protocol, MaxPacket0, _/binary>>) ->
+    MaxPacket0;
+device_head_fields(_) ->
+    refuse(malformed_descriptor).
+
 %% The header's own wTotalLength bounds the walk; too long is told apart from
 %% malformed, since a device past the bound is refused for that bound.
-walk_configuration(<<Length, ?ERX_USB_DESCRIPTOR_TYPE_CONFIGURATION, Total:16/little, _Interfaces,
-                     Value, _Name, Attributes, MaxPower, _/binary>> = Bytes)
-  when Length =:= ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE ->
+total_length(<<?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE, ?ERX_USB_DESCRIPTOR_TYPE_CONFIGURATION, Total:16/little,
+               _/binary>> = Bytes)
+  when byte_size(Bytes) >= ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE ->
     check(Total =< ?ERX_USB_CONFIG_MAX, descriptor_too_long),
-    check(Total >= Length andalso Total =< byte_size(Bytes), malformed_descriptor),
-    <<_:Length/binary, Body:(Total - Length)/binary, _Unread/binary>> = Bytes,
+    check(Total >= ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE, malformed_descriptor),
+    Total;
+total_length(_) ->
+    refuse(malformed_descriptor).
+
+walk_configuration(Bytes) ->
+    Total = total_length(Bytes),
+    check(Total =< byte_size(Bytes), malformed_descriptor),
+    <<_Length, _Type, _Total:16, _Interfaces, Value, _Name, Attributes, MaxPower,
+      Body:(Total - ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE)/binary, _Unread/binary>> = Bytes,
     #walk{settings = Settings} = walk(Body, #walk{}),
     #{value => Value, attributes => Attributes, max_power => MaxPower,
       settings => maps:map(fun(_Key, S = #{endpoints := Es}) -> S#{endpoints := lists:reverse(Es)} end,
-                           Settings)};
-walk_configuration(_) ->
-    refuse(malformed_descriptor).
+                           Settings)}.
 
 walk(<<>>, W) ->
     W;

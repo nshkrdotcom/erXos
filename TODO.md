@@ -7037,13 +7037,26 @@ to the corpus and follow rc
   address is still being set. The design's transaction-translator argument wants the turn held until that answer,
   or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
   decides which.
-* [Medium] USB, the bus core's hub depth (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  `usb_hub_depth_max` is not applied, so a hub more than 5 tiers below the root has its ports powered and its
-  children enumerated with a route of 6 tiers, which the slot context's route string cannot hold. A hub past the
-  limit is to be configured with its ports never powered, with a case that builds the chain.
-* [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
-  new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.
+* [Low] USB, the bus core's enumeration (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
+  step 3, the language table and the manufacturer, product and serial strings, is not run, so a device's
+  inspection record has no strings; a failure there fails nothing, so adding it is a step between `device` and
+  `config_head` with the strings kept on the device.
+* [Medium] USB, the bus core's enumeration tests (`test/erlang/erx_usb_bus_core_tests.erl`): no case reaches a
+  multi-TT hub (SET_INTERFACE's setup bytes, `multi_tt => true` in Configure Endpoint, `multi => true` in a
+  child's translator), a refused `bMaxPacketSize0`, a SuperSpeed hub-class device or a malformed descriptor
+  answer; add a multi-TT hub kind and targeted cases, with seeds for the EP0 bound loosened and SET_INTERFACE's
+  fields swapped. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
+  sets only at high speed (`controller/xhci.c:2662-2690`).
+* [Medium] USB, the bus core's exploration reduction (`test/erlang/erx_usb_bus_core_tests.erl`, `taken_alone/2`):
+  the answer choices/1 takes alone is chosen from the model's world, and its independence from every other choice is
+  argued from what `enumerated/6`, `configured/3` and `settle/3` do, not checked. A step that fails a device on a
+  well-formed answer (the refused `bMaxPacketSize0` or malformed-descriptor kinds above) or a deadline on a step after
+  the settle would break the argument silently. Check it instead: in `follow/2`, assert for every answer taken alone
+  that its actions are only the device's next request, its `start` or its new hub's `power_on`, with the deadline
+  unchanged and no detach.
+* [Medium] USB, the bus core's seeded depths (`test/host/erx_usb_bus_core_test.rb`): each exploration seed names a
+  depth that must lie within one of the test module's `?DEPTHS`, and nothing checks that; export the depths and have
+  the host test assert it, so dropping a depth from the module cannot leave a seed caught only by its own run.
 * [Low] USB, the bus core's exploration (`test/erlang/erx_usb_bus_core_tests.erl`): the simulated bus never ends a
   reset with the port disabled, never presents a low-speed device or a root port speed the controller cannot run,
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
@@ -7947,7 +7960,7 @@ document's "residual risks accepted" paragraph.
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
   ([plan.md](docs/plan.md#track-u-usb-proposed)); its design keeps the three rules the USB design records.
 * [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
-  hub configured at SuperSpeed (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
+  hub at SuperSpeed at its device descriptor (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
   design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
   beside it.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's

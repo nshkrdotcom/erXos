@@ -5,8 +5,9 @@
 %% core", "Hubs" and the bus core's row of "Host tests of the cores"): the core explored
 %% to a fixed point against a simulated bus of a root hub of two ports, one external hub
 %% of two ports and devices of one and two functions; then traces of 1,000 attach and
-%% detach cycles on one port, a connection storm, and a hub detached during its child's
-%% enumeration.
+%% detach cycles on one port, a connection storm, a hub detached during its child's
+%% enumeration, a chain of six hubs and four connects on one port within a minute; and
+%% over-current changes read on a root port. World places are routes from the root.
 %%
 %% The simulation is the test's own model of the hardware and the processes around the
 %% core: every port's connection, enable, power and latched change bits; the port
@@ -24,7 +25,11 @@
 %% * no status read reaches a hub's port before its power-good time has passed since
 %%   its last power-on answer;
 %% * at most one simulated device is enabled and not yet addressed;
-%% * no reset names a port that is off or empty.
+%% * no reset names a port that is off or empty;
+%% * Address Device names the device's place in the world as its root port and route,
+%%   at most five tiers below the root port;
+%% * every answer a device has taken, delivered again once its step is left, the
+%%   answer just taken among them, changes neither the core's state nor its actions.
 %% Times start at 2^40, so every integer at or above it in a state is a time; states are
 %% compared with times taken relative to the clock and device references renumbered in
 %% order, so equal situations at different times are one state. Every number is
@@ -33,7 +38,7 @@
 
 -include_lib("eunit/include/eunit.hrl").
 
--export([states/2]).
+-export([states/2, explored/2]).
 
 -define(T0, (1 bsl 40)).
 %% The depths explored, as connects or disconnects and failed answers the environment
@@ -43,24 +48,36 @@
 %% Power-good times: the root's 10 units, the simulated hub's 50, each times 2 ms plus 20.
 -define(ROOT_POWER_GOOD, 40).
 -define(HUB_POWER_GOOD, 120).
+%% A port's enumeration attempts: at most 3 in any 60 s.
+-define(ATTEMPTS_MAX, 3).
+-define(ATTEMPT_WINDOW, 60000).
+%% wPortStatus's and wPortChange's connection and over-current bits.
+-define(CONNECTION, 1).
+-define(OVER_CURRENT, 8).
 
 %% The exploration.
 
 explored_to_a_fixed_point_test_() ->
-    {timeout, 600, fun() ->
-                           [begin
-                                {ok, Seen} = states(Stimuli, Errors),
-                                io:format(user, "~nerx_usb_bus_core: ~b states, ~b connects or disconnects "
-                                          "and ~b failed answers deep~n", [Seen, Stimuli, Errors])
-                            end || {Stimuli, Errors} <- ?DEPTHS]
-                   end}.
+    [{timeout, 600, fun() -> explored(Stimuli, Errors) end} || {Stimuli, Errors} <- ?DEPTHS].
+
+%% The exploration at one depth, its size printed; the host test runs a seeded fault
+%% at the smallest depth that catches it, every path of which a depth of ?DEPTHS
+%% at least as deep in both counts also takes.
+explored(Stimuli, Errors) ->
+    {ok, Seen} = states(Stimuli, Errors),
+    io:format(user, "~nerx_usb_bus_core: ~b states, ~b connects or disconnects and ~b failed answers deep~n",
+              [Seen, Stimuli, Errors]).
 
 %% The node after the bus's first step: the root hub powering its ports.
 start(Stimuli, Errors) ->
     deliver(expired, (model0())#{stimuli := Stimuli, errors := Errors}, erx_usb_bus_core:new(2)).
 
-%% The number of states reachable with Stimuli connects or disconnects and Errors failed answers.
-states(Stimuli, Errors) -> explore(start(Stimuli, Errors)).
+%% The number of states reachable with Stimuli connects or disconnects and Errors failed
+%% answers. A port's attempts throttle only its fourth within a minute, which takes four
+%% connects at its place and the three disconnects between them, since stimuli/1 moves
+%% a place only between a device and nothing; with fewer stimuli no attempt time
+%% decides anything, so key/1 drops them.
+states(Stimuli, Errors) when Stimuli < 2 * ?ATTEMPTS_MAX + 1 -> explore(start(Stimuli, Errors)).
 
 explore(Start) ->
     explore([Start], #{key(Start) => true}).
@@ -73,23 +90,32 @@ explore([Node | Rest], Seen) ->
     explore(maps:values(New) ++ Rest, maps:merge(Seen, maps:map(fun(_, _) -> true end, New))).
 
 %% A power-on answered longer ago than any hub's power-good time is as good as any
-%% older one, so its time is clamped and the key stays finite as time passes.
+%% older one, so its time is clamped and the key stays finite as time passes; attempt
+%% times decide nothing at the depths explored (states/2) and are dropped. The answers
+%% each device has taken are dropped too: each is checked to change nothing, and so
+%% decides nothing after it.
 key({Model = #{now := Now, powered := Powered}, Core}) ->
     Clamped = maps:map(fun(_Hub, At) -> max(At, Now - 1000) end, Powered),
-    canon({maps:remove(last, Model#{powered := Clamped}), Core}, Now).
+    canon({maps:without([last, answered], Model#{powered := Clamped}), without_attempts(Core)}, Now).
+
+%% The core's state with every port's attempt times emptied: the one place the test
+%% reads the core's representation rather than its exported views.
+without_attempts(Core = #{hubs := Hubs}) ->
+    Core#{hubs := #{Id => Hub#{histories := #{N => History#{attempts := []} || N := History <- Histories}}
+                    || Id := Hub = #{histories := Histories} <- Hubs}}.
 
 %% The simulated bus.
 
 model0() ->
     #{now => ?T0, deadline => none,
-      world => #{{root, 1} => port0(), {root, 2} => port0()},
-      ext => none, hub_fn => none, ops => #{}, cmds => [], slots => #{}, things => #{},
-      powered => #{}, window => none, stimuli => 0, errors => 0}.
+      world => #{[1] => port0(), [2] => port0()},
+      hubs => #{}, ops => #{}, cmds => [], slots => #{}, things => #{}, seen => #{}, addressed_at => #{},
+      powered => #{}, window => none, answered => #{}, stimuli => 0, errors => 0}.
 
 port0() -> #{thing => none, chg => [], enabled => false, addressed => false, powered => false, signaled => false}.
 
-%% The choices the environment has in a node. It answers what is in flight and
-%% finishes a device's descriptor steps in one fixed order, the first of them only,
+%% The choices the environment has in a node. It answers what is in flight, the
+%% devices' requests included, in one fixed order, the first of them only,
 %% which keeps two devices' lifecycles from multiplying into each other; reports and
 %% port events arrive in any state; any answer may fail, the next deadline may pass
 %% first, so an answer can come after its deadline or never, and anything may be
@@ -107,15 +133,67 @@ port0() -> #{thing => none, chg => [], enabled => false, addressed => false, pow
 %% between two deadlines set the same times. What the fixed order would hide, an answer
 %% held back while others overtake it, the interleaved failures, deadlines and
 %% stimuli reach instead.
+%%
+%% Once the environment has spent its connects, disconnects and failures, the first answer,
+%% when it is one
+%% to a device's request after its address settle is taken alone when the device
+%% still sits, enabled, at its place, with no connection change latched there or at
+%% any place above it (a partial-order reduction: the answer is the node's only
+%% choice, and every other choice waits until it is taken). Such an answer is
+%% independent of every other choice the node or any node after it can offer:
+%% * it reads and writes only its device's port, its device and, at the last
+%%   step, the hub it adds under its own reference; it reads no time, since a step
+%%   after the settle has no deadline and the settle check passes at any later
+%%   time; and it neither takes nor releases the turn, so the turn's grant and
+%%   every other hub's next operation and deadline are the same either side of it;
+%% * the choices left are other answers, hub reports and deadlines: a report only
+%%   marks ports to read, a deadline only moves ports that are timed, which a port
+%%   past its settle is not, and a status read of the device's port or of a port
+%%   above it finds nothing that moves the port, since its connection, enable and
+%%   presence agree with the port's state and only a stimulus, now spent, could
+%%   latch a change there;
+%% * no choice can make its answer fail or its device go: that takes a stimulus,
+%%   a failed answer or a latched connection change, and none is left.
+%% So the two orders of the answer and any other choice reach the same node, the
+%% invariants checked at each step do not depend on which step of its walk a
+%% device past its address is at, and a device's walk is finite, so no choice is
+%% postponed forever. While a stimulus or a failure is left, every interleaving of
+%% a device's steps with it is explored.
 choices(Node = {M, _Core}) ->
     {Ready, Failed} = environment(Node),
     {Answers, Reports} = lists:partition(fun({Kind, _}) -> Kind =:= core end, Ready),
-    lists:sublist(Answers, 1) ++ Reports ++ Failed ++ expiry(M) ++ stimuli(M).
+    First = lists:sublist(Answers, 1),
+    case lists:any(fun(A) -> taken_alone(A, Node) end, First) of
+        true -> First;
+        false -> First ++ Reports ++ Failed ++ expiry(M) ++ stimuli(M)
+    end.
+
+%% Whether the first answer is one choices/1 may take alone. Only the first is, so a
+%% node offers a subset of what it offers with more connects or failures to spend.
+taken_alone({core, {Kind, Ref, _Step, _Result}}, {M = #{stimuli := 0, errors := 0, things := Things}, Core})
+  when Kind =:= control_done; Kind =:= evaluated; Kind =:= endpoints_configured ->
+    case {maps:find(Ref, erx_usb_bus_core:devices(Core)), maps:find(Ref, Things)} of
+        {{ok, _Device}, {ok, {Place, Thing}}} -> undisturbed(Place, Thing, M);
+        _Gone -> false
+    end;
+taken_alone(_Choice, _Node) ->
+    false.
+
+%% The device Thing sits enabled at Place, and no place from the root to it has a
+%% connection change latched.
+undisturbed(Place, Thing, #{world := World}) ->
+    Above = [lists:sublist(Place, I) || I <- lists:seq(1, length(Place))],
+    case maps:get(Place, World, none) of
+        #{thing := Thing, enabled := true} ->
+            lists:all(fun(P) -> not lists:member(connection, maps:get(chg, maps:get(P, World, port0()))) end,
+                      Above);
+        _ -> false
+    end.
 
 %% What the environment can deliver now, in its fixed order, and the failures it may
 %% deliver instead.
-environment({M, Core}) ->
-    All = answers(M) ++ commands(M) ++ configured(M, Core) ++ reports(M),
+environment({M, _Core}) ->
+    All = answers(M) ++ commands(M) ++ reports(M),
     {[C || C = {Kind, _} <- All, Kind =/= core_error], [C || C = {core_error, _} <- All]}.
 
 answers(M = #{ops := Ops, errors := Errors}) ->
@@ -123,28 +201,93 @@ answers(M = #{ops := Ops, errors := Errors}) ->
                   ++ [{core_error, {port_done, H, T, {error, stall}}} || Errors > 0, H =/= root, live(H, M)]
                   || H := {T, Op} <- Ops]).
 
-commands(#{cmds := Cmds, errors := Errors, slots := Slots}) ->
-    lists:append([[{core, {Kind, Ref, {ok, free_slot(Slots)}}}]
-                  ++ [{core_error, {Kind, Ref, {error, transaction}}} || Errors > 0]
-                  || {Kind, Ref} <- Cmds]).
+%% The controller's commands and the devices' control transfers in flight, one per
+%% device, each answered as the controller and the device on its place would.
+commands(M = #{cmds := Cmds, errors := Errors}) ->
+    lists:append([[{core, {Kind, Ref, Step, command_answer(Kind, Ref, Request, M)}}]
+                  ++ [{core_error, {Kind, Ref, Step, {error, transaction}}} || Errors > 0]
+                  || {Kind, Ref, Step, Request} <- Cmds]).
 
-configured(#{things := Things, errors := Errors}, Core) ->
-    lists:append([descriptor_steps(Ref, maps:get(Ref, Things))
-                  ++ [{core_error, {enumeration_failed, Ref, stall}} || Errors > 0]
-                  || {_, {enumerating, Ref, configuring}} <- maps:to_list(erx_usb_bus_core:ports(Core))]).
+command_answer(Kind, _Ref, none, #{slots := Slots}) when Kind =:= slot; Kind =:= addressed ->
+    {ok, free_slot(Slots)};
+command_answer(control_done, Ref, Setup, #{things := Things, world := World}) ->
+    case maps:find(Ref, Things) of
+        {ok, {Place, Thing}} ->
+            case maps:get(Place, World, none) of
+                #{thing := Thing, enabled := true} -> device_answer(Thing, Setup);
+                _UnpluggedOrReplaced -> {error, timeout}
+            end;
+        error ->
+            %% Detached: the controller dropped its reference, so its pipe answers gone.
+            {error, gone}
+    end;
+command_answer(_EvaluatedOrConfigured, _Ref, none, _M) ->
+    ok.
 
-reports(M = #{hub_fn := #{ref := Ref, first := First, outstanding := false}}) ->
-    Changed = [N || N <- [1, 2], maps:get(chg, maps:get({ext, N}, maps:get(world, M), port0())) =/= []],
-    case {First, Changed} of
-        {true, _} -> [{report, {changed, Ref, [1, 2, hub], {fn, Ref}}}];
-        {false, []} -> [];
-        {false, _} -> [{report, {changed, Ref, Changed, {fn, Ref}}}]
-    end ++ root_events(M);
-reports(M) ->
-    root_events(M).
+%% The devices: dev1 a full-speed HID device whose EP0 takes 64 bytes, dev2 a
+%% high-speed device of two HID interfaces, and a high-speed single-TT hub of two
+%% ports; each answers a request by the bytes it holds, cut to the length asked.
+device_answer(Thing, Setup = <<_:6/binary, Length:16/little>>) ->
+    Bytes = case request_name(Setup) of
+                Device when Device =:= device_head; Device =:= device -> device_bytes(Thing);
+                Config when Config =:= config_head; Config =:= configuration -> config_bytes(Thing);
+                hub_descriptor -> erx_usb_desc_tests:hub(2, 0, 50);
+                set_configuration -> <<>>
+            end,
+    {ok, binary:part(Bytes, 0, min(Length, byte_size(Bytes)))}.
+
+%% The requests the devices understand, by their setup packets written out; any other
+%% fails the case.
+request_name(<<16#80, 6, 0, 1, 0:16, 8:16/little>>) -> device_head;
+request_name(<<16#80, 6, 0, 1, 0:16, 18:16/little>>) -> device;
+request_name(<<16#80, 6, 0, 2, 0:16, 9:16/little>>) -> config_head;
+request_name(<<16#80, 6, 0, 2, 0:16, _:16>>) -> configuration;
+request_name(<<0, 9, 1, 0, 0:16, 0:16>>) -> set_configuration;
+request_name(<<16#a0, 6, 0, 16#29, 0:16, 7:16/little>>) -> hub_descriptor.
+
+device_bytes(hub) -> erx_usb_desc_tests:device(9, 0, 1);
+device_bytes(_Device) -> erx_usb_desc_tests:device(0, 0, 0).
+
+config_bytes(dev1) ->
+    erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 3, 0, 0),
+                                      erx_usb_desc_tests:endpoint(16#81, 3, 8, 10)]);
+config_bytes(dev2) ->
+    erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 3, 0, 0),
+                                      erx_usb_desc_tests:endpoint(16#81, 3, 8, 10),
+                                      erx_usb_desc_tests:interface(1, 0, 3, 0, 0),
+                                      erx_usb_desc_tests:endpoint(16#82, 3, 8, 10)]);
+config_bytes(hub) ->
+    erx_usb_desc_tests:configuration([erx_usb_desc_tests:interface(0, 0, 9, 0, 0),
+                                      erx_usb_desc_tests:endpoint(16#81, 3, 1, 12)]).
+
+%% The requests and commands each device must see from its address on, in order, and
+%% its functions and hub fields once configured.
+expected_steps(dev1) -> [device_head, ep0_packet, device, config_head, configuration, set_configuration,
+                         configure_endpoints];
+expected_steps(dev2) -> [device, config_head, configuration, set_configuration, configure_endpoints];
+expected_steps(hub) -> [device, config_head, configuration, set_configuration, hub_descriptor,
+                        configure_endpoints].
+
+expected_pipes(dev2) -> 2;
+expected_pipes(_Dev1OrHub) -> 1.
+
+expected_hub_fields(hub) -> #{ports => 2, think_time => 0, multi_tt => false};
+expected_hub_fields(_Device) -> none.
+
+%% Each hub function with no report outstanding: its first report names every port and
+%% the hub, a later one the ports whose change bits are set.
+reports(M = #{hubs := Hubs, world := World}) ->
+    [{report, {changed, Ref, Named, {fn, Ref}}}
+     || Ref := #{route := Route, first := First, outstanding := false} <- Hubs,
+        Named <- [named(First, [N || N <- [1, 2], maps:get(chg, maps:get(Route ++ [N], World, port0())) =/= []])],
+        Named =/= []]
+        ++ root_events(M).
+
+named(true, _Changed) -> [1, 2, hub];
+named(false, Changed) -> Changed.
 
 root_events(#{world := World}) ->
-    [{signal, {port_event, N}} || N <- [1, 2], #{chg := [_ | _], signaled := false} <- [maps:get({root, N}, World)]].
+    [{signal, {port_event, N}} || N <- [1, 2], #{chg := [_ | _], signaled := false} <- [maps:get([N], World)]].
 
 expiry(#{deadline := none}) -> [];
 expiry(#{deadline := At}) -> [{expire, At}].
@@ -156,38 +299,37 @@ stimuli(#{world := World}) ->
     [{stimulus, Where, New}
      || Where := #{thing := Thing} <- World,
         New <- case Thing of
-                   none -> [dev1, dev2] ++ [hub || element(1, Where) =:= root, not HubPresent];
+                   none -> [dev1, dev2] ++ [hub || length(Where) =:= 1, not HubPresent];
                    _ -> [none]
                end].
 
-%% A device unplugged before its descriptor steps fails them.
-descriptor_steps(Ref, Gone) when Gone =:= none; Gone =:= gone -> [{core, {enumeration_failed, Ref, gone}}];
-descriptor_steps(Ref, Thing) -> [{core, {configured, Ref, config(Thing)}}].
-
-config(dev1) -> #{functions => [f1], hub => none};
-config(dev2) -> #{functions => [f1, f2], hub => none};
-config(hub) -> #{functions => [hub], hub => #{ports => 2, power_good => 50, multi_tt => false}}.
-
 live(root, _M) -> true;
-live(H, #{ext := Ext}) -> H =:= Ext.
+live(H, #{hubs := Hubs}) -> is_map_key(H, Hubs).
 
 free_slot(Slots) -> hd(lists:seq(1, 16) -- maps:values(Slots)).
 
-where(root, N) -> {root, N};
-where(_Ext, N) -> {ext, N}.
+%% The place of port N of hub H in the world: its route from the root; `gone` for a hub
+%% the model no longer holds.
+where(root, N, _M) ->
+    [N];
+where(H, N, #{hubs := Hubs}) ->
+    case Hubs of
+        #{H := #{route := Route}} -> Route ++ [N];
+        #{} -> gone
+    end.
 
 %% A live port operation's answer from the world; an operation on a hub already gone
 %% is answered as its pipe would be.
 answer(H, T, Op, M) ->
-    case live(H, M) andalso (T =:= hub orelse is_map_key(where(H, T), maps:get(world, M))) of
+    case live(H, M) andalso (T =:= hub orelse is_map_key(where(H, T, M), maps:get(world, M))) of
         true -> world_answer(H, T, Op, M);
         false -> {error, gone}
     end.
 
 world_answer(_H, hub, get_status, _M) ->
     {ok, <<0:16, 0:16>>};
-world_answer(H, N, get_status, #{world := World}) ->
-    #{thing := Thing, chg := Chg, enabled := Enabled, powered := Powered} = maps:get(where(H, N), World),
+world_answer(H, N, get_status, M = #{world := World}) ->
+    #{thing := Thing, chg := Chg, enabled := Enabled, powered := Powered} = maps:get(where(H, N, M), World),
     Status = bit(Thing =/= none, 1) bor bit(Enabled, 2) bor bit(Powered, 256)
         bor bit(H =/= root andalso (Thing =:= dev2 orelse Thing =:= hub), 1024),
     Change = lists:sum([maps:get(C, #{connection => 1, enabled => 2, reset => 16}) || C <- Chg]),
@@ -211,8 +353,8 @@ follow({stimulus, Where, New}, {M = #{world := World, stimuli := S}, Core}) ->
     Moved = World#{Where := Port#{thing := New, enabled := false, addressed := false,
                                   chg := ordsets:add_element(connection, Chg)}},
     Downstream = case {Old, New} of
-                     {hub, none} -> maps:without([{ext, 1}, {ext, 2}], Moved);
-                     {_, hub} -> Moved#{{ext, 1} => port0(), {ext, 2} => port0()};
+                     {hub, none} -> maps:filter(fun(P, _) -> not lists:prefix(Where, P) orelse P =:= Where end, Moved);
+                     {_, hub} -> Moved#{Where ++ [1] => port0(), Where ++ [2] => port0()};
                      _ -> Moved
                  end,
     {M#{world := Downstream, stimuli := S - 1}, Core};
@@ -220,14 +362,15 @@ follow({expire, At}, {M = #{now := Now}, Core}) ->
     At > Now orelse error({deadline_not_in_the_future, At - Now}),
     deliver(expired, M#{now := At}, Core);
 follow({signal, Event = {port_event, N}}, {M = #{world := World}, Core}) ->
-    deliver(Event, M#{world := World#{{root, N} := (maps:get({root, N}, World))#{signaled := true}}}, Core);
-follow({report, Event}, {M = #{hub_fn := Fn}, Core}) ->
-    deliver(Event, M#{hub_fn := Fn#{first := false, outstanding := true}}, Core);
+    deliver(Event, M#{world := World#{[N] := (maps:get([N], World))#{signaled := true}}}, Core);
+follow({report, Event = {changed, Ref, _, _}}, {M = #{hubs := Hubs}, Core}) ->
+    Fn = maps:get(Ref, Hubs),
+    deliver(Event, M#{hubs := Hubs#{Ref := Fn#{first := false, outstanding := true}}}, Core);
 follow({core_error, Event}, {M = #{errors := E}, Core}) ->
     deliver(Event, consume(Event, M#{errors := E - 1}), Core);
-follow({core, Event = {addressed, Ref, {ok, _}}}, {M = #{world := World}, Core}) ->
+follow({core, Event = {addressed, Ref, _Step, {ok, _}}}, {M = #{world := World}, Core}) ->
     Where = case maps:find(Ref, erx_usb_bus_core:devices(Core)) of
-                {ok, #{port := {H, N}}} when H =:= root; H =:= map_get(ext, M) -> where(H, N);
+                {ok, #{port := {H, N}}} -> where(H, N, M);
                 _Gone -> gone
             end,
     Addressed = case maps:find(Where, World) of
@@ -235,25 +378,28 @@ follow({core, Event = {addressed, Ref, {ok, _}}}, {M = #{world := World}, Core})
                         M#{world := World#{Where := Port#{addressed := true}}};
                     _ -> M
                 end,
-    deliver(Event, consume(Event, Addressed), Core);
+    deliver(Event, consume(Event, Addressed#{addressed_at := (map_get(addressed_at, Addressed))#{Ref => map_get(now, M)}}),
+            Core);
 follow({core, Event}, {M, Core}) ->
     deliver(Event, consume(Event, world_effect(Event, M)), Core).
 
 consume({port_done, H, _T, _Result}, M = #{ops := Ops}) -> M#{ops := maps:remove(H, Ops)};
-consume({Kind, Ref, _Result}, M = #{cmds := Cmds}) when Kind =:= slot; Kind =:= addressed ->
-    M#{cmds := Cmds -- [{Kind, Ref}]};
+consume({Kind, Ref, Step, _Result}, M = #{cmds := Cmds})
+  when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
+       Kind =:= endpoints_configured ->
+    M#{cmds := [C || C = {K, R, S, _} <- Cmds, {K, R, S} =/= {Kind, Ref, Step}]};
 consume(_Event, M) -> M.
 
 %% What a successful port operation does to the simulated hardware.
 world_effect({port_done, H, N, ok}, M = #{world := World, ops := Ops}) when is_integer(N) ->
-    case {live(H, M), maps:find(where(H, N), World)} of
+    case {live(H, M), maps:find(where(H, N, M), World)} of
         {true, {ok, Port}} ->
             Op = element(2, maps:get(H, Ops)),
             Powered = case Op of
                           power_on -> (map_get(powered, M))#{H => map_get(now, M)};
                           _ -> map_get(powered, M)
                       end,
-            M#{world := World#{where(H, N) := port_effect(Op, Port)}, powered := Powered};
+            M#{world := World#{where(H, N, M) := port_effect(Op, Port)}, powered := Powered};
         _ -> M
     end;
 world_effect(_Event, M) ->
@@ -286,12 +432,45 @@ observe(Event, Actions, M0, Before, After) ->
                      M1#{deadline := none, last => Actions}, Actions),
     [is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({slot_of_gone_device, Ref, Event})
      || Ref := _ <- maps:get(slots, M2)],
-    {M2, After}.
+    {check_stale(Event, M2, After), After}.
+
+%% A device's successful answer is kept while the device lasts, and every answer the
+%% device has taken, this one included, is delivered again: each names a step the
+%% device has left, so each must leave the state as it is and act on nothing.
+check_stale(Event, M = #{answered := Answered, now := Now}, Core) ->
+    Devices = erx_usb_bus_core:devices(Core),
+    case succeeded_answer(Event) of
+        {ok, Ref} when is_map_key(Ref, Devices) ->
+            History = [Event | maps:get(Ref, Answered, [])],
+            lists:foreach(fun(Stale) -> stale(Stale, Now, Core) end, History),
+            M#{answered := Answered#{Ref => History}};
+        _NoneOrGone ->
+            M
+    end.
+
+stale(Stale, Now, Core) ->
+    case erx_usb_bus_core:step(Stale, Now, Core) of
+        {Actions, Core} ->
+            [] =:= [A || A <- Actions, element(1, A) =/= deadline] orelse error({stale_answer_acted, Stale, Actions});
+        {_Actions, _Changed} ->
+            error({stale_answer_changed_the_state, Stale})
+    end.
+
+%% The device an answer to its request names, when the answer succeeded.
+succeeded_answer({Kind, Ref, _Step, Result})
+  when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
+       Kind =:= endpoints_configured ->
+    case Result of
+        {error, _Reason} -> none;
+        _Value -> {ok, Ref}
+    end;
+succeeded_answer(_Event) ->
+    none.
 
 %% The test's own notion of the address-zero window, from the design's port table.
 in_window({resetting, _, _}) -> true;
 in_window({recovering, _, _}) -> true;
-in_window({enumerating, _, Step}) -> Step =/= configuring;
+in_window({enumerating, _, Step}) -> Step =:= enabling_slot orelse Step =:= addressing;
 in_window({disabling, _, Held}) -> Held;
 in_window(_) -> false.
 
@@ -332,10 +511,10 @@ first_detaches(Ref, Actions) ->
 
 %% A window opens with its port's reset and closes with its device's address answer,
 %% or when the port leaves it by a failure, a detach or a connection change; it never
-%% reaches `configuring` without the answer.
+%% reaches a step past the address without the answer.
 close_window(_Event, M = #{window := none}, _Before, _After) ->
     M;
-close_window({addressed, Ref, _}, M = #{window := Window}, Before, After) ->
+close_window({addressed, Ref, _Step, _Result}, M = #{window := Window}, Before, After) ->
     case {maps:find(Ref, erx_usb_bus_core:devices(Before)), maps:get(Window, erx_usb_bus_core:ports(After), gone)} of
         {{ok, #{port := Window}}, {disabling, _, true}} -> M;
         {{ok, #{port := Window}}, _} -> M#{window := none};
@@ -346,7 +525,8 @@ close_window(_Event, M, _Before, After) ->
 
 left(M = #{window := Window}, After) ->
     case maps:get(Window, erx_usb_bus_core:ports(After), gone) of
-        {enumerating, _, configuring} -> error({window_closed_without_address_answer, Window});
+        {enumerating, _, Step} when Step =/= enabling_slot, Step =/= addressing ->
+            error({window_closed_without_address_answer, Window});
         State ->
             case in_window(State) of
                 true -> M;
@@ -356,6 +536,7 @@ left(M = #{window := Window}, After) ->
 
 action({port, H, T, Op}, M = #{ops := Ops, now := Now, powered := Powered}, _Before, After) ->
     is_map_key(H, Ops) andalso error({two_operations_on_hub, H, Op}),
+    Op =:= power_on andalso length(where(H, T, M)) > 6 andalso error({power_on_past_five_hub_tiers, H, T}),
     Opened = case {T, Op} of
                  {N, get_status} when is_integer(N) ->
                      Now >= maps:get(H, Powered, Now + 1) + power_good(H)
@@ -368,33 +549,84 @@ action({port, H, T, Op}, M = #{ops := Ops, now := Now, powered := Powered}, _Bef
                      M
              end,
     Opened#{ops := Ops#{H => {T, Op}}};
-action({handled, H, From}, M = #{hub_fn := Fn}, _Before, _After) ->
-    case Fn of
-        #{ref := Ref, outstanding := true} when From =:= {fn, Ref}, H =:= Ref -> M#{hub_fn := Fn#{outstanding := false}};
-        _ -> error({handled_without_report, From, Fn})
+action({handled, H, From}, M = #{hubs := Hubs}, _Before, _After) ->
+    case Hubs of
+        #{H := Fn = #{outstanding := true}} when From =:= {fn, H} -> M#{hubs := Hubs#{H := Fn#{outstanding := false}}};
+        #{} -> error({handled_without_report, H, From})
     end;
-action({enable_slot, Ref}, M = #{cmds := Cmds, things := Things, world := World}, Before, After) ->
+action({enable_slot, Ref, Step}, M = #{cmds := Cmds, things := Things, world := World}, Before, After) ->
     is_map_key(Ref, erx_usb_bus_core:devices(Before)) andalso error({reference_reused, Ref}),
     #{port := {H, N}} = maps:get(Ref, erx_usb_bus_core:devices(After)),
-    #{thing := Thing} = maps:get(where(H, N), World, #{thing => gone}),
-    M#{cmds := Cmds ++ [{slot, Ref}], things := Things#{Ref => Thing}};
-action({address, Ref, #{slot := Slot}}, M = #{cmds := Cmds, slots := Slots}, _Before, After) ->
+    Place = where(H, N, M),
+    #{thing := Thing} = maps:get(Place, World, #{thing => gone}),
+    M#{cmds := Cmds ++ [{slot, Ref, Step, none}], things := Things#{Ref => {Place, Thing}}};
+%% A low- or full-speed device behind the high-speed hub is served by the hub's
+%% translator on its port; every other device by none.
+action({address, Ref, Step, #{slot := Slot, root_port := RootPort, route := Tiers, tt := TT}},
+       M = #{cmds := Cmds, slots := Slots, things := Things}, _Before, After) ->
     is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({address_for_gone_device, Ref}),
-    M#{cmds := Cmds ++ [{addressed, Ref}], slots := Slots#{Ref => Slot}};
-action({start, Ref, Functions}, M, _Before, After) ->
+    #{port := {H, N}} = maps:get(Ref, erx_usb_bus_core:devices(After)),
+    [RootPort | Tiers] =:= where(H, N, M) orelse error({address_route_not_the_place, Ref, RootPort, Tiers}),
+    length(Tiers) =< 5 orelse error({route_past_five_tiers, Ref, Tiers}),
+    %% The speed the core saw may be a device's since replaced on the place, so only a
+    %% translator named is checked against the hub's slot and the device's port.
+    Expected = case {H, maps:get(Ref, Things)} of
+                   {root, _} -> [none];
+                   {_, {_, dev1}} -> [#{hub_slot => maps:get(H, Slots), port => N, multi => false}];
+                   {_, _} -> [none, #{hub_slot => maps:get(H, Slots), port => N, multi => false}]
+               end,
+    lists:member(TT, Expected) orelse error({wrong_translator, Ref, TT, Expected}),
+    M#{cmds := Cmds ++ [{addressed, Ref, Step, none}], slots := Slots#{Ref => Slot}};
+action({control, Ref, Step, Setup, Data}, M = #{cmds := Cmds}, _Before, After) ->
+    is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({request_for_gone_device, Ref}),
+    Expected = case Setup of
+                   <<16#80:8, _:40, Length:16/little>> -> {in, Length};
+                   <<16#a0:8, _:40, Length:16/little>> -> {in, Length};
+                   <<_:48, 0:16>> -> none
+               end,
+    Data =:= Expected orelse error({data_stage_not_the_setups, Setup, Data}),
+    settled(Ref, M),
+    saw(Ref, request_name(Setup), M#{cmds := Cmds ++ [{control_done, Ref, Step, Setup}]});
+action({evaluate_context, Ref, Step, Context}, M = #{cmds := Cmds}, _Before, _After) ->
+    Context =:= #{ep0_packet => 64} orelse error({wrong_ep0_packet, Ref, Context}),
+    saw(Ref, ep0_packet, M#{cmds := Cmds ++ [{evaluated, Ref, Step, none}]});
+action({configure_endpoints, Ref, Step, #{add := Pipes, hub := HubFields}}, M = #{cmds := Cmds, things := Things},
+       _Before, _After) ->
+    {_, Thing} = maps:get(Ref, Things),
+    {length(Pipes), HubFields} =:= {expected_pipes(Thing), expected_hub_fields(Thing)}
+        orelse error({wrong_endpoints, Ref, Pipes, HubFields}),
+    saw(Ref, configure_endpoints, M#{cmds := Cmds ++ [{endpoints_configured, Ref, Step, none}]});
+action({start, Ref, Functions}, M = #{hubs := Hubs, things := Things, seen := Seen}, _Before, After) ->
     is_map_key(Ref, erx_usb_bus_core:devices(After)) orelse error({start_for_gone_device, Ref}),
-    case Functions of
-        [hub] -> M#{hub_fn := #{ref => Ref, first => true, outstanding => false}, ext => Ref};
+    #{port := {H, N}} = maps:get(Ref, erx_usb_bus_core:devices(After)),
+    {_, Thing} = maps:get(Ref, Things),
+    lists:reverse(maps:get(Ref, Seen)) =:= expected_steps(Thing)
+        orelse error({started_after_other_steps, Ref, Thing, maps:get(Ref, Seen)}),
+    case [Driver || #{driver := Driver} <- Functions] of
+        [erx_usb_hub] -> M#{hubs := Hubs#{Ref => #{route => where(H, N, M), first => true, outstanding => false}}};
         _ -> M
     end;
-action({detach, Ref}, M = #{slots := Slots, things := Things, hub_fn := Fn, ext := Ext}, Before, After) ->
+action({detach, Ref}, M = #{slots := Slots, things := Things, hubs := Hubs, seen := Seen}, Before, After) ->
     is_map_key(Ref, erx_usb_bus_core:devices(Before)) orelse error({detached_twice, Ref}),
     is_map_key(Ref, erx_usb_bus_core:devices(After)) andalso error({reference_kept, Ref}),
-    M#{slots := maps:remove(Ref, Slots), things := maps:remove(Ref, Things),
-       hub_fn := case Fn of #{ref := Ref} -> none; _ -> Fn end,
-       ext := case Ext of Ref -> none; _ -> Ext end};
+    M#{slots := maps:remove(Ref, Slots), things := maps:remove(Ref, Things), hubs := maps:remove(Ref, Hubs),
+       seen := maps:remove(Ref, Seen), addressed_at := maps:remove(Ref, map_get(addressed_at, M)),
+       answered := maps:remove(Ref, map_get(answered, M))};
+action({log, _H, _N, over_current}, M, _Before, _After) ->
+    M;
 action({deadline, At}, M, _Before, _After) ->
     M#{deadline := At}.
+
+%% No request reaches a device within 10 ms of its address answer, FreeBSD's settle.
+settled(Ref, #{now := Now, addressed_at := AddressedAt}) ->
+    case AddressedAt of
+        #{Ref := At} when Now < At + 10 -> error({request_before_address_settle, Ref, Now - At});
+        #{} -> ok
+    end.
+
+%% The model's record of the requests and commands a device has seen, newest first.
+saw(Ref, Name, M = #{seen := Seen}) ->
+    M#{seen := Seen#{Ref => [Name | maps:get(Ref, Seen, [])]}}.
 
 power_good(root) -> ?ROOT_POWER_GOOD;
 power_good(_Ext) -> ?HUB_POWER_GOOD.
@@ -431,25 +663,84 @@ port_of({_M, Core}, Where) -> maps:get(Where, erx_usb_bus_core:ports(Core)).
 
 trace_start() -> settle(start(1 bsl 30, 0)).
 
+%% A device attached to root port 1 runs, then is detached, leaving the port empty.
+cycle(Node) ->
+    Running = settle(follow({stimulus, [1], dev2}, Node)),
+    ?assertMatch({running, _}, port_of(Running, {root, 1})),
+    Gone = settle(follow({stimulus, [1], none}, Running)),
+    ?assertEqual(empty, port_of(Gone, {root, 1})),
+    ?assertEqual(#{}, erx_usb_bus_core:devices(element(2, Gone))),
+    Gone.
+
+cycles(Count, Node) -> lists:foldl(fun(_, Acc) -> cycle(Acc) end, Node, lists:seq(1, Count)).
+
+%% From the fourth cycle on, the port's attempts repeat every three cycles, the first
+%% of each three held until a minute after the attempt three before it, so the state
+%% after the 1,000th cycle is the state after the fourth.
 attach_and_detach_cycles_leave_nothing_behind_test_() ->
     {timeout, 300, fun() ->
-        Cycle = fun(_, Node) ->
-                        Running = settle(follow({stimulus, {root, 1}, dev2}, Node)),
-                        ?assertMatch({running, _}, port_of(Running, {root, 1})),
-                        Gone = settle(follow({stimulus, {root, 1}, none}, Running)),
-                        ?assertEqual(empty, port_of(Gone, {root, 1})),
-                        ?assertEqual(#{}, erx_usb_bus_core:devices(element(2, Gone))),
-                        Gone
-                end,
-        First = {#{now := Now1}, Core1} = Cycle(1, trace_start()),
-        {#{now := Now}, Core} = lists:foldl(Cycle, First, lists:seq(2, 1000)),
-        ?assertEqual(canon(Core1, Now1), canon(Core, Now))
+        Fourth = {#{now := Now4}, Core4} = cycles(4, trace_start()),
+        {#{now := Now}, Core} = cycles(996, Fourth),
+        ?assertEqual(canon(Core4, Now4), canon(Core, Now))
     end}.
+
+%% Three attempts on one port in a few seconds; the fourth connect settles within the
+%% minute and is held in `settling` until the first attempt is a minute old, then
+%% starts, and the port keeps only the three attempts within the window.
+a_port_starts_at_most_three_attempts_a_minute_test() ->
+    Three = cycles(3, trace_start()),
+    #{{root, 1} := #{attempts := [A1, A2, A3]}} = erx_usb_bus_core:histories(element(2, Three)),
+    Held = fun(Node) -> port_of(Node, {root, 1}) =:= {settling, A1 + ?ATTEMPT_WINDOW} end,
+    {#{now := Now, deadline := Deadline}, _} = Node = drive(follow({stimulus, [1], dev2}, Three), Held,
+                                                            fun(_) -> true end),
+    ?assert(Held(Node)),
+    ?assert(Now < A1 + ?ATTEMPT_WINDOW),
+    ?assertEqual(A1 + ?ATTEMPT_WINDOW, Deadline),
+    {_, Core} = Running = settle(Node),
+    ?assertMatch({running, _}, port_of(Running, {root, 1})),
+    #{{root, 1} := #{attempts := Attempts}} = erx_usb_bus_core:histories(Core),
+    ?assertEqual([A2, A3, A1 + ?ATTEMPT_WINDOW], Attempts).
+
+%% Over-current changes on a root port: each is counted and the first is logged, the
+%% next only counted, a connection change read with one included, until the port's
+%% next attempt starts 300 ms later; the first after it is logged again.
+over_current_changes_are_logged_once_per_attempt_test() ->
+    {#{now := Now}, Core0} = trace_start(),
+    Log = [{log, root, 1, over_current}],
+    {Logged1, Core1} = root_read(?OVER_CURRENT, ?OVER_CURRENT, Now, Core0),
+    {Logged2, Core2} = root_read(?OVER_CURRENT, ?OVER_CURRENT, Now, Core1),
+    {Logged3, Core3} = root_read(?CONNECTION bor ?OVER_CURRENT, ?CONNECTION bor ?OVER_CURRENT, Now, Core2),
+    ?assertMatch(#{{root, 1} := {settling, _}}, erx_usb_bus_core:ports(Core3)),
+    Started = Now + 300,
+    {Reset, Core4} = erx_usb_bus_core:step(expired, Started, Core3),
+    ?assert(lists:member({port, root, 1, reset}, Reset)),
+    {_, Core5} = erx_usb_bus_core:step({port_done, root, 1, ok}, Started, Core4),
+    {Logged4, Core6} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core5),
+    {Logged5, Core7} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core6),
+    ?assertEqual([Log, [], [], Log, []], [Logged1, Logged2, Logged3, Logged4, Logged5]),
+    ?assertMatch(#{{root, 1} := #{over_current_changes := 5}}, erx_usb_bus_core:histories(Core7)).
+
+%% Root port 1 of an idle bus signals, its status read answers Status and Change, and
+%% each change bit is cleared in turn; the read's log actions and the state after.
+root_read(Status, Change, Now, Core0) ->
+    {[{port, root, 1, get_status} | _], Core1} = erx_usb_bus_core:step({port_event, 1}, Now, Core0),
+    {Actions, Core2} = erx_usb_bus_core:step({port_done, root, 1, {ok, <<Status:16/little, Change:16/little>>, 3}},
+                                             Now, Core1),
+    {[A || A = {log, _, _, _} <- Actions], cleared(Actions, Now, Core2)}.
+
+cleared(Actions, Now, Core) ->
+    case [Op || {port, root, 1, Op = {clear, _}} <- Actions] of
+        [] ->
+            Core;
+        [_] ->
+            {More, Next} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Core),
+            cleared(More, Now, Next)
+    end.
 
 a_connection_storm_stays_bounded_test() ->
     Toggle = fun(I, Node) ->
                      Thing = case I rem 2 of 0 -> none; 1 -> dev1 end,
-                     drive(follow({stimulus, {root, 1}, Thing}, Node), fun(_) -> false end,
+                     drive(follow({stimulus, [1], Thing}, Node), fun(_) -> false end,
                            fun({expire, _}) -> false; (_) -> true end)
              end,
     Storm = {_, Core} = lists:foldl(Toggle, trace_start(), lists:seq(1, 201)),
@@ -460,20 +751,20 @@ a_connection_storm_stays_bounded_test() ->
 %% before the hub, every reference is gone, the late address answer changes nothing,
 %% and the turn is free for the next device.
 a_hub_detached_during_its_childs_enumeration_test() ->
-    Hub = settle(follow({stimulus, {root, 1}, hub}, trace_start())),
+    Hub = settle(follow({stimulus, [1], hub}, trace_start())),
     {running, HubRef} = port_of(Hub, {root, 1}),
     Addressing = fun(Node) -> port_of(Node, {HubRef, 1}) =:= {enumerating, {device, 2}, addressing} end,
-    Child = drive(follow({stimulus, {ext, 1}, dev1}, Hub), Addressing, fun(_) -> true end),
+    Child = drive(follow({stimulus, [1, 1], dev1}, Hub), Addressing, fun(_) -> true end),
     ?assert(Addressing(Child)),
     Root = fun({signal, _}) -> true; ({core, {port_done, root, _, _}}) -> true; (_) -> false end,
     Unplugged = {#{last := Last}, Core} =
-        drive(follow({stimulus, {root, 1}, none}, Child),
+        drive(follow({stimulus, [1], none}, Child),
               fun(Node) -> not is_map_key(HubRef, erx_usb_bus_core:devices(element(2, Node))) end, Root),
     ?assertEqual([{detach, {device, 2}}, {detach, HubRef}], [A || A = {detach, _} <- Last]),
     ?assertEqual(#{}, erx_usb_bus_core:devices(Core)),
-    {Late, _} = erx_usb_bus_core:step({addressed, {device, 2}, {ok, 2}}, maps:get(now, element(1, Unplugged)), Core),
+    {Late, _} = erx_usb_bus_core:step({addressed, {device, 2}, addressing, {ok, 2}}, maps:get(now, element(1, Unplugged)), Core),
     ?assertEqual([], [A || A <- Late, element(1, A) =/= deadline]),
-    Next = settle(follow({stimulus, {root, 2}, dev1}, settle(Unplugged))),
+    Next = settle(follow({stimulus, [2], dev1}, settle(Unplugged))),
     ?assertMatch({running, _}, port_of(Next, {root, 2})).
 
 %% Power: every port off until its power-on answer, then no status read before the
@@ -493,7 +784,7 @@ the_root_hub_powers_its_ports_before_reading_them_test() ->
 %% a shape its operation never answers gives the hub up, as a failed answer does.
 out_of_shape_reports_and_answers_test() ->
     Powering = fun({#{ops := Ops}, _}) -> [H || H := {_, power_on} <- Ops, H =/= root] =/= [] end,
-    {#{now := Now}, Core} = Node = drive(follow({stimulus, {root, 1}, hub}, trace_start()), Powering, fun(_) -> true end),
+    {#{now := Now}, Core} = Node = drive(follow({stimulus, [1], hub}, trace_start()), Powering, fun(_) -> true end),
     {running, HubRef} = port_of(Node, {root, 1}),
     {Detached, _} = erx_usb_bus_core:step({port_done, HubRef, 1, {ok, <<>>}}, Now, Core),
     ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Detached]),
@@ -507,14 +798,14 @@ out_of_shape_reports_and_answers_test() ->
 %% until its parent answers the disable, since the child stays reachable through the
 %% hub until then: a device waiting on the other root port is reset only after that.
 a_hub_given_up_keeps_its_childs_turn_test() ->
-    Hub = settle(follow({stimulus, {root, 1}, hub}, trace_start())),
+    Hub = settle(follow({stimulus, [1], hub}, trace_start())),
     {running, HubRef} = port_of(Hub, {root, 1}),
     Resetting = fun(Node) -> P = port_of(Node, {HubRef, 1}), is_tuple(P) andalso element(1, P) =:= resetting end,
-    Child = drive(follow({stimulus, {ext, 1}, dev1}, Hub), Resetting, fun(_) -> true end),
+    Child = drive(follow({stimulus, [1, 1], dev1}, Hub), Resetting, fun(_) -> true end),
     HubAnswer = fun({core, {port_done, H, _, _}}) -> H =:= HubRef; (_) -> false end,
     Waiting = fun(Node) -> port_of(Node, {root, 2}) =:= waiting end,
     {#{now := Now, ops := #{HubRef := {Target, _}}}, Core} =
-        drive(follow({stimulus, {root, 2}, dev1}, Child), Waiting, fun(C) -> not HubAnswer(C) end),
+        drive(follow({stimulus, [2], dev1}, Child), Waiting, fun(C) -> not HubAnswer(C) end),
     {Actions, Failed} = erx_usb_bus_core:step({port_done, HubRef, Target, {error, stall}}, Now, Core),
     ?assertEqual([{detach, HubRef}], [A || A = {detach, _} <- Actions]),
     ?assertMatch(#{{root, 1} := {disabling, _, true}, {root, 2} := waiting}, erx_usb_bus_core:ports(Failed)),
@@ -522,10 +813,32 @@ a_hub_given_up_keeps_its_childs_turn_test() ->
     {Next, _} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Failed),
     ?assert(lists:member({port, root, 2, reset}, Next)).
 
+%% A chain of six hubs, each on port 1 of the one above: the fifth, five tiers below the
+%% root, has its ports powered, and a device on it is addressed with a route of five
+%% tiers; the sixth is configured and runs, but its ports stay `off` and are never
+%% powered, so a device plugged below it is never enumerated with a route the slot
+%% context cannot hold, and no operation names the sixth hub.
+a_hub_past_the_depth_limit_keeps_its_ports_off_test() ->
+    Chain = lists:foldl(fun(Tier, Node) -> settle(follow({stimulus, lists:duplicate(Tier, 1), hub}, Node)) end,
+                        trace_start(), lists:seq(1, 6)),
+    Full = settle(follow({stimulus, [1, 1, 1, 1, 1, 2], dev1}, Chain)),
+    {#{powered := Powered, ops := Ops}, Core} = settle(follow({stimulus, lists:duplicate(7, 1), dev1}, Full)),
+    Devices = erx_usb_bus_core:devices(Core),
+    [Sixth] = [Ref || Ref := #{route := Route} <- Devices, Route =:= [1, 1, 1, 1, 1, 1]],
+    [Device] = [Ref || Ref := #{route := Route} <- Devices, Route =:= [1, 1, 1, 1, 1, 2]],
+    Ports = erx_usb_bus_core:ports(Core),
+    ?assertMatch(#{{Sixth, 1} := off, {Sixth, 2} := off}, Ports),
+    ?assertNot(is_map_key(Sixth, Powered)),
+    ?assertNot(is_map_key(Sixth, Ops)),
+    ?assertEqual(7, map_size(Devices)),
+    ?assertEqual(lists:sort(maps:keys(Devices)), lists:sort([R || _ := {running, R} <- Ports])),
+    #{port := DevicePort} = maps:get(Device, Devices),
+    ?assertEqual({running, Device}, maps:get(DevicePort, Ports)).
+
 %% decision 3: `handled` goes to the instance that reported; a restarted hub
 %% function's report replaces its predecessor's, which is never answered.
 handled_goes_to_the_reporter_test() ->
-    {_, Node} = Hub = settle(follow({stimulus, {root, 1}, hub}, trace_start())),
+    {_, Node} = Hub = settle(follow({stimulus, [1], hub}, trace_start())),
     {running, HubRef} = port_of(Hub, {root, 1}),
     {A1, S1} = erx_usb_bus_core:step({changed, HubRef, [1], old}, maps:get(now, element(1, Hub)), Node),
     ?assertMatch([{port, HubRef, 1, get_status} | _], A1),

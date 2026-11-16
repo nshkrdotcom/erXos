@@ -36,7 +36,18 @@ as FreeBSD's `uhub_reattach_port` frees the old child before it reads the
 fresh status (sys/dev/usb/usb_hub.c:625-637, release/15.1.0, 95719d8a); a
 status that agrees with the state leaves the port as it is.
 
-**Power.** A hub's ports start `off`. The core powers each, one request
+**Attempts and over-current.** A port's history outlives its states: a
+settled port starts an enumeration attempt, moving to `waiting`, only while
+fewer than `usb_port_attempts_max` started on it in the last
+`usb_port_attempt_window_ms`, and is held in `settling` until its oldest
+attempt leaves the window otherwise, so a device that toggles its connection
+costs that port at most three Enable Slots a minute. A hub's ports start their
+histories afresh when the hub is attached again, which the attempts of the
+hub's own port bound. An over-current change is counted, and answered with
+`{log, Hub, Port, over_current}` once per attempt.
+
+**Power.** A hub's ports start `off`, and a hub more than five tiers below
+the root, `usb_hub_depth_max`, keeps them so. The core powers each, one request
 at a time, and the hub's power-good time, `bPwrOn2PwrGood` times 2 ms
 plus FreeBSD's 20 ms (usb_hub.c:1280-1281, usb.h:124 and 624), runs from
 the last one's answer; FreeBSD waits it after each port (usb_hub.c:1512),
@@ -67,14 +78,34 @@ a hub the state no longer holds are ignored, so a device removed in the
 middle of any step leaves nothing behind.
 
 **Enumeration.** At the end of its reset recovery a port's device gets a
-reference, `{enable_slot, Ref}` and then `{address, Ref, Params}` with the
-route, the root port, the speed and the transaction translator; the
-answer to the address releases the turn. The descriptor steps that
-follow, 2 to 8 of the design, reach this core as one answer,
-`{configured, Ref, Config}` or `{enumeration_failed, Ref, Reason}`; on the
-first the port is `running`, `{start, Ref, Functions}` starts the
-device's functions, and a hub's configuration adds the hub, its ports
-`off`.
+reference and walks the steps of the design's enumeration, each one
+request whose answer is the next event, named by the port's state
+`{enumerating, Ref, Step}`: `{enable_slot, Ref, Step}`; `{address, Ref,
+Step, Params}` with the route, the root port, the speed and the
+transaction translator, whose answer releases the turn; FreeBSD's 10 ms
+settle, `{address_settle, At}`, awaiting no answer; at full speed the
+device descriptor's first 8 bytes and, when its EP0 packet size is not 8,
+`{evaluate_context, Ref, Step, ...}`; the whole device descriptor; the
+configuration's header and then all of it, which erx_usb_claim turns into
+the device's functions; SET_CONFIGURATION; for a hub, SET_INTERFACE to its
+multi-TT setting when the claim selected it, and the hub descriptor's
+head; and one `{configure_endpoints, Ref, Step, ...}` adding every claimed
+pipe, with the hub fields for a hub. Control transfers go out as
+`{control, Ref, Step, Setup, Data}`. On the last answer the port is
+`running`, `{start, Ref, Functions}` starts the device's functions, and a
+hub enters with its ports `off`.
+
+Every request names its device's reference and the step it was sent at,
+and its answer echoes both: `{Kind, Ref, Step, Result}`. request/4 is the
+one maker of a request, and it sets the port's step from the same value
+it writes into the request; a device passes each step at most once, so a
+reference and a step name one request. An answer is taken only while its
+port is at the step it names and that step awaits its kind, so an answer
+repeated, or arriving after its step was left, is stale by construction
+and ignored, without the core counting the requests in flight. Any failed
+answer, or descriptor erx_usb_desc or the claim refuses, gives the port up
+with the step and the reason, through one throw caught in
+device_answered/6.
 
 Every status word comes from a device and is decoded by erx_usb_hub_core,
 which refuses a malformed one; a malformed status or answer, like a failed
@@ -82,9 +113,9 @@ port operation, detaches an external hub. The root hub's operations are the
 controller process's register accesses and do not fail.
 """.
 
--export([new/1, step/3, ports/1, devices/1]).
+-export([new/1, step/3, ports/1, histories/1, devices/1]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, config/0]).
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -125,29 +156,53 @@ whether it holds the address-zero turn meanwhile.
                     | {resetting, to_send} | {resetting, ms(), sent | {poll, ms()} | read_queued}
                     | {disabling, term(), boolean()}
                     | {recovering, ms(), speed()}
-                    | {enumerating, ref(), enabling_slot | addressing | configuring}
+                    | {enumerating, ref(), step()}
                     | {running, ref()}
                     | {disabled, term()}.
+
+-doc """
+What a port keeps across its states: the start times of its enumeration
+attempts within the last `usb_port_attempt_window_ms`, oldest first, at most
+`usb_port_attempts_max` of them; its over-current changes counted; and whether
+one has been logged since its last attempt started.
+""".
+-type port_history() :: #{attempts := [ms()], over_current_changes := non_neg_integer(),
+                          over_current_logged := boolean()}.
 
 -type op() :: power_on | get_status | reset | disable | {clear, atom()}.
 
 -doc """
-What the descriptor steps answer for a configured device: the functions to
-start and, for a hub, its port count, its bPwrOn2PwrGood and whether its
-multi-TT interface was selected.
+A step of a device's enumeration, in order; each awaits one answer, of the
+kind awaits/1 names, and that answer echoes the step its request named. A
+device passes each step at most once: no step is retried, so a retry would
+be a step of its own. `device_head` and `ep0_packet` are a full-speed
+device's alone, `set_interface` a multi-TT hub's and `hub_descriptor` a
+hub's.
 """.
--type config() :: #{functions := [term()],
-                    hub := none | #{ports := 1..?ERX_USB_HUB_PORTS_MAX, power_good := byte(),
-                                    multi_tt := boolean()}}.
+-type step() :: enabling_slot | addressing | {address_settle, ms()} | device_head | ep0_packet | device
+              | config_head | configuration | set_configuration | set_interface | hub_descriptor
+              | configuring_endpoints.
+
+-type answer_kind() :: slot | addressed | control_done | evaluated | endpoints_configured.
 
 -type event() :: {port_event, port_no()}
                | {changed, hub_id(), erx_usb_hub_core:change_set(), From :: term()}
                | {port_done, hub_id(), target(), ok | {ok, binary()} | {ok, binary(), byte()} | {error, term()}}
-               | {slot, ref(), {ok, pos_integer()} | {error, term()}}
-               | {addressed, ref(), {ok, pos_integer()} | {error, term()}}
-               | {configured, ref(), config()}
-               | {enumeration_failed, ref(), term()}
+               | {slot, ref(), step(), {ok, pos_integer()} | {error, term()}}
+               | {addressed, ref(), step(), {ok, pos_integer()} | {error, term()}}
+               | {control_done, ref(), step(), {ok, binary()} | {error, term()}}
+               | {evaluated | endpoints_configured, ref(), step(), ok | {error, term()}}
                | expired.
+
+-doc "An enumeration request as the core makes it, before request/4 names its device and step.".
+-type request() :: enable_slot | {address, address_params()}
+                 | {control, Setup :: <<_:64>>, none | {in, pos_integer()}}
+                 | {evaluate_context, #{ep0_packet := pos_integer()}}
+                 | {configure_endpoints, endpoints()}.
+
+-type endpoints() :: #{add := [erx_usb_claim:pipe()],
+                       hub := none | #{ports := 1..?ERX_USB_HUB_PORTS_MAX, think_time := 0..3,
+                                       multi_tt := boolean()}}.
 
 -type address_params() :: #{slot := pos_integer(), root_port := port_no(), route := [port_no()],
                             speed := speed(),
@@ -155,20 +210,35 @@ multi-TT interface was selected.
 
 -type action() :: {port, hub_id(), target(), op()}
                 | {handled, hub_id(), From :: term()}
-                | {enable_slot, ref()}
-                | {address, ref(), address_params()}
-                | {start, ref(), [term()]}
+                | {enable_slot, ref(), step()}
+                | {address, ref(), step(), address_params()}
+                | {control, ref(), step(), Setup :: <<_:64>>, none | {in, pos_integer()}}
+                | {evaluate_context, ref(), step(), #{ep0_packet := pos_integer()}}
+                | {configure_endpoints, ref(), step(), endpoints()}
+                | {start, ref(), [erx_usb_claim:function_()]}
                 | {detach, ref()}
+                | {log, hub_id(), port_no(), over_current}
                 | {deadline, ms()}.
 
+%% A hub; `ports` and `histories` have the same keys, every port of the hub, since
+%% hub/5 makes both and nothing adds or removes a port but the hub's own removal.
 -type hub() :: #{parent := root | {hub, full | high}, power_good := ms(),
-                 power := powering | {good_at, ms()} | good, multi_tt := boolean(),
-                 ports := #{port_no() => port_state()}, pending := ordsets:ordset(target()),
+                 power := powering | {good_at, ms()} | good | unpowered, multi_tt := boolean(),
+                 ports := #{port_no() => port_state()}, histories := #{port_no() => port_history()},
+                 pending := ordsets:ordset(target()),
                  op := none | {target(), op()}, clears := [{target(), atom()}], reporter := none | term()}.
 
+-doc """
+A device: its place, speed, slot and translator, and what its enumeration
+has read so far: its device descriptor, its claimed functions and, for a
+hub, its hub descriptor.
+""".
 -type device() :: #{port := {hub_id(), port_no()}, route := [port_no(), ...], speed := speed(),
                     slot := none | pos_integer(),
-                    tt := none | {hub_id(), port_no()}}.
+                    tt := none | {hub_id(), port_no()},
+                    descriptor := none | erx_usb_desc:device(),
+                    functions := [erx_usb_claim:function_()],
+                    hub := none | erx_usb_desc:hub()}.
 
 -opaque state() :: #{hubs := #{hub_id() => hub()}, devices := #{ref() => device()},
                      waiting := [{hub_id(), port_no()}], next := ref()}.
@@ -176,7 +246,7 @@ multi-TT interface was selected.
 -doc "The bus of a controller whose root hub has RootPorts ports, every port `off`.".
 -spec new(port_no()) -> state().
 new(RootPorts) when is_integer(RootPorts), RootPorts >= 1, RootPorts =< 255 ->
-    #{hubs => #{root => hub(root, RootPorts, ?ROOT_POWER_GOOD_UNITS, false)},
+    #{hubs => #{root => hub(root, RootPorts, ?ROOT_POWER_GOOD_UNITS, false, powering)},
       devices => #{}, waiting => [], next => {device, 1}}.
 
 -doc "The actions the bus process performs on Event, handled at Now, and the next state.".
@@ -189,6 +259,11 @@ step(Event, Now, State0) ->
 -spec ports(state()) -> #{{hub_id(), port_no()} => port_state()}.
 ports(#{hubs := Hubs}) ->
     maps:from_list([{{Id, N}, Port} || Id := #{ports := Ports} <- Hubs, N := Port <- Ports]).
+
+-doc "Every port's history, by its hub and number, for inspection.".
+-spec histories(state()) -> #{{hub_id(), port_no()} => port_history()}.
+histories(#{hubs := Hubs}) ->
+    maps:from_list([{{Id, N}, History} || Id := #{histories := Histories} <- Hubs, N := History <- Histories]).
 
 -doc "Every device the bus holds, by its reference, for inspection.".
 -spec devices(state()) -> #{ref() => device()}.
@@ -214,61 +289,238 @@ event({port_done, Id, Target, Result}, Now, State = #{hubs := Hubs}) ->
         #{} ->
             {[], State}
     end;
-event({slot, Ref, Result}, _Now, State) ->
-    at_step(Ref, enabling_slot, State, fun(Device) -> slot(Ref, Device, Result, State) end);
-event({addressed, Ref, Result}, _Now, State) ->
-    at_step(Ref, addressing, State, fun(_Device) -> addressed(Ref, Result, State) end);
-event({configured, Ref, Config}, _Now, State) ->
-    at_step(Ref, configuring, State, fun(Device) -> configured(Ref, Device, Config, State) end);
-event({enumeration_failed, Ref, Reason}, _Now, State) ->
-    at_step(Ref, configuring, State, fun(_Device) -> fail_device(Ref, Reason, State) end);
+event({Kind, Ref, Step, Result}, Now, State)
+  when Kind =:= slot; Kind =:= addressed; Kind =:= control_done; Kind =:= evaluated;
+       Kind =:= endpoints_configured ->
+    device_answered(Ref, Step, Kind, Result, Now, State);
 event(expired, Now, State = #{hubs := Hubs}) ->
     lists:foldl(fun(Id, Acc) -> expire_hub(Id, Now, Acc) end, {[], State}, lists:sort(maps:keys(Hubs))).
 
-%% Runs Fun on the device Ref when its port is at enumeration Step; an answer for
-%% a device gone or at another step is stale and ignored.
-at_step(Ref, Step, State = #{devices := Devices}, Fun) ->
+%% Enumeration.
+
+%% The answer of kind Kind to device Ref's request at Step, taken only while its
+%% port is at that step and the step awaits that kind: a reference and a step name
+%% one request, so an answer for a step left, of another kind or for a device gone
+%% is stale and ignored. A failed answer, or a descriptor or claim refused, gives
+%% the port up with the step and the reason.
+device_answered(Ref, Step, Kind, Result, Now, State = #{devices := Devices}) ->
     case Devices of
         #{Ref := Device = #{port := {Id, N}}} ->
             case port(Id, N, State) of
-                {enumerating, Ref, Step} -> Fun(Device);
-                _ -> {[], State}
+                {enumerating, Ref, Step} ->
+                    case awaits(Step) of
+                        Kind ->
+                            try
+                                enumerated(Step, Ref, Device, Result, Now, State)
+                            catch
+                                throw:{?MODULE, refused, Reason} -> fail_device(Ref, {Step, Reason}, State)
+                            end;
+                        _Other ->
+                            {[], State}
+                    end;
+                _ ->
+                    {[], State}
             end;
         #{} ->
             {[], State}
     end.
 
-slot(Ref, Device0, {ok, Slot}, State = #{devices := Devices}) ->
-    Device = Device0#{slot := Slot},
-    then([{address, Ref, address_params(Device, State)}],
-         set_step(Ref, addressing, State#{devices := Devices#{Ref := Device}}));
-slot(Ref, _Device, {error, Reason}, State) ->
-    fail_device(Ref, {enable_slot, Reason}, State).
+-spec awaits(step()) -> answer_kind() | none.
+awaits(enabling_slot) -> slot;
+awaits(addressing) -> addressed;
+awaits({address_settle, _At}) -> none;
+awaits(device_head) -> control_done;
+awaits(ep0_packet) -> evaluated;
+awaits(device) -> control_done;
+awaits(config_head) -> control_done;
+awaits(configuration) -> control_done;
+awaits(set_configuration) -> control_done;
+awaits(set_interface) -> control_done;
+awaits(hub_descriptor) -> control_done;
+awaits(configuring_endpoints) -> endpoints_configured.
 
-addressed(Ref, {ok, _Address}, State) ->
-    set_step(Ref, configuring, State);
-addressed(Ref, {error, Reason}, State) ->
-    fail_device(Ref, {address, Reason}, State).
+%% A step's successful answer moves the device to its next step, in the order of
+%% FreeBSD's usb_alloc_device (docs/design-usb.md, the enumeration's steps).
+%% Only a full-speed EP0 has a packet size to learn, so only a full-speed device
+%% reads the device descriptor's first 8 bytes first, as usbd_setup_device_desc
+%% does (sys/dev/usb/usb_request.c:1984-2026, release/15.1.0, 95719d8a).
+enumerated(enabling_slot, Ref, Device, Result, _Now, State) ->
+    Slotted = Device#{slot := value(Result)},
+    request(Ref, addressing, {address, address_params(Slotted, State)}, put_device(Ref, Slotted, State));
+enumerated(addressing, Ref, _Device, Result, Now, State) ->
+    _Address = value(Result),
+    set_step(Ref, {address_settle, Now + ?ERX_USB_SET_ADDRESS_SETTLE_MS}, State);
+enumerated(device_head, Ref, _Device, Result, _Now, State) ->
+    case ep0_packet(value(erx_usb_desc:device_head(value(Result)))) of
+        ?ERX_USB_DEVICE_DESCRIPTOR_HEAD -> read_device(Ref, State);
+        Packet -> request(Ref, ep0_packet, {evaluate_context, #{ep0_packet => Packet}}, State)
+    end;
+enumerated(ep0_packet, Ref, _Device, Result, _Now, State) ->
+    ok = value(Result),
+    read_device(Ref, State);
+enumerated(device, Ref, Device = #{speed := Speed}, Result, _Now, State) ->
+    Descriptor = value(erx_usb_desc:device(value(Result))),
+    no_superspeed_hub(Descriptor, Speed),
+    request(Ref, config_head, get_descriptor(?ERX_USB_DESCRIPTOR_TYPE_CONFIGURATION,
+                                             ?ERX_USB_CONFIGURATION_DESCRIPTOR_SIZE),
+            put_device(Ref, Device#{descriptor := Descriptor}, State));
+enumerated(config_head, Ref, _Device, Result, _Now, State) ->
+    Total = value(erx_usb_desc:configuration_length(value(Result))),
+    request(Ref, configuration, get_descriptor(?ERX_USB_DESCRIPTOR_TYPE_CONFIGURATION, Total), State);
+enumerated(configuration, Ref, Device = #{speed := Speed, descriptor := Descriptor}, Result, _Now, State) ->
+    Configuration = #{value := Value} = value(erx_usb_desc:configuration(value(Result))),
+    Functions = value(erx_usb_claim:functions(Speed, Descriptor, Configuration)),
+    request(Ref, set_configuration, control(?ERX_USB_REQUEST_TYPE_STANDARD, ?ERX_USB_RECIPIENT_DEVICE,
+                                            ?ERX_USB_REQUEST_SET_CONFIGURATION, Value, 0),
+            put_device(Ref, Device#{functions := Functions}, State));
+enumerated(set_configuration, Ref, #{functions := Functions}, Result, _Now, State) ->
+    _ = value(Result),
+    case hub_function(Functions) of
+        none ->
+            configure_endpoints(Ref, State);
+        #{alternate := 0} ->
+            read_hub_descriptor(Ref, State);
+        #{interface := Interface, alternate := Alternate} ->
+            request(Ref, set_interface, control(?ERX_USB_REQUEST_TYPE_STANDARD, ?ERX_USB_RECIPIENT_INTERFACE,
+                                                ?ERX_USB_REQUEST_SET_INTERFACE, Alternate, Interface), State)
+    end;
+enumerated(set_interface, Ref, _Device, Result, _Now, State) ->
+    _ = value(Result),
+    read_hub_descriptor(Ref, State);
+enumerated(hub_descriptor, Ref, Device, Result, _Now, State) ->
+    Hub = value(erx_usb_desc:hub(value(Result))),
+    configure_endpoints(Ref, put_device(Ref, Device#{hub := Hub}, State));
+enumerated(configuring_endpoints, Ref, Device, Result, _Now, State) ->
+    ok = value(Result),
+    configured(Ref, Device, State).
 
-configured(Ref, #{port := {Id, N}, speed := Speed}, Config = #{functions := Functions}, State0) ->
-    case {Config, Speed} of
-        {#{hub := #{}}, super} ->
-            fail_device(Ref, superspeed_hub, State0);
-        {#{hub := none}, _} ->
-            then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0));
-        {#{hub := #{ports := Ports, power_good := Units, multi_tt := MultiTT}}, _} ->
-            #{hubs := Hubs} = State0,
-            Hub = hub({hub, hub_speed(Speed)}, Ports, Units, MultiTT),
-            then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State0#{hubs := Hubs#{Ref => Hub}}))
+%% The value of a step's answer or decoding; a failure leaves through the one
+%% throw device_answered/6 catches.
+value({ok, Value}) -> Value;
+value(ok) -> ok;
+value({error, Reason}) -> throw({?MODULE, refused, Reason}).
+
+%% A full-speed EP0's packet size from bMaxPacketSize0: a power of two from 8 to
+%% usb_ep0_packet_full_max, the sizes FreeBSD's fallback tries
+%% (usb_request.c:1998-2011); any other value is not one to guess at.
+ep0_packet(Packet) when Packet >= ?ERX_USB_DEVICE_DESCRIPTOR_HEAD, Packet =< ?ERX_USB_EP0_PACKET_FULL_MAX,
+                        Packet band (Packet - 1) =:= 0 ->
+    Packet;
+ep0_packet(_Packet) ->
+    value({error, malformed_descriptor}).
+
+%% A hub at SuperSpeed is refused at its device descriptor (docs/design-usb.md,
+%% "Outside this design").
+no_superspeed_hub(#{class := ?ERX_USB_CLASS_HUB}, super) -> value({error, superspeed_hub});
+no_superspeed_hub(_Descriptor, _Speed) -> ok.
+
+hub_function(Functions) ->
+    case [F || F = #{driver := erx_usb_hub} <- Functions] of
+        [Hub] -> Hub;
+        [] -> none
     end.
+
+%% The first request after the address's settle.
+first_read(Ref, State = #{devices := Devices}) ->
+    case maps:get(Ref, Devices) of
+        #{speed := full} -> request(Ref, device_head, get_descriptor(?ERX_USB_DESCRIPTOR_TYPE_DEVICE,
+                                                                     ?ERX_USB_DEVICE_DESCRIPTOR_HEAD), State);
+        #{} -> read_device(Ref, State)
+    end.
+
+read_device(Ref, State) ->
+    request(Ref, device, get_descriptor(?ERX_USB_DESCRIPTOR_TYPE_DEVICE, ?ERX_USB_DEVICE_DESCRIPTOR_SIZE), State).
+
+%% The hub descriptor's 7-byte head holds every field the slot's hub fields take,
+%% so its port bitmaps are not read (erx_usb_desc:hub/1).
+read_hub_descriptor(Ref, State) ->
+    request(Ref, hub_descriptor,
+            {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_CLASS bor ?ERX_USB_RECIPIENT_DEVICE,
+                            ?ERX_USB_REQUEST_GET_DESCRIPTOR, ?ERX_USB_DESCRIPTOR_TYPE_HUB bsl 8, 0,
+                            ?ERX_USB_HUB_DESCRIPTOR_HEAD),
+             {in, ?ERX_USB_HUB_DESCRIPTOR_HEAD}},
+            State).
+
+%% One Configure Endpoint adding every pipe the claimed functions need, with the
+%% hub fields for a hub: the multi-TT flag only once its multi-TT setting was
+%% selected (xHCI 4.5.2, as docs/design-usb.md cites it).
+configure_endpoints(Ref, State = #{devices := Devices}) ->
+    #{functions := Functions, hub := Hub} = maps:get(Ref, Devices),
+    HubFields = case Hub of
+                    none -> none;
+                    #{ports := Ports, think_time := Think} -> #{ports => Ports, think_time => Think,
+                                                                multi_tt => multi_tt(Functions)}
+                end,
+    request(Ref, configuring_endpoints,
+            {configure_endpoints, #{add => [Pipe || #{pipes := Pipes} <- Functions, Pipe <- Pipes],
+                                    hub => HubFields}},
+            State).
+
+multi_tt(Functions) ->
+    #{alternate := Alternate} = hub_function(Functions),
+    Alternate =:= ?ERX_USB_HUB_MULTI_TT_ALTERNATE.
+
+%% The device configured: its port `running`, its functions started, and a hub's
+%% ports added `off`.
+configured(Ref, #{port := {Id, N}, speed := Speed, route := Route, functions := Functions, hub := Hub},
+           State0 = #{hubs := Hubs}) ->
+    State = case Hub of
+                none ->
+                    State0;
+                #{ports := Ports, power_good := Units} ->
+                    Added = hub({hub, hub_speed(Speed)}, Ports, Units, multi_tt(Functions), hub_power(Route)),
+                    State0#{hubs := Hubs#{Ref => Added}}
+            end,
+    then([{start, Ref, Functions}], set_port(Id, N, {running, Ref}, State)).
+
+%% Device Ref's next step, Step, and its one request, sent naming the device and the
+%% step. The one maker of an enumeration request, so the step a request names, which
+%% its answer echoes, is the step its port is set to.
+request(Ref, Step, Request, State) ->
+    then([sent(Ref, Step, Request)], set_step(Ref, Step, State)).
+
+-spec sent(ref(), step(), request()) -> action().
+sent(Ref, Step, enable_slot) -> {enable_slot, Ref, Step};
+sent(Ref, Step, {address, Params}) -> {address, Ref, Step, Params};
+sent(Ref, Step, {control, Setup, Data}) -> {control, Ref, Step, Setup, Data};
+sent(Ref, Step, {evaluate_context, Context}) -> {evaluate_context, Ref, Step, Context};
+sent(Ref, Step, {configure_endpoints, Endpoints}) -> {configure_endpoints, Ref, Step, Endpoints}.
+
+get_descriptor(Type, Length) ->
+    {control, setup(?ERX_USB_REQUEST_DIR_IN bor ?ERX_USB_REQUEST_TYPE_STANDARD bor ?ERX_USB_RECIPIENT_DEVICE,
+                    ?ERX_USB_REQUEST_GET_DESCRIPTOR, Type bsl 8, 0, Length),
+     {in, Length}}.
+
+%% A request with no data stage.
+control(Kind, Recipient, Request, Value, Index) ->
+    {control, setup(Kind bor Recipient, Request, Value, Index, 0), none}.
+
+%% A setup packet: bmRequestType, bRequest, wValue, wIndex and wLength.
+setup(RequestType, Request, Value, Index, Length) ->
+    <<RequestType, Request, Value:16/little, Index:16/little, Length:16/little>>.
+
+put_device(Ref, Device, State = #{devices := Devices}) ->
+    State#{devices := Devices#{Ref := Device}}.
 
 hub_speed(high) -> high;
 hub_speed(_LowOrFull) -> full.
 
-hub(Parent, Ports, PowerGoodUnits, MultiTT) ->
+%% A hub more than usb_hub_depth_max tiers below the root keeps every port `off`:
+%% a slot context's route string holds five tiers below the root port, four bits a
+%% tier, so no device below such a hub could be addressed (docs/design-usb.md, "What
+%% a device can make the domain spend"). An `unpowered` hub issues no port operation
+%% (next_op's first clause), so its ports never leave `off` and its hub function's
+%% first report stays unanswered: one transfer, then nothing.
+hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;
+hub_power(_Route) -> powering.
+
+hub(Parent, Ports, PowerGoodUnits, MultiTT, Power) ->
     #{parent => Parent, power_good => PowerGoodUnits * ?POWER_GOOD_UNIT_MS + ?EXTRA_POWER_UP_MS,
-      power => powering, multi_tt => MultiTT,
-      ports => maps:from_keys(lists:seq(1, Ports), off), pending => lists:seq(1, Ports),
+      power => Power, multi_tt => MultiTT,
+      ports => maps:from_keys(lists:seq(1, Ports), off),
+      histories => maps:from_keys(lists:seq(1, Ports), #{attempts => [], over_current_changes => 0,
+                                                        over_current_logged => false}),
+      pending => lists:seq(1, Ports),
       op => none, clears => [], reporter => none}.
 
 %% The answer to a hub's port operation. A port that has moved on since the
@@ -315,26 +567,43 @@ decode(_Id, _Target, _Malformed, _State) ->
     {error, malformed_status}.
 
 %% A hub's own status needs nothing beyond clearing its changes; a port's status
-%% moves the port as the port table says.
+%% moves the port as the port table says, then its over-current change is counted.
 read(_Id, hub, _HubStatus, _Now, State) ->
     {[], State};
 read(Id, N, Status = #{connected := Connected}, Now, State) ->
     Port = port(Id, N, State),
-    case connection_changed(Status, Port) of
-        true ->
-            Arrival = case Connected of
-                          true -> {settling, Now + ?POWER_UP_DELAY_MS};
-                          false -> empty
-                      end,
-            set_port(Id, N, Arrival, State);
-        false ->
-            follow(Id, N, Port, Status, Now, State)
-    end.
+    {Actions, Moved} = case connection_changed(Status, Port) of
+                           true ->
+                               Arrival = case Connected of
+                                             true -> {settling, Now + ?POWER_UP_DELAY_MS};
+                                             false -> empty
+                                         end,
+                               set_port(Id, N, Arrival, State);
+                           false ->
+                               follow(Id, N, Port, Status, Now, State)
+                       end,
+    then(Actions, over_current(Id, N, Status, Moved)).
 
 %% A connection change, or a status that disagrees with whether the port holds
 %% something: nothing on an `empty` port, something on every other read port.
 connection_changed(#{changes := Changes, connected := Connected}, Port) ->
     lists:member(connection, Changes) orelse Connected =/= (Port =/= empty).
+
+%% An over-current change is counted for the port's inspection and logged once per
+%% enumeration attempt: the first since the port's last attempt started is logged,
+%% the rest only counted. attempt/4 rearms the log, so a device that reports
+%% connection and over-current changes on every read logs at most one line more
+%% than the attempts it is allowed. The hub, not software, cuts the port's power,
+%% so the port only follows its status (usb_hub.c:1036-1046).
+over_current(Id, N, #{changes := Changes}, State) ->
+    case lists:member(over_current, Changes) of
+        true ->
+            History = #{over_current_changes := Count, over_current_logged := Logged} = history(Id, N, State),
+            {[{log, Id, N, over_current} || not Logged],
+             put_history(Id, N, History#{over_current_changes := Count + 1, over_current_logged := true}, State)};
+        false ->
+            {[], State}
+    end.
 
 %% A running port its hub disabled is given up; a resetting port's read after its
 %% reset was answered decides the reset, as usbd_req_reset_port does
@@ -379,7 +648,10 @@ expire_hub(Id, Now, {Actions, State = #{hubs := Hubs}}) ->
     end.
 
 expire_port(Id, N, {settling, At}, Now, State = #{waiting := Waiting}) when At =< Now ->
-    set_port(Id, N, waiting, State#{waiting := Waiting ++ [{Id, N}]});
+    case attempt(Id, N, Now, State) of
+        {started, Started} -> set_port(Id, N, waiting, Started#{waiting := Waiting ++ [{Id, N}]});
+        {held, Until} -> set_port(Id, N, {settling, Until}, State)
+    end;
 expire_port(Id, N, {resetting, At, _Phase}, Now, State) when At =< Now ->
     give_up(Id, N, reset_timeout, State);
 expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, State) when Poll =< Now ->
@@ -387,16 +659,32 @@ expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, State) when Poll =< Now -
     set_port(Id, N, {resetting, At, read_queued}, Polled);
 expire_port(Id, N, {recovering, At, Speed}, Now, State) when At =< Now ->
     enumerate(Id, N, Speed, State);
+expire_port(_Id, _N, {enumerating, Ref, {address_settle, At}}, Now, State) when At =< Now ->
+    first_read(Ref, State);
 expire_port(_Id, _N, _Port, _Now, State) ->
     {[], State}.
+
+%% A settled port starts an enumeration attempt when fewer than usb_port_attempts_max
+%% started in the last usb_port_attempt_window_ms (docs/design-usb.md, "What a device
+%% can make the domain spend"); otherwise it is held until its oldest attempt leaves
+%% the window. Only attempts within the window are kept, so a port keeps at most the
+%% bound however often its device reconnects. A started attempt rearms the port's
+%% over-current log (over_current/4).
+attempt(Id, N, Now, State) ->
+    History = #{attempts := Attempts} = history(Id, N, State),
+    Recent = [T || T <- Attempts, Now - T < ?ERX_USB_PORT_ATTEMPT_WINDOW_MS],
+    case length(Recent) < ?ERX_USB_PORT_ATTEMPTS_MAX of
+        true ->
+            Started = History#{attempts := Recent ++ [Now], over_current_logged := false},
+            {started, put_history(Id, N, Started, State)};
+        false -> {held, hd(Recent) + ?ERX_USB_PORT_ATTEMPT_WINDOW_MS}
+    end.
 
 %% A device for the port at the end of its reset recovery.
 enumerate(Id, N, Speed, State = #{devices := Devices, next := Ref = {device, Next}}) ->
     Device = #{port => {Id, N}, route => route(Id, State) ++ [N], speed => Speed, slot => none,
-               tt => translator(Id, N, Speed, State)},
-    then([{enable_slot, Ref}],
-         set_port(Id, N, {enumerating, Ref, enabling_slot},
-                  State#{devices := Devices#{Ref => Device}, next := {device, Next + 1}})).
+               tt => translator(Id, N, Speed, State), descriptor => none, functions => [], hub => none},
+    request(Ref, enabling_slot, enable_slot, State#{devices := Devices#{Ref => Device}, next := {device, Next + 1}}).
 
 route(root, _State) -> [];
 route(Ref, #{devices := Devices}) -> maps:get(route, maps:get(Ref, Devices)).
@@ -503,7 +791,7 @@ grant_turn(State) ->
 holds_turn({resetting, to_send}) -> true;
 holds_turn({resetting, _At, _Phase}) -> true;
 holds_turn({recovering, _At, _Speed}) -> true;
-holds_turn({enumerating, _Ref, Step}) -> Step =/= configuring;
+holds_turn({enumerating, _Ref, Step}) -> Step =:= enabling_slot orelse Step =:= addressing;
 holds_turn({disabling, _Reason, Held}) -> Held;
 holds_turn(_Port) -> false.
 
@@ -531,6 +819,8 @@ run_hub(Id, Hub0, Now) ->
 %% a port given up, the turn holder's reset, then a status read once powered.
 %% A resetting port's reads are queued in `pending` with the hub's other reads,
 %% so a report is answered only once they are done as well.
+next_op(_Id, Hub = #{power := unpowered}, _Now) ->
+    {[], Hub};
 next_op(Id, Hub = #{clears := [{Target, Change} | _]}, _Now) ->
     issue(Id, Target, {clear, Change}, Hub);
 next_op(Id, Hub = #{power := powering, ports := Ports, power_good := PowerGood}, Now) ->
@@ -571,11 +861,17 @@ port_deadlines({settling, At}) -> [At];
 port_deadlines({resetting, At, {poll, Poll}}) -> [At, Poll];
 port_deadlines({resetting, At, _Phase}) -> [At];
 port_deadlines({recovering, At, _Speed}) -> [At];
+port_deadlines({enumerating, _Ref, {address_settle, At}}) -> [At];
 port_deadlines(_Port) -> [].
 
 %% State access.
 
 port(Id, N, #{hubs := Hubs}) -> maps:get(N, maps:get(ports, maps:get(Id, Hubs))).
+
+history(Id, N, #{hubs := Hubs}) -> maps:get(N, maps:get(histories, maps:get(Id, Hubs))).
+
+put_history(Id, N, History, State) ->
+    with_hub(Id, fun(Hub = #{histories := Histories}) -> Hub#{histories := Histories#{N := History}} end, State).
 
 find_port(Id, N, #{hubs := Hubs}) ->
     case Hubs of

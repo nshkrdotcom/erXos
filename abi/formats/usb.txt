@@ -28,6 +28,10 @@ limit usb_endpoints_max u32 8
 limit usb_input_max u32 8
 # The drives the USB domain offers the file servers.
 limit usb_drives_max u32 4
+# The enumeration attempts a port starts in any usb_port_attempt_window_ms; past them
+# a settled port waits until its oldest attempt leaves the window.
+limit usb_port_attempts_max u32 3
+limit usb_port_attempt_window_ms u32 60000
 
 # A setup packet's bmRequestType: the direction in bit 7, the kind in bits 6:5 and the
 # recipient in bits 4:0 (usb.h:157-165).
@@ -86,6 +90,15 @@ limit usb_device_descriptor_head u32 8
 limit usb_device_descriptor_size u32 18
 limit usb_configuration_descriptor_size u32 9
 limit usb_hub_descriptor_head u32 7
+# A full-speed EP0's largest packet: its bMaxPacketSize0 is a power of two from
+# usb_device_descriptor_head to this, the sizes FreeBSD's fallback tries
+# (usbd_setup_device_desc, usb_request.c:1984-2026). At low, high and SuperSpeed EP0 has
+# one packet size, so FreeBSD reads the whole device descriptor at once there.
+limit usb_ep0_packet_full_max u16 64
+# The wait after a device's address is set before its next request, FreeBSD's
+# usb_set_address_settle (usb.h:120), which usbd_req_set_address waits even when the
+# controller sets the address itself (usb_request.c:1596-1599).
+limit usb_set_address_settle_ms u32 10
 
 # The least each descriptor a configuration's walk reads must hold: a header's length
 # and type (struct usb_descriptor, usb.h:282-286, less its subtype), an interface's 9
