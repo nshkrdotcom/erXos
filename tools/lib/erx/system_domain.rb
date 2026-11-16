@@ -586,6 +586,15 @@ module Erx
 
     module_function
 
+    # The machine both images boot on: MediumBoot's, 128 MiB larger, with Fiasco's
+    # reserve grown in step (6% of RAM, rounded up as Fiasco rounds it; MediumBoot's
+    # 48 MiB of 768 kept as the same share). The re-grant image (Regrant) holds three
+    # domains' budgets in root_memory and carries the session release beside them, so its
+    # archive outgrows the room the medium machine leaves root_memory; such an archive
+    # asks for a larger machine, never a smaller root_memory (docs/design-stopgap.md,
+    # "The root startup rule").
+    def machine(platform) = MediumBoot.machine(platform).with(memory_mib: 896, fiasco_reserve_mib: 56)
+
     # The manifest: MediumBoot's, room for two domains, with ECHO_ROW, PEER_ROW and ECHO_SERVICES for its rows.
     def manifest(source) = MediumBoot.manifest(source, row: ECHO_ROW + PEER_ROW + ECHO_SERVICES)
 
@@ -659,13 +668,13 @@ module Erx
         @compiler = compiler
         @linker = linker
         @qemu = qemu
-        @machine = MediumBoot.machine(platform)
+        @machine = SystemDomain.machine(platform)
         source = platform.site_manifest_source(@root)
         @manifest = SystemDomain.manifest(source)
         @regrant_manifest = Regrant.manifest(source)
       end
 
-      # Packs the two test images once, on a medium machine (MediumBoot.machine), then boots each at each CPU count:
+      # Packs the two test images once, on SystemDomain.machine, then boots each at each CPU count:
       # the service-kill boot, then the re-grant boot (Regrant).
       def call(cpus:, jobs: 4, build: true, placement: QemuCells::HERE)
         fiasco = Fiasco.new(root: @root, runner: @runner, compiler: @compiler)
