@@ -47,7 +47,10 @@ connection on it and gives the program a `/dev` of its own, an
 erx_session_export tree that serves the connection's `draw` and `ctl` and
 relays the window's `kbd`, `mouse`, `wctl`, `label` and the display's
 `clipboard` (docs/design-files.md, "A program's window"). All three end
-when the handler does.
+when the handler does. erx_session_export:start_window/1 makes them, so
+this module, which the display domain's release ships, names none of the
+window library's modules; its one client name is the pixel allocator's,
+erx_pixels, G9's one exception (docs/design-display.md, G9).
 
 start/1 waits 30 seconds for the handler's answer; start/2, the tests'
 seam, takes the wait in milliseconds. Past it, the start kills the
@@ -403,38 +406,23 @@ lend(Peer, Bytes) ->
         exit:{noproc, _} -> {refused, enodev}
     end.
 
-%% The program's window on Display, its draw connection and its own /dev tree
-%% (docs/design-files.md, "A program's window"), each with the handler as its
-%% one owner: the window's holder, the connection's starter and what the
-%% tree's grant ends with, so each ends when the handler does, whatever its
-%% reason, and a refused start undoes nothing by hand. A domain without the
-%% display client, or with no grant of Display, refuses with enodev.
+%% The program's own /dev tree on a window of its own on Display, with the handler
+%% as the one owner of the window, its draw connection and the tree
+%% (erx_session_export:start_window/1). A domain without the session's application,
+%% the display domain among them, or without the display client (start_window/1's
+%% enodev) refuses with enodev. Only the undef of erx_session_export where it is not
+%% loaded says so; any other undef is a fault of the code, raised again.
 window(Display) ->
-    maybe
-        {ok, Window} ?= open_window(Display),
-        {ok, Conn} ?= erx_draw_conn:start(#{window => Window}),
-        Args = #{window => #{window => Window, conn => Conn, display => Display,
-                             clipboard => erx_win:clipboard(Display)}},
-        {ok, DevGrant} ?= dev_grant(erx_fs:start_link(erx_session_export, Args, rw,
-                                                      #{client => own, ends_with => self()})),
-        {windowed, DevGrant}
-    else
+    try erx_session_export:start_window(Display) of
+        {ok, DevGrant} -> {windowed, DevGrant};
         {error, Errno} -> {refused, Errno}
-    end.
-
-%% The window, or enodev in a domain whose release lacks the display client or
-%% that holds no grant of Display.
-open_window(Display) ->
-    try erx_win:open(Display, #{}) of
-        {error, none} -> {error, enodev};
-        Answer -> Answer
     catch
-        error:undef -> {error, enodev}
+        error:undef:Stack ->
+            case {Stack, erlang:module_loaded(erx_session_export)} of
+                {[{erx_session_export, _, _, _} | _], false} -> {refused, enodev};
+                _ -> erlang:raise(error, undef, Stack)
+            end
     end.
-
-%% A grant that does not start refuses the start with eio.
-dev_grant({ok, _} = Started) -> Started;
-dev_grant({error, _}) -> {error, eio}.
 
 %% A monitor of the pipe server, or none while it is between restarts.
 watch_pipes() ->

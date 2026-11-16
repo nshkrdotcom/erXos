@@ -27,6 +27,7 @@ class ErxProgHandlerTest < Minitest::Test
   SUITES = %w[erx_prog_handler_core_tests erx_prog_handler_tests].freeze
   CORE = 'erlang/apps/erx/src/erx_prog_handler_core.erl'
   HANDLER = 'erlang/apps/erx/src/erx_prog_handler.erl'
+  EXPORT = 'erlang/apps/erx_session/src/erx_session_export.erl'
 
   def test_the_handler_starts_forwards_and_ends
     text, ok = run_eunit({})
@@ -39,7 +40,7 @@ class ErxProgHandlerTest < Minitest::Test
   Mutant = Data.define(:file, :original, :replacement, :caught_by)
   MUTANTS = {
     'a /dev tree grant that does not end with the handler' =>
-      Mutant.new(file: HANDLER, original: '#{client => own, ends_with => self()}', replacement: '#{client => own}',
+      Mutant.new(file: EXPORT, original: '#{client => own, ends_with => self()}', replacement: '#{client => own}',
                  caught_by: 'a_refused_windowed_start_ends_what_it_made'),
     'a window check against the export names of a program without a window' =>
       Mutant.new(file: CORE, original: '|| Dir := Names <- exported(Window), Name <- Names]',

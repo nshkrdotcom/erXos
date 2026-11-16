@@ -1728,6 +1728,12 @@ handler, after building the program's table:
    every entry at exactly `/dev`, or beside the others when the
    narrowing left none.
 
+Steps 1 to 3 are one call the handler makes in its own process,
+`erx_session_export:start_window/1`, so they lie in the session's
+application beside the tree they start, and the handler's application,
+which the display domain's release also ships, names none of the window
+library's modules ([design-display.md](design-display.md), G9).
+
 Step 4 drops what it replaces, so the entry is measured against the
 entries at exactly `/dev`, since rights only shrink (F3). With none
 there, `/dev` is the export's, whose names reach every program whatever

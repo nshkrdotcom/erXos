@@ -63,6 +63,7 @@ allow answers `ebadf`, as on UNIX.
 
 -include("generated/erx_abi.hrl").
 
+-export([start_window/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, write/4, make/4,
          readdir/4, statfs/1, clunk/2]).
 
@@ -100,6 +101,47 @@ grant carries `clipboard`.
                | null | zero | urandom | tty | passwd | group
                | draw | ctl | kbd | mouse | wctl | label | clipboard.
 -type access() :: read | write | read_write.
+
+-doc """
+A program's own `/dev` on a window of its own on `Display` (docs/design-files.md,
+"A program's window"), started in the calling process, the program's handler, which
+becomes the one owner of all three: the window's holder (erx_win:open/2), the draw
+connection's starter and what the tree's grant ends with. Each therefore ends when the
+handler does, whatever its reason, and a refused start undoes nothing by hand. Answers
+the tree's grant, `enodev` in a domain without the display client or with no grant of
+`Display`, the window's or the connection's own errno, or `eio` for a tree that does not
+start. The display's window modules are named here, in the session's application,
+and not by the handler, since the display domain's release ships the handler's
+application and none of the client's (docs/design-display.md, G9).
+""".
+-spec start_window(atom()) -> {ok, pid()} | {error, atom()}.
+start_window(Display) ->
+    maybe
+        {ok, Window} ?= open_window(Display),
+        {ok, Conn} ?= erx_draw_conn:start(#{window => Window}),
+        Args = #{window => #{window => Window, conn => Conn, display => Display,
+                             clipboard => erx_win:clipboard(Display)}},
+        {ok, _} ?= tree(erx_fs:start_link(?MODULE, Args, rw, #{client => own, ends_with => self()}))
+    end.
+
+%% The window, or enodev in a domain that holds no grant of Display or whose release
+%% lacks the display client, whose erx_win is then not loaded; any other undef is a
+%% fault of the code, raised again.
+open_window(Display) ->
+    try erx_win:open(Display, #{}) of
+        {error, none} -> {error, enodev};
+        Answer -> Answer
+    catch
+        error:undef:Stack ->
+            case {Stack, erlang:module_loaded(erx_win)} of
+                {[{erx_win, _, _, _} | _], false} -> {error, enodev};
+                _ -> erlang:raise(error, undef, Stack)
+            end
+    end.
+
+%% A tree that does not start refuses the start with eio.
+tree({ok, _} = Started) -> Started;
+tree({error, _}) -> {error, eio}.
 
 %% ---------------------------------------------------------------------------
 %% The erx_fs callbacks

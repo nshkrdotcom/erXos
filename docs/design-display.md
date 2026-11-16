@@ -405,18 +405,19 @@ script takes `erx_memdraw`, `erx_display` and `erx_fb`, a client's takes
 neither side, so what the display domain's boot script loads holds no
 module of `erx_win` or `erx_ui`, and the G9 check, which reads every
 application that script boots, `erx` and `erx_files` among them,
-refuses a client module placed outside them by mistake. Three names of
-client modules are allowed on the display side, all from one module: a
+refuses a client module placed outside them by mistake. One name of a
+client module is allowed on the display side, from one module: a
 program's handler, in `erx`, calls `erx_pixels` to allocate and lend
 the window buffer it maps into its program, since that buffer is the
-handler's ([The pixel area](#the-pixel-area)), and `erx_win` and
-`erx_draw_conn` to open the window of a program started with one and
-the draw connection on it ([The window tree](#the-window-tree), "A
-program's `/dev`"). In a domain whose release lacks the client side,
-the display domain's among them, the handler refuses a buffer and a
-window with `ENODEV`, so the names load no client module there; the
-check allows that one module those three names and refuses them in any
-other.
+handler's ([The pixel area](#the-pixel-area)). The window of a program
+started with one, the draw connection on it and its `/dev` are made by
+`erx_session_export:start_window/1`, in the session's application,
+which the display domain's release does not ship, called in the
+handler's process ([The window tree](#the-window-tree), "A program's
+`/dev`"). In a domain whose release lacks the client side, the display
+domain's among them, the handler refuses a buffer and a window with
+`ENODEV`, so the name loads no client module there; the check allows
+that one module that one name and refuses it in any other.
 
 ## Invariants
 

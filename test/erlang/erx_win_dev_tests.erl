@@ -3,7 +3,7 @@
 
 %% A program's own /dev (docs/design-files.md, "A program's window") over the real window
 %% system of erx_win_tests's fixture: erx_winfs under the single policy, erx_win and
-%% erx_draw_conn, with the tree started as erx_prog_handler's window/1 starts it, an
+%% erx_draw_conn, with the tree started as erx_session_export:start_window/1 starts it, an
 %% erx_session_export grant in program-window mode. The test is the program: a 9P client
 %% of that grant, sending what the handler sends once the resolver has reduced a path to
 %% plain names. A recorder traces erx_winfs's walk/3 and write/4, the display's side of
@@ -46,8 +46,9 @@ with_dev(Case) ->
                                end
                        end).
 
-%% The window, its connection and the tree's grant, as erx_prog_handler:window/1 makes
-%% them, with fid 1 attached to the tree's root.
+%% The window, its connection and the tree's grant, as erx_session_export:start_window/1 makes
+%% them but for the window's name, w1, which the cases walk to, and the tree's end, which
+%% with_dev/1 brings about rather than the test process's; fid 1 is attached to the root.
 dev() ->
     ok = erx_fs_version:init(),
     {ok, Window} = erx_win:open(?SERVICE, #{name => <<"w1">>}),
