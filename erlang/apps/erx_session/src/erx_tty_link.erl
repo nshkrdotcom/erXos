@@ -12,8 +12,8 @@ the end of each step, sends what is held, as FreeBSD wakes the device once
 after a step's input or a write (ttydisc_rint_done, tty_ttydisc.c:1293-1305;
 the end of ttydisc_write, :653-658). So nothing a step drops, by a flush,
 reaches the master before the drop, and what the master has outstanding
-changes only between steps. erx_session_tty and erx_session_relay_core
-carry the actions out.
+changes only between steps. erx_session_relay_core carries the actions
+out.
 
 The tty has one output outstanding at a time, numbered from 0. It sends
 the bytes held once, as `{tty_output, N, Bytes}`, and asks for a timer; when
@@ -71,7 +71,7 @@ anywhere, so an owner waits for output to drain only while it does.
 -define(MAX_INPUT, 4096).
 -define(MAX_SIDE, 65535).
 
-%% Who waits on a write: a term erx_session_tty hands back, or none.
+%% Who waits on a write: a term the relay hands back, or none.
 -type writer() :: term().
 -type master_message() :: {tty_taken, non_neg_integer()}
                         | {tty_input, binary()}

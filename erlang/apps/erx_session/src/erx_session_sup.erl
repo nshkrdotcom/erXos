@@ -30,7 +30,7 @@ init([]) ->
             start => {erx_session_tty, start_link, []},
             restart => transient,
             type => worker,
-            modules => [erx_session_tty, erx_console]},
+            modules => [erx_session_tty, erx_console, erx_session_relay]},
     Pipes = #{id => erx_pipe_srv,
               start => {erx_pipe_srv, start_link, []},
               restart => permanent,

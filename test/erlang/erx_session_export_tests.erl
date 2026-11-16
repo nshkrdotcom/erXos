@@ -4,10 +4,10 @@
 %% EUnit cases of the session's export's fixed tree (docs/design-files.md, "Narrowing
 %% for a program"): erx_session_export's callbacks, called without a grant and through
 %% real erx_fs grants of each of the session's rights, for a made-up principal and
-%% command list, with stand-ins for the kernel's generator and the session's tty that
-%% report to the test; erx_shell_namespace:commands/1, which names what /bin lists; and
-%% erx_session_sup:export_args/3, what the session starts the export from. test/host/erx_session_export_test.rb runs them on stock's
-%% emulator.
+%% command list, with a stand-in for the kernel's generator that reports to the test;
+%% erx_shell_namespace:commands/1, which names what /bin lists; and
+%% erx_session_sup:export_args/3, what the session starts the export from.
+%% test/host/erx_session_export_test.rb runs them on stock's emulator.
 -module(erx_session_export_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -17,15 +17,13 @@
 -define(COMMANDS, [<<"ls">>, <<"cat">>, <<"echo">>]).
 
 %% The tree's state, with a generator that answers bytes of 7 and reports each read's
-%% size, and a tty that reports each write.
+%% size.
 fs() ->
     Test = self(),
     fs(fun(Size) -> Test ! {entropy, Size}, binary:copy(<<7>>, Size) end).
 
 fs(Entropy) ->
-    Test = self(),
-    init(#{principal => ?PRINCIPAL, commands => ?COMMANDS, entropy => Entropy,
-           tty => fun(Bytes) -> Test ! {tty, Bytes}, ok end}).
+    init(#{principal => ?PRINCIPAL, commands => ?COMMANDS, entropy => Entropy}).
 
 init(Args) ->
     ok = erx_fs_version:init(),
@@ -64,7 +62,7 @@ mode(Path, Fs) ->
     Mode.
 
 messages() ->
-    receive {Tag, _} = Message when Tag =:= tty; Tag =:= entropy -> [Message | messages()]
+    receive {entropy, _} = Message -> [Message | messages()]
     after 0 -> []
     end.
 
@@ -200,19 +198,16 @@ a_refused_generator_read_answers_eio_test() ->
     Fs = fs(fun(_Size) -> error({entropy, ebusy}) end),
     ?assertEqual({error, eio}, read([<<"dev">>, <<"urandom">>], 16, Fs)).
 
-tty_takes_writes_unchanged_and_refuses_reads_test() ->
+%% /dev/tty is a name only (docs/design-files.md, "Narrowing for a program"): a walk
+%% and a getattr reach it, and every open of it, in any mode or through a create,
+%% answers enxio, since a program's handler makes a terminal's description in its
+%% place, an open of the terminal relay under the program's job.
+tty_is_a_name_that_never_opens_test() ->
     Fs = fs(),
-    {ok, Tty} = open([<<"dev">>, <<"tty">>], ?ERX_P9_O_RDWR, Fs),
-    Bytes = <<"\e[1mbold\e[0m\r\n">>,
-    ?assertEqual({ok, byte_size(Bytes), 0}, erx_session_export:write(Tty, 0, Bytes, Fs)),
-    ?assertEqual([{tty, Bytes}], messages()),
-    ?assertEqual({error, enotsup}, erx_session_export:read(Tty, 0, 16, Fs)).
-
-a_write_to_an_ended_tty_fails_alone_test() ->
-    Fs = init(#{principal => ?PRINCIPAL, commands => [],
-                tty => fun(_Bytes) -> exit(noproc) end}),
-    {ok, Tty} = open([<<"dev">>, <<"tty">>], ?ERX_P9_O_WRONLY, Fs),
-    ?assertEqual({error, eio}, erx_session_export:write(Tty, 0, <<"x">>, Fs)).
+    ?assertEqual(?ERX_P9_S_IFCHR bor 8#666, mode([<<"dev">>, <<"tty">>], Fs)),
+    [?assertEqual({error, enxio}, open([<<"dev">>, <<"tty">>], Flags, Fs))
+     || Flags <- [0, ?ERX_P9_O_WRONLY, ?ERX_P9_O_RDWR]],
+    ?assertEqual({error, enxio}, erx_session_export:make(dev, <<"tty">>, {file, 8#644, ?ERX_P9_O_WRONLY}, Fs)).
 
 %% ---------------------------------------------------------------------------
 %% /etc
@@ -302,13 +297,11 @@ bin_lists_the_erlang_commands_alone_test() ->
 %% ---------------------------------------------------------------------------
 
 %% A grant of the tree with Rights, as erx_session_sup starts it, with a generator of
-%% sevens and a tty that reports each write; fid 1 is attached to its root.
+%% sevens; fid 1 is attached to its root.
 grant(Rights) ->
     ok = erx_fs_version:init(),
-    Test = self(),
     Args = #{principal => ?PRINCIPAL, commands => ?COMMANDS,
-             entropy => fun(Size) -> binary:copy(<<7>>, Size) end,
-             tty => fun(Bytes) -> Test ! {tty, Bytes}, ok end},
+             entropy => fun(Size) -> binary:copy(<<7>>, Size) end},
     {ok, Grant} = erx_fs:start_link(erx_session_export, Args, Rights),
     unlink(Grant),
     {ok, _Qid} = call(Grant, {attach, 1, ?ERX_P9_NOFID, <<"user">>, <<"export">>, 0}),
@@ -346,16 +339,14 @@ the_rw_grant_reads_etc_and_lists_dev_as_character_devices_test() ->
                  listing(Grant, 3)),
     exit(Grant, kill).
 
-the_rw_grant_creates_into_a_device_and_writes_the_tty_test() ->
+the_rw_grant_creates_into_a_device_and_answers_an_open_of_the_tty_enxio_test() ->
     Grant = grant(rw),
     walk_to(Grant, 2, [<<"dev">>]),
     ?assertMatch({ok, _Qid, _Iounit},
                  call(Grant, {lcreate, 2, <<"null">>, ?ERX_P9_O_WRONLY, 8#644, 0})),
     ?assertEqual({ok, 3, 0}, call(Grant, {write, 2, 0, <<"abc">>})),
     walk_to(Grant, 3, [<<"dev">>, <<"tty">>]),
-    {ok, _, _} = call(Grant, {lopen, 3, ?ERX_P9_O_WRONLY}),
-    ?assertEqual({ok, 2, 0}, call(Grant, {write, 3, 0, <<"hi">>})),
-    receive {tty, Bytes} -> ?assertEqual(<<"hi">>, Bytes) after 2000 -> erlang:error(no_tty) end,
+    ?assertEqual({error, enxio}, call(Grant, {lopen, 3, ?ERX_P9_O_WRONLY})),
     exit(Grant, kill).
 
 the_rx_grant_lists_bin_and_refuses_writes_test() ->

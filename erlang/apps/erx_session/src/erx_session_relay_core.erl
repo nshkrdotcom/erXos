@@ -28,7 +28,7 @@ in the step drops reaches it first, as FreeBSD wakes the device once a
 step (ttydisc_rint_done, sys/kern/tty_ttydisc.c:1293-1305).
 
 Opens and waits are named by the edge: an open by the term the `open`
-request carries (a reference the server makes), a wait by `{Open, Kind}`,
+request carries (the server's pid and a reference it makes), a wait by `{Open, Kind}`,
 Kind being `read`, `in` or `out`, the names erx_tty's waiters and timers
 carry. Processes, groups and the console are terms the core only compares
 and names in actions.
@@ -107,8 +107,8 @@ and names in actions.
 -doc """
 A relay whose console is Console: the console holds the terminal from the
 start, in the editing setting made from the tty's defaults. With `master`
-`none` the relay has no master, as a session's tty may have none
-(erx_session_tty): erx_tty_link sends nothing for one and drops a master
+`none` the relay has no master, as a session's console tty may have none
+(erx_session_tty:start_link/0): erx_tty_link sends nothing for one and drops a master
 message, and a drain is answered at once.
 """.
 -spec new(term(), #{master := none | present}) -> core().

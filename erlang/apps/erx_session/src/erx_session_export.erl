@@ -24,9 +24,11 @@ program reaches of them.
 * **`/dev`** holds four character devices. `null` reads as empty and takes
   every write; `zero` reads as zeros and takes every write; `urandom` reads
   from the kernel's generator (erx_bytes:entropy/1) and takes no write; and
-  `tty` hands its writes to the session's tty (erx_session_tty:write/1),
-  which shows them as a terminal does, and answers a read with `enotsup`:
-  the tty's readers are the terminal relay's line discipline's to serve.
+  `tty`, a program's terminal, is a name only, which a walk and a getattr
+  reach, and answers every open of it `enxio` (docs/design-files.md,
+  "Narrowing for a program"): the program's handler makes a terminal's
+  description in its place, an open of the terminal relay under the
+  program's job, so no terminal byte passes through the file protocol.
 * **`/etc`** holds `passwd` and `group`, read-only: the session's principal,
   with its number as uid and gid, and `nobody` (65534).
 * **A create** of an existing device opens it (erx_fs_node:open_by_create/4),
@@ -49,12 +51,11 @@ allow answers `ebadf`, as on UNIX.
 
 -doc """
 What init/1 takes: the session's principal, the names `/bin` lists, and, for
-a test, stand-ins for the kernel's generator and the session's tty.
+a test, a stand-in for the kernel's generator.
 """.
 -type args() :: #{principal := #{name := binary(), number := pos_integer()},
                   commands := [binary()],
-                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary()),
-                  tty => fun((binary()) -> ok)}.
+                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary())}.
 
 %% The tree's name, which attach's Aname names.
 -define(TREE, <<"export">>).
@@ -82,8 +83,7 @@ init(#{principal := Principal, commands := Commands} = Args) ->
     Qids = maps:from_list([{Dir, qid(?ERX_P9_QTDIR)} || Dir <- maps:keys(Dirs)]
                           ++ [{File, qid(0)} || File <- Files]),
     {ok, #{dirs => Dirs, qids => Qids, texts => texts(Principal),
-           entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1),
-           tty => maps:get(tty, Args, fun erx_session_tty:write/1)}}.
+           entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1)}}.
 
 %% A qid of Type whose path is drawn from the domain's counter; a counter spent
 %% to 2^64 - 1 fails the grant's start.
@@ -134,7 +134,11 @@ getattr(Node, #{qids := Qids}) ->
     {Kind, Mode} = file(Node),
     erx_fs_node:attr(map_get(Node, Qids), Kind, Mode).
 
+%% A program's terminal is opened by its handler, never through this tree, so
+%% `tty` answers enxio whatever the mode.
 -doc false.
+open(tty, _Flags, _Fs) ->
+    {error, enxio};
 open(Node, Flags, #{dirs := Dirs} = Fs) ->
     case {access(Flags), Dirs} of
         {error, _} -> {error, einval};
@@ -186,8 +190,6 @@ read({zero, _}, _Offset, Count, _Fs) ->
     {ok, <<0:(Count * 8)>>};
 read({urandom, _}, _Offset, Count, #{entropy := Entropy}) ->
     random(Count, Entropy);
-read({tty, _}, _Offset, _Count, _Fs) ->
-    {error, enotsup};
 read({Text, _}, Offset, Count, #{texts := Texts}) when Text =:= passwd; Text =:= group ->
     Bytes = map_get(Text, Texts),
     Start = min(Offset, byte_size(Bytes)),
@@ -205,19 +207,12 @@ random(Count, Entropy) ->
         error:{entropy, _Status} -> {error, eio}
     end.
 
-%% Only null, zero and tty open for writing (file/1).
+%% Only null and zero open for writing (file/1, open/3).
 -doc false.
 write({_Node, read}, _Offset, _Bytes, _Fs) ->
     {error, ebadf};
 write({Sink, _}, Offset, Bytes, _Fs) when Sink =:= null; Sink =:= zero ->
     {ok, byte_size(Bytes), Offset};
-write({tty, _}, Offset, Bytes, #{tty := Tty}) ->
-    %% A tty that has ended fails the write alone, not the grant.
-    try Tty(Bytes) of
-        ok -> {ok, byte_size(Bytes), Offset}
-    catch
-        exit:_ -> {error, eio}
-    end;
 write({entries, _}, _Offset, _Bytes, _Fs) ->
     {error, ebadf}.
 

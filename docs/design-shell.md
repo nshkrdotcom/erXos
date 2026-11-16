@@ -1282,12 +1282,16 @@ as on a pseudo-terminal of the second
 
 #### The terminal relay's protocol
 
-The relay is a `gen_server` registered as `erx_tty_owner`, the name the
-runtime's own output looks for ([design-runtime.md](design-runtime.md),
-"A process waits on its tty's owner"), since in the session's domain the
-relay is the tty's owner. It holds no other name, as a process can hold
-only one (`erts/emulator/beam/register.c:216-218`), and every party
-below reaches it by that name or by its pid. Its construction is one
+The relay is a `gen_server`, one for each tty of the session: the
+console's tty, the domain's line, and each tty a master of the session's
+own domain opens (`erx_session_tty:open/1`, for a terminal window). The
+relay of the domain's line alone is registered, as `erx_tty_owner`, the
+name the runtime's own output looks for ([design-runtime.md](design-runtime.md),
+"A process waits on its tty's owner"), since in the session's domain that
+relay is the tty's owner. A registered name has one holder, so the other
+relays hold none: each is reached by its pid, which its console holds as
+its driver, and every open names the relay that made it, so the parties
+below that hold an open reach its relay through it. Its construction is one
 value: **the terminal has one holder at a time, the console or one job,
 and the holder's `termios` goes with it; typed input waits only in the
 tty, and leaves it only by a read from a reader of the holder; a job
@@ -1396,9 +1400,9 @@ stopped, as FreeBSD's do.
   permanent end of the line, whether or not a read is outstanding, before
   the waits the hangup readies; the console ends every shell on the line
   at it. A read's `eof` is that read's end of file and never the hangup.
-* The runtime's writers reach it through `erx_tty_owner`:
-  `erlang:display_string/2`, `erlang:display/1`, `standard_error` and a
-  normal halt.
+* The runtime's writers reach the relay of the domain's line through
+  `erx_tty_owner`: `erlang:display_string/2`, `erlang:display/1`,
+  `standard_error` and a normal halt.
 * The program handlers, the Erlang commands through `erx_cmd`, the
   console and the shell make requests.
 
@@ -1407,12 +1411,18 @@ process of another domain cannot reach the relay. Its messages arrive as
 `{erx_origin, D, Msg}`, and the relay takes those only from its master's
 domain, so a plain message comes from its own domain by construction.
 
-**Requests.** A request is a call, `gen_server:call(erx_tty_owner,
-Request, infinity)`, made by a client function of `erx_session_relay`,
-the one module of the session's own code that names `erx_tty_owner`
-(the runtime's writers aside), which a build check proves ("Only
-`erx_cmd`'s and the console's opens read", below), and the relay
-answers it in the step that takes it.
+**Requests.** A request is a call, `gen_server:call(Relay, Request,
+infinity)`, made by a client function of `erx_session_relay`, which
+takes the relay from the open the request names, which names its
+relay, or as its pid where the request names no open. An open is an
+opaque type of that module, which only it builds or takes apart, as
+Dialyzer would flag. Build checks guard against a slip that names
+`erx_tty_owner` outside it (the runtime's writers aside) or builds the
+request for an open made for reading as a literal tuple ("Only
+`erx_cmd`'s and the console's opens read", below);
+no check stops a module that holds a relay's pid from building any
+other request by hand. The relay answers a request in the step that
+takes it.
 The relay
 calls no one and waits on no one, so no cycle of waits passes through
 it, and a caller waits for one step of the relay at most. The
@@ -1425,14 +1435,14 @@ protocol's `{ready, Open, Events}`, its own open in place of the
 relay's, and keeps `N` with the open, naming it in the read it passes
 on ([design-programs.md](design-programs.md#the-terminal)). The opens are
 made by the relay module's two client functions:
-`erx_session_relay:open_reader(Holder)` asks for an open made for
-reading and `open_writer(Holder)` for a write-only one. Reads and writes carry bytes, at most 4 KiB, as 9P2000.L's
+`erx_session_relay:open_reader(Relay, Holder)` asks Relay for an open
+made for reading and `open_writer(Relay, Holder)` for a write-only one. Reads and writes carry bytes, at most 4 KiB, as 9P2000.L's
 `read` and `write` do. The program protocol carries data-area slots
 instead, and the handler copies between the two.
 
 | Request | Sent by | Answer | What follows the answer |
 | --- | --- | --- | --- |
-| `{open, Holder, Mode}`, `Mode` being `read` or `write` | with `write`, through `open_writer/1`: a program's handler, for each terminal open of its program, `Holder` being the job its row names ([design-programs.md](design-programs.md#the-terminal)), and a command domain's stream relay, `Holder` being the job of its command's row ([design-programs.md](design-programs.md#what-a-program-can-start)); with `read`, through `open_reader/1`: `erx_cmd`, in the calling process at its first terminal call, under the caller's own job tag, kept in the caller's dictionary, and the console of the session role, once at its start, with `Holder` `console` | `{ok, Open}`, `Open` a new reference | the relay monitors the caller and closes the open when the caller ends |
+| `{open, Holder, Mode}`, `Mode` being `read` or `write` | with `write`, through `open_writer/2`: a program's handler, for each terminal open of its program, `Holder` being the job its row names ([design-programs.md](design-programs.md#the-terminal)), and a command domain's stream relay, `Holder` being the job of its command's row ([design-programs.md](design-programs.md#what-a-program-can-start)); with `read`, through `open_reader/2`: `erx_cmd`, in the calling process at its first terminal call, under the caller's own job tag, kept in the caller's dictionary, and the console of the session role, once at its start, with `Holder` `console` | `{ok, Open}`, `Open` an opaque value naming the relay and a new reference | the relay monitors the caller and closes the open when the caller ends |
 | `{close, Open}` | a process given the open | `ok` | the open's waits end, and no report for it is sent after the close is taken |
 | `{tty, Open, tcgetattr}` | a process given the open | `{ok, Termios}` | nothing |
 | `{tty, Open, {tcsetattr, Termios}}` | a process given the open | `ok`; `{error, einval}` when `erx_tty:set/2` refuses `Termios` or `TOSTOP` is set; `{background, false}` when the open's holder does not hold the terminal, with nothing changed | on `ok`, the line discipline's waits are checked again under the new `termios` ([design-live.md](design-live.md#the-tty)) |
@@ -1460,7 +1470,7 @@ the relay waits on none of them:
 | --- | --- | --- |
 | `{erx_console_output, From, Bytes}` | the console | `{erx_console_written, From}`, once every byte has passed `output/3` into what the relay holds for the master, or a flush or a hangup has dropped it |
 | `{tty_write, From, Ref, Bytes}` | `erx_output:write/2`, for a process of the session's domain | `{Ref, ok}`, on the same condition |
-| `{tty_drain, From, Ref}` | `erx_output:halt/2`, at a normal halt | `{Ref, ok}`, once nothing waits to be written and the master has answered every byte the relay holds, or at once while output is stopped, the relay has no master or the line has hung up, since nothing would take the bytes; a relay started with no master, as a session's tty may have none, sends nothing for one, holds its output as it does while output is stopped and drops any message as from a master; the relay gives up `erx_tty_owner` as it answers, so a second call of `erlang:halt/2` goes straight on; a request by name after it exits in its caller, and the runtime is halting |
+| `{tty_drain, From, Ref}` | `erx_output:halt/2`, at a normal halt | `{Ref, ok}`, once nothing waits to be written and the master has answered every byte the relay holds, or at once while output is stopped, the relay has no master or the line has hung up, since nothing would take the bytes; a relay started with no master, as a session's tty may have none, sends nothing for one, holds its output as it does while output is stopped and drops any message as from a master; the relay of the domain's line gives up `erx_tty_owner` as it answers, so a second call of `erlang:halt/2` goes straight on; a request by name after it exits in its caller, and the runtime is halting |
 
 These bytes join the one output queue with the opens' writes, in the
 order they arrive ([Job control](#job-control), "Output"). Each writer
@@ -2068,12 +2078,13 @@ which three rules give:
   over the runtime's Erlang under `otp/` and `erlang/`, of the form the
   tree's Erlang chokepoint rules take
   (`tools/lib/erx/chokepoint_rules/relay.rb`), with comments blanked,
-  fail on either of two sites. One is a call of
-  `erx_session_relay:open_reader/1` from any module but `erx_cmd` and
+  fail on any of three sites. One is a call of
+  `erx_session_relay:open_reader`, of any arity, from any module but `erx_cmd` and
   `erx_console`, in any form that names the function outside a string:
   a remote call, a fun, an `apply/3`, a variable or macro module, an
   import from `erx_session_relay` or a macro defined as either name.
-  The other is the atom `erx_tty_owner`, the relay's registered name,
+  Another is the atom `erx_tty_owner`, the registered name of the
+  relay of the domain's line,
   bare, quoted or in a string, from which `list_to_atom/1` could make
   it, in any module but `erx_session_relay`,
   whose client functions make every request to the relay, `erx_output`,
@@ -2085,8 +2096,12 @@ which three rules give:
   A registered name is an argument, not a call, so the second check
   looks for the name wherever it appears. So a handler that
   builds the open request itself and sends it by name is a site, as
-  one that calls `open_reader/1` is
-  ([design.md](design.md#chokepoint-checks)). Test modules lie outside
+  one that calls `open_reader` is
+  ([design.md](design.md#chokepoint-checks)). The third is the request
+  for an open made for reading, `{open, Holder, read}`, outside
+  `erx_session_relay`, so a module that holds the pid of a relay with no
+  name, and sends it that request, is a site too; a request whose mode is
+  a variable passes it. Test modules lie outside
   `otp/` and `erlang/`, so the relay's own cases, which open for
   reading from the test process, are not sites; the checks' seeds are
   modules under `erlang/apps`. It is a guard against a slip, not the
@@ -2687,9 +2702,17 @@ remain independent of catalog generation.
     Seeded: a relay that does not monitor the group, under which the
     console's watch gets no report and the fake console gets no event for
     the `Ctrl-C`.
-  * The name: the relay starts registered as `erx_tty_owner`, and a
-    handler's `open_writer(Job)` reaches it by that name. Seeded: a relay
-    that also registers a second name, which fails to start.
+  * The name: the relay of the domain's line starts registered as
+    `erx_tty_owner`, and the relay of another tty, started beside it,
+    holds no name and keeps none at its drain; an open made by the other
+    relay reaches it through `tty/2`, and the first answers it
+    `{error, ebadf}`. Seeded: a relay that also registers a second
+    name, which fails to start.
+  * A tty a master of the session's domain opens: `erx_session_tty:open/1`
+    starts a console driven by a relay of its own, unregistered, on which
+    `echo` and `erl` return and a hangup ends the tty; two such ttys run
+    beside the domain's line, whose relay keeps `erx_tty_owner`
+    (`test/host/erx_session_tty_test.rb`).
   * The mode: with `A` holding the terminal and `ls\n` typed, a
     write-only open of A's gets `{error, ebadf}` for a watch of
     `{read, 4096}` and for `tty_read` with the relay's current signal
@@ -2698,14 +2721,15 @@ remain independent of catalog generation.
     `ls\n`. Seeded: a relay that ignores the mode, whose write-only open
     reads `ls\n`.
   * The readers: the chokepoint checks that only `erx_cmd` and
-    `erx_console` call `open_reader/1`, and that `erx_tty_owner` appears
+    `erx_console` call `open_reader`, that `erx_tty_owner` appears
     only in `erx_session_relay`, `erx_output`, `erx_console` and
-    `erx_log_h`, pass on the tree (`test/host/relay_chokepoints_test.rb`).
+    `erx_log_h`, and that only `erx_session_relay` builds
+    `{open, Holder, read}`, pass on the tree (`test/host/relay_chokepoints_test.rb`).
     Seeded, in `test/host/chokepoints_test.rb` as every rule's seed is,
     each a module under `erlang/apps`: one that calls
-    `open_reader/1`, and one that sends `{open, Job, read}` with
-    `gen_server:call(erx_tty_owner, _, infinity)`, each of which the
-    check reports.
+    `open_reader/2`, one that sends `{open, Job, read}` with
+    `gen_server:call(erx_tty_owner, _, infinity)`, and one that sends it
+    to a relay's pid, each of which the check reports.
   * The runtime's writers: with output stopped by `VSTOP`, a
     `tty_write` is answered once its bytes are held and none reaches the
     fake master; one past the room is answered after `VSTART`, once the

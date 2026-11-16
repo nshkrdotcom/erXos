@@ -96,7 +96,7 @@ changes come, and each delivery sends a process one message.
                       job_control => job_control(),
                       foreground => foreground()}.
 %% How the shell tells the terminal relay who holds the terminal
-%% (erx_session_relay:foreground/2,3), on a terminal the relay serves.
+%% (erx_session_relay:foreground/3,4), on a terminal a relay serves.
 -type foreground() :: fun((erx_shell_jobs:target(), {pid(), non_neg_integer()}) -> term()).
 %% How a runner reaches the shell's job table: the shell's process.
 -opaque job_control() :: pid().

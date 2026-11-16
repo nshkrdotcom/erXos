@@ -1512,7 +1512,7 @@ the path into one of four images:
   them and the command domain's connection, the session's one path to
   another domain ([design-domains.md](design-domains.md#connections)).
   Its open of the session's tty is a write-only one, which it asks for
-  with `erx_session_relay:open_writer/1`, as a program's handler does
+  with `erx_session_relay:open_writer/2`, as a program's handler does
   ([The terminal](#the-terminal)). The stream relay belongs to no job, so
   no signal's mark would stop it taking a key typed after the signal;
   its open takes none, and a build check proves that it asks for no open
@@ -2371,7 +2371,7 @@ owns. The session's export names it `/dev/tty`, and a program's standard
 streams that go to the terminal are opens on it. The export serves the name
 alone: the handler that opens it makes a terminal's description
 ([Descriptors and files](#descriptors-and-files)) and asks the relay for an
-open with `erx_session_relay:open_writer/1`, under its program's job,
+open with `erx_session_relay:open_writer/2`, under its program's job,
 which the command server's row gives it, and every read, write, watch and
 control of that open goes to the relay and never through the file
 protocol ([design-shell.md](design-shell.md#the-terminal-relays-protocol)).

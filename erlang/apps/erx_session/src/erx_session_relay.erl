@@ -5,23 +5,32 @@
 -behaviour(gen_server).
 -moduledoc """
 The terminal relay (docs/design-shell.md, "The terminal relay's protocol"):
-the gen_server registered as erx_tty_owner, the effects around the pure
-core erx_session_relay_core. Every request goes to request/3 and every
-other message to event/2; the relay answers the request first and then
-carries out the core's actions in the order the core gives them, so a
-caller sees its answer before anything the request set off.
+the gen_server that drives one tty of the session, the effects around the
+pure core erx_session_relay_core. Every tty has a relay of its own, and the
+relay of the domain's line, the session's console tty, alone is registered,
+as erx_tty_owner, the name the runtime's own writers look for. Every request
+goes to request/3 and every other message to event/2; the relay answers the
+request first and then carries out the core's actions in the order the core
+gives them, so a caller sees its answer before anything the request set off.
 
-The client functions below make every request, so this is the one module
-of the session's code that names erx_tty_owner; the chokepoint rules
-`relay-readers` and `relay-name` (tools/lib/erx/chokepoint_rules/relay.rb)
-keep it so. open_reader/1 is the one way to an open made for reading.
+The client functions below make every request. Each names the relay it asks:
+an open names the relay that made it, and the functions that make no use of
+an open take the relay's pid, which the console holds as its driver. Three
+chokepoint rules (tools/lib/erx/chokepoint_rules/relay.rb) fail the build
+on a slip outside this module: `relay-readers`, a call of open_reader/2
+outside erx_cmd and erx_console; `relay-name`, the name erx_tty_owner
+outside its holders; and `relay-requests`, a request `{open, Holder, read}`
+built by hand. An open is opaque (open()), so Dialyzer flags a module that
+builds one or takes one apart; no gate runs Dialyzer, and nothing stops a
+module that holds a relay's pid from building another request by hand.
 
 The core trusts the shape of what it is given, so the relay checks what
 arrives before the core sees it, and drops a message it cannot take:
 
 * a group the shell or the console names must be a process of this node,
   since the core monitors every group it meets;
-* the name of an open is the relay's own, a reference made per open;
+* the name of an open is the relay's own, its pid and a reference made per
+  open;
 * a writer's bytes must be iodata, and its reply address a pid with a
   reference;
 * a monitor's `'DOWN'`, the console's and the master's included, and a
@@ -36,13 +45,20 @@ arrives before the core sees it, and drops a message it cannot take:
 The relay is its console's line and ends with it.
 """.
 
--export([start_link/2]).
--export([open_reader/1, open_writer/1, close/1, tty/2, watch/2, read/3, write/2,
-         console_group/1, status/1, foreground/2, foreground/3]).
+-export([start_link/3]).
+-export([open_reader/2, open_writer/2, close/1, tty/2, watch/2, read/3, write/2,
+         console_group/2, status/2, foreground/3, foreground/4]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
+-export_type([open/0]).
 
 -define(NAME, erx_tty_owner).
 -define(RESEND_MS, 1000).
+
+-doc """
+An open of the terminal: the relay that made it and the reference that
+names it there. Only this module builds or reads one.
+""".
+-opaque open() :: {pid(), reference()}.
 
 -type master() :: none
                 | {local, pid(), reference()}   % in this domain, monitored
@@ -63,64 +79,71 @@ The relay is its console's line and ends with it.
 %%% Starting
 
 -doc """
-Starts the relay registered as erx_tty_owner, linked to the caller, for
-Console, the console of the session role, and Master, the tty's master:
-a process of this domain, one of another domain, or `undefined` for none.
+Starts a relay linked to the caller for Console, the console of the session
+role, and Master, the tty's master: a process of this domain, one of another
+domain, or `undefined` for none. With `domain_line` true in Options it is the
+relay of the domain's line, registered as erx_tty_owner; otherwise it holds
+no name.
 """.
--spec start_link(pid(), pid() | undefined) -> gen_server:start_ret().
-start_link(Console, Master) when is_pid(Console) ->
-    gen_server:start_link({local, ?NAME}, ?MODULE, {Console, origin(Master)}, []).
+-spec start_link(pid(), pid() | undefined, #{domain_line => boolean()}) -> gen_server:start_ret().
+start_link(Console, Master, Options) when is_pid(Console) ->
+    Init = {Console, origin(Master)},
+    case Options of
+        #{domain_line := true} -> gen_server:start_link({local, ?NAME}, ?MODULE, Init, []);
+        #{} -> gen_server:start_link(?MODULE, Init, [])
+    end.
 
-%%% Client functions: every request to the relay
+%%% Client functions: every request to a relay
 
--doc "An open of the terminal made for reading, for Holder: `console` or a job's tag.".
--spec open_reader(term()) -> {ok, reference()} | {error, einval}.
-open_reader(Holder) -> call({open, Holder, read}).
+-doc "An open of Relay's terminal made for reading, for Holder: `console` or a job's tag.".
+-spec open_reader(pid(), term()) -> {ok, open()} | {error, einval}.
+open_reader(Relay, Holder) -> call(Relay, {open, Holder, read}).
 
--doc "A write-only open of the terminal for Holder: `console` or a job's tag.".
--spec open_writer(term()) -> {ok, reference()} | {error, einval}.
-open_writer(Holder) -> call({open, Holder, write}).
+-doc "A write-only open of Relay's terminal for Holder: `console` or a job's tag.".
+-spec open_writer(pid(), term()) -> {ok, open()} | {error, einval}.
+open_writer(Relay, Holder) -> call(Relay, {open, Holder, write}).
 
 -doc "Closes Open; no report for it follows the answer.".
--spec close(reference()) -> ok | {error, ebadf}.
-close(Open) -> call({close, Open}).
+-spec close(open()) -> ok | {error, ebadf}.
+close(Open) -> call(Open, {close, Open}).
 
 -doc "`tcgetattr`, `winsize`, `{tcsetattr, T}` or `{tcsetattr, T, sigttou_ignored}` on Open.".
--spec tty(reference(), term()) -> erx_session_relay_core:answer().
-tty(Open, Request) -> call({tty, Open, Request}).
+-spec tty(open(), term()) -> erx_session_relay_core:answer().
+tty(Open, Request) -> call(Open, {tty, Open, Request}).
 
 -doc """
 Watches Open for Kind, `{read, Count}`, `in` or `out`; the report is
 `{ready, Open, [Kind], N}`.
 """.
--spec watch(reference(), term()) -> ok | {error, einval | ebadf}.
-watch(Open, Kind) -> call({watch, Open, [Kind]}).
+-spec watch(open(), term()) -> ok | {error, einval | ebadf}.
+watch(Open, Kind) -> call(Open, {watch, Open, [Kind]}).
 
 -doc "Reads at most Max bytes from Open, after the report numbered N.".
--spec read(reference(), 0..4096, integer()) -> erx_session_relay_core:answer().
-read(Open, Max, N) -> call({tty_read, Open, Max, N}).
+-spec read(open(), 0..4096, integer()) -> erx_session_relay_core:answer().
+read(Open, Max, N) -> call(Open, {tty_read, Open, Max, N}).
 
 -doc "Writes Bytes, at most 4 KiB, through Open.".
--spec write(reference(), binary()) -> {ok, non_neg_integer()} | eagain | {error, einval | ebadf}.
-write(Open, Bytes) -> call({write, Open, Bytes}).
+-spec write(open(), binary()) -> {ok, non_neg_integer()} | eagain | {error, einval | ebadf}.
+write(Open, Bytes) -> call(Open, {write, Open, Bytes}).
 
--doc "The console names its current group, which its events carry from now on.".
--spec console_group(pid()) -> ok | {error, einval}.
-console_group(Group) -> call({console_group, Group}).
+-doc "The console names its current group to Relay, whose events carry it from now on.".
+-spec console_group(pid(), pid()) -> ok | {error, einval}.
+console_group(Relay, Group) -> call(Relay, {console_group, Group}).
 
--doc "The shell's `Ctrl-T` status line.".
--spec status(binary()) -> ok | {error, einval}.
-status(Line) -> call({status, Line}).
+-doc "The shell's `Ctrl-T` status line, shown on Relay's terminal.".
+-spec status(pid(), binary()) -> ok | {error, einval}.
+status(Relay, Line) -> call(Relay, {status, Line}).
 
--doc "The shell gives the terminal to the console, Signals being `{Group, Seen}`.".
--spec foreground(console, {pid(), non_neg_integer()}) -> erx_session_relay_core:answer().
-foreground(console, Signals) -> call({foreground, console, Signals}).
+-doc "The shell gives Relay's terminal to the console, Signals being `{Group, Seen}`.".
+-spec foreground(pid(), console, {pid(), non_neg_integer()}) -> erx_session_relay_core:answer().
+foreground(Relay, console, Signals) -> call(Relay, {foreground, console, Signals}).
 
--doc "The shell gives the terminal to the job Tag with Mode: `cooked`, `current` or a termios.".
--spec foreground(term(), term(), {pid(), non_neg_integer()}) -> erx_session_relay_core:answer().
-foreground(Tag, Mode, Signals) -> call({foreground, Tag, Mode, Signals}).
+-doc "The shell gives Relay's terminal to the job Tag with Mode: `cooked`, `current` or a termios.".
+-spec foreground(pid(), term(), term(), {pid(), non_neg_integer()}) -> erx_session_relay_core:answer().
+foreground(Relay, Tag, Mode, Signals) -> call(Relay, {foreground, Tag, Mode, Signals}).
 
-call(Request) -> gen_server:call(?NAME, Request, infinity).
+call({Relay, _Ref}, Request) -> call(Relay, Request);
+call(Relay, Request) -> gen_server:call(Relay, Request, infinity).
 
 %%% The server
 
@@ -166,9 +189,10 @@ handle_call(Request, {Caller, _Tag} = From, #state{core = Core0} = State) ->
     {noreply, carry_out(Actions, State#state{core = Core})}.
 
 %% A request as the core takes it, or `refused`: the relay names each open,
-%% and every group named must be a process of this node, which the core has
-%% the relay monitor.
-checked({open, Holder, Mode}) -> {ok, {open, Holder, Mode, make_ref()}};
+%% with its own pid, so the open leads a client function back to it, and every
+%% group named must be a process of this node, which the core has the relay
+%% monitor.
+checked({open, Holder, Mode}) -> {ok, {open, Holder, Mode, {self(), make_ref()}}};
 checked({open, _Holder, _Mode, _Open}) -> refused;
 checked({console_group, Group} = Request) -> group_checked(Group, Request);
 checked({foreground, console, {Group, _}} = Request) -> group_checked(Group, Request);
@@ -215,8 +239,7 @@ handle_info({erx_origin, _D, _Message}, State) ->
     {noreply, State};
 %% A plain message comes from this domain by construction; with a master in
 %% it, every other plain message is the master's (docs/design-shell.md, "Its
-%% parties"), and
-%% erx_tty_link drops a shape it does not know.
+%% parties"), and erx_tty_link drops a shape it does not know.
 handle_info(Message, #state{master = {local, _Pid, _Ref}} = State) ->
     event({master, Message}, State);
 handle_info(_Message, State) ->
@@ -268,7 +291,8 @@ carry_out_one({timer_cancel, Timer}, #state{timers = Timers} = State) ->
     State#state{timers = maps:remove({timer, Timer}, Timers)};
 carry_out_one(give_up_name, State) ->
     %% A drain gives the name up as it is answered, so a second halt goes
-    %% straight on; a drain answered after it finds the name already gone.
+    %% straight on; a drain answered after it, or by the relay of another
+    %% tty, which holds no name, leaves the name as it is.
     _ = whereis(?NAME) =:= self() andalso unregister(?NAME),
     State.
 

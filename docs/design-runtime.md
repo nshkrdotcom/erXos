@@ -2458,7 +2458,7 @@ pid. The owner depends on the domain:
 
 | The domain | `erx_tty_owner` | What it does with the bytes |
 | --- | --- | --- |
-| a session's | the terminal relay | writes them to the session's tty, as any writer does, and answers when they are all in the tty ([design-live.md](design-live.md#the-tty)) |
+| a session's | the terminal relay of the domain's line, the session's console tty; the relays of its other ttys hold no name | writes them to the session's tty, as any writer does, and answers when they are all in the tty ([design-live.md](design-live.md#the-tty)) |
 | the system domain | `erx_console` | writes them to the UART's driver unchanged, as UNIX writes to `/dev/console`, and answers when the driver has written them, so a service never waits on a shell's or a session's tty, nor on any other console line ([design-live.md](design-live.md#the-console)) |
 | any other, which has no terminal | the logger proxy | sends them as log records through its log facet, under its name, which the log service escapes ([design-log.md](design-log.md#writing)), and answers at once: a UNIX daemon's rule, that with no terminal its output goes to a log under its name |
 

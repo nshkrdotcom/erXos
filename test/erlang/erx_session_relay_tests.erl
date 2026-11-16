@@ -17,11 +17,11 @@
 
 %%% Helpers
 
-%% A relay for Console and Master, not linked to the test, so a crash shows as
-%% a dead relay, and a start that fails as a failed match, rather than a dead
-%% test.
+%% The relay of the domain's line for Console and Master, not linked to the
+%% test, so a crash shows as a dead relay, and a start that fails as a failed
+%% match, rather than a dead test.
 start(Console, Master) ->
-    started(fun() -> ?RELAY:start_link(Console, Master) end).
+    started(fun() -> ?RELAY:start_link(Console, Master, #{domain_line => true}) end).
 
 %% A relay whose master is in domain D, which stock's emulator cannot name:
 %% the server is started with the origin start_link/2 would have found.
@@ -98,21 +98,34 @@ eventually(Fun, Tries) ->
 %% first message and the report as the second.
 order_test() ->
     with_relay(fun(Relay) ->
-        {ok, Open} = ?RELAY:open_reader(console),
+        {ok, Open} = ?RELAY:open_reader(Relay, console),
         type(Relay, <<"x">>),
-        Request = gen_server:send_request(?NAME, {watch, Open, [in]}),
+        Request = gen_server:send_request(Relay, {watch, Open, [in]}),
         First = next(),
         Second = next(),
         ?assertEqual({reply, ok}, gen_server:check_response(First, Request)),
         ?assertMatch({ready, Open, [in], 0}, Second)
     end).
 
-%% The name: the relay holds erx_tty_owner, and the client functions reach it
-%% by that name.
+%% The name: the relay of the domain's line holds erx_tty_owner, and the relay
+%% of another tty of the session none, nor takes it at a drain. An open names
+%% the relay that made it, so the client functions reach that relay with it,
+%% and the other relay knows no such open.
 the_name_test() ->
-    with_relay(fun(Relay) ->
-        ?assertEqual(Relay, whereis(?NAME)),
-        ?assertMatch({ok, _}, ?RELAY:open_writer(job_a))
+    with_relay(fun(Line) ->
+        Other = started(fun() -> ?RELAY:start_link(self(), undefined, #{}) end),
+        try
+            ?assertEqual(Line, whereis(?NAME)),
+            {ok, Open} = ?RELAY:open_writer(Other, job_a),
+            ?assertMatch({ok, {_, _}}, ?RELAY:tty(Open, winsize)),
+            ?assertEqual({error, ebadf}, gen_server:call(Line, {tty, Open, winsize})),
+            Drain = make_ref(),
+            Other ! {tty_drain, self(), Drain},
+            receive {Drain, ok} -> ok after ?WAIT_MS -> error(drain_unanswered) end,
+            ?assertEqual(Line, whereis(?NAME))
+        after
+            stop(Other)
+        end
     end).
 
 %% The writers: the console's write and a tty_write are each answered once
@@ -125,12 +138,12 @@ a_drain_gives_the_name_up_test() ->
         receive {tty_output, 0, <<"c">>} -> ok after ?WAIT_MS -> error(no_output) end,
         Relay ! {tty_taken, 0},
         Write = make_ref(),
-        ?NAME ! {tty_write, self(), Write, <<"hi">>},
+        Relay ! {tty_write, self(), Write, <<"hi">>},
         receive {Write, ok} -> ok after ?WAIT_MS -> error(unanswered) end,
         receive {tty_output, 1, <<"hi">>} -> ok after ?WAIT_MS -> error(no_output) end,
         Drain = make_ref(),
-        ?NAME ! {tty_drain, self(), Drain},
-        nothing_after(fun() -> ?RELAY:open_writer(job_a) end),
+        Relay ! {tty_drain, self(), Drain},
+        nothing_after(fun() -> ?RELAY:open_writer(Relay, job_a) end),
         ?assertEqual(Relay, whereis(?NAME)),
         Relay ! {tty_taken, 1},
         receive {Drain, ok} -> ok after ?WAIT_MS -> error(drain_unanswered) end,
@@ -141,9 +154,9 @@ a_drain_gives_the_name_up_test() ->
 %% the editing setting, and its parked watch reports a typed key.
 a_shell_that_ends_while_its_job_holds_test() ->
     with_relay(fun(Relay) ->
-        {ok, Console} = ?RELAY:open_reader(console),
+        {ok, Console} = ?RELAY:open_reader(Relay, console),
         Group = group(),
-        ?assertMatch({ok, _, 0}, ?RELAY:foreground(job_a, cooked, {Group, 0})),
+        ?assertMatch({ok, _, 0}, ?RELAY:foreground(Relay, job_a, cooked, {Group, 0})),
         ok = ?RELAY:watch(Console, {read, 1}),
         exit(Group, kill),
         eventually(fun() ->
@@ -157,10 +170,10 @@ a_shell_that_ends_while_its_job_holds_test() ->
 %% A read's timer: with VMIN 0 and VTIME 1 a wait is reported when the timer
 %% the relay started ends, and the read then takes nothing.
 a_timed_read_test() ->
-    with_relay(fun(_Relay) ->
+    with_relay(fun(Relay) ->
         Group = group(),
-        {ok, _, 0} = ?RELAY:foreground(job_a, cooked, {Group, 0}),
-        {ok, Open} = ?RELAY:open_reader(job_a),
+        {ok, _, 0} = ?RELAY:foreground(Relay, job_a, cooked, {Group, 0}),
+        {ok, Open} = ?RELAY:open_reader(Relay, job_a),
         {ok, Termios} = ?RELAY:tty(Open, tcgetattr),
         Timed = with(lflag, [], [icanon], #{vmin => 0, vtime => 1}, Termios),
         ok = ?RELAY:tty(Open, {tcsetattr, Timed}),
@@ -174,8 +187,8 @@ a_timed_read_test() ->
 %% that finds no bytes reads the end of file.
 the_masters_end_hangs_up_test() ->
     Master = group(),
-    with_relay(Master, fun(_Relay) ->
-        {ok, Open} = ?RELAY:open_reader(console),
+    with_relay(Master, fun(Relay) ->
+        {ok, Open} = ?RELAY:open_reader(Relay, console),
         ok = ?RELAY:watch(Open, {read, 1}),
         exit(Master, kill),
         %% The console hears of the hangup first, before the wait it readies.
@@ -204,17 +217,17 @@ the_relay_ends_with_its_console_test() ->
 %% domain, a group that is no pid, and an open named by its caller.
 malformed_messages_are_refused_test() ->
     with_relay(fun(Relay) ->
-        {ok, Open} = ?RELAY:open_reader(console),
+        {ok, Open} = ?RELAY:open_reader(Relay, console),
         Relay ! {tty_write, not_a_pid, make_ref(), <<"a">>},
         Relay ! {tty_write, self(), make_ref(), [<<"a">> | not_a_tail]},
         Relay ! {tty_drain, self(), not_a_ref},
         Relay ! {erx_console_output, from, {not_iodata}},
         Relay ! {'DOWN', make_ref(), process, self(), forged},
         Relay ! {erx_origin, 7, {tty_input, <<"z">>}},
-        ?assertEqual({error, einval}, ?RELAY:console_group(not_a_pid)),
-        ?assertEqual({error, einval}, ?RELAY:foreground(job_a, cooked, {not_a_pid, 0})),
-        ?assertEqual({error, einval}, ?RELAY:foreground(console, {not_a_pid, 0})),
-        ?assertEqual({error, einval}, gen_server:call(?NAME, {open, console, read, Open})),
+        ?assertEqual({error, einval}, ?RELAY:console_group(Relay, not_a_pid)),
+        ?assertEqual({error, einval}, ?RELAY:foreground(Relay, job_a, cooked, {not_a_pid, 0})),
+        ?assertEqual({error, einval}, ?RELAY:foreground(Relay, console, {not_a_pid, 0})),
+        ?assertEqual({error, einval}, gen_server:call(Relay, {open, console, read, Open})),
         ?assertMatch({ok, _}, ?RELAY:tty(Open, tcgetattr)),
         nothing_after(fun() -> ok = ?RELAY:watch(Open, in) end),
         ?assert(is_process_alive(Relay))
@@ -226,8 +239,8 @@ malformed_messages_are_refused_test() ->
 forged_timers_are_ignored_test() ->
     with_relay(fun(Relay) ->
         Group = group(),
-        {ok, _, 0} = ?RELAY:foreground(job_a, cooked, {Group, 0}),
-        {ok, Open} = ?RELAY:open_reader(job_a),
+        {ok, _, 0} = ?RELAY:foreground(Relay, job_a, cooked, {Group, 0}),
+        {ok, Open} = ?RELAY:open_reader(Relay, job_a),
         {ok, Termios} = ?RELAY:tty(Open, tcgetattr),
         Slow = with(lflag, [], [icanon], #{vmin => 0, vtime => 255}, Termios),
         ok = ?RELAY:tty(Open, {tcsetattr, Slow}),
@@ -246,7 +259,7 @@ a_master_in_another_domain_test() ->
     Relay = start_in_domain(7),
     try
         {tty_open, Relay} = next(),
-        {ok, Open} = ?RELAY:open_reader(console),
+        {ok, Open} = ?RELAY:open_reader(Relay, console),
         ok = ?RELAY:watch(Open, in),
         Relay ! {tty_input, <<"p">>},
         Relay ! {erx_origin, 8, {tty_input, <<"q">>}},

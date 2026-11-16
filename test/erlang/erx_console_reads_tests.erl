@@ -32,7 +32,7 @@ typed_ahead_input_stays_in_the_tty_test() ->
                          ?assertEqual("cat\n", get_line(Shell)),
                          Shell ! {foreground, job, self()},
                          ?assertMatch({ok, _Termios, 0}, receive {foregrounded, Answer} -> Answer after ?WAIT_MS -> timeout end),
-                         {ok, Open} = erx_session_relay:open_reader(job),
+                         {ok, Open} = erx_session_relay:open_reader(relay(), job),
                          ok = erx_session_relay:watch(Open, {read, 100}),
                          N = receive {ready, Open, [{read, 100}], Number} -> Number after ?WAIT_MS -> error(no_report) end,
                          ?assertEqual({ok, <<"two\n">>}, erx_session_relay:read(Open, 100, N))
@@ -97,7 +97,7 @@ a_hangup_with_no_read_outstanding_ends_the_console_test() ->
 an_end_of_file_on_a_read_ends_no_shell_test() ->
     with_console(fun(Relay, Shell) ->
                          Console = persistent_term:get({erx_console, line}),
-                         {ok, Open} = erx_session_relay:open_writer(background),
+                         {ok, Open} = erx_session_relay:open_writer(relay(), background),
                          {ok, #{lflag := L} = Termios} = erx_session_relay:tty(Open, tcgetattr),
                          Canonical = Termios#{lflag := [icanon | L -- [icanon]]},
                          ok = erx_session_relay:tty(Open, {tcsetattr, Canonical, sigttou_ignored}),
@@ -116,7 +116,7 @@ with_console(Case) ->
     process_flag(trap_exit, true),
     {ok, Console} = erx_console:start_link(
                       #{role => session, domain_line => true, user => none,
-                        driver => fun(C) -> {ok, Relay} = erx_session_relay:start_link(C, Test), {ok, Relay, true} end,
+                        driver => fun(C) -> {ok, Relay} = erx_session_relay:start_link(C, Test, #{domain_line => true}), {ok, Relay, relay} end,
                         first_shell => {?MODULE, shell, [Test]}}),
     Relay = receive {tty_open, R} -> R after ?WAIT_MS -> error(no_relay) end,
     Shell = receive {shell, S} -> S after ?WAIT_MS -> error(no_shell) end,
@@ -169,6 +169,6 @@ shell_loop() ->
             ok = io:setopts([{encoding, unicode}]),
             From ! {line, io:get_line("")};
         {foreground, Tag, From} ->
-            From ! {foregrounded, erx_session_relay:foreground(Tag, cooked, {group_leader(), 0})}
+            From ! {foregrounded, erx_session_relay:foreground(relay(), Tag, cooked, {group_leader(), 0})}
     end,
     shell_loop().

@@ -237,7 +237,7 @@ lost({tty_output, N, Bytes}, S = #{lost := Lost}) when Bytes =/= <<>> ->
 lost(_Message, S) ->
     S.
 
-%% Each step of the tty ends in send/1, as erx_session_tty's steps do.
+%% Each step of the tty ends in send/1, as the relay core's steps do.
 tty({Actions0, Tty0}, S) ->
     {Sends, Tty} = erx_tty_link:send(Tty0),
     Actions = Actions0 ++ Sends,

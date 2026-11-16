@@ -760,9 +760,12 @@ while the tty is connected at a console line, the UART or the host link's
 tier a program that holds a pseudo-terminal's master;
 so a session's `/dev/tty` and a `/dev/pts/N` are one thing with different
 masters ([design-programs.md](design-programs.md#the-terminal)). Each master
-has a tty of its own: the console's is made as the session starts, and a
-master in the session's domain asks the relay for a new one, as
-`posix_openpt` makes a pseudo-terminal.
+has a tty of its own, driven by a terminal relay of its own
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)): the
+console's is made as the session starts, and its relay alone holds the
+name the runtime's writers look for; a master in the session's domain
+asks the session for a new one, as `posix_openpt` makes a
+pseudo-terminal.
 
 The system shell's tty lives in `erx_console` and is simpler. Programs run only
 under a session's domain (V8), so no program opens it and nothing can call

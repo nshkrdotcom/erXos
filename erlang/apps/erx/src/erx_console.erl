@@ -33,10 +33,10 @@
 %% processing.
 %%
 %% Each of a session's ttys has a console too, of the `session` role (start_link/1,
-%% config()): the same groups, unregistered. The domain's line is driven by the
-%% terminal relay (erx_session_relay), which it reads on demand (reader()); every
-%% other tty is raw, with the tty as its driver (erx_session_tty), which sends its
-%% input as it arrives. Only the domain's line among them holds `user`; none writes
+%% config()): the same groups, unregistered. Each is driven by a terminal relay of
+%% its own (erx_session_relay), which it reads on demand (reader()) and tells which
+%% job holds the terminal; only the domain's line's relay is registered, as
+%% erx_tty_owner. Only the domain's line among them holds `user`; none writes
 %% the kernel log; each starts
 %% its first shell again whenever it ends, and at its line's hangup or end it ends every
 %% shell and stops, never halting the runtime. A shell holds its console as a terminal (terminal/1),
@@ -135,7 +135,12 @@
 %% tty (erx_session_tty): none of that; it starts its first shell again whenever it
 %% ends, and ends every shell and stops when its line hangs up or ends. `name` is the
 %% name it registers, if any: a session's ttys register none. `domain_line` says whether it is
-%% its domain's line, which terminal/0 names: a session's console tty is. A
+%% its domain's line, which terminal/0 names: a session's console tty is. `driver`
+%% starts the console's driver and says what it is: `true` or `false` for one that
+%% sends the input as it arrives, by whether a person's terminal is at its far end,
+%% and `relay` for a terminal relay (erx_session_relay), which the console reads on
+%% demand and whose terminal its first shell gives to its jobs, as every session
+%% tty's driver is. A
 %% `first_shell` that is a function gets the console's own terminal (terminal/1) and
 %% returns the shell, so the shell of an unregistered console can reach it.
 %% `menu` says whether a typed Ctrl-G opens the Ctrl-G menu, by default for the system
@@ -157,7 +162,7 @@
                     owner => fun((pid()) -> non_neg_integer()),
                     name => atom(),
                     domain_line => boolean(),
-                    driver := fun((Console :: pid()) -> {ok, pid(), Terminal :: boolean()}),
+                    driver := fun((Console :: pid()) -> {ok, pid(), Kind :: boolean() | relay}),
                     line_owners => fun(() -> {ok, [pid()]} | {error, term()}),
                     first_shell := first_shell() | shell() | fun((terminal()) -> shell()),
                     user => replace | take | none}.
@@ -222,17 +227,17 @@
                 %% The domain a pid belongs to (config()).
                 owner :: fun((pid()) -> non_neg_integer()),
                 %% The console's reads of its terminal, made only for its groups' asks,
-                %% when its driver is the session's terminal relay; none when its driver
+                %% when its driver is a terminal relay; none when its driver
                 %% sends the input as it arrives.
                 reader = none :: none | reader()}).
 
-%% The console of a session domain's line reads its relay as libedit reads a tty
+%% The console of a session's tty reads its relay as libedit reads a tty
 %% (docs/design-shell.md, "The console reads on demand"): through its one open, a
-%% byte at a time and only for an ask of its current group. It keeps each group's
+%% byte at a time and only for an ask of its current group. It keeps the relay, each group's
 %% outstanding ask, the leading bytes of a character it holds for that group, and
 %% whether a watch of the open waits for its report. One watch or one read is
 %% outstanding at most; a read is a call, so only the watch outlives a step.
--type reader() :: #{open := reference(), asks := #{pid() => reference()},
+-type reader() :: #{relay := pid(), open := erx_session_relay:open(), asks := #{pid() => reference()},
                     held := #{pid() => binary()}, watching := boolean()}.
 
 %% A session: its tty, name, principal and domain pid with the pid's monitor, once
@@ -391,13 +396,19 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
     process_flag(trap_exit, true),
     %% A domain has one line, which terminal/0 names.
     [persistent_term:put({?MODULE, line}, self()) || maps:get(domain_line, Config, false)],
-    FirstShell = case First of
-                     Make when is_function(Make, 1) -> Make(shell_terminal(Role, Config));
-                     Given -> Given
-                 end,
     Console = self(),
     {ok, LineOwners} = (maps:get(line_owners, Config, fun() -> {ok, []} end))(),
-    {ok, DriverPid, Terminal} = Start(self()),
+    {ok, DriverPid, Kind} = Start(self()),
+    {Terminal, Relay} = case Kind of
+                            %% A relay runs a line discipline for a person's
+                            %% terminal, a window's or the console facet's.
+                            relay -> {true, DriverPid};
+                            _ when is_boolean(Kind) -> {Kind, none}
+                        end,
+    FirstShell = case First of
+                     Make when is_function(Make, 1) -> Make(shell_terminal(Relay));
+                     Given -> Given
+                 end,
     %% As user_drv does for a line with no terminal on it: no editing, no echo and bytes
     %% as they are.
     TTY = banner(Role, prim_tty:init_ssh(tty_options(Terminal), ?DEFAULT_SIZE, utf8), DriverPid),
@@ -423,25 +434,25 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
                            principal = line_principal(Config),
                            owner = maps:get(owner, Config, fun erx:owner/1),
                            endpoint = spawn(fun() -> facet_endpoint(Console) end),
-                           reader = reader(Role, maps:get(domain_line, Config, false))})}.
+                           reader = reader(Relay)})}.
 
-%% The terminal the console's first shell holds: on a session domain's line, which the
-%% terminal relay drives, it also tells the relay which job holds the terminal.
-shell_terminal(session, #{domain_line := true}) ->
-    (terminal(self()))#{foreground => fun relay_foreground/2};
-shell_terminal(_Role, _Config) ->
-    terminal(self()).
+%% The terminal the console's first shell holds: on a tty a terminal relay drives, it
+%% also tells that relay which job holds the terminal.
+shell_terminal(none) ->
+    terminal(self());
+shell_terminal(Relay) ->
+    (terminal(self()))#{foreground => fun(Target, Signals) -> relay_foreground(Relay, Target, Signals) end}.
 
-relay_foreground(console, Signals) -> erx_session_relay:foreground(console, Signals);
-relay_foreground({Tag, Mode}, Signals) -> erx_session_relay:foreground(Tag, Mode, Signals).
+relay_foreground(Relay, console, Signals) -> erx_session_relay:foreground(Relay, console, Signals);
+relay_foreground(Relay, {Tag, Mode}, Signals) -> erx_session_relay:foreground(Relay, Tag, Mode, Signals).
 
-%% A session domain's line is driven by the terminal relay, erx_tty_owner, which its
-%% driver function has just started: the console makes its one open there.
-reader(session, true) ->
-    {ok, Open} = erx_session_relay:open_reader(console),
-    #{open => Open, asks => #{}, held => #{}, watching => false};
-reader(_Role, _DomainLine) ->
-    none.
+%% A tty a terminal relay drives, which the driver function has just started: the
+%% console makes its one open there.
+reader(none) ->
+    none;
+reader(Relay) ->
+    {ok, Open} = erx_session_relay:open_reader(Relay, console),
+    #{relay => Relay, open => Open, asks => #{}, held => #{}, watching => false}.
 
 %% The line's principal as the console starts: the one Config names, as a host test's
 %% does, or unknown. The system domain's line takes the system principal from the domain
@@ -612,7 +623,8 @@ info({erx_console_input, Bytes}, State = #state{menu = true, keys = Keys}) when 
     {Pieces, Next} = erx_console_keys:split(Bytes, Keys),
     {noreply, read(Pieces, State#state{keys = Next})};
 info({erx_console_input, Bytes}, State) when is_binary(Bytes) ->
-    %% A console with no menu, a session's relay, reads a BEL as a raw tty does: as a byte.
+    %% A raw driver's console with no menu reads a BEL as a raw tty does: as a byte. A
+    %% relay's console gets no input this way; it reads on demand (reader()).
     {noreply, read([Bytes], State)};
 info(erx_console_eof, State = #state{role = session}) ->
     hang_up(State);
@@ -1312,7 +1324,7 @@ latin1(Bin) -> unicode:characters_to_binary(Bin, latin1).
 control($\^C) -> interrupt;
 control($\^Z) -> suspend.
 
-%% The relay's reads, for the console of a session domain's line (reader()).
+%% The relay's reads, for the console of a session's tty (reader()).
 
 %% The current group changed, or may have: the relay is told, so the events made from
 %% now on carry it; what the console kept for a group that has ended is forgotten; and
@@ -1320,8 +1332,8 @@ control($\^Z) -> suspend.
 reader_follows(_Group, State = #state{reader = none}) ->
     State;
 reader_follows(Group, State = #state{user = User, base = Base, shells = Shells,
-                                     reader = Reader = #{asks := Asks, held := Held}}) ->
-    ok = erx_session_relay:console_group(Group),
+                                     reader = Reader = #{relay := Relay, asks := Asks, held := Held}}) ->
+    ok = erx_session_relay:console_group(Relay, Group),
     Live = [User, Base | [G || {G, _Caller, _Shell} <- Shells]],
     watch(State#state{reader = Reader#{asks := maps:with(Live, Asks), held := maps:with(Live, Held)}}).
 
