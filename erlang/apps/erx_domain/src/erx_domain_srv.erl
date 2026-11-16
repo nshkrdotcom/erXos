@@ -1634,7 +1634,7 @@ throttle(_Now, {Start, Lines, Held}) when Lines < ?MINT_LOG_BURST ->
 throttle(_Now, {Start, Lines, Held}) ->
     {quiet, {Start, Lines, Held + 1}}.
 
-%% The system domain's packages grant at its system place (erx_ns:system_place/1),
+%% The system domain's packages grant at its place (erx_ns:packages_place/0),
 %% /packages, where erx_pkg_medium reads and deletes the installed packages
 %% (docs/design-packaging.md, "Where a package lies"), when the manifest grants it, as a
 %% board with an apps row does. Packages has no place a session mounts, so no session's
@@ -1642,7 +1642,7 @@ throttle(_Now, {Start, Lines, Held}) ->
 mount_packages(Granted) ->
     case lists:member(packages, Granted) of
         true ->
-            {Point, Options} = erx_ns:system_place(packages),
+            {Point, Options} = erx_ns:packages_place(),
             erx_ns:mount({facet, packages}, Point, Options);
         false ->
             ok

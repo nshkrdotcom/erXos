@@ -10,8 +10,8 @@ erx_pkg_io calls it.
 * **Installed packages** lie in `installed/` of the data partition's
   `packages/` directory, which the storage domain serves as the files
   service `packages`; the system domain reaches it through its grant,
-  rooted at `packages/` and mounted at its system place, `/packages`
-  (erx_ns:system_place/1, which erx_domain_srv mounts), so they lie at
+  rooted at `packages/` and mounted at its place, `/packages`
+  (erx_ns:packages_place/0, which erx_domain_srv mounts), so they lie at
   `/packages/installed`, where an app's own grant roots, and every
   request goes through the system domain's
   file client, erx_file_remote, in erx_pkg_io's own process. While the
@@ -93,7 +93,7 @@ place(system, File) -> File.
 
 %% installed/ of the packages tree, where the system domain mounts it.
 installed() ->
-    {Packages, _Options} = erx_ns:system_place(packages),
+    {Packages, _Options} = erx_ns:packages_place(),
     <<Packages/binary, "/installed">>.
 
 %% The #file_info{} of an installed package at its path, or of an image package

@@ -424,7 +424,7 @@ system_data_mount_test_() ->
                                            system_mounts([{0, data, 1, #{}}])) end}].
 
 %% The packages tree, which no session mounts, the system domain mounts at its system
-%% place, /packages (erx_ns:system_place/1), where erx_pkg_medium reads the installed
+%% place, /packages (erx_ns:packages_place/0), where erx_pkg_medium reads the installed
 %% packages, and only when the manifest grants it packages.
 system_packages_mount_test_() ->
     [{"granted", fun() -> ?assertMatch([_, #{point := [<<"packages">>], provider := {facet, packages, <<"packages">>},

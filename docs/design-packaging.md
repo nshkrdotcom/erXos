@@ -817,7 +817,7 @@ hash, so a package listed under another's name, or a file that is not
 a package, is refused. The system domain mounts its `packages` grant
 at `/packages`, so the installed packages lie there at
 `/packages/installed/`. That mount point is a place of the system
-domain's alone (`erx_ns:system_place/1`), which no session's
+domain's alone (`erx_ns:packages_place/0`), which no session's
 `erx_ns:mount_facets/1` mounts; a path reaches only a grant its own
 domain holds, so an app's session reaches the tree only through its own
 grant. Since `erx_verity` checks

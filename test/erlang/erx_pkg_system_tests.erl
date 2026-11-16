@@ -44,6 +44,24 @@ manifest() ->
       reserved => [<<"system">>],
       packages => [<<"dashboard">>]}.
 
+%% The installed packages are listed at installed/ of the place erx_ns gives the packages
+%% tree (erx_ns:packages_place/0), where erx_domain_srv mounts the system domain's grant,
+%% and at no path of this module's own: the trace sees the one path the listing reads. The
+%% listing runs in a process of its own, since a process is never its own tracer.
+installed_lies_beneath_the_packages_place_test() ->
+    {Packages, _Options} = erx_ns:packages_place(),
+    1 = erlang:trace_pattern({prim_file, list_dir_all, 1}, true, [local]),
+    Lister = spawn(fun() -> receive list -> erx_pkg_medium:list(1) end end),
+    1 = erlang:trace(Lister, true, [call]),
+    try
+        Lister ! list,
+        Installed = <<Packages/binary, "/installed">>,
+        ?assertEqual(Installed, receive {trace, Lister, call, {prim_file, list_dir_all, [Path]}} -> Path
+                                after 2000 -> no_call end)
+    after
+        _ = erlang:trace_pattern({prim_file, list_dir_all, 1}, false, [local])
+    end.
+
 %% Without the grant every read answers enoent; with it a package's length and bytes
 %% come through it, and a name the tree does not hold answers enoent.
 reads_through_the_system_grant_test() ->

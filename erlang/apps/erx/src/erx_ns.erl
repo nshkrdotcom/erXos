@@ -66,7 +66,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, mount/3, mount_facets/1, mount_own/2, unmount/1, bind/2, bind/3, tmp_limit/0,
-         change/2, system_place/1]).
+         change/2, packages_place/0]).
 -export([image_log/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export_type([entry/0, table/0]).
@@ -176,7 +176,7 @@ mount_own(Name, Grant) ->
 %% session's included, mounts either: an app's session reaches them by erx:cap/1, its
 %% {erofs, app} mount or an entry its own code puts in its table
 %% (docs/design-packaging.md, "An app's session"), and the system domain mounts its
-%% packages grant at its system place (system_place/1).
+%% packages grant at its own place (packages_place/0).
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
 place(apps) -> {<<"/apps">>, [{tree, <<"apps">>}, rw]};
@@ -185,14 +185,13 @@ place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
 place(line) -> {<<"/line">>, [{tree, ?ERX_LINE_TREE_BYTES}, rw]};
 place(_Name) -> none.
 
-%% Where a tree the system domain alone mounts lies, with the same options as place/1:
-%% the storage domain's packages tree at /packages, where the system domain's erx_domain_srv
-%% mounts its grant and erx_pkg_medium reads and deletes the installed packages
-%% (docs/design-packaging.md, "Where a package lies"). mount_facets/1 never reads this
-%% table, so no session mounts a tree it names, whatever facets the session holds.
--spec system_place(atom()) -> {binary(), [option()]} | none.
-system_place(packages) -> {<<"/packages">>, [{tree, <<"packages">>}, rw]};
-system_place(_Name) -> none.
+%% Where the storage domain's packages tree lies in the system domain alone, with the
+%% same options as place/1: /packages, where erx_domain_srv mounts the system domain's
+%% grant and erx_pkg_medium finds the installed packages (docs/design-packaging.md,
+%% "Where a package lies"). place/1 gives packages no place, so mount_facets/1 never
+%% mounts it, whatever facets a session holds.
+-spec packages_place() -> {binary(), [option()]}.
+packages_place() -> {<<"/packages">>, [{tree, <<"packages">>}, rw]}.
 
 %% Removes the entry at exactly To.
 -spec unmount(file:name_all()) -> ok | {error, reason()}.
