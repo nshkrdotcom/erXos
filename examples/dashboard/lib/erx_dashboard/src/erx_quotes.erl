@@ -35,7 +35,8 @@ to the core. An answer to a request it does not hold is dropped.
 -type state() :: #{dashboard := pid(),
                    core := erx_quotes_core:state(),
                    requests := #{reference() => request()},
-                   sent := none | erx_dashboard_source:board()}.
+                   sent := none | erx_dashboard_source:board(),
+                   logged := #{atom() => binary()}}.
 
 -doc "Starts the live source, linked to `Dashboard`, to which it sends its boards.".
 -spec start_link(pid()) -> {ok, pid()} | {error, term()}.
@@ -57,7 +58,7 @@ init(Dashboard) ->
                     self() ! tick,
                     {ok, #{dashboard => Dashboard,
                            core => erx_quotes_core:new(Table, now_ms()),
-                           requests => #{}, sent => none}};
+                           requests => #{}, sent => none, logged => #{}}};
                 {error, Reason} ->
                     {stop, {quotes_start, Reason}}
             end;
@@ -108,14 +109,29 @@ carry_out({Core, Actions}, State) ->
 
 action({fetch, Quote, Source, Url}, State) ->
     request(#{quote => Quote, source => Source, url => Url, hops => 0}, State);
-action(render, #{dashboard := Dashboard, core := Core, sent := Sent} = State) ->
-    case erx_quotes_view:board(Core, now_ms()) of
+action(render, #{dashboard := Dashboard, core := Core, sent := Sent, logged := Logged} = State) ->
+    Now = now_ms(),
+    Logged2 = log_changes(erx_quotes_view:lines(Core, Now), Logged),
+    case erx_quotes_view:board(Core, Now) of
         Sent ->
-            State;
+            State#{logged := Logged2};
         Board ->
             Dashboard ! {erx_dashboard_board, Board},
-            State#{sent := Board}
+            State#{sent := Board, logged := Logged2}
     end.
+
+%% One log line per change of a quote's line (erx_quotes_view:lines/2),
+%% which the QEMU cell display_domain/quotes reads from the serial line.
+log_changes(Lines, Logged) ->
+    lists:foldl(fun({Name, Line}, Acc) ->
+                        case Acc of
+                            #{Name := Line} ->
+                                Acc;
+                            #{} ->
+                                logger:notice("quotes: ~ts", [Line]),
+                                Acc#{Name => Line}
+                        end
+                end, Logged, Lines).
 
 %% One request, as docs/design-quotes.md, "One request", states: no TLS
 %% option, so httpc takes the system's defaults, and both size limits in
