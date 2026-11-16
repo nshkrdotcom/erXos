@@ -7450,9 +7450,23 @@ document's "residual risks accepted" paragraph.
   - `erx_wifi_join` takes the station's own RSN element and RSNXE in the `join` request; nothing
     builds them from the candidate's AKM and PMF yet, which wants the RSN element's layout in
     `abi/formats/ieee80211.txt`;
-  - `erx_sae` is a stand-in that ends every exchange with the `bss` class, so an SAE join
-    fails; `erx_wifi_keys` makes only the `ptk` request, and the call that performs a request
-    belongs to the station's process;
+  - SAE's secret half is not built: the key holder (`erx_wpa_holder` over `erx_wpa_arith`),
+    `wlankey`'s hashed values (`erx_wpa_secret`) and `crypto`'s `sae_pt/3`, `sae_commit/5`
+    and `sae_key/5` ("OTP's `crypto`: SAE's arithmetic"). `erx_sae`'s tests stand on
+    `test/erlang/erx_sae_peer.erl`, whose arithmetic on Erlang integers matches Annex J.10's
+    vectors; the holder's cases and seeds of Verification (the element not negated,
+    `sae_key/5`'s `badarg` escaping, a keyseed salted with zeros whatever the list, the
+    entropy seam's scalar of 1) and the recorded hostapd exchange wait for them. The call
+    that performs a request to the holder belongs to the station's process;
+  - `erx_sae` takes a password identifier in `new/1`, but `erx_wifi_join` passes none, since
+    the choice's candidate does not carry the identifier the holder's names report;
+  - `erx_sae` and `erx_wpa_key` parse frames from the air with no fuzz target (WF6, "Untrusted
+    input"); `erx_sae_tests` runs truncations and random bodies of its frames, which is not
+    a fuzzer;
+  - the join's state holds SAE's KCK while the exchange runs, so the station's process must
+    keep it out of crash reports, `sys` and `/proc` with the logger filter below;
+  - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
+    exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
   - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
     fields exist only after `join`, so Dialyzer cannot catch a missing one (a record or a
     map type per phase would); message 3's checks are spread over `eapol/4`, `message/5`,

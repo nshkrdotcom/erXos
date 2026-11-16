@@ -4,12 +4,12 @@
 %% The join machine, explored (docs/design-wifi.md, "Verification", erx_wifi_join):
 %% every sequence of events up to a bound from three starting points (the pick, the
 %% association, an open port), against a fake access point that computes real MICs
-%% and wraps real key data, a fake key holder that derives each PTK from the PMK, and
-%% a fake chip that keeps what each slot holds and held. Each step is checked for the
+%% and wraps real key data, a fake key holder that derives each PTK from the PMK and
+%% answers SAE's steps (erx_sae_peer), and a fake chip that keeps what each slot holds and held. Each step is checked for the
 %% design's properties as it is taken; every edge of erx_wifi_join:table/0 must be
 %% taken and no other. The design's longer scenarios run as scripted sequences through
-%% the same checks. test/host/erx_wifi_join_test.rb compiles erx_sae_fake.erl in place
-%% of erx_sae.
+%% the same checks. An SAE join runs the real erx_sae against an access point running
+%% SAE; erx_sae's own cases cover its edge cases.
 -module(erx_wifi_join_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -63,7 +63,7 @@ roots(open) ->
 roots(Name) ->
     Joined = joined(Name),
     Associated = case Name of
-                     sae -> play(Joined, [auth_request, {peer, <<"commit">>}, {peer, <<"accept">>}, connect_ok]);
+                     sae -> play(Joined, [auth_request, {peer, commit}, {peer, confirm}, connect_ok]);
                      _ -> play(Joined, [connect_ok])
                  end,
     Open = play(Associated, [ap_msg1, deliver_up, ap_msg3, deliver_up, {confirm, 1}]),
@@ -108,7 +108,8 @@ enabled(#{join := Join, ap := Ap, up := Up, recorded := Recorded, chip := Chip, 
     case State of
         idle -> Stale;
         joining -> [connect_ok, connect_fail, auth_request, ap_msg1, wrong_confirm | Deadline ++ Ends ++ Stale];
-        sae -> [{peer, <<"commit">>}, {peer, <<"accept">>}, {peer, <<"fail">>}, auth_tx, connect_ok | Deadline ++ Ends];
+        sae -> [{peer, commit}, {peer, confirm}, {peer, fail}, {peer, reflected}, auth_tx, connect_ok
+                | Deadline ++ Ends];
         _ when Akm =:= none -> [ap_msg1, later_disconnected | Ends ++ Stale];
         open -> Air ++ Chip0 ++ [later_disconnected | Ends ++ Stale];
         _ -> Air ++ Chip0 ++ Deadline ++ Ends
@@ -130,7 +131,7 @@ play(World, Events) ->
 prepare(connect_ok, #{ref := Ref, sent := Sent} = W) -> {{connect_confirm, Ref, {ok, Sent}}, W, genuine};
 prepare(connect_fail, #{ref := Ref} = W) -> {{connect_confirm, Ref, {failed, 1}}, W, genuine};
 prepare(auth_request, #{ref := Ref} = W) -> {{auth_request, Ref}, W, genuine};
-prepare({peer, Frame}, #{ref := Ref} = W) -> {{auth_frame, Ref, Frame}, sae_trace(Frame, W), genuine};
+prepare({peer, Name}, #{ref := Ref} = W) -> {{auth_frame, Ref, sae_frame(Name)}, W, genuine};
 prepare(auth_tx, #{ref := Ref} = W) -> {{auth_tx, Ref, ok}, W, genuine};
 prepare(wrong_confirm, #{ref := Ref} = W) -> {{set_keys_confirm, Ref, 1, ok}, W, genuine};
 prepare(leave, W) -> {leave, cause(leave, W), genuine};
@@ -259,19 +260,42 @@ check_world(#{join := Join, now := Now} = World) ->
 
 holder(#{akm := Akm}, {ptk, #{ssid := ?SSID, akm := Akm, aa := ?AA, spa := ?SPA, anonce := ANonce, snonce := SNonce}}) ->
     {ok, erx_wpa_kdf:ptk(suite(Akm), pmk(), ?AA, ?SPA, ANonce, SNonce)};
-holder(_World, {sae_commit, fake}) ->
-    {ok, fake}.
+holder(_World, {sae_commit, #{ssid := ?SSID, spa := ?SPA, aa := ?AA}} = Request) ->
+    {Answer, _} = erx_sae_peer:holder(Request, sae_holder()),
+    Answer;
+holder(_World, {sae_key, #{ssid := ?SSID}} = Request) ->
+    {Answer, _} = erx_sae_peer:holder(Request, sae_committed_holder()),
+    Answer.
 
 cause(Cause, #{trace := Trace} = W) -> W#{trace := Trace#{cause := Cause}}.
 
-sae_trace(Frame, #{join := Join, trace := Trace} = W) ->
-    case {erx_wifi_join:state(Join), Frame, maps:get(sae_accepted, Trace)} of
-        {sae, _, true} -> W;
-        {sae, <<"accept">>, false} -> W#{trace := Trace#{sae_accepted := true}};
-        {sae, <<"fail">>, false} -> W;
-        {sae, _, false} -> W#{trace := Trace#{sae_tested := true}};
-        _ -> W
-    end.
+%% SAE's parties for the join's exploration, made once: the station's holder, drawing
+%% fixed values, the access point, and its frames. A frame of the access point is
+%% genuine whenever the station takes it; `reflected` is the station's own commit sent
+%% back, and `fail` a commit refused with status 1.
+sae_holder() ->
+    {U1, U2} = erx_sae_peer:hashed_values(?SSID, <<"sae password">>, <<>>),
+    erx_sae_peer:holder_new(erx_sae_peer:pt(U1, U2), [{<<7:256>>, <<1000033:256>>}]).
+
+sae_committed_holder() ->
+    {_, Holder} = erx_sae_peer:holder({sae_commit, #{ssid => ?SSID, spa => ?SPA, aa => ?AA}}, sae_holder()),
+    Holder.
+
+sae_frame(Name) ->
+    case get(sae_frames) of
+        undefined -> put(sae_frames, sae_frames());
+        _ -> ok
+    end,
+    maps:get(Name, get(sae_frames)).
+
+sae_frames() ->
+    Holder = sae_holder(),
+    #{pt := Pt} = Holder,
+    {{ok, Scalar, Element}, _} = erx_sae_peer:holder({sae_commit, #{ssid => ?SSID, spa => ?SPA, aa => ?AA}}, Holder),
+    Own = <<3, 0, 1, 0, 126, 0, 19, 0, Scalar/binary, Element/binary>>,
+    Ap0 = erx_sae_peer:ap_new(#{pt => Pt, aa => ?AA, spa => ?SPA, rand => <<5:256>>, mask => <<77777:256>>}),
+    {[Commit], Ap} = erx_sae_peer:ap_take(Own, Ap0),
+    #{commit => Commit, confirm => erx_sae_peer:ap_confirm(Ap, 1), reflected => Own, fail => <<3, 0, 1, 0, 1, 0>>}.
 
 %% ---- What the actions do ----
 
@@ -287,6 +311,10 @@ effect({chip, {eapol, _, Frame}}, _Event, #{up := Up, trace := Trace} = W) ->
            end,
     Counted = maps:update_with(Kind, fun(N) -> N + 1 end, Trace),
     W#{up := Up ++ [Frame], trace := case Kind of message_2 -> Counted#{snonce := Nonce}; _ -> Counted end};
+effect({chip, {auth_frame, _, <<3, 0, 2, 0, _/binary>>}}, _Event, #{trace := Trace} = W) ->
+    W#{trace := Trace#{sae_tested := true}};
+effect({chip, {auth_result, _, ok}}, _Event, #{trace := Trace} = W) ->
+    W#{trace := Trace#{sae_accepted := true}};
 effect({chip, {set_keys, _, Id, Keys}}, _Event, W) ->
     chip_install(Id, Keys, W);
 effect({chip, {port, _, open}}, _Event, #{chip := Chip, pmf := Pmf, akm := Akm, now := Now, trace := Trace} = W) ->

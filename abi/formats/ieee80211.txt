@@ -144,3 +144,39 @@ layout erx_wpa_igtk_kde packed_le 1 24
   field igtk u8 8 count 16
 limit wpa_igtk_key_id_min u16 4
 limit wpa_igtk_key_id_max u16 5
+
+# SAE's Authentication frames (docs/design-wifi.md, "SAE and protected management
+# frames"), whose body the station builds and parses: the algorithm number, SAE's 3
+# (ieee802_11_defs.h, line 96), the transaction sequence number, commit or confirm
+# (lines 106-107), and the status codes the station tells apart: success, an
+# anti-clogging token request, an unknown password identifier, and a commit under
+# hash-to-element (lines 134, 199, 231, 233); any other is the peer's refusal.
+# All three are little-endian 16-bit fields, as every field of the body is.
+enum ieee80211_auth_algorithm u16
+  value sae 3
+enum sae_transaction u16
+  value commit 1
+  value confirm 2
+enum ieee80211_status u16
+  value success 0
+  value anti_clogging_token_required 76
+  value unknown_password_identifier 123
+  value sae_hash_to_element 126
+# The elements after a commit's scalar and element, each an extension element (tag 255,
+# line 496) named by its extension id: the password identifier, the Rejected Groups
+# list and the anti-clogging token container (lines 514, 531-532).
+limit ieee80211_eid_extension u8 255
+enum ieee80211_eid_ext u8
+  value password_identifier 33
+  value rejected_groups 92
+  value anti_clogging_token 93
+# The one group the station offers, 19, the NIST P-256 curve, whose scalar and each
+# coordinate are 32 bytes; the KCK of hash-to-element on it is 32 bytes (sae.h, line 12),
+# and the confirm's send-confirm counter stops at its 16-bit maximum (sae.c, lines
+# 2410-2411). A password identifier is at most 64 bytes (docs/design-wifi.md,
+# "Credentials").
+limit sae_group u16 19
+limit sae_scalar_size u32 32
+limit sae_kck_size u32 32
+limit sae_send_confirm_max u16 0xffff
+limit sae_password_identifier_max u32 64

@@ -191,6 +191,8 @@ sae_step(#{sae := Sae0, ref := Ref, proof := Proof} = Join, Event, #{now := Now}
     Actions = [sae_action(Ref, Action) || Action <- SaeActions],
     Tested = case erx_sae:tested(Sae) of true -> tested; false -> Proof end,
     case Outcome of
+        {drop, Check} ->
+            {drop, Check};
         {running, Deadline} ->
             {Actions, Join#{sae := Sae, proof := Tested, deadline := Deadline}};
         accepted ->

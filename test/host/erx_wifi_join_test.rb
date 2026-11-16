@@ -6,9 +6,8 @@
 # The join machine, erx_wifi_join (docs/design-wifi.md, "Joining", "The supplicant",
 # "Verification"): its EUnit cases explore every sequence of events up to a bound
 # against a fake access point, chip and key holder, and run the design's scenarios;
-# each seeded fault of the design's list for these parts fails its case. erx_sae is
-# replaced by the scripted stand-in test/erlang/erx_sae_fake.erl, so the SAE cells of
-# the table are reached.
+# each seeded fault of the design's list for these parts fails its case. An SAE join
+# runs the real erx_sae against test/erlang/erx_sae_peer.erl's holder and access point.
 
 require 'minitest/autorun'
 require 'open3'
@@ -17,9 +16,7 @@ require_relative '../fixtures/erlang_build'
 
 class ErxWifiJoinTest < Minitest::Test
   JOIN = 'erlang/apps/erx_wifi/src/erx_wifi_join.erl'
-  SAE = 'erlang/apps/erx_wifi/src/erx_sae.erl'
-  FAKE_SAE = 'test/erlang/erx_sae_fake.erl'
-  TESTS = %w[test/erlang/erx_wifi_join_tests.erl].freeze
+  TESTS = %w[test/erlang/erx_wifi_join_tests.erl test/erlang/erx_sae_peer.erl].freeze
   ROOT = File.expand_path('../..', __dir__)
 
   # A fault planted by replacing each anchor, which must occur once, with its text.
@@ -107,12 +104,10 @@ class ErxWifiJoinTest < Minitest::Test
   private
 
   def eunit(replaced)
-    modules = TESTS.map { |path| File.basename(path, '.erl') }.join(', ')
-    stand_in = { SAE => File.read(File.join(ROOT, FAKE_SAE)) }
     Dir.mktmpdir('erx-wifi-join-test') do |work|
-      ErlangBuild.compile(work, applications: %w[erx erx_wifi], tests: TESTS, replaced: stand_in.merge(replaced))
+      ErlangBuild.compile(work, applications: %w[erx erx_wifi], tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', '900', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
-                      "halt(case eunit:test([#{modules}], [verbose]) of ok -> 0; _ -> 1 end)",
+                      "halt(case eunit:test([erx_wifi_join_tests], [verbose]) of ok -> 0; _ -> 1 end)",
                       chdir: work, stdin_data: '')
     end
   end

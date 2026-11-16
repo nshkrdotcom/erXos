@@ -1689,7 +1689,7 @@ counted as `bad_element`, and the exchange goes on to the peer's
 genuine commit.
 
 Its states are wpa_supplicant's: nothing, committed, confirmed, accepted
-(`sae.h:113-115`). How far the three functions are constant-time is a
+(`sae.h:113-115`), with committing while the holder makes the commit. How far the three functions are constant-time is a
 residual of [Security](#security). A network that offers SAE without
 hash-to-element in its RSNXE (bit 5, `ieee802_11_defs.h:632`) is not an
 SAE candidate: hunting-and-pecking derives its element per exchange, in
