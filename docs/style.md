@@ -249,6 +249,22 @@ Erlang code takes the same shape: pure functions decide, and the
 `gen_server` or `gen_statem` callback performs the effects their result
 names.
 
+Every Erlang core's step returns one shape, `{State, Actions}`: the next
+state, then the list of actions the edge performs in order. A core that
+ends says so with the action `{stop, Reason}`, always the last, and the
+edge performs the actions before it and then stops, never stepping the
+state beside a stop again. No step returns a separate stop or error
+variant, so every edge takes a step's result apart the same way:
+
+```erlang
+-spec step(event(), state()) -> {state(), [action()]}.
+
+%% The edge: perform each action in order; a stop ends the process.
+perform([{stop, Reason}], _S) -> {stop, Reason};
+perform([Action | Actions], S) -> perform(Actions, effect(Action, S));
+perform([], S) -> {ok, S}.
+```
+
 A core with timeouts keeps its deadlines in its state and takes the time
 as an input ([design.md](design.md#drivers-and-dma), "Deadlines in
 state"). Each deadline lives in the variant it guards, so leaving the

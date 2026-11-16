@@ -91,22 +91,22 @@ new(Ports) when is_integer(Ports), Ports >= 1, Ports =< ?ERX_USB_HUB_PORTS_MAX -
 -spec transfer_length(ports()) -> pos_integer().
 transfer_length(Ports) -> Ports div 8 + 1.
 
--doc "The hub function's next actions on Event.".
--spec step(event(), state()) -> {[action()], state()}.
+-doc "The next state on Event and the actions the hub function performs.".
+-spec step(event(), state()) -> {state(), [action()]}.
 step(start, State = #{ports := Ports, phase := idle}) ->
-    {[{changed, lists:seq(1, Ports) ++ [hub]}], State#{phase := reporting}};
+    {State#{phase := reporting}, [{changed, lists:seq(1, Ports) ++ [hub]}]};
 step(handled, State = #{phase := reporting}) ->
     post(State);
 step({transfer, {ok, Bytes}}, State = #{ports := Ports, phase := posted}) ->
     case bitmap(Ports, Bytes) of
         [] -> post(State);
-        Set -> {[{changed, Set}], State#{phase := reporting}}
+        Set -> {State#{phase := reporting}, [{changed, Set}]}
     end;
 step({transfer, {error, Reason}}, State = #{phase := posted}) ->
-    {[{stop, {transfer, Reason}}], State#{phase := stopped}}.
+    {State#{phase := stopped}, [{stop, {transfer, Reason}}]}.
 
 post(State = #{ports := Ports}) ->
-    {[{post, transfer_length(Ports)}], State#{phase := posted}}.
+    {State#{phase := posted}, [{post, transfer_length(Ports)}]}.
 
 -doc "The hub and ports a status-change report of a hub of Ports ports names; a short report names them all.".
 -spec bitmap(ports(), binary()) -> change_set().
