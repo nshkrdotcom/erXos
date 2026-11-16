@@ -534,7 +534,9 @@ connection's two sides and two bells:
   the domain library creates it in the plan that makes the connection,
   sized by the `pixels` parameter of the manifest's grant of the
   display's window tree to that client, a facet row's for a configured
-  domain or for each session of a session template, and gives each
+  domain, and for a session the row its plan gave it (a template's session
+  holds every row of its template, an app's the rows its admission
+  kept), and gives each
   party its capability, without the right to delete it
   ([design-system.md](design-system.md#the-domain-library)). A pair of
   domains with no grant of a display between them has a connection

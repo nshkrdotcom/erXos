@@ -708,10 +708,13 @@ display_timed_out() ->
     ?assertEqual({reply, ok}, gen_server:receive_response(Wait, 2000)).
 
 %% An app's session (docs/design-packaging.md, "An app's session"): the boot's app
-%% template, 2, is granted two of a's services, echo (facet row 0) and clip (row 1), both
-%% of the files interface, and the app clock's admission kept only row 1. Its session is
-%% planned under the app's entry with the declared memory, granted clip alone, whose mint
-%% carries the app's name as its principal's, and its ready answer names clip alone; its
+%% template, 2, is granted two of a's services, screen (facet row 0), a display of the
+%% windows interface, and clip (row 1), of the files interface, and the app clock's
+%% admission kept only row 1. Its session is planned under the app's entry with the
+%% declared memory, granted clip alone, whose mint carries the app's name as its
+%% principal's, and its ready answer names clip alone; the connection clip's grant makes
+%% between a and the session carries no pixel area, since the session holds no screen
+%% row, though its template does (erx_domain_mints:pair_area/3); its
 %% domain pid receives the app's record the registration kept once clip is installed,
 %% after the ready answer and before the start is answered. A name not registered is
 %% refused.
@@ -728,10 +731,10 @@ app_setup() ->
                                      restarts => 3, restart_period_s => 60, boot_timeout_s => 60} end,
     persistent_term:put({erx_domain_fake_lib, boot},
                         #{domains => [Row(0, 1, <<"b">>), Row(1, 0, <<"a">>)],
-                          services => [{1, echo, 5}, {1, clip, 5}],
-                          grants => [{{template, 2}, echo, 1, #{max_request => 64}},
+                          services => [{1, screen, ?ERX_SERVICE_WINDOWS}, {1, clip, ?ERX_SERVICE_FILES}],
+                          grants => [{{template, 2}, screen, 1, #{max_request => 64}},
                                      {{template, 2}, clip, 1, #{max_request => 32}}]}),
-    provide_a(fun(Id) -> #{echo => pid('a@erxos', Id, 1), clip => pid('a@erxos', Id, 4)} end),
+    provide_a(fun(Id) -> #{screen => pid('a@erxos', Id, 1), clip => pid('a@erxos', Id, 4)} end),
     Log = erx_domain_fake_lib:start_log(),
     {ok, Service} = erx_domain_srv:start_link(#{lib => erx_domain_fake_lib, agent => erx_domain_fake_lib,
                                                 exports => erx_domain_fake_lib, principals => ?PRINCIPALS,
@@ -762,6 +765,7 @@ app_session() ->
         {Earlier, Call} = app_session_call([]),
         ?assertMatch({app_session, 7, 0, ?APP_MEMORY, <<"clock_1">>, none}, Call),
         ?assertEqual([], [Stop || {stop, _} = Stop <- Earlier]),
+        ?assertEqual({connect, 5, 7, erx_domain_fake_lib:reader(5), erx_domain_fake_lib:reader(7)}, next_connect()),
         [PidA, Pid7] = [domain_pid(Id) || Id <- [5, 7]],
         erlang:trace(PidA, true, ['receive', {tracer, Self}]),
         Key = {{session, 7}, clip},

@@ -41,7 +41,7 @@ state is a bug of the caller and fails with a badmatch.
          session_reserved/1, names_quota/0, app_session/4]).
 -export([inspect_scope/3, inspect_view/2]).
 -export_type([state/0, domain/0, origin/0, info/0, slogan/0, inspect_scope/0, inspect_entry/0,
-              app_session/1]).
+              app_session/1, session_row/0]).
 
 -define(SYSTEM_ID, 4).
 -define(ID_MAX, 16#ffffffff).
