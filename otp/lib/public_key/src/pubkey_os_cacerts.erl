@@ -19,6 +19,8 @@
 %%
 %% %CopyrightEnd%
 %%
+%% Modified by erXos: load/0 gains a row for {unix, erxos}, which loads cacerts.pem
+%% of public_key's priv directory, the image's trust store.
 
 %%
 
@@ -79,6 +81,8 @@ load() ->
             load(bsd_paths(), DefError);
         {unix, sunos} ->
             load(sunos_paths(), DefError);
+        {unix, erxos} ->
+            load(erxos_paths(), DefError);
         {win32, _} ->
             load_win32();
 	{unix, darwin} ->
@@ -231,6 +235,14 @@ bsd_paths() ->
      "/etc/openssl/certs/ca-certificates.crt",
      "/usr/local/share/certs/ca-root-nss.crt"
     ].
+
+%% erXos's trust store, the cacerts.pem the domain release carries in
+%% public_key's priv directory (docs/design-crypto.md, "The trust store").
+erxos_paths() ->
+    case code:priv_dir(public_key) of
+        {error, _} -> [];
+        Priv -> [filename:join(Priv, "cacerts.pem")]
+    end.
 
 sunos_paths() ->
     ["/etc/certs/CA/", %% Oracle Solaris, some older illumos distros

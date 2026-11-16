@@ -773,9 +773,11 @@ enforced, which is a residual of trusted code recorded in `TODO.md`;
 erXos's kernel checks `WRITE` on the time page. The range check of
 `erx_time_set_offset` is the body's own and holds on the stopgap as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
-boot is cold and wall time counts from 1970-01-01 on QEMU `virt`, which
-has a PL031 the stopgap does not read, and on the Raspberry Pi 4, which
-has no real-time clock (`TODO.md`, platforms). The hosted backend reads
+boot is cold. On QEMU `virt` the stopgap's root reads the PL031 once at
+boot and sets the offset from it, so `state` is `boot`. The Raspberry Pi 4
+has no real-time clock of its own: wall time counts from 1970-01-01 until
+the wall-clock keeper sets it from a DS3231 module
+([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
 ([design-stopgap.md](design-stopgap.md), "The hosted backend"), so its
 `state` is `boot`; its setter answers `ERX_ENOTSUP`. The tree's hosted

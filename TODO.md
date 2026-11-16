@@ -75,6 +75,8 @@ it; git history is the record of completed work.
   `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
+  `{not_supported, program}` until then).
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
   preloaded modules and the applications every domain boots, mapped read-only into every domain that runs
   the interpreter. It is wanted long term. Its trigger, three adopting domains at once, is met: the
@@ -2028,6 +2030,22 @@ it; git history is the record of completed work.
   `opendir`, `stat` and `syslog` (file BIOs, the `file:` store loader, `X509_LOOKUP` by directory) and keeps
   `OPENSSLDIR="/usr/local/ssl"`; K5 holds because `no-autoload-config` stops the implicit loads and OTP's `crypto` names
   no file. Give Configure an `--openssldir` of erXos's, so a caller that does name OpenSSL's directory finds erXos's.
+* [High] HTTPS clients, the trust store in the domain release (`config/trust/`, `tools/lib/erx/trust_store.rb`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the five roots, their record and the reader are in the
+  tree and `pubkey_os_cacerts` has its `{unix, erxos}` row, but no build writes `cacerts.pem` into `public_key`'s
+  `priv` of the domain release, so `public_key:cacerts_get/0` raises `failed_load_cacerts` on erXos and the full
+  kiosk's quotes cannot fetch. The pack's provenance check attributes every receipt source through an import
+  record with a license per file; the roots need no license (public keys and names, facts), so the check takes a
+  recorded `none` for them, and `config/trust` needs a row in the images' imports, before the release names the store. Then: the layout row
+  for `priv/cacerts.pem`, a test image's extra roots, and the design's "store on QEMU" row.
+* [Medium] HTTPS clients, the store by construction (`tools/lib/erx/trust_store.rb`): build it from `config/trust/ORIGIN.md`'s
+  rows instead of a `*.pem` glob (which is case-insensitive on macOS and follows links): each recorded file a regular
+  file by `lstat`, its bytes matching the recorded SHA-256, one block decoding to exactly one DER certificate (two
+  certificates base64ed into one block, or an empty block, pass the form check today), and any other entry of the
+  directory refused. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
+* [Medium] HTTPS clients, the rest of design-crypto's client work: `inets`' `httpc_bound` edit and its tests (CR8),
+  and `ssl` in the web domain's script for its listener
+  ([design-crypto.md](docs/design-crypto.md#otps-applications)).
 * [Medium] crypto NIFs, rebuild (`tools/lib/erx/native_runtime.rb`, `build_openssl`): the static objects of `crypto.a` and
   `asn1rt_nif.a` have no header dependencies (`otp/lib/crypto/c_src/Makefile.in`'s `%_static` rule, `otp/lib/asn1/c_src/Makefile`)
   and the configure stamp does not cover OpenSSL's options or headers, so a change to `Libcrypto::OPTIONS`, `openssl/include` or
@@ -6422,10 +6440,14 @@ to the corpus and follow rc
   showing a pid's node name beside its text in the inspector; the user
   decides
   ([design-runtime.md](docs/design-runtime.md#risks-and-open-questions)).
-* [Low] platforms, the real-time clock: neither board has the PL031 the
-  kernel's device table takes as its real-time clock. Name each board's
-  clock, or read wall time from the firmware
+* [Low] platforms, the real-time clock: no board but QEMU `virt` has the PL031 the
+  kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
+  Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
+* [Medium] stopgap, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): the stopgap's root reads the
+  PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
+  certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
+  Today the page starts zeroed and the wall clock reads 1970-01-01.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
   it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,
