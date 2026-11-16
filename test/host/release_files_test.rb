@@ -390,15 +390,40 @@ class ReleaseFilesTest < Minitest::Test
     assert_includes error.message, 'mnesia'
   end
 
+  # The serving module is derived by each runtime build from its own beams: a release
+  # takes its source from the OTP copy it ships the beam of, so two copies built apart
+  # (hosted and native) each name the source their own build wrote, and the pack inputs
+  # carry that source.
+  def test_the_derived_serving_module_names_the_source_of_its_own_otp_copy
+    other = File.join(@scratch, 'other', 'otp')
+    FileUtils.mkdir_p(File.dirname(other))
+    FileUtils.cp_r(@otp, other)
+    sources = [@otp, other].to_h do |otp|
+      source = Erx::ServingSet.source(otp: otp)
+      write(otp, 'lib/erx_files/ebin/erx_ramfs_serving.beam', 'beam')
+      write(File.dirname(source), File.basename(source), "-module(erx_ramfs_serving). %% #{otp}\n")
+      [otp, source]
+    end
+    sources.each do |otp, source|
+      release = Erx::ReleaseFiles.new(root: ROOT, otp: otp, directory: File.join(File.dirname(otp), 'release'), runner: BootRunner.new,
+                                      codec: Codec.new, oracle: FakeOracle.new)
+      entry = release.entries.find { |candidate| candidate.fetch('path').end_with?('/erx_ramfs_serving.beam') }
+      refute_nil entry, 'the release ships no erx_ramfs_serving.beam'
+      named = JSON.parse(File.read(entry.fetch('receipt'))).fetch('sources')
+      assert_equal [{ 'path' => source, 'sha256' => Digest::SHA256.file(source).hexdigest }], named
+      assert_includes Erx::ReleaseFiles.inputs_of(release.entries, root: ROOT, otp: otp), source
+    end
+  end
+
   # A release's pack inputs name the sources of its own applications, test-only ones
   # included, so a test image's catalog authorizes what its receipts name, and the
   # system release's name none of a test-only application's.
   def test_pack_inputs_name_the_sources_of_the_release_s_applications
     app = File.join(ROOT, 'test/erlang/apps/erx_echo_test/src/erx_echo_test.app.src')
-    tests = Erx::ReleaseFiles.inputs_of([], root: ROOT, applications: [*Erx::ReleaseFiles::DOMAIN_BASE, 'erx_echo_test'])
+    tests = Erx::ReleaseFiles.inputs_of([], root: ROOT, otp: @otp, applications: [*Erx::ReleaseFiles::DOMAIN_BASE, 'erx_echo_test'])
     assert_includes tests, app
     assert_includes tests, File.join(ROOT, 'test/erlang/apps/erx_echo_test/src/erx_echo_test.erl')
-    refute_includes Erx::ReleaseFiles.inputs_of([], root: ROOT), app
+    refute_includes Erx::ReleaseFiles.inputs_of([], root: ROOT, otp: @otp), app
   end
 
   # The release takes only scripts domain_boot made, at least one, each name once.

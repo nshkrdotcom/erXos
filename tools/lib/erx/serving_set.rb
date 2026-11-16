@@ -15,18 +15,24 @@ module Erx
   # holds; erx_ramfs_sup loads that list, the module erx_ramfs_serving, before it mounts
   # /tmp. Preloaded modules are always loaded and are left out. The list is a fact about
   # beams, so no checked-in source holds it: the runtime build calls build, which writes
-  # the module's source into the build tree and compiles it into erx_files beside the
+  # the module's source (see source) and compiles it into erx_files beside the
   # application's own modules.
   module ServingSet
     SEEDS = %w[erx_ramfs erx_ramfs_core erx_fs].freeze
-    # The application the module belongs to, its name and its source in the build tree.
+    # The application the module belongs to, and the module.
     APPLICATION = 'erx_files'
     MODULE = 'erx_ramfs_serving'
-    SOURCE = "build/serving/#{MODULE}.erl"
+
     PRELOAD_MAKEFILE = 'otp/erts/preloaded/src/Makefile'
     # xref's name for a call of a fun value, which names no module.
     FUN_CALL = '$M_EXPR'
     DEADLINE = 300
+
+    # The module's source for the OTP copy otp: in a directory beside the copy, which one
+    # runtime build owns, so each build writes its own and a receipt names the source of its
+    # own beam. Not inside the copy, whose ORIGIN.md makes pack provenance treat everything
+    # under it as imported source; outside it the source is attributed as generated.
+    def self.source(otp:) = File.join(File.dirname(otp), 'serving', "#{MODULE}.erl")
 
     # The beams xref reads in an OTP copy: erXos's applications, kernel and stdlib.
     def self.directories(otp:) = %w[erx_files erx kernel stdlib].map { |application| File.join(otp, 'lib', application, 'ebin') }
@@ -81,15 +87,15 @@ module Erx
       ERLANG
     end
 
-    # Writes the module's source into the build tree and compiles it into the ebin of
+    # Writes the module's source (see source) and compiles it into the ebin of
     # erx_files, built already, from what the beams of otp reach; answers the module's
     # name, which the application file lists. erlc is the erlc the applications build with.
     def self.build(runner:, erlc:, flags:, otp:, root:)
       modules = closure(runner: runner, erl: File.join(File.dirname(erlc), 'erl'), directories: directories(otp: otp), root: root)
-      source = File.join(root, SOURCE)
+      source = source(otp: otp)
       FileUtils.mkdir_p(File.dirname(source))
       File.write(source, render(modules))
-      runner.run([erlc, *flags, '-o', File.join(otp, 'lib', APPLICATION, 'ebin'), SOURCE], name: "erlang-app-#{MODULE}",
+      runner.run([erlc, *flags, '-o', File.join(otp, 'lib', APPLICATION, 'ebin'), source], name: "erlang-app-#{MODULE}",
                                                                                          deadline: DEADLINE, chdir: root,
                                                                                          env: Oracle::CLEAN_ERLANG_ENV)
       MODULE

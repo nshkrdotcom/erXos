@@ -97,7 +97,7 @@ module Erx
         domains = domain_entries(manifest_source, root_task)
         entries = [root_entry(root_task), *files, *system_release.directories, *domains]
         _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
-        catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root)))
+        catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root, otp: @otp)))
         pack_with(tools, catalog).build(
           entries: entries, root_path: 'system/root', build_kind: BuildKind::DEVELOPMENT,
           platform: @platform.record,

@@ -192,7 +192,7 @@ class RuntimeBuildTest < Minitest::Test
   # reached, less the preloaded ones and the fun call, it is compiled into erx_files and
   # erx_files' application file lists it. The tree holds no copy of the list.
   def serving_modules
-    File.read(File.join(@root, Erx::ServingSet::SOURCE))[/^modules\(\) ->\n\s*\[([^\]]*)\]\./m, 1].split(',').map(&:strip)
+    File.read(Erx::ServingSet.source(otp: @output.root))[/^modules\(\) ->\n\s*\[([^\]]*)\]\./m, 1].split(',').map(&:strip)
   end
 
   def test_the_build_derives_the_serving_module_from_what_xref_reaches
@@ -201,7 +201,7 @@ class RuntimeBuildTest < Minitest::Test
     assert_equal Erx::Oracle::CLEAN_ERLANG_ENV, @runner.options.fetch('serving-set').fetch(:env)
     assert_includes @runner.steps, 'erlang-app-erx_ramfs_serving'
     assert_equal SERVING_LIST, serving_modules
-    assert_includes @runner.argvs.fetch('erlang-app-erx_ramfs_serving'), Erx::ServingSet::SOURCE
+    assert_includes @runner.argvs.fetch('erlang-app-erx_ramfs_serving'), Erx::ServingSet.source(otp: @output.root)
     listed = Erx::ErlangApps.modules_of(File.read(File.join(@output.root, 'lib/erx_files/ebin/erx_files.app')), label: 'erx_files.app')
     assert_equal ['erx_ramfs_serving'], listed
     refute_path_exists File.join(TREE, 'erlang/apps/erx_files/src/erx_ramfs_serving.erl')

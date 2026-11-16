@@ -38,14 +38,14 @@ module Erx
     FLAGS = %w[-Werror +debug_info +deterministic +warn_deprecated_catch +warn_obsolete_bool_op].freeze
     DEADLINE = 300
 
-    # What derives modules of an application from the build's own beams: each answers SOURCE,
-    # its root-relative source in the build tree, and build(runner:, erlc:, flags:, otp:, root:),
-    # which writes and compiles it and answers its module name (ServingSet). No .app.src
-    # lists such a module, and the application file lists it beside erxos/'s.
+    # What derives modules of an application from the build's own beams: each answers
+    # MODULE, its name, source(otp:), its absolute source for the OTP copy, and build(runner:, erlc:, flags:,
+    # otp:, root:), which writes and compiles it and answers its module name (ServingSet).
+    # No .app.src lists such a module, and the application file lists it beside erxos/'s.
     def self.derived(application) = application == ServingSet::APPLICATION ? [ServingSet] : []
 
-    # The sources of an application's derived modules, relative to the root.
-    def self.derived_sources(application) = derived(application).map { |deriving| deriving::SOURCE }
+    # The sources of an application's derived modules for the OTP copy otp, absolute.
+    def self.derived_sources(application, otp:) = derived(application).map { |deriving| deriving.source(otp: otp) }
 
     # The tree's directory of an application, relative to the root.
     def self.source(application) = File.join(TEST_ONLY.include?(application) ? TEST_SOURCE : SOURCE, application)
@@ -118,12 +118,12 @@ module Erx
     end
 
     # Every file a build compiles or copies for applications, as absolute paths: the
-    # sources the release's receipts name for them.
-    def self.sources(root:, applications: APPLICATIONS)
+    # sources the release's receipts name for them, the derived ones those of the OTP
+    # copy otp.
+    def self.sources(root:, otp:, applications: APPLICATIONS)
       applications.flat_map do |application|
-        [*modules(root: root, application: application), *derived_sources(application),
-         File.join(source(application), 'src', "#{application}.app.src")]
-          .map { |path| File.join(root, path) }
+        [*modules(root: root, application: application), File.join(source(application), 'src', "#{application}.app.src")]
+          .map { |path| File.join(root, path) } + derived_sources(application, otp: otp)
       end
     end
 
@@ -212,8 +212,7 @@ module Erx
       @runner.run([@erlc, *FLAGS, *includes, *earlier, '-pa', ebin, '-o', ebin, *modules], name: "erlang-app-#{application}",
                                                                    deadline: DEADLINE, chdir: @root, env: Oracle::CLEAN_ERLANG_ENV)
       self.class.derived(application).each do |deriving|
-        name = File.basename(deriving::SOURCE, '.erl')
-        raise Error, "#{application}.app.src lists #{name}, which the build derives" if sources.listed.include?(name)
+        raise Error, "#{application}.app.src lists #{deriving::MODULE}, which the build derives" if sources.listed.include?(deriving::MODULE)
       end
       derived = self.class.derived(application).map { |deriving| deriving.build(runner: @runner, erlc: @erlc, flags: FLAGS, otp: otp, root: @root) }
       File.write(File.join(ebin, "#{application}.app"), self.class.with_modules(sources.resource, [*sources.listed, *sources.erxos, *derived]))
