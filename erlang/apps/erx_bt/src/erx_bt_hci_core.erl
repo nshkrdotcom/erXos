@@ -59,7 +59,8 @@ free credits are the controller's buffer count less their sum, so a completion c
 grow them: one naming a handle that is not live, or more packets than the handle has
 given the writer, stops, so the writer's list holds at most the credits. Disconnection
 Complete returns all of a handle's (4.3). Each link may hold at most its share, the
-buffers divided by the connection limit; a controller with fewer
+buffers divided by the connection limit, and counts its own packets back: a completion
+passes each handle's count to its link as `{completed, Count}`. A controller with fewer
 buffers than the limit lowers the limit to its buffer count, so every share is at least
 one buffer.
 
@@ -283,7 +284,8 @@ event({command_status, Status, Allowed, Opcode}, Core) ->
 event({hardware_error, Code}, _Core) ->
     stop({hardware_error, Code});
 event({number_of_completed_packets, Pairs}, #core{links = Links, out = Out} = Core) ->
-    {[], Core#core{links = lists:foldl(fun(Pair, Acc) -> complete(Pair, Out, Acc) end, Links, Pairs)}};
+    {Completed, Returned} = lists:mapfoldl(fun(Pair, Acc) -> complete(Pair, Out, Acc) end, Links, Pairs),
+    {lists:append(Completed), Core#core{links = Returned}};
 event({le_connection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, Info}, Core) ->
     connected(Handle, Info, Core);
 event({le_connection_complete, _Failed, _Handle, _Info}, Core) ->
@@ -324,12 +326,15 @@ to_link(Handle, Event, #core{links = Links} = Core) ->
 
 %% A completion returns a live handle's packets, never more than it has given the
 %% writer: one still on the writer's list has not reached the controller, and freeing
-%% its credit would let the list grow while the line is stalled.
+%% its credit would let the list grow while the line is stalled. The packets returned
+%% go to the handle's link, named in full, so the link counts its share back; a count of
+%% 0 returns nothing and tells the link nothing.
 complete({Handle, Count}, Out, Links) ->
     Queued = length([Owner || {Owner, _} <- Out, Owner =:= Handle]),
     case Links of
         #{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->
-            Links#{Handle := {Serial, InFlight - Count}};
+            {[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],
+             Links#{Handle := {Serial, InFlight - Count}}};
         #{Handle := _} -> stop({completion_beyond_in_flight, Handle, Count});
         #{} -> stop({completion_for_dead_handle, Handle})
     end.

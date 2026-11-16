@@ -122,6 +122,11 @@ class ErxBtHciTest < Minitest::Test
                           "        none -> {[], Core#core{slot = idle}};\n" \
                           "        _ -> {[], Core#core{slot = {due, Now + ?ERX_BT_COMMAND_TIMEOUT_MS}}}\n",
              catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: 'completions not passed to their links, so a link never counts its share back',
+             module_path: CORE,
+             anchor: '{[{to_link, {Handle, Serial}, {completed, Count}} || Count > 0],',
+             replacement: '{[],',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
     Seed.new(fault: 'a deadline passed only after its instant',
              module_path: CORE,
              anchor: 'case next_deadline(Core) =< Now of',

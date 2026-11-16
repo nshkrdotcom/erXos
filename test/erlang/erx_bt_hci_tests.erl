@@ -277,13 +277,35 @@ a_command_the_controller_never_allows_stops_on_its_deadline_test() ->
     {ok, Allowed, _} = answer(Due, {command_complete, 1, 0, <<>>}),
     ?assertEqual([{write, <<1, 1, 16#10, 0>>}], Allowed).
 
+%% Number Of Completed Packets passes each live handle's count to its link, named in
+%% full, so the link counts its own share back.
+completions_reach_each_handles_link_test() ->
+    {_, Ready} = ready(2),
+    {ok, Up1, One} = answer(Ready, {le_connection_complete, 0, 16#40, #{}}),
+    {ok, _, Advertising} = step(written, One),
+    {ok, _, Enabled} = answer(Advertising, complete(16#200A, <<0>>)),
+    {ok, Up2, Two} = answer(Enabled, {le_connection_complete, 0, 16#41, #{}}),
+    {A, B} = {link_of(Up1), link_of(Up2)},
+    {ok, [{write, _}], S1} = step({request, A, {send, 0, <<1>>}}, Two),
+    {ok, [], W1} = step(written, S1),
+    {ok, [{write, _}], S2} = step({request, B, {send, 0, <<2>>}}, W1),
+    {ok, [], W2} = step(written, S2),
+    ?assertMatch({ok, [{to_link, A, {completed, 1}}, {to_link, B, {completed, 1}}], _},
+                 step({event, {number_of_completed_packets, [{16#40, 1}, {16#41, 1}]}}, W2)),
+    %% A count of 0 tells the link nothing; a handle named twice is counted twice.
+    ?assertMatch({ok, [{to_link, B, {completed, 1}}], _},
+                 step({event, {number_of_completed_packets, [{16#40, 0}, {16#41, 1}]}}, W2)),
+    ?assertEqual({stop, {completion_beyond_in_flight, 16#41, 1}},
+                 step({event, {number_of_completed_packets, [{16#41, 1}, {16#41, 1}]}}, W2)).
+
 %% A packet still on the writer's list has not reached the controller, so a completion
 %% of it is forged: the list stays within the credits however the line stalls.
 a_completion_of_a_queued_packet_stops_test() ->
     {Link, Core} = linked(1, 16#40),
     {ok, [{write, _}], One} = step({request, Link, {send, 0, <<1>>}}, Core),
     {ok, [], Two} = step({request, Link, {send, 0, <<2>>}}, One),
-    ?assertMatch({ok, [], _}, step({event, {number_of_completed_packets, [{16#40, 1}]}}, Two)),
+    ?assertMatch({ok, [{to_link, Link, {completed, 1}}], _},
+                 step({event, {number_of_completed_packets, [{16#40, 1}]}}, Two)),
     ?assertEqual({stop, {completion_beyond_in_flight, 16#40, 2}},
                  step({event, {number_of_completed_packets, [{16#40, 2}]}}, Two)).
 
@@ -401,6 +423,7 @@ visit(#world{core = Before, now = Now} = World, Input, {Queue, Seen, Stats}) ->
         {ok, Actions, Core} ->
             check_deadline_kept(Input, World),
             check_expiry_acts(Input, Before, Core),
+            check_completions_passed(Input, World, Actions),
             Next = observe(Actions, (consume(Input, World))#world{core = Core}),
             check(Next),
             Key = key(Next),
@@ -601,6 +624,14 @@ check_quiescent(#world{ready = true, writer = idle, command = none, core = Core}
         _Due -> ok
     end;
 check_quiescent(_) ->
+    ok.
+
+%% Each live handle's count in Number Of Completed Packets, but a count of 0, reaches the
+%% handle's current link.
+check_completions_passed({event, {number_of_completed_packets, Pairs}}, #world{names = Ids}, Actions) ->
+    ?assertEqual([{to_link, map_get(Handle, Ids), {completed, Count}} || {Handle, Count} <- Pairs, Count > 0],
+                 [Action || {to_link, _, {completed, _}} = Action <- Actions]);
+check_completions_passed(_Input, _World, _Actions) ->
     ok.
 
 %% Helpers: a core driven by a controller that answers every command well, at time 0.
