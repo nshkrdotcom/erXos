@@ -20,7 +20,8 @@ distinct from the first ones, so the bring-up patches at most once.
 command are never both active:
 
 - `idle`: nothing, and no deadline armed;
-- `line_reset`: the line is being reset, until `line_ready`;
+- `line_reset`: the line is being reset, until `line_ready`; the process does not wait
+  on the reset, so its deadline can pass while the line service holds it;
 - `wait`: a bring-up wait, which ends when its deadline passes;
 - `due`: a command is due and waits for the writer and for the controller's
   `Num_HCI_Command_Packets` to be at least one (Part E, 4.4);
@@ -34,11 +35,14 @@ command and never says otherwise stops on it. Command Complete or Command Status
 command sent empties the slot; one with opcode 0 only updates the count, and one naming
 any other opcode, the command due but not yet written included, stops.
 
-**Disconnects**: a link's disconnect stays with its handle, asked and then sent, until
+**Disconnects**: a link's disconnect stays with its handle, asked and then taken, until
 the handle's Disconnection Complete, so a second request for the handle is ignored and
-no request outlives the connection it was made for. A disconnect answered with a status
-other than success or Unknown Connection Identifier (the handle has gone, which
-Disconnection Complete reports or has reported) stops.
+the core never decides a disconnect for a handle after its Disconnection Complete. A
+connection on a handle whose disconnect is handed to the writer and unanswered stops,
+since the controller may carry that disconnect out on the new peer. A disconnect
+answered with a status other than success or Unknown Connection Identifier (the handle
+has gone, which Disconnection Complete reports or has reported) stops. Requests name a
+handle only: the process passes on only those of the handle's current link.
 
 **ACL credits** (Part E, 4.1.1): each live handle counts its packets in flight, and the
 free credits are the controller's buffer count less their sum, so a completion can never
@@ -102,7 +106,7 @@ slice): this core sends what it is given.
     acl_tx_max = 0 :: 0..16#FFFF,
     links = #{} :: #{handle() => non_neg_integer()},  % packets in flight per live handle
     advertising = false :: boolean(),
-    disconnects = [] :: [{handle(), Reason :: byte() | sent}],  % live handles only, until Disconnection Complete
+    disconnects = [] :: [{handle(), {asked, Reason :: byte()} | taken}],  % live handles only
     facts = #{} :: map(),
     dropped = 0 :: non_neg_integer()
 }).
@@ -165,7 +169,7 @@ step(Input, Core) ->
 stop(Reason) -> throw({stop, Reason}).
 
 input(start, #core{plan = [line_reset | Plan], slot = idle} = Core) ->
-    {[line_reset, {timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}], Core#core{plan = Plan, slot = line_reset}};
+    {[{timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}, line_reset], Core#core{plan = Plan, slot = line_reset}};
 input(line_ready, #core{slot = line_reset} = Core) ->
     {[cancel_timer], Core#core{slot = idle}};
 input(written, #core{writer = busy} = Core) ->
@@ -200,7 +204,7 @@ input({send, Handle, Boundary, Data}, #core{links = Links} = Core) ->
     end;
 input({disconnect, Handle, Reason}, #core{links = Links, disconnects = Pending} = Core) ->
     case is_map_key(Handle, Links) andalso not lists:keymember(Handle, 1, Pending) of
-        true -> {[], Core#core{disconnects = Pending ++ [{Handle, Reason}]}};
+        true -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
         false -> {[], Core}
     end;
 input(Input, _Core) ->
@@ -275,6 +279,8 @@ connected(Handle, _Info, #core{stage = bringup}) ->
     stop({connection_during_bringup, Handle});
 connected(Handle, _Info, #core{links = Links}) when is_map_key(Handle, Links) ->
     stop({duplicate_handle, Handle});
+connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _}}) ->
+    stop({connection_while_disconnecting, Handle});
 connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
 connected(Handle, Info, #core{links = Links, acl_tx_max = TxMax, slot = Slot} = Core) ->
@@ -299,7 +305,7 @@ answer(Opcode, _Answer, _Core) ->
 
 %% A disconnect is answered by Command Status (Part E, 7.1.6). Unknown Connection
 %% Identifier means the handle has gone, which Disconnection Complete reports or has
-%% reported, and the handle keeps its mark until then; any other failure stops.
+%% reported, and the handle keeps its taken mark until then; any other failure stops.
 answered({disconnect, Handle}, Command, Answer, Core) ->
     case outcome(Command, Answer) of
         {ok, _} -> {[], Core};
@@ -373,17 +379,19 @@ next_step(#core{stage = bringup, slot = idle, plan = []} = Core) ->
 next_step(Core) ->
     {[], Core}.
 
-%% The command due now, if any: its label, the command and the state once it has been
-%% handed to the writer. In the bring-up, its next step; once ready, the first disconnect
-%% asked for and not yet sent, else advertising while connections are below the limit.
+%% The command due now, if any: its label, the command, and the state once it is taken
+%% (the plan's step popped, or the disconnect marked taken). Only feed/1 keeps that
+%% state; the other callers ask only whether a command is due. In the bring-up, its
+%% next step; once ready, the first disconnect asked for and not yet taken, else
+%% advertising while connections are below the limit.
 due(#core{stage = bringup, plan = [{command, Label, Command} | Plan]} = Core) ->
     {Label, Command, Core#core{plan = Plan}};
 due(#core{stage = ready, disconnects = Disconnects} = Core) ->
-    case lists:search(fun({_Handle, Reason}) -> Reason =/= sent end, Disconnects) of
-        {value, {Handle, Reason}} ->
+    case [Asked || {_Handle, {asked, _Reason}} = Asked <- Disconnects] of
+        [{Handle, {asked, Reason}} | _] ->
             {{disconnect, Handle}, {disconnect, Handle, Reason},
-             Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, {Handle, sent})}};
-        false ->
+             Core#core{disconnects = lists:keyreplace(Handle, 1, Disconnects, {Handle, taken})}};
+        [] ->
             advertise(Core)
     end;
 due(_Core) ->

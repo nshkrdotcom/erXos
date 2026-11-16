@@ -6670,12 +6670,25 @@ to the corpus and follow rc
 
 ## Security residuals
 
-* [Medium] bluetooth, the packet the writer holds at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
+* [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
   the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
-  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the one
-  packet the writer already holds is on its way to the line and is written; if the controller has already given
-  the handle to a new peer, that packet reaches the new link. Narrow it in the link slice, where the link protocol
-  can tie each packet to its connection, for example by the writer checking the handle's connection at the write.
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
+  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
+  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
+  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
+  the link slice, where the link protocol can tie each packet to its connection.
+* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
+  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
+  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
+  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
+  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
+  ones that mean the handle is going.
+* [Medium] bluetooth, requests that name only a handle (`erx_bt_hci_core:step/2`'s `{send, ...}` and
+  `{disconnect, ...}`; docs/design-bluetooth.md "Commands and data credits"): the controller reuses handles, so a
+  request of a link that has gone, handled after the handle's Disconnection Complete and a new LE Connection
+  Complete, would send the old link's packet to, or disconnect, the new peer. The design puts the filter in the
+  controller process, which passes on only the requests of the handle's current link; the link slice should make it
+  hold by construction instead, with a connection identity given in `link_up` and required in every request.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and

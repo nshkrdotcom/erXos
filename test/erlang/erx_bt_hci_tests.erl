@@ -219,10 +219,21 @@ a_connection_before_the_enable_answer_leaves_advertising_off_test() ->
 
 %% The line's reset is under a deadline too, cancelled when the line is ready.
 a_line_reset_that_never_ends_stops_test() ->
-    {ok, [line_reset, {timer, 5000}], Resetting} = erx_bt_hci_core:step(start, new(1)),
+    {ok, [{timer, 5000}, line_reset], Resetting} = erx_bt_hci_core:step(start, new(1)),
     ?assertEqual({stop, line_reset_timeout}, erx_bt_hci_core:step(timeout, Resetting)),
     ?assertMatch({ok, [cancel_timer, {timer, 5000}, {write, <<1, 3, 16#0C, 0>>}], _},
                  erx_bt_hci_core:step(line_ready, Resetting)).
+
+%% A disconnect written and unanswered may be carried out on whichever peer holds its
+%% handle when the controller reads it, so a new connection on that handle stops.
+a_connection_on_a_handle_being_disconnected_stops_test() ->
+    {_, Core} = connected(2, 1),
+    {ok, [], Written} = erx_bt_hci_core:step(written, Core),
+    {ok, [cancel_timer], Advertising} = answer(Written, complete(16#200A, <<0>>)),
+    {ok, [{timer, 5000}, {write, <<1, 6, 4, 3, 1, 0, 16#13>>}], Asked} =
+        erx_bt_hci_core:step({disconnect, 1, 16#13}, Advertising),
+    {ok, _, Gone} = answer(Asked, {disconnection_complete, 0, 1, 16#13}),
+    ?assertEqual({stop, {connection_while_disconnecting, 1}}, answer(Gone, {le_connection_complete, 0, 1, #{}})).
 
 element_pair({ok, Actions, _Core}) -> {ok, Actions}.
 
@@ -282,10 +293,10 @@ shared_buffers_take_any_length_from_one_test() ->
 %% the deadline pass; answer the command written well (and allowing one more command or
 %% none), with a failed status, with another command's opcode, or by Command Status;
 %% send an opcode-0 event allowing one command or none; report a hardware error or a
-%% malformed event; once, an event or ACL packet the core drops; connect, during the
-%% bring-up, while advertising, or while the advertising enable is written and not yet
-%% answered; and for each live handle, disconnect it from either side, take or deliver a
-%% packet, and complete packets truly or falsely. The invariants hold on every
+%% malformed event; identify a controller of another company; once, an event or ACL
+%% packet the core drops; connect, in any state, on a handle not live or past the limit;
+%% and for each live handle, disconnect it from either side, take or deliver a packet,
+%% and complete packets truly or falsely. The invariants hold on every
 %% transition; every state before ready has its deadline armed, so every path ends in
 %% ready or a stop; a path patches at most once; a written disconnect names a handle
 %% whose disconnect was asked for since it last connected; advertising is never on at
@@ -294,25 +305,28 @@ shared_buffers_take_any_length_from_one_test() ->
 -record(world, {core, line = none, writer = idle, command = none, deadline = false, asked = #{}, patches = 0,
                 ready = false}).
 
-%% About 11,000 states for each configuration explored.
+%% About 21,000 states for each configuration explored.
 -define(EXPLORE_BUDGET, 100000).
 
 explored_core_keeps_its_invariants_test_() ->
     {timeout, 60, fun() ->
         Patched = (?READY_CONFIG(2))#{patch => #{manufacturer => 15, records => [{16#FC4C, <<1, 2>>}, {16#FC4E, <<>>}]}},
-        [explore(Config) || Config <- [?READY_CONFIG(2), Patched]]
+        Stops = lists:usort(lists:append([explore(Config) || Config <- [?READY_CONFIG(2), Patched]])),
+        ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
+                      connection_beyond_limit, connection_during_bringup, connection_while_disconnecting,
+                      disconnect_failed, duplicate_handle, hardware_error, line_reset_timeout, malformed_event,
+                      patch_for_other_controller, step_failed],
+                     Stops)
     end}.
 
+%% Walks every state of one configuration and returns the reasons it stopped for.
 explore(Config) ->
     {ok, Actions, Core} = erx_bt_hci_core:step(start, erx_bt_hci_core:new(Config)),
     Start = observe(Actions, #world{core = Core}),
     {exhausted, Stats} = walk(queue:from_list([Start]), sets:from_list([key(Start)], [{version, 2}]),
                               #{ready => 0, stops => #{}}, ?EXPLORE_BUDGET),
     ?assert(maps:get(ready, Stats) > 0),
-    ?assertEqual([answer_to_other_command, command_timeout, completion_beyond_in_flight, completion_for_dead_handle,
-                  connection_beyond_limit, connection_during_bringup, disconnect_failed, duplicate_handle,
-                  hardware_error, line_reset_timeout, malformed_event, step_failed],
-                 lists:sort(maps:keys(maps:get(stops, Stats)))).
+    maps:keys(maps:get(stops, Stats)).
 
 walk(Queue, Seen, Stats, Budget) ->
     case queue:out(Queue) of
@@ -354,13 +368,12 @@ count_ready(#world{ready = true}, #{ready := N} = Stats) -> Stats#{ready := N + 
 count_ready(_, Stats) -> Stats.
 
 %% What the line, the controller and the clock may do next. Left out: a dropped input
-%% after the first, since the count is all it changes; a new connection while
-%% advertising is off with no enable written and unanswered, which a controller sends
-%% only from advertising; and an answer to a command due and not yet written, which a
-%% case gives.
+%% after the first, since the count is all it changes; an answer to a command due and
+%% not yet written, which a case gives; events with a failed status, the link events
+%% other than Encryption Change, and completions of several handles or of no packet,
+%% none of which the core reads beyond passing it on or ignoring it.
 inputs(#world{core = Core, line = Line, writer = Writer, command = Command, deadline = Deadline, ready = Ready}) ->
-    #{links := Links, advertising := Advertising, dropped := Dropped, limit := Limit} = erx_bt_hci_core:facts(Core),
-    Enabling = element(1, tuple(Command)) =:= 16#200A,
+    #{links := Links, dropped := Dropped, limit := Limit} = erx_bt_hci_core:facts(Core),
     [line_ready || Line =:= resetting] ++
         [written || Writer =:= busy] ++
         [timeout || Deadline] ++
@@ -369,8 +382,7 @@ inputs(#world{core = Core, line = Line, writer = Writer, command = Command, dead
         [{event, {hardware_error, 1}}, {event, malformed}] ++
         [Drop || Dropped =:= 0, Drop <- [{event, {unknown, 16#FF}}, {acl, 3, 2, 0, <<1>>},
                                          {event, {disconnection_complete, 0, 3, 16#13}}]] ++
-        [{event, {le_connection_complete, 0, Handle, #{}}} || Advertising orelse Enabling orelse not Ready,
-                                                              Handle <- [1, 2],
+        [{event, {le_connection_complete, 0, Handle, #{}}} || Handle <- [1, 2],
                                                               not is_map_key(Handle, Links)] ++
         [{event, {le_connection_complete, 0, 4, #{}}} || Ready, map_size(Links) >= Limit] ++
         lists:append([[{event, {le_connection_complete, 0, Handle, #{}}},
@@ -393,7 +405,8 @@ answers({Opcode, _} = Command) ->
     [{event, {command_complete, Allowed, Opcode, good(Command)}} || Allowed <- [0, 1], not is_buffers(Opcode)] ++
         [{event, complete(Opcode, <<1>>)}, {event, complete(Opcode, bad_layout(Command))},
          {event, complete(Opcode bxor 1, <<0>>)}, {event, {command_status, 0, 1, Opcode}}] ++
-        [{event, complete(Opcode, Return)} || Return <- buffers(Opcode)].
+        [{event, complete(Opcode, Return)} || Return <- buffers(Opcode)] ++
+        [{event, complete(Opcode, version(305))} || Opcode =:= 16#1001].
 
 good({16#1001, _}) -> version(15);
 good({16#1002, _}) -> <<0, 0:512>>;

@@ -96,14 +96,20 @@ class ErxBtHciTest < Minitest::Test
              anchor: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise_overtaken, Command, Opcode};',
              replacement: 'overtaken({sent, advertise, Command, Opcode}) -> {sent, advertise, Command, Opcode};',
              catching_case: 'explored_core_keeps_its_invariants_test_'),
-    Seed.new(fault: 'any failed disconnect taken as the handle gone',
+Seed.new(fault: 'a connection accepted on a handle whose disconnect is handed over and unanswered',
+         module_path: CORE,
+         anchor: "connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _}}) ->\n" \
+                 "    stop({connection_while_disconnecting, Handle});\n",
+         replacement: '',
+         catching_case: 'a_connection_on_a_handle_being_disconnected_stops_test'),
+Seed.new(fault: 'any failed disconnect taken as the handle gone',
              module_path: CORE,
              anchor: '        Failed -> stop({disconnect_failed, Handle, Failed})',
              replacement: '        _Failed -> {[], Core}',
              catching_case: 'a_disconnect_is_asked_once_and_its_failure_stops_test'),
     Seed.new(fault: "the line's reset under no deadline",
              module_path: CORE,
-             anchor: '{[line_reset, {timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}],',
+             anchor: '{[{timer, ?ERX_BT_LINE_RESET_TIMEOUT_MS}, line_reset],',
              replacement: '{[line_reset],',
              catching_case: 'a_line_reset_that_never_ends_stops_test')
   ].freeze
