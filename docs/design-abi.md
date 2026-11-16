@@ -1981,7 +1981,7 @@ runtime defaults.
 | --- | --- |
 | principal, 80 | `0: name str`; `8: memory u64`; `16: grant share`; `64: domains u32`; `68: names u32`; `72: default_limits u32`; `76: ceiling_limits u32` |
 | configured domain, 64 | `0: name str`; `8: principal u32`; `12: kind u32`; `16: flags u32`; `20: runtime u32`; `24: release u32`; `28: release_files u32`; `32: limits u32`; `36: restarts u32`; `40: restart_period_s u32`; `44: boot_timeout_s u32`; `48: args str`; `56: env str` |
-| domain limits, 160 | `0: name str`; `8: memory u64`; `16: outer u64`; `24: grant share`; `72: spaces share`; `120: lane u32`; `124: connections u32`; `128: crash u32`; `132: flags u32`; `136: runtime_limits u32`; `140: reserved u32`; `144: peer_held u64`; `152: peer_held_total u64` |
+| domain limits, 176 | `0: name str`; `8: memory u64`; `16: outer u64`; `24: grant share`; `72: spaces share`; `120: lane u32`; `124: connections u32`; `128: crash u32`; `132: flags u32`; `136: runtime_limits u32`; `140: threads u32`; `144: peer_held u64`; `152: peer_held_total u64`; `160: objects u32`; `164: mappings u32`; `168: band u32`; `172: reserved u32` |
 | runtime limits, 56 | `0: name str`; `8: max_frame u32`; `12: max_message_heap u32`; `16: funnel_depth u32`; `20: exports u32`; `24: tmp u64`; `32: overlay u64`; `40: atoms u32`; `44: foreign_atoms u32`; `48: processes u32`; `52: reserved u32` |
 | lane class, 16 | `0: name str`; `8: lane u32`; `12: reserved u32` |
 
@@ -1994,6 +1994,16 @@ a complete named record; readers do not apply inheritance or merge maps.
 Lane-class records supply configured defaults when policy constructs a
 new specification; each packed domain-limits record already has its
 resolved lane size. They cannot change a configured domain at runtime.
+
+`threads`, `objects`, `mappings` and `band` are Fiasco's
+([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14 and FD15). The domain library hands
+them to the backend, which bounds by them what the domain can make the root hold for it and
+starts the domain's threads at the band's priority within the grant's `cpuset`, so the CPU set
+has one source on both kernels. They live in the limits record, not the configured-domain row, so
+that a session takes them from its template's limits as it takes every other limit, an app's
+session from the manifest's `limits session` record. Nothing above the domain library reads
+them, and they leave the record with Fiasco, since erXos's kernel bounds a domain by its budget
+and its grant alone.
 
 Defaults and ceilings have different purposes. Omitted request fields
 take their default value; an explicit request may exceed a default but

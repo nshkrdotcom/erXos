@@ -473,14 +473,39 @@ it; git history is the record of completed work.
   `kobject_rpc.h` restored in place of the clean-room header, made without anyone opening it; the check also
   settles whether the toolchain's `libgcc` links into `bootstrap` or `sigma0` (`fiasco/mk/mk/Makeconf:505-506`)
   ([design-fiasco.md](docs/design-fiasco.md#the-releases-fiasco-build)).
-* [High] R1 on Fiasco, `liberx/backend/fiasco` and `abi/manifest.txt`: per-domain object and mapping limits
-  beside the thread limit, in each domain's manifest row (an app's session takes its limits from the `apps`
-  row, as [design-packaging.md](docs/design-packaging.md) says), with no
+* [High] R1 on Fiasco, `liberx/backend/fiasco` and `abi/manifest.txt`: per-domain thread, object and mapping
+  limits and the band in the domain-limits record, its threads within the grant's `cpuset`
+  ([design-abi.md](docs/design-abi.md#principal-domain-and-limit-records)), so an app's session takes them
+  from the app template's `limits session` record as every other limit
+  ([design-packaging.md](docs/design-packaging.md)), with no
   table of the root's shared between domains; the machine-wide tables (`irq.c:60`'s `irq_objects`, the page
-  index's labels) become shares of each domain's row, a create or map past a limit `ERX_ELIMIT`, and the domain
-  service admits a domain only when the root's kernel memory and tables have its cost left
+  index's labels) become shares of each domain's limits, a create or map past a limit `ERX_ELIMIT`, and the
+  domain service admits a domain only when the root's kernel memory and tables have its cost left, a session
+  only from what lies outside the configured domains' shares
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets), FD14;
   [design-system.md](docs/design-system.md#the-manifest) lists the fields).
+* [High] R1 on Fiasco, `tools/lib/erx` manifest check: property 19's clause 8
+  ([design-packaging.md](docs/design-packaging.md#the-builds-check)), the root's machine-wide tables and its
+  kernel memory holding the configured domains' shares plus `max` times the app template's and every session
+  template's share, the configured shares reserved, with its seeded violation: an `apps` row whose `max` times
+  the app template's object limit passes the page index's 4,096 labels beside the configured domains'. Its run-time
+  half is the domain service's admission of a session from the unreserved part, with a test: apps started to
+  `max` and a configured domain then ended restarts; admission that does not reserve the configured shares fails it.
+* [High] R1, littlefs, `tools/fuzz`: the request fuzz target of the release contract's Requests row
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract)), `tools/fuzz/lfs_request_fuzz.c` with its seed
+  generator `tools/fuzz/lfs_request_target.rb` beside `lfs_image_target.rb`, driving operation sequences through the
+  decoder of the form R1 ships (the NIF form's under an `enif_*` shim) into littlefs built with `erx_lfs_config`, at
+  its full `check-fuzz` budget under AddressSanitizer; seeded failure: `bin.size >= len` deleted from `get_path`
+  (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c`).
+* [High] R1, littlefs, the production image's check: if R1 ships the port, refuse a release manifest that runs
+  `erx_lfs`'s NIF form, with a release manifest keeping the NIF form as its seeded failure
+  ([design-stopgap.md](docs/design-stopgap.md#release-contract), Placement); waits on the form's open decision.
+* [High] R1, littlefs, the placement test: if R1 ships the port, the driver_domains suite reads the port's space
+  through `/proc` and finds no handle but its channel and data area; a port given the storage domain's window as
+  well fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Placement).
+* [High] R1, littlefs, the restart-intensity test: the storage domain ended six times within 600 seconds is restarted
+  five times and then stays down, reported by the domain service; the intensity not applied, so the sixth end is
+  restarted, fails it ([design-stopgap.md](docs/design-stopgap.md#release-contract), Failure).
 * [Medium] R1 on Fiasco, `liberx/backend/fiasco`: the root takes a task's free slots oldest-freed first, with the
   *Slot reuse* case ([design-fiasco.md](docs/design-fiasco.md#handles-are-slots), FD1).
 * [Medium] R1 on Fiasco, `liberx/backend/fiasco/service_task.c` (`:747-750`): a memory object records its
@@ -508,8 +533,10 @@ it; git history is the record of completed work.
   the quota pool's pure core (WP58, commit `c38b3ada`). Phase 1 on a
   near-stock Fiasco does not use them. Track K reviews each against
   erXos's kernel's design and lands what it keeps.
-* [Medium] storage: replace littlefs, which runs as a sub-space port of
-  the storage domains of the data partition and of the vault's partition,
+* [Medium] storage: replace littlefs, which runs in the storage domains of
+  the data partition and of the vault's partition, as a sub-space port or
+  as a NIF, whichever form R1 ships (an open decision of
+  [design-stopgap.md](docs/design-stopgap.md#open-decisions)),
   with erXos's F2FS, written in Erlang, at parity over the file-semantics
   corpus, by gate G13. Nothing written under littlefs is converted: erXos's
   F2FS arrives by an installation, which creates both partitions afresh,
@@ -4839,7 +4866,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   dirty I/O thread, and every caller of `/data` waits with it (`erx_lfs` calls have no
   timeout). Not reproduced; add a seed to `tools/fuzz/lfs_image_target.rb`. littlefs's
   `LFS_ASSERT`s on disk state stay live, so one reachable from a damaged image resets the
-  machine, at every boot if it is reached at mount.
+  machine, at every boot if it is reached at mount, while it runs in the system domain; in either
+  R1 form it ends the port or the storage domain. Whether each of the two is a published downside or a
+  residual that blocks R1 is an open decision
+  ([design-stopgap.md](docs/design-stopgap.md#open-decisions), "A crafted image that hangs or asserts").
 * [Medium] storage, `erx_lfs`: once the qid table is full, `listing/4` leaves out entries it
   cannot draw a qid for and numbers the next offset from the entries kept, so a listing
   repeats entries or ends early instead of answering `enfile`.
@@ -7126,8 +7156,8 @@ to the corpus and follow rc
 * [Medium] Fiasco kernel, FP state: the fork switches FP state eagerly,
   and nothing runs it. No QEMU case holds distinct vector registers in two
   threads of different spaces across switches and a migration, or reads a
-  fresh thread's registers as zero (the FP case of the "every exception
-  class" row of [design-fiasco.md](docs/design-fiasco.md)), and no
+  fresh thread's registers as zero (the FP state case of "The release's
+  cases" in [design-fiasco.md](docs/design-fiasco.md#the-releases-cases)), and no
   `tools/erx bench` workload times the kernel's context switch, so the
   eager switch's cost is unmeasured. `Context::spill_fpu_if_owner`
   (`context.cpp`), which turns the unit on to save a current vCPU that

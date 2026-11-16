@@ -85,7 +85,8 @@ Decisions every reader of this document needs:
   declares can reach past the row. On Fiasco an app's session also has
   thread, object and mapping limits (FD14 of
   [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)),
-  which come from the `apps` row as its memory does, so the declaration
+  which come from the app template's limits, the manifest's `limits
+  session` record, as every other limit of the session does, so the declaration
   names none of them. Admission is one pure Erlang function
   that the build runs on the host and the system domain runs on the
   machine.
@@ -608,7 +609,20 @@ the packages are well formed**, beside the eighteen of
    `system` window ([design-storage.md](design-storage.md#the-system-tree)),
    so the domain that mints the tree's grants is the one whose block
    driver serves its partition; no facet row of the board's source names
-   it, since only the derived `system` rows do.
+   it, since only the derived `system` rows do;
+9. on Fiasco, the root's machine-wide tables hold every domain the image
+   can run at once, with the configured domains' shares reserved: for
+   each table [design-fiasco.md](design-fiasco.md#table-sizes) names as
+   shared out among domains (the page index's 4,096 labels for tasks and
+   memory objects) and for the root's own
+   kernel memory, the configured domains' shares, which their limits
+   records' thread, object and mapping limits fix, plus `max` times the
+   app template's share, plus every other session template's share times
+   its principals' `domains` quotas, sum within the table. The domain
+   service admits a session only from what lies outside the configured
+   domains' shares, so apps and sessions, however many run, never take
+   what a configured domain's restart needs. The clause goes with Fiasco:
+   erXos's kernel has no table of the root's (FD30).
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -618,7 +632,9 @@ in `services` whose ABI file gives a parameter no default; two enabled packages 
 passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
 apps`; a `system_service` served by a domain that does not hold the
-`system` window; a source facet row of `system_service`.
+`system` window; a source facet row of `system_service`; an `apps` row
+whose `max` times the app template's object limit, beside the configured
+domains' object limits, passes the page index's 4,096 labels.
 
 ### The declaration
 

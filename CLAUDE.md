@@ -130,8 +130,11 @@ These shape every design and change; the rules below apply them.
   release, ships on that Fiasco: the backend uses Fiasco's own
   capabilities, factories, interrupts and DMA spaces, so isolation
   between domains and budgets as walls rest on Fiasco and on the root
-  service's request decoder and placement code, and what Fiasco
-  lacks against erXos's kernel is a published downside. Phase 2 builds
+  service's request decoder and placement code; where no IOMMU confines
+  a DMA-capable device, also on the domain that drives it (FD12); and,
+  until FD32 is decided, on the CPU's branch predictors (FD32). What
+  Fiasco lacks against erXos's kernel is a downside row of
+  [docs/design-fiasco.md](docs/design-fiasco.md). Phase 2 builds
   erXos's kernel with every guarantee and replaces Fiasco.
   On Fiasco the properties only erXos's kernel enforces are deferred as
   enforcement, not rewritten:
@@ -187,10 +190,11 @@ These shape every design and change; the rules below apply them.
   commitments are the release contract of
   [docs/design-fiasco.md](docs/design-fiasco.md#contract), for trusted
   and untrusted workloads, and no more. What it lacks against erXos's
-  kernel is a row of that document's downsides, published with the
-  release, not a residual that blocks it; a gap that breaks the contract
-  blocks the release. Its reviews check that contract, not erXos's
-  kernel's design.
+  kernel is a row of that document's downsides. A row I have accepted is
+  published with the release, not a residual that blocks it; a row that
+  document's open decisions hold open is neither until I decide it,
+  before the release; a gap that breaks the contract blocks the release.
+  Its reviews check that contract, not erXos's kernel's design.
 * **Nothing ships until I say so.** A release ships only the stopgaps its
   milestone names, each under its release contract: R1 ships littlefs and
   LVGL, and runs on Fiasco, whose status is `release`. Every gap of a
@@ -226,10 +230,11 @@ Third-party components are allowed when they pay for themselves.
   later phase replaces, as R1 runs on Fiasco and Phase 2 replaces it with
   erXos's kernel, is marked `release` in the dependency table. What
   separates it from a stopgap a release ships is where it runs: a stopgap
-  a release ships runs confined, its code in an address space that holds
-  only what its release contract names, though the data it serves is
-  still in that space's reach, so its contract states that confinement,
-  what a defect in it can reach and the input it is fuzzed against,
+  a release ships runs confined as its release contract states (for
+  littlefs, which form R1 ships is an open decision of
+  [docs/design-stopgap.md](docs/design-stopgap.md#open-decisions)), so
+  its contract states that confinement, what a defect in it can reach
+  and the input it is fuzzed against,
   while every domain's isolation rests on a `release` component, so its
   release contract is its design's contract section, which states the
   isolation every domain rests on. Its replacement is
@@ -628,7 +633,10 @@ scripts live in `~/erxos-scratch/tools/`.
   what, and a fault of the system domain resets the machine. A domain's
   memory, threads and CPU grant depend on nothing outside itself except
   the kernel, and on Fiasco the root service, where its CPU is a band, a
-  CPU set and a thread limit rather than a grant; which processes may
+  CPU set and a thread limit rather than a grant; where no IOMMU confines
+  a DMA-capable device, they depend also on the domain that drives it
+  (FD12), and on Fiasco, until FD32 is decided, on the CPU's branch
+  predictors (FD32); which processes may
   message it depends on the kernel and on its own runtime's funnel and
   export table, and on nothing else. A
   device belongs to the domain its capabilities are installed in, by

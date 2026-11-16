@@ -285,9 +285,15 @@ manifest holds:
   or `secret`); its runtime image and release, as boot-image entries; its
   own and outer budgets, grant, lane size, `connections` quota and crash
   area; whether it holds `SPACES`, and its sub-space group's grant; on
-  Fiasco, its priority band, its CPU set, and its thread, object and
-  mapping limits, which bound what it can make the root hold for it
-  ([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14); its
+  Fiasco, its priority band and its thread, object and mapping limits,
+  which bound what it can make the root hold for it
+  ([design-fiasco.md](design-fiasco.md#memory-and-budgets), FD14), all
+  of these from its limits record, as a session's come from its
+  template's, its threads running within its grant's CPU set
+  ([design-abi.md](design-abi.md#principal-domain-and-limit-records)).
+  The band and the three limits are Fiasco's alone and leave the
+  manifest with it: erXos's kernel bounds a domain by its budget and
+  grant (FD14, FD15), and nothing above the domain library reads them; its
   restart intensity, the seconds its runtime has to report ready (its
   boot timeout, 60 unless the row says otherwise, a default sessions and
   create requests share, long enough for an emulated machine), whether
