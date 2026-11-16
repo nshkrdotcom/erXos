@@ -625,11 +625,13 @@ module Erx
           end
           declaration.fail!('liveness must name a declared operation') if liveness && !operations.key?(liveness)
           declaration.fail!('service must state served_as') unless served_as
+          checkers = parameters.values.map { |parameter| parameter.fetch(:helper) }.uniq
+          declaration.fail!('a service\'s parameters name one checked_by helper') if checkers.size > 1
           Model.unique_values(operations, label: 'operation', line: declaration.line)
           Model.unique_values(parameters.transform_values { |value| value.fetch(:number) }, label: 'parameter', line: declaration.line)
           { name: name, number: number,
             operations: operations.freeze, parameters: parameters.freeze, liveness: liveness,
-            served_as: served_as }.freeze
+            served_as: served_as, checked_by: checkers.first }.freeze
         end.freeze
       end
 

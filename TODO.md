@@ -674,12 +674,13 @@ it; git history is the record of completed work.
   framebuffer the harness's stand-in for the firmware sets up (design-platforms.md, "The firmware's framebuffer
   under QEMU"); the firmware's own node and a full-size screen are checked on the board by hand
   (design-platforms.md, "Trying a card on a board", step 5). No session is granted the display, as on QEMU virt.
-* [Medium] `tools/lib/erx/manifest.rb`, `GRANT_CHECKERS`: a service is admitted when every parameter's
-  `checked_by` names a helper listed there, but each checker (`check_display_grants`, `check_line_grants`) picks its
-  facets by interface, and only a comment ties a helper's name to its method, so a new service declaring
-  `checked_by line_grant` on another interface would have its `device` parameter resolved and checked by nothing.
-  Map each helper to its keys and its method and dispatch each facet to its helper's checker, so a checked parameter
-  is checked by construction.
+* [Medium] `tools/lib/erx/manifest.rb`, `GRANT_CHECKERS`: each facet goes to the checker its service names
+  (`grant_checker`), but the helper reaches its method only by the name string each checker repeats
+  (`check_line_grants`, `normalize_displays`), so a helper listed with its keys and no method admits its facets
+  unchecked; map each helper to its keys and its method and call them from one loop. With it: `check_start_display`
+  still takes a display as a `windows` service while property 18 takes one as a `windows_grant` service
+  (design-system.md says the former), and `check_apps` grants an app row a service whose checker is not run on app
+  grants, which only line.txt declaring every parameter `one` keeps off the line.
 * [Medium] `tools/lib/erx/manifest.rb`, `check_framebuffer_windows`: a framebuffer window is checked against the
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree

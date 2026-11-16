@@ -2178,6 +2178,10 @@ spells `system yes|no`. The helper is a qualified symbol of the service's
 manifest-grant checker, resolved against its checked consumer inventory;
 naming it in untrusted configuration creates no helper or authority.
 The service is unusable by the packer unless that checker is available.
+All of one service's parameters name one helper, and the manifest check
+hands each facet to the checker its service names, never to one that
+picks facets by interface, so a service naming a checker is checked by
+it whatever its interface.
 These declarations supply manifest metadata and validation, not request
 execution or a future service's callback implementation.
 The closed KIND tokens are `u64`, `i64`, `boolean`, `identifier`,

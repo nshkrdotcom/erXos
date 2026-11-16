@@ -746,7 +746,7 @@ class ManifestDomainsTest < Minitest::Test
   def test_every_windows_service_has_a_display_record_and_every_record_one
     refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows(record: ''), message: /has no display record/)
     refused(Erx::Manifest::Invalid, 18, 'display.name', with_display(served: service('b', '@domain.beta') + DISPLAY),
-            message: /not of the windows interface/)
+            message: /not checked by windows_grant/)
     refused(Erx::Manifest::Invalid, 18, 'display.name', with_windows + DISPLAY.sub('display b', 'display c'),
             message: /does not contain/)
     refused(Erx::Manifest::Invalid, 'source', 'display', with_windows + DISPLAY)
@@ -996,5 +996,52 @@ class ManifestDomainsTest < Minitest::Test
                                                line_grant('lb', '@domain.beta', '/pl011@9060000')), /at most one line grant/)
     refused_line(8, 'facet.grantee', with_line(line_grant('ls', '@session.system', '/pl011@9050000'),
                                                base: with_session(self.class.session)), /no configured domain/)
+  end
+
+  # The codec of the tree's ABI with one more interface, declared by DECLARATION.
+  def codec_with(declaration)
+    sources = Erx::ABI::Sources.read(root: File.expand_path('../..', __dir__))
+    extra = Erx::ABI::Syntax.parse(declaration, path: 'abi/services/extra.txt')
+    Erx::ABI::Codec.new(Erx::ABI::Model.validate(Erx::ABI::SourceSet.new(declarations: sources.declarations + extra,
+                                                                         inputs: sources.inputs)))
+  end
+
+  # Seed: a service of another interface whose parameters name line_grant. Its facet is
+  # the line checker's, which refuses its uart, the console's; a checker choosing its
+  # facets by interface would admit it unchecked.
+  def test_a_facet_goes_to_the_checker_its_service_names_whatever_its_interface
+    codec = codec_with("service spare 98\n  served_as tree\n  parameter uart 1 device one target devices checked_by line_grant\n" \
+                       "  parameter rate 2 u64 one range 115200 115200 checked_by line_grant\n" \
+                       "  parameter flow 3 identifier one bytes 7 checked_by line_grant\n")
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec)
+                                                                .merge(platform: ManifestContextFixture.line_platform(@platform)))
+    grant = line_grant('sp', '@domain.alpha', @platform.fetch('console')).sub('@service.line', '@service.sp')
+    source = with_line + "service sp\n  server system\n  interface spare\n" + grant
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest.admit(source: source, codec: codec, context: context, planner: @planner)
+    end
+    assert_equal [8, 'facet.parameter'], [error.property, error.field], error.message
+    assert_match(/console's or the host link's/, error.message)
+  end
+
+  # Seed: a service of another interface whose parameters name windows_grant is a
+  # display's, so it has a display record as every windows service does.
+  def test_a_service_naming_the_display_checker_is_a_display_whatever_its_interface
+    codec = codec_with("service pane 97\n  served_as tree\n" \
+                       "  parameter pixels 2 u64 optional range 4096 1099511627776 checked_by windows_grant\n")
+    context = Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec).merge(platform: @platform))
+    error = assert_raises(Erx::Manifest::Invalid) do
+      Erx::Manifest.admit(source: @source + "service pn\n  server @domain.beta\n  interface pane\n", codec: codec,
+                          context: context, planner: @planner)
+    end
+    assert_equal [18, 'display.name'], [error.property, error.field], error.message
+  end
+
+  # Seed: one service's parameters naming two checkers, which no dispatch could serve.
+  def test_a_service_names_one_grant_checker
+    assert_raises(Erx::ABI::SchemaError) do
+      codec_with("service mixed 96\n  served_as message\n  parameter a 1 u64 one range 1 2 checked_by line_grant\n" \
+                 "  parameter b 2 u64 one range 1 2 checked_by windows_grant\n")
+    end
   end
 end

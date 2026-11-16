@@ -1477,11 +1477,16 @@ module Erx
         end
       end
 
+      # The ABI file's declaration of interface, or nil when no ABI file declares it.
+      def service_declaration(interface) = @codec.schema.services.find { |service| service.fetch(:number) == interface }
+
       # The parameters an ABI file declares for interface, by key, or nil when no ABI
       # file declares the interface.
-      def declared_parameters(interface)
-        @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:parameters)
-      end
+      def declared_parameters(interface) = service_declaration(interface)&.fetch(:parameters)
+
+      # The grant checker the service of interface names in its parameters' checked_by,
+      # one for all of them (abi_contracts.rb), or nil for a service with no parameter.
+      def grant_checker(interface) = service_declaration(interface)&.fetch(:checked_by)
 
       # The manifest's start rows, sorted by their principal's index, each with its
       # defaults applied: enabled, no display and START_RESTARTS ends in
@@ -1629,7 +1634,8 @@ module Erx
       # clipboard as their declarations bound them; line_grant is property 8's line clause,
       # check_line_grants, which reads uart and flow and range-checks rate. A service
       # declaring a parameter that no checker here consumes is unusable: no facet of it is
-      # admitted, since nothing would check what it grants.
+      # admitted, since nothing would check what it grants. Each checker takes the facets
+      # of the services that name it (grant_checker), whatever their interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
                          'line_grant' => %w[uart rate flow].freeze }.freeze
 
@@ -1640,7 +1646,8 @@ module Erx
       def facet_parameters(record, row, tables)
         interface = tables.fetch('services').fetch(row.fetch('service')).fetch('interface')
         declared = declared_parameters(interface) || {}
-        unless declared.all? { |key, parameter| GRANT_CHECKERS.fetch(parameter.fetch(:helper), []).include?(key) }
+        consumed = GRANT_CHECKERS.fetch(grant_checker(interface), [])
+        unless declared.keys.all? { |key| consumed.include?(key) }
           unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
         end
         values = resolve_parameters(record, declared, tables.fetch('devices'))
@@ -1725,11 +1732,11 @@ module Erx
       # line service serves one line (TODO.md, the line's service side); the duplicate check
       # runs first, so it holds once that limit is lifted.
       def check_line_grants(facets, values, tables)
-        interface = fetch_interface('line')
-        if tables.fetch('services').any? { |row| row.fetch('interface') == interface && row.fetch('server') != @codec.constant('mf_none') }
+        line = ->(service) { grant_checker(service.fetch('interface')) == 'line_grant' }
+        if tables.fetch('services').any? { |row| line.call(row) && row.fetch('server') != @codec.constant('mf_none') }
           invalid('only the system domain serves the line interface', 8, 'service.server')
         end
-        grants = facets.zip(values).select { |row, _| tables.fetch('services').fetch(row.fetch('service')).fetch('interface') == interface }
+        grants = facets.zip(values).select { |row, _| line.call(tables.fetch('services').fetch(row.fetch('service'))) }
         console = @context.platform['console']
         reserved = [console, @context.platform.fetch('hostlink', '')]
         uarts = grants.map do |row, given|
@@ -1753,22 +1760,23 @@ module Erx
       # The displays (docs/design-display.md, "A display's session"), sorted by their
       # service's index; facet_values holds each facet row's resolved parameters, by the
       # facet table's index. A display record is keyed by its service's source alias, so
-      # a service has at most one. Property 18: every windows service has a record and
+      # a service has at most one. Property 18: every service whose parameters name
+      # windows_grant (grant_checker), of the windows interface or another, has a record and
       # every record names one; a display domain serves one display, so no domain pays
       # for two displays' grants out of one outer budget; and each display's grants pass
       # check_display_grants.
       def normalize_displays(services, tables, facet_values, app_services)
-        windows = find_interface('windows')
+        display = ->(service) { grant_checker(service.fetch('interface')) == 'windows_grant' }
         rows = records('display').map do |record|
           index = services.index { |service| service.name == record.name } ||
                   invalid('a display record names a service the manifest does not contain', 18, 'display.name')
-          invalid('a display record names a service that is not of the windows interface', 18, 'display.name') unless
-            tables.fetch('services').fetch(index).fetch('interface') == windows
+          invalid('a display record names a service whose parameters are not checked by windows_grant', 18, 'display.name') unless
+            display.call(tables.fetch('services').fetch(index))
           display_row(record, index)
         end
         tables.fetch('services').each_with_index do |service, index|
-          next unless service.fetch('interface') == windows
-          invalid("service #{service.fetch('name')} of the windows interface has no display record", 18, 'display.name') unless
+          next unless display.call(service)
+          invalid("service #{service.fetch('name')}, checked by windows_grant, has no display record", 18, 'display.name') unless
             rows.any? { |row| row.fetch('service') == index }
         end
         servers = rows.map { |row| tables.fetch('services').fetch(row.fetch('service')).fetch('server') }
