@@ -214,7 +214,11 @@ watch() ->
 %% The stub answers start_session with a session, a process that traps exits as
 %% a domain pid does and ends with {domain_down, Id, Info} when it is told to or
 %% when a linked process ends with any reason but normal. It reports each start,
-%% and each end, to the test. It answers the table's wait for the system domain's
+%% and each end, to the test. A start of a principal the test holds is answered
+%% only once the test sends release: the stub reports {held, Principal, Caller}
+%% with the process that waits for the answer, and that session's end waits too,
+%% reporting {ending, Principal, Session, Reason} on an exit signal and ending
+%% only once the test sends it finish. It answers the table's wait for the system domain's
 %% namespace (erx_domain:system_namespace/0) at once, or holds it until the test
 %% sends release_namespace. It holds each wait for a display
 %% (erx_domain:display_settled/1) until the test sends {release_display, Name}.
@@ -228,10 +232,12 @@ stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
                     gen:reply(From, {error, quota}),
                     stub(State);
                 false ->
-                    Session = spawn(fun() -> process_flag(trap_exit, true), session(Stub, Id, Principal) end),
+                    Holding = lists:member(Principal, Hold),
+                    Session = spawn(fun() -> process_flag(trap_exit, true), session(Stub, Id, Principal, Holding) end),
                     Reply = {ok, {erx_domain, Id, node(), Session}},
-                    Answered = case lists:member(Principal, Hold) of
-                                   true -> State#{held := [{From, Reply} | Held]};
+                    {Caller, _Tag} = From,
+                    Answered = case Holding of
+                                   true -> report({held, Principal, Caller}, State#{held := [{From, Reply} | Held]});
                                    false -> gen:reply(From, Reply), State
                                end,
                     stub(report({started, Principal, Start, Session}, Answered#{next := Id + 1}))
@@ -268,17 +274,23 @@ stub(#{refuse := Refuse, hold := Hold, held := Held, next := Id} = State) ->
 report(Report, #{test := none, kept := Kept} = State) -> State#{kept := [Report | Kept]};
 report(Report, #{test := Test} = State) -> Test ! Report, State.
 
-session(Test, Id, Principal) ->
+session(Test, Id, Principal, Holding) ->
     receive
         {'EXIT', _From, normal} ->
-            session(Test, Id, Principal);
+            session(Test, Id, Principal, Holding);
         {'EXIT', _From, Reason} ->
+            Holding andalso finish(Test, Principal, Reason),
             Test ! {report, {ended, Principal, self(), Reason}},
             exit({domain_down, Id, stopped});
         {end_session, Info} ->
             Test ! {report, {ended, Principal, self(), Info}},
             exit({domain_down, Id, Info})
     end.
+
+%% A held session's end: reported as ending, and taken once the case sends finish.
+finish(Test, Principal, Reason) ->
+    Test ! {report, {ending, Principal, self(), Reason}},
+    receive finish -> true end.
 
 %% ---------------------------------------------------------------------------
 %% The cases
@@ -479,14 +491,28 @@ a_keeper_stopped_while_its_start_is_pending_ends_the_session(_) ->
             Kiosk = started(?KIOSK),
             erx_domain_srv ! {hold, [?KIOSK]},
             Kiosk ! {end_session, crashed},
-            %% The stub has made the session and holds its answer.
+            %% The stub has made the session and holds its answer to the keeper's helper.
             Pending = started(?KIOSK),
-            %% The stop answers once the abandoned session has ended, so the stub's
-            %% answer is released after the stop has reached the keeper.
-            _ = spawn(fun() -> timer:sleep(200), erx_domain_srv ! release end),
-            ?assertEqual(ok, erx_starter:command({stop, <<"kiosk">>, #{}})),
-            receive {ended, ?KIOSK, Pending, abandoned} -> ok after ?WAIT_MS -> error(abandoned_session_kept) end
+            Helper = receive {held, ?KIOSK, Caller} -> Caller after ?WAIT_MS -> error(no_held_start) end,
+            Case = self(),
+            _ = spawn(fun() -> Case ! {stopped, erx_starter:command({stop, <<"kiosk">>, #{}})} end),
+            %% The answer is released only once the keeper's stop waits in its helper's
+            %% queue, so the helper finds the keeper ended and abandons the session.
+            ok = wait_until(fun() -> exit_queued(Helper) end),
+            erx_domain_srv ! release,
+            %% The stop answers only once the abandoned session has ended (PK7), and that
+            %% session's end waits for the case.
+            receive {ending, ?KIOSK, Pending, abandoned} -> ok after ?WAIT_MS -> error(abandoned_session_kept) end,
+            receive {stopped, _} -> error(stop_answered_before_the_session_ended) after 200 -> ok end,
+            Pending ! finish,
+            receive {stopped, Answer} -> ?assertEqual(ok, Answer) after ?WAIT_MS -> error(stop_unanswered) end,
+            ?assertNot(is_process_alive(Pending))
     end.
+
+%% Whether an exit signal waits in the queue of Pid, a process that traps exits.
+exit_queued(Pid) ->
+    {messages, Messages} = process_info(Pid, messages),
+    [Exit || {'EXIT', _, _} = Exit <- Messages] =/= [].
 
 a_stopped_row_stays_stopped_when_its_settings_change(Setup) ->
     fun() ->
