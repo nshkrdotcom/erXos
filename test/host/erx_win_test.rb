@@ -193,16 +193,18 @@ class ErxWinTest < Minitest::Test
     runs.map(&:value).each do |seed, output, status|
       refute status.success?, "#{seed.fault} passed every case:\n#{output}"
       assert_includes failed_cases(seed.suite, output), seed.catching_case,
-                      "#{seed.catching_case} did not catch #{seed.fault}"
+                      "#{seed.catching_case} did not catch #{seed.fault}:\n#{output}"
     end
   end
 
   private
 
   # The cases of suite EUnit reports failed or timed out: each case's report runs from
-  # its "suite: case..." line to the next, with the fixture's crash reports in between.
+  # its "suite: case..." line, at whatever depth EUnit indents it, to the next. The
+  # logger, the only other writer, is off (see #eunit), so no crash report lands inside
+  # a case's line.
   def failed_cases(suite, output)
-    output.split(/^  #{suite}: /).drop(1).filter_map do |report|
+    output.split(/^ +#{suite}: /).drop(1).filter_map do |report|
       report[/\A\w+/] if report.include?('*failed*') || report.include?('*timed out*')
     end
   end
@@ -223,10 +225,13 @@ class ErxWinTest < Minitest::Test
   end
 
   # The output and status of EUnit over modules, with the beams and the NIF of directory.
+  # Logger is off (level none): its crash reports, written as the fixtures kill
+  # what they started, would otherwise land between EUnit's indent and a case's name,
+  # and failed_cases would charge that case's failure to the case before it.
   def eunit(modules, directory: @directory)
     environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(directory))
     Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, File.join(OTP, 'bin/erl'),
-                    '-noshell', '-pa', directory, '-eval',
+                    '-noshell', '-kernel', 'logger_level', 'none', '-pa', directory, '-eval',
                     "case eunit:test([#{modules.join(', ')}], [verbose]) of ok -> halt(0); _ -> halt(1) end.",
                     chdir: directory, stdin_data: '')
   end

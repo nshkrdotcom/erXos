@@ -2438,9 +2438,9 @@ it; git history is the record of completed work.
 * [Low] host tests, EUnit runs (`test/host/*_test.rb`): each test file starts `erl` for `eunit:test` on its
   own, and a logger report a case provokes can split EUnit's verbose line for that case on standard output.
   `erx_inspector_test.rb` sends the logger to standard error and matches verdicts on standard output alone;
-  `erx_fs_test.rb` and `erx_ramfs_test.rb` silence the logger instead; the rest do neither. Give the host
-  tests one EUnit runner that keeps the logger on standard error and returns the two streams apart, and move
-  every suite onto it.
+  `erx_fs_test.rb`, `erx_ramfs_test.rb`, `erx_bt_group_test.rb`, `erx_line_test.rb`,
+  `erx_console_reads_test.rb` and `erx_win_test.rb` silence the logger instead; the rest do neither. Give the host tests one EUnit runner that keeps the logger on standard error and returns the two
+  streams apart, and move every suite onto it.
 * [Low] ABI generator, frame profiles (`tools/lib/erx/abi_profile.rb`, `include/erx/profile.h`): the C
   check's bounds on depth and totals are written in both files, tied only by the generated table's static
   asserts, and the 64-key bound of a map or union (`ERX_PROFILE_KEYS_MAX`) has no model rule, so a protocol
