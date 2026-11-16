@@ -905,7 +905,7 @@ boot_timer(Id, Timeout) -> _ = erlang:start_timer(Timeout, self(), {boot_timeout
 ready(Id, Ref, Provides, Inspect, #{core := Core, waiting := Waiting} = State) ->
     case {erx_domain_core:fetch(Id, Core), Waiting} of
         {{ok, #{ref := Ref, state := running, origin := Origin, node := Node, start := Start} = Domain}, _} ->
-            {Actions, Links} = erx_domain_links:ready(Id, maps:get(links, State)),
+            {Links, Actions} = erx_domain_links:ready(Id, maps:get(links, State)),
             Ready = State#{core := erx_domain_core:ready(Id, Inspect, Core), links := Links},
             Answered = answer_ready(Id, grant_facets(Id, served(Origin, Domain, Ready), granted(Origin, Domain, Ready),
                                                      perform(Actions, Ready))),
@@ -1248,7 +1248,7 @@ holds(Origin, _Rows) -> Origin.
 connect({ok, #{number := Number, a := PartyA, b := PartyB}}, A, B, ReaderA, ReaderB, #{links := Links} = State) ->
     UpA = up_values(PartyA, ReaderB, ReaderA),
     UpB = up_values(PartyB, ReaderA, ReaderB),
-    {Actions, Next} = erx_domain_links:connect(Number, {A, UpA}, {B, UpB}, Links),
+    {Next, Actions} = erx_domain_links:connect(Number, {A, UpA}, {B, UpB}, Links),
     {wait, perform(Actions, State#{links := Next})};
 connect({error, Limit}, _A, _B, _ReaderA, _ReaderB, State) when Limit =:= elimit; Limit =:= enomem ->
     {{error, system_limit}, State};
@@ -1368,7 +1368,7 @@ answer(Id, Ref, Answer, #{core := Core, links := Links} = State) ->
                 {erx_facet_minted, Tag, Reply} ->
                     mints({minted, Id, Tag, Reply}, State);
                 _ ->
-                    {Actions, Next} = erx_domain_links:answer(Id, unwire(Answer), Links),
+                    {Next, Actions} = erx_domain_links:answer(Id, unwire(Answer), Links),
                     perform(Actions, State#{links := Next})
             end;
         _ ->
@@ -1408,7 +1408,7 @@ ended(Id, End, #{lib := Lib, core := Core, links := Links} = State) ->
             close_side(Id, Connection, {domain_down, Id, Info}, State),
             disconnect(Lib, Connection),
             Pid ! {Ref, domain_down, Info},
-            {Actions, Unlinked} = erx_domain_links:ended(Id, Info, Links),
+            {Unlinked, Actions} = erx_domain_links:ended(Id, Info, Links),
             Told = unprovide(Origin, Id, perform(Actions, State#{core := Ended, links := Unlinked})),
             _ = retire(Lib, Id),
             release(restart(Origin, Id, Info, waiter_ended(Id, Life, Info, Told)))
