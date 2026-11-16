@@ -37,6 +37,9 @@ start(Spec) ->
     Answer = case conf(start) of
                  port -> program_port("read x");
                  {program, Shell} -> program_port(Shell);
+                 %% Held until the test sends go to the handler, so the test sees
+                 %% what the handler made before the start answers.
+                 {held, Held} -> tell({start_held, self()}), receive go -> Held end;
                  Error -> Error
              end,
     tell({start, Spec, Answer}),

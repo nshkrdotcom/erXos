@@ -72,7 +72,7 @@ it; git history is the record of completed work.
   in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
+  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
 * [Medium] runtime, `docs/design-shared-code.md`: build shared loaded code, one prepared copy of the
@@ -780,7 +780,10 @@ it; git history is the record of completed work.
   `etc` in the resolved manifest belongs to a template holding `start`
   ([design-system.md](docs/design-system.md#the-manifest)), and a program's handler joins the session's export and
   its grant at `/etc` and `/dev` ([design-files.md](docs/design-files.md#narrowing-for-a-program)), so a native
-  editor reaches `rc.conf`. This removes the A5c residuals of an `enable` interrupted during its write and of the
+  editor reaches `rc.conf`, and a program with a window keeps a grant the session mounts at `/dev`, which its
+  own `/dev` replaces until then ([design-files.md](docs/design-files.md#a-programs-window)); the join keeps
+  that grant at its own rights, so it also decides whether a windowed start still refuses a read-only entry at
+  exactly `/dev` (`erx_prog_handler_core:writes_dev/2`), a cap that follows from the replacement. This removes the A5c residuals of an `enable` interrupted during its write and of the
   stopped mark.
 * [Low] The start table's first `rc.conf` read waits for the system domain's namespace to be in place
   (`erx_domain:system_namespace/0`), but a storage domain that ends once during boot, or misses the mint
@@ -3030,6 +3033,25 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   session's variable and kept in `erx_prog_self_t`, would carry it as `pgid` carries the job;
   design-programs decides first. `getpid` likewise answers 1 rather than the startup message's
   `pid`.
+* [Medium] tests, a program's window (docs/design-files.md, Verification, "A program's window" and the
+  cases after it): `test/erlang/erx_win_dev_tests.erl` covers the display's side over a real `erx_winfs`
+  with the test as the tree's 9P client: the corpus as plain-name walks, a window removed and remade (its
+  label checked, not its rectangle), a resize read through `ctl`, a killed connection, and the clipboard's
+  fids. Still open: the corpus through a test program and the handler's resolver (`/dev/kbd/../ctl`,
+  `/dev/./wctl`, `mkdir /dev/w1`), a `d` drawn after a resize and its present at the new size, the seeded
+  trees that relay any name to the window's directory or walk each relayed open by name, the descriptor
+  case, the refused-rectangle resize and the child case.
+* [Low] session, `erx_session_export`: each open of a program's `/dev/clipboard` holds one fid on the
+  session's display grant, so a program and its children can hold up to their tree's pool of them and
+  make the session's other window opens fail at the display grant's pool.
+* [Medium] session, a program's `/dev` (docs/design-files.md, "A program's window"): each open of a
+  relayed window file (`kbd`, `mouse`, `wctl`, `label`) holds a fid on the session's grant of the
+  display, and each read of `kbd` or `mouse` waits there as a request in flight until the window has
+  input. A program and its children can open and read until they fill that grant's fid pool or its
+  requests in flight, and the session's other windows, the shell's included, then fail their opens and
+  reads at the display grant. Bound what one program's tree may hold on the session's grant (a share of
+  the pool per tree, or a grant of the display per windowed program), as the clipboard item above needs
+  too.
 * [Medium] session, `erx_session_export`: the export serves the fixed tree alone. The tree of each of
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
@@ -3210,13 +3232,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   taken ahead of the pipe server's `'DOWN'` goes to the restarted server before `pipe_server_lost`
   reaches the program, against docs/design-pipes.md, "The pipe server" (harmless: the restarted server
   numbers its pipes past the old ones, so the notice names no end).
-* [Medium] session, `erx_prog_handler`: the starter hears of its program's end only from a handler that
-  does not crash, since `start/1` drops its monitor of the handler before answering; a crash (a
-  `hand_drop` or `unlend` that does not answer `ok`, an answer of the pipe server outside its spec)
-  leaves a starter that waits only for `erx_prog_exit` waiting. Answering the monitor with the handler
-  (`{ok, Handler, Monitor, Offsets}`) makes the report hold by construction. A port the driver closes
-  with no status (`ERX_PROGRAM_LOST`, when a record of the end may be lost) ends the handler with no
-  report either, as it read no status; the starter needs to hear that its program ended, status unknown.
 * [Medium] session, `erx_pipe_nif.c` and `erx_event.c`: each ring of a session end's doorbell is one
   `{erx_pipe_ready, _, _}` message, uncoalesced, so while an end waits (bits set for that wait only) a
   co-reader that loops on the lock or a writer's repeated crossings can queue many messages before the
@@ -4598,6 +4613,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   whatever the module's `read_mode/0` says, and a read that waits for a medium holds up the file's other requests.
   Build the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries) with the
   first tree that answers `helper`.
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which
+  `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
+  `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
+  transfers alike; make the code answer the table's value, or the table say 0, so one statement holds.
+* [Medium] programs and shell, the files a stage hands a program: `docs/design-shell.md` (Overview, "Starting
+  programs") has the shell hand a program it starts with `erx_prog_handler:start/1` the files its redirections opened,
+  sharing their offsets, where `start/1` takes pipe ends and buffers only (`docs/design-programs.md`, "A session
+  process's program"; `erlang/apps/erx/src/erx_prog_handler.erl:19-30, 86-93`). Design the form in design-programs
+  and design-shell. It must keep `docs/design-files.md`'s rule that every description a program holds was opened
+  through a program's table, so that nothing on a window tree enters a program ("A program's window"): for example
+  a description the program's handler opens through the program's own table for the starter, or one whose tree,
+  part of its identity, the handler refuses when it is `windows`.
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
   leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
   draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.

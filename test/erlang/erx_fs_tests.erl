@@ -253,6 +253,24 @@ ended_owner_leaves_no_fid_test() ->
     ?assertEqual(ebadf, qid_of(Grant, 2)),
     stop(Grant).
 
+%% A grant for its own domain ends with the process ends_with names, whatever
+%% that process's reason, normal included (docs/design-files.md,
+%% "Interfaces"), as a program's /dev tree ends with its handler.
+own_grant_ends_with_what_it_names_test() ->
+    Holder = spawn(fun() -> receive go -> ok end end),
+    Grant = grant(rw, #{ends_with => Holder}),
+    Watch = monitor(process, Grant),
+    ?assertMatch({ok, _}, attach(Grant, 1)),
+    Holder ! go,
+    %% A grant that stays fails here, within EUnit's 5 s, so the module's other
+    %% cases still run.
+    receive
+        {'DOWN', Watch, process, Grant, Reason} -> ?assertEqual({shutdown, connection_ended}, Reason)
+    after 4000 ->
+        stop(Grant),
+        ?assert(false)
+    end.
+
 owner_end_clunks_its_fids_test() ->
     Grant = grant(rw),
     {ok, _} = attach(Grant, 1),

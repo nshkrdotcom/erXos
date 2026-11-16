@@ -103,8 +103,8 @@ composes them:
 * the session's connections to the system domain and to file servers,
   over which the handler acts for its programs
   ([design-domains.md](design-domains.md#connections));
-* the file protocol, 9P2000.L, whose `walk` of no names clones a grant
-  for a program and whose `lopen`, `read` and `write` serve every file,
+* the file protocol, 9P2000.L, whose `walk`, `lopen`, `read` and
+  `write` serve every file a program reaches through its handler,
   and the session's objects for shared mappings
   ([design-files.md](design-files.md#the-file-protocol),
   [design-files.md](design-files.md#shared-mappings));
@@ -183,8 +183,8 @@ own state and sends one request on its channel to its handler. The handler
 checks the right to start commands, resolves the command to an image
 through the starter's namespace, and has the command server assign the
 program a process id and spawn the program's handler, which has the session's pipe server make an
-end for each pipe end the request names, clones the child's grants from
-the starter's at the servers, and has the port driver build the sub-space
+end for each pipe end the request names, builds the child's table from
+the starter's, and has the port driver build the sub-space
 from one plan: a budget, a group, an anchor space and an image space, the
 channel, the image mapped, the capabilities installed, and the first
 thread, stopped. The program's handler writes the startup message into the
@@ -220,7 +220,7 @@ handed it, reached through the session.
 
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
-| **P1.** A program reaches only what its starter held and handed it | a program's table lives in its handler, which builds it from its starter's table alone: its namespace is grants the handler cloned at the servers from the starter's, with the starter's rights there or fewer, its opens name open-file descriptions that the starter's opens name, its rights beyond files are a subset of the starter's, and its pipe ends are ends the session's pipe server made for it; the program holds no pid, no grant and no capability but those its session installed into its table, and holds no IPC gate, so no capability reaches it at a rendezvous; every request it makes is served by its handler against that table; it has no connection to any other domain, so nothing it sends reaches one ([The handler](#the-handler)) | a request field that a handler trusts to name authority; a capability installed into a program by anyone but its session; a program with a connection of its own | the narrowed-program tests; a program that names its handler's or another session's process in a request, which gains nothing; the pipe server's model ([design-pipes.md](design-pipes.md#invariants)) |
+| **P1.** A program reaches only what its starter held and handed it | a program's table lives in its handler, which builds it from its starter's table alone: its namespace is entries on the providers of the starter's, rooted at or below them, with the starter's rights there or fewer, and none on a window tree, its opens name open-file descriptions that the starter's opens name, its rights beyond files are a subset of the starter's, and its pipe ends are ends the session's pipe server made for it; the program holds no pid, no grant and no capability but those its session installed into its table, and holds no IPC gate, so no capability reaches it at a rendezvous; every request it makes is served by its handler against that table; it has no connection to any other domain, so nothing it sends reaches one ([The handler](#the-handler)) | a request field that a handler trusts to name authority; a capability installed into a program by anyone but its session; a program with a connection of its own | the narrowed-program tests; a program that names its handler's or another session's process in a request, which gains nothing; the pipe server's model ([design-pipes.md](design-pipes.md#invariants)) |
 | **P2.** A started command holds exactly the capabilities its starter handed it, and starting anything needs the right to start commands | a handler builds a child's table from its starter's table and the request alone: the child's namespace is the starter's, its rights beyond files the starter's, each descriptor an end or an open made for the child, and the right to start commands is the starter's own; the handler refuses every spawn of a starter without that right; an Erlang command started by a program runs in a command domain the system domain builds with the same table, and the session's domain runs only commands with the session's own authority | a handler that adds a capability the request did not name; an Erlang command run in the session's domain for a program; a starter setting a right it lacks | a narrowed program's own spawn request, which fails with `EPERM`; `xargs ps` with and without the `inspect` right, which lists processes or fails with `no_facet`; a command domain whose capabilities are exactly the program's |
 | **P3.** No process of the session waits on a program | the port driver's write into a program's lane never blocks: a frame that finds no room is **owed**, kept by the handler and written when the program frees room; the handler never waits on a request's work, keeping a request pending while it serves the next frame; and every other process of the session that answers a program, the pipe server and the terminal relay among them, hands its replies and reports to the program's handler ([The handler](#the-handler), [The channel](#the-channel)) | a blocking write into a lane; a handler that waits for a filler, a mapper or the pipe server before taking its program's next request; a session process that writes a program's lane itself | the test of a program that stops draining its channel while its children end and a pipe gains a writer, while the relay, the shell and the program's siblings stay responsive; a spawn whose executable's file object is slow to fill while the starter's `SIGINT` still arrives |
 | **P4.** A program hands no pipe end on: what another program receives is an end the session made for it | every end is made and installed by the session's pipe server, for one holder, and no copy it installs carries `DUP` or `GIVE`; a spawn, a fork and a passed descriptor name the end, and the pipe server makes an end of the same kind for the receiver ([design-pipes.md](design-pipes.md#invariants), PI1) | a copy of a lane or a doorbell with `DUP` or `GIVE`; a path that installs the starter's own end into another program | PI1's tests; domain tests that a spawn, a fork and a passed descriptor each leave the starter's end in its table and give the receiver an end of its own, and that a refused spawn leaves every pipe with the ends it had |
@@ -574,7 +574,7 @@ state, and a channel made for an image dies with it:
 | --- | --- |
 | the process id, the parent and the job, as the command server's reservation gave them ([The command server](#the-command-server)), and the current image's command and arguments | the space and its threads |
 | the anchor, the budget, the group and the current image's space and channel | its mappings of the channel and of its pipe ends |
-| the namespace: each mount point's grant, cloned for the program at its server, and its rights | the arguments, the environment, the working directory and the file mode creation mask |
+| the namespace: each mount point's provider and root, narrowed from the starter's, and its rights | the arguments, the environment, the working directory and the file mode creation mask |
 | the open table: each open's kind and the open-file description it names, mapping opens among them | the descriptor table: which numbers name which opens and ends, each write end's private position, `FD_CLOEXEC` and `O_NONBLOCK` |
 | the rights beyond files, and the right to start commands | masks, dispositions, pending sets, handlers and the alarm |
 | the children, each with its latest state, its count of state changes, and whether the program's `wait` has taken that state | the child table that `wait` reads |
@@ -615,13 +615,14 @@ of signals, acting with the session's authority after checking the
 program's own table. It does five things:
 
 * **It keeps the program's table.** The namespace, a list of mount points
-  each with a grant the handler cloned for the program at the mount's
-  server from its starter's grant there, with a `walk` of no names, and
-  the rights the program holds there, the starter's or fewer, which the
+  each on the provider of its starter's entry there, rooted at or below
+  that entry's root, with no entry on a window tree, and the rights the
+  program holds there, the starter's or fewer, which the
   handler checks on every request
   ([design-files.md](design-files.md#narrowing-for-a-program)); the open
-  table, each open naming an open-file description of the session
-  ([Descriptors and files](#descriptors-and-files)); the rights beyond
+  table, each open naming an open-file description of the session that
+  was opened through a program's table, this program's or the one that
+  passed it on ([Descriptors and files](#descriptors-and-files)); the rights beyond
   files; the children; and the pipe ends. The program sees paths,
   descriptor numbers and open numbers, never a grant, a fid or a pid.
 * **It serves the program's requests**, in the order they arrive on the
@@ -686,7 +687,10 @@ holds, which the handler asks the pipe server for as an inherit with the
 starter as the end's holder
 ([design-pipes.md](design-pipes.md#inherited-ends)), and
 `{N, {buffer, Peer, Bytes}}` for a window's buffer of `Bytes` in the
-pixel area it shares with the display domain `Peer`, at most one. The
+pixel area it shares with the display domain `Peer`, at most one, and
+never a file or a directory it opened, so every description a program
+holds was opened through a program's table
+([design-files.md](design-files.md#a-programs-window)). The
 handler allocates that buffer's range and lends it to the program
 itself, so the range is the handler's, as the buffer of every program is
 ([design-display.md](design-display.md#the-pixel-area)), and the starter,
@@ -700,15 +704,23 @@ a program that draws through Plan 9's draw files rather than into a
 buffer its starter presents. When it reserves the program's grants
 (step 5 of [Starting a program](#starting-a-program)) the handler opens
 the window with `erx_win`, as its holder, so the window ends with the
-handler, starts a draw connection on it, and binds the connection's
-`draw` and `ctl` and the window's `kbd`, `mouse`, `wctl` and `label` at
-`/dev/draw`, `/dev/ctl`, `/dev/kbd` and the rest of the program's
-namespace, beside the session's own `/dev`, as
+handler, starts a draw connection on it, and starts the program's own
+`/dev` tree, which serves the connection's `draw` and `ctl` and relays
+the window's `kbd`, `mouse`, `wctl` and `label` at `/dev/draw`,
+`/dev/ctl`, `/dev/kbd` and the rest, beside the session's devices, as
 [design-display.md](design-display.md#the-window-tree) ("A program's
-`/dev`") says; a later step's failure closes the window with the rest of
-what the start reserved. The window and a buffer are two ways to draw,
+`/dev`") says, in place of the shared `/dev` in the program's table
+([design-files.md](design-files.md#a-programs-window)); a later step's
+failure refuses the start, and the window, the connection and the tree
+end with the handler, as below. The window and a buffer are two ways to draw,
 and a spec names at most one of them: one that names both is refused
-with `EINVAL`. A domain without the display's client side, and a
+with `EINVAL`. The program's `/dev` is read-write, and rights only
+shrink, so a program's table with an entry at exactly `/dev` that cannot
+write refuses a window with `EACCES` before the window is opened; a table
+with no entry there, a session's own with its release slice read-only at
+`/`, gets the window, whose `/dev` stands in for the export's, which
+every program reaches ([design-files.md](design-files.md#a-programs-window)).
+A domain without the display's client side, and a
 display the session holds no `windows` grant on, refuse a window with
 `ENODEV`; a window the display refuses refuses the start with the
 display's errno, as `erx_win:open/2` answers it
@@ -736,7 +748,11 @@ before it exits: the buffer's range is the handler's, and the pixel
 allocator frees it at its owner's exit once the lease is back
 ([design-display.md](design-display.md#the-pixel-area)); the window's
 holder is the handler, and the display ends the window when its holder
-ends. Each owner sees the handler's end on its own, in no order with the
+ends; the draw connection ends with its starter, the handler, and the
+`/dev` tree's grant ends with the handler, its `ends_with`
+([design-files.md](design-files.md#a-programs-window)). Each of the
+three watches the handler with a monitor, so each ends however the
+handler ends, at a refused start's `normal` exit as at a program's end. Each owner sees the handler's end on its own, in no order with the
 `'DOWN'`, so a starter that starts another program at once may find the
 range or the window still held, and its start is then refused with the
 display's errno as any start that does not fit is. Nothing waits for
@@ -1079,7 +1095,11 @@ nothing. So two programs given one file share its offset and its status
 flags, as POSIX processes do: `{date; uname} >f` writes both outputs one
 after the other, and `>[2=1]` is a `dup`, one object under two numbers.
 A passed file reaches the program whatever its namespace holds, and a
-file removed after it was opened stays readable through it, as on UNIX.
+file removed after it was opened stays readable through it, as on UNIX;
+it was opened through some program's table, the only way a description
+is made, so it is never a file no program's table reaches, a window's
+`ctl` among them
+([design-files.md](design-files.md#narrowing-for-a-program)).
 The shell's redirections open, create or truncate the file before the
 spawn, as a UNIX shell does, and a redirection to `/dev/null` hands the
 program a `null` descriptor. A pipe end's `O_NONBLOCK` stays in the
@@ -1396,7 +1416,7 @@ reserved:
 | 2 | the starter | sends `{spawn, Path, Start}` to its handler and waits for the reply, in a closed wait ([Signals in liberx](#signals-in-liberx)) | as the step that fails |
 | 3 | the starter's handler: **validate** | checks the frame against the protocol's grammar and bounds, the requester's right to start commands, its `children` quota and its principal's `programs` quota, and that every end and open the request names is in the requester's table | nothing to undo; `EPERM` without the right, `EAGAIN` at a quota, `EBADF` for an end or open the requester does not hold |
 | 4 | the starter's handler: **resolve** | resolves `Path` through the requester's namespace to an image ([What a program can start](#what-a-program-can-start)); for an executable file, the handler makes its image check and a filler opens it for reading, and the command server makes or finds its code object ([File objects](#file-objects)) | nothing to undo, since a code object belongs to the cache; `ENOENT` for an unknown command, `EACCES` for a file without `rx`, `ETXTBSY` for a file that keeps changing while it is read |
-| 5 | the command server, the starter's handler, the program's handler, the pipe server: **reserve** | the starter's handler asks the command server for the program's handler, and the server assigns the next process id, records the program in the starter's job and spawns the handler outside every job ([The command server](#the-command-server)); the starter's handler monitors the new handler and sends it the start, and the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it clones at each server, with a `walk` of no names, a grant for each entry of the requester's namespace, with the requester's rights there, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler clunks the grants it made, drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, a server's error for a grant it refuses |
+| 5 | the command server, the starter's handler, the program's handler, the pipe server: **reserve** | the starter's handler asks the command server for the program's handler, and the server assigns the next process id, records the program in the starter's job and spawns the handler outside every job ([The command server](#the-command-server)); the starter's handler monitors the new handler and sends it the start, and the handler then makes the program's holder entry in the pipe NIF ([design-pipes.md](design-pipes.md#hand-offs)) and builds the record: it builds the program's table from the requester's, narrowed as the request asks and with no entry on a window tree, which asks no server anything, and gives the program an open of its own naming the open-file description of each file, directory, terminal and socket open it hands on, which asks no server anything ([design-files.md](design-files.md#narrowing-for-a-program), [Descriptors and files](#descriptors-and-files)), copies the requester's rights beyond files and its right to start commands, and has the pipe server make an end of the same kind for each pipe end the request names, with the starter as the end's holder, each answered as a hand-off the handler owns, its doorbell not yet bound, since the program's group does not exist yet ([design-pipes.md](design-pipes.md#inherited-ends), [Hand-offs](design-pipes.md#hand-offs)) | the handler drops the opens it made, and drops the ends' hand-offs and its hold on the program's holder entry, so the pipe server reads the program's gone, and exits, which drops the command server's row, whose id is never given again; `EAGAIN` once every id is spent, `EMFILE` beyond a pipe's read ends, `EINVAL` for a table with an entry at or below a name the export takes at `/dev` or `/etc` |
 | 6 | the program's handler, through the port driver: **build** | hands the port driver one plan, which it validates whole and then applies. The plan first creates the channel and the data area from the session's own budget, since the session maps both and deletes them only after the program's budget. It then carves the program's budget from the session's pool for programs, with the floor as its guarantee and the cap the spec gives it, creates its group under the programs group, and creates the anchor, with the starter's anchor or the session's space as parent, the session's fault gate and a label of its own, and the image below it under another; the driver allocates both labels and never reuses them. For a program given a window's buffer, it then maps the buffer's pages, read-write, at the buffer place of the image, from the lease the spec names, which the plan takes first, so that its return is the last undo, and keeps it until the anchor is released ([design-display.md](design-display.md#the-pixel-area)). It then maps the image, a program command's slices from the boot image with `erx_image_map`, or the loader `erx_exec` from the boot image for an executable file; installs into the image's table the budget, the group, the channel's two sides and the session's doorbell, the data area, the copies of each pipe end's hand-off, which the plan takes by its number with the lease, and the code object for `erx_exec`; binds the program's doorbell to its group, and each pipe end's doorbell to it with the end's label; and creates the first thread, stopped, with the values of the budget, the group, the channel's two sides and the session's doorbell, then the session's CPU feature words, in its argument registers | the plan is undone, the anchor stopped and released, which releases the image and the buffer's mapping, the lease returned, the hand-offs let go and the port's hold on the program's holder entry with them, and then step 5's reservations as there; `EAGAIN` for a program nested deeper than the kernel's 64 levels of spaces allow, about 60 generations of programs, `ENOMEM` for the session's budget |
 | 7 | the program's handler | writes the startup message into the image's inbound lane, with the program's `pid`, `ppid` and `pgid`, the data area's value, each descriptor's values in the program's table, and for `erx_exec` the code object's value as `image` | none: the lane is the session's own memory |
 | 8 | the session's job table, then the program's handler | when the program's starter is paused for its job, or the shell starts it for a job it has stopped, the port driver pauses the image first ([Job control](#job-control)); the handler then has the port driver start the first thread | `ERX_EDEAD` when the program was stopped first, by a kill or by its parent's or session's end: the starter still gets `{ok, Pid}`, then the child's end as `SIGKILL` |
@@ -1632,7 +1652,7 @@ so its record locks end with it even when a sibling keeps the
 description they were taken through
 ([design-files.md](design-files.md#locks)); closes every other open of
 the program, each open-file description clunking its fid once no open
-names it; clunks the grants it cloned for the program
+names it, and the program's table holds no fid to clunk
 ([design-files.md](design-files.md#narrowing-for-a-program)); has the
 domain service end the program's command domain, if one was made; and
 tells the starter's handler, which sends the parent `{exit, N, Pid,
@@ -2288,12 +2308,10 @@ standard streams as opens on the terminal:
 | frames | 2 on the starter's channel, the request and the reply; the startup message on the program's; one report to each peer of each inherited pipe end | |
 | kernel objects | 1 budget, 1 group, 2 spaces, 2 memory objects and 2 IRQ objects for the channel, 1 memory object for the data area, 1 thread: 10; plus 3 for each inherited write end and 1 for each inherited read end ([design-pipes.md](design-pipes.md#the-objects-of-a-pipe)) | the two spaces' records, root translation tables and table pages, an estimated 16 KiB from the kernel's layouts; the channel, 48 KiB; the data area, 4 slots of 64 KiB by default; the thread's kernel stack and kernel-user page; 24 KiB for each inherited write end |
 | kernel calls | about 23: the carve, the group, two space creations, three memory objects, two IRQ objects and their bindings, one to three image maps, the installs four capabilities at a time, the thread's creation and start | |
-| Erlang | the handler's validate, resolve and reserve steps, one `walk` of no names at a server for each mount of the namespace, and nothing at a server for an open handed on | the handler, a process of a few KiB |
+| Erlang | the handler's validate, resolve and reserve steps, nothing at a server for the namespace, which is a table built in the handler, and nothing at a server for an open handed on | the handler, a process of a few KiB |
 
 A program's start is budgeted at 1 ms under HVF, from about 23 kernel
-calls at an estimated 1 to 2 us each, the clones over the session's
-connections at an estimated 5 to 10 us each for a namespace of ten
-mounts, the handler's Erlang steps and `liberx`'s start-up, which
+calls at an estimated 1 to 2 us each, the handler's Erlang steps and `liberx`'s start-up, which
 `tools/erx bench spawn` checks against `posix_spawn` of the same applet on
 the host ([Performance](#performance)). Four things keep it close to a
 UNIX process:
@@ -2549,8 +2567,8 @@ is recorded and decided as at any other time.
    handler validates and reserves as for a spawn, steps 3 and 5 of
    [Starting a program](#starting-a-program): the right to start
    commands, the `children` and `programs` quotas, a process id in the
-   parent's job, the child's handler, grants of the child's own for its
-   namespace, and an open of the child's own naming the open-file
+   parent's job, the child's handler, a copy of the parent's table
+   ([design-files.md](design-files.md#narrowing-for-a-program)), and an open of the child's own naming the open-file
    description of each of the parent's opens, and a mapping open of the
    child's own for each of the parent's, walked and opened afresh, which
    the handler hands to the file's mapper; so parent and child share each
@@ -3396,7 +3414,7 @@ test:
 | a program's children end with it: `daemon`, a double `fork` and `nohup` leave a child that ends with the program that started it, and a process that outlives its parent is a service under a supervisor, never a detached program | a program's anchor lies below its starter's, and the kernel ends a space's children with it (P9); the decision that nothing is orphaned |
 | paths resolve as FreeBSD's do, `..` physically and symbolic links followed by the client at most 32 times, a renamed working directory is not followed, and a rename between grants, trees or rights fails with `EXDEV` | one resolver serves Erlang and native clients ([design-files.md](design-files.md#compatibility-and-migration)) |
 | arguments, environment strings and file names are valid UTF-8 | they cross the channel and the session's connections as binaries that the frame grammars require to be valid UTF-8 |
-| `O_NONBLOCK` of a pipe end is not inherited by a child, though an `exec` keeps it | a child receives ends and grants of its own, not the parent's objects, while an `exec` keeps the ends themselves ([Descriptors and files](#descriptors-and-files)) |
+| `O_NONBLOCK` of a pipe end is not inherited by a child, though an `exec` keeps it | a child receives ends of its own, not the parent's objects, while an `exec` keeps the ends themselves ([Descriptors and files](#descriptors-and-files)) |
 | one `sendmsg` passes at most 16 descriptors, more failing with `EINVAL`; a write end holds at most 16 passed descriptors not yet received, more failing with `ETOOMANYREFS` | a control record holds 16 tickets, and each write end's share of its pipe's deposits bounds what one sender makes the session hold ([Passing descriptors](#passing-descriptors)) |
 | a pipe has at most 64 read ends at once, and a spawn or a `fork` that would make a 65th fails with `EMFILE` | a pipe's wake mask has one bit per read end ([design-pipes.md](design-pipes.md#the-ring)) |
 | programs nest at most about 60 deep, and a spawn or a `fork` deeper fails with `EAGAIN` | each program's anchor lies below its starter's, and the kernel bounds a tree of spaces at 64 levels ([design-kernel.md](design-kernel.md#creating-spaces)) |
@@ -3559,7 +3577,8 @@ terminal cases.
   spec naming a window and a buffer answers `EINVAL`, a display the
   session holds no grant on `ENODEV`, a fixture tree with the session at
   its `windows` quota `EDQUOT`, and one whose pixel area is full
-  `ENOMEM`, each with no window, hand-off or lease left behind. A
+  `ENOMEM`, and the test awaits, within a deadline, the end of each
+  window, hand-off and lease the refused start made. A
   program that exits 3 gives its starter one message, the `'DOWN'` of
   the returned monitor with `{shutdown, {program_exit, {exited, 3}}}`;
   `stop/1` of a running program gives `{shutdown, {program_exit,
@@ -3688,9 +3707,7 @@ terminal cases.
   also across an `exec` that cuts a reap short; a child that ended
   unwaited before its parent ignored `SIGCHLD` and called `exec`, which
   the next image reaps; a spawn whose executable's file object is slow to
-  fill, while the starter's `SIGINT` still arrives; a program that
-  clones grants past its allowance, whose `open` fails with `EMFILE`
-  rather than succeeding with a grant it cannot reach; job control's pause
+  fill, while the starter's `SIGINT` still arrives; job control's pause
   and resume across three generations of one job, a program started while
   its job is paused, which starts paused, `Ctrl-Z` during a `fork`'s copy
   and `fg` after it, which leave the job paused and then running, and

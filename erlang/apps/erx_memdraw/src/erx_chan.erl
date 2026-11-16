@@ -16,7 +16,7 @@ It is pure and loads no NIF, so the fuzz target of erx_win_core runs it
 on stock's emulator.
 """.
 
--export([parse/1, depth/1, channels/1, stride/2, bytes/3]).
+-export([parse/1, text/1, depth/1, channels/1, stride/2, bytes/3]).
 -export_type([text/0, code/0, depth/0]).
 
 -doc "A channel descriptor as text.".
@@ -42,7 +42,8 @@ parse(_) ->
     {error, einval}.
 
 %% draw(2)'s channel types: CRed 0, CGreen 1, CBlue 2, CGrey 3, CAlpha 4, CMap 5,
-%% CIgnore 6.
+%% CIgnore 6, each the letter at its type in LETTERS.
+-define(LETTERS, <<"rgbkamx">>).
 parse(<<Letter, Bits, Rest/binary>>, Code, Count) when Bits >= $1, Bits =< $8, Count < 4 ->
     case chan_type(Letter) of
         error -> {error, einval};
@@ -56,14 +57,21 @@ parse(<<>>, Code, _Count) ->
 parse(_, _, _) ->
     {error, einval}.
 
-chan_type($r) -> 0;
-chan_type($g) -> 1;
-chan_type($b) -> 2;
-chan_type($k) -> 3;
-chan_type($a) -> 4;
-chan_type($m) -> 5;
-chan_type($x) -> 6;
-chan_type(_) -> error.
+chan_type(Letter) ->
+    case binary:match(?LETTERS, <<Letter>>) of
+        {Type, 1} -> Type;
+        nomatch -> error
+    end.
+
+-doc """
+Channel code `Code`, one `depth/1` takes, as text, as 9front's
+`chantostr` writes it: each channel's letter and bits, from the highest
+byte, such as `<<"x8r8g8b8">>`.
+""".
+-spec text(code()) -> text().
+text(Code) ->
+    {ok, _} = depth(Code),
+    << <<(binary:at(?LETTERS, Byte bsr 4)), ($0 + (Byte band 15))>> || <<Byte>> <= <<Code:32>>, Byte =/= 0 >>.
 
 -doc """
 The depth of channel code `Code`, as 9front's chantodepth reads one:

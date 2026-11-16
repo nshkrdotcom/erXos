@@ -12,7 +12,7 @@ performs each action in order and turns what happens outside it back
 into events.
 
 A session process starts a program with start/1 and gets the handler's
-pid. The spec is erx_program:start/1's, but for its descriptors, which
+pid and a monitor of it. The spec is erx_program:start/1's, but for its descriptors, which
 the starter names as it holds them (docs/design-pipes.md, "Inherited
 ends"):
 
@@ -40,6 +40,15 @@ the handler; it exits if the caller ends first. Until the runtime's job tags exi
 job is its group leader, as the shell's jobs are (TODO.md, "a job's
 processes are found by group leader").
 
+The spec's `window => Display`, in place of a buffer, starts the program
+with a window of its own on the display whose grant this domain names
+`Display`: the handler opens the window as its holder, starts a draw
+connection on it and gives the program a `/dev` of its own, an
+erx_session_export tree that serves the connection's `draw` and `ctl` and
+relays the window's `kbd`, `mouse`, `wctl`, `label` and the display's
+`clipboard` (docs/design-files.md, "A program's window"). All three end
+when the handler does.
+
 start/1 waits 30 seconds for the handler's answer; start/2, the tests'
 seam, takes the wait in milliseconds. Past it, the start kills the
 handler and answers `{error, timeout}`: a handler stuck in a call to the
@@ -49,15 +58,18 @@ gives each of them back through its owner, as each owner sees the exit.
 A kill takes effect only between the handler's calls of a driver or a
 NIF, so the answer can come that much later.
 
-When the program ends the starter gets `{erx_prog_exit, Handler,
-Status}`, `Status` read by erx_prog:status/1: `{exited, N}` or
-`{signaled, Signal}`. A port the driver closes with no status, when a
-record of the program's end may be lost, ends the handler with no report,
-since it read none. stop/1 stops the program, which then ends signaled
-`sigkill`; the starter's exit stops it too, so no program outlives the
-session process that started it. The handler then exits normally. Its
-crash closes the program's port, which kills the program; a starter that
-needs to know monitors the handler.
+start/1 answers a monitor of the handler with it, made before the handler
+could end, and the monitor's `'DOWN'` is the starter's one report of the
+program's end (docs/design-programs.md, "The handler"). Once the program
+has ended the handler exits `{shutdown, {program_exit, Status}}`, `Status`
+read by erx_prog:status/1: `{exited, N}` or `{signaled, Signal}`;
+`shutdown` marks that end as an ordinary one, as OTP reads an exit reason. Any other reason
+is the handler's own end, and the program ended with it: a crash closes
+the program's port, which kills the program, and a port the driver closes
+with no status, when a record of the program's end may be lost, ends the
+handler `program_lost`, since it read no status. stop/1 stops the
+program, which then ends signaled `sigkill`; the starter's exit stops it
+too, so no program outlives the session process that started it.
 
 The handler monitors the pipe server and, when it goes, sends the program
 `pipe_server_lost` (docs/design-pipes.md, "The pipe server").
@@ -91,27 +103,34 @@ driver (erx_program:data_read/3 and data_write/3).
 
 -doc """
 Starts the program `Spec` names, as described above, with the caller as
-its starter: `{ok, Handler, Offsets}`, `Offsets` each buffer's
-`{N, Offset}`, or `{error, Errno}`: `einval` for a spec the program's
-start refuses, one that names a `pid`, `ppid` or `pgid`, or a descriptor
-of another form, `enotsup` in a domain that runs no command server,
-`eagain` once the server has given every process id, `ebadf` for a pipe
-end the caller does not hold, `emfile`
+its starter: `{ok, Handler, Monitor, Offsets}`, `Monitor` the caller's
+monitor of the handler, whose `'DOWN'` reports the program's end, and
+`Offsets` each buffer's `{N, Offset}`; or `{error, Errno}`, with no
+monitor left: `einval` for a spec the program's start refuses, one that
+names a `pid`, `ppid` or `pgid`, or a descriptor of another form,
+`enotsup` in a domain that runs no command server, `eagain` once the
+server has given every process id, `ebadf` for a pipe end the caller
+does not hold, `emfile`
 beyond a pipe's read ends, `enfile` at the session's pipes quota,
 `enodev` for a buffer in a domain where no pixel allocator runs,
 `einval` for a buffer in an area the domain does not share with `Peer`,
+`einval` for a window beside a buffer or for a table with no room for the
+window's `/dev`, `eacces` for a window whose program's table holds an entry
+at `/dev` itself that cannot write, `enodev` for a window in a domain without the display
+client or with no grant of the display, the display's or the connection's
+errno for a window they refuse, `eio` for a `/dev` tree that does not start,
 `enomem` (for a pipe server that is gone too), `eio` when the handler
 crashed, `e2big` for strings past the startup message's bound, the
 start's own refusal (erx_program:start/1), or `timeout` when the handler
 has not answered within 30 seconds.
 Nothing the start reserved survives an error.
 """.
--spec start(map()) -> {ok, pid(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
+-spec start(map()) -> {ok, pid(), reference(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
 start(Spec) ->
     start(Spec, ?START_MS).
 
 -doc "start/1 with a wait of `Timeout` milliseconds for the handler's answer.".
--spec start(map(), timeout()) -> {ok, pid(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
+-spec start(map(), timeout()) -> {ok, pid(), reference(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
 start(Spec, Timeout) when is_map(Spec), not is_map_key(pid, Spec), not is_map_key(ppid, Spec),
                           not is_map_key(pgid, Spec),
                           Timeout =:= infinity orelse is_integer(Timeout) andalso Timeout >= 0 ->
@@ -124,14 +143,15 @@ start(_Spec, _Timeout) ->
     {error, einval}.
 
 %% The handler's answer to the start, which is sent only once the handler
-%% is monitored, so the handler cannot end unseen.
+%% is monitored. The handler does nothing but wait for its start until it
+%% has it, so the monitor holds from before the handler can end, and its
+%% 'DOWN', the program's end, always comes.
 started(Handler, Key, Spec, Timeout) ->
     Watch = monitor(process, Handler),
     Handler ! {start, Key, Spec},
     receive
         {erx_prog_started, Handler, {ok, Offsets}} ->
-            demonitor(Watch, [flush]),
-            {ok, Handler, Offsets};
+            {ok, Handler, Watch, Offsets};
         {erx_prog_started, Handler, {error, _} = Refused} ->
             demonitor(Watch, [flush]),
             Refused;
@@ -142,18 +162,18 @@ started(Handler, Key, Spec, Timeout) ->
     after Timeout ->
         %% Killed, the handler frees nothing itself: what it reserved goes
         %% back to each owner, once, at its exit. Every message it sent
-        %% arrives before its 'DOWN', so an answer or an end that crossed
-        %% the kill is taken out of the mailbox here.
+        %% arrives before its 'DOWN', so an answer that crossed the kill is
+        %% taken out of the mailbox here.
         exit(Handler, kill),
         receive {'DOWN', Watch, process, Handler, _} -> ok end,
         receive {erx_prog_started, Handler, _} -> ok after 0 -> ok end,
-        receive {erx_prog_exit, Handler, _} -> ok after 0 -> ok end,
         {error, timeout}
     end.
 
 -doc """
 Stops the program the handler serves, when its starter calls it; its end
-follows as `erx_prog_exit`. A call by any other process does nothing.
+follows as the `'DOWN'` of the starter's monitor. A call by any other
+process does nothing.
 """.
 -spec stop(pid()) -> ok.
 stop(Handler) when is_pid(Handler) ->
@@ -178,12 +198,16 @@ serve(#{starter := Starter, key := Key} = Init) ->
             ok
     end.
 
+%% serve/1's monitor of the starter stays, and the loop reads its 'DOWN'
+%% as a stop.
 init(Starter, #{pid := Pid} = Spec) ->
-    Files = #{table => erx_file_description:table(), within => maps:get(within, Spec, all),
-              cwd => maps:get(cwd, Spec, undefined), slots => erx_program:slots(Spec)},
+    Files = (maps:with([window], Spec))#{table => erx_file_description:table(),
+                                         within => maps:get(within, Spec, all),
+                                         cwd => maps:get(cwd, Spec, undefined),
+                                         slots => erx_program:slots(Spec)},
     case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, []), Files) of
         {ok, Core, Actions} ->
-            H = #h{core = Core, starter = Starter, spec = maps:without([fds, within], Spec),
+            H = #h{core = Core, starter = Starter, spec = maps:without([fds, within, window], Spec),
                    reply = Starter, pipes = watch_pipes()},
             loop(perform(Actions, H));
         {error, _} = Refused ->
@@ -191,30 +215,35 @@ init(Starter, #{pid := Pid} = Spec) ->
             ok
     end.
 
+%% Once the core has ended, the handler exits with the core's reason.
 loop(#h{core = Core, port = Port, closed = Closed, starter = Starter, spec = #{pid := Pid}, pipes = Pipes} = H) ->
     case erx_prog_handler_core:phase(Core) of
-        ended ->
-            ok;
+        {ended, Reason} ->
+            exit(Reason);
         _ ->
-            Event = receive
-                        {erx_channel, Port, Frame} -> {frame, Frame};
-                        {erx_channel_room, Port} -> room;
-                        {Port, {exit_status, Status}} -> {exit_status, Status};
-                        %% After the port's exit status, which it sends first, if any.
-                        {'DOWN', Closed, port, Port, _} -> port_closed;
-                        {pipe_report, Pid, Report} -> {report, Report};
-                        {erx_prog_stop, Starter} -> stop;
-                        {'DOWN', _, process, Starter, _} -> stop;
-                        {'DOWN', Pipes, process, _, _} -> pipes_lost;
-                        %% The command server's, for a kill or the program's job.
-                        {erx_signal, Signal, _Sender} -> {signal, Signal};
-                        {erx_job, {signal, Signal}} -> {signal, Signal};
-                        {erx_file_opened, Slot, Result} -> {file_opened, Slot, Result};
-                        {erx_file_done, Slot, Result} -> {file_done, Slot, Result};
-                        %% Nothing else is for the handler; it must not pile up.
-                        _Other -> ignored
-                    end,
+            Event = next_event(Port, Closed, Starter, Pid, Pipes),
             loop(watched(Event, event(Event, H)))
+    end.
+
+%% The next message for the handler, as the core's event.
+next_event(Port, Closed, Starter, Pid, Pipes) ->
+    receive
+        {erx_channel, Port, Frame} -> {frame, Frame};
+        {erx_channel_room, Port} -> room;
+        {Port, {exit_status, Status}} -> {exit_status, Status};
+        %% After the port's exit status, which it sends first, if any.
+        {'DOWN', Closed, port, Port, _} -> port_closed;
+        {pipe_report, Pid, Report} -> {report, Report};
+        {erx_prog_stop, Starter} -> stop;
+        {'DOWN', _, process, Starter, _} -> stop;
+        {'DOWN', Pipes, process, _, _} -> pipes_lost;
+        %% The command server's, for a kill or the program's job.
+        {erx_signal, Signal, _Sender} -> {signal, Signal};
+        {erx_job, {signal, Signal}} -> {signal, Signal};
+        {erx_file_opened, Slot, Result} -> {file_opened, Slot, Result};
+        {erx_file_done, Slot, Result} -> {file_done, Slot, Result};
+        %% Nothing else is for the handler; it must not pile up.
+        _Other -> ignored
     end.
 
 %% After the pipe server's loss, a monitor of its restart, if it is up.
@@ -249,6 +278,8 @@ act({inherit, End}, #h{starter = Starter, spec = #{pid := Pid}} = H) ->
     end;
 act({lend, Peer, Bytes}, H) ->
     {event, lend(Peer, Bytes), H};
+act({window, Display}, H) ->
+    {event, window(Display), H};
 act({start, Fds}, #h{spec = Spec} = H) ->
     %% A spec of the wrong shape is the starter's, refused as einval.
     Started = try erx_program:start(Spec#{fds => Fds})
@@ -297,9 +328,6 @@ act({stop, Status}, #h{port = Port} = H) ->
     %% A program already ending refuses the stop; its exit status follows.
     _ = driver(Port, fun() -> erx_program:stop(Port, anchor, Status) end, {error, einval}),
     H;
-act({tell_starter, Status}, #h{starter = Starter} = H) ->
-    Starter ! {erx_prog_exit, self(), erx_prog:status(Status)},
-    H;
 act({open, Slot, Path, Flags, Mode, Table, Cwd}, H) ->
     _ = erx_file_description:open(Slot, Path, Flags, Mode, Table, Cwd),
     H;
@@ -324,8 +352,6 @@ act({copy_in, Slot, Data, Bytes}, #h{port = Port} = H) ->
     {event, {file_copied, Slot, Copied}, H};
 act({clunk, Description, Slot}, H) ->
     ok = erx_file_description:clunk(Description, Slot),
-    H;
-act(exit, H) ->
     H.
 
 %% A write's bytes, Count of them taken from data slot Data before the write
@@ -376,6 +402,39 @@ lend(Peer, Bytes) ->
         error:undef -> {refused, enodev};
         exit:{noproc, _} -> {refused, enodev}
     end.
+
+%% The program's window on Display, its draw connection and its own /dev tree
+%% (docs/design-files.md, "A program's window"), each with the handler as its
+%% one owner: the window's holder, the connection's starter and what the
+%% tree's grant ends with, so each ends when the handler does, whatever its
+%% reason, and a refused start undoes nothing by hand. A domain without the
+%% display client, or with no grant of Display, refuses with enodev.
+window(Display) ->
+    maybe
+        {ok, Window} ?= open_window(Display),
+        {ok, Conn} ?= erx_draw_conn:start(#{window => Window}),
+        Args = #{window => #{window => Window, conn => Conn, display => Display,
+                             clipboard => erx_win:clipboard(Display)}},
+        {ok, DevGrant} ?= dev_grant(erx_fs:start_link(erx_session_export, Args, rw,
+                                                      #{client => own, ends_with => self()})),
+        {windowed, DevGrant}
+    else
+        {error, Errno} -> {refused, Errno}
+    end.
+
+%% The window, or enodev in a domain whose release lacks the display client or
+%% that holds no grant of Display.
+open_window(Display) ->
+    try erx_win:open(Display, #{}) of
+        {error, none} -> {error, enodev};
+        Answer -> Answer
+    catch
+        error:undef -> {error, enodev}
+    end.
+
+%% A grant that does not start refuses the start with eio.
+dev_grant({ok, _} = Started) -> Started;
+dev_grant({error, _}) -> {error, eio}.
 
 %% A monitor of the pipe server, or none while it is between restarts.
 watch_pipes() ->

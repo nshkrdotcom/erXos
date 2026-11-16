@@ -20,9 +20,8 @@ rather than waiting on its own start. The process holds nothing; erx_app is
 permanent, so its end, with the first step's failure as its reason, ends the
 session.
 
-A native app's program needs erx_prog_handler's `window` option and the monitor
-its start returns, which the handler does not offer; its record ends erx_app
-with `{not_supported, program}`.
+A native app's program needs erx_prog_handler's `window` option, which the
+handler does not offer; its record ends erx_app with `{not_supported, program}`.
 """.
 -behaviour(application).
 

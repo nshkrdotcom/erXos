@@ -404,3 +404,23 @@ prelude() ->
 %% Within erx_memdraw's limits on a shape's points (erx_draw_core, SHAPE_COORD).
 shape_coords(Points) ->
     lists:all(fun({X, Y}) -> lists:all(fun(V) -> V >= -(1 bsl 19) andalso V < 1 bsl 19 end, [X, Y]) end, Points).
+
+%% The connection's ctl text (docs/design-display.md, "The connection's
+%% files"): twelve fields of 11 characters and a blank, as devdraw's %11d
+%% writes them, for image 0 of a 640 by 480 x8r8g8b8 window; after a c that
+%% sets its clip rectangle; and after a resize, which makes the clip
+%% rectangle the new rectangle.
+ctl_test_() ->
+    XRGB32 = 16#68081828,
+    Text = fun(Fields) -> iolist_to_binary(io_lib:format(lists:append(lists:duplicate(12, "~11s ")), Fields)) end,
+    State = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => XRGB32,
+                                quota => #{pixels => 64 * ?PAGE, side => 640}}),
+    {ok, Clipped, _} = erx_draw_core:step(State, {clip, 0, 0, {-2147483648, 0, 1, 1}}),
+    Resized = erx_draw_core:resize(Clipped, {0, 0, 800, 600}),
+    [?_assertEqual(144, byte_size(erx_draw_core:ctl(State))),
+     ?_assertEqual(Text(["0", "0", "x8r8g8b8", "0", "0", "0", "640", "480", "0", "0", "640", "480"]),
+                   erx_draw_core:ctl(State)),
+     ?_assertEqual(Text(["0", "0", "x8r8g8b8", "0", "0", "0", "640", "480", "-2147483648", "0", "1", "1"]),
+                   erx_draw_core:ctl(Clipped)),
+     ?_assertEqual(Text(["0", "0", "x8r8g8b8", "0", "0", "0", "800", "600", "0", "0", "800", "600"]),
+                   erx_draw_core:ctl(Resized))].

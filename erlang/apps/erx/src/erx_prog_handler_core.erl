@@ -13,7 +13,12 @@ A handler lives through three phases:
   holder entry, then each descriptor the starter named, one at a time in
   the order given (a pipe end as an `inherit` with the starter as the
   end's holder, a window's buffer as an allocation and a lease the
-  handler holds), then the start itself. Any refusal undoes everything
+  handler holds), then, for a spec that names a window, the window, its
+  draw connection and the program's own `/dev` tree as one `window`
+  action, whose grant the core puts at `/dev` in the program's table
+  (docs/design-files.md, "A program's window"), then the start itself.
+  What the `window` action made needs no undo: it ends with the
+  handler. Any refusal undoes everything
   reserved, without knowing how far the start went: every hand-off is
   dropped and the lease given back, both of which do nothing to what the
   start took (docs/design-pipes.md, "Hand-offs", Giving back), and the
@@ -28,9 +33,13 @@ A handler lives through three phases:
   program. Its requests are answered on their own reply slots, each
   reply queued like a report, so it reaches the program after every
   frame queued before it (Requests, below).
-* **ended**: the program's exit status reached the handler, which tells
-  the starter and exits, or its port closed with none, and the handler
-  exits without a report.
+* **ended**, `{ended, Reason}`, with the reason the handler exits with,
+  so a handler that reaches the end cannot stay: `normal` for a refused
+  start, once the refusal is answered; `{shutdown, {program_exit,
+  Status}}` once the program's exit status reached the handler, `Status`
+  as erx_prog:status/1 reads it, the reason its starter reads in the
+  `'DOWN'` of its monitor; or `program_lost` for a port closed with no
+  status, which tells no status the handler did not read.
 
 A stop, asked by the starter or forced by its exit, stops the program's
 anchor with `ERX_EXIT_SIGNAL + SIGKILL`, a stop by its session, and the
@@ -108,7 +117,7 @@ session code and the program's own driver.
 -include("generated/erx_abi.hrl").
 -include_lib("kernel/include/file.hrl").
 
--export([new/3, step/2, phase/1]).
+-export([new/3, step/2, phase/1, exported/0, exported/1]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
@@ -122,6 +131,7 @@ session code and the program's own driver.
 -type event() :: {holder, ok | {error, atom()}}
                | {reserved, {pipe_hand, pos_integer(), term()}}
                | {reserved, {mem, Lease :: pos_integer(), Pages :: pos_integer(), Offset :: non_neg_integer()}}
+               | {windowed, DevGrant :: pid()}
                | {refused, atom()}
                | started
                | {report, term()}
@@ -146,9 +156,10 @@ session code and the program's own driver.
 %% What the starter hands for the program's files: its namespace table
 %% (prim_file:erx_mounts/0), the narrowing, `all` for the whole table or each
 %% absolute path the program reaches with its rights there, the program's
-%% working directory, and its data area's slots.
+%% working directory, its data area's slots, and, for a program with a window,
+%% the display it is opened on, the name of the session's grant of it.
 -type files() :: #{table := erx_path:table(), within := all | [{binary(), ro | rw | rx}],
-                   cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX}.
+                   cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX, window => atom()}.
 -type slot() :: non_neg_integer().
 %% An open-file description, a session process the effect side made.
 -type description() :: pid().
@@ -164,6 +175,7 @@ session code and the program's own driver.
 -type action() :: holder
                 | {inherit, term()}
                 | {lend, pos_integer(), pos_integer()}
+                | {window, atom()}
                 | {start, [program_fd()]}
                 | {answer, {ok, [{0..1023, non_neg_integer()}]} | {error, atom()}}
                 | {hand_drop, pos_integer()}
@@ -175,7 +187,6 @@ session code and the program's own driver.
                 | {install_end, hand()}
                 | {forward, tuple()}
                 | {stop, non_neg_integer()}
-                | {tell_starter, integer()}
                 | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
                    erx_path:table(), erx_path:place()}
                 | {read, description(), slot(), pos_integer()}
@@ -185,8 +196,10 @@ session code and the program's own driver.
                 | {seek, description(), slot(), integer(), bof | cur | eof}
                 | {getattr, description(), slot()}
                 | {copy_in, slot(), slot(), binary()}
-                | {clunk, description(), slot()}
-                | exit.
+                | {clunk, description(), slot()}.
+
+%% The reason the handler exits with once it has ended.
+-type reason() :: normal | program_lost | {shutdown, {program_exit, erx_prog:status()}}.
 
 %% What waits to reach the program, oldest first: a frame to send, or a
 %% hand-off to install, whose filled report is then sent.
@@ -195,7 +208,7 @@ session code and the program's own driver.
 -type hand() :: {pipe_hand, pos_integer(), term()}.
 
 -record(core, {pid :: pos_integer(),
-               phase = reserving :: reserving | running | ended,
+               phase = reserving :: reserving | running | {ended, reason()},
                %% reserving: the starter's descriptors not yet reserved, in order.
                todo = [] :: [starter_fd()],
                %% reserving: the reserved descriptors, newest first, for the start
@@ -203,6 +216,9 @@ session code and the program's own driver.
                made = [] :: [program_fd()],
                %% reserving: each buffer's offset in its area, for the starter.
                offsets = [] :: [{0..1023, non_neg_integer()}],
+               %% reserving: the display the program's window is still to be
+               %% opened on, or none.
+               window = none :: none | {window, atom()},
                queue = queue:new() :: queue:queue(outgoing()),
                %% The head of the queue is out: sent and not yet answered, or
                %% answered busy and owed until the program frees room; or a
@@ -245,25 +261,137 @@ action; or `{error, einval}` for a `Pid` outside 2..2^31-1, a descriptor
 of another form, a number named twice, more than one buffer, which the
 program may have only one of, a working directory that is not an
 absolute path of plain names, slots outside 1..`ERX_PROG_DATA_SLOTS_MAX`,
-or a narrowing path named twice or not absolute; `{error, enoent}` for a
+or a narrowing path named twice or not absolute, a program's table with an
+entry at or below one of the names of exported/1, a window beside a buffer,
+or a window for a table at `ERX_NS_MOUNTS_MAX` entries with none at `/dev`,
+which cannot take the window's `/dev`; `{error, enoent}` for a
 narrowing path that no entry of the table holds; or `{error, eacces}` for
-rights the starter does not hold there.
+rights the starter does not hold there, or for a window whose program's
+table holds an entry at `/dev` itself that cannot write.
 """.
 -spec new(term(), term(), files()) -> {ok, core(), [action()]} | {error, einval | enoent | eacces}.
-new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots})
-  when ?IS_PID(Pid), is_list(Fds), is_integer(Slots), Slots >= 1, Slots =< ?ERX_PROG_DATA_SLOTS_MAX ->
-    case {valid_fds(Fds), erx_path:cwd(Cwd), narrowed(Table, Within)} of
+new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots} = Files)
+  when ?IS_PID(Pid), is_list(Fds), is_integer(Slots), Slots >= 1, Slots =< ?ERX_PROG_DATA_SLOTS_MAX,
+       not is_map_key(window, Files) orelse is_atom(map_get(window, Files)) ->
+    %% A display may take any name, none included, so its absence is not an atom.
+    Window = case Files of
+                 #{window := Display} -> {window, Display};
+                 #{} -> none
+             end,
+    case {valid_fds(Fds) andalso drawn_once(Window, Fds), erx_path:cwd(Cwd),
+          program_table(Table, Within, Window)} of
         {false, _, _} -> {error, einval};
         {_, error, _} -> {error, einval};
         {_, _, {error, _} = Refused} -> Refused;
         {true, {ok, Place}, {ok, Narrowed}} ->
-            {ok, #core{pid = Pid, todo = Fds, table = Narrowed, cwd = Place, slots = Slots}, [holder]}
+            {ok, #core{pid = Pid, todo = Fds, window = Window, table = Narrowed, cwd = Place,
+                       slots = Slots}, [holder]}
     end;
 new(_Pid, _Fds, _Files) ->
     {error, einval}.
 
-%% The program's namespace (docs/design-files.md, "Narrowing for a
-%% program"): the starter's whole table, or for each path the starter names
+-doc """
+The names the session's export serves every program at `/dev` and `/etc`
+(docs/design-programs.md, "Devices"), which erx_session_export serves and
+at or below which no entry of a program's table may stand
+(docs/design-files.md, "Narrowing for a program").
+""".
+-spec exported() -> #{dev := [binary()], etc := [binary()]}.
+exported() ->
+    #{dev => [<<"null">>, <<"tty">>, <<"urandom">>, <<"zero">>],
+      etc => [<<"group">>, <<"passwd">>]}.
+
+-doc """
+The names exported/0 gives, for a program started without a window
+(`none`), or for one with a window (`{window, Display}`): its own `/dev`
+tree serves those devices and its window's names, `clipboard` among them
+whether or not the session's grant on the display carries it, so no entry
+of its table may stand at or below any of them (docs/design-files.md, "A
+program's window").
+""".
+-spec exported(none | {window, atom()}) -> #{dev := [binary()], etc := [binary()]}.
+exported(none) ->
+    exported();
+exported({window, Display}) when is_atom(Display) ->
+    #{dev := Devices} = Names = exported(),
+    Names#{dev := Devices ++ [<<"draw">>, <<"ctl">>, <<"kbd">>, <<"mouse">>, <<"wctl">>, <<"label">>,
+                              <<"clipboard">>]}.
+
+%% A window and a buffer are two ways to draw, and a spec names at most one.
+drawn_once(none, _Fds) -> true;
+drawn_once({window, _}, Fds) -> [Buffer || {_, {buffer, _, _}} = Buffer <- Fds] =:= [].
+
+%% The program's table (docs/design-files.md, "Narrowing for a program"):
+%% the narrowed table less every entry on a window tree, which passes to no
+%% program whatever its point, as a bind of one keeps its source's provider,
+%% unless refusal/2 finds a reason the program cannot be started on it.
+program_table(Table, Within, Window) ->
+    case narrowed(Table, Within) of
+        {ok, Narrowed} ->
+            Kept = [Entry || Entry <- Narrowed, not on_window_tree(Entry)],
+            case refusal(Window, Kept) of
+                none -> {ok, Kept};
+                Errno -> {error, Errno}
+            end;
+        {error, _} = Refused ->
+            Refused
+    end.
+
+%% The first reason, in this order, that a program cannot be started on Table,
+%% or none. An entry at or below one of the export's names would hide that
+%% name or put a mount beneath a file. A program with a window gets its own
+%% /dev in place of every entry at /dev itself once the window is open
+%% (window_dev/2), so its table must have room for that entry, and the
+%% entries it replaces must let it write, as writes_dev/2 says.
+refusal(Window, Table) ->
+    Refusals = [{hides_export(Window, Table), einval},
+                {not room_for_dev(Window, Table), einval},
+                {not writes_dev(Window, Table), eacces}],
+    case [Errno || {true, Errno} <- Refusals] of
+        [] -> none;
+        [Errno | _] -> Errno
+    end.
+
+hides_export(Window, Table) ->
+    Names = [[atom_to_binary(Dir), Name] || Dir := Names <- exported(Window), Name <- Names],
+    Hides = fun(#{point := Point}) -> lists:any(fun(Name) -> lists:prefix(Name, Point) end, Names) end,
+    lists:any(Hides, Table).
+
+room_for_dev(none, _Table) -> true;
+room_for_dev({window, _}, Table) -> length(without_dev(Table)) < ?ERX_NS_MOUNTS_MAX.
+
+%% Whether a program with a window may write its own /dev, which is rw: every
+%% entry window_dev/2 replaces must be rw, since rights only shrink and step 4
+%% of "Starting" drops what it replaces (docs/design-files.md, "A program's
+%% window"), so a program draws only where its starter let it write /dev.
+%% With no entry at /dev itself, /dev is the export's, whose names reach every
+%% program whatever its narrowing ("Narrowing for a program"), so the window's
+%% /dev widens nothing; an entry above /dev, such as the release slice's
+%% read-only root, does not cap it.
+writes_dev(none, _Table) -> true;
+writes_dev({window, _}, Table) -> lists:all(fun(Rights) -> Rights =:= rw end, dev_rights(Table)).
+
+dev_rights(Table) -> [Rights || #{rights := Rights} <- Table -- without_dev(Table)].
+
+%% The program's table with its own /dev tree's grant at /dev, in place of
+%% every entry at /dev itself (docs/design-files.md, "A program's window").
+%% Until the handler joins the export and a grant at /dev, that drops a grant
+%% the session mounts there, so the program reaches fewer files, never more
+%% (TODO.md).
+window_dev(Table, DevGrant) ->
+    without_dev(Table) ++ [#{point => [<<"dev">>], provider => {grant, DevGrant, <<"export">>},
+                             root => [<<"dev">>], rights => rw}].
+
+without_dev(Table) -> [Entry || #{point := Point} = Entry <- Table, Point =/= [<<"dev">>]].
+
+%% An entry on a window tree names the tree in its provider, a grant's or a
+%% facet's (docs/design-files.md, "Namespaces").
+on_window_tree(#{provider := {Kind, _, ?ERX_WINDOWS_TREE_BYTES}})
+  when Kind =:= grant; Kind =:= facet ->
+    true;
+on_window_tree(_Entry) -> false.
+
+%% The starter's table narrowed: the whole table, or for each path the starter names
 %% an entry at that path, on the provider of the starter's entry that holds
 %% it, rooted where the path lies there, with the rights asked, the
 %% starter's own there or read-only; and each of the starter's entries
@@ -316,8 +444,8 @@ narrowed_at(_Entry, _Place, _Rights, _Table) ->
 below_rights(ro, _Mount) -> ro;
 below_rights(_Own, #{rights := Rights}) -> Rights.
 
--doc "The handler's phase: `reserving`, `running` or `ended`.".
--spec phase(core()) -> reserving | running | ended.
+-doc "The handler's phase: `reserving`, `running` or `{ended, Reason}`.".
+-spec phase(core()) -> reserving | running | {ended, reason()}.
 phase(#core{phase = Phase}) -> Phase.
 
 -doc "The next state and the actions that carry out one event.".
@@ -329,7 +457,7 @@ step(#core{phase = reserving} = C, {holder, {error, Errno}}) when is_atom(Errno)
     %% No entry was made for this handler, so it has nothing to let go.
     %% eexist: the pid has an entry, another handler speaks for it, and
     %% the starter named a pid that is not its program's.
-    {C#core{phase = ended}, [{answer, {error, holder_errno(Errno)}}, exit]};
+    {C#core{phase = {ended, normal}}, [{answer, {error, holder_errno(Errno)}}]};
 step(#core{phase = reserving, todo = [{N, {pipe, _}} | Todo], made = Made} = C,
      {reserved, {pipe_hand, Number, _Term} = Hand}) when ?IS_POS(Number) ->
     reserve_next(C#core{todo = Todo, made = [{N, Hand} | Made]});
@@ -337,16 +465,19 @@ step(#core{phase = reserving, todo = [{N, {buffer, _, _}} | Todo], made = Made, 
      {reserved, {mem, Lease, Pages, Offset}}) when ?IS_POS(Lease), ?IS_POS(Pages) ->
     reserve_next(C#core{todo = Todo, made = [{N, {mem, Lease, Pages}} | Made],
                         offsets = [{N, Offset} | Offsets]});
+step(#core{phase = reserving, todo = [], window = {window, _}, table = Table} = C, {windowed, DevGrant})
+  when is_pid(DevGrant) ->
+    reserve_next(C#core{window = none, table = window_dev(Table, DevGrant)});
 step(#core{phase = reserving} = C, {refused, Errno}) when is_atom(Errno) ->
-    {C#core{phase = ended}, undo(C) ++ [{answer, {error, Errno}}, exit]};
+    {C#core{phase = {ended, normal}}, undo(C) ++ [{answer, {error, Errno}}]};
 step(#core{phase = reserving, todo = []} = C, started) ->
     {C1, Actions} = pump(C#core{phase = running}),
     {C1, [{answer, {ok, lists:reverse(C#core.offsets)}} | Actions]};
 %% Reports queue from the first: those that arrive while the program is
 %% built wait behind its startup message, which the start wrote.
-step(#core{phase = Phase} = C, {report, Report}) when Phase =/= ended ->
+step(#core{phase = Phase} = C, {report, Report}) when not is_tuple(Phase) ->
     pump(enqueue(C, outgoing(Report)));
-step(#core{phase = Phase} = C, pipes_lost) when Phase =/= ended ->
+step(#core{phase = Phase} = C, pipes_lost) when not is_tuple(Phase) ->
     pump(enqueue(C, {frame, {erx_prog, 1, pipe_server_lost}}));
 %% Running: the queue's head, and the program's notices.
 step(#core{phase = running, out = sending} = C, {sent, ok}) ->
@@ -403,11 +534,11 @@ step(#core{phase = running} = C, stop) ->
 step(#core{phase = running} = C, {signal, sigkill}) ->
     stop(C, ?STOP_STATUS);
 step(#core{phase = running} = C, {exit_status, Status}) when is_integer(Status) ->
-    {C#core{phase = ended, queue = queue:new()}, [{tell_starter, Status}, exit]};
+    {C#core{phase = {ended, {shutdown, {program_exit, erx_prog:status(Status)}}}, queue = queue:new()}, []};
 step(#core{phase = running} = C, port_closed) ->
     %% The port closed with no status: a record of the end may be lost, and
-    %% the starter is told nothing the handler did not read.
-    {C#core{phase = ended, queue = queue:new()}, [exit]};
+    %% the starter is told no status the handler did not read.
+    {C#core{phase = {ended, program_lost}, queue = queue:new()}, []};
 step(#core{phase = running, pending = Pending} = C, {file_opened, Slot, Result}) ->
     case maps:take(Slot, Pending) of
         {Case, Rest} when Case =:= file_lopen; Case =:= file_lcreate ->
@@ -625,6 +756,8 @@ reserve_next(#core{todo = [{_N, {pipe, End}} | _]} = C) ->
     {C, [{inherit, End}]};
 reserve_next(#core{todo = [{_N, {buffer, Peer, Bytes}} | _]} = C) ->
     {C, [{lend, Peer, Bytes}]};
+reserve_next(#core{todo = [], window = {window, Display}} = C) ->
+    {C, [{window, Display}]};
 reserve_next(#core{todo = [], made = Made} = C) ->
     {C, [{start, lists:reverse(Made)}]}.
 

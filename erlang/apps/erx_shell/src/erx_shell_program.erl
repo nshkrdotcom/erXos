@@ -89,9 +89,9 @@ plumbed(Spec, Ctx) ->
             %% pumps see the end of the stream once the program is gone.
             [ok = erx_pipe_srv:close(End) || {{_, {pipe, End}}, _, _} <- Plumbing],
             case Started of
-                {ok, Handler, _Offsets} ->
+                {ok, Handler, Watch, _Offsets} ->
                     Pumps = [Pump || Pump <- [pump(Other, Work) || {_, Other, Work} <- Plumbing], Pump =/= none],
-                    ended(Handler, Pumps);
+                    ended(Handler, Watch, Pumps);
                 {error, Errno} ->
                     refused(Errno, Ctx)
             end;
@@ -179,11 +179,9 @@ take({dev, Device}) ->
 %% has written what it read. An input pump is stopped rather than awaited:
 %% the program may have left input unread, and the stage that writes it
 %% then sees its reader gone once the starter ends.
-ended(Handler, Pumps) ->
-    Watch = monitor(process, Handler),
+ended(Handler, Watch, Pumps) ->
     Status = receive
-                 {erx_prog_exit, Handler, Exit} ->
-                     demonitor(Watch, [flush]),
+                 {'DOWN', Watch, process, Handler, {shutdown, {program_exit, Exit}}} ->
                      status(Exit);
                  {'DOWN', Watch, process, Handler, _} ->
                      <<"no status">>

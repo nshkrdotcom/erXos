@@ -165,6 +165,20 @@ kbd_label_resize_test() ->
         ?assertEqual({error, einval}, erx_win:resize(Window, {0, 0, 4, 4}))
     end).
 
+%% A program's /dev tree relays kbd, mouse, wctl and label on the handle's
+%% fids (docs/design-files.md, "A program's window"): a label written at an
+%% offset reads back, a kbd record reads raw, and ctl has no clause.
+relay_test() ->
+    with(fun(_) ->
+        {ok, Window} = erx_win:open(?SERVICE, #{}),
+        ?assertMatch({ok, 7, _}, erx_win:write_at(Window, label, 0, <<"a label">>)),
+        ?assertEqual({ok, <<"label">>}, erx_win:read_at(Window, label, 2, 64)),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
+        ?assertMatch({ok, <<"k", _/binary>>}, erx_win:read_at(Window, kbd, 0, 64)),
+        ?assertError(function_clause, erx_win:read_at(Window, ctl, 0, 144)),
+        ?assertError(function_clause, erx_win:write_at(Window, ctl, 0, <<"present">>))
+    end).
+
 no_room_test() ->
     with(fun(#{grant := Grant}) ->
         {ok, _} = erx_win:open(?SERVICE, #{name => <<"first">>}),

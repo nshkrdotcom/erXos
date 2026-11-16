@@ -56,9 +56,9 @@ refused_start_undoes_everything_test() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {3, {buffer, 5, 8192}}, {1, {pipe, w}}]),
     C3 = run(C0, [{holder, ok}, {reserved, ?HAND(1)}, {reserved, {mem, 77, 2, 4096}}, {reserved, ?HAND(2)}]),
     {C4, Actions} = erx_prog_handler_core:step(C3, {refused, enomem}),
-    ?assertEqual([{hand_drop, 1}, {hand_drop, 2}, {unlend, 77}, holder_drop, {answer, {error, enomem}}, exit],
+    ?assertEqual([{hand_drop, 1}, {hand_drop, 2}, {unlend, 77}, holder_drop, {answer, {error, enomem}}],
                  Actions),
-    ?assertEqual(ended, erx_prog_handler_core:phase(C4)).
+    ?assertEqual({ended, normal}, erx_prog_handler_core:phase(C4)).
 
 refused_reservation_undoes_what_came_before_test_() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}, {1, {pipe, w}}]),
@@ -66,10 +66,10 @@ refused_reservation_undoes_what_came_before_test_() ->
     {_, Actions} = erx_prog_handler_core:step(C1, {refused, ebadf}),
     {_, Refused} = erx_prog_handler_core:step(run(C0, []), {holder, {error, eexist}}),
     {_, NoMemory} = erx_prog_handler_core:step(run(C0, []), {holder, {error, enomem}}),
-    [?_assertEqual([{hand_drop, 1}, holder_drop, {answer, {error, ebadf}}, exit], Actions),
+    [?_assertEqual([{hand_drop, 1}, holder_drop, {answer, {error, ebadf}}], Actions),
      %% Another handler's entry is not this handler's to drop.
-     ?_assertEqual([{answer, {error, einval}}, exit], Refused),
-     ?_assertEqual([{answer, {error, enomem}}, exit], NoMemory)].
+     ?_assertEqual([{answer, {error, einval}}], Refused),
+     ?_assertEqual([{answer, {error, enomem}}], NoMemory)].
 
 reports_wait_for_the_start_test() ->
     {ok, C0, _} = new(?PID, [{0, {pipe, r}}]),
@@ -321,6 +321,101 @@ narrowing_test_() ->
      ?_assertEqual({error, einval}, Narrow([{<<"/data">>, ro}, {<<"/data">>, ro}])),
      ?_assertEqual({error, enoent}, files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := [], within := [{<<"/x">>, ro}]})))].
 
+%% No display in a program's table (docs/design-files.md, "Narrowing for a
+%% program"): a display's facet mounted at /n/display and a bind of its
+%% client directory at /mnt/w, an alias that keeps the facet's provider,
+%% pass to no program, whole or narrowed, while the data grant passes.
+no_window_tree_test_() ->
+    Data = #{point => [<<"data">>], provider => {grant, self(), <<"t">>}, root => [], rights => rw},
+    Display = #{point => [<<"n">>, <<"display">>], provider => {facet, display, ?ERX_WINDOWS_TREE_BYTES},
+                root => [], rights => rw},
+    Alias = Display#{point := [<<"mnt">>, <<"w">>], root := [<<"client">>]},
+    Granted = Display#{point := [<<"n">>, <<"d2">>], provider := {grant, self(), ?ERX_WINDOWS_TREE_BYTES}},
+    Table = ?TABLE ++ [Data, Display, Alias, Granted],
+    Narrow = fun(Within) -> files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := Table, within := Within})) end,
+    [?_assertEqual(?TABLE ++ [Data], Narrow(all)),
+     ?_assertEqual([#{point => [<<"n">>], provider => release, root => [<<"n">>], rights => ro},
+                    #{point => [<<"mnt">>], provider => release, root => [<<"mnt">>], rights => ro}],
+                   Narrow([{<<"/n">>, ro}, {<<"/mnt">>, ro}])),
+     %% A narrowing to a place on the window tree leaves no entry there.
+     ?_assertEqual([], Narrow([{<<"/mnt/w/w1">>, rw}]))].
+
+%% The names the export serves at /dev and /etc: a start whose table holds an
+%% entry at or below one is refused, since the entry would hide the name or
+%% put a mount beneath a file.
+export_names_test_() ->
+    Bind = fun(Point) -> #{point => Point, provider => {grant, self(), <<"t">>}, root => [], rights => rw} end,
+    Start = fun(Entries, Within) ->
+                    files_of(erx_prog_handler_core:new(?PID, [], (files())#{table := ?TABLE ++ Entries,
+                                                                           within := Within}))
+            end,
+    [?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"null">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"tty">>, <<"x">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"etc">>, <<"passwd">>])], all)),
+     ?_assertEqual({error, einval}, Start([Bind([<<"dev">>, <<"tty">>, <<"x">>])], [{<<"/dev">>, ro}])),
+     %% Beside the export's names, and at /dev itself, an entry stays.
+     ?_assertMatch([_, _], Start([Bind([<<"dev">>, <<"draw">>])], all)),
+     ?_assertMatch([_, _], Start([Bind([<<"dev">>])], all))].
+%% A program's window (docs/design-files.md, "A program's window"): after the
+%% holder entry and the descriptors, the window action; its /dev grant takes
+%% the place of every entry at /dev; a window beside a buffer, an entry at or
+%% below one of the window's names and a table with no room for /dev refuse.
+window_test_() ->
+    NewOn = fun(Entries, Fds, Display) ->
+                    erx_prog_handler_core:new(?PID, Fds, (files())#{table := ?TABLE ++ Entries, window => Display})
+            end,
+    Bind = fun(Point) -> #{point => Point, provider => {grant, self(), <<"t">>}, root => [], rights => rw} end,
+    Grant = list_to_pid("<0.4242.0>"),
+    Dev = #{point => [<<"dev">>], provider => {grant, Grant, <<"export">>}, root => [<<"dev">>], rights => rw},
+    New = fun(Entries, Fds) -> NewOn(Entries, Fds, display) end,
+    Narrowed = fun(Within) ->
+                       Table = ?TABLE ++ [Bind([<<"data">>]), Bind([<<"dev">>])],
+                       erx_prog_handler_core:new(?PID, [], (files())#{table := Table, within => Within,
+                                                                      window => display})
+               end,
+    {ok, C0, [holder]} = New([Bind([<<"data">>]), Bind([<<"dev">>]), Bind([<<"dev">>, <<"usb">>])], []),
+    {C1, Window} = erx_prog_handler_core:step(C0, {holder, ok}),
+    {C2, Start} = erx_prog_handler_core:step(C1, {windowed, Grant}),
+    {_, [{open, _, _, _, _, Table, _}]} =
+        erx_prog_handler_core:step(run(C2, [started]), ?ASK(7, {file, lopen, <<"x">>, 0})),
+    {_, Refused} = erx_prog_handler_core:step(C1, {refused, enodev}),
+    Full = [Bind([integer_to_binary(N)]) || N <- lists:seq(2, ?ERX_NS_MOUNTS_MAX)],
+    [?_assertEqual([{window, display}], Window),
+     %% A display may be named none: it still gets its window.
+     ?_assertMatch({_, [{window, none}]},
+                   erx_prog_handler_core:step(element(2, NewOn([], [], none)), {holder, ok})),
+     ?_assertEqual([{start, []}], Start),
+     ?_assertEqual(?TABLE ++ [Bind([<<"data">>]), Bind([<<"dev">>, <<"usb">>]), Dev], Table),
+     ?_assertEqual([holder_drop, {answer, {error, enodev}}], Refused),
+     ?_assertEqual({error, einval}, New([], [{3, {buffer, 1, 4096}}])),
+     ?_assertEqual({error, einval}, New([Bind([<<"dev">>, <<"kbd">>, <<"x">>])], [])),
+     ?_assertEqual({error, einval}, New([Bind([<<"dev">>, <<"clipboard">>])], [])),
+     ?_assertMatch({ok, _, _}, erx_prog_handler_core:new(?PID, [], (files())#{table := ?TABLE ++ [Bind([<<"dev">>, <<"kbd">>, <<"x">>])]})),
+     ?_assertEqual({error, einval}, New(Full, [])),
+     ?_assertMatch({ok, _, _}, New(tl(Full) ++ [Bind([<<"dev">>])], [])),
+     ?_assertEqual({error, einval}, erx_prog_handler_core:new(?PID, [], (files())#{window => "d"})),
+     %% Rights only shrink: the window's /dev entry is rw and replaces the
+     %% entries at /dev itself, so one that is read-only there, the starter's or
+     %% left by a narrowing to /dev or to / read-only, refuses the start before
+     %% anything is made. A table with no entry at /dev, as a session's is with
+     %% its release slice read-only at / alone, leaves /dev to the export, which
+     %% every program reaches, and starts; so does a narrowing away from /dev.
+     ?_assertMatch({ok, _, [holder]}, New([], [])),
+     ?_assertMatch({ok, _, [holder]}, New([Bind([<<"data">>])], [])),
+     ?_assertMatch({ok, _, [holder]}, New([Bind([<<"dev">>])], [])),
+     ?_assertEqual({error, eacces}, New([(Bind([<<"dev">>]))#{rights := ro}], [])),
+     ?_assertEqual({error, eacces}, New([(Bind([<<"dev">>]))#{rights := rx}], [])),
+     %% An entry on a window tree passes to no program, so it caps nothing; and
+     %% an entry that hides one of the window's names refuses with einval first.
+     ?_assertMatch({ok, _, [holder]},
+                   New([(Bind([<<"dev">>]))#{provider := {grant, self(), ?ERX_WINDOWS_TREE_BYTES}, rights := ro}],
+                       [])),
+     ?_assertEqual({error, einval}, New([(Bind([<<"dev">>]))#{rights := ro}, Bind([<<"dev">>, <<"kbd">>])], [])),
+     ?_assertEqual({error, eacces}, Narrowed([{<<"/dev">>, ro}])),
+     ?_assertEqual({error, eacces}, Narrowed([{<<"/">>, ro}])),
+     ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/data">>, rw}])),
+     ?_assertMatch({ok, _, [holder]}, Narrowed([{<<"/dev">>, rw}]))].
+
 probe_test_() ->
     [?_assertMatch({_, [?ANSWER(5, ok)]}, erx_prog_handler_core:step(running(), ?ASK(5, {probe, ?PID}))),
      ?_assertMatch({_, [?ANSWER(5, {error, esrch})]},
@@ -400,9 +495,19 @@ refused_frames_after_a_stop_ask_nothing_more_test() ->
 stop_once_then_exit_test() ->
     {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
     {C2, []} = erx_prog_handler_core:step(C1, stop),
-    {C3, [{tell_starter, 265}, exit]} = erx_prog_handler_core:step(C2, {exit_status, 265}),
-    ?assertEqual(ended, erx_prog_handler_core:phase(C3)),
+    {C3, []} = erx_prog_handler_core:step(C2, {exit_status, 265}),
+    ?assertEqual({ended, {shutdown, {program_exit, {signaled, sigkill}}}}, erx_prog_handler_core:phase(C3)),
     ?assertEqual({C3, []}, erx_prog_handler_core:step(C3, {report, {pipe_lost, 9, 1}})).
+
+%% A program that exited before the stop reached it keeps its own status.
+a_stop_behind_an_exit_keeps_its_status_test() ->
+    {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
+    {C2, []} = erx_prog_handler_core:step(C1, {exit_status, 3}),
+    ?assertEqual({ended, {shutdown, {program_exit, {exited, 3}}}}, erx_prog_handler_core:phase(C2)).
+
+a_port_closed_without_a_status_is_lost_test() ->
+    {C1, []} = erx_prog_handler_core:step(running(), port_closed),
+    ?assertEqual({ended, program_lost}, erx_prog_handler_core:phase(C1)).
 
 refused_send_stops_the_program_test() ->
     {C1, [{send, _}]} = erx_prog_handler_core:step(running(), {report, {pipe_lost, 9, 1}}),

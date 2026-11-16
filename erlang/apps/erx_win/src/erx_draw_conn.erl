@@ -69,7 +69,7 @@ report's state shows neither the images, the pixels nor the write
 
 -include("generated/erx_abi.hrl").
 
--export([start/1, start_link/1, write/2, read/2, resized/1]).
+-export([start/1, start_link/1, write/2, read/2, resized/1, ctl/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 -export_type([spec/0, answer/0]).
 
@@ -135,6 +135,15 @@ whose rectangles named pixels of the old size.
 resized(Conn) ->
     call(Conn, resized).
 
+-doc """
+draw(3)'s 144 bytes of information on image 0 as they stand between writes
+(erx_draw_core:ctl/1), what a program reads from its `/dev/ctl`
+(docs/design-display.md, "The connection's files").
+""".
+-spec ctl(pid()) -> {ok, <<_:1152>>} | {error, ebadf}.
+ctl(Conn) ->
+    call(Conn, ctl).
+
 %% A call, answering {error, ebadf} once the connection has ended.
 call(Conn, Request) ->
     try
@@ -179,6 +188,8 @@ handle_call(resized, _From, #conn{window = Window, core = Core, images = Images}
         {error, _} = Failed ->
             {reply, Failed, Conn}
     end;
+handle_call(ctl, _From, #conn{core = Core} = Conn) ->
+    {reply, {ok, erx_draw_core:ctl(Core)}, Conn};
 handle_call(_Request, _From, Conn) ->
     {reply, {error, badarg}, Conn}.
 
