@@ -7092,14 +7092,20 @@ to the corpus and follow rc
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
   time page. A Phase 1 residual, not fixed in the stopgap.
-* [Medium] WiFi credentials before the vault, development builds only
-  ([design-wifi.md](docs/design-wifi.md#credentials)): the networks'
-  PMKs and SAE PTs sit unsealed in the `credentials` file of the WiFi
-  domain's own directory on the data partition, readable by any session
-  that holds the data partition's tree and from a copy of the medium.
-  It blocks release. The vault's state slot for `wifi`, shared with the
-  Bluetooth design's bonds, closes it, and the release manifest check
-  refuses the development store.
+* [Medium] WiFi's key holder before its release placement, development
+  builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
+  the holder runs as a process of the WiFi domain, so the networks'
+  PMKs and SAE PTs are in the domain that parses the air, and they sit
+  unsealed in the `keys` file of the WiFi domain's own directory on the
+  data partition, readable by any session that holds the data
+  partition's tree and from a copy of the medium; a break of the WiFi
+  domain can also write that file, so enroll a network, and a `pending`
+  Transition Disable mark is lost with the domain's restart. No
+  passphrase enters the domain: `wlankey` derives in the session. It
+  blocks release. The vault's purpose closes it
+  ([design-wifi.md](docs/design-wifi.md#decisions), 1), and the
+  release manifest check refuses a `wifi` row without `wpa_key` or with
+  `wpa_admin`.
 * [Medium] WiFi, SAE not constant-time throughout
   ([design-wifi.md](docs/design-wifi.md#security)): `crypto:sae_pt/3`,
   `sae_commit/5` and `sae_key/5` multiply in constant time, but their
@@ -8851,3 +8857,14 @@ document's "residual risks accepted" paragraph.
   intensity the log service stays down and the machine runs on, as without `erx_console`. Revisit at the security
   closure ([plan.md](docs/plan.md#m11-security-closure)), where a release build may prefer ending the machine with
   a crash record.
+
+* [Low] WiFi, a release front end cannot read the verdicts
+  ([design-wifi.md](docs/design-wifi.md#control-and-inspection)): the
+  verdicts, the saved networks and the failure reasons are `visible
+  all`, and in a release build no session has the machine-wide scope
+  ([design-live.md](docs/design-live.md#inspection)), so a front end in
+  root's session offers a passphrase for every protected network and
+  cannot say which are saved or why a join failed; the system shell
+  reads them. An inspection scope for the holder of a service's
+  administrative facet would close it, a change to design-live.md's
+  scopes.
