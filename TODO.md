@@ -7112,7 +7112,7 @@ to the corpus and follow rc
   kernel.
 
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
-* [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement and the apply steps are tested, and the raspi4b suite only sees the display domain start without a screen.
+* [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement, the apply steps and `erx_boot_framebuffer_words` itself (`boot_manifest_test.rb`) are tested, and the raspi4b suite's tcg-4cpu cell, one QEMU boot under TCG, checks the display domain's record through its driver's framebuffer line and, for the base and offset, only through its picture.
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
 * [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
   a detach while Address Device is in flight releases the address-zero turn, which follows from the port's state,
