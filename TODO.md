@@ -6711,17 +6711,6 @@ to the corpus and follow rc
   handed to Fiasco) an entry: today the proof judges only what the
   exported functions reach, so such a callback's frame and callees go
   unchecked.
-* [Medium] build, stack proof: a `switch` that clang lowers to a jump
-  table ends in an indirect branch that stays inside its function, which
-  `kernel/stack_targets.txt` cannot declare (it lists functions, taken as
-  tail jumps), so the first such switch in a core fails the proof or
-  invites a wrong declaration. The choice is between
-  `-fno-jump-tables` for every proven object (the proof's flags in
-  `tools/lib/erx/stack_proof_run.rb`, the archive's in
-  [design-stopgap.md](docs/design-stopgap.md) and
-  [design-arch-aarch64.md](docs/design-arch-aarch64.md#stack-proof)) and
-  teaching `stack_graph.rb` to recognize a jump table's branch whose
-  targets lie in its own function.
 * [Low] build, stack proof: declarations that nothing uses are accepted
   silently: a `kernel/stack_targets.txt` line whose function holds no
   indirect site at either level, and a `leaf` of `kernel/stack_fiasco.txt`
