@@ -49,9 +49,8 @@ calls only BIFs and preloaded modules, the SHA-256 built-ins of
 a path, the code server included.
 
 The tree `unchecked` opens a window that has no layout, which no module of
-a release does: the tests and the medium boot's checkpoint mount images that
-way, whose blocks pass through unchecked until the security
-closure (docs/plan.md, M11).
+a release does: only the tests mount images that way, whose blocks pass
+through unchecked.
 """.
 
 -export([open/2, read/3]).

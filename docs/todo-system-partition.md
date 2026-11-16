@@ -102,14 +102,13 @@ that proves the code under test ran.
   `verified_image` window role, the `images` and `extents` tables, the
   `image` declaration and the window's `image` field, `erofs_unchecked`,
   `SLOT_IMAGES_START` and `image_extents` in `release_medium.rb`, and the
-  slot's `release.erofs` copy): delete them. The release copy's only readers
-  are tests of the mechanism being deleted: `image_checkpoints` in
-  `tools/lib/erx/medium_boot.rb` (checked by `test/host/medium_boot_test.rb`),
-  which reads `lists.beam` from `/images/release`, and the
-  `SLOT_IMAGES_START` cases of `test/host/release_medium_test.rb` and
-  `test/host/boot_partition_test.rb`. Each moves to the `system` tree: the
-  medium boot reads a package file through the storage domain's grant, and
-  the medium tests read the system partition's image.
+  slot's `release.erofs` copy): delete them. Until then every storage
+  domain's boot logs `erx_blk_service: no image is served: the manifest:
+  enoent`, since `image_windows/1` reads a manifest its namespace does not
+  hold. The release copy's only readers are the `SLOT_IMAGES_START` cases
+  of `test/host/release_medium_test.rb` and `test/host/boot_partition_test.rb`,
+  which move to reading the system partition's image, as the medium boot's
+  `image_checkpoints` does.
 
 ## Residuals
 

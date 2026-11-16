@@ -5197,9 +5197,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   behind the image it is handed that does not answer holds every mount, bind and unmount of the
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
-* [Medium] runtime, `erx_verity`: an image opened with a layout is checked against its tree, but
-  an image opened `unchecked` (the tests' and the medium boot checkpoint's) has no layout, so its blocks pass
-  through unchecked until M11; there is no cache, neither of checked tree blocks, so each read
+* [Medium] runtime, `erx_verity`: there is no cache, neither of checked tree blocks, so each read
   fetches its tree path again, nor the reader's ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only
@@ -7640,12 +7638,6 @@ to the corpus and follow rc
   (`erlang/apps/erx/src/erx_console.erl`).
 
 
-* [Low] test, `erx_verity` (Phase 1): the EROFS reader reads the blocks
-  of an image mounted without a layout, the medium boot checkpoint's (test code alone), unchecked
-  until M11 ([design-storage.md](docs/design-storage.md), E1), so a swapped
-  medium or a flipped bit reaches the parser. Deleting the image windows
-  ([todo-system-partition.md](docs/todo-system-partition.md), deletions) closes it;
-  an image opened with a layout is checked inside `erx_verity:read/3`.
 * [Medium] system domain, the reset count
   ([design-system.md](docs/design-system.md)): any successful login clears the
   count, including a web login, so a machine with a boot fault that lets

@@ -124,9 +124,6 @@ module Erx
     # indexes a create names them by. runtime is the interpreter's image, jit the BeamAsm
     # image's, the one whose manifest carries ERX_IMAGE_JIT.
     Domain = Data.define(:runtime, :jit, :release, :release_files)
-    # The system release's EROFS image in the slot, as erx_blk_image:place/2 takes it: the
-    # manifest's format number and its one extent's offset and length in bytes.
-    SlotImage = Data.define(:format, :slot_offset, :length)
     # What the BeamAsm domain evaluates in NAMED_HALT's place: a halt with status 0 says its
     # boot script ran, translated by BeamAsm, which needs a space that allows JIT objects
     # (docs/design-runtime.md, "BeamAsm"), and that the image it runs is BeamAsm's.
@@ -343,14 +340,6 @@ module Erx
       Domain.new(runtime: runtime, jit: jit, release: run.fetch('entry'), release_files: run.fetch('files'))
     end
 
-    # Where the release medium's slot holds the system release's EROFS image at erofs, as
-    # the manifest's image row places it: its format and its one extent.
-    def image_in(erofs, codec:)
-      extent = ReleaseMedium.image_extent(erofs)
-      SlotImage.new(format: codec.member('mf_image_format', 'erofs_unchecked'), slot_offset: extent.slot_offset,
-                    length: extent.file.length)
-    end
-
     # The device tree source that adds the firmware's two properties to a tree: dtc
     # merges a node defined twice, so appended to QEMU's own tree it adds them under its
     # /chosen. choice is the slot parser's answer.
@@ -369,17 +358,17 @@ module Erx
     # The production boot's checkpoints with the boot value's inserted: the kernel
     # prints "erx: boot image build ..." and then "erx: boot value ...". The boot ends at
     # the console's command shell, where the person starts the Erlang shell. There the
-    # person reads a release file from the slot's EROFS image at the storage domain
+    # person reads a release file from the system partition's image at the storage domain
     # (image_checkpoints), runs the CRC-32C primitive (crc32c_checkpoints), and
     # then starts a nested command shell and types at it (command_shell_checkpoints),
     # whose lines read the mounts. Each list takes the line before it and sets what the
     # person types there.
-    def checkpoints(points, choice, release:, domain:, image:)
+    def checkpoints(points, choice, release:, domain:)
       at = points.index { |point| point.fetch(:name) == 'image-identity' }
       raise Error, 'the production checkpoints name no image-identity' unless at
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
-      erlang, image_answer = image_checkpoints(ProductionImage::Run::ERLANG_SHELL, release, image)
+      erlang, image_answer = image_checkpoints(ProductionImage::Run::ERLANG_SHELL, release)
       *crc32c, crc32c_answer = crc32c_checkpoints(image_answer)
       *domain_lib, domain_lib_answer = domain_lib_checkpoints(crc32c_answer, domain)
       [*points[0..at], boot_value_checkpoint(choice), *points[(at + 1)...-1],
@@ -469,24 +458,20 @@ module Erx
 
     # At the Erlang shell's banner, the person types an expression that waits for the
     # storage domain to run erx_storage, and so the block driver, and then, at that node
-    # over erpc, places a read-only window on the system release's EROFS image in the
-    # booted slot with erx_blk_image:place/2, opens its image unchecked, mounts it at
-    # /images/release in the storage domain's namespace and prints the MD5 of IMAGE_FILE as the mount shows it; it must
-    # be the MD5 of the file the packer put in the image. The storage domain serves no
-    # image window of its own, since no manifest is in its namespace, so the expression places the window from image, the harness's
-    # SlotImage. A call that raises answers {image_md5, {Class, Reason}}. The echo of the
-    # line does not start {image_md5, so only the answer matches.
-    def image_checkpoints(shell, release, image)
+    # over erpc, opens the system partition's EROFS image on the system window, checked
+    # against the layout of the node's system_image record (docs/design-stopgap.md, "The
+    # booted slot"), mounts it at /images/release in the storage domain's namespace and
+    # prints the MD5 of IMAGE_FILE as the mount shows it; it must be the MD5 of the file
+    # the packer put in the image. A call that raises answers {image_md5, {Class, Reason}}.
+    # The echo of the line does not start {image_md5, so only the answer matches.
+    def image_checkpoints(shell, release)
       entry = release.find { |candidate| IMAGE_FILE.match?(candidate.fetch('path')) }
       raise Error, 'the release has no stdlib lists module to read from the image' unless entry
 
       path = "/images/release/#{entry.fetch('path')}"
       digest = Digest::MD5.file(entry.fetch('artifact')).hexdigest.upcase
-      place = "#\{name=><<\"release\">>,format=>#{image.format},data_bytes=>#{image.length}," \
-              "extents=>[{#{image.slot_offset},#{image.length}}]}"
-      read = "fun()->{ok,ImSlot}=erx_blk_image:boot_slot(erx_device_record:records())," \
-             "{ok,ImWindow}=erx_blk_image:place(#{place},ImSlot),{ok,ImPid}=erx_blk_window:start_link(ImWindow)," \
-             "{ok,ImImage}=erx_verity:open(ImPid,unchecked),ok=erx_ns:mount({erofs,ImImage},<<\"/images/release\">>,[])," \
+      read = "fun()->{ok,ImLayout}=erx_device_record:system_image(),{ok,ImPid}=erx_blk_service:window(system)," \
+             "{ok,ImImage}=erx_verity:open(ImPid,ImLayout),ok=erx_ns:mount({erofs,ImImage},<<\"/images/release\">>,[])," \
              "case file:read_file(\"#{path}\") of {ok,B}->binary:encode_hex(erlang:md5(B));E->E end end"
       expression = "ImWait=fun ImW(0)->timeout;ImW(N)->case lists:keymember(erx_storage,1,try erpc:call('#{STORAGE_NODE}'," \
                    "application,which_applications,[],1000) catch _:_->[] end) of true->ok;false->timer:sleep(500),ImW(N-1) end end," \
@@ -526,13 +511,12 @@ module Erx
                                         .build_medium(directory: directory, machine: @machine, manifest_source: @manifest)
         codec = ABI::Codec.new(ABI::Generator.plan(root: @root).schema)
         domain = MediumBoot.domain_in(built.archive, codec: codec)
-        slot_image = MediumBoot.image_in(built.erofs, codec: codec)
-        cpus.to_h { |count| ["hvf-#{count}cpu", boot(count, built, written, domain, slot_image)] }
+        cpus.to_h { |count| ["hvf-#{count}cpu", boot(count, built, written, domain)] }
       end
 
       private
 
-      def boot(count, built, written, domain, slot_image)
+      def boot(count, built, written, domain)
         directory = OutputDirectory.prepare(root: @root, mode: 0o700,
                                             path: File.join(@root, 'build/medium-boot', "hvf-#{count}cpu-#{Process.pid}-#{Random.bytes(8).unpack1('H*')}"))
         medium = written.fresh(directory: directory)
@@ -545,7 +529,7 @@ module Erx
                                                   memory_mib: @machine.memory_mib)
         Qemu.new(root: @root, runner: @runner, program: @qemu)
             .run(platform: @machine.platform, accel: 'hvf', cpus: count, image: image, memory_mib: @machine.memory_mib, directory: File.join(directory, 'boot'),
-                 checkpoints: MediumBoot.checkpoints(points, choice, release: built.release, domain: domain, image: slot_image), dtb: firmware_tree(count, image, disks, choice, directory),
+                 checkpoints: MediumBoot.checkpoints(points, choice, release: built.release, domain: domain), dtb: firmware_tree(count, image, disks, choice, directory),
                  disks: disks)
         'passed'
       end
