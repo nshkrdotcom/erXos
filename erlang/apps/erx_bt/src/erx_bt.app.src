@@ -1,14 +1,17 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The Bluetooth stack (docs/design-bluetooth.md). Its pure cores so far: erx_h4, H4
-%% framing over the controller's line; erx_hci, the HCI codec; and erx_bt_hci_core, the
-%% controller process's core: the bring-up, the command slot, ACL credits and
-%% advertising. The processes over them come with the domain.
+%% The Bluetooth stack (docs/design-bluetooth.md). Its pure cores: erx_h4, H4 framing over
+%% the controller's line; erx_hci, the HCI codec; erx_bt_hci_core, the controller process's
+%% core; erx_bt_adv, the advertising data. Its processes: the store, erx_bt_store, and the
+%% controller group, erx_bt_host_sup, of the link supervisor, the line's reader and writer
+%% and the controller process, erx_bt_hci, over the line mounted at /line.
 {application, erx_bt,
  [{description, "erXos Bluetooth Low Energy"},
   {vsn, "1"},
-  {modules, [erx_bt_hci_core, erx_h4, erx_hci]},
-  {registered, []},
-  {applications, [kernel, stdlib]},
+  {modules, [erx_bt_adv, erx_bt_hci, erx_bt_hci_core, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx,
+             erx_bt_link, erx_bt_link_sup, erx_bt_store, erx_h4, erx_hci]},
+  {registered, [erx_bt_hci, erx_bt_host_sup, erx_bt_line_rx, erx_bt_line_tx, erx_bt_link_sup,
+                erx_bt_store]},
+  {applications, [kernel, stdlib, erx]},
   {env, []}]}.

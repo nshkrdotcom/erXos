@@ -7420,6 +7420,17 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
+  `abi/services/line.txt`, `erx_ns:place(line)` and the line service, `erx_line`, are not written, so the
+  controller group runs only over a model line in host tests; `erx_bt_line_rx` reads 65536 octets, the
+  design's `line_rx_max`, from a module constant until `line.txt` defines the limit.
+* [Medium] bluetooth, the domain's top (`erlang/apps/erx_bt`; docs/design-bluetooth.md "Concurrency"): the
+  store and the controller group exist, not `erx_bt_sup`, the application callback that mounts the facets
+  with `erx_ns:mount_facets/1`, or the patch reader `erx_bt_patch:records/1`; `erx_bt_hci` refuses a row
+  with a `patch` key (`patch_unsupported`) until the reader lands.
+* [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
+  no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
+  needs the table's declarations brought forward from stage 2.
 * [Low] protocol apps, one clock seam (`erlang/apps/erx_net/src/erx_net_clock.erl`; the process edges of
   `erx_bt`, USB, Wi-Fi and `erx_ntpd`): each protocol process keeps one wake-up timer at its core's
   `next_deadline/1` (docs/design.md, "Deadlines in state"), and only `erx_net` has a clock module, with the

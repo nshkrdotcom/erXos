@@ -106,6 +106,19 @@ limit hci_advertising_type_ind u8 0x00
 limit hci_own_address_random u8 0x01
 limit hci_advertising_channels_all u8 0x07
 limit hci_advertising_interval_unit_us u32 625
+# The advertising and scan response data are AD structures, each a length, a type and its
+# data (Vol 3 Part C, 11), of the types Bumble names (bumble/core.py, lines 1594 to 1622;
+# unverified against the Core Specification Supplement): the Flags, complete lists of
+# 16-bit and 128-bit service UUIDs, the shortened and the complete local name, and the
+# appearance. The Flags erXos sends say LE General Discoverable and BR/EDR not supported.
+enum bt_ad_type u8
+  value flags 0x01
+  value uuid16_complete 0x03
+  value uuid128_complete 0x07
+  value name_shortened 0x08
+  value name_complete 0x09
+  value appearance 0x19
+limit bt_ad_flags_general_no_bredr u8 0x06
 
 # erXos's bounds (docs/design-bluetooth.md, "What a radio peer can make the domain
 # spend"): the longest ACL packet the host accepts, which Host Buffer Size states, 4
@@ -117,6 +130,9 @@ limit bt_connections_max u8 4
 limit bt_acl_credits_max u8 8
 limit bt_host_acl_packets u16 8
 limit bt_advertising_interval_us u32 100000
+# The notifications a link holds waiting for its share of the credits (docs/design-bluetooth.md,
+# "What a radio peer can make the domain spend").
+limit bt_notify_queue u8 16
 
 # erXos's deadlines (docs/design-bluetooth.md, "The bring-up"): every command's answer,
 # and the patch's two waits, NetBSD's (usr.sbin/btattach/init_bcm43xx.c, lines 123-125
