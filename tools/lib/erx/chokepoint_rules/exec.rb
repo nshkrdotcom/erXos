@@ -38,15 +38,16 @@ module Erx
         # liberx's one function that maps an executable file's code into a
         # program. Only erx_exec calls it; the program that runs it at
         # libexec/erx_exec is not in the tree yet, so no site outside the
-        # loader names it.
+        # loader names it but its host driver, which runs it over memory
+        # calls of its own.
         Chokepoints::Forbidden.new(
           name: 'exec-code-map',
           rule: "only erx_exec maps an executable file's code into a program: erx_exec_load " \
-                "(#{EXEC_LOAD}) is named only by its own module",
+                "(#{EXEC_LOAD}) is named only by its own module and its host driver",
           design: 'docs/design.md#chokepoint-checks',
           scope: EXEC_SCOPE,
           pattern: /\berx_exec_load\b/,
-          sites: %w[liberx/exec/load.c liberx/exec/load.h].map { |path| Chokepoints::Site.new(glob: path) },
+          sites: %w[liberx/exec/load.c liberx/exec/load.h test/fixtures/exec_load_effects.c].map { |path| Chokepoints::Site.new(glob: path) },
           seed: { 'liberx/program/seeded.c' => "bool f(void) { return (erx_exec_load(o, n, b, &i, &e)); }\n",
                   'otp/erts/emulator/sys/erxos/seeded.c' => "(void)erx_exec_load(o, n, b, &i, &f);\n" }
         )

@@ -162,20 +162,7 @@ it; git history is the record of completed work.
   the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
   the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
   record, the task script's base symbol and dynamic sections, and the removal of `image` from the
-  startup message (`abi/protocols/prog.txt`, the `image` union). `load.c` plans the page-rounded view
-  size, not the file's exact length (`load.c:92`, `:119`); its rollback discards the statuses of three
-  releases (`load.c:125`, `:131`, `:132`), where a refused release is the terminal refused-cleanup outcome;
-  and `load.h`'s comment says the executable releases the view, which the loader releases itself before
-  the transfer. The planner passes every dynamic tag it does not name (`elf_plan.c:180`) where the
-  design's list is closed, `abi/formats/elf64.txt` holds no such list (it names only the tags the
-  planner tests, none of the six constructor and destructor tags the static link writes); a
-  position-independent file's `PT_DYNAMIC` is optional (`elf_plan.c:634-638`) and need only lie in some
-  load, where the design requires exactly one, not empty, in the writable load; and a fixed file's empty
-  `PT_DYNAMIC` fails `erx_elf_dynamic` with `dynamic_terminator` (`elf_plan.c:645`, `:220`) and would fail
-  `erx_elf_metadata_mapped` with `dynamic_mapping` after it (`elf_plan.c:464-465`, called at `:659`), so
-  the shared task script's fixed link would be refused first by the boot packer's planner
-  (`release.rb:146`, `production_image.rb:1766`) and on the stopgap by `erx_image_map` for a file entry
-  (`service_task.c:515`). The static link needs `-fPIE`
+  startup message (`abi/protocols/prog.txt`, the `image` union). The static link needs `-fPIE`
   objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail
   the link, and `liberx`'s program objects without it fail with 344 absolute relocations in read-only
   tables, mostly the generated `prog_profile.c`; `task.ld` names none of `.rela.dyn`, `.hash`,
@@ -185,8 +172,8 @@ it; git history is the record of completed work.
   on the stopgap. The load trusts its object to be a sealed code
   object: it checks neither, the stopgap maps a pool object read-execute, and the relocations are read
   again from the view, so a writer of an unsealed object could move them [Medium, security residual]; the
-  exec record names only an object the command server sealed. `load.c` runs in no test yet: the
-  programs suite gets the bootstrap's cases (design-programs.md, "Loading an executable") when the
+  exec record names only an object the command server sealed. `load.c` runs only in its host test, over memory calls
+  of the test's own (`test/fixtures/exec_load_effects.c`), which checks its outcomes and releases but not the bytes it maps, and whose stand-in space checks neither page alignment nor that a map lies in a reservation, nor makes an object shorter than the rounded length [Low]; nothing yet states who guarantees the code object's zeros past the file's last byte, which a read-only or executable segment ending in the last page maps into the program [Medium, security residual]: the programs suite gets the bootstrap's cases (design-programs.md, "Loading an executable") when the
   program lands.
   So a native app's start of `/app/bin/NAME` is refused
   `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this

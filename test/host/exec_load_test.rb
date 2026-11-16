@@ -40,10 +40,15 @@ class ExecLoadTest < Minitest::Test
                  Erx::Generated.path('liberx/generated/abi_reader.c', root: root),
                  File.join(root, 'test/fixtures/exec_load_driver.c'), '-o', @driver],
                 name: 'compile-exec-load', deadline: 60)
-    # The effects edge builds against the kernel interface's declarations; only a program links it.
-    @runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-fsyntax-only',
+    # The effects edge over the memory calls of test/fixtures/exec_load_effects.c.
+    @effects = File.join(@directory, 'exec-load-effects')
+    @runner.run(['clang', '-std=c17', '-Wall', '-Wextra', '-Werror', '-pedantic', '-O1', '-g', *flags,
                  *Erx::Generated.include_flags(root: root), '-I', File.join(root, 'include'), '-I', root,
-                 File.join(root, 'liberx/exec/load.c')], name: 'syntax-exec-load', deadline: 60)
+                 File.join(root, 'liberx/elf_plan.c'), File.join(root, 'liberx/exec/load_plan.c'),
+                 File.join(root, 'liberx/exec/load.c'),
+                 Erx::Generated.path('liberx/generated/abi_reader.c', root: root),
+                 File.join(root, 'test/fixtures/exec_load_effects.c'), '-o', @effects],
+                name: 'compile-exec-load-effects', deadline: 60)
   end
 
   def teardown
@@ -66,10 +71,23 @@ class ExecLoadTest < Minitest::Test
                output: text)
   end
 
-  def run_driver(*arguments)
-    @runner.run([@driver, *arguments.map(&:to_s)], name: 'exec-load', deadline: 30)
+  def run_driver(*arguments, driver: @driver)
+    @runner.run([driver, *arguments.map(&:to_s)], name: 'exec-load', deadline: 30)
   rescue Erx::CommandError => error
     error.result
+  end
+
+  Effects = Data.define(:outcome, :reserves, :releases)
+
+  # erx_exec_load over the effects driver's memory calls: the outcome line, each
+  # reservation [address, size] and each release [address, size, status].
+  def load_effects(bytes, refuse: 0, fail: '-')
+    input = File.join(@directory, 'effects.elf')
+    File.binwrite(input, bytes)
+    text = File.read(run_driver(input, refuse, fail, driver: @effects).fetch('log'))
+    Effects.new(outcome: text.lines.last.chomp,
+                reserves: text.scan(/^reserve (\d+) (\d+)$/).map { |row| row.map(&:to_i) },
+                releases: text.scan(/^release (\d+) (\d+) (-?\d+)$/).map { |row| row.map(&:to_i) })
   end
 
   def pages(bytes) = (bytes + PAGE - 1) / PAGE * PAGE
@@ -154,5 +172,44 @@ class ExecLoadTest < Minitest::Test
     assert_match(/^error reservation /, loaded.output)
     loaded = load(bytes, reserved: 0xffff_ffff_ffff_f000, size: 3 * PAGE)
     assert_match(/^error reservation /, loaded.output)
+  end
+  # The file's end: the planner reads the file's exact bytes, not the object's
+  # page-rounded view, so a segment whose file bytes reach one byte into the last
+  # page's padding is refused (seed: a load that plans the rounded length accepts it).
+  def test_the_load_plans_the_files_exact_bytes
+    bytes = patch(ElfFixture.pie, WRITABLE, FILE_SIZE, 3000)[0, PAGE + 3000]
+    assert_match(/^loaded \d+ \d+$/, load_effects(bytes).outcome)
+    assert_equal 'refused load_file_extent 4096', load_effects(patch(bytes, WRITABLE, FILE_SIZE, 3001)).outcome
+  end
+
+  # A load that succeeds releases its view of the object and keeps the executable's
+  # reservation; a refused release of the view is refused cleanup, never a load
+  # (seed: a load that discards the release's status reports the file loaded).
+  def test_a_load_releases_its_view_and_a_refused_release_is_refused_cleanup
+    loaded = load_effects(ElfFixture.pie)
+    assert_match(/^loaded \d+ \d+$/, loaded.outcome)
+    view, = loaded.reserves
+    assert_equal [[*view, 0]], loaded.releases
+    refused = load_effects(ElfFixture.pie, refuse: 1)
+    assert_equal 'cleanup_refused', refused.outcome
+    assert_equal [[*view, -1]], refused.releases
+  end
+
+  # A load that fails releases the reservation and the view, whether a call failed
+  # part way or the plan refused the file, and reports the step that failed; a refused
+  # release on that route is refused cleanup.
+  def test_a_failed_load_releases_everything_and_a_refused_release_is_refused_cleanup
+    failed = load_effects(ElfFixture.pie, fail: 'child:1')
+    assert_equal 'failed child -6', failed.outcome
+    view, reservation = failed.reserves
+    assert_equal [[*reservation, 0], [*view, 0]], failed.releases
+    view_map_failed = load_effects(ElfFixture.pie, fail: 'map:1')
+    assert_equal ['failed view -6', [[*view, 0]]], [view_map_failed.outcome, view_map_failed.releases]
+    refused = load_effects(ElfFixture.valid)
+    assert_match(/^refused fixed_image /, refused.outcome)
+    assert_equal [[*refused.reserves.first, 0]], refused.releases
+    [1, 2].each do |index|
+      assert_equal 'cleanup_refused', load_effects(ElfFixture.pie, fail: 'child:1', refuse: index).outcome
+    end
   end
 end
