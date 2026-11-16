@@ -43,8 +43,9 @@ class ErxRamfsTest < Minitest::Test
                   "decode_frame(Frame, #grant{client = Client, rights = Rights}) ->\n",
               caught_by: 'names_that_break_the_grammar_are_refused_before_a_callback_test'),
     Fault.new(name: "a grant that does not clunk a dead owner's fids", file: "#{APP}/erx_fs_grant.erl",
-              from: "            drain(lists:foldl(fun end_fid/2, Grant, maps:keys(Fids)));\n",
-              to: "            _ = Fids,\n            {[], Grant};\n",
+              from: "    lists:foldl(fun(Fid, Step) -> then(Step, fun(G) -> end_owned(Fid, G) end) end,\n" \
+                    "                Forgotten, maps:keys(Owned)).\n",
+              to: "    _ = Owned,\n    Forgotten.\n",
               caught_by: 'a_dead_owners_open_file_gives_back_what_it_held_test'),
     Fault.new(name: 'a grant that never forgets a walked node', file: "#{APP}/erx_fs_grant.erl",
               from: '    _ = [optional(Module, forget, [Node, Fs], ok) || Node <- Unnamed],',
