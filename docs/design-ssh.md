@@ -489,18 +489,25 @@ anyone who writes the data partition, or anything running in the
 session, add a login. `~/.ssh/known_hosts` and `~/.ssh/config` stay
 ordinary files of the principal, used by clients as on FreeBSD.
 
-**Before the vault** (stages 1 to 3, development builds only), `root`
-has one login key: the public half of the clone's development login key,
-an Ed25519 pair that `tools/erx setup`, or the first image build that
-needs it, makes with the host's `ssh-keygen` in `erxos/dev-key` under
-git's common directory, so every worktree of a clone shares it and no
-commit holds it (`tools/lib/erx/dev_key.rb`). The image build writes the
-public line, without its comment, into the system release and every
-domain release at `abi/erx_abi.txt`'s `ssh_authorized_keys_path`, and the
-packer refuses that file in any build but a development one. Only the
-QEMU harnesses that log in pass the key to the image build, which a
+**Before the vault** (stages 2 and 3, development builds only), `root`
+is the one principal that logs in, and its login keys are the lines of
+one file that whoever prepares the medium writes onto it before the
+first boot: `authorized_keys`, in the root directory of the medium's
+record partition, the FAT volume that holds the boot-selection record
+([Root's login keys on the medium](#roots-login-keys-on-the-medium)).
+The host key is made at the first boot ([Host keys](#host-keys)).
+
+The development login key is the clone's Ed25519 pair that
+`tools/erx setup`, or the first image build that needs it, makes with
+the host's `ssh-keygen` in `erxos/dev-key` under git's common directory,
+so every worktree of a clone shares it and no commit holds it
+(`tools/lib/erx/dev_key.rb`). For an image a QEMU harness logs in to,
+the image build writes the key's public line, without its comment, as
+the record volume's `authorized_keys`, as a user would. Only the
+harnesses that log in pass the key to the image build, which a
 chokepoint check holds (`Checks::LOGIN_KEY_BUILDERS`), so the images the
-website offers carry none. The private half stays on the host.
+website offers carry no `authorized_keys`, and whoever writes one of
+them to a card adds their own. The private half stays on the host.
 `tools/erx ssh` runs the host's `ssh` with that key, the guest's
 forwarded port and no configuration file, and checks the guest's host
 key under one alias against a known-hosts file of the boot's own, in
@@ -511,14 +518,131 @@ operator's terminal, so the session's bytes reach it unchanged, as with
 any `ssh` to a UNIX host: a session with a pseudo-terminal is a tty, and a
 program's output to a tty is its own. Text attributed to the guest, such
 as log records and names, keeps going through each sink's escaping
-function, and development builds run trusted code only. At stage 1
-`erx_ssh_dev`'s key callback reads exactly that release file and admits
-its key for `root` alone; from stage 2 the facet does. The facet issues
+function, and development builds run trusted code only. The facet
+admits root's keys from the medium for `root` alone. It issues
 cookies and derives each login's session identifier as at stage 4, but until the system domain has its Ed25519 verifier and the
 vault the host key, it compares no host key and accepts `login_key` on
 the SSH domain's own signature check, a development-build residual
 recorded in `TODO.md`. `login_passphrase` answers `unavailable`, since no
 passphrase exists.
+
+### Root's login keys on the medium
+
+The construction: **the file is read once per boot at the edge, and the
+system domain receives only key blobs.** The storage domain that serves
+`system` reads `authorized_keys` through a read-only window on the
+record partition when it starts, decodes its lines, and serves the keys
+they name as a read-only tree of one file holding each key's 51-byte
+blob after the other. The login facet reads that file and checks each
+blob with `erx_ssh_wire`, the decoder it already has for the blobs a
+login carries. So the system domain gains no FAT reader, no base64
+decoder and no OpenSSH line parser, and what reaches it from the medium
+is what reaches it from the network: fixed-format key blobs (S3).
+
+**Where the file lies.** The record partition is the medium's first
+entry, a FAT16 volume that a computer the medium is put into mounts
+as a disk ([design-storage.md](design-storage.md#data-model)). It
+belongs to neither slot: an update writes its two record sectors and
+nothing else of it, so a file written there survives every update. A
+slot's boot partition would not do: an update replaces the spare's
+boot partition whole, the check of a slot hashes its boot partition whole
+([design-storage.md](design-storage.md#invariants), U5), and no domain
+parses a boot partition's FAT. On QEMU the medium's record partition is
+the same FAT16 volume as the card's, written by the same code, so the
+file lies at the same place on both; the harness, which reads only the
+record's sector, does not change. A user adds the file to a QEMU
+medium as to a card, by attaching the image on the host and copying the
+file onto its first FAT volume.
+
+**No domain writes it.** The record partition has three windows: the
+slot writer's two, on the record's sector (`boot_selection`) and on the
+reset count's (`reset_count`), one sector each, and the storage
+domain's `record_volume` window on the whole partition, which
+`abi/manifest.txt` does not mark writable, so its driver refuses every
+write to it. No window grants a write to any other sector of the
+partition, so the FAT, the root directory and the file are written by no
+domain, whatever the domains do; the one code that could, the block
+driver, alone calls the device ([design-storage.md](design-storage.md#invariants),
+PW1). Physical write access to the medium is root's login, a known
+limitation of every build before the vault, stated in the user
+documentation.
+
+**The accepted format** is a subset of sshd(8)'s AUTHORIZED_KEYS FILE
+FORMAT ([Sources](#sources)), read as bytes:
+
+* a line ends at a line feed, and a carriage return just before it is
+  dropped, so a file saved on Windows reads the same; a last line
+  without its line feed counts;
+* leading spaces and tabs are skipped; a line that is then empty, or
+  starts with `#`, is ignored, as sshd ignores it;
+* any other line is fields separated by runs of spaces and tabs: the
+  first is exactly `ssh-ed25519`; the second is the key, exactly 68
+  characters of RFC 4648's base64 alphabet, which decode to 51 bytes
+  with no padding and no spare bits, so each blob has one spelling, and
+  which must be the blob of the name `ssh-ed25519` and 32 bytes; anything after the key is
+  the comment, which is never read or shown.
+
+**Options are refused, not ignored.** sshd's options field comes before
+the key type, and each option limits or widens what a login with the key
+may do (`restrict`, `command=`, `from=`, `no-pty`, `permitopen=`). The
+daemon has none of those controls, and ignoring an option would give the
+key more than its line grants. So a line whose first field is not
+`ssh-ed25519`, whether it carries options, another key type or
+`cert-authority`, is not a key. sshd skips a line it cannot use and reads
+on (`auth2-pubkeyfile.c:236-249`, `:288-301`); so does the reader, since
+a skipped line adds no authority and the other lines stay usable.
+
+**Bounds.** Each bound is a plain number the reader checks before it
+uses what the bound covers:
+
+| Bound | Value | Past it |
+| --- | --- | --- |
+| the file | 16 KiB | the whole file is refused |
+| a line, its line feed included | 1024 bytes | the line is skipped |
+| keys | 16 | the whole file is refused |
+
+An `ssh-ed25519` line is 80 bytes and its comment; sshd's 8 KiB lines
+are for RSA keys, which the file does not take. A bound on the whole
+file refuses it whole, since keeping a prefix would drop keys silently;
+a fault of one line skips that line.
+
+**Diagnostics.** Each finding is one log record of the storage domain,
+which reaches the console, naming the file, the line number and one
+reason of a closed set: `not a plain ssh-ed25519 key`, `key does not
+decode` and `line longer than 1024 bytes` for a skipped line, and for
+the file `no authorized_keys`, `longer than 16 KiB`, `more than 16
+keys`, `the record partition is not its FAT volume` and `does not read`.
+No byte of the file is shown, so nothing a user wrote reaches a sink. At
+its first read of the boot the facet logs `root: N SSH login keys from
+the medium`, or `root has no SSH login key` when there are none. A
+missing, empty or wholly refused file is a boot with no SSH login, since
+no passphrase exists before the vault; the console still logs in.
+
+**What the system domain reads.** The tree is `login_keys`, of one
+file, `root`. The facet reads it at the boot's first `key_ok` or
+`login_key` and keeps it for the boot. It refuses the whole file, with a
+log record, when its length is not a multiple of 51 or is past 16 keys',
+or when a blob does not decode under `erx_ssh_wire`'s key layout or is
+one of the eight points of small order that `add_login_key` refuses
+([Logging in](#logging-in)): the blobs are the reader's output, so a fault
+in them is the reader's and not a line to skip. A read that fails, the
+storage domain not serving yet or restarting, answers `unavailable`, and
+the next request reads again.
+
+**Once per boot.** The reader reads the file before it serves the tree,
+so a read of `root` finds the whole result or nothing. No domain writes
+the partition, so a restart of the storage domain reads the same bytes
+and serves the same file, and a restart of the facet reads it again.
+Nothing is written, so a power cut loses nothing. A key added to the
+medium takes effect at the next boot.
+
+**The code.** The reader is two pure functions over the medium's bytes,
+run in the storage domain at its start: `erx_fat`'s read core, which finds
+one file of a FAT volume's root directory by its long name
+([design-storage.md](design-storage.md#removable-media-fat)), and
+`erx_boot_keys:decode/1`, which takes the file's bytes and returns the
+blobs and the findings, or the file's refusal. Each reads through a cursor
+and has a fuzz target ([Verification](#verification)).
 
 ### Sessions, ttys and shells
 
@@ -708,7 +832,11 @@ identifier.
 2. **The SSH domain and `rc`** (1b-G, M14). The SSH domain, the login
    facet with its cookies and derived session identifiers, `erx_ssh_line`
    with its ttys and jobs, the channel and algorithm policies and the
-   limits, in development builds with `root` and the development key.
+   limits, in development builds with `root` and its keys from the
+   medium ([Root's login keys on the medium](#roots-login-keys-on-the-medium)).
+   It replaces stage 1's daemon: `erx_ssh_dev`, the release file at
+   `abi/erx_abi.txt`'s `ssh_authorized_keys_path` and the packer's
+   refusal of that file are deleted, so root's keys have one source.
 3. **The Raspberry Pi 4** (1b-I). Stage 2 over the board's Ethernet.
 4. **The vault** (M11, M12). Host key facet, the facet's comparison of
    the host key and its signature check with the system domain's
@@ -756,6 +884,7 @@ change.
 | **H5.** The system domain runs no OpenSSL; neither it nor the vault parses an SSH packet, and the vault decodes no SSH structure | the facet's decoder compares two fixed-format blobs against their one layout and takes five length-prefixed strings, each checked against the bytes that remain, in Erlang; the facet hashes the input as given with `erx_bytes:sha256/1` and checks Ed25519 with the update verifier, which alone decodes a key's bytes as a point; the vault sees lookups, passphrases, 32-byte exchange hashes and key blobs the principal service has already decoded |
 | **H6.** The host key never changes silently | it is made only when absent, and a corrupt one stops the daemon |
 | **H7.** A key login names one exchange that began after the facet chose its cookie and that carried this machine's host key | the facet derives the session identifier from the exchange input itself, finds its own outstanding cookie and the host key in that input, and retires the cookie at the login |
+| **H8.** Before the vault, root's login keys are the medium's `authorized_keys` and nothing else, no domain can write that file, and the system domain reads only key blobs from it | the slot writer's record windows are one sector each and the reader's `record_volume` window is not writable; the storage domain decodes the lines and serves 51-byte blobs; the facet checks each with `erx_ssh_wire` |
 
 ## Failure handling
 
@@ -772,6 +901,9 @@ change.
 | the network domain restarts | the grant's sockets close | the listener and every connection end; `erx_ssh` listens again when the grant answers |
 | a session cannot start (quota, budget) | the domain service's refusal | the login answers `unavailable`, logged with the reason; the client sees authentication fail |
 | entropy unavailable in the SSH domain | `crypto` raises in the key exchange | that connection closes ([design-crypto.md](design-crypto.md#seeding)) |
+| `authorized_keys` missing, empty or refused whole (before the vault) | the reader's finding, and the facet's `root has no SSH login key` | every key login answers `no_match`; the console logs in as before |
+| a line of `authorized_keys` that is not a plain `ssh-ed25519` key, does not decode or is too long | the reader's finding, with the line's number | that line is skipped; the other lines' keys log in |
+| the `login_keys` tree not served when a key login arrives | the facet's read fails | that login answers `unavailable`; the next one reads again |
 
 ## Refusals and error results
 
@@ -842,7 +974,15 @@ the facet answers `no_match`.
   key's private half is held only by the host that built the image, in
   its clone's owner-only key directory: no image, receipt or log carries
   it, so whoever holds that clone's key directory logs in as `root` to
-  every development image the clone builds, and to nothing else.
+  every development image the clone builds for a harness, and to nothing
+  else.
+* **Root's keys on the medium** (before the vault). Whoever can write the
+  medium adds a login as `root`, the known limitation above. While the
+  machine runs no domain can write the file, but its keys are as sound as
+  the storage domain that reads them: that domain serves `system` to
+  every domain, so a flaw in it that a client's requests could steer
+  would be a way to root's login. Development builds run trusted code
+  only; the dependency is a security residual in `TODO.md`.
 * **Downgrade.** The lists are fixed and no SHA-1 signature, CBC cipher or
   finite-field group is offered. The strict key exchange holds for every
   client that offers it; a client that does not is exposed to the prefix
@@ -888,11 +1028,23 @@ on the host; the QEMU suite runs the interop and the ends.
 | limits | the 65th connection is refused; the 11th channel is refused; after a first `none` request, which does not count, the 6th failed attempt is answered with a disconnect | `max_auth_tries` not passed: the 6th failure is answered with `SSH_MSG_USERAUTH_FAILURE` |
 | host key | its fingerprint is the same across a reboot; a corrupt key file stops the daemon with the file named | the key made anew at each start: the fingerprints differ |
 | logging | a login as a user name holding `ESC [`, a newline and a bidirectional override shows each escaped in the record and on the console | the record's user name written through without the sink's escaper: the raw escape reaches the console capture |
+| `erx_boot_keys:decode/1`, host unit tests | a file of two keys with comments, blank lines, `#` lines, leading tabs, CRLF endings and no final line feed gives the two blobs in order; a file of exactly 16 keys and a line of exactly 1024 bytes are taken | `#` lines taken as keys: the comment case gives a finding instead of nothing; the 16-key bound checked with `>=`: the 16-key file is refused |
+| options and other types, host unit tests | `restrict ssh-ed25519 KEY`, `command="ls" ssh-ed25519 KEY`, `ssh-rsa KEY` and `ssh-ed25519` followed by an RSA blob in base64 are each skipped with its reason while the next line's key is taken | the decoder looking for `ssh-ed25519` in any field, as sshd finds a key after its options: the `restrict` line's key is taken |
+| key encoding and bounds, host unit tests | keys of 67 and 69 characters, one ending in `=`, and one holding a character outside the alphabet are skipped as `key does not decode`; a 17-key file and a file of 16 KiB and one byte are refused, and a 1025-byte line is skipped | the length checked as at least 68: the 69-character key is taken; the line bound checked with `>`: the 1025-byte line is taken |
+| `erx_fat`'s root-directory lookup, host unit tests over volumes fsimg writes | `authorized_keys` written with a long name is found, and found as `AUTHORIZED_KEYS`; a deleted entry of that name, `authorized_keys.pub`, a directory of that name and a long name whose checksum does not match its short entry are not; a chain with a link outside the data area, a loop, a chain into the record's own cluster and a size past 16 KiB give `does not read` or the bound, never a crash; a boot sector whose data area does not start at the record's sector is `not its FAT volume` | the range check on a link removed: the out-of-range case raises instead of answering; the deleted-entry marker not checked: the deleted file is found |
+| the fuzz targets of `erx_boot_keys:decode/1` and of the lookup | random and mutated files and volumes never crash either, every blob the decoder returns is 51 bytes that `erx_ssh_wire` accepts, and no lookup reads more than 32 clusters | the range check on a FAT link removed: a mutated link crashes the lookup within the target's budget |
+| no domain writes the file, host test of the block table | every window on the record partition but `boot_selection` and `reset_count` refuses a write; those two cover one sector each, and a write through either to any other sector answers `erange` | the table's single window over the whole record partition kept: a write to the root directory's sector succeeds |
+| the facet's read of `login_keys`, host unit tests | a file of 51-byte blobs gives that key list; a length of 50, a length past 16 keys, a blob naming another type and the neutral point's key each refuse the whole file with a log record, leaving no key | the small-order check skipped: the neutral point's key is admitted |
+| root's keys end to end, on QEMU | an image built with the development key in its record volume logs in with `tools/erx ssh`; an image built with that line prefixed by `restrict` refuses the login and its console shows `line 1: not a plain ssh-ed25519 key`; an image built with no file shows `root has no SSH login key` | the image build writing the key into the system release instead: the first case fails |
 | login keys (stage 4) | `sshkeys add` with a wrong passphrase is refused and with the right one admits the key; `sshkeys del` removes it at once; a key added under `device` and written to the medium by hand does not open | the add path skipping the passphrase check: the wrong-passphrase case succeeds |
 
-OTP's parsers are tested by OTP's suites; `erx_ssh_wire` is the only
-parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
-`ssh_file`.
+OTP's parsers are tested by OTP's suites; `erx_ssh_wire` and
+`erx_boot_keys` are the parsers erXos writes for SSH, and `sshkeys`
+parses its key line with OTP's `ssh_file`. The Raspberry Pi 4's manual
+checklist writes `authorized_keys` onto a card from macOS's Finder and
+from Windows or Linux where one is at hand, boots it, and logs in: that
+those hosts write the file under its long name is unverified until it
+passes ([design-platforms.md](design-platforms.md#trying-a-card-on-a-board)).
 
 ## Interfaces
 
@@ -903,6 +1055,8 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
 | the console interface's six messages | a channel and a tty | `abi/services/console.txt` ([design-live.md](design-live.md#paths)) |
 | the credentials facet: `login_keys`, `add_login_key`, `del_login_key` | a session and the principal service | the principal service's service file, citing [Login keys](#login-keys) |
 | `{ssh_host, Name}` key facet | the SSH domain and the vault | [design-system.md](design-system.md#the-vault) |
+| the `login_keys` tree, read-only, of one file `root` of 51-byte key blobs (before the vault) | the storage domain that serves `system` and the system domain | the system manifest's tree grant, citing [Root's login keys on the medium](#roots-login-keys-on-the-medium) |
+| the `record_volume` window role, configured and not writable | the block driver and the storage domain | `abi/manifest.txt`, citing [design-storage.md](design-storage.md#invariants), PW1 |
 
 ## Alternatives considered
 
@@ -953,6 +1107,21 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   Rejected: whoever writes the data partition or runs in the session
   could add a login, which the vault's design refuses for every other
   credential.
+* **Root's `authorized_keys` on the booted slot's boot partition**, the
+  volume holding `config.txt`, where Raspberry Pi OS takes its own
+  first-boot files. Rejected: an update replaces that partition whole,
+  so the keys would vanish at the first update unless the slot writer
+  parsed FAT to carry them; the check of a slot hashes the partition
+  whole; and no domain parses a boot partition's FAT.
+* **The system domain decoding the file's lines**, or the image build
+  writing raw blobs beside the line. Rejected: the first puts a base64
+  decoder and a line parser of text from the medium into the trusted
+  base; the second gives the file two forms a user must keep in step,
+  and a user writing the card has only the line.
+* **The slot writer reading the file**, since it already holds a window
+  on the record partition. Rejected: the domain that writes slots would
+  parse a volume anyone with the card can craft, against ST-R4 of
+  [design-storage.md](design-storage.md#requirements).
 * **The daemon's word for who logged in.** Rejected: a compromise of the
   SSH domain would be a login as anyone.
 * **Dropping the SHA-1 MACs.** Not adopted: FreeBSD offers them, after
@@ -980,6 +1149,20 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   a paste larger than the bound into a program that is not reading loses
   bytes. An acknowledgement of input in the console interface would carry
   the SSH window to the tty; recorded in `TODO.md`.
+* **Root's keys on the medium after the vault.** From stage 4 the vault
+  holds each principal's login keys and the first is added from a
+  passphrase login, so writing the medium adds no login. The
+  recommendation is that the file then stops being read: the release
+  manifest check refuses the `record_volume` window, as it refuses an
+  SSH domain without the host key facet. The other choice, the file
+  enrolling root's first key into the vault once, keeps physical write
+  access a way to root and is not designed.
+* **The record volume's label.** A card shows two FAT volumes, the
+  record partition (`ERXREC`) and slot A's boot partition (`ERXOS`), and
+  users look for their first-boot files beside `config.txt`. The
+  recommendation is to label the record volume `ERXOS` and the slots'
+  `ERXSLOTA` and `ERXSLOTB`, so the install guide names the volume that
+  takes the file, a change of `tools/lib/erx/pi_medium.rb` alone.
 * **Session creation per login** costs a domain's start; the latency of
   an SSH login is on the watch list
   ([todo-performance.md](todo-performance.md)),
@@ -1003,6 +1186,17 @@ parser erXos writes for SSH, and `sshkeys` parses its key line with OTP's
   `version.h` `3605cf2244753b660a0d06f0946665f77ce2e446b367ecee5fe6e11db28318ff`,
   `auth2.c` `d4364911846a7296bc232660ae3427e45b6fc7726c5c7ff34c86c50ef9f5cdbf`,
   `monitor.c` `f6a0096c9ade1fd45a485099c73c07044fb2f8bdf3d3da993513b38490aeace1`.
+* OpenBSD's `src/usr.bin/ssh`, from
+  `https://cvsweb.openbsd.org/checkout/src/usr.bin/ssh/`, read
+  2026-11-16: `sshd.8` revision 1.332 (2026/09/02)
+  `f10e2339258ba5294163fb1471b152d122a41e843f95053ad95085a43f488ad0`,
+  AUTHORIZED_KEYS FILE FORMAT (lines 414-689): one key per line, empty
+  and `#` lines ignored, fields options, keytype, base64 key and
+  comment, the options field optional and first, lines up to 8 kilobytes;
+  `auth2-pubkeyfile.c` revision 1.8 (2026/04/02)
+  `983c78a5b38cd0b40909e58cda272a20cdeafe5ddab8a4e76768a4004875cd9c`:
+  the file loop skips leading space, empty and `#` lines (236-249), and
+  a line whose key or options do not parse is skipped (288-301).
 * From `https://www.rfc-editor.org/rfc/`: RFC 4252, "The Secure Shell
   (SSH) Authentication Protocol", section 7, `rfc4252.txt`
   `a36b882cf77b107335d49921b5e955b4ba78e253205dfbce5096ebc0e78bdf14`;

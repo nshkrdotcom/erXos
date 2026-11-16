@@ -7147,6 +7147,12 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Low] SSH, root's login keys on the medium (development builds, before the vault;
+  [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)): the keys are as sound as the
+  storage domain that reads `authorized_keys` and serves them as `login_keys`, and that domain serves
+  `system` to every domain, so a flaw in it that a client's requests could steer would be a way to
+  root's login. A storage domain whose only client is the system domain, as the vault's is, would
+  close it; the vault's arrival, after which the file is not read, closes it too.
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
