@@ -576,10 +576,11 @@ not take the keyboard and `accent` for the one that does, one hairline
 wide, and the menu draws its items in the `body` role, on `surface`,
 with the `menu` radius and the section shadow, inside its own image.
 The menu's glyphs are the `body` role's, which the glyph step writes as
-an Erlang module of metrics and raw `k8` rows; `erx_wm_menu` loads them
-into an image of the display domain's own with `erx_memdraw:load/3` and
-draws each label's glyphs through it as masks, so the display release
-holds no font file and no font reader and G9's check is unchanged
+`erx_menu_glyphs`, an Erlang module of metrics and raw `k8` rows;
+`erx_wm_menu` loads them into an image of the display domain's own
+with `erx_memdraw:load/3` and draws each label's glyphs through it as
+masks, so the display release holds no font file and no font reader
+and G9's check is unchanged
 ([design-display.md](design-display.md#windows-and-the-window-system);
 [Decisions](#decisions), 8). The decorations are borders only, with no
 title bar ([Decisions](#decisions), 4).

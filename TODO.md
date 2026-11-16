@@ -1948,6 +1948,14 @@ it; git history is the record of completed work.
 * [Medium] host tools, one build scaffold (`tools/lib/erx/raster.rb`, `rc_oracle.rb`, `fsimg.rb`): `source_record`,
   `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
   Fold them into one module that takes a source id and an output directory.
+* [Medium] desktop, the window menu's role (`tools/lib/erx/glyphs_menu.rb` `ROLE`, `abi_theme.rb`): only the glyph step
+  requires the theme to have a `body` role, so a theme without one passes `tools/gen_abi.rb` and fails only in
+  `tools/erx build glyphs`, after every role is rasterised. Require the role in `ABI::Theme.validate` and the
+  design-abi theme table. The generated `erx_menu_glyphs:role/0` gives the menu its role, so `erx_wm_menu` never
+  names it.
+* [Medium] desktop, the glyph step's output enters no runtime build (`build/glyphs`, `tools/lib/erx/erlang_apps.rb`):
+  `erx_menu_glyphs.erl` is written beside the subfonts, and nothing compiles it into `erx_display`; the build would
+  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15).
 * [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
   (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program

@@ -8,12 +8,15 @@ require_relative 'error'
 require_relative 'abi_theme'
 require_relative 'output_directory'
 require_relative 'raster'
+require_relative 'glyphs_menu'
 
 module Erx
   # The glyph step (docs/design-desktop-programs.md, "Type"): one Plan 9
   # subfont with an 8-bit grey image (`k8`) per role of the theme, from the
   # coverage erx-raster gives for the role's font, weight and size, written
-  # into build/glyphs as ROLE.subfont. Nothing here is checked in.
+  # into build/glyphs as ROLE.subfont, with the body role's glyphs a second
+  # time as the window menu's Erlang module (Menu). Nothing here is checked
+  # in.
   #
   # A role's subfont holds one glyph for each code point of its font's
   # ranges, in ascending order across the ranges, so glyph i is the i-th code
@@ -89,22 +92,41 @@ module Erx
       ABI::Theme.validate(ABI::Syntax.parse(source, path: ABI::Theme::SOURCE).select { |item| item.kind == 'theme' })
     end
 
-    # Writes every role's subfont of theme into OUTPUT beneath output_root and
-    # returns their paths by role name. Font paths in the theme are beneath root.
+    # What write wrote: each role's subfont's path by role name, and the
+    # window menu's glyph module's path.
+    Written = Data.define(:subfonts, :menu)
+
+    # Writes every role's subfont of theme, and the menu role's glyph module
+    # (Menu), into OUTPUT beneath output_root, and returns their paths as
+    # Written. Font paths in the theme are beneath root.
     def write(root:, program:, runner:, theme: Glyphs.theme(root: root), output_root: root)
       subfonts = theme.roles.transform_values do |role|
         font = theme.fonts.fetch(role.font)
         asked = requests(role, font)
-        result = program.rasterise(font: File.join(root, font.directory, font.files.fetch(role.weight)),
-                                   size: role.size, glyphs: asked, runner: runner)
+        result = program.rasterise(font: File.join(root, font_file(theme, role)), size: role.size, glyphs: asked,
+                                   runner: runner)
         subfont(role, requests: asked, result: result)
       end
-      publish(subfonts, output_root: output_root)
+      menu_role = theme.roles[Menu::ROLE] || raise(Refused, "the theme has no #{Menu::ROLE} role, which the window menu takes")
+      menu = Menu.erlang(subfonts.fetch(Menu::ROLE), code_points: code_points(theme.fonts.fetch(menu_role.font)),
+                         sources: [ABI::Theme::SOURCE, font_file(theme, menu_role)])
+      files = subfonts.to_h { |name, subfont| [subfont_file(name), subfont.encode] }.merge(Menu::FILE => menu)
+      paths = publish(files, output_root: output_root)
+      Written.new(subfonts: subfonts.to_h { |name, _| [name, paths.fetch(subfont_file(name))] },
+                  menu: paths.fetch(Menu::FILE))
     end
 
-    # The subfonts in a new directory beside OUTPUT, which then replaces it
-    # whole; returns each file's final path by role name.
-    def publish(subfonts, output_root:)
+    # A role's font file, relative to the tree, and a role's subfont's file name.
+    def font_file(theme, role)
+      font = theme.fonts.fetch(role.font)
+      File.join(font.directory, font.files.fetch(role.weight))
+    end
+
+    def subfont_file(name) = "#{name}#{EXTENSION}"
+
+    # FILES, their contents by name, in a new directory beside OUTPUT, which
+    # then replaces it whole; returns each file's final path by name.
+    def publish(files, output_root:)
       parent = OutputDirectory.prepare(root: output_root, path: File.join(output_root, File.dirname(OUTPUT)))
       destination = File.join(output_root, OUTPUT)
       raise Error, "glyph output is a symbolic link: #{destination}" if File.symlink?(destination)
@@ -112,18 +134,22 @@ module Erx
       Dir.mktmpdir('.glyphs-', parent) do |work|
         fresh = File.join(work, 'glyphs')
         Dir.mkdir(fresh)
-        subfonts.each { |name, subfont| File.binwrite(File.join(fresh, "#{name}#{EXTENSION}"), subfont.encode) }
+        files.each { |name, contents| File.binwrite(File.join(fresh, name), contents) }
         File.rename(destination, File.join(work, 'previous')) if File.exist?(destination)
         File.rename(fresh, destination)
       end
-      subfonts.to_h { |name, _| [name, File.join(destination, "#{name}#{EXTENSION}")] }
+      files.to_h { |name, _| [name, File.join(destination, name)] }
     end
+
+    # The code points of a font's ranges, in order: glyph i of its subfonts
+    # is the i-th.
+    def code_points(font) = font.ranges.flat_map { |low, high| (low..high).to_a }
 
     # What erx-raster is asked for, for each code point of the font's ranges
     # in order: the character, or for a tabular role's digit, the digit's
     # tabular glyph by name.
     def requests(role, font)
-      font.ranges.flat_map { |low, high| (low..high).to_a }.map do |point|
+      code_points(font).map do |point|
         digit = point - DIGIT_ZERO
         if role.figures == 'tabular' && (0...DIGITS.size).cover?(digit)
           "#{DIGITS.fetch(digit)}#{TABULAR}"
