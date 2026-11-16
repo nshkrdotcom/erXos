@@ -21,10 +21,9 @@ end
 class DependenciesTest < Minitest::Test
   def setup
     @directory = Dir.mktmpdir('erx-deps-')
-    # Another checkout's source cache, and the downloads directory beside it that holds the archives.
-    @cache = File.join(@directory, 'other/build/third_party')
-    @downloads = File.join(@directory, 'other/build/downloads')
-    FileUtils.mkdir_p([@cache, @downloads])
+    # Another checkout's downloads directory: the source cache, which holds the archives.
+    @cache = File.join(@directory, 'other/build/downloads')
+    FileUtils.mkdir_p(@cache)
   end
 
   def teardown
@@ -172,7 +171,7 @@ class DependenciesTest < Minitest::Test
   end
 
   def prepare_cached_source(tar_program: 'tar', members: nil)
-    archive = File.join(@downloads, 'source.tar.gz')
+    archive = File.join(@cache, 'source.tar.gz')
     stream = StringIO.new(''.b)
     Gem::Package::TarWriter.new(stream) do |tar|
       tar.mkdir('source-1', 0o755)
@@ -192,8 +191,8 @@ class DependenciesTest < Minitest::Test
 
   # Files the archive in the downloads directory under the name Dependencies looks for.
   def keep_in_downloads(entry)
-    FileUtils.cp(File.join(@downloads, 'source.tar.gz'),
-                 File.join(@downloads, "#{entry.fetch('id')}-#{entry.fetch('sha256')}.tar.gz"))
+    FileUtils.cp(File.join(@cache, 'source.tar.gz'),
+                 File.join(@cache, "#{entry.fetch('id')}-#{entry.fetch('sha256')}.tar.gz"))
   end
 
   def extracted_file
@@ -232,7 +231,7 @@ class DependenciesTest < Minitest::Test
     FileUtils.mkdir_p(outside)
     FileUtils.mkdir_p(File.join(@directory, 'build'))
     name = "fixture-#{entry.fetch('sha256')}.tar.gz"
-    FileUtils.cp(File.join(@downloads, 'source.tar.gz'), File.join(outside, name))
+    FileUtils.cp(File.join(@cache, 'source.tar.gz'), File.join(outside, name))
     File.symlink(outside, File.join(@directory, 'build/downloads'))
     assert_raises(Erx::Error) { dependencies.archive_for('fixture') }
   end
@@ -313,7 +312,7 @@ class DependenciesTest < Minitest::Test
 
   def test_bad_hash_publishes_neither_archive_nor_tree
     dependencies = prepare_cached_source
-    File.write(Dir.glob(File.join(@downloads, 'fixture-*')).first, 'bad')
+    File.write(Dir.glob(File.join(@cache, 'fixture-*')).first, 'bad')
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
     assert_empty Dir.glob(File.join(@directory, 'build/downloads/*.tar.gz'))
@@ -335,13 +334,27 @@ class DependenciesTest < Minitest::Test
     assert_includes error.message, 'without --cache'
   end
 
-  def test_archive_directory_is_the_sibling_downloads_of_the_cache
-    assert_equal '/x/build/downloads', Erx::Dependencies.archive_directory('/x/build/third_party')
+  # An archive already in this checkout's build/downloads is used as it is; the cache is not read for it.
+  def test_a_cache_fetch_leaves_an_archive_already_in_downloads_alone
+    dependencies = prepare_cached_source
+    dependencies.fetch(cache: @cache)
+    FileUtils.rm(Dir.glob(File.join(@cache, 'fixture-*')))
+    File.unlink(extracted_file)
+    dependencies.fetch(cache: @cache)
+    assert_equal 'safe', File.read(extracted_file)
+  end
+
+  def test_a_cache_that_is_not_a_directory_is_refused_once
+    dependencies = prepare_cached_source
+    ['', File.join(@directory, 'absent')].each do |cache|
+      error = assert_raises(Erx::Error) { dependencies.fetch(cache: cache) }
+      assert_includes error.message, 'not a directory'
+    end
   end
 
   def test_missing_cache_does_not_fall_back_to_network
     dependencies = prepare_cached_source
-    FileUtils.rm(Dir.glob(File.join(@downloads, 'fixture-*')))
+    FileUtils.rm(Dir.glob(File.join(@cache, 'fixture-*')))
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
   end

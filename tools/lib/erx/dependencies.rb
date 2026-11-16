@@ -128,17 +128,16 @@ module Erx
                                              .map(&:freeze)
     end
 
-    # Where another checkout keeps verified archives, derived from a source
-    # cache: that checkout's build/third_party.
-    def self.archive_directory(cache) = File.join(File.dirname(File.expand_path(cache)), 'downloads')
-
     # Fetches every source this host uses, or source_id alone. A cache is
-    # another checkout's build/third_party: the archives come from the
-    # downloads directory beside it, never from the network, and each is
-    # verified against its pin. With a cache an OCI image is not fetched: the
-    # Docker cache holds it, and only its own fetch contacts a registry;
-    # naming one with a cache is refused.
+    # another checkout's build/downloads: the archives come from it, never
+    # from the network, and each is verified against its pin. With a cache an
+    # OCI image is not fetched: the Docker cache holds it, and only its own
+    # fetch contacts a registry; naming one with a cache is refused.
     def fetch(cache: nil, source_id: nil)
+      if cache && !File.directory?(cache)
+        raise Error, "source cache is not a directory (it is another checkout's build/downloads): #{cache}"
+      end
+
       selected = source_id ? [pinned(source_id)] : sources
       images = cache ? selected.select { |source| oci?(source) } : []
       raise Error, 'OCI images use the Docker cache; fetch them explicitly without --cache' if source_id && !images.empty?
@@ -278,7 +277,7 @@ module Erx
       Dir.mktmpdir('.download-', File.dirname(archive)) do |directory|
         temporary = File.join(directory, 'source.tar.gz')
         if cache
-          cached = File.join(self.class.archive_directory(cache), File.basename(archive))
+          cached = File.join(cache, File.basename(archive))
           raise Error, "source not found in source cache: #{cached}" unless File.file?(cached)
           copy_bounded(cached, destination: temporary)
         elsif source.fetch('kind') == 'git'

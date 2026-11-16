@@ -225,7 +225,7 @@ module Erx
       # Dependencies#fetch downloads a missing archive; with no cache setup must not.
       unless @cache || File.file?(@dependencies.archive_path_of(id))
         raise Error, "source #{id} is not downloaded; run `make fetch` or set ERX_SOURCE_CACHE " \
-                     "to another checkout's build/third_party"
+                     "to another checkout's build/downloads"
       end
       @dependencies.fetch(cache: @cache, source_id: id)
     end

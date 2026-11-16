@@ -342,8 +342,8 @@ class SetupDecisionsTest < Minitest::Test
 
   def test_a_cache_without_the_archive_is_an_error_and_never_a_download
     with_tree do |root, runner, _sample, _sha|
-      cache = File.join(root, 'empty/build/third_party')
-      FileUtils.mkdir_p(File.join(root, 'empty/build/downloads'))
+      cache = File.join(root, 'empty/build/downloads')
+      FileUtils.mkdir_p(cache)
       error = assert_raises(Erx::Error) { setup_for(root, runner, cache: cache).send(:obtain_source, 'musl') }
       assert_match(/not found in source cache/, error.message)
       assert_empty runner.programs
@@ -353,7 +353,7 @@ class SetupDecisionsTest < Minitest::Test
 
   def test_a_cached_archive_is_adopted_and_unpacked_without_the_network
     with_tree do |root, runner, sample, sha|
-      cache = File.join(root, 'other/build/third_party')
+      cache = File.join(root, 'other/build/downloads')
       File.rename(sample, File.join(root, 'other/build/downloads', "musl-#{sha}.tar.gz"))
       setup = setup_for(root, runner, cache: cache)
       setup.send(:obtain_source, 'musl')
@@ -368,7 +368,7 @@ class SetupDecisionsTest < Minitest::Test
   def test_a_cached_libc_test_archive_is_adopted_and_unpacked
     with_tree(id: 'libc-test', directory: 'libc-test-63e36e9') do |root, runner, sample, sha|
       File.rename(sample, File.join(root, 'other/build/downloads', "libc-test-#{sha}.tar.gz"))
-      setup = setup_for(root, runner, cache: File.join(root, 'other/build/third_party'))
+      setup = setup_for(root, runner, cache: File.join(root, 'other/build/downloads'))
       setup.send(:obtain_source, 'libc-test')
       assert File.file?(File.join(root, 'build/downloads', "libc-test-#{sha}.tar.gz"))
       assert_equal "hello\n", File.read(File.join(root, 'build/third_party/libc-test/libc-test-63e36e9/hello.txt'))

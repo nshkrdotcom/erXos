@@ -1124,7 +1124,7 @@ module Erx
       source_id = nil
       docker_context = nil
       parser = OptionParser.new do |options|
-        options.on('--cache DIRECTORY', "Use only another checkout's build/third_party as the source cache") { |value| cache = value }
+        options.on('--cache DIRECTORY', "Use only another checkout's build/downloads as the source cache") { |value| cache = value }
         options.on('--source ID', 'Fetch only this pinned source') { |value| source_id = value }
         options.on('--docker-context NAME', 'Use this local Docker context for image fetch') { |value| docker_context = value }
       end
