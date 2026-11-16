@@ -549,7 +549,7 @@ session_line_grant_test() ->
                                           [{{template, 0}, line, system, #{max_request => 131072}}]),
     try
         {ok, {erx_domain, Id, _, _}} = erx_domain:start_session(1, #{}),
-        #{line := Grant} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
+        #{line := {Grant, rw}} = maps:get(domain_pid(Id), answers([domain_pid(Id)], #{})),
         ?assertEqual([Grant], [Child || {_, Child, _, _} <- supervisor:which_children(Grants)])
     after
         files_cleanup(Started)

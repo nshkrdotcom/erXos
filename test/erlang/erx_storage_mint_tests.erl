@@ -92,6 +92,7 @@ unrooted_tree_starts_no_grant_test() ->
 a_rooted_grant_starts_from_its_tree_s_arguments_test() ->
     with_grants([{subtree, installed}, {observer, self()}], fun(Grants) ->
         {ok, Grant} = grant(Grants, #{rights => rx, tree => installed}, connection()),
+        receive {exported, Grant, _, _, _} -> ok after 0 -> error(not_exported) end,
         receive
             {tree_subtree, installed, Grantee} ->
                 ?assertEqual(#{client => ?GRANTEE, principal => ?PRINCIPAL}, Grantee)
