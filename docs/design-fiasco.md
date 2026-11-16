@@ -529,7 +529,7 @@ and a macOS process has none. The ABI's layouts carry `reported`, but no partial
 | Topic | Asked on | `reported` | Partial |
 | --- | --- | --- | --- |
 | basic | any handle | the topic is `ERX_ENOTSUP`: the slot's record holds the handle's type and rights, but no object id, which only the kernel has (FD2, FD6) | none |
-| machine | the resource, which is ignored; a task other than the root `ERX_ENOTSUP` | `cpus_online`, the count of `l4_scheduler_info`'s CPU map, clear when that call fails; `uptime`, `liberx`'s clock (`erx_fiasco_clock_ns`, the generic timer's virtual count since the counter started, which QEMU starts at reset and a board's firmware at power-on); `build` and `boot_value`, the build identifier and boot value of bootstrap's handoff, which the program root keeps for the service before starting it (a root that does not keep them, such as a native test guest's, leaves both clear); nothing else, since no machine page is mapped ([Image windows](#image-windows)): `entropy_quality` stays clear, since `liberx`'s generator, not the kernel, holds the entropy, and keeps no quality of its own | `memory_total` and `memory_free`, the pool's ([Reporting a budget](#reporting-a-budget)) |
+| machine | the resource, which is ignored; a task other than the root `ERX_ENOTSUP` | `cpus_online`, the count of `l4_scheduler_info`'s CPU map, clear when that call fails; `uptime`, `liberx`'s clock (`erx_fiasco_clock_ns`, the generic timer's virtual count since the counter started, which QEMU starts at reset and a board's firmware at power-on); `build` and `boot_value`, the build identifier and boot value of bootstrap's handoff, which the program root keeps for the service before starting it (a root that does not keep them, such as a native test guest's, leaves both clear); nothing else, since no machine page is mapped ([The booted slot](#the-booted-slot)): `entropy_quality` stays clear, since `liberx`'s generator, not the kernel, holds the entropy, and keeps no quality of its own | `memory_total` and `memory_free`, the pool's ([Reporting a budget](#reporting-a-budget)) |
 | cpu | as machine; a CPU outside that map `ERX_ERANGE` | nothing: not `idle_time`, since Fiasco, built with periodic ticks and without fine-grained CPU time, charges each tick to the thread it interrupts, so its idle count bounds the idle time neither from below nor from above | none |
 | group | in the root, `ERX_CAP_SELF` or the root's own group's handle; any other group handle the caller holds, a domain's included, any other handle, `ERX_CAP_NULL` included, and any call before the root's group is up, `ERX_ENOTSUP` | `cpuset`, once a set was configured, `parked` and `ready`, read from the root's status page; not `capacity_mcpu`, since the grant's capacity is ignored, nor `used_ns` | none |
 | budget | `ERX_CAP_SELF` in the root, the root's budget; any other handle, and any call from a task, `ERX_ENOTSUP`, which the inspector shows as every field `unsupported` | nothing ([Reporting a budget](#reporting-a-budget)) | `used` |
@@ -919,7 +919,29 @@ Inherited code reads no executable and no modules.
    (`init_kip.cc:30`), which `boot_info_t` carries there.
 
 **The kernel.** Its options are a constant, `Fiasco::KERNEL_OPTIONS` (`fiasco.rb`), built into
-`bootstrap`, with neither `-serial_esc` nor `-serial_input`, and it is built without JDB. Its own
+`bootstrap`, with neither `-serial_esc` nor `-serial_input`. Its configuration is one
+defconfig, `config/fiasco/kernel.defconfig`, for every board. A development kernel is built
+from it as it is, with JDB, the kernel debugger, which selects `CONFIG_INPUT`, the kernel's own
+console input: a panic (`kernel_panic.cc`) enters JDB on the console through
+`Thread::system_abort` (`thread.cpp`) once JDB is initialized, and before that waits at
+`terminate.cpp`'s `raw_exit` for a key; either way the run waits for the operator or the
+harness's deadline. A release kernel is built from the same defconfig with `CONFIG_JDB` and
+`CONFIG_INPUT` written as not set after it, its only differences, stated once in
+`FiascoConfig::RELEASE_UNSET` (`fiasco_config.rb`, `tools/erx build release-kernel`). Without
+JDB a panic calls `terminate`. Its exit question, which `kernel_main` installs
+(`arm/main.cpp`), reboots at once when console input is out of the build
+(`terminate.cpp`, `Exit_question::ask`); before `kernel_main`, during the static
+initialization that runs `Startup::stage1` and `stage2`, `raw_exit` stands in, reads no key
+without console input and resets as well. The reset (`reset-arm-gen.cpp`) is PSCI's system
+reset, or the BCM2711 watchdog where the device tree has one and no PSCI was found, and
+otherwise an endless loop: a panic before `Dt::init` and `Psci::init` in `stage2`, the
+handoff checks among them, does not reset. With console input in, the exit question would
+instead wait on the console with interrupts off. `FiascoConfig` checks the resolved configuration,
+`globalconfig.out`, after every configuration step, since a `select` can set what the defconfig
+leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER`
+(with `CONFIG_PERF_CNT`, which only JDB turns on by default) and `CONFIG_SYNC_CLOCK`, and none
+has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`; a release kernel's has neither
+`CONFIG_JDB` nor `CONFIG_INPUT`. The kernel's own
 changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and slot that are not
 one of the machine page's pairs, prints the banner (`development build: trusted code only`, the
 build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot <none|a|b>`,
@@ -997,7 +1019,7 @@ reason on refusal, with checked arithmetic on every offset. Each entry only gath
 | `budget`, `group_ctl`, `group_stat`, `spaces_group`, `release`, `crash_area`, `system_connection` | `ERX_CAP_NULL` and zeros: `erx_vm_*` and `erx_group_status` find theirs with no handle, `erx_release_entry` reads the archive, and no Phase 1 caller takes the rest | the same |
 | `cpuset`, `capacity_mcpu` | the manifest's system share's `cpuset` within what `l4_scheduler_info` reports; 1,000 for each CPU, since Phase 1 has no grants | the host's online CPUs; the same |
 | node name | `system@` and the manifest's `host` | the same |
-| `args` | the manifest's `system_args`, the console's words, `-erx_record boot VALUE SLOT` ([image windows](#image-windows)), `-erx_record build ID`, the boot image's build identifier in decimal, and each [device record](#device-records), then each `erx.arg=WORD` | the manifest's `system_args`, then `-erx_record console stdio`, then the command line after the archive's path |
+| `args` | the manifest's `system_args`, the console's words, `-erx_record boot VALUE SLOT` ([the booted slot](#the-booted-slot)), `-erx_record build ID`, the boot image's build identifier in decimal, and each [device record](#device-records), then each `erx.arg=WORD` | the manifest's `system_args`, then `-erx_record console stdio`, then the command line after the archive's path |
 | `env` | empty | empty: the host's environment is not inherited, and the entry sets `TZ=UTC` for libSystem |
 | `hwcap`, `hwcap2` | the features the boot CPU's identification registers name that the kernel enables and saves for user mode, from the handoff's `cpu_id` words ([Boot handoff](#boot-handoff), step 4; the architecture's binding gives the mapping, [design-arch-aarch64.md](design-arch-aarch64.md#cpu-feature-words)) | 0, which claims no optional feature |
 | `limits` | the projection of the manifest's `system_runtime_limits` | the same |
@@ -1042,8 +1064,9 @@ domain's node name and the system node's, its `args` and `env`, and the words th
 the row's own: `-erx_record build ID` with the boot image's build identifier, as the root's own page carries it, so
 every domain names the same build; one record per device it was given that has one, `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
 MEM_SIZE CLOCK COHERENT MAC`, the same record the root writes into the system domain's page for each device of a kind it holds ([Device records](#device-records)), or, for a framebuffer the root placed, `-erx_record framebuffer WINDOW_H OFFSET SIZE WIDTH HEIGHT STRIDE FORMAT` ([design-device-tree.md](design-device-tree.md#facts-into-records)), and, when it holds a
-block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it ([Image
-windows](#image-windows)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
+block device, `-erx_record boot VALUE SLOT` with the boot's pair, as the root's own page carries it, and, when the
+manifest's `system` window row names it, `-erx_record system_image` ([The booted
+slot](#the-booted-slot)). A device of no kind has no record and no window of its own: its registers on a page that a device of a kind in
 its unit shares lie in that device's window, and a line it shares with one is that device's IRQ object
 ([design-shared-devices.md](design-shared-devices.md#the-unit-rule)). PATH is the device-tree path of its manifest row, the name its driver gives it (`erx_device_record` returns it as `path`), a node path of at most `device_path_max` bytes (`abi/erx_abi.txt`), which the manifest grammar holds `devices[].path` to; the record writers, the root's reader and the domain library's view refuse any other path (`erx_boot_device_path_valid`), and `erx_device_record` any other PATH word, so a name a driver shows holds no control or escape, and reaches a display only through that sink's escaping function; WINDOW_H, LINE_H and MEM_H are the installed objects' values in the holder's own handle
 table, OFFSET and SIZE place the registers in the window page, MEM_H and MEM_SIZE are 0 for a device with no
@@ -1104,7 +1127,7 @@ idle machine.
 host link's device record ([Device records](#device-records)). The manifest names the host link's UART
 by its device-tree path, and the root does not look in the device tree for it, so on a machine without
 that UART the record would point `erx_pl011` at empty address space, whose first read faults the
-system domain and with it the machine. Without the record `erx_hostlink` starts nothing and the boot
+system domain and with it the machine. Without the record no line group starts `erx_hostlink` and the boot
 is the same otherwise. `Erx::QemuPlan` adds the word exactly when it gives the guest the second
 `-serial` ([The production image](#the-production-image), "Device paths"); the website's emulator, whose machine has one UART, never
 sends it. erXos's kernel needs no such word: it lists a UART only when the device tree has it.
@@ -1114,12 +1137,12 @@ sends it. erXos's kernel needs no such word: it lists a UART only when the devic
 Two things stop a production image without it: `Admitted.admit` refuses every
 manifest for `root_startup` (`manifest.rb`, and `Pack#build` requires the
 admitted bytes), and before that `EmptyNative#check` refuses a full boot and
-every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`,
-`image` and `liveness` record. **`Stopgap`** sits beside `EmptyNative` and
+every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`
+and `liveness` record. **`Stopgap`** sits beside `EmptyNative` and
 shares its readers: a development manifest, full or partial boot, with the
 system domain and its configured domains. It accepts the records the system
 release's services and the configured domains need, `domain`, `window`,
-`service`, `facet`, `introduce` and `image` among them, and refuses
+`service`, `facet` and `introduce` among them, and refuses
 `partial_boot` and `liveness` records with a diagnostic naming the milestone
 that brings them. It accepts a `facet` only of a service a configured domain
 serves, and only when it names no operation: operations resolve against the
@@ -1128,17 +1151,12 @@ service, and the domain library's boot view refuses one that names any. A
 facet's parameters it resolves as [design-abi.md](design-abi.md) says, each
 key against its service's declaration and each value against that key's kind
 and bound, and the manifest property that consumes them holds as written, as
-property 18 does for `windows`. Its `image` records are
-format `erofs_unchecked` ([design-abi.md](design-abi.md)): the packer writes no
-hash tree, so an image's record carries its data's length and extents, which
-the packer derives from the built image, the artifact its `input` names, and
-zeros for every tree field, and a `salt` is refused. Each image lies on the
-block device, and a `verified_image` window names one image, read-only, held
-by the domain the window's record names. The production image's one image
-is the system release's EROFS image (`ReleaseMedium`), written before the
-archive is packed, since the archive's manifest records it; the image does not
-hold the manifest. Phase 1's EROFS windows pass blocks through unchecked; the
-hash check is a residual recorded in `TODO.md`. QEMU `virt`'s record is
+property 18 does for `windows`. Every release the production image
+starts lies in its boot image, which holds what the rule of
+[design-storage.md](design-storage.md#data-model) allows it, and the
+slot's system partition holds the image builder's packages. Phase 1's `erx_verity` passes a package's
+blocks through unchecked; the hash check is a residual recorded
+in `TODO.md` ([design-packaging.md](design-packaging.md#phase-1)). QEMU `virt`'s record is
 [config/platforms/qemu-virt.json](../config/platforms/qemu-virt.json) and its
 development manifest is the records every board takes,
 [config/manifest/development.txt](../config/manifest/development.txt),
@@ -1180,7 +1198,7 @@ seeded violation and each refusal with a seeded record:
 | 5 names | kept | |
 | 6 no JIT in the root | kept; a full boot may use the native root image, since the interpreter image is not yet the root | |
 | 7 the sealing secret | `sealing` is `none`, no entry carries `ERX_ENTRY_SEAL`, no TPM | M11 |
-| 8 partitions and devices reach holders | kept: the UARTs are the system domain's; the slot and data windows are the system domain's or a storage domain's, as the manifest places them; the network device is the network domain's, which runs the network stack; the display domain holds the gpu and input devices; only the system domain holds a facet of the driver-control interface, whichever way its service row names the interface; no vault partition | M11 (vault) |
+| 8 partitions and devices reach holders | kept: the UARTs are the system domain's; the slot writer's windows, both slots' boot and system partitions and the two records, are the system domain's; the data window is a storage domain's, as the manifest places it; the one read-only `system` window is held by the configured domain that holds its block device, since the block driver hands a window only to its own domain ([The booted slot](#the-booted-slot)); the network device is the network domain's, which runs the network stack; the display domain holds the gpu and input devices; only the system domain holds a facet of the driver-control interface, whichever way its service row names the interface; no vault partition | M11 (vault) |
 | 9 a release build's confinement | release builds refused. In a development build every virtio-mmio device is unconfined and allowed, whoever holds it, the display domain's gpu and input devices and the network domain's net device among them, as the property's development clause says; the display domain is reported in the trusted base. The packer sets `ERX_PACK_UNCONFINED_DMA` when the manifest gives an unconfined device, as the property says, and nothing reads it | M11 |
 | 10 boot order, 11 rescue, 12 child domains, 13 headroom | kept; 12 runs the host build of `erx_dom_plan_configured` in boot order and `erx_dom_plan_connect` over the introductions, recording each plan, as on erXos's kernel, so the configured domains' sums of 4 and 13 are the planner's; 13 is a configuration check and nothing enforces grants at run time | |
 | 14 session templates | kept: a template is a record of the session table, keyed by its principal's name, so a principal has one; its principal exists and its profile has `SPACES`; nothing that resolves through the domain table reaches it, and the domain library's boot view refuses templates out of principal order | |
@@ -1189,7 +1207,9 @@ seeded violation and each refusal with a seeded record:
 **The root startup rule** is a sanity check, not a proof: the root entry's
 loadable segments plus `system_baseline` fit `root_memory`, and `root_memory`
 fits the platform's RAM less `fiasco_reserve`. `fiasco_reserve` is a number in
-the platform record beside `ram_bytes`, the harness's RAM size. `sigma0`'s
+the platform record beside `ram_bytes`, the harness's RAM size, and equals the rule
+below on that RAM, which the tools check and from which every other machine they boot
+(a test machine with more RAM, the website's with less) takes its own. `sigma0`'s
 resource dump at 512 MiB on a 4-CPU HVF boot of the fork shows 33.8 MiB it does
 not offer the root: 32 MiB of kernel memory, the kernel's image, the device
 tree's 1 MiB and `sigma0` itself; at 160 MiB the kernel memory is 10 MiB, and
@@ -1285,8 +1305,7 @@ without `ERX_PACK_TEST_CODE` (`ProductionImage.check_test_scripts`, seeded in
 server boots `erx_echo_test` this way, to provide a service before its ready report.
 
 A test image may also name a larger machine (`ProductionImage::Machine`): its RAM,
-its `fiasco_reserve`, which grows with RAM because Fiasco sizes its kernel memory
-as 6% of it, a growth added to both `root_memory` and `system_baseline` of the
+from which its `fiasco_reserve` follows by Fiasco's rule (`Platform.fiasco_reserve`), a growth added to both `root_memory` and `system_baseline` of the
 development manifest, a growth of `/tmp`'s cap, and the root's place, the one
 address `liberx/backend/fiasco/root.ld` takes from the root's link; the rest of the
 added RAM widens the archive's room below RAM. The
@@ -1301,7 +1320,7 @@ room for the test images' archives beside `root_memory`. The site image, built f
 site manifest, is packed and checked on the site machine (`Machine.site`): 256 MiB with
 a 16 MiB reserve, the RAM the website's browser emulator gives its guest, since the
 guest's RAM is the tab's memory. `OracleQemu` boots on 2 GiB with a
-160 MiB reserve, the system domain 1 GiB larger and `/tmp`'s cap 160 MiB, since
+124 MiB reserve, the system domain 1 GiB larger and `/tmp`'s cap 160 MiB, since
 OTP's suites ask for more than the development baseline holds (compiler's
 `beam_ssa_check_SUITE` asks for a 98 MiB heap) and fill more of `/tmp` than its
 4 MiB (stdlib's group charges about 97 MiB).
@@ -1312,7 +1331,7 @@ OTP's suites ask for more than the development baseline holds (compiler's
 | `boot_stand_in_root_path` | file | the root as an ELF file, which `bootstrap` loads |
 | `system/root` | image | the same program as an image, the header's root entry, which the root startup rule sizes |
 | `system_manifest_path`, `system/NOTICES` | file | what `Pack#build` generates |
-| `domains/erxos/...` | file | the domain release, which every domain boots from. It holds each file of the applications any of its boot scripts names, once, under `lib/` as in the system release, and a boot script `bin/<name>.boot` for each name the manifest's domain rows and session templates give their release, and the build facts at `releases/build-facts`, the same file as the system release's ([design-shell.md](design-shell.md#text-commands)), and, in a development image whose build was given the development login key, root's login key at `ssh_authorized_keys_path` (`releases/ssh/authorized_keys`), the same file as the system release's ([design-ssh.md](design-ssh.md#login-keys)). The build's release scripts table defines a script's applications under its name: `session`, which a session domain boots, names `asn1`, `crypto`, `public_key`, `ssh`, `erx_net_client`, `erx_shell`, `erx_web_line`, `erx_desk` and `erx_session` beside the base every domain boots through (`kernel`, `stdlib`, `erx` and `erx_files`); `storage`, `network`, `web` and `display` name their domains' applications, and `client` a display client's (`erx_memdraw` and `erx_win`, [design-display.md](design-display.md#overview)), and `ssh` the SSH domain's `asn1`, `crypto`, `public_key` and `ssh` ([design-ssh.md](design-ssh.md#the-ssh-domain)); the system release ships only the applications its own list names, and an application in no list fails the build; `erts` names the base alone, and a name the table does not hold fails the build, so a misspelt release boots nothing. Each script's release file lists only its own applications and is named after the script, so a domain boots only those and `init:script_id()` names its script; the domain can still read and load any application of the release, which grants nothing, since authority is its capabilities. The session script only loads `erx_session`, which the session template's arguments start with `-eval` once init holds the domain's facets, since its tty relay needs `erx:cap(console)`. Every script only loads `asn1`, `crypto`, `public_key` and `ssh`, so a domain runs none of `ssh`'s supervisors until a program of its own calls `ssh:start/0` ([design-ssh.md](design-ssh.md#stages)). The index is sorted, so the release is one run of whole entries, which the domain library slices; none carries the system mark, and no other file lies under `domains/`. The release provider strips the prefix, as it strips `system/`. `<name>` is a manifest identifier, and a domain row's `release @artifact.<name>` names both the run (its first entry and its count of files, which every name shares) and the script. The packer binds the script: it puts `-- -boot /bin/<name> --` between the row's emulator flags and its init arguments, so the binding is init's first flag and no later argument hides it, and it refuses a row whose own arguments name `-boot`. The domain service does the same for a create request's `boot` ([design-domains.md](design-domains.md#erlang-interface)) |
+| `domains/erxos/...` | file | the domain release, which every domain boots from. It holds each file of the applications any of its boot scripts names, once, under `lib/` as in the system release, and a boot script `bin/<name>.boot` for each name the manifest's domain rows and session templates give their release, and in a test image for each script its harness adds, and the build facts at `releases/build-facts`, the same file as the system release's ([design-shell.md](design-shell.md#text-commands)), and, in a development image whose build was given the development login key, root's login key at `ssh_authorized_keys_path` (`releases/ssh/authorized_keys`), the same file as the system release's ([design-ssh.md](design-ssh.md#login-keys)). The build's release scripts table (`ReleaseFiles::RELEASE_SCRIPTS`) defines a script's applications under its name, each the base every domain boots through (`kernel`, `stdlib`, `erx` and `erx_files`) and one kind of domain's own: `erts` names the base alone; `session` and `app` a session's and an app's session's, each with the command shell and `erx_session`; `storage`, `network`, `web`, `display`, `ssh` ([design-ssh.md](design-ssh.md#the-ssh-domain)), `usb` ([design-usb.md](design-usb.md#domains-and-authority)), `bt` ([design-bluetooth.md](design-bluetooth.md#the-bluetooth-domain)) and `wifi` ([design-wifi.md](design-wifi.md#the-wifi-domain)) those domains' stacks; and `client` a display client's ([design-display.md](design-display.md#overview)). The system release ships only the applications its own list names, and an application in neither that list nor a script fails the build (`ReleaseFiles.check_released`), since it would be built and booted nowhere. So a domain's stack has its script whether or not a manifest configures the domain, and a production image carries only the scripts its manifest names; a name the table does not hold fails the build, so a misspelt release boots nothing. Each script's release file lists only its own applications and is named after the script, so a domain boots only those and `init:script_id()` names its script; the domain can still read and load any application of the release, which grants nothing, since authority is its capabilities. The session script only loads `erx_session`, which the session template's arguments start with `-eval` once init holds the domain's facets, since its tty relay needs `erx:cap(console)`. Every script only loads those of `asn1`, `crypto`, `public_key`, `ssh`, `ssl` and `inets` that it names, so a domain runs none of their supervisors until a program of its own starts them, as `ssh:start/0` does ([design-ssh.md](design-ssh.md#stages)). The index is sorted, so the release is one run of whole entries, which the domain library slices; none carries the system mark, and no other file lies under `domains/`. The release provider strips the prefix, as it strips `system/`. `<name>` is a manifest identifier, and a domain row's `release @artifact.<name>` names both the run (its first entry and its count of files, which every name shares) and the script. The packer binds the script: it puts `-- -boot /bin/<name> --` between the row's emulator flags and its init arguments, so the binding is init's first flag and no later argument hides it, and it refuses a row whose own arguments name `-boot`. The domain service does the same for a create request's `boot` ([design-domains.md](design-domains.md#erlang-interface)) |
 | `runtimes/emu` | image | the domain runtime image: the interpreter ERTS linked as a task's program at `task.ld`'s fixed addresses, since `erx_image_map` loads only an `ERX_IMAGE_FIXED` image; one image for every domain, named as `erx_domain`'s spec names its flavour, with BeamAsm's beside it as `runtimes/jit`, the one entry whose manifest carries `ERX_IMAGE_JIT`, named `@artifact.jit`. It carries no system mark, since the root does not run it, and a domain row's `runtime @artifact.emu` names it |
 
 The root is stored twice because `bootstrap` reads an ELF file while the archive's
@@ -2358,8 +2377,11 @@ its interrupt line and the DMA memory the platform reserves for it. So a device 
 has one form in every domain: its queues are carved from its one memory, and the system domain's
 driver opens it exactly as a holder's does. Nothing deletes these objects, since the system
 domain holds the device for the boot and its fault resets the machine; an object the backend
-refuses refuses the boot, naming the record. The host link's UART, which does no DMA, is the one
-physical record, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK`, PATH as in the given record. The record also names, after CLOCK, the base and length
+refuses refuses the boot, naming the record. The host link's UART and the line's
+([design-bluetooth.md](design-bluetooth.md#the-controllers-line)), which do no DMA, are the
+physical records, `-erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX`, PATH as in the given record and INDEX the
+device's row in the manifest's device table, which a line grant's `uart` names; the root writes the
+line's record for that row alone. The record also names, after CLOCK, the base and length
 of the run of pages its unit's registers cover around its own, so the device NIF maps that run once, at the first open of any record in
 it, as it maps a window object once, and two physical records in one page share one mapping; `-erx_record console` names its run the same way. CLOCK is the device entry's
 clock in hertz, which the driver reads and the NIF does not. The record's window and line the device
@@ -2511,7 +2533,7 @@ role and peripheral are refused with a stated reason
 since a hosted runtime has no devices. More records than `ERX_BOOT_DEVICES_MAX` refuse
 the manifest at boot.
 
-### Image windows
+### The booted slot
 
 Phase 1 maps no machine page to the system domain, so the root hands its
 ERTS the boot value and slot as it hands it the device records: from the
@@ -2520,45 +2542,58 @@ handoff, which bootstrap derived from `/chosen/bootloader`, it adds
 (`unknown none`, `normal a`, `trial b` and so on). The hosted entry adds
 none, which reads as unknown.
 
-Once the partition table is admitted, `erx_blk_service` reads the
-release's manifest (`/manifest`, the archive's `system/manifest`) with
-the generated reader, and its pure core, `erx_blk_image`, places each
-image the system domain holds a read-only `verified_image` window on in
-the booted slot: the image's one extent becomes a window of role
-`{image, Name}` on the slot's sectors from `slot_offset`, `length` bytes
-long, which must be whole sectors inside the slot and the image's
-`data_bytes`. A boot with no slot, an unknown boot, serves no image
-window, as the storage design requires; an image of another format, in
-more than one extent or outside the slot is refused by name in the
-kernel log, and the other images are served. An image window refuses
-every write with `erofs`.
-
-`erx_blk_sup`'s next child mounts each image window at `/images/NAME`
-with `erx_ns:mount({erofs, Window}, ...)`, read-only and unchecked, as
-the image's format says. `/images/` is Phase 1's place for the system
-domain's own images; the system domain still starts from the release in
-the boot image and reads the slot's image as files only, never as code
-([design-live.md](design-live.md#invariants) V5).
-
-**No image window is served across domains.** Where a storage domain
-holds the `block` unit, as the development manifest has it, the driver
-places no image window: the storage domain's `/` is its domain release,
-which holds no manifest, and its runtime does not know its own index
-among the manifest's domains, so `erx_blk_service` logs that the manifest
-cannot be read and serves no image, and `/images/release` is mounted
-nowhere. The `-erx_record boot` words reach the storage domain all the same,
-since the domain library adds them to a configured block holder's
-arguments. Serving the release image from the storage domain is the domain
-library's work: it writes each image window's placement into the holder's boot
-page beside `-erx_record boot`, so the driver needs no manifest file.
+The domain library adds the same words to a configured block holder's
+arguments, so the block driver knows the booted slot without a machine
+page. Once the partition table is admitted, `erx_blk_service` starts one
+read-only window of role `system` on the booted slot's system partition,
+whose sectors come from the medium layout of the ABI file alone, for the
+storage domain that serves `system`, the holder the manifest's `system`
+window row names; a boot with no slot, an unknown
+boot, starts none, as the storage design requires, and so does a holder
+whose `system_image` record, below, is absent or refused, so the window
+follows the manifest's row, the record's one writer being the domain
+library. That storage domain
+serves the window as the `system` tree, with the read-only `erx_fs`
+backend over `erx_erofs`, as on erXos's kernel
+([design-storage.md](design-storage.md#the-system-tree)), and every other
+domain reaches its files through a grant. The driver reads no manifest.
+To that holder alone the domain library adds one record more, from the
+manifest's `system_image` fields, `-erx_record system_image LEN
+TREE_OFF TREE_LEN SALT ROOT`: the image's length and the tree's offset
+and length in bytes, in decimal, and the tree's salt and root hash in
+lowercase hex, with which `erx_storage_system` opens the image in
+`erx_verity` (E1 of [design-storage.md](design-storage.md#invariants)).
+The packer writes the tree in whole blocks right after the image, under
+the salt a package's image takes, the image's own SHA-256
+([design-packaging.md](design-packaging.md#building-and-packing)), which
+one function, `Erx::AppPackage.image_tree`, picks for both.
+The one reader of the record is `erx_device_record:system_image/1`, a
+pure function over the record words `erx_device_record:records/0`
+holds, with a fuzz target as `find/3` has: it takes exactly one
+`system_image` record of exactly five words, LEN, TREE_OFF and TREE_LEN
+each a decimal of at most 20 digits within 64 bits, SALT 2 to 64
+lowercase hex digits, an even count, for a salt of 1 to 32 bytes, as
+the manifest's image salts are bounded, and ROOT exactly 64 lowercase
+hex digits, and refuses any other shape, a second record and an absent
+one with a stated reason. On a refusal `erx_storage_system` opens no
+image and logs the reason, and every request on a grant of the `system`
+tree answers `eio`, as on a boot that names no `system` window: the
+image packages are absent and nothing reads an unchecked block. The
+manifest check refuses a manifest with a `system` window row and no
+`system_image` fields, or with an empty salt, so a built image never
+takes that path, and refuses `system_image` fields with no `system`
+window row, which would reach no holder. Its host test covers a well-formed record, each word
+malformed in turn, a missing word, an extra word, a second record and
+none, seeded with a reader that takes ROOT of any length, which the
+short-root case catches.
 
 ### The console
 
 The console's record is `-erx_record console PERIPHERAL BASE SIZE LINE MARK CLOCK`, which the root writes from the device entry `machine.console` names (`erx_boot_console_words`). PERIPHERAL is the CMSIS-SVD peripheral of the entry's compatible string, from the one table of UART kinds, `erx_uart_kinds` in `include/erx/device_kinds.h`, beside the kinds a give drives and apart from them, so a console UART is never given: `arm,pl011` is `pl011`, which is also the host link's UART, and `brcm,bcm2835-aux-uart` is `mini_uart`. The record's first word, `console`, is the row's too. The manifest check refuses a console of any other compatible string, naming it, and the root writes no record for one. The console starts the driver of the peripheral its record names, `erx_pl011` for `pl011` and `erx_mini_uart` for `mini_uart` (`erx_console:console_driver/1`), and stops with a stated reason at any other word, at no record, or at more than one, so the console makes no atom of a record word. The hosted entry writes `-erx_record console stdio`, the same record with no UART after it, which names `erx_stdio`. The driver opens the record's window and line through `erx_device`. It takes exactly one such entry, each number in decimal within its field of the boot manifest's console (64, 64, 32 and 32 bits), MARK `direct` or `shared` as a device record's, and the clock not 0, and stops with a stated reason otherwise (`erx_pl011:console_uart/1`, which has a fuzz target). The clock, the UART's in hertz from the platform record, times a character while the driver reprograms the UART and gives the divisors for 115200 baud when the boot left the UART unprogrammed; a clock with no integer divisor of 1 to 65535 for that rate stops the driver before it touches the UART. A plain `erx.arg` word that joins any of these lists of arguments, the console's or a device record's, is ignored.
 
 Without `-serial_input`, `Config::serial_input` stays `Serial_no_input` (`config.cpp:246,278-282`), so the kernel never attaches the UART's
-receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). Without JDB a kernel panic halts and the
-harness's deadline ends the run.
+receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). A development kernel's panic enters JDB on the
+console and the harness's deadline ends the run; a release kernel's reboots ([the kernel](#boot-handoff)).
 
 **The sink** is a variable the service owns. `erx_debug_log` copies `len` bytes from the caller's public UTCB, escapes them, and writes to
 `l4_vcon_write` on `L4_BASE_LOG_CAP`, the kernel's polled UART output, or to a ring of `log.c` records. `erx_log_read` runs `erx_log_copy` into
@@ -2637,13 +2672,13 @@ data, one `bootstrap` build, the random generator's read, and the kernel's other
   [Slots and the boot-selection record](design-platforms.md#slots-and-the-boot-selection-record) describes: the
   record's partition, an 8 MiB FAT16 whose data area begins with `autoboot.txt`, one cluster at
   `medium_record_select_start`, and whose reserved area holds the reset count alone in its MiB at
-  `medium_record_count_start`; slot A, which begins with a FAT32 volume that holds the boot files below and ends before the
-  slot's EROFS images start at 128 MiB (`SLOT_IMAGES_START`, `tools/lib/erx/release_medium.rb`), with `kernel8.img`
+  `medium_record_count_start`; boot A, a FAT32 volume that holds the boot files below, with `kernel8.img`
   allocated first and contiguous from `medium_slot_boot_start`, so the harness and the slot writer find it without
-  parsing FAT and the firmware finds it through FAT; slot B, empty; the vault's partition; and the data partition with
-  a fresh littlefs volume. The volume is the slot's first 128 MiB, and its 1 KiB clusters make it FAT32 by the cluster count the FAT
-  specification sets ([design-storage.md](design-storage.md#references)), as the slot's partition type
-  (`medium_slot_type`, `0x0c`) says. Both placed files are fsimg's `place` option, `-o place=/PATH@OFFSET`, the file's absolute path in the
+  parsing FAT and the firmware finds it through FAT; boot B, empty; system A, the EROFS image of the slot's packages;
+  system B, empty; the vault's partition; and the data partition with
+  a fresh littlefs volume. The volume is the whole of boot A, 128 MiB, and its 1 KiB clusters make it FAT32 by the cluster count the FAT
+  specification sets ([design-storage.md](design-storage.md#references)), as the boot partition's type
+  (`medium_boot_type`, `0x0c`) says. Both placed files are fsimg's `place` option, `-o place=/PATH@OFFSET`, the file's absolute path in the
   volume and a byte offset from the volume's start: one placed file per volume, on FAT16 and FAT32, for which fsimg pads the reserved area so that the data area starts at
   the placement sector and gives the file the clusters from the first data cluster on, in order, the FAT32 root
   directory's cluster following them; `kernel8.img` is placed at `medium_slot_boot_start` and `autoboot.txt` at
@@ -3010,7 +3045,7 @@ These differ from the native backend, and a caller must not depend on either sid
 * **A runtime links libSystem.** ERTS's threads are libSystem's pthreads with libSystem's TLS, and `erx_utcb_self` is a thread-local block (`hosted/log.c:40`), so it works on any host thread. Only a thread that `erx_thread_create` or `erx_pthread_create_executor` made has a slot; for one that plain `pthread_create` made, `erx_executor_slot` says none and `erx_park` is `ERX_ETYPE`, as for a worker natively.
 * **Time.** `erx_clock_ns` is the host's `CLOCK_UPTIME_RAW`, the raw counter that stock OTP also takes on macOS and that the hosted wait's `OS_CLOCK_MACH_ABSOLUTE_TIME` counts in: nanoseconds, stopped during a sleep of the machine, and never below a thread's earlier read, which ERTS's time supervisor checks on every read and stops the runtime over. `CLOCK_MONOTONIC` does not keep that promise on macOS, since it is the wall clock less the boot time. `erx_time_wall_ns` adds one offset that the entry reads from `CLOCK_REALTIME` at its start, as the time page's wall offset does natively, so a later step of the host's clock does not reach ERTS, and wall time runs behind by the length of any sleep of the machine until the next start. `erlang:system_info(os_monotonic_time_source)` and `os_system_time_source` name these two calls as their functions, and report their unit as the resolution, since neither backend says how fine its clock ticks. The zone is UTC whatever the host's `TZ` says. `statistics(runtime)` fails with `notsup`, as on Fiasco, though the host could answer, so nothing comes to depend on it; no start path calls it.
 * **The entry maps an archive.** `liberx/backend/hosted/start.c` holds `main(ARCHIVE, ARGS...)`: it `mmap`s the file read-only, closes it, runs `erx_pack_open` and the manifest reader, builds [the boot information page](#boot-information) and calls `erx_runtime_main`. A missing file or a refusal prints its reason and exits with status 1. A file truncated during the run faults, as the host's. `erx.*` words do not exist here: arguments after the archive's path are `init`'s.
-* **The archive has a root that never runs.** `erx_pack_open` requires a root image and a manifest (`pack.c:405`, `:505`), and the packer sizes the root as an executable for the target. A hosted release is packed by the same `Pack#build`, with the same manifest and the same entries under `system/`, and a minimal static executable as `system/root`, so hosted iteration needs neither Fiasco's build nor the cross-compiled ERTS. It carries the domain release under `domains/erxos/`, with a boot script for each name the manifest's session and domain rows give their release, as the production image does, and the same executable again at `runtimes/emu`, so the manifest's references resolve as they do natively; neither runs, since hosted the domain service makes no domain. A test compares the two archives' release files, path and hash; the root, the manifest and the notices, which name what each build links, are excepted. `tools/lib/erx/release_files.rb` lists the files: each beam and `.app` under `lib/<application>-<version>/ebin/` with a `compiled` build receipt naming its source in `otp/` or `erlang/apps/`, each `include/*.hrl` header under `lib/<application>-<version>/include/` with a receipt naming the header itself as its source, and the boot scripts, the system release's `bin/start.boot` and the domain release's `bin/<name>.boot`, which `systools` on the stock host build writes from a release file and the applications' own `.app` files.
+* **The archive has a root that never runs.** `erx_pack_open` requires a root image and a manifest (`pack.c:405`, `:505`), and the packer sizes the root as an executable for the target. A hosted release is packed by the same `Pack#build`, with the same manifest and the same entries under `system/`, and a minimal static executable as `system/root`, so hosted iteration needs neither Fiasco's build nor the cross-compiled ERTS. It carries the domain release under `domains/erxos/`, with a boot script for each name the manifest's session and domain rows give their release, as the production image does, and the same executable again at `runtimes/emu`, so the manifest's references resolve as they do natively; neither runs, since hosted the domain service makes no domain. A test compares the two archives' release files, path and hash; the root, the manifest and the notices, which name what each build links, are excepted. `tools/lib/erx/release_files.rb` lists the files: each beam and `.app` under `lib/<application>-<version>/ebin/` with a `compiled` build receipt naming its source in `otp/` or `erlang/apps/`, each `include/*.hrl` header under `lib/<application>-<version>/include/` with a receipt naming the header itself as its source, `public_key`'s `priv/cacerts.pem`, the trust store, with a receipt naming each root of `config/trust/` ([design-crypto.md](design-crypto.md#the-trust-store)), and the boot scripts, the system release's `bin/start.boot` and the domain release's `bin/<name>.boot`, which `systools` on the stock host build writes from a release file and the applications' own `.app` files.
 * **No watchdog.** A pet is accepted and does nothing, so a process stopped under `lldb` lives, and `erx_watchdog` runs as natively.
 * **No domain library in one process.** The one-process form is the system domain alone and builds no library, as a domain's runtime builds none: both link `liberx/backend/core/dom_lib_none.c` in its place, so the domain service's NIF module `erx_domain_lib` loads as natively and answers every well-formed call `{error, enotsup}`, and the domain service runs with no library. `erx_mem_create`, `erx_cap_close` and `erx_gate_bind`, which that module links for the library's crash copies and fault gate, are `ERX_ENOTSUP`.
 * **The console's driver is `erx_stdio`** ([design-runtime.md](design-runtime.md#the-console-and-standard-io)).
