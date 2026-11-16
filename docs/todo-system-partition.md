@@ -4,9 +4,9 @@ The work that brings the code to the target design of
 [design-storage.md](design-storage.md#the-system-tree): each slot is a
 boot partition and a read-only EROFS system partition, the storage domain
 serves the booted slot's system partition as the `system` tree, every
-package and every release outside the boot image is a self-checking file
-read through a grant, and the boot image holds only what runs before
-storage, or rescue. Index: [TODO.md](../TODO.md), Major initiatives.
+package is a self-checking file there read through a grant, and the boot
+image holds what the manifest names to run and no package. Index:
+[TODO.md](../TODO.md), Major initiatives.
 
 ## Build
 
@@ -25,48 +25,68 @@ that proves the code under test ran.
   record, which admission must refuse.
 * [High] storage, window roles (`abi/manifest.txt`, `erx_blk_table`,
   `tools/lib/erx/manifest.rb` property 8, `liberx/system/dom_apply.c`):
-  roles boot A, boot B, booted system, system A and system B in place of
-  slot A, slot B and verified image; the booted-system window read-only on
+  roles boot A, boot B, system, system A and system B in place of slot A,
+  slot B and verified image; the `system` window, at most one, read-only on
   the system partition of the slot the `-erx_record boot` words name, given
-  only to the storage domain that serves `system`, and none on an `unknown`
-  boot. Test: the device service's derivation (PW1); seeded: a booted-system
-  window derived on an `unknown` boot.
-* [High] storage, the `system` tree (`erlang/apps/erx_storage`): a read-only
-  `erx_fs` backend over `erx_erofs`, reading the `system` window unchecked,
-  with no writing callback; the `system` service in `abi/services` and its
-  facet row naming design-storage.md's section; grants for the system
-  domain, the app template and each domain whose release lies there. Test:
-  a QEMU test that reads a multi-block package file through the grant;
+  only to the storage domain the manifest names as its holder, and none on
+  an `unknown` boot. Test: the device service's derivation (PW1); seeded: a
+  `system` window derived on an `unknown` boot.
+* [High] storage, the `system` tree (`erlang/apps/erx_storage`,
+  `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
+  `erx_storage_system`, a read-only `erx_fs` backend over `erx_erofs` rooted
+  at the partition's `apps/`, with no writing callback, which alone builds
+  the raw source, a record private to it whose blocks `erx_erofs` reads
+  through `erx_storage_system:read/3`; `Erx::ErofsReads` rules that only
+  `erx_storage_system` builds the source and that the reader reaches blocks
+  only through `erx_verity:read/3` or `erx_storage_system:read/3`; the
+  `system` service in `abi/services`, named `system_service` in
+  `abi/manifest.txt`, with its facet row naming design-storage.md's
+  section; property 19 deriving the `system` rows, the system domain's and
+  the app template's, both `ro`, and the `apps` row's `system_facet`, and
+  checking that the service's server holds the `system` window. Test: a
+  QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
-  callback.
+  callback, and a module of another application that builds the raw
+  source, which the build check must refuse.
 * [High] files, the file-backed EROFS mount (`erx_ns`, `erx_verity`):
   `erx_ns:mount({erofs, {file, Path, Layout}}, To, Options)` as the one
-  EROFS mount, `erx_ns`'s process owning the fid, and a refusal of a layout
-  that names no tree; `erx_ns.erl` has only `{erofs, Window}` today. Test:
-  a mount of a package file and a read below it; seeded: a layout with the
-  tree fields zeroed, which must be refused with `einval`.
+  EROFS mount, `erx_ns`'s process owning the fid, its layout an opaque
+  `erx_pkg_header:layout()` built only by `check_file/2`, which only the
+  package process calls, or by `erx_pkg_header:served_layout/2` for
+  `header`, which `erx_ns` takes only for a file reached through the
+  `apps` grant;
+  `erx_ns.erl` has only `{erofs, Window}`. Test: a mount of a package
+  file and a read below it; seeded: a module outside `erx_pkg_header` that
+  builds a layout, which `Erx::ErofsReads` must refuse, and a `header`
+  mount of a file of `packages`, which must be refused with `einval`.
 * [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
   `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
   `place(system, ..)`, `erx_principal`): the packer writes each image package
   to `apps/NAME.app` in the slot's system partition; the package process
   reads image packages' headers through the `system` grant; the app's
-  record names `/system/apps/NAME.app`. Test: `ls /apps` on a kiosk image
+  record names `/system/NAME.app`. Test: `ls /apps` on a kiosk image
   shows the image's package, read-only; seeded: the package left in the
   boot image, which the packer check below must refuse.
 * [High] build, the boot image rule (`tools/lib/erx/production_image.rb`):
-  a packer check that the boot image holds only the kernel, the root, the
-  runtime images, the system release and manifest, the block driver's and
-  the storage domain's releases, the small start releases, the session
-  releases and the rescue set, and no package, failing with the file and
-  the rule named. Test: the check on the production image; seeded: one
-  package file added to a domain release.
+  a packer check that every file of the boot image is an artifact a
+  manifest row names by its role (the kernel, the root, the system release
+  with the manifest, each configured domain's and session template's
+  runtime image and release, and each partial-boot program's image), and
+  that no file of any slice begins with the package container's magic,
+  failing with the file and the rule named; and that the system partition's
+  image fits its partition. Test: the check on the production image;
+  seeded: one package file added to a domain release, and a file no row
+  names.
 * [High] apps, one flat `/apps` (`erx_pkg_io`, `erx_pkg_plan`): image
   packages listed at `/apps/NAME.app`, read-only, a create of an image
-  package's name answering `erofs`, and the recovery deleting an installed
-  package whose name a system update gave to the image
+  package's name answering `erofs`; an installed package whose name a
+  system update gave to the image shadowed, kept on the data partition,
+  listed as `.NAME.app`, shown `shadowed` at `/proc/packages`, removable
+  there, and purged for its signer alone through `remove_app` with a
+  signer; nothing written on a trial boot
   ([design-packaging.md](design-packaging.md#boot-and-recovery)). Test: the
-  recovery over a directory holding such a package; seeded: the deletion
-  dropped, which leaves the name listed twice.
+  recovery over a directory holding such a package, on a normal and on a
+  trial boot; seeded: the shadow check dropped, which lists the name twice.
 * [High] update, the slot writer and the update for two partitions
   (the slot writer and update service are not yet built; the TLA+ model
   and the host's exhaustive model of
@@ -79,7 +99,8 @@ that proves the code under test ran.
   `erx_blk_service.erl` `image_windows/0` and `mount_images/0`, the
   `/images/NAME` child of `erx_blk_sup.erl`, the `{image, Name}` role of
   `erx_blk_table` and `erx_blk_window`, `abi/manifest.txt`'s
-  `verified_image` window role, image extents and `erofs_unchecked`,
+  `verified_image` window role, the `images` and `extents` tables, the
+  `image` declaration and the window's `image` field, `erofs_unchecked`,
   `SLOT_IMAGES_START` and `image_extents` in `release_medium.rb`, and the
   slot's `release.erofs` copy): delete them. The release copy's only readers
   are tests of the mechanism being deleted: `image_checkpoints` in
@@ -104,7 +125,8 @@ that proves the code under test ran.
   says how it treats four logical partitions behind entry 4; the board's
   manual checklist boots a card with the new table, A and B, before the
   layout lands.
-* [Low] storage, availability of the kiosk: the kiosk and every app now
-  wait on the storage domain that serves `system`; a crash of it stops
-  every app until it restarts. Measured by the boot-to-first-frame item of
+* [Medium] storage, availability of the kiosk: the kiosk and every app
+  wait on the storage domain that serves `system`, which in the default
+  configuration also serves the data partition; a crash of it stops every
+  app until it restarts. Measured by the boot-to-first-frame item of
   [todo-performance.md](todo-performance.md).

@@ -1896,12 +1896,12 @@ these exact offsets and sizes.
 
 ### Machine header
 
-The header is 440 bytes with alignment 8. Its fields are:
+The header is 424 bytes with alignment 8. Its fields are:
 
 | Offset | Field | Type and meaning |
 | --- | --- | --- |
 | 0, 4, 6 | `magic`, `version`, `flags` | `u32`, `u16`, `u16`; magic/version above; development at flag bit 0, partial boot at bit 1, the UART console line secure at bit 2 and the host-link line secure at bit 3, all other bits zero |
-| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 440 |
+| 8, 12 | `length`, `header_size` | `u32`, `u32`; complete file length and exactly 424 |
 | 16, 24, 32, 40 | `host`, `console`, `hostlink`, `platform` | four string references; system identifier, absolute device-tree path, optional device-tree path and platform identifier |
 | 48, 56, 64 | `root_memory`, `system_baseline`, `system_reservation` | three `u64` byte counts; the root assumption, configured baseline and checked admission reservation |
 | 72, 120 | `system_share`, `users_share` | two shares, for `system` and `users` |
@@ -1909,19 +1909,19 @@ The header is 440 bytes with alignment 8. Its fields are:
 | 180, 184, 188 | `system_lane`, `system_queue`, `peer_held` | three `u32` byte limits with their system-contract meanings |
 | 192, 196 | `system_reserve`, `sealing` | two `u32`; unallocated system-rate headroom in thousandths, and none 0, device 1 or TPM 2 |
 | 200, 204 | `system_runtime_limits`, `native_limits` | two `u32` indices; the system runtime's limits and a partial boot's complete native-domain limits |
-| 208 through 360 | table spans | twenty `span` values, in the order below |
-| 368 | `system_args` | string reference; the system runtime's arguments |
-| 376 | `sessions` | `span` of the session templates |
-| 384 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
-| 392 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
-| 400, 408 | `apps`, `app_services` | `span` of the `apps` row ([design-packaging.md](design-packaging.md#the-apps-row)), at most one, and of the service indices its `services` span partitions |
-| 416, 424 | `packages`, `signers` | `span` of the image's package rows, at most `apps_max_limit`, and of the `signer` rows ([design-packaging.md](design-packaging.md#where-a-package-lies)) |
-| 432 | `development_key` | `span` of the build's development package key ([design-packaging.md](design-packaging.md#the-sdk)), at most one; in a development manifest only |
+| 208 through 344 | table spans | eighteen `span` values, in the order below |
+| 352 | `system_args` | string reference; the system runtime's arguments |
+| 360 | `sessions` | `span` of the session templates |
+| 368 | `starts` | `span` of the start rows ([design-apps.md](design-apps.md#the-start-table)), at most `start_rows_max` |
+| 376 | `displays` | `span` of the display records ([design-display.md](design-display.md#a-displays-session)) |
+| 384, 392 | `apps`, `app_services` | `span` of the `apps` row ([design-packaging.md](design-packaging.md#the-apps-row)), at most one, and of the service indices its `services` span partitions |
+| 400, 408 | `packages`, `signers` | `span` of the image's package rows, at most `apps_max_limit`, and of the `signer` rows ([design-packaging.md](design-packaging.md#where-a-package-lies)) |
+| 416 | `development_key` | `span` of the build's development package key ([design-packaging.md](design-packaging.md#the-sdk)), at most one; in a development manifest only |
 
-The spans at 208 through 360 are `principals`, `domains`, `limits`,
+The spans at 208 through 344 are `principals`, `domains`, `limits`,
 `runtime_limits`, `lane_classes`, `units`, `devices`, `windows`,
 `services`, `facets`, `facet_operations`, `facet_parameters`,
-`introductions`, `images`, `extents`, `boot_order`, `liveness`,
+`introductions`, `boot_order`, `liveness`,
 `shell_principals`, `partial_boot` and `strings`, at offsets 208, 216
 and so on. The tables are packed in that order, with `sessions` after
 `domains`, `starts` after `partial_boot`, `displays` after `starts`, and `apps`,
@@ -2125,17 +2125,20 @@ over ([design-device-tree.md](design-device-tree.md),
 the device service still verifies the machine before assigning the unit.
 
 Window roles are boot A 1, boot B 2, boot-selection record 3, reset
-count 4, vault 5, data 6, FAT 7, booted system 8, system A 9 and system
-B 10. Fixed-medium roles have `partition = 0`; the ABI medium layout
-determines their sectors, and a booted-system window's are those of the
+count 4, vault 5, data 6, FAT 7, system 8, system A 9 and system B 10.
+Fixed-medium roles have `partition = 0`; the ABI medium layout
+determines their sectors, and a `system` window's are those of the
 system partition of the slot that the boot value names, so an `unknown`
 boot gives none.
 FAT names a primary partition numbered 1 through 4 on the selected
 removable device. Rights are read bit 0 and write
-bit 1, at least read; a booted-system window is read-only. No record
+bit 1, at least read; a `system` window is read-only, and a manifest
+has at most one. No record
 contains a caller-selected sector range. Role/holder checks still
 restrict boot partitions, system A and B and the records to the slot
-writer, the booted system to the storage domain that serves `system`
+writer, the `system` window to a storage domain, whose holder is the
+storage domain that serves `system` and the server of the service named
+`system_service`
 ([design-storage.md](design-storage.md#the-system-tree)), and data and
 FAT to their storage holders. These are private grants, not a global device
 namespace.
@@ -2249,41 +2252,20 @@ facet's charge in its grantee's admission reservation. Liveness records
 name services whose interface declares its liveness operation; all use
 the kernel watchdog's period and cannot extend its deadline.
 
-### Read-only images, ordering and partial boots
+### Ordering and partial boots
 
 | Record and size | Fields |
 | --- | --- |
-| image, 136 | `0: name str`; `8: path str`; `16: format u32`; `20: data_offset u32`; `24: data_bytes u64`; `32: data_block_size u32`; `36: hash_block_size u32`; `40: data_blocks u64`; `48: hash_offset u64`; `56: hash_bytes u64`; `64: salt_length u32`; `68: hash_algorithm u32`; `72: salt bytes[32]`; `104: root_hash bytes[32]` |
 | boot-order entry, 4 | `0: domain u32` |
 | system-shell principal, 4 | `0: principal u32` |
 | partial-boot program, 16 | `0: name str`; `8: image u32`; `12: reserved u32` |
 | start row, 24 | `0: principal u32`; `4: flags u32` (enabled at bit 0); `8: display u32` (a service index or `mf_none`); `12: restarts u32`; `16: restart_period_s u32` (from 1); `20: reserved u32` |
 | display, 16 | `0: service u32`; `4: policy u32`; `8: idle_dim_s u32`; `12: idle_off_s u32` |
-| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: reserved u32`; `24: services span` (of `app_services`) |
+| apps row, 32 | `0: memory u64` (from 1); `8: max u32` (1 to `apps_max_limit`); `12: app_template u32` (a session index); `16: packages_facet u32` (a facet index); `20: system_facet u32` (a facet index); `24: services span` (of `app_services`) |
 | app service, 8 | `0: service u32` (a service index); `4: facet u32` (a facet index) |
 | package, 44 | `0: name str` (an identifier); `8: flags u32` (enabled at bit 0); `12: sha256 u8[32]`, its header's SHA-256 |
 | signer, 40 | `0: name str` (an identifier); `8: key u8[signer_key_bytes]`, an Ed25519 public key |
 | development key, 32 | `0: key u8[signer_key_bytes]`, an Ed25519 public key |
-
-Image format 1 denotes EROFS protected by the storage contract's
-dm-verity version 1 tree; hash algorithm 1 is SHA-256. Salt length is
-0 through 32 and unused salt bytes are zero. Both block sizes are
-positive powers of two accepted by that format. Extents are nonempty,
-sector-aligned, sorted, disjoint byte ranges relative to a slot's start,
-not the medium's start. Concatenating their bytes produces the image
-window: its data starts at zero and its tree starts at `hash_offset`.
-An image record names a release that lies outside the boot image:
-`path` is its file in the `system` tree, in the package's container
-([design-packaging.md](design-packaging.md#the-package)), `data_offset`
-is where the EROFS image starts in that file and `hash_offset` where its
-tree starts. All size/block-count/tree calculations are checked against
-the storage format. The packer derives these fields and hashes from the
-built file; source text cannot supply an unchecked root hash or offset.
-The domain the release belongs to receives the record with its `system`
-grant and mounts the file with the record as its layout; an `unknown`
-boot serves no `system` tree, so that domain does not start. Every image
-record names a tree: the file mount refuses a layout without one
-([design-files.md](design-files.md#building-binding-and-mounting)).
 
 Boot order is the complete permutation of the configured-domain
 indices, with servers before clients. The packer uses a topological
@@ -2343,7 +2325,7 @@ the native-program mode does not pretend to start the absent services.
 `config/<name>.txt` uses the same ASCII token, comment and quoted-string
 rules as ABI declarations. It begins `manifest 1`; declaration keywords
 are `machine`, `share`, `principal`, `domain`, `limits`, `runtime_limits`,
-`lane_class`, `unit`, `window`, `service`, `facet`, `introduce`, `image`,
+`lane_class`, `unit`, `window`, `service`, `facet`, `introduce`,
 `liveness`, `shell_principal` and `partial_boot`. Named declarations
 have two-space-indented properties whose names and types are their
 record's fields. References use source identifiers, not numeric indices.
@@ -2375,11 +2357,10 @@ field or computed charge is an accepted property.
 | `domain NAME` | `principal`, `limits` references; `kind service\|secret`; `flags` flag list; `runtime`, `release` artifact references; `restarts`, `restart_period_s` integers; `boot_timeout_s` integer, 1 to `boot_timeout_max_s` (3,600), `boot_timeout_default_s` (60) when absent; `args`, `env` vectors |
 | `session PRINCIPAL` | the session template of the principal its name names, so a principal has one; `limits` reference; `runtime`, `release` artifact references; `args`, `env` vectors |
 | `unit NAME` | `placement` string naming a complete checked platform unit; `holder` domain reference or `system` |
-| `window NAME` | `holder` domain reference; `device` checked platform-device string; `role` declared role name; `partition` integer; `rights` flag list; `image` image reference or `none` |
+| `window NAME` | `holder` domain reference; `device` checked platform-device string; `role` declared role name; `partition` integer; `rights` flag list |
 | `service NAME` | `server` domain reference or `system`; `interface` qualified ABI service name |
 | `facet NAME` | `grantee`, `service` references; `operations` list; repeated `parameter KEY VALUE`; `max_request`, `in_flight`, `reductions`, `period_ns`, `max_heap_size`, `queue` integers |
 | `introduce FROM TO` | two domain references on the declaration line; no properties |
-| `image NAME` | `device` checked platform-device string; `input` artifact reference; optional `salt` byte literal, bounded to 32 bytes |
 | `liveness SERVICE` | one service reference on the declaration line; no properties |
 | `shell_principal PRINCIPAL` | one principal reference on the declaration line; no properties |
 | `partial_boot NAME` | `image` artifact reference |

@@ -1268,13 +1268,7 @@ arrive with the domain's
 other facets, each a grant the server made for the domain when the system
 domain introduced the two
 ([design-system.md](design-system.md#creating-a-domain)); the runtime
-mounts them before its release's applications start. A domain whose
-release lies in the `system` tree starts from the small release of its
-slice, and its runtime mounts the rest, once its `system` grant is in
-place and before the release's applications start, with the file mount
-below, at the point and with the layout the boot image's record of that
-release names
-([design-storage.md](design-storage.md#the-system-tree)). `/tmp` is the grant
+mounts them before its release's applications start. `/tmp` is the grant
 of the domain's own RAM file server, which the runtime starts and mounts
 itself ([design-tmp.md](design-tmp.md#starting-and-mounting)). A facet that serves
 a tree carries its tree's name and its grant's rights, `ro`, `rw` or
@@ -1321,14 +1315,19 @@ mount, adds a read-only entry for the image a file holds: `erx_ns`'s
 process mounts the image with the EROFS reader, which reads it through
 `erx_verity` ([design-storage.md](design-storage.md#reading-erofs-images)),
 so an image the reader refuses is refused before the table changes, and
-the entry's provider is the reader's mount. `Layout` is the image's
-offset and length and its hash tree's offset, length, salt and root
-hash, those of an app's package
+the entry's provider is the reader's mount. `Layout` is an
+`erx_pkg_header:layout()`, the image's offset and length and its hash
+tree's offset, length, salt and root hash, an opaque value that only
+`erx_pkg_header` builds, never without a tree: the one the package file
+check built, which the domain service hands an app's session for its
+package
 ([design-packaging.md](design-packaging.md#apps), "Looking inside a
-package") or of a release as the boot image records it, or `header`, for
-the layout that `erx_pkg_header:layout/2` decodes from the package
-header at the file's start; a layout that names no tree is refused with
-`einval`. `erx_ns`'s
+package"); or `header`, for the layout that
+`erx_pkg_header:served_layout/2` decodes from the package header at the
+file's start, which `erx_ns`'s process takes only for a file it reached
+through the `apps` grant, whose header bytes the system domain
+authenticated, and refuses with `einval` for any other
+([design-storage.md](design-storage.md#invariants) E1). `erx_ns`'s
 process walks `Path` to one fid of its own, opens it for reading and
 owns it, so the fid lives as long as the mount, and `erx_verity`, in
 whichever process of the domain reads below `To`, sends its positioned
@@ -1336,9 +1335,7 @@ reads on that fid, as any process of a domain may use the domain's fids
 ([Fid owners](#fid-owners)); no OTP file descriptor is shared. The
 unmount clunks the fid. If `erx_ns`'s process ends, the grant clunks
 every fid it owns, its mounts' among them (F10), and reads below those
-mounts answer `eio` until each is mounted again. A file of the release
-slice needs no fid: every process of the domain reads its bytes in the
-slice.
+mounts answer `eio` until each is mounted again.
 `erx_ns:unmount(To)` removes the entry at exactly `To`; unmounting `/`
 fails. Each takes effect for the whole domain at once, for every
 resolution that starts after it returns, and changes nothing for any

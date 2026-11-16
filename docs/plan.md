@@ -2722,8 +2722,8 @@ by side; (f) needs (b) and (c).
   issues a command only through `erx_device:command/2`, which the build
   check holds to `erx_blk_write` as it holds `erx_device:post/4`
   ([design-storage.md](design-storage.md#the-sd-host-controller)). The storage domain holds the SD card, laid out on
-  the host as the ABI file's medium layout, with the release's EROFS
-  image read through its window and littlefs at `/data`. The Pi medium
+  the host as the ABI file's medium layout, with the slot's system
+  partition served as the `system` tree and littlefs at `/data`. The Pi medium
   package brings fsimg's `place` option, which writes the record
   partition's FAT16 and slot A's FAT32 with their placed files
   ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record)),
@@ -3309,7 +3309,7 @@ the sub-spaces of a domain holding `SPACES`, and
 a domain that churns sub-spaces
 ([design-kernel.md](design-kernel.md#security)); the hash check of EROFS
 images: the packer's dm-verity version 1 hash tree for each image and the
-root hash, salt and data-block count in the manifest's `image` records,
+root hash, salt and data-block count in each package's header,
 and the check inside `erx_verity:read/3`, the funnel M6 built, so the
 reader parses only blocks that passed their image's tree (E1), with the
 hash-checking reader's fuzz target

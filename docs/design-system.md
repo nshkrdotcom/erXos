@@ -369,7 +369,7 @@ content, so both readers have a fuzz target
 | --- | --- |
 | the root-task entry, in C | `root_memory`, which it compares with the root budget before anything else; the shares of `system` and `users`; the system principal's budget; the sizes of the domain library's tables; a development build's partial boot |
 | the domain service | the configured domains in the boot order, their restart intensities, `required` and rescue marks, facets and introductions; `system_lane`, `system_queue`, `peer_held` and `system_reserve`; the host name; the vault's sealing backend, which it passes to the vault at its creation |
-| the device service | each device's holder, unit and confinement mark, each domain's windows by role, the image records, an unconfined device's memory size, and the console's and the host link's paths |
+| the device service | each device's holder, unit and confinement mark, each domain's windows by role, an unconfined device's memory size, and the console's and the host link's paths |
 | the resource policy | the principals' budgets, shares and quotas; the lane size per class; `system_reserve`, which bounds the service grants it sets |
 | the principal service | the principals, and which of them are system-shell principals, which it tells the console with each login it confirms |
 | the start service | the `start` rows, the principals with a session template, and the `windows` services each template is granted, by which it checks a row's display ([design-apps.md](design-apps.md#the-start-table)) |
@@ -3465,15 +3465,16 @@ the boot-selection record and the reset count to the slot writer alone,
 derived from that layout, and
 the manifest assigns each data partition by its role in the layout, never
 by sectors, to its storage domain, and each FAT partition likewise to a
-FAT server's domain of its own. The storage domain that serves `system`
-gets one read-only window on the system partition of the slot that the
-boot value names; when the boot value is `unknown`, it gets none
+FAT server's domain of its own. The holder of the manifest's `system`
+window, the storage domain that serves `system`, gets one read-only
+window on the system partition of the slot that the boot value names;
+when the boot value is `unknown`, it gets none
 ([design-storage.md](design-storage.md#the-system-tree)). No other domain
-gets a window on a slot: a domain whose release lies in the `system`
-tree gets a read-only grant of that tree, and its capability registry
-gets the release's record from the manifest, its path, root hash, salt
-and tree layout, which the registry hands to the hash-checking reader
-alone ([design-runtime.md](design-runtime.md#per-byte-primitives)). A
+gets a window on a slot: a domain that reads the `system` tree holds a
+read-only grant of it, and an app's session mounts its package with the
+layout the domain service hands it in the app's record, which the file
+check built
+([design-packaging.md](design-packaging.md#an-apps-session)). A
 window is a grant of the block driver's domain, which the device service
 introduces to the window's holder over a connection once the holder
 runs. The slot

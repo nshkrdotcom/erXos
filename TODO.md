@@ -13,8 +13,8 @@ it; git history is the record of completed work.
   [design-storage.md](docs/design-storage.md#the-system-tree)): each slot
   becomes a FAT boot partition and a read-only EROFS system partition; the
   storage domain serves the booted slot's as the `system` tree through a
-  read-only `erx_fs` backend over `erx_erofs`; packages and releases outside
-  the boot image are self-checking files mounted with
+  read-only `erx_fs` backend over `erx_erofs`; packages are self-checking
+  files in it, mounted with
   `erx_ns:mount({erofs, {file, Path, Layout}}, ...)`; image packages leave
   the boot image under a packer check of what it may hold; `/apps` is one
   flat tree; the slot writer and the update write two partitions; image
@@ -185,7 +185,7 @@ it; git history is the record of completed work.
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   `erx_principal:app_record()` and
   `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
-  `/pkg/NAME.app`, which becomes `/system/apps/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
@@ -5090,13 +5090,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   a native root with these release files. `liberx/backend/core/boot_manifest.c` is the reader to link, and
   `Erx::Release.differences` the comparison `test/integration/runtime_release_test.rb` runs over two hosted packs
   until then.
-* [Medium] runtime, `erx_erofs`: `erx_ns:mount({erofs, Window}, To, [])` mounts an image from a block
-  service window and `prim_file` reads it, but nothing in the running system mounts one: the block
-  service serves no window on an image inside a slot (the slot's images follow the boot image, whose
-  layout the slot parser reads), and the runtime mounts no image at domain creation from the boot
-  image's grants ([design-files.md](docs/design-files.md#building-binding-and-mounting)), so the boot
-  table holds none. `erx_verity:open/2` takes only the tree `unchecked` until the packer writes each
-  image's hash tree and the boot image records its root hash, salt and layout (M11).
 * [Low] runtime, EROFS mounts: `erx_erofs_file` opens no directory (`[directory]` answers `enotsup`) and
   exports no `copy/3` or `ipread_s32bu_p32bu/3`, so `file:copy/3` from an image's open file and
   `disk_log`'s positioned reads of one fail; `set_cwd` on an image checks no search bit; every image
@@ -7067,6 +7060,17 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] files, an EROFS mount's rights (`erx_ns`,
+  [design-files.md](docs/design-files.md#invariants) F6): `erx_ns:mount({erofs,
+  {file, Path, Layout}}, To, Options)` takes `rx` from its caller whatever grant
+  reached the file, so F6, which bounds grants, does not bound an EROFS mount.
+  With a `header` mount of any file, which the design allowed before the
+  `system` tree, a session could write a package-shaped file under `/tmp` and
+  mount it `rx`, running code it wrote. Confining `header` to the `apps` grant
+  and building layouts only in the file check closes that route, but no rule
+  states it: an EROFS mount is `rx` only with a layout the file check built,
+  and is `ro` otherwise. State it in F6 and test it; seeded: an `rx` mount
+  through the `apps` grant, which must come out `ro`.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
@@ -7487,15 +7491,6 @@ to the corpus and follow rc
   `write/1`'s callers, before the security closure
   (`erlang/apps/erx/src/erx_console.erl`).
 
-* [Medium] ABI, the manifest's image records (`abi/manifest.txt`): only the
-  packer's Phase 1 check (`tools/lib/erx/manifest.rb`, `normalize_images`)
-  holds an image record's rules; the generated C and Erlang readers check
-  `format` and `hash_algorithm` each alone, so a malformed boot image can
-  pair `erofs_verity` with hash algorithm `none` and zero tree fields.
-  Express the format's rules as reader rules in `abi/manifest.txt` when the
-  record takes its `path` form ([design-abi.md](docs/design-abi.md)); its
-  extents, `erofs_unchecked` and the window's `image` go with the image
-  windows ([docs/todo-system-partition.md](docs/todo-system-partition.md)).
 
 * [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads blocks
   unchecked until M11 adds the hash check inside `erx_verity:read/3`
@@ -8418,7 +8413,7 @@ document's "residual risks accepted" paragraph.
   storage domain's driver, or the device service's window grants, PW1) before it writes.
 * [Medium] storage, window rights (`erlang/apps/erx_blk/src/erx_blk_window.erl`):
   a window is read-only only by its role, not because it carries the
-  manifest window's `rights`, and the booted-system window of
+  manifest window's `rights`, and the `system` window of
   [design-storage.md](docs/design-storage.md#the-system-tree) must be
   read-only while the slot writer's window on the same partition is
   writable. Carry `ro | rw`

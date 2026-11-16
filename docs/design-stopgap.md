@@ -414,12 +414,12 @@ sends it. erXos's kernel needs no such word: it lists a UART only when the devic
 Two things stop a production image without it: `Admitted.admit` refuses every
 manifest for `root_startup` (`manifest.rb`, and `Pack#build` requires the
 admitted bytes), and before that `EmptyNative#check` refuses a full boot and
-every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`,
-`image` and `liveness` record. **`Stopgap`** sits beside `EmptyNative` and
+every `domain`, `partial_boot`, `window`, `service`, `facet`, `introduce`
+and `liveness` record. **`Stopgap`** sits beside `EmptyNative` and
 shares its readers: a development manifest, full or partial boot, with the
 system domain and its configured domains. It accepts the records the system
 release's services and the configured domains need, `domain`, `window`,
-`service`, `facet`, `introduce` and `image` among them, and refuses
+`service`, `facet` and `introduce` among them, and refuses
 `partial_boot` and `liveness` records with a diagnostic naming the milestone
 that brings them. It accepts a `facet` only of a service a configured domain
 serves, and only when it names no operation: operations resolve against the
@@ -428,12 +428,10 @@ service, and the domain library's boot view refuses one that names any. A
 facet's parameters it resolves as [design-abi.md](design-abi.md) says, each
 key against its service's declaration and each value against that key's kind
 and bound, and the manifest property that consumes them holds as written, as
-property 18 does for `windows`. The production image holds no `image`
-record: every release it starts lies in the boot image, which holds what
-the rule of [design-storage.md](design-storage.md#data-model) allows it,
-the releases that run before the `system` tree is served, the session
-releases and the rescue set, and the slot's system partition holds the
-image builder's packages. Phase 1's `erx_verity` passes a package's
+property 18 does for `windows`. Every release the production image
+starts lies in its boot image, which holds what the rule of
+[design-storage.md](design-storage.md#data-model) allows it, and the
+slot's system partition holds the image builder's packages. Phase 1's `erx_verity` passes a package's
 blocks through unchecked; the hash check is a stopgap residual recorded
 in `TODO.md` ([design-packaging.md](design-packaging.md#phase-1)). QEMU `virt`'s record is
 [config/platforms/qemu-virt.json](../config/platforms/qemu-virt.json) and its
@@ -1829,7 +1827,8 @@ arguments, so the block driver knows the booted slot without a machine
 page. Once the partition table is admitted, `erx_blk_service` starts one
 read-only window of role `system` on the booted slot's system partition,
 whose sectors come from the medium layout of the ABI file alone, for the
-storage domain that serves `system`; a boot with no slot, an unknown
+storage domain that serves `system`, the holder the manifest's `system`
+window row names; a boot with no slot, an unknown
 boot, starts none, as the storage design requires. That storage domain
 serves the window as the `system` tree, with the read-only `erx_fs`
 backend over `erx_erofs`, as on erXos's kernel
