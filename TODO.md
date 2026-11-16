@@ -8791,15 +8791,36 @@ document's "residual risks accepted" paragraph.
   writes only the record's sector and leaves the rest of the partition zero, so a QEMU medium has no FAT volume
   to hold `authorized_keys`; [design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium) has it format
   the partition with `PiMedium::RECORD_VOLUME`, as the card is.
+* [Low] storage, long-name case in `erx_fat_read` (`erlang/apps/erx_storage/src/erx_fat_read.erl`, `upper/1`;
+  [design-storage.md](docs/design-storage.md#removable-media-fat)): the read core maps only ASCII letters to upper
+  case before comparing long names, where the design compares after mapping every Basic Multilingual Plane code
+  unit through a case table generated from Unicode's character database; so a name whose letters differ only by
+  a non-ASCII code unit whose simple uppercase is an ASCII letter (U+0131, U+017F) is not found, which fails safe for
+  `authorized_keys`. The FAT server, which needs the table, generates it and `upper/1` takes it.
+* [Low] storage, FAT's format constants have two copies (`tools/lib/erx/fat_volume.rb`, `FAT16_MIN`, `FAT32_MIN`,
+  the entry markers and attributes; `erlang/apps/erx_storage/src/erx_fat_read.erl`, the same as macros): an
+  `abi/formats/fat.txt` would give both, and the FAT server, one source, as `abi/formats/erofs.txt` does for EROFS.
+  The test fixture (`test/fixtures/fat_record_volume.rb`) and the fuzz target keep their own values on purpose, as
+  oracles independent of the reader.
+* [Medium] storage, `erx_fat_read` over a volume another writer made (`test/host/erx_fat_read_test.rb`;
+  [design-ssh.md](docs/design-ssh.md#verification)): every case and fuzz seed is a volume of
+  `test/fixtures/fat_record_volume.rb`, written from the same reading of the FAT specification as the reader, where
+  the design's row reads volumes fsimg writes; a shared misreading would refuse every real card. Add a case over
+  the record volume `PiMedium::RECORD_VOLUME` has fsimg write (`not_found` proves its layout is admitted), and one
+  that finds `authorized_keys` once fsimg can place a file past the record's region (the fsimg item below).
+* [Low] SSH, the boot keys' fuzz target (`test/erlang/erx_boot_keys_fuzz.erl`, `key_blob/1`;
+  [design-ssh.md](docs/design-ssh.md#verification)): it checks each blob's layout itself, where the design has
+  `erx_ssh_wire` accept it; that decoder and `abi/formats/ssh.txt` are on another branch, and when they land the
+  target calls it, as `erx_boot_keys` then takes the blob layout's macros from the generated header.
 * [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
   clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
   file beside the record in its erase unit;
   [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
-  in both FATs. Work: `abi/medium.txt` gains `limit medium_erase_sectors u32 2048`, with its comment naming the
-  record's region; `RECORD_VOLUME` derives the range after the record's cluster from it and passes it as fsimg's
+  in both FATs. Work: `RECORD_VOLUME` derives the range after the record's cluster from `abi/medium.txt`'s
+  `medium_erase_sectors` and passes it as fsimg's
   `-o bad=FIRST-LAST` (the fsimg item below); `check_volumes` derives the same range and refuses a volume in
-  which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark;
-  `erx_fat_read` derives its region check from the generated constant. No cluster number is written down
+  which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark,
+  as `erx_fat_read` derives its region check. No cluster number is written down
   anywhere, and nothing patches fsimg's output.
 * [Medium] tooling, fsimg's FAT creation and update (`~/projects/fsimg`, pinned in `deps.lock`;
   [design-storage.md](docs/design-storage.md#removable-media-fat),

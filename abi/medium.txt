@@ -50,12 +50,17 @@
 # the committed slot's partition, and the other slot's in its [tryboot] section;
 # medium_record_a's text is, line by line, "[all]", "tryboot_a_b=1",
 # "boot_partition=2", "[tryboot]", "boot_partition=3", each ended by a line feed, and
-# medium_record_b's swaps the two numbers.
+# medium_record_b's swaps the two numbers. The medium's erase unit is medium_erase_sectors
+# sectors (1 MiB), counted from the partition's start; the record's region is the unit that
+# holds the record's sector, which no file of the volume but the record's own may enter
+# (docs/design-storage.md, "Removable media: FAT"), and every consumer derives its
+# clusters from these values.
 limit medium_record_start u32 2048
 limit medium_record_sectors u32 16384
 limit medium_record_type u8 0x0e
 limit medium_record_select_start u32 6144
 limit medium_record_count_start u32 2048
+limit medium_erase_sectors u32 2048
 limit medium_slot_a_partition u32 2
 limit medium_slot_b_partition u32 3
 bytes medium_record_a 64 value 5b616c6c5d0a747279626f6f745f615f623d310a626f6f745f706172746974696f6e3d320a5b747279626f6f745d0a626f6f745f706172746974696f6e3d330a
