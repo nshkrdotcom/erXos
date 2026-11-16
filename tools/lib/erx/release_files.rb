@@ -43,8 +43,10 @@ module Erx
     # (docs/design-runtime.md, edit 65), and the app template's start erx_app, once the
     # ready answer has also brought the app's record (docs/design-packaging.md,
     # "Starting an app"). The system release ships erx_session (SYSTEM_APPLICATIONS)
-    # and not erx_app, which only the app script holds.
-    DOMAIN_ONLY = %w[erx_session erx_app].freeze
+    # and not erx_app, which only the app script holds. erx_wifi, the WiFi domain's
+    # (docs/design-wifi.md, "The WiFi domain"), is only loaded until the domain's
+    # station starts it once it holds its facets.
+    DOMAIN_ONLY = %w[erx_session erx_app erx_wifi].freeze
     raise Error, "DOMAIN_ONLY names what the release does not ship: #{DOMAIN_ONLY - APPLICATIONS}" unless
       (DOMAIN_ONLY - APPLICATIONS).empty?
     # OTP's applications that only the domains' runtime images run (DomainImageApps).
@@ -133,8 +135,8 @@ module Erx
     #   No manifest names it yet: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
-    #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script, session's and app's
-    #   name crypto, so no other domain has it on its code path. No manifest names it
+    #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script, session's, app's and
+    #   wifi's name crypto, so no other domain has it on its code path. No manifest names it
     #   yet; the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
@@ -144,6 +146,9 @@ module Erx
     #   which mounts the app's package at /app and starts what it declares. Its .app
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
+    # * wifi, the WiFi domain's (docs/design-wifi.md, "The WiFi domain"): crypto, which
+    #   the supplicant's key arithmetic calls, and erx_wifi (DOMAIN_ONLY), both only
+    #   loaded. No manifest names it yet.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
@@ -155,7 +160,8 @@ module Erx
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
                         'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
-                                  'erx_net_client', 'erx_app'].freeze }.freeze
+                                  'erx_net_client', 'erx_app'].freeze,
+                        'wifi' => [*DOMAIN_BASE, 'crypto', 'erx_wifi'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release
