@@ -4538,8 +4538,8 @@ principal's policy:
 | `sockets` | sockets open at once, listeners and accepted connections included | 1,024 |
 | `buffers` | bytes of send and receive buffer reserved across the grant's sockets; what a socket has pushed to its socket process is the client's own memory and does not count | 16 MiB |
 | `time_wait` | connections in TIME-WAIT | 4,096 |
-| `ports` | `[{Lo, Hi}]`, inclusive ranges of the local ports the grant may bind explicitly; ports below 1,024 only when listed, as FreeBSD requires privilege for them (`ipport_reservedhigh`, `in_pcb.c:132`) | `[{1024, 65535}]` |
-| `listen` | `true`, `false` or `[{Lo, Hi}]`: whether the grant may listen, and on which of its `ports`; a listener's bind may claim the ports both hold | `true` |
+| `ports` | `[{Lo, Hi}]`, inclusive ranges of the local ports the grant may bind explicitly; ports below 1,024 only when listed, as FreeBSD requires privilege for them (`ipport_reservedhigh`, `in_pcb.c:132`). A facet row states it as a set of at most 16 ports, which replaces the default and which the mint takes as one-port ranges; a port below 1,024 is listed by one grant of a network domain alone (property 15 of [design-system.md](design-system.md#the-manifest)) | `[{1024, 65535}]` |
+| `listen` | `true`, `false` or `[{Lo, Hi}]`: whether the grant may listen, and on which of its `ports`; a listener's bind may claim the ports both hold. A facet row states it as a set of at most 16 of its `ports`, taken as one-port ranges, or leaves it out for `true`; no row states `false` | `true` |
 | `addresses` | `all` or `[Addr]`, `Addr` an address tuple such as `{10, 0, 2, 15}`, the local addresses the grant may bind, a listener's or a datagram socket's; when it is a list, a bind to `any` is refused with `{error, eacces}` | `all` |
 | `share` | reductions per period, the facet's share | the policy's |
 | `max_request` | the largest decoded request the grant and its sockets take; the runtime drops a larger one before it is queued | fixed, not a policy's: the schema's largest request, which the generator computes |

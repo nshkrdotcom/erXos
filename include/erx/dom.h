@@ -500,8 +500,9 @@ typedef struct erx_dom_parameter {
 /*
  * A checked facet row: a grant of a service to its grantee, the system
  * domain, a configured row or a session template, never the service's own
- * server, with the grant's limits and its parameters, each stated once, in
- * number order. A session template takes facets of configured domains'
+ * server, with the grant's limits and its parameters in number order: each
+ * declared parameter once, except a set, whose elements are consecutive
+ * entries in ascending order. A session template takes facets of configured domains'
  * services, which their servers grant each session made from it, and of
  * the system domain's, which the domain service grants each such session
  * in its ready answer (property 14). It names no operation: operations

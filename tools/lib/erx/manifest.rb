@@ -1522,7 +1522,7 @@ module Erx
             interface == fetch_interface('files')
           declared = declared_parameters(interface) ||
                      invalid("services names #{name}, whose interface no ABI file declares", 19, 'apps.services')
-          required = declared.reject { |_key, parameter| parameter.fetch(:cardinality) == 'optional' }.keys
+          required = declared.select { |_key, parameter| parameter.fetch(:cardinality) == 'one' }.keys
           invalid("services names #{name}, whose interface gives #{required.join(', ')} no default", 19, 'apps.services') unless
             required.empty?
           derived_quantities(interface, name)
@@ -1828,7 +1828,7 @@ module Erx
         control = fetch_interface('driver_control')
         invalid('only the system domain holds a driver-control facet', 8, 'facet.grantee') if
           rows.any? { |row| row.fetch('grantee_kind') != grantee_kind('system') && service_rows.fetch(row.fetch('service')).fetch('interface') == control }
-        check_network_grants(rows, tables)
+        check_network_grants(rows, packed.map(&:first), tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
         check_line_grants(rows, packed.map(&:first), tables)
@@ -1847,8 +1847,11 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them; line_grant is property 8's line clause,
-      # check_line_grants, which reads uart and flow and range-checks rate; files_grant
+      # clipboard as their declarations bound them. line_grant is property 8's line clause,
+      # check_line_grants, which reads uart and flow and range-checks rate. net_grant is
+      # property 15's parameter clause, check_net_ports, which reads a net facet's ports and
+      # listen; its sockets and buffers their declarations alone bound, and the grant
+      # enforces all four at run time (abi/services/net.txt). files_grant
       # takes a files facet's rights, whose member kind alone bounds them to ro, rw and rx,
       # and which the grant applies at run time. A service declaring a parameter that no
       # checker here consumes is unusable: no facet of it is admitted, since nothing would
@@ -1856,6 +1859,7 @@ module Erx
       # (grant_checker), whatever their interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
                          'line_grant' => %w[uart rate flow].freeze,
+                         'net_grant' => %w[sockets buffers ports listen].freeze,
                          'files_grant' => %w[rights].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
@@ -1876,20 +1880,36 @@ module Erx
         unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
       end
 
-      # Resolved parameter values, by key, and their packed facet_parameters rows in key order.
+      # Resolved parameter values, by key, and their packed facet_parameters rows in key
+      # order, a set's one row an element, in ascending order of its elements.
       def pack_parameters(values, declared)
-        [values.freeze, values.map { |key, value| parameter_row(declared.fetch(key), value) }.sort_by { |item| item.fetch('key') }]
+        rows = values.flat_map do |key, value|
+          parameter = declared.fetch(key)
+          parameter.fetch(:cardinality) == 'set' ? value.map { |item| parameter_row(parameter, item) } : [parameter_row(parameter, value)]
+        end
+        [values.freeze, rows.sort_by { |item| item.values_at('key', 'scalar') }]
       end
 
       # A facet record's parameter lines, KEY VALUE, as a map from key to value, a device
-      # reference resolved against devices, the placed device rows.
+      # reference resolved against devices, the placed device rows. A set's lines, one an
+      # element, give it the array of their values in ascending order: at most its
+      # MAX_COUNT of them, and none twice. Every other key is stated at most once.
       def resolve_parameters(record, declared, devices)
         values = record.parameters.each_with_object({}) do |(key_token, value_token), result|
           key = key_token.value
           parameter = (!key_token.quoted && declared[key]) ||
                       invalid("facet parameter #{key} is not declared by its service", 2, 'facet.parameter')
-          invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
-          result[key] = parameter_value(key, parameter, value_token, record.line, devices)
+          value = parameter_value(key, parameter, value_token, record.line, devices)
+          if parameter.fetch(:cardinality) == 'set'
+            set = result.fetch(key, [])
+            invalid("facet parameter #{key} states #{value} twice", 2, 'facet.parameter') if set.include?(value)
+            invalid("facet parameter #{key} states over #{parameter.fetch(:maximum_count)} values", 2, 'facet.parameter') if
+              set.size == parameter.fetch(:maximum_count)
+            result[key] = (set + [value]).sort.freeze
+          else
+            invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
+            result[key] = value
+          end
         end
         declared.each do |key, parameter|
           invalid("facet parameter #{key} is required", 2, 'facet.parameter') if parameter.fetch(:cardinality) == 'one' && !values.key?(key)
@@ -1901,13 +1921,12 @@ module Erx
       # boolean, quoted bytes within their bound, the bare name of one of a member kind's
       # members, which is the value, or for a device reference the index in devices of the
       # device-tree row at the quoted path, which its grant checker judges
-      # (docs/design-abi.md, "Services, facets and their parameter schemas"). A set and
-      # the domain and principal references are refused while no service declares one, so
-      # nothing here guesses their spelling.
+      # (docs/design-abi.md, "Services, facets and their parameter schemas"); a set's
+      # element is one value of its kind, which is u64 (the ABI reader refuses a set of
+      # another). The domain and principal references are refused while no service
+      # declares one, so nothing here guesses their spelling.
       def parameter_value(key, parameter, token, line, devices)
         kind = parameter.fetch(:kind)
-        unsupported("facet parameter #{key} is a set, which no service declares", 'facet.parameter') if
-          parameter.fetch(:cardinality) == 'set'
         case kind
         when 'u64', 'i64'
           line.fail!("parameter #{key} requires an integer") if token.quoted
@@ -2110,8 +2129,8 @@ module Erx
       # frames of at least net_max_frame_min bytes under their own runtime limits, since
       # the socket protocol's piece and its envelope arrive in one frame. The manifest is the only
       # source of a net grant, since no requested create carries one, so this holds for
-      # every grant there is.
-      def check_network_grants(facets, tables)
+      # every grant there is. The grants' ports are its parameter clause (check_net_ports).
+      def check_network_grants(facets, values, tables)
         net, netadmin = fetch_interface('net'), fetch_interface('netadmin')
         interface = ->(row) { tables.fetch('services').fetch(row.fetch('service')).fetch('interface') }
         facets.each do |row|
@@ -2121,6 +2140,35 @@ module Erx
         end
         floor = @codec.constant('net_max_frame_min')
         facets_of(facets, 'net', tables).each { |row| check_receiver_floors(row, tables, 'net', { 'max_frame' => floor }, property: 15) }
+        check_net_ports(facets.zip(values).select { |row, _| interface.call(row) == net }, tables)
+      end
+
+      # Property 15's parameter clause, over each net grant and its resolved parameters
+      # (abi/services/net.txt): every listen port is one of the grant's ports, those it
+      # lists or by default net_unprivileged_port to 65535, so no listen line is void; and a
+      # privileged port, below net_unprivileged_port, which a grant binds only when it lists it,
+      # is listed by one grant of its network domain alone, to a configured domain. That
+      # domain's stack binds a port for the first grant to claim it (erx_net_bind), so a
+      # second grant listing it could take it first, and a session template's grant is
+      # every session's made from it.
+      def check_net_ports(grants, tables)
+        unprivileged = @codec.constant('net_unprivileged_port')
+        privileged = grants.flat_map do |row, stated|
+          server = tables.fetch('services').fetch(row.fetch('service')).fetch('server')
+          ports = stated['ports']
+          unbound = stated.fetch('listen', []).reject { |port| ports ? ports.include?(port) : port >= unprivileged }
+          invalid("facet #{row.fetch('name')} listens on #{unbound.join(', ')}, none of its ports", 15, 'facet.parameter') unless
+            unbound.empty?
+          low = (ports || []).select { |port| port < unprivileged }
+          invalid("facet #{row.fetch('name')} grants privileged ports to a session template", 15, 'facet.grantee') if
+            !low.empty? && row.fetch('grantee_kind') != grantee_kind('domain')
+          low.map { |port| [[server, port], row.fetch('name')] }
+        end
+        shared = privileged.group_by(&:first).select { |_held, holders| holders.size > 1 }
+        shared.each do |(_server, port), holders|
+          invalid("privileged port #{port} is listed by facets #{holders.map(&:last).join(', ')} of one network domain",
+                  15, 'facet.parameter')
+        end
       end
 
       # Property 16: every domain that receives the files protocol of a facet of an
