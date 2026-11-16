@@ -243,33 +243,33 @@ mode([], _MaxBytes) ->
     {error, disabled}.
 
 %% The bring-up's first request, the display's size; MaxBytes bounds the screen image.
--spec setup_start(non_neg_integer()) -> {setup_action(), setup()}.
+-spec setup_start(non_neg_integer()) -> {setup(), [setup_action()]}.
 setup_start(MaxBytes) when is_integer(MaxBytes), MaxBytes >= 0 ->
-    {{post, display_info_request()}, #{step => display_info, max_bytes => MaxBytes}}.
+    {#{step => display_info, max_bytes => MaxBytes}, [{post, display_info_request()}]}.
 
-%% The bring-up's next action, from the answer to the step's request (decoded and checked
+%% The bring-up's next state and its one action, from the answer to the step's request (decoded and checked
 %% by the frame that carried it) or the region the driver made. Anything else for the step
 %% stops it.
--spec setup_next(setup(), setup_event()) -> {setup_action(), setup()}.
+-spec setup_next(setup(), setup_event()) -> {setup(), [setup_action()]}.
 setup_next(S = #{step := display_info, max_bytes := MaxBytes}, {answer, {ok, Scanouts}}) ->
     case mode(Scanouts, MaxBytes) of
-        {ok, Mode} -> {{region, region_size(Mode)}, S#{step := region, mode => Mode}};
-        {error, Reason} -> {{stop, {mode, Reason}}, S}
+        {ok, Mode} -> {S#{step := region, mode => Mode}, [{region, region_size(Mode)}]};
+        {error, Reason} -> {S, [{stop, {mode, Reason}}]}
     end;
 setup_next(S = #{step := region, mode := {Width, Height}}, {region, Region}) ->
     {ok, Format} = format(?CHAN),
-    {{post, create_2d_request(?RESOURCE_ID, Format, Width, Height)}, S#{step := create, region => Region}};
+    {S#{step := create, region => Region}, [{post, create_2d_request(?RESOURCE_ID, Format, Width, Height)}]};
 setup_next(S = #{step := create, region := Region}, {answer, ok}) ->
-    {{post, attach_backing_request(?RESOURCE_ID, Region)}, S#{step := attach}};
+    {S#{step := attach}, [{post, attach_backing_request(?RESOURCE_ID, Region)}]};
 setup_next(S = #{step := attach, mode := Mode}, {answer, ok}) ->
-    {{post, set_scanout_request(?SCANOUT, ?RESOURCE_ID, Mode)}, S#{step := scanout}};
+    {S#{step := scanout}, [{post, set_scanout_request(?SCANOUT, ?RESOURCE_ID, Mode)}]};
 setup_next(S = #{step := scanout, mode := {Width, Height}, region := Region}, {answer, ok}) ->
     {ok, Chan} = chan_code(?CHAN),
     Stride = Width * ?BYTES_PER_PIXEL,
     Geometry = #{width => Width, height => Height, stride => Stride, length => Stride * Height},
-    {{ready, #{geometry => Geometry, region => Region, resource => ?RESOURCE_ID, chan => Chan}}, S};
+    {S, [{ready, #{geometry => Geometry, region => Region, resource => ?RESOURCE_ID, chan => Chan}}]};
 setup_next(S = #{step := Step}, Event) ->
-    {{stop, {unexpected, Step, Event}}, S}.
+    {S, [{stop, {unexpected, Step, Event}}]}.
 
 %% A frame of Requests whose first is posted under Tag.
 -spec frame_start([request()], 0..?U64_MAX) -> frame().

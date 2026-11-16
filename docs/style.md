@@ -261,9 +261,16 @@ variant, so every edge takes a step's result apart the same way:
 
 %% The edge: perform each action in order; a stop ends the process.
 perform([{stop, Reason}], _S) -> {stop, Reason};
+perform([{stop, _} | _], _S) -> error(stop_not_last);
 perform([Action | Actions], S) -> perform(Actions, effect(Action, S));
 perform([], S) -> {ok, S}.
 ```
+
+A stop with actions after it is the core's bug, and the edge's one loop
+refuses it before performing any action after it. It refuses with
+`error/1`, whose stack trace names the function's arity and not its
+arguments: a `function_clause` there would put the whole state in the
+stack trace, which `format_status/1` does not filter.
 
 A core with timeouts keeps its deadlines in its state and takes the time
 as an input ([design.md](design.md#drivers-and-dma), "Deadlines in

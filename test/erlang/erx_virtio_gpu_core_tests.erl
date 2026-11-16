@@ -135,31 +135,31 @@ display_info(Width, Height, Enabled) ->
 %% The bring-up, one request at a time: the display's size, the screen image's region,
 %% the resource, its backing (the region), then the scanout; ready with the geometry.
 setup_in_order_test() ->
-    {{post, Info}, S0} = erx_virtio_gpu_core:setup_start(1 bsl 24),
+    {S0, [{post, Info}]} = erx_virtio_gpu_core:setup_start(1 bsl 24),
     ?assertEqual(erx_virtio_gpu_core:display_info_request(), Info),
-    {{region, Bytes}, S1} = erx_virtio_gpu_core:setup_next(S0, {answer, decoded(Info, display_info(640, 480, 1))}),
+    {S1, [{region, Bytes}]} = erx_virtio_gpu_core:setup_next(S0, {answer, decoded(Info, display_info(640, 480, 1))}),
     ?assertEqual(640 * 4 * 480 + 8, Bytes),
-    {{post, Create}, S2} = erx_virtio_gpu_core:setup_next(S1, {region, r}),
+    {S2, [{post, Create}]} = erx_virtio_gpu_core:setup_next(S1, {region, r}),
     ?assertEqual(erx_virtio_gpu_core:create_2d_request(1, 2, 640, 480), Create),
-    {{post, Attach}, S3} = erx_virtio_gpu_core:setup_next(S2, {answer, ok}),
+    {S3, [{post, Attach}]} = erx_virtio_gpu_core:setup_next(S2, {answer, ok}),
     ?assertEqual(erx_virtio_gpu_core:attach_backing_request(1, r), Attach),
-    {{post, Scanout}, S4} = erx_virtio_gpu_core:setup_next(S3, {answer, ok}),
+    {S4, [{post, Scanout}]} = erx_virtio_gpu_core:setup_next(S3, {answer, ok}),
     ?assertEqual(erx_virtio_gpu_core:set_scanout_request(0, 1, {640, 480}), Scanout),
-    ?assertMatch({{ready, #{geometry := #{width := 640, height := 480, stride := 2560, length := 2560 * 480},
-                            region := r, resource := 1, chan := 16#68081828}}, _},
+    ?assertMatch({_, [{ready, #{geometry := #{width := 640, height := 480, stride := 2560, length := 2560 * 480},
+                                region := r, resource := 1, chan := 16#68081828}}]},
                  erx_virtio_gpu_core:setup_next(S4, {answer, ok})).
 
 decoded({_Segments, Expect}, Bytes) -> erx_virtio_gpu_core:decode(Expect, Bytes).
 
 %% A disabled scanout, a screen past the memory, and an event out of its step each stop it.
 setup_stops_test() ->
-    {_, S0} = erx_virtio_gpu_core:setup_start(1 bsl 24),
-    ?assertMatch({{stop, {mode, disabled}}, _},
+    {S0, _} = erx_virtio_gpu_core:setup_start(1 bsl 24),
+    ?assertMatch({_, [{stop, {mode, disabled}}]},
                  erx_virtio_gpu_core:setup_next(S0, {answer, erx_virtio_gpu_core:decode(display_info, display_info(640, 480, 0))})),
-    ?assertMatch({{stop, {mode, {size, 4096, 4096}}}, _},
+    ?assertMatch({_, [{stop, {mode, {size, 4096, 4096}}}]},
                  erx_virtio_gpu_core:setup_next(S0, {answer, erx_virtio_gpu_core:decode(display_info, display_info(4096, 4096, 1))})),
-    ?assertMatch({{stop, {unexpected, display_info, {region, r}}}, _}, erx_virtio_gpu_core:setup_next(S0, {region, r})),
-    ?assertMatch({{stop, {unexpected, display_info, {answer, ok}}}, _}, erx_virtio_gpu_core:setup_next(S0, {answer, ok})).
+    ?assertMatch({_, [{stop, {unexpected, display_info, {region, r}}}]}, erx_virtio_gpu_core:setup_next(S0, {region, r})),
+    ?assertMatch({_, [{stop, {unexpected, display_info, {answer, ok}}}]}, erx_virtio_gpu_core:setup_next(S0, {answer, ok})).
 
 two() ->
     {ok, Requests} = erx_virtio_gpu_core:flush_plan([{0, 0, 1, 1}], screen(), 7, 99),

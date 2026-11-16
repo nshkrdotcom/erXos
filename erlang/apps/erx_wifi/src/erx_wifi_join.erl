@@ -107,25 +107,25 @@ table() ->
       deadline => {fun due/4, #{joining => [idle], sae => [sae, idle], keys => [idle], rekey => [open]}}}.
 
 -doc """
-One event at the time and with the random bytes of Ctx: the actions to perform, in
-order, and the next join.
+One event at the time and with the random bytes of Ctx: the next join, and the actions
+to perform, in order.
 """.
--spec step(join(), event(), ctx()) -> {[action()], join()}.
+-spec step(join(), event(), ctx()) -> {join(), [action()]}.
 step(#{state := State} = Join, Event, Ctx) ->
     Kind = kind(Event),
     {Handler, Cells} = maps:get(Kind, table()),
     case {belongs(Event, Join), maps:find(State, Cells)} of
         {false, _} ->
-            {[], count(stale, Join)};
+            {count(stale, Join), []};
         {true, error} ->
-            {[], count(unexpected_event, Join)};
+            {count(unexpected_event, Join), []};
         {true, {ok, Allowed}} ->
             case Handler(State, Event, Join, Ctx) of
                 {drop, Check} ->
-                    {[], count(Check, Join)};
+                    {count(Check, Join), []};
                 {Actions, #{state := Next} = Joined} ->
                     lists:member(Next, Allowed) orelse erlang:error({outside_table, Kind, State, Next}),
-                    {Actions, Joined}
+                    {Joined, Actions}
             end
     end.
 

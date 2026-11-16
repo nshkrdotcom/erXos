@@ -195,7 +195,7 @@ bump(#{counter := Counter} = Ap) -> Ap#{counter := Counter + 1}.
 %% never moves the watermark; every edge taken is recorded.
 step(#{join := Join, now := Now} = World, Event, Class) ->
     Ctx = #{now => Now, random => crypto:hash(sha256, term_to_binary(key(World)))},
-    {Actions, Joined} = erx_wifi_join:step(Join, Event, Ctx),
+    {Joined, Actions} = erx_wifi_join:step(Join, Event, Ctx),
     Dropped = maps:get(counts, Joined) =/= maps:get(counts, Join),
     case refusal(Event, Join) of
         none when not Dropped ->

@@ -97,13 +97,14 @@ start_device(Spec) ->
         {ok, _Features} ?= step(negotiate, erx_device:negotiate(Dev, ?WANTED)),
         {ok, Irq} ?= step(attach, erx_irq_line:attach(Dev, ?IRQ_LINE)),
         State0 = #state{dev = Dev, irq = Irq, queue = Queue},
-        {Action, Setup} = erx_virtio_gpu_core:setup_start(?ERX_MEM_CONTIGUOUS_MAX),
+        {Setup, [Action]} = erx_virtio_gpu_core:setup_start(?ERX_MEM_CONTIGUOUS_MAX),
         {ok, Ready, State1} ?= setup(Action, Setup, State0),
         screen(Ready, State1)
     end.
 
 %% The bring-up's actions performed until it is ready or stops: each request as a frame of
-%% one, the region by the NIF.
+%% one, the region by the NIF. Each of its steps names one action, whose outcome is the
+%% next step's event.
 setup({post, Request}, Setup, State) ->
     case run_frame([Request], State) of
         {ok, [Answer], Next} -> setup_step(Setup, {answer, Answer}, Next);
@@ -120,7 +121,7 @@ setup({stop, Reason}, _Setup, _State) ->
     {error, Reason}.
 
 setup_step(Setup, Event, State) ->
-    {Action, Next} = erx_virtio_gpu_core:setup_next(Setup, Event),
+    {Next, [Action]} = erx_virtio_gpu_core:setup_next(Setup, Event),
     setup(Action, Next, State).
 
 %% The screen image over the region, and the info erx_screen reads.

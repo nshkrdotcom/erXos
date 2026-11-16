@@ -2241,7 +2241,7 @@ has report ids, as FreeBSD sizes its interrupt transfer
 since a transfer ends only at its length or a short packet (HID 1.11,
 section 8.4; xHCI 4.10.1.1, p. 191).
 
-`erx_hid_core:step(Layout, Report, State) -> {Records, State}` keeps,
+`erx_hid_core:step(Layout, Report, State) -> {State, Records}` keeps,
 for each report id the layout has, what its last report of that id
 left: the keys and buttons it held and its absolute position, not the
 fields' values; and derives the held set, the keys and buttons held, as

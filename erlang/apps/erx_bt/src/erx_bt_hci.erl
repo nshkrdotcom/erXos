@@ -153,8 +153,12 @@ steps([Input | Inputs], #hci{core = Core} = State) ->
         {stop, _Reason} = Stop -> Stop
     end.
 
-%% Performs a step's actions in order; a stop, always the last, ends the process.
+%% Performs a step's actions in order; a stop, always the last, ends the process. A stop
+%% with actions after it is the core's fault, refused here before any action after it
+%% is performed, with a reason that carries no state: error/1's stack trace names the
+%% function's arity, not its arguments.
 perform_all([{stop, Reason}], _State) -> {stop, Reason};
+perform_all([{stop, _Reason} | _After], _State) -> error(stop_not_last);
 perform_all([Action | Actions], State) -> perform_all(Actions, perform(Action, State));
 perform_all([], State) -> {ok, State}.
 
