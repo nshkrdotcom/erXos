@@ -14,7 +14,7 @@ Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
 * [High] storage, the `system` tree (`erlang/apps/erx_storage`,
-  `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
+  `tools/lib/erx/manifest.rb` property 19):
   the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
   tree larger than the partition, the manifest recording the image's
@@ -25,9 +25,7 @@ that proves the code under test ran.
   `-erx_record system_image` into the arguments of the `system` window's
   holder alone (design-stopgap.md, The booted slot), the manifest check
   refusing a `system` window row without the fields, and the update
-  writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
-  blocks only through `erx_verity:read/3` and that only `erx_ns` and
-  `erx_storage_system` open an image in it; property 19 deriving the
+  writing the tree and the manifest with the partition; property 19 deriving the
   `system` rows, the system domain's and the app template's, `ro` and `rx`,
   and the `apps` row's `system_facet` (a field of `erx_mf_apps`, which
   `boot_app_grants` in `liberx/system/dom_boot_view.c` and

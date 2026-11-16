@@ -10,7 +10,8 @@ require_relative '../../tools/lib/erx/erofs_reads'
 # The chokepoint that the EROFS reader reaches an image only through
 # erx_verity:read/3 and that no other module reaches erx_verity's store
 # (docs/design-storage.md, invariant E1): the tree passes, and each seeded way
-# around the funnel fails.
+# around the funnel fails, and so does a mount of an image by any module but
+# erx_ns and erx_storage_system.
 class ErofsReadsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   READER = 'otp/erts/preloaded/src/erx_erofs.erl'
@@ -47,6 +48,18 @@ class ErofsReadsTest < Minitest::Test
     text = "%% persistent_term:get(x)\nf(<<V:16/little, _/binary>>) -> \"file:read(x)\", binary:at(<<1>>, V).\n" \
            "g() -> try ok catch throw:{x, Y} -> Y end.\nh() -> \#{a := b} = \#{a => b}.\n"
     assert_empty lines_of(READER => text)
+  end
+
+  # Only erx_ns and erx_storage_system open an image in erx_verity, through the
+  # mount; a call, a quoted call and a fun of it anywhere else fail.
+  def test_only_the_two_mounters_mount_an_image
+    call = "f(W) -> erx_erofs:mount(W, unchecked, fun log/1).\n"
+    mounters = %w[erlang/apps/erx/src/erx_ns.erl erlang/apps/erx_storage/src/erx_storage_system.erl]
+    assert_empty lines_of(mounters.to_h { |path| [path, call] })
+    text = "#{call}g(W) -> 'erx_erofs':'mount'(W, unchecked, fun log/1).\nh() -> fun erx_erofs:mount/3.\n" \
+           "i(W) -> erx_erofs:walk(W, []).\n%% erx_erofs:mount(W, unchecked, L)\nj() -> \"erx_erofs:mount(\".\n"
+    assert_equal [[SERVICE, 1], [SERVICE, 2], [SERVICE, 3]], lines_of(SERVICE => text)
+    assert_equal [['otp/erts/preloaded/src/erx_verity.erl', 1]], lines_of('otp/erts/preloaded/src/erx_verity.erl' => call)
   end
 
   def test_the_funnel_itself_and_files_outside_the_scope_pass

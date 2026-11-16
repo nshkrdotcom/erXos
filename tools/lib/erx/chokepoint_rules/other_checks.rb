@@ -33,7 +33,8 @@ module Erx
         ),
         Chokepoints::Elsewhere.new(
           name: 'erofs-reads', rule: 'the EROFS reader reaches an image only through erx_verity:read/3, and only erx_verity ' \
-                                     'reaches the window behind it',
+                                     'reaches the window behind it, and only erx_ns and erx_storage_system call ' \
+                                     'erx_erofs:mount/3',
           design: 'docs/design-storage.md#reading-erofs-images', check: 'ErofsReads, in Checks',
           test: 'test/host/erofs_reads_test.rb'
         ),
