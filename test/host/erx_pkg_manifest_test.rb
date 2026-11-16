@@ -39,7 +39,7 @@ class ErxPkgManifestTest < Minitest::Test
   RESERVED = '[principals, domains, services, facets]'
   # The end of the release case of the generated reader's mode choice, whose fields are the
   # counts a release manifest may hold, and that case with the development key's count added.
-  RELEASE_END = "'label' => <<\"root.signers.count\">>\n#{' ' * 24}}\n#{' ' * 20}],\n#{' ' * 20}1 => ["
+  RELEASE_END = "'label' => <<\"root.system_image.count\">>\n#{' ' * 24}}\n#{' ' * 20}],\n#{' ' * 20}1 => ["
   DEVELOPMENT_KEY = %q(#{'scope' => 'root', 'fields' => ['development_key', 'count'], 'offset' => 436, ) +
                     %q('size' => 4, 'label' => <<"root.development_key.count">>})
   # The design's seeded faults: each kind of reserved name dropped, which lets an app take a

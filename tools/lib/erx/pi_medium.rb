@@ -25,7 +25,7 @@ module Erx
   # * boot A: a FAT32 of the whole partition holding the boot files, with kernel8.img
   #   placed by fsimg at medium_slot_boot_start, so the QEMU harness and the slot writer
   #   find it without parsing FAT;
-  # * system A: the release's EROFS image where ReleaseMedium places a slot's image;
+  # * system A: the release's EROFS image and its tree, as ReleaseMedium places them;
   # * boot B, system B and the vault's partition empty, and the data partition a fresh littlefs
   #   volume (DataVolume) running to the medium's end.
   #
@@ -129,14 +129,14 @@ module Erx
     end
 
     # The card's pieces by sector: the record volume filling its partition, slot A's
-    # volume filling boot A, the EROFS image, if any, where ReleaseMedium places a slot's
-    # one image in system A, and the data volume's leading blocks.
+    # volume filling boot A, the system partition of the EROFS image, if any, in system A
+    # as ReleaseMedium places it (ReleaseMedium.system_pieces), and the data volume's
+    # leading blocks.
     def pieces(record:, slot:, erofs:, volume:)
-      system_start = MediumImage.constant('system_a_start')
-      image = erofs ? { system_start + (ReleaseMedium.image_extent(erofs).slot_offset / SECTOR_BYTES) => piece(erofs) } : {}
+      system = erofs ? ReleaseMedium.system_pieces(erofs, start: MediumImage.constant('system_a_start')) : {}
       { MediumImage.constant('record_start') => piece(record),
         MediumImage.constant('boot_a_start') => piece(slot),
-        **image,
+        **system,
         **DataVolume.pieces(volume) }
     end
 

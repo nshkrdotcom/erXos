@@ -75,14 +75,15 @@ static bool	boot_lines_meet(const erx_dom_device_entry_t *, const erx_dom_device
 static const char *boot_units(const erx_manifest_view_t *, erx_dom_device_entry_t *);
 static const char *boot_devices(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_device_entry_t *, erx_dom_device_t *);
-static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool);
+static bool	boot_strings_fit(uint64_t, uint64_t, uint32_t, bool, bool);
 static bool	boot_env_names_display(const char *, uint32_t);
 static bool	boot_env_sets(const char *, uint32_t, const char *);
 static const char *boot_display(const erx_manifest_view_t *, uint32_t, const char *, uint32_t,
 		    erx_dom_display_t *);
 static const char *boot_places(erx_dom_configured_t *, uint32_t, const erx_manifest_view_t *);
+static const char *boot_system_image(erx_dom_lib_t *, const erx_manifest_view_t *);
 static const char *boot_configured(erx_dom_view_t *, const erx_manifest_view_t *,
-		    erx_dom_configured_t *);
+		    erx_dom_configured_t *, uint32_t);
 static const char *boot_templates(erx_dom_view_t *, const erx_manifest_view_t *,
 		    erx_dom_template_t *);
 static const char *boot_services(erx_dom_view_t *, const erx_manifest_view_t *,
@@ -483,7 +484,8 @@ _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a fr
  * environment beside what the library writes there (docs/design-stopgap.md,
  * "Boot information"): its own node name and the system node's, -erx_record
  * build, a -erx_record given record per device of a kind it holds, and -erx_record boot when it holds a
- * block device of a kind. The reserve takes each at its longest, so a row the view
+ * block device of a kind, and -erx_record system_image when it holds the system
+ * window (system_image). The reserve takes each at its longest, so a row the view
  * admits never fails its creation for its strings: a node name at
  * ERX_DOM_NODE_MAX, though the system node's is at most 71 bytes, and the
  * difference also covers the NUL the page adds to args or env that lack a
@@ -491,11 +493,11 @@ _Static_assert(ERX_BOOT_FRAMEBUFFER_WORDS_MAX <= ERX_BOOT_GIVEN_WORDS_MAX, "a fr
  * constant.
  */
 static bool
-boot_strings_fit(uint64_t args_len, uint64_t env_len, uint32_t records, bool block)
+boot_strings_fit(uint64_t args_len, uint64_t env_len, uint32_t records, bool block, bool system_image)
 {
 	const uint64_t reserve = 2u * (uint64_t)ERX_DOM_NODE_MAX + ERX_BOOT_BUILD_WORDS_MAX +
 	    (uint64_t)records * ERX_BOOT_GIVEN_WORDS_MAX +
-	    (block ? ERX_BOOT_PAIR_WORDS_MAX : 0);
+	    (block ? ERX_BOOT_PAIR_WORDS_MAX : 0) + (system_image ? ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX : 0);
 
 	return (args_len + env_len + reserve <= ERX_BOOT_STRINGS_MAX);
 }
@@ -601,14 +603,50 @@ boot_places(erx_dom_configured_t *configured, uint32_t nconfigured, const erx_ma
 }
 
 /*
+ * Sets lib's system_image_row, the configured row that holds the manifest's
+ * system window, ERX_MF_NONE for a manifest with none, and system_image, the
+ * row its boot page alone carries as -erx_record system_image
+ * (docs/design-stopgap.md, "The booted slot"). The check gives a manifest
+ * at most one system window, held by the configured domain that holds its
+ * block device, and the system_image row with it (property 8). The view
+ * refuses a second window, a holder past the domains table and a window
+ * without the row or the row without it, so the record has one row to name
+ * and one holder or none; that the holder holds the block device is the
+ * check's alone.
+ */
+static const char *
+boot_system_image(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest)
+{
+	erx_mf_window_t window;
+
+	lib->system_image_row = ERX_MF_NONE;
+	for (uint32_t index = 0; index < manifest->header.windows.count; index++) {
+		if (!erx_manifest_windows_at(manifest, index, &window))
+			return ("manifest: a window the reader cannot read");
+		if (window.role != ERX_MF_WINDOW_ROLE_SYSTEM)
+			continue;
+		if (lib->system_image_row != ERX_MF_NONE || window.holder >= manifest->header.domains.count)
+			return ("manifest: more than one system window, or one held by no configured domain");
+		lib->system_image_row = window.holder;
+	}
+	if ((lib->system_image_row == ERX_MF_NONE) != (manifest->header.system_image.count == 0) ||
+	    (lib->system_image_row != ERX_MF_NONE && !erx_manifest_system_image_at(manifest, 0, &lib->system_image)))
+		return ("manifest: a system window without its system_image row, or the row without the window");
+	return (NULL);
+}
+
+/*
  * Each configured-domain row, its limits resolved from its limits record and
  * its strings judged against the devices the catalogue places on it, so
  * it reads view->devices, which boot_devices builds first. Every device
  * on the row is given; only a driven one (erx_dom_entry_driven) gets a
- * record, -erx_record given or -erx_record framebuffer.
+ * record, -erx_record given or -erx_record framebuffer. The row
+ * system_image_row, the system window's holder, gets -erx_record
+ * system_image too.
  */
 static const char *
-boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_configured_t *configured)
+boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_dom_configured_t *configured,
+    uint32_t system_image_row)
 {
 	erx_mf_domain_t domain;
 	erx_mf_limits_t profile;
@@ -655,7 +693,8 @@ boot_configured(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_d
 		    &row->display)) != NULL)
 			return (reason);
 		if (!boot_strings_fit(domain.args.length, domain.env.length +
-		    (row->display.name_len != 0 ? ERX_DOM_DISPLAY_WORDS_MAX : 0), records, block))
+		    (row->display.name_len != 0 ? ERX_DOM_DISPLAY_WORDS_MAX : 0), records, block,
+		    index == system_image_row))
 			return ("manifest: a configured domain's arguments and environment leave the boot page's strings "
 			    "no reserve for its node names, device records and display");
 		row->name = strings + domain.name.offset;
@@ -718,7 +757,7 @@ boot_templates(erx_dom_view_t *view, const erx_manifest_view_t *manifest, erx_do
 		if (boot_env_sets(strings + session.env.offset, session.env.length, ERX_PRINCIPAL_KEY_STRING) ||
 		    boot_env_sets(strings + session.env.offset, session.env.length, ERX_DISPLAY_KEY_STRING))
 			return ("manifest: a session template's environment sets a variable its start gives it");
-		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_WORDS_MAX, 0, false))
+		if (!boot_strings_fit(session.args.length, session.env.length + ERX_DOM_SESSION_WORDS_MAX, 0, false, false))
 			return ("manifest: a session template's arguments and environment leave the boot page's strings "
 			    "no reserve for its node names, principal and display");
 		templates[index] = (erx_dom_template_t){ .principal = principal,
@@ -1088,7 +1127,8 @@ erx_dom_view_build(erx_dom_lib_t *lib, const erx_manifest_view_t *manifest, uint
 	lib->held.principals = tables->held;
 	if ((reason = boot_principals(lib, manifest, tables)) != NULL ||
 	    (reason = boot_devices(&lib->view, manifest, tables->devices, tables->device_records)) != NULL ||
-	    (reason = boot_configured(&lib->view, manifest, tables->configured)) != NULL ||
+	    (reason = boot_system_image(lib, manifest)) != NULL ||
+	    (reason = boot_configured(&lib->view, manifest, tables->configured, lib->system_image_row)) != NULL ||
 	    (reason = boot_templates(&lib->view, manifest, tables->templates)) != NULL ||
 	    (reason = boot_apps(lib, manifest)) != NULL ||
 	    (reason = boot_services(&lib->view, manifest, tables->services, tables->facets, tables->parameters)) != NULL ||

@@ -4,8 +4,8 @@
 %% EUnit cases of erx_blk_image, the windows on the booted slot's EROFS images
 %% (test/host/erx_blk_image_test.rb runs them). The manifest cases read manifests the
 %% packer wrote from the development manifest into the working directory: manifest-good
-%% names the release image in one extent of two blocks at 128 MiB into the slot's system
-%% partition,
+%% names the release image in one extent of two blocks at the start of the slot's system
+%% partition, as the packer places it,
 %% manifest-two-extents the same image in two extents, and manifest-no-window the image
 %% with no window on it.
 
@@ -57,7 +57,7 @@ image_window_is_read_only_test() ->
     exit(Window, kill).
 
 manifest_test_() ->
-    Release = {{image, <<"release">>}, ?ERX_MEDIUM_SYSTEM_A_START + ?AT div 512, 16},
+    Release = {{image, <<"release">>}, ?ERX_MEDIUM_SYSTEM_A_START, 16},
     [?_assertEqual({ok, [Release], []}, erx_blk_image:windows(manifest("good"), a)),
      ?_assertEqual({ok, [], []}, erx_blk_image:windows(manifest("good"), none)),
      ?_assertEqual({ok, [], [{<<"release">>, extent_count}]}, erx_blk_image:windows(manifest("two-extents"), a)),

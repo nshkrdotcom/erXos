@@ -74,15 +74,17 @@ module Erx
         'display' => %w[policy idle_dim_s idle_off_s],
         'apps' => %w[memory services max],
         'package' => %w[input enable],
-        'signer' => %w[key]
+        'signer' => %w[key],
+        'system_image' => %w[input]
       }.freeze
       OPTIONAL = { 'machine' => %w[system_args], 'domain' => %w[boot_timeout_s args env], 'session' => %w[args env], 'service' => %w[name],
                    'facet' => %w[name queue], 'image' => %w[salt],
                    'start' => %w[enable display restarts restart_period_s],
                    'apps' => %w[services max], 'package' => %w[enable] }.freeze
-      # The declarations that carry no source alias: the one machine and the one apps
-      # row (docs/design-packaging.md, "The apps row").
-      NAMELESS = %w[machine apps].freeze
+      # The declarations that carry no source alias: the one machine, the one apps row
+      # (docs/design-packaging.md, "The apps row") and the one system_image row
+      # (docs/design-stopgap.md, "The booted slot").
+      NAMELESS = %w[machine apps system_image].freeze
       DIRECTIVES = { 'introduce' => 2, 'liveness' => 1, 'shell_principal' => 1 }.freeze
       IDENTIFIER = /\A[a-z0-9][a-z0-9_-]{0,62}\z/.freeze
       module_function
@@ -106,6 +108,7 @@ module Erx
           records.fetch('machine', []).size == 1
         # Property 19's first clause (docs/design-packaging.md, "The build's check").
         raise Invalid.new('at most one apps row', property: 19, field: 'apps') if records.fetch('apps', []).size > 1
+        raise Invalid.new('at most one system_image row', property: 8, field: 'system_image') if records.fetch('system_image', []).size > 1
 
         records.each do |kind, list|
           next if kind == 'machine' || DIRECTIVES.key?(kind)

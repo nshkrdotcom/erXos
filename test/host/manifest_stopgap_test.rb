@@ -202,6 +202,10 @@ class ManifestStopgapTest < Minitest::Test
     assert_equal 'stopgap', admit(source).report.fetch('mode')
   end
 
+  def test_a_partial_boot_has_no_system_image
+    refused(Erx::Manifest::Invalid, 8, 'system_image', partial_boot + "system_image\n  input @artifact.release\n")
+  end
+
   def test_a_partial_boot_runs_no_services
     source = partial_boot + SERVICE
     refused(Erx::Manifest::Invalid, 2, 'service', source)
@@ -855,6 +859,18 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Invalid, 19, 'service.name', source, message: /holds one service named system/)
   end
 
+  # The storage domain mounts the system window through the system_image row's image
+  # length, tree and root hash, so neither comes without the other.
+  def test_a_system_window_without_a_system_image_row_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'window.role', changed(@source.sub("system_image\n  input @artifact.release\n", '')),
+            message: /system_image row/)
+  end
+
+  def test_a_system_image_row_without_a_system_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'system_image', changed(@source.sub(/^window system\n(?:  .*\n)*/, '')),
+            message: /system window it describes/)
+  end
+
   def test_a_fat_window_must_name_a_primary_partition
     [0, 5].each do |partition|
       refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'fat', partition: partition))
@@ -966,6 +982,43 @@ class ManifestStopgapTest < Minitest::Test
     refused(Erx::Manifest::Unsupported, 'unsupported', 'partial_boot', source, message: /M5/)
   end
 
+  # The system_image row packs the release artifact's image and tree as the fixture
+  # gives them: two blocks from the partition's start and one tree block after them.
+  def test_the_system_image_row_packs_the_release_images_tree
+    view = @codec.open('manifest', admit.bytes)
+    assert_equal 1, view.count('system_image')
+    row = view.fetch('system_image', 0)
+    assert_equal [8192, 8192, 4096, 32], row.values_at('image_length', 'tree_offset', 'tree_length', 'salt_length')
+    assert_equal ["\x5a".b * 32, "\xa5".b * 32], row.values_at('salt', 'root_hash')
+  end
+
+  # A release artifact whose image or tree the system partition cannot hold as the
+  # record describes it is refused.
+  def test_a_system_image_the_record_cannot_describe_is_refused
+    tree = ManifestContextFixture.images.fetch('release').fetch('tree')
+    [{ 'extents' => [{ 'slot_offset' => 4096, 'length' => 8192 }] }, { 'tree' => nil },
+     { 'tree' => tree.merge('offset' => 12_288) }, { 'tree' => tree.merge('length' => 100) },
+     { 'tree' => tree.merge('salt' => 'AB') }, { 'tree' => tree.merge('salt' => '') },
+     { 'tree' => tree.merge('root_hash' => '00') }, { 'tree' => tree.merge('length' => 1_048_576 * 512) }].each do |change|
+      release = ManifestContextFixture.images.fetch('release').merge(change)
+      against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
+      refused(Erx::Manifest::Invalid, 8, 'system_image.input', @source, against)
+    end
+  end
+
+# With no verified image sharing the release artifact, the system_image record alone
+# reads its extents, and a refusal of them names that record.
+def test_a_system_image_with_no_extents_is_refused_under_its_own_field
+  source = changed(@source.sub(/^image release\n(?:  .*\n)*/, '').sub(/^window release\n(?:  .*\n)*/, ''))
+  release = ManifestContextFixture.images.fetch('release').merge('extents' => [])
+  against = context { |arguments| arguments[:artifacts] = arguments[:artifacts].merge('release' => release) }
+  refused(Erx::Manifest::Invalid, 8, 'system_image.input', source, against, message: /at least one extent/)
+end
+
+  def test_a_second_system_image_row_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'system_image', @source + "system_image\n  input @artifact.release\n")
+  end
+
   # The release image (docs/design-stopgap.md, "The Phase 1 manifest check"): format
   # erofs_unchecked, its extents from the artifact, every tree field zero.
   def test_the_release_image_is_recorded_without_a_tree
@@ -977,7 +1030,7 @@ class ManifestStopgapTest < Minitest::Test
     assert_equal [0, 0, 0, 0, 0, 0], image.values_at('hash_block_size', 'hash_offset', 'hash_bytes', 'salt_length',
                                                      'hash_algorithm', 'salt').map { |value| value.is_a?(String) ? value.sum : value }
     assert_equal 0, image.fetch('root_hash').sum
-    assert_equal [{ 'slot_offset' => 128 << 20, 'length' => 8192 }], (0...view.count('extents')).map { |at| view.fetch('extents', at) }
+    assert_equal [{ 'slot_offset' => 0, 'length' => 8192 }], (0...view.count('extents')).map { |at| view.fetch('extents', at) }
     windows = (0...view.count('windows')).map { |at| view.fetch('windows', at) }
     verified = windows.select { |row| row.fetch('role') == @codec.member('mf_window_role', 'verified_image') }
     assert_equal [[0, @codec.member('mf_window_rights', 'read')]], verified.map { |row| row.values_at('image', 'rights') }

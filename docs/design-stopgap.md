@@ -1844,6 +1844,10 @@ TREE_OFF TREE_LEN SALT ROOT`: the image's length and the tree's offset
 and length in bytes, in decimal, and the tree's salt and root hash in
 lowercase hex, with which `erx_storage_system` opens the image in
 `erx_verity` (E1 of [design-storage.md](design-storage.md#invariants)).
+The packer writes the tree in whole blocks right after the image, under
+the salt a package's image takes, the image's own SHA-256
+([design-packaging.md](design-packaging.md#building-and-packing)), which
+one function, `Erx::AppPackage.image_tree`, picks for both.
 The one reader of the record is `erx_device_record:system_image/1`, a
 pure function over the record words `erx_device_record:records/0`
 holds, with a fuzz target as `find/3` has: it takes exactly one
@@ -1858,7 +1862,8 @@ tree answers `eio`, as on a boot that names no `system` window: the
 image packages are absent and nothing reads an unchecked block. The
 manifest check refuses a manifest with a `system` window row and no
 `system_image` fields, or with an empty salt, so a built image never
-takes that path. Its host test covers a well-formed record, each word
+takes that path, and refuses `system_image` fields with no `system`
+window row, which would reach no holder. Its host test covers a well-formed record, each word
 malformed in turn, a missing word, an extra word, a second record and
 none, seeded with a reader that takes ROOT of any length, which the
 short-root case catches.

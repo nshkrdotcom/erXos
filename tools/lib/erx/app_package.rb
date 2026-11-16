@@ -24,8 +24,9 @@ module Erx
     # The declaration's fields; start is an Applications or a Program, license '' when
     # app.txt names none.
     Declaration = Data.define(:name, :needs, :start, :license, :memory, :version)
-    # A hash tree's bytes, its levels top first, and its root hash.
-    Tree = Data.define(:bytes, :root_hash)
+    # A hash tree's bytes, its levels top first, the salt every hash was salted with, and
+    # its root hash.
+    Tree = Data.define(:bytes, :salt, :root_hash)
 
     # The most bytes of app.txt.
     DECLARATION_MAX = 16 * 1024
@@ -106,8 +107,15 @@ module Erx
       raise Error, 'an image is a whole number of blocks' unless image.bytesize.positive? && (image.bytesize % block).zero?
 
       levels = levels(image.b, salt)
-      Tree.new(bytes: levels.reverse.join.freeze, root_hash: Digest::SHA256.digest(salt + (levels.last || image.b)))
+      Tree.new(bytes: levels.reverse.join.freeze, salt: salt.b.freeze,
+               root_hash: Digest::SHA256.digest(salt + (levels.last || image.b)))
     end
+
+    # The dm-verity tree over image under the salt every EROFS image erXos writes takes,
+    # the image's own SHA-256 (docs/design-packaging.md, "Building and packing"): a
+    # package's image and the booted slot's system image alike, so the same image always
+    # has the same tree.
+    def image_tree(image) = verity_tree(image, salt: Digest::SHA256.digest(image))
 
     # The levels over data, lowest first.
     def levels(data, salt)

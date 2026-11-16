@@ -135,6 +135,9 @@ class BootPartitionTest < Minitest::Test
       assert_equal Erx::BootRecord.sector(:a), File.binread(image, sector, Erx::BootRecord::RECORD_OFFSET)
       assert_equal 'kernel', File.binread(image, 6, slot_start + Erx::PiMedium::BOOT_PLACE)
       assert_equal EROFS, File.binread(image, EROFS.bytesize, system_start + Erx::ReleaseMedium::SLOT_IMAGES_START)
+      tree = Erx::AppPackage.image_tree(EROFS).bytes
+      assert_equal tree, File.binread(image, tree.bytesize, system_start + Erx::ReleaseMedium::SLOT_IMAGES_START + EROFS.bytesize),
+                   'the tree follows the image'
       assert_equal VOLUME, File.binread(image, VOLUME.bytesize, Erx::MediumImage.constant('data_start') * sector)
 
       # The record is an assembled receipt: the card, each file of the partition by its

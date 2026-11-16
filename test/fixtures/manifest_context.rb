@@ -11,9 +11,11 @@ module ManifestContextFixture
   module_function
 
   # The release image the development manifest names, as ReleaseMedium.image describes
-  # a built one: two blocks at the slot's images start.
+  # a built one: two blocks at the slot's images start, and their one tree block after
+  # them.
   def images
-    { 'release' => { 'kind' => 'erofs_image', 'extents' => [{ 'slot_offset' => 128 << 20, 'length' => 8192 }] } }
+    { 'release' => { 'kind' => 'erofs_image', 'extents' => [{ 'slot_offset' => 0, 'length' => 8192 }],
+                     'tree' => { 'offset' => 8192, 'length' => 4096, 'salt' => '5a' * 32, 'root_hash' => 'a5' * 32 } } }
   end
 
   # The tree's own device kinds, which the checked context carries.
@@ -111,6 +113,7 @@ module ManifestContextFixture
   # The development manifest's apps row.
   APPS_ROW = /^apps\n(?:  .*\n)*/
   SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
+  SYSTEM_IMAGE = /^system_image\n(?:  .*\n)*/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
@@ -160,11 +163,12 @@ module ManifestContextFixture
   # removed and what they hold but the display unit held by the system domain, as a
   # manifest that configures no domain holds them. A session facet is removed where the
   # source still has it, and so is its apps row, whose services those domains serve, and
-  # its system window, which only a storage domain holds (property 8).
+  # its system window, which only a storage domain holds (property 8), with the
+  # system_image row that names the window's image.
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '')
+    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '').sub(SYSTEM_IMAGE, '')
     held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end

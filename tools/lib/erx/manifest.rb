@@ -1167,7 +1167,7 @@ module Erx
         %w[domain session partial_boot].each do |kind|
           unsupported('child domain planning is unavailable', kind) unless records(kind).empty?
         end
-        %w[window service facet introduce image liveness display apps package signer].each do |kind|
+        %w[window service facet introduce image system_image liveness display apps package signer].each do |kind|
           invalid('empty native boot has no service or child assignments', 9, kind) unless records(kind).empty?
         end
         invalid('a partial boot starts no row', 17, 'start') unless records('start').empty?
@@ -1214,6 +1214,7 @@ module Erx
         %w[service facet introduce liveness display].each do |kind|
           invalid('a partial boot runs no services', 2, kind) unless records(kind).empty?
         end
+        invalid('a partial boot has no domain to hold the system partition', 8, 'system_image') unless records('system_image').empty?
       end
 
       def check_device(device)
@@ -1260,6 +1261,7 @@ module Erx
         check_rescue(rows['domains'], edges)
         check_facets_supported
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
+        rows['system_image'] = system_image_rows
         rows['windows'] = normalize_windows(rows)
         check_system_service(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
@@ -1628,6 +1630,36 @@ module Erx
         size = @codec.constant('signer_key_bytes')
         invalid("the development package key is not #{size} bytes", 19, 'context.development_key') unless key.bytesize == size
         [{ 'key' => key.bytes }]
+      end
+
+      # The booted slot's system partition (docs/design-stopgap.md, "The booted slot"),
+      # packed as its one system_image record from the erofs_image artifact the nameless
+      # system_image row's input names, as ReleaseMedium.image records it: the image one
+      # extent from the partition's start (checked_extents keeps it inside the partition),
+      # and its tree, whole blocks from where the image ends and inside the partition,
+      # with a salt of 1 to 32 bytes and a 32-byte root hash in lowercase hex. None
+      # without the row.
+      def system_image_rows
+        record = records('system_image').first
+        return [] unless record
+
+        artifact = artifact(record, 'input', 'erofs_image', property: 8, field: 'system_image.input')
+        extents = checked_extents(artifact, field: 'system_image.input')
+        invalid('the system image is one extent at its partition\'s start', 8, 'system_image.input') unless
+          extents.size == 1 && extents.first.fetch('slot_offset').zero?
+        length = extents.first.fetch('length')
+        tree = artifact['tree']
+        case tree.is_a?(Hash) && tree.values_at('offset', 'length', 'salt', 'root_hash')
+        in [Integer => offset, Integer => bytes, /\A(?:[0-9a-f]{2}){1,32}\z/ => salt, /\A[0-9a-f]{64}\z/ => root]
+          partition = @codec.constant('medium_system_sectors') * @codec.constant('mbr_sector_size')
+          invalid('the system image\'s tree is whole blocks from the image\'s end, inside the partition', 8, 'system_image.input') unless
+            offset == length && !bytes.negative? && (bytes % @codec.constant('page_size')).zero? && offset + bytes <= partition
+        else
+          invalid('the system image\'s tree names its offset, length, salt and root hash', 8, 'system_image.input')
+        end
+        salt = [salt].pack('H*')
+        [{ 'image_length' => length, 'tree_offset' => offset, 'tree_length' => bytes, 'salt_length' => salt.bytesize,
+           'reserved' => 0, 'salt' => salt.ljust(32, "\0").bytes, 'root_hash' => [root].pack('H*').bytes }]
       end
 
       # A package row as the manifest packs it (erx_mf_package).
@@ -2330,10 +2362,15 @@ module Erx
       end
 
       # At most one system window, held by a storage domain: a configured domain, never
-      # the system domain, that holds the window's block device.
+      # the system domain, that holds the window's block device. The window and the
+      # system_image row come together, since its holder opens the window's image by
+      # that row (docs/design-stopgap.md, "The booted slot").
       def check_system_window(rows, tables)
         system = rows.select { |row| row.fetch('role') == system_role }
         invalid('a manifest has at most one system window', 8, 'window.role') if system.size > 1
+        described = !records('system_image').empty?
+        invalid('a system window needs the system_image row that describes its image', 8, 'window.role') if system.any? && !described
+        invalid('a system_image row needs the system window it describes', 8, 'system_image') if system.empty? && described
         system.each do |row|
           holder = row.fetch('holder')
           device = tables.fetch('devices').fetch(row.fetch('device')).fetch('path')
@@ -2417,7 +2454,7 @@ module Erx
         records('image').sort_by { |record| record.name.b }.each_with_object([[], []]) do |record, (images, extents)|
           invalid('image name is not a system identifier', 5, 'image.name') unless record.name.match?(Frontend::IDENTIFIER)
           invalid('an image without a hash tree takes no salt', 8, 'image.salt') if record.properties.key?('salt')
-          placed = checked_extents(artifact(record, 'input', 'erofs_image', property: 8, field: 'image.input'))
+          placed = checked_extents(artifact(record, 'input', 'erofs_image', property: 8, field: 'image.input'), field: 'image.input')
           bytes = placed.sum { |extent| extent.fetch('length') }
           invalid('an image is whole blocks', 8, 'image.input') unless (bytes % block_size).zero?
           device = block_device(text(record, 'device'), devices) || invalid('image names no block device the manifest places', 8, 'image.device')
@@ -2432,17 +2469,17 @@ module Erx
 
       # design-abi.md: nonempty, sorted and disjoint whole sectors, relative to the start of
       # the slot's system partition and inside it.
-      def checked_extents(artifact)
+      def checked_extents(artifact, field:)
         sector = @codec.constant('mbr_sector_size')
         slot = @codec.constant('medium_system_sectors') * sector
         extents = artifact['extents']
-        invalid('an image has at least one extent', 8, 'image.input') unless extents.is_a?(Array) && !extents.empty?
+        invalid('an image has at least one extent', 8, field) unless extents.is_a?(Array) && !extents.empty?
         extents.each_with_object([]) do |extent, placed|
           offset, length = extent.values_at('slot_offset', 'length') if extent.is_a?(Hash)
           floor = placed.empty? ? 0 : placed.last.fetch('slot_offset') + placed.last.fetch('length')
           unless offset.is_a?(Integer) && length.is_a?(Integer) && length.positive? && offset >= floor &&
                  (offset % sector).zero? && (length % sector).zero? && offset + length <= slot
-            invalid('image extents are sorted, disjoint whole sectors inside a slot', 8, 'image.input')
+            invalid('image extents are sorted, disjoint whole sectors inside a slot', 8, field)
           end
           placed << { 'slot_offset' => offset, 'length' => length }
         end

@@ -52,10 +52,14 @@ typedef struct apply {
 	uint64_t		 bootinfo_addr;	/* where the domain sees its boot page */
 	uint64_t		 release_addr;	/* where it sees its release slice */
 	apply_give_t		 gives[ERX_DOM_GIVES_MAX];	/* plan->gives, give for give */
-	/* The boot page's -erx_record given record of each device, -erx_record boot and -erx_record build. */
+	/*
+	 * The boot page's -erx_record given record of each device, -erx_record boot, -erx_record build
+	 * and -erx_record system_image.
+	 */
 	char			 given_words[ERX_DOM_DEVICES_MAX][ERX_BOOT_GIVEN_WORDS_MAX];
 	char			 pair_words[ERX_BOOT_PAIR_WORDS_MAX];
 	char			 build_words[ERX_BOOT_BUILD_WORDS_MAX];
+	char			 system_image_words[ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX];
 } apply_t;
 
 /*
@@ -546,11 +550,18 @@ apply_unrecorded(const erx_dom_device_entry_t *entry)
 }
 
 /*
- * The boot page's arguments into words, which holds 3 + ERX_DOM_DEVICES_MAX
- * runs: the specification's own, -erx_record build with the boot image's build
- * identifier, a -erx_record given or -erx_record framebuffer record per device of the
- * gives that has one, and, for a holder of a block device of a kind, -erx
- * boot with the boot's pair, each as the root's own page carries it. A
+ * The boot page's arguments into words, which holds 4 + ERX_DOM_DEVICES_MAX
+ * runs:
+ * - the specification's own;
+ * - -erx_record build with the boot image's build identifier;
+ * - a -erx_record given or -erx_record framebuffer record per device of the
+ *   gives that has one;
+ * - for a holder of a block device of a kind, -erx_record boot with the
+ *   boot's pair;
+ * - for the configured row that holds the system window alone
+ *   (boot_system_image), -erx_record system_image from the manifest's
+ *   system_image row, which the root's own page never carries.
+ * The first four are as the root's own page carries them. A
  * device of no kind, which its give marks not driven
  * (erx_dom_entry_driven), is held with its unit and has no record, so no
  * driver opens it, as the root writes none
@@ -595,6 +606,13 @@ apply_args(apply_t *apply, erx_boot_words_t *words)
 			return (0);
 		words[count++] = (erx_boot_words_t){ apply->pair_words, length };
 	}
+	if (erx_dom_from_row(&spec->origin, apply->lib->system_image_row)) {
+		length = erx_boot_system_image_words(&apply->lib->system_image, apply->system_image_words,
+		    sizeof(apply->system_image_words));
+		if (length == 0)
+			return (0);
+		words[count++] = (erx_boot_words_t){ apply->system_image_words, length };
+	}
 	return (count);
 }
 
@@ -623,7 +641,7 @@ apply_bootinfo(apply_t *apply)
 	const erx_dom_plan_t *plan = apply->plan;
 	const erx_dom_spec_t *spec = &plan->spec;
 	const uint64_t page = apply->handles.made[ERX_DOM_OBJ_BOOTINFO];
-	erx_boot_words_t args[3 + ERX_DOM_DEVICES_MAX];
+	erx_boot_words_t args[4 + ERX_DOM_DEVICES_MAX];
 	const erx_boot_words_t env = { spec->strings + spec->args_len, spec->env_len };
 	char node[ERX_DOM_NODE_MAX], system_node[ERX_DOM_NODE_MAX];
 	erx_boot_inputs_t inputs = { 0 };
