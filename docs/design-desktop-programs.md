@@ -602,6 +602,38 @@ so no pair is cut to fit; Inter comes nowhere near either. The pairs
 have no count limit of their own: strict order over n glyphs allows at
 most n x n, and each reader matches the count against the bytes present.
 
+**Whole pixels and the pen.** The rule keeps every glyph's distance
+from the next within half a pixel of the font's, the closest a pen that
+moves by whole pixels can come; it cannot keep a line's length, because
+each advance is rounded on its own and the errors add up. Over the
+first 400 ASCII lines of 8 to 70 characters of the tree's `README.md`
+(at commit `7bec5218c`, about 55 characters a line), with advances from
+`hmtx` in exact arithmetic, which differ from FreeType's 26.6 by at most
+1/128 of a pixel:
+
+| Role | Font and size | Line length by this rule | Distances off by more than half a pixel with an exact pen, each glyph rounded |
+| --- | --- | --- | --- |
+| `caption` | Regular, 11 | 1.2 pixels long on average | 28% |
+| `body` | Regular, 13 | 5.2 pixels long on average | 25% |
+| `heading` | SemiBold, 15 | 1.0 pixel long on average | 24% |
+| `title` | SemiBold, 20 | 4.4 pixels short on average | 19% |
+
+So whole pixels shift each role's tracking by an amount that depends on
+its size, the `body` role about 0.09 pixel a glyph looser than the
+font and the `title` role tighter, while the spacing stays even. A pen
+kept in fractions of a pixel, each glyph's place rounded, keeps every
+line's length within half a pixel but moves a quarter of the distances
+between neighbours by half a pixel to a pixel, which reads as uneven
+spacing at these sizes. Exact length and even spacing together need
+glyphs rasterised at several horizontal phases and chosen by the pen's
+fraction, as current desktop systems draw text: a draw message that
+places each glyph, text subfonts three to four times as wide, and
+LVGL's font code changed to match, since it rounds each kerned advance
+to a whole pixel as this rule does
+(`src/font/fmt_txt/lv_font_fmt_txt.c`, lines 250-256). That choice is
+[Open decisions](#open-decisions), 3; the pairs this section derives
+are the same data under either.
+
 **The pair section.** When a role has pairs, its subfont file goes on
 after the glyph table with two fields of the subfont header's form, the
 word `kern` and the pair count k, then k entries of 5 bytes: the first
@@ -1516,7 +1548,8 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 | An icon set under a permissive license | a license and a style to inherit; twenty glyphs drawn for erXos are less work than reconciling a set's style with the theme |
 | Packages under `examples/` | an app is its own principal, so stats and files would see the app's domains and files, not the person's ([Shipping](#shipping-and-starting)) |
 | A tweened graph scroll | a renderer timer or many trees a second, against G6, for motion that adds nothing the step does not show |
-| FreeType's own `GPOS` kerning (`TT_CONFIG_OPTION_GPOS_KERNING`) and `FT_Get_Kerning` | no reader to write, but it takes the first matching subtable across the `kern` lookups instead of adding them, and so loses 529 to 568 of Inter's pairs per font over the theme's ranges ([Kerning](#kerning)) |
+| FreeType's own `GPOS` kerning (`TT_CONFIG_OPTION_GPOS_KERNING`) and `FT_Get_Kerning` | no reader to write, and it reads class pairs as well as single ones (`src/sfnt/ttgpos.c`, lines 908-940), which give 13,701 of Inter Regular's 14,587 kerned pairs over the theme's ranges; but it takes the first matching subtable across the `kern` lookups instead of adding them, and so loses 529 to 568 of Inter's pairs per font ([Kerning](#kerning)) |
+| A pen in fractions of a pixel, each glyph's place rounded | exact line lengths, but a quarter of the distances between neighbours off by half a pixel to a pixel at the text roles' sizes, and a new draw message; with glyph phases it is [Open decisions](#open-decisions), 3 |
 | HarfBuzz as a pinned host tool | a full shaper, correct by construction, but a large C++ dependency whose only use would be the values of single pairs, read back through `hb-shape` and filtered of every other feature it applies |
 | The `GPOS` reader in C inside `erx-raster` | the same rules in a language where every offset is a memory-safety question, with a fuzz target of its own; Ruby makes an offset past the table a typed error, and the step's other decisions, rounding among them, are already Ruby |
 | The pairs in a sibling file beside each subfont | two files a reader must load and keep together, for nothing a stock Plan 9 reader needs: it ignores what follows the glyph table |
@@ -1612,6 +1645,23 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    a C++ dependency used by one test. Recommendation: not now; take it
    when a second font or script enters the theme, where a shaper's rules
    (script itemisation, marks) begin to matter.
+3. **Whole-pixel pen or glyph phases.** The design's pen moves by whole
+   pixels: spacing within half a pixel of the font's at every pair, no
+   change to the draw protocol, the subfonts or LVGL, and each role's
+   tracking off the font's by up to about 0.09 pixel a glyph ([Whole
+   pixels and the pen](#kerning)). The alternative keeps the pen in
+   fractions of a pixel and rasterises each text role's glyphs at three
+   or four horizontal phases: exact line lengths and each glyph placed
+   within a sixth to an eighth of a pixel, the way current desktop systems set
+   text, at the cost of a draw message that places each glyph, text
+   subfonts three to four times as wide (the `display` role keeps one
+   phase) and a change to LVGL's font code. A fractional pen without
+   phases is not an option worth taking: it trades even spacing for
+   line length. Recommendation: build the whole-pixel pen with 8.12 and
+   8.13, then judge the phases on the reference frames of clock and
+   month at 13 pixels beside the same text set at exact positions; adopt them, as a
+   design of their own in design-display and here, if the tracking
+   shows.
 
 ## References
 
@@ -1691,7 +1741,7 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
   `7fd1ce25de661e802dbff67ad5e9927bcdef1730527a5d453120586f13698280`);
   `include/freetype/config/ftoption.h`, lines 827-838 (SHA-256
   `2115ceb051433d1596a63649923ace29441debd9f10de43c4c61259fc7b81384`);
-  `src/sfnt/ttgpos.c`, lines 263-264, 350, 488, 677-678 and 944-981
+  `src/sfnt/ttgpos.c`, lines 263-264, 350, 488, 677-678, 908-940 and 944-981
   (SHA-256
   `48f0eb6f7e82bcbc5a6028f8deb137c26688b78260ce9404e2fb8ae004ef8009`);
   `src/truetype/ttdriver.c`, lines 229-240 (SHA-256
