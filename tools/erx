@@ -477,6 +477,8 @@ module Erx
                    name: 'fuzz-erx-f2fs', deadline: 900, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_wpa_key.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-wpa-key', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_sae.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-sae', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pkg_header.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-pkg-header', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hostlink_frame.rb'), '--seed', options.fetch(:seed).to_s],

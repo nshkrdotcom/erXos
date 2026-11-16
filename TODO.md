@@ -7460,9 +7460,6 @@ document's "residual risks accepted" paragraph.
     that performs a request to the holder belongs to the station's process;
   - `erx_sae` takes a password identifier in `new/1`, but `erx_wifi_join` passes none, since
     the choice's candidate does not carry the identifier the holder's names report;
-  - `erx_sae` and `erx_wpa_key` parse frames from the air with no fuzz target (WF6, "Untrusted
-    input"); `erx_sae_tests` runs truncations and random bodies of its frames, which is not
-    a fuzzer;
   - SAE's `keying` state: no join-level case drives a holder's `bad_element` through
     `erx_wifi_join`, whose `sae_step/4` keeps the exchange a drop returns (reverting it to
     `{drop, Check}` fails no test), and the exploration's check that a counted drop changes
