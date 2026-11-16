@@ -43,7 +43,7 @@ reads, such as clock, reads its tree the same way.
 The input the widget server sends window `Window` when a person does
 `Action` to the one node of `Tree` that `Query` matches.
 """.
--spec input(Window :: term(), query(), action(), erx_ui_model:tree()) ->
+-spec input(Window :: term(), query(), action(), erx_ui_schema:tree()) ->
           {ui, Window :: term(), Term :: term(), Detail :: term()}.
 input(Window, Query, Action, Tree) ->
     Ui = realised(Tree),
@@ -58,7 +58,7 @@ input(Window, Query, Action, Tree) ->
     end.
 
 -doc "The properties of the one node of `Tree` that `Query` matches.".
--spec find(query(), erx_ui_model:tree()) -> #{atom() => term()}.
+-spec find(query(), erx_ui_schema:tree()) -> #{atom() => term()}.
 find(Query, Tree) ->
     #{props := Props} = the_one(Query, realised_nodes(realised(Tree))),
     Props.

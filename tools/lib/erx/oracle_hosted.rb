@@ -5,6 +5,7 @@
 require 'fileutils'
 require_relative 'abi'
 require_relative 'bounded_file'
+require_relative 'build_kind'
 require_relative 'erlang_apps'
 require_relative 'oracle'
 require_relative 'oracle_comparison'
@@ -187,7 +188,7 @@ module Erx
       writer = PackWire.new(codec: @codec, hasher: PackHasher.new(helper: tools.fetch('hasher'), runner: @runner))
       File.open(archive, 'wb+') do |output|
         writer.write(rows: rows, root_entry: rows.index { |row| row.fetch('path') == 'system/root' },
-                     build_kind: 'development', output: output, budget: ARCHIVE_BUDGET)
+                     build_kind: BuildKind::DEVELOPMENT, output: output, budget: ARCHIVE_BUDGET)
       end
       archive
     end

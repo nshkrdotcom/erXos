@@ -168,7 +168,7 @@ order a PPM holds them (the display suite's reference pictures,
 tools/lib/erx/screen_reference.rb).
 """.
 -spec picture(#{program := file:filename(), ruby := file:filename(), launcher := file:filename()},
-              erx_ui_model:tree(), {pos_integer(), pos_integer()}) -> binary().
+              erx_ui_schema:tree(), {pos_integer(), pos_integer()}) -> binary().
 picture(#{program := Program, ruby := Ruby, launcher := Launcher}, Tree, {Width, Height}) ->
     Buffer = filename:absname("buffer"),
     ok = file:write_file(Buffer, binary:copy(<<0>>, stride(Width, 32) * Height)),

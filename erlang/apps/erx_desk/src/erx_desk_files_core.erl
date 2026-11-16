@@ -498,7 +498,7 @@ valid_utf8(Bytes, Acc) ->
 %%% The tree
 
 -doc "The widget tree of state `S`.".
--spec view(state()) -> erx_ui_model:tree().
+-spec view(state()) -> erx_ui_schema:tree().
 view(S) ->
     {column, #{},
      [toolbar(S),

@@ -12,6 +12,7 @@ require_relative 'data_volume'
 require_relative 'pi_medium'
 require_relative 'bl31'
 require_relative 'board_tree'
+require_relative 'build_kind'
 require_relative 'bounded_file'
 require_relative 'build_path'
 require_relative 'dependencies'
@@ -132,11 +133,9 @@ module Erx
     # when the serial log cannot locate a hang. A release card keeps both off its header,
     # and its jtag rows give no line at all.
     def development_lines(build_kind, header)
-      case build_kind
-      in 'development' then "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if header.jtag?}"
-      in 'release' then ''
-      else raise Error, "boot partition: build kind #{build_kind.inspect} is neither development nor release"
-      end
+      return '' unless BuildKind.development?(build_kind)
+
+      "uart_2ndstage=1\n#{"enable_jtag_gpio=1\n" if header.jtag?}"
     end
 
     # core_freq in MHz, the unit config.txt takes, and core_freq_fixed, for a map whose

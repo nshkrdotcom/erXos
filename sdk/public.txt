@@ -9,4 +9,5 @@ erx_prog_handler:start/1
 erx_ui:close/1
 erx_ui:open/1
 erx_ui:tree/2
+erx_ui_schema:property/1
 erx_win

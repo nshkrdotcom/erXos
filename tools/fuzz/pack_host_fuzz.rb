@@ -4,6 +4,7 @@
 
 require_relative '../lib/erx/abi'
 require_relative '../lib/erx/abi_binary'
+require_relative '../lib/erx/build_kind'
 require_relative '../lib/erx/elf_plan'
 require_relative '../lib/erx/pack_provenance'
 require 'tmpdir'
@@ -54,7 +55,7 @@ module Erx
               File.binwrite(receipt_path, bytes)
               catalog = fixed.merge(BuildInputs.capture(root: directory, paths: [receipt_path]))
               resolver = PackProvenance.new(root: directory, catalog: catalog)
-              resolver.resolve(receipt: receipt_path, artifact: artifact, build_kind: 'development')
+              resolver.resolve(receipt: receipt_path, artifact: artifact, build_kind: BuildKind::DEVELOPMENT)
             end
           rescue Error
             # Refusal is an ordinary parser result. Any other exception is a bug.
