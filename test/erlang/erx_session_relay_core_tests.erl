@@ -42,7 +42,7 @@ ok(Caller, Request, T) ->
     end.
 
 ev(Event, #t{core = Core} = T) ->
-    {Actions, Core1} = ?CORE:event(Event, Core),
+    {Core1, Actions} = ?CORE:event(Event, Core),
     deliver(Actions, T#t{core = Core1}).
 
 type(Bytes, T) -> ev({master, {tty_input, Bytes}}, T).

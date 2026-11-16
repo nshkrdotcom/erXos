@@ -250,13 +250,13 @@ consumers() ->
 Lines join both backlogs at time Now, each with its family, oldest first:
 `kernel` for a line the kernel's ring held, `messages` for every other. A
 backlog past its bound drops its oldest lines, counted. The answer is the
-batches that fall due, each `lines missed` note at their head a line of the
-system domain, System, and the next consumers.
+next consumers and the batches that fall due, each `lines missed` note at
+their head a line of the system domain, System.
 """.
 -spec lines(non_neg_integer(), source(), [{family(), binary()}], consumers()) ->
-          {[action()], consumers()}.
+          {consumers(), [action()]}.
 lines(_Now, _System, [], Consumers) ->
-    {[], Consumers};
+    {Consumers, []};
 lines(Now, System, Lines, Consumers) ->
     Joined = maps:map(fun(_Role, Backlog) -> bounded(joined(Now, Lines, Backlog)) end, Consumers),
     due(Now, System, Joined).
@@ -267,19 +267,19 @@ the monitor the service holds on its sender. A request kept for the role is
 replaced only by its own sender's, and the service forgets the old monitor;
 a request from any other process while one is kept is refused, so no other
 process can take the role's batches from its consumer. The answer is the
-refusal or the batch, if one falls due now, and the next consumers.
+next consumers and the refusal or the batch, if one falls due now.
 """.
 -spec ask(role(), requester(), non_neg_integer(), source(), consumers()) ->
-          {[action()], consumers()}.
+          {consumers(), [action()]}.
 ask(Role, {{Pid, _Tag}, Monitor} = Requester, Now, System, Consumers) when is_reference(Monitor) ->
     #{Role := Backlog} = Consumers,
     case Backlog#backlog.waiting of
         {waiting, {{Other, _}, _}} when Other =/= Pid ->
-            {[{refuse, Requester}], Consumers};
+            {Consumers, [{refuse, Requester}]};
         Waiting ->
             Forgotten = [{forget, Old} || {waiting, Old} <- [Waiting]],
-            {Due, Next} = due(Now, System, Consumers#{Role := Backlog#backlog{waiting = {waiting, Requester}}}),
-            {Forgotten ++ Due, Next}
+            {Next, Due} = due(Now, System, Consumers#{Role := Backlog#backlog{waiting = {waiting, Requester}}}),
+            {Next, Forgotten ++ Due}
     end.
 
 -doc """
@@ -299,17 +299,17 @@ The batches that fall due at time Now, with no line added: a waiting
 console's once its backlog holds a line, and a waiting store's once
 STORE_BATCH_BYTES have gathered or the oldest line has waited STORE_WAIT_NS.
 Each batch is answered to its requester, which is then forgotten, and the
-role is idle.
+role is idle. The answer is the next consumers and the batches, in order.
 """.
--spec due(non_neg_integer(), source(), consumers()) -> {[action()], consumers()}.
+-spec due(non_neg_integer(), source(), consumers()) -> {consumers(), [action()]}.
 due(Now, System, Consumers) ->
-    lists:foldl(fun(Role, {Actions, Acc}) ->
+    lists:foldl(fun(Role, {Acc, Actions}) ->
                         #{Role := Backlog} = Acc,
                         case batch(Role, Now, System, Backlog) of
-                            none -> {Actions, Acc};
-                            {Action, Rest} -> {Actions ++ [Action], Acc#{Role := Rest}}
+                            none -> {Acc, Actions};
+                            {Action, Rest} -> {Acc#{Role := Rest}, Actions ++ [Action]}
                         end
-                end, {[], Consumers}, [console, store]).
+                end, {Consumers, []}, [console, store]).
 
 %% The batch of a waiting role whose batch is due, and the backlog after it.
 batch(_Role, _Now, _System, #backlog{waiting = idle}) ->

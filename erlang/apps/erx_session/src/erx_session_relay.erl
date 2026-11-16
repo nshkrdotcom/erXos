@@ -255,7 +255,7 @@ take_write(Done, Bytes, State) ->
     end.
 
 event(Event, #state{core = Core0} = State) ->
-    {Actions, Core} = erx_session_relay_core:event(Event, Core0),
+    {Core, Actions} = erx_session_relay_core:event(Event, Core0),
     {noreply, carry_out(Actions, State#state{core = Core})}.
 
 %%% The core's actions, in the order it gives them

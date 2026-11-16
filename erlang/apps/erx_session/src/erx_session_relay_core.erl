@@ -126,12 +126,12 @@ request(Caller, Request, Core0) ->
     {Settled, Core2} = settle(Core1),
     {Answer, Actions ++ Settled, Core2}.
 
--doc "A message that is not a request: what to do and the next core.".
--spec event(event(), core()) -> {[action()], core()}.
+-doc "A message that is not a request: the next core and what to do.".
+-spec event(event(), core()) -> {core(), [action()]}.
 event(Event, Core0) ->
     {Actions, Core1} = on_event(Event, Core0),
     {Settled, Core2} = settle(Core1),
-    {Actions ++ Settled, Core2}.
+    {Core2, Actions ++ Settled}.
 
 -doc "Who holds the terminal: `console` or `{job, Tag}`.".
 -spec holder(core()) -> console | {job, term()}.
