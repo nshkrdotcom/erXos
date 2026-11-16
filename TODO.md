@@ -6510,9 +6510,7 @@ to the corpus and follow rc
   multi-TT hub (SET_INTERFACE's setup bytes, `multi_tt => true` in Configure Endpoint, `multi => true` in a
   child's translator), a refused `bMaxPacketSize0`, a SuperSpeed hub-class device or a malformed descriptor
   answer; add a multi-TT hub kind and targeted cases, with seeds for the EP0 bound loosened and SET_INTERFACE's
-  fields swapped. Also from review: answers name only `{Kind, Ref}` and seven steps share `control_done`, so the
-  core trusts the controller to answer each request once; echoing the step in request and answer would make a
-  stray answer stale by construction. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
+  fields swapped. A full-speed hub gets hub fields and possibly the MTT flag, which FreeBSD
   sets only at high speed (`controller/xhci.c:2662-2690`).
 * [Medium] USB, the bus core's exploration reduction (`test/erlang/erx_usb_bus_core_tests.erl`, `taken_alone/2`):
   the answer choices/1 takes alone is chosen from the model's world, and its independence from every other choice is
