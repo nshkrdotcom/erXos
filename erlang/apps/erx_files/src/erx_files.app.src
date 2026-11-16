@@ -3,8 +3,8 @@
 
 %% Erlang file servers (docs/design-files.md, "Serving the erx_fs behaviour"): the
 %% erx_fs behaviour and its grant's pure core, what every made tree shares
-%% (erx_fs_node), a keeper's waiting requests (erx_fs_waits), the version counter,
-%% the RAM file system's core (docs/design-tmp.md), and /proc, the inspector's tree
+%% (erx_fs_node), the version counter, the RAM file system's core
+%% (docs/design-tmp.md), and /proc, the inspector's tree
 %% (docs/design-live.md, "The /proc tree").
 {application, erx_files,
  [{description, "erXos file servers"},
@@ -14,7 +14,6 @@
              erx_fs_grants,
              erx_fs_grant,
              erx_fs_version,
-             erx_fs_waits,
              erx_procfs,
              erx_procfs_core,
              erx_ramfs,

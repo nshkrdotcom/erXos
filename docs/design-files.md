@@ -2152,11 +2152,11 @@ other client's request can come between its parts:
      not a process of the server's own runtime, or is the grant itself,
      the grant answers the request `eio`.
   2. **The keeper answers once, through its set.** A keeper keeps the
-     requests it holds in an `erx_fs_waits` set, which `erx_fs`
-     provides, and answers one only with `erx_fs_waits:answer(Wait,
-     Result, Waits)`, where `Result` is one of the callback's own answers
-     other than a wait: the one call sends it to the alias, forgets the
-     request and releases the set's monitor of its grant with that
+     requests it holds in an `erx_fs_waits` set, which the `erx`
+     application provides, and answers one only with
+     `erx_fs_waits:answer(Wait, Result, Waits)`, where `Result` is one of
+     the callback's own answers other than a wait: the one call sends
+     it to the alias, forgets the request and releases the set's monitor of its grant with that
      grant's last request, so no answered request stays held and no held
      one is answered by another route. The alias takes one answer, so a
      second is dropped by construction. The grant holds the answer to the
@@ -3167,7 +3167,7 @@ recovers a value's exact bytes
   The three messages between a grant and a keeper, `{erx_fs_wait, Wait,
   Request}`, `{erx_fs_flush, Wait}` and `{erx_fs_answer, Alias, Result}`,
   are defined once, as the macros `ERX_FS_WAIT`, `ERX_FS_FLUSH` and
-  `ERX_FS_ANSWER` of `erx_files`' header `erx_fs_waits.hrl`, which `erx_fs`,
+  `ERX_FS_ANSWER` of `erx`'s header `erx_fs_waits.hrl`, which `erx_fs`,
   `erx_fs_waits` and every keeper include: a keeper matches `ERX_FS_WAIT`
   in its receive to hand the message to `hold/2`.
   `erx_fs_locks` is a tree's lock table, a keeper of the grants' `lock`

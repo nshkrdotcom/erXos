@@ -39,7 +39,7 @@ class ErxFsTest < Minitest::Test
   SERVER = 'erlang/apps/erx_files/src/erx_fs.erl'
   MINT = 'erlang/apps/erx_storage/src/erx_lfs_mint.erl'
   VERSION = 'erlang/apps/erx_files/src/erx_fs_version.erl'
-  WAITS = 'erlang/apps/erx_files/src/erx_fs_waits.erl'
+  WAITS = 'erlang/apps/erx/src/erx_fs_waits.erl'
   STREAM = 'test/erlang/erx_fs_stream_tree.erl'
   TABLE = 'abi/protocols/9p.txt'
 

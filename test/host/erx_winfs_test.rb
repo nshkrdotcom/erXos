@@ -23,7 +23,8 @@ class ErxWinfsTest < Minitest::Test
                erx_wm_single erx_wm_rio erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl
                build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl]
-  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version erx_fs_waits].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
+  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" } +
+          ['erlang/apps/erx/src/erx_fs_waits.erl']
   MODULES = (['erlang/apps/erx_memdraw/src/erx_memdraw.erl', 'erlang/apps/erx_memdraw/src/erx_chan.erl', GRAMMAR] + DISPLAY + FILES +
              ['erlang/apps/erx/src/erx_facet.erl', 'erlang/apps/erx_fb/src/erx_fb_sup.erl', 'test/erlang/erx_winfs_tests.erl']).freeze
   # The display's log is the debug log of erx_log's NIF, which stock's emulator has not.
@@ -97,7 +98,7 @@ class ErxWinfsTest < Minitest::Test
     end
     sources << File.join(@directory, 'erx_log.erl')
     text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
-                                   '-I', INCLUDE, '-I', File.join(ROOT, 'erlang/apps/erx_display/src'), '-I', File.join(ROOT, 'erlang/apps/erx_files/include'),
+                                   '-I', INCLUDE, '-I', File.join(ROOT, 'erlang/apps/erx_display/src'), '-I', File.join(ROOT, 'erlang/apps/erx/include'),
                                    '-o', @directory, *sources, stdin_data: '')
     assert status.success?, text
     environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@directory))

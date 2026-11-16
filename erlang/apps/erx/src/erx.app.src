@@ -6,10 +6,10 @@
 %% handler and the report filter, the kernel log, the namespace, the watchdog's petter, a driver's view
 %% of its device and its device record, the hold on a header pin, chip select or PWM
 %% channel, the decisions of a shared interrupt line's owner, the inspector and its
-%% collectors, the tracer and its ring reader, the pipe server's decisions, erx's
-%% shell functions, the package decoder and its hash tree layout, and the modules
-%% tools/gen_abi.rb and
-%% tools/gen_terminal.rb generate, the 9P2000.L codec erx_9p and the input records'
+%% collectors, the tracer and its ring reader, the pipe server's decisions, a
+%% keeper's set of waiting file requests (erx_fs_waits), erx's shell functions,
+%% the package decoder and its hash tree layout, and the modules tools/gen_abi.rb
+%% and tools/gen_terminal.rb generate, the 9P2000.L codec erx_9p and the input records'
 %% codec erx_input_codec among them.
 %%
 %% It starts nothing of its own; kernel starts what must run, and the boot script's
@@ -53,6 +53,7 @@
              erx_driver_ctl,
              erx_facet,
              erx_file_description,
+             erx_fs_waits,
              erx_hold,
              erx_input_codec,
              erx_inspect_agent,
