@@ -33,8 +33,10 @@
 %% processing.
 %%
 %% Each of a session's ttys has a console too, of the `session` role (start_link/1,
-%% config()): the same groups on that raw tty, unregistered, with the tty as its driver
-%% (erx_session_tty). Only the domain's line among them holds `user`; none writes
+%% config()): the same groups, unregistered. The domain's line is driven by the
+%% terminal relay (erx_session_relay), which it reads on demand (reader()); every
+%% other tty is raw, with the tty as its driver (erx_session_tty), which sends its
+%% input as it arrives. Only the domain's line among them holds `user`; none writes
 %% the kernel log; each starts
 %% its first shell again whenever it ends, and at its line's hangup or end it ends every
 %% shell and stops, never halting the runtime. A shell holds its console as a terminal (terminal/1),
@@ -218,7 +220,20 @@
                 %% The process behind every session's console facet (facet_endpoint/1).
                 endpoint :: pid(),
                 %% The domain a pid belongs to (config()).
-                owner :: fun((pid()) -> non_neg_integer())}).
+                owner :: fun((pid()) -> non_neg_integer()),
+                %% The console's reads of its terminal, made only for its groups' asks,
+                %% when its driver is the session's terminal relay; none when its driver
+                %% sends the input as it arrives.
+                reader = none :: none | reader()}).
+
+%% The console of a session domain's line reads its relay as libedit reads a tty
+%% (docs/design-shell.md, "The console reads on demand"): through its one open, a
+%% byte at a time and only for an ask of its current group. It keeps each group's
+%% outstanding ask, the leading bytes of a character it holds for that group, and
+%% whether a watch of the open waits for its report. One watch or one read is
+%% outstanding at most; a read is a call, so only the watch outlives a step.
+-type reader() :: #{open := reference(), asks := #{pid() => reference()},
+                    held := #{pid() => binary()}, watching := boolean()}.
 
 %% A session: its tty, name, principal and domain pid with the pid's monitor, once
 %% add_session/2 names them; the monitor of its console facet, once the facet has
@@ -407,7 +422,16 @@ init(Config = #{role := Role, driver := Start, first_shell := First}) ->
                            menu = maps:get(menu, Config, Role =:= system),
                            principal = line_principal(Config),
                            owner = maps:get(owner, Config, fun erx:owner/1),
-                           endpoint = spawn(fun() -> facet_endpoint(Console) end)})}.
+                           endpoint = spawn(fun() -> facet_endpoint(Console) end),
+                           reader = reader(Role, maps:get(domain_line, Config, false))})}.
+
+%% A session domain's line is driven by the terminal relay, erx_tty_owner, which its
+%% driver function has just started: the console makes its one open there.
+reader(session, true) ->
+    {ok, Open} = erx_session_relay:open_reader(console),
+    #{open => Open, asks => #{}, held => #{}, watching => false};
+reader(_Role, _DomainLine) ->
+    none.
 
 %% The line's principal as the console starts: the one Config names, as a host test's
 %% does, or unknown. The system domain's line takes the system principal from the domain
@@ -580,12 +604,22 @@ info({erx_console_input, Bytes}, State = #state{menu = true, keys = Keys}) when 
 info({erx_console_input, Bytes}, State) when is_binary(Bytes) ->
     %% A console with no menu, a session's relay, reads a BEL as a raw tty does: as a byte.
     {noreply, read([Bytes], State)};
-info(erx_console_eof, State = #state{role = session, base = Base, shells = Shells}) ->
-    %% A session's line has hung up: every shell on it ends, and the console with them,
-    %% as a UNIX session ends at its terminal's hangup. No group is told of the end of
-    %% input: the Erlang shell would halt the runtime at it, and edlin edits with it.
-    lists:foreach(fun(Group) -> exit(Group, kill) end, [Base | [G || {G, _Caller, _Shell} <- Shells]]),
-    {stop, normal, State};
+info(erx_console_eof, State = #state{role = session}) ->
+    hang_up(State);
+info({ready, Open, [{read, 1}], N}, State = #state{reader = Reader = #{open := Open}}) ->
+    read_for_ask(N, State#state{reader = Reader#{watching := false}});
+info({erx_tty_event, Group, Event}, State = #state{reader = Reader = #{held := Held}})
+  when Event =:= interrupt; Event =:= suspend; Event =:= quit ->
+    %% A signal the line discipline made while Group was the console's current group
+    %% flushed the tty's input typed with it, so the bytes held for Group go, and
+    %% Group's ask stays outstanding. Only a group of this console's is acted on.
+    State1 = State#state{reader = Reader#{held := maps:remove(Group, Held)}},
+    [signal(Event, Group, State1) || is_pid(Group), is_group(Group, State1)],
+    {noreply, State1};
+info({erx_tty_event, _Group, _Event}, State) ->
+    %% `winch` comes with the size report, which carries it to the current group;
+    %% `info` at the prompt writes nothing, and an event naming no group reaches none.
+    {noreply, State};
 info(erx_console_eof, State = #state{pending = Pending}) ->
     %% What began a character will never end it, so it reads as stock reads a bad byte.
     [deliver({data, latin1(Pending)}, State) || Pending =/= <<>>],
@@ -723,7 +757,7 @@ gets_input(State = #state{input_ended = Ended}) ->
     %% Not always Group: only the Erlang shell's group answers shell:get_state/0.
     put(current_group, erlang_shell_group(State#state.shells)),
     [Group ! {self(), eof} || Ended],
-    State.
+    reader_follows(Group, State).
 
 %% How a shell run_shell/1 started ended, as its caller is told.
 shell_ended(normal) -> ok;
@@ -750,8 +784,10 @@ from_group({Pid, set_unicode_state, Unicode}, State = #state{tty = TTY}) ->
     ok = io:setopts(standard_error, [{encoding, encoding(Unicode)}]),
     Pid ! {self(), set_unicode_state, prim_tty:unicode(TTY)},
     State#state{tty = prim_tty:unicode(TTY, Unicode)};
-from_group({Pid, read, _Count}, State) ->
-    Pid ! {self(), {error, enotsup}},
+from_group({Pid, read, Ref}, State = #state{reader = Reader = #{asks := Asks}}) when is_reference(Ref) ->
+    watch(State#state{reader = Reader#{asks := Asks#{Pid => Ref}}});
+from_group({_Pid, read, _Ask}, State) ->
+    %% A driver that sends the input as it arrives leaves every ask unanswered.
     State;
 from_group({Pid, Request}, State) ->
     group_request(Request, Pid, State);
@@ -1265,6 +1301,78 @@ latin1(Bin) -> unicode:characters_to_binary(Bin, latin1).
 
 control($\^C) -> interrupt;
 control($\^Z) -> suspend.
+
+%% The relay's reads, for the console of a session domain's line (reader()).
+
+%% The current group changed, or may have: the relay is told, so the events made from
+%% now on carry it; what the console kept for a group that has ended is forgotten; and
+%% the open is watched if the current group has an ask outstanding.
+reader_follows(_Group, State = #state{reader = none}) ->
+    State;
+reader_follows(Group, State = #state{user = User, base = Base, shells = Shells,
+                                     reader = Reader = #{asks := Asks, held := Held}}) ->
+    ok = erx_session_relay:console_group(Group),
+    Live = [User, Base | [G || {G, _Caller, _Shell} <- Shells]],
+    watch(State#state{reader = Reader#{asks := maps:with(Live, Asks), held := maps:with(Live, Held)}}).
+
+%% A watch of one byte, made only when none waits for its report and the current group
+%% has an ask outstanding.
+watch(State = #state{reader = Reader = #{open := Open, asks := Asks, watching := false}}) ->
+    case is_map_key(current(State), Asks) of
+        true ->
+            ok = erx_session_relay:watch(Open, {read, 1}),
+            State#state{reader = Reader#{watching := true}};
+        false ->
+            State
+    end;
+watch(State) ->
+    State.
+
+%% The watch's report, numbered N: one byte is read for the current group's ask, if it
+%% has one; otherwise the byte stays in the tty until a group asks. A read that finds
+%% no byte after a hangup is the end of the line, since the editing setting leaves
+%% ICANON clear and so no key reads as an end of file.
+read_for_ask(N, State = #state{reader = #{open := Open, asks := Asks}}) ->
+    Group = current(State),
+    case is_map_key(Group, Asks) andalso erx_session_relay:read(Open, 1, N) of
+        false -> {noreply, State};
+        {ok, <<Byte>>} -> {noreply, watch(answer(Group, Byte, State))};
+        eagain -> {noreply, watch(State)};
+        eof -> hang_up(State)
+    end.
+
+%% Byte, read for Group's ask, joins the bytes held for Group: what they complete ends
+%% the ask, and what they leave incomplete stays held for Group's next ask.
+answer(Group, Byte, State = #state{reader = Reader = #{asks := Asks, held := Held}}) ->
+    {Events, Left} = text(<<(maps:get(Group, Held, <<>>))/binary, Byte>>),
+    Reader1 = Reader#{held := Held#{Group => Left}},
+    case << <<Utf8/binary>> || {data, Utf8} <- Events >> of
+        <<>> ->
+            State#state{reader = Reader1};
+        Chars ->
+            Group ! {self(), {read, map_get(Group, Asks), Chars}},
+            State#state{reader = Reader1#{asks := maps:remove(Group, Asks)}}
+    end.
+
+%% A signal key typed while Group was the console's current group, as deliver/2 passes
+%% on the system console's Ctrl-C and Ctrl-Z; `quit` at the prompt does nothing more, as
+%% FreeBSD's sh ignores SIGQUIT.
+signal(interrupt, Group, _State) ->
+    exit(Group, interrupt);
+signal(suspend, Group, #state{shells = Shells}) ->
+    case lists:keyfind(Group, 1, Shells) of
+        {Group, _Caller, {shell, start, _}} -> ok;
+        _ -> Group ! {self(), suspend}
+    end;
+signal(quit, _Group, _State) ->
+    ok.
+
+%% A session's line has hung up: every shell on it ends, and the console with them, as a
+%% UNIX session ends at its terminal's hangup. No group is told of the end of input: the
+%% Erlang shell would halt the runtime at it, and edlin edits with it.
+hang_up(State = #state{base = Base, shells = Shells}) ->
+    lists:foreach(fun(Group) -> exit(Group, kill) end, [Base | [G || {G, _Caller, _Shell} <- Shells]]),
+    {stop, normal, State}.
 
 deliver({data, Utf8}, State) ->
     current(State) ! {self(), {data, Utf8}};

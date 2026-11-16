@@ -20,13 +20,16 @@ A tty is two processes. The groups that run its shells are driven by a console o
 the session role (erx_console:start_link/1), unregistered, exactly as the system
 domain's console drives its own: the command shell on the first group, started
 again whenever it ends (as on the UART), and run_shell and write with
-erx_console's meaning on the tty's terminal, erx_console:terminal(Console). That
-console's line driver is the tty itself, which turns the console's writes into
-numbered outputs to the master and the master's messages into the console's
-input, size and end of input, by the pure core erx_tty_link. The tty is raw,
-since no program opens it: no line discipline runs, and the bytes the session's
-writers hand it reach the master unchanged, as a program's output reaches a tty
-on UNIX. The console, which shows them, applies its own receiver checks.
+erx_console's meaning on the tty's terminal, erx_console:terminal(Console).
+
+The console tty's line driver is the terminal relay (erx_session_relay), which
+runs the line discipline and which the console reads on demand (docs/design-shell.md, "The console reads on demand").
+The line driver of a tty open/1 makes is the tty itself, which turns the
+console's writes into numbered outputs to the master and the master's messages
+into the console's input, size and end of input, by the pure core erx_tty_link.
+That tty is raw: no line discipline runs, and the bytes the console's writers
+hand it reach the master unchanged. The console, which shows them, applies its
+own receiver checks.
 
 A message from the master arrives as `{erx_origin, D, Msg}` when the master is
 in another domain, and the tty takes the envelope off only when `D` is the
@@ -49,7 +52,7 @@ domain's line, whose console holds the domain's `user`. Returns its console.
 """.
 -spec start_link() -> {ok, pid()} | {error, term()}.
 start_link() ->
-    start_console(fun() -> erx:cap(console) end, #{domain_line => true}).
+    start_console(fun start_relay/1, #{domain_line => true}).
 
 -doc """
 Starts a tty whose master is Master, a process of this domain, linked to the
@@ -57,7 +60,7 @@ caller. Returns its console; the master learns the tty from its `{tty_open, Tty}
 """.
 -spec start_link(pid()) -> {ok, pid()} | {error, term()}.
 start_link(Master) when is_pid(Master), node(Master) =:= node() ->
-    start_console(fun() -> Master end, #{user => none}).
+    start_console(fun(Console) -> start_tty(Console, fun() -> Master end) end, #{user => none}).
 
 -doc """
 Opens a new tty of the session for Master, a process of this domain, under the
@@ -73,16 +76,23 @@ open(Master) when is_pid(Master), node(Master) =:= node() ->
                              type => worker,
                              modules => [?MODULE, erx_console]}).
 
-%% A console of the session role whose line driver is the tty, and whose first shell is
-%% the command shell on that console's own terminal.
-start_console(MasterFun, Options) ->
+%% A console of the session role whose line driver Driver starts, and whose first shell
+%% is the command shell on that console's own terminal.
+start_console(Driver, Options) ->
     erx_console:start_link(Options#{role => session,
-                                    driver => fun(Console) -> start_tty(Console, MasterFun) end,
+                                    driver => Driver,
                                     first_shell => fun(Terminal) ->
                                                            {erx_shell, server, [{erx_shell_runner, Terminal}]}
                                                    end}).
 
-%%% The tty: erx_console's line driver, around erx_tty_link
+%% The console tty's driver: the terminal relay (erx_session_relay), whose master is
+%% the console facet erx:cap(console) names, and which the console reads on demand.
+start_relay(Console) ->
+    {ok, Relay} = erx_session_relay:start_link(Console, erx:cap(console)),
+    %% A person's terminal is at the master's end.
+    {ok, Relay, true}.
+
+%%% The tty of a master in this domain: erx_console's line driver, around erx_tty_link
 
 -doc false.
 -spec start_tty(pid(), fun(() -> pid() | undefined)) -> {ok, pid(), true}.

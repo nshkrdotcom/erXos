@@ -4495,14 +4495,31 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
-* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): the relay is
-  built and tested but nothing starts it, so `erx_session_tty` stays each session tty's line driver, raw,
-  with no line discipline. It replaces `erx_session_tty`'s tty process as `erx_console`'s driver once the
-  console of the session role reads through an open of the relay
-  ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol), "The console reads on demand";
-  edit 72 of [design-runtime.md](docs/design-runtime.md)), the shell sends `foreground` and `erx_cmd`
-  reads through `open_reader/1`; `erx_session_tty` is then deleted, and the runtime's writers find
-  `erx_tty_owner` held.
+* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): the relay drives
+  the session's console tty, which reads it on demand, but the shell sends no `foreground`, so every
+  command runs while the console holds the terminal under the editing setting, and `erx_cmd` does not
+  read through `open_reader/1` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)).
+  Once both are in, `erx_session_tty` is deleted, the runtime's writers find `erx_tty_owner` held, and
+  `erx_tty_owner` joins `erx_session.app.src`'s `registered` list. A tty a master of the session's own
+  domain opens (`erx_session_tty:open/1`, for a terminal window) still runs raw on `erx_session_tty`'s tty
+  process: the relay is one registered process per session, while
+  [design-live.md](docs/design-live.md) ("The tty") has such a master ask the relay for a tty of its own,
+  which the relay's design does not provide.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `reader()`):
+  (1) a hangup reaches the console only as a read's `eof`, so while no group of the line has an ask
+  outstanding (a command running, the Erlang shell evaluating) the line's shells outlive the hangup until the
+  next prompt; the relay should tell its console, as `erx_session_tty` did with `erx_console_eof`, which the
+  relay's protocol table in [design-shell.md](docs/design-shell.md#the-terminal-relays-protocol) does not
+  name yet. (2) The design answers a read's `eof` to the group as `{read, Ref, eof}`; the console takes it as
+  the hangup instead (no group is told, so the Erlang shell does not halt the runtime), which holds only
+  while the editing setting leaves `ICANON` clear; settle one meaning in the design. (3) The console-read
+  cases and seeded faults the design's Verification lists beyond the five in
+  `test/erlang/erx_console_reads_tests.erl` (reads per ask, held bytes across a signal, one held set per
+  group, an interrupt queued before a read, one ask through blink and interrupt, a late event) are not
+  written, and the interrupt case does not pin that the group keeps its ask. (4) The ask, report, read and
+  event decisions are effects in the console; a pure core returning actions would let them be tested
+  without a relay. (5) After the relay gives up its name at a halt, a group's ask makes the console's call
+  exit `noproc`.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
   (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and
   output; reports are pooled across receivers.
