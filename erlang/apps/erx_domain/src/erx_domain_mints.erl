@@ -168,7 +168,7 @@ serves the display's service.
                      grants := #{key() => #{server := row(), limits := map(), mark := boolean(),
                                             state := grant()}},
                      rows := #{row() => incarnation()},
-                     sessions := #{id() => ready},
+                     sessions := sets:set(id()),
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
@@ -213,7 +213,7 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
     Entries = maps:from_list([{{Grantee, Name}, entry(Server, Limits, false)}
                               || {Grantee, Name, Server, Limits} <- Grants, not is_template(Grantee)]),
     Windows = maps:get(windows, Config, []),
-    #{declared => Declared, grants => Entries, rows => #{}, sessions => #{},
+    #{declared => Declared, grants => Entries, rows => #{}, sessions => sets:new([{version, 2}]),
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
@@ -298,22 +298,23 @@ step({ended, Row, Id}, #{rows := Rows} = State) ->
             reconcile(State#{rows := Rows#{Row => {Id, ended}}})
     end;
 step({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
-    case Sessions of
-        #{Id := _} ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             {[{refused, stale_report, {session, Id}}], State};
-        #{} ->
+        false ->
             Added = maps:from_list([{{{session, Id}, Name}, entry(Server, Limits, {display, Name} =:= Marked)}
                                     || {Name, Server, Limits} <- Rows]),
-            reconcile(State#{sessions := Sessions#{Id => ready}, grants := maps:merge(Grants, Added)})
+            reconcile(State#{sessions := sets:add_element(Id, Sessions), grants := maps:merge(Grants, Added)})
     end;
 step({session_ended, Id}, #{sessions := Sessions} = State) ->
-    case maps:take(Id, Sessions) of
-        {_Template, Rest} ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             %% With the session gone its grants have no pair, so reconcile cancels
             %% their operations; then nothing of the session is kept.
+            Rest = sets:del_element(Id, Sessions),
             {Actions, #{grants := Grants} = Next} = reconcile(State#{sessions := Rest}),
             {Actions, Next#{grants := maps:filter(fun({Grantee, _}, _) -> Grantee =/= {session, Id} end, Grants)}};
-        error ->
+        false ->
             {[], State}
     end;
 step({introduced, Tag, Result}, State) ->
@@ -519,9 +520,9 @@ current_pair({Grantee, Name} = Key, #{rows := Rows} = State) ->
 ready_id(system, _State) ->
     ?SYSTEM_ID;
 ready_id({session, Id}, #{sessions := Sessions}) ->
-    case Sessions of
-        #{Id := _} -> Id;
-        #{} -> none
+    case sets:is_element(Id, Sessions) of
+        true -> Id;
+        false -> none
     end;
 ready_id(Row, #{rows := Rows}) ->
     case Rows of
