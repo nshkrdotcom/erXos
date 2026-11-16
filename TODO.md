@@ -480,6 +480,16 @@ it; git history is the record of completed work.
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
+* [High] stopgap, `liberx/backend/fiasco`: only a root fault and a missed pet reset the machine
+  (`erx_fiasco_end_how`). The root's own stop (`service_task.c`, `ERX_FIASCO_END_STOP`), which is how
+  ERTS's `halt(String)` on a boot that fails ends, and the direct `erx_fiasco_machine_off` ends (`root.c`'s
+  refusals, `libc_root*.c`, the kernel-refusal ends in `service.c`, `service_task.c`, `thread.c`, `vm.c`)
+  still power off, so a trial that fails that way does not fall back. design-system.md files those exits
+  with faults. Decide whether an unordered stop resets; then make `erx_fiasco_machine_end` private to
+  `end.c` so every end names a cause.
+* [Medium] tooling, `tools/lib/erx/native_crash.rb` and `system_domain_regrant.rb`: their judges do not read
+  the end line, so a root fault that powered off would pass; only `native_watchdog` checks for `erx: end reset`.
+  The crash suite's fixture logs have no end line and need recapturing first.
 * [Low] stopgap, the crash suite's end-path row: `erx_machine_end` runs only with
   `ERX_END_OFF`; under `-no-reboot` both ends exit QEMU, so the suite cannot tell
   them apart, and the refusal of a bad `how` has no case.

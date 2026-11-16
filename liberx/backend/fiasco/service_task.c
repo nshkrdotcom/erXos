@@ -712,7 +712,7 @@ erx_fiasco_task_stop_body(uint32_t caller, uint64_t space, int64_t status)
 	if (status == ERX_EXIT_PARENT || status == ERX_EXIT_RELEASED || status == ERX_EXIT_NOTHREAD)
 		return (ERX_EINVAL);
 	if (task == ERX_FIASCO_TASK_ROOT)
-		erx_fiasco_end(NULL, ERX_END_OFF);
+		erx_fiasco_end(ERX_FIASCO_END_STOP, NULL);
 	if (erx_fiasco_task(task)->state == ERX_FIASCO_TASK_LIVE)
 		task_stop_tree(task, caller, status);
 	return (task == caller ? ERX_FIASCO_NO_REPLY : ERX_OK);

@@ -462,7 +462,7 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 			return (ERX_ENOTSUP);
 		if (how != ERX_END_OFF && how != ERX_END_RESET)
 			return (ERX_EINVAL);
-		erx_fiasco_end(NULL, (uint32_t)how);
+		erx_fiasco_end(how == ERX_END_OFF ? ERX_FIASCO_END_ASKED_OFF : ERX_FIASCO_END_ASKED_RESET, NULL);
 	}
 	default:
 		return (ERX_ENOTSUP);
@@ -880,12 +880,12 @@ erx_fiasco_test_thread_priority(uint32_t index, uint32_t priority, uint64_t mask
 }
 #endif
 
-/* The root's fault ends the machine; a task's goes to its fault gate, or ends only the task. */
+/* The root's fault resets the machine; a task's goes to its fault gate, or ends only the task. */
 static void
 service_fault(uint32_t task, const erx_crash_fault_t *fault)
 {
 	if (task == ERX_FIASCO_TASK_ROOT)
-		erx_fiasco_end(fault, ERX_END_OFF);
+		erx_fiasco_end(ERX_FIASCO_END_FAULT, fault);
 	erx_fiasco_task_fault(task, fault);
 }
 

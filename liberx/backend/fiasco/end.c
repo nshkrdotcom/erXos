@@ -9,7 +9,8 @@
  * service takes, the root's fault, its stop and erx_machine_end, first writes the debug log's
  * records that wait for a reader to the console, so none is lost; the crash writer is handed
  * no log ring. The watchdog's end runs off the service and writes only its frame. Every end
- * then writes its last line, erx: end off or erx: end reset (erx_fiasco_machine_end).
+ * then writes its last line, erx: end off or erx: end reset (erx_fiasco_machine_end), as
+ * erx_fiasco_end_how decides: a missed pet and a root fault reset the machine.
  */
 
 #include <stdatomic.h>
@@ -21,6 +22,7 @@
 #include "erx/core/debug_log.h"
 #include "erx/core/effects.h"
 #include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/end_how.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/service.h"
 
@@ -49,11 +51,11 @@ erx_fiasco_end_watchdog(const erx_watchdog_end_t *end)
 
 	(void)erx_crash_record_write(&input, end_record, end_scratch);
 	erx_crash_frame_write(end_record, ERX_CRASH_END_WATCHDOG);
-	erx_fiasco_machine_end(false);
+	erx_fiasco_machine_end(erx_fiasco_end_how(ERX_FIASCO_END_PET) == ERX_END_RESET);
 }
 
 _Noreturn void
-erx_fiasco_end(const erx_crash_fault_t *fault, uint32_t how)
+erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 {
 	static const char message[] = "root task fault";
 
@@ -68,7 +70,7 @@ erx_fiasco_end(const erx_crash_fault_t *fault, uint32_t how)
 		(void)erx_crash_record_write(&input, end_record, end_scratch);
 		erx_crash_frame_write(end_record, ERX_CRASH_END_FAULT);
 	}
-	erx_fiasco_machine_end(how != ERX_END_OFF);
+	erx_fiasco_machine_end(erx_fiasco_end_how(cause) == ERX_END_RESET);
 }
 
 /* Buffers of its own: the watchdog's end may run at the same time and takes the others. */

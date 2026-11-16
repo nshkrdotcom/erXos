@@ -29,6 +29,7 @@ class NativeSeedsTest < Minitest::Test
   SERVICE = 'liberx/backend/fiasco/service.c'
   WATCHDOG = 'liberx/backend/fiasco/watchdog_thread.c'
   TASK = 'liberx/backend/fiasco/service_task.c'
+  END_PATH = 'liberx/backend/fiasco/end.c'
   PARK = 'liberx/backend/core/park_table.c'
   IRQ = 'liberx/backend/fiasco/irq.c'
   DISPATCHER = 'liberx/backend/fiasco/park.c'
@@ -57,6 +58,8 @@ class NativeSeedsTest < Minitest::Test
                                                    suite: :threads, cpus: 1, expected: /failed_start FAILED/),
     'the watchdog never ends the machine' => Seed.new(file: WATCHDOG, from: "\t\tif (step.action == ERX_WATCHDOG_END)\n\t\t\terx_fiasco_end_watchdog(&step.end);\n", to: '',
                                                       suite: :watchdog, cpus: 1, expected: /UNCAUGHT/),
+    'a missed pet powers off' => Seed.new(file: END_PATH, from: 'erx_fiasco_machine_end(erx_fiasco_end_how(ERX_FIASCO_END_PET) == ERX_END_RESET);',
+                                          to: 'erx_fiasco_machine_end(false);', suite: :watchdog, cpus: 1, expected: /did not end by a reset/),
     'the read-write alias mapped read-execute' => Seed.new(file: 'liberx/backend/core/vm_table.c', from: 'addr + done, prot);', to: 'addr + done, ERX_PROT_RX);',
                                                            suite: :task, cpus: 1, expected: /service FAILED/),
     'the thread deletion skipped' => Seed.new(file: TASK, from: "\t\t\ttask_delete(erx_fiasco_task_thread_cap(task, index));\n", to: "\t\t\tcontinue;\n",
