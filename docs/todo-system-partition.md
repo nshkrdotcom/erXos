@@ -52,7 +52,9 @@ that proves the code under test ran.
   `packages` grant at `installed/`, with property 19 letting only the
   derived row carry it, and property 19 deriving that row `rights rx`
   rather than the `ro` that `app_facets` (`tools/lib/erx/manifest.rb`)
-  derives today, the two together so no `rx` grant reaches `new/`. The stopgap's `packages` mint roots every grant
+  derives today, the two together so no `rx` grant reaches `new/`; until then an installed package's
+  `rx` `/app` mount answers `eacces`, so no installed package runs, while an image
+  package's mounts `rx` through the `rx` `system` row. The stopgap's `packages` mint roots every grant
   at `packages/` (design-stopgap.md, the storage domain), so an app's
   grant reaches an upload in progress until this lands. Test: the
   package mounts' row, a walk of `new` and of `../new/tmp.K` through the

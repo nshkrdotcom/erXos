@@ -7210,13 +7210,6 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
-* [High] files, the app mount's rights, `tools/lib/erx/manifest.rb` (`app_facets`;
-  [design-files.md](docs/design-files.md#building-binding-and-mounting)): the app template's `packages`
-  row is `ro`, so `erx_ns` refuses an installed package's `rx` `/app` mount with `eacces` and no
-  installed package runs; an image package's `/app` mounts `rx` through the template's `rx` `system`
-  row. The `packages` row turns `rx` with `tree installed` in the uploads item of
-  [todo-system-partition.md](docs/todo-system-partition.md), since an `rx` grant rooted at `packages/`
-  would reach an upload in progress.
 * [Low] manifest check, `signer` rows: a signer key of small order, or one that does not
   decode, would accept a seal anyone can make, as design-ssh.md's acceptance rules note for
   login keys. Have property 19's signer clause refuse such a key, with the eight small-order
