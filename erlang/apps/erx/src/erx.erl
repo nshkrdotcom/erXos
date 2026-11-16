@@ -188,6 +188,6 @@ app's session (docs/design-packaging.md, "An app's session"): its package's
 place, its header's layout and what it starts, which erx_app reads.
 `undefined` in every other domain.
 """.
--spec app() -> erx_app:record() | undefined.
+-spec app() -> erx_app:app_record() | undefined.
 app() ->
     persistent_term:get({erx, app}, undefined).

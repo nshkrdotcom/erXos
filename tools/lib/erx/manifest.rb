@@ -1485,13 +1485,14 @@ module Erx
       # The services an app may never take, whatever the apps row says, by name
       # (docs/design-packaging.md, "The build's check", property 19's first clause): the
       # service named packages_service, which every app holds already, and those that
-      # would let an app command the start table, install packages or rewrite
-      # /etc/rc.conf.
+      # would let an app command the start table, install packages, rewrite
+      # /etc/rc.conf or end the machine.
       def app_services_refused
         { @codec.fixed_bytes('packages_service') => 'every app holds its packages grant already',
           'start'.b => 'it would let an app command the start table',
           'apps'.b => 'it would let an app install packages',
-          'etc'.b => 'it would let an app rewrite /etc/rc.conf' }
+          'etc'.b => 'it would let an app rewrite /etc/rc.conf',
+          'machine'.b => 'it would let an app end the machine' }
       end
 
       # Property 19's first and seventh clauses; answers the index of each service of the

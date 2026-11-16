@@ -844,10 +844,11 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Seeds: services naming what would let an app command the start table, install
-  # packages or rewrite /etc/rc.conf, or what it holds already, each refused by name
-  # whether or not the manifest has such a service; and a name of no service.
+  # packages, rewrite /etc/rc.conf or end the machine, or what it holds already, each
+  # refused by name whether or not the manifest has such a service; and a name of no
+  # service.
   def test_an_apps_row_s_services_are_services_an_app_may_take
-    %w[packages start apps etc].each do |name|
+    %w[packages start apps etc machine].each do |name|
       refused(Erx::Manifest::Invalid, 19, 'apps.services', with_room(@source + self.class.apps(services: name), 8),
               message: /services names #{name}:/)
     end

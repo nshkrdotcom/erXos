@@ -7,7 +7,8 @@ require_relative 'chokepoints_helper'
 # The start table's chokepoints (docs/design-apps.md, AP1 and AP2): erx_starter reaches
 # erx_domain only through start_session/2, stop/2 and the handle's accessors, and calls
 # nothing through a variable module or apply; only erx_console and erx_starter_keeper call
-# start_session/2; only erx_starter names display or default_display beside a start.
+# start_session/2; only erx_starter names display or default_display beside a start;
+# only erx_starter_keeper calls start_app/2 (docs/design-packaging.md, PK7).
 class AppsChokepointsTest < Minitest::Test
   include ChokepointsHelper
 
@@ -17,9 +18,15 @@ class AppsChokepointsTest < Minitest::Test
   OTHER = 'erlang/apps/erx/src/erx_session.erl'
   START = "s(P) -> erx_domain:start_session(P, \#{}).\n"
 
-  RULES = %w[starter-reach start-callers start-display].freeze
+  APP_START = "s(P) -> erx_domain:start_app(P, \#{}).\n"
+
+  RULES = %w[starter-reach start-callers start-display app-starters].freeze
 
   def found(files) = erlang_found(RULES, files)
+
+  # The session rules alone: app-starters also refuses an import from erx_domain, a macro
+  # naming it and the service's name, which the session rules' cases plant.
+  def session_found(files) = erlang_found(RULES - ['app-starters'], files)
 
   def test_the_tree_passes
     files = erlang_tree
@@ -46,7 +53,7 @@ class AppsChokepointsTest < Minitest::Test
     # An import from erx_domain, or the service's name, breaks both rules: either lets a
     # session start without the start_session call.
     ['-import(erx_domain, [create/1]).', 'c() -> gen_server:call(erx_domain_srv, x).'].each do |source|
-      assert_equal [['starter-reach', STARTER, 1], ['start-callers', STARTER, 1]], found(STARTER => "#{source}\n"), source
+      assert_equal [['starter-reach', STARTER, 1], ['start-callers', STARTER, 1]], session_found(STARTER => "#{source}\n"), source
     end
   end
 
@@ -85,7 +92,7 @@ class AppsChokepointsTest < Minitest::Test
       'a call split across lines' => "s(P) ->\n    erx_domain:\n        start_session(P, \#{}).\n"
     }.each do |form, source|
       line = source.lines.index { |text| text.match?(/erx_domain|start_session/) } + 1
-      assert_equal [['start-callers', OTHER, line]], found(OTHER => source), form
+      assert_equal [['start-callers', OTHER, line]], session_found(OTHER => source), form
     end
     assert_equal [['start-callers', 'otp/lib/stdlib/src/seeded.erl', 1]], found('otp/lib/stdlib/src/seeded.erl' => START)
     assert_empty found('test/erlang/seeded_tests.erl' => START)
@@ -102,10 +109,34 @@ class AppsChokepointsTest < Minitest::Test
     seeded = "s(P, D) ->\n    S = maps:put('default_display', D, \#{}),\n    erx_domain:start_session(P, S).\n"
     assert_equal [['start-display', CONSOLE, 2]], found(CONSOLE => seeded)
     via_service = "s(P, D) -> gen_server:call(erx_domain_srv, {start_session, P, \#{display => D}}).\n"
-    assert_equal [['start-callers', OTHER, 1]], found(OTHER => via_service)
+    assert_equal [['start-callers', OTHER, 1]], session_found(OTHER => via_service)
     assert_empty found(CONSOLE => "#{START}d() -> erlang:display(x), display(y), fun display/1.\n")
     assert_empty found(OTHER => "d(D) -> \#{display => D}.\n")
   end
+
+# The keeper alone starts an app's session; erx_domain's own definition and its call
+# of its service pass, and the console, which starts sessions, does not start apps.
+def test_only_the_keeper_starts_an_app_session
+  assert_empty found(KEEPER => APP_START)
+  assert_empty found('erlang/apps/erx_domain/src/erx_domain.erl' =>
+                       "-export([start_app/2]).\nstart_app(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
+  assert_equal [['app-starters', CONSOLE, 1]], found(CONSOLE => APP_START)
+  assert_equal [['app-starters', STARTER, 1]], found(STARTER => APP_START)
+  {
+    'a fun' => "s() -> fun erx_domain:start_app/2.\n",
+    'a quoted atom' => "s(P) -> 'erx_domain':'start_app'(P, \#{}).\n",
+    'an apply' => "s(A) -> erlang:apply(erx_domain, start_app, A).\n",
+    'a variable module' => "s(M, P) -> M:start_app(P, \#{}).\n",
+    'a variable apply' => "s(M, A) -> apply(M, start_app, A).\n",
+    'a call split across lines' => "s(P) ->\n    erx_domain:\n        start_app(P, \#{}).\n"
+  }.each do |form, source|
+    line = source.lines.index { |text| text.match?(/erx_domain|start_app/) } + 1
+    assert_equal [['app-starters', CONSOLE, line]], found(CONSOLE => source), form
+  end
+  assert_equal [['app-starters', CONSOLE, 1]],
+               found(CONSOLE => "s(P, S) -> gen_server:call(erx_domain_srv, {start_app, P, S}).\n")
+  assert_empty found(CONSOLE => "s() -> start_app(x), {start_app, 1}, \"erx_domain:start_app\".\n")
+end
 
   # The source check runs the rules over the files git lists.
   def test_the_source_check_refuses_a_seeded_violation
