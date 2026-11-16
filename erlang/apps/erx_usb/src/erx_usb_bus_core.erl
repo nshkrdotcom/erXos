@@ -36,6 +36,16 @@ as FreeBSD's `uhub_reattach_port` frees the old child before it reads the
 fresh status (sys/dev/usb/usb_hub.c:625-637, release/15.1.0, 95719d8a); a
 status that agrees with the state leaves the port as it is.
 
+**Attempts and over-current.** A port's history outlives its states: a
+settled port starts an enumeration attempt, moving to `waiting`, only while
+fewer than `usb_port_attempts_max` started on it in the last
+`usb_port_attempt_window_ms`, and is held in `settling` until its oldest
+attempt leaves the window otherwise, so a device that toggles its connection
+costs that port at most three Enable Slots a minute. A hub's ports start their
+histories afresh when the hub is attached again, which the attempts of the
+hub's own port bound. An over-current change is counted, and answered with
+`{log, Hub, Port, over_current}` once per attempt.
+
 **Power.** A hub's ports start `off`, and a hub more than five tiers below
 the root, `usb_hub_depth_max`, keeps them so. The core powers each, one request
 at a time, and the hub's power-good time, `bPwrOn2PwrGood` times 2 ms
@@ -94,9 +104,9 @@ port operation, detaches an external hub. The root hub's operations are the
 controller process's register accesses and do not fail.
 """.
 
--export([new/1, step/3, ports/1, devices/1]).
+-export([new/1, step/3, ports/1, histories/1, devices/1]).
 
--export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, step/0]).
+-export_type([state/0, event/0, action/0, hub_id/0, ref/0, port_state/0, port_history/0, step/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -141,6 +151,15 @@ whether it holds the address-zero turn meanwhile.
                     | {running, ref()}
                     | {disabled, term()}.
 
+-doc """
+What a port keeps across its states: the start times of its enumeration
+attempts within the last `usb_port_attempt_window_ms`, oldest first, at most
+`usb_port_attempts_max` of them; its over-current changes counted; and whether
+one has been logged since its last attempt started.
+""".
+-type port_history() :: #{attempts := [ms()], over_current_changes := non_neg_integer(),
+                          over_current_logged := boolean()}.
+
 -type op() :: power_on | get_status | reset | disable | {clear, atom()}.
 
 -doc """
@@ -179,11 +198,15 @@ hub's.
                                                                  think_time := 0..3, multi_tt := boolean()}}}
                 | {start, ref(), [erx_usb_claim:function_()]}
                 | {detach, ref()}
+                | {log, hub_id(), port_no(), over_current}
                 | {deadline, ms()}.
 
+%% A hub; `ports` and `histories` have the same keys, every port of the hub, since
+%% hub/5 makes both and nothing adds or removes a port but the hub's own removal.
 -type hub() :: #{parent := root | {hub, full | high}, power_good := ms(),
                  power := powering | {good_at, ms()} | good | unpowered, multi_tt := boolean(),
-                 ports := #{port_no() => port_state()}, pending := ordsets:ordset(target()),
+                 ports := #{port_no() => port_state()}, histories := #{port_no() => port_history()},
+                 pending := ordsets:ordset(target()),
                  op := none | {target(), op()}, clears := [{target(), atom()}], reporter := none | term()}.
 
 -doc """
@@ -217,6 +240,11 @@ step(Event, Now, State0) ->
 -spec ports(state()) -> #{{hub_id(), port_no()} => port_state()}.
 ports(#{hubs := Hubs}) ->
     maps:from_list([{{Id, N}, Port} || Id := #{ports := Ports} <- Hubs, N := Port <- Ports]).
+
+-doc "Every port's history, by its hub and number, for inspection.".
+-spec histories(state()) -> #{{hub_id(), port_no()} => port_history()}.
+histories(#{hubs := Hubs}) ->
+    maps:from_list([{{Id, N}, History} || Id := #{histories := Histories} <- Hubs, N := History <- Histories]).
 
 -doc "Every device the bus holds, by its reference, for inspection.".
 -spec devices(state()) -> #{ref() => device()}.
@@ -460,7 +488,10 @@ hub_power(_Route) -> powering.
 hub(Parent, Ports, PowerGoodUnits, MultiTT, Power) ->
     #{parent => Parent, power_good => PowerGoodUnits * ?POWER_GOOD_UNIT_MS + ?EXTRA_POWER_UP_MS,
       power => Power, multi_tt => MultiTT,
-      ports => maps:from_keys(lists:seq(1, Ports), off), pending => lists:seq(1, Ports),
+      ports => maps:from_keys(lists:seq(1, Ports), off),
+      histories => maps:from_keys(lists:seq(1, Ports), #{attempts => [], over_current_changes => 0,
+                                                        over_current_logged => false}),
+      pending => lists:seq(1, Ports),
       op => none, clears => [], reporter => none}.
 
 %% The answer to a hub's port operation. A port that has moved on since the
@@ -507,26 +538,43 @@ decode(_Id, _Target, _Malformed, _State) ->
     {error, malformed_status}.
 
 %% A hub's own status needs nothing beyond clearing its changes; a port's status
-%% moves the port as the port table says.
+%% moves the port as the port table says, then its over-current change is counted.
 read(_Id, hub, _HubStatus, _Now, State) ->
     {[], State};
 read(Id, N, Status = #{connected := Connected}, Now, State) ->
     Port = port(Id, N, State),
-    case connection_changed(Status, Port) of
-        true ->
-            Arrival = case Connected of
-                          true -> {settling, Now + ?POWER_UP_DELAY_MS};
-                          false -> empty
-                      end,
-            set_port(Id, N, Arrival, State);
-        false ->
-            follow(Id, N, Port, Status, Now, State)
-    end.
+    {Actions, Moved} = case connection_changed(Status, Port) of
+                           true ->
+                               Arrival = case Connected of
+                                             true -> {settling, Now + ?POWER_UP_DELAY_MS};
+                                             false -> empty
+                                         end,
+                               set_port(Id, N, Arrival, State);
+                           false ->
+                               follow(Id, N, Port, Status, Now, State)
+                       end,
+    then(Actions, over_current(Id, N, Status, Moved)).
 
 %% A connection change, or a status that disagrees with whether the port holds
 %% something: nothing on an `empty` port, something on every other read port.
 connection_changed(#{changes := Changes, connected := Connected}, Port) ->
     lists:member(connection, Changes) orelse Connected =/= (Port =/= empty).
+
+%% An over-current change is counted for the port's inspection and logged once per
+%% enumeration attempt: the first since the port's last attempt started is logged,
+%% the rest only counted. attempt/4 rearms the log, so a device that reports
+%% connection and over-current changes on every read logs at most one line more
+%% than the attempts it is allowed. The hub, not software, cuts the port's power,
+%% so the port only follows its status (usb_hub.c:1036-1046).
+over_current(Id, N, #{changes := Changes}, State) ->
+    case lists:member(over_current, Changes) of
+        true ->
+            History = #{over_current_changes := Count, over_current_logged := Logged} = history(Id, N, State),
+            {[{log, Id, N, over_current} || not Logged],
+             put_history(Id, N, History#{over_current_changes := Count + 1, over_current_logged := true}, State)};
+        false ->
+            {[], State}
+    end.
 
 %% A running port its hub disabled is given up; a resetting port's read after its
 %% reset was answered decides the reset, as usbd_req_reset_port does
@@ -571,7 +619,10 @@ expire_hub(Id, Now, {Actions, State = #{hubs := Hubs}}) ->
     end.
 
 expire_port(Id, N, {settling, At}, Now, State = #{waiting := Waiting}) when At =< Now ->
-    set_port(Id, N, waiting, State#{waiting := Waiting ++ [{Id, N}]});
+    case attempt(Id, N, Now, State) of
+        {started, Started} -> set_port(Id, N, waiting, Started#{waiting := Waiting ++ [{Id, N}]});
+        {held, Until} -> set_port(Id, N, {settling, Until}, State)
+    end;
 expire_port(Id, N, {resetting, At, _Phase}, Now, State) when At =< Now ->
     give_up(Id, N, reset_timeout, State);
 expire_port(Id, N, {resetting, At, {poll, Poll}}, Now, State) when Poll =< Now ->
@@ -583,6 +634,22 @@ expire_port(_Id, _N, {enumerating, Ref, {address_settle, At}}, Now, State) when 
     first_read(Ref, State);
 expire_port(_Id, _N, _Port, _Now, State) ->
     {[], State}.
+
+%% A settled port starts an enumeration attempt when fewer than usb_port_attempts_max
+%% started in the last usb_port_attempt_window_ms (docs/design-usb.md, "What a device
+%% can make the domain spend"); otherwise it is held until its oldest attempt leaves
+%% the window. Only attempts within the window are kept, so a port keeps at most the
+%% bound however often its device reconnects. A started attempt rearms the port's
+%% over-current log (over_current/4).
+attempt(Id, N, Now, State) ->
+    History = #{attempts := Attempts} = history(Id, N, State),
+    Recent = [T || T <- Attempts, Now - T < ?ERX_USB_PORT_ATTEMPT_WINDOW_MS],
+    case length(Recent) < ?ERX_USB_PORT_ATTEMPTS_MAX of
+        true ->
+            Started = History#{attempts := Recent ++ [Now], over_current_logged := false},
+            {started, put_history(Id, N, Started, State)};
+        false -> {held, hd(Recent) + ?ERX_USB_PORT_ATTEMPT_WINDOW_MS}
+    end.
 
 %% A device for the port at the end of its reset recovery.
 enumerate(Id, N, Speed, State = #{devices := Devices, next := Ref = {device, Next}}) ->
@@ -773,6 +840,11 @@ port_deadlines(_Port) -> [].
 %% State access.
 
 port(Id, N, #{hubs := Hubs}) -> maps:get(N, maps:get(ports, maps:get(Id, Hubs))).
+
+history(Id, N, #{hubs := Hubs}) -> maps:get(N, maps:get(histories, maps:get(Id, Hubs))).
+
+put_history(Id, N, History, State) ->
+    with_hub(Id, fun(Hub = #{histories := Histories}) -> Hub#{histories := Histories#{N := History}} end, State).
 
 find_port(Id, N, #{hubs := Hubs}) ->
     case Hubs of

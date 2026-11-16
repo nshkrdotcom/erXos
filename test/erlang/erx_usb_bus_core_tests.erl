@@ -6,7 +6,8 @@
 %% to a fixed point against a simulated bus of a root hub of two ports, one external hub
 %% of two ports and devices of one and two functions; then traces of 1,000 attach and
 %% detach cycles on one port, a connection storm, a hub detached during its child's
-%% enumeration, and a chain of six hubs. World places are routes from the root.
+%% enumeration, a chain of six hubs and four connects on one port within a minute; and
+%% over-current changes read on a root port. World places are routes from the root.
 %%
 %% The simulation is the test's own model of the hardware and the processes around the
 %% core: every port's connection, enable, power and latched change bits; the port
@@ -45,6 +46,12 @@
 %% Power-good times: the root's 10 units, the simulated hub's 50, each times 2 ms plus 20.
 -define(ROOT_POWER_GOOD, 40).
 -define(HUB_POWER_GOOD, 120).
+%% A port's enumeration attempts: at most 3 in any 60 s.
+-define(ATTEMPTS_MAX, 3).
+-define(ATTEMPT_WINDOW, 60000).
+%% wPortStatus's and wPortChange's connection and over-current bits.
+-define(CONNECTION, 1).
+-define(OVER_CURRENT, 8).
 
 %% The exploration.
 
@@ -63,8 +70,12 @@ explored(Stimuli, Errors) ->
 start(Stimuli, Errors) ->
     deliver(expired, (model0())#{stimuli := Stimuli, errors := Errors}, erx_usb_bus_core:new(2)).
 
-%% The number of states reachable with Stimuli connects or disconnects and Errors failed answers.
-states(Stimuli, Errors) -> explore(start(Stimuli, Errors)).
+%% The number of states reachable with Stimuli connects or disconnects and Errors failed
+%% answers. A port's attempts throttle only its fourth within a minute, which takes four
+%% connects at its place and the three disconnects between them, since stimuli/1 moves
+%% a place only between a device and nothing; with fewer stimuli no attempt time
+%% decides anything, so key/1 drops them.
+states(Stimuli, Errors) when Stimuli < 2 * ?ATTEMPTS_MAX + 1 -> explore(start(Stimuli, Errors)).
 
 explore(Start) ->
     explore([Start], #{key(Start) => true}).
@@ -77,10 +88,17 @@ explore([Node | Rest], Seen) ->
     explore(maps:values(New) ++ Rest, maps:merge(Seen, maps:map(fun(_, _) -> true end, New))).
 
 %% A power-on answered longer ago than any hub's power-good time is as good as any
-%% older one, so its time is clamped and the key stays finite as time passes.
+%% older one, so its time is clamped and the key stays finite as time passes; attempt
+%% times decide nothing at the depths explored (states/2) and are dropped.
 key({Model = #{now := Now, powered := Powered}, Core}) ->
     Clamped = maps:map(fun(_Hub, At) -> max(At, Now - 1000) end, Powered),
-    canon({maps:remove(last, Model#{powered := Clamped}), Core}, Now).
+    canon({maps:remove(last, Model#{powered := Clamped}), without_attempts(Core)}, Now).
+
+%% The core's state with every port's attempt times emptied: the one place the test
+%% reads the core's representation rather than its exported views.
+without_attempts(Core = #{hubs := Hubs}) ->
+    Core#{hubs := #{Id => Hub#{histories := #{N => History#{attempts := []} || N := History <- Histories}}
+                    || Id := Hub = #{histories := Histories} <- Hubs}}.
 
 %% The simulated bus.
 
@@ -556,6 +574,8 @@ action({detach, Ref}, M = #{slots := Slots, things := Things, hubs := Hubs, seen
     is_map_key(Ref, erx_usb_bus_core:devices(After)) andalso error({reference_kept, Ref}),
     M#{slots := maps:remove(Ref, Slots), things := maps:remove(Ref, Things), hubs := maps:remove(Ref, Hubs),
        seen := maps:remove(Ref, Seen), addressed_at := maps:remove(Ref, map_get(addressed_at, M))};
+action({log, _H, _N, over_current}, M, _Before, _After) ->
+    M;
 action({deadline, At}, M, _Before, _After) ->
     M#{deadline := At}.
 
@@ -605,20 +625,79 @@ port_of({_M, Core}, Where) -> maps:get(Where, erx_usb_bus_core:ports(Core)).
 
 trace_start() -> settle(start(1 bsl 30, 0)).
 
+%% A device attached to root port 1 runs, then is detached, leaving the port empty.
+cycle(Node) ->
+    Running = settle(follow({stimulus, [1], dev2}, Node)),
+    ?assertMatch({running, _}, port_of(Running, {root, 1})),
+    Gone = settle(follow({stimulus, [1], none}, Running)),
+    ?assertEqual(empty, port_of(Gone, {root, 1})),
+    ?assertEqual(#{}, erx_usb_bus_core:devices(element(2, Gone))),
+    Gone.
+
+cycles(Count, Node) -> lists:foldl(fun(_, Acc) -> cycle(Acc) end, Node, lists:seq(1, Count)).
+
+%% From the fourth cycle on, the port's attempts repeat every three cycles, the first
+%% of each three held until a minute after the attempt three before it, so the state
+%% after the 1,000th cycle is the state after the fourth.
 attach_and_detach_cycles_leave_nothing_behind_test_() ->
     {timeout, 300, fun() ->
-        Cycle = fun(_, Node) ->
-                        Running = settle(follow({stimulus, [1], dev2}, Node)),
-                        ?assertMatch({running, _}, port_of(Running, {root, 1})),
-                        Gone = settle(follow({stimulus, [1], none}, Running)),
-                        ?assertEqual(empty, port_of(Gone, {root, 1})),
-                        ?assertEqual(#{}, erx_usb_bus_core:devices(element(2, Gone))),
-                        Gone
-                end,
-        First = {#{now := Now1}, Core1} = Cycle(1, trace_start()),
-        {#{now := Now}, Core} = lists:foldl(Cycle, First, lists:seq(2, 1000)),
-        ?assertEqual(canon(Core1, Now1), canon(Core, Now))
+        Fourth = {#{now := Now4}, Core4} = cycles(4, trace_start()),
+        {#{now := Now}, Core} = cycles(996, Fourth),
+        ?assertEqual(canon(Core4, Now4), canon(Core, Now))
     end}.
+
+%% Three attempts on one port in a few seconds; the fourth connect settles within the
+%% minute and is held in `settling` until the first attempt is a minute old, then
+%% starts, and the port keeps only the three attempts within the window.
+a_port_starts_at_most_three_attempts_a_minute_test() ->
+    Three = cycles(3, trace_start()),
+    #{{root, 1} := #{attempts := [A1, A2, A3]}} = erx_usb_bus_core:histories(element(2, Three)),
+    Held = fun(Node) -> port_of(Node, {root, 1}) =:= {settling, A1 + ?ATTEMPT_WINDOW} end,
+    {#{now := Now, deadline := Deadline}, _} = Node = drive(follow({stimulus, [1], dev2}, Three), Held,
+                                                            fun(_) -> true end),
+    ?assert(Held(Node)),
+    ?assert(Now < A1 + ?ATTEMPT_WINDOW),
+    ?assertEqual(A1 + ?ATTEMPT_WINDOW, Deadline),
+    {_, Core} = Running = settle(Node),
+    ?assertMatch({running, _}, port_of(Running, {root, 1})),
+    #{{root, 1} := #{attempts := Attempts}} = erx_usb_bus_core:histories(Core),
+    ?assertEqual([A2, A3, A1 + ?ATTEMPT_WINDOW], Attempts).
+
+%% Over-current changes on a root port: each is counted and the first is logged, the
+%% next only counted, a connection change read with one included, until the port's
+%% next attempt starts 300 ms later; the first after it is logged again.
+over_current_changes_are_logged_once_per_attempt_test() ->
+    {#{now := Now}, Core0} = trace_start(),
+    Log = [{log, root, 1, over_current}],
+    {Logged1, Core1} = root_read(?OVER_CURRENT, ?OVER_CURRENT, Now, Core0),
+    {Logged2, Core2} = root_read(?OVER_CURRENT, ?OVER_CURRENT, Now, Core1),
+    {Logged3, Core3} = root_read(?CONNECTION bor ?OVER_CURRENT, ?CONNECTION bor ?OVER_CURRENT, Now, Core2),
+    ?assertMatch(#{{root, 1} := {settling, _}}, erx_usb_bus_core:ports(Core3)),
+    Started = Now + 300,
+    {Reset, Core4} = erx_usb_bus_core:step(expired, Started, Core3),
+    ?assert(lists:member({port, root, 1, reset}, Reset)),
+    {_, Core5} = erx_usb_bus_core:step({port_done, root, 1, ok}, Started, Core4),
+    {Logged4, Core6} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core5),
+    {Logged5, Core7} = root_read(?CONNECTION bor ?OVER_CURRENT, ?OVER_CURRENT, Started, Core6),
+    ?assertEqual([Log, [], [], Log, []], [Logged1, Logged2, Logged3, Logged4, Logged5]),
+    ?assertMatch(#{{root, 1} := #{over_current_changes := 5}}, erx_usb_bus_core:histories(Core7)).
+
+%% Root port 1 of an idle bus signals, its status read answers Status and Change, and
+%% each change bit is cleared in turn; the read's log actions and the state after.
+root_read(Status, Change, Now, Core0) ->
+    {[{port, root, 1, get_status} | _], Core1} = erx_usb_bus_core:step({port_event, 1}, Now, Core0),
+    {Actions, Core2} = erx_usb_bus_core:step({port_done, root, 1, {ok, <<Status:16/little, Change:16/little>>, 3}},
+                                             Now, Core1),
+    {[A || A = {log, _, _, _} <- Actions], cleared(Actions, Now, Core2)}.
+
+cleared(Actions, Now, Core) ->
+    case [Op || {port, root, 1, Op = {clear, _}} <- Actions] of
+        [] ->
+            Core;
+        [_] ->
+            {More, Next} = erx_usb_bus_core:step({port_done, root, 1, ok}, Now, Core),
+            cleared(More, Now, Next)
+    end.
 
 a_connection_storm_stays_bounded_test() ->
     Toggle = fun(I, Node) ->

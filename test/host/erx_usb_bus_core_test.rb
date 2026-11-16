@@ -81,7 +81,23 @@ class ErxUsbBusCoreTest < Minitest::Test
     Seed.new(fault: 'a hub six tiers below the root powering its ports',
              anchor: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX -> unpowered;',
              replacement: 'hub_power(Route) when length(Route) > ?ERX_USB_HUB_DEPTH_MAX + 1 -> unpowered;',
-             catching: 'a_hub_past_the_depth_limit_keeps_its_ports_off_test')
+             catching: 'a_hub_past_the_depth_limit_keeps_its_ports_off_test'),
+    Seed.new(fault: 'the attempt throttle removed, so a settled port always starts an attempt',
+             anchor: 'case length(Recent) < ?ERX_USB_PORT_ATTEMPTS_MAX of',
+             replacement: 'case length(Recent) >= 0 of',
+             catching: 'a_port_starts_at_most_three_attempts_a_minute_test'),
+    Seed.new(fault: "a port's attempts never leaving the window",
+             anchor: 'Recent = [T || T <- Attempts, Now - T < ?ERX_USB_PORT_ATTEMPT_WINDOW_MS],',
+             replacement: 'Recent = Attempts,',
+             catching: 'a_port_starts_at_most_three_attempts_a_minute_test'),
+    Seed.new(fault: 'an over-current change logged on every change',
+             anchor: '{[{log, Id, N, over_current} || not Logged],',
+             replacement: '{[{log, Id, N, over_current} || is_boolean(Logged)],',
+             catching: 'over_current_changes_are_logged_once_per_attempt_test'),
+    Seed.new(fault: 'the over-current log not rearmed by an attempt',
+             anchor: 'Started = History#{attempts := Recent ++ [Now], over_current_logged := false},',
+             replacement: 'Started = History#{attempts := Recent ++ [Now]},',
+             catching: 'over_current_changes_are_logged_once_per_attempt_test')
   ].freeze
 
   def test_bus_core_cases_pass_under_eunit

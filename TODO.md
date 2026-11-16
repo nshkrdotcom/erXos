@@ -6524,11 +6524,6 @@ to the corpus and follow rc
 * [Medium] USB, the bus core's seeded depths (`test/host/erx_usb_bus_core_test.rb`): each exploration seed names a
   depth that must lie within one of the test module's `?DEPTHS`, and nothing checks that; export the depths and have
   the host test assert it, so dropping a depth from the module cannot leave a seed caught only by its own run.
-* [Medium] USB, the bus core's over-current changes (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#hubs)):
-  an over-current change is cleared but not logged once per connection nor counted for the port's inspection record.
-* [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
-  the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
-  new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.
 * [Low] USB, the bus core's exploration (`test/erlang/erx_usb_bus_core_tests.erl`): the simulated bus never ends a
   reset with the port disabled, never presents a low-speed device or a root port speed the controller cannot run,
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
