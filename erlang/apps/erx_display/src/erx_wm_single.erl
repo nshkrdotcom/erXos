@@ -32,7 +32,7 @@ without the policy being asked (erx_input).
 
 -behaviour(erx_wm).
 
--export([init/1, place/6, arrange/4, decorate/2, input/4, shown/2]).
+-export([init/1, place/6, arrange/4, decorate/3, input/5, menu/2, shown/2]).
 -export_type([config/0, state/0]).
 
 -doc "The policy's configuration, which is empty.".
@@ -75,13 +75,17 @@ arrange(Windows, Screen, Session, State) ->
       || W = #{id := WindowId} <- Windows], State}.
 
 -doc "The single policy draws nothing.".
--spec decorate([erx_wm:window()], erx_wm:rect()) -> [].
-decorate(_Windows, _Screen) -> [].
+-spec decorate([erx_wm:window()], erx_wm:rect(), state()) -> [].
+decorate(_Windows, _Screen, _State) -> [].
+
+-doc "The single policy has no menu.".
+-spec menu([erx_wm:window()], state()) -> none.
+menu(_Windows, _State) -> none.
 
 -doc "Routes one input event the router asks about; see the moduledoc.".
--spec input(erx_wm:input(), [erx_wm:window()], erx_wm:session(), state()) ->
+-spec input(erx_wm:input(), [erx_wm:window()], erx_wm:rect(), erx_wm:session(), state()) ->
           {erx_wm:route(), state()}.
-input(Input, Windows, Session, State) ->
+input(Input, Windows, _Screen, Session, State) ->
     case shown(Session, Windows) of
         none -> {drop, State};
         Id -> {{to, Id, Input}, State}

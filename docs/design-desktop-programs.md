@@ -553,7 +553,7 @@ with CSS from `theme.ts`.
 Windows are square-cornered: rounding a window's corners would ask the
 display to mask a client's buffer against whatever lies behind it,
 which is composition with alpha that the display does not do. The
-overlapping policy's decorations take the theme: `decorate/2` returns
+overlapping policy's decorations take the theme: `decorate/3` returns
 its border rectangles in the theme's `line` colour for windows that do
 not take the keyboard and `accent` for the one that does, one hairline
 wide, and the menu draws its items in the `body` role, on `surface`,
@@ -1285,7 +1285,7 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
    entry, in its `screen` file or in a session's environment. A dark
    palette is work in `TODO.md`.
 4. **No title bar.** A title bar with the window's label would change
-   `decorate/2`, which returns rectangles and colours, to return a label
+   `decorate/3`, which returns rectangles and colours, to return a label
    too, a change to design-display's overlapping policy that belongs
    there; the decorations are borders.
 5. **Time zones.** clock and month show UTC and say so. A zone needs a

@@ -19,10 +19,11 @@ locks that are on; and each window's repeating key. The buttons a
 pointer event carries and the modifiers that select a layer are derived
 from what the sources hold at each step, never stored.
 
-**Who is asked.** The policy's input/4 is asked only about what starts
-something: a key's down, a gesture's first event, and a pointer event or
-wheel step while nothing is held. What follows goes where the start
-went, by the record of the start, not by asking again:
+**Who is asked.** The policy's input/5 is asked, with the screen,
+only about what starts something: a key's down, a gesture's first
+event, and a pointer event or wheel step while nothing is held. What
+follows goes where the start went, by the record of the start, not by
+asking again:
 
 * a key's up goes to the window its down went to, whatever that
   window's state, and stops that window's repeat;
@@ -75,9 +76,10 @@ abi/formats/input.txt declares, with its bounds and its binary form.
 -doc "The window table, the display's session and the policy, as erx_winfs holds them.".
 -type view() :: #{windows := [erx_wm:window()], session := erx_wm:session(),
                   policy := module(), policy_state := term()}.
--doc "What erx_winfs performs: a delivery, the policy's word, a new table, the timer.".
+-doc "What erx_winfs performs: a delivery, the policy's word, an end, a new table, the timer.".
 -type out() :: {to, erx_wm:window_id(), erx_wm:input()} | {wm, term()}
-             | {windows, [erx_wm:window()]} | {wake, At :: integer() | none}.
+             | {delete, erx_wm:window_id()} | {windows, [erx_wm:window()]}
+             | {wake, At :: integer() | none}.
 
 %% A key a source holds: the window its down went to, or none, and what its down typed,
 %% the unshifted rune, the modifier row it holds and the modifiers then held, which its
@@ -177,10 +179,10 @@ record({wheel, Steps}, Source, At, Step, #input{gesture = Gesture} = S) ->
     Event = event(Source, At, {wheel, Steps}, S),
     case Gesture of
         none ->
-            {Route, Asked} = ask(Event, Step),
+            {Route, Asked} = ask(Event, Step, S),
             {answer(Route, Asked), S};
         _ ->
-            {Delivered, _Same} = deliver(Gesture, Event, move, Step),
+            {Delivered, _Same} = deliver(Gesture, Event, move, Step, S),
             {Delivered, S}
     end;
 record(release, Source, At, Step, S) ->
@@ -232,25 +234,26 @@ pointer(Source, At, Edge, Step, #input{pointer = {X, Y}, gesture = Gesture} = S)
     case {Gesture, Buttons} of
         {none, 0} ->
             %% Between gestures the policy routes it.
-            {Route, Asked} = ask(Event, Step),
+            {Route, Asked} = ask(Event, Step, S),
             {answer(Route, Asked), S};
         {none, _} ->
             %% A press begins a gesture, whose destination the policy's answer fixes.
-            {Route, Asked} = ask(Event, Step),
+            {Route, Asked} = ask(Event, Step, S),
             {answer(Route, Asked), S#input{gesture = destination(Route)}};
         {_, 0} ->
             %% The gesture ends with the event after which nothing is held.
-            {Delivered, _Ended} = deliver(Gesture, Event, Edge, Step),
+            {Delivered, _Ended} = deliver(Gesture, Event, Edge, Step, S),
             {Delivered, S#input{gesture = none}};
         {_, _} ->
             %% The gesture goes on, to its destination.
-            {Delivered, Destination} = deliver(Gesture, Event, Edge, Step),
+            {Delivered, Destination} = deliver(Gesture, Event, Edge, Step, S),
             {Delivered, S#input{gesture = Destination}}
     end.
 
 destination({to, Window, #{event := {pointer, _, _, Buttons}}}) -> {window, Window, Buttons};
 destination({to, Window, _NotPointer}) -> {window, Window, 0};
 destination({wm, _}) -> policy;
+destination({delete, _}) -> policy;
 destination(_WindowsOrDrop) -> nowhere.
 
 %% An event of a gesture after its first, and the gesture's destination after it. A
@@ -259,9 +262,9 @@ destination(_WindowsOrDrop) -> nowhere.
 %% hidden window never hears of a button pressed after it was hidden. The policy is
 %% asked, and an answer naming a window is dropped and counted, since that window did
 %% not see the gesture start.
--spec deliver(destination(), erx_wm:input(), edge(), #step{}) -> {#step{}, destination()}.
+-spec deliver(destination(), erx_wm:input(), edge(), #step{}, #input{}) -> {#step{}, destination()}.
 deliver({window, Window, Seen} = Dest, #{event := Ev} = Event, Edge,
-        #step{view = #{windows := Windows}} = Step) ->
+        #step{view = #{windows := Windows}} = Step, _S) ->
     case {erx_wm:fetch(Window, Windows), Edge, Ev} of
         {{ok, #{state := shown}}, _, {pointer, _, _, Buttons}} ->
             {out({to, Window, Event}, Step), {window, Window, Buttons}};
@@ -274,12 +277,12 @@ deliver({window, Window, Seen} = Dest, #{event := Ev} = Event, Edge,
         _HiddenOrEnded ->
             {Step, Dest}
     end;
-deliver(policy, Event, _Edge, Step) ->
-    case ask(Event, Step) of
+deliver(policy, Event, _Edge, Step, S) ->
+    case ask(Event, Step, S) of
         {{to, _, _}, #step{drops = Drops} = Asked} -> {Asked#step{drops = Drops + 1}, policy};
         {Route, Asked} -> {answer(Route, Asked), policy}
     end;
-deliver(nowhere, _Event, _Edge, Step) ->
+deliver(nowhere, _Event, _Edge, Step, _S) ->
     {Step, nowhere}.
 
 %% Keys -----------------------------------------------------------------------
@@ -310,7 +313,7 @@ key_down(Code, Row, #source{keys = Keys} = Src, Source, At, Step, S) ->
     Event = event(Source, At, {key, down, Code, Typed, Unshifted, Mods}, S),
     {Route, Asked} = case chord(Code, S) of
                          true -> {{wm, chord}, Step};
-                         false -> ask(Event, Step)
+                         false -> ask(Event, Step, S)
                      end,
     Dest = case Route of {to, Window, _} -> Window; _ -> none end,
     Held = #{dest => Dest, typed => Typed, unshifted => Unshifted, modifier => Modifier,
@@ -474,13 +477,15 @@ mods(S) -> lists:usort([Rune || #{modifier := {Rune, _}} <- held_keys(S), Rune =
 %% Helpers --------------------------------------------------------------------
 
 ask(Event, #step{view = #{windows := Windows, session := Session, policy := Policy},
-                 policy_state = PolicyState} = Step) ->
-    {Route, PolicyState1} = Policy:input(Event, Windows, Session, PolicyState),
+                 policy_state = PolicyState} = Step,
+    #input{screen = Screen}) ->
+    {Route, PolicyState1} = Policy:input(Event, Windows, Screen, Session, PolicyState),
     {Route, Step#step{policy_state = PolicyState1}}.
 
 %% The policy's answer as what erx_winfs performs.
 answer({to, Window, Event}, Step) -> out({to, Window, Event}, Step);
 answer({wm, Term}, Step) -> out({wm, Term}, Step);
+answer({delete, Window}, Step) -> out({delete, Window}, Step);
 answer({windows, Table}, Step) -> out({windows, Table}, Step);
 answer(drop, Step) -> Step.
 

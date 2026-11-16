@@ -33,9 +33,11 @@ every other message is dropped.
 **The table.** The windows in stacking order, topmost first, each an
 `erx_wm:window()` with its holder, its grant and its holder's monitor.
 Every change goes through the policy (`erx_wm`), and after every change
-each window whose rectangle or state moved is told so, and the screen is
-handed the layout: the shown windows, topmost first, with their
-decorations. `erx_winfs` calls the policy's arrange/4 after every change
+each window whose rectangle or state moved is told so. After every
+message the layout, the shown windows, topmost first, with their
+decorations, is derived from the table and the policy's state together
+and handed to the screen when it differs from the one last handed, so a
+pick that changes no table still moves the border. `erx_winfs` calls the policy's arrange/4 after every change
 it makes itself, and whenever the session it derives differs from the one
 it last passed, so the table always holds the policy's answer for the
 current session.
@@ -45,8 +47,8 @@ routed, so each source has at most one record waiting here. Each record,
 a source's end and a timer's tick is stamped with this process's
 monotonic clock in milliseconds and stepped by the router's core,
 erx_input, which alone asks the policy about input; this process
-performs its answers: an event cast to a window process, a new table
-committed, the one repeat timer replaced. It monitors each source from
+performs its answers: an event cast to a window process, a window
+ended, a new table committed, the one repeat timer replaced. It monitors each source from
 its first record, so a source's end releases what it held, and tells the
 screen of each record first, for its idle clock.
 
@@ -125,6 +127,8 @@ applied here, whole or not at all.
                 chan = none :: none | binary(),
                 depth = none :: none | pos_integer(),
                 screen = none :: none | {pid(), reference()},
+                %% The layout last handed to the screen.
+                layout = [] :: erx_screen_core:layout(),
                 next_id = 1 :: pos_integer(),
                 %% The display's clipboard.
                 clipboard = <<>> :: binary(),
@@ -214,27 +218,36 @@ mint_request(_System, _Service, _Message) ->
 %% Each message is handled whole, and the next is awaited through a remote call,
 %% so the process moves to newly loaded code between messages.
 -doc false.
+%% After each message the layout is derived and handed to the screen when it changed, before
+%% a call is answered, so a client that hears its wctl write answered presents into the
+%% layout that write made.
 loop(#winfs{options = #{system := System, service := Service}, parent = Parent, grants_sup = Sup} = State) ->
-    receive
-        {erx_origin, System, _} = Message ->
-            ?MODULE:loop(mint(mint_request(System, Service, Message), State));
-        {'$gen_call', {Pid, _} = From, Request} when is_pid(Pid) ->
-            {Reply, Next} = handle_call(Request, Pid, State),
-            gen_server:reply(From, Reply),
-            ?MODULE:loop(Next);
-        {timeout, Timer, erx_input_tick} when Timer =:= State#winfs.timer ->
-            ?MODULE:loop(route({tick, now_ms()}, State#winfs{timer = none}));
-        {'DOWN', Ref, process, Pid, _} ->
-            ?MODULE:loop(down(Ref, Pid, State));
-        {'EXIT', Parent, Reason} ->
-            exit(Reason);
-        {'EXIT', Sup, Reason} ->
-            exit(Reason);
-        {'EXIT', Pid, Reason} ->
-            ?MODULE:loop(window_exit(Pid, Reason, State));
-        _ ->
-            ?MODULE:loop(State)
-    end.
+    {Next, Reply} =
+        receive
+            {erx_origin, System, _} = Message ->
+                {mint(mint_request(System, Service, Message), State), noreply};
+            {'$gen_call', {Pid, _} = From, Request} when is_pid(Pid) ->
+                {Answer, Called} = handle_call(Request, Pid, State),
+                {Called, {From, Answer}};
+            {timeout, Timer, erx_input_tick} when Timer =:= State#winfs.timer ->
+                {route({tick, now_ms()}, State#winfs{timer = none}), noreply};
+            {'DOWN', Ref, process, Pid, _} ->
+                {down(Ref, Pid, State), noreply};
+            {'EXIT', Parent, Reason} ->
+                exit(Reason);
+            {'EXIT', Sup, Reason} ->
+                exit(Reason);
+            {'EXIT', Pid, Reason} ->
+                {window_exit(Pid, Reason, State), noreply};
+            _ ->
+                {State, noreply}
+        end,
+    Presented = present(Next),
+    ok = case Reply of
+             {To, Answer1} -> gen_server:reply(To, Answer1);
+             noreply -> ok
+         end,
+    ?MODULE:loop(Presented).
 
 %% A local call with no timeout: erx_winfs calls no process that calls it, so no
 %% cycle of waits exists. A window system that has ended answers eio.
@@ -330,7 +343,8 @@ handle_call({attach, Rect, Chan}, Pid, #winfs{screen = Old} = State) ->
             Arranged = arrange(State#winfs{screen_rect = Rect, chan = Chan, depth = Depth,
                                            screen = none}),
             Screen = {Pid, erlang:monitor(process, Pid)},
-            {{ok, layout(Arranged)}, route({screen, Rect}, Arranged#winfs{screen = Screen})};
+            Layout = layout(Arranged),
+            {{ok, Layout}, route({screen, Rect}, Arranged#winfs{screen = Screen, layout = Layout})};
         _ ->
             {{error, einval}, State}
     end;
@@ -491,6 +505,8 @@ perform({to, Id, Event}, #winfs{windows = Windows} = State) ->
     State;
 perform({windows, Table}, State) ->
     commit(Table, State);
+perform({delete, Id}, State) ->
+    arrange(end_window(Id, State));
 perform({wm, _Term}, State) ->
     State;
 perform({wake, At}, #winfs{timer = Old} = State) ->
@@ -561,8 +577,8 @@ arrange(#winfs{windows = Windows, screen_rect = Screen, session = Session, polic
     {Table, PolicyState1} = Policy:arrange(Windows, Screen, Session, PolicyState),
     commit(Table, State#winfs{policy_state = PolicyState1}).
 
-%% Takes the policy's table: each window whose rectangle or state changed is told,
-%% and the screen is handed the layout. The policy keeps every field it does not
+%% Takes the policy's table: each window whose rectangle or state changed is told; the
+%% loop hands the screen the layout. The policy keeps every field it does not
 %% set, so a table that lost or gained a window is a policy's error and is refused
 %% whole, keeping the old one.
 commit(Table, State) ->
@@ -576,20 +592,29 @@ commit(Table, #winfs{windows = Old} = State, New) ->
             _ = [gen_server:cast(Proc, {placed, R, S})
                  || #{id := Id, rect := R, state := S, proc := Proc} <- Table,
                     maps:get(Id, Before, none) =/= {R, S} orelse lists:member(Id, New)],
-            Next = State#winfs{windows = Table},
-            ok = case Next#winfs.screen of
-                     {Pid, _} -> gen_server:cast(Pid, {layout, layout(Next)});
-                     none -> ok
-                 end,
-            Next;
+            State#winfs{windows = Table};
         false ->
             _ = erx_log:debug(["erx_winfs: the policy changed the table's windows"]),
             State
     end.
 
+%% Hands the screen the layout when it differs from the one last handed: the layout is a
+%% function of the table and the policy's state, so a pick that changes no table still
+%% moves the border.
+present(#winfs{screen = {Pid, _}, layout = Last} = State) ->
+    case layout(State) of
+        Last ->
+            State;
+        Layout ->
+            ok = gen_server:cast(Pid, {layout, Layout}),
+            State#winfs{layout = Layout}
+    end;
+present(#winfs{screen = none} = State) ->
+    State.
+
 %% The shown windows, topmost first, with their decorations.
-layout(#winfs{windows = Windows, screen_rect = Screen, policy = Policy}) ->
-    Decorations = maps:from_list(Policy:decorate(Windows, Screen)),
+layout(#winfs{windows = Windows, screen_rect = Screen, policy = Policy, policy_state = PolicyState}) ->
+    Decorations = maps:from_list(Policy:decorate(Windows, Screen, PolicyState)),
     [#{id => Id, proc => Proc, rect => Rect, decorations => maps:get(Id, Decorations, [])}
      || #{id := Id, proc := Proc, rect := Rect, state := shown} <- Windows].
 

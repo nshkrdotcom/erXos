@@ -704,13 +704,12 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # A policy is a member of mf_display_policy, which has one for each window manager the
-  # display domain has, so rio, whose erx_wm_rio is not one, is refused as a word that
-  # names no policy is.
+  # display domain has, so rio, erx_wm_rio's, is admitted and tiled, which names none, is
+  # refused.
   def test_a_display_record_s_policy_and_idle_times_are_checked
-    %w[rio tiled].each do |policy|
-      error = assert_raises(Erx::ABI::SchemaError) { admit(with_windows(record: DISPLAY.sub('single', policy))) }
-      assert_match(/policy names no member of mf_display_policy: single\z/, error.message, policy)
-    end
+    admit(with_windows(record: DISPLAY.sub('single', 'rio')))
+    error = assert_raises(Erx::ABI::SchemaError) { admit(with_windows(record: DISPLAY.sub('single', 'tiled'))) }
+    assert_match(/policy names no member of mf_display_policy/, error.message)
     refused(Erx::Manifest::Invalid, 18, 'display.idle_off_s', with_windows(record: DISPLAY.sub('idle_off_s 600', 'idle_off_s 59')),
             message: /off before it dims/)
   end

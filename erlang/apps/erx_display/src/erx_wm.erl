@@ -7,10 +7,9 @@ The window policy behaviour (docs/design-display.md, "Windows and the
 window system"): the pure module erx_winfs asks every question of
 geometry and input. A policy decides where windows go, which are shown,
 how they are framed and which window an input event reaches; erx_winfs
-keeps the window table and applies the answers. erx_wm_single, the
-kiosk's, is the policy built so far; the overlapping one, erx_wm_rio,
-comes with the desktop. The input router's core, erx_input, alone asks
-input/4, and only about what starts something: a key's down, a
+keeps the window table and applies the answers. erx_wm_single is the
+kiosk's policy and erx_wm_rio the desktop's overlapping one. The input
+router's core, erx_input, alone asks input/5, and only about what starts something: a key's down, a
 gesture's first event, and a pointer event or wheel step while nothing
 is held. What follows a down goes where the down went without asking.
 
@@ -20,7 +19,8 @@ and `state`, may reorder the list, and keeps every other field as it
 found it.
 
 A policy's own state, from init/1, is threaded by erx_winfs through
-place/6, arrange/4 and input/4, which also take
+place/6 and arrange/4 and by erx_input through input/5, and read by
+decorate/3 and menu/2. place/6, arrange/4 and input/5 also take
 `Session`, the directory of the display's session or `none`, which
 erx_winfs derives at the call from its grants: the live grant most
 recently minted with `session` set. The configuration names no
@@ -39,19 +39,29 @@ Callbacks:
 * arrange(Windows, Screen, Session, State) sets every window's `rect` and
   `state` after a change erx_winfs makes itself: a window ended or the
   screen's size changed.
-* decorate(Windows, Screen) returns each shown window's decoration as
-  rectangles and colours, or none.
-* input(Input, Windows, Session, State) routes one input event: to one window,
-  to the window system itself (`{wm, Term}`, such as a menu request),
+* decorate(Windows, Screen, State) returns each shown window's
+  decoration as rectangles and colours, or none: a function of the table
+  and the policy's state together, from which erx_winfs derives the
+  layout.
+* input(Input, Windows, Screen, Session, State) routes one input event:
+  to one window; to the policy itself (`{wm, Term}`, such as the press
+  that opens a menu), which takes the rest of the event's gesture and
+  for which erx_winfs performs nothing; as the end of window `Id`
+  (`{delete, Id}`), which erx_winfs performs as a removal of the
+  window's directory, the rest of the gesture going to the policy too;
   as a rearranged table (`{windows, Table}`, such as a click that
-  raises a window), or nowhere.
+  raises a window); or nowhere.
+* menu(Windows, State) returns the menu the policy shows, each item
+  with its rectangle on the screen, or none: like decorate/3 a function
+  of the table and the policy's state, which erx_winfs derives after
+  every message and hands to the menu's drawer when it changed.
 
 Every rectangle a policy returns lies within the screen, within/2.
 """.
 
 -export([within/2, shown/1, fetch/2, session/1]).
 -export_type([window_id/0, coord/0, rect/0, color/0, window/0, request/0,
-              input/0, route/0, session/0, rune/0]).
+              input/0, route/0, session/0, rune/0, menu_item/0]).
 
 -include("generated/erx_abi.hrl").
 
@@ -93,9 +103,11 @@ runes of the modifiers held on the display.
                              Typed :: rune() | none, Unshifted :: rune() | none,
                              Mods :: [rune()]}
                           | {wheel, Steps :: ?ERX_INPUT_WHEEL_MIN..?ERX_INPUT_WHEEL_MAX}}.
--doc "Where input/3 sends an event.".
--type route() :: {to, window_id(), input()} | {wm, term()}
+-doc "Where input/5 sends an event.".
+-type route() :: {to, window_id(), input()} | {wm, term()} | {delete, window_id()}
                | {windows, [window()]} | drop.
+-doc "A menu item: a command the next press applies, or a hidden window to show.".
+-type menu_item() :: resize | move | delete | hide | {show, window_id()}.
 -callback init(Config :: map()) -> State :: term().
 -callback place(request(), window_id(), Windows :: [window()], Screen :: rect(),
                 Session :: session(), State :: term()) ->
@@ -103,10 +115,12 @@ runes of the modifiers held on the display.
 -callback arrange(Windows :: [window()], Screen :: rect(), Session :: session(),
                   State :: term()) ->
     {[window()], State :: term()}.
--callback decorate(Windows :: [window()], Screen :: rect()) ->
+-callback decorate(Windows :: [window()], Screen :: rect(), State :: term()) ->
     [{window_id(), [{rect(), color()}]}].
--callback input(input(), Windows :: [window()], Session :: session(), State :: term()) ->
+-callback input(input(), Windows :: [window()], Screen :: rect(), Session :: session(),
+                State :: term()) ->
     {route(), State :: term()}.
+-callback menu(Windows :: [window()], State :: term()) -> [{menu_item(), rect()}] | none.
 
 -doc "Whether rectangle `Inner` is non-empty and lies within `Outer`.".
 -spec within(rect(), rect()) -> boolean().

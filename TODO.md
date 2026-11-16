@@ -1354,15 +1354,32 @@ it; git history is the record of completed work.
   gitlink with a small path-to-license map, or check the archive's defining members (`llvm-nm --defined-only`)
   against such a map. `src/misc/lv_lru.c` cites willcannings/C-LRU-Cache with no notice of its own; its upstream
   license is unverified.
-* [High] `erx_wm_rio` (desktop, not built, so `abi/manifest.txt`'s `mf_display_policy` has no `rio` member and
-  the manifest check refuses a `rio` display; landing it adds the member and its clause in `erx_fb_sup:policy/1`; the
-  P7 version is on branch `disp-p7`, commit 5ea13441): that version gives the keyboard to the topmost shown
-  window, so any client takes it from another session's window by a `wctl` `top`, `hide` then `show`, or a
-  `mkdir`, and reads what the user types next. Land the policy with the user's pick of [Windows and the window
-  system](docs/design-display.md#windows-and-the-window-system) instead, set only by `input/4` on a click or a
-  menu choice, and with `erx_wm`'s `decorate/3`, which `erx_wm_single` and `erx_winfs` take up too; `erx_winfs`
-  then hands over the layout whenever the one derived from the table and the policy's state changes, a pick
-  included, not only after a change of the table.
+* [Medium] `erlang/apps/erx_display/src/erx_wm_rio.erl`: the menu works but nothing draws it: `erx_wm_menu`
+  and `erx_screen:overlay/2` are not built, so a right press on the background opens an invisible column of
+  items, and `erx_winfs` does not yet derive `menu/2` after every message and hand it to the drawer as
+  [Windows and the window system](docs/design-display.md#windows-and-the-window-system) says. The menu's labels
+  are the `body` role's glyphs, whose generated module waits on plan items 8.11 and 8.12 (FreeType,
+  `erx-raster`, Inter and `Erx::Glyphs`).
+* [Low] `erlang/apps/erx_display/src/erx_wm_rio.erl` (security residual): a client learns where the pointer is
+  while it crosses its window and can raise or move its window under it with `wctl`, so the user's next click
+  picks that window, as under rio. The same race steers a menu command's naming press, which acts on the window
+  under the press when it comes: a client that hides or moves its window, or opens a new one, just before the
+  press can turn the user's `delete` aimed at it onto another session's window beneath, which then ends.
+* [Low] `erlang/apps/erx_display/src/erx_wm_rio.erl`: open points of the menu. A move's or resize's naming press
+  picks without raising, and a cancel keeps the pick, so the keyboard may go to a covered window; Escape while
+  the menu is held goes to the current window and leaves the menu open, which the design does not state; the
+  menu's rectangles, fixed at its press, can lie off a screen re-attached smaller while it is held, against
+  `erx_wm`'s rule that every rectangle lies within the screen; and the four commands are spelled in
+  `erx_wm:menu_item()`, rio's `command()` and `?COMMANDS`.
+* [Low] `erlang/apps/erx_display/src/erx_input.erl`, `erx_winfs.erl`: `destination/1` ends in a catch-all, so a
+  new route that should give the policy its gesture would silently go nowhere; and the screen has two copies,
+  `erx_winfs`'s `screen_rect` and `erx_input`'s, with different checks: an attach of an empty rectangle is taken
+  by `erx_winfs` and refused by `erx_input`, leaving the policy's input on the old screen.
+* [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
+  keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
+  each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
+  system). The same sequence runs on the host in `test/erlang/erx_winfs_tests.erl`'s click case, and the
+  policy's own exhaustive run is in `test/erlang/erx_wm_rio_tests.erl`.
 * [Low] `otp/erts/emulator/nifs/erxos/erx_device_nif.c`: a move of a bound edge line can lose the one delivery taken under the old label just before the old sink was unregistered, while a level
   line fires again at the bind's acknowledgement. A driver of an edge line looks at its device after binding. The PL011's line is level.
 * [Medium] `erlang/apps/erx_blk/src/erx_blk_sd_host.erl` (`issued/2`), the request transfer: it expects command

@@ -42,7 +42,7 @@ class ErxInputTest < Minitest::Test
                                  test: KEYS_RUN, property: /key_order/),
     up_asks_the_policy: Mutant.new(
       text: '    {out({to, Window, Event}, Step), S#input{repeats = maps:remove(Window, S#input.repeats)}}.',
-      broken: "    {Route, Asked} = ask(Event, Step),\n" \
+      broken: "    {Route, Asked} = ask(Event, Step, S),\n" \
               '    {answer(Route, Asked), S#input{repeats = maps:remove(Window, S#input.repeats)}}.',
       test: KEYS_RUN, property: /key_order/
     ),
