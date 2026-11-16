@@ -486,13 +486,15 @@ typedef struct erx_dom_service {
  * declares (erx_service_parameters, erx/abi.h), of the declared kind and
  * within the declared bound. An integer or boolean is in scalar, a
  * boolean 0 or 1 and an i64 as its two's complement bits; text and bytes
- * lie in the manifest's strings, which outlive the view.
+ * lie in the manifest's strings, which outlive the view; a device
+ * reference is the index of its row in the view's devices.
  */
 typedef struct erx_dom_parameter {
 	const erx_service_parameter_t *declared;	/* its name, kind and bound */
 	uint64_t	scalar;
 	const uint8_t	*bytes;		/* text or bytes kinds; NULL otherwise */
 	uint32_t	bytes_len;
+	uint32_t	index;		/* a device reference; 0 otherwise */
 } erx_dom_parameter_t;
 
 /*

@@ -49,8 +49,11 @@ served(ErlNifEnv *env, int argc, const ERL_NIF_TERM argv[])
 	if (bytes == NULL || lib == NULL)
 		goto out;
 	memcpy(bytes, binary.data, binary.size);
-	if (!erx_manifest_open(bytes, binary.size, &manifest, &error))
+	if (!erx_manifest_open(bytes, binary.size, &manifest, &error)) {
+		result = enif_make_atom(env, "unreadable");
+		answered = true;
 		goto out;
+	}
 	sizes = erx_dom_view_sizes(&manifest, 0);
 	if (!erx_dom_boot_layout(&sizes, 0, &tables, &region_len) || region_len > SIZE_MAX - ERX_PAGE_SIZE)
 		goto out;

@@ -21,8 +21,11 @@ require_relative '../../tools/lib/erx/host_os'
 # test/fixtures/erx_domain_terms_harness.c loaded into stock's emulator (ERX_ERL and
 # ERX_ERLC, which make check supplies), under test/erlang/erx_facet_parameters_tests.erl:
 # the grant's limits carry each parameter by name, erx_domain_mints charges the display
-# the row's pixel area, and the view refuses each forged parameter row of FORGED. Seeded
-# faults that drop a parameter on the way, or admit one out of bound, must each fail a case.
+# the row's pixel area, and the view refuses each forged parameter row of FORGED. The
+# line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's uart
+# reaches the terms as the index of its UART's device row, and the manifest's reader, which
+# the view reads through, refuses a uart one past the device table. Seeded faults that drop
+# a parameter on the way, or admit one out of bound, must each fail a case.
 class FacetParametersTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -35,6 +38,7 @@ class FacetParametersTest < Minitest::Test
   TESTS = %w[test/erlang/erx_facet_parameters_tests.erl].freeze
   LIMITS_CASE = 'the_grant_s_limits_carry_its_parameters_by_name_test'
   FORGED_CASE = 'forged_parameter_rows_are_refused_test'
+  LINE_CASE = 'the_line_grant_s_uart_is_its_device_row_test'
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
   # manifest's only ones, 32 bytes each: key u32 at 0, kind u32 at 4, scalar u64 at 8.
@@ -48,7 +52,7 @@ class FacetParametersTest < Minitest::Test
   }.freeze
 
   def test_a_packed_row_reaches_the_mint
-    assert_match(/^  All 3 tests passed\.$/, run_cases)
+    assert_match(/^  All 4 tests passed\.$/, run_cases)
   end
 
   # A seeded fault: the file it edits, the anchor found once there, its replacement and
@@ -63,7 +67,11 @@ class FacetParametersTest < Minitest::Test
        LIMITS_CASE],
     'the view admits a value out of its bound' =>
       [VIEW, 'return (within ? NULL : "manifest: a facet parameter is outside its declared bound");', 'return ((void)within, NULL);',
-       FORGED_CASE]
+       FORGED_CASE],
+    'the view drops a device reference' =>
+      [VIEW, 'value->index = row->index;', 'value->index = 0;', LINE_CASE],
+    'the terms give a device reference\'s scalar' =>
+      [TERMS, 'enif_make_uint(env, parameter->index)', 'enif_make_uint(env, (unsigned)parameter->scalar)', LINE_CASE]
   }.freeze
 
   def test_seeded_faults_are_caught
@@ -79,6 +87,26 @@ class FacetParametersTest < Minitest::Test
 
   def codec = @codec ||= Erx::ABI::Codec.new(Erx::ABI::Generator.plan(root: ROOT).schema)
   def manifest = @manifest ||= Erx::ManifestSeeds.windows_grant(ROOT, codec)
+  def line_manifest = @line_manifest ||= Erx::ManifestSeeds.line_grant(ROOT, codec)
+
+  # The line manifest's device rows, by path, the index of the one its grant names.
+  def line_uart
+    view = codec.open('manifest', line_manifest)
+    view.count('devices').times.find { |index| view.string(view.fetch('devices', index).fetch('path')) == Erx::ManifestSeeds::LINE_UART }
+  end
+
+  # The line manifest with its grant's uart row naming one past the device table.
+  def line_past_the_table
+    header = codec.open('manifest', line_manifest).header
+    table = header.fetch('facet_parameters')
+    device = codec.member('mf_parameter_kind', 'device')
+    offset = table.fetch('count').times.map { |index| table.fetch('offset') + (index * 32) }.find do |at|
+      codec.decode_layout('erx_mf_parameter', line_manifest, offset: at, prefix: true).fetch('kind') == device
+    end
+    row = codec.decode_layout('erx_mf_parameter', line_manifest, offset: offset, prefix: true)
+    encoded = codec.encode_layout('erx_mf_parameter', row.merge('index' => header.fetch('devices').fetch('count')))
+    line_manifest.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
+  end
 
   # The manifest with its parameter rows edited by forge.
   def forged(forge)
@@ -96,6 +124,9 @@ class FacetParametersTest < Minitest::Test
     Dir.mktmpdir('erx-facet-parameters-') do |work|
       File.binwrite(File.join(work, 'manifest.bin'), manifest)
       FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(forge)) }
+      File.binwrite(File.join(work, 'line.bin'), line_manifest)
+      File.write(File.join(work, 'line-uart'), line_uart.to_s)
+      File.binwrite(File.join(work, 'unreadable-device-past-the-table.bin'), line_past_the_table)
       ErlangBuild.compile(work, applications: %w[erx_domain], tests: TESTS)
       build_nif(work, sources.to_h { |path, text| [path, File.join(work, File.basename(path)).tap { |copy| File.write(copy, text) }] })
       output, = Open3.capture2e(Erx::HostOs.nif_search_environment(work), 'gtimeout', '-k', '10', '120',

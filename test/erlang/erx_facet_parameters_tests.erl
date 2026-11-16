@@ -11,7 +11,10 @@
 %% client template's grant of the display stating pixels, windows and clipboard;
 %% the grant's limits carry each by name, and erx_domain_mints charges the
 %% display the pixel area the row asks for. Each refused-NAME.bin beside it
-%% forges the grant's parameter rows, and the view refuses it.
+%% forges the grant's parameter rows, and the view refuses it. line.bin is the
+%% configured domains' manifest with alpha granted the line, its uart the
+%% device row whose index line-uart holds, and the reader refuses
+%% unreadable-device-past-the-table.bin, its uart one past the device table.
 -module(erx_facet_parameters_tests).
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
@@ -47,6 +50,17 @@ the_pixel_charge_follows_the_row_test() ->
                                    grants => [G || {_, _, S, _} = G <- Grants, S =/= system],
                                    windows => [Name], owner => fun(_) -> ok end}),
     ?assertEqual({4194304, 5}, erx_domain_mints:pair_area({5, {configured, Server}}, {6, {session, Template}}, Mints)).
+
+the_line_grant_s_uart_is_its_device_row_test() ->
+    {ok, Bytes} = file:read_file("line.bin"),
+    {ok, Text} = file:read_file("line-uart"),
+    {ok, {Services, Grants}} = served(Bytes),
+    [Name] = [N || {system, N, ?ERX_SERVICE_LINE} <- Services],
+    [Limits] = [L || {0, N, system, L} <- Grants, N =:= Name],
+    ?assertMatch(#{uart := _, rate := 115200, flow := <<"none">>}, Limits),
+    ?assertEqual(binary_to_integer(Text), maps:get(uart, Limits)),
+    {ok, Past} = file:read_file("unreadable-device-past-the-table.bin"),
+    ?assertEqual(unreadable, served(Past)).
 
 forged_parameter_rows_are_refused_test() ->
     Forged = filelib:wildcard("refused-*.bin"),

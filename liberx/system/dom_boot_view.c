@@ -767,10 +767,13 @@ boot_facet_grantee(const erx_dom_view_t *view, const erx_mf_facet_t *facet, cons
 /*
  * Why row is not a value of parameter, or NULL with the value in *value:
  * it is of the declared kind and within the declared bound, and text or
- * bytes point into strings, the manifest's string table. A
- * reference kind, which nothing carries to the domain service, is refused,
- * as the packer refuses one. The reader has checked a boolean's value and
- * each string against the string table.
+ * bytes point into strings, the manifest's string table. A device
+ * reference is its row's index in the device table, which the reader has
+ * checked against that table (abi/manifest.txt), and the view's devices
+ * are that table's rows in order. A domain or principal reference, which
+ * nothing carries to the domain service, is refused, as the packer
+ * refuses one. The reader has checked a boolean's value and each string
+ * against the string table.
  */
 static const char *
 boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *parameter, const uint8_t *strings,
@@ -796,6 +799,10 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
 		within = row->bytes.length <= parameter->maximum;
 		value->bytes = strings + row->bytes.offset;
 		value->bytes_len = row->bytes.length;
+		break;
+	case ERX_MF_PARAMETER_DEVICE:
+		within = true;
+		value->index = row->index;
 		break;
 	default:
 		return ("manifest: a facet parameter is a reference, which the boot does not carry");

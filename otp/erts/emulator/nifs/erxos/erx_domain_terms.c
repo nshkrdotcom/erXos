@@ -26,7 +26,8 @@ atom(ErlNifEnv *env, const char *name)
 
 /*
  * A checked parameter's value: an integer kind's as an integer, a
- * boolean as true or false, and text or bytes as a binary.
+ * boolean as true or false, text or bytes as a binary, and a device
+ * reference as its device row's index.
  */
 static bool
 parameter_term(ErlNifEnv *env, const erx_dom_parameter_t *parameter, ERL_NIF_TERM *value)
@@ -50,6 +51,9 @@ parameter_term(ErlNifEnv *env, const erx_dom_parameter_t *parameter, ERL_NIF_TER
 			return (false);
 		if (parameter->bytes_len != 0)
 			memcpy(bytes, parameter->bytes, parameter->bytes_len);
+		return (true);
+	case ERX_MF_PARAMETER_DEVICE:
+		*value = enif_make_uint(env, parameter->index);
 		return (true);
 	default:
 		return (false);
