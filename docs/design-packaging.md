@@ -814,7 +814,13 @@ writes; the storage domain that serves it checks every block of the
 partition against the root hash the manifest records, and the file
 check authenticates each header there against its `package` row's
 hash, so a package listed under another's name, or a file that is not
-a package, is refused. Since `erx_verity` checks
+a package, is refused. The system domain mounts its `packages` grant
+at `/packages`, so the installed packages lie there at
+`/packages/installed/`. That mount point is a place of the system
+domain's alone (`erx_ns:packages_place/0`), which no session's
+`erx_ns:mount_facets/1` mounts; a path reaches only a grant its own
+domain holds, so an app's session reaches the tree only through its own
+grant. Since `erx_verity` checks
 every block against the root hash of the authenticated header, no
 property of a package rests on the storage domain but its presence: a
 storage domain can withhold a package, put back an older one of the same

@@ -66,7 +66,7 @@
 -behaviour(gen_server).
 
 -export([start_link/0, start_link/1, mount/3, mount_facets/1, mount_own/2, unmount/1, bind/2, bind/3, tmp_limit/0,
-         change/2]).
+         change/2, packages_place/0]).
 -export([image_log/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 -export_type([entry/0, table/0]).
@@ -175,8 +175,8 @@ mount_own(Name, Grant) ->
 %% The packages and system facets have no place, so no domain's mount_facets/1, a
 %% session's included, mounts either: an app's session reaches them by erx:cap/1, its
 %% {erofs, app} mount or an entry its own code puts in its table
-%% (docs/design-packaging.md, "An app's session"), and the
-%% system domain mounts its packages grant itself (erx_domain_srv).
+%% (docs/design-packaging.md, "An app's session"), and the system domain mounts its
+%% packages grant at its own place (packages_place/0).
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
 place(apps) -> {<<"/apps">>, [{tree, <<"apps">>}, rw]};
@@ -184,6 +184,14 @@ place(start) -> {<<"/etc/start">>, [{tree, <<"start">>}, rw]};
 place(machine) -> {<<"/machine">>, [{tree, <<"machine">>}, rw]};
 place(line) -> {<<"/line">>, [{tree, ?ERX_LINE_TREE_BYTES}, rw]};
 place(_Name) -> none.
+
+%% Where the storage domain's packages tree lies in the system domain alone, with the
+%% same options as place/1: /packages, where erx_domain_srv mounts the system domain's
+%% grant and erx_pkg_medium finds the installed packages (docs/design-packaging.md,
+%% "Where a package lies"). place/1 gives packages no place, so mount_facets/1 never
+%% mounts it, whatever facets a session holds.
+-spec packages_place() -> {binary(), [option()]}.
+packages_place() -> {<<"/packages">>, [{tree, <<"packages">>}, rw]}.
 
 %% Removes the entry at exactly To.
 -spec unmount(file:name_all()) -> ok | {error, reason()}.

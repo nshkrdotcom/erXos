@@ -1572,7 +1572,11 @@ has read the manifest, call). The system domain mounts its own grant of
 each `files` service it serves at the same point
 (`erx_ns:mount_own/2`; [design-shell.md](design-shell.md#interfaces)),
 so a session's mount and the system domain's take the point from one
-table of `erx_ns`. A domain the manifest grants no `data` facet has no `/data` mount,
+table of `erx_ns`. The `packages` tree has no place in that table: the
+system domain alone mounts it, at `/packages`
+(`erx_ns:packages_place/0`; [design-packaging.md](design-packaging.md#where-a-package-lies)),
+so `erx_ns:mount_facets/1` mounts it in no session whatever facets the
+session holds. A domain the manifest grants no `data` facet has no `/data` mount,
 so the path falls through to the root's own entry, an empty directory of
 the release slice, read-only, as FreeBSD shows the directory beneath a
 mount point with nothing mounted on it: `ls /data` lists nothing and a

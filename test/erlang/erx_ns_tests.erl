@@ -39,6 +39,7 @@ ns_test_() ->
       fun facets_mount_only_where_granted/0,
       fun the_system_domain_trees_mount_at_their_places/0,
       fun an_own_tree_mounts_its_grant_at_its_place/0,
+      fun the_packages_place_is_the_system_domains_alone/0,
       fun facet_mount_refusals/0]}.
 
 start() ->
@@ -419,6 +420,16 @@ an_own_tree_mounts_its_grant_at_its_place() ->
     ?assertEqual([?RELEASE, #{point => [<<"machine">>], provider => {grant, Second, <<"machine">>}, root => [],
                               rights => rw}], settled()),
     ?assertError({badmatch, none}, erx_ns:mount_own(echo, {Second, rw})).
+
+%% The packages tree has a place only in the system domain (packages_place/0), at
+%% /packages, where the system domain alone mounts its grant (erx_domain_srv): a session
+%% that holds the packages facet, as every app's session does, mounts nothing there,
+%% whatever else it holds (docs/design-packaging.md, "Where a package lies"). A tree a
+%% session mounts has no system place.
+the_packages_place_is_the_system_domains_alone() ->
+    ?assertEqual({<<"/packages">>, [{tree, <<"packages">>}, rw]}, erx_ns:packages_place()),
+    ?assertEqual(ok, erx_ns:mount_facets([packages, system, data, apps, start, machine, line])),
+    ?assertEqual([], [Entry || #{point := [<<"packages">> | _]} = Entry <- at_use()]).
 
 %% A facet is named by an atom, and its mount takes a grant's options; a pid of another
 %% domain is never mounted directly, only through a facet.
