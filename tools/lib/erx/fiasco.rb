@@ -175,10 +175,24 @@ module Erx
     # The release kernel (docs/design-stopgap.md, "The kernel"): the same sources and cores,
     # configured from the release defconfig (FiascoConfig.release_defconfig) and checked
     # with the release rules, in Fiasco.kernel_directory. No image packs it:
-    # every image is a development build (ProductionImage::BUILD_KIND).
+    # every image is a development build (ProductionImage::BUILD_KIND). The kernel's
+    # link audit (FiascoProvenance#certify) must find every source it links under terms a
+    # release may carry, or the build fails naming each source that is not. The kernel stays
+    # only beside the audit's pass record: an earlier record goes before the build, and a
+    # build that fails anywhere after it removes the kernel and any record.
     def build_release_kernel(jobs: 4)
-      build_kernel_beside(directory: self.class.kernel_directory(root: @root, kind: BuildKind::RELEASE), kind: BuildKind::RELEASE,
-                          defines: [], jobs: jobs)
+      require_relative 'fiasco_provenance'
+      directory = self.class.kernel_directory(root: @root, kind: BuildKind::RELEASE)
+      kernel = File.join(directory, 'fiasco')
+      record = File.join(directory, FiascoProvenance::PASS_RECORD)
+      FileUtils.rm_f(record)
+      passed = false
+      build_kernel_beside(directory: directory, kind: BuildKind::RELEASE, defines: [], jobs: jobs)
+      provenance_auditor(kind: BuildKind::RELEASE).certify
+      passed = true
+      kernel
+    ensure
+      FileUtils.rm_f([kernel, record].compact) unless passed
     end
 
     # Where the tree at root builds the kernel of build kind kind: build's own kernel for
@@ -295,15 +309,15 @@ module Erx
        *user_include_directories, File.join(@build, 'receipt.json'), File.join(@build, 'provenance.json')]
     end
 
-    def record_provenance
+    def record_provenance = provenance_auditor(kind: BuildKind::DEVELOPMENT).certify
+
+    # The link audit of the kernel of build kind kind, over this build's toolchain.
+    def provenance_auditor(kind:)
       require_relative 'fiasco_provenance'
-      auditor = FiascoProvenance.new(root: @root, runner: @runner,
-                                     external: FiascoProvenance.external_registry(root: @root, compiler: @compiler,
-                                                                                  runner: @runner, cross: cross_toolchain),
-                                     compiler: @compiler, cross: cross_toolchain)
-      auditor.capture_construction
-      report = auditor.audit
-      auditor.record_receipt(report)
+      FiascoProvenance.new(root: @root, runner: @runner, kind: kind,
+                           external: FiascoProvenance.external_registry(root: @root, compiler: @compiler,
+                                                                        runner: @runner, cross: cross_toolchain),
+                           compiler: @compiler, cross: cross_toolchain)
     end
 
     # Inherited dependency stamps do not cover every generator's code or the
