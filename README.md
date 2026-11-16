@@ -247,15 +247,23 @@ Eshell V17.1.1 (type help(). for help)
   hangs up that tty's shells. The line discipline that will serve them,
   `erx_tty` (cooked editing, signals for the foreground group, `termios`
   modes and timers, after FreeBSD's), is a pure core with host tests, and
-  no tty runs it yet.
+  no tty runs it yet. The terminal relay's decisions (`erx_session_relay_core`,
+  `erx_tty_link`) are pure cores with host tests as well, and nothing runs
+  them yet.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The command shell runs a program of the session's
   `/bin` by name or as `/bin/NAME`, alone or in a pipeline with Erlang
   commands: its standard streams are pipes to the terminal and its
   neighbours, `$status` is its exit status or signal, and `Ctrl-C` ends
-  it. A program does not read the terminal yet, and a redirection reaches
-  it as a pipe, not the file. The file tree a program will see (`/bin`, `/dev`
+  it; a line that `Ctrl-C` ended leaves `$status` as `sigint`. A program does not read the terminal yet, and a redirection reaches
+  it as a pipe, not the file. The command server assigns every process id
+  and spawns every program handler. A program's files take 64-bit offsets
+  (`pread`, `pwrite`, `lseek`, `fstat`). A program started with a window
+  gets a `/dev` of its own (`draw`, `ctl`, `kbd`, `mouse`, `wctl`, `label`
+  and, if its grant carries it, `clipboard`) from its handler; host tests
+  cover it over stand-ins of the window and draw connection, and no QEMU
+  cell runs a program that draws. The file tree a program will see (`/bin`, `/dev`
   with `null`, `zero`, `urandom` and `tty`, and `/etc/passwd` and
   `/etc/group`) is written as a file server that nothing starts yet.
 * musl's errno and signal numbers are FreeBSD's, generated from the ABI's
@@ -293,6 +301,10 @@ Eshell V17.1.1 (type help(). for help)
   `ssh` daemon. The network suite logs in through a host port forward,
   and root's login there reboots the machine; `tools/erx boot` gives its
   guest no network device yet.
+* OTP's `ssl` and `inets` are in every domain release, with a trust store
+  of five root certificates and its reader. Host tests fetch over HTTPS from
+  loopback `ssl` servers with no internet; no QEMU suite fetches from the
+  network yet.
 
 **Display and input**
 
@@ -318,13 +330,24 @@ Eshell V17.1.1 (type help(). for help)
   render, damage reports, a client confined to its buffer and the
   program's restart. `erx_ui_host` runs an app's interface on the
   development host under stock OTP.
+* Inter 4.1's Regular, Medium and SemiBold fonts are in the tree, and
+  `erx-raster`, built with FreeType, renders them to Plan 9 subfonts, one
+  per type role; the display role's is loaded in tiles. Host tests check
+  the glyphs and the tiled load.
+* `erx_wm_rio`, a window-manager policy of overlapping windows after rio
+  (pick, delete and a menu), is a pure core with exhaustive host
+  tests, and the window server's tests run it. No QEMU cell runs it.
 * The widget format carries type roles, areas, icons, a current item and a
   graph kind, with coverage masks for corners, shadows and graphs. The
   desktop's file list and statistics have pure cores with host tests.
 * `examples/dashboard`, the basic kiosk's app (a clock, the date and
   sample quotes), is drawn by `erx-lvgl` and checked on the host against
   its reference picture. It has no package and no QEMU boot yet; the
-  first boot comes with its package.
+  first boot comes with its package. The full kiosk takes live quotes
+  from `erx_quotes`, a source behind the dashboard's seam with pure cores for
+  the source table, retry holds, body parsing and the board; host tests
+  and a fuzz target check them. A real fetch on a target waits on the
+  network suite.
 
 **Web demo and checks**
 
@@ -335,8 +358,10 @@ Eshell V17.1.1 (type help(). for help)
 
 **Not built yet**
 
-* The rest of erXos's own kernel, programs started from the shell and
-  the musl seam for C programs' pipes, the rest of the browser client, and
+* The rest of erXos's own kernel, terminal input and sockets for programs,
+  drivers for USB and Bluetooth, which have host-tested cores only (a hub
+  and port state machine, descriptor and HID decoders, and a Bluetooth
+  HCI codec and controller core), the rest of the browser client, and
   the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
