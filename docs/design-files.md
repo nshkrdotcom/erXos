@@ -2124,7 +2124,10 @@ other client's request can come between its parts:
 * **Waiting requests.** Nothing in a grant waits for an event. A
   callback does bounded work: a step of its tree's process, a call that
   process answers without waiting for an event, a call to another
-  service whose design names its deadline as the bound, or a read or
+  service whose design names its deadline as the bound when every
+  holder of the grant could make that call itself, so a stalled grant
+  holds only requests of parties who could ask for the same wait, or a
+  read or
   write of its medium, which the grant waits for as a call on a local
   file system waits for its disk. A read or a write that must wait for
   an event, bytes a device has not sent yet, a key not yet pressed, a driver that
