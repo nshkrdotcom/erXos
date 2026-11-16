@@ -182,8 +182,15 @@ effect({delete, File}, _State) ->
     erx_pkg_io:request({delete, self(), File});
 effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
-effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
-    erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
+effect({admit, #{header := #{name := Name}} = Checked}, #{config := #{manifest := Manifest}}) ->
+    case erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry()) of
+        {ok, _} = Admitted ->
+            logger:notice("packages: admitted ~ts", [Name]),
+            Admitted;
+        {error, Reason} = Refused ->
+            logger:notice("packages: refused ~ts: ~0P", [Name, Reason, 8]),
+            Refused
+    end;
 effect({register, Package}, _State) ->
     erx_principal:register_app(Package);
 effect({publish, Set}, _State) ->

@@ -9,7 +9,10 @@ require_relative 'bounded_file'
 require_relative 'error'
 require_relative 'license_expression'
 require_relative 'manifest_frontend'
+require_relative 'oracle'
 require_relative 'pack_provenance'
+require_relative 'runtime'
+require_relative 'sdk'
 
 module Erx
   # The packages an image builder adds to an image (docs/design-packaging.md, "Adding an
@@ -116,6 +119,18 @@ module Erx
                end
         read(path, sdk: sdk, runner: runner)
       end
+    end
+
+    # The packages of the app directories sources as `tools/erx pack --app` packs them:
+    # the SDK exported with stock's compiler into sdk_directory/sdk, then each directory
+    # packed over it and signed by signer into packages_directory (gather). Both
+    # directories must exist and be empty.
+    def packed_apps(sources, sdk_directory:, packages_directory:, root:, runner:, signer:, compiler:)
+      erlc = File.join(File.dirname(Oracle.new(root: root, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
+      exported = File.join(sdk_directory, 'sdk')
+      Sdk.new(root: root, runner: runner, erlc: erlc).export(exported)
+      gather(sources, into: packages_directory, sdk: AppPack::Sdk.new(root: exported, erlc: erlc), signer: signer,
+                      runner: runner, root: root, compiler: compiler)
     end
 
     # The package file at path as the image takes it, refused unless the machine's file

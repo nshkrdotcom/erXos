@@ -674,11 +674,9 @@ module Erx
     # The packages of sources (ImageApps.gather), packed with an SDK exported into
     # build/app-sdk and signed by signer, staged in build/app-packages.
     def self.gathered_apps(sources, runner:, signer:, compiler:)
-      erlc = File.join(File.dirname(Oracle.new(root: ROOT, runner: runner).erl_path(Runtime::HOST_OTP_FLAVOUR)), 'erlc')
-      exported = File.join(empty_build_directory('build/app-sdk'), 'sdk')
-      Sdk.new(root: ROOT, runner: runner, erlc: erlc).export(exported)
-      ImageApps.gather(sources, into: empty_build_directory('build/app-packages'), sdk: AppPack::Sdk.new(root: exported, erlc: erlc),
-                                signer: signer, runner: runner, root: ROOT, compiler: compiler)
+      ImageApps.packed_apps(sources, sdk_directory: empty_build_directory('build/app-sdk'),
+                                     packages_directory: empty_build_directory('build/app-packages'),
+                                     root: ROOT, runner: runner, signer: signer, compiler: compiler)
     end
 
     # The directory relative names under the tree, made empty.

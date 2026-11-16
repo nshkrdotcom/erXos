@@ -8052,10 +8052,21 @@ document's "residual risks accepted" paragraph.
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
   check, which this host test does not. G6 (design-display.md) holds when no device request comes between
-  two changes of the tree. No QEMU test checks it yet: the kiosk cell's next step counts the driver's
+  two changes of the tree. The kiosk cell (`tools/lib/erx/kiosk.rb`) boots it as an image package and
+  checks its frame; no QEMU test checks G6 yet: the cell's next step counts the driver's
   requests between two of the dashboard's clock ticks, where a seeded timer that repaints with no change
   fails the count. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
+
+* [Medium] the kiosk cell (`tools/lib/erx/kiosk.rb`), left from its review: its boot repeats
+  MediumBoot::Run's (fresh medium, slot parse, firmware tree, the boot value spliced after the image's
+  identity) instead of sharing one MediumBoot function; it loads `test/fixtures/dashboard_screen.rb`
+  from tools/lib, whose `generated_tree` sets the host tests' sanitizer environment in the gate process,
+  so the renderer and the part of ErlangBuild it needs belong in tools/lib without that side effect;
+  `packages: refused` is logged for admission refusals only, not for a header the file check refuses;
+  AppPack builds an app's beams into the app directory's own `ebin/`, which each run of the cell or of
+  `tools/erx pack --app` leaves in the source tree. `ls /apps` and a dropped `--enable` are not yet
+  cases of its boot.
 
 * [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
   above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches

@@ -21,7 +21,7 @@ moves rows instead of rewriting their text. Before the first board the
 panel says it is waiting.
 """.
 
--export([tree/1, clock/1, date/1, price/2, change/1]).
+-export([tree/1, clock/1, date/1, minute/1, price/2, change/1]).
 
 -export_type([model/0]).
 
@@ -78,6 +78,15 @@ or_none(Number, Format) -> Format(Number).
 -spec clock(calendar:datetime()) -> binary().
 clock({_Date, {Hour, Minute, _Second}}) ->
     iolist_to_binary(io_lib:format("~2..0B:~2..0B", [Hour, Minute])).
+
+-doc """
+The minute of a wall-clock reading, as `2026-11-15 09:41`: the screen
+`tree/1` draws for a reading depends on nothing of it finer, so the
+dashboard names the screen it shows by this.
+""".
+-spec minute(calendar:datetime()) -> binary().
+minute({{Year, Month, Day}, {Hour, Minute, _Second}}) ->
+    iolist_to_binary(io_lib:format("~4..0B-~2..0B-~2..0B ~2..0B:~2..0B", [Year, Month, Day, Hour, Minute])).
 
 -doc "The date of a wall-clock reading, as `Sunday, 15 November 2026`.".
 -spec date(calendar:datetime()) -> binary().
