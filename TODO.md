@@ -7449,6 +7449,10 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
+  [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
+  release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
+  sessions see the row names, and the palette follows it.
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
