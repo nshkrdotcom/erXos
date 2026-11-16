@@ -3415,6 +3415,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   QEMU tests of hand-offs between domains (docs/design-pipes.md, "Verification and testing"). The programs
   suite's `handler` case runs the handler at root_1's shell; `pipe_hand` and `install` test the driver's
   takes and installs directly.
+* [Low] display, `wctl`'s `current` field (`erlang/apps/erx_display/src/erx_window.erl:101`): the field
+  rio defines as whether the window takes the keyboard is filled from whether the window is shown, so
+  every shown window reads `current`, and a change of the current window gives no window a new `wctl`
+  record. Report the overlapping policy's current window there and send the record on a change;
+  find and act's palette needs both to close when another window is picked
+  ([design-find-act.md](docs/design-find-act.md#changes-to-other-designs)).
+* [Medium] shell, `$home` (`erlang/apps/erx_shell/src/erx_shell.erl:205`, docs/design-shell.md "The
+  language"): design-shell lists `$home` among rc's variables, but no design says what it holds for a
+  session and the interactive shell sets none (scripts get `/` or `/var/empty` from
+  `erx_shell_script`). Find and act reads `$home/lib/act`, and its narrowing rule names the session's
+  home, so the session's starting home needs one definition, read by the shell and by
+  `erx_act_run` alike.
 * [Medium] display client, `erx_pixels` tests: `erx_prog_handler:start/1`'s deadline frees what a
   killed handler reserved through the allocator's handling of a dead owner, which
   `test/erlang/erx_pixels_tests.erl` does not cover: an alloc whose caller has already exited (the
@@ -7766,9 +7778,25 @@ document's "residual risks accepted" paragraph.
   server's own domain id, not `own`, drops every frame, since its own domain's frames
   arrive bare; nothing refuses that option. Refuse it, or take it as `own`, in
   `erx_fs:init/2`.
+* [Low] find and act, rules written by a program given the whole namespace
+  ([design-find-act.md](docs/design-find-act.md#security)): such a program holds the session's files but
+  no right beyond files unless `within -f` names one, yet a binding or route it writes to
+  `$home/lib/act` runs with the session's rights once `erx_act` reads it. A narrowed program cannot
+  write the file. Closing it needs a home for the rules that no program's namespace holds, as
+  crontab(1) keeps a user's table, which no design names; `rc.conf` has the same gap.
+* [Low] find and act, a covered palette ([design-find-act.md](docs/design-find-act.md#security)): a
+  client may raise a window of its own over the current palette with `wctl` `top`, which leaves the
+  keyboard with the palette, so a person typing into what looks like the raised window types into
+  the palette and a Return runs its selected offer. The reserved chord's overlay is the planned way to
+  tell windows apart; a rule that a covered current window takes no Return is the cheaper fix if one is
+  needed first.
 
 ## Planned features
 
+* [Medium] apps, who may read the start table's row names in a release build ([design-apps.md](docs/design-apps.md),
+  [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
+  release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
+  sessions see the row names, and the palette follows it.
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
