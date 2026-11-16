@@ -62,10 +62,10 @@ it; git history is the record of completed work.
   `apps` row only because it declares no quantity, so adding them would let apps administer the network.
   Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
   beside inspect and files) and require quantities only of grantable interfaces.
-* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
-  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
-  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
-  codec's layout.
+* [Low] ABI, which of `erx_mf_facet`'s fields are quantities is stated in Ruby, not in
+  `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
+  widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the
+  reader keeps) so the list is derived.
 * [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
   session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
   duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
