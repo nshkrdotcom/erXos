@@ -247,9 +247,10 @@ Eshell V17.1.1 (type help(). for help)
   hangs up that tty's shells. The line discipline that will serve them,
   `erx_tty` (cooked editing, signals for the foreground group, `termios`
   modes and timers, after FreeBSD's), is a pure core with host tests, and
-  no tty runs it yet. The terminal relay's decisions (`erx_session_relay_core`,
-  `erx_tty_link`) are pure cores with host tests as well, and nothing runs
-  them yet.
+  no tty runs it yet. The terminal relay (`erx_session_relay`, with its pure cores
+  `erx_session_relay_core` and `erx_tty_link`) is a server with host
+  tests, one relay per tty; `erx_output` and a tty that runs the line
+  discipline are not built.
 * Programs have pipes and a session process can start one. A program's
   `kill` and `kill(pid, 0)` are answered by its handler, and a program
   reaches only itself. The command shell runs a program of the session's
@@ -281,8 +282,9 @@ Eshell V17.1.1 (type help(). for help)
   and finds each kept file cut at a sync. An EROFS reader mounts read-only
   images.
 * An F2FS codec reads a volume's superblock and checkpoint pack, its node
-  and segment tables, journals, inodes and directory entries. The file
-  system is not built yet.
+  and segment tables, journals, inodes and directory entries, and a mount
+  core picks the superblock copy and checkpoint pack and decides the mount
+  mode. The file system is not built yet.
 * `erx-app pack`, the SDK's packer, compiles an app directory's Erlang
   sources against the SDK and packs it into a `.app` file: a header
   signed by default with a development key the packer makes on the host,
@@ -349,6 +351,10 @@ Eshell V17.1.1 (type help(). for help)
   and a fuzz target check them. A real fetch on a target waits on the
   network suite.
 
+* `erx_desk`, the desktop application, runs a window of its own and a
+  `clock` command that reads the clock's state before the wall clock; its
+  pure cores have host tests.
+
 **Web demo and checks**
 
 * The website runs a demo in the browser on an AArch64 emulator, with a
@@ -359,10 +365,11 @@ Eshell V17.1.1 (type help(). for help)
 **Not built yet**
 
 * The rest of erXos's own kernel, terminal input and sockets for programs,
-  drivers for USB and Bluetooth, which have host-tested cores only (a hub
-  and port state machine, descriptor and HID decoders, and a Bluetooth
-  HCI codec and controller core), the rest of the browser client, and
-  the POSIX-lite layer. Each has a design document in [docs/](docs/). The
+  drivers for USB, Bluetooth and WiFi, which have host-tested cores only (a hub
+  and port state machine, descriptor and HID decoders, a Bluetooth
+  HCI codec and a controller process with its line, links and patch
+  reader, and WiFi's join machine, SAE exchange and EAPOL-Key codec), the
+  rest of the browser client, and the POSIX-lite layer. Each has a design document in [docs/](docs/). The
   Pi 4's header (GPIO, SPI, I2C) has register descriptions, a pin table
   and the pure core of a pin's ownership, and no driver yet.
 
