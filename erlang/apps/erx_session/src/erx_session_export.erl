@@ -16,17 +16,21 @@ program reaches of them.
   counter (erx_fs_version), so no two files of the tree share a qid path, and
   a grant started again serves new files.
 * **Each file's kind and permission bits decide its opens** (file/1): a
-  directory opens for reading only, and a file opens for reading or writing
-  exactly when its bits let it be read or written, so a command of `/bin`,
-  execute-only, never opens; a handler starts a command by its name.
+  directory opens for reading only, and a file other than `tty` opens for
+  reading or writing exactly when its bits let it be read or written, so a
+  command of `/bin`, execute-only, never opens; a handler starts a command
+  by its name.
 * **`/bin`** lists the session's Erlang commands
   (erx_shell_namespace:commands/1).
 * **`/dev`** holds four character devices. `null` reads as empty and takes
   every write; `zero` reads as zeros and takes every write; `urandom` reads
   from the kernel's generator (erx_bytes:entropy/1) and takes no write; and
-  `tty` hands its writes to the session's tty (erx_session_tty:write/1),
-  which shows them as a terminal does, and answers a read with `enotsup`:
-  the tty's readers are the terminal relay's line discipline's to serve.
+  `tty` is a name alone: a walk and a getattr reach it, and an open of it,
+  or a create that would open it, answers `enxio` (docs/design-files.md,
+  "Native clients"). The design has the handler that opens the name make
+  a terminal's description on the terminal relay instead
+  (docs/design-programs.md, "The terminal"), so no terminal read or write
+  reaches this tree.
 * **`/etc`** holds `passwd` and `group`, read-only: the session's principal,
   with its number as uid and gid, and `nobody` (65534).
 * **A create** of an existing device opens it (erx_fs_node:open_by_create/4),
@@ -73,16 +77,14 @@ allow answers `ebadf`, as on UNIX.
 
 -doc """
 What init/1 takes: for the shared tree, the session's principal and the names
-`/bin` lists; for a program's own `/dev`, its window; and, for a test,
-stand-ins for the kernel's generator and the session's tty.
+`/bin` lists; for a program's own `/dev`, its window; and, for a test, a
+stand-in for the kernel's generator.
 """.
 -type args() :: #{principal := #{name := binary(), number := pos_integer()},
                   commands := [binary()],
-                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary()),
-                  tty => fun((binary()) -> ok)}
+                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary())}
               | #{window := window(),
-                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary()),
-                  tty => fun((binary()) -> ok)}.
+                  entropy => fun((1..?ERX_ENTROPY_BYTES_MAX) -> binary())}.
 
 -doc """
 A program's window: the window erx_win:open/2 made, the draw connection on
@@ -164,8 +166,7 @@ init(Args) ->
     Qids = maps:from_list([{Dir, qid(?ERX_P9_QTDIR)} || Dir <- maps:keys(Dirs)]
                           ++ [{File, qid(0)} || File <- Files]),
     {ok, (maps:with([window], Args))#{dirs => Dirs, qids => Qids, texts => texts(Args),
-                                       entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1),
-                                       tty => maps:get(tty, Args, fun erx_session_tty:write/1)}}.
+                                       entropy => maps:get(entropy, Args, fun erx_bytes:entropy/1)}}.
 
 %% Each directory's listing, in order: /bin's commands, and /dev's devices and
 %% /etc's files as every program's handler knows them
@@ -266,9 +267,11 @@ dirent_type(Node, _Dirs) ->
         {file, _} -> ?ERX_P9_DT_REG
     end.
 
-%% A file opens with Access when its permission bits allow every part of it. The
-%% clipboard is opened at the display with the program's flags, on a fid of the
-%% open's own.
+%% A file opens with Access when its permission bits allow every part of it, but
+%% tty, a name alone, never opens. The clipboard is opened at the display with the
+%% program's flags, on a fid of the open's own.
+opened(tty, _Access, _Flags, _Fs) ->
+    {error, enxio};
 opened(Node, Access, Flags, Fs) ->
     {_Kind, Mode} = file(Node),
     Reads = Mode band 8#444 =/= 0,
@@ -299,8 +302,6 @@ read({zero, _}, _Offset, Count, _Fs) ->
     {ok, <<0:(Count * 8)>>};
 read({urandom, _}, _Offset, Count, #{entropy := Entropy}) ->
     random(Count, Entropy);
-read({tty, _}, _Offset, _Count, _Fs) ->
-    {error, enotsup};
 read({draw, _}, _Offset, Count, #{window := #{conn := Conn}}) ->
     erx_draw_conn:read(Conn, Count);
 read({ctl, _}, 0, Count, #{window := #{conn := Conn}}) ->
@@ -341,13 +342,6 @@ write({_Node, read}, _Offset, _Bytes, _Fs) ->
     {error, ebadf};
 write({Sink, _}, Offset, Bytes, _Fs) when Sink =:= null; Sink =:= zero ->
     {ok, byte_size(Bytes), Offset};
-write({tty, _}, Offset, Bytes, #{tty := Tty}) ->
-    %% A tty that has ended fails the write alone, not the grant.
-    try Tty(Bytes) of
-        ok -> {ok, byte_size(Bytes), Offset}
-    catch
-        exit:_ -> {error, eio}
-    end;
 write({draw, _}, Offset, Bytes, #{window := #{conn := Conn}}) ->
     case erx_draw_conn:write(Conn, Bytes) of
         ok -> {ok, byte_size(Bytes), Offset};

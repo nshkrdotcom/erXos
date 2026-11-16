@@ -26,8 +26,11 @@ for it, and calls the holder's driver-control facet for a ctl write.
 * **Writes.** A write to `ctl` is one command (erx_devfs_core:command/1),
   whatever its offset, acted on within the write: the facet call waits up
   to erx_driver_ctl's own bound, and a call that fails or exits answers
-  `eio` and ends nothing here. The write runs in the file's process, so
-  writes to one open ctl run one at a time.
+  `eio` and ends nothing here. The write runs in the grant, which calls
+  every callback itself, so until the facet answers, every other request of
+  that grant, its clunks and flushes among them, waits behind it: the call
+  is the tree's bounded work, and its deadline the bound the grant may stop
+  for (docs/design-system.md, "The /dev tree").
 
 In Phase 1 the design's device service is the system domain's domain
 service: its supervisor starts the control tree with start_link/0, which

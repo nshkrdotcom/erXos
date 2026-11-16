@@ -2120,15 +2120,12 @@ it; git history is the record of completed work.
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
   aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
   and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
-  keeper, which shares one life with the handler. What is left is the trees that still wait for an event inside a
-  callback, which blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
-  the `pair` file, and stops its whole grant, every other request, clunk and flush of it included, until the event
-  comes, as each wait for an event left in a callback does now that callbacks run
-  in the grant: a `/dev/tty` write to a stopped tty (`erx_session_export:write/4`, `Tty(Bytes)`), and a `ctl` write
-  to `/dev`'s driver files, whose `erx_driver_ctl` stop, start or restart may take up to its 30 s call deadline
-  (`erx_devfs.erl`, `control/3`). `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
-  lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
-  `rest_for_one`, as design-files.md ("Locks") has it.
+  keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
+  a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
+  which stops its whole grant, every other request, clunk and flush of it included, until the event comes, as each
+  wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
+  table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
+  supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
 * [Medium] display client, a program's input reads (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `relay/6`): the draw
   connection sends every `kbd` and `mouse` read its program has waiting on to the display at once, and every window of
   a session sits on the session's one display grant, whose 64 requests in flight they share
@@ -3156,14 +3153,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
-  `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
-  relay's line discipline serves the tty's readers.
-* [Medium] session, `erx_session_export`: a write to `/dev/tty` waits until the tty takes it
-  (`erx_console:write/2`, a call without a timeout), and a stopped tty holds 4 KiB, so writes to a
-  stopped tty fill the `rw` grant's 64 requests in flight and that grant answers `emfile` to every
-  program of the session, for `/etc` too. Have the terminal relay that owns the tty serve
-  `/dev/tty`'s opens, or answer a write once the relay accepts it, so a stopped tty blocks its
-  writers alone, as on UNIX.
+  `/etc/passwd` names, is missing.
+* [Medium] session, `erx_prog_handler`, `/dev/tty`: the export serves `tty` as a name alone and answers an
+  open of it with `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
+  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an
+  open of the terminal relay under the program's job, through which its reads, writes, watches and controls
+  go to the relay, never through the file protocol. Until it does, a program's open of `/dev/tty` fails
+  with `enxio`, and its standard streams reach the terminal only through its starter's pumps (the item
+  under shell, `erx_shell_program`, below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -4491,6 +4488,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   intensity, 1 restart in 5 s), so a bug that crashes the `/dev` grant twice within 5 s
   ends the system domain and resets the machine. Move it under a supervisor whose end
   the domain service survives, when the device service gets its own.
+* [Low] devices, `erx_devfs`, `/dev`'s ctl writes: the facet call is the control tree's bounded work, with
+  `erx_driver_ctl`'s 30 s deadline as the bound its grant may stop for (design-system.md, "The `/dev`
+  tree"), and that bound is per write, not per tree: the facet takes no other request while a start runs,
+  which nothing bounds (`erx_driver_ctl`'s moduledoc), so a second write queues behind the first and may
+  answer `eio` after 30 s of its own for an operation not yet begun; a start that never returns holds
+  the facet for good, and each later write then holds the grant 30 s before it answers `eio`. Bound the
+  driver's start where the facet waits for it.
 * [Low] devices, `erx_devfs`: `/dev` shows only the block device. Its `status` has no
   `path` line, because the catalogue that reaches Erlang has no device-tree path, and
   its `driver` line is `[unknown]`, because no facet says which process drives a unit.
