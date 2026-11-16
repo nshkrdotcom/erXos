@@ -8,10 +8,23 @@
 # net_max_frame_min bytes, the protocol's max_frame floor: a piece of 64 KiB and its
 # envelope (docs/design-domains.md, "Floors from a protocol";
 # docs/design-network-stack.md, "Message sizes").
+# A facet row's parameters of net are the grant's limits of the same names, which the
+# mint hands the grant: sockets, the sockets it may hold open at once, and buffers, the
+# bytes of send and receive buffer it may reserve across them. A limit a row leaves out
+# takes the grant's default (erx_net_grant_core). The bounds cap one grant, not their sum:
+# at most 4,096 sockets, the design's TIME-WAIT limit and a small part
+# of the ephemeral ports and ICMP echo identifiers, and from 128 KiB, room for one
+# connection's initial buffers (erx_net_grant's tcp_sendspace and tcp_recvspace), to
+# 64 MiB of buffers; nothing sums the grants' buffers against the network domain's memory
+# (TODO.md).
+# net_grant is the manifest check's acceptance of the parameters, whose declarations
+# alone bound them; the grant enforces both at run time.
 # A facet row of net the build derives takes the quantities below; netadmin declares
 # none, so no derived row grants it.
 service net 3
   served_as message
+  parameter sockets 1 u64 optional range 1 4096 checked_by net_grant
+  parameter buffers 2 u64 optional range 131072 67108864 checked_by net_grant
   quantity max_request 64
   quantity in_flight 16
   quantity reductions 100000

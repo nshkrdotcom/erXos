@@ -1847,8 +1847,10 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them; line_grant is property 8's line clause,
-      # check_line_grants, which reads uart and flow and range-checks rate; files_grant
+      # clipboard as their declarations bound them. line_grant is property 8's line clause,
+      # check_line_grants, which reads uart and flow and range-checks rate. net_grant takes a
+      # net facet's sockets and buffers, which their declarations alone bound and the grant
+      # enforces at run time (abi/services/net.txt). files_grant
       # takes a files facet's rights, whose member kind alone bounds them to ro, rw and rx,
       # and which the grant applies at run time. A service declaring a parameter that no
       # checker here consumes is unusable: no facet of it is admitted, since nothing would
@@ -1856,6 +1858,7 @@ module Erx
       # (grant_checker), whatever their interface.
       GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
                          'line_grant' => %w[uart rate flow].freeze,
+                         'net_grant' => %w[sockets buffers].freeze,
                          'files_grant' => %w[rights].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every

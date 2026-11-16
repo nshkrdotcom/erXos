@@ -526,6 +526,43 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # A net facet's sockets and buffers, the grant's limits of their names
+  # (abi/services/net.txt): each a u64 packed under its key when the row states it,
+  # within its declared bound, and absent when it does not, so the grant takes its
+  # default; a value outside its bound, a word or a quoted number is refused.
+  def test_a_net_facet_s_sockets_and_buffers_are_bounded_parameters
+    granted = lambda do |lines|
+      with_session(self.class.session) + service('n', '@domain.beta').sub('interface 1', 'interface net') +
+        facet('n', '@session.system', '@service.n') + lines
+    end
+    keys = @codec.schema.services.find { |service| service.fetch(:name) == 'net' }.fetch(:parameters)
+                 .to_h { |name, parameter| [parameter.fetch(:number), name] }
+    u64 = @codec.member('mf_parameter_kind', 'u64')
+    # The packed rows as {name => value}, each checked to be a u64 row, in key order.
+    packed = lambda do |lines|
+      found = rows(@codec.open('manifest', admit(granted.call(lines)).bytes), 'facet_parameters')
+      assert_equal found.map { |row| row.fetch('key') }.sort, found.map { |row| row.fetch('key') }
+      assert(found.all? { |row| row.fetch('kind') == u64 })
+      found.to_h { |row| [keys.fetch(row.fetch('key')), row.fetch('scalar')] }
+    end
+    assert_empty packed.call('')
+    # Stated out of key order; the packer writes them sorted.
+    assert_equal({ 'sockets' => 80, 'buffers' => 1_048_576 },
+                 packed.call("  parameter buffers 1048576\n  parameter sockets 80\n"))
+    [[1, 131_072], [4096, 67_108_864]].each do |sockets, buffers|
+      assert_equal({ 'sockets' => sockets, 'buffers' => buffers },
+                   packed.call("  parameter sockets #{sockets}\n  parameter buffers #{buffers}\n"))
+    end
+    { "  parameter sockets 0\n" => /outside 1 to 4096/, "  parameter sockets 4097\n" => /outside 1 to 4096/,
+      "  parameter buffers 131071\n" => /outside 131072 to 67108864/,
+      "  parameter buffers 67108865\n" => /outside 131072 to 67108864/ }.each do |line, message|
+      refused(Erx::Manifest::Invalid, 2, 'facet.parameter', granted.call(line), message: message)
+    end
+    ["  parameter sockets many\n", "  parameter sockets \"80\"\n"].each do |line|
+      assert_raises(Erx::ABI::SchemaError, line) { admit(granted.call(line)) }
+    end
+  end
+
   # Property 16: a files facet's grantee, the system domain, a configured domain or a
   # session template, and its server each take frames of at least files_max_frame_min
   # under their own runtime limits, and the facet's max_request admits a request that
