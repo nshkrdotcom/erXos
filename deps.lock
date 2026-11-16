@@ -300,6 +300,186 @@
       "host": "darwin-arm64",
       "license": "BSD-3-Clause",
       "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-0",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_0",
+      "sha256": "e47aded32b161bfc7c5306b35b7b220d805f6dbffce915cee7f991eab04be477",
+      "filename": "syz_mount_image_f2fs_0",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-1",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_1",
+      "sha256": "45f95a97c961605b3a23e6bdd668a4aec87e2b7549275d749b7e5dd1a6d7fb75",
+      "filename": "syz_mount_image_f2fs_1",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-2",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_2",
+      "sha256": "51affb1839083831e9352b1143419ebb4095ba7009d76f0bc32ab662c97ee89d",
+      "filename": "syz_mount_image_f2fs_2",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-3",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_3",
+      "sha256": "435fb9b7241e9a369271b8c80c55c10137c20a4064d3a13d57776e8630658048",
+      "filename": "syz_mount_image_f2fs_3",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-4",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_4",
+      "sha256": "9a780f382077d2f961b203b598a1b581bf759d2e72dfee7be41235e595497ff3",
+      "filename": "syz_mount_image_f2fs_4",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-5",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_5",
+      "sha256": "1b0a815165cfa6103523fc498b8bb846f13866a14e7f4e6d57d2a594311b6f59",
+      "filename": "syz_mount_image_f2fs_5",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-6",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_6",
+      "sha256": "973526d067933e72b01ab72dc6e7ca8813388c7c5ac84f8457f29fc94b923f37",
+      "filename": "syz_mount_image_f2fs_6",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-7",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_7",
+      "sha256": "f015a48017a3d70d91cbd95a97642a5f1c259067d516533865da74a3ca44c393",
+      "filename": "syz_mount_image_f2fs_7",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-8",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_8",
+      "sha256": "1dfb14e8ee64131affec6171e0f95f5edb4b785fca7eb2930f52c591e5b45b9a",
+      "filename": "syz_mount_image_f2fs_8",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-9",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_9",
+      "sha256": "4aafa64a8ea89a9a142e024a9e24c0f670bed7308b960c89d654770224d285cd",
+      "filename": "syz_mount_image_f2fs_9",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-10",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_10",
+      "sha256": "438dae1008360feb34aeaa176b50af740178860301565e7d3205d68741ee6e2c",
+      "filename": "syz_mount_image_f2fs_10",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-11",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_11",
+      "sha256": "6eb12d750021476971e4a2972a6931f9738376433c8ab4c8408d619162dcc97e",
+      "filename": "syz_mount_image_f2fs_11",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-12",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_12",
+      "sha256": "c17a2de5ad1f79570187caab18fdd50c249be4927af639014bbc290970bc96a3",
+      "filename": "syz_mount_image_f2fs_12",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-13",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_13",
+      "sha256": "e55eaf8ddae26976c7268362e1ac31d1136a76b2c63baaff1c423cca4f48f730",
+      "filename": "syz_mount_image_f2fs_13",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-14",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_14",
+      "sha256": "d9dd5c5eff7ad5d6b7ba3a7182cdd2163292e9c1e65666b68f355e3721e1eb8c",
+      "filename": "syz_mount_image_f2fs_14",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-15",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/syz_mount_image_f2fs_15",
+      "sha256": "f855d7b8e5bf7e4914c6a48dffcbbb6688e73590eeacf1f719ea08d4254c63f1",
+      "filename": "syz_mount_image_f2fs_15",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-syzkaller-fscrypt",
+      "kind": "file",
+      "version": "819ebe34df0f1cb61a2c97ced41d03285824b6c1",
+      "url": "https://raw.githubusercontent.com/google/syzkaller/819ebe34df0f1cb61a2c97ced41d03285824b6c1/sys/linux/test/fscrypt_f2fs",
+      "sha256": "0f911e50d81f41b90eeb69d4d5b37c965b7a31af647378f07f3d8353b4bff72a",
+      "filename": "fscrypt_f2fs",
+      "license": "Apache-2.0",
+      "status": "permanent"
+    },
+    {
+      "id": "f2fs-fuchsia",
+      "kind": "file",
+      "version": "6478165d12ab3164d09b3e81551ff692427b5038",
+      "url": "https://fuchsia.googlesource.com/fuchsia/+/6478165d12ab3164d09b3e81551ff692427b5038/src/storage/f2fs_reader/testdata/f2fs.img.zst?format=TEXT",
+      "sha256": "ee098b02ce3f01200d5a68c5e7d36e3a74d228211b83ab3a607e27b75ae963f4",
+      "filename": "f2fs.img.zst.base64",
+      "license": "BSD-2-Clause",
+      "status": "permanent"
     }
   ]
 }
