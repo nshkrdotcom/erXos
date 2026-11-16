@@ -226,6 +226,7 @@ Specification at
 | | | `examples/run_gatt_client.py` | `aec03764d636d0e024dc443d777989fad7ecf45b10e40e56ebd77e7e65613b48` |
 | | | `examples/run_connect_and_encrypt.py` | `c15665cf0dc4e8f0437e21940c2a4304a28adfefd2091d732c281bcc28e3f891` |
 | | | `bumble/core.py` | `99604dffc77ee642b256d86d1f6e27fdc7e770bd70f62ecd225f485810f87aa0` |
+| | | `bumble/hci.py` | `6eacd9bd72df40da6a5b79e9e7130e8c20434d01e6d379b150808b3de8c0e865` |
 | | | `bumble/transport/common.py` | `c62ac850542cf9ef8668ebbe801e3a5dc369a50464c1faba875fb404935b409d` |
 
 The Core Specification Supplement, which defines the advertising data
@@ -358,10 +359,10 @@ stack's owners do
 
 | Owner | Its state | Its pure core | Effects |
 | --- | --- | --- | --- |
-| the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | writes to `data` and `ctl`, starting and ending link processes |
+| the **controller process**, `erx_bt_hci` | the bring-up, the command slot, ACL credits, the map from handles to links, advertising | `erx_bt_hci_core` | items for its writer, which writes `data` and `ctl`; acknowledgements to its reader; starting and ending link processes ([The controller process's effects](#the-controller-processs-effects)) |
 | a **link process**, `erx_bt_link`, one per connection | L2CAP reassembly, the ATT bearer (MTU, the request in progress, queued commands, the prepared write, the indication in flight), the notifications waiting for credits, subscriptions, its one key and whether it is encrypted, the pairing in progress | `erx_bt_link_core`, over `erx_gatt_server`, `erx_gatt_gate` and `erx_smp_core` | ACL fragments to the controller process, events to handlers, store requests |
 | the **registry**, `erx_gatt_srv` | the table, each service's handler, the live `Conn` map, the `ble` facets | `erx_gatt_registry` | monitors, events to handlers |
-| the **store**, `erx_bt_store` (stage 4) | the identity address and the bonds | `erx_bt_state` | reads and writes through the store's backend |
+| the **store**, `erx_bt_store` | the identity address, from stage 1; the bonds, from stage 4 | `erx_bt_state` (stage 4) | reads and writes through the store's backend (stage 4) |
 | the **window**, in `erx_bt_fs` (stage 4) | whether a pairing window is open, its mode and its opener's fid; the pairing wait | `erx_bt_window` | lines on the opener's `pair` file |
 
 Every timer is a deadline in its owner's state, and `next_deadline/1`
@@ -427,7 +428,14 @@ no device. Its release ships `kernel`, `stdlib`, `erx`, `erx_files`,
   `bt_connections_max`), the patch file and the manufacturer it applies
   to where the board needs one, and the service the console serves, if
   any (the opt-in of [Decisions](#decisions), 2: absent from every
-  manifest erXos ships);
+  manifest erXos ships). They are application keys of `erx_bt` in OTP's
+  own form, `-erx_bt Key Value` among the row's `init` arguments, which
+  `application:get_env/2` reads, as the network domain's row sets
+  `-erx_net interfaces` (`config/manifest/qemu-virt-development.txt`):
+  `name`, `appearance`, `connections`, `patch`, a file of `erx_bt`'s
+  `priv` directory, `patch_manufacturer` and `console`. The host name is
+  the host part of the domain's node name
+  ([design-system.md](design-system.md#identifiers));
 * at stage 4, the store's grant: in a release build the vault's state
   facet `{state, "bt"}` ([design-system.md](design-system.md#state-slots)),
   and in a development build a `data` grant rooted at its own directory;
@@ -476,6 +484,27 @@ console's or the host link's:
 | --- | --- | --- |
 | `data` | the bytes the controller sent, at least one and at most what is buffered, waiting while none is; `eio` once the line is broken | the bytes to send, in order, returning once the driver has taken all of them |
 | `ctl` | `eacces` | `reset`, with or without its newline, at most 16 bytes: the steps of [A reset](#a-reset) below; answers once done, or `eio` when a power notification failed; any other write is `einval` |
+
+`line.txt` is shaped as `windows.txt` is, an `erx_fs` grant of one tree
+with typed parameters: `uart` of kind `device`, `rate` a `u64` held to
+115200, and `flow` an `identifier` of `none` or `rts_cts`, each
+`checked_by` the line's grant checker; the tree's name in an attach,
+`line_tree`, `line`; its files, `line_file`, `data` and `ctl`; and
+`line_rx_max` and `ctl`'s 16 bytes as limits. Every grantee carries
+frames of at least `files_max_frame_min`, as a `files` grantee does, so
+a read of `line_rx_max` answers in one frame. The line service is a
+service of the system domain, so the domain service hands each grantee
+its grant in the grantee's ready answer, before any of its applications
+starts, and the grant ends with the grantee or with the tree behind it
+([design-system.md](design-system.md#facets-a-configured-domain-serves),
+"Facets of the system domain's services"). The grantee mounts it as
+every `files` service of the system domain is mounted, at the place
+`erx_ns` gives its facet name: `line` at `/line`, read-write on the tree
+`line`, beside `machine` at `/machine`
+([design-files.md](design-files.md#building-binding-and-mounting), "A
+facet's mount"). `erx_bt`'s application start mounts its facets with
+`erx_ns:mount_facets/1`, as a session's does, so the Bluetooth domain's
+processes open `/line/data` and `/line/ctl`.
 
 The line service parses no byte of `data`: it moves bytes between a
 fid and its driver. Its one grammar of untrusted input is `ctl`'s, one
@@ -695,7 +724,10 @@ Command Complete with status success, within the command deadline; any
 other answer, or none, ends the controller process with the step and the
 status as its reason.
 
-1. **Reset the line.** Write `reset` to `ctl`. The controller is fresh
+1. **Reset the line.** The writer writes `reset` to `ctl`, and its
+   answer is the core's input `line_ready`
+   ([The controller process's effects](#the-controller-processs-effects)).
+   The controller is fresh
    from power-on where the platform has a power line, and the UART is
    programmed afresh ([A reset](#a-reset)). The reset is under its own
    deadline, `bt_line_reset_timeout_ms`, 5 s: two power notifications,
@@ -826,9 +858,17 @@ never sent, nor for one still waiting for the writer, so what waits for
 the writer stays within the credits however long the line stalls. Each
 link may hold at most its share of the buffers in flight, the buffer
 count divided by the connection limit, at least one since the bring-up
-keeps the limit at most the buffer count; a link's notifications wait in its own queue, at most
-`bt_notify_queue`, for its share. Controller-to-host flow control is not
-enabled: the host always reads, and the line's bound is the backstop.
+keeps the limit at most the buffer count. A link learns its share when it
+starts, and its handle's returned packets from the core, which passes
+each live handle's count in Number Of Completed Packets to the handle's
+link as `{completed, Count}`; so a link hands over a packet only while
+its outstanding packets are below its share, and its notifications wait
+in its own queue, at most `bt_notify_queue`. The core answers a packet
+beyond the share with `busy`, which a link that counts never meets; a
+link that meets it ends, and its end disconnects it
+([The controller process's effects](#the-controller-processs-effects)).
+Controller-to-host flow control is not enabled: the host always reads,
+and the line's bound is the backstop.
 
 The controller process does no I/O itself: a reader process keeps one
 read of `data` outstanding and sends the bytes it got, waiting for the
@@ -840,7 +880,9 @@ So what waits for the line is bounded locally, by one item at the writer
 and the credits and the command slot at the controller process, whatever
 the controller reports; the controller process never waits on the line
 and always takes events; and what the line delivers faster than the stack
-consumes waits in the line service, up to its bound.
+consumes waits in the line service, up to its bound. How the process
+finds its reader, writer and links, and where its configuration comes
+from, is [The controller process's effects](#the-controller-processs-effects).
 
 Events the controller process decodes: Command Complete, Command Status,
 Disconnection Complete, Encryption Change, Encryption Key Refresh
@@ -848,6 +890,105 @@ Complete, Number Of Completed Packets, Hardware Error, and the LE Meta
 events LE Connection Complete, LE Long Term Key Request and LE
 Connection Update Complete. Any other event is counted and dropped after
 its length is checked. Hardware Error ends the controller process.
+
+### The controller process's effects
+
+`erx_bt_hci` is a loop around `erx_bt_hci_core`: it turns each message
+into one input, steps the core and performs the actions in order. Its
+group, `erx_bt_host_sup`, `one_for_all`, starts its children in this
+order: `erx_bt_link_sup`, `erx_bt_line_rx`, `erx_bt_line_tx`, then
+`erx_bt_hci`. The first three register their names in the Bluetooth
+domain's runtime, so when the controller process starts its siblings
+run and it reaches each by its registered name; the reader and the
+writer answer whichever process gave them work and never look it up.
+Any child's end ends the whole group, which starts again in the same
+order, so the four always belong to one run of the core. Neither the
+reader nor the writer traps exits, so the group's shutdown also ends one
+blocked in a call to the line service.
+
+**Configuration.** At its start the controller process builds the
+core's `new/1` configuration from owners that outlive its group, so a
+restart of the group rebuilds the same configuration:
+
+* `connections`, from the application key `connections`
+  ([The Bluetooth domain](#the-bluetooth-domain));
+* `address`, the identity address, from the store,
+  `erx_bt_store:address/0` ([The identity address](#the-identity-address));
+* `advertising_data` and `scan_response_data`, from `erx_bt_adv:data/1`,
+  a pure function of the UUIDs the registry's table marks `advertise`
+  (`erx_gatt_srv:advertised/0`), the name and the appearance
+  ([Advertising](#advertising));
+* `patch`: `none` when the row names no patch, else the manufacturer from
+  `patch_manufacturer` and the records `erx_bt_patch:records/1` returns
+  for the file `patch` names. The file is read whole here, so a file the
+  reader refuses ends the process before the line is touched.
+
+It then steps `start`, whose one action is `line_reset`.
+
+**The writer** takes two kinds of item. Bytes it writes to `/line/data`,
+and acknowledges with `written`. The action `line_reset` it carries out
+by writing `reset` to `/line/ctl`, and acknowledges with `line_ready`.
+The core gives `line_reset` only as the bring-up's first step, before any
+other item, so the writer is idle then and still holds one item at a
+time. A write that fails, `eio` from `data` or from `ctl` included, ends
+the writer and so the group: the group's restart is the recovery for a
+broken line and for a failed power notification alike, and the core has
+no input for a line failure. A reset that never answers is the core's
+own: the slot's deadline passes and the core stops with
+`line_reset_timeout`.
+
+**The reader** opens `/line/data` at its start and reads only after an
+acknowledgement; the controller process gives the first when it steps
+`line_ready`. A read waiting at a reset answers `eio`
+([Concurrency](#concurrency)), so a reader that read before the reset
+answered would end its group at every start; reading only after an
+acknowledgement puts the bring-up's reset before every read, with no
+case of its own. Each read asks for `line_rx_max` bytes, so one read can
+take everything the line holds. The controller process appends what
+arrives to the bytes the last split left, splits them with
+`erx_h4:split/1`, decodes each packet with `erx_hci` and steps it, then
+acknowledges. A split error ends the controller process
+([H4 framing](#h4-framing)); a read that fails ends the reader, and so
+the group.
+
+**Links.** The core's link actions go to link processes, one for each
+link the core has named:
+
+* `{link_up, Name, Info}`: the controller process makes the link's
+  `Conn`, a fresh reference, starts `erx_bt_link` as a temporary child of
+  `erx_bt_link_sup` with `Name`, `Conn`, `Info` (the peer's address,
+  `acl_tx_max` and the link's share) and its own pid, monitors it, and
+  maps `Name` to it;
+* `{to_link, Name, Event}` and `{busy, Name}`: sent to the process
+  `Name` maps to; an action for a name that maps to none is dropped, since
+  its link has already ended;
+* `{link_down, Name}`: the controller process removes `Name` and ends its
+  process through `erx_bt_link_sup`;
+* a link process that ends while its name is mapped: the controller
+  process removes the name and steps `{request, Name, {disconnect,
+  16#13}}`, Remote User Terminated Connection (`bumble/hci.py:752`). So a
+  link's end is its disconnect, whatever ended it; a link that wants
+  another reason asks for it before it ends, and the core ignores a
+  second disconnect for the handle and refuses one whose name is no
+  longer current ([Commands and data credits](#commands-and-data-credits)).
+
+The core's names are unique only within one run of the core: the serial
+in a name starts again at each `new/1`. So the controller process maps
+full names, never handles, to link processes, and every link process is
+a child of `erx_bt_link_sup` in the same `one_for_all` group, which ends
+with the core: no link outlives the core that named it, and no name a
+later run gives can reach it. What leaves the group is `Conn`, which is
+unique for the runtime's life, so no app meets a name that a later run
+reuses ([A name dies at once](#a-name-dies-at-once)). From stage 2 a link
+registers its `Conn` with the registry when it starts, and the registry
+monitors it.
+
+Before stage 2 a link process has no channels: it hands over no packet,
+drops and counts every ACL packet it is given, and ends at `link_down`;
+stage 2 gives it the fixed channels ([Links: the fixed
+channels](#links-the-fixed-channels)). The core's `{ready, Facts}`, and
+`facts/1` at any moment, are what the controller process shows at
+`/proc/bt` ([Inspection](#inspection)).
 
 ### The identity address
 
@@ -858,10 +999,15 @@ the board nor its controller, so no Bluetooth address of an erXos
 machine names its hardware, as no IPv6 address does
 ([design-network-stack.md](design-network-stack.md#ipv6-neighbour-discovery-and-autoconfiguration)).
 It needs no vendor command to set the public address and no address in
-the device tree. Before stage 4 a new one is made at each start of the
-Bluetooth domain, which costs an unbonded phone nothing, since it
-rediscovers at every connection. From stage 4 it is part of the stored
-state and lasts as long as the bonds that name it. Its form, two top
+the device tree. Its one owner is the store, `erx_bt_store`, from stage
+1 on: before stage 4 the store makes a new one when it starts, which is
+at each start of the Bluetooth domain, and keeps it in memory, which
+costs an unbonded phone nothing, since it rediscovers at every
+connection. From stage 4 it is part of the stored state and lasts as
+long as the bonds that name it. The store sits before the controller
+group in `erx_bt_sup` ([Concurrency](#concurrency)), so a restart of the
+group keeps the address, and the controller process asks for it,
+`erx_bt_store:address/0`, at each of its starts. Its form, two top
 bits set and the rest neither all zeros nor all ones, is Vol 6 Part B
 1.3.2.1's, unverified until that part is read; the test of its maker
 checks it against Bumble's address parser.
@@ -870,7 +1016,11 @@ checks it against Bumble's address parser.
 
 The controller process advertises, connectable and undirected, on all
 three channels at a 100 ms interval, while connections are below the
-row's limit. The data are computed once, from the table:
+row's limit. The data are a pure function of the table, the name and
+the appearance, `erx_bt_adv:data/1`, which the controller process calls
+at its start ([The controller process's effects](#the-controller-processs-effects));
+the table is fixed for the domain's life, so every start computes the
+same bytes:
 
 * **advertising data:** the Flags structure (LE General Discoverable,
   BR/EDR not supported) and the list of UUIDs of the services whose
@@ -1507,24 +1657,30 @@ erx_bt_sup                      rest_for_one
   erx_gatt_srv                  the table, handlers, Conn map, ble facets
   erx_bt_fs                     the control tree and the window
   erx_bt_host_sup               one_for_all, at most 5 restarts in 60 s
-    erx_bt_hci                  the controller process
-    erx_bt_line_rx, erx_bt_line_tx
     erx_bt_link_sup             a temporary link per connection
+    erx_bt_line_rx              the reader, registered
+    erx_bt_line_tx              the writer, registered
+    erx_bt_hci                  the controller process, started last
   erx_bt_console                when configured
 ```
+
+The controller group starts in that order, so the controller process
+finds its siblings running and registered when it starts
+([The controller process's effects](#the-controller-processs-effects)),
+and stops in the reverse order, the controller process first.
 
 ## Failure handling
 
 | Failure | Detected by | What ends | Recovery |
 | --- | --- | --- | --- |
-| a framing error, a Hardware Error event, a command not answered in 5 s, an answer to another command, a completion for a handle not live or beyond its outstanding packets, a failed bring-up step, `eio` on `data` | the controller process | the controller group: the controller process, the line's reader and writer, every link | the group restarts: `reset`, then the bring-up; past 5 restarts in 60 s the domain ends and the domain service restarts it within its intensity |
-| a malformed L2CAP frame, a second outstanding ATT request, an SMP timeout, an encryption change the link did not key | the link | the link: the controller process sends Disconnect | the phone reconnects |
+| a framing error, a Hardware Error event, a command not answered in 5 s, an answer to another command, a completion for a handle not live or beyond its outstanding packets, a failed bring-up step, a line reset not answered in 5 s; a failed open, read or write of `data` or `ctl` | the controller process; for the line's files, the reader or the writer, whose end ends the group | the controller group: the controller process, the line's reader and writer, every link | the group restarts: `reset`, then the bring-up; past 5 restarts in 60 s the domain ends and the domain service restarts it within its intensity |
+| a malformed L2CAP frame, a second outstanding ATT request, an SMP timeout, an encryption change the link did not key, a packet the core answered `busy`, a link process's crash | the link | the link: its end makes the controller process send Disconnect | the phone reconnects |
 | a malformed ATT request | the ATT server | nothing: Invalid PDU | none needed |
 | a handler that does not answer in 5 s | the link's deadline | nothing: Unlikely Error | none |
 | a handler that ends | the facet's monitor | the handler's attachment | the app attaches again |
 | the store answers `unavailable`, returns a blob that does not decode, or leaves a `put` unconfirmed | the store | the pairing; at start, the bonds: the domain runs without them and refuses pairing; the configuration write; `forget` | `/proc/bt` and the log say `store_unavailable` or `store_unreadable`; the store is `unknown`; after an unconfirmed `put` a change reads first and fails unless the read succeeds; after the start's read the next start reads again; `forget all` alone replaces a blob that does not decode ([Bonds and the store](#bonds-and-the-store)) |
 | a broken line | the line service | reads of `data` | the controller group's restart writes `reset` |
-| a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the Bluetooth domain's reads fail and its controller group restarts; the console, in no group, is untouched |
+| a line tree or the host link ends, or line 153's owner | its line group's supervisor | the group after it: on the Pi 4, the tree's fids and, for the owner, the host link's sessions | the group restarts, its owner first; the console, in no group, is untouched. The Bluetooth domain's `line` grant ended with the tree, and a grant of a system domain's service comes only in a ready answer, so `/line` answers `eio` to the controller group's restarts until the domain ends at its intensity; the domain service restarts it, and its ready answer brings a grant of the new tree |
 | a power notification that fails | `reset`'s answer, `eio` | the bring-up | the group's restart retries within its intensity; after an unanswered request every later notification of the boot fails at once, the VL805's included, so the Bluetooth domain ends at its intensity, and its log records and the line service's `/proc` show why |
 | a configuration write the store does not keep | the store, `unknown` or a `put` not `ok` | nothing: Unlikely Error, the configuration unchanged | the phone writes again |
 
@@ -1591,6 +1747,7 @@ Each passing case is paired with the seeded fault it must catch.
 | the line's `ctl` grammar | `reset` with and without newline accepted; everything else `einval` | a prefix match accepting `resetx` |
 | the line service's reset, over a model driver and a model device service | the four steps run in order; the driver's input during the on time is discarded; a power `{error, _}` answers `eio` before the next step | the driver started before the off notification, so the old FIFO drains into the new controller |
 | the identity address | 10,000 addresses all have the static form and parse in Bumble's `Address` as static | the top bits cleared |
+| the controller group, over a model line tree (an `erx_fs` tree in the test, mounted at `/line`, whose `ctl` answers after a set delay, whose `data` read waiting at a reset answers `eio`, and whose `data` plays a scripted controller), a model store and a model registry | the group reaches `ready` from its start and again after the controller process is killed; the first read of `data` comes after `ctl`'s answer; the identity address in the facts is the same before and after the restart; a link process killed while connected leads to one `HCI_Disconnect` of its handle with reason `0x13` on `data`; a `link_down` ends the link process, and a `to_link` for its name afterwards reaches no process; each live handle's Number Of Completed Packets count reaches its link as `{completed, Count}`; a `ctl` answering `eio` ends the group | the reader reading at its start, so its read meets the reset and the group restarts without reaching `ready`; the controller process making the address itself, so it changes across the restart; a link process's end ignored, so no Disconnect is written; the completion not passed to the link, so a link with a share of one never hands over its second notification |
 
 ### Fuzz targets
 
