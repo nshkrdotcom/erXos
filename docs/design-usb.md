@@ -2264,7 +2264,7 @@ report of id 2 never releases a key that id 1 holds. Then:
   counted.
 * **Pointer.** A relative X and Y give `{pointer, rel, DX, DY}` when
   either is non-zero. An absolute X and Y are clamped to their logical
-  range and normalized across it as `(V - Min) * 65535 div (Max - Min)`,
+  range and spread across a record's axis by `erx_input_codec:axis/3`,
   as the virtio-input driver does
   ([design-display.md](design-display.md#the-display-device)), giving
   `{pointer, abs, X, Y}` when either changed from its id's last report;

@@ -35,6 +35,8 @@ class ErxInputCodecTest < Minitest::Test
       record touch 3
         field phase @input_touch_phase
       record release 4
+      record wheel 5
+        field steps @input_wheel
   ABI
 
   def test_eunit_cases_pass
@@ -62,7 +64,7 @@ class ErxInputCodecTest < Minitest::Test
 
   def test_the_sample_is_accepted
     input = validate(SAMPLE)
-    assert_equal [1, 2, 3, 4], input.records.map(&:tag)
+    assert_equal [1, 2, 3, 4, 5], input.records.map(&:tag)
     assert_equal 5, input.size
   end
 
@@ -78,12 +80,23 @@ class ErxInputCodecTest < Minitest::Test
       'a field name with an underscore' => ['field x @input_axis', 'field x_y @input_axis', /invalid input field name/],
       'a field named twice' => ['field dx @input_rel', "field dx @input_rel\n    field dx @input_rel", /duplicate input field/],
       'an unknown member' => ['record release 4', 'message release 4', /unknown input member/],
-      'an argument' => ["input\n", "input 1\n", /expected input/]
+      'an argument' => ["input\n", "input 1\n", /expected input/],
+      'no input_wheel field' => ['field steps @input_wheel', 'field steps @input_rel', /no input field has scalar type input_wheel/],
+      'no input_axis field' => ['field x @input_axis', 'field x @input_rel', /no input field has scalar type input_axis/]
     }.each do |label, (text, broken, message)|
       assert_includes SAMPLE, text, label
       error = assert_raises(Erx::ABI::SchemaError, label) { validate(SAMPLE.sub(text, broken)) }
       assert_match message, error.message, label
     end
+  end
+
+  # axis/3 scales a device's range onto input_axis from 0, so an input_axis that
+  # starts elsewhere is refused.
+  def test_an_axis_that_does_not_start_at_0_is_refused
+    declarations = Erx::ABI::Syntax.parse(SAMPLE, path: Erx::ABI::Input::SOURCE)
+    shifted = root_types.merge('input_axis' => root_types.fetch('input_axis').dup.tap { |type| type.minimum = 1 })
+    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Input.validate(declarations, types: shifted) }
+    assert_match(/input_axis must start at 0/, error.message)
   end
 
   def test_a_second_declaration_or_one_elsewhere_is_refused

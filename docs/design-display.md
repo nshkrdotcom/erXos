@@ -1884,10 +1884,10 @@ events before it in the update put the pointer; `SYN_REPORT` sends what
 is kept. When an event would take a sum past a record's range, the sum
 is sent as it stands with all else kept, and a new sum starts at that
 event, so no sum overflows and no movement is clamped away; a wheel
-event's own value is clamped
-to a record's range first. An absolute position is each axis clamped
-to its range and normalized across it as `(V - Min) * 65535 div (Max -
-Min)`; the core takes a range only with `Min` below `Max`, and a device
+event's own value is clamped to a record's range first
+(`erx_input_codec:wheel/1`). An absolute position is each axis clamped
+to its range and spread across a record's axis by `erx_input_codec:axis/3`
+([design-abi.md](design-abi.md#input-records)); the core takes a range only with `Min` below `Max`, and a device
 that lacks either axis, answering its `ABS_INFO` with size 0 (virtio
 1.2, section 5.8.5.2), has none. The core reads a configuration answer
 by its `size` alone, as section 5.8.5.1 asks, since QEMU's reads as

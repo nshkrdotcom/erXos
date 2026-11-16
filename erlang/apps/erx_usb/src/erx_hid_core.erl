@@ -56,7 +56,7 @@ raises on any report, which `test/erlang/erx_hid_core_fuzz.erl` checks.
 
 -opaque state() :: #{entries := #{erx_hid_desc:report_id() => entry()}, counts := counts()}.
 
--type axis() :: 0..?ERX_INPUT_AXIS_MAX.
+-type axis() :: erx_input_codec:input_axis().
 
 %% An evdev key or button code, as the translations of abi/formats/hid.txt give it.
 -type code() :: non_neg_integer().

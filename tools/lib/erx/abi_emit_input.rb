@@ -130,11 +130,9 @@ module Erx
       end
 
       # The scalar type NAME of a record's field, whose range a driver's value is
-      # held to by the clamps of clamp_functions.
-      def scalar(input, name)
-        types(input).find { |type| type.name == name && type.is_a?(ScalarType) } ||
-          raise(SchemaError, "input: no record field has scalar type #{name}")
-      end
+      # held to by the clamps of clamp_functions (one of Input::CLAMPED, which
+      # Input.validate makes some field's type).
+      def scalar(input, name) = types(input).find { |type| type.name == name }
 
       # rel/1, wheel/1 and axis/3: a device's value held to a record's field, so
       # every driver clamps and scales as the bounds of valid/1 require.
@@ -142,7 +140,6 @@ module Erx
         rel = scalar(input, 'input_rel')
         wheel = scalar(input, 'input_wheel')
         axis = scalar(input, 'input_axis')
-        raise SchemaError, 'input: input_axis must start at 0' unless axis.minimum.zero?
 
         <<~ERLANG.chomp
           -doc "A device's relative move held to a pointer record's range.".
@@ -208,10 +205,13 @@ module Erx
           whose tag, padding or field is outside them, so a bad record costs only
           itself; encode/1 writes one record. The decoder makes no atom.
           rel/1, wheel/1 and axis/3 hold a device's values to a record's fields,
-          so every driver clamps and scales them alike.
+          so every driver clamps and scales them alike, and the types and
+          checks of those fields (#{Input::CLAMPED.join(', ')}) are a driver's
+          to name, so no driver restates their bounds.
           """.
           -export([size/0, decode/1, encode/1, valid/1, rel/1, wheel/1, axis/3]).
-          -export_type([record/0]).
+          -export([#{Input::CLAMPED.map { |name| "is_#{name}/1" }.join(', ')}]).
+          -export_type([record/0, #{Input::CLAMPED.map { |name| "#{name}/0" }.join(', ')}]).
 
           %% The design names a driver's record record(), as "Input events" spells it.
           -compile({nowarn_redefined_builtin_type, {record, 0}}).
