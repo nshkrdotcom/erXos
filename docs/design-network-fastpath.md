@@ -1150,7 +1150,7 @@ checked.
 * **Device claims.** None is believed: virtio's receive header is never
   read, the receive offloads are never negotiated, and tap and netmap
   give none.
-* **A residual of Phase 1.** On the stopgap the virtio driver and the
+* **A residual of Phase 1.** On Fiasco the virtio driver and the
   stack run in the system domain (plan.md's 1b-G), so the merge's C runs
   in the system domain's runtime, where a memory error is a fault of the
   system domain and resets the machine. Development builds run trusted

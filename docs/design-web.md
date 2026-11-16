@@ -202,14 +202,14 @@ It holds a **login facet** of the system domain's `erx_web_login`, whose
 two operations are `login` and `logout`. It holds no inspect, trace,
 console or shell facet.
 
-**On the stopgap.** The web domain runs on Fiasco as designed:
+**On Fiasco.** The web domain runs on Fiasco as designed:
 a configured domain holding its login facet, reached through the host
 tool's front end over the host link, and through the network front end
 once the network domain gives it a network facet. Nothing in this document
 changes there. What the stopgap does not enforce is the wall around the
 domain and W8's charge to the principal: budgets are records, so W8's
 bounds hold as the web domain's own limits but nothing is charged
-([design-domains.md](design-domains.md#on-the-stopgap)).
+([design-domains.md](design-domains.md#on-fiasco)).
 
 **A browser is a display.** A UI is a widget server in its application's
 session, whatever shows it: `erx_ui_server` with `erx_ui_schema`,

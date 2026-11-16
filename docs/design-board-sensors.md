@@ -159,7 +159,7 @@ the trial request, the boot-time key read and the firmware notification
 are designed ([design-platforms.md](design-platforms.md#trial-requests),
 [design-usb.md](design-usb.md#the-vl805s-firmware)) but not built;
 Fiasco's `rpi` platform, which asks the mailbox for memory, is not used
-on the stopgap ([design-fiasco.md](design-fiasco.md)); and the only
+on Fiasco ([design-fiasco.md](design-fiasco.md)); and the only
 mailbox user in the tree is the QEMU suite's framebuffer stand-in,
 `test/raspi4b/firmware_fb.c`, which runs before BL31 and is never packed.
 
@@ -425,7 +425,7 @@ The core is the mailbox core of
 used by the stopgap's root backend and by erXos's kernel alike. On the
 stopgap the backend implements the call in the root task over the
 mailbox page it maps, with the same core
-([design-usb.md](design-usb.md#the-vl805s-firmware), "On the stopgap").
+([design-usb.md](design-usb.md#the-vl805s-firmware), "On Fiasco").
 
 ## The sensor driver
 

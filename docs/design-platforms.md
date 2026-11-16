@@ -265,7 +265,7 @@ console is not the card's `serial0`. The mini UART's baud rate is divided from t
 clock, which the firmware may change at run time, so the board's
 `config.txt` sets `enable_uart=1`, which has the firmware pin the core
 clock and set the mini UART's line; the early console, Fiasco's
-console on the stopgap and the Erlang mini-UART driver keep the divisor
+console on Fiasco and the Erlang mini-UART driver keep the divisor
 the firmware set and never compute one, so no core clock rate reaches
 the platform record. The PL011s' clock does: each PL011's entry in the
 record carries its clock in hertz, from its node's `clocks`, and
@@ -569,10 +569,10 @@ whose in-kernel GIC has no ITS
 ([research](research-kernel-bases.md#qemu-virt-under-tcg-and-hvf)). The
 Raspberry Pi 5's MIP block raises SPIs 128 to 191. The Raspberry Pi 4's
 devices that erXos drives use wired interrupts, the VL805 its closed
-bus's INTx line, so it needs no frame. On the stopgap, which may not read
+bus's INTx line, so it needs no frame. On Fiasco, which may not read
 the frame's `MSI_TYPER`, QEMU `virt`'s platform record names the frame's
 base and line range, and the backend binds each line edge-triggered
-([design-pcie.md](design-pcie.md#the-msi-frame-on-the-stopgap)).
+([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 
 The GICv2m frame's registers, from FreeBSD's driver at releng/15.1:
 `MSI_TYPER` at `0x008` gives the first line and the count,
@@ -638,7 +638,7 @@ device in Linux's tree for the Pi 4 is `dma-coherent`, so every DMA device
 of the board needs the device NIF's cache maintenance; QEMU `virt` marks
 every virtio-mmio node `dma-coherent`, and its DMA is coherent. Each DMA
 device's record carries its coherence and its range, read at boot from
-the tree the firmware hands over, on the stopgap as on erXos's kernel
+the tree the firmware hands over, on Fiasco as on erXos's kernel
 ([design-device-tree.md](design-device-tree.md),
 [design-device-dma.md](design-device-dma.md#device-addresses-and-reach)). The
 contiguous pool, from the lowest RAM, serves devices with an address
@@ -1561,7 +1561,7 @@ medium to 2 GiB for a standard-capacity card and to 4 GiB for a
 high-capacity one. The model's bus is not timed, so the base clock is checked on the
 board alone.
 
-### The Raspberry Pi 4 on the stopgap
+### The Raspberry Pi 4 on Fiasco
 
 Before erXos's kernel exists, the Raspberry Pi 4 runs Fiasco
 behind the same interface, booted by the same firmware and the same BL31,

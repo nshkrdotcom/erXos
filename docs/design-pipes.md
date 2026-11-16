@@ -977,7 +977,7 @@ cannot take the ends, and `ENOMEM` for the session's budget or the
 program's. The session's own processes get their pipes the same way,
 without an install, since the capabilities stay in the session's table.
 
-**On the stopgap.** The pipe server, the handler and `liberx` are the same
+**On Fiasco.** The pipe server, the handler and `liberx` are the same
 code. On Fiasco each create, bind, install and map is a
 request to the backend's root service, each a row of
 [its call table](design-fiasco.md#the-call-table): the lane and the lock
@@ -987,7 +987,7 @@ driver binds to the program's group, whose deliveries reach the program task's
 readiness dispatcher; and the installs are `erx_cap_pass` from the
 session's table into the program's space, which the session created.
 Budgets are records there, so `ENOMEM` comes from the root's pool rather
-than the session's budget. A handle on the stopgap carries no rights, so
+than the session's budget. A handle on Fiasco carries no rights, so
 the rights step 3 names are recorded nowhere: a program uses only the
 ends its `liberx` was told of, and maps them as step 3 says, because its
 `liberx` does so. That a program which bypasses `liberx` cannot widen

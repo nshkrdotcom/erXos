@@ -882,7 +882,7 @@ byte fill of whole pages, and a drawing call for what is not drawing.
 
 The system domain therefore never deletes an area that a program still
 maps, on erXos's kernel, where memory mapped from a deleted object
-faults, and on the stopgap, whose delete removes every mapping of the
+faults, and on Fiasco, whose delete removes every mapping of the
 object (`erx_fiasco_vm_object_revoke`). A program whose display dies
 goes on writing its buffer without a fault until its session ends it.
 
@@ -4692,7 +4692,7 @@ emits presentations ([Inspection](design-live.md#inspection)); the
 inspector schema supplies the types
 ([Inspection](design-live.md#inspection)).
 
-## On the stopgap
+## On Fiasco
 
 The display runs on Fiasco as designed, with trusted
 domains, and what differs is what the Fiasco kernel does not enforce
@@ -4870,7 +4870,7 @@ the window and the reason.
   its two pipe ends and its window's buffer; what it reads was written
   by its own session's widget server, and what it reports is checked in
   Erlang before anything is presented.
-* **On the stopgap.** QEMU `virt` under Fiasco, as the harness
+* **On Fiasco.** QEMU `virt` under Fiasco, as the harness
   starts it, has no IOMMU, so virtio-gpu and virtio-input attach over
   virtio-mmio and are unconfined. The development manifest gives them to
   the display domain, the Phase 1 manifest check allows that in a
@@ -5126,7 +5126,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     freed makes ASan report;
   * on erXos's kernel a store by the display domain into a client's area
     faults in the display domain, where an install that gives the server
-    a writable capability fails it; on the stopgap the case reports
+    a writable capability fails it; on Fiasco the case reports
     `unsupported`;
   * `erx_memdraw:wrap/4` over ranges that end at the area's last byte,
     one byte past it and far past it, over sizes whose product
@@ -5229,7 +5229,7 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     it, and its end is the session's stop, not a fault. A seeded driver
     that returns the lease right after mapping fails the third run: the
     connection's end deletes the area, and the program ends with a
-    fault on the stopgap, whose delete removes its mapping, as on
+    fault on Fiasco, whose delete removes its mapping, as on
     erXos's kernel.
 * **Presents.** Each passing case beside its seeded failure:
   * `erx_winctl`'s fuzz target over arbitrary lines, which asserts that
@@ -5908,7 +5908,7 @@ between the renderer's write and the device:
 | copy path: the buffer into the screen image | one, of the changed rectangles, clipped to what is visible | virtio-gpu transfers the rectangles to the host; a firmware framebuffer shows them; a panel driver sends them on its bus |
 | direct path: the device reads the buffer | none | as above, from the client's memory |
 
-A kiosk's frame under LVGL on QEMU `virt` on the stopgap is therefore
+A kiosk's frame under LVGL on QEMU `virt` on Fiasco is therefore
 one copy of the changed rectangles and the device's transfer, and on a
 confined virtio-gpu or a panel on a bus no copy.
 

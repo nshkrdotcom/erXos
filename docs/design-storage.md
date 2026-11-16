@@ -2228,7 +2228,7 @@ The SD controller, each test paired with the fault that proves it ran:
   finds an admitted card whose last byte address does not fit 32 bits.
 * On the board, by hand: the card identifies at default speed, `/data`
   mounts, and the power-cut checklist of
-  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap) passes; the
+  [plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco) passes; the
   [board probe](#the-board-probe) records its items and its timed slow
   read settles the base clock.
 

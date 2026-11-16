@@ -389,7 +389,7 @@ as ERTS refuses to start without its reference key
 ([design-runtime.md](design-runtime.md#unguessable-references)), and no
 owner falls back to another source; its supervisor restarts it. On
 erXos's kernel the generator is ready before any domain runs, so a read
-fails only on the stopgap, when its backend cannot reach its generator
+fails only on Fiasco, when its backend cannot reach its generator
 service. In
 deterministic mode the kernel's generator is fixed, so the whole stack's
 random values repeat from boot to boot.
@@ -6424,7 +6424,7 @@ broken down by stage: completion, classification, checksum, step,
 encoding, posting, the lane crossing and the socket process's hop to the
 owner. The measurements on erXos's
 kernel decide and those on the Raspberry Pi 4 confirm or reopen the
-decision; the same measurements on QEMU on the stopgap are a baseline
+decision; the same measurements on QEMU on Fiasco are a baseline
 that decides nothing, since every interrupt and doorbell there passes the
 stopgap's one service thread (plan.md's gates GN-QEMU, GK3 and GN-board).
 If the established path misses line rate and the breakdown names a pure

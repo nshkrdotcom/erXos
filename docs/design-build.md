@@ -319,7 +319,7 @@ The JSON build record is audit output and cannot create a helper handle or
 replace its expected inputs. A bare executable path and a matching sidecar
 file do not establish that the executable came from the trusted builder.
 
-## The frozen stopgap build
+## The frozen Fiasco build
 
 Output directories have an explicit owner root. The shared directory guard
 resolves that trusted root, checks every existing child component for links

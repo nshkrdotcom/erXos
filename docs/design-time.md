@@ -164,7 +164,7 @@ read for this design.
   ([design-kernel.md](design-kernel.md), "Time"). The setter in the tree
   is `erx_time_set_wall(wall_ns)`, whose body stores `wall_ns` minus a
   monotonic reading of its own, taken after the call has crossed to the
-  service on the stopgap (`liberx/backend/fiasco/time_page.c`,
+  service on Fiasco (`liberx/backend/fiasco/time_page.c`,
   `erx_fiasco_time_set_wall_body`), and checks no range; this design
   replaces it with `erx_time_set_offset`, which stores the offset it is
   given ([The construction](#the-construction)).
@@ -356,7 +356,7 @@ The special cases this removes:
   that calls `erx_time_set_offset`, as `erx_watchdog_nif.c` is the one
   that pets the watchdog. On erXos's kernel only the system domain holds
   the time page's `WRITE` right, so wherever else the NIF is linked the
-  call fails; on the stopgap the call checks no right
+  call fails; on Fiasco the call checks no right
   ([Phase 1](#phase-1)).
 
 Why an app and not the network domain: the network domain is the stack,
@@ -738,7 +738,7 @@ shown there is one of the known atoms or its four bytes in hex.
   then up to 1000 s per two samples, forward or backward, without limit
   over time. The thresholds guard an honest client against one bad
   measurement, not the system against the client. On erXos's kernel the
-  authority is the facet row; on the stopgap it is held, not enforced
+  authority is the facet row; on Fiasco it is held, not enforced
   ([Phase 1](#phase-1)).
 * **The server decides the time, and so does anyone on its path.** This
   is the residual, recorded in [design.md](design.md#residual-risks) and
@@ -772,7 +772,7 @@ page (`liberx/backend/fiasco/time_page.c`). That only the system domain
 sets the clock is therefore held by the chokepoint and the facet, not
 enforced, which is a residual of trusted code recorded in `TODO.md`;
 erXos's kernel checks `WRITE` on the time page. The range check of
-`erx_time_set_offset` is the body's own and holds on the stopgap as on
+`erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
 boot is cold. On QEMU `virt` the stopgap's root reads the PL031 once at
 boot and sets the offset from it, so `state` is `boot`. The Raspberry Pi 4
@@ -803,7 +803,7 @@ that proves it ran.
 | flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
 | facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included | dropping `W`'s upper bound accepts `time_offset_max + 1` |
 
-The setter's range has a test of its own on the stopgap, in the native
+The setter's range has a test of its own on Fiasco, in the native
 guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
 `time_offset_max` are stored and read back exactly by `erx_time_offset`,
 and `time_offset_max + 1` and -1 answer `ERX_EINVAL` and leave the page
@@ -891,7 +891,7 @@ reference clock within a second.
   being an OTP application with no erXos authority in it.
 * **Giving the app the time page's `WRITE` right.** No clock record in
   one place for `/proc`, two policies if a second time source comes, and
-  on the stopgap no difference from any task's call.
+  on Fiasco no difference from any task's call.
 * **A relative facet, "add this much".** It applies twice if repeated
   and depends on the wall clock not moving between measurement and
   arrival; the absolute `W` has neither problem.

@@ -33,7 +33,7 @@ seeded from `erx_entropy_read`, never from another source
 belongs to the machine: the boot banner reports `entropy_quality`, a
 release build stops the boot on a weak seed and a development build
 continues ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy));
-on the stopgap the seed is the counter and `/chosen`'s seeds where the
+on Fiasco the seed is the counter and `/chosen`'s seeds where the
 device tree carries them; where it carries none, the Raspberry Pi 4 adds
 its RNG200 and other boards use the counter alone
 ([design-fiasco.md](design-fiasco.md#the-call-table)).
@@ -338,7 +338,7 @@ branch; each file carries its notice:
   `TODO.md`'s feature-words item carries to where the words are filled),
   so the read is not reached. `OPENSSL_armcap` sets the features and
   returns before that test, so it never causes the read. With the words
-  0, as on the stopgap, no feature bit is set, `OPENSSL_armcap_P` stays
+  0, as on Fiasco, no feature bit is set, `OPENSSL_armcap_P` stays
   0, and every algorithm takes its software path.
 * `providers/implementations/rands/seeding/rand_unix.c` includes
   `<sys/random.h>` and, in `syscall_random`, skips the weak `getentropy`
@@ -383,13 +383,13 @@ OpenSSL's one seed path is `getrandom`, in musl, over the seam's
 * **Quality is the machine's.** OpenSSL credits each seed byte with eight
   bits, as from any operating system source. Whether the kernel's seed
   deserves that is reported by `entropy_quality`; a release build never
-  runs on a weak seed. A development build on the stopgap leaves
+  runs on a weak seed. A development build on Fiasco leaves
   `entropy_quality` unreported, and its banner names the `/chosen` seeds
   it mixed or says it seeds from the counter alone; keys made on a
   boot without a seed are as weak as the counter, which
   [design-ssh.md](design-ssh.md#host-keys) records for the host key.
 * **Reseeding** follows OpenSSL's own intervals, each a call through the
-  same path; on the stopgap each is a request to the root's generator
+  same path; on Fiasco each is a request to the root's generator
   service. A generator already seeded need not read the kernel for every
   request, so a failure of the kernel's generator after the first seed
   shows at the next reseed, not at once.

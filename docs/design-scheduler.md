@@ -936,7 +936,7 @@ again and reports whether it has changed. The step returns with every
 answer the instant that answer next changes, when the share is spent or
 the period ends; the dispatch arms that instant as one deadline of the
 CPU's one-shot timer, and the deadline's handler feeds `DEADLINE` and
-picks when the answer has changed. On the stopgap the share and the step
+picks when the answer has changed. On Fiasco the share and the step
 are unsupported, per the backend's table
 ([design-fiasco.md](design-fiasco.md#the-call-table)).
 
@@ -1902,7 +1902,7 @@ scheduler binding (`+sbt`) is the adapter's pinning and cannot be changed
 from Erlang; and a NIF that blocks on a normal scheduler fails instead of
 stalling it.
 
-On the stopgap a group is a record in `liberx`'s Fiasco backend and gives
+On Fiasco a group is a record in `liberx`'s Fiasco backend and gives
 readiness only; quotas, urgency resolution, charging, shared areas and the
 finishing share are unsupported, per the backend's table
 ([design-fiasco.md](design-fiasco.md#the-call-table)), and threads run on
@@ -2059,7 +2059,7 @@ reading that lane and tell the system domain, which takes the connection down
 | Runtimes | ERTS's adapter and the test runtime against the contract: wakeups under storms, capacity changes, yield requests | the runtimes' own tests and OTP's suites |
 | Runtimes | runs: four ERTS domains on eight CPUs with the same cpuset and a capacity of two each, normal and dirty CPU schedulers busy, runs placed by the policy | each domain's executors only on its own run; no CPU shared by two domains' executors in steady state |
 | Runtimes | attribution: a service serving three clients with known work per request, its per-client report against a cycle-counter ground truth | the report within the budget E-S5 sets; shown as runtime-reported in the inspector, with a seeded misreport changing nothing outside the service: its group's usage stays within its quota |
-| Parity | the stopgap and erXos's kernel run the same group-readiness tests (create, bind, trigger, take ready, park, wake); the decisions of C0 and C1 are tested on erXos's kernel alone | identical readiness results on both; quotas, urgency, charging, shares and the finishing share answer unsupported on the stopgap, each by a test, and Fiasco's placement of a woken thread at the head of its level is the one documented scheduling difference |
+| Parity | the stopgap and erXos's kernel run the same group-readiness tests (create, bind, trigger, take ready, park, wake); the decisions of C0 and C1 are tested on erXos's kernel alone | identical readiness results on both; quotas, urgency, charging, shares and the finishing share answer unsupported on Fiasco, each by a test, and Fiasco's placement of a woken thread at the head of its level is the one documented scheduling difference |
 
 Every test runs under HVF; TCG runs only the deterministic-mode transcript
 and a boot smoke test. A failure seen under one accelerator only is a bug
@@ -2397,7 +2397,7 @@ client's.**
 | cross-CPU wakes under HVF are slow | unknown | wake latency above budget, felt as messaging latency | E-S4; executors stay pinned and a busy runtime finds work without wakes |
 | quotas at 10 ms periods make a throttled domain's latency jumpy | medium | p99 latency for capped domains | E-S7 tunes periods and draw quanta; policy prefers capacity over tight caps |
 | refill once per period lets a burst that straddles a boundary use up to twice the quota in one period's span, and local slices strand quota on CPUs a group left | medium | short-term isolation between groups | E-S7 measures both and decides whether a CPU that goes idle returns its local quota to the pool; sporadic replenishment, as in seL4's scheduling contexts, is the fallback |
-| slices and quota enforcement exist only on erXos's kernel | high on the stopgap | the stopgap enforces no quotas and has no slices; on erXos's kernel charges are exact to the clock | the backend's table says what the stopgap carries ([design-fiasco.md](design-fiasco.md#the-call-table)); erXos's kernel uses one-shot timers |
+| slices and quota enforcement exist only on erXos's kernel | high on Fiasco | the stopgap enforces no quotas and has no slices; on erXos's kernel charges are exact to the clock | the backend's table says what the stopgap carries ([design-fiasco.md](design-fiasco.md#the-call-table)); erXos's kernel uses one-shot timers |
 | two runtimes in one space share a group | low | contention and taken wake-ups inside one space | the kernel keeps a group's executors in one space and its ready list to executors; a space that runs two runtimes gives each a group of its own |
 
 Open questions:

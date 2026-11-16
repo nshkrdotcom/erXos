@@ -3333,7 +3333,7 @@ when it is first sliced, and a file that is never used is never read.
 ### The bootable file
 
 The packer emits the boot image in one of two forms. The **first stage**
-is the code the loader enters: erXos's kernel, or on the stopgap
+is the code the loader enters: erXos's kernel, or on Fiasco
 `bootstrap`.
 
 * **The single file**, the default and the only form a slot or a board
@@ -3470,12 +3470,12 @@ under test ran.
 | --- | --- | --- |
 | the index hash | an image the packer wrote validates, on the host and at boot | one flipped byte in the entry table, one in the string table and one in the index run's padding are each refused with `index_hash` before any structural check; the same flipped entry with the hash recomputed is refused by the structural check it breaks, which shows the hash check is what refused first |
 | a file's hash | a slice of every file of a packed image succeeds, and the root task starts | one flipped byte in a file's data passes the validator, which reads no file data, and fails the first slice that includes the file with `ERX_ECORRUPT`, naming its index; a slice of its neighbour succeeds; a second slice of the damaged file fails without hashing again, which the check counter shows |
-| a file checked at boot | the root task and, on the stopgap, the kernel start | one flipped byte in the root task's executable stops the boot at step 11 naming `root_entry`; one in the Fiasco kernel stops `bootstrap` before `erx_elf_plan` runs |
+| a file checked at boot | the root task and, on Fiasco, the kernel start | one flipped byte in the root task's executable stops the boot at step 11 naming `root_entry`; one in the Fiasco kernel stops `bootstrap` before `erx_elf_plan` runs |
 | a file run's padding | every file run's padding is zero | a fixture with a nonzero padding byte and a hash recomputed over it is refused with `padding`, which the hash alone would accept |
 | concurrent checks | four threads on four CPUs slice the same unchecked file at once, each gets its slice, and the verdict is good | a checker seeded to store its verdict before it finishes hashing lets a concurrent slice of a damaged file succeed, which the test catches |
 | the version | an image of version 2 validates | an image of version 1's layout is refused with `version 1, expected 2`; a version-2 image with its version field set to 3 and its index hash recomputed is refused by the version check, not by the hash |
 | BLAKE3 | the kernel's portable build and the host tools' SIMD build both reproduce the official test vectors | one vector seeded with a wrong digest fails both builds |
-| the single file | the single file boots under QEMU with `-kernel` alone, under HVF, on the stopgap and on erXos's kernel, and the banner's index hash equals the packer's | the same single file booted with an `-initrd` as well stops with `two_boot_images`; a locator whose `archive_off` points into the first stage's zero-initialised data is refused; a file cut one page short is refused by the validator |
+| the single file | the single file boots under QEMU with `-kernel` alone, under HVF, on Fiasco and on erXos's kernel, and the banner's index hash equals the packer's | the same single file booted with an `-initrd` as well stops with `two_boot_images`; a locator whose `archive_off` points into the first stage's zero-initialised data is refused; a file cut one page short is refused by the validator |
 | the two-file form | the first stage as built boots with the archive as `-initrd`, under HVF, with the same banner hash as the single file | the first stage booted without `-initrd` stops with `no_boot_image` |
 | reproducibility | both forms are byte-identical across two clean builds, and the single file's archive equals the two-file archive | a packer seeded to write the time into the locator's zero field fails `make check-reproducible` |
 | segment alignment | every executable the build packs passes the ELF planner, and each mapped segment's bytes equal the ELF's | an ELF fixture whose load segment's file offset is not page-aligned, and one whose offset and address disagree modulo the page size, are each refused by the packer with a diagnostic; with the planner's check removed the fixture packs, and the comparison of mapped bytes with the ELF's fails |
@@ -3950,7 +3950,7 @@ what it protects:
   once its existence lock is invalid (`ipc_gate.cpp`); an insert into a
   dying thread's queues fails with `ERX_EDEAD` whether or not the thread
   is closed, since the thread's own death drains its senders and nothing
-  may queue after the drain, as on the stopgap
+  may queue after the drain, as on Fiasco
   ([design-fiasco.md](design-fiasco.md#ipc-gates-and-where-transfer-fits)); a space's creation
   of a child or a thread checks the same under the space's lock. An
   insert therefore either comes before the teardown's walk of that field,
@@ -7484,7 +7484,7 @@ uses.
    in parts as above, under the construction's lock. The object's own
    record comes from the budget's cache through `erx_kalloc` before
    publication, counted for the creator as the construction record is,
-   or, on the stopgap, where a thread's record is its block, is made in
+   or, on Fiasco, where a thread's record is its block, is made in
    the pages the backing produced with the same two references
    ([design-fiasco.md](design-fiasco.md#budgets-and-the-ownership-of-pages)).
    A budget destroyed meanwhile closes the construction and drains its
@@ -8088,7 +8088,7 @@ in the ABI file:
 | `ERX_ETIMEDOUT` | the deadline passed |
 | `ERX_EFAULT` | a umtx word's address that no valid user-readable translation of the caller's space maps, or whose translation maps a page the kernel's direct map does not cover, found before the call changed anything, so touching the word and repeating the call is safe ([Umtx](#umtx)) |
 | `ERX_EEXIST` | the range is in use; a copy's target that is not empty when the copy starts, or gains a mapping or a capability where the copy would place its own |
-| `ERX_ENOTSUP` | an unknown call; an image built for another ABI version; a copy of a space that maps a JIT object; `ERX_END_TRIAL` while the boot value is `unknown` ([Console, log and panic](#console-log-and-panic)); on the stopgap, a call it leaves out, such as `erx_space_pause` ([The current implementation](#the-current-implementation-the-modified-fiasco)) |
+| `ERX_ENOTSUP` | an unknown call; an image built for another ABI version; a copy of a space that maps a JIT object; `ERX_END_TRIAL` while the boot value is `unknown` ([Console, log and panic](#console-log-and-panic)); on Fiasco, a call it leaves out, such as `erx_space_pause` ([The current implementation](#the-current-implementation-the-modified-fiasco)) |
 | `ERX_EWOULDBLOCK` | an executor made a call that would wait ([design-scheduler.md](design-scheduler.md#executor-class-enforcement)) |
 | `ERX_ENOCALLER` | a reply with no caller to receive it |
 | `ERX_EDEAD` | the peer of a call, or the thread a sender was queued at, died or its space stopped; the caller was dropped by a server that took another call, or its server died; a stopped space takes no thread and no child; a copy whose source or target stopped or was destroyed; the IOMMU behind a window has failed |
@@ -8580,19 +8580,19 @@ not scheduled holds it indefinitely. It can do so directly only for an
 object it holds a capability to, which the budget's owner or its carver
 gave it; a space reaches further, as below.
 What one such object keeps is its record's cache page, two pages for a
-thread on the stopgap, whose record is its block, one more for a space,
+thread on Fiasco, whose record is its block, one more for a space,
 its root table, kept until its last reference has gone, and, since a dead
 budget's tombstone waits for the last record charged to it, one cache
 page for the tombstone of each dead budget between the object's budget
 and its nearest live ancestor, fewer than `ERX_BUDGET_DEPTH_MAX`; so
 what a party can withhold is at most `ERX_BUDGET_DEPTH_MAX` cache pages,
-one more for a space and one more for a thread on the stopgap, for each
+one more for a space and one more for a thread on Fiasco, for each
 object it was given. A space's record also keeps the record of each
 released space above it, at most `ERX_SPACE_DEPTH_MAX` of them, each with
 the same cache pages at its own budget, which may be a budget the holder
 was never given: one space held counted withholds at most
 `ERX_SPACE_DEPTH_MAX` times `ERX_BUDGET_DEPTH_MAX` cache pages, from
-whoever paid for those spaces, and on the stopgap one root directory for
+whoever paid for those spaces, and on Fiasco one root directory for
 each of those spaces as well. A destroy under way holds the same chain:
 a space that destroys its own child C, below a parent P on another party's
 budget, and leaves that call unscheduled once its walk has unlinked C keeps the
@@ -9743,7 +9743,7 @@ Fiasco's scheduling:
 | hashing each file with portable code at its first slice lengthens the boot and each domain's first start | medium | boot time, in proportion to the bytes the boot uses | each file is hashed once per boot and only when used; the boot benchmark reports the hashing time per platform, and the boot image stays small, with the system release in EROFS images from M6 |
 | a loader places the device tree or another payload inside a large single file, because it ignores the declared image size | low | the boot stops with the locator's overlap check | the file's own extent covers the archive whatever the header says; the boot probe confirms each board's placement before anything depends on it ([design-platforms.md](design-platforms.md#boot)) |
 | the stopgap's modifications grow large (memory objects, sealed paged objects, groups, the stop core in Fiasco's C++) | medium | the stopgap takes longer than expected | the backend carries only the part of the interface that Phase 1's system uses, and every mechanism beyond it lands on erXos's kernel alone ([The current implementation](#the-current-implementation-the-modified-fiasco)); the plan's pilot calibrates the effort |
-| the stopgap carries GPL code: `kobject_rpc.h` and `jdb_object.cpp` in the kernel, and possibly a link dependency of `bootstrap` or `sigma0` | certain for the two files | nothing built on the stopgap is distributed outside the project until R1's release build replaces `kobject_rpc.h` with an erXos-authored header and turns the debugger off ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | recorded at import; erXos's kernel takes code only from files whose effective license is permissive, judged by Fiasco's `LICENSE.spdx`, each file's own notice and its upstream history, and needs nothing those two files do: its dispatch is generated, and it has no kernel debugger ([design.md](design.md#dependencies)) |
+| the stopgap carries GPL code: `kobject_rpc.h` and `jdb_object.cpp` in the kernel, and possibly a link dependency of `bootstrap` or `sigma0` | certain for the two files | nothing built on Fiasco is distributed outside the project until R1's release build replaces `kobject_rpc.h` with an erXos-authored header and turns the debugger off ([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)) | recorded at import; erXos's kernel takes code only from files whose effective license is permissive, judged by Fiasco's `LICENSE.spdx`, each file's own notice and its upstream history, and needs nothing those two files do: its dispatch is generated, and it has no kernel debugger ([design.md](design.md#dependencies)) |
 | 8 KiB kernel stacks do not hold the proven worst case with an interrupt on top | low | larger stacks, about 4 KiB more per thread | the stack proof fails the build first; Fiasco runs in 8 KiB with its thread record in the same block |
 | deleting an object that has many capabilities or mappings takes many bounded parts | low | a long call for the deleter | closing makes the object unreachable in the first part, so no other call waits for the rest, and the drain waits only for the one operation that holds the existence lock; each part is bounded and preemptible |
 | a space's existence lock serialises its range calls and maps, as Fiasco's serialises a task's maps | medium | a runtime's threads that change their space's ranges at once wait for each other | faults do not take it, and every part is bounded; if `tools/erx bench` shows contention, a shared mode for operations, with the destroy's close and drain alone exclusive, is a change behind `erx_object_lock_existence` |

@@ -687,7 +687,7 @@ only each field's name, offset and width.
 
 Each row carries the reason the stopgap honours it: the kernel enables
 the feature at EL0 and saves its state on a switch. The table itself is
-the list of claimed features. On the stopgap the reasons are that Fiasco
+the list of claimed features. On Fiasco the reasons are that Fiasco
 saves `q0` to `q31`, `FPCR` and `FPSR` on every switch and the general
 registers and `PSTATE`'s flags on every entry, and that `SCTLR_EL1.UCI`
 lets EL0 clean to the point of persistence. No `hwcap2` feature has a
@@ -750,7 +750,7 @@ cache holds the line. A `DSB` completes the maintenance of the CPU that
 executes it only, so the `DSB SY` of every exit from EL0
 ([Asynchronous errors](#asynchronous-errors)) is what completes a
 thread's outstanding maintenance before the thread can resume on another
-CPU; on the stopgap, which has no such barrier, no thread is moved while
+CPU; on Fiasco, which has no such barrier, no thread is moved while
 it makes a device call
 ([design-device-dma.md](design-device-dma.md#concurrency)).
 

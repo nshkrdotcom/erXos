@@ -1625,7 +1625,7 @@ pid's liveness, not by the pid's exit signal, which may still be in its
 queue when the caller's start arrives, so the rule holds for every caller
 by construction and no caller retries.
 
-**On the stopgap.** The plan, its checks and its undo are the same code.
+**On Fiasco.** The plan, its checks and its undo are the same code.
 Each step's kernel call is a request to the stopgap's root service, the
 one owner of every Fiasco object, served on its one thread
 ([design-fiasco.md](design-fiasco.md#the-root-service)), each a row of
@@ -1637,7 +1637,7 @@ faults reach the root service as Fiasco's fault messages, which become
 fault records at the library's gate; step 4's sides and bells are memory
 objects and IRQ objects of the root, the bells bound by the library to
 each party's group; and step 6's installs are `erx_cap_pass` from the
-library's table into the space it created. A handle on the stopgap
+library's table into the space it created. A handle on Fiasco
 carries no rights, so the rights step 6 names are the library's own
 discipline, recorded nowhere: the domain gets no delete right on its
 connection's objects because only an object's creator may destroy it,
@@ -1646,7 +1646,7 @@ asks for that. That a domain which bypasses `liberx` is held to step 6's
 rights and that its charges stay within its walls are erXos's kernel's
 ([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)); what the
 stopgap means for connections and for the domains' invariants, D7 and D17
-included, is in [design-domains.md](design-domains.md#on-the-stopgap).
+included, is in [design-domains.md](design-domains.md#on-fiasco).
 
 Domain ids come from a counter in the domain service that only grows and
 starts at 4, since stock `erlang:setnode/2` raises a creation below 4 to
@@ -2238,7 +2238,7 @@ ask for an end, because `erx_machine_end` itself is the system domain's
 alone. On erXos's kernel the call's generated decoder requires `POWER` on
 `res` through the one capability lookup, and only the root resource
 carries `POWER`, so any other caller gets `ERX_ERIGHTS` (K31;
-[design-kernel.md](design-kernel.md#kernel-calls)). On the stopgap, the
+[design-kernel.md](design-kernel.md#kernel-calls)). On Fiasco, the
 Fiasco backend's service does the same with the tool it has: it answers
 `ERX_FIASCO_CALL_MACHINE_END` only for the root task and refuses a call
 from any other task with `ERX_ENOTSUP`, as it refuses `erx_log_take` and
@@ -3231,7 +3231,7 @@ and through a mapping it makes for those writes, during its boot and at
 a panic or the machine's end, and the driver owns it otherwise
 ([design-kernel.md](design-kernel.md#console-log-and-panic)).
 
-**On the stopgap.** The device service, the manifest's placement, the
+**On Fiasco.** The device service, the manifest's placement, the
 drivers and their supervisors are the same code. In a give, the domain
 library creates the unit's register windows, its lines' IRQ objects and,
 at the first give, each device's contiguous memory, all in the root, from the catalogue

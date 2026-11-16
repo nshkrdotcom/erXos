@@ -9,7 +9,7 @@ written at build time cannot hold a value only the firmware knows. This
 document says how the system domain's `liberx`, the root task, receives
 the tree the firmware handed over, how one bounded reader reads it, and
 how the values it reads reach the device records the root writes
-([design-fiasco.md](design-fiasco.md#device-records)), on the stopgap
+([design-fiasco.md](design-fiasco.md#device-records)), on Fiasco
 Fiasco and on erXos's kernel alike.
 
 Decisions every reader needs:
@@ -169,7 +169,7 @@ reach, not one it handles:
 
 ## How the tree reaches the root
 
-### On the stopgap
+### On Fiasco
 
 `erx_image_load` makes the copy after the load plan is made and before
 anything it places moves, then writes the handoff page (`erx_image.cc`,
@@ -243,7 +243,7 @@ host, where its tests and fuzz target run. It reaches the tree only
 through `libfdt` from `fiasco/libfdt/lib/contrib`, compiled with
 `-DFDT_ASSUME_MASK=0`, so no copy's default decides which checks run.
 erXos's kernel links the same file, and its `erx_dma_ranges` is the
-reader's DMA walk. On the stopgap the root task links it in user mode and
+reader's DMA walk. On Fiasco the root task links it in user mode and
 the kernel's core archive leaves it out (`CoreArchive::ROOT_TASK_SOURCES`),
 since Fiasco reads no tree of erXos's and links its own `libfdt`. Besides
 `fdt.c`, `fdt_ro.c`, `fdt_check.c` and `fdt_addresses.c`, the reader links

@@ -327,7 +327,7 @@ call ([design-runtime.md](design-runtime.md#liberx)).
 | **D17.** A domain's end reaches each peer behind everything the domain published on their lane | the kernel posts a space's exit record only when no thread of it can run, so the dead domain's write position is final; a runtime told that a connection is down first drains that lane to the position it reads then, waiting on nothing the dead domain would have to do, and only then fires its links and monitors with the peer's processes | a runtime that acts on a connection down before draining; a stop reported while a thread can still run | a test that kills a domain mid-burst on every CPU and checks that each peer sees the burst, then the death |
 | **D18.** No process acts on a message from another domain that the owner of its protocol did not admit | the peer delivers every message from another domain, to a pid or to an alias, as `{erx_origin, D, Msg}`, `D` the domain of the lane it arrived on, with no flag and no exception (edit 16 of [design-runtime.md](design-runtime.md#the-edits-outside-syserxos)), so such a message never has the shape of one from the receiver's own domain; only the owner of a protocol that crosses domains takes the envelope off, in its own receive and only for its own shapes: `erts_internal` for a spawn's argument list, which ERTS queues as the child's first message, `gen` for call replies, `io` for io replies, `erx_file_remote` for a file server's replies, the io servers for io requests, `gen_server` and `gen_statem` for calls and casts to a server started with `{erx_serve, any}`, and a command domain's run server for `erx_start` and `erx_job` from its session's domain, the second only at a run's alias; each unwrap of a request admits it only when the names its reply goes to are of `D`, and an unwrap of a reply takes it at the request's own alias whatever `D` ([The peer](#the-peer)); everything else reaches its process as an unknown message that carries its origin, and `sys` takes nothing apart | a delivery path that skips the wrap; an OTP module outside the list that matches the envelope, `sys` or `proc_lib` above all; a served unwrap without the check of `From` | the source check of [design.md](design.md#chokepoint-checks) on OTP's modules, with a seeded extra site; every `sys` call from another domain on a `gen_server`, a `gen_statem`, a `gen_event` and a plain `sys` loop times out, the process runs on and its state is unchanged, with the seeded failure of edit 16 delivering raw ([Verification and testing](#verification-and-testing)) |
 
-## On the stopgap
+## On Fiasco
 
 Until erXos's kernel is written, domains and their connections run on the
 Fiasco behind the same kernel interface
@@ -359,7 +359,7 @@ row of [the stopgap's call table](design-fiasco.md#the-call-table) each:
   every field of a domain's budgets, `used` included, reports `unsupported`
   ([Budgets and groups as records](design-fiasco.md#budgets-and-groups-as-records)).
 
-D1 to D7, D9, D13 and D17 hold on the stopgap for every domain whose
+D1 to D7, D9, D13 and D17 hold on Fiasco for every domain whose
 runtime goes through `liberx`. D1 to D6, D9 and D13 rest on user-mode code.
 D7 and D17 rest on the stop, which the root service carries out without
 the runtime: it deletes every thread of the space and of the spaces below
@@ -386,7 +386,7 @@ sender or name gets) count; their bounds on memory charged to a budget, on
 CPU grants and on an innocent peer's latency report `unsupported` and are
 checked on erXos's kernel. The check that no party can delete a
 connection's objects passes through the creator-only destroy, since a
-handle on the stopgap carries no rights; it proves the root service's
+handle on Fiasco carries no rights; it proves the root service's
 rule, not a kernel's. Lane and wake timings are provisional: a bell on the
 stopgap is an IRQ object behind the root service, which serves the whole
 machine on one thread, so no code above `liberx` may depend on a bell's
@@ -3118,7 +3118,7 @@ from a control slot, and the agent acts only on the system domain's.
   leaves init to its default script, so a domain boots only the script its
   request names, as a configured row and a session template boot the one
   their `release @artifact.<name>` names, which the manifest's packer binds
-  the same way. On the stopgap the request names the release's run of
+  the same way. On Fiasco the request names the release's run of
   entries by its indexes, `release` and `release_files`, and the script by
   `boot`, and it carries the runtime's own `args`; a request whose `args`
   name `-boot` is refused with `{error, {bad_spec, boot}}`, as the packer

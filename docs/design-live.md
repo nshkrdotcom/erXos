@@ -2022,7 +2022,7 @@ a runtime report trusted or let a decoder bypass the output escaper
   events, doorbell triggers and interrupts
   ([design-kernel.md](design-kernel.md#trace-ring)); `erx_tracer` drains
   it with `erx_trace_read`. A park or a wake has one source, the layer
-  that carries it out: the kernel's ring, or on the stopgap the backend's
+  that carries it out: the kernel's ring, or on Fiasco the backend's
   ([design-fiasco.md](design-fiasco.md#the-trace-ring)). The runtime
   adapter adds to ERTS's trace only what it alone sees: capacity changes,
   yield requests honoured, refusals, connection closes and unheld frames
@@ -2077,7 +2077,7 @@ scope `all`.
 the reporter its collector assigns ([Inspection
 records](#inspection-records)):
 
-| Row | Reporter | On erXos's kernel | On the stopgap |
+| Row | Reporter | On erXos's kernel | On Fiasco |
 | --- | --- | --- | --- |
 | `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since the stopgap offers no lanes |
 | `backend` | `{stopgap, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-fiasco.md](design-fiasco.md#the-trace-ring)) |
@@ -2085,7 +2085,7 @@ records](#inspection-records)):
 
 A row whose call answers `ERX_ENOTSUP` is shown as `unsupported` when
 its reporter is `kernel`, and left out when its reporter is a stopgap's,
-since a stand-in that does not run reports nothing. On the stopgap the
+since a stand-in that does not run reports nothing. On Fiasco the
 adapter emits none of its own events: what causes them, a grant that
 changes, a yield request or a lane, is a kernel mechanism the stopgap does
 not offer. The BIF `erx_trace_ring:read(Source, Cursor, Max)`, with
@@ -2349,7 +2349,7 @@ by a driver like the console's, beside `erx_hostlink`; the system
 manifest names the UART by its device-tree path; under QEMU it is a UNIX
 socket
 (`-serial unix:build/qemu/RUN/hostlink.sock,server=on,wait=off` after the
-console's `-serial`, in the run's owner-only directory). On the stopgap the
+console's `-serial`, in the run's owner-only directory). On Fiasco the
 root hands the host link's device record only under `erx.hostlink=1`
 ([design-fiasco.md](design-fiasco.md#the-command-line)), which the harness
 adds with the second `-serial`.

@@ -497,7 +497,7 @@ lies and in every input a domain may vary.
 
 * **Placement.** `liberx` places a space's private mappings, those
   without a fixed address, from a **placement start** that space creation
-  takes. On the stopgap it is where `liberx`'s lowest-free search begins
+  takes. On Fiasco it is where `liberx`'s lowest-free search begins
   (`find_free_range`, `liberx/backend/core/vm_table.c:504-525`); on erXos's
   kernel it is the space's placement base, below which the kernel places
   at the highest free range
@@ -820,8 +820,8 @@ the function a return address lies in, as a stack trace does, which reads
 the function table inside a module's code, and nothing rules that out
 during a swap. On erXos's kernel such a read is harmless, since the swap
 is one mapping call that replaces the image's pages with a copy of the
-same bytes and never leaves the range unmapped. On the stopgap it joins
-the residual of [Phase 1](#phase-1-on-the-stopgap). The purge's release
+same bytes and never leaves the range unmapped. On Fiasco it joins
+the residual of [Phase 1](#phase-1-on-fiasco). The purge's release
 of an image instance runs under code modification permission, after the
 purge has established that no process runs the instance, as stock OTP's
 `erts_free` of the same code does.
@@ -868,7 +868,7 @@ breakpoint BIFs, `{error, {load_failed, Text}}` from `load_nif/2`. On the
 stopgap only, a refusal after the image's pages are released and before
 the copy is in place, or a read of the module's code by a thread that
 blocking thread progress does not stop, ends the domain with a diagnostic
-([Phase 1](#phase-1-on-the-stopgap)). The purge of an image instance
+([Phase 1](#phase-1-on-fiasco)). The purge of an image instance
 reports as usual.
 
 ## Security
@@ -1000,12 +1000,12 @@ build host, the build run's duration. Adoption's cost, privatising's cost
 and the per-domain cells belong on the performance watch list until it
 runs.
 
-## Phase 1, on the stopgap
+## Phase 1, on Fiasco
 
 The stopgap backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root
 (`docs/design-fiasco.md:519`), so every domain that maps the image shares
-its frames, and the physical saving is real on the stopgap.
+its frames, and the physical saving is real on Fiasco.
 
 **One mapping per module is the stopgap's shape.** The stopgap cannot map
 over a mapping or cut one (`docs/design-fiasco.md:517`), so the domain
@@ -1021,7 +1021,7 @@ of the prepared copy over the module's page range, which replaces the
 image's pages there or fails and leaves them, since a range call is
 planned whole, its allocations made and its charge taken before anything
 changes ([design-kernel.md](design-kernel.md#overview), the row for range
-calls). On the stopgap the copy is a memory object of the domain's
+calls). On Fiasco the copy is a memory object of the domain's
 budget, created and filled through a scratch mapping before the swap, so
 it is funded before anything is released; the swap then releases the
 module's mapping, reserves its range again and maps the object there.
@@ -1035,7 +1035,7 @@ scheduler or an async thread, which faults ([Concurrency](#concurrency)).
 erXos's kernel has no step between.
 
 **Purging.** Releasing an image instance's page range is releasing the
-module's whole mapping on the stopgap, and a range release on erXos's
+module's whole mapping on Fiasco, and a range release on erXos's
 kernel.
 
 The stopgap's pool reports a domain's use as partial, with its reporter
@@ -1187,7 +1187,7 @@ its seeds stay local.
   the other keeps running. Seeded fault: the domain library maps the image
   with read and execute; the inspector then shows execute and the test
   fails. That a slice is never writable is the slice calls' own property
-  on both kernels (on the stopgap, a write right on a slice is
+  on both kernels (on Fiasco, a write right on a slice is
   `ERX_ERIGHTS`, `docs/design-fiasco.md:519`), tested with them, not
   here.
 * **Tracing is private and stock.** Domain A sets a local trace pattern on
@@ -1216,9 +1216,9 @@ its seeds stay local.
   modules prepared before the refusal are then set and the test fails.
 * **A failed swap.** A test hook refuses the swap's mapping. On erXos's
   kernel `trace_pattern` raises `system_limit` and the module stays
-  read-only and runs; on the stopgap the domain ends with the diagnostic
+  read-only and runs; on Fiasco the domain ends with the diagnostic
   naming the module, and B runs on. Seeded fault: the runtime returning
-  `system_limit` and resuming on the stopgap; the next call into the
+  `system_limit` and resuming on Fiasco; the next call into the
   module then faults without the diagnostic and the test fails.
 * **Hot loading is private.** A probe module of `DOMAIN_BASE`'s test build
   returns 1; A loads a version returning 2, B still gets 1. Seeded fault:

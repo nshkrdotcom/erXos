@@ -406,7 +406,7 @@ mapping of its own, during boot and at a panic or an end, and uses no
 interrupt ([design-platforms.md](design-platforms.md#uarts)), so neither
 a shared page nor a shared line reaches it.
 
-On the stopgap the root hands the kernel log to the console when the
+On Fiasco the root hands the kernel log to the console when the
 console service first takes it, not when a page is first mapped
 ([design-fiasco.md](design-fiasco.md#the-console)), so a sibling's
 mapping of the console's page hands nothing over.

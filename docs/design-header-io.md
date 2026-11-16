@@ -1030,7 +1030,7 @@ named, never passed by default.
 | GPIO output, with the GPIO package | `out 1` and `out 0` on GPIO 21 read back on `value`, if the model reflects outputs on GPLEV | GPCLR written for 1 |
 
 **The board checklist**, run by hand on the 4 GB board, as 1b-I's other
-checks are ([plan.md](plan.md#1b-i-the-raspberry-pi-4-on-the-stopgap)):
+checks are ([plan.md](plan.md#1b-i-the-raspberry-pi-4-on-fiasco)):
 
 1. **Probe at boot**: the header probe card
    ([research-rpi4-header-probe.md](research-rpi4-header-probe.md)), a

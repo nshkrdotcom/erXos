@@ -3145,7 +3145,7 @@ around them.
 * **The entropy entry.** `erx_bytes:entropy(N)` is not per-byte work,
   but it lives beside the primitives as Erlang's entry to the kernel's
   generator ([design.md](design.md#decisions)). It is a synchronous
-  kernel call, on the stopgap a request to the root's generator service,
+  kernel call, on Fiasco a request to the root's generator service,
   so the never-blocking rule above does not cover it. For an
   integer `N` from 1 to 256 (`entropy_bytes_max` of the ABI file) it
   returns exactly `N` bytes from one `erx_entropy_take`; any other `N`
@@ -3156,7 +3156,7 @@ around them.
   never returns fewer bytes, zeros, or bytes from `rand`, the clock or
   any other source. On erXos's kernel the read fails only on a length
   that `badarg` already refuses, since the generator is seeded before any
-  domain runs; on the stopgap it also fails when the backend cannot
+  domain runs; on Fiasco it also fails when the backend cannot
   reach its generator service
   ([design-fiasco.md](design-fiasco.md#the-call-table)). How good the
   seed is belongs to the machine, not to a call: `entropy_quality` in the
@@ -4099,7 +4099,7 @@ crash dump ([design-live.md](design-live.md#inspection)). The adapter
 emits trace events for capacity changes, yield requests honoured,
 refusals, connection closes and unheld frames. Parks and wakes are
 recorded by the layer that carries them out: the kernel trace ring, which
-also shows the executors' dispatches, or on the stopgap the backend's
+also shows the executors' dispatches, or on Fiasco the backend's
 ring, where the adapter emits none of its own. One viewer lines them up
 by time ([design-live.md](design-live.md#tracing)).
 Hosted mode adds `lldb` and the sanitizers.

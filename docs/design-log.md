@@ -246,7 +246,7 @@ construction: they are readable where an inspect facet of scope `all`
 answers `/proc/kernel/log`, which in a release build is the system shell
 at a secure line ([design-live.md](design-live.md#inspection), Scopes).
 
-On the stopgap a development build's `data` grant to `root`'s sessions
+On Fiasco a development build's `data` grant to `root`'s sessions
 covers the whole of `/data`, read-write
 ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)),
 so those sessions can also read `kernel/messages`, which their scope
@@ -489,7 +489,7 @@ take are on the serial line and in `/proc/kernel/log`, not in
 **The handoff.** The first take is also the handoff of the UART: until
 it, the early console writes every record on the UART, moving the taken
 position as it does, and from it every record waits in the ring for the
-next take. On the stopgap the root service writes the early console and
+next take. On Fiasco the root service writes the early console and
 sets the sink to the ring at the first take
 ([design-fiasco.md](design-fiasco.md#the-console)); erXos's kernel
 offers the same `erx_log_take`
@@ -673,7 +673,7 @@ is lost, as for any consumer.
 
 ## Phase 1
 
-Phase 1 runs on the stopgap, with other domains from M5
+Phase 1 runs on Fiasco, with other domains from M5
 ([plan.md](plan.md)). Everything here is Erlang in the system domain and
 unchanged by erXos's kernel. The kernel ring is the stopgap's, polled
 since it offers no signal; its rate is per space and its ring shared, so
