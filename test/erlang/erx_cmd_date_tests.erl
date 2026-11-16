@@ -240,7 +240,7 @@ set_test_() ->
                    ?assertEqual({<<"1">>, <<>>}, {Status, Out}),
                    ?assertEqual(<<"date: clock_settime: ", (erx_cmd:format_error(Errno))/binary, "\n">>, Err),
                    {set, _} = asked()
-               end || {Reason, Errno} <- [{badarg, einval}, {unavailable, eagain}, {unsupported, enotsup},
+               end || {Reason, Errno} <- [{badarg, einval}, {eperm, eperm}, {unavailable, eagain}, {unsupported, enotsup},
                                           {limit, eoverflow}, {busy, ebusy}, {failed, eio}]]
       end,
       %% A facet that has already ended was sent nothing.

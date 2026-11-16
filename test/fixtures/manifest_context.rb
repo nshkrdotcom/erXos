@@ -137,11 +137,13 @@ module ManifestContextFixture
   # Root's session template's facets, of data, net, inspect, start and machine, which a
   # sessionless source (ProductionImage.without_sessions) does not hold.
   SESSION_FACETS = [/^facet data_session\n(?:  .*\n)*/, /^facet net\n(?:  .*\n)*/, /^facet inspect\n(?:  .*\n)*/,
-                    /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/].freeze
-  # The services the system domain serves: inspect, start and machine, to session templates
+                    /^facet start\n(?:  .*\n)*/, /^facet machine\n(?:  .*\n)*/,
+                    /^facet root_clock\n(?:  .*\n)*/].freeze
+  # The services the system domain serves: inspect, start, machine and clock, to session templates
   # alone, and log, which no facet row grants.
   SYSTEM_SERVICES = [/^service inspect\n(?:  .*\n)*/, /^service start\n(?:  .*\n)*/,
-                     /^service machine\n(?:  .*\n)*/, /^service log\n(?:  .*\n)*/].freeze
+                     /^service machine\n(?:  .*\n)*/, /^service log\n(?:  .*\n)*/,
+                     /^service clock\n(?:  .*\n)*/].freeze
   DOMAIN_HOLDER = /^  holder @domain\.(?:storage|network)$/
 
   # The development manifest as the domain tests start from it: without its session

@@ -4211,12 +4211,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   in a configured domain and an `erx_fs` grant check none, so such a row would grant
   every operation. The server's release is not checked to supply the service's
   interface.
-* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): no callback in the
-  tree exports `operation/1` yet, so a row naming operations of a system-served service
-  compiles and boots, and only its mint refuses it (`unchecked_operations`, logged, no
-  facet). A callback's `operation/1` and `admit/3` read one request separately; derive the
-  first from the callback's decoder when the clock facet lands, until the generated
-  admission path replaces both.
+* [Medium] time, the clock facet (`erlang/apps/erx/src/erx_clock_facet.erl`): it has no fuzz target, though
+  [design-time.md](docs/design-time.md#verification-and-testing) names `erx_clock_facet_fuzz` with the seed "accepting a
+  Stratum of 0"; and it is bound to erx_clock's pid at its mint and ends with it, while the design has it forward to
+  the erx_clock registered at each request (as `erx_log_facet` does behind `erx_syslog_sup`), so one crash of the
+  service leaves every root session's `date` answering `eagain` until the session restarts. The setter's chokepoint
+  (`tools/lib/erx/chokepoint_rules/clock.rb`) is a text check of five spellings, not the call-graph check the design
+  names; a variable function name gets past it [Low]. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close
+  to the host time the PL031 seeds, where the design sets 2030 [Low].
+* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
+  exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
+  its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
+  service's operations.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl` (`served/2`): a
   configured domain's facet of a service the system domain serves ends with the process
   behind it, and when that service restarts and names a new process (`erx_facet:serve/2`)
@@ -6738,21 +6744,17 @@ to the corpus and follow rc
   PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
   certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
   Today the page starts zeroed and the wall clock reads 1970-01-01.
-* [High] time, setting the clock by hand (`erlang/apps/erx_shell/src/erx_cmd_date.erl`,
-  [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): the 0.1 preview's kiosk needs a right wall
-  clock for TLS, and root sets it with `date`. `date` reads, formats and parses its set forms, and `-j` works, but
-  every set answers `eperm`, since no session holds a `clock` grant: design-time.md's decision 5 gives root's
-  template a `clock` row granting `set`, and the chain behind it is unbuilt (the facet rows' `operations` from the
-  manifest compiler through the boot's reader to the facet, `abi/services/clock.txt` with `sample` and `set`,
-  the manifest's clock service and the `root_clock` row with `operations set`, `erx_clock_facet`, the clock
-  service `erx_clock` with its set clause and `step_source`, and the check over the system release's call graph that
-  allows `erx_clock_nif:set_offset/1` only in `erx_clock`, with its seeded violation; the setter,
-  `erx_time_set_offset`, and the NIF are built). In the system domain's own shell a
-  set answers `eperm` too, and `eagain` once the system domain serves `clock` (`erx_cmd_date:request/2`, `local`).
-  `date`'s `%N` pass runs inside the strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as
-  `%E%N` and `%5%N` differ from FreeBSD [Medium]; make it a format-to-format step first. Build the
-  chain and the QEMU "Set by hand" case, and add a FreeBSD oracle case for `date -j -u` over the operand and
-  format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
+* [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
+  [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
+  through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
+  the service's record is kept but not reported, so `/proc/time/status` shows every attribute but `state` as
+  `unsupported` (`erx_time_records`); a set's log line names the domain, not the grant's principal as the
+  design says; in the system domain's own shell a set answers `eagain`, since that shell holds the service
+  itself (`erx_cmd_date:request/2`, `local`); a session of a template without the row is checked for `eperm` on
+  the host only, as the development manifest has no other session template. `date`'s `%N` pass runs inside the
+  strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as `%E%N` and `%5%N` differ
+  from FreeBSD; make it a format-to-format step first. Add a FreeBSD oracle case for `date -j -u` over the
+  operand and format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
   it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,

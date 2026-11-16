@@ -2408,23 +2408,27 @@ type. Repetition is legal only for a declared set, within its bound.
 Numeric operation, key and kind values are derived. For example:
 
 ```text
-facet storage_read
-  grantee @domain.client
-  service @service.storage
-  operations read,stat
-  parameter root "/public"
-  max_request 4096
-  in_flight 2
+facet root_clock
+  name "clock"
+  grantee @session.system
+  service @service.clock
+  operations set
+  max_request 256
+  in_flight 1
   reductions 100000
-  period_ns 10000000
-  max_heap_size 65536
-  queue 16384
+  period_ns 1000000000
+  max_heap_size 8192
 ```
 
-This block requires that service's `read`, `stat` and single
-namespace-path parameter `root`; its grant checker still decides scope.
-An unknown operation, `parameter root 3`, or a second `root` line fails
-normalization. This adds no service callback or execution schema.
+This block requires that the `clock` service, a message service,
+declares the operation `set`, and its facet admits that operation
+alone. An unknown operation or a repeated one fails normalization. A
+tree service's row names no operations, since its protocol's messages
+are its operations, and configures its grant by parameters instead: on
+a `windows` row, `parameter windows 16` resolves against
+`abi/services/windows.txt`, and `parameter windows 0` or a second
+`windows` line fails normalization; its grant checker still decides
+scope. This adds no service callback or execution schema.
 
 `args VALUE...` and `env VALUE...` contain zero or more quoted or hex
 byte values without embedded NUL. Normalization appends a NUL per

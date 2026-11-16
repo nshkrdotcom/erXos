@@ -131,7 +131,8 @@ class FacetParametersTest < Minitest::Test
     return configured_server(view) if forge == :configured_server
 
     table = view.header.fetch('facet_operations')
-    assert_equal 2, table.fetch('count')
+    # inspect's two rows, then root_clock's set, which the forges leave alone.
+    assert_equal 3, table.fetch('count')
     offset = table.fetch('offset')
     rows = Array.new(2) { |index| operations_manifest.byteslice(offset + (index * 4), 4).b }
     forge.call(rows)

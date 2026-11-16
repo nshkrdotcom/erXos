@@ -1,0 +1,14 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The clock interface (docs/design-time.md, "The clock facet"): the wall clock's one
+# authority, served by the system domain's clock service, erx_clock. sample is ntpd's
+# {sample, W, Distance, Stratum, Server}; set is the operator's {set, W}, W in
+# 0..time_offset_max. Each facet row grants one of the two by its operations list, and
+# erx_clock_facet refuses an operation its row does not grant before it forwards anything.
+# clock_distance_max_ns is RFC 5905's MAXDIST, the bound below which a sample's root
+# distance must lie.
+service clock 13
+  served_as message
+  operation sample 1
+  operation set 2
+limit clock_distance_max_ns u64 1000000000

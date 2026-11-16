@@ -415,8 +415,11 @@ Each facet row grants one of the two operations, by its `operations`
 list ([design-abi.md](design-abi.md), the facet record's operations
 span): ntpd's row `sample` alone and root's `set` alone, so ntpd cannot
 set and root's sessions send no samples, and the facet refuses an
-operation its row does not grant before `decode/1` runs
-([Who may set it](#who-may-set-it)). A row's `operations` reach the
+operation its row does not grant with `{error, eperm}` before it forwards
+anything ([Who may set it](#who-may-set-it)). `erx_clock_facet:operation/1`
+names the operation of what `decode/1` admits and nothing else, so the
+operation check and the decode cannot read one request two ways, and a
+request `decode/1` refuses is `{error, badarg}` whatever its row grants. A row's `operations` reach the
 facet by the manifest's own path: the manifest compiler resolves each
 name against `abi/services/clock.txt` into the facet record's operations
 span, the boot's reader of the manifest checks each number against the

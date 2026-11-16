@@ -12,6 +12,7 @@ include services/inspect.txt
 include services/windows.txt
 include services/line.txt
 include services/log.txt
+include services/clock.txt
 include manifest.txt
 include formats/elf64.txt
 include formats/virtio.txt

@@ -10,11 +10,13 @@ service, erx_clock, calls.
 """.
 
 -export([read/0, set_offset/1]).
--export_type([page/0]).
+-export_type([page/0, status/0]).
 -nifs([read_nif/0, set_offset_nif/1]).
 -on_load(on_load/0).
 
 -type page() :: #{offset := integer(), cold := boolean(), monotonic := non_neg_integer()}.
+%% A refusal of the setter, erx_time_set_offset's status.
+-type status() :: badarg | limit | unsupported.
 
 on_load() ->
     erlang:load_nif(atom_to_list(?MODULE), #{}).
@@ -38,7 +40,7 @@ an offset outside 0..ERX_TIME_OFFSET_MAX, `limit` when the page's
 sequence has run out, `unsupported` where the backend cannot set wall
 time.
 """.
--spec set_offset(non_neg_integer()) -> ok | {error, badarg | limit | unsupported}.
+-spec set_offset(non_neg_integer()) -> ok | {error, status()}.
 set_offset(OffsetNs) ->
     set_offset_nif(OffsetNs).
 

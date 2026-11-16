@@ -322,7 +322,17 @@ init(safe) ->
                 type => worker,
                 modules => [erx_inspect_srv]},
 
-    {ok, {SupFlags, Boot ++ DiskLog ++ Pg ++ [Ns, Tmp, Proc, Agent, Inspect]}}.
+    %% erXos: the clock service, the wall clock's one authority, which names itself
+    %% with erx_facet:serve/2 before the domain service mints the clock facets
+    %% (design-time.md, The clock facet); none but in the system domain.
+    Clock = #{id => erx_clock,
+              start => {erx_clock, start_link, []},
+              restart => permanent,
+              shutdown => 2000,
+              type => worker,
+              modules => [erx_clock]},
+
+    {ok, {SupFlags, Boot ++ DiskLog ++ Pg ++ [Ns, Tmp, Proc, Agent, Inspect, Clock]}}.
 
 start_distribution(Part) ->
     Rpc = #{id => rex,

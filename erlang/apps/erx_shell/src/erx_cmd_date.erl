@@ -390,6 +390,7 @@ request(local, _Request) ->
     {error, unavailable}.
 
 errno(badarg) -> einval;
+errno(eperm) -> eperm;
 errno(unavailable) -> eagain;
 errno(unsupported) -> enotsup;
 errno(limit) -> eoverflow;

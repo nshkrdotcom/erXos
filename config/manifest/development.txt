@@ -382,4 +382,24 @@ facet machine
   reductions 100000
   period_ns 1000000000
   max_heap_size 65536
+# clock: the wall clock's one authority (docs/design-time.md, "The clock facet"), served
+# by the system domain, where erx_clock registers as its server (erx_facet:serve/2).
+# root_clock grants each session made from root's template the set operation alone, so
+# root sets the clock with date ("Setting the clock by hand") and sends
+# no samples, the sample operation being ntpd's. A request is one small tuple within
+# 256 bytes, and a set waits for one step, so one is in flight; max_heap_size, in words
+# (64 KiB), bounds the facet's process, which holds only that request.
+service clock
+  server system
+  interface clock
+facet root_clock
+  name "clock"
+  grantee @session.system
+  service @service.clock
+  operations set
+  max_request 256
+  in_flight 1
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 8192
 shell_principal @principal.system
