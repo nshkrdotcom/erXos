@@ -27,6 +27,7 @@
   {vsn, "1"},
   {modules, [erx,
              erx_9p,
+             erx_abi_enums,
              erx_abi_errno,
              erx_abi_events,
              erx_abi_packed,

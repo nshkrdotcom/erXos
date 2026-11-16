@@ -99,6 +99,7 @@ module Erx
 
       def outputs(schema)
         result = { 'erlang/apps/erx/include/generated/erx_abi.hrl' => header(schema),
+                   'erlang/apps/erx/src/generated/erx_abi_enums.erl' => enums(schema),
                    'erlang/apps/erx/src/generated/erx_abi_events.erl' => events(schema),
                    'erlang/apps/erx/src/generated/erx_abi_errno.erl' => errnos(schema),
                    'erlang/apps/erx/src/generated/erx_abi_signals.erl' => signals(schema),
@@ -149,7 +150,7 @@ module Erx
             lines << "-define(#{prefix}_SIZE, #{type.size})."
             lines << "-define(#{prefix}_BYTES, #{literal(type.fixed)})." if type.fixed
           elsif type.is_a?(EnumType) && !type.flags
-            lines << enum_members(schema, type)
+            lines << enum_members(schema, type) << enum_guard(type)
           end
         end
         (lines + ['', '-endif.', '']).join("\n")
@@ -169,6 +170,74 @@ module Erx
 
         "-define(#{Names.macro(name)}, [\n    #{members.join(",\n    ")}\n])."
       end
+
+      # ?ERX_IS_<ENUM>(Term): a guard test true exactly when Term is one of
+      # the enum's member names, so a clause head admits the members without
+      # spelling them. A guard has no side effects, so Term repeats freely.
+      def enum_guard(type)
+        macro = Names.macro("is_#{type.name}")
+        tests = member_names(type).map { |member| "(Term) =:= #{literal(atom(member))}" }
+        compact = "-define(#{macro}(Term), (#{tests.join(' orelse ')}))."
+        return compact if compact.bytesize <= 100
+
+        "-define(#{macro}(Term),\n        (#{tests.join("\n         orelse ")}))."
+      end
+
+      # One attribute of one enum, as erx_abi_enums names its predicate.
+      Predicate = Data.define(:type, :attribute) do
+        def function = "#{type.name}_#{attribute}"
+        def holders = type.attributes.fetch(attribute)
+      end
+
+      # erx_abi_enums: each enum of the ABI file as the type of its member
+      # names, and each attribute an enum declares as a predicate
+      # ENUM_ATTRIBUTE/1, true for the members that carry it and false for
+      # the others, with no clause for a name that is no member. An enum
+      # named as an Erlang built-in type would fail erlc; none is.
+      def enums(schema)
+        types = schema.type_order.map { |name| schema.types.fetch(name) }
+                      .select { |type| type.is_a?(EnumType) && !type.flags }
+        predicates = types.flat_map { |type| type.attributes.keys.map { |attribute| Predicate.new(type:, attribute:) } }
+        duplicate, = predicates.map(&:function).tally.find { |_function, count| count > 1 }
+        raise SchemaError, "enum attribute predicate #{duplicate} is named twice" if duplicate
+
+        [NOTICE, '-module(erx_abi_enums).',
+         '-moduledoc "The ABI file\'s enums as types of their member names, and their attributes as predicates.".',
+         form_list('export', predicates.map { |predicate| "#{literal(atom(predicate.function))}/1" }),
+         form_list('export_type', types.map { |type| "#{literal(atom(type.name))}/0" }), '',
+         *types.map { |type| enum_type(type) },
+         *predicates.flat_map { |predicate| ['', attribute_predicate(predicate)] }, ''].join("\n")
+      end
+
+      # -NAME([ITEM, ...]). on one line, or one item to a line.
+      def form_list(name, items)
+        compact = "-#{name}([#{items.join(', ')}])."
+        return compact if compact.bytesize <= 100
+
+        "-#{name}([\n    #{items.join(",\n    ")}\n])."
+      end
+
+      # An enum's type, its member names on one line or one to a line.
+      def enum_type(type)
+        head = "-type #{literal(atom(type.name))}() ::"
+        names = member_names(type).map { |member| literal(atom(member)) }
+        compact = "#{head} #{names.join(' | ')}."
+        return compact if compact.bytesize <= 100
+
+        "#{head}\n      #{names.join("\n    | ")}."
+      end
+
+      # One clause per member, so a name that is no member fails to match.
+      def attribute_predicate(predicate)
+        head = literal(atom(predicate.function))
+        clauses = member_names(predicate.type).map do |member|
+          "#{head}(#{literal(atom(member))}) -> #{predicate.holders.include?(member)}"
+        end
+        ["-spec #{head}(#{literal(atom(predicate.type.name))}()) -> boolean().", clauses.join(";\n") + '.'].join("\n")
+      end
+
+      # An enum's member names in value order, the order its other outputs use.
+      def member_names(type) = type.members.sort_by { |_member, value| value }.map(&:first)
 
       # erx_abi_events:describe(Enum, Value): for each enum with args
       # lines, its member numbered Value as {Name, [{ArgName, Type}]}, or
