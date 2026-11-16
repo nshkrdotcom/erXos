@@ -715,7 +715,7 @@ fixed before any device arrives:
 | transfers in flight | 1 on a control pipe, 4 on an interrupt pipe, 2 on a bulk pipe | the queue blocks' buffers |
 | commands | one in flight per controller; a device's teardown at most one Stop Endpoint per endpoint and one Disable Slot | the controller process |
 | hub notifications | one status transfer posted per hub, and the next posted only when the bus core has handled every port the last one named; per port at most one operation in flight | [Hubs](#hubs) |
-| enumeration | one port at a time between its reset and its device's address; one attempt per connection; an attempt starts when the port has settled, at most 3 on a port in any 60 s; past them a settled port is held in `settling` until its oldest attempt is 60 s old; a hub attached again starts its ports' attempts afresh, which its own port's attempts bound | `usb_port_attempts_max`, `usb_port_attempt_window_ms` |
+| enumeration | one port at a time between its reset and its device's address; one attempt per connection; an attempt starts when the port has settled, at most `usb_port_attempts_max` on a port in any `usb_port_attempt_window_ms`; past them a settled port is held in `settling` until its oldest attempt leaves that window; a hub attached again starts its ports' attempts afresh, which its own port's attempts bound | `usb_port_attempts_max`, `usb_port_attempt_window_ms` |
 | diagnostics | a port's failure is logged once per connection and an over-current change once per enumeration attempt, so at most one line more than the port's attempts; repeats count in the inspection record | the bus core |
 | processes | one per claimed function, one per ready medium's transport, partition and windows | the claim table and the places |
 | input numbers, drives | 8 input numbers; the drives the manifest names, at most 4 | `usb_input_max`, `usb_drives_max` |
@@ -1296,16 +1296,17 @@ and to `empty` otherwise, as FreeBSD's `uhub_reattach_port` frees the
 old child before it reads the fresh status (`usb_hub.c:625-637`). So a
 disconnect and a reconnect before the status is read never keep the
 first device's reference, places or media; the table's last column lists
-only the other ways out:
+only the other ways out, and its times and counts are limits of
+`abi/formats/usb.txt`:
 
 | Port state | Meaning | Leaves on, besides a connection change |
 | --- | --- | --- |
 | `off` | not powered | the bus core's power-on request, one port of the hub at a time: `empty`; no port of the hub has its status read until the hub's power-good time has passed since the last port's answer |
 | `empty` | powered, nothing connected | |
-| `settling` | connected; waiting FreeBSD's power-up delay, 300 ms, and, when 3 attempts started on the port in the last 60 s, until the oldest of them is 60 s old | the deadline: `waiting`, an attempt started, or, past the attempts, `settling` with the later deadline |
+| `settling` | connected; waiting FreeBSD's power-up delay, `usb_power_up_delay_ms`, and, when `usb_port_attempts_max` attempts started on the port in the last `usb_port_attempt_window_ms`, until the oldest of them leaves that window | the deadline: `waiting`, an attempt started, or, past the attempts, `settling` with the later deadline |
 | `waiting` | settled; waiting for the address-zero turn, in arrival order | the turn: `resetting` |
-| `resetting` | port reset issued, holding the turn; deadline 1 s | reset done with the port enabled: `recovering`; reset done with the port disabled: `disabled`; the deadline or a speed the controller cannot run: `disabling` |
-| `recovering` | FreeBSD's 20 ms reset recovery, holding the turn | the deadline: `enumerating` |
+| `resetting` | port reset issued, holding the turn; deadline `usb_reset_deadline_ms` | reset done with the port enabled: `recovering`; reset done with the port disabled: `disabled`; the deadline or a speed the controller cannot run: `disabling` |
+| `recovering` | FreeBSD's reset recovery, `usb_reset_recovery_ms`, holding the turn | the deadline: `enumerating` |
 | `enumerating` | the device is addressed, read and configured; the turn is released when the address is assigned or the attempt fails | configured: `running`; any failure: `disabling` |
 | `disabling` | given up while its device may still be enabled: the occupant detached, the port being disabled at its hub; holding the turn if it, or a port below the hub on it, held it when given up | the hub's answer: `disabled` |
 | `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled`; a hub whose control pipe fails: `disabling` |
@@ -1317,7 +1318,7 @@ as much as any other, as FreeBSD resets every port in host mode
 reset bit whatever the port's protocol (`xhci_roothub_exec`,
 `xhci.c:3681-3684`), so the bus core has no case for a port's speed. A
 root port's reset is done when its port event shows the reset change
-(xHCI 4.3.1, p. 87); a hub port's when GET_STATUS, read every 50 ms,
+(xHCI 4.3.1, p. 87); a hub port's when GET_STATUS, read every `usb_reset_poll_ms`,
 shows the reset change or the reset bit clear, after which the change is
 cleared, as `usbd_req_reset_port` does (`usb_request.c:805-863`).
 
@@ -1355,7 +1356,7 @@ no count of what is in flight. The steps:
    ([The TRB ring form](#the-trb-ring-form)). The command's completion
    answers the address the controller assigned, which the NIF reads from
    the slot's output context, as FreeBSD reads it (`xhci.c:1530`); the
-   turn is released; FreeBSD's 10 ms settle follows. A failed Address
+   turn is released; FreeBSD's settle, `usb_set_address_settle_ms`, follows. A failed Address
    Device is answered only once the controller has cleaned up after it,
    the translator's buffer included ([The controller
    process](#the-controller-process), "A failed address"), and the turn

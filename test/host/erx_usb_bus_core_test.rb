@@ -25,8 +25,8 @@ class ErxUsbBusCoreTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'a connection change with the port still connected not detaching the occupant',
-             anchor: 'true -> {settling, Now + ?POWER_UP_DELAY_MS};',
-             replacement: 'true when Port =/= empty -> Port; true -> {settling, Now + ?POWER_UP_DELAY_MS};',
+             anchor: 'true -> {settling, Now + ?ERX_USB_POWER_UP_DELAY_MS};',
+             replacement: 'true when Port =/= empty -> Port; true -> {settling, Now + ?ERX_USB_POWER_UP_DELAY_MS};',
              catching: [3, 0]),
     Seed.new(fault: "the address-zero turn released at the reset's end instead of the address",
              anchor: "holds_turn({recovering, _At, _Speed}) -> true;\n" \
