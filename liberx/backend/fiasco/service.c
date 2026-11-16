@@ -34,6 +34,7 @@
 #include "liberx/backend/fiasco/budget.h"
 #include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/entropy.h"
+#include "liberx/backend/fiasco/exception.h"
 #include "liberx/backend/fiasco/fault_gate.h"
 #include "liberx/backend/fiasco/group.h"
 #include "liberx/backend/fiasco/log.h"
@@ -902,8 +903,8 @@ service_page_fault(const l4_msg_regs_t *mr, uint32_t task)
 static void
 service_exception(const l4_exc_regs_t *regs, uint32_t task)
 {
-	const erx_crash_fault_t fault = { .kind = ERX_FAULT_UNDEFINED, .cause = (uint32_t)regs->err,
-	    .addr = regs->pfa, .pc = regs->pc, .thread = SERVICE_THREAD_UNKNOWN, .space = task };
+	const erx_crash_fault_t fault = { .kind = erx_fiasco_exception_kind(regs->err),
+	    .cause = (uint32_t)regs->err, .addr = regs->pfa, .pc = regs->pc, .thread = SERVICE_THREAD_UNKNOWN, .space = task };
 
 	service_fault(task, &fault);
 }

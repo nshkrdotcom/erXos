@@ -66,14 +66,6 @@ module Erx
     LOGIN_KEY_SOURCES = %w[tools/lib/erx/dev_key.rb tools/lib/erx/production_image.rb].freeze
     ROOT_ENTRY_PATH = 'system/root'
     NOTICES_PATH = 'system/NOTICES'
-    # No more RAM than root_memory, of which Fiasco and the archive take their part first,
-    # so the root's page pool falls short and the root must refuse the boot. The development machine's
-    # root, 64 MiB into RAM, ends inside it, and QEMU's device tree, at half of RAM below
-    # 256 MiB, lies below the root there, so the root, not bootstrap, refuses. Between the
-    # root's room and the kernel memory Fiasco keeps at the top of RAM there is still a run
-    # for the largest contiguous pool, which the root takes before it counts root_memory,
-    # so the refusal is root_memory's (test/host/production_image_test.rb holds this).
-    TOO_LITTLE_MEMORY_MIB = 112
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
     LICENSE = 'LICENSE'
@@ -232,6 +224,27 @@ module Erx
 
       # The part of the RAM Fiasco keeps as its kernel memory.
       def fiasco_reserve_mib = Platform.fiasco_reserve(memory_mib << 20) >> 20
+
+      # The lowest place, in MiB into RAM, where QEMU virt puts the device tree: half of
+      # RAM, at most 128 MiB into it; a single file ending higher moves the tree behind
+      # it (docs/design-platforms.md, "Boot handoff").
+      def tree_floor_mib = [memory_mib / 2, 128].min
+
+      # The machine of the refusal boot: this one with no more RAM than the image's
+      # root_memory, of which Fiasco and the archive take their part first, so the root's
+      # page pool falls short and the root refuses the boot. Its tree must lie past the
+      # root's room, as the development machine's does, so the tree never lands on the
+      # root whatever the file's length, and bootstrap does not refuse with place_overlap
+      # before the root runs. Room for a moved archive behind the tree is not checked
+      # here: the boot shows its absence as archive_no_room. A root_memory too small for
+      # the tree's place is refused here.
+      def refusal(root_memory:)
+        machine = with(memory_mib: root_memory >> 20)
+        return machine if machine.tree_floor_mib >= root_mib + ROOT_ROOM_MIB
+
+        raise Error, "a refusal machine of root_memory's #{machine.memory_mib} MiB puts QEMU's device tree " \
+                     "on the root's place, #{root_mib} MiB into RAM"
+      end
 
       # The root's place, with room for the root's image (about 5 MiB) before RAM ends.
       def root_address
@@ -1291,10 +1304,10 @@ module Erx
          { name: 'past-the-deadlines', pattern: /\A(?:% )?past_the_deadlines\r*\n\z/n, seconds: seconds + 60 }.freeze].freeze
       end
 
-      # A machine with no more RAM than root_memory: the same image boots to the root, which
+      # The refusal machine (Machine#refusal): the same image boots to the root, which
       # says so and ends the machine before anything would start.
-      def self.refusal_checkpoints
-        [*Qemu.boot_transcript(memory_mib: TOO_LITTLE_MEMORY_MIB),
+      def self.refusal_checkpoints(machine:)
+        [*Qemu.boot_transcript(memory_mib: machine.memory_mib),
          { name: 'root-refusal', pattern: /\Aerx: root task refused the boot: manifest: root_memory is more than/n, seconds: 30 }.freeze].freeze
       end
 
@@ -1402,7 +1415,8 @@ module Erx
           idle_boot(accel, count, built)
           kernel_records_boot(accel, count, built)
           # This boot's transcript is its whole result: it raises if the refusal is missing.
-          boot(accel, count, built, memory_mib: TOO_LITTLE_MEMORY_MIB, points: Run.refusal_checkpoints, machine_end: true)
+          refusal = @machine.refusal(root_memory: built.report.fetch('archive_room').fetch('root_memory'))
+          boot(accel, count, built, memory_mib: refusal.memory_mib, points: Run.refusal_checkpoints(machine: refusal), machine_end: true)
           ["#{accel}-#{count}cpu", { serial: full.fetch('serial_log'), seconds: full.fetch('elapsed_seconds') }.freeze]
         end
       end

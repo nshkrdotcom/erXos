@@ -2405,22 +2405,17 @@ module Erx
         { 'kind' => row.fetch('kind'), 'flags' => row.fetch('flags'), 'head' => head }
       end
 
-      # The roles a configured domain may hold. Every other role, both slots' boot and
-      # system partitions and the two records, is the slot writer's, and in Phase 1 the
-      # system domain writes the slots (PW1), so a role the ABI adds is the system
-      # domain's until it is listed here.
-      CONFIGURED_ROLES = %w[vault data fat system verified_image].freeze
-
       # Property 8's windows (docs/design-abi.md, "Devices and partition windows"; PW1 of
-      # docs/design-storage.md): the slot writer's roles are the system domain's alone, and
-      # the one system window is read-only and held by its block device's holder, the
-      # storage domain whose block driver serves it, since the driver hands a window only to
-      # its own domain (docs/design-stopgap.md, "The booted slot").
+      # docs/design-storage.md): a role abi/manifest.txt does not mark configured is the
+      # slot writer's, the system domain's alone in Phase 1, and the one system window is
+      # read-only and held by its block device's holder, the storage domain whose block
+      # driver serves it, since the driver hands a window only to its own domain
+      # (docs/design-stopgap.md, "The booted slot").
       def normalize_windows(tables)
         devices = tables.fetch('devices')
         rows = records('window').map do |record|
           role = window_role(record)
-          slot_writer = CONFIGURED_ROLES.none? { |name| role == @codec.member('mf_window_role', name) }
+          slot_writer = !@codec.attribute?('mf_window_role', role, 'configured')
           invalid('only the system domain, the slot writer, holds the slot windows', 8, 'window.holder') if
             slot_writer && !(one(record, 'holder').value == 'system' && !one(record, 'holder').quoted)
           { 'holder' => holder_index(one(record, 'holder'), property: 8, field: 'window.holder'),
@@ -2447,8 +2442,8 @@ module Erx
         rights = flags(record, 'rights', 'mf_window_rights')
         read = @codec.member('mf_window_rights', 'read')
         invalid('a window grants at least read', 8, 'window.rights') if (rights & read).zero?
-        invalid('a verified-image window is read-only', 8, 'window.rights') if role == image_role && rights != read
-        invalid('a system window is read-only', 8, 'window.rights') if role == system_role && rights != read
+        writable = @codec.attribute?('mf_window_role', role, 'writable')
+        invalid('a window of a role not marked writable grants read alone', 8, 'window.rights') if !writable && rights != read
         rights
       end
 

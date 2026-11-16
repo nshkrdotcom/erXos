@@ -47,7 +47,7 @@
 
 %% A name of abi/manifest.txt's mf_window_role (role/1), the record partition's record,
 %% or {image, Name}, a window on one of the booted slot's EROFS images (erx_blk_image).
--type role() :: record | atom() | {image, binary()}.
+-type role() :: record | erx_abi_enums:mf_window_role() | {image, binary()}.
 %% A slot as the boot value's words name it.
 -type slot() :: a | b.
 %% A window: its role, its first sector on the medium and its length in sectors.
@@ -146,10 +146,13 @@ system_window(Slot) ->
 system_partition(a) -> {?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS};
 system_partition(b) -> {?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}.
 
-%% Whether a window of Role takes no write: the system window and an image window.
+%% Whether a window of Role takes no write: a role abi/manifest.txt does not mark
+%% writable. An image window is a verified_image window, and the record window, which
+%% holds the boot_selection and reset_count records, is read-only if either of them is.
 -spec read_only(role()) -> boolean().
-read_only({image, _Name}) -> true;
-read_only(Role) -> Role =:= role(?ERX_MF_WINDOW_ROLE_SYSTEM).
+read_only({image, _Name}) -> read_only(verified_image);
+read_only(record) -> read_only(boot_selection) orelse read_only(reset_count);
+read_only(Role) -> not erx_abi_enums:mf_window_role_writable(Role).
 
 %% The medium's first sector of a request for Count sectors from Sector of Window: einval
 %% for a request that names no sectors, erange for one that leaves the window.

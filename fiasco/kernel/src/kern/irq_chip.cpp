@@ -1,3 +1,5 @@
+// Modified by erXos: an interrupt whose pin is unbound is ended at its chip
+// instead of dereferenced (TODO.md, "a device's input and a fault's reach").
 INTERFACE:
 
 #include <cxx/bitfield>
@@ -409,6 +411,18 @@ Irq_chip::handle_irq(Mword pin, Upstream_irq const *ui)
   // call the irq function of the chip avoiding the
   // virtual function call overhead.
   Irq_base *irq = nonull_static_cast<CHIP *>(this)->CHIP::irq(pin);
+
+  // The pin can be unbound by the time its interrupt arrives here:
+  // Irq_chip_gen::detach() masks and clears a pin without waiting for a CPU
+  // that already acknowledged its interrupt. End that interrupt at this chip
+  // and its upstream ones, so this CPU's priority drops.
+  if (!irq) [[unlikely]]
+    {
+      nonull_static_cast<CHIP *>(this)->CHIP::ack(pin);
+      Upstream_irq::ack(ui);
+      return;
+    }
+
   irq->log();
   irq->hit(ui);
 }
