@@ -120,7 +120,7 @@ handle_call(facts, _From, #hci{core = Core, ready = Ready} = State) ->
 handle_cast(_Message, State) ->
     {noreply, State}.
 
-%% A crash report shows sizes, never the controller's or a peer's bytes: the last read and
+%% A crash report shows sizes, never a packet's or a peer's bytes: the last read and
 %% the incomplete packet are untrusted, and from pairing on they may carry keys. The core
 %% shows as its facts, since its plan holds the patch's records, the vendor's firmware.
 format_status(#{state := #hci{core = Core, rest = Rest} = State} = Status) ->

@@ -1,0 +1,27 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The line interface (docs/design-bluetooth.md, "The controller's line"): an erx_fs grant
+# of one line tree, a UART of the system domain's that erx_line serves and a client
+# mounts at /line. Its operations are the file protocol's own, which no facet row names,
+# so it declares none. A facet row's parameters configure the line: uart, the UART's
+# device; rate, its bits per second, 115200 on every board the design names; and flow,
+# none or rts_cts. line_grant is the line's grant checker: it gives each line's UART to
+# the system domain, refuses two grants that name one UART and a grant that names the
+# console's or the host link's, and holds flow to its two words.
+service line 10
+  parameter uart 1 device one target devices checked_by line_grant
+  parameter rate 2 u64 one range 115200 115200 checked_by line_grant
+  parameter flow 3 identifier one bytes 7 checked_by line_grant
+# The line tree's wire (docs/design-bluetooth.md, "The controller's line"), which
+# erx_line serves and erx_bt writes and reads. line_tree is the tree's name in an
+# attach; line_file names its files in the order its directory lists them, each value
+# the file's number in its qid. The receive buffer holds at most line_rx_max bytes,
+# about five seconds at 115200 baud, and one read of data asks for it whole; a write to
+# ctl is at most line_ctl_max bytes, and line_ctl_reset is ctl's one word.
+bytes line_tree 4 value 6c696e65
+enum line_file u8
+  value data 1
+  value ctl 2
+limit line_rx_max u32 65536
+limit line_ctl_max u32 16
+bytes line_ctl_reset 5 value 7265736574

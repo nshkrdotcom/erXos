@@ -22,6 +22,8 @@ group's shutdown ends it while it waits on the line.
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
 
+-include("generated/erx_abi.hrl").
+
 -doc "Starts the writer, registered as `erx_bt_line_tx`; `Open` is `file:open/2` or a test's model.".
 -spec start_link(erx_bt_host_sup:open()) -> gen_server:start_ret().
 start_link(Open) ->
@@ -45,7 +47,7 @@ open(Open, File) ->
 handle_info({write, From, Bytes}, #{data := Data} = Files) ->
     carry_out(From, written, file:write(Data, Bytes), Files);
 handle_info({line_reset, From}, #{ctl := Ctl} = Files) ->
-    carry_out(From, line_ready, file:write(Ctl, <<"reset">>), Files);
+    carry_out(From, line_ready, file:write(Ctl, ?ERX_LINE_CTL_RESET_BYTES), Files);
 handle_info(_Message, Files) ->
     {noreply, Files}.
 

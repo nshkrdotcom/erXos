@@ -7421,9 +7421,24 @@ document's "residual risks accepted" paragraph.
 ## Planned features
 
 * [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
-  `abi/services/line.txt`, `erx_ns:place(line)` and the line service, `erx_line`, are not written, so the
-  controller group runs only over a model line in host tests; `erx_bt_line_rx` reads 65536 octets, the
-  design's `line_rx_max`, from a module constant until `line.txt` defines the limit.
+  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
+  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
+  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
+  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
+  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
+  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
+  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
+  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
+  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
+  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
+  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
+  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
+  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
+* [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
+  docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
+  one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
+  restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. Making the group
+  `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
 * [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
   no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
   needs the table's declarations brought forward from stage 2.
