@@ -145,6 +145,9 @@ module Erx
     #   which mounts the app's package at /app and starts what it declares. Its .app
     #   file names erx_session, since the design starts a native app's program through
     #   the session's servers.
+    # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
+    #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
+    #   names it.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
@@ -156,7 +159,8 @@ module Erx
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
-                                  'erx_net_client', 'erx_app'].freeze }.freeze
+                                  'erx_net_client', 'erx_app'].freeze,
+                        'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release

@@ -6826,6 +6826,24 @@ to the corpus and follow rc
 * [Low] tests, `test/host/erx_starter_test.rb`: the suite takes about 4.5 minutes, most of it seeded fault 0 (the keeper not linking), under which nearly every case waits out EUnit's 5 s timeout. Fail the fault's cases fast instead of by timeout.
 * [Low] tests, `liberx/system/dom_apply.c` (`apply_given_words`): no host test checks the record words written for a framebuffer handed to a domain other than the system domain; placement and the apply steps are tested, and the raspi4b suite only sees the display domain start without a screen.
 * [Medium] SSH stage 2, the login facet ([design-ssh.md](docs/design-ssh.md)): the cookie table is keyed by the connection process, but a service behind `erx_facet` sees the facet's forward (a fresh alias, `erx_facet.erl`'s request handling), not the grantee's pid. The stage-2 design must say how the facet learns the connection: carried in the request, or keyed by the facet's forward and its `'DOWN'`.
+* [Medium] USB, the bus core and the controller core (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#ports-hubs-and-devices-the-bus-core)):
+  a detach while Address Device is in flight releases the address-zero turn, which follows from the port's state,
+  before the controller answers the command, so the next port's reset can start while the detached device's
+  address is still being set. The design's transaction-translator argument wants the turn held until that answer,
+  or the controller to order the next Enable Slot after the failed address's cleanup; the controller core's design
+  decides which.
+* [Medium] USB, the bus core's hub depth (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
+  `usb_hub_depth_max` is not applied, so a hub more than 5 tiers below the root has its ports powered and its
+  children enumerated with a route of 6 tiers, which the slot context's route string cannot hold. A hub past the
+  limit is to be configured with its ports never powered, with a case that builds the chain.
+* [Medium] USB, the bus core's attempts (`erx_usb_bus_core`, [design-usb.md](docs/design-usb.md#what-a-device-can-make-the-domain-spend)):
+  the design's bound of 3 enumeration attempts on a port in 60 s is not kept; every connection change starts a
+  new attempt, so a device that toggles its connection costs an Enable Slot each time. State stays bounded.
+* [Low] USB, the bus core's exploration (`test/erlang/erx_usb_bus_core_tests.erl`): the simulated bus never ends a
+  reset with the port disabled, never presents a low-speed device or a root port speed the controller cannot run,
+  so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
+  translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
+  turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
 
 ## Security residuals
 
@@ -7682,6 +7700,11 @@ document's "residual risks accepted" paragraph.
   full-speed devices with control, bulk and interrupt transfers. It serves QEMU `raspi4b` alone, since a real
   Pi 4's DWC2 is the USB-C power connector's, so it comes after Track U's parts
   ([plan.md](docs/plan.md#track-u-usb)); its design keeps the three rules the USB design records.
+  ([plan.md](docs/plan.md#track-u-usb-proposed)); its design keeps the three rules the USB design records.
+* [Low] USB, SuperSpeed hubs ([design-usb.md](docs/design-usb.md#outside-this-design)): the bus core gives up a
+  hub configured at SuperSpeed (`superspeed_hub`), and no device behind it runs at SuperSpeed. Driving one is a
+  design of its own, with the VL805's bulk-out burst quirk for mass storage behind such a hub that the design lists
+  beside it.
 * [Low] apps, [design-packaging.md](docs/design-packaging.md#the-apps-row): a setting for the apps group's
   CPU share of `users`. The apps group takes what the principals' shares leave, each app an equal part, with
   no field of the `apps` row to set it; a builder who wants apps held to a smaller share has no lever.

@@ -570,7 +570,8 @@ whose creation gives it, and nothing else holds it
 ([design-system.md](design-system.md#devices)). The USB domain holds the
 controller's unit and nothing else in a release build's manifest, and
 runs the USB core, the controller's driver and the class drivers, and no
-file system:
+file system. Its release script, `usb`, holds the base every domain boots and
+`erx_usb`, the application that holds the stack:
 
 | Platform | Controller | Given as | Interrupt | DMA | The USB domain is |
 | --- | --- | --- | --- | --- | --- |
@@ -664,21 +665,34 @@ since erXos has no counterpart of FreeBSD's `ugen`. A need for one is a
 declared protocol with a design of its own
 ([design.md](design.md#decisions)).
 
-Which interfaces it drives is one pure function of the device and
-configuration descriptors, `erx_usb_claim:functions/2`, a closed table:
+Which interfaces it drives is one pure function of the device's speed
+and its device and configuration descriptors,
+`erx_usb_claim:functions/3`, a closed table, which names an interface
+by its alternate setting 0:
 
 | Interface | Function | Alternate setting | Needs |
 | --- | --- | --- | --- |
+| interface 0 (`bInterfaceNumber` 0) of a device of device class 09h, hub, whatever the interface's own class | `erx_usb_hub` at full or high speed; none at low and SuperSpeed | 1 on a multi-TT hub (device protocol 2), as FreeBSD's `uhub_attach` selects it (`usb_hub.c:1252-1258`); 0 otherwise | the first interrupt-IN endpoint |
 | class 03h, HID, any subclass and protocol | `erx_usb_hid` | 0 | the first interrupt-IN endpoint |
 | class 08h, mass storage, subclass 06h, protocol 50h | `erx_usb_bot` | 0 | the first bulk-IN and the first bulk-OUT endpoint |
-| device class 09h, hub, or interface class 09h, at full or high speed | `erx_usb_hub` | 1 on a multi-TT hub (device protocol 2), as FreeBSD's `uhub_attach` selects it (`usb_hub.c:1252-1258`); 0 otherwise | the first interrupt-IN endpoint |
-| anything else, SuperSpeed hubs included | none | | |
+| anything else, an interface of class 09h on a device of another class included | none | | |
+
+A hub is a device, not an interface: FreeBSD's `uhub_probe` matches a
+device of class 09h alone (`usb_hub.c:1134-1136`), and `uhub_attach`
+selects the setting of interface index 0 (`usb_hub.c:1252-1253`), so a
+hub runs one hub function, on interface 0, and its other interfaces are
+claimed by the rows below the first. FreeBSD's index 0 is the first
+interface in the configuration's order; the claim, which reads the
+settings by number, takes `bInterfaceNumber` 0, the same interface on a
+hub that numbers its interfaces from 0, and runs no hub function on one
+that has no interface 0.
 
 The device's first configuration is set, as FreeBSD sets configuration
 index 0 unless a quirk names another (`usb_device.c:1969-2019`). Each
 interface the table names is one function; a composite device's
-interfaces are claimed one by one. A device none of whose interfaces the
-table names is configured anyway, so its descriptors and state show in
+interfaces are claimed one by one. An interface whose selected setting
+lacks an endpoint its function needs runs no function. A device none of
+whose interfaces the table names is configured anyway, so its descriptors and state show in
 its inspection record, and runs no function. CBI (protocols 00h and
 01h), UAS (62h), the RBC, UFI and SFF-8070i command sets, isochronous
 interfaces and every other class are outside this design.
@@ -696,7 +710,7 @@ fixed before any device arrives:
 | configuration descriptor | 4 KiB: one control buffer; a longer `wTotalLength` refuses the device | `usb_config_max` |
 | HID report descriptor | 4 KiB, one control buffer; a longer one refuses the function | `hid_report_descriptor_max` |
 | string descriptor | 255 bytes, `bLength`'s own bound, three strings a device | the descriptor format |
-| endpoints a device may use | its claimed functions' endpoints, at most 8 with EP0 | `usb_endpoints_max` |
+| endpoints a device may use | its claimed functions' endpoints, at most 8 with EP0; a device whose functions claim more is refused (`too many endpoints`) | `usb_endpoints_max` |
 | xHCI queue blocks | 16 control, 16 interrupt and 4 bulk blocks per controller | the TRB ring form's record |
 | transfers in flight | 1 on a control pipe, 4 on an interrupt pipe, 2 on a bulk pipe | the queue blocks' buffers |
 | commands | one in flight per controller; a device's teardown at most one Stop Endpoint per endpoint and one Disable Slot | the controller process |
@@ -1265,13 +1279,15 @@ the function, and a medium's windows end with its block service.
 
 ### Ports, hubs and devices: the bus core
 
-`erx_usb_bus_core:step(Event, State) -> {Actions, State}` holds the
-whole topology. Its state is a map of hubs, the root hub among them, each
+`erx_usb_bus_core:step(Event, Now, State) -> {Actions, State}` holds the
+whole topology; `Now` is the time the event is handled at, from which
+the step sets its deadlines. Its state is a map of hubs, the root hub among them, each
 with its ports and its pending change set, and of devices, each with its
 place in the tree (the route of port numbers from the root), its speed,
 its reference, its enumeration state, its configuration and its
-functions, and the **address-zero turn**: the one port, or none, that is
-between the start of its reset and its device's address.
+functions; the **address-zero turn**, the one port, or none, between the
+start of its reset and its device's address, follows from the ports'
+states.
 
 Each port is in one of these states. A **connection change** reported
 for a port in any state first detaches the port's occupant, if it has
@@ -1284,14 +1300,15 @@ only the other ways out:
 
 | Port state | Meaning | Leaves on, besides a connection change |
 | --- | --- | --- |
-| `off` | not powered | power on: `empty`, with its status read once the hub's power-good time has passed |
+| `off` | not powered | the bus core's power-on request, one port of the hub at a time: `empty`; no port of the hub has its status read until the hub's power-good time has passed since the last port's answer |
 | `empty` | powered, nothing connected | |
 | `settling` | connected; waiting FreeBSD's power-up delay, 300 ms | the deadline: `waiting` |
 | `waiting` | settled; waiting for the address-zero turn, in arrival order | the turn: `resetting` |
-| `resetting` | port reset issued, holding the turn; deadline 1 s | reset done with the port enabled: `recovering`; the deadline or a reset done with the port disabled: `disabled` |
+| `resetting` | port reset issued, holding the turn; deadline 1 s | reset done with the port enabled: `recovering`; reset done with the port disabled: `disabled`; the deadline or a speed the controller cannot run: `disabling` |
 | `recovering` | FreeBSD's 20 ms reset recovery, holding the turn | the deadline: `enumerating` |
-| `enumerating` | the device is addressed, read and configured; the turn is released when the address is assigned or the attempt fails | configured: `running`; any failure: `disabled` |
-| `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled` |
+| `enumerating` | the device is addressed, read and configured; the turn is released when the address is assigned or the attempt fails | configured: `running`; any failure: `disabling` |
+| `disabling` | given up while its device may still be enabled: the occupant detached, the port being disabled at its hub; holding the turn if it, or a port below the hub on it, held it when given up | the hub's answer: `disabled` |
+| `running` | the device's functions run | the port reported disabled by its hub: detach, `disabled`; a hub whose control pipe fails or that is configured at SuperSpeed: `disabling` |
 | `disabled` | given up; the port's last failure and its step are kept | none: only a connection change, and not before the port's attempts allow ([What a device can make the domain spend](#what-a-device-can-make-the-domain-spend)) |
 
 Every port is reset before its device is addressed, a USB 3 root port
@@ -1308,7 +1325,11 @@ The **address-zero turn** keeps one device at a time in the default
 state, where every device answers address zero: a port takes the turn
 when it starts its reset and gives it back when the controller has
 assigned its device's address or the attempt has failed, and the next
-`waiting` port takes it. On xHCI the controller sends SET_ADDRESS itself
+`waiting` port takes it. The turn is no field of its own: the port that
+holds it is the one in `resetting`, `recovering`, `enumerating` before
+its Address Device is answered, or `disabling` after holding it, and a `waiting` port is granted it only
+when no port is in those states, so a port that leaves them by any path,
+its hub's detach included, has given the turn back. On xHCI the controller sends SET_ADDRESS itself
 during Address Device (xHCI 4.3.4, p. 89); the turn still serializes
 the resets, since two devices reset behind one hub would both answer
 address zero.
@@ -1341,13 +1362,15 @@ event:
    SuperSpeed device's value is the exponent of its size). Then all 18
    bytes.
 3. **Strings.** The language table, then the manufacturer, product and
-   serial strings in US English (0409h) when the table offers it and in
-   its first language otherwise; a failure leaves the string unknown and
+   serial strings in the table's first language whose primary language
+   is English, its low byte 09h under the mask 00ffh, and in its first
+   language when none is, as FreeBSD chooses (`usb_device.c:1717-1728`;
+   `abi/formats/usb.txt`); a failure leaves the string unknown and
    does not fail the device.
 4. **Configuration descriptor.** Its 9-byte header, then `wTotalLength`
    bytes, refused past `usb_config_max`, decoded and checked whole
    ([Descriptors](#descriptors)).
-5. **Claim.** `erx_usb_claim:functions/2`.
+5. **Claim.** `erx_usb_claim:functions/3`.
 6. **Configure.** SET_CONFIGURATION with the first configuration's value.
 7. **Hub setup**, for a hub only: SET_INTERFACE to alternate setting 1 on
    a multi-TT hub; then the hub descriptor, first at the length that
@@ -1362,11 +1385,16 @@ event:
    (xHCI 4.3.5, p. 90: the request and the command together configure
    the device).
 9. **Start.** One function process per claimed interface, each with its
-   pipes. A hub's function first powers every port, waits the hub's
-   power-good time, `bPwrOn2PwrGood` times 2 ms plus 20 ms, then reads
-   every port's status, so the bus core starts the next tier only once
-   this hub and its transaction translator are set up, as xHCI asks
-   (4.3, p. 87). A port whose status agrees with the state the bus core
+   pipes. A hub enters the bus core with every port `off`, and the bus
+   core powers it as it powers the root hub: one port-power request at a
+   time on the hub's control pipe, then the hub's power-good time,
+   `bPwrOn2PwrGood` times 2 ms plus 20 ms (`usb_hub.c:1280-1281`), from
+   the last port's answer, then every port's status. FreeBSD waits the
+   time after each port (`usb_hub.c:1470-1513`); once after the last is
+   enough, since every port's own time started earlier. So the bus core
+   starts the next tier only once this hub and its transaction translator
+   are set up, as xHCI asks (4.3, p. 87), and the hub's function only
+   transfers on its status pipe. A port whose status agrees with the state the bus core
    holds for it is left as it is, so a hub function's restart re-reads
    its ports without disturbing the devices behind them.
 
@@ -1387,7 +1415,10 @@ instance starts with its class's reset recovery for that reason
 ([The BOT engine](#the-bot-engine)).
 
 A STALL, a timeout or a malformed answer ends the enumeration as
-FreeBSD's error path does: the device is detached, the port is disabled,
+FreeBSD's error path does: the device is detached, the port is disabled
+at its hub, by ClearPortFeature(PORT_ENABLE) or a root port's enable bit
+(`usb_hub.c:827-832`), and holds the turn until the hub answers, so a
+device left in the default state never meets the next port's reset,
 and the port's inspection record keeps the step and the reason until its
 connection changes (`usb_hub.c:820-839`).
 
@@ -1401,22 +1432,43 @@ tears down each device's slot as
 says. The bus core waits for none of it: the port can take a new device
 while the old slot drains, since the new device gets a slot of its own.
 So a device's removal in the middle of any step leaves nothing behind,
-and no list of steps needs a removal case of its own.
+and no list of steps needs a removal case of its own. One function writes
+a port's occupancy, and it detaches the occupant a new state does not keep,
+so the bus core holds a device exactly while a port holds it and no
+path that moves a port can forget the device on it.
 
 #### Hubs
 
 A hub function keeps one status-change transfer posted on its interrupt
 endpoint. Its report is a bitmap, bit 0 the hub itself and bit *n* port
 *n*, at least as long as the hub's port count needs and decoded by
-`erx_usb_hub_core`; bits above the port count are ignored. The function
-sends `{changed, Hub, Bitmap}` to the bus process and posts its next
-transfer only when the bus process answers `{handled, Hub}`. The bus core
+`erx_usb_hub_core`; bits above the port count are ignored, and a
+shorter report names every port and the hub, as FreeBSD reads none of
+the report and explores every port on any (`uhub_intr_callback`,
+`usb_hub.c:185-218`, and `uhub_explore`, `usb_hub.c:993-1090`). The function
+sends `{changed, Hub, Bitmap, Pid}`, `Pid` its own, to the bus process
+and posts its next transfer only when the bus process answers
+`{handled, Hub}`; a report that names nothing posts the next transfer at
+once. The bus core keeps the pid of the report it is handling and
+answers that pid alone, and a restarted function's report replaces its
+predecessor's, so no instance ever takes another's answer. Its first report, at
+start, names the hub and every port, so each instance, a restarted one
+included, has the bus core read every port's status once. The bus core
 merges the bitmap into the hub's pending set, and for each port in it,
 one at a time, reads GET_STATUS, clears every change bit it read and
 acts on what the status says; for bit 0 it reads and clears the hub's
-own status. When the set is empty it answers `handled`. The root hub
+own status. When the set is empty it answers `handled`. A hub port's
+GET_STATUS gives the speed of the device on it by the hub's own speed,
+as FreeBSD's `uhub_reattach_port` reads it (`usb_hub.c:738-752`): on a
+high-speed hub the high-speed bit, then the low-speed bit, else full
+speed; on a full-speed hub the low-speed bit, else full speed. A root
+port's words carry its PORTSC speed ID instead, and an ID other than
+low, full, high or SuperSpeed refuses the device (`unsupported speed`);
+the port's status and changes are still read and cleared, so its
+disconnect is seen. The root hub
 works the same way: the controller process turns a port event into
-`{changed, root, [Port]}`, and a root port raises no further event until
+`{port_event, Port}`, and its port operations, register accesses of its
+own, do not fail, so one that does ends the bus with its controller; and a root port raises no further event until
 every one of its change bits is cleared (xHCI 4.19.2, p. 322).
 
 So the work a hub can create is bounded by construction: one bitmap in
@@ -1448,10 +1500,23 @@ bounds above, and the rules that make a configuration one endpoint graph:
   nothing); an interface descriptor is at least 9 bytes, an endpoint
   descriptor at least 7, a HID descriptor at least 9 with its report
   descriptor's length, a SuperSpeed endpoint companion at least 6, a hub
-  descriptor at least 7 with its port count from 1 to 15;
+  descriptor at least 7 with its port count from 1 to 15; a hub
+  descriptor arrives on its own request (enumeration step 7), so the
+  walk skips one like any other descriptor it does not use, and only
+  its 7-byte head, which holds every field the stack reads, is decoded,
+  so a read cut short of `bLength` is enough;
 * each endpoint descriptor belongs to the interface descriptor before
   it, and one before any interface descriptor refuses the configuration;
-  `bNumEndpoints` is not trusted, the descriptors are;
+  `bNumEndpoints` is not trusted, the descriptors are; a SuperSpeed
+  endpoint companion belongs to the endpoint descriptor just before it,
+  and a companion anywhere else refuses the configuration; a HID
+  descriptor belongs to the HID interface (class 03h) before it, one a
+  setting, its first class descriptor the report descriptor, and a
+  second one or another first class descriptor refuses the
+  configuration; type 21h anywhere else, before any interface or under
+  another class, is not HID's (DFU's functional descriptor, CCID's class
+  descriptor) and is skipped, so it never refuses a composite device's
+  HID function;
 * the walk builds one map from `{interface number, alternate setting}`
   to that setting's descriptors, so a second definition of a key refuses
   the configuration (`duplicate interface`) instead of shadowing the
@@ -1460,9 +1525,12 @@ bounds above, and the rules that make a configuration one endpoint graph:
   multi-TT hub without alternate setting 1, refuses the configuration
   (`missing setting`);
 * an endpoint descriptor whose address names endpoint 0, `0x00` or
-  `0x80`, refuses the configuration (`endpoint zero`), since its device context index
-  would be EP0's, 1 (xHCI 4.5.1, p. 96); among the selected settings
-  every other endpoint address appears once, kept as the keys of a
+  `0x80`, whatever its reserved bits 6:4 hold, refuses the configuration
+  (`endpoint zero`), since its device context index would be EP0's, 1
+  (xHCI 4.5.1, p. 96); an address is kept as its direction and number
+  alone, so two that differ only in the reserved bits are one pipe;
+  among the settings the claim selects every other endpoint address
+  appears once, kept as the keys of a
   second map, and a duplicate refuses the configuration, so no two
   functions can claim the same pipe;
 * an endpoint of a SuperSpeed device is followed by its companion, and a
@@ -1470,12 +1538,12 @@ bounds above, and the rules that make a configuration one endpoint graph:
   isochronous multiplier it may advertise are ignored, since the NIF
   forces both off;
 * an endpoint's type, direction and interval are checked against what
-  the claimed function accepts, and the three values the endpoint
+  the claimed function accepts, and the four values the endpoint
   context takes are derived by speed and type, one function of the
-  descriptor and the device's speed:
+  descriptor and the device's speed, `erx_usb_claim:parameters/2`:
   * the **packet size**, bits 10:0 of `wMaxPacketSize`, taken through
     FreeBSD's filter of standard sizes (`usbd_get_std_packet_size`,
-    `usb_transfer.c:3525-3591`, applied at `:560-592`): an interrupt
+    `usb_transfer.c:3525-3591`, applied at `:569-592`): an interrupt
     endpoint's at most 8 at low speed, 64 at full and 1024 at high and
     SuperSpeed; a bulk endpoint's 8, 16, 32 or 64 at full speed, 512 at
     high and 1024 at SuperSpeed, a value between them taken down to
@@ -1484,8 +1552,11 @@ bounds above, and the rules that make a configuration one endpoint graph:
     SuperSpeed; bits 12:11 of `wMaxPacketSize` on a high-speed interrupt
     endpoint, where 3, which FreeBSD calls an invalid packet count and
     clamps to 2 (`usb_transfer.c:502-513`), refuses the endpoint, since a
-    value the device cannot mean is not one to guess at; and 0 on every other
-    endpoint, as the context requires (xHCI 6.2.3.4, p. 455);
+    value the device cannot mean is not one to guess at, as does a
+    `bMaxBurst` above 15, which FreeBSD clamps (`usb_transfer.c:520-527`)
+    and the context cannot hold, both with `malformed descriptor`; and 0
+    on every other endpoint, as the context requires (xHCI 6.2.3.4,
+    p. 455);
   * the **payload of one service interval**, by speed (4.14.2, p. 259).
     Below SuperSpeed, and on every bulk endpoint, it is the packet size
     times burst plus one (6.2.3.4, p. 455), computed with checked
@@ -1498,7 +1569,20 @@ bounds above, and the rules that make a configuration one endpoint graph:
     invalid, but erXos does not admit it, refusing the device with
     `zero interval payload`: the stack's interrupt endpoints are HID
     reports and hub status changes, so an interrupt endpoint that moves
-    no bytes has no consumer in it.
+    no bytes has no consumer in it. The same refusal meets a
+    `wMaxPacketSize` whose bits 10:0 are 0, on any endpoint: FreeBSD
+    raises it to the controller's largest packet before its filter
+    (`usb_transfer.c:563-567`), a guess erXos does not make.
+  * the **interval exponent**, the endpoint context's Interval, the
+    period as a power of two of 125 us (xHCI 6.2.3.6 and Table 6-12,
+    p. 456): on an interrupt endpoint at low and full speed, where
+    `bInterval` counts milliseconds from 1 to 255, the base-2 logarithm
+    of `bInterval` times 8 rounded down, 3 to 10; at high and SuperSpeed,
+    where `bInterval` is 1 to 16, `bInterval` less one. A `bInterval`
+    outside its speed's range, for which the table gives no period,
+    refuses the device with `malformed descriptor`. A bulk endpoint's is
+    0: the controller does not use it at SuperSpeed (6.2.3.6), and
+    FreeBSD sets it only for periodic endpoints (`xhci.c:2463-2470`).
   The payload must fit one buffer of the queue block the endpoint's type
   takes, or the device is refused with `endpoint too large`. Its
   consumer is the controller's bandwidth reservation: the NIF writes the
@@ -1593,9 +1677,12 @@ nonblocking:
 3. `erx_device:negotiate/2`, the form's reset and install, called again
    on a timer while it answers `{error, ebusy}`
    ([Install](#install));
-4. power every root port, when the controller has port power switches,
-   and read each port's status, so the bus core starts from what is
-   connected.
+4. start the bus process with the root hub's port count; the bus core
+   powers and reads the root ports as it does any hub's, the controller
+   turning the hub's port-power request into `PORTSC`'s port power bit,
+   as FreeBSD's root hub does (`xhci_roothub_exec`, `xhci.c:3685-3687`),
+   with the power-good time of FreeBSD's xHCI root hub descriptor, 10
+   units (`xhci.c:3533`).
 
 **Ports.** The controller process answers the bus core's root-hub
 operations from each port's `PORTSC`. A write to `PORTSC` keeps its
@@ -2075,7 +2162,13 @@ at most 64 usages a main item, 16 report ids and a report count of 2048
 keeps what it read (`hid.c:446-450`), erXos refuses the descriptor, so a
 layout is never built from part of one. erXos adds two bounds: an input
 report of at most the interrupt buffer, 1 KiB with its report-id byte,
-and a descriptor of at most `hid_report_descriptor_max`. Its result is a
+and a descriptor of at most `hid_report_descriptor_max`. It also refuses
+a report id of 0 or above 255, since a report carries its id in one byte
+and HID 1.11 reserves 0 (section 6.2.2.7); input items, padding
+included, both outside and inside numbered reports, since a report then
+cannot say which it is; an item cut off by the descriptor's end, whose missing bytes
+FreeBSD reads as zero; and a data input field wider than 32 bits. Its
+result is a
 **layout**: for each report id, the input fields in order, each a bit
 offset, a size from 1 to 32 bits, a count, a logical minimum and maximum,
 a usage page and its usages or usage range, and the flags variable or
@@ -2132,9 +2225,10 @@ since a transfer ends only at its length or a short packet (HID 1.11,
 section 8.4; xHCI 4.10.1.1, p. 191).
 
 `erx_hid_core:step(Layout, Report, State) -> {Records, State}` keeps,
-for each report id the layout has, the values of the fields that id
-carries as its last report of that id set them, and derives the held
-set, the keys and buttons held, as the union over every id. A report of
+for each report id the layout has, what its last report of that id
+left: the keys and buttons it held and its absolute position, not the
+fields' values; and derives the held set, the keys and buttons held, as
+the union over every id. A report of
 id *k* replaces only id *k*'s entry, as FreeBSD's keyboard driver clears
 and sets only the keys of the received id (`hkbd.c:706-745`), so a
 report of id 2 never releases a key that id 1 holds. Then:
@@ -2144,9 +2238,12 @@ report of id 2 never releases a key that id 1 holds. Then:
   Each key in the old held set and not the new gives `{key, up, Code}`,
   then each in the new and not the old `{key, down, Code}`, in ascending
   code order, so a report that changes several keys gives a
-  deterministic sequence. A report whose array fields all hold
-  ErrorRollOver (usage 01h) is the phantom state of Appendix C and
-  changes nothing. A usage the table maps to no code is dropped and
+  deterministic sequence. A report whose array values that name a
+  Keyboard/Keypad page usage all hold ErrorRollOver (usage 01h) is the phantom state of
+  Appendix C and changes nothing. An array value above the field's
+  logical maximum still names a usage, the one at `v - min` of its
+  usage ranges when they reach that far, since the fold checks only the
+  minimum. A usage the table maps to no code is dropped and
   counted.
 * **Pointer.** A relative X and Y give `{pointer, rel, DX, DY}` when
   either is non-zero. An absolute X and Y are clamped to their logical
@@ -2159,7 +2256,8 @@ report of id 2 never releases a key that id 1 holds. Then:
 * **Buttons** give key records with their `BTN_` codes on each edge of
   the held set.
 * **Wheel.** A non-zero wheel gives `{wheel, Steps}`, clamped to -128 to
-  127.
+  127. A wheel field without the relative flag is read the same way, so
+  it scrolls on every report in which it is non-zero.
 
 Moves come before button edges within one report, so a click lands where
 the report put the pointer. The state holds one entry per report id, at
@@ -2716,7 +2814,7 @@ sink shows it.
 | a drive grant's `window` | `{error, no_medium}`, `{error, no_partition}` | the drive holds no ready medium; the medium's table has no entry for the grant's partition that the removable-media rule serves |
 | a window of a medium that has gone | no answer: the process has ended | the caller's monitor fires |
 | the transport | `{error, {device, {sense, Key, Asc, Ascq}}}`, `{error, {device, no_sense}}`, `{error, {device, reset}}`, `{error, {device, short}}`, `{error, {device, gone}}`, `{error, {device, deadline}}`, `{error, no_flush}` | a failed command; a failed command whose REQUEST SENSE failed too; a reset recovery; a transfer that moved less than asked; a request of an ended medium; the wait bound passed; a flush of a medium that cannot flush |
-| a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
+| a device at enumeration | refused, with `descriptor too long`, `malformed descriptor`, `duplicate interface`, `missing setting`, `endpoint zero`, `duplicate endpoint`, `missing companion`, `unsupported speed`, `too deep`, `too many ports`, `too many devices`, `too many endpoints`, `endpoint too large` or `zero interval payload` | the decoder or a bound |
 | an access of the bridge driver below the root port | `{error, link_down}` | the link was down before the access or after it |
 | the bridge's bring-up | fails, with `link down`, `endpoint mode` or `dma-ranges` in the bridge's inspection record, and no function reported | no link 200 ms after PERST#'s release; the block is not a root complex; the tree's inbound range breaks the window's rules |
 | the VL805's report | `not_ready`, never given, with `vl805 firmware not loaded` | `0x50` reads 0 or all ones after the notification, or the notification's kernel call failed; for the rest of the boot after a timed-out notification, whatever `0x50` reads |
@@ -2740,14 +2838,15 @@ targeted traces carry the longer sequences.
 
 | Test | Passes when | Seeded fault that must fail it |
 | --- | --- | --- |
-| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, and a hub detached during its child's enumeration | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no action names a port that is `off` or `empty` | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
+| `erx_usb_bus_core`, explored to a fixed point over a root hub of two ports, one external hub of two ports and devices of one and two functions, with references and slots drawn from small sets; then traces of 1,000 attach and detach cycles on one port, a connection storm, and a hub detached during its child's enumeration | every enabled slot belongs to a device that is enumerating, running or in teardown; after a detach the device's reference and places are gone; at most one port holds the address-zero turn, and a failed Address Device keeps it until the controller's answer; a connection change on an occupied port detaches before anything else; per hub at most one bitmap is unhandled; a function is started again only after every one of its pipes answered its reset; a hub function's restart changes no port whose status agrees with its state; no reset names a port that is `off` or `empty`; at most one simulated device is enabled and not yet addressed | a connection change with the port still connected not detaching the occupant; the address-zero turn released at the reset's end instead of the address; a port's new state dropping its occupant without detaching it; a port given up after its address keeping the turn; a hub given up handing on the turn a port below it held; a function restarted before its pipes' resets answer, so the new instance meets a transfer its predecessor posted |
+| `erx_usb_hub_core`, its machine explored to a fixed point for hubs of 1, 2, 7, 8 and 15 ports over every report of the port count's length with each port bit and the bits around it, a short report and a failed transfer; its decoders on written cases | the first report names the hub and every port; exactly one transfer posted or one bitmap unhandled until the function stops; every reported set is a non-empty ordset of the hub and ports within the count; bit *n* is port *n* and bits above the count are ignored; a hub port's speed follows the hub's speed | a change report sent with the next transfer already posted; `handled` taken without posting the next transfer; the bits above the port count kept; a report shorter than the port count taken as naming nothing |
 | `erx_xhci_core`'s pipe machine, teardown, control abort and failed address, explored to a fixed point over every queue state the NIF reports and every answer of each step, EP0 and other endpoints, behind a translator and not | Reset Endpoint is issued only for a halted queue; a halt is reset once; EP0 is never in a drop or an add; an aborted control request is answered `timeout` only after Stop Endpoint and a Set TR Dequeue Pointer to the enqueue position, and EP0 then accepts the next request; a failed Address Device behind a translator with a USB Transaction Error is answered only after Disable Slot and CLEAR_TT_BUFFER, and a failed clear answers `tt_clear`; Disable Slot follows only stops that answered; new posts are refused while a reset runs | `reset_pipe` issuing Reset Endpoint on a stopped queue; a stopped EP0 dropped and added; the abort answered after Stop Endpoint alone, so the next request finds EP0 stopped; the translator's clear skipped; Disable Slot issued before the stops answer |
 | `erx_device_trb`, in C on the host, explored to a fixed point over rings of six TRBs and a link, two slots, two queues each, one buffer a queue, events of every code and kind, stops, resets, dequeue moves, drops and disables, so ring wrap and slot reuse are reachable; then traces of 100,000 transfers with random completions and 1,000 slot reuses; then under AddressSanitizer | a buffer returns only by the event that completes its transfer or by a command after which the controller holds nothing of its ring; a short data stage leaves its transfer posted until the status event; a stop's event at every place of Table 4-2 is accepted and completes nothing: after the completion of the TD it names, at a link inside a TD and between two, inside a control transfer's data stage, at the enqueue position of an idle ring and across the ring's wrap; a second event for one stop breaks the form; the enqueue position is never a link TRB; every ring has its pad; every address a plan writes lies in the record; every decision passes `erx_device_dma_check`; every built context has no streams | a short data-stage event treated as completing, so the status event names no transfer and breaks the form; the stop span narrowed to the oldest transfer's first TRB and the enqueue position, so a completion followed by its forced event breaks the form; the enqueue position left on the link after a post that ends before it; Disable Slot accepted with a queue running; the TRB pointer's range check removed |
 | the publication, in C on the host, against a model controller that takes a TRB the moment its cycle bit matches | the model never sees a chain whose later TRBs or buffer bytes are not yet written | the first TRB's cycle word written with the other TRBs |
 | the event ring's bound | the table's sum, recomputed from the form's constants, is below the ring's capacity, and the explored model never holds more events than that sum | the forced stop event left out of the model's sources |
 | the install, in C on the host, against a model controller that interrupts only with both gates open and closes `INTE` at every reset | after the first install and after a reset and install again, an event raises the model's interrupt | the `INTE` write dropped, so the model raises nothing after install |
 | `erx_usb_desc` on the boot devices of HID 1.11 Appendix B and E, and on the descriptors QEMU's `usb-kbd`, `usb-tablet`, `usb-storage` and `usb-hub` return, captured once into small fixtures | each decodes to the expected interfaces and endpoints | the walk run over the bytes received instead of `wTotalLength`, with an interface descriptor in the trailing bytes, which is then claimed |
-| claiming and admission, a property test over fuzzed configurations through `erx_usb_desc`, `erx_usb_claim` and the endpoint parameters, with a fixture of a SuperSpeed interrupt endpoint of packet size 64, burst 0 and `wBytesPerInterval` 8 | no endpoint belongs to two functions; no configuration with two definitions of one interface setting, a missing selected setting or an endpoint 0 descriptor is admitted; every admitted endpoint's packet size is one FreeBSD's filter gives for its speed and type, its burst follows its speed and type, and its payload, packet size times burst plus one below SuperSpeed and on bulk endpoints, the companion's `wBytesPerInterval` on a SuperSpeed interrupt endpoint, fits its block's buffer; the fixture's payload parameter and the context the NIF builds from it both say 8, and the same companion with `wBytesPerInterval` 0 or 65 is refused; every parameter handed to the NIF is in range, and the NIF answers `badarg` to a payload of 0, one above packet size times burst plus one, and one that differs from that product on a slot below SuperSpeed | the duplicate-address rule removed; the payload computed as packet size times burst, so a high-speed interrupt endpoint of 1024 bytes and one extra transaction is admitted to a 1 KiB buffer; the payload computed as the product at SuperSpeed, so the fixture's context says 64; the second definition of an interface setting kept over the first |
+| claiming and admission, a property test over fuzzed configurations through `erx_usb_desc`, `erx_usb_claim` and the endpoint parameters, with a fixture of a SuperSpeed interrupt endpoint of packet size 64, burst 0 and `wBytesPerInterval` 8 | no endpoint belongs to two functions; no configuration with two definitions of one interface setting, a missing selected setting or an endpoint 0 descriptor is admitted; every admitted endpoint's packet size is one FreeBSD's filter gives for its speed and type, its burst follows its speed and type, and its payload, packet size times burst plus one below SuperSpeed and on bulk endpoints, the companion's `wBytesPerInterval` on a SuperSpeed interrupt endpoint, fits its block's buffer, and its interval exponent is in Table 6-12's range for its speed and type; the fixture's payload parameter and the context the NIF builds from it both say 8, and the same companion with `wBytesPerInterval` 0 or 65 is refused; every parameter handed to the NIF is in range, and the NIF answers `badarg` to a payload of 0, one above packet size times burst plus one, and one that differs from that product on a slot below SuperSpeed | the duplicate-address rule removed; the payload computed as packet size times burst, so a high-speed interrupt endpoint of 1024 bytes and one extra transaction is admitted to a 1 KiB buffer; the payload computed as the product at SuperSpeed, so the fixture's context says 64; the second definition of an interface setting kept over the first; a hub function claimed on every interface of a hub device; the high-speed interval's upper bound removed, so a `bInterval` of 17 gives an exponent past 15 |
 | `erx_hid_desc` against FreeBSD's `hid.c` compiled on the host as the oracle, over the fuzz corpus, comparing each input field's offset, size, count and usage | every descriptor within erXos's bounds that FreeBSD parses whole gives the same fields in both; where the host build of `hid.c` records that it stopped at a fourth push, erXos refuses; past erXos's own bounds, erXos refuses whatever FreeBSD does | the push-depth bound removed: a descriptor of four nested pushes is accepted |
 | `erx_hid_core` | a keyboard's held set gives ups then downs in code order; a rollover report changes nothing; an absolute position normalizes to 0 and 65535 at its range's ends; a report of id 2 leaves id 1's keys held; a report two packets long folds whole | the ErrorRollOver check removed; the state reduced to one previous report; the interrupt length taken as the packet size |
 | the usage table | `abi/formats/hid.txt`'s map equals FreeBSD's `evdev_usb_scancodes`, read from the pinned source | one map entry changed |

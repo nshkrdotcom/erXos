@@ -10,8 +10,10 @@
 # and table. Every structure is little-endian. A controller whose HCCPARAMS1.CSZ is
 # set spaces its contexts 64 bytes apart, each context's first 32 bytes the layouts
 # below and the rest reserved (xhci.h:113-116, :163-166, :182-185). The ring form's own
-# sizes, its rings' lengths, queue blocks and buffers, are its record's, not this file's
-# (design-usb.md, "The TRB ring form").
+# sizes, its rings' lengths and queue blocks, are its record's, not this file's
+# (design-usb.md, "The TRB ring form"); the size of an interrupt and of a bulk queue
+# block's buffer is here, since the USB core admits an endpoint only when its payload of one service
+# interval fits one.
 
 # A device context holds the slot context and 31 endpoint contexts, indexed by the
 # device context index, EP0's 1 (XHCI_MAX_ENDPOINTS, xhci.h:33); an input context
@@ -37,6 +39,23 @@ limit xhci_scratchpad_array_align u32 64
 
 # The error count every endpoint context the NIF builds takes (xhci.c:2495-2501).
 limit xhci_endpoint_error_count u32 3
+
+# The buffer of an interrupt and of a bulk queue block: an interrupt block's four of
+# 1 KiB and a bulk block's two of 32 KiB (design-usb.md, "The TRB ring form"), each an
+# erXos choice.
+limit xhci_interrupt_buffer_size u32 1024
+limit xhci_bulk_buffer_size u32 32768
+
+# An interrupt endpoint's Interval, the base-2 exponent of its period in 125 us units
+# (xHCI 1.2, 6.2.3.6 and Table 6-12, p. 456). At low and full speed bInterval counts
+# milliseconds, 1 to 255, and the exponent is the base-2 logarithm of bInterval times 8
+# (8 being 2 to the frame shift), rounded down, so 3 to 10; at high and SuperSpeed
+# bInterval is 1 to its maximum and the exponent is bInterval less one, 0 to 15. A bInterval
+# outside its range is one the table gives no period for. A bulk endpoint's Interval is
+# 0: the controller does not use it at SuperSpeed (6.2.3.6), and FreeBSD sets it only
+# for periodic endpoints (xhci.c:2463-2470).
+limit xhci_interval_frame_shift u8 3
+limit xhci_interval_binterval_max u8 16
 
 # The slot context (xhci.h:74-111): the device's route, speed and hub fields, its
 # last valid context index, the root hub port it is reached through, its

@@ -24,6 +24,10 @@ enum hid_boot_protocol u8
 # descriptor it names (HID 1.11, section 7.1; usbhid.h, lines 40-41).
 limit hid_descriptor_hid u8 0x21
 limit hid_descriptor_report u8 0x22
+# A HID descriptor's least length: its header, bcdHID, country code and count, then
+# the first class descriptor's type and length (struct usb_hid_descriptor, usbhid.h,
+# lines 51-61), which names the report descriptor.
+limit hid_descriptor_size u32 9
 
 # The class requests the function sends, as bRequest (HID 1.11, section 7.2;
 # usbhid.h, lines 47 and 49), and SET_PROTOCOL's wValue: 0 for the boot protocol, as
