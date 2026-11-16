@@ -8051,8 +8051,10 @@ document's "residual risks accepted" paragraph.
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
-  check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
-  for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
+  check, which this host test does not. G6 (design-display.md) holds when no device request comes between
+  two changes of the tree. No QEMU test checks it yet: the kiosk cell's next step counts the driver's
+  requests between two of the dashboard's clock ticks, where a seeded timer that repaints with no change
+  fails the count. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
 
 * [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"

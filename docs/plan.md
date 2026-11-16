@@ -1558,8 +1558,9 @@ window has one present in flight, and a client that floods presents
 delays another window's present by no more than two frames (G3); the
 virtio-gpu response and virtio-input event parsers' fuzz targets run
 their budgets clean; a driver restart is followed by one repaint of the
-whole screen from the windows' buffers, with no client asked; an idle
-display makes no device request for a minute (G6); the copy under UBSan
+whole screen from the windows' buffers, with no client asked; the
+display makes no device request between two presents or changes of the
+layout (design-display's G6); the copy under UBSan
 at its bounds; the display's session starts at boot with no login, its
 window covers the screen, and a screenshot through QEMU's monitor equals
 the reference image under HVF; ending the session's domain brings a new
@@ -1595,9 +1596,9 @@ supervisor, and ending its session's domain brings a new session while
 a second app holding the display's grant stays
 hidden; the kiosk's image boots into its app with no login, and two
 images whose `app` and `start` rows name different apps share every
-other row of the manifest and the display domain's release; an idle
-kiosk makes no device request and wakes its program not once for a
-minute (G6); a screenshot through QEMU's monitor equals the reference
+other row of the manifest and the display domain's release; between
+two changes of its tree the kiosk makes no device request and its
+program does not wake (design-display's G6); a screenshot through QEMU's monitor equals the reference
 image under HVF; each chokepoint check catches its seeded violation.
 
 **Exit criteria, kiosks on boards.** The fuzz targets of the touch,
@@ -1606,7 +1607,8 @@ run their budgets clean; a panel driver passes against a model of its
 command set on the host, on the copy path and on the direct path, which
 send the same bytes; the reserved chord reaches no window; the panel
 turns `dim` and `off` after the idle times and on at the next input;
-G6's idle test at the driver; a Raspberry Pi 4 kiosk boots into its
+design-display's G6 at the driver, no device request between two
+changes of the kiosk's tree; a Raspberry Pi 4 kiosk boots into its
 application.
 
 **Exit criteria, the desktop.** `erx_draw_core` explored exhaustively,

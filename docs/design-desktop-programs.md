@@ -918,7 +918,8 @@ touches a few kilobytes. Its frames interpolate until its deadline, its
 start plus its duration, at most 250 ms, and one final present after
 the deadline draws its end, as soon as the device has answered the
 present before; then the window is idle again (design-display's G6,
-"nothing paints without a change or a transition a change started").
+"nothing paints between two changes, except the frames of a transition a
+change started").
 The Erlang renderer draws a transition's frames at the answers of its
 presents and has no timer
 ([design-display.md](design-display.md#the-widget-server)); LVGL takes
