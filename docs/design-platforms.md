@@ -1667,8 +1667,15 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    then `dmesg`, which prints the kernel's and the system's log.
 5. With a screen on the micro-HDMI port the board labels HDMI0, plugged
    in before power-on: the firmware's rainbow square and boot text give
-   way, after the shell's prompt, to the display's empty layout, one
-   colour over the whole screen, and the picture stays put. `dmesg`
+   way to the kiosk, the dashboard the card carries
+   ([design-packaging.md](design-packaging.md#the-apps-row)), within
+   60 seconds of the erXos banner, and the picture stays put but for its
+   clock. Record the seconds from the banner to the dashboard. The
+   serial console shows `packages: admitted dashboard`, `erx_app: mounted
+   /app` and `erx_dashboard: shown` with the minute it drew; a dashboard
+   that does not appear with those lines present is a failure of the
+   display path, and one whose lines are missing names the step that
+   failed. `dmesg`
    holds the root's line `erx: device tree: /chosen: framebuffer
    WIDTHxHEIGHT STRIDE FORMAT` and the display domain's `erx_fb:
    framebuffer WIDTHxHEIGHT stride STRIDE FORMAT`, with the same numbers,

@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'open3'
 require 'pathname'
 require 'rbconfig'
+require 'tmpdir'
 require_relative '../../tools/lib/erx/oracle_qemu'
 require_relative '../../tools/lib/erx/medium_boot'
 require_relative '../../tools/lib/erx/production_image'
@@ -100,19 +101,13 @@ class ProductionImageTest < Minitest::Test
     end
   end
 
-  # The Raspberry Pi 4's card is the one the website offers: until a release signer exists
-  # its manifest leaves out the apps row, as the site's does, and it takes no package and
-  # no --local, refused before anything is built. QEMU's medium keeps the row. The Pi's
-  # development manifest has no apps row yet (TODO.md), so the card's edit is shown on
-  # QEMU virt's manifest, which has one.
-  def test_a_card_takes_no_packages
+  # The Raspberry Pi 4's card is the one the website offers: it carries the kiosk alone,
+  # which its own build adds, so it takes no app, signer or --local of its builder's,
+  # refused before anything is built; its manifest keeps the board's apps row, as QEMU's
+  # medium's does.
+  def test_a_card_takes_no_app_of_its_builders
     pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
-    apps_row = /^apps$/
-    with_row = PLATFORM.manifest_source(ROOT)
-    assert_match apps_row, with_row
-    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, with_row)
-    refute_match apps_row, Erx::ProductionImage.medium_manifest(pi, pi.manifest_source(ROOT))
-    assert_match apps_row, Erx::ProductionImage.medium_manifest(PLATFORM, with_row)
+    assert_match(/^apps\n  memory [0-9]+\n  max 1\n  services display net\n/, pi.manifest_source(ROOT))
 
     machine = Erx::ProductionImage::Machine.development(pi)
     image = Erx::ProductionImage.new(root: ROOT, runner: nil, compiler: '', linker: '', machine: machine, fiasco: Object.new,
@@ -121,10 +116,30 @@ class ProductionImageTest < Minitest::Test
      Erx::ImageApps.plan([Erx::ImageApps::Package.new(path: '/p/clock.app', name: 'clock', memory: 1 << 22,
                                                      sha256: "\xab".b * 32, license: 'MIT')], enable: [])].each do |apps|
       error = assert_raises(Erx::Error) { image.build_medium(directory: '/nonexistent', apps: apps) }
-      assert_equal 'the raspi4b card is the one the website offers, so it takes no app and no --local', error.message
+      assert_equal 'the raspi4b card is the one the website offers: it carries the kiosk alone and takes no app, ' \
+                   'signer or --local', error.message
     end
     Erx::ProductionImage.check_card_apps(pi, Erx::ImageApps.none)
     Erx::ProductionImage.check_card_apps(PLATFORM, Erx::ImageApps.plan([], enable: [], local: true))
+  end
+
+  # The card's own packages: the kiosk, examples/dashboard, packed and signed as the kiosk
+  # suite packs it, and enabled, with no signer row and no --local, so the card trusts the
+  # package by its row's hash and trusts no key.
+  def test_a_card_carries_the_kiosk_enabled_and_trusts_no_key
+    pi = Erx::Platform.load(root: ROOT, name: 'raspi4b')
+    runner = Erx::Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
+    image = Erx::ProductionImage.new(root: ROOT, runner: runner, compiler: ENV.fetch('ERX_CLANG'), linker: '',
+                                     machine: Erx::ProductionImage::Machine.development(pi), fiasco: Object.new,
+                                     runtime: nil, jit_runtime: nil)
+    home = Dir.mktmpdir('erx-card-apps-home-')
+    apps = image.card_apps(signer: Erx::PackageKey.ensure(directory: Erx::PackageKey.directory(home: home)))
+    assert_equal ['dashboard'], apps.packages.map(&:name)
+    assert_equal 'BSD-2-Clause', apps.packages.first.license
+    refute apps.local
+    rows = apps.rows
+    assert_match(/^package dashboard\n(?:  .*\n)*  enable YES\n/, rows)
+    refute_match(/^signer /, rows)
   end
 
   # An image's packages lie in its medium's system partition, so an image built without a

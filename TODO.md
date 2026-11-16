@@ -60,10 +60,9 @@ it; git history is the record of completed work.
   server's connections, which the Phase 1 manifest check sums for no principal (QEMU virt's manifest reckons the
   storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
   and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
-  over distinct grantee and server pairs against each server's quota and `max_connections`); and the
-  Raspberry Pi 4's `apps` row, which the design gives the default `max` 8: the display record in
-  `config/manifest/development.txt` holds QEMU virt's four pixel areas (32 MiB of outer budget the Pi pays
-  without using), so the Pi's row needs its own display limits or a derived outer budget.
+  over distinct grantee and server pairs against each server's quota and `max_connections`; the Raspberry
+  Pi 4's part reckons them by hand too, and its storage and network domains keep the common rows' four
+  connections for QEMU virt's four apps where the Pi's row has one).
 * [Medium] apps, a files service on the `apps` row (`tools/lib/erx/manifest.rb`, `check_apps`): refused as
   unsupported until the storage service's `tree` parameter roots a grant at the app's own directory
   (`tree apps`, [design-packaging.md](docs/design-packaging.md#where-an-apps-files-lie)); then `data`
@@ -1004,16 +1003,14 @@ it; git history is the record of completed work.
   `display_domain` suite's unmeasured figures; size both from a measurement of the domain driving a screen. No
   boot of the development image attaches a gpu (`tools/erx boot` included), so the domain runs there without a
   screen, and no session is granted the display.
-* [Medium] the Raspberry Pi 4's display domain row (`config/manifest/development.txt` and `raspi4b-development.txt`;
+* [Medium] the Raspberry Pi 4's display domain row (`config/manifest/raspi4b-development.txt`, `limits display`;
   [design-display.md](docs/design-display.md#the-display-device)): the display domain holds the `framebuffer`
-  unit and drives it with `erx_firmware_fb`, on QEMU virt's figures, the `display` share's 100 mcpu and
-  24 MiB, which are measured on neither board; on the Pi the screen image lives in the domain's own memory
-  (8 MiB at 1920x1080 and 32 bits, about 33 MiB at 4K, where `alloc` answers `enomem` and the driver
-  `ignore`s); size both from a measurement of the domain driving a screen on
-  the Pi. The `raspi4b` suite's shell cell checks the driver's stores at 640x480 on QEMU's model, whose
-  framebuffer the harness's stand-in for the firmware sets up (design-platforms.md, "The firmware's framebuffer
-  under QEMU"); the firmware's own node and a full-size screen are checked on the board by hand
-  (design-platforms.md, "Trying a card on a board", step 5). No session is granted the display, as on QEMU virt.
+  unit and drives it with `erx_firmware_fb` on the `display` share's 100 mcpu and 40 MiB, QEMU virt's
+  unmeasured 24 MiB with the 8 MiB screen image of one 1920x1080 screen of 32 bits, which on the Pi lives in
+  the domain's own memory, and 8 MiB of headroom (about 33 MiB at 4K, where `alloc` answers `enomem` and the
+  driver `ignore`s). Neither figure is measured: size both from a measurement of the domain driving the
+  dashboard on a 1920x1080 screen on the Pi, a hand step (design-platforms.md, "Trying a card on a board",
+  step 5).
 * [Medium] `tools/lib/erx/manifest.rb`, `GRANT_CHECKERS`: each facet goes to the checker its service names
   (`grant_checker`), but the helper reaches its method only by the name string each checker repeats
   (`check_line_grants`, `normalize_displays`), so a helper listed with its keys and no method admits its facets
@@ -3227,7 +3224,8 @@ it; git history is the record of completed work.
   `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
   no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
   `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
-  build, not only those `pack --app` builds, should; the packer does not yet run the machine's manifest
+  build, not only those `pack --app` builds, should, but for the Raspberry Pi 4's card, the image the website
+  offers, which trusts its kiosk by hash and no key (design-packaging.md, "The shipped manifests"); the packer does not yet run the machine's manifest
   reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
   `AppPack.describe`; and `tools/erx app run DIR`.
   Fix: each with its own package.

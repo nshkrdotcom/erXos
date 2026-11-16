@@ -33,7 +33,7 @@ module Erx
   # (AppPack.describe) never sees it; the session's /app mount then refuses the image
   # (UNVERIFIED), no /app is mounted and the dashboard shows nothing.
   module Kiosk
-    APP = 'examples/dashboard'
+    APP = ImageApps::KIOSK
     NAME = 'dashboard'
     SERVED = /erx_storage_system: serving the system tree/n
     ADMITTED = /packages: admitted dashboard\r?\n/n
