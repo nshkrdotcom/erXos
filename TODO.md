@@ -135,10 +135,8 @@ it; git history is the record of completed work.
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
-* [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
-  `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
-  before the kept row is installed, because configured domain `a` ends after its introduction to the
-  session, for a reason not yet found. Also open: the pixel area of an app session's pairs is still the
+* [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): the pixel
+  area of an app session's pairs is still the
   app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows; the
   record's `{Ref, app, App}` step and erx_app's registered wait, which design-packaging.md's "An app's
   session" must name (it still says the ready answer hands the record); `erx_principal:app_record()` and

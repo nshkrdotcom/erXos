@@ -715,13 +715,9 @@ display_timed_out() ->
 %% domain pid receives the app's record the registration kept once clip is installed,
 %% after the ready answer and before the start is answered. A name not registered is
 %% refused.
-%% Written ahead of the start it checks, which answers before its kept row is installed
-%% in this fixture (TODO.md, "an app's session"); until that is explained it is not run.
--compile({nowarn_unused_function, [app_session/0, app_session_call/1, received/3]}).
-
 app_session_test_() ->
     {setup, fun app_setup/0, fun app_cleanup/1,
-     fun(_) -> {inorder, [fun no_app/0]} end}.
+     fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
 
 -define(APP_MEMORY, 16777216).
 -define(APP_RECORD, #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}}).
