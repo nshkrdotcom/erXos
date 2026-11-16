@@ -8,10 +8,22 @@ it; git history is the record of completed work.
 
 ## Major initiatives
 
+* [High] storage and apps, the system partition and the `system` tree
+  ([docs/todo-system-partition.md](docs/todo-system-partition.md),
+  [design-storage.md](docs/design-storage.md#the-system-tree)): each slot
+  becomes a FAT boot partition and a read-only EROFS system partition; the
+  storage domain serves the booted slot's as the `system` tree through a
+  read-only `erx_fs` backend over `erx_erofs`; packages and releases outside
+  the boot image are self-checking files mounted with
+  `erx_ns:mount({erofs, {file, Path, Layout}}, ...)`; image packages leave
+  the boot image under a packer check of what it may hold; `/apps` is one
+  flat tree; the slot writer and the update write two partitions; image
+  windows, `erx_blk_image`, image extents and the slot's release copy are
+  deleted.
 * [High] apps, [design-packaging.md](docs/design-packaging.md): the packaging design awaits an outside
   review of its update path, its `mount` and its `/etc/rc.conf`; then Track A's parts 2 and 3 build it
   ([plan.md](docs/plan.md#track-a-apps)). An app names its needs, memory and code, and one `apps` row bounds
-  every app; each app is a plain file, `/apps/NAME.app` or `/apps/system/NAME.app`; installing is `cp
+  every app; each app is a plain file, `/apps/NAME.app`, the image's read-only; installing is `cp
   NAME.app /apps/`, whose close checks, admits and publishes the package by one rename, a copy over an
   installed app updates it the same way, the old one running until the new one passes and then stopped until
   its own `service NAME start` or `restart` or the next boot, since no publication applies `rc.conf`, `rm` removes it,
@@ -76,7 +88,8 @@ it; git history is the record of completed work.
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
-  the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
+  the release's `pkg/NAME.app`, which the system partition replaces
+  ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
   the config from the manifest and the library's app entries. QEMU virt's development manifest has the
   `apps` row and the check derives the app template, so every development boot runs the package process:
@@ -172,7 +185,7 @@ it; git history is the record of completed work.
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   `erx_principal:app_record()` and
   `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
-  `/pkg/NAME.app` is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `/pkg/NAME.app`, which becomes `/system/apps/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
@@ -7478,21 +7491,11 @@ to the corpus and follow rc
   packer's Phase 1 check (`tools/lib/erx/manifest.rb`, `normalize_images`)
   holds an image record's rules; the generated C and Erlang readers check
   `format` and `hash_algorithm` each alone, so a malformed boot image can
-  pair `erofs_verity` with hash algorithm `none` and zero tree fields, give
-  `erofs_unchecked` a root hash, use format 2 in a release manifest, carry
-  unsorted or overlapping extents, or a window whose `image` disagrees with
-  its role. Express the format's rules as reader rules in
-  `abi/manifest.txt`. The block service checks only what it serves
-  (`erx_blk_image:place/2`): one extent of whole sectors inside the slot,
-  as long as the image's data.
-* [Low] storage, the slot's image area: the packer's extent check bounds an
-  image by the whole slot, so an extent may cover the slot's FAT and
-  bootable file; the images' start (128 MiB) and alignment (1 MiB) live in
-  `ReleaseMedium` and prose, not in `abi/medium.txt`, where both the check
-  and the medium writer should take them. The medium and the manifest also
-  place the release image by two calls of `ReleaseMedium.image_extents`
-  over the same list; keep the placed extents in `ProductionImage::Built`
-  so there is one placement.
+  pair `erofs_verity` with hash algorithm `none` and zero tree fields.
+  Express the format's rules as reader rules in `abi/manifest.txt` when the
+  record takes its `path` form ([design-abi.md](docs/design-abi.md)); its
+  extents, `erofs_unchecked` and the window's `image` go with the image
+  windows ([docs/todo-system-partition.md](docs/todo-system-partition.md)).
 
 * [Medium] storage, `erx_verity` (Phase 1): the EROFS reader reads blocks
   unchecked until M11 adds the hash check inside `erx_verity:read/3`
@@ -8406,20 +8409,6 @@ document's "residual risks accepted" paragraph.
   (https://www.raspberrypi.com/documentation/computers/raspberry-pi.html#PARTITION_WALK), not yet checked. The board pass
   records the board's EEPROM configuration (`BOOT_ORDER`, `PARTITION_WALK`) and what a card with a damaged record
   partition boots.
-* [Low] storage, the release image across domains (`liberx/system/dom_apply.c`,
-  `erlang/apps/erx_blk/src/erx_blk_service.erl`, `erx_blk_image.erl`): with the block
-  unit held by the storage domain, no image window is served
-  ([design-stopgap.md](docs/design-stopgap.md#image-windows)): the storage domain's
-  namespace holds no manifest, and `erx_blk_image` picks only windows the system domain
-  holds. Nothing outside tests reads `/images/release` yet. When a reader appears, have
-  the domain library write each image window's placement (image name, format, extent)
-  into the holder's boot page beside `-erx_record boot`, and have `erx_blk_image` read those
-  words instead of the manifest file.
-* [Low] storage, log lines at every boot (`erlang/apps/erx_blk/src/erx_blk_service.erl`
-  `image_windows/0`, `mount_images/0`): in the storage domain the driver logs that the manifest
-  cannot be read and that no image is served or mounted on every normal boot, which reads as an
-  error. Skip the manifest read outside the system domain, or log it once as information,
-  until the image placement reaches the holder's boot page (the release image item above).
 * [Low] storage, slot windows (`config/manifest/qemu-virt-development.txt`,
   `tools/lib/erx/manifest.rb` property 8): the four slot-writer windows (`slot_a`,
   `slot_b`, `boot_selection`, `reset_count`) are held by the system domain, as property
@@ -8427,19 +8416,14 @@ document's "residual risks accepted" paragraph.
   grant carries slot writes from the storage domain to the system domain, so the rows
   describe a grant nothing implements. The slot writer needs that grant (a facet of the
   storage domain's driver, or the device service's window grants, PW1) before it writes.
-* [Low] storage, image windows (`erlang/apps/erx_blk/src/erx_blk_service.erl`):
-  a restart of the block service starts new windows, but the image mounts
-  made at boot (`mount_images/0`, a supervisor child that runs once) are not
-  made again, so `/images/NAME` answers `eio` until the next boot.
 * [Medium] storage, window rights (`erlang/apps/erx_blk/src/erx_blk_window.erl`):
-  a window is read-only because its role is `{image, _}`, not because it
-  carries the manifest window's `rights`; the slot windows over the same
-  sectors stay writable for any caller in the system domain. Carry `ro | rw`
+  a window is read-only only by its role, not because it carries the
+  manifest window's `rights`, and the booted-system window of
+  [design-storage.md](docs/design-storage.md#the-system-tree) must be
+  read-only while the slot writer's window on the same partition is
+  writable. Carry `ro | rw`
   from the manifest in the window and let a write require `rw`, so read-only
   holds by construction (PW1's grants bring the per-client half).
-* [Low] storage, image names (`erx_blk_image:windows/2`): two images of one
-  name would start two windows of which the service keeps one; refuse the
-  second by name, or let the manifest's reader refuse duplicate image names.
 
 * [Low] storage, the boot-selection record (`abi/medium.txt`): the record and
   the reset count each have a MiB of their own, the layout's alignment taken as
