@@ -5,6 +5,7 @@
 require 'digest'
 require 'tmpdir'
 require 'fileutils'
+require_relative 'build_kind'
 require_relative 'device_kinds'
 require_relative 'elf_plan'
 require_relative 'pack_provenance'
@@ -46,7 +47,7 @@ module Erx
       unless budget.is_a?(Integer) && budget.between?(1, 512 * 1024 * 1024)
         raise Error, 'invalid pack host budget'
       end
-      raise Error, 'invalid pack build kind' unless %w[development release].include?(build_kind)
+      build_kind = BuildKind.fetch(build_kind)
       raise Error, 'invalid pack test-code mark' unless [true, false].include?(test_code)
       destination = File.expand_path(output)
       directory = OutputDirectory.prepare(root: @output_root, path: File.dirname(destination))
@@ -62,7 +63,7 @@ module Erx
         # holds its private half as root, so only a development build may carry it, in
         # any release.
         login_key = @codec.fixed_bytes('ssh_authorized_keys_path')
-        if build_kind != 'development' && rows.any? { |row| row.fetch('path').b.end_with?(login_key) }
+        if !BuildKind.development?(build_kind) && rows.any? { |row| row.fetch('path').b.end_with?(login_key) }
           raise Error, "a #{build_kind} build carries no development login key"
         end
         system = @codec.member('entry_flags', 'system')

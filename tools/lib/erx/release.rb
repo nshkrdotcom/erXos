@@ -9,6 +9,7 @@ require 'open3'
 require_relative 'abi'
 require_relative 'dom_planner'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'error'
 require_relative 'json_input'
 require_relative 'manifest'
@@ -98,7 +99,7 @@ module Erx
         _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
         catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root)))
         pack_with(tools, catalog).build(
-          entries: entries, root_path: 'system/root', build_kind: 'development',
+          entries: entries, root_path: 'system/root', build_kind: BuildKind::DEVELOPMENT,
           platform: @platform.record,
           artifacts: ProductionImage.artifacts(archive_paths(entries), images: images),
           manifest_source: manifest_source, output: output

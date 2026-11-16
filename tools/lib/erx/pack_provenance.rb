@@ -8,6 +8,7 @@ require_relative 'origin'
 require_relative 'archive_member'
 require_relative 'license_expression'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'import_notices'
 require_relative 'cross_toolchain'
 
@@ -51,7 +52,7 @@ module Erx
     # Returns only stable, public names. The caller may include these facts in
     # manifest admission and render NOTICES from the same checked closure.
     def resolve(receipt:, artifact:, build_kind:, notice_budget: MAX_METADATA)
-      raise Error, 'unknown provenance build kind' unless %w[development release].include?(build_kind)
+      build_kind = BuildKind.fetch(build_kind)
       unless notice_budget.is_a?(Integer) && notice_budget.positive?
         raise Error, 'invalid provenance notice budget'
       end
@@ -315,7 +316,7 @@ module Erx
       fresh.fetch('sources').each do |source|
         next unless source.key?('license')
         path = source.fetch('source', source.fetch('path'))
-        selected = LicenseExpression.select(source.fetch('license'), allow_restricted: build_kind == 'development')
+        selected = LicenseExpression.select(source.fetch('license'), allow_restricted: BuildKind.development?(build_kind))
         notices = source.fetch('notices', []) + selected.fetch('grants').flat_map do |grant|
           fresh.fetch('license_notices', {}).fetch(grant, [])
         end
@@ -488,7 +489,7 @@ module Erx
       Attribution.validate_expression(license)
       raise Error, 'invalid font data statement' unless [true, false].include?(font_data)
       raise Error, 'invalid dependency provenance status' unless statuses.include?(status)
-      selected = LicenseExpression.select(license, allow_restricted: build_kind == 'development' && status != PERMANENT,
+      selected = LicenseExpression.select(license, allow_restricted: BuildKind.development?(build_kind) && status != PERMANENT,
                                                    font_data: font_data)
       if public_path
         unless public_path.is_a?(String) && !public_path.start_with?('/') &&

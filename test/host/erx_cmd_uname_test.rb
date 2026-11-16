@@ -24,7 +24,7 @@ class ErxCmdUnameTest < Minitest::Test
 
   # The longest configuration: the longest platform name, then the longest kind, local.
   LONGEST_CONFIGURATION = Erx::BuildFacts.configuration(platform: 'a' * 64, local: true,
-                                                        build_kind: Erx::BuildFacts::KINDS.max_by(&:bytesize))
+                                                        build_kind: Erx::BuildKind::ALL.max_by(&:bytesize))
   # Facts at each field's longest, which the writer's shapes admit, and every fact unknown.
   LONGEST = [Erx::BuildFacts::Facts.new(revision: "n9999999999-#{'f' * 12}-dirty", date: 999_999_999_999,
                                         configuration: LONGEST_CONFIGURATION, kernel: "k#{'.' * 63}"),

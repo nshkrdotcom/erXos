@@ -10,6 +10,7 @@ require_relative 'boot_file'
 require_relative 'boot_partition'
 require_relative 'build_facts'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'build_path'
 require_relative 'compiler_rt'
 require_relative 'crash_frame'
@@ -55,7 +56,7 @@ module Erx
   class ProductionImage
     # The kind of build every image is, which the archive header's development bit
     # records and uname -i names (BuildFacts.configuration).
-    BUILD_KIND = 'development'
+    BUILD_KIND = BuildKind::DEVELOPMENT
     # The code that gathers and writes the build-facts file (BuildFacts, SourceRevision,
     # build_facts_file, made_entry and Fiasco#kernel_name), which its receipt names as its sources.
     BUILD_FACTS_SOURCES = %w[tools/lib/erx/build_facts.rb tools/lib/erx/source_revision.rb tools/lib/erx/production_image.rb
@@ -517,7 +518,7 @@ module Erx
           marked = flags.anybits?(@codec.member('pack_flags', 'test_code'))
           raise Error, 'the archive header disagrees with the test-code mark asked for' unless marked == test_code
           raise Error, "the archive header disagrees with the build kind #{BUILD_KIND} the build facts name" unless
-            flags.anybits?(@codec.member('pack_flags', 'development')) == (BUILD_KIND == 'development')
+            flags.anybits?(@codec.member('pack_flags', 'development')) == BuildKind.development?(BUILD_KIND)
 
           File.rename(unchecked, single)
         ensure
