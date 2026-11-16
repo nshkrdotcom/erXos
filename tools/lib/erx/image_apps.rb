@@ -7,7 +7,9 @@ require_relative 'abi_source'
 require_relative 'app_pack'
 require_relative 'bounded_file'
 require_relative 'error'
+require_relative 'license_expression'
 require_relative 'manifest_frontend'
+require_relative 'pack_provenance'
 
 module Erx
   # The packages an image builder adds to an image (docs/design-packaging.md, "Adding an
@@ -23,7 +25,9 @@ module Erx
   # whose header SHA-256 the build's file check found (AppPack.describe), so a package of
   # the image is trusted by that hash whoever signed it, the builder's key included. The
   # image judges each package's license as it judges an archive's (ProductionImage's
-  # package receipts), so the license the package declares decides whether it may enter.
+  # package receipts), so the license the package declares decides whether it may enter:
+  # one that is not permissive enters only a local test image, which the builder asks for
+  # with --local and which never leaves the host that built it (Plan#status).
   module ImageApps
     RELEASE_DIRECTORY = 'pkg'
     ARTIFACT_KIND = 'package'
@@ -60,8 +64,23 @@ module Erx
     end
 
     # What the image takes for its packages, each in name order, and the manifest
-    # source text appended to the board's: the package rows, then the signer rows.
-    Plan = Data.define(:packages, :rows) do
+    # source text appended to the board's: the package rows, then the signer rows. local
+    # is the builder's --local: the image is a local test image, which takes a package
+    # whose license is not permissive and is marked local in its build facts.
+    Plan = Data.define(:packages, :rows, :local) do
+      # The status package is registered under: package-local for a package of a local
+      # image that names a license that is not permissive, which only a development
+      # build admits, and permanent for every other, whose license is judged as a
+      # permanent dependency's, so such a package enters no image built without --local.
+      # A package that names no license is permanent, and enters no image.
+      def status(package)
+        restricted = local && !package.license.empty? && !LicenseExpression.permissive?(package.license)
+        restricted ? PackProvenance::PACKAGE_LOCAL : PackProvenance::PERMANENT
+      end
+
+      # Whether the image takes no package, no signer and is no local test image.
+      def empty? = packages.empty? && rows.empty? && !local
+
       # Each release-relative path mapped to the package file that lies there.
       def entries = packages.to_h { |package| [package.entry_path, package.path] }
 
@@ -82,15 +101,17 @@ module Erx
     module_function
 
     # The packages of sources, each an app directory, which AppPack.pack packs with sdk
-    # and signer into the directory into, or a package file, copied there as it is: the
+    # and signer into the directory into, building erx_elf_plan for the host with
+    # compiler, or a package file, copied there as it is: the
     # image takes the copy in the build tree, which nothing else writes, so the file the
     # file check described is the file the image packs. into must be empty.
-    def gather(sources, into:, sdk:, signer:, runner:, root:)
+    def gather(sources, into:, sdk:, signer:, runner:, root:, compiler:)
       raise Error, "#{into} is not an empty directory" unless Dir.exist?(into) && Dir.empty?(into)
 
       sources.map do |source|
         path = if File.directory?(source)
-                 AppPack.pack(directory: source, sdk: sdk, signer: signer, output_directory: into, runner: runner, root: root)
+                 AppPack.pack(directory: source, sdk: sdk, signer: signer, output_directory: into, runner: runner, root: root,
+                                          compiler: compiler)
                else
                  copied(source, into)
                end
@@ -126,8 +147,8 @@ module Erx
 
     # The Plan of packages (Package), each row enabled when enable names it, and a signer
     # row for each of signers. An image takes one package of a name and one signer of a
-    # name, and enable names only packages it takes.
-    def plan(packages, enable:, signers: [])
+    # name, and enable names only packages it takes. local makes it a local test image's.
+    def plan(packages, enable:, signers: [], local: false)
       refuse_twice(packages.map(&:name), 'two packages of the image are named')
       refuse_twice(signers.map(&:name), 'two signers of the image are named')
       unknown = enable - packages.map(&:name)
@@ -136,10 +157,12 @@ module Erx
       sorted = packages.sort_by(&:name).freeze
       records = [*sorted.map { |package| package_record(package, enabled: enable.include?(package.name)) },
                  *signers.sort_by(&:name).map { |signer| signer_record(signer) }]
-      Plan.new(packages: sorted, rows: Manifest::Frontend.records_text(records).freeze)
+      raise Error, 'local is true or false' unless [true, false].include?(local)
+
+      Plan.new(packages: sorted, rows: Manifest::Frontend.records_text(records).freeze, local: local)
     end
 
-    # The image with no packages, which adds no row.
+    # The image with no packages, which adds no row and is no local test image.
     def none = plan([], enable: [])
 
     def copied(source, into)

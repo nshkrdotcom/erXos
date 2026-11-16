@@ -8,9 +8,12 @@ require 'tmpdir'
 require_relative 'app_package'
 require_relative 'bounded_file'
 require_relative 'erlang_apps'
+require_relative 'elf_plan'
 require_relative 'erofs_image'
 require_relative 'error'
 require_relative 'oracle'
+require_relative 'pack_tools'
+require_relative 'runner'
 
 module Erx
   # `erx-app pack` (docs/design-packaging.md, "Building and packing"): an app's directory
@@ -29,7 +32,9 @@ module Erx
   # relative path, so nothing of the host's paths, owners, modes or times reaches the
   # package (Erx::ErofsImage). A name starting with '.' is left out wherever it lies, so a
   # host's own files (.DS_Store, ._NAME, editor files) never enter a package; a link or a
-  # file of any other kind is refused. The salt is the image's SHA-256 and an Ed25519
+  # file of any other kind is refused. A program the declaration starts is someone else's
+  # bytes, built outside the packer: the host build of erx_elf_plan, the one reader of
+  # executable headers, plans it as the loader will, and it is never run. The salt is the image's SHA-256 and an Ed25519
   # signature depends on the key and the bytes alone, so the same sources give the same
   # package.
   #
@@ -44,6 +49,10 @@ module Erx
     RESOURCE_MAX = 65_536
     ERLC_FLAGS = %w[+deterministic].freeze
     DEADLINE = 600
+    # Where the packer builds erx_elf_plan for the host, under the tree it packs with.
+    TOOLS_DIRECTORY = 'build/app-pack-tools'
+    # The most bytes of the planner's refusal the packer reads back.
+    REFUSAL_MAX = 4096
 
     # The SDK the packer runs from (docs/design-packaging.md, "The SDK"): its root
     # directory, and the host's stock erlc, beside which its erl lies.
@@ -86,13 +95,15 @@ module Erx
 
     # Packs the app in directory with sdk (Sdk), sealed by signer (Erx::AppPackage::Signer),
     # into output_directory/NAME.app, which a checked package replaces whole; returns its
-    # path. runner runs erlc, erl and fsimg, the build under root.
-    def pack(directory:, sdk:, signer:, output_directory:, runner:, root: ErofsImage::ROOT)
+    # path. runner runs erlc, erl, fsimg and the ELF planner, which compiler builds for the
+    # host from the tree at root.
+    def pack(directory:, sdk:, signer:, output_directory:, runner:, root: ErofsImage::ROOT, compiler: 'clang')
       directory = File.expand_path(directory)
       declaration = declaration(directory)
       compile(directory, sdk: sdk, runner: runner)
       files = image_files(directory)
       check_start(declaration.start, files)
+      check_program(declaration, files, runner: runner, root: root, compiler: compiler)
       output = File.join(File.expand_path(output_directory), "#{declaration.name}.app")
       Dir.mktmpdir('.erx-app-', File.dirname(output)) do |work|
         image = ErofsImage.new(runner: runner, root: root).write(files: files, name: "app-#{declaration.name}",
@@ -189,6 +200,29 @@ module Erx
       raise Error, "the app's directory has no #{missing.join(', ')}" unless missing.empty?
     end
 
+    # Refuses a program the loader would refuse (docs/design-packaging.md, "Building and
+    # packing"): erx_elf_plan's host build (Erx::ElfPlanner) plans the file for the ABI's
+    # version and the target's architecture, with the app's declared memory as the most its
+    # image may take. An app that starts applications has no program to plan.
+    def check_program(declaration, files, runner:, root:, compiler:)
+      return unless declaration.start in AppPackage::Program(path:)
+
+      helper = PackTools.build(root: root, owner_root: root, directory: File.join(root, TOOLS_DIRECTORY), runner: runner,
+                               compiler: compiler, tools: ['planner']).fetch('planner')
+      begin
+        ElfPlanner.new(helper: helper, runner: runner, codec: AppPackage.codec).call(files.fetch(path), budget: declaration.memory)
+      rescue CommandError => error
+        raise Error, "#{path} is not a program the loader accepts: #{planner_refusal(error.result)}"
+      end
+    end
+
+    # The planner's reason and byte offset from its log, 'error REASON OFFSET', or its state
+    # when it gave none (a deadline, a crash).
+    def planner_refusal(result)
+      found = BoundedFile.read(result.fetch('log'), maximum: REFUSAL_MAX).match(/\Aerror ([a-z_]{1,64}) ([0-9]{1,20})\n?\z/)
+      found ? "#{found[1]} at byte #{found[2]}" : "the planner #{result.fetch('state')}"
+    end
+
     # The parts below lib/: ebin and priv of each application directory.
     def application_parts(directory)
       applications(directory).flat_map { |application| APPLICATION_PARTS.map { |part| "lib/#{application}/#{part}" } }
@@ -266,6 +300,6 @@ module Erx
       :absent
     end
 
-    private_class_method :file_check, :application_parts, :applications, :build, :files_below, :part_kind, :visible, :kind
+    private_class_method :file_check, :planner_refusal, :application_parts, :applications, :build, :files_below, :part_kind, :visible, :kind
   end
 end

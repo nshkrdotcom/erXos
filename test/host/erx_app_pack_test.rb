@@ -7,6 +7,7 @@ require 'minitest/autorun'
 require 'openssl'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/app_pack'
+require_relative '../fixtures/elf_fixture'
 
 # The packer's refusals before it writes anything (Erx::AppPackage, Erx::AppPack): app.txt's
 # parser, the walk of an app's directory and the signing key's reader. The packages it
@@ -69,6 +70,29 @@ class ErxAppPackTest < Minitest::Test
       FileUtils.rm_r(File.join(work, 'lib/foo-1.0'))
       File.symlink('/etc/passwd', File.join(work, 'share/passwd'))
       assert_match(/is a link/, assert_raises(Erx::Error) { Erx::AppPack.image_files(work) }.message)
+    end
+  end
+
+  # A native program is someone else's bytes: erx_elf_plan's host build plans it as the
+  # loader will and it is never run. An executable the loader takes passes; a file that is
+  # no ELF, and one whose image needs more than the app's declared memory, are refused with
+  # the planner's reason.
+  def test_a_program_is_planned_as_the_loader_plans_it
+    root = File.expand_path('../..', __dir__)
+    runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
+    Dir.mktmpdir('erx-app-pack-test') do |work|
+      check = lambda do |bytes, memory: 4_194_304|
+        write(work, 'bin/x' => bytes)
+        declaration = Package::Declaration.new(name: 'x', needs: [], start: Package::Program.new(path: 'bin/x', args: []),
+                                               license: '', memory: memory, version: 1)
+        Erx::AppPack.check_program(declaration, Erx::AppPack.image_files(work), runner: runner, root: root,
+                                                                                compiler: ENV.fetch('ERX_CLANG', 'clang'))
+      end
+      check.call(ElfFixture.valid)
+      error = assert_raises(Erx::Error) { check.call("#!/bin/sh\nexit 0\n") }
+      assert_equal 'bin/x is not a program the loader accepts: elf_header at byte 0', error.message
+      error = assert_raises(Erx::Error) { check.call(ElfFixture.valid, memory: 4096) }
+      assert_match(%r{\Abin/x is not a program the loader accepts: [a-z_]+ at byte [0-9]+\z}, error.message)
     end
   end
 

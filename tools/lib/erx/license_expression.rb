@@ -30,6 +30,9 @@ module Erx
     PRECEDENCE = { 'OR' => 1, 'AND' => 2 }.freeze
     module_function
 
+    # Whether expression has a grant every image may take, as select chooses one.
+    def permissive?(expression) = select(expression, allow_restricted: true).fetch('permissive')
+
     # SPDX grouping is bounded by Attribution's grammar. Postfix evaluation
     # avoids input-controlled recursion, including long unparenthesized chains.
     # AND needs both grants; OR selects one, preferring a permissive grant. font_data: true says

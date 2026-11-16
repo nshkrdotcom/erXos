@@ -30,6 +30,9 @@ class BuildFactsTest < Minitest::Test
 
   def test_the_configuration_is_the_platform_and_the_build_kind
     assert_equal 'qemu-virt/development', BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'development')
+    local = BuildFacts.configuration(platform: 'qemu-virt', build_kind: 'development', local: true)
+    assert_equal 'qemu-virt/development-local', local
+    assert_match BuildFacts::SHAPES.fetch(:configuration), local
     assert_equal 'rpi4/release', BuildFacts.configuration(platform: 'rpi4', build_kind: 'release')
   end
 
