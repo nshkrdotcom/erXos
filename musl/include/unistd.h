@@ -234,7 +234,7 @@ pid_t gettid(void);
 #define _POSIX_SAVED_IDS        1
 #define _POSIX_SHELL            1
 #define _POSIX_SPAWN            _POSIX_VERSION
-#define _POSIX_VDISABLE         0
+#include <bits/vdisable.h>
 
 #define _POSIX_THREADS          _POSIX_VERSION
 #define _POSIX_THREAD_PROCESS_SHARED _POSIX_VERSION

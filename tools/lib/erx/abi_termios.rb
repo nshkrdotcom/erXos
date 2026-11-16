@@ -10,26 +10,35 @@ module Erx
     TermiosFlag = Struct.new(:name, :bit, keyword_init: true)
     # A field of contiguous bits of a termios word (csize): its mask, the
     # value its bits read as when 0, and the derived shift and last value.
+    # Its name ends in size, and C names each value by the name less ize:
+    # csize's 5 to 8 are CS5 to CS8.
     TermiosSize = Struct.new(:name, :mask, :first, keyword_init: true) do
       def shift = (mask & -mask).bit_length - 1
       def last = first + (mask >> shift)
+      # Each value's C name with its bits: CS5 0, CS6 0x100 for csize.
+      def bits_by_name
+        (first..last).to_h { |value| ["#{name.delete_suffix('ize').upcase}#{value}", (value - first) << shift] }
+      end
     end
     # One word of struct termios (iflag): its flags and sizes in name order.
     TermiosWord = Struct.new(:name, :flags, :sizes, keyword_init: true)
     # One special character: its name (veof) and its index in c_cc.
     TermiosChar = Struct.new(:name, :index, keyword_init: true)
     # The termios table: the four words in struct order, the characters in
-    # name order, c_cc's length and the byte written where no character is.
-    TermiosTable = Struct.new(:words, :chars, :count, :unnamed, keyword_init: true)
+    # name order, c_cc's length, the byte written where no character is, and
+    # the speeds a program may name, in increasing order.
+    TermiosTable = Struct.new(:words, :chars, :count, :unnamed, :rates, keyword_init: true)
 
     # The termios lines of abi/termios.txt (docs/design-live.md, "The tty").
     module Termios
       # The words of struct termios, in the order the struct holds them.
       WORDS = %w[iflag oflag cflag lflag].freeze
+      # The two speeds, which struct termios holds after c_cc, input first.
+      SPEEDS = %w[ispeed ospeed].freeze
       # The keys of erx_tty's termios map besides the flags and sizes, which
       # no name of the table may take.
-      KEYS = [*WORDS, 'cc', 'ispeed', 'ospeed'].freeze
-      SECTIONS = [*WORDS, 'cc'].freeze
+      KEYS = [*WORDS, 'cc', *SPEEDS].freeze
+      SECTIONS = [*WORDS, 'cc', 'speed'].freeze
       NAME = /\A[a-z][a-z0-9]{0,15}\z/
       # tcflag_t is FreeBSD's unsigned int.
       WORD_MASK = 0xffff_ffff
@@ -54,7 +63,8 @@ module Erx
         names = words.flat_map { |entry| entry.flags + entry.sizes }.map(&:name) + chars.map(&:name)
         duplicate = names.tally.find { |_name, times| times > 1 }
         declarations.first.fail!("duplicate termios name #{duplicate.first}") if duplicate
-        TermiosTable.new(words: words.freeze, chars: chars, count: count, unnamed: unnamed).freeze
+        TermiosTable.new(words: words.freeze, chars: chars, count: count, unnamed: unnamed,
+                         rates: rates(sections.fetch('speed'))).freeze
       end
 
       def section_of(declaration)
@@ -93,6 +103,7 @@ module Erx
         value = word_value(line, mask)
         low = value & -value
         line.fail!("termios size #{name} must be contiguous bits") unless value.positive? && ((value + low) & value).zero?
+        line.fail!("termios size #{name} must end in size") unless name.end_with?('size')
         start = Syntax.integer(first, line: line)
         line.fail!("termios size #{name} must start at 0 or above") if start.negative?
         TermiosSize.new(name: name_of(line, name), mask: value, first: start).freeze
@@ -115,6 +126,22 @@ module Erx
         duplicate = chars.map(&:index).tally.find { |_index, times| times > 1 }
         declaration.fail!("duplicate termios char index #{duplicate.first}") if duplicate
         [count, unnamed, chars.sort_by(&:name).freeze]
+      end
+
+      # termios speed and its rate members: the speeds a program names as B
+      # and the rate, each a distinct 32-bit speed_t.
+      def rates(declaration)
+        declaration.fail!('expected termios speed') unless declaration.args.size == 1
+        rates = declaration.members.map do |line|
+          case line.words
+          in ['rate', speed] then word_value(line, speed)
+          else line.fail!('expected rate SPEED')
+          end
+        end
+        declaration.fail!('termios speed names no rate') if rates.empty?
+        duplicate = rates.tally.find { |_rate, times| times > 1 }
+        declaration.fail!("duplicate termios rate #{duplicate.first}") if duplicate
+        rates.sort.freeze
       end
 
       def word_value(line, text)
