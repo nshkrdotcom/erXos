@@ -2291,9 +2291,10 @@ inspector and the code store are reached through Erlang commands with the
 facets in their context ([design-live.md](design-live.md)); and `bind`,
 `mount` and `unmount` change the session domain's namespace
 ([design-files.md](design-files.md#building-binding-and-mounting)).
-`mount FILE DIR` mounts the EROFS image of a package file read-only at
-`DIR`, with the layout its own header gives, read through the same open
-as the image, and `unmount DIR` ends it
+`mount FILE DIR` mounts the EROFS image of a package file of `/apps`
+read-only at `DIR`, with the layout of the header the `apps` tree
+served, read through the same open as the image, and answers `einval`
+for any other file; `unmount DIR` ends it
 ([design-packaging.md](design-packaging.md#apps)).
 
 ## Compatibility and migration

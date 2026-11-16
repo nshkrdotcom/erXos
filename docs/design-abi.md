@@ -2026,7 +2026,7 @@ learns only its own projected limits through its read-only boot page.
 ### Domain identity and placement
 
 Domain kind 1 is `service` and 2 is `secret`. A session template is no
-domain row: the `sessions` table, which the header's span at offset 376
+domain row: the `sessions` table, which the header's span at offset 360
 names and which follows the domain table, holds one 40-byte record per
 template, in principal order and at most one per principal: its principal
 and limits indices, its runtime, release and release-file count as a

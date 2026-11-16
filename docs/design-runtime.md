@@ -2292,10 +2292,9 @@ server of its own:
   the image's file through the domain's grant and
   hands to the hash-checking primitive, which checks them against the
   image's dm-verity tree, whose root comes from a header the system
-  domain's file check authenticated, and returns only blocks that
-  matched; the reader parses no block of a mount that the primitive did
-  not return, and the one source it reads unchecked is the `system`
-  backend's, in the storage domain that serves `system`
+  domain's file check authenticated, or, for the system partition, from
+  the manifest the boot image holds, and returns only blocks that
+  matched; the reader parses no block that the primitive did not return
   ([design-storage.md](design-storage.md#invariants) E1);
 * **a RAM file system** per domain at `/tmp`, an `erx_fs` server,
   `erx_ramfs`, that runs in the domain and is mounted as a grant like any

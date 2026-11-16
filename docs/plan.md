@@ -2117,7 +2117,7 @@ the guest's power cut and the next boot.
   each slot's system partition in the EROFS format, which the storage
   domain serves as the `system` tree with a read-only `erx_fs` backend
   over the EROFS reader, and the file-backed EROFS mount,
-  `erx_ns:mount({erofs, {file, Path, Layout}}, ...)`: the EROFS reader
+  `erx_ns:mount({erofs, Source}, ...)`: the EROFS reader
   in Erlang, preloaded in every runtime image, with its fuzz target;
   fsimg as the packer's host tool, which writes and verifies each image, and
   the packer's disk image for QEMU, laid out by the ABI file's medium

@@ -34,31 +34,38 @@ that proves the code under test ran.
 * [High] storage, the `system` tree (`erlang/apps/erx_storage`,
   `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
   `erx_storage_system`, a read-only `erx_fs` backend over `erx_erofs` rooted
-  at the partition's `apps/`, with no writing callback, which alone builds
-  the raw source, a record private to it whose blocks `erx_erofs` reads
-  through `erx_storage_system:read/3`; `Erx::ErofsReads` rules that only
-  `erx_storage_system` builds the source and that the reader reaches blocks
-  only through `erx_verity:read/3` or `erx_storage_system:read/3`; the
+  at the partition's `apps/`, with no writing callback, which opens the
+  partition's image in `erx_verity` over the `system` window with the
+  layout and root hash of its boot record; the packer and fsimg writing
+  the partition's hash tree after its image and refusing an image and
+  tree larger than the partition, the manifest recording the image's
+  length and the tree's layout and root hash for the slot
+  (`abi/manifest.txt`), the system domain writing them into the serving
+  domain's boot record, and the update writing the tree and the manifest
+  with the partition; `Erx::ErofsReads` rules that the reader reaches
+  blocks only through `erx_verity:read/3` and that only `erx_ns` and
+  `erx_storage_system` open an image in it; the
   `system` service in `abi/services`, named `system_service` in
   `abi/manifest.txt`, with its facet row naming design-storage.md's
   section; property 19 deriving the `system` rows, the system domain's and
-  the app template's, both `ro`, and the `apps` row's `system_facet`, and
+  the app template's, `ro` and `rx`, and the `apps` row's `system_facet`, and
   checking that the service's server holds the `system` window. Test: a
   QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
-  callback, and a module of another application that builds the raw
-  source, which the build check must refuse.
+  callback, and a flipped bit in the partition's directory, which must
+  answer `eio` before the reader parses it.
 * [High] files, the file-backed EROFS mount (`erx_ns`, `erx_verity`):
-  `erx_ns:mount({erofs, {file, Path, Layout}}, To, Options)` as the one
-  EROFS mount, `erx_ns`'s process owning the fid, its layout an opaque
-  `erx_pkg_header:layout()` built only by `check_file/2`, which only the
-  package process calls, or by `erx_pkg_header:served_layout/2` for
-  `header`, which `erx_ns` takes only for a file reached through the
-  `apps` grant;
-  `erx_ns.erl` has only `{erofs, Window}`. Test: a mount of a package
-  file and a read below it; seeded: a module outside `erx_pkg_header` that
-  builds a layout, which `Erx::ErofsReads` must refuse, and a `header`
-  mount of a file of `packages`, which must be refused with `einval`.
+  `erx_ns:mount({erofs, Source}, To, Options)` as the one EROFS mount,
+  `Source` `app` (the place and layout of the app's record) or
+  `{header, Path}` (only for a file reached through the `apps` grant),
+  no form taking a layout, `erx_ns`'s process owning the fid, and the
+  mount's rights at most those of the grant its fid came through, so
+  `rx` only through the app template's `rx` `packages` and `system`
+  grants; `erx_ns.erl` has only `{erofs, Window}`. Test: the package
+  mounts' host test of design-packaging.md; seeded: a mount that takes
+  its rights from its options, which mounts a file of `/apps` `rx`, and a
+  `header` mount judged by the path rather than the fid's grant, which
+  mounts a session-written `/tmp` file once `/tmp` is bound at `/apps`.
 * [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
   `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
   `place(system, ..)`, `erx_principal`): the packer writes each image package
@@ -71,10 +78,12 @@ that proves the code under test ran.
   a packer check that every file of the boot image is an artifact a
   manifest row names by its role (the kernel, the root, the system release
   with the manifest, each configured domain's and session template's
-  runtime image and release, and each partial-boot program's image), and
+  runtime image and release, the system domain's own runtime image, the
+  shared-code image `runtimes/emu.code` when `shared_code_image` is true,
+  and each partial-boot program's image), and
   that no file of any slice begins with the package container's magic,
   failing with the file and the rule named; and that the system partition's
-  image fits its partition. Test: the check on the production image;
+  image fits its partition. Test: the check on the production image, with and without a shared-code image;
   seeded: one package file added to a domain release, and a file no row
   names.
 * [High] apps, one flat `/apps` (`erx_pkg_io`, `erx_pkg_plan`): image
@@ -82,8 +91,8 @@ that proves the code under test ran.
   package's name answering `erofs`; an installed package whose name a
   system update gave to the image shadowed, kept on the data partition,
   listed as `.NAME.app`, shown `shadowed` at `/proc/packages`, removable
-  there, and purged for its signer alone through `remove_app` with a
-  signer; nothing written on a trial boot
+  there, and its data purged through `remove_app` with every other
+  signer's of the name but `image`; nothing written on a trial boot
   ([design-packaging.md](design-packaging.md#boot-and-recovery)). Test: the
   recovery over a directory holding such a package, on a normal and on a
   trial boot; seeded: the shadow check dropped, which lists the name twice.

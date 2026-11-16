@@ -15,7 +15,7 @@ it; git history is the record of completed work.
   storage domain serves the booted slot's as the `system` tree through a
   read-only `erx_fs` backend over `erx_erofs`; packages are self-checking
   files in it, mounted with
-  `erx_ns:mount({erofs, {file, Path, Layout}}, ...)`; image packages leave
+  `erx_ns:mount({erofs, Source}, ...)`; image packages leave
   the boot image under a packer check of what it may hold; `/apps` is one
   flat tree; the slot writer and the update write two partitions; image
   windows, `erx_blk_image`, image extents and the slot's release copy are
@@ -154,7 +154,7 @@ it; git history is the record of completed work.
   leave out; the session plan
   in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
-  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
+  `erx_app` calls as `{erofs, app}`; a native app's start and the record's `window`, which wait for
   `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
@@ -178,7 +178,7 @@ it; git history is the record of completed work.
   the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
-  which `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's
+  which `erx_app` calls as `{erofs, app}`; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app`
   script, which the runtime does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
@@ -7060,17 +7060,6 @@ to the corpus and follow rc
 
 ## Security residuals
 
-* [Medium] files, an EROFS mount's rights (`erx_ns`,
-  [design-files.md](docs/design-files.md#invariants) F6): `erx_ns:mount({erofs,
-  {file, Path, Layout}}, To, Options)` takes `rx` from its caller whatever grant
-  reached the file, so F6, which bounds grants, does not bound an EROFS mount.
-  With a `header` mount of any file, which the design allowed before the
-  `system` tree, a session could write a package-shaped file under `/tmp` and
-  mount it `rx`, running code it wrote. Confining `header` to the `apps` grant
-  and building layouts only in the file check closes that route, but no rule
-  states it: an EROFS mount is `rx` only with a layout the file check built,
-  and is `ro` otherwise. State it in F6 and test it; seeded: an `rx` mount
-  through the `apps` grant, which must come out `ro`.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
