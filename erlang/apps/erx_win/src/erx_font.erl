@@ -23,7 +23,13 @@ header and the glyph table:
 * n+1 entries of 6 bytes: x (two bytes, low first), top, bottom, left (a
   signed byte) and width; glyph i covers columns x(i) to x(i+1) and rows
   top to bottom of the image, is placed left pixels right of the pen and
-  advances it by width. The last entry gives only the end of glyph n-1.
+  advances it by width. The last entry gives only the end of glyph n-1;
+* optionally, erXos's pair section (docs/design-desktop-programs.md,
+  "Kerning"), which a stock Plan 9 reader never reads: two fields, the
+  word `kern` and the pair count k, then k entries of 5 bytes, the first
+  glyph's index and the second's (two bytes each, low first) and the
+  adjustment of the first glyph's advance when the second follows it (a
+  signed byte).
 
 `parse/1` refuses what a load could not use as it stands: an image that
 does not start at the origin, since a glyph's x and rows are offsets in
@@ -33,7 +39,13 @@ old image whose first field is a depth rather than a channel; a glyph count
 of none or more than a font cache
 holds (`erx_draw_core:max_glyphs/0`); an ascent outside a byte, the field
 `i` carries it in; a glyph whose columns leave the image or run backwards;
-and any byte after the glyph table. A glyph's rows are clamped into the
+and bytes after the glyph table unless they are a pair section. A pair
+section is refused whole, for any fault once its first field reads `kern`:
+a count below 1 or not matched by exactly its entries, an index at or past
+the glyph count, entries not strictly ascending by first index and then
+second, an adjustment of 0, a pair naming a glyph of width 0, which a font
+reader takes as missing, and a kerned advance outside 0 to 255, so the pen
+never moves backward. A glyph's rows are clamped into the
 image as loadchar clamps them, since real subfonts give empty glyphs rows
 past it, and an ascent above the height is kept, as plan9port keeps it.
 Every count
@@ -52,15 +64,23 @@ that, and a `y` may load any rectangle inside the image (draw(3)).
 The image is its own
 cache, so a glyph's index is its index in the subfont and text in it is a
 sequence of `s` messages.
+
+`width/2` and `runs/2` place a line of glyph indices by the pairs, through
+`erx_pen`: `runs/2` cuts the line where an adjustment is not 0, and each
+run is one `s` message at its offset, so the draw server, which advances
+each glyph by its width, never sees a pair. The pairs stay the file's
+bytes and a pair is found by halving them, so a subfont costs its size.
 """.
 
--export([parse/1, load/2]).
--export_type([subfont/0, glyph/0, reason/0]).
+-export([parse/1, load/2, width/2, runs/2]).
+-export_type([subfont/0, glyph/0, index/0, reason/0]).
 
 %% A header field: a number or descriptor right-justified in 11, then a blank.
 -define(FIELD, 12).
 %% The most bytes of pixels one `y` of `load/2` carries.
 -define(Y_BYTES, 8192).
+%% A pair section's entry: two glyph indices and an adjustment.
+-define(PAIR, 5).
 %% The widest and tallest image whose columns and rows a glyph reaches:
 %% its x is two bytes, its top and bottom one each.
 -define(MAX_W, 16#ffff).
@@ -73,14 +93,20 @@ offset from the pen and its advance.
 """.
 -type glyph() :: erx_draw_core:glyph().
 
+-doc "A glyph's index in its subfont, as a pair entry holds it.".
+-type index() :: 0..16#ffff.
+
 -doc """
 A subfont as `parse/1` read it: its image's channel and rectangle, which
 starts at the origin, the image's pixels row by row as a `y` message lays
-them, the font's height and ascent, and its glyphs in index order.
+them, the font's height and ascent, its glyphs in index order, and its pair
+section's entries as the file holds them, ascending, empty for a file
+without one.
 """.
 -type subfont() :: #{chan := erx_chan:code(),
                      r := {0, 0, pos_integer(), pos_integer()}, pixels := binary(),
-                     height := non_neg_integer(), ascent := byte(), glyphs := [glyph(), ...]}.
+                     height := non_neg_integer(), ascent := byte(), glyphs := [glyph(), ...],
+                     pairs := binary()}.
 
 -doc """
 Why a file is refused: `header` for a missing or malformed field of the
@@ -89,10 +115,11 @@ glyph reaches; `pixels` for
 pixels short of the rectangle or codes that
 do not fill a block; `glyphs` for a table short of n+1 entries, a glyph
 count, height or ascent out of range, or a glyph's columns outside the
-image or backwards; and
-`trailing` for bytes after the table.
+image or backwards;
+`trailing` for bytes after the table that are not a pair section; and
+`kern` for any fault of a pair section.
 """.
--type reason() :: header | pixels | glyphs | trailing.
+-type reason() :: header | pixels | glyphs | trailing | kern.
 
 -doc "The subfont in file `Bytes`, or why it is refused.".
 -spec parse(binary()) -> {ok, subfont()} | {error, reason()}.
@@ -103,15 +130,82 @@ parse(Bytes) when is_binary(Bytes) ->
         check(N >= 1 andalso N =< erx_draw_core:max_glyphs()
               andalso Ascent >= 0 andalso Ascent =< 255 andalso Height >= 0, glyphs),
         TableBytes = 6 * (N + 1),
-        Table = case AfterHeader of
-                    <<T:TableBytes/binary>> -> T;
-                    <<_:TableBytes/binary, _/binary>> -> throw(trailing);
-                    _ -> throw(glyphs)
-                end,
+        {Table, AfterTable} = case AfterHeader of
+                                  <<T:TableBytes/binary, Rest/binary>> -> {T, Rest};
+                                  _ -> throw(glyphs)
+                              end,
         Glyphs = glyphs(Table, maps:get(r, Image)),
-        {ok, Image#{height => Height, ascent => Ascent, glyphs => Glyphs}}
+        Pairs = pairs(AfterTable, Glyphs),
+        {ok, Image#{height => Height, ascent => Ascent, glyphs => Glyphs, pairs => Pairs}}
     catch
         throw:Reason -> {error, Reason}
+    end.
+
+-doc """
+The width of a line of `Subfont`'s glyphs, by their advances and pairs.
+Each index is below the subfont's glyph count, as the caller's mapping
+from characters to glyphs gives it.
+""".
+-spec width(subfont(), [index()]) -> non_neg_integer().
+width(Subfont, Line) ->
+    {_Offsets, Width} = place(Subfont, Line),
+    Width.
+
+-doc """
+A line of `Subfont`'s glyphs cut into runs, each with its pen offset from
+the line's start: a run ends where the adjustment between two glyphs is
+not 0, so within a run each glyph follows the last by its advance, as an
+`s` message draws it. A line without pairs is one run. Each index is below
+the subfont's glyph count.
+""".
+-spec runs(subfont(), [index()]) -> [{non_neg_integer(), [index(), ...]}].
+runs(#{glyphs := Glyphs} = Subfont, Line) ->
+    {Offsets, _Width} = place(Subfont, Line),
+    cut(lists:zip(Line, Offsets), advance(Glyphs)).
+
+%% Placed glyphs, each {Glyph, Offset}, cut into runs. The open run starts
+%% at Start, holds Run in reverse and its advances end at End; the next
+%% glyph joins it when it stands at End, which is when the adjustment
+%% between it and the glyph before it is 0, and starts a run otherwise.
+cut([], _Advance) ->
+    [];
+cut([{Glyph, X} | Placed], Advance) ->
+    cut(Placed, Advance, X, [Glyph], X + Advance(Glyph)).
+
+cut([], _Advance, Start, Run, _End) ->
+    [{Start, lists:reverse(Run)}];
+cut([{Glyph, X} | Placed], Advance, Start, Run, End) when X =:= End ->
+    cut(Placed, Advance, Start, [Glyph | Run], X + Advance(Glyph));
+cut([{Glyph, X} | Placed], Advance, Start, Run, _End) ->
+    [{Start, lists:reverse(Run)} | cut(Placed, Advance, X, [Glyph], X + Advance(Glyph))].
+
+%% Each glyph's pen offset and the line's width, by erx_pen.
+place(#{glyphs := Glyphs, pairs := Pairs}, Line) ->
+    erx_pen:place(Line, advance(Glyphs), fun(A, B) -> kern(Pairs, A, B) end).
+
+%% A glyph's advance by its index.
+advance(Glyphs) ->
+    Widths = widths(Glyphs),
+    fun(Index) -> element(Index + 1, Widths) end.
+
+%% The glyphs' advances, element I + 1 glyph I's.
+widths(Glyphs) -> list_to_tuple([Width || {_, _, _, _, _, Width} <- Glyphs]).
+
+%% The adjustment of glyph A followed by glyph B: the pair's, found by
+%% halving the ascending entries, or 0 when no entry names them.
+kern(Pairs, A, B) ->
+    kern(Pairs, {A, B}, 0, byte_size(Pairs) div ?PAIR).
+
+kern(_Pairs, _Key, Low, Low) ->
+    0;
+kern(Pairs, Key, Low, High) ->
+    Middle = (Low + High) div 2,
+    Skip = Middle * ?PAIR,
+    <<_:Skip/binary, First:16/little, Second:16/little, Adjustment:8/signed, _/binary>> = Pairs,
+    if
+        {First, Second} =:= Key -> Adjustment;
+        {First, Second} < Key -> kern(Pairs, Key, Middle + 1, High);
+        true -> kern(Pairs, Key, Low, Middle)
     end.
 
 -doc """
@@ -209,6 +303,47 @@ glyphs(Table, {0, 0, W, H}) ->
     check(lists:all(fun({X0, X1, _, _, _, _}) -> X0 =< X1 andalso X1 =< W end, Glyphs), glyphs),
     Glyphs.
 
+%% The pair section's entries, or none when the glyph table ends the file.
+%% Bytes that do not start with a field reading `kern` are trailing; after
+%% one, every fault is `kern`, the count's included, so the count is read
+%% as digits alone rather than by the header's number reader. The count is
+%% matched against the bytes before any entry is read.
+pairs(<<>>, _Glyphs) ->
+    <<>>;
+pairs(<<Marker:?FIELD/binary, Section/binary>>, Glyphs) ->
+    check(text(Marker, trailing) =:= <<"kern">>, trailing),
+    {Count, Entries} = case Section of
+                           <<CountField:?FIELD/binary, E/binary>> -> {digits(text(CountField, kern), kern), E};
+                           _ -> throw(kern)
+                       end,
+    check(Count >= 1 andalso byte_size(Entries) =:= ?PAIR * Count, kern),
+    check_entries(Entries, widths(Glyphs), {-1, -1}),
+    %% A copy, so a subfont of a compressed file does not keep the file.
+    binary:copy(Entries);
+pairs(_Short, _Glyphs) ->
+    throw(trailing).
+
+%% Each entry names two glyphs of width above 0 (drawn_width/2), comes after
+%% the one before it (Previous, which starts below every pair), adjusts by
+%% other than 0 and keeps the first glyph's kerned advance in 0 to 255.
+check_entries(<<>>, _Widths, _Previous) ->
+    ok;
+check_entries(<<A:16/little, B:16/little, Adjustment:8/signed, Rest/binary>>, Widths, Previous) ->
+    Kerned = drawn_width(A, Widths) + Adjustment,
+    drawn_width(B, Widths),
+    check({A, B} > Previous, kern),
+    check(Adjustment =/= 0 andalso Kerned >= 0 andalso Kerned =< 255, kern),
+    check_entries(Rest, Widths, {A, B}).
+
+%% The width of the glyph an entry names, which must be a glyph of the
+%% subfont and of width above 0: the one bound on an entry's indices.
+drawn_width(Index, Widths) when Index < tuple_size(Widths) ->
+    Width = element(Index + 1, Widths),
+    check(Width > 0, kern),
+    Width;
+drawn_width(_Index, _Widths) ->
+    throw(kern).
+
 %% Count numeric header fields.
 numbers(Count, Bytes) ->
     lists:mapfoldl(fun(_, Rest) ->
@@ -216,23 +351,26 @@ numbers(Count, Bytes) ->
                            {number(Text), After}
                    end, Bytes, lists:seq(1, Count)).
 
-%% A field's text: one word, blank-padded within its 12 bytes.
-field(<<Field:?FIELD/binary, Rest/binary>>) ->
+%% A header field's text and the bytes after it.
+field(<<Field:?FIELD/binary, Rest/binary>>) -> {text(Field, header), Rest};
+field(_) -> throw(header).
+
+%% A field's text: one word, blank-padded within its 12 bytes, else Reason.
+text(Field, Reason) ->
     case binary:split(Field, <<" ">>, [global, trim_all]) of
-        [Text] -> {Text, Rest};
-        _ -> throw(header)
-    end;
-field(_) ->
-    throw(header).
+        [Text] -> Text;
+        _ -> throw(Reason)
+    end.
 
-%% A decimal number, optionally negative.
-number(<<$-, Digits/binary>>) -> -digits(Digits);
-number(Digits) -> digits(Digits).
+%% A header field's decimal number, optionally negative.
+number(<<$-, Digits/binary>>) -> -digits(Digits, header);
+number(Digits) -> digits(Digits, header).
 
-digits(Digits) ->
+%% The number a run of decimal digits spells, else Reason.
+digits(Digits, Reason) ->
     case Digits =/= <<>> andalso << <<D>> || <<D>> <= Digits, D >= $0, D =< $9 >> =:= Digits of
         true -> binary_to_integer(Digits);
-        false -> throw(header)
+        false -> throw(Reason)
     end.
 
 check(true, _Reason) -> ok;

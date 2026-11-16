@@ -3,8 +3,11 @@
 # frozen_string_literal: true
 
 require 'fileutils'
+require 'json'
 require 'minitest/autorun'
+require 'open3'
 require 'tmpdir'
+require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/gpos_tables'
 require_relative '../fixtures/seeded_source'
 require_relative '../../tools/lib/erx/glyphs'
@@ -13,13 +16,15 @@ require_relative '../../tools/lib/erx/glyphs'
 # (docs/design-desktop-programs.md, "Kerning" and "Kerning, on the host"),
 # with erx-raster built once from the fetched FreeType pin into a temporary
 # directory: Inter Regular's units for AV, To, Ty and quote-comma, and the
-# widths the body role's pairs give them against the rounding rule in exact
-# arithmetic, where a seeded step with the adjustment's sign flipped, or with
-# k rounded on its own, fails; the pair section as the subfont file holds it;
-# the step's refusals of a legacy kern table and of a drawn glyph GDEF classes
-# a mark; no pair naming a tabular digit; and the line-length check over the
-# tree's README.md, which prints each role's numbers for the pens of Open
-# decisions, 3.
+# widths erx_font:width/2 gives them from the body subfont against the
+# rounding rule in exact arithmetic, where a seeded step with the
+# adjustment's sign flipped, or with k rounded on its own, fails; the pair
+# section as the subfont file holds it; the step's refusals of a legacy kern
+# table and of a drawn glyph GDEF classes a mark; no pair naming a tabular
+# digit; and the line-length check over the tree's README.md, each line
+# measured by erx_font:width/2, which prints each role's numbers for the pens
+# of Open decisions, 3. erx_font runs on stock's emulator (ERX_ERL and
+# ERX_ERLC, which make check supplies).
 class KerningTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   GLYPHS_SOURCE = File.join(ROOT, 'tools/lib/erx/glyphs.rb')
@@ -36,6 +41,11 @@ class KerningTest < Minitest::Test
   LINE_LENGTH = 8..70
   PHASES = 4
   DIGITS = 0x30..0x39
+  DEADLINE_SECONDS = '300'
+  # erx_font's widths of the lines in lines.term, of the subfont in role.subfont.
+  WIDTHS = '{ok, Bytes} = file:read_file("role.subfont"), {ok, Subfont} = erx_font:parse(Bytes), ' \
+           '{ok, [Lines]} = file:consult("lines.term"), ' \
+           'io:format("~w~n", [[erx_font:width(Subfont, Line) || Line <- Lines]]), halt(0)'
 
   # A role as the step reads it: its theme entry, its requests, erx-raster's
   # result, the subfont, its code points and the font's kerning in units of
@@ -62,6 +72,14 @@ class KerningTest < Minitest::Test
     end
   end
 
+  # erx_font and what it calls, compiled once for every case.
+  def self.erlang
+    @erlang ||= Dir.mktmpdir('erx-kerning-erlang-').tap do |work|
+      Minitest.after_run { FileUtils.remove_entry(work) }
+      ErlangBuild.compile(work, applications: %w[erx_win])
+    end
+  end
+
   def setup
     @work = Dir.mktmpdir('erx-kerning-case-')
   end
@@ -71,7 +89,7 @@ class KerningTest < Minitest::Test
   def test_body_units_and_widths_follow_the_rounding_rule
     body = role('body')
     assert_equal [-140, -160, -128, -168], BODY_TEXTS.map { |text| body.units.fetch(fonts(body, text)) }
-    assert_equal BODY_WIDTHS, BODY_TEXTS.map { |text| width(body, body.subfont, text) }
+    assert_equal BODY_WIDTHS, widths(body, body.subfont.encode, BODY_TEXTS)
     assert_equal BODY_WIDTHS, BODY_TEXTS.map { |text| exact_rule_width(body, text) }
     refute pair?(body, 'Ty'), 'Ty has a pair at 13 pixels'
     assert pair?(role('title'), 'Ty'), 'Ty has no pair at 20 pixels'
@@ -81,11 +99,10 @@ class KerningTest < Minitest::Test
     body = role('body')
     [SIGN, ROUNDED_K].each do |fault|
       outcome = SeededSource.run(GLYPHS_SOURCE, fault, work: @work) do
-        subfont = Erx::Glyphs.subfont(body.role, requests: body.requests, result: body.result)
-        BODY_TEXTS.map { |text| width(body, subfont, text) }
+        Erx::Glyphs.subfont(body.role, requests: body.requests, result: body.result).encode
       end
       assert_equal :value, outcome.first, outcome.inspect
-      refute_equal BODY_WIDTHS, outcome.last, fault.last
+      refute_equal BODY_WIDTHS, widths(body, outcome.last, BODY_TEXTS), fault.last
     end
   end
 
@@ -141,20 +158,23 @@ class KerningTest < Minitest::Test
 
   # Ten i measure 30 pixels in caption and body, where a width that adds
   # exact advances and rounds the line once gives 27 and 32; each README line
-  # measures, by the subfont, the rule's rounded kerned advances in exact
-  # arithmetic. Prints each role's numbers for the three pens.
+  # measures, by erx_font:width/2, the rule's rounded kerned advances in
+  # exact arithmetic. Prints each role's numbers for the three pens.
   def test_line_length_check
-    %w[caption body].zip([27, 32]).each do |name, rounded_once|
-      entry = role(name)
-      assert_equal 30, width(entry, entry.subfont, 'i' * 10), "role #{name}"
-      assert_equal rounded_once, (exact_advances(entry, 'i' * 10).sum + HALF).floor, "role #{name}"
-    end
     lines = File.foreach(File.join(ROOT, 'README.md')).map(&:chomp)
                 .select { |line| LINE_LENGTH.cover?(line.size) && line.match?(/\A[\x20-\x7e]+\z/) }.first(LINES)
-    %w[caption body heading title].each do |name|
+    measured = %w[caption body heading title].to_h do |name|
       entry = role(name)
-      lines.each { |line| assert_equal exact_rule_width(entry, line), width(entry, entry.subfont, line), "#{name}: #{line}" }
-      report(name, entry, lines)
+      [name, widths(entry, entry.subfont.encode, ['i' * 10, *lines])]
+    end
+    %w[caption body].zip([27, 32]).each do |name, rounded_once|
+      assert_equal 30, measured.fetch(name).first, "role #{name}"
+      assert_equal rounded_once, (exact_advances(role(name), 'i' * 10).sum + HALF).floor, "role #{name}"
+    end
+    measured.each do |name, (_, *line_widths)|
+      entry = role(name)
+      lines.zip(line_widths).each { |line, width| assert_equal exact_rule_width(entry, line), width, "#{name}: #{line}" }
+      report(name, entry, lines, line_widths)
     end
   end
 
@@ -168,12 +188,15 @@ class KerningTest < Minitest::Test
 
   def pair?(entry, text) = entry.subfont.pairs.any? { |a, b, _| [a, b] == indices(entry, text) }
 
-  # The text's width by the subfont: each glyph's width, plus each pair's
-  # adjustment where the next glyph follows.
-  def width(entry, subfont, text)
-    kern = subfont.pairs.to_h { |a, b, adjustment| [[a, b], adjustment] }
-    glyphs = indices(entry, text)
-    glyphs.sum { |index| subfont.glyphs.fetch(index).width } + glyphs.each_cons(2).sum { |pair| kern.fetch(pair, 0) }
+  # The width erx_font:width/2 gives each of TEXTS, in the role's subfont
+  # whose file is BYTES, on stock's emulator in the case's directory.
+  def widths(entry, bytes, texts)
+    File.binwrite(File.join(@work, 'role.subfont'), bytes)
+    File.write(File.join(@work, 'lines.term'), "#{texts.map { |text| indices(entry, text) }.inspect}.\n")
+    output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell',
+                                     '-pa', self.class.erlang, '-eval', WIDTHS, chdir: @work, stdin_data: '')
+    assert status.success?, output
+    JSON.parse(output.lines.last)
   end
 
   # The font's exact advance of each glyph of TEXT, kerned by the next.
@@ -193,8 +216,8 @@ class KerningTest < Minitest::Test
   # length, and the share of neighbour distances more than half a pixel off
   # the font's under each pen: whole pixels (this rule), fractional origins
   # each rounded, and fractional origins at PHASES phases a pixel.
-  def report(name, entry, lines)
-    differences = lines.map { |line| width(entry, entry.subfont, line) - exact_advances(entry, line).sum }
+  def report(name, entry, lines, line_widths)
+    differences = lines.zip(line_widths).map { |line, width| width - exact_advances(entry, line).sum }
     pens = { 'rounded origins' => ->(origin) { (origin + HALF).floor },
              "#{PHASES} phases" => ->(origin) { (origin * PHASES + HALF).floor.quo(PHASES) } }
     distances = lines.sum { |line| line.size - 1 }

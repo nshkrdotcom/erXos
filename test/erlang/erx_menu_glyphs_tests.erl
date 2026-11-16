@@ -5,7 +5,8 @@
 %% emulator with erx_memdraw's NIF built for the host, in a directory that
 %% holds the erx_menu_glyphs module and the body.subfont Erx::Glyphs wrote
 %% beside it: the pixels load into a k8 image with erx_memdraw:load/3 and
-%% read back unchanged, and the module's image and glyphs are the subfont's.
+%% read back unchanged, the module's image and glyphs are the subfont's, and
+%% its kern/2 is the subfont's pairs by character.
 -module(erx_menu_glyphs_tests).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -38,3 +39,22 @@ is_the_subfont_test() ->
                           #{r := {X0, Y0, X1, Y1}, left := Left, advance := Advance} <- [erx_menu_glyphs:glyph(C)]]),
     ?assertNotEqual([], Menu),
     ?assertEqual(lists:sort(Present), Menu).
+
+%% kern/2 is body.subfont's pairs taken to their characters, through
+%% body.points, the character of each glyph index, which the test writes:
+%% every pair erx_font reads gives kern/2 its adjustment, and erx_font's
+%% width of the two glyphs their advances plus it, and every other two
+%% characters of drawn glyphs give 0.
+kern_is_the_subfonts_test() ->
+    {ok, Bytes} = file:read_file("body.subfont"),
+    {ok, #{glyphs := Glyphs, pairs := Pairs} = Subfont} = erx_font:parse(Bytes),
+    {ok, [Points]} = file:consult("body.points"),
+    Point = list_to_tuple(Points),
+    Width = list_to_tuple([W || {_, _, _, _, _, W} <- Glyphs]),
+    Entries = [{A, B, K} || <<A:16/little, B:16/little, K:8/signed>> <= Pairs],
+    ?assertNotEqual([], Entries),
+    ?assertEqual([element(A + 1, Width) + element(B + 1, Width) + K || {A, B, K} <- Entries],
+                 [erx_font:width(Subfont, [A, B]) || {A, B, _} <- Entries]),
+    Listed = lists:sort([{element(A + 1, Point), element(B + 1, Point), K} || {A, B, K} <- Entries]),
+    Drawn = [C || {C, {_, _, _, _, _, W}} <- lists:zip(Points, Glyphs), W > 0],
+    ?assertEqual(Listed, lists:sort([{A, B, K} || A <- Drawn, B <- Drawn, K <- [erx_menu_glyphs:kern(A, B)], K =/= 0])).

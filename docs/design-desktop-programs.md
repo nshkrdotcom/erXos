@@ -502,15 +502,20 @@ are:
 
 | Role | Font and size | Pairs | Adjustments, in pixels |
 | --- | --- | --- | --- |
-| `body` | Regular, 13 | 7,697 | -2 to 2 |
-| `caption` | Regular, 11 | 5,369 | -2 to 1 |
-| `numeric` | Medium, 13 | at most 7,322 | -3 to 2 |
-| `heading` | SemiBold, 15 | 8,827 | -3 to 2 |
-| `title` | SemiBold, 20 | 9,999 | -4 to 3 |
-| `display` | SemiBold, 48 | at most 13,774 | -9 to 7 |
+| `body` | Regular, 13 | 7,813 | -2 to 2 |
+| `caption` | Regular, 11 | 5,610 | -2 to 1 |
+| `numeric` | Medium, 13 | 7,254 | -3 to 2 |
+| `heading` | SemiBold, 15 | 8,861 | -3 to 2 |
+| `title` | SemiBold, 20 | 10,315 | -4 to 3 |
+| `display` | SemiBold, 48 | 13,341 | -9 to 7 |
 
-The two counts marked "at most" were read with the proportional digits,
-which those roles replace by tabular ones. Inter's tabular figures,
+The counts are those of the glyph step's pair sections, from Inter 4.1's
+three fonts with each advance as FreeType gives it in 26.6 pixels
+([Rounding and bounds](#kerning)), over each role's drawn glyphs, the
+tabular roles' tabular digits among them; an advance from `hmtx` in
+exact arithmetic, which differs from FreeType's by at most 1/128 of a
+pixel, rounds the other way for some glyphs and gives other counts.
+Inter's tabular figures,
 `zero.tf` to `nine.tf`, take part in no pair of any of the three fonts,
 while its proportional digits take part in twelve pairs among
 themselves, so the tabular roles kern their letters and their digits
@@ -555,7 +560,9 @@ returns, in font units, the kerning of every ordered pair of the role's
 drawn glyphs that is not 0, as the OpenType specification applies it:
 
 * from the default language system of the `latn` script, or of `DFLT`
-  when the font has no `latn` script, every feature tagged `kern`; a
+  when the font has no `latn` script, every feature tagged `kern`, the
+  language system's required feature among them when it is tagged
+  `kern`, as a client applies a required feature with the rest; a
   font with neither has no pairs, and a font whose chosen script has no
   default language system is refused, since the font then kerns no
   text that names no language and the reader would have to pick one;
@@ -670,7 +677,7 @@ glyph's index and the second's, two bytes each, low byte first as a
 glyph's x is, and the adjustment, a signed byte as a glyph's left is.
 The entries ascend strictly by the first index and then the second. A
 subfont without pairs ends at its glyph table, as `fixed` does. The
-body role's section is about 38 KiB and the display role's about 69
+body role's section is about 38 KiB and the display role's about 65
 KiB.
 
 `erx_font` checks the section with the rest of the file. Bytes after
@@ -678,9 +685,8 @@ the glyph table whose first field is not the word `kern`, fewer than a
 field's bytes among them, stay `trailing`. Once that field reads
 `kern`, every fault of the section refuses the whole file with the
 reason `kern`, a malformed count field included: the header's number
-reader answers `header` and takes a minus sign
-(`erlang/apps/erx_win/src/erx_font.erl`, lines 212-237), so the section
-reads its count under its own reason and checks the sign itself. Before it
+reader answers `header` and takes a minus sign, so the section reads its
+count as decimal digits alone, under its own reason. Before it
 reads an entry, it requires the count to be at least 1 and the bytes
 after the count field to be exactly 5 times the count, so a missing
 count, a count of 0 or below, entries short of the count and bytes
@@ -1527,13 +1533,13 @@ must catch:
   index at the glyph count, a count of -1 with no entries and a count
   field that is not a number among them, and accepts a section whose
   last index is one below it; a seeded reader with the bound off by one
-  accepts the first, and one that reads the count with the header's
+  does not refuse the first with `kern`, and one that reads the count with the header's
   number reader answers `header` for the third. Its fuzz target
   (`test/erlang/erx_font_fuzz.erl`) adds `kern` to its closed set of
   reasons, writes pair sections in one round in four, and checks that
   every accepted file's pairs ascend, name drawn glyphs and keep every
   kerned advance in 0 to 255. Its two properties of an accepted file's
-  neighbours (lines 52-53) follow the section: a byte appended to a file
+  neighbours follow the section: a byte appended to a file
   with pairs is refused with `kern`, and to one without them with
   `trailing`; every prefix of the file is refused, except that a file
   with pairs cut exactly at the end of its glyph table parses to the same

@@ -9,8 +9,8 @@ module Erx
     # second time as an Erlang module, so the display release holds its glyphs
     # as data and no font file or font reader. The module gives the subfont's
     # image size, its baseline, its pixels as erx_memdraw:load/3 takes a k8
-    # image's rows, and each character's glyph as the rectangle of the image
-    # that is its mask.
+    # image's rows, each character's glyph as the rectangle of the image
+    # that is its mask, and the subfont's pairs by character ("Kerning").
     module Menu
       ROLE = 'body'
       MODULE = 'erx_menu_glyphs'
@@ -40,10 +40,12 @@ module Erx
           erx_memdraw:load/3 and draws a glyph's rectangle of that image as the
           mask of its colour, with the rectangle's left edge `left` pixels
           right of the pen and its rows placed so that row ascent/0 of the
-          image lies on the baseline; the pen then moves `advance` pixels.
+          image lies on the baseline; the pen then moves `advance` pixels,
+          plus kern/2 of the glyph and the next, by erx_pen's rule
+          ("Kerning").
           """.
 
-          -export([role/0, size/0, ascent/0, pixels/0, glyph/1]).
+          -export([role/0, size/0, ascent/0, pixels/0, glyph/1, kern/2]).
           -export_type([glyph/0]).
 
           -doc """
@@ -74,7 +76,19 @@ module Erx
           -doc "A character's glyph, or none when the font or the theme's ranges have none.".
           -spec glyph(char()) -> glyph() | none.
           #{clauses(subfont, code_points).join(";\n")}.
+
+          -doc "The adjustment of a character's advance when another follows it, 0 where no pair names the two.".
+          -spec kern(char(), char()) -> #{ADJUSTMENT.min}..#{ADJUSTMENT.max}.
+          #{kern_clauses(subfont, code_points).join(";\n")}.
         ERLANG
+      end
+
+      # One clause a pair of the subfont, its glyph indices taken to their
+      # characters, then the clause of every other two characters.
+      def kern_clauses(subfont, code_points)
+        subfont.pairs.map do |first, second, adjustment|
+          format('kern(16#%04X, 16#%04X) -> %d', code_points.fetch(first), code_points.fetch(second), adjustment)
+        end + ['kern(_, _) -> 0']
       end
 
       # The pixels as binary segments of CHUNK bytes, the last one shorter.

@@ -21,7 +21,8 @@ require_relative '../../tools/lib/erx/memdraw_build'
 # font lacks a tabular figure, or one with a glyph whose ink leaves its line,
 # is refused. The body role's menu module places each square as its subfont
 # does, and the theme's loads with erx_memdraw:load/3 on the host NIF and holds
-# the body subfont's image and glyphs.
+# the body subfont's image, glyphs and pairs, the last by character, where a
+# module whose kern/2 is keyed by glyph index fails.
 class GlyphsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   THEME = File.read(File.join(ROOT, 'abi/theme.txt')).freeze
@@ -108,16 +109,21 @@ class GlyphsTest < Minitest::Test
   end
 
   # The menu module of the theme's body role loads into a k8 image with
-  # erx_memdraw:load/3, on the host NIF, and holds the body subfont's image
-  # and glyphs.
+  # erx_memdraw:load/3, on the host NIF, and holds the body subfont's image,
+  # glyphs and pairs; the same module with kern/2 keyed by glyph index fails
+  # the pairs' case.
   def test_menu_module_loads_with_erx_memdraw
     written = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) })
-    FileUtils.cp([written.menu, written.subfonts.fetch('body')], @work)
-    ErlangBuild.compile(@work, applications: %w[erx_win erx_memdraw],
-                               tests: [File.join(@work, File.basename(written.menu)), 'test/erlang/erx_menu_glyphs_tests.erl'])
-    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: @work, compiler: ENV.fetch('ERX_CLANG', 'clang'))
-    output = erlang('halt(case eunit:test(erx_menu_glyphs_tests, [verbose]) of ok -> 0; _ -> 1 end)')
-    assert_match(/\b2 tests passed/, output)
+    menu = File.read(written.menu)
+    output, status = menu_cases(menu, written.subfonts.fetch('body'), 'tree')
+    assert status.success?, output
+    assert_match(/\b3 tests passed/, output)
+    points = body_points
+    by_index = menu.gsub(/^kern\(16#(\h+), 16#(\h+)\)/) { "kern(#{points.index(Regexp.last_match(1).hex)}, #{points.index(Regexp.last_match(2).hex)})" }
+    refute_equal menu, by_index, 'the module has no kern clause'
+    output, status = menu_cases(by_index, written.subfonts.fetch('body'), 'by-index')
+    refute status.success?, "a menu module keyed by glyph index passed:\n#{output}"
+    assert_match(/kern_is_the_subfonts_test\.\.\.\*failed\*/, output)
   end
 
   # The squares' menu module gives each square the rectangle, offset and
@@ -135,6 +141,29 @@ class GlyphsTest < Minitest::Test
   end
 
   private
+
+  # The body role's character of each subfont glyph index.
+  def body_points
+    theme = theme_of(THEME)
+    Erx::Glyphs.code_points(theme.fonts.fetch(theme.roles.fetch('body').font))
+  end
+
+  # The menu glyph module's cases over MENU, the source of erx_menu_glyphs, and
+  # the body subfont at SUBFONT, with body.points beside them, in a directory
+  # NAME of the case's: the output and status.
+  def menu_cases(menu, subfont, name)
+    directory = File.join(@work, name).tap { |path| Dir.mkdir(path) }
+    File.write(File.join(directory, Erx::Glyphs::Menu::FILE), menu)
+    File.write(File.join(directory, 'body.points'), "[#{body_points.join(',')}].\n")
+    FileUtils.cp(subfont, directory)
+    ErlangBuild.compile(directory, applications: %w[erx_win erx_memdraw],
+                                   tests: [File.join(directory, Erx::Glyphs::Menu::FILE), 'test/erlang/erx_menu_glyphs_tests.erl'])
+    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: directory, compiler: ENV.fetch('ERX_CLANG', 'clang'))
+    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(directory))
+    Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', directory,
+                    '-eval', 'halt(case eunit:test(erx_menu_glyphs_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                    chdir: directory, stdin_data: '')
+  end
 
   # What the emulator printed for EXPRESSION, run in the case's directory,
   # which must succeed.
