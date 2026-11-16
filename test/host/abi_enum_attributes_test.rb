@@ -115,7 +115,7 @@ class AbiEnumAttributesTest < Minitest::Test
   def test_a_window_role_added_without_attributes_is_read_only_and_the_system_domain_s
     Dir.mktmpdir('erx-abi-roles-') do |root|
       seed_roles(root) do |text|
-        text.sub(/^(  value verified_image 11 .*\n)/, "\\1  value probe 12\n").tap { |seeded| assert text != seeded, 'probe added' }
+        text.sub(/^(  value record_volume 12 .*\n)/, "\\1  value probe 13\n").tap { |seeded| assert text != seeded, 'probe added' }
       end
       codec = Erx::ABI::Codec.new(tree_schema(root))
       probe = ->(holder, rights) { manifest_source + "window probe\n  holder #{holder}\n  device \"/virtio_mmio@a003e00\"\n" \

@@ -871,6 +871,100 @@ class ManifestStopgapTest < Minitest::Test
             message: /system window it describes/)
   end
 
+  # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): the
+  # record_volume window, the login_keys service its holder serves and the system
+  # domain's read-only grant of it, as a board with SSH holds them.
+  def record_volume(holder: '@domain.storage', label: 'record_volume')
+    window(role: 'record_volume', partition: 0, holder: holder).sub('window seeded', "window #{label}")
+  end
+
+  LOGIN_KEYS_SERVICE = "service login_keys\n  server @domain.storage\n  interface files\n"
+
+  def login_keys_facet(grantee: 'system', rights: "  parameter rights ro\n")
+    "facet login_keys\n  grantee #{grantee}\n  service @service.login_keys\n#{rights}" \
+      "  operations none\n  max_request 131072\n  in_flight 16\n  reductions 100000\n  period_ns 1000000000\n" \
+      "  max_heap_size 262144\n"
+  end
+
+  def login_keys_source(window: record_volume, service: LOGIN_KEYS_SERVICE, facet: login_keys_facet)
+    @source + window + service + facet
+  end
+
+  def test_the_record_volume_window_and_its_login_keys_service_pass
+    view = @codec.open('manifest', admit(login_keys_source).bytes)
+    windows = (0...view.count('windows')).map { |at| view.fetch('windows', at) }
+    volume = windows.select { |row| row.fetch('role') == @codec.member('mf_window_role', 'record_volume') }
+    storage = (0...view.count('domains')).find { |at| view.string(view.fetch('domains', at).fetch('name')) == 'storage' }
+    assert_equal [[storage, @codec.member('mf_window_rights', 'read')]], volume.map { |row| row.values_at('holder', 'rights') }
+  end
+
+  def test_a_writable_record_volume_window_is_refused
+    window = record_volume.sub("  rights read\n", "  rights read,write\n")
+    refused(Erx::Manifest::Invalid, 8, 'window.rights', login_keys_source(window: window))
+  end
+
+  def test_login_keys_served_by_another_domain_than_the_window_s_holder_is_refused
+    %w[@domain.web @domain.network].each do |server|
+      service = LOGIN_KEYS_SERVICE.sub('@domain.storage', server)
+      refused(Erx::Manifest::Invalid, 8, 'service.server', login_keys_source(service: service),
+              message: /holder of the record_volume window/)
+    end
+  end
+
+  def test_a_login_keys_service_of_another_interface_is_refused
+    service = LOGIN_KEYS_SERVICE.sub('interface files', 'interface driver_control')
+    refused(Erx::Manifest::Invalid, 8, 'service.interface', login_keys_source(service: service, facet: ''),
+            message: /of the files interface/)
+  end
+
+  # A row that states no rights is rw (abi/services/files.txt).
+  def test_a_login_keys_grant_that_is_not_read_only_is_refused
+    ["  parameter rights rw\n", "  parameter rights rx\n", ''].each do |rights|
+      refused(Erx::Manifest::Invalid, 8, 'facet.parameter', login_keys_source(facet: login_keys_facet(rights: rights)),
+              message: /read-only/)
+    end
+  end
+
+  def test_a_login_keys_grant_to_another_grantee_than_the_system_domain_is_refused
+    %w[@domain.network @session.system].each do |grantee|
+      refused(Erx::Manifest::Invalid, 8, 'facet.grantee', login_keys_source(facet: login_keys_facet(grantee: grantee)),
+              message: /system domain/)
+    end
+  end
+
+  def test_a_login_keys_service_without_a_record_volume_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'service.name', login_keys_source(window: ''), message: /record_volume window/)
+  end
+
+  def test_a_record_volume_window_without_its_login_keys_service_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'service.name', login_keys_source(service: '', facet: ''),
+            message: /record_volume window/)
+  end
+
+  # The count is checked before the holder and before two windows on one role and
+  # partition are refused as such, so the second window, on another holder, fails it.
+  def test_a_second_record_volume_window_is_refused
+    second = record_volume(holder: '@domain.network', label: 'record_volume_again')
+    refused(Erx::Manifest::Invalid, 8, 'window.role', login_keys_source(window: record_volume + second),
+            message: /at most one record_volume window/)
+  end
+
+# A second block device, which its holder's driver does not serve, is no medium the
+# record partition's rules reason about.
+def test_a_record_volume_window_on_another_device_than_the_system_window_s_is_refused
+  source, against = with_extra_device(role: 'block')
+  window = record_volume.sub(BLOCK, '/extra@0')
+  refused(Erx::Manifest::Invalid, 8, 'window.holder', source + window + LOGIN_KEYS_SERVICE + login_keys_facet, against,
+          message: /on its device/)
+end
+
+  def test_a_record_volume_window_on_another_domain_than_the_system_window_s_holder_is_refused
+    %w[@domain.web @domain.network].each do |holder|
+      refused(Erx::Manifest::Invalid, 8, 'window.holder', login_keys_source(window: record_volume(holder: holder)),
+              message: /holder of the system window/)
+    end
+  end
+
   def test_a_fat_window_must_name_a_primary_partition
     [0, 5].each do |partition|
       refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'fat', partition: partition))

@@ -1264,6 +1264,7 @@ module Erx
         rows['system_image'] = system_image_rows
         rows['windows'] = normalize_windows(rows)
         check_system_service(rows)
+        check_login_keys_service(rows, facet_values)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -2406,6 +2407,7 @@ module Erx
             .tap { |row| check_image_device(row, tables.fetch('images')) }
         end
         check_system_window(rows, tables)
+        check_record_volume_window(rows)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image') }
         invalid('two windows name one role and partition', 8, 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image') }
@@ -2471,6 +2473,47 @@ module Erx
           records('facet').any? { |record| labels.include?(one(record, 'service').value) }
       end
 
+      # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): at most one
+      # record_volume window, on the system window's medium and held by its holder, so the
+      # domain that reads the record partition is the one whose block driver serves it.
+      def check_record_volume_window(rows)
+        volumes = rows.select { |row| row.fetch('role') == record_volume_role }
+        invalid('a manifest has at most one record_volume window', 8, 'window.role') if volumes.size > 1
+        system = rows.find { |row| row.fetch('role') == system_role }
+        invalid('the record_volume window is held by the holder of the system window, on its device', 8, 'window.holder') if
+          volumes.any? { |volume| system.nil? || volume.values_at('holder', 'device') != system.values_at('holder', 'device') }
+      end
+
+      # The other half of "Who publishes it": a manifest with a record_volume window holds
+      # exactly one service named login_keys_service, of the files interface, served by the
+      # window's holder, and one without holds none; and every facet row of it is the system
+      # domain's and read-only, a row that states no rights being rw (abi/services/files.txt).
+      # facet_values holds each facet row's resolved parameters, in the rows' order.
+      def check_login_keys_service(tables, facet_values)
+        name = @codec.fixed_bytes('login_keys_service')
+        service_rows = tables.fetch('services')
+        indices = service_rows.each_index.select { |index| service_rows.fetch(index).fetch('name') == name }
+        window = tables.fetch('windows').find { |row| row.fetch('role') == record_volume_role }
+        invalid("a manifest with a record_volume window holds one service named #{name}, and one without holds none", 8,
+                'service.name') unless indices.size == (window ? 1 : 0)
+        return if indices.empty?
+
+        index = indices.first
+        service = service_rows.fetch(index)
+        invalid("the service named #{name} is of the files interface", 8, 'service.interface') unless
+          service.fetch('interface') == fetch_interface('files')
+        invalid("the service named #{name} is served by the holder of the record_volume window", 8, 'service.server') unless
+          window.fetch('holder') == service.fetch('server')
+        tables.fetch('facets').zip(facet_values).each do |facet, values|
+          next unless facet.fetch('service') == index
+
+          invalid("facet #{facet.fetch('name')} grants #{name} to another grantee than the system domain", 8, 'facet.grantee') unless
+            facet.fetch('grantee_kind') == grantee_kind('system')
+          invalid("facet #{facet.fetch('name')} grants #{name} other than read-only", 8, 'facet.parameter') unless
+            values.fetch('rights', 'rw') == 'ro'
+        end
+      end
+
       def window_device(record, devices)
         block_device(text(record, 'device'), devices) || invalid('window names no block device the manifest places', 8, 'window.device')
       end
@@ -2512,6 +2555,7 @@ module Erx
       def image_role = @codec.member('mf_window_role', 'verified_image')
 
       def system_role = @codec.member('mf_window_role', 'system')
+      def record_volume_role = @codec.member('mf_window_role', 'record_volume')
 
       # The image table and its extents (docs/design-stopgap.md, "The Phase 1 manifest
       # check"): each image is format erofs_unchecked, since the packer writes no hash
