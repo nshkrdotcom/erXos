@@ -2697,7 +2697,8 @@ the row's offset to 1 must fail the string extent check. Changing the
 schema path to `rows[].missing`, or mixing `rows[].name_off` with
 `root.text_length` in that string rule, fails generation before an output
 exists. The primitive string-class spellings are `identifier`,
-`dt_path`, `namespace_path`, `utf8`, `bytes`, `args` and `env`.
+`dt_path`, `namespace_path`, `relative_path` (plain names joined by `/`, none
+empty, `.` or `..`, in UTF-8 without C0 or C1 controls), `utf8`, `bytes`, `args` and `env`.
 
 Shared metadata can be exercised independently with this complete layout
 inside the same declaration set:

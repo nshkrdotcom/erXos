@@ -20,7 +20,10 @@ limit pkg_scan_max u32 1024
 # the services it needs, the OTP applications an Erlang app starts, a native
 # program's path under the image's bin/, its arguments (which the packer counts; the
 # reader bounds them only together, as NUL-terminated strings), and the SPDX license
-# expression.
+# expression. The reader checks the program's path as a relative_path, plain names, so
+# its text below the image's mount stays below it; that it lies under bin/ is the
+# packer's rule, and a link of the image is the program's resolve step's to refuse
+# (TODO.md, "an executable file as a program's image").
 limit pkg_needs_max u32 16
 limit pkg_applications_max u32 16
 limit pkg_program_max u32 255
@@ -90,7 +93,7 @@ reader pkg_reader erx_pkg_header @pkg_header_max
   string root.arch.offset root.arch.length strings identifier 63
   string root.name.offset root.name.length strings identifier 63
   string root.license.offset root.license.length strings utf8 @pkg_license_max empty yes
-  string root.program.offset root.program.length strings utf8 @pkg_program_max when root.kind native
+  string root.program.offset root.program.length strings relative_path @pkg_program_max when root.kind native
   string root.args.offset root.args.length strings args @pkg_args_bytes_max empty yes
   string needs[].offset needs[].length strings identifier 63
   string applications[].offset applications[].length strings identifier 63
