@@ -62,7 +62,20 @@ is unverified here. The board's Ethernet node has no address property
 `local-mac-address` through that alias is unverified. No tree under
 Linux 6.18's `arch/arm/boot/dts/broadcom/` has a `simple-framebuffer`
 node, so a framebuffer node can come only from the firmware, and whether
-it adds one is unverified. The firmware also rewrites the memory node
+it adds one is unverified. Raspberry Pi's legacy video options for
+`config.txt` name two framebuffer settings, which erXos's boot partition
+leaves unset. `framebuffer_depth` is 16 bits per pixel by default
+(`legacy_config_txt/video.adoc:1696-1718`). `max_framebuffers` is 2 on
+the Raspberry Pi 4, "as it has two HDMI ports", and a framebuffer is
+made only for a display the firmware detects (`:1749-1755`). Whether
+those options still apply to the pinned firmware, which format name it
+writes at 16 bits, and whether a screen on each port gives two nodes
+are unverified. The cut-down firmware, which only `gpu_mem=16` selects,
+limits the early framebuffer to 1080p at 16 bits
+(`config_txt/boot.adoc:12`); the boot partition ships no cut-down
+firmware files and sets a larger `gpu_mem`
+([design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)).
+The firmware also rewrites the memory node
 ([design-platforms.md](design-platforms.md#bring-up-under-qemu)).
 
 **The bindings.** A `simple-framebuffer` node is a child of `/chosen`
@@ -723,6 +736,12 @@ claimed for either.
   (`https://github.com/devicetree-org/devicetree-specification/releases/download/v0.4/devicetree-specification-v0.4.pdf`,
   SHA-256 `c141dd78af0971fffed19433f84af5beab6aa058cfff2e33076805cef9f92e02`),
   sections 2.3.5 and 2.3.8 to 2.3.11.
+* Raspberry Pi documentation, commit `c6a64966af13`
+  (`https://github.com/raspberrypi/documentation`), under
+  `documentation/asciidoc/computers/`: `legacy_config_txt/video.adoc`
+  (SHA-256 `6174e1a01aa2a36728d83176be554e457625280f287860d4fd8ba57f4e466191`)
+  and `config_txt/boot.adoc`
+  (SHA-256 `d4be7bf9a1e29c09c4592176d04cd8bc4ff146d8f38fe03108e738fa5aa1fee3`).
 * FreeBSD `975e3605ebb1`, `sys/arm64/broadcom/genet/if_genet.c`.
 * `libfdt` `5756062b` (`fiasco/libfdt`, `fiasco/kernel/src/lib/libfdt`).
 * L4Re `bootstrap` and `sigma0`, as imported under `fiasco/`.
