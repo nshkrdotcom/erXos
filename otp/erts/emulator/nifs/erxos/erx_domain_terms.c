@@ -82,23 +82,27 @@ server_term(ErlNifEnv *env, uint32_t server)
  * template Template, the index a session's origin {session, Template}
  * names, Name the service's name as an atom, Server its server's row
  * or, for a service the system domain serves, the atom system, and Limits
- * the grant's limits by name: the facet row's six limit fields and each
- * parameter it states, under its declared name (parameter_term), which
- * the ABI generator keeps apart from the fields' names; each list in
+ * the grant's limits by name: the facet row's six limit fields, its
+ * operations, as the list of their declared names, and each parameter it
+ * states, under its declared name (parameter_term), which the ABI
+ * generator keeps apart from the fields' names; each list in
  * manifest order
  * (docs/design-system.md, "Facets a configured domain serves"). The
  * domain service hands only the configured domains' services to its mint
  * core, and reads the system domain's for their interface.
  * A name is a checked identifier of at most 63 bytes from the manifest,
- * never from a request, and a parameter's name is the ABI's, so the atoms
+ * never from a request, and an operation's or a parameter's name is the ABI's, so the atoms
  * are bounded by the manifest's rows and the ABI's declarations.
  */
 bool
 erx_domain_served_terms(ErlNifEnv *env, const erx_dom_view_t *view, ERL_NIF_TERM *services, ERL_NIF_TERM *grants)
 {
-	/* The facet row's six limit fields and at most one parameter a declaration (boot_facet_parameters). */
-	ERL_NIF_TERM keys[6 + ERX_SERVICE_PARAMETERS_MAX], values[6 + ERX_SERVICE_PARAMETERS_MAX];
-	ERL_NIF_TERM limits, grantee, name;
+	/*
+	 * The facet row's six limit fields, its operations and at most one
+	 * parameter a declaration (boot_facet_parameters).
+	 */
+	ERL_NIF_TERM keys[7 + ERX_SERVICE_PARAMETERS_MAX], values[7 + ERX_SERVICE_PARAMETERS_MAX];
+	ERL_NIF_TERM limits, grantee, name, operations;
 	const erx_dom_service_t *service;
 	const erx_dom_facet_t *facet;
 	uint32_t index, nkeys;
@@ -122,6 +126,11 @@ erx_domain_served_terms(ErlNifEnv *env, const erx_dom_view_t *view, ERL_NIF_TERM
 		keys[nkeys] = atom(env, "period_ns"), values[nkeys++] = enif_make_uint64(env, facet->period_ns);
 		keys[nkeys] = atom(env, "max_heap_size"), values[nkeys++] = enif_make_uint64(env, facet->max_heap_size);
 		keys[nkeys] = atom(env, "queue"), values[nkeys++] = enif_make_uint64(env, facet->queue);
+		/* Each a declaration's name (erx_service_operations), in number order. */
+		operations = enif_make_list(env, 0);
+		for (uint32_t at = facet->noperations; at-- > 0;)
+			operations = enif_make_list_cell(env, atom(env, facet->operations[at]->name), operations);
+		keys[nkeys] = atom(env, "operations"), values[nkeys++] = operations;
 		/* The view states each parameter once, so at most ERX_SERVICE_PARAMETERS_MAX of them. */
 		if (facet->nparameters > sizeof(keys) / sizeof(keys[0]) - nkeys)
 			return (false);

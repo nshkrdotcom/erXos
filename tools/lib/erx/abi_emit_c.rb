@@ -80,6 +80,7 @@ module Erx
         out.concat(enum_name_tables(schema))
         out.concat(signal_tables(schema))
         out.concat(event_tables(schema))
+        out.concat(service_operation_table(schema)) if schema.types.key?(FACET_LAYOUT)
         out.concat(service_parameter_table(schema)) if schema.types.key?(FACET_LAYOUT)
         out.concat(rights_tables(schema)) if schema.objects.any?
         out.concat(['#endif /* ERX_ABI_H */', ''])
@@ -183,11 +184,36 @@ module Erx
          'typedef struct erx_service_parameter {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
          "\tconst char\t*name;", "\tuint32_t\tkind;", "\tbool\t\trequired;",
          "\tuint64_t\tminimum, maximum;", "\tconst char *const *members;", '} erx_service_parameter_t;', '',
-         '/* The parameters interface declares, in number order: *count rows from the result. */',
-         'static inline const erx_service_parameter_t *',
-         'erx_service_parameters(uint32_t interface, size_t *count)', '{',
-         *names, "\tstatic const erx_service_parameter_t table[] = {", *rows,
-         "\t\t{ 0, 0, NULL, 0, false, 0, 0, NULL }", "\t};", "\tsize_t first = 0;", '',
+         *interface_lookup('parameters', 'erx_service_parameter_t', names + ["\tstatic const erx_service_parameter_t table[] = {",
+                                                                     *rows, "\t\t{ 0, 0, NULL, 0, false, 0, 0, NULL }", "\t};"])]
+      end
+
+      # erx_service_operations(interface, &count): the operations an abi/services
+      # interface declares, in number order, as the domain library's boot view checks a
+      # facet's packed operation rows against them and names each (docs/design-time.md,
+      # "The clock facet"). A row is the declaration's number and name. An interface
+      # served as a tree declares none (abi_contracts.rb).
+      def service_operation_table(schema)
+        services = schema.services.sort_by { |service| service.fetch(:number) }
+        rows = services.flat_map do |service|
+          service.fetch(:operations).sort_by(&:last).map do |name, number|
+            "\t\t{ #{constant("service_#{service.fetch(:name)}")}, #{number}, #{c_string(name)} },"
+          end
+        end
+        ['/*', ' * An operation an abi/services interface declares: its number, as a', ' * facet\'s packed operation rows name it, and its name.', ' */',
+         'typedef struct erx_service_operation {', "\tuint32_t\tinterface;", "\tuint32_t\tnumber;",
+         "\tconst char\t*name;", '} erx_service_operation_t;', '',
+         *interface_lookup('operations', 'erx_service_operation_t', ["\tstatic const erx_service_operation_t table[] = {",
+                                                                     *rows, "\t\t{ 0, 0, NULL }", "\t};"])]
+      end
+
+      # The lookup erx_service_WHAT(interface, &count) over a table of type, sorted by
+      # interface and ended by a row whose name is NULL, which table_lines declare: the
+      # rows of interface, *count of them from the result.
+      def interface_lookup(what, type, table_lines)
+        ["/* The #{what} interface declares, in number order: *count rows from the result. */",
+         "static inline const #{type} *", "erx_service_#{what}(uint32_t interface, size_t *count)", '{',
+         *table_lines, "\tsize_t first = 0;", '',
          "\twhile (table[first].name != NULL && table[first].interface != interface)", "\t\tfirst++;",
          "\tfor (*count = 0; table[first + *count].name != NULL && table[first + *count].interface == interface;)",
          "\t\t(*count)++;", "\treturn (&table[first]);", '}', '']

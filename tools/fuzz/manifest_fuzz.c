@@ -83,6 +83,42 @@ declares(const erx_service_parameter_t *declared, size_t ndeclared, const erx_se
 }
 
 /*
+ * Whether the view carries facet row facet_row's operations as facet's, each
+ * of them: one per row, so none is dropped; each the declaration of its
+ * row's number, so none is mapped to another; each a declaration of the
+ * service's interface, matched by its fields as declares does, in strictly
+ * ascending number order, so none is named twice; and none for a service a
+ * configured domain serves, whose server checks none on the stopgap.
+ */
+static bool
+operations_admitted(const erx_manifest_view_t *view, const erx_dom_view_t *dom, const erx_dom_facet_t *facet,
+    const erx_mf_facet_t *facet_row)
+{
+	const uint32_t first = (facet_row->operations.offset - view->header.facet_operations.offset) / ERX_MF_OPERATION_SIZE;
+	const erx_service_operation_t *declared, *operation;
+	erx_mf_operation_t row;
+	size_t ndeclared;
+	bool found;
+
+	declared = erx_service_operations(dom->services[facet->service].interface, &ndeclared);
+	if (facet->noperations != facet_row->operations.count ||
+	    (facet->noperations != 0 && dom->services[facet->service].server != ERX_MF_NONE))
+		return (false);
+	for (uint32_t index = 0; index < facet->noperations; index++) {
+		operation = facet->operations[index];
+		if (!erx_manifest_facet_operations_at(view, first + index, &row) || row.operation != operation->number)
+			return (false);
+		found = false;
+		for (size_t at = 0; at < ndeclared; at++)
+			found |= declared[at].interface == operation->interface && declared[at].number == operation->number &&
+			    strcmp(declared[at].name, operation->name) == 0;
+		if (!found || (index > 0 && operation->number <= facet->operations[index - 1]->number))
+			return (false);
+	}
+	return (true);
+}
+
+/*
  * Whether the view carries facet row facet_row's parameters as facet's, each
  * of them: one per row, so none is dropped; each a declaration of the
  * service's interface, in strictly ascending number order, so none is
@@ -147,9 +183,9 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
  * on one register page; each configured row's words with room for both
  * node names; and every service and facet row, each server a configured row
  * or the system domain and each grantee one the boot may grant (grantee_admitted),
- * no grantee taking two facets of one service name, no facet naming an
- * operation, which the domain service would otherwise grant unchecked, and
- * each facet's parameters its service's (parameters_admitted).
+ * no grantee taking two facets of one service name, and each facet's
+ * operations (operations_admitted) and parameters (parameters_admitted) its
+ * service's.
  */
 static void
 view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
@@ -170,9 +206,9 @@ view_check(const erx_manifest_view_t *view, const erx_dom_lib_t *lib)
 			abort();
 	for (uint32_t index = 0; index < dom->nfacets; index++) {
 		facet = &dom->facets[index];
-		if (!erx_manifest_facets_at(view, index, &facet_row) || facet_row.operations.count != 0 ||
-		    facet->service >= dom->nservices ||
-		    !grantee_admitted(dom, facet) || !parameters_admitted(dom, facet, &facet_row))
+		if (!erx_manifest_facets_at(view, index, &facet_row) || facet->service >= dom->nservices ||
+		    !grantee_admitted(dom, facet) || !operations_admitted(view, dom, facet, &facet_row) ||
+		    !parameters_admitted(dom, facet, &facet_row))
 			abort();
 		for (uint32_t earlier = 0; earlier < index; earlier++) {
 			a_service = &dom->services[dom->facets[earlier].service];

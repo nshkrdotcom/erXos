@@ -1094,9 +1094,11 @@ served(Grantee, Rows) ->
                              end
                      end, Rows)).
 
+%% A message grant carries its row's operations, which the facet admits alone
+%% (erx_facet:start/3); a tree grant's row names none (dom_boot_view.c).
 served_grant(message, Behind, Limits) ->
     case grant({Behind, maps:with([max_request, in_flight], Limits)}) of
-        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked}};
+        {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked#{operations => maps:get(operations, Limits, [])}}};
         invalid -> invalid
     end;
 served_grant(tree, Grants, Limits) ->

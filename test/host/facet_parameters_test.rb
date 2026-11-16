@@ -25,7 +25,13 @@ require_relative '../../tools/lib/erx/host_os'
 # line-grant seed (Erx::ManifestSeeds.line_grant) takes the same road: its grant's uart
 # reaches the terms as the index of its UART's device row, and the manifest's reader, which
 # the view reads through, refuses a uart one past the device table. Seeded faults that drop
-# a parameter on the way, or admit one out of bound, must each fail a case.
+# a parameter on the way, or admit one out of bound, must each fail a case. The
+# operations seed (Erx::ManifestSeeds.operations_grant), root's template granted both of
+# inspect's operations, takes the same road: the grant's limits carry their names in
+# number order, and the view refuses each forgery of FORGED_OPERATIONS, the last naming
+# operations on a service a configured domain serves; seeded faults that drop an
+# operation, or admit an undeclared one or one of a configured domain's service, must
+# each fail a case.
 class FacetParametersTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -38,6 +44,8 @@ class FacetParametersTest < Minitest::Test
   TESTS = %w[test/erlang/erx_facet_parameters_tests.erl].freeze
   LIMITS_CASE = 'the_grant_s_limits_carry_its_parameters_by_name_test'
   FORGED_CASE = 'forged_parameter_rows_are_refused_test'
+  OPERATIONS_CASE = 'the_grant_s_limits_carry_its_operations_by_name_test'
+  FORGED_OPERATIONS_CASE = 'forged_operation_rows_are_refused_test'
   LINE_CASE = 'the_line_grant_s_uart_is_its_device_row_test'
 
   # The grant's packed parameter rows are windows (key 1), pixels (2) and clipboard (3), the
@@ -51,8 +59,18 @@ class FacetParametersTest < Minitest::Test
     'below-its-bound' => ->(rows) { rows[1][8, 8] = [4095].pack('Q<') }
   }.freeze
 
+  # The operations seed's grant of inspect packs inspect (1) and entries (2), 4 bytes
+  # each: operation u32 at 0. Each forgery edits the rows, or, for configured-server, the
+  # inspect service's row, and the view must refuse it.
+  FORGED_OPERATIONS = {
+    'undeclared' => ->(rows) { rows[1] = [3].pack('V') },
+    'out-of-order' => ->(rows) { rows[0], rows[1] = rows[1], rows[0] },
+    'named-twice' => ->(rows) { rows[1] = rows[0].dup },
+    'configured-server' => :configured_server
+  }.freeze
+
   def test_a_packed_row_reaches_the_mint
-    assert_match(/^  All 4 tests passed\.$/, run_cases)
+    assert_match(/^  All 6 tests passed\.$/, run_cases)
   end
 
   # A seeded fault: the file it edits, the anchor found once there, its replacement and
@@ -71,7 +89,18 @@ class FacetParametersTest < Minitest::Test
     'the view drops a device reference' =>
       [VIEW, 'value->index = row->index;', 'value->index = 0;', LINE_CASE],
     'the terms give a device reference\'s scalar' =>
-      [TERMS, 'enif_make_uint(env, parameter->index)', 'enif_make_uint(env, (unsigned)parameter->scalar)', LINE_CASE]
+      [TERMS, 'enif_make_uint(env, parameter->index)', 'enif_make_uint(env, (unsigned)parameter->scalar)', LINE_CASE],
+    'the view admits an undeclared operation' =>
+      [VIEW, 'if (row.operation == declared[at].number)', 'if (row.operation != 0)', FORGED_OPERATIONS_CASE],
+    'the view admits operations of a configured domain\'s service' =>
+      [VIEW, 'if (count != 0 && service->server != ERX_MF_NONE)', 'if (count != 0 && service->server == 0xdeadbeef)',
+       FORGED_OPERATIONS_CASE],
+    'the view drops a facet\'s last operation' =>
+      [VIEW, '.operations = &operations[named], .noperations = facet.operations.count,',
+       '.operations = &operations[named], .noperations = facet.operations.count - (facet.operations.count != 0),',
+       OPERATIONS_CASE],
+    'the terms leave the operations out' =>
+      [TERMS, 'for (uint32_t at = facet->noperations; at-- > 0;)', 'for (uint32_t at = 0; at-- > 0;)', OPERATIONS_CASE]
   }.freeze
 
   def test_seeded_faults_are_caught
@@ -88,6 +117,34 @@ class FacetParametersTest < Minitest::Test
   def codec = @codec ||= Erx::ABI::Codec.new(Erx::ABI::Generator.plan(root: ROOT).schema)
   def manifest = @manifest ||= Erx::ManifestSeeds.windows_grant(ROOT, codec)
   def line_manifest = @line_manifest ||= Erx::ManifestSeeds.line_grant(ROOT, codec)
+
+  def operations_manifest
+    @operations_manifest ||= Erx::ManifestSeeds.operations_grant(
+      Erx::Platform.load(root: ROOT, name: 'qemu-virt').manifest_source(ROOT), codec, Erx::ManifestSeeds.platform_of(ROOT, 'qemu-virt')
+    )
+  end
+
+  # The operations manifest with its operation rows edited by forge, or, for
+  # :configured_server, its inspect service served by configured row 0.
+  def forged_operations(forge)
+    view = codec.open('manifest', operations_manifest)
+    return configured_server(view) if forge == :configured_server
+
+    table = view.header.fetch('facet_operations')
+    assert_equal 2, table.fetch('count')
+    offset = table.fetch('offset')
+    rows = Array.new(2) { |index| operations_manifest.byteslice(offset + (index * 4), 4).b }
+    forge.call(rows)
+    operations_manifest.b.tap { |copy| copy[offset, 8] = rows.join }
+  end
+
+  def configured_server(view)
+    assert_operator view.count('domains'), :>, 0
+    index = view.count('services').times.find { |at| view.fetch('services', at).fetch('interface') == codec.constant('service_inspect') }
+    encoded = codec.encode_layout('erx_mf_service', view.fetch('services', index).merge('server' => 0))
+    offset = view.header.fetch('services').fetch('offset') + (index * encoded.bytesize)
+    operations_manifest.b.tap { |copy| copy[offset, encoded.bytesize] = encoded }
+  end
 
   # The line manifest's device rows, by path, the index of the one its grant names.
   def line_uart
@@ -125,6 +182,8 @@ class FacetParametersTest < Minitest::Test
       File.binwrite(File.join(work, 'manifest.bin'), manifest)
       FORGED.each { |name, forge| File.binwrite(File.join(work, "refused-#{name}.bin"), forged(forge)) }
       File.binwrite(File.join(work, 'line.bin'), line_manifest)
+      File.binwrite(File.join(work, 'operations.bin'), operations_manifest)
+      FORGED_OPERATIONS.each { |name, forge| File.binwrite(File.join(work, "forged-operations-#{name}.bin"), forged_operations(forge)) }
       File.write(File.join(work, 'line-uart'), line_uart.to_s)
       File.binwrite(File.join(work, 'unreadable-device-past-the-table.bin'), line_past_the_table)
       ErlangBuild.compile(work, applications: %w[erx_domain], tests: TESTS)

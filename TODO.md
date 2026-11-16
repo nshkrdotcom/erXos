@@ -4205,11 +4205,18 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   development one grown. Build test images' domain boot scripts from their manifest's
   rows, as the production image does.
 * [Medium] manifest check, `tools/lib/erx/manifest.rb` (`Stopgap#check_facets_supported`):
-  a facet that names an operation is refused (`unsupported`, naming M5), because
-  operations resolve against its service's generated declarations (design-abi.md,
-  "Services, facets and their parameter schemas"), which the packer does not read; the
-  boot view refuses one too, so an admitted facet grants every operation of its service.
-  The server's release is not checked to supply the service's interface.
+  a facet that names operations of a service a configured domain serves, or of a tree,
+  is refused (`unsupported`), as the boot view refuses it, since only the system
+  domain's `erx_facet` checks a grant's operations (design-time.md, "Phase 1"); a mint
+  in a configured domain and an `erx_fs` grant check none, so such a row would grant
+  every operation. The server's release is not checked to supply the service's
+  interface.
+* [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): no callback in the
+  tree exports `operation/1` yet, so a row naming operations of a system-served service
+  compiles and boots, and only its mint refuses it (`unchecked_operations`, logged, no
+  facet). A callback's `operation/1` and `admit/3` read one request separately; derive the
+  first from the callback's decoder when the clock facet lands, until the generated
+  admission path replaces both.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_srv.erl` (`served/2`): a
   configured domain's facet of a service the system domain serves ends with the process
   behind it, and when that service restarts and names a new process (`erx_facet:serve/2`)
