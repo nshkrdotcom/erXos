@@ -6735,6 +6735,19 @@ to the corpus and follow rc
   PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
   certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
   Today the page starts zeroed and the wall clock reads 1970-01-01.
+* [High] time, setting the clock by hand (`erlang/apps/erx_shell/src/erx_cmd_date.erl`,
+  [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): the 0.1 preview's kiosk needs a right wall
+  clock for TLS, and root sets it with `date`. `date` reads, formats and parses its set forms, and `-j` works, but
+  every set answers `eperm`, since no session holds a `clock` grant: the authority is open decision 2 of
+  design-time.md, and the chain behind its option A is unbuilt (`abi/services/clock.txt` with `sample` and `set`,
+  the manifest's clock service and the `root_clock` row with `operations set`, `erx_clock_facet`, the clock
+  service `erx_clock` with its set clause and `step_source`, `erx_clock_nif:set_offset/1` and its imports section,
+  and `erx_time_set_offset` on the Fiasco backend in place of `erx_time_set_wall`). In the system domain's own shell a
+  set answers `eperm` too, and `eagain` once the system domain serves `clock` (`erx_cmd_date:request/2`, `local`).
+  `date`'s `%N` pass runs inside the strftime scan, not before it as `date.c`'s `strftime_ns` does, so formats such as
+  `%E%N` and `%5%N` differ from FreeBSD [Medium]; make it a format-to-format step first. Once decided, build the
+  chain and the QEMU "Set by hand" case, and add a FreeBSD oracle case for `date -j -u` over the operand and
+  format corpus, which settles the `mktime(3)` normalization design-time.md marks unverified.
 * [Medium] time, the wall-clock keeper (`docs/design-header-io.md`, "An I2C real-time clock"): the header design
   says "the system domain's wall-clock keeper, designed with network time, reads `/dev/rtc/time` at boot and writes
   it after each correction", but [design-time.md](docs/design-time.md) designs no keeper and no use of `/dev/rtc`,

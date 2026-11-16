@@ -772,8 +772,8 @@ date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]
   above 59, a second above 61, digits that are not an even count of 2
   to 12, a
   `.SS` that is not two digits, a second dot or any other character is
-  `date: illegal time format` and the usage line, status 1, and nothing
-  is set. The fields are then normalized as `mktime(3)` does, so a month
+  `date: illegal time format` and the usage line, with the shell's
+  `usage` status, and nothing is set. The fields are then normalized as `mktime(3)` does, so a month
   of `00` is December of the year before, a day of `00` the last day of
   the month before, month and day `0230` the first or second of March,
   and a second of 60 or 61 the first or second second of the next
@@ -793,8 +793,8 @@ date [-jnu] [[[[[cc]yy]mm]dd]HH]MM[.SS] [+format]
   FreeBSD's securelevel limit, which erXos does not have.
 
 The decisions are pure: `erx_cmd_date:parse/1` takes the arguments to
-`{read, Format}`, `{set, Operand, Format, Set}` or `{error, usage}`;
-`target/2` takes a parsed operand and the current wall time to the
+`{ok, {read, Format}}`, `{ok, {set, Operand, Format, Set}}`, `{error, usage}` or
+`{error, illegal_time}`; `target/2` takes a parsed operand and the current wall time to the
 named time in nanoseconds; `format/2` takes a format and a wall time to
 bytes. `run/2` does the effects: it reads the clocks, asks the clock
 service, and writes.
@@ -895,14 +895,14 @@ command raise.
 
 | Failure | Result |
 | --- | --- |
-| an operand or flag the command does not take | `date: illegal time format` for a bad time operand, then the usage line; status 1; nothing is sent |
+| an operand or flag the command does not take | `date: illegal time format` for a bad time operand, then the usage line; status `usage`; nothing is sent |
 | the session holds no `clock` grant | `date: clock_settime: ` and `eperm`'s text; status 1 |
 | `W` outside `0..time_offset_max`: a time before 1970-01-01 plus the uptime, or after early 2116 | the facet's `{error, badarg}`, `einval`'s text; status 1; the page is unchanged |
-| no clock service registered | `{error, unavailable}`, `eagain`'s text; status 1; the page is unchanged |
+| no clock service registered, or the facet has ended | `{error, unavailable}`, or a facet that ended before the call, `eagain`'s text; status 1; the page is unchanged |
 | the backend cannot set wall time | `{error, unsupported}`, `enotsup`'s text; status 1 |
 | the page's sequence has run out | `{error, limit}`, `eoverflow`'s text; status 1 |
 | the facet is busy | `{error, busy}`, `ebusy`'s text; status 1 |
-| the clock service ended before it answered | `{error, failed}`, `eio`'s text; status 1; the set may or may not have been applied, which a reading `date` or `/proc/time/status` shows |
+| the clock service ended, or no answer came within 10 s | `{error, failed}`, `eio`'s text; status 1; the set may or may not have been applied, which a reading `date` or `/proc/time/status` shows |
 | standard output cannot be written | the shell's write failure ends the command with its reason as the status, as for every command |
 
 ## Concurrency and failure
