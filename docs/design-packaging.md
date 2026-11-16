@@ -955,7 +955,8 @@ The principal service registers an app's principal with
 `erx_principal:register_app/2`, which only the package process calls, in
 a free entry of the `max` the domain library's principal table holds for
 apps. Its record holds the app's name, its signer (`image` for one of
-the image's) and its declared memory, and it is written only when a
+the image's), its declared memory and the app template's facet rows its
+admission kept, which its sessions hold, and it is written only when a
 package of the name is committed: at an install or an update, once the
 rename is durable, and at the recovery, for each package it admits. A
 refused or failed install or update leaves the record as it was. A
@@ -998,8 +999,10 @@ budget is resized.
 ### An app's session
 
 `erx_domain:start_session(App, Start)` makes an app's session as it makes
-any session, with three differences, all decided by the domain service
-from the app's admitted record:
+any session, with three differences, all decided by the domain service:
+the first two from the app's entry in its registry, which
+`erx_domain_core:app_session/4` turns into the session's plan, and the
+third from the package the entry was registered from:
 
 * the domain library's plan takes the app template and the app's
   principal: `erx_dom_plan_app_session` plans the app template under the

@@ -5,8 +5,8 @@
 -moduledoc """
 The registry of app principals (docs/design-packaging.md, "An app's
 principal"): a record is written into an entry no other name holds, keeps
-its entry and signer for the boot, holds nothing but its entry, signer and
-memory, and is refused, never crashed on, when malformed.
+its entry and signer for the boot, holds nothing but its entry, signer, memory and
+kept rows, and is refused, never crashed on, when malformed.
 test/host/erx_principal_test.rb runs it against erx_principal as it is and
 against seeded faults.
 """.
@@ -28,7 +28,7 @@ registered(Max, Records) ->
 registration_writes_the_record_admission_reads_test() ->
     Apps = registered(4, [{<<"kiosk">>, admitted(0, image, 32 * ?MIB)},
                           {<<"clock">>, admitted(1, <<"vendor">>, 64 * ?MIB)}]),
-    ?assertEqual({ok, #{entry => 1, signer => <<"vendor">>, memory => 64 * ?MIB}},
+    ?assertEqual({ok, #{entry => 1, signer => <<"vendor">>, memory => 64 * ?MIB, rows => [0, 2]}},
                  erx_principal:app(<<"clock">>, Apps)),
     ?assertEqual(#{<<"clock">> => #{entry => 1, signer => <<"vendor">>},
                    <<"kiosk">> => #{entry => 0, signer => image}},
@@ -39,13 +39,13 @@ registration_writes_the_record_admission_reads_test() ->
 a_record_holds_no_credentials_test() ->
     Given = (admitted(0, development, 8 * ?MIB))#{credentials => <<"secret">>, login => true},
     {ok, Apps} = erx_principal:register(<<"notes">>, Given, erx_principal:new(2)),
-    ?assertEqual({ok, #{entry => 0, signer => development, memory => 8 * ?MIB}},
+    ?assertEqual({ok, #{entry => 0, signer => development, memory => 8 * ?MIB, rows => [0, 2]}},
                  erx_principal:app(<<"notes">>, Apps)).
 
 a_name_registered_again_keeps_its_entry_and_signer_test() ->
     Apps = registered(4, [{<<"clock">>, admitted(0, <<"vendor">>, 64 * ?MIB)}]),
     {ok, Updated} = erx_principal:register(<<"clock">>, admitted(0, <<"vendor">>, 16 * ?MIB), Apps),
-    ?assertEqual({ok, #{entry => 0, signer => <<"vendor">>, memory => 16 * ?MIB}},
+    ?assertEqual({ok, #{entry => 0, signer => <<"vendor">>, memory => 16 * ?MIB, rows => [0, 2]}},
                  erx_principal:app(<<"clock">>, Updated)),
     ?assertEqual({error, {signer_changed, <<"clock">>}},
                  erx_principal:register(<<"clock">>, admitted(0, <<"other">>, 16 * ?MIB), Apps)),
@@ -84,6 +84,8 @@ malformed_input_is_refused_test() ->
                           {<<"clock">>, [entry]},
                           {<<"clock">>, maps:remove(memory, admitted(0, image, ?MIB))},
                           {<<"clock">>, maps:remove(signer, admitted(0, image, ?MIB))},
+                          {<<"clock">>, maps:remove(rows, admitted(0, image, ?MIB))},
+                          {<<"clock">>, (admitted(0, image, ?MIB))#{rows := x}},
                           {<<"clock">>, admitted(-1, image, ?MIB)},
                           {<<"clock">>, admitted(zero, image, ?MIB)},
                           {<<"clock">>, admitted(0, image, 0)}]].

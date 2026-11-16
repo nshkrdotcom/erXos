@@ -33,7 +33,7 @@ class ErxPrincipalTest < Minitest::Test
               edits: [['{ok, _Given} -> {error, {entry, Entry}};', '{ok, _Given} -> {ok, Apps};']],
               caught_by: 'a_new_name_takes_the_entry_admission_gives_test'),
     Fault.new(name: 'credentials kept on an app principal',
-              edits: [['case maps:with([entry, signer, memory], Admitted) of', 'case Admitted of']],
+              edits: [['case maps:with([entry, signer, memory, rows], Admitted) of', 'case Admitted of']],
               caught_by: 'a_record_holds_no_credentials_test'),
     Fault.new(name: 'a refusal of the entry rule written anyway',
               edits: [['{error, _} = Refused -> Refused', '{error, _} -> {ok, Apps#{names := Names#{Name => Record}}}']],

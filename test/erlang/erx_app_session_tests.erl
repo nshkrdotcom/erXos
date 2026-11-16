@@ -1,0 +1,89 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+-module(erx_app_session_tests).
+-moduledoc """
+The plan of an app's session, `erx_domain_core:app_session/4`
+(docs/design-packaging.md, "An app's session", and its verification row):
+a header is admitted (`erx_app_admit:admit/3`) and registered
+(`erx_principal:register/3`) as the package process does, and the plan is
+made from the record the registry holds. The session's rows are the
+`packages` row and the rows its needs name; its principal, from which every
+facet's scope is computed, is the app's entry; its memory is the declared
+one; and one header admitted as an image package and as an installed one
+gives the same plan (PK10). test/host/erx_app_session_test.rb runs it
+against the core as it is and against seeded faults.
+""".
+
+-include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
+
+-define(MIB, 1048576).
+%% The app entries the library placed: entry i is principal 6 + i.
+-define(APPS, #{template => 2, first => 6, max => 4, memory => 128 * ?MIB}).
+
+%% The apps row as admission reads it: the app template's packages row is 7, and
+%% the services an app may need are granted by rows 8 to 10.
+manifest(ImagePackages) ->
+    #{apps => #{memory => 128 * ?MIB, max => 4, packages_row => 7,
+                services => [#{name => <<"display">>, windows => true, row => 8},
+                             #{name => <<"data">>, windows => false, row => 9},
+                             #{name => <<"panel">>, windows => true, row => 10}]},
+      reserved => [<<"system">>, <<"storage">>, <<"display">>, <<"data">>, <<"panel">>],
+      packages => ImagePackages}.
+
+%% The app template's facet rows by their index in the facet table, each the
+%% {Service, Server} the caller keeps for it.
+template_rows() ->
+    [{7, {packages, storage}}, {8, {display, display}}, {9, {data, storage}},
+     {10, {panel, panel}}].
+
+header(Name, Memory, Needs) ->
+    #{name => Name, memory => Memory, needs => Needs,
+      abi_version => ?ERX_ABI_VERSION, arch => ?ERX_ARCH_MACHINE_ARCH_BYTES}.
+
+%% Admits Header signed by Signer against Manifest, registers it in Apps, and plans
+%% its session from the registered record; answers the plan and the registry.
+started(Header, Signer, Manifest, Apps) ->
+    #{name := Name} = Header,
+    {ok, Admitted} = erx_app_admit:admit(#{header => Header, signer => Signer}, Manifest,
+                                         erx_principal:registry(Apps)),
+    {ok, Registered} = erx_principal:register(Name, Admitted, Apps),
+    {ok, Record} = erx_principal:app(Name, Registered),
+    {erx_domain_core:app_session(Name, Record, ?APPS, template_rows()), Registered}.
+
+started(Header, Signer) ->
+    {Plan, _} = started(Header, Signer, manifest([]), erx_principal:new(4)),
+    Plan.
+
+the_rows_are_packages_and_the_needs_test() ->
+    Dashboard = started(header(<<"dashboard">>, 16 * ?MIB, [<<"display">>]), <<"vendor">>),
+    ?assertEqual([{packages, storage}, {display, display}], maps:get(rows, Dashboard)),
+    Daemon = started(header(<<"daemon">>, 16 * ?MIB, []), <<"vendor">>),
+    ?assertEqual([{packages, storage}], maps:get(rows, Daemon)),
+    Both = started(header(<<"panels">>, 16 * ?MIB, [<<"panel">>, <<"data">>]), <<"vendor">>),
+    ?assertEqual([{packages, storage}, {data, storage}, {panel, panel}], maps:get(rows, Both)).
+
+%% Every facet's parameters are computed from the plan's principal: the app's entry,
+%% never the template's, whatever entry the app takes.
+every_scope_names_the_apps_principal_test() ->
+    {First, Apps} = started(header(<<"clock">>, 16 * ?MIB, []), <<"vendor">>, manifest([]),
+                            erx_principal:new(4)),
+    {Second, _} = started(header(<<"notes">>, 16 * ?MIB, []), development, manifest([]), Apps),
+    ?assertMatch(#{entry := 0, principal := 6, prefix := <<"clock">>}, First),
+    ?assertMatch(#{entry := 1, principal := 7, prefix := <<"notes">>}, Second),
+    ?assertEqual({principal, 6}, erx_domain_core:inspect_scope(maps:get(principal, First), [], true)),
+    ?assertEqual({principal, 7}, erx_domain_core:inspect_scope(maps:get(principal, Second), [], true)).
+
+the_memory_is_the_declared_one_test() ->
+    ?assertEqual(16 * ?MIB, maps:get(memory, started(header(<<"clock">>, 16 * ?MIB, []), <<"vendor">>))),
+    ?assertEqual(64 * ?MIB, maps:get(memory, started(header(<<"clock">>, 64 * ?MIB, []), image))).
+
+%% PK10: an image package and an installed one, with one header, have one plan; only
+%% what authenticated the header differs, and the plan reads nothing of it.
+one_header_admitted_both_ways_gives_one_plan_test() ->
+    Header = header(<<"kiosk">>, 32 * ?MIB, [<<"display">>, <<"data">>]),
+    {Image, _} = started(Header, image, manifest([<<"kiosk">>]), erx_principal:new(4)),
+    {Installed, _} = started(Header, <<"vendor">>, manifest([]), erx_principal:new(4)),
+    ?assertEqual(Image, Installed),
+    ?assertEqual([{packages, storage}, {display, display}, {data, storage}], maps:get(rows, Image)).

@@ -17,10 +17,12 @@ holds, numbered for the whole boot (`erx_dom_apps_place`), so a record is
 keyed by its name and holds its entry. An entry is never freed within a
 boot: there is no unregister, and a name keeps its entry and signer until
 the machine reboots, so the names and entries the registry holds stay
-within `max` (PK9). A record holds the app's entry, its signer and its
-declared memory, the memory each of its sessions' own budgets holds, and
-nothing else: an app principal has no credentials, so no login starts a
-session of one (AP2).
+within `max` (PK9). A record holds four things and nothing else: the
+app's entry; its signer; its declared memory, which each of its sessions'
+own budgets holds; and the indices of the app template's facet rows its
+admission kept, which each of its sessions is granted
+(erx_domain_core:app_session/4). An app principal has no credentials, so
+no login starts a session of one (AP2).
 """.
 
 -export([register_app/2, app_registry/0]).
@@ -29,8 +31,9 @@ session of one (AP2).
 
 -doc "An app principal's record.".
 -type app() :: #{entry := non_neg_integer(),
-                    signer := erx_pkg_header:authenticator(),
-                    memory := pos_integer()}.
+                 signer := erx_pkg_header:authenticator(),
+                 memory := pos_integer(),
+                 rows := [non_neg_integer()]}.
 
 -doc """
 The boot's app principals: `max`, the apps row's, and each registered
@@ -54,7 +57,7 @@ Admission decides by the same rule before the package is committed.
 -doc """
 Register the app `Name` with the record of `Admitted`, the package's
 admission (`erx_app_admit:admitted/0`), of which it keeps the entry, the
-signer and the declared memory.
+signer, the declared memory and the kept rows.
 """.
 -spec register_app(binary(), erx_app_admit:admitted()) -> ok | {error, reason()}.
 register_app(Name, Admitted) ->
@@ -71,7 +74,7 @@ new(Max) when is_integer(Max), Max >= 0 ->
     #{max => Max, names => #{}}.
 
 -doc """
-`Apps` with `Name`'s record, the entry, signer and memory of `Admitted`,
+`Apps` with `Name`'s record, the entry, signer, memory and rows of `Admitted`,
 written in the entry `erx_app_admit:entry/4` gives it, the one admission
 gave: a name not yet registered takes the lowest entry no name holds, and
 a registered one writes its record again in its own entry, with its own
@@ -79,9 +82,9 @@ signer only.
 """.
 -spec register(binary(), erx_app_admit:admitted(), apps()) -> {ok, apps()} | {error, reason()}.
 register(Name, Admitted, Apps) when is_binary(Name), is_map(Admitted) ->
-    case maps:with([entry, signer, memory], Admitted) of
-        #{entry := Entry, signer := _, memory := Memory} = Record
-          when is_integer(Entry), Entry >= 0, is_integer(Memory), Memory > 0 ->
+    case maps:with([entry, signer, memory, rows], Admitted) of
+        #{entry := Entry, signer := _, memory := Memory, rows := Rows} = Record
+          when is_integer(Entry), Entry >= 0, is_integer(Memory), Memory > 0, is_list(Rows) ->
             write(Name, Record, Apps);
         #{} ->
             {error, badarg}
