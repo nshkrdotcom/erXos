@@ -134,8 +134,8 @@ class ReleaseFilesTest < Minitest::Test
   def test_the_system_release_ships_no_domain_only_application
     paths = entries.map { |entry| entry.fetch('path') }
     release = File.read(File.join(@scratch, 'release/boot/start/start.rel'))
-    only = %w[asn1 crypto public_key ssh ssl inets erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_win erx_ui erx_desk
-              erx_web erx_net erx_net_client erx_web_line erx_app]
+    only = %w[asn1 crypto public_key ssh ssl inets erx_blk erx_storage erx_f2fs erx_memdraw erx_display erx_fb erx_usb erx_win erx_ui
+              erx_desk erx_web erx_net erx_net_client erx_web_line erx_app erx_bt]
     assert_equal Erx::ReleaseFiles::APPLICATIONS - Erx::ReleaseFiles::SYSTEM_APPLICATIONS, only
     only.each do |application|
       refute_includes release, "{#{application},"

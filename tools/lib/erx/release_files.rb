@@ -148,6 +148,8 @@ module Erx
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
     #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
     #   names it.
+    # * bt, the Bluetooth domain's (docs/design-bluetooth.md): the Bluetooth stack,
+    #   erx_bt, so no other domain parses what a controller writes. No manifest names it.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
@@ -160,7 +162,8 @@ module Erx
                         'ssh' => [*DOMAIN_BASE, 'asn1', 'crypto', 'public_key', 'ssh'].freeze,
                         'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'ssl', 'inets', 'erx_memdraw', 'erx_win', 'erx_ui',
                                   'erx_net_client', 'erx_app'].freeze,
-                        'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze }.freeze
+                        'usb' => [*DOMAIN_BASE, 'erx_usb'].freeze,
+                        'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze }.freeze
 
     # Refuses applications of which no release holds one: an application the runtime
     # builds that neither the system release (system) nor a script of the release
