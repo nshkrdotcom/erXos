@@ -18,8 +18,10 @@ ns_test_() ->
      [fun boot_table_until_a_change/0,
       fun mount_adds_a_grant_entry/0,
       fun mount_refusals/0,
-      fun mount_of_an_image_adds_a_read_only_entry/0,
-      fun image_mount_refusals/0,
+      fun an_app_mount_reads_the_package_through_its_record/0,
+      fun an_app_mount_of_a_changed_package_answers_eio/0,
+      fun app_mount_refusals/0,
+      fun the_fid_closes_when_the_last_entry_of_the_image_goes/0,
       fun bind_roots_at_the_place_from_reaches/0,
       fun bind_of_a_relative_path_starts_at_the_working_directory/0,
       fun bind_refusals/0,
@@ -47,6 +49,7 @@ stop(_Ns) ->
     wait_down(Ns),
     persistent_term:erase(erx_ns),
     persistent_term:erase({erx, facets}),
+    persistent_term:erase(erx_connections_app),
     flush().
 
 table() -> erx_ns_prim_stub:erx_mounts().
@@ -173,39 +176,99 @@ a_malformed_request_answers_einval_and_changes_nothing() ->
     ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
     ?assert(is_process_alive(whereis(erx_ns))).
 
-%% An image the caller opened in erx_verity mounts read-only, its entry holding the
-%% reader's mount, and unmounts as any entry does.
-mount_of_an_image_adds_a_read_only_entry() ->
-    {ok, Image} = erx_erofs_tests:open(erx_erofs_tests:fixture("compact")),
-    ?assertEqual(ok, erx_ns:mount({erofs, Image}, <<"/release/">>, [])),
-    [_, #{point := [<<"release">>], provider := {erofs, Fs}, root := [], rights := ro}] = table(),
-    ?assertEqual({ok, [<<"b">>]}, erx_erofs:list_dir(Fs, [<<"a">>])),
-    ?assertEqual(ok, erx_ns:mount({erofs, Image}, "/again", [ro])),
-    ?assertEqual(ok, erx_ns:unmount(<<"/release">>)),
-    ?assertMatch([#{point := []}, #{point := [<<"again">>]}], table()).
+%% The app's package, a package-shaped file (a header block, the compact fixture image
+%% and its tree, ERX_VERITY_CASES' "package"), served as clock.app at the root of an rx
+%% grant named packages, the session's packages facet, observed by the case; and the
+%% app's record naming it there with its layout, as the session's agent holds it.
+app_package(Bytes) ->
+    {ok, Grant} = erx_fs:start_link(erx_fs_test_tree, [{observer, self()}, {name, <<"packages">>},
+                                                      {file, <<"clock.app">>, Bytes}], rx),
+    unlink(Grant),
+    persistent_term:put({erx, facets}, #{packages => Grant}),
+    {_, Layout} = package(),
+    persistent_term:put(erx_connections_app, {ok, #{place => {packages, [<<"clock.app">>]}, layout => Layout,
+                                                   start => {applications, [<<"clock">>]}}}),
+    Grant.
 
-%% A malformed image, anything but an image erx_verity opened and anything but ro answer
-%% before the table changes; the mount's diagnostic goes to the log. A window is not an
-%% image: erx_ns opens none, so a module that holds a window, the block service's
-%% `system` window among them, cannot mount it without its tree through erx_ns.
-image_mount_refusals() ->
+package() ->
+    Dir = os:getenv("ERX_VERITY_CASES"),
+    {ok, [{"package", Layout}]} = file:consult(filename:join(Dir, "verity.terms")),
+    {ok, Bytes} = file:read_file(filename:join(Dir, "package.img")),
+    {Bytes, Layout}.
+
+flip_byte(Bytes, Offset) ->
+    <<Before:Offset/binary, Byte, After/binary>> = Bytes,
+    <<Before/binary, (Byte bxor 16#10), After/binary>>.
+
+%% The callbacks the grant's tree saw since the last call.
+tree_calls() ->
+    receive {tree_call, Callback} -> [Callback | tree_calls()] after 0 -> [] end.
+
+%% {erofs, app} mounts the session's own package from its record: erx_ns's process walks
+%% the record's name on the record's facet to a fid of its own, and the reader reads the
+%% image through it, every block checked, so a file below the mount reads as the image
+%% holds it. The entry is rx, as asked.
+an_app_mount_reads_the_package_through_its_record() ->
+    {Bytes, _} = package(),
+    _ = app_package(Bytes),
+    ?assertEqual(ok, erx_ns:mount({erofs, app}, <<"/app">>, [rx])),
+    [_, #{point := [<<"app">>], provider := {erofs, Fs}, root := [], rights := rx}] = table(),
+    ?assertEqual({ok, [<<"b">>]}, erx_erofs:list_dir(Fs, [<<"a">>])),
+    [{regular, Names, Size, Seed} | _] = [Entry || {regular, _, _, _} = Entry <- erx_erofs_tests:expected()],
+    ?assertEqual({ok, erx_erofs_tests:contents(Size, Seed)}, erx_erofs:read_file(Fs, Names)),
+    ?assertEqual(ok, erx_ns:unmount(<<"/app">>)),
+    ?assertEqual(ok, erx_ns:mount({erofs, app}, <<"/app">>, [])),
+    ?assertMatch([_, #{point := [<<"app">>], rights := ro}], table()).
+
+%% A flipped bit in the package's image fails the mount with eio before the table
+%% changes: the superblock's block does not match its tree.
+an_app_mount_of_a_changed_package_answers_eio() ->
+    {Bytes, #{image_offset := Offset}} = package(),
+    _ = app_package(flip_byte(Bytes, Offset + 1024 + 5)),
     register(erx_ns_log, self()),
-    Window = erx_erofs_tests:window(erx_erofs_tests:fixture("compact")),
+    ?assertEqual({error, eio}, erx_ns:mount({erofs, app}, <<"/app">>, [rx])),
+    unregister(erx_ns_log),
+    ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
+    ?assertMatch([{log, ["erx_ns: image: ", _]} | _], logged()).
+
+%% No form of the mount takes a layout or an image from its caller: an opened image, a
+%% place with a layout and a source other than app are malformed, as is rw; a session
+%% with no record is refused with enoent. Nothing reaches the table.
+app_mount_refusals() ->
+    {Bytes, Layout} = package(),
+    _ = app_package(Bytes),
     {ok, Image} = erx_erofs_tests:open(erx_erofs_tests:fixture("compact")),
-    {ok, Zeros} = erx_erofs_tests:open(binary:copy(<<0>>, 8192)),
     [?assertEqual({error, Reason}, erx_ns:mount(Source, To, Options))
      || {Reason, Source, To, Options} <-
-            [{eio, {erofs, Zeros}, <<"/x">>, []},
-             {eio, {erofs, Window}, <<"/x">>, []},
-             {eio, {erofs, not_an_image}, <<"/x">>, []},
-             {einval, {erofs, Image}, <<"/x">>, [rw]},
-             {einval, {erofs, Image}, <<"/x">>, [rx]},
-             {einval, {erofs, Image}, <<"/x">>, [{tree, <<"t">>}]},
-             {einval, {erofs, Image}, <<"x">>, []},
-             {eexist, {erofs, Image}, <<"/">>, []}]],
-    ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)),
-    unregister(erx_ns_log),
-    ?assertMatch([{log, ["erx_ns: image: ", <<"erofs: block 0: no EROFS magic">>]} | _], logged()).
+            [{einval, {erofs, Image}, <<"/x">>, []},
+             {einval, {erofs, {layout, {packages, [<<"clock.app">>]}, Layout}}, <<"/x">>, [rx]},
+             {einval, {erofs, {file, <<"/packages/clock.app">>, Layout}}, <<"/x">>, [rx]},
+             {einval, {erofs, app}, <<"/x">>, [rw]},
+             {einval, {erofs, app}, <<"/x">>, [{tree, <<"t">>}]},
+             {einval, {erofs, app}, <<"/x">>, [ro, rx]},
+             {einval, {erofs, app}, <<"x">>, [rx]},
+             {eexist, {erofs, app}, <<"/">>, [rx]}]],
+    persistent_term:erase(erx_connections_app),
+    ?assertEqual({error, enoent}, erx_ns:mount({erofs, app}, <<"/x">>, [rx])),
+    ?assertEqual(undefined, persistent_term:get(erx_ns, undefined)).
+
+%% The mount's fid lives as long as an entry holds the image: a bind of the mount keeps
+%% it open past the mount's unmount, and the grant's tree sees the file closed once the
+%% last entry goes.
+the_fid_closes_when_the_last_entry_of_the_image_goes() ->
+    {Bytes, _} = package(),
+    _ = app_package(Bytes),
+    ?assertEqual(ok, erx_ns:mount({erofs, app}, <<"/app">>, [rx])),
+    ?assert(lists:member(open, tree_calls())),
+    ?assertEqual(ok, erx_ns:bind(<<"/app">>, <<"/b">>)),
+    ?assertEqual(ok, erx_ns:unmount(<<"/app">>)),
+    _ = sys:get_state(erx_ns),
+    ?assertNot(lists:member(clunk, tree_calls())),
+    [_, #{point := [<<"b">>], provider := {erofs, Fs}}] = table(),
+    ?assertEqual({ok, [<<"b">>]}, erx_erofs:list_dir(Fs, [<<"a">>])),
+    ?assertEqual(ok, erx_ns:unmount(<<"/b">>)),
+    _ = sys:get_state(erx_ns),
+    ?assert(lists:member(clunk, tree_calls())).
 
 %% A facet's mount holds the facet's name, not a pid, and a resolution reads the domain's
 %% facet registry, the term {erx, facets}, as it uses the table: each entry of the facet,

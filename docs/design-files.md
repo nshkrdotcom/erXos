@@ -1503,8 +1503,8 @@ process walks the file to one fid of its own, opens it for reading and
 owns it, so the fid lives as long as the mount, and `erx_verity`, in
 whichever process of the domain reads below `To`, sends its positioned
 reads on that fid, as any process of a domain may use the domain's fids
-([Fid owners](#fid-owners)); no OTP file descriptor is shared. The
-unmount clunks the fid. If `erx_ns`'s process ends, the grant clunks
+([Fid owners](#fid-owners)); no OTP file descriptor is shared. The fid
+is clunked once no entry holds it, a bind of the mount's included. If `erx_ns`'s process ends, the grant clunks
 every fid it owns, its mounts' among them (F10), and reads below those
 mounts answer `eio` until each is mounted again.
 `erx_ns:unmount(To)` removes the entry at exactly `To`; unmounting `/`

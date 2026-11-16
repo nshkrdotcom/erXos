@@ -37,7 +37,9 @@ With `{observer, Pid}` in its arguments, every callback first sends
 the tree. A walk of ".." crashes the grant: erx_fs must answer ".." itself.
 
 With `{cap, Bytes}`, a write ending past `Bytes` answers `enospc` and writes
-nothing, as a full tree answers.
+nothing, as a full tree answers. With `{name, Name}` the tree is named `Name`
+rather than `test`, and with `{file, Name, Bytes}` its root also holds the
+file `Name`, inode 7, holding `Bytes`.
 """.
 
 -behaviour(erx_fs).
@@ -73,8 +75,17 @@ init(Args) ->
               5 => #{kind => symlink, mode => 8#777, target => <<"a">>, links => 1, opens => 0},
               6 => file(8#644)},
     Cap = proplists:get_value(cap, Args, infinity),
-    Tree = spawn_link(fun() -> serve(#{nodes => Nodes, next => 7, cap => Cap}) end),
-    {ok, #{tree => Tree, observer => proplists:get_value(observer, Args, none)}}.
+    {Held, Next} = case lists:keyfind(file, 1, Args) of
+               {file, Name, Bytes} ->
+                   #{1 := Root} = Nodes,
+                   {Nodes#{1 := Root#{entries := maps:put(Name, 7, maps:get(entries, Root))},
+                           7 => (file(8#444))#{data := Bytes}}, 8};
+               false ->
+                   {Nodes, 7}
+           end,
+    Tree = spawn_link(fun() -> serve(#{nodes => Held, next => Next, cap => Cap}) end),
+    {ok, #{tree => Tree, observer => proplists:get_value(observer, Args, none),
+           name => proplists:get_value(name, Args, <<"test">>)}}.
 
 directory(Entries) ->
     #{kind => directory, mode => 8#755, entries => Entries, links => 1, opens => 0}.
@@ -101,10 +112,11 @@ apply_step(#{tree := Tree}, Step) ->
         {'DOWN', Ref, process, Tree, Why} -> exit({tree_ended, Why})
     end.
 
--doc "The tree is named `test`.".
+-doc "The tree is named `test`, or the name its `{name, Name}` argument gives.".
 root(Fs) ->
     seen(root, Fs),
-    apply_step(Fs, fun(T) -> {{ok, <<"test">>, ?ROOT, qid(?ROOT, T)}, T} end).
+    #{name := Name} = Fs,
+    apply_step(Fs, fun(T) -> {{ok, Name, ?ROOT, qid(?ROOT, T)}, T} end).
 
 -doc "One plain name in a directory.".
 walk(_, <<"..">>, _) ->

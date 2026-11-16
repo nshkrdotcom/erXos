@@ -13,13 +13,20 @@
 %% table, change/2, which a session's handler can apply to a program's table as well;
 %% each is pure but for an image's mount, which reads the image.
 %%
-%% An EROFS image mounts read-only from the handle the module that opened it in
-%% erx_verity hands erx_ns: the change mounts it with erx_erofs:mount/2 once the point and
-%% options pass, and the entry holds that mount as its provider, so the table holds only
-%% mounts erx_ns made. erx_ns opens no image: in a release only the `system` tree's
-%% backend opens one, on the `system` window with its layout (Erx::ErofsReads), so no
-%% module reaches a window's blocks unchecked through erx_ns. Anything but an opened
-%% image fails at the reader's first read: the mount answers eio and logs why.
+%% The one EROFS mount, {erofs, app}, mounts the session's own package (design-files.md,
+%% "Building, binding and mounting"): this process takes the file's facet, its names and
+%% its layout from the app's record the session's agent holds, never from the caller,
+%% walks the names on that facet's grant to a fid it owns (erx_file_remote:open_fid/2),
+%% opens the image on the fid in erx_verity with the record's layout, and mounts it with
+%% erx_erofs:mount/2, so every block the reader parses matched the root hash the domain
+%% service put in the record (E1, design-storage.md). The record's facet is the app
+%% template's packages or system facet. A client cannot learn a grant's rights, so an rx
+%% mount does not check that the facet's grant is rx (a security residual in TODO.md,
+%% "files, the app mount's rights"). The entry holds the reader's mount as its provider
+%% and the grant and fid as its fid; the fid is clunked once no entry, a bind included,
+%% holds it (closed/2), and the grant clunks it if this process ends first, so a
+%% restarted process's image entries answer eio. Its rights are ro or rx, ro when none is
+%% asked; rw is einval, as is any other source: no form takes a layout or an image.
 %% A mount that fails answers its error, and its diagnostic goes to the kernel log, as
 %% does the diagnostic of every later operation that fails on the image.
 %%
@@ -42,12 +49,13 @@
 %% every operation that reaches it answers eio, a read may first answer bytes the
 %% descriptor already holds, and only a new open finds the re-grant.
 %%
-%% Each call answers ok or {error, Reason}: einval for a malformed path, place or
-%% option, a mount point holding . or .., or an unmount where no entry is; enametoolong
-%% beyond the bounds of a place; enoent for a source no entry holds; eexist for a point
+%% Each call answers ok or {error, Reason}: einval for a malformed path, place,
+%% source or option, a mount point holding . or .., or an unmount where no entry is; enametoolong
+%% beyond the bounds of a place; enoent for a source no entry holds, and for an app mount
+%% in a domain with no app's record, no grant of its facet or no file at its names; eexist for a point
 %% that already has an entry; ebusy for unmounting /; system_limit beyond the table's
 %% 64 entries; and for an image whose mount fails, the reader's error: eio for a
-%% window that does not answer or an image it cannot read, enotsup for a feature it
+%% file that does not answer, does not fit its layout or does not match its tree, enotsup for a feature it
 %% does not implement.
 
 -module(erx_ns).
@@ -66,28 +74,29 @@
 -type rights() :: ro | rw | rx.
 -type provider() :: release | {erofs, erx_erofs:fs()} | {grant, pid(), Tree :: name()}
                   | {facet, Name :: atom(), Tree :: name()} | ended.
--type entry() :: #{point := [name()], provider := provider(), root := [name()], rights := rights()}.
+%% An image's entry also holds the grant and fid the image is read through.
+-type entry() :: #{point := [name()], provider := provider(), root := [name()], rights := rights(),
+                   fid => file()}.
+-type file() :: {{pid(), Tree :: binary(), ro}, Fid :: non_neg_integer()}.
 -type table() :: [entry()].
 -type option() :: {tree, binary()} | rights().
-%% An image erx_verity:open/2 answered, whose handle the reader takes; any other term
-%% fails at the reader's first read.
--type image() :: term().
 -type reason() :: einval | enametoolong | enoent | eexist | ebusy | system_limit | file:posix().
 %% A change as the process receives it, from this module's functions or from any other
 %% process, so every field is checked before it changes anything. A bind's source is
 %% the place it reached, an absolute path of plain names.
--type request() :: {mount, To :: binary(), pid() | {erofs, image()} | {facet, atom()}, [option()]}
+-type request() :: {mount, To :: binary(), pid() | {erofs, app} | {facet, atom()}, [option()]}
                  | {bind, From :: binary(), To :: binary(), [] | [ro]}
                  | {unmount, To :: binary()}.
 %% A change once checked against the table, with its paths as plain names.
 -type checked() :: {mount, [name()], provider(), rights()}
-                 | {mount_image, [name()], image()}
+                 | {mount_app, [name()], ro | rx}
+                 | {mount, [name()], provider(), rights(), file()}
                  | {bind, [name()], [name()], boolean()}
                  | {unmount, [name()]}.
 %% The module whose erx_mounts/0 reads the term (prim_file, or a stub in the EUnit
-%% cases), and the monitor of each grant
-%% pid the table holds, which follows from the table.
--type state() :: #{prim := module(), monitors := #{pid() => reference()}}.
+%% cases), the monitor of each grant pid the table holds and the fids its images hold,
+%% both of which follow from the table.
+-type state() :: #{prim := module(), monitors := #{pid() => reference()}, fids := [file()]}.
 
 -spec start_link() -> gen_server:start_ret().
 start_link() ->
@@ -104,11 +113,11 @@ start_link(Prim) ->
 %% the domain's facet registry holds for Name when a path under To is resolved, a grant
 %% of another domain included, which is the only way such a grant is mounted.
 %%
-%% Or mounts at To, read-only, the EROFS image Image, which erx_verity:open/2 answered,
-%% with no option or ro alone; any other term answers eio, its diagnostic in the log.
--spec mount(pid() | {facet, atom()} | {erofs, image()}, file:name_all(), [option()]) -> ok | {error, reason()}.
-mount({erofs, Image}, To, Options) ->
-    request(fun() -> {mount, text(To), {erofs, Image}, Options} end);
+%% Or mounts at To the session's own package, {erofs, app}, the image of the file the
+%% app's record names, read-only with no option or ro, or read and execute with rx.
+-spec mount(pid() | {facet, atom()} | {erofs, app}, file:name_all(), [option()]) -> ok | {error, reason()}.
+mount({erofs, Source}, To, Options) ->
+    request(fun() -> {mount, text(To), {erofs, Source}, Options} end);
 mount(Pid, To, Options) ->
     request(fun() -> {mount, text(To), Pid, Options} end).
 
@@ -194,7 +203,8 @@ change(Request, Table) ->
 
 -spec init(module()) -> {ok, state()}.
 init(Prim) ->
-    {ok, #{prim => Prim, monitors => watched(Prim:erx_mounts(), #{})}}.
+    Table = Prim:erx_mounts(),
+    {ok, #{prim => Prim, monitors => watched(Table, #{}), fids => held(Table)}}.
 
 -spec handle_call(term(), gen_server:from(), state()) -> {reply, ok | {error, reason()}, state()}.
 handle_call(Request, _From, #{prim := Prim} = State) ->
@@ -227,9 +237,18 @@ handle_info({'DOWN', Monitor, process, Pid, _}, #{prim := Prim, monitors := Moni
 handle_info(_Message, State) ->
     {noreply, State}.
 
-put_table(Table, #{monitors := Monitors} = State) ->
+put_table(Table, #{monitors := Monitors, fids := Fids} = State) ->
     persistent_term:put(erx_ns, Table),
-    State#{monitors := watched(Table, Monitors)}.
+    State#{monitors := watched(Table, Monitors), fids := closed(Table, Fids)}.
+
+%% The fids the table's images hold, once each fid no entry holds any more is clunked.
+closed(Table, Fids) ->
+    Held = held(Table),
+    _ = [erx_file_remote:exchange(Grant, [{clunk, Fid}]) || {Grant, Fid} <- Fids -- Held],
+    Held.
+
+held(Table) ->
+    lists:usort([File || #{fid := File} <- Table]).
 
 %% The monitors the table calls for: one for each grant pid it holds, none for any other.
 watched(Table, Monitors) ->
@@ -257,10 +276,11 @@ checked({mount, To, {facet, Name}, Options}, Table) when is_atom(Name) ->
         ok ?= tree(Tree),
         {ok, {mount, Point, {facet, Name, Tree}, Rights}}
     end;
-checked({mount, To, {erofs, Image}, Options}, Table) when Options =:= []; Options =:= [ro] ->
-    case new_point(To, Table) of
-        {ok, Point} -> {ok, {mount_image, Point, Image}};
-        {error, _} = Error -> Error
+checked({mount, To, {erofs, app}, Options}, Table) ->
+    maybe
+        {ok, Rights} ?= image_rights(Options),
+        {ok, Point} ?= new_point(To, Table),
+        {ok, {mount_app, Point, Rights}}
     end;
 checked({bind, From, To, Options}, Table) when Options =:= []; Options =:= [ro] ->
     maybe
@@ -293,6 +313,12 @@ mount_options([Rights | Rest], Tree, undefined) when Rights =:= ro; Rights =:= r
     mount_options(Rest, Tree, Rights);
 mount_options(_Options, _Tree, _Rights) ->
     {error, einval}.
+
+%% An image is never written: its mount is ro, or rx to run what it holds.
+image_rights([]) -> {ok, ro};
+image_rights([ro]) -> {ok, ro};
+image_rights([rx]) -> {ok, rx};
+image_rights(_Options) -> {error, einval}.
 
 %% A point no entry has yet, in a table with room for one more.
 new_point(To, Table) ->
@@ -362,6 +388,8 @@ plain(Names) ->
 -spec applied(checked(), table()) -> table().
 applied({mount, Point, Provider, Rights}, Table) ->
     Table ++ [#{point => Point, provider => Provider, root => [], rights => Rights}];
+applied({mount, Point, Provider, Rights, File}, Table) ->
+    Table ++ [#{point => Point, provider => Provider, root => [], rights => Rights, fid => File}];
 applied({bind, Place, Point, ReadOnly}, Table) ->
     {ok, #{rights := Rights} = Holder} = holder(Place, Table),
     Table ++ [Holder#{point := Point, rights := case ReadOnly of true -> ro; false -> Rights end}];
@@ -383,16 +411,49 @@ ended(Pid, Table) ->
 %% A checked change with its image mounted: the mount's entry change, or the error once
 %% its diagnostic, fixed text and numbers, is in the kernel log. Every other change is
 %% ready as it is.
-mounted({mount_image, Point, Image}) ->
-    case erx_erofs:mount(Image, fun ?MODULE:image_log/1) of
-        {ok, Fs} ->
-            {ok, {mount, Point, {erofs, Fs}, ro}};
-        {error, Reason, Diagnostic} ->
-            _ = image_log(Diagnostic),
-            {error, Reason}
+mounted({mount_app, Point, Rights}) ->
+    maybe
+        {ok, #{place := {Facet, Names}, layout := Layout}} ?= app_record(),
+        {ok, Grant} ?= facet_grant(Facet),
+        {ok, Fid} ?= erx_file_remote:open_fid(Grant, Names),
+        {ok, Fs} ?= image(Grant, Fid, Layout),
+        {ok, {mount, Point, {erofs, Fs}, Rights, {Grant, Fid}}}
     end;
 mounted(Checked) ->
     {ok, Checked}.
+
+%% The app's record as the session's agent holds it, its place a facet and plain names.
+app_record() ->
+    case erx_connections:app_held() of
+        {ok, #{place := {Facet, Names}, layout := Layout} = Record}
+          when (Facet =:= packages orelse Facet =:= system), is_list(Names), is_map(Layout) ->
+            {ok, Record};
+        _ ->
+            {error, enoent}
+    end.
+
+%% The grant the domain holds for the facet, read-only, on the tree of the facet's name.
+facet_grant(Facet) ->
+    case erx:cap(Facet) of
+        Pid when is_pid(Pid) -> {ok, {Pid, atom_to_binary(Facet), ro}};
+        _ -> {error, enoent}
+    end.
+
+%% The reader's mount of the image the fid holds under Layout; on a failure the fid is
+%% clunked and the diagnostic logged.
+image(Grant, Fid, Layout) ->
+    Mounted = case erx_verity:open_file(Grant, Fid, Layout) of
+                  {ok, Image} -> erx_erofs:mount(Image, fun ?MODULE:image_log/1);
+                  {error, eio} -> {error, eio, <<"the file has no length or the layout does not fit it">>}
+              end,
+    case Mounted of
+        {ok, Fs} ->
+            {ok, Fs};
+        {error, Reason, Diagnostic} ->
+            _ = erx_file_remote:exchange(Grant, [{clunk, Fid}]),
+            _ = image_log(Diagnostic),
+            {error, Reason}
+    end.
 
 %% The kernel log line of an operation that failed on a mounted image, which runs in the
 %% process that read the path: a fun of an exported function, so a reload of this module

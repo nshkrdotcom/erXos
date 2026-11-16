@@ -723,7 +723,7 @@ app_session_test_() ->
      fun(_) -> {inorder, [fun no_app/0, {timeout, 20, fun app_session/0}]} end}.
 
 -define(APP_MEMORY, 16777216).
--define(APP_RECORD, #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}}).
+-define(APP_RECORD, #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}}).
 
 app_setup() ->
     persistent_term:put({erx_domain_fake_lib, apps}, #{template => 2, first => 6, max => 4, memory => 4 * ?APP_MEMORY}),

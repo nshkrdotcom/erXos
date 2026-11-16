@@ -66,7 +66,7 @@
 -export_type([request_id/0]).
 -export([read_file_info/3, read_link/2, list_dir/2, write_file_info/3, make_dir/2,
          del_dir/2, delete/2, rename/3, make_link/3, make_symlink/3]).
--export([open/3, open_flags/4, read_file/2, set_cwd/2, identity/2, statfs/2]).
+-export([open/3, open_flags/4, open_fid/2, read_file/2, set_cwd/2, identity/2, statfs/2]).
 %% An open file's operations, which file dispatches to by its descriptor's module.
 -export([close/1, read/2, read_line/1, pread/2, pread/3, write/2, pwrite/2, pwrite/3,
          position/2, truncate/1, sync/1, datasync/1, advise/4, allocate/3,
@@ -383,6 +383,24 @@ open(Grant, {parent, Dir, Name}, Modes) ->
             {error, einval};
         Open ->
             created(Grant, Dir, Name, Open)
+    end.
+
+%% Opens the regular file at Names below the grant's tree, its last name walked as it
+%% is, for reading as a fid the calling process owns and no OTP descriptor holds: the
+%% EROFS file mount's, which erx_ns's process keeps and erx_verity reads. A walk that
+%% stops short answers enoent, a directory eisdir, a link eloop.
+-spec open_fid(grant(), [binary()]) -> {ok, non_neg_integer()} | {error, posix()}.
+open_fid(Grant, Names) ->
+    case kept(Grant, {Names, nofollow}, fun(Fid) -> {lopen, Fid, 0} end) of
+        {ok, Fid, {Type, _, _}, _} when Type band ?ERX_P9_QTDIR =:= 0 ->
+            {ok, Fid};
+        {ok, Fid, _, _} ->
+            _ = exchange(Grant, [{clunk, Fid}]),
+            {error, eisdir};
+        {error, _} = Error ->
+            Error;
+        _Resume ->
+            {error, enoent}
     end.
 
 %% A native program's open (design-programs.md, Descriptors and files), with 9P2000.L's

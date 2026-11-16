@@ -21,7 +21,7 @@ within `max` (PK9). A record holds five things and nothing else: the
 app's entry; its signer; its declared memory, which each of its sessions'
 own budgets holds; the indices of the app template's facet rows its
 admission kept, which each of its sessions is granted
-(erx_domain_core:app_session/4); and the app's record (erx_app:app_record/0)
+(erx_domain_core:app_session/4); and the app's record (erx:app_record/0)
 each of its sessions is sent once its namespace is in place, the place of
 its package's file, its header's layout and what it starts
 (docs/design-packaging.md, "An app's session"), taken
@@ -39,7 +39,7 @@ starts a session of one (AP2).
                  signer := erx_pkg_header:authenticator(),
                  memory := pos_integer(),
                  rows := [non_neg_integer()],
-                 app := erx_app:app_record()}.
+                 app := erx:app_record()}.
 
 -doc """
 The boot's app principals: `max`, the apps row's, and each registered
@@ -97,12 +97,13 @@ register(#{name := Name, place := Place, checked := #{header := #{layout := Layo
             Refused
     end.
 
-%% Where a package's file lies in a session's namespace (docs/design-packaging.md,
-%% "Where a package lies"): an installed one under its `packages` grant, which erx_ns
-%% mounts at /packages, and one of the image, on the stopgap, in the release at /pkg,
-%% where erx_pkg_medium reads it for the system domain.
-place(system, Name) -> <<"/pkg/", Name/binary, ".app">>;
-place(installed, Name) -> <<"/packages/", Name/binary, ".app">>.
+%% Where a package's file lies (docs/design-packaging.md, "Where a package lies"), as
+%% the facet of the app template that reaches it and the names below that facet's
+%% tree: an installed one at the root of the `packages` grant, rooted at installed/,
+%% and one of the image at apps/ of the `system` grant. erx_ns's process walks them on
+%% that facet's grant for the session's mount of /app.
+place(system, Name) -> {system, [<<"apps">>, <<Name/binary, ".app">>]};
+place(installed, Name) -> {packages, [<<Name/binary, ".app">>]}.
 
 -doc "What admission compares a package with: each name's entry and signer.".
 -spec registry(apps()) -> erx_app_admit:registry().

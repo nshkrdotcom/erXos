@@ -136,15 +136,14 @@ it; git history is the record of completed work.
   package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
   the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
-  the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
-  which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
-  EROFS mount of [todo-system-partition.md](docs/todo-system-partition.md) lands, so every Erlang
-  app's session ends with `{mount, einval}`; a native app's start and the record's
+  the plan's PK10 comparison does not cover it; the rest of the file-backed EROFS mount of
+  [todo-system-partition.md](docs/todo-system-partition.md), whose `{erofs, app}` source `erx_app`
+  mounts `/app` with; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
   an image package's place
-  `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `{system, [apps, NAME.app]}` is written in `erx_principal` beside `erx_pkg_medium`'s `pkg/NAME.app` (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
@@ -7208,6 +7207,19 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
+* [High] files, the app mount's rights, `erlang/apps/erx/src/erx_ns.erl` (`facet_grant/1`;
+  [design-files.md](docs/design-files.md#building-binding-and-mounting)): `erx_ns` cannot check the
+  rights of the grant an EROFS mount's fid came through, since a 9P client cannot learn a grant's rights,
+  so `{erofs, app}` mounts `rx` without refusing an `ro` or `rw` grant with `eacces` and keeps no grant
+  rights for the image check. The design has the manifest grant the app template's `packages` and
+  `system` facets `rx` alone (design-packaging.md, "the `packages` rows"), but property 19 derives the
+  template's `packages` row `ro` (`app_facets` in `tools/lib/erx/manifest.rb`) and no `system` row yet
+  (the `system` tree item of [todo-system-partition.md](docs/todo-system-partition.md)), so today `/app`
+  is mounted `rx` through an `ro` grant, against F6 of design-files.md; what it holds is still bound by
+  the record's root hash, which the domain service sets. The `packages` row turns `rx` with the uploads
+  item of todo-system-partition.md, since an `rx` grant rooted at `packages/` would reach an upload in
+  progress. How a client learns a grant's rights is an open question for design-files.md. Development
+  builds run trusted code only; this blocks release.
 * [Low] manifest check, `signer` rows: a signer key of small order, or one that does not
   decode, would accept a seal anyone can make, as design-ssh.md's acceptance rules note for
   login keys. Have property 19's signer clause refuse such a key, with the eight small-order

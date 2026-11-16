@@ -10,6 +10,7 @@ authority of its own.
 """.
 
 -export([i/0, i/1, inspect/2, source/1, trace/1, trace_stop/1, export/3, exports/1, owner/1, cap/1, caps/0, granted/0, app/0]).
+-export_type([app_record/0]).
 
 %%% Source lines: erx:source/1.
 
@@ -183,6 +184,16 @@ granted() ->
     persistent_term:get({erx, granted}, []).
 
 -doc """
+The app's record, as the domain service sends it once the session's namespace
+is in place (docs/design-packaging.md, "An app's session"): the place of the
+package's file, as the facet whose grant holds it and its names below that
+facet's tree, its header's layout, and what it starts, as its header declares it.
+""".
+-type app_record() :: #{place := {packages | system, [binary()]},
+                        layout := erx_verity_tree:layout(),
+                        start := erx_pkg_header:start()}.
+
+-doc """
 The app's record, when the domain is an app's session (docs/design-packaging.md,
 "An app's session"): its package's place, its header's layout and what it
 starts, which erx_app reads. The domain service sends it after the ready answer,
@@ -190,6 +201,6 @@ once the session's namespace is in place; the connection agent keeps it, and
 answers at once if it holds it and else once it comes. `{error, badarg}` in the
 system domain; in another domain that is no app's session it never comes.
 """.
--spec app() -> {ok, erx_app:app_record()} | {error, noproc | badarg}.
+-spec app() -> {ok, app_record()} | {error, noproc | badarg}.
 app() ->
     erx_connections:app().

@@ -307,11 +307,14 @@ app(Agent) ->
     %% once the record has come in the system connection's envelope: a question asked
     %% before it waits for it, and one asked after is answered with the record the agent
     %% kept. A record a peer sends, or one sent bare, is dropped and counted, and answers
-    %% no one; so is a second record, which leaves the first one kept.
+    %% no one; so is a second record, which leaves the first one kept. erx_ns asks the
+    %% agent what it holds (erx_connections:app_held/0), which never waits: enoent
+    %% before the record, the record after.
     Test = self(),
-    Record = #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}},
+    Record = #{place => {packages, [<<"clock.app">>]}, layout => #{}, start => {applications, [<<"clock">>]}},
     Early = spawn(fun() -> Test ! {early, erx:app()} end),
     asking(Early),
+    ?assertEqual({error, enoent}, erx_connections:app_held()),
     Agent ! {erx_origin, ?PEER, {erx_app, #{place => <<"forged">>}}},
     Agent ! {erx_app, #{place => <<"forged">>}},
     ?assertEqual(2, erx_connections:dropped()),
@@ -320,7 +323,8 @@ app(Agent) ->
     ?assertEqual({ok, Record}, receive {early, Answer} -> Answer after 2000 -> timeout end),
     record(Agent, {erx_app, #{place => <<"second">>}}),
     ?assertEqual(3, erx_connections:dropped()),
-    ?assertEqual({ok, Record}, erx:app()).
+    ?assertEqual({ok, Record}, erx:app()),
+    ?assertEqual({ok, Record}, erx_connections:app_held()).
 
 %% Waits until Pid waits in its call, its question queued at the agent, or has ended,
 %% answered at once.

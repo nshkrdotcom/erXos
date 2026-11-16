@@ -38,7 +38,7 @@ register(Name, Admitted, Apps) ->
 %% The record `Name`'s registration as an installed package writes.
 record(Name, Entry, Signer, Memory) ->
     #{entry => Entry, signer => Signer, memory => Memory, rows => [0, 2],
-      app => #{place => <<"/packages/", Name/binary, ".app">>, layout => ?LAYOUT, start => ?START}}.
+      app => #{place => {packages, [<<Name/binary, ".app">>]}, layout => ?LAYOUT, start => ?START}}.
 
 registered(Max, Records) ->
     lists:foldl(fun({Name, Admitted}, Apps) ->
@@ -95,16 +95,18 @@ without_an_apps_row_nothing_registers_test() ->
                  register(<<"clock">>, admitted(image, 8 * ?MIB), erx_principal:new(0))).
 
 %% The record keeps the app's record each of its sessions is sent:
-%% the file's place under the session's `packages` grant, the image's for a
-%% system package and the installed tree's for an installed one, with the
-%% header's layout and start; fetch_name/2 answers the name in an entry.
+%% the file's place as the facet whose grant holds it and its names there,
+%% apps/NAME.app on the `system` grant for a system package and NAME.app at
+%% the root of the `packages` grant for an installed one, with the header's
+%% layout and start; fetch_name/2 answers the name in an entry.
 the_record_keeps_the_app_record_with_its_place_test() ->
     {ok, Image} = erx_principal:register(package(<<"kiosk">>, system, admitted(image, ?MIB)),
                                          erx_principal:new(2)),
     {ok, Apps} = register(<<"clock">>, admitted(development, ?MIB), Image),
     {ok, #{app := Kiosk}} = erx_principal:app(<<"kiosk">>, Apps),
-    ?assertEqual(#{place => <<"/pkg/kiosk.app">>, layout => ?LAYOUT, start => ?START}, Kiosk),
+    ?assertEqual(#{place => {system, [<<"apps">>, <<"kiosk.app">>]}, layout => ?LAYOUT, start => ?START},
+                 Kiosk),
     {ok, #{app := Clock}} = erx_principal:app(<<"clock">>, Apps),
-    ?assertEqual(#{place => <<"/packages/clock.app">>, layout => ?LAYOUT, start => ?START}, Clock),
+    ?assertEqual(#{place => {packages, [<<"clock.app">>]}, layout => ?LAYOUT, start => ?START}, Clock),
     ?assertEqual(<<"kiosk">>, erx_principal:fetch_name(0, Apps)),
     ?assertEqual(<<"clock">>, erx_principal:fetch_name(1, Apps)).

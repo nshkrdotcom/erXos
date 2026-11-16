@@ -1132,9 +1132,11 @@ third from the package the entry was registered from:
 * its environment holds its default display, which its planning sets
   ([design-apps.md](design-apps.md#starting-a-session)), and the domain
   service sends it the app's record, in a message of its own after the
-  ready answer: the place of the package's file, its grant and its name
-  there (`NAME.app` on its `packages` grant, or, for a package of the
-  image, on its `system` grant; neither service has a mount point in the
+  ready answer: the place of the package's file, `{Facet, Names}`, the
+  facet whose grant holds it and its names below that facet's tree
+  (`{packages, [NAME.app]}`, at the root of the `packages` grant, or, for
+  a package of the image, `{system, [apps, NAME.app]}` on the `system`
+  grant; neither service has a mount point in the
   session's namespace, and what the session reaches through either
   grant, by `erx:cap/1` or by any entry its code puts in its table, is
   what the grant reaches: the `packages` grant, packages of
