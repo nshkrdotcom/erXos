@@ -73,5 +73,6 @@ start_grant(Name) ->
 start_mint(Tree, Name) ->
     case whereis(Name) of
         undefined -> ignore;
-        _Owner -> erx_storage_mint:start_link(Tree, erx_lfs, {Name, Tree})
+        %% The owner has mounted the volume, so the mint's mount answers its arguments.
+        _Owner -> erx_storage_mint:start_link(Tree, erx_lfs, fun() -> {Name, Tree} end)
     end.

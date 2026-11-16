@@ -374,6 +374,21 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   answer. Settled by operations a second over a release image on the host's
   stock OTP with and without the design's metadata cache; the fix on the table
   is that cache, and an open file keeping its inode.
+* **[Low] storage, the `system` tree's mount at boot** (`erx_storage_mint`,
+  `erx_storage_system:mount/1`,
+  [design-storage.md](design-storage.md#the-system-tree)): the `system`
+  mint mounts the tree once in its own process after its start, so the
+  storage domain's ready report does not wait for it, but the first grant
+  of the tree does: the mount reads the superblock and the root and `apps/`
+  directories through `erx_verity`, each block a window round trip and a
+  SHA-256 over its hash tree's path, the superblock's CRC-32C runs bit by
+  bit in Erlang, and the system domain's first `system` grant, which a
+  domain's start needs, waits in the mint's queue until the mount ends.
+  That wait counts against `erx_domain_mints`' 10 s deadline on a mint,
+  and a pair that misses it stays failed for the boot. Settled by the time
+  from the mint's start to the end of its mount, and to the first `system`
+  grant answered, on QEMU `virt` under HVF and on the Pi 4, at boot with a
+  release system partition, against that deadline.
 * **[Low] files, resolving a path in Erlang** (`erx_path`, [design-files.md](design-files.md#resolving-a-path)):
   each run the resolver places is list work over up to 256 names and 64 entries in the calling process; a `.` or `..`
   after a name the path has not yet walked costs a walk of its own, one round trip more, and on the release file

@@ -15,9 +15,10 @@ the node and the storage domain:
   erx_storage's application starts once erx_blk's has started, so the block
   service holds the windows by then. The domain service's restart mounts
   `/data` afresh;
-* the `system` tree, the booted slot's system partition, mounted once on
-  the block service's `system` window and served as `system_service` by its
-  mint (erx_storage_system:start_mint/0; docs/design-storage.md, "The
+* the `system` tree, the booted slot's system partition, served as
+  `system_service` by its mint, which mounts it once on the block service's
+  `system` window in its own process, so this supervisor's start waits for
+  no mount (erx_storage_system:start_mint/0; docs/design-storage.md, "The
   `system` tree"). A boot whose block service names no `system` window
   starts no mint. The domain service's restart mounts the tree afresh.
 """.

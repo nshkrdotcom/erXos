@@ -1358,11 +1358,13 @@ The tree is served as the data volume's trees are
 (`abi/services/files.txt`) whose server is the storage domain that
 serves `system`, and its server holds the manifest's `system` window,
 which property 19 checks. One child of `erx_storage_sup`,
-`erx_storage_system:start_mint/0`, mounts the tree once with
-`erx_storage_system:mount/1` on the block service's `system` window
-(`erx_blk_service:window(system)`) and then runs as the service's mint,
+`erx_storage_system:start_mint/0`, starts the service's mint,
 `erx_storage_mint`, the one mint of every files service the storage
-domain serves. For each mint request in the system domain's envelope
+domain serves. The mint names itself and reports its start, and only
+then, in its own process and before it takes a request, mounts the tree
+once with `erx_storage_system:mount/1` on the block service's `system`
+window (`erx_blk_service:window(system)`), so neither the supervisor's
+start nor the domain's ready report waits for the mount. For each mint request in the system domain's envelope
 it starts one `erx_fs` grant of that mounted tree, with the facet
 row's rights, `ro` for the system domain's row and `rx` for the app
 template's, bound to the grantee's domain id

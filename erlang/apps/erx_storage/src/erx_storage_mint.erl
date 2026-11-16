@@ -9,9 +9,11 @@ storage domain's `/data` for the system domain and root's session, or `packages`
 installed app packages (docs/design-packaging.md, "Where a package lies"); or of the
 `system` tree, the booted slot's system partition (docs/design-storage.md, "The `system`
 tree"). Each mint serves one tree, which an erx_fs callback module serves from the
-arguments the mint is started with, so a mint hands out grants of its own tree alone. It
-is a child of the supervisor that mounted that tree, started after the mount, and it
-names itself the service's mint (erx_facet:provide/2) before the domain's ready report.
+arguments the mint's mount answers, so a mint hands out grants of its own tree alone.
+It names itself the service's mint (erx_facet:provide/2) and acknowledges its start, both
+before the domain's ready report; only then does it run the mount, in its own process,
+before it takes a request: the supervisor that starts it waits for no mount, and a mint
+request that comes first waits in the mint's queue.
 
 For each mint request in the system domain's envelope (mint_request/3) it starts one
 erx_fs grant of the service's tree, with the facet row's rights, whose client is the
@@ -35,17 +37,18 @@ and so the tree's, ends every grant. erx_fs_grants applies the facet row's limit
 
 -doc """
 Starts the mint of the files service Service, whose tree the erx_fs callback module
-Module serves from Args, linked to the caller, the supervisor that mounted the tree.
+Module serves from the arguments Mount answers, linked to the caller, the supervisor
+of the tree. The mint runs Mount once, in its own process, after this returns.
 """.
--spec start_link(atom(), module(), term()) -> {ok, pid()}.
-start_link(Service, Module, Args) when is_atom(Service), is_atom(Module) ->
-    proc_lib:start_link(?MODULE, mint_init, [self(), {Service, Module, Args}]).
+-spec start_link(atom(), module(), fun(() -> term())) -> {ok, pid()}.
+start_link(Service, Module, Mount) when is_atom(Service), is_atom(Module), is_function(Mount, 0) ->
+    proc_lib:start_link(?MODULE, mint_init, [self(), {Service, Module, Mount}]).
 
 -doc false.
-mint_init(Parent, {Service, Module, Args}) ->
-    {ok, Grants} = erx_fs_grants:start_link(Module, Args),
+mint_init(Parent, {Service, Module, Mount}) ->
     ok = erx_facet:provide(Service, self()),
     proc_lib:init_ack(Parent, {ok, self()}),
+    {ok, Grants} = erx_fs_grants:start_link(Module, Mount()),
     mint(erx_kernel_records:system_domain(), Service, Grants).
 
 mint(System, Service, Grants) ->

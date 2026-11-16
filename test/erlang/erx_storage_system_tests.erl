@@ -181,10 +181,27 @@ changed_partition_under_the_original_root_answers_eio_test() ->
 
 %% The service's mint over the mounted tree names itself the mint of `system`.
 the_mint_names_itself_system_s_mint_test() ->
-    {ok, Mint} = erx_storage_mint:start_link(system, erx_storage_system, open("good")),
+    {ok, Mint} = erx_storage_mint:start_link(system, erx_storage_system, fun() -> open("good") end),
     unlink(Mint),
     ?assertMatch(#{system := Mint}, persistent_term:get({erx, provides})),
     exit(Mint, kill).
+
+%% The mint has started and named itself before it mounts the tree, and mounts it in its
+%% own process, so the supervisor that starts it, and with it the domain's ready report,
+%% waits for no mount. Here the mount waits until it is told to go: started by a process
+%% of its own, which stands in for the supervisor, the start must answer meanwhile.
+the_mint_starts_before_it_mounts_its_tree_test() ->
+    Self = self(),
+    Mount = fun() -> Self ! {mounting, self()}, receive go -> open("good") end end,
+    Starter = spawn(fun() -> Self ! {started, erx_storage_mint:start_link(system, erx_storage_system, Mount)},
+                             receive after infinity -> ok end end),
+    Started = receive {started, Answer} -> Answer after 2000 -> no_answer end,
+    ?assertMatch({ok, _}, Started),
+    {ok, Mint} = Started,
+    ?assertMatch(#{system := Mint}, persistent_term:get({erx, provides})),
+    ?assertEqual(Mint, receive {mounting, Pid} -> Pid after 2000 -> no_mount end),
+    Mint ! go,
+    exit(Starter, kill).
 
 %% A grant the mint makes for the system domain, as it makes one for each row, with the
 %% row's rights, ro or rx, reads a file of the tree and answers each write erofs before any
