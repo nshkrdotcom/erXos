@@ -24,8 +24,9 @@ host's side of 9P2000.L in [design-live.md](design-live.md).
 Decisions every reader of this document needs:
 
 * **A namespace is per domain and private.** It maps mount points to
-  local providers (the release file system and EROFS images, both
-  read-only) and to grants at file servers, named by pid, the domain's
+  local providers (the release file system, and EROFS images read from
+  files the domain reaches through a grant, both read-only) and to
+  grants at file servers, named by pid, the domain's
   own RAM file server at `/tmp` among them. The domain service
   builds it at creation from the domain's grants; the domain may bind,
   mount a server it holds and unmount, none of which adds authority. A
@@ -105,7 +106,8 @@ Decisions every reader of this document needs:
 ## Context
 
 A runtime serves two read-only local file systems through `prim_file`
-(its release slice and EROFS images), runs its own RAM file server for
+(its release slice, and EROFS images that files of its grants hold),
+runs its own RAM file server for
 `/tmp` ([design-tmp.md](design-tmp.md)), and reaches storage as a
 service like any other ([design-runtime.md](design-runtime.md#files)).
 Three needs go beyond that: native programs, toybox's applets among them,
@@ -279,6 +281,21 @@ read or a write move through the program's **data area**, memory the
 session made and installed for the program, which maps it ([Native
 clients](#native-clients-liberxs-file-client)).
 
+**One way to a file.** Every file a domain reads, it reaches by that
+journey: a path, an entry of its namespace, a grant at the file's server,
+9P2000.L. An EROFS mount is no second way: its image is a file reached
+the same way, which the domain's own runtime reads through one fid and
+checks block by block ([Building, binding and
+mounting](#building-binding-and-mounting)). The one exception is a
+domain's own release slice, at `/`, which its runtime reads from memory
+the kernel mapped before any grant exists, so that the domain can start;
+no other domain can be granted it. So **nothing a second domain must
+read lies in a release**: a package, a release that a domain reads after
+it has started, and every file another domain's sessions need lie in a
+file system that a server serves and grants, such as the `system` tree
+of each slot's system partition
+([design-storage.md](design-storage.md#the-system-tree)).
+
 ## Invariants
 
 | Invariant | Why it holds | What would break it | How it is checked |
@@ -314,8 +331,9 @@ clients](#native-clients-liberxs-file-client)).
 
 -type provider() :: release                % the domain's release slice,
                                            % read-only
-                  | {erofs, image()}       % an EROFS image the domain holds
-                                           % a window on
+                  | {erofs, image()}       % an EROFS image that a file holds,
+                                           % read through a fid of erx_ns's
+                                           % process
                   | {grant, pid(), Tree :: name()}
                                            % a grant at a file server, by pid,
                                            % and the tree it roots in, its
@@ -1239,8 +1257,7 @@ never learns another's mounts.
 ### Building, binding and mounting
 
 **Building.** The domain service builds a domain's namespace from its
-specification: `/` is the release slice, an EROFS image mounts where its
-release names it, and each entry of the
+specification: `/` is the release slice, and each entry of the
 specification's `files` map mounts a facet the domain is granted, such as
 `/data` (its principal's directory on the data partition, read-write)
 or `/dev` (the device service's tree, for an administrator principal).
@@ -1251,7 +1268,13 @@ arrive with the domain's
 other facets, each a grant the server made for the domain when the system
 domain introduced the two
 ([design-system.md](design-system.md#creating-a-domain)); the runtime
-mounts them before its release's applications start. `/tmp` is the grant
+mounts them before its release's applications start. A domain whose
+release lies in the `system` tree starts from the small release of its
+slice, and its runtime mounts the rest, once its `system` grant is in
+place and before the release's applications start, with the file mount
+below, at the point and with the layout the boot image's record of that
+release names
+([design-storage.md](design-storage.md#the-system-tree)). `/tmp` is the grant
 of the domain's own RAM file server, which the runtime starts and mounts
 itself ([design-tmp.md](design-tmp.md#starting-and-mounting)). A facet that serves
 a tree carries its tree's name and its grant's rights, `ro`, `rw` or
@@ -1293,18 +1316,19 @@ options name.
 `Name`, with the same options, whose provider names the facet and holds
 no pid (below, "A facet's mount"); it is the only way a grant
 of another domain is mounted.
-`erx_ns:mount({erofs, Window}, To, Options)` adds a read-only entry for
-the EROFS image that the block service's window `Window` holds: `erx_ns`'s
-process mounts the image with the EROFS reader, which reads it
-through `erx_verity` ([design-storage.md](design-storage.md#reading-erofs-images)),
+`erx_ns:mount({erofs, {file, Path, Layout}}, To, Options)`, the one EROFS
+mount, adds a read-only entry for the image a file holds: `erx_ns`'s
+process mounts the image with the EROFS reader, which reads it through
+`erx_verity` ([design-storage.md](design-storage.md#reading-erofs-images)),
 so an image the reader refuses is refused before the table changes, and
-the entry's provider is the reader's mount.
-`erx_ns:mount({erofs, {file, Path, Layout}}, To, Options)` mounts the
-image a file holds. `Layout` is the image's offset and length and its
-hash tree's offset, length, salt and root hash, those of an app's package
+the entry's provider is the reader's mount. `Layout` is the image's
+offset and length and its hash tree's offset, length, salt and root
+hash, those of an app's package
 ([design-packaging.md](design-packaging.md#apps), "Looking inside a
-package"), or `header`, for the layout that `erx_pkg_header:layout/2`
-decodes from the package header at the file's start. `erx_ns`'s
+package") or of a release as the boot image records it, or `header`, for
+the layout that `erx_pkg_header:layout/2` decodes from the package
+header at the file's start; a layout that names no tree is refused with
+`einval`. `erx_ns`'s
 process walks `Path` to one fid of its own, opens it for reading and
 owns it, so the fid lives as long as the mount, and `erx_verity`, in
 whichever process of the domain reads below `To`, sends its positioned
@@ -1326,10 +1350,9 @@ each `bind`, `mount` and `unmount` in turn, checks it, builds the new
 table from the one the term holds and puts it, so two changes never
 lose each other, and a resolution reads the term without copying it or
 taking a lock. Until it writes a table the term is absent and
-`prim_file` reads the boot table, the domain's local entries: the
-release slice at `/` and each EROFS image where its release names it,
-both from the boot information, so `erl_prim_loader` loads a runtime's
-first modules, from the slice or an image, before any process of
+`prim_file` reads the boot table, the domain's one local entry: the
+release slice at `/`, from the boot information, so `erl_prim_loader`
+loads a runtime's first modules from the slice before any process of
 erXos's own has run; the runtime starts `erx_ns`'s process before it
 mounts the domain's facets. The changes themselves are pure functions
 over a table, which `erx_ns`'s process applies to the domain's term and a

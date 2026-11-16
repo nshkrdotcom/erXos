@@ -129,7 +129,7 @@ names; the table's order is the order.
 | Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as the stopgap's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
 | M4 The machine is an object | save in the editor on the Mac, run in the machine; follow a process to its source; ERTS and backend events on one timeline, the kernel's row unsupported | 10,000 lines of Erlang, 3,000 of Ruby, 2,000 of C | M3 | |
-| M6 Immutable code, lasting data | the shell reads the release's files from an EROFS image on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
+| M6 Immutable code, lasting data | the shell reads a file of the slot's system partition through the `system` tree on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
 | Track S The command shell | `ps -m \| grep erx` in a shell with rc's language, printing FreeBSD's text | 6,000 lines of Erlang, 4,000 of C17 for the track, programs included | M4 | |
 | **Phase 1b** | | | | |
 | 1b-A M5 on the stopgap | spawn into a sandbox domain with a link, crash it, get `{domain_down, D, crash}`; kill a domain mid-burst and watch its end arrive after its last messages; kill the system domain and read its crash record after the reset; every guarantee deferred | 9,000 lines of C17, 6,000 of Erlang for M5, its kernel interface carried as backend rows in the Fiasco backend, and in the hosted backend where cheap (2,000 to 4,000 lines of C17, a guess until the first rows land) | Phase 1 | G5, provisionally |
@@ -1999,8 +1999,10 @@ next available item of the plan.
    with its fuzz target, `erx_ui_host`; `tools/erx pack --app` and
    `tools/erx app run`; `erx-lvgl` beside `erx_ui` in every image's
    domain release; `examples/dashboard` built through the SDK alone, and
-   `examples/doom` as a submodule built only on request. On the stopgap
-   the image's packages lie in the boot image's domain release.
+   `examples/doom` as a submodule built only on request. The image's
+   packages lie in the slot's system partition and are read through the
+   `system` tree, so this part follows M6's `system` tree; the packer
+   refuses a boot image that holds one.
 3. **Installing at run time**, after part 2, M6's data partition and
    1b-E's storage domain. The `packages` tree of the storage service;
    the `apps` tree's installed packages, whose close installs or
@@ -2082,9 +2084,10 @@ block-checking funnel, and one practical store keeps data across power
 cuts, so the system is one a person can use. The funnel passes blocks
 through unchecked until M11 adds the hash check.
 
-**Demo.** A QEMU disk image holds a slot with the release's EROFS images
-and a data partition. Booted from it, the shell reads the release's files
-from the slot's EROFS image; a file written and synced under `/data` survives
+**Demo.** A QEMU disk image holds a slot, its boot and its system
+partition, and a data partition. Booted from it, the shell reads a file
+of the system partition through the storage domain's `system` tree and
+mounts the self-checking image it holds; a file written and synced under `/data` survives
 the guest's power cut and the next boot.
 
 **Scope.**
@@ -2111,11 +2114,14 @@ the guest's power cut and the next boot.
   adds the hash check inside it, and CRC-32C among the per-byte primitives,
   with its fuzz target
   ([design-runtime.md](design-runtime.md#per-byte-primitives));
-  read-only images in the EROFS format, one per release: the EROFS reader
+  each slot's system partition in the EROFS format, which the storage
+  domain serves as the `system` tree with a read-only `erx_fs` backend
+  over the EROFS reader, and the file-backed EROFS mount,
+  `erx_ns:mount({erofs, {file, Path, Layout}}, ...)`: the EROFS reader
   in Erlang, preloaded in every runtime image, with its fuzz target;
   fsimg as the packer's host tool, which writes and verifies each image, and
   the packer's disk image for QEMU, laid out by the ABI file's medium
-  layout.
+  layout, with each slot's boot and system partitions.
 * **One practical data store.** littlefs as the stopgap read-write file
   system behind `erx_fs`'s callback module, a NIF of the system domain that
   a worker process calls on a dirty scheduler while the volume's owner
@@ -2128,8 +2134,8 @@ the guest's power cut and the next boot.
   trials: it plays the firmware, reads the record from the disk image with
   its slot parser, which has its fuzz target, boots the slot the record
   names and writes the boot value into `/chosen`, from which the root task
-  builds the machine page, so the device service grants the slot's EROFS
-  windows
+  builds the machine page, so the device service grants the storage
+  domain its read-only window on the booted slot's system partition
   ([design-platforms.md](design-platforms.md#slots-and-the-boot-selection-record));
   the harness's trials follow with M12.
 
