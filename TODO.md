@@ -8791,8 +8791,36 @@ document's "residual risks accepted" paragraph.
 * [Medium] storage, the record volume's erase unit (`tools/lib/erx/pi_medium.rb`, `RECORD_VOLUME`; fsimg): the
   clusters of MiB 3 after the record's are free, so fsimg, and a user's computer writing `authorized_keys`, put a
   file beside the record in its erase unit;
-  [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) marks clusters 3 to 2049
-  bad in both FATs, and `check_volumes` should check the marks.
+  [design-storage.md](docs/design-storage.md#removable-media-fat) marks the rest of the record's erase unit bad
+  in both FATs. Work: `abi/medium.txt` gains `limit medium_erase_sectors u32 2048`, with its comment naming the
+  record's region; `RECORD_VOLUME` derives the range after the record's cluster from it and passes it as fsimg's
+  `-o bad=FIRST-LAST` (the fsimg item below); `check_volumes` derives the same range and refuses a volume in
+  which a cluster of it is not marked bad in both FATs, with a `pi_medium_test` case whose volume lacks one mark;
+  `erx_fat_read` derives its region check from the generated constant. No cluster number is written down
+  anywhere, and nothing patches fsimg's output.
+* [Medium] tooling, fsimg's FAT creation and update (`~/projects/fsimg`, pinned in `deps.lock`;
+  [design-storage.md](docs/design-storage.md#removable-media-fat),
+  [design-ssh.md](docs/design-ssh.md#verification)): fsimg has no way to mark clusters bad and no mode that
+  adds a file to an existing image (its modes are `c`, `x`, `t`, `W` and `i`, `docs/fsimg.1`). Add a FAT
+  creation option `-o bad=FIRST-LAST` that writes the bad-cluster mark for that cluster range in every FAT,
+  refused when the range leaves the data area or holds a placed file's cluster; and an append mode, as tar's
+  `r`, that adds a file to an existing FAT volume, whole or as a partition of an MBR disk, allocating only free
+  clusters and keeping every other byte. Tests in fsimg's own suite: a volume made with `bad=` has exactly
+  those entries marked in both FATs and `fsimg W` accepts it; a range off the data area is refused; an append
+  to such a volume places the file's first cluster past the range, `fsimg W` accepts the result and a
+  second extraction gives every earlier file unchanged; an append to a full root directory is refused. Then
+  repin fsimg in `deps.lock`.
+* [Medium] SSH, the QEMU test of a downloadable medium ([design-ssh.md](docs/design-ssh.md#the-ssh-domain)):
+  `MediumBoot` packs its medium from `site_manifest_source` (`tools/lib/erx/medium_boot.rb:499`,
+  `tools/lib/erx/bench_g5.rb:82`), the browser demo's manifest, which leaves the SSH domain out, so no harness
+  boots the QEMU release medium the website offers. The test needs `MediumBoot` to take its manifest from the
+  caller, `ProductionImage.medium_manifest` of the development manifest for that test and
+  `site_manifest_source` for the medium suite and G5 as now.
+* [Medium] site, the QEMU virt download ([site/README.md](site/README.md),
+  [design-ssh.md](docs/design-ssh.md#the-ssh-domain)): the page offers the browser demo's gzip-compressed
+  `image.boot` as its QEMU download; it is to offer the QEMU release medium packed from the development
+  manifest (`ProductionImage.medium_manifest`), with the SSH domain and no `authorized_keys`, and the QEMU
+  command line that boots it, while the browser demo keeps its own image.
 * [Low] Raspberry Pi card labels (`tools/lib/erx/pi_medium.rb`, `RECORD_FORMAT` and `SLOT_FORMAT`): the record
   volume is labelled `ERXREC` and both slots' boot partitions `ERXOS`, where
   [design-platforms.md](docs/design-platforms.md#slots-and-the-boot-selection-record) labels the record volume

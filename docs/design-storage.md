@@ -1714,15 +1714,22 @@ other. It looks the file up in the root directory alone, by its long
 name, compared as above; refuses an entry that is a directory or a label
 and a size past 16 KiB before it reads a cluster; and reads exactly as
 many clusters as the size needs, at most 32, each link a cluster of the
-data area; a cluster seen twice, the record's cluster, a link outside the
+data area; a cluster seen twice, a link outside the
 data area and an end of chain before the size's clusters are each `does
 not read`, and the chain past the size's clusters is not read, so whatever the FAT holds, the read is a bounded number of
-sector reads.
+sector reads. It answers exactly the bytes the directory entry's size
+gives, so the slack of the last cluster, whatever it holds, never
+reaches the decoder. A sector read the window refuses ends the reader
+with `read failed`, which is not a finding about the file
+([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) has the
+tree answer it `eio`).
 
-The reader also refuses a file with a cluster in the rest of the
-record's region, the erase-unit-aligned region of the layout that holds
-the record's sector, with the finding `lies in the boot-selection
-record's region`: the record is alone in its erase unit
+The reader refuses a file with any cluster in the record's region, the
+record's own included, with the one finding `lies in the boot-selection
+record's region`. The region is the erase unit that holds the record's
+sector: `abi/medium.txt`'s `medium_erase_sectors` (2048 sectors, 1 MiB)
+aligned from the partition's start, so with the layout's values it is
+MiB 3 of the volume, clusters 2 to 2049. The record is alone in its erase unit
 ([System updates](#system-updates)), and a file there would share the
 unit a commit rewrites. The volume is built so that no FAT writer puts a
 file there: the image build marks every cluster of the region after the
@@ -1733,12 +1740,22 @@ cluster whose entry is free, which a bad cluster's is not (the FAT
 specification's bad-cluster mark; that the hosts of the Raspberry Pi's
 manual checklist honor it is unverified until that step passes). The refusal is the bound for a volume whose marks a host's
 repair tool has cleared: the file is refused with that finding, and the
-record keeps its unit. The region's bounds are computed from
-`abi/medium.txt`'s values, as the record's sector is.
+record keeps its unit. The region has one source: every consumer
+derives its clusters from `medium_erase_sectors`,
+`medium_record_select_start` and the one-sector clusters, as the
+generated constants give them, and writes no cluster number down. The
+reader takes the range for its check; the image build passes the
+range after the record's cluster to fsimg's FAT creation as
+`-o bad=FIRST-LAST`, so fsimg writes the marks as it formats and nothing
+patches its output; and `check_volumes`
+(`tools/lib/erx/pi_medium.rb`) reads both FATs back through `FatVolume`
+and refuses a volume in which a cluster of that range is not marked bad.
 
-The reader runs in a process of its own and the tree publishes its
-result once, so the domain serves `system` and its other trees without
-waiting for it
+The reader runs in a process of its own, spawned and monitored by the
+tree's one holder, a process linked to the `login_keys` mint under
+`erx_storage_sup`, which publishes the first of the reader's result and
+its end once for the incarnation, so the domain serves `system` and its
+other trees without waiting for it
 ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium) gives the
 tree's lifecycle). It writes nothing, so a power cut or a restart finds
 the partition as it was, and the next start reads it again.
