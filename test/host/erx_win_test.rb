@@ -17,8 +17,8 @@ require_relative '../../tools/lib/erx/memdraw_build'
 # (Erx::MemdrawBuild.nif). erx's registry, erx_area and erx_log are stand-ins written
 # here, the stand-in erx_area's leases returned by a process that watches the holder,
 # and erx_win's fids, which prim_file draws on erXos, come from a counter of the
-# emulator's. Then each seeded fault of the dirty list and of the draw connection,
-# applied to a copy of its module, must fail the case named for it.
+# emulator's. Then each seeded fault, applied to a copy of its module, must fail the
+# case named for it.
 class ErxWinTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   Erx::Generated.ensure(root: ROOT)
@@ -148,7 +148,13 @@ class ErxWinTest < Minitest::Test
              anchor: "        true = link(Conn),\n",
              replacement: '',
              suite: 'erx_win_dev_tests',
-             catching_case: 'the_handler_and_its_dev_end_at_the_connection_s_end_test')
+             catching_case: 'the_handler_and_its_dev_end_at_the_connection_s_end_test'),
+    Seed.new(fault: 'a window that hands a kbd read any record, whatever its count',
+             path: 'erlang/apps/erx_display/src/erx_window.erl',
+             anchor: '[{Wait, Count} || {Wait, {read, Of, Count}, waiting} <- erx_fs_waits:list(Waits),',
+             replacement: '[{Wait, 64} || {Wait, {read, Of, _}, waiting} <- erx_fs_waits:list(Waits),',
+             suite: 'erx_win_tests',
+             catching_case: 'a_short_kbd_read_leaves_its_record_test')
   ].freeze
 
   def setup

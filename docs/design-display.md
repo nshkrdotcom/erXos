@@ -2476,9 +2476,10 @@ the window presents its last buffer, whole, as if its client had: a
 request that arrives while a present is in flight waits for its answer
 and then goes before any queued write, and one that arrives before the
 window has a last buffer does nothing. A read of `mouse` or `kbd` takes
-one whole record, waiting for one, and one whose count cannot hold a
-record fails with `EINVAL`. A `label` write replaces the label whole,
-and one at a nonzero offset fails with `EINVAL`, erXos's choice. The
+one whole record, waiting for one, and one whose count cannot hold the
+record it would take fails with `EINVAL` and leaves that record
+queued. A `label` write replaces the label whole, and one at a nonzero
+offset fails with `EINVAL`, erXos's choice. The
 window ends with its holder, its directory or its grant, and holds
 nothing that outlives it: its buffer is its client's memory.
 

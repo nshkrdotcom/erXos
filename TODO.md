@@ -1206,6 +1206,12 @@ it; git history is the record of completed work.
 * [Low] `erlang/apps/erx_win/src/erx_draw_conn.erl`, [The draw connection](docs/design-display.md#the-draw-connection):
   a connection ends only with its window's holder; a window ended otherwise (its directory removed, its display
   lost) leaves it running, each present failing with `EIO`. End it when a present answers that the window is gone.
+* [Medium] `erlang/apps/erx_win/src/erx_draw_conn.erl`, `perform_write/2`: design-files.md ("A program's window")
+  promises that a `draw` write holds its grant's later requests for at most one present, but the write runs every
+  operation in its callback, each `v` waiting for its present, so a write alternating drawing and `v` holds the
+  grant, a `kbd` clunk among its requests, and the connection's input replies and flushes for several presents.
+  Give a draw write keeper handling that stays responsive between presents, or restate the promise and bound the
+  whole write's delay; add a regression with several drawing and `v` pairs in one write followed by a `kbd` clunk.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
   emulator](docs/design-display.md#the-terminal-emulator): the oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases
@@ -2155,11 +2161,6 @@ it; git history is the record of completed work.
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
   `EPERM` (no `setattr`); an open with `O_TRUNC` is the one way to empty it.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`, `take/3`: a `kbd` read is refused only below 6 bytes, the
-  bound of a `c` record, but a `k` or `K` record carries every held key and modifier (each modifier 3 bytes of
-  UTF-8), so a read of 6 to 8 bytes takes a 9-byte record off the queue, the grant's reply check answers it `EIO`,
-  and the key is lost. Answer a reader whose count cannot hold the head record `EINVAL` without taking it
-  (`serve_records/2`; the held `{read, File, Count}` keeps the count), with a test that holds Ctrl and Shift.
 * [Medium] display, the keepers' heaps (`erlang/apps/erx_display/src/erx_window.erl`,
   `erlang/apps/erx_win/src/erx_draw_conn.erl`): design-files.md ("What waiting holds") has a keeper run under a
   `max_heap_size` its tree sets from its counts, and design-display.md has the display set the window's ("The window
@@ -4744,6 +4745,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   every exported step must drain, and an owner's monitor is `pending` until the shell hands its reference back with
   `monitored/3`. Thread the effects through the step's return instead, so a step that both makes and ends one
   owner's fid can never emit `{demonitor, pending}`.
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`, the pure core: design-files.md ("Serving") has the core take
+  each callback result and return the callbacks to run as effects, but `call/3`, `unlinked/2`, `forget_loose/1` and
+  `close_fid/3` run callbacks themselves, as the module's own doc says ("The core calls the tree's callback module
+  itself"), so replaying a transition repeats an unlink or a clunk instead of reproducing an effect list, and
+  `test/erlang/erx_fs_core_model_tests.erl` counts clunks in the process dictionary. Make the grant's shell the
+  callbacks' one executor, feeding their results to pure transitions, and correct the module doc; the forget part
+  is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
   selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` says they are zero; and

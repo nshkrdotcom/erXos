@@ -12,8 +12,10 @@
 %% Cases: a window opens with a buffer of the screen's size, draws and presents a pixel
 %% the screen shows; a change of the screen's size answers an r record, after which
 %% resized/1 answers an image at the new size over the same buffer and allocates nothing;
-%% kbd reads a typed rune and label takes a write; the single policy refuses resize/2; an area with no room for
-%% a second buffer answers enomem and leaves no window behind; no grant answers none.
+%% kbd reads a typed rune and label takes a write; a kbd read too short for the head
+%% record fails with einval and leaves it for the next read; the single policy refuses
+%% resize/2; an area with no room for a second buffer answers enomem and leaves no
+%% window behind; no grant answers none.
 %% A window opened with buffer => none over a full area allocates nothing, answers its
 %% peer, rectangle and channel, refuses image/1, lease/2 and present/2, and presents a
 %% range of the area it does not own through present/3, at the range's own size after
@@ -25,6 +27,7 @@
 
 -module(erx_win_tests).
 -include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
 
 -export([info/1, export/3, with/1, flushed/0]).
 
@@ -164,6 +167,32 @@ kbd_label_resize_test() ->
         ok = erx_win:label(Window, <<"a label">>),
         ?assertEqual({error, einval}, erx_win:resize(Window, {0, 0, 4, 4}))
     end).
+
+%% A kbd read whose count cannot hold the record at the head of the queue fails with
+%% EINVAL and leaves it there (docs/design-display.md, "The window tree"): with Ctrl and
+%% Shift held, KEY_A's down is a 9-byte k record, which a 6-byte read refuses and a
+%% 64-byte read then takes.
+a_short_kbd_read_leaves_its_record_test() ->
+    with(fun(_) ->
+        {ok, Window} = erx_win:open(?SERVICE, #{}),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, ?ERX_EVDEV_KEY_LEFTCTRL}),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, ?ERX_EVDEV_KEY_LEFTSHIFT}),
+        held_runes(Window, 2),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, ?ERX_EVDEV_KEY_A}),
+        ?assertEqual({error, einval}, erx_win:read_at(Window, kbd, 0, 6)),
+        {ok, Record} = erx_win:read_at(Window, kbd, 0, 64),
+        ?assertEqual(9, byte_size(Record)),
+        {ok, {down, Runes}} = erx_win_core:kbd(Record),
+        ?assert(lists:member($a, Runes))
+    end).
+
+%% Reads the window's kbd until a k record holds Count runes.
+held_runes(Window, Count) ->
+    {ok, Record} = erx_win:read_at(Window, kbd, 0, 64),
+    case erx_win_core:kbd(Record) of
+        {ok, {down, Runes}} when length(Runes) =:= Count -> ok;
+        _ -> held_runes(Window, Count)
+    end.
 
 %% A program's /dev tree relays kbd, mouse, wctl and label on the handle's
 %% fids (docs/design-files.md, "A program's window"): a label written at an

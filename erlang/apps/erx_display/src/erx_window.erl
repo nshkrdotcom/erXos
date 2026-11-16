@@ -52,7 +52,8 @@ encoded here. Each queue holds at most 4 KiB of
 records; past that the oldest is dropped and counted. A change of the
 window's size sets `resized`, which the next `mouse` read answers with an
 `r` record at the last pointer position. A read takes one record, waits
-for one when there is none, and is `EINVAL` when its count cannot hold one.
+for one when there is none, and is `EINVAL`, leaving the record, when its
+count cannot hold the one it would take.
 
 **label.** Read at any offset; a write replaces the label, and one at a
 nonzero offset is `EINVAL`, which is erXos's choice: the label is one
@@ -158,12 +159,11 @@ handle_info(Message, #window{waits = Waits} = W) ->
 %% Waiting requests ------------------------------------------------------------
 
 %% A request the tree's callback handed here: a read waits for a record and a checked
-%% ctl write for its present; either is answered at once when it cannot wait.
+%% ctl write for its present; either is answered at once when it cannot wait. A mouse
+%% record is one size, so a mouse read too short for it is refused here; a kbd record's
+%% size varies with the keys held, so serve_records/2 measures the one a read takes.
 take(Wait, {read, mouse, Count}, W) when Count < ?ERX_WINDOWS_MOUSE_RECORD ->
     refuse(Wait, {read, mouse, Count}, {error, einval}, W);
-take(Wait, {read, kbd, Count}, W) when Count < 6 ->
-    %% A kbd record is at most 6 bytes: c, four of UTF-8 and the NUL.
-    refuse(Wait, {read, kbd, Count}, {error, einval}, W);
 take(Wait, {read, File, _Count} = Read, W) when File =:= mouse; File =:= kbd ->
     serve(hold(Wait, Read, W));
 take(Wait, {write, ctl, Offset, Line}, W) ->
@@ -186,10 +186,11 @@ refuse(Wait, Request, Refused, W) ->
 answer(Wait, Result, #window{waits = Waits} = W) ->
     W#window{waits = erx_fs_waits:answer(Wait, Result, Waits)}.
 
-%% The reads of File still waiting, and the checked ctl writes, each in the order
-%% it arrived.
+%% The reads of File still waiting, each with its count, and the checked ctl writes,
+%% each in the order it arrived.
 readers(File, #window{waits = Waits}) ->
-    [Wait || {Wait, {read, Of, _}, waiting} <- erx_fs_waits:list(Waits), Of =:= File].
+    [{Wait, Count} || {Wait, {read, Of, Count}, waiting} <- erx_fs_waits:list(Waits),
+                      Of =:= File].
 
 writes(#window{waits = Waits}) ->
     [{Wait, Present, Written} || {Wait, {present, Present, Written}, waiting} <- erx_fs_waits:list(Waits)].
@@ -295,18 +296,22 @@ push(Record, #records{queue = Queue, bytes = Bytes, dropped = Dropped} = Records
 %% resize record before any queued one.
 serve(#window{resized = true, pointer = Pointer} = W) ->
     case readers(mouse, W) of
-        [Wait | _] -> serve(answer(Wait, {ok, record($r, Pointer)}, W#window{resized = false}));
+        [{Wait, _Count} | _] -> serve(answer(Wait, {ok, record($r, Pointer)}, W#window{resized = false}));
         [] -> serve_records(kbd, serve_records(mouse, W))
     end;
 serve(W) ->
     serve_records(kbd, serve_records(mouse, W)).
 
+%% The oldest reader of File takes the record at the head of its queue when its count
+%% holds it, and otherwise fails with einval and leaves the record for the next read.
 serve_records(File, W) ->
     #records{queue = Queue, bytes = Bytes} = Records = queue_of(File, W),
     case {queue:out(Queue), readers(File, W)} of
-        {{{value, Record}, Rest}, [Wait | _]} ->
+        {{{value, Record}, Rest}, [{Wait, Count} | _]} when byte_size(Record) =< Count ->
             Taken = Records#records{queue = Rest, bytes = Bytes - byte_size(Record)},
             serve_records(File, answer(Wait, {ok, Record}, with_queue(File, Taken, W)));
+        {{{value, _Record}, _Rest}, [{Wait, _Count} | _]} ->
+            serve_records(File, answer(Wait, {error, einval}, W));
         _ ->
             W
     end.
