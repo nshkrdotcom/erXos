@@ -32,8 +32,10 @@
 %% driver's domain writes a system partition. booted/1 names the one window the boot value
 %% decides (PW1 of docs/design-storage.md; docs/design-stopgap.md, "The booted slot"):
 %% system, read-only, on the system partition of the slot that `-erx_record boot VALUE
-%% SLOT` names, and none on a boot that names no slot, an unknown boot, or on boot words
-%% it refuses. read_only/1 is which roles take no write.
+%% SLOT` names, for the holder the domain library gave the slot's `-erx_record
+%% system_image` record, and none on a boot that names no slot, an unknown boot, on boot
+%% words it refuses, or for a holder given no record or one the record's reader refuses.
+%% read_only/1 is which roles take no write.
 
 -module(erx_blk_table).
 
@@ -102,13 +104,22 @@ admit(Capacity, Sectors) when is_list(Sectors) ->
 %% The booted slot and the windows it decides, from Arguments, what
 %% erx_device_record:records/0 returns: the slot and its system window, or none and no
 %% window on a boot that names no slot; on boot words boot_slot/1 refuses, none and no
-%% window too, with the refusal for the caller's log.
--spec booted(term()) -> {slot() | none, [window()], ok | {error, bad_boot}}.
+%% window too, with the refusal for the caller's log. The system window is the holder's
+%% of the manifest's system window row, the one domain the domain library gives a
+%% system_image record: a holder whose record erx_device_record:system_image/1 does not
+%% take gets no system window, the refusal is returned for the log, and the slot is kept
+%% for the images erx_blk_image places on it.
+-spec booted(term()) -> {slot() | none, [window()],
+                         ok | {error, bad_boot | {bad_device_record, string()}}}.
 booted(Arguments) ->
     case boot_slot(Arguments) of
-        {ok, Slot} -> {Slot, system_window(Slot), ok};
+        {ok, none} -> {none, [], ok};
+        {ok, Slot} -> system_window(Slot, erx_device_record:system_image(Arguments));
         Refused -> {none, [], Refused}
     end.
+
+system_window(Slot, {ok, _Layout}) -> {Slot, system_window(Slot), ok};
+system_window(Slot, {error, _} = Refused) -> {Slot, [], Refused}.
 
 %% The slot of `-erx_record boot VALUE SLOT` in Arguments, by the names of
 %% include/erx/core/boot_pair.h: none when there is no such word list or its value is
@@ -125,10 +136,7 @@ boot_slot(Arguments) when is_list(Arguments) ->
 boot_slot(_Arguments) ->
     {error, bad_boot}.
 
-%% The system window of a boot that booted Slot, on that slot's system partition, or none
-%% on a boot with no slot.
-system_window(none) ->
-    [];
+%% The system window of a boot that booted Slot, on that slot's system partition.
 system_window(Slot) ->
     {Start, Sectors} = system_partition(Slot),
     [{role(?ERX_MF_WINDOW_ROLE_SYSTEM), Start, Sectors}].

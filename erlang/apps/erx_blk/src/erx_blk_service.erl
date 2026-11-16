@@ -16,8 +16,9 @@
 %% erx_blk_table:booted/1 derives from the -erx_record boot words the domain library
 %% gives the block device's holder: the read-only system window on the booted slot's
 %% system partition (docs/design-stopgap.md, "The booted slot"), which reads no
-%% manifest, and a read-only window on each EROFS image of the
-%% booted slot that the release's manifest gives the system domain, of role
+%% manifest and is started only in the holder given a system_image record, and a
+%% read-only window on each EROFS image of the booted slot that the release's manifest
+%% gives the system domain, of role
 %% {image, Name}, which erx_blk_image places from the slot and the manifest. A boot with
 %% no slot, an unknown boot, serves neither; so does a boot value the reader refuses,
 %% which is one line of the log, as is each image refused. mount_images/0, the
@@ -120,11 +121,15 @@ start_window(Window) ->
     {ok, Pid} = erx_blk_window:start_link(Window),
     Pid.
 
-%% The booted slot and its system window, with a refused boot value's line in the log.
+%% The booted slot and its system window, with a refused boot value's or system_image
+%% record's line in the log.
 booted({Slot, System, ok}) ->
     {Slot, System};
-booted({Slot, System, {error, Reason}}) ->
-    log("no system window or image is served: ~0p", [Reason]),
+booted({Slot, System, {error, bad_boot}}) ->
+    log("no system window or image is served: bad_boot", []),
+    {Slot, System};
+booted({Slot, System, {error, {bad_device_record, Reason}}}) ->
+    log("no system window is served: ~s", [Reason]),
     {Slot, System}.
 
 %% The windows on the booted slot's images (erx_blk_image). The manifest is read only on a

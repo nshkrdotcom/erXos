@@ -1830,7 +1830,10 @@ read-only window of role `system` on the booted slot's system partition,
 whose sectors come from the medium layout of the ABI file alone, for the
 storage domain that serves `system`, the holder the manifest's `system`
 window row names; a boot with no slot, an unknown
-boot, starts none, as the storage design requires. That storage domain
+boot, starts none, as the storage design requires, and so does a holder
+whose `system_image` record, below, is absent or refused, so the window
+follows the manifest's row, the record's one writer being the domain
+library. That storage domain
 serves the window as the `system` tree, with the read-only `erx_fs`
 backend over `erx_erofs`, as on erXos's kernel
 ([design-storage.md](design-storage.md#the-system-tree)), and every other

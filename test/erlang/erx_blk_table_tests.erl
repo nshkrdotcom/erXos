@@ -62,11 +62,13 @@ windows(Data) ->
 
 -define(SYSTEM_A, {system, ?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS}).
 -define(SYSTEM_B, {system, ?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}).
+%% A system_image record as the domain library writes it to the system window's holder.
+-define(RECORD, ["system_image", "8192", "8192", "4096", "5a", lists:duplicate(64, $0)]).
 
 %% Every layout role but the record partition's, and the system window's, is the name
 %% abi/manifest.txt gives a window role.
 roles_are_the_manifest_s_test() ->
-    {a, System, ok} = erx_blk_table:booted([["boot", "normal", "a"]]),
+    {a, System, ok} = erx_blk_table:booted([["boot", "normal", "a"], ?RECORD]),
     Roles = [Role || {Role, _, _} <- windows(?DATA) ++ System, Role =/= record],
     ?assertEqual([], Roles -- [Name || {Name, _Value} <- ?ERX_MF_WINDOW_ROLE_MEMBERS]).
 
@@ -74,13 +76,22 @@ roles_are_the_manifest_s_test() ->
 %% partition of the slot `-erx_record boot VALUE SLOT` names, and a boot that names no
 %% slot, an unknown boot or a runtime given no such words, has none.
 booted_test_() ->
-    [?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["console", "pl011"], ["boot", "normal", "a"]])),
-     ?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["boot", "trial", "a"]])),
-     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([["boot", "normal", "b"]])),
-     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([["boot", "trial", "b"]])),
-     ?_assertEqual({none, [], ok}, erx_blk_table:booted([["boot", "unknown", "none"]])),
+    [?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["console", "pl011"], ["boot", "normal", "a"], ?RECORD])),
+     ?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["boot", "trial", "a"], ?RECORD])),
+     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([?RECORD, ["boot", "normal", "b"]])),
+     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([["boot", "trial", "b"], ?RECORD])),
+     ?_assertEqual({none, [], ok}, erx_blk_table:booted([["boot", "unknown", "none"], ?RECORD])),
      ?_assertEqual({none, [], ok}, erx_blk_table:booted([])),
      ?_assertEqual({none, [], ok}, erx_blk_table:booted([["console", "pl011", "1", "2", "3"]]))].
+
+%% The system window follows the system_image record, which the domain library gives the
+%% holder of the manifest's system window row alone: a holder given none, one that does
+%% not parse or two keeps the slot, for its images, but has no system window, and the
+%% refusal.
+booted_without_a_record_test_() ->
+    [?_assertMatch({a, [], {error, {bad_device_record, _}}}, erx_blk_table:booted(Arguments))
+     || Arguments <- [[["boot", "normal", "a"]], [["boot", "normal", "a"], ["system_image", "8192"]],
+                      [["boot", "normal", "a"], ?RECORD, ?RECORD]]].
 
 %% Every pair boot_pair.h refuses, a word too many or too few, two lists, and terms that
 %% are not init's arguments: no slot and no window, and the refusal.
