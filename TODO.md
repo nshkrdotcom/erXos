@@ -2793,12 +2793,18 @@ it; git history is the record of completed work.
   `erx_net_if_core` (counted `unsupported`); an `erx_net` application module and its `env` keys
   (the stack starts with `erx_net_sup:start_link/1`); the credit limits are fixed defines, not
   application keys; a datagram socket's credit counts datagrams, not bytes of its receive
-  buffer. Build checks still to add: the clock chokepoint (`erlang:send_after`, `monotonic_time`
-  and the rest only in `erx_net_clock`), `erx_net_bind` as the only demultiplexing inserter,
+  buffer. Build checks still to add: the clock chokepoint's `receive ... after` rule (its calls are
+  checked: `net_checks.rb`'s `clock`, which allows `erx_net_driver` and `erx_genet` whole where the design
+  names only the driver's hold and the MDIO and PHY waits), `erx_net_bind` as the only demultiplexing inserter,
   `erx_net_if` as the only configuration writer and `erx_net_credit` as the only batch sender.
   With IPv6 interface addresses, `lo0` takes `::1/128` and `fe80::1%lo0` as it comes up, as
   FreeBSD's `in6_ifattach` gives them (`in6_ifattach.c:541-543`, `:816-823`); `erx_net_sup`
   gives `lo0` 127.0.0.1/8 alone.
+* [Medium] network, the cookie keys' rotation (`erlang/apps/erx_net/src/erx_net_tables.erl`'s
+  `{erx_net_clock, hint}`): each hint rotates the keys and arms the next, so a stray or repeated hint would
+  start a second chain and rotate twice as often, halving how long a cookie is accepted. Keep the reseed
+  deadline in the owner's state and rotate only once `now/0` reaches it, with a test of the deadline armed,
+  and take the lifetime from `erx_tcp_syncache`'s `SYNCOOKIE_LIFETIME` instead of a second define.
 * [Medium] network, virtio-net transport (`erlang/apps/erx_net/erxos/erx_virtio_net.erl`): what the
   first package leaves. No host tests of its pure functions (`frame/3`, `mtu/2`, `lladdr/2`,
   `link_state/2`, `segments/1`, `erx_net_app:interfaces/1`): export them under `TEST` or move
@@ -6913,6 +6919,24 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
+  the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
+  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
+  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
+  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
+  the link slice, where the link protocol can tie each packet to its connection.
+* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
+  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
+  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
+  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
+  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
+  ones that mean the handle is going.
+* [Low] bluetooth, the advertising enable's deadline refilled (`erx_bt_hci_core`'s `command/2`): at the
+  connection limit with `Num_HCI_Command_Packets` 0, a controller alternating LE Connection Complete and
+  Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
+  enable never times out and the core never stops; the controller process should end when a command stays
+  unsent across refills for longer than `bt_command_timeout_ms`.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
@@ -7650,6 +7674,35 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
+  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
+  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
+  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
+  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
+  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
+  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
+  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
+  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
+  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
+  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
+  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
+  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
+  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
+* [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
+  docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
+  one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
+  restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. Making the group
+  `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
+* [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
+  no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
+  needs the table's declarations brought forward from stage 2.
+* [Low] protocol apps, one clock seam (`erlang/apps/erx_net/src/erx_net_clock.erl`; the process edges of
+  `erx_bt`, USB, Wi-Fi and `erx_ntpd`): each protocol process keeps one wake-up timer at its core's
+  `next_deadline/1` (docs/design.md, "Deadlines in state"), and only `erx_net` has a clock module, with the
+  virtual clock for deterministic runs and the one-timer `arm_by/2` and `hinted/1`. Whether the other apps
+  share one clock module, and where it lives, is an open design question: a shared module is a new
+  mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
+  is usable outside erXos.
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for

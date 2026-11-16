@@ -249,6 +249,39 @@ Erlang code takes the same shape: pure functions decide, and the
 `gen_server` or `gen_statem` callback performs the effects their result
 names.
 
+A core with timeouts keeps its deadlines in its state and takes the time
+as an input ([design.md](design.md#drivers-and-dma), "Deadlines in
+state"). Each deadline lives in the variant it guards, so leaving the
+state drops it, and the edge alone reads the clock and keeps one timer:
+
+```erlang
+-type slot() :: idle | {wait, Deadline :: integer()} | {sent, Request :: term(), Deadline :: integer()}.
+
+step(Input, Now, Core) -> ...           % a new deadline is Now plus its timeout
+
+next_deadline(#core{slot = idle}) -> infinity;
+next_deadline(#core{slot = {wait, Deadline}}) -> Deadline;
+next_deadline(#core{slot = {sent, _Request, Deadline}}) -> Deadline.
+
+%% The edge: the timer's message is only a hint to step with the time.
+handle_info(wake, S) -> settle(step(expired, now(), S)).
+```
+
+`expired` runs every deadline at or before the time it is given and
+changes nothing otherwise. An explorer of such a core keeps the clock in
+its world: the clock starts at 0 and moves only to the core's
+`next_deadline/1`, by stepping `expired` there, and every other input
+steps at the clock. At each state it checks that `expired` just before
+the deadline returns the state unchanged with no actions, and that
+`expired` at the deadline stops the core or changes it. Since no time
+passes between other inputs, a deadline restarted at the clock equals one
+kept, so each input that must keep the deadline is stepped once more a
+millisecond later, where only a kept deadline stays the same. Each deadline is
+the clock at arming plus a fixed timeout, so the states stay finite when
+only finitely many deadlines can pass without ending the run; the
+explorer states that bound and asserts it, and a case covers a late
+wake-up.
+
 ## C
 
 ### Layout and whitespace

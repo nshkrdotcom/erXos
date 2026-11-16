@@ -301,6 +301,18 @@ clock_keeps_one_timer_per_caller_test() ->
     ?assertEqual(0, length([x || {erx_net_clock, hint} <- element(2, process_info(self(), messages))])),
     ?assertMatch({_, _}, Armed1).
 
+%% A hint before the armed deadline is a replaced timer's, whose asynchronous cancel came
+%% too late: the armed timer stays pending, so the next deadline arms no second one. A
+%% hint at or after the armed deadline is the armed timer's own.
+a_stale_hint_keeps_the_armed_timer_test() ->
+    flush(),
+    Now = erx_net_clock:now(),
+    {_, Timer} = Armed = erx_net_clock:arm_by(Now + 60000000, infinity),
+    ?assertEqual(Armed, erx_net_clock:hinted(Armed)),
+    ?assertEqual(infinity, erx_net_clock:hinted({Now, Timer})),
+    _ = erlang:cancel_timer(Timer),
+    flush().
+
 %% --- A transport with nothing to drive ---------------------------------------------
 
 %% The stack starts without a link whose transport answers ignore, as erXos boots without
