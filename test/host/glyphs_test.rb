@@ -17,16 +17,11 @@ require_relative '../../tools/lib/erx/glyphs'
 # one-pixel shift fails that; the theme's subfonts are byte-identical over two
 # runs, each parses with erx_font and loads into erx_draw_core on stock's
 # emulator (ERX_ERL and ERX_ERLC, which make check supplies); and a role whose
-# font lacks a tabular figure is refused.
+# font lacks a tabular figure, or one with a glyph whose ink leaves its line,
+# is refused.
 class GlyphsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   THEME = File.read(File.join(ROOT, 'abi/theme.txt')).freeze
-  # The theme's display role is refused: Inter's accented capitals and bar
-  # rise above its 56-pixel line, and its glyphs are wider than the 8192
-  # bytes a row of erx_font holds (TODO.md, "The display role does not fit
-  # its subfont"). The theme's other roles are the step's real input.
-  DISPLAY = "  role display font ui size 48 line 56 weight semibold figures tabular\n"
-  ROLES = THEME.sub(DISPLAY, '').freeze
   # The one-pixel shift: every glyph's top one row higher than FreeType put it.
   SHIFT = ['put_u32((uint32_t)(int32_t)slot->bitmap_top);', 'put_u32((uint32_t)(int32_t)slot->bitmap_top + 1);'].freeze
   DEADLINE_SECONDS = '300'
@@ -73,7 +68,7 @@ class GlyphsTest < Minitest::Test
 
   def test_theme_subfonts_parse_and_load_in_a_draw_connection
     subfonts = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) })
-    assert_equal theme_of(ROLES).roles.keys, subfonts.keys
+    assert_equal theme_of(THEME).roles.keys, subfonts.keys
     ErlangBuild.compile(@work, applications: %w[erx_win], tests: %w[test/erlang/erx_glyph_subfonts_tests.erl])
     FileUtils.cp(subfonts.values, @work)
     output, status = Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell',
@@ -92,10 +87,19 @@ class GlyphsTest < Minitest::Test
     name = "\x06one.tf".b
     assert_equal 1, medium.scan(name).size, 'the post table names one.tf once'
     File.binwrite(File.join(fonts, 'Inter-Medium.ttf'), medium.sub(name, "\x06one.tx".b))
-    theme = theme_of(ROLES.gsub(/^  role .*\n/, '')
+    theme = theme_of(THEME.gsub(/^  role .*\n/, '')
                           .sub("  # The spacing scale", "  role numeric font ui size 13 line 20 weight medium figures tabular\n  # The spacing scale"))
     error = assert_raises(Erx::Glyphs::Refused) { write(root: @work, theme: theme, program: :tree) }
     assert_equal 'role numeric: its font has no tabular figure one.tf', error.message
+  end
+
+  # The display role in a 56-pixel line: Inter SemiBold's accented capitals
+  # and bar leave it at 48 pixels.
+  def test_glyph_whose_ink_leaves_the_line_is_refused
+    display = THEME[/^  role display .*\n/].sub(/ line \d+ /, ' line 56 ')
+    theme = theme_of(THEME.gsub(/^  role .*\n/, '').sub('  # The spacing scale', "#{display}  # The spacing scale"))
+    error = assert_raises(Erx::Glyphs::Refused) { write(root: ROOT, theme: theme, program: :tree, output_root: @work) }
+    assert_match(/\Arole display: U\+[0-9A-F]{4} leaves the line, rows -?\d+ to \d+ of 56\z/, error.message)
   end
 
   private
@@ -136,8 +140,8 @@ class GlyphsTest < Minitest::Test
     Erx::Glyphs::Subfont.new(width: 13, height: 20, ascent: 15, pixels: rows.flatten.pack('C*'), glyphs: glyphs)
   end
 
-  # The theme's roles less display, written beneath output_root.
-  def write_theme(output_root) = write(root: ROOT, theme: theme_of(ROLES), program: :tree, output_root: output_root)
+  # The theme's roles, written beneath output_root.
+  def write_theme(output_root) = write(root: ROOT, theme: theme_of(THEME), program: :tree, output_root: output_root)
 
   def write(root:, theme:, program:, output_root: root)
     programs = self.class.programs

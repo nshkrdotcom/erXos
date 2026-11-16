@@ -4008,8 +4008,10 @@ encoder and hand them to the connection, batching until a flush or
 in bands of whole rows, as libdraw's `loadimage` does. `erx_font` reads a Plan 9 subfont file and loads its glyphs into
 a font cache image with `i` and `l`, so a client's text is a sequence of
 `s` messages; it is a parser of file data and has a fuzz target. The
-subfont's own image is the cache: `b` and `y` make it, `i` turns it into
-a cache of the subfont's glyph count and each `l` records a glyph where
+subfont's own image is the cache: `b` makes it and `y`s load its
+pixels, in tiles of columns and bands of rows when its one row of glyphs
+is wider than `erx_font` puts in one `y`, since a `y` may load any rectangle inside
+the image; `i` turns it into a cache of the subfont's glyph count and each `l` records a glyph where
 it already lies, so a glyph's index is its index in the subfont. The
 reader checks the whole file before it makes a message, so loading a
 file it accepts fails only for the connection's own reasons: a channel the

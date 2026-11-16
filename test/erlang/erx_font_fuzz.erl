@@ -21,7 +21,7 @@
 -export([run/1]).
 
 -define(ROUNDS, 20000).
--define(REASONS, [header, wide, pixels, glyphs, trailing]).
+-define(REASONS, [header, pixels, glyphs, trailing]).
 -define(ARGB32, 16#48081828).
 
 run([Seed]) ->
@@ -60,7 +60,7 @@ holds(#{chan := Chan, r := {0, 0, W, H} = R, pixels := Pixels, height := Height,
         glyphs := Glyphs} = Subfont, Bytes) ->
     {ok, Depth} = erx_chan:depth(Chan),
     Inside = fun({X0, X1, Top, Bottom, _, _}) -> X0 =< X1 andalso X1 =< W andalso Top =< Bottom andalso Bottom =< H end,
-    case W >= 1 andalso H >= 1 andalso byte_size(Pixels) =:= erx_draw_image:bytes_per_line(R, Depth) * H
+    case W >= 1 andalso W =< 16#ffff andalso H >= 1 andalso H =< 255 andalso byte_size(Pixels) =:= erx_draw_image:bytes_per_line(R, Depth) * H
         andalso Ascent >= 0 andalso Ascent =< 255 andalso Height >= 0
         andalso length(Glyphs) >= 1 andalso length(Glyphs) =< erx_draw_core:max_glyphs()
         andalso lists:all(Inside, Glyphs) of
@@ -112,11 +112,16 @@ depth(Text) ->
     {ok, _, Depth} = erx_chan:parse(Text),
     Depth.
 
-%% A subfont of a random channel, a random image up to 64 by 8, glyphs that
-%% split its columns at random with random rows, and a random pixel form.
+%% A subfont of a random channel, a random image up to 64 by 8, or one
+%% round in 16 up to 10922 wide, past one tile of load/2 at 24 bits a pixel
+%% and at 8 when over 8192, glyphs that split its columns at random with
+%% random rows, and a random pixel form.
 well_formed() ->
     Text = lists:nth(rand:uniform(5), [<<"k1">>, <<"k2">>, <<"k4">>, <<"k8">>, <<"r8g8b8">>]),
-    W = rand:uniform(64),
+    W = case rand:uniform(16) of
+            1 -> 2730 + rand:uniform(8192);
+            _ -> rand:uniform(64)
+        end,
     H = rand:uniform(8),
     Pixels = rand:bytes(erx_draw_image:bytes_per_line({0, 0, W, 1}, depth(Text)) * H),
     Height = H + rand:uniform(4) - 1,

@@ -18,7 +18,7 @@ theme 1
   range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
   # Type roles; a renderer never picks a size, a role does. Sizes and line
   # heights are pixels; a role without a colour takes `text`.
-  role display font ui size 48 line 56 weight semibold figures tabular
+  role display font ui size 48 line 64 weight semibold figures tabular
   role title   font ui size 20 line 28 weight semibold
   role heading font ui size 15 line 20 weight semibold
   role body    font ui size 13 line 20 weight regular

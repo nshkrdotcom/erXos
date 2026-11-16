@@ -353,7 +353,7 @@ theme 1
   unit 4
   font ui display/fonts/inter regular Inter-Regular.ttf medium Inter-Medium.ttf semibold Inter-SemiBold.ttf
   range ui 0020-007E 00A0-017F 2000-206F 2190-21FF
-  role display  font ui size 48 line 56 weight semibold figures tabular
+  role display  font ui size 48 line 64 weight semibold figures tabular
   role title    font ui size 20 line 28 weight semibold
   role heading  font ui size 15 line 20 weight semibold
   role body     font ui size 13 line 20 weight regular

@@ -1929,19 +1929,18 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
-* [High] desktop, the glyph step: the display role does not fit its subfont (`tools/lib/erx/glyphs.rb`,
-  `abi/theme.txt`). At 48 pixels in a 56-pixel line, 77 of Inter SemiBold's glyphs leave the line: the accented
-  capitals rise up to 3 pixels above it and the bar `|` 2 above and 1 below, so `Erx::Glyphs` refuses the role and
-  `tools/erx build glyphs` fails on the theme. A line of 64 holds every glyph. And its glyphs are 10463 pixels
-  wide, more than the 8192 bytes one row may have in `erx_font` (its `?BAND`, the most one `y` carries), so even
-  a taller role would not parse. Two choices wait on a decision: the display role's line (or a
-  narrower range for it, which the theme grammar has no row for), and whether `erx_font:load/2` loads a row wider
-  than a band in column tiles, as a `y` of any rectangle inside the image allows. `test/host/glyphs_test.rb`
-  leaves the display row out of the theme it writes until then.
-* [Medium] desktop, the glyph step's limits (`tools/lib/erx/glyphs.rb` `MAX_X`, `erlang/apps/erx_win/src/erx_font.erl`
-  `?BAND`, `erx_draw_core.erl` `?MAX_GLYPHS`): `Erx::Glyphs` refuses only at font(7)'s field limits, so it writes a
-  `k8` subfont wider than 8192 pixels, or of more than 4096 glyphs, that `erx_font:parse/1` then refuses. Make the
-  reader's limits one generated fact that both the step and `erx_font` read, and refuse there.
+* [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
+  `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
+  most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
+  gives only the messages' layouts), so it is not shared. Make it a fact of the draw format that `tools/gen_abi.rb`
+  gives both `erx_draw_core` and the step, and refuse there. The theme's ranges hold 543 code points. The subfont
+  format's own field limits, x in two bytes and rows in one, are written twice the same way (`Erx::Glyphs` `MAX_X`
+  and `ROW`, `erx_font` `?MAX_W` and `?MAX_H`): a spec of the subfont format would give both.
+* [Medium] display, two splitters of pixels into `y` messages (`erlang/apps/erx_win/src/erx_font.erl` `tiles/3`,
+  `erx_draw.erl` `band_rows/2`): `erx_font` cuts an image into tiles of columns and bands of rows of at most 8192
+  bytes each, while `erx_draw:load/4` cuts only bands of rows, as many as fit a write (`?ERX_P9_IO_MAX` less the
+  header), and refuses a row wider than a write. Make one pure planner of a rectangle's `y`s, its limit taken from
+  the write size, that both call.
 * [Medium] desktop, a present glyph of zero advance (`tools/lib/erx/glyphs.rb` `place`, design-desktop-programs "The
   glyph step"): width 0 is how a subfont marks a missing glyph, so a glyph whose advance rounds to 0 reads as
   missing too. Inter has U+200B (zero width space) at advance 0, inside the theme's range `2000-206F`, so the
@@ -1950,7 +1949,7 @@ it; git history is the record of completed work.
   `locate` and its build record, `source_tree`, `compiler_identity` and `publish` are the same code three times.
   Fold them into one module that takes a source id and an output directory.
 * [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
-  (`test/host/glyphs_test.rb`); the ink-leaves-the-line refusal is exercised only by the theme's display role.
+  (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
   profile's capability fields, the walk's array, the pipe ends' handles, the startup record's, `erx_prog_object_map`
   and `erx_cap_close` are `erx_cap_t`, but every other call of `api.h` takes or returns a handle as `uint64_t`
