@@ -176,3 +176,45 @@ reads_stay_within_the_file_test() ->
     ?assertEqual({ok, <<>>}, erx_storage_login_keys:read(file, 102, 817, Tree)),
     ?assertEqual({error, enoent}, erx_storage_login_keys:walk(file, <<"root">>, Tree)),
     ?assertEqual({error, enoent}, erx_storage_login_keys:walk(root, <<"other">>, Tree)).
+
+%% start_mint/0 starts the mint on the block service's record_volume window, which the
+%% service serves exactly when the holder's system_image record names it
+%% (erx_blk_table:booted/1), and answers ignore otherwise. A stand-in registered as the
+%% block service serves the windows booted/1 gives each record and answers every other
+%% call eio, so the reader it starts reads nothing.
+start_mint_follows_the_record_test_() ->
+    Record = ["system_image", "8192", "8192", "4096", "5a", lists:duplicate(64, $0)],
+    [?_assertMatch({ok, Mint} when is_pid(Mint), mint_on([["boot", "normal", "a"], Record ++ ["record_volume"]])),
+     ?_assertEqual(ignore, mint_on([["boot", "normal", "a"], Record])),
+     ?_assertEqual(ignore, mint_on([]))].
+
+mint_on(Arguments) ->
+    {_Slot, Windows, _Status} = erx_blk_table:booted(Arguments),
+    Service = spawn(fun() -> block_service([Role || {Role, _Start, _Sectors} <- Windows]) end),
+    true = register(erx_blk_service, Service),
+    Self = self(),
+    Starter = spawn(fun() -> Self ! {started, erx_storage_login_keys:start_mint()}, receive stop -> ok end end),
+    Started = receive {started, Answer} -> Answer end,
+    exit(Starter, kill),
+    exit(Service, kill),
+    _ = persistent_term:erase({erx, provides}),
+    wait_unregistered(),
+    Started.
+
+block_service(Roles) ->
+    receive
+        {'$gen_call', From, {window, Role}} ->
+            gen_server:reply(From, case lists:member(Role, Roles) of
+                                       true -> {ok, self()};
+                                       false -> {error, no_window}
+                                   end);
+        {'$gen_call', From, _Other} ->
+            gen_server:reply(From, {error, eio})
+    end,
+    block_service(Roles).
+
+wait_unregistered() ->
+    case whereis(erx_blk_service) of
+        undefined -> ok;
+        _ -> timer:sleep(1), wait_unregistered()
+    end.

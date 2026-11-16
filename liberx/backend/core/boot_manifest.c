@@ -786,7 +786,7 @@ hex_word_put(char *words, size_t capacity, size_t *used, const uint8_t *bytes, s
 }
 
 size_t
-erx_boot_system_image_words(const erx_mf_system_image_t *row, char *words, size_t capacity)
+erx_boot_system_image_words(const erx_mf_system_image_t *row, bool record_volume, char *words, size_t capacity)
 {
 	size_t used = 0;
 
@@ -797,7 +797,8 @@ erx_boot_system_image_words(const erx_mf_system_image_t *row, char *words, size_
 	    number_put(words, capacity, &used, row->tree_offset) &&
 	    number_put(words, capacity, &used, row->tree_length) &&
 	    hex_word_put(words, capacity, &used, row->salt, row->salt_length) &&
-	    hex_word_put(words, capacity, &used, row->root_hash, sizeof(row->root_hash)))
+	    hex_word_put(words, capacity, &used, row->root_hash, sizeof(row->root_hash)) &&
+	    (!record_volume || word_put(words, capacity, &used, erx_mf_window_role_name(ERX_MF_WINDOW_ROLE_RECORD_VOLUME))))
 		return (used);
 	return (0);
 }

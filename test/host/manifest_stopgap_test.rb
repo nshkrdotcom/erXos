@@ -140,7 +140,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 4, view.count('domains')
     assert_equal 12, view.count('devices')
-    assert_equal 9, view.count('windows')
+    assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -153,7 +153,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 2, view.count('domains')
     assert_equal 4, view.count('devices')
-    assert_equal 9, view.count('windows')
+    assert_equal 10, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -213,9 +213,9 @@ class ManifestStopgapTest < Minitest::Test
 
   def test_admitted_services_reach_the_encoded_manifest
     view = @codec.open('manifest', admit(@source + SERVICE).bytes)
-    # The development manifest's own, data, display, inspect, log, machine, net,
+    # The development manifest's own, data, display, inspect, log, login_keys, machine, net,
     # network_ctl, packages, start, storage_ctl, system and web, and this one.
-    assert_equal %w[data display inspect log machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
+    assert_equal %w[data display inspect log login_keys machine net network_ctl packages probe start storage_ctl system web], view.count('services').times.map { |index| view.string(view.fetch('services', index).fetch('name')) }
     assert_equal 0, view.count('liveness')
   end
 
@@ -873,7 +873,15 @@ class ManifestStopgapTest < Minitest::Test
 
   # Root's login keys on the medium (docs/design-ssh.md, "Who publishes it"): the
   # record_volume window, the login_keys service its holder serves and the system
-  # domain's read-only grant of it, as a board with SSH holds them.
+  # domain's read-only grant of it, as a board with SSH holds them. The cases add them
+  # to the development manifest taken without its own (WITHOUT_LOGIN_KEYS).
+  WITHOUT_LOGIN_KEYS = [/^window record_volume\n(?:  .*\n)*/, /^service login_keys\n(?:  .*\n)*/,
+                        /^facet login_keys\n(?:  .*\n)*/].freeze
+
+  def without_login_keys(source)
+    WITHOUT_LOGIN_KEYS.reduce(source) { |text, row| ManifestContextFixture.substitute(text, row, '') }
+  end
+
   def record_volume(holder: '@domain.storage', label: 'record_volume')
     window(role: 'record_volume', partition: 0, holder: holder).sub('window seeded', "window #{label}")
   end
@@ -887,7 +895,7 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   def login_keys_source(window: record_volume, service: LOGIN_KEYS_SERVICE, facet: login_keys_facet)
-    @source + window + service + facet
+    without_login_keys(@source) + window + service + facet
   end
 
   def test_the_record_volume_window_and_its_login_keys_service_pass
@@ -949,14 +957,14 @@ class ManifestStopgapTest < Minitest::Test
             message: /at most one record_volume window/)
   end
 
-# A second block device, which its holder's driver does not serve, is no medium the
-# record partition's rules reason about.
-def test_a_record_volume_window_on_another_device_than_the_system_window_s_is_refused
-  source, against = with_extra_device(role: 'block')
-  window = record_volume.sub(BLOCK, '/extra@0')
-  refused(Erx::Manifest::Invalid, 8, 'window.holder', source + window + LOGIN_KEYS_SERVICE + login_keys_facet, against,
-          message: /on its device/)
-end
+  # A second block device, which its holder's driver does not serve, is no medium the
+  # record partition's rules reason about.
+  def test_a_record_volume_window_on_another_device_than_the_system_window_s_is_refused
+    source, against = with_extra_device(role: 'block')
+    window = record_volume.sub(BLOCK, '/extra@0')
+    refused(Erx::Manifest::Invalid, 8, 'window.holder',
+            without_login_keys(source) + window + LOGIN_KEYS_SERVICE + login_keys_facet, against, message: /on its device/)
+  end
 
   def test_a_record_volume_window_on_another_domain_than_the_system_window_s_holder_is_refused
     %w[@domain.web @domain.network].each do |holder|

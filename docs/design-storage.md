@@ -1695,7 +1695,14 @@ writes with its verify (`fsimg W`).
 record partition is read on the target: root's `authorized_keys`
 ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)). The
 storage domain that serves `system` reads it once, at its start, through
-the read-only `record_volume` window, with `erx_fat_read`, the pure read
+the read-only `record_volume` window, which its block service starts
+exactly when the manifest gives the domain that window: on erXos's
+kernel from the device service's derivation (PW1), and on the Phase 1
+stopgap from the sixth word, `record_volume`, of the domain's
+`-erx_record system_image`, which the domain library writes only for
+the holder of the manifest's window
+([design-stopgap.md](design-stopgap.md#the-booted-slot)). It reads the
+file with `erx_fat_read`, the pure read
 core of the FAT format that the FAT server above reads through too:
 `root_file(ReadSector, Name, MaxBytes)` takes a function that reads one
 sector of the window, the long name and the size bound, and answers

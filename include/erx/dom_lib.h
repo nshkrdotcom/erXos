@@ -108,6 +108,9 @@ typedef struct erx_dom_lib {
 					 * ERX_MF_NONE for none */
 	erx_mf_system_image_t system_image; /* the manifest's system_image row,
 					 * for that page; unused without one */
+	bool		 record_volume;	/* that row also holds the manifest's
+					 * record_volume window, which its
+					 * -erx_record system_image names */
 	uint64_t	 build_id;	/* the boot image's build identifier, as
 					 * -erx_record build gives it, for each boot page */
 	uint64_t	 hwcap;		/* the system's boot page's CPU feature words, */

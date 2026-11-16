@@ -135,7 +135,7 @@ print_system_image(const erx_dom_lib_t *lib)
 
 	if (lib->system_image_row == ERX_MF_NONE)
 		return (true);
-	if ((used = erx_boot_system_image_words(&lib->system_image, words, sizeof(words))) == 0)
+	if ((used = erx_boot_system_image_words(&lib->system_image, lib->record_volume, words, sizeof(words))) == 0)
 		return (false);
 	printf("system_image %" PRIu32, lib->system_image_row);
 	for (size_t at = sizeof(ERX_BOOT_RECORD_FLAG) + sizeof("system_image"); at < used; at += strlen(words + at) + 1)

@@ -62,8 +62,10 @@ logged. Every grant is read-only: the tree has no writing callback (F5).
 
 -doc """
 Starts the mint of `login_keys_service`, `login_keys`, linked to the caller
-(erx_storage_sup), on the block service's `record_volume` window. A boot whose
-block service names no such window starts no mint.
+(erx_storage_sup), on the block service's `record_volume` window, which the
+service starts exactly when the domain's `-erx_record system_image` names it, the
+domain library's mark of the manifest's `record_volume` window
+(erx_blk_table:booted/1). A domain whose record does not name it starts no mint.
 """.
 -spec start_mint() -> {ok, pid()} | ignore.
 start_mint() ->

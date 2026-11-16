@@ -707,6 +707,21 @@ window lies only on the domain that holds the `system` window. So the domain tha
 one whose read-only window covers the record partition, and no manifest
 can name another, the SSH domain among them, as their source.
 
+The holder learns that it holds the window from the manifest alone. On
+erXos's kernel the device service names the window for the holder its
+manifest row names ([design-storage.md](design-storage.md#invariants),
+PW1). On the Phase 1 stopgap, whose block service reads no manifest, the
+domain library marks it in the one record it already writes for that
+holder alone: `-erx_record system_image` gains a sixth word,
+`record_volume`, exactly when the manifest holds the window
+([design-stopgap.md](design-stopgap.md#the-booted-slot)). From that word
+`erx_blk_table:booted/1` starts the read-only `record_volume` window,
+whatever slot the boot names, and `erx_storage_login_keys:start_mint/0`
+starts the tree's mint on it; a domain whose record lacks the word, or
+has no record, starts neither, so no other domain serves `login_keys`
+or reads the record partition. The word grants nothing by itself: the
+window is a range of the block device, which only that holder holds.
+
 **How the facet reads it.** The facet reads `root` from its start until
 it holds 817 bytes, one past 16 keys' 816, or meets its end, each read
 asking for no more than what is left of the 817, as the starter reads
@@ -732,7 +747,10 @@ logins:
 * **One holder owns the result.** The `login_keys` mint is a child of
   the storage domain's `erx_storage_sup`, started by
   `erx_storage_login_keys:start_mint/0` beside `system`'s
-  (`erx_storage_system:start_mint/0`), and like every mint it names
+  (`erx_storage_system:start_mint/0`) when the domain's block service
+  serves the `record_volume` window, which it does exactly when the
+  manifest gives the domain that window ([Who publishes it](#roots-login-keys-on-the-medium)),
+  and like every mint it names
   itself the service's provider before the domain's ready report
   (`erx_facet:provide/2`, which refuses a later call). Its mount, which
   the mint runs once in its own process

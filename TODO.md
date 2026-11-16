@@ -7145,6 +7145,26 @@ to the corpus and follow rc
   each to `{stop, Reason}` and the one loop, then add a source check that no module but
   `erx_actions` has a clause on a stop at a list's head.
 
+* [Medium] fuzz, `tools/fuzz/erx_device_record.rb`: the target fails on the module as it is, before
+  any mutant runs, with `{too_few_accepted, 159, 648, 482}` at seed 1: its generator
+  (`test/erlang/erx_device_record_fuzz.erl`, `entry/0`) finds an accepted device record in 159 of
+  20000 rounds, under the floor of 200 (`MIN_ACCEPTED`). The generator's well-formed device entries
+  no longer match the record's shape often enough; make them do so, rather than lower the floor.
+* [Medium] domain library, `boot_system_image` (`liberx/system/dom_boot_view.c`): its two `record_volume`
+  refusals, a second window and one held by a row other than the `system` window's holder, have no test;
+  add `dom_planner_test.rb` cases that run the view on such manifest bytes past the check, with each
+  refusal's removal seeded.
+* [Medium] the `record_volume` role's name is spelled by hand in `erx_device_record:image_record/1`
+  (`"record_volume"`) and in `ERX_BOOT_SYSTEM_IMAGE_WORDS_MAX` (`sizeof("record_volume")`, as the pair
+  words' bound spells its names), while the writer takes it from the generated
+  `erx_mf_window_role_name`; only `boot_info_driver.c`'s longest-record check keeps them in step. Take the
+  Erlang word from `?ERX_MF_WINDOW_ROLE_MEMBERS`, as `erx_blk_table:role/1` does, and have the ABI
+  generator emit each enum member's name as a string macro the bounds can size.
+* [Low] boot records, `Erx::Manifest#boot_args` (`tools/lib/erx/manifest.rb`) and
+  `erx_domain_srv:boot_args/2`: a row's `args` may carry `-erx_record`, as they may not carry `-boot`, so
+  a row's own words can read as a record the domain library writes (for `system_image`, the
+  `record_volume` mark, which grants nothing without the block device). Refuse `-erx_record` there.
+
 ## Security residuals
 
 * [Low] SSH, root's login keys on the medium (development builds, before the vault;
@@ -7156,6 +7176,19 @@ to the corpus and follow rc
 * [Medium] SSH, the browser demo's manifest ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium)):
   `config/platforms/qemu-virt.json:10`'s `site_leaves_out` gains `ssh` in the same change that puts the SSH
   domain into the development manifest, or the demo's image holds a domain that no one can give a key.
+  The same change (P7, the SSH domain's package) takes the `record_volume` window, the `login_keys`
+  service and the system domain's `login_keys` facet out of the site manifest
+  (`Erx::Platform#site_manifest_source`), which holds them because it derives from QEMU virt's
+  development manifest, although design-ssh.md's browser-demo bullet and its "each product's SSH domain" test
+  row say the demo holds no `record_volume` window. Until then they are inert there: the demo's
+  storage domain reads a medium with no `authorized_keys`, so `login_keys` serves an empty `root`, and no
+  SSH domain reads it.
+* [Medium] SSH, release builds and the record volume ([design-ssh.md](docs/design-ssh.md#roots-login-keys-on-the-medium),
+  the test row "release builds refuse the development key"): the manifest check does not yet refuse a
+  release-kind manifest that holds a `record_volume` window, since `Stopgap#check_mode`
+  (`tools/lib/erx/manifest.rb`) refuses every manifest that is not of the development kind. When
+  `check_mode` admits release manifests, the release check refuses the window, with its seeded test
+  (the release check skipping the `record_volume` row: the manifest with the window passes).
 * [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
   system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
   `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
