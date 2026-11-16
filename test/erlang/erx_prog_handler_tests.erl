@@ -27,7 +27,8 @@ loss reaches the program.
 
 -include_lib("eunit/include/eunit.hrl").
 
--define(PID, 21).
+%% The process id a fresh command server gives first.
+-define(PID, 2).
 -define(WAIT, 2000).
 
 handler_test_() ->
@@ -47,6 +48,7 @@ handler_test_() ->
       fun owed_report_waits_for_room/1,
       fun hand_off_report_is_installed_then_sent/1,
       fun exit_tells_the_starter/1,
+      fun ids_come_from_the_command_server/1,
       fun an_end_behind_a_closed_port_still_tells_the_starter/1,
       fun a_port_closed_without_a_status_ends_the_handler/1,
       fun starters_exit_stops_the_program/1,
@@ -57,19 +59,23 @@ setup() ->
     erx_prog_handler_fakes:setup(self()),
     {ok, Srv} = erx_pipe_srv:start_link(#{nif => erx_pipe_fake_nif}),
     unlink(Srv),
-    Srv.
+    {ok, Commands} = erx_command_srv:start_link(),
+    unlink(Commands),
+    [Srv, Commands].
 
-cleanup(Srv) ->
+cleanup(Servers) ->
     %% A handler left running would answer a later case's pipe server loss.
     [exit(H, kill) || H <- erlang:get_keys(handler)],
     [erlang:erase(H) || H <- erlang:get_keys(handler)],
-    Ref = monitor(process, Srv),
-    exit(Srv, kill),
-    receive {'DOWN', Ref, process, Srv, _} -> ok end,
+    [begin
+         Ref = monitor(process, Srv),
+         exit(Srv, kill),
+         receive {'DOWN', Ref, process, Srv, _} -> ok end
+     end || Srv <- Servers],
     flush().
 
 spec(Fds) ->
-    #{image => <<"bin/pipeio">>, pid => ?PID, ppid => 1, pgid => ?PID, argv => [<<"pipeio">>], env => [],
+    #{image => <<"bin/pipeio">>, argv => [<<"pipeio">>], env => [],
       cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022, fds => Fds}.
 
 %% A started program: its handler, its fake port and the descriptors its start named.
@@ -226,6 +232,22 @@ hand_off_report_is_installed_then_sent(_) ->
     Calls = [fake(install), fake(send)],
     ?_assertEqual([{install, Port, 8}, {send, Port, {erx_prog, 1, {pipe_reader, 9, 1, 2, 100, open}}}], Calls).
 
+%% Each start takes its process id, parent and group from the command
+%% server, never from its spec, and an id is not given again after its
+%% program ends.
+ids_come_from_the_command_server(_) ->
+    {ok, H1, []} = erx_prog_handler:start(spec([])),
+    {start, Spec1, Port1} = fake(start),
+    Ref = monitor(process, H1),
+    H1 ! {Port1, {exit_status, 0}},
+    receive {'DOWN', Ref, process, H1, _} -> ok after ?WAIT -> timeout end,
+    {ok, H2, []} = erx_prog_handler:start(spec([])),
+    erlang:put(H2, handler),
+    {start, Spec2, _} = fake(start),
+    [?_assertEqual(#{pid => ?PID, ppid => 1, pgid => ?PID}, maps:with([pid, ppid, pgid], Spec1)),
+     ?_assertEqual(#{pid => ?PID + 1, ppid => 1}, maps:with([pid, ppid], Spec2)),
+     ?_assertEqual({error, einval}, erx_prog_handler:start((spec([]))#{pid => 7}))].
+
 exit_tells_the_starter(_) ->
     {H, Port, []} = started([]),
     Ref = monitor(process, H),
@@ -279,7 +301,7 @@ starters_exit_stops_the_program(_) ->
     Stopped = fake(stop),
     ?_assertEqual({stop, Port, 256 + 9}, Stopped).
 
-pipe_server_loss_reaches_the_program(Srv) ->
+pipe_server_loss_reaches_the_program([Srv, _Commands]) ->
     {_H, Port, []} = started([]),
     exit(Srv, kill),
     Sent = fake(send),

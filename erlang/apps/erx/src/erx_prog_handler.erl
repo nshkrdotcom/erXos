@@ -29,8 +29,16 @@ ends"):
   is gone. start/1 answers the range's offset, which the starter names in
   the window's presents.
 
-The pid, ppid and pgid come from the command server, which assigns
-process ids (docs/design-programs.md, "The parties").
+The spec names no `pid`, `ppid` or `pgid`: start/1 asks the command
+server (erx_command_srv) for the program's handler, and the server
+assigns the program's process id, records it in the caller's job with
+1, the server, as its parent and its job's group, and spawns the handler
+outside every job (docs/design-programs.md, "The command server"). The
+handler takes the three values from the server's table and waits for
+its start, which start/1 sends with a key only it holds once it monitors
+the handler; it exits if the caller ends first. Until the runtime's job tags exist, the caller's
+job is its group leader, as the shell's jobs are (TODO.md, "a job's
+processes are found by group leader").
 
 start/1 waits 30 seconds for the handler's answer; start/2, the tests'
 seam, takes the wait in milliseconds. Past it, the start kills the
@@ -66,7 +74,7 @@ read or a write cross the program's data area through the program
 driver (erx_program:data_read/3 and data_write/3).
 """.
 
--export([start/1, start/2, stop/1]).
+-export([start/1, start/2, stop/1, serve/1]).
 
 %% How long start/1 waits for the handler's answer.
 -define(START_MS, 30000).
@@ -77,16 +85,18 @@ driver (erx_program:data_read/3 and data_write/3).
             port :: port() | undefined,
             %% The monitor of the port, whose close ends the handler.
             closed :: reference() | undefined,
-            %% The answer start/1 waits for, until it is given.
-            reply :: {pid(), reference()} | undefined,
+            %% The starter, until it has start/1's answer.
+            reply :: pid() | undefined,
             pipes :: reference() | undefined}).
 
 -doc """
 Starts the program `Spec` names, as described above, with the caller as
 its starter: `{ok, Handler, Offsets}`, `Offsets` each buffer's
 `{N, Offset}`, or `{error, Errno}`: `einval` for a spec the program's
-start refuses, a descriptor of another form or a `pid` another handler
-speaks for, `ebadf` for a pipe end the caller does not hold, `emfile`
+start refuses, one that names a `pid`, `ppid` or `pgid`, or a descriptor
+of another form, `enotsup` in a domain that runs no command server,
+`eagain` once the server has given every process id, `ebadf` for a pipe
+end the caller does not hold, `emfile`
 beyond a pipe's read ends, `enfile` at the session's pipes quota,
 `enodev` for a buffer in a domain where no pixel allocator runs,
 `einval` for a buffer in an area the domain does not share with `Peer`,
@@ -102,16 +112,27 @@ start(Spec) ->
 
 -doc "start/1 with a wait of `Timeout` milliseconds for the handler's answer.".
 -spec start(map(), timeout()) -> {ok, pid(), [{0..1023, non_neg_integer()}]} | {error, atom()}.
-start(#{pid := _} = Spec, Timeout) when Timeout =:= infinity; is_integer(Timeout), Timeout >= 0 ->
-    Self = self(),
-    Ref = make_ref(),
-    Handler = spawn(fun() -> init(Self, Ref, Spec) end),
+start(Spec, Timeout) when is_map(Spec), not is_map_key(pid, Spec), not is_map_key(ppid, Spec),
+                          not is_map_key(pgid, Spec),
+                          Timeout =:= infinity orelse is_integer(Timeout) andalso Timeout >= 0 ->
+    Key = make_ref(),
+    case erx_command_srv:handler({process, group_leader()}, Key) of
+        {ok, Handler, _Pid} -> started(Handler, Key, Spec, Timeout);
+        {error, _} = Refused -> Refused
+    end;
+start(_Spec, _Timeout) ->
+    {error, einval}.
+
+%% The handler's answer to the start, which is sent only once the handler
+%% is monitored, so the handler cannot end unseen.
+started(Handler, Key, Spec, Timeout) ->
     Watch = monitor(process, Handler),
+    Handler ! {start, Key, Spec},
     receive
-        {Ref, {ok, Offsets}} ->
+        {erx_prog_started, Handler, {ok, Offsets}} ->
             demonitor(Watch, [flush]),
             {ok, Handler, Offsets};
-        {Ref, {error, _} = Refused} ->
+        {erx_prog_started, Handler, {error, _} = Refused} ->
             demonitor(Watch, [flush]),
             Refused;
         {'DOWN', Watch, process, Handler, _} ->
@@ -125,12 +146,10 @@ start(#{pid := _} = Spec, Timeout) when Timeout =:= infinity; is_integer(Timeout
         %% the kill is taken out of the mailbox here.
         exit(Handler, kill),
         receive {'DOWN', Watch, process, Handler, _} -> ok end,
-        receive {Ref, _} -> ok after 0 -> ok end,
+        receive {erx_prog_started, Handler, _} -> ok after 0 -> ok end,
         receive {erx_prog_exit, Handler, _} -> ok after 0 -> ok end,
         {error, timeout}
-    end;
-start(_Spec, _Timeout) ->
-    {error, einval}.
+    end.
 
 -doc """
 Stops the program the handler serves, when its starter calls it; its end
@@ -141,17 +160,35 @@ stop(Handler) when is_pid(Handler) ->
     Handler ! {erx_prog_stop, self()},
     ok.
 
-init(Starter, Ref, #{pid := Pid} = Spec) ->
-    erlang:monitor(process, Starter),
+-doc """
+A program's handler as the command server spawns it, from the server's
+`Init` (erx_command_core:init()): it waits for `{start, Key, Spec}`,
+`Key` the reference Init names, which only the starter that asked for
+the handler holds, so no other process can start it, and builds the
+program from `Spec` with the process id, parent and group of `Init`; it
+exits if the starter ends first.
+""".
+-spec serve(erx_command_core:init()) -> ok.
+serve(#{starter := Starter, key := Key} = Init) ->
+    Watch = monitor(process, Starter),
+    receive
+        {start, Key, Spec} when is_map(Spec) ->
+            init(Starter, maps:merge(Spec, maps:with([pid, ppid, pgid], Init)));
+        {'DOWN', Watch, process, Starter, _} ->
+            ok
+    end.
+
+init(Starter, #{pid := Pid} = Spec) ->
     Files = #{table => erx_file_description:table(), within => maps:get(within, Spec, all),
               cwd => maps:get(cwd, Spec, undefined), slots => erx_program:slots(Spec)},
     case erx_prog_handler_core:new(Pid, maps:get(fds, Spec, []), Files) of
         {ok, Core, Actions} ->
             H = #h{core = Core, starter = Starter, spec = maps:without([fds, within], Spec),
-                   reply = {Starter, Ref}, pipes = watch_pipes()},
+                   reply = Starter, pipes = watch_pipes()},
             loop(perform(Actions, H));
         {error, _} = Refused ->
-            Starter ! {Ref, Refused}
+            Starter ! {erx_prog_started, self(), Refused},
+            ok
     end.
 
 loop(#h{core = Core, port = Port, closed = Closed, starter = Starter, spec = #{pid := Pid}, pipes = Pipes} = H) ->
@@ -218,8 +255,8 @@ act({start, Fds}, #h{spec = Spec} = H) ->
         {error, Errno} -> {event, {refused, Errno}, H};
         Port -> {event, started, H#h{port = Port, closed = erlang:monitor(port, Port)}}
     end;
-act({answer, Answer}, #h{reply = {To, Ref}} = H) ->
-    To ! {Ref, Answer},
+act({answer, Answer}, #h{reply = To} = H) ->
+    To ! {erx_prog_started, self(), Answer},
     H#h{reply = undefined};
 act({hand_drop, Number}, H) ->
     ok = erx_pipe_nif:hand_drop(Number),

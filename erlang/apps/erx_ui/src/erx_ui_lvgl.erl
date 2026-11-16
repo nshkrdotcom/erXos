@@ -45,9 +45,8 @@ window/2; the mouse reader takes an `r` record as a resize, reading the
 window's new rectangle with erx_win:resized/1 and passing its size with
 resize/3.
 
-The program is `bin/erx-lvgl`, started as a program of the session.
-Its pid is one this module numbers from a base (TODO.md,
-`erx_ui_lvgl`).
+The program is `bin/erx-lvgl`, started as a program of the session,
+whose command server gives it its pid.
 
 **Over options.** start/3 over any other target takes the window's
 size, channel and presents as options, the entry of the tests and the
@@ -115,9 +114,6 @@ and with it every call (a residual, TODO.md).
 -define(WRITE_MS, 10000).
 %% The most a reader reads of the program's output at once.
 -define(READ_BYTES, 4096).
-%% The base of the pids this module gives its programs, above those the
-%% tests name.
--define(PID_BASE, 1 bsl 20).
 
 -type program() :: {handler, Spec :: map(), Peer :: pos_integer(), Bytes :: pos_integer()}
                  | {port, Open :: fun(() -> port())}.
@@ -382,8 +378,7 @@ run({handler, Spec, Peer, Bytes}) ->
 
 %% The spec of the program's start, but for its descriptors.
 program_spec() ->
-    Pid = ?PID_BASE + erlang:unique_integer([positive, monotonic]),
-    #{image => <<"bin/erx-lvgl">>, pid => Pid, ppid => 1, pgid => Pid, argv => [<<"erx-lvgl">>],
+    #{image => <<"bin/erx-lvgl">>, argv => [<<"erx-lvgl">>],
       env => [], cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022}.
 
 %% Ends the window's readers and stops the program, at each end of this

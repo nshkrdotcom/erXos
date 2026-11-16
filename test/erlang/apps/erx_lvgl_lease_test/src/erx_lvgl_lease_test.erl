@@ -78,9 +78,6 @@ then waits for ever.
 -define(POLLS, 120).
 -define(POLL_MS, 500).
 -define(WAIT_MS, 30000).
-%% The process ids of the rounds' programs, one each, so no round's id is
-%% one a handler of an earlier round still speaks for.
--define(FIRST_PID, 900).
 
 -spec run() -> no_return().
 run() ->
@@ -131,7 +128,7 @@ peer(N) ->
     end.
 
 lend_round(Peer, Round) ->
-    with_renderer(Round, opts(Peer, Round, ?LVGL, []), fun(Shell) ->
+    with_renderer(Round, opts(Peer, ?LVGL, []), fun(Shell) ->
         expect(Round, {ok, Shell}, applied(Round, Shell)),
         expect(Round, {?WIDTH, ?HEIGHT}, first_present(Round, Shell)),
         clicked(Round, Shell),
@@ -147,7 +144,7 @@ lend_round(Peer, Round) ->
 %% Reason after exactly Presents presents, each answered when Answer is
 %% `shown` and none when it is `unanswered`.
 probe_round(Peer, Round, Args, Answer, Presents, Reason) ->
-    with_renderer(Round, opts(Peer, Round, ?PROBE, Args), fun(Shell) ->
+    with_renderer(Round, opts(Peer, ?PROBE, Args), fun(Shell) ->
         expect(Round, {Presents, {shutdown, {renderer_down, Reason}}}, presents_until_down(Shell, Answer, 0))
     end).
 
@@ -190,9 +187,8 @@ started(Round, Opts, Polls) ->
     end.
 
 %% The renderer's options, its program the release's bin/Name run with Args.
-opts(Peer, Round, Name, Args) ->
-    Pid = ?FIRST_PID + Round,
-    Spec = #{image => <<"bin/", Name/binary>>, pid => Pid, ppid => 1, pgid => Pid, argv => [Name | Args],
+opts(Peer, Name, Args) ->
+    Spec = #{image => <<"bin/", Name/binary>>, argv => [Name | Args],
              env => [], cwd => <<"/">>, spawn => false, sigmask => [], sigignore => [], umask => 8#022},
     Test = self(),
     #{width => ?WIDTH, height => ?HEIGHT, chan => ?X8R8G8B8,
