@@ -9050,8 +9050,8 @@ The license is not a reason for the new kernel. Fiasco's kernel package
 is MIT, as `fiasco/kernel/LICENSE.spdx` declares; its GPL and LGPL parts
 are excluded from the import, and of Fiasco's code in the stopgap build
 only two files are GPL-2.0, by their own notices: `src/kern/kobject_rpc.h`
-in every build, and the kernel debugger's `jdb_object.cpp` in development
-builds ([dependency table](design.md#dependencies)).
+in every build, and the kernel debugger object's `jdb_object.cpp`, also
+in every build (`Modules.generic`) ([dependency table](design.md#dependencies)).
 
 ### The ledger
 

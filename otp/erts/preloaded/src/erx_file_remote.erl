@@ -77,7 +77,7 @@
 -include("file.hrl").
 -include("generated/erx_abi.hrl").
 
--type grant() :: {pid(), Tree :: binary(), Rights :: ro | rw | rx}.
+-type grant() :: {pid(), Tree :: binary(), Rights :: erx_abi_enums:files_rights()}.
 %% Where the resolver's last action lies on the grant, as names from the tree's root.
 -type where() :: {target, [binary()]} | {parent, [binary()], Name :: binary()}.
 %% erx_path's reply of a walk: the kind of each name passed, and how it ended.
@@ -1301,7 +1301,7 @@ take(Message, #request_id{monitor = Monitor} = Id) ->
             no_reply
     end.
 
--spec refused([tuple()], ro | rw | rx) -> none | einval | erofs.
+-spec refused([tuple()], erx_abi_enums:files_rights()) -> none | einval | erofs.
 refused([], _) ->
     none;
 refused([Request | Requests], Rights) ->

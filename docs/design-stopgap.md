@@ -224,7 +224,29 @@ Inherited code reads no executable and no modules.
    (`init_kip.cc:30`), which `boot_info_t` carries there.
 
 **The kernel.** Its options are a constant, `Fiasco::KERNEL_OPTIONS` (`fiasco.rb`), built into
-`bootstrap`, with neither `-serial_esc` nor `-serial_input`, and it is built without JDB. Its own
+`bootstrap`, with neither `-serial_esc` nor `-serial_input`. Its configuration is one
+defconfig, `config/fiasco/kernel.defconfig`, for every board. A development kernel is built
+from it as it is, with JDB, the kernel debugger, which selects `CONFIG_INPUT`, the kernel's own
+console input: a panic (`kernel_panic.cc`) enters JDB on the console through
+`Thread::system_abort` (`thread.cpp`) once JDB is initialized, and before that waits at
+`terminate.cpp`'s `raw_exit` for a key; either way the run waits for the operator or the
+harness's deadline. A release kernel is built from the same defconfig with `CONFIG_JDB` and
+`CONFIG_INPUT` written as not set after it, its only differences, stated once in
+`FiascoConfig::RELEASE_UNSET` (`fiasco_config.rb`, `tools/erx build release-kernel`). Without
+JDB a panic calls `terminate`. Its exit question, which `kernel_main` installs
+(`arm/main.cpp`), reboots at once when console input is out of the build
+(`terminate.cpp`, `Exit_question::ask`); before `kernel_main`, during the static
+initialization that runs `Startup::stage1` and `stage2`, `raw_exit` stands in, reads no key
+without console input and resets as well. The reset (`reset-arm-gen.cpp`) is PSCI's system
+reset, or the BCM2711 watchdog where the device tree has one and no PSCI was found, and
+otherwise an endless loop: a panic before `Dt::init` and `Psci::init` in `stage2`, the
+handoff checks among them, does not reset. With console input in, the exit question would
+instead wait on the console with interrupts off. `FiascoConfig` checks the resolved configuration,
+`globalconfig.out`, after every configuration step, since a `select` can set what the defconfig
+leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER`
+(with `CONFIG_PERF_CNT`, which only JDB turns on by default) and `CONFIG_SYNC_CLOCK`, and none
+has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`; a release kernel's has neither
+`CONFIG_JDB` nor `CONFIG_INPUT`. The kernel's own
 changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and slot that are not
 one of the machine page's pairs, prints the banner (`development build: trusted code only`, the
 build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot <none|a|b>`,
@@ -1877,8 +1899,8 @@ short-root case catches.
 The console's record is `-erx_record console PERIPHERAL BASE SIZE LINE MARK CLOCK`, which the root writes from the device entry `machine.console` names (`erx_boot_console_words`). PERIPHERAL is the CMSIS-SVD peripheral of the entry's compatible string, from the one table of UART kinds, `erx_uart_kinds` in `include/erx/device_kinds.h`, beside the kinds a give drives and apart from them, so a console UART is never given: `arm,pl011` is `pl011`, which is also the host link's UART, and `brcm,bcm2835-aux-uart` is `mini_uart`. The record's first word, `console`, is the row's too. The manifest check refuses a console of any other compatible string, naming it, and the root writes no record for one. The console starts the driver of the peripheral its record names, `erx_pl011` for `pl011` and `erx_mini_uart` for `mini_uart` (`erx_console:console_driver/1`), and stops with a stated reason at any other word, at no record, or at more than one, so the console makes no atom of a record word. The hosted entry writes `-erx_record console stdio`, the same record with no UART after it, which names `erx_stdio`. The driver opens the record's window and line through `erx_device`. It takes exactly one such entry, each number in decimal within its field of the boot manifest's console (64, 64, 32 and 32 bits), MARK `direct` or `shared` as a device record's, and the clock not 0, and stops with a stated reason otherwise (`erx_pl011:console_uart/1`, which has a fuzz target). The clock, the UART's in hertz from the platform record, times a character while the driver reprograms the UART and gives the divisors for 115200 baud when the boot left the UART unprogrammed; a clock with no integer divisor of 1 to 65535 for that rate stops the driver before it touches the UART. A plain `erx.arg` word that joins any of these lists of arguments, the console's or a device record's, is ignored.
 
 Without `-serial_input`, `Config::serial_input` stays `Serial_no_input` (`config.cpp:246,278-282`), so the kernel never attaches the UART's
-receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). Without JDB a kernel panic halts and the
-harness's deadline ends the run.
+receive line, which `Irq_chip_gen::attach` would refuse the driver (`irq_chip_generic.cpp:77-81`). A development kernel's panic enters JDB on the
+console and the harness's deadline ends the run; a release kernel's reboots ([the kernel](#boot-handoff)).
 
 **The sink** is a variable the service owns. `erx_debug_log` copies `len` bytes from the caller's public UTCB, escapes them, and writes to
 `l4_vcon_write` on `L4_BASE_LOG_CAP`, the kernel's polled UART output, or to a ring of `log.c` records. `erx_log_read` runs `erx_log_copy` into

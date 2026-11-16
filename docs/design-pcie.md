@@ -1266,7 +1266,7 @@ waits for.
 | the enumerator crashes | its application ends | the PCIe domain ends and is restarted; the device service goes `between`; the new start keeps every function that reads as its setting and turns every other one off |
 | the PCIe domain ends past its intensity | the domain service | it stays down; functions keep their state; holders' requests answer `{error, unavailable}` after 5 s ([Concurrency](#concurrency)) |
 | a configuration access with the link down, on erXos's kernel | a synchronous abort, a fault of the PCIe domain's thread, or an SError presumed the running thread's ([design-arch-aarch64.md](design-arch-aarch64.md#asynchronous-errors)) | the PCIe domain ends and is restarted; the BCM2711's start finds the link down and resets the bridge; every function below it that no longer reads as its setting is turned off with its layout |
-| the same, on the stopgap | the access's second link read, since Fiasco's SError handler counts and returns (`fiasco/kernel/src/kern/arm/thread-jdb.cpp:96-106`) | the access answers `{error, link_down}`, and the enumerator exits at once, so the domain restarts as above |
+| the same, on the stopgap | an SError Fiasco takes in user mode, which it presumes the running thread's (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735`); Fiasco runs its kernel with SErrors masked, so one raised while a CPU is in the kernel is taken against the next thread to enter user mode there, and the access's second link read catches the link down | the thread's task ends with a fault record of kind `async_error`, or the access answers `{error, link_down}` and the enumerator exits at once; either way the domain restarts as above |
 | the link falls under a running function, seen by its holder | its driver's accesses abort, read all ones or time out | the holder's driver ends and starts again ([design-system.md](design-system.md#devices)); its `open` makes the enumerator access the fallen link, which ends the PCIe domain as above; the `open` waits in `between` and is applied after the restart |
 | a plan cut short | the enumerator's end | the next start reads the prefix and keeps the function or turns it off ([The plan](#the-plan)) |
 | a write that does not take | the stage's readback | no later stage; the function is lowered to quiet by `quiet/1`; `{error, gone}`; the entry stays as the latest report left it |
@@ -1349,9 +1349,11 @@ service runs. Its residuals:
   and its holder, with the PCIe domain, is in the trusted base.
 * **No isolation between tasks.** The PCIe domain and the holders are
   apart by convention ([design-stopgap.md](design-stopgap.md#what-phase-1-code-must-not-assume)).
-* **Bus errors are ignored.** Fiasco's SError handler returns, so an
-  access over a fallen link completes with whatever the bus returned.
-  The second link read keeps an answer made with the link down from
+* **Bus errors reach only the running thread.** An SError Fiasco takes
+  in user mode ends the task of the thread that ran, presumed its own
+  (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp:713-735`); one raised while the CPU is in the kernel, where
+  SErrors are masked, lands on the next thread to enter user mode, and
+  the access completes with whatever the bus returned. The second link read keeps an answer made with the link down from
   being used, and turns it into the enumerator's exit; an answer made
   while the link fell and came back between the reads is taken
   ([Failure handling and restart](#failure-handling-and-restart)). A

@@ -2058,6 +2058,11 @@ it; git history is the record of completed work.
 
 ## Bugs by subsystem
 
+* [Low] stopgap Fiasco, bootstrap (`fiasco/bootstrap/server/src/platform/arm_virt.cc`): `init`
+  never calls `query_psci_method()`, so `reboot_psci` uses the default `Psci_smc`
+  (`platform-arm.h:96`) while QEMU virt's device tree says hvc; bootstrap's own reboot path on
+  virt would issue SMC through the wrong conduit. The fix is one call in `init`, with a test.
+
 * [Medium] desktop, the glyph step's glyph count (`tools/lib/erx/glyphs.rb`, `erx_draw_core.erl` `?MAX_GLYPHS`):
   `Erx::Glyphs` refuses only at font(7)'s field limits, so it would write a subfont of more than 4096 glyphs, the
   most a font cache holds, which `erx_font:parse/1` then refuses. No spec holds that limit (`abi/formats/draw.txt`
@@ -7596,6 +7601,44 @@ to the corpus and follow rc
   `kernel_watchdog_timeout` unset, since nothing under Fiasco reloads the watchdog), no crash region, no trial request and no device
   secret (M12). Development
   builds run trusted code only until M11.
+* [Medium] stopgap, a device's input and a fault's reach on Fiasco (R1's published downsides; erXos's
+  kernel closes them). What holds: an interrupt whose pin was unbound after another CPU acknowledged it
+  is ended at its chip, not dereferenced (`Irq_chip::handle_irq`, `fiasco/kernel/src/kern/irq_chip.cpp`);
+  an SError taken in user mode ends the task of the thread that ran with a fault record of kind
+  `async_error` (`arm_serror_user_entry`, `fiasco/kernel/src/kern/arm/thread-arm.cpp`, decided by
+  `liberx/backend/fiasco/arch/aarch64/exception.c`). What does not:
+  * attribution beyond the running thread: Fiasco's kernel runs with SErrors masked, so an SError
+    is taken at the next entry to user mode on its CPU and presumed that thread's, and a device
+    error raised while a domain was in the kernel, or by a posted write, can end another domain's
+    task (K12's limit). Where it lands in the root, the root's main and runtime threads end the
+    machine (`service_fault`), its service and watchdog threads, whose exception handler is sigma0,
+    resume with nothing recorded (sigma0 refuses the message), and in sigma0 it is only counted; Fiasco has no exit window and reads no severity or error
+    records, so an uncontainable error is not stopped either. No test provokes an SError, since QEMU
+    `virt` raises none a guest can cause: only the root's decision is tested
+    (`test/host/fiasco_exception_test.rb`);
+  * every SError is counted per CPU (`num_serrors`, which jdb shows), but no log line names one and
+    the inspector has no attribute for the count;
+  * a pin read on one CPU while another detaches it (`Irq_chip_gen::detach`) reaches a handler whose
+    object is already bound to the software chip, whose acknowledge does nothing, so that CPU's
+    interrupt is never ended: every GIC priority is the same, so that CPU takes no more timer ticks,
+    IPIs or device interrupts, a silent hang reached by a driver domain ending while its line fires on
+    another CPU. Only `handle_irq` knows which chip acknowledged the interrupt, so no small fix
+    exists; and `Icu_h::op_icu_unbind`
+    (`fiasco/kernel/src/kern/icu_helper.cpp`) detaches without the IRQ's lock that
+    `Irq_chip::detach` requires;
+  * a wedged bus, which stalls the CPU that touches it with no fault to end anything;
+  * DMA of unconfined devices (the item above, FD12);
+  * on the Raspberry Pi 4, no hardware watchdog behind a hang of Fiasco (the item above, FD29); Q15
+    accepts the root reloading the PM watchdog during a trial.
+* [Low] liberx Fiasco backend, `erx_fiasco_exception_kind`
+  (`liberx/backend/fiasco/arch/aarch64/exception.c`): the exception class's position and the SError
+  class are written by hand, since `tools/erx sysreg refresh` refuses ESR_EL1, whose ISS layout
+  depends on EC; let the refresh keep the fields that do not (EC, IL) and generate them. The same
+  function reports alignment and breakpoint exceptions as `undefined`, though the ABI has both kinds.
+* [Medium] hostile suites, an interrupt storm on a driver's line on Fiasco: a line held asserted, or
+  raised at the device's fastest rate, whose pass is that the machine and the other domains keep
+  running, so the downside above is measured rather than assumed (FD33's recommendation). It needs a
+  device on QEMU `virt` that a test can make interrupt without end.
 
 * [Medium] code service, atoms from loads (`erlang/apps/erx_code/src/erx_code.erl`):
   `activate/1` makes each manifest name an atom before ERTS's loader checks it
@@ -8002,6 +8045,31 @@ document's "residual risks accepted" paragraph.
   filter in the client's domain that rewrites such reports to names, classes and arities, as the WiFi
   design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
   takes the same shape.
+
+* [Medium] stopgap kernel, release builds (design-stopgap.md, "Boot handoff", the kernel): a
+  release kernel is configured without JDB and the kernel's console input, so a panic reboots
+  instead of waiting on the console (`tools/erx build release-kernel`, `FiascoConfig::RELEASE_UNSET`),
+  but no image packs it: every image is a development build (`ProductionImage::BUILD_KIND`);
+  the release image build must take `Fiasco#build_release_kernel`'s kernel and extend the
+  provenance audit (`fiasco_provenance.rb`, which reads `build/fiasco/kernel`) and the build
+  memo to it. A panic before `Psci::init` and `Dt::init` in `Startup::stage2`, the handoff
+  checks of `erx_handoff.cpp` among them, finds no reset method and loops forever
+  (`reset-arm-gen.cpp`). The kernel picks the PSCI conduit at run time from the device tree
+  (`CONFIG_ARM_PSCI_DYN`; QEMU virt says hvc, the Pi 4 SMC through BL31), and the device tree
+  is readable only after `Kip_init`, while the banner's handoff check runs in stage1. The fix
+  is to run `Kip_init` and `Dt::init` ahead of `Kmem_alloc::init` in stage2, fold the banner
+  and `check_descriptors` into one handoff step right after `Dt::init`, and have
+  `platform_reset` run Psci's own probe (without the ACPI fallback) when PSCI is not yet
+  detected; Fiasco's own stage1 and `Kip_init` panics stay a residual. The test boots a
+  release image whose handoff record is refused. The reboot rests on reading `kernel_panic.cc`, `thread.cpp`,
+  `terminate.cpp` and `reset-arm-gen.cpp` and on the configuration check; no release kernel
+  has panicked under QEMU. The test that settles it boots a release image whose kernel panics
+  after `Psci::init` with `-no-reboot` and expects QEMU to exit after the panic line, and one
+  whose handoff fails, once the early reset is fixed. Still in a release kernel and each a
+  question for the release: `CONFIG_RT_DBG`, which adds object naming and the kernel memory
+  statistics dump to the console (`jdb_kobject`, `CONFIG_JDB_KMEM_STATS`) to the debugger
+  kernel object `jdb_object` that every kernel has; and `CONFIG_PERF_CNT_USER`, user-mode
+  access to the performance counters, which Fiasco's Kconfig marks for debugging only.
 
 ## Planned features
 

@@ -14,6 +14,8 @@ module Erx
     # (?ERX_FIASCO_CALL_MEMBERS): it defines the calls and calls none, so it
     # is a site of the line-call rule.
     ERX_ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
+    # The ABI's generated enum module lists every member by name, calls included.
+    ERX_ABI_ENUMS = 'erlang/apps/erx/src/generated/erx_abi_enums.erl'
     BLK_WRITE = 'erlang/apps/erx_blk/src/erx_blk_write.erl'
     # The applications whose modules drive a device class, and the UART drivers, the
     # device shims of erx_uart: its other modules, the host link and the line trees,
@@ -235,7 +237,7 @@ module Erx
                                            'a driver attaches and acknowledges its lines through erx_irq_line',
           design: 'docs/design-shared-devices.md#lines-inside-a-domain',
           pattern: /(?<![A-Za-z0-9_@])irq_(?:bind|bind_owner|ack)(?![A-Za-z0-9_@])/,
-          sites: [ERX_DEVICE, ERX_IRQ_LINE, ERX_ABI_HEADER],
+          sites: [ERX_DEVICE, ERX_IRQ_LINE, ERX_ABI_HEADER, ERX_ABI_ENUMS],
           seed: { 'erlang/apps/erx_blk/src/seeded.erl' => "f(D) -> erx_device:irq_bind_owner(D, 0).\n" }
         ),
         # A block device reads or writes the medium only for a request a driver

@@ -42,6 +42,7 @@ module Erx
         liberx/backend/hosted/wait.c
         liberx/backend/fiasco/arch/aarch64/cache.c
         liberx/backend/fiasco/arch/aarch64/clock.c
+        liberx/backend/fiasco/arch/aarch64/exception.c
         liberx/backend/fiasco/arch/aarch64/generated/trap.c
         liberx/backend/fiasco/arch/aarch64/root_start.S
         liberx/backend/fiasco/arch/aarch64/task_start.S
@@ -52,6 +53,7 @@ module Erx
         liberx/backend/fiasco/end.c
         liberx/backend/fiasco/entropy.c
         liberx/backend/fiasco/entropy.h
+        liberx/backend/fiasco/exception.h
         liberx/backend/fiasco/generated/calls.c
         liberx/backend/fiasco/generated/calls.h
         liberx/backend/fiasco/group.c
@@ -217,13 +219,9 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/guest/native_space/program.c'),
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/guest.c'),
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/program.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_vm_driver.c'),
                   Chokepoints::Site.new(glob: 'test/fixtures/boot_info_driver.c'),
+                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_*_driver.c'),
                   Chokepoints::Site.new(glob: 'tools/fuzz/boot_args_fuzz.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_umtx_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_park_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_claim_driver.c'),
-                  Chokepoints::Site.new(glob: 'test/fixtures/fiasco_time_driver.c'),
                   Chokepoints::Site.new(glob: 'tools/fuzz/service_wire_fuzz.c')],
           seed: { 'kernel/core/seeded.c' => "#include \"liberx/backend/fiasco/generated/calls.h\"\n" }
         ),

@@ -63,7 +63,7 @@
 -include("generated/erx_abi.hrl").
 
 -type name() :: binary().
--type rights() :: ro | rw | rx.
+-type rights() :: erx_abi_enums:files_rights().
 -type provider() :: release | {erofs, erx_erofs:fs()} | {grant, pid(), Tree :: name()}
                   | {facet, Name :: atom(), Tree :: name()} | ended.
 -type entry() :: #{point := [name()], provider := provider(), root := [name()], rights := rights()}.
@@ -292,7 +292,7 @@ mount_options([], Tree, Rights) when is_binary(Tree) ->
     {ok, Tree, case Rights of undefined -> ro; _ -> Rights end};
 mount_options([{tree, Tree} | Rest], undefined, Rights) when is_binary(Tree) ->
     mount_options(Rest, Tree, Rights);
-mount_options([Rights | Rest], Tree, undefined) when Rights =:= ro; Rights =:= rw; Rights =:= rx ->
+mount_options([Rights | Rest], Tree, undefined) when ?ERX_IS_FILES_RIGHTS(Rights) ->
     mount_options(Rest, Tree, Rights);
 mount_options(_Options, _Tree, _Rights) ->
     {error, einval}.
