@@ -48,6 +48,16 @@ module Erx
         type.members.fetch(member_name.to_s)
       end
 
+      # Whether the member numbered value of enum type_name carries attribute,
+      # one of the names the enum's attribute lines declare.
+      def attribute?(type_name, value, attribute)
+        type = @schema.types[type_name.to_s]
+        holders = type.attributes[attribute.to_s] if type.is_a?(EnumType)
+        member = type.members.key(value) if holders
+        fail_decode('unknown_attribute', 'schema', 0) unless member
+        holders.include?(member)
+      end
+
       def fixed_bytes(name)
         type = @schema.types[name.to_s]
         fail_decode('unknown_fixed_bytes', 'schema', 0) unless type.is_a?(BytesType) && type.fixed
