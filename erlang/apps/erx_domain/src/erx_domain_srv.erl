@@ -1484,7 +1484,7 @@ unprovide(request, _Id, State) -> State.
 %% the core a further event at once (an installation in the system domain's own
 %% registry); the core's state is already the step's next, so that event sees it.
 mints(Event, #{mints := Mints} = State) ->
-    {Actions, Next} = erx_domain_mints:step(Event, Mints),
+    {Next, Actions} = erx_domain_mints:step(Event, Mints),
     answer_in_place(lists:foldl(fun mint_act/2, State#{mints := Next}, Actions)).
 
 %% Each session's start still waiting after its ready report, answered once its

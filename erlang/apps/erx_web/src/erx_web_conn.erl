@@ -6,8 +6,8 @@
 One browser connection of the web front end (docs/design-web.md, "The
 connection core"): a pure state machine that both front ends drive, so
 they differ in how bytes arrive and leave and in nothing else (W5).
-step/2 takes one input and returns the actions its driver performs, in
-order, and the next state; it sends nothing and reads no clock.
+step/2 takes one input and returns the next state and the actions its
+driver performs, in order; it sends nothing and reads no clock.
 
 * The first message must be a `hello` with erx_web_proto's hash. Another
   hash closes with `bye mismatch`. A message the codec refuses, a text
@@ -60,7 +60,7 @@ updates pass through and are never stored.
                 | {close, close_reason()}        % close the connection; nothing follows
                 | {open, view(), target()}       % start the view and ask its first update
                 | {next, pid()}                  % ask the view for one more update
-                | {stop, pid()}                  % end the view's process
+                | {stop_view, pid()}             % end the view's process
                 | {event, pid(), binary()}.      % one ui.txt event record, for the renderer
 
 %% A view's pull is `sent` while the view owes an answer, `idle` once it
@@ -91,26 +91,31 @@ new(#{principal := Principal, build := Build}) ->
         {error, _} = Error -> Error
     end.
 
--doc "The actions INPUT asks of the driver, in order, and the next state.".
--spec step(input(), state()) -> {[action()], state()}.
+-doc "The next state and the actions INPUT asks of the driver, in order.".
+-spec step(input(), state()) -> {state(), [action()]}.
+step(Input, State) ->
+    {Actions, Next} = on_input(Input, State),
+    {Next, Actions}.
+
+%% INPUT's actions and the next state, as the decisions below build them.
 %% A pid is stopped whatever the phase, so one that arrives after the
 %% connection closed does not outlive it.
-step({opened, View, Pid}, State) ->
+on_input({opened, View, Pid}, State) ->
     opened(View, Pid, State);
-step(_Input, #conn{phase = closed} = State) ->
+on_input(_Input, #conn{phase = closed} = State) ->
     {[], State};
-step({in, Bytes}, State) ->
+on_input({in, Bytes}, State) ->
     case erx_web_proto:decode(browser, Bytes) of
         {ok, Message} -> message(Message, State);
         {error, _} -> close(protocol, State)
     end;
-step({text, _Bytes}, State) ->
+on_input({text, _Bytes}, State) ->
     close(protocol, State);
-step({update, View, Body}, State) ->
+on_input({update, View, Body}, State) ->
     update(View, Body, State);
-step({ended, View, Reason}, State) ->
+on_input({ended, View, Reason}, State) ->
     ended(View, Reason, State);
-step(tick, State) ->
+on_input(tick, State) ->
     close(idle, State).
 
 %% A message from the browser.
@@ -168,7 +173,7 @@ next(_View, #view{}, State) ->
     close(protocol, State).
 
 close_view(View, #view{phase = {open, Pid, _}}, State) ->
-    {[{stop, Pid}], drop_view(View, State)};
+    {[{stop_view, Pid}], drop_view(View, State)};
 close_view(View, #view{} = Entry, State) ->
     {[], put_view(View, Entry#view{phase = closing}, State)}.
 
@@ -190,12 +195,12 @@ opened(View, Pid, #conn{phase = ready, views = Views} = State) ->
         #{View := #view{phase = {opening, Request}} = Entry} ->
             {[], put_view(View, Entry#view{phase = {open, Pid, Request}}, State)};
         #{View := #view{phase = closing}} ->
-            {[{stop, Pid}], drop_view(View, State)};
+            {[{stop_view, Pid}], drop_view(View, State)};
         #{} ->
-            {[{stop, Pid}], State}
+            {[{stop_view, Pid}], State}
     end;
 opened(_View, Pid, State) ->
-    {[{stop, Pid}], State}.
+    {[{stop_view, Pid}], State}.
 
 %% A view's answer, sent only when the view owes one.
 update(View, Body, #conn{views = Views} = State) ->
@@ -220,7 +225,7 @@ answer(View, Body, Answered, State) ->
 end_view(View, Reason, #conn{views = Views} = State) ->
     Ended = {send, ended_message(View, Reason)},
     case maps:get(View, Views) of
-        #view{phase = {open, Pid, _}} -> {[{stop, Pid}, Ended], drop_view(View, State)};
+        #view{phase = {open, Pid, _}} -> {[{stop_view, Pid}, Ended], drop_view(View, State)};
         #view{} = Entry -> {[Ended], put_view(View, Entry#view{phase = closing}, State)}
     end.
 
@@ -230,7 +235,7 @@ ended(View, Reason, #conn{views = Views} = State) ->
     case Views of
         #{View := #view{phase = closing}} -> {[], drop_view(View, State)};
         #{View := #view{phase = {open, Pid, _}}} ->
-            {[{stop, Pid}, {send, ended_message(View, Reason)}], drop_view(View, State)};
+            {[{stop_view, Pid}, {send, ended_message(View, Reason)}], drop_view(View, State)};
         #{View := #view{}} -> {[{send, ended_message(View, Reason)}], drop_view(View, State)};
         #{} -> {[], State}
     end.
@@ -239,7 +244,7 @@ ended(View, Reason, #conn{views = Views} = State) ->
 %% hears why unless it went silent, and the core ignores everything after
 %% except a late pid, which it stops.
 close(Reason, #conn{views = Views} = State) ->
-    Stops = [{stop, Pid} || {_View, #view{phase = {open, Pid, _}}} <- lists:sort(maps:to_list(Views))],
+    Stops = [{stop_view, Pid} || {_View, #view{phase = {open, Pid, _}}} <- lists:sort(maps:to_list(Views))],
     Bye = case Reason of
               idle -> [];
               _ -> [{send, encoded({bye, Reason})}]
@@ -284,9 +289,10 @@ the session's erx_web_line, or `none` where the connection has none.
   refusal and `{ended, View, unavailable}` when the line did not answer.
   Every other target, and every open without a line, is `{ended, View,
   unsupported}`: the line serves records, and no UI is served yet.
-* `next` and `stop` are messages to the view; the view answers a `next`
-  with `{web_view, Pid, Body}` or `{web_view_ended, Pid, Reason}`, which the
-  driver hands to step/2 as `update` and `ended` of the view it opened as Pid.
+* `next` sends the view the message `next` and `stop_view` sends it `stop`;
+  the view answers a `next` with `{web_view, Pid, Body}` or
+  `{web_view_ended, Pid, Reason}`, which the driver hands to step/2 as
+  `update` and `ended` of the view it opened as Pid.
 * An `event` is dropped, since no UI view opens.
 """.
 -spec perform(action(), #{send := fun((binary()) -> term()), close := fun((close_reason()) -> term()),
@@ -314,7 +320,7 @@ perform({open, View, _Target}, #{}) ->
 perform({next, Pid}, #{}) ->
     Pid ! next,
     [];
-perform({stop, Pid}, #{}) ->
+perform({stop_view, Pid}, #{}) ->
     Pid ! stop,
     [];
 perform({event, _Pid, _Record}, #{}) ->
