@@ -2201,7 +2201,9 @@ interface, strictly ascending and without duplicates. A schema revision
 does not implicitly add newly declared operations to an existing grant.
 The parameters span contains typed scope and option values which the
 same service fragment declares with `parameter NAME NUMBER KIND
-CARDINALITY BOUND`. Cardinality is `one`, `optional` or `set MAX_COUNT`.
+CARDINALITY BOUND`. Cardinality is `one`, `optional` or `set MAX_COUNT`;
+a set is of `u64` and its `MAX_COUNT` at least 2, and its elements are
+packed one row each, in strictly ascending order of their values.
 Each declaration also identifies the checked scope/admission helper that
 consumes it. A missing required parameter, an unknown key or kind, a
 duplicate scalar key, an unsorted/duplicate set, an excessive bound, or a

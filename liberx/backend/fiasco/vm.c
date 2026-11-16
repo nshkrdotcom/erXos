@@ -704,5 +704,5 @@ vm_refused(const char *line)
 	while (line[length] != '\0')
 		length++;
 	erx_fiasco_console_write(line, length);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

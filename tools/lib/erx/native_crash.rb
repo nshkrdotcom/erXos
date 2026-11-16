@@ -18,7 +18,7 @@ module Erx
   # not, one case per image. A run that ended the machine proves little alone, so
   # the crash frame in its log is read back and held to what the guest said it would
   # touch: a read of a decommitted page, a write to a read-only page, a read from
-  # another thread than the first, and a trap. A page with too many rights makes the touch
+  # another thread than the first, and a trap. The machine must then reset. A page with too many rights makes the touch
   # succeed, and then the guest's next line fails the run.
   module NativeCrash
     MEMORY_MIB = 512
@@ -58,6 +58,7 @@ module Erx
       disagreements = RootFault.disagreements(record, kind: kase.kind, address: said[:address].to_i(16), write: kase.write)
       disagreements += ['pc'] unless fault.fetch('pc') >= ram_first
       raise Error, "#{kase.name}: the record's #{disagreements.join(', ')} disagree: #{record}" unless disagreements.empty?
+      raise Error, "#{kase.name}: the machine did not end by a reset" unless CrashFrame::RESET_LINE.match?(serial)
 
       fault
     end

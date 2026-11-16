@@ -613,7 +613,12 @@ on the host:
   turns a C program's `struct termios` into it and keeps only the bits the
   table names, as FreeBSD's `tcsetattr` drops the bits it does not support
   (`sys/kern/tty.c:1760-1764`), so a FreeBSD program that sets one gets
-  success, as POSIX allows, and sees it clear in `tcgetattr`. A change of
+  success, as POSIX allows, and sees it clear in `tcgetattr`. The table is
+  `abi/termios.txt`, from which both that codec (`erx_abi_termios`) and
+  musl's `bits/termios.h` are generated, so the flag bits, `c_cc` indices,
+  `NCCS` and `_POSIX_VDISABLE` the codec reads are those a C program
+  writes, and `struct termios` and its `B` speeds, each its rate, are
+  FreeBSD's (`sys/sys/_termios.h`). A change of
   `ICANON`, `VEOF` or `VEOL` moves what the new mode counts as complete to
   the readable bytes (`tty.c:1803-1812`), and every waiter waits again under
   the new rules.

@@ -5,14 +5,20 @@
 
 /*
  * The end path (docs/design-stopgap.md, "The end path"), and the effects the crash
- * codec asks of it. Best effort, with no lock. No thread is stopped first. Every end the
- * service takes, the root's fault, its stop and erx_machine_end, first writes the debug log's
- * records that wait for a reader to the console, so none is lost; the crash writer is handed
- * no log ring. The watchdog's end runs off the service and writes only its frame. Every end
- * then writes its last line, erx: end off or erx: end reset (erx_fiasco_machine_end).
+ * codec asks of it. Best effort, with no lock. No thread is stopped first. An end on the
+ * thread that owns the debug log (erx_fiasco_log_owned) first writes the records that
+ * wait for a reader to the console, so none is lost; on any other thread a write to the
+ * ring may be under way, so the ring is skipped, and the watchdog's end writes only its
+ * frame. Every end names its cause, which alone decides how it ends (end_how.c): it
+ * writes its last line, erx: end off or erx: end reset, and only a requested power-off
+ * turns the machine off. machine_end is static, so nothing ends the machine without a
+ * cause.
  */
 
+#include <l4/sys/platform_control.h>
+
 #include <stdatomic.h>
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -21,6 +27,7 @@
 #include "erx/core/debug_log.h"
 #include "erx/core/effects.h"
 #include "liberx/backend/fiasco/console.h"
+#include "liberx/backend/fiasco/end_how.h"
 #include "liberx/backend/fiasco/log.h"
 #include "liberx/backend/fiasco/service.h"
 
@@ -36,6 +43,29 @@ end_take(void)
 		erx_fiasco_sleep_forever();
 }
 
+/*
+ * The machine's end, which under -no-reboot QEMU turns into its own exit,
+ * whichever is asked, so its last line, erx: end off or erx: end reset, is what
+ * tells a test which end it took, as erXos's kernel's last line does
+ * (docs/design-kernel.md, "Ending the machine"). A kernel that returns from the
+ * call has no way to do it, so the thread sleeps and the harness's deadline
+ * reports the boot as hung.
+ */
+static _Noreturn void
+machine_end(erx_fiasco_end_cause_t cause)
+{
+	static const char off[] = "erx: end off\n";
+	static const char reset[] = "erx: end reset\n";
+	const bool reboot = erx_fiasco_end_how(cause) == ERX_END_RESET;
+
+	if (reboot)
+		erx_fiasco_console_write(reset, sizeof(reset) - 1);
+	else
+		erx_fiasco_console_write(off, sizeof(off) - 1);
+	(void)l4_platform_ctl_system_shutdown(L4_BASE_ICU_CAP, reboot ? 1 : 0);
+	erx_fiasco_sleep_forever();
+}
+
 _Noreturn void
 erx_fiasco_end_watchdog(const erx_watchdog_end_t *end)
 {
@@ -49,16 +79,17 @@ erx_fiasco_end_watchdog(const erx_watchdog_end_t *end)
 
 	(void)erx_crash_record_write(&input, end_record, end_scratch);
 	erx_crash_frame_write(end_record, ERX_CRASH_END_WATCHDOG);
-	erx_fiasco_machine_end(false);
+	machine_end(ERX_FIASCO_END_PET);
 }
 
 _Noreturn void
-erx_fiasco_end(const erx_crash_fault_t *fault, uint32_t how)
+erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 {
 	static const char message[] = "root task fault";
 
 	end_take();
-	erx_debug_log_take_back();
+	if (erx_fiasco_log_owned())
+		erx_debug_log_take_back();
 	if (fault != NULL) {
 		const erx_crash_input_t input = { .form = ERX_CRASH_FORM_FULL, .cause = ERX_CRASH_CAUSE_FAULT,
 		    .boot_value = ERX_BOOT_VALUE_UNKNOWN, .boot_slot = ERX_BOOT_SLOT_NONE,
@@ -68,7 +99,7 @@ erx_fiasco_end(const erx_crash_fault_t *fault, uint32_t how)
 		(void)erx_crash_record_write(&input, end_record, end_scratch);
 		erx_crash_frame_write(end_record, ERX_CRASH_END_FAULT);
 	}
-	erx_fiasco_machine_end(how != ERX_END_OFF);
+	machine_end(cause);
 }
 
 /* Buffers of its own: the watchdog's end may run at the same time and takes the others. */
@@ -87,7 +118,11 @@ erx_fiasco_task_crash_write(const erx_crash_fault_t *fault)
 	erx_crash_frame_write(record, ERX_CRASH_END_TASK);
 }
 
-/* The service is one thread and the only caller of erx_dispatch in this program, so the debug log's lock is empty. */
+/*
+ * The cores' one caller in a root is one thread, the service, or a probe's one thread
+ * with no service (log.c), so the debug log's lock is empty, and an end drains the ring
+ * only on that thread.
+ */
 void
 erx_effect_log_lock(void)
 {

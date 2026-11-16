@@ -1017,11 +1017,13 @@ boot_parameter(const erx_mf_parameter_t *row, const erx_service_parameter_t *par
  * parameter table, into parameters[0] to parameters[count - 1], against
  * what its service's interface declares (erx_service_parameters); the
  * reason it refuses them, or NULL. The rows follow the declarations'
- * number order, at most one row a declaration, as the packer writes
- * them: one walk over the declarations, with a cursor on the first row
- * not yet matched, checks each row against the declaration of its key
- * (boot_parameter), refuses a required declaration with no row, and
- * leaves over only a row that is undeclared, repeated or out of order.
+ * number order, at most most rows a declaration, a set's elements in
+ * strictly ascending order of their values, as the packer writes them:
+ * one walk over the declarations, with a cursor on the first row not yet
+ * matched, checks each row of a declaration's key against it
+ * (boot_parameter) and against the row before it, refuses a required
+ * declaration with no row, and leaves over only a row that is
+ * undeclared, past its declaration's most, repeated or out of order.
  */
 static const char *
 boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint32_t count, uint32_t interface,
@@ -1032,20 +1034,23 @@ boot_facet_parameters(const erx_manifest_view_t *manifest, uint32_t first, uint3
 	erx_mf_parameter_t row;
 	const char *reason;
 	size_t ndeclared;
-	uint32_t matched = 0;
+	uint32_t matched = 0, of;
 
 	declared = erx_service_parameters(interface, &ndeclared);
 	for (size_t at = 0; at < ndeclared; at++) {
-		if (matched < count && !erx_manifest_facet_parameters_at(manifest, first + matched, &row))
-			return ("manifest: a facet parameter row the reader cannot read");
-		if (matched == count || row.key != declared[at].number) {
-			if (declared[at].required)
-				return ("manifest: a facet leaves out a parameter its service requires");
-			continue;
+		for (of = 0; of < declared[at].most && matched < count; of++, matched++) {
+			if (!erx_manifest_facet_parameters_at(manifest, first + matched, &row))
+				return ("manifest: a facet parameter row the reader cannot read");
+			if (row.key != declared[at].number)
+				break;
+			if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
+				return (reason);
+			/* A set's elements; boot_parameter has checked each is a u64. */
+			if (of > 0 && row.scalar <= parameters[matched - 1].scalar)
+				return ("manifest: a facet parameter set is unsorted or repeats a value");
 		}
-		if ((reason = boot_parameter(&row, &declared[at], strings, &parameters[matched])) != NULL)
-			return (reason);
-		matched++;
+		if (of == 0 && declared[at].required)
+			return ("manifest: a facet leaves out a parameter its service requires");
 	}
 	if (matched != count)
 		return ("manifest: a facet parameter is undeclared, stated twice or out of order");

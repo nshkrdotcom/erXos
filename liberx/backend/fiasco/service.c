@@ -105,6 +105,8 @@ static void	service_page_fault(const l4_msg_regs_t *, uint32_t);
 static void	service_exception(const l4_exc_regs_t *, uint32_t);
 
 static _Alignas(16) uint8_t service_stack[SERVICE_STACK_BYTES];
+/* The service thread's UTCB, set before it runs and never again. */
+static l4_utcb_t *service_utcb;
 /* What the boot handoff said of the machine: written once, before the service thread exists. */
 static bool	service_boot_known;
 static uint8_t	service_build[sizeof(((erx_info_facts_t *)0)->build)];
@@ -125,6 +127,13 @@ uint64_t
 erx_fiasco_service_thread(void)
 {
 	return (erx_fiasco_root_slot_cap(ERX_FIASCO_SLOT_SERVICE_THREAD));
+}
+
+/* In a root, the service thread alone runs the debug log's cores (service_debug_log). */
+bool
+erx_fiasco_log_owned(void)
+{
+	return (l4_utcb() == service_utcb);
 }
 
 void
@@ -214,7 +223,8 @@ service_start(void)
 	l4_thread_control_start();
 	l4_thread_control_pager(L4_BASE_PAGER_CAP);
 	l4_thread_control_exc_handler(L4_BASE_PAGER_CAP);
-	l4_thread_control_bind((l4_utcb_t *)((char *)l4_utcb() + L4_UTCB_OFFSET), L4_BASE_TASK_CAP);
+	service_utcb = (l4_utcb_t *)((char *)l4_utcb() + L4_UTCB_OFFSET);
+	l4_thread_control_bind(service_utcb, L4_BASE_TASK_CAP);
 	if (service_failed(l4_thread_control_commit(erx_fiasco_service_thread())))
 		return ("service: the kernel refused its thread's control");
 	if (service_failed(l4_factory_create_gate(L4_BASE_FACTORY_CAP, erx_fiasco_service_gate(), erx_fiasco_service_thread(),
@@ -463,7 +473,7 @@ service_run(const erx_fiasco_wire_decoded_t *decoded, erx_fiasco_reply_t *reply)
 			return (ERX_ENOTSUP);
 		if (how != ERX_END_OFF && how != ERX_END_RESET)
 			return (ERX_EINVAL);
-		erx_fiasco_end(NULL, (uint32_t)how);
+		erx_fiasco_end(how == ERX_END_OFF ? ERX_FIASCO_END_ASKED_OFF : ERX_FIASCO_END_ASKED_RESET, NULL);
 	}
 	default:
 		return (ERX_ENOTSUP);
@@ -839,7 +849,7 @@ service_thread_delete(uint32_t task, uint32_t index)
 	if (service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_thread_cap(task, index))) ||
 	    service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_semaphore_cap(task, index)))) {
 		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
 }
 
@@ -881,12 +891,12 @@ erx_fiasco_test_thread_priority(uint32_t index, uint32_t priority, uint64_t mask
 }
 #endif
 
-/* The root's fault ends the machine; a task's goes to its fault gate, or ends only the task. */
+/* The root's fault resets the machine; a task's goes to its fault gate, or ends only the task. */
 static void
 service_fault(uint32_t task, const erx_crash_fault_t *fault)
 {
 	if (task == ERX_FIASCO_TASK_ROOT)
-		erx_fiasco_end(fault, ERX_END_OFF);
+		erx_fiasco_end(ERX_FIASCO_END_FAULT, fault);
 	erx_fiasco_task_fault(task, fault);
 }
 

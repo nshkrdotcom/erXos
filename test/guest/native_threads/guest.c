@@ -980,7 +980,7 @@ erx_fiasco_root_main(void)
 
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	say("erx: threads: service up\n");
 	cpu_count = erx_fiasco_test_cpu_count();
