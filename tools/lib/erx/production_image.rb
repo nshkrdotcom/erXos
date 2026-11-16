@@ -778,33 +778,54 @@ module Erx
       # The words of -erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
       # MEM_SIZE CLOCK COHERENT MAC, which the root adds for each device of a kind in a unit the system
       # domain holds, and of -erx_record device ROLE PERIPHERAL PATH BASE SIZE LINE MARK CLOCK INDEX, the
-      # host link's UART's physical record (docs/design-stopgap.md, "Device records"; record_words).
+      # host link's and the line grant's UART's physical record (docs/design-stopgap.md, "Device
+      # records"; held_record_words).
       GIVEN_RECORD_WORDS = 15
       DEVICE_RECORD_WORDS = 11
-      # The words of the records the root adds to the system domain's arguments: for each unit
-      # the manifest gives the system domain, each device of its placement in the platform
-      # record that is of a kind (DeviceKinds.given) gives a -erx_record given record, and the host link's
-      # UART, the UART at machine.hostlink's path, a -erx_record device record when the boot asks for
-      # the host link (liberx/backend/core/boot_manifest.c, devices_read). A framebuffer row
-      # the system domain holds is not counted: its record depends on whether the firmware's
-      # tree placed the framebuffer, which the manifest does not say (TODO.md).
+      # The words of the records the root adds to the system domain's arguments, for the
+      # manifest at source on its platform (held_record_words).
       def self.record_words(root, source, hostlink:)
         manifest = Manifest::Frontend.read(source)
         platform = Platform.load(root: root, name: manifest.machine.string('platform'))
+        held_record_words(root, manifest, platform.record.fetch('units'), hostlink: hostlink)
+      end
+
+      # The words of the records the root adds for manifest, a Manifest::Frontend view, over
+      # the platform record's units: for each unit the manifest gives the system domain, each
+      # device of its placement that is of a kind (DeviceKinds.given) gives a -erx_record given
+      # record, and each PL011 the root drives physically (physical_paths) a -erx_record device
+      # record (liberx/backend/core/boot_manifest.c, devices_read and device_kind). A
+      # framebuffer row the system domain holds is not counted: its record depends on whether
+      # the firmware's tree placed the framebuffer, which the manifest does not say (TODO.md).
+      def self.held_record_words(root, manifest, units, hostlink:)
         kinds = DeviceKinds.given(root).map { |kind| [kind.role, kind.compatible] }
-        hostlink_path = hostlink ? manifest.machine.string('hostlink') : nil
+        physical = physical_paths(manifest, hostlink: hostlink)
+        pl011 = ['uart', DeviceKinds.uart_compatible(DeviceKinds::PL011, root: root)]
         placements = manifest.records.fetch('unit', []).filter_map do |unit|
           unit.string('placement') if unit.reference('holder') == 'system'
         end
-        platform.record.fetch('units').select { |unit| placements.include?(unit.fetch('key')) }
-                .flat_map { |unit| unit.fetch('devices') }
-                .sum do |device|
-                  if kinds.include?(device.values_at('role', 'compatible')) then GIVEN_RECORD_WORDS
-                  elsif hostlink_path && device.fetch('role') == 'uart' && device.fetch('path') == hostlink_path
-                    DEVICE_RECORD_WORDS
-                  else 0
-                  end
-                end
+        units.select { |unit| placements.include?(unit.fetch('key')) }
+             .flat_map { |unit| unit.fetch('devices') }
+             .sum do |device|
+               if kinds.include?(device.values_at('role', 'compatible')) then GIVEN_RECORD_WORDS
+               elsif device.values_at('role', 'compatible') == pl011 && physical.include?(device.fetch('path'))
+                 DEVICE_RECORD_WORDS
+               else 0
+               end
+             end
+      end
+
+      # The paths of the UARTs whose records the root writes physical, one for each of its
+      # physical kinds (boot_manifest.c, hostlink_kind and line_kind): machine.hostlink's
+      # when the boot asks for the host link, and the uart of each facet of a service whose
+      # interface is line, which the manifest check keeps to one grant on a UART that is
+      # neither the console's nor the host link's.
+      def self.physical_paths(manifest, hostlink:)
+        lines = manifest.records.fetch('service', []).select { |service| service.reference('interface') == 'line' }
+                        .map { |service| "@service.#{service.name}" }
+        uarts = manifest.records.fetch('facet', []).select { |facet| lines.include?(facet.reference('service')) }
+                        .flat_map { |facet| facet.parameters.filter_map { |key, value| value.value if key.value == 'uart' } }
+        (hostlink ? [manifest.machine.string('hostlink')] : []) + uarts
       end
       # What a plain erx.arg word used to break: it joins the last flag's arguments.
       CONSOLE_PLAIN_WORD = 'erx.arg=plainword'
@@ -1277,7 +1298,7 @@ module Erx
 
       # SMOKE_CELLS under TCG: the plain boot to the command shell at one CPU, then the transcript.
       # The plain boot is of the website's machine, one UART, the console's: one serial line and
-      # no erx.hostlink=1, so the root hands no host link record and erx_hostlink starts nothing
+      # no erx.hostlink=1, so the root hands no host link record and no line group starts erx_hostlink
       # (docs/design-stopgap.md, "The command line"). A record for the absent UART faults the
       # root task under TCG at erx_pl011's first read, as on the website; under HVF the same read
       # does not fault, so only this boot shows it. HVF's boots keep the host link.

@@ -637,11 +637,13 @@ line trees under one supervisor, `erx_uart_sup`, `one_for_one`, of
 **line groups**, one for each interrupt line those UARTs use. A group is
 a `rest_for_one` supervisor: the line's owner first, when the line is
 shared, which `erx_irq_line:owners/1` computes from the drivers'
-records, then the host link if its UART is on the line, then each line
-tree on it, each starting its own driver, which joins the owner
+records, then the line's services, a `one_for_one` supervisor of the
+host link if its UART is on the line and each line tree on it, each
+starting its own driver, which joins the owner
 ([design-shared-devices.md](design-shared-devices.md#lines-inside-a-domain)).
 So an owner's failure restarts exactly the services whose UARTs share
-its line, and a failure on another line restarts nothing here. On the
+its line, one service's failure restarts no other, and a failure on
+another line restarts nothing here. On the
 Pi 4 one group holds line 153's owner, the host link and the Bluetooth
 line's tree; on QEMU `virt` the host link's group holds the host link
 alone. The console is not in a group: it starts its own line's owner,

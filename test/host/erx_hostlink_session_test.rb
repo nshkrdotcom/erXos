@@ -17,7 +17,7 @@ class ErxHostlinkSessionTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   # The application, compiled whole (ErlangBuild). The host stand-in for erx_bytes, whose
   # BIFs stock's emulator lacks, is compiled after it and replaces its beam.
-  APPLICATIONS = %w[erx erx_hostlink].freeze
+  APPLICATIONS = %w[erx erx_uart].freeze
   TESTS = %w[test/erlang/host_bytes/erx_bytes.erl test/erlang/erx_hostlink_session_tests.erl].freeze
 
   def test_session_protocol_cases_pass_under_eunit

@@ -358,10 +358,12 @@ services (the carrier between domains, `erx_dist`, and its connection
 agent, `erx_connections`; the log sink's handler, `erx_log_h`;
 `erx_program`, `erx_device`, `erx_watchdog`, the console, the kernel log
 and the namespace); `erx_files`, the Erlang file servers; one driver
-application per device class, `erx_uart` and `erx_blk`; `erx_shell`, the
+application per device class, `erx_uart` and `erx_blk`, of which
+`erx_uart` also holds the services on the system domain's UARTs, the host
+link and the line service; `erx_shell`, the
 command shell; and the system services and their clients: `erx_domain`,
 the domain service, which only the system release ships; `erx_code`, the
-code service; `erx_hostlink`, the host link; `erx_net`, the TCP/IP stack;
+code service; `erx_net`, the TCP/IP stack;
 `erx_net_client`, its socket backends; `erx_web_line`, a session's line to
 the web domain, which only the domain release ships; `erx_desk`, the
 desktop programs, which the client script boots; and `erx_session`,
@@ -3069,9 +3071,13 @@ Only the driver's modules reference the device NIF: ERTS binds a static NIF
 only to the module of its name, and the register BIFs are that module's, so
 Erlang reaches a device only by naming `erx_device`, and a source check
 (`tools/lib/erx/chokepoint_rules/device.rb`, in `make check`) fails the build when any
-Erlang source under `otp/` or `erlang/` other than `erx_device` itself and
-the modules of the driver applications names it, in a call, an apply, a
-quoted atom or a string, with a seeded violation in
+Erlang source under `otp/` or `erlang/` other than `erx_device` itself,
+the modules of the driver applications `erx_blk` and `erx_fb`, and the UART
+drivers of `erx_uart`, `erx_pl011` and `erx_mini_uart`, names it, in a
+call, an apply, a quoted atom or a string, so the host link and the line
+trees, which parse the bytes a UART carries, touch no device's registers
+themselves (which UART a driver drives is its starter's choice, which no
+check constrains), with a seeded violation in
 `test/host/device_callers_test.rb`. It reads text, so it catches a slip,
 not code that spells the atom with escapes or builds it from pieces; what
 keeps a device from every other domain is that its capabilities are

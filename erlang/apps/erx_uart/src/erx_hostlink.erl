@@ -9,11 +9,16 @@ The host link's process in the system domain (docs/design-live.md, "The host
 link"): the effects around erx_hostlink_session's pure state machine, and the
 one sink of the host link's UART.
 
-It finds the UART the system manifest names as `machine.hostlink` among the
-root's device records (`-erx_record device hostlink pl011 ...`) and starts erx_pl011
-on it as its owner, so only this process hands that line bytes to write. A
-machine whose manifest names no host link has no record, and the process is
-not started (`ignore`), as a machine without a disk has no block driver.
+Its line group (erx_uart_sup) starts it with the root's device record of the
+UART the system manifest names as `machine.hostlink` (`-erx_record device
+hostlink pl011 ...`), after the line's owner when the line is shared, and it
+starts erx_pl011 on that record as the driver's owner, so only this process
+hands that line bytes to write. A machine whose manifest names no host link
+has no record, and no group starts it, as a machine without a disk has no
+block driver. Its supervisor restarts it after a crash, which ends the
+session and its facets, as a machine reset does for the host: the tool sees
+no reply to its calls, opens a new session with a hello, and reports the
+outcome of calls whose replies never arrived as unknown.
 
 Everything the session decides is erx_hostlink_session's; this module only
 performs what `step/2` returns, in order, and feeds back what happened:
@@ -54,7 +59,7 @@ no facet: none takes them. A facet's own casts to the host arrive as
 `{facet_cast, Facet, Payload}` and go out on the facet's number.
 """.
 
--export([start_link/0, root/2, bounded_measure/1]).
+-export([start_link/1, root/2, bounded_measure/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2, format_status/1]).
 
 -include("generated/erx_abi.hrl").
@@ -93,38 +98,19 @@ no facet: none takes them. A facet's own casts to the host arrive as
     files = none :: none | {pid(), reference()}
 }).
 
--spec start_link() -> gen_server:start_ret().
-start_link() ->
-    gen_server:start_link({local, ?MODULE}, ?MODULE, [], []).
+-spec start_link(erx_device_record:spec()) -> gen_server:start_ret().
+start_link(Spec) ->
+    gen_server:start_link({local, ?MODULE}, ?MODULE, Spec, []).
 
 -doc false.
-init([]) ->
-    case erx_device_record:find(hostlink, pl011) of
-        {ok, []} ->
-            ignore;
-        {ok, [Spec]} ->
-            start(Spec);
-        {ok, [_, _ | _]} ->
-            {stop, {hostlink, "more than one host link device record"}};
-        {error, Reason} ->
-            {stop, Reason}
-    end.
-
-start(Spec) ->
+init(Spec) ->
     case erx_build:id() of
         {ok, Build} ->
-            %% The line's owner first, when the record marks the line shared: linked to
-            %% this process as the driver is, so either's end ends the host link.
-            case erx_irq_line:start_owners([{erx_pl011, [Spec]}]) of
-                {ok, _Owners} ->
-                    {ok, Driver} = erx_pl011:start_link(Spec, self()),
-                    Core = erx_hostlink_session:new(#{build => Build, versions => versions(),
-                                                      measure => fun bounded_measure/1}),
-                    {ok, perform(erx_hostlink_session:step({entropy, entropy()}, Core),
-                                 #state{driver = Driver, core = Core})};
-                {error, Reason} ->
-                    {stop, {hostlink_line_owner, Reason}}
-            end;
+            {ok, Driver} = erx_pl011:start_link(Spec, self()),
+            Core = erx_hostlink_session:new(#{build => Build, versions => versions(),
+                                              measure => fun bounded_measure/1}),
+            {ok, perform(erx_hostlink_session:step({entropy, entropy()}, Core),
+                         #state{driver = Driver, core = Core})};
         {error, Reason} ->
             {stop, Reason}
     end.

@@ -16,7 +16,7 @@ require_relative '../fixtures/generated_tree'
 class ConsoleSinkTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   SITES = %w[erlang/apps/erx_uart/src/erx_pl011.erl erlang/apps/erx_uart/src/erx_mini_uart.erl erlang/apps/erx/src/erx_console.erl erlang/apps/erx/src/erx_stdio.erl
-             erlang/apps/erx_hostlink/src/erx_hostlink.erl erlang/apps/erx_session/src/erx_session_tty.erl
+             erlang/apps/erx_uart/src/erx_hostlink.erl erlang/apps/erx_session/src/erx_session_tty.erl
              erlang/apps/erx_uart/src/erx_line.erl].freeze
   PATTERN = /\berx_console_output\b/
 

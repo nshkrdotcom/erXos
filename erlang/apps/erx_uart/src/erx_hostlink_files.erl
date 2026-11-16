@@ -21,7 +21,7 @@ reply, and a grant's reply arrives at the alias of its request or flush;
 anything else the bridge receives is dropped.
 
 Which trees the host may reach is the host-link configuration's:
-`files_trees` in `erx_hostlink`'s environment, a list of atoms, when it sets
+`files_trees` in `erx_uart`'s environment, a list of atoms, when it sets
 one, and otherwise the build's (`default_trees/1`): `proc` and `data` in a
 development build, none in a release build, as erx_build:development/0
 tells them apart, a manifest that cannot be read counting as a release
@@ -125,7 +125,7 @@ or value that is no list, as written and line-escaped.
 """.
 -spec configured_trees() -> {ok, [binary()]} | {error, {files_trees, binary()}}.
 configured_trees() ->
-    case application:get_env(erx_hostlink, files_trees) of
+    case application:get_env(erx_uart, files_trees) of
         {ok, Names} ->
             tree_names(Names, []);
         undefined ->

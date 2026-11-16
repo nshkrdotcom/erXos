@@ -11,6 +11,7 @@ require_relative '../../tools/lib/erx/oracle_qemu'
 require_relative '../../tools/lib/erx/medium_boot'
 require_relative '../../tools/lib/erx/production_image'
 require_relative '../../tools/lib/erx/net_device'
+require_relative '../fixtures/manifest_context'
 
 # The production image's host-side rules. Its boot is the QEMU gate's production_image suite.
 class ProductionImageTest < Minitest::Test
@@ -736,6 +737,22 @@ class ProductionImageTest < Minitest::Test
       checkpoint_verifier('erts-start', manifest_source: source)
         .call("erx: erts: erl_start runs, #{words - Erx::ProductionImage::Run::GIVEN_RECORD_WORDS} arguments\n")
     end
+  end
+
+  # The line grant's UART gets a physical record as the host link's does
+  # (boot_manifest.c, device_kind): a manifest granting the line on line_a counts one more
+  # physical record, and line_b, a UART of a held unit that no grant names, none.
+  def test_the_erts_line_counts_the_line_grants_uart_record
+    units = ManifestContextFixture.line_platform(PLATFORM.record).fetch('units')
+    source = ManifestContextFixture.domain_source(PLATFORM.manifest_source(ROOT))
+    uart = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
+    grant = ManifestContextFixture.line_grant('line', '@domain.alpha', uart, floor: 1)
+    plain, granted = [[], [grant]].map { |grants| Erx::Manifest::Frontend.read(ManifestContextFixture.with_line(source, *grants)) }
+    words = ->(manifest, hostlink) { Erx::ProductionImage::Run.held_record_words(ROOT, manifest, units, hostlink: hostlink) }
+    device = Erx::ProductionImage::Run::DEVICE_RECORD_WORDS
+    assert_equal words.call(plain, true) + device, words.call(granted, true)
+    assert_equal words.call(plain, false) + device, words.call(granted, false)
+    assert_equal words.call(plain, false) + device, words.call(plain, true), 'the host link adds its own record'
   end
 
   # The count reads boot_info.c's ALLOCATOR_WORDS: a misread string would leave every

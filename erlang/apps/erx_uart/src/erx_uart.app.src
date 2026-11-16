@@ -1,13 +1,33 @@
 %% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
 %% SPDX-License-Identifier: BSD-2-Clause
 
-%% The UART device class's drivers, over erx_device (docs/design-runtime.md, "The console
-%% and standard I/O"): the Arm PrimeCell UART PL011 and the BCM2711's mini UART, either of
-%% which the console drives when the boot's `-erx_record console` names its peripheral.
+%% The system domain's UARTs and the services on them. The drivers, over erx_device
+%% (docs/design-runtime.md, "The console and standard I/O"): the Arm PrimeCell UART PL011
+%% and the BCM2711's mini UART, either of which the console drives when the boot's
+%% `-erx_record console` names its peripheral. erx_uart_sup, which erx_uart_app starts:
+%% one line group for each interrupt line of the host link's UART and the line trees'
+%% (erx_line, erx_line_fs), so one application owns every line those services use and
+%% every service on it; the console's line is the console's own.
+%%
+%% The host link (docs/design-live.md, "The host link"): the session between tools/erx and
+%% the system domain over the second UART. erx_hostlink_frame is its wire frames,
+%% erx_hostlink_stream the frames within a session (reassembly, sequence, credit) and
+%% erx_hostlink_session the session protocol's pure core (hello, the call window, kept
+%% replies, the facet table); erx_hostlink_payload is Phase 1's check of a payload from the
+%% host. erx_hostlink is the process that performs the session's actions on the UART, in
+%% its UART's line group; erx_hostlink_install is the install facet, over erx_code, and
+%% erx_hostlink_web the web facet, a relay of browser connections to the web domain.
+%% erx_hostlink_files is the files stream's 9P bridge, one for each session, around
+%% erx_hostlink_9p's pure core; files_trees, when set, lists the trees it serves, and
+%% otherwise the system manifest's development flag decides them.
 {application, erx_uart,
- [{description, "erXos UART drivers and the line service"},
+ [{description, "erXos UARTs: drivers, the host link and the line service"},
   {vsn, "1"},
-  {modules, [erx_line, erx_line_fs, erx_mini_uart, erx_pl011]},
-  {registered, []},
-  {applications, [kernel, stdlib, erx, erx_files]},
+  {modules, [erx_hostlink, erx_hostlink_9p, erx_hostlink_files, erx_hostlink_frame,
+             erx_hostlink_install, erx_hostlink_payload, erx_hostlink_session,
+             erx_hostlink_stream, erx_hostlink_web,
+             erx_line, erx_line_fs, erx_mini_uart, erx_pl011, erx_uart_app, erx_uart_sup]},
+  {registered, [erx_uart_sup, erx_hostlink]},
+  {applications, [kernel, stdlib, erx, erx_files, erx_code]},
+  {mod, {erx_uart_app, []}},
   {env, []}]}.

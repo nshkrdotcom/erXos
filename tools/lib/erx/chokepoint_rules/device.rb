@@ -15,8 +15,11 @@ module Erx
     # is a site of the line-call rule.
     ERX_ABI_HEADER = 'erlang/apps/erx/include/generated/erx_abi.hrl'
     BLK_WRITE = 'erlang/apps/erx_blk/src/erx_blk_write.erl'
-    # The applications whose modules drive a device class.
-    DRIVER_APPLICATIONS = %w[erx_blk erx_fb erx_uart].freeze
+    # The applications whose modules drive a device class, and the UART drivers, the
+    # device shims of erx_uart: its other modules, the host link and the line trees,
+    # parse the bytes the drivers carry and touch no UART's registers themselves.
+    DRIVER_APPLICATIONS = %w[erx_blk erx_fb].freeze
+    UART_DRIVERS = %w[erx_pl011 erx_mini_uart].freeze
 
     # A call of erx_device's issuing function name: erx_device followed by
     # the name after a colon (a remote call or fun) or a comma (an apply),
@@ -206,20 +209,23 @@ module Erx
         # Erlang reaches a device only by naming erx_device. Only erx_device,
         # erx_irq_line, which binds and acknowledges lines for drivers
         # (docs/design-shared-devices.md, "Lines inside a domain"), and the
-        # driver applications, one per device class, name it: as a call, an
-        # apply's module literal, a quoted atom or a string. What keeps a device
+        # driver applications, one per device class, name it, and of erx_uart only
+        # its UART drivers: as a call, an apply's module literal, a quoted atom or
+        # a string. What keeps a device
         # from other domains is that its capability is installed only in its
         # driver's domain.
         Chokepoints::ErlangForbidden.new(
-          name: 'device-callers', rule: 'only erx_device, erx_irq_line and the driver applications name erx_device, ' \
-                                        'whose NIF and BIFs reach a device',
+          name: 'device-callers', rule: 'only erx_device, erx_irq_line, the driver applications and the UART drivers ' \
+                                        'name erx_device, whose NIF and BIFs reach a device',
           design: DEVICE_DESIGN, pattern: /(?<![A-Za-z0-9_@])erx_device(?![A-Za-z0-9_@])/,
           sites: [ERX_DEVICE, ERX_IRQ_LINE, *DRIVER_APPLICATIONS.map { |application| "erlang/apps/#{application}/**/*" },
+                  *UART_DRIVERS.map { |driver| "erlang/apps/erx_uart/src/#{driver}.erl" },
                   # erXos's own directory of the network stack, whose other modules name nothing of erXos's
                   # (docs/design-network-stack.md, "Two places, four seams").
                   'erlang/apps/erx_net/erxos/**/*'],
           seed: { 'otp/lib/stdlib/src/seeded.erl' => "f(D) -> erx_device:read(D, dr).\n",
-                  'erlang/apps/erx_files/src/seeded.erl' => "f() -> \"erx_device\".\n" }
+                  'erlang/apps/erx_files/src/seeded.erl' => "f() -> \"erx_device\".\n",
+                  'erlang/apps/erx_uart/src/erx_hostlink_seeded.erl' => "f(D) -> erx_device:read(D, dr).\n" }
         ),
         # No driver binds a shared line and takes its deliveries from the drivers
         # joined to its owner, nor binds or acknowledges a line past erx_irq_line
@@ -230,7 +236,7 @@ module Erx
           design: 'docs/design-shared-devices.md#lines-inside-a-domain',
           pattern: /(?<![A-Za-z0-9_@])irq_(?:bind|bind_owner|ack)(?![A-Za-z0-9_@])/,
           sites: [ERX_DEVICE, ERX_IRQ_LINE, ERX_ABI_HEADER],
-          seed: { 'erlang/apps/erx_uart/src/seeded.erl' => "f(D) -> erx_device:irq_bind_owner(D, 0).\n" }
+          seed: { 'erlang/apps/erx_blk/src/seeded.erl' => "f(D) -> erx_device:irq_bind_owner(D, 0).\n" }
         ),
         # A block device reads or writes the medium only for a request a driver
         # posts, and erx_blk_write is the one block module that posts: it builds

@@ -23,7 +23,7 @@ module ErxHostlink9pFuzz
   Erx::Generated.ensure(root: ROOT)
   SOURCES = %w[otp/erts/preloaded/src/erx_9p_grammar.erl erlang/apps/erx/src/generated/erx_9p.erl]
             .map { |source| Erx::Generated.path(source, root: ROOT) }.freeze
-  CORE_SOURCE = File.join(ROOT, 'erlang/apps/erx_hostlink/src/erx_hostlink_9p.erl')
+  CORE_SOURCE = File.join(ROOT, 'erlang/apps/erx_uart/src/erx_hostlink_9p.erl')
   TARGET_SOURCE = File.join(ROOT, 'test/erlang/erx_hostlink_9p_fuzz.erl')
   INCLUDE = Erx::Generated.path('erlang/apps/erx/include', root: ROOT)
   POOL_CHECK = 'map_size(Fids) >= Pool -> {error, emfile};'

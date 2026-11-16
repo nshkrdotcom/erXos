@@ -404,7 +404,7 @@ idle machine.
 host link's device record ([Device records](#device-records)). The manifest names the host link's UART
 by its device-tree path, and the root does not look in the device tree for it, so on a machine without
 that UART the record would point `erx_pl011` at empty address space, whose first read faults the
-system domain and with it the machine. Without the record `erx_hostlink` starts nothing and the boot
+system domain and with it the machine. Without the record no line group starts `erx_hostlink` and the boot
 is the same otherwise. `Erx::QemuPlan` adds the word exactly when it gives the guest the second
 `-serial` ([The production image](#the-production-image), "Device paths"); the website's emulator, whose machine has one UART, never
 sends it. erXos's kernel needs no such word: it lists a UART only when the device tree has it.
