@@ -15,10 +15,11 @@ that proves the code under test ran.
 
 * [High] storage, the `system` tree (`erlang/apps/erx_storage`,
   `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
-  `erx_storage_system`, a read-only `erx_fs` backend over `erx_erofs` rooted
-  at the partition's `apps/`, with no writing callback, which opens the
-  partition's image in `erx_verity` over the `system` window with the
-  layout and root hash of its boot record; the packer and fsimg writing
+  the storage domain serving the backend `erx_storage_system` as
+  `system_service`: the tree mounted once by `erx_storage_system:mount/1`
+  on `erx_blk_service:window(system)` under `erx_storage_sup`, and its
+  grants, `erx_fs:start_link(erx_storage_system, Tree, Rights)`, handed out
+  by the service's mint; the packer and fsimg writing
   the partition's hash tree after its image and refusing an image and
   tree larger than the partition, the manifest recording the image's
   length and the tree's offset, length, salt and root hash for the slot
@@ -26,10 +27,8 @@ that proves the code under test ran.
   `tree_offset`, `tree_length`, `salt` and `root_hash`, named by a
   header field `system_image`), the domain library writing them as
   `-erx_record system_image` into the arguments of the `system` window's
-  holder alone (design-stopgap.md, The booted slot), read by
-  `erx_device_record:system_image/1` with its fuzz target and host test,
-  the manifest check refusing a `system` window row without the fields,
-  and the update
+  holder alone (design-stopgap.md, The booted slot), the manifest check
+  refusing a `system` window row without the fields, and the update
   writing the tree and the manifest with the partition; `Erx::ErofsReads` rules that the reader reaches
   blocks only through `erx_verity:read/3` and that only `erx_ns` and
   `erx_storage_system` open an image in it; the

@@ -1,0 +1,175 @@
+%% Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+%% SPDX-License-Identifier: BSD-2-Clause
+
+%% EUnit cases of the `system` tree's backend, erx_storage_system, through erx_fs grants
+%% over a RAM window (erx_erofs_tests:window/1) on the partitions
+%% test/host/erx_storage_system_test.rb writes in ERX_SYSTEM_CASES, each opened with the
+%% record words written beside it.
+-module(erx_storage_system_tests).
+-include_lib("eunit/include/eunit.hrl").
+-include("generated/erx_abi.hrl").
+
+-define(NOFID, 16#ffffffff).
+-define(TREE, <<"system">>).
+-define(O_RDONLY, 0).
+-define(O_WRONLY, 1).
+-define(O_TRUNC, 8#1000).
+
+%% Fixtures --------------------------------------------------------------
+
+%% The partition Name's bytes and its boot records, the system_image record alone.
+partition(Name) ->
+    Dir = os:getenv("ERX_SYSTEM_CASES"),
+    {ok, Cases} = file:consult(filename:join(Dir, "system.terms")),
+    {Name, Words} = lists:keyfind(Name, 1, Cases),
+    {ok, Bytes} = file:read_file(filename:join(Dir, Name ++ ".img")),
+    {Bytes, [Words]}.
+
+%% The tree mounted on partition Name with its records, its log lines sent to the caller.
+open(Name) ->
+    {Bytes, Records} = partition(Name),
+    open(Bytes, Records).
+
+open(Bytes, Records) ->
+    Self = self(),
+    erx_storage_system:mount(erx_erofs_tests:window(Bytes), Records, fun(Line) -> Self ! {log, Line} end).
+
+%% An attached grant with Rights on Tree, fid 1 at its root.
+grant(Tree, Rights) ->
+    {ok, Grant} = erx_fs:start_link(erx_storage_system, Tree, Rights),
+    unlink(Grant),
+    {ok, _} = call(Grant, {attach, 1, ?NOFID, <<"user">>, ?TREE, 0}),
+    Grant.
+
+call(Grant, Request) ->
+    Alias = alias([reply]),
+    Grant ! {erx_9p, Alias, self(), Request},
+    receive
+        {erx_9p, Alias, Reply} -> Reply
+    after 5000 ->
+        erlang:error({no_reply, Request})
+    end.
+
+%% The whole file at fid Fid, opened for reading, read in pieces of Count bytes.
+read_all(Grant, Fid, Count) -> read_all(Grant, Fid, Count, 0, []).
+
+read_all(Grant, Fid, Count, Offset, Read) ->
+    case call(Grant, {read, Fid, Offset, Count}) of
+        {ok, <<>>} -> {ok, iolist_to_binary(lists:reverse(Read))};
+        {ok, Bytes} -> read_all(Grant, Fid, Count, Offset + byte_size(Bytes), [Bytes | Read]);
+        {error, _} = Error -> Error
+    end.
+
+%% The names a directory fid lists, opened for reading.
+names(Grant, Fid) -> names(Grant, Fid, 0, []).
+
+names(Grant, Fid, Offset, Names) ->
+    case call(Grant, {readdir, Fid, Offset, 4096}) of
+        {ok, []} -> {ok, lists:sort(Names)};
+        {ok, Entries} ->
+            {_, Next, _, _} = lists:last(Entries),
+            names(Grant, Fid, Next, Names ++ [Name || {_Qid, _Offset, _Type, Name} <- Entries]);
+        {error, _} = Error -> Error
+    end.
+
+%% The names the partitions' apps/ holds, sorted, as the host test wrote them.
+listed() ->
+    {ok, Cases} = file:consult(filename:join(os:getenv("ERX_SYSTEM_CASES"), "system.terms")),
+    {names, Names} = lists:keyfind(names, 1, Cases),
+    Names.
+
+logged() ->
+    receive {log, Line} -> [Line | logged()]
+    after 0 -> []
+    end.
+
+%% A good partition ----------------------------------------------------------
+
+%% The tree roots at apps/: it lists the packages, reads each whole and in pieces across
+%% its blocks, and reaches nothing outside apps/, `..` staying at its root.
+good_partition_serves_apps_test() ->
+    Grant = grant(open("good"), rx),
+    {ok, []} = call(Grant, {walk, 1, 9, []}),
+    {ok, _, _} = call(Grant, {lopen, 9, ?O_RDONLY}),
+    ?assertEqual({ok, listed()}, names(Grant, 9)),
+    {ok, [{0, 0, _}]} = call(Grant, {walk, 1, 2, [<<"big.app">>]}),
+    ?assertMatch({ok, #{size := 20000, mode := Mode}} when Mode band ?ERX_P9_S_IFMT =:= ?ERX_P9_S_IFREG,
+                 call(Grant, {getattr, 2, 16#7ff})),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 3)}, read_all(Grant, 2, 4096)),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 3)}, read_all(Grant, 2, 3000)),
+    ?assertEqual({ok, binary:part(erx_erofs_tests:contents(20000, 3), 4090, 20)},
+                 call(Grant, {read, 2, 4090, 20})),
+    {ok, [_]} = call(Grant, {walk, 1, 3, [<<"small.app">>]}),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(100, 1)}, read_all(Grant, 3, 4096)),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"README">>]})),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"apps">>]})),
+    {ok, [RootQid]} = call(Grant, {walk, 1, 4, [<<"..">>]}),
+    ?assertMatch({ok, #{qid := RootQid}}, call(Grant, {getattr, 1, 16#7ff})),
+    {ok, _, _} = call(Grant, {lopen, 4, ?O_RDONLY}),
+    ?assertEqual({ok, listed()}, names(Grant, 4)),
+    ?assertMatch({ok, #{type := ?ERX_P9_MAGIC_EROFS}}, call(Grant, {statfs, 1})),
+    ?assertEqual([], logged()).
+
+%% Writing -------------------------------------------------------------------
+
+%% Every grant of the tree refuses each writing operation with erofs, an rw grant too,
+%% since the tree has no writing callback.
+writes_through_a_grant_are_refused_test_() ->
+    Tree = open("good"),
+    [{atom_to_list(Rights), fun() -> refuses_writes(Tree, Rights) end} || Rights <- [ro, rx, rw]].
+
+refuses_writes(Tree, Rights) ->
+    Grant = grant(Tree, Rights),
+    {ok, [_]} = call(Grant, {walk, 1, 2, [<<"big.app">>]}),
+    ?assertEqual({error, erofs}, call(Grant, {lopen, 2, ?O_WRONLY})),
+    ?assertEqual({error, erofs}, call(Grant, {lopen, 2, ?O_RDONLY bor ?O_TRUNC})),
+    ?assertEqual({error, erofs}, call(Grant, {lcreate, 1, <<"new.app">>, 0, 8#644, 0})),
+    ?assertEqual({error, erofs}, call(Grant, {mkdir, 1, <<"d">>, 8#755, 0})),
+    ?assertEqual({error, erofs}, call(Grant, {unlinkat, 1, <<"big.app">>, 0})),
+    ?assertEqual({error, erofs}, call(Grant, {renameat, 1, <<"big.app">>, 1, <<"b.app">>})),
+    ?assertEqual({error, erofs}, call(Grant, {setattr, 2, maps:from_keys([valid, mode, uid, gid, size, atime_sec,
+                                                                       atime_nsec, mtime_sec, mtime_nsec], 0)})),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    ?assertEqual({error, erofs}, call(Grant, {write, 2, 0, <<"x">>})),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 3)}, read_all(Grant, 2, 4096)).
+
+%% No tree -------------------------------------------------------------------
+
+%% A record that is absent or refused opens no image: every request answers eio, and the
+%% refusal is logged.
+refused_record_serves_no_tree_test_() ->
+    {Bytes, _} = partition("good"),
+    [fun() -> serves_nothing(open(Bytes, Records)) end
+     || Records <- [[], [["system_image", "1"]]]].
+
+serves_nothing(Tree) ->
+    ?assertMatch([<<"no system tree: ", _/binary>>], logged()),
+    Grant = grant(Tree, rx),
+    ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"big.app">>]})),
+    ?assertEqual({error, eio}, call(Grant, {getattr, 1, 16#7ff})),
+    ?assertEqual({error, eio}, call(Grant, {lopen, 1, ?O_RDONLY})).
+
+%% A flipped bit of the apps/ directory's entries, which turns big.app into big.apq and
+%% keeps their order, answers eio before the reader parses the block: neither a walk of
+%% either name nor the listing answers anything else.
+flipped_directory_bit_answers_eio_test() ->
+    Grant = grant(open("directory"), rx),
+    ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"big.app">>]})),
+    ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"big.apq">>]})),
+    ?assertNotMatch({ok, _, _}, call(Grant, {lopen, 1, ?O_RDONLY})).
+
+%% A changed partition whose tree was rebuilt to match it, opened with the record of the
+%% original: every request answers eio, so none of the changed bytes is served. With the
+%% record of its own tree the same partition serves them, so the image itself is sound.
+changed_partition_under_the_original_root_answers_eio_test() ->
+    Grant = grant(open("changed"), rx),
+    ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"big.app">>]})),
+    ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"small.app">>]})),
+    ?assertEqual({error, eio}, call(Grant, {lopen, 1, ?O_RDONLY})),
+    ?assertNotEqual([], logged()),
+    Own = grant(open("changed-own"), rx),
+    {ok, [_]} = call(Own, {walk, 1, 2, [<<"big.app">>]}),
+    {ok, _, _} = call(Own, {lopen, 2, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 4)}, read_all(Own, 2, 4096)).
