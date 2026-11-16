@@ -13,8 +13,9 @@ require_relative '../../tools/lib/erx/sdk'
 # make into an erXos module is one of sdk/public.txt's functions or erx:inspect/2. It runs
 # the SDK's boundary check, test/erlang/erx_sdk_boundary.erl, over erx_desk compiled from
 # source with debug information, beside the applications it depends on, against those
-# functions. A whole-module line of public.txt, erx_win's, is left out: erx_desk draws
-# nothing itself, so the check is only stricter for it.
+# functions, and pins the calls whose callee the check cannot name to VARIABLE. A
+# whole-module line of public.txt, erx_win's, is left out: erx_desk draws nothing itself,
+# so the check is only stricter for it.
 class ErxDeskBoundaryTest < Minitest::Test
   ROOT = ErlangBuild::ROOT
   DESK = File.join(ROOT, 'erlang/apps/erx_desk/src')
@@ -26,9 +27,21 @@ class ErxDeskBoundaryTest < Minitest::Test
   KNOWN = '[{{erx_desk_files_core,caption_max,0},{erx_ui_schema,property,1}},' \
           '{{erx_desk_files_core,item_max,0},{erx_ui_schema,property,1}},' \
           '{{erx_desk_files_core,max_items,0},{erx_ui_schema,property,1}}]'
+  # The calls whose callee the check cannot name, each reviewed, as xref names them. The
+  # window calls the injected inspector, its one injected effect (fun erx:inspect/2 under
+  # erx_desk_sup, a model in tests), in effect/2; its core's init/1, view/1 and step/2 by
+  # module name, so a reload reaches the newest version; and each worker's answer, a fun
+  # it built itself, in worker/4. Stats' core applies a fun it builds itself in combine/2.
+  # A new call through a variable fails the check until it is reviewed and listed here.
+  VARIABLE = "[{{erx_desk_stats_core,combine,2},{'$M_EXPR','$F_EXPR',1}}," \
+             "{{erx_desk_window,effect,2},{'$M_EXPR','$F_EXPR',2}}," \
+             "{{erx_desk_window,init,3},{'$M_EXPR',init,1}}," \
+             "{{erx_desk_window,present,1},{'$M_EXPR',view,1}}," \
+             "{{erx_desk_window,stepped,2},{'$M_EXPR',step,2}}," \
+             "{{erx_desk_window,worker,4},{'$M_EXPR','$F_EXPR',0}}]"
 
   def test_erx_desk_calls_only_the_public_surface
-    assert_equal KNOWN, outside
+    assert_equal "{#{KNOWN},#{VARIABLE}}", outside
   end
 
   def test_a_call_of_the_inspector_router_fails_the_check
@@ -37,6 +50,16 @@ class ErxDeskBoundaryTest < Minitest::Test
                       "-export([init/1, step/2, view/1, next_deadline/1, seeded/1]).") +
              "\nseeded(Query) -> erx_inspector:route(false, undefined, Query, 1).\n"
     assert_includes outside(CLOCK => seeded), '{{erx_desk_clock_core,seeded,1},{erx_inspector,route,4}}'
+  end
+
+  def test_a_call_through_a_variable_module_fails_the_check
+    seeded = File.read(File.join(DESK, CLOCK))
+                 .sub('-export([init/1, step/2, view/1, next_deadline/1]).',
+                      "-export([init/1, step/2, view/1, next_deadline/1, seeded/1]).") +
+             "\nseeded(Router) -> Router:route(false, undefined, [], 1).\n"
+    answer = outside(CLOCK => seeded)
+    assert_includes answer, "{{erx_desk_clock_core,seeded,1},{'$M_EXPR',route,4}}"
+    refute_equal "{#{KNOWN},#{VARIABLE}}", answer
   end
 
   private

@@ -8114,6 +8114,16 @@ document's "residual risks accepted" paragraph.
   from `erx_shell` alone (`erx_shell_namespace:from_applications([erx_shell])` in `erx_session_sup`,
   `erx_shell_runner` and `erx_shell_script`), and it names no `-behaviour(erx_cmd)`, which would make `erx_desk`
   build after `erx_shell`. 8.4's QEMU cell, `clock` opened in the desktop session, waits on this.
+* [Medium] SDK boundary check (`test/erlang/erx_sdk_boundary.erl`; D1 in
+  [design-desktop-programs.md](docs/design-desktop-programs.md#verification-and-testing), and the SDK's boundary row of
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing)): a call handed to stock OTP as data, a
+  `{Module, Function, Args}` to `proc_lib:spawn/3`, `timer:apply_after/4`, `erpc:call/4`, a child spec's `start`, or
+  `erlang:make_fun/3`, reaches neither of `outside/2`'s lists, since xref resolves such triples only for `apply` and
+  `spawn`; and a pinned variable call is pinned per caller function and callee shape, so a second call of the same
+  shape in that function passes, and a caller may match `{[], _}` and drop the variable half. Close it by
+  construction: refuse a literal atom naming a non-public erXos module and the atom-making BIFs, put each pinned call
+  alone in a one-call function (the window's worker can dispatch its effect through a local function, which removes
+  its `worker/4` pin), and have the check take the reviewed list and answer one list of violations.
 * [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
   the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
   `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.
