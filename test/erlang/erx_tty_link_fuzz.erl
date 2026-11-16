@@ -36,7 +36,7 @@ run([Seed]) ->
     io:format("fuzz: ~p rounds ok~n", [?ROUNDS]).
 
 round_of() ->
-    Run = lists:foldl(fun(_, R) -> step(event(R), R) end, #run{link = erx_tty_link:new()},
+    Run = lists:foldl(fun(_, R) -> step(event(R), R) end, #run{link = erx_tty_link:new(present)},
                       lists:seq(1, rand:uniform(60))),
     drained(drain(Run, 1000)).
 

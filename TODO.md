@@ -4504,11 +4504,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   owner but the core. (3) `erx_tty:input/3` returns a room the relay core discards, since it derives the
   next room from the link; drop it from the result, or use it. (4) `input/3`'s per-call room and output
   stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
-  (6) "No master" is implemented twice: the relay core skips `erx_tty_link:send/1` and drops
-  master messages, while `erx_session_tty` sends into an output nobody takes and filters the effects, so
-  a flush frees room in one and not the other. Make the master's presence state of `erx_tty_link`
-  (`send/1` and `master/2` refuse with none, one "would anything take the bytes" query for drains) and
-  delete both copies. (7) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no
+  (7) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no
   length bound; with no master it drains only by a flush or a hangup. The writers are synchronous and in
   the session's own domain. Writers whose messages refill the room exactly as it empties hold `out` waits
   off for as long as they keep it up, since an `out` wait is reported only while no message waits.

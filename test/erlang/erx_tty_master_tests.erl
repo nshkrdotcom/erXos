@@ -154,7 +154,7 @@ against_the_tty_test_() ->
                   end}.
 
 run() ->
-    Start = #{tty => erx_tty_link:new(), master => erx_tty_master:new(),
+    Start = #{tty => erx_tty_link:new(present), master => erx_tty_master:new(),
               to_master => [], to_tty => [], writing => [], timers => [],
               line => <<>>, wrote => <<>>, sent => [], lost => [], reported => []},
     End = drain(lists:foldl(fun(_, S) -> step(event(), S) end, Start, lists:seq(1, ?STEPS))),

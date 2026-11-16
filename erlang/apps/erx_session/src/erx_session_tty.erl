@@ -33,8 +33,8 @@ in another domain, and the tty takes the envelope off only when `D` is the
 master's domain. A master in the session's own domain sends plain messages, and
 its end is the tty's hangup, as a pseudo-terminal master's close is
 (docs/design-programs.md, "The terminal"): the tty ends its shells and then
-itself, and the session's other ttys run on. With no master, the tty is stopped
-from the start: it holds 4 KiB and its writers wait.
+itself, and the session's other ttys run on. With no master, erx_tty_link sends
+nothing: the tty holds 4 KiB and its writers wait.
 """.
 
 -export([start_link/0, start_link/1, open/1]).
@@ -99,7 +99,7 @@ tty_init(Parent, Console, MasterFun) ->
     proc_lib:init_ack(Parent, {ok, self()}),
     Master = master(MasterFun()),
     ok = announce(Master),
-    loop(#{console => Console, master => Master, link => erx_tty_link:new()}).
+    loop(#{console => Console, master => Master, link => erx_tty_link:new(presence(Master))}).
 
 %% The master, if any, and where its messages come from: plain from a master in this
 %% domain, which is watched, so that its end hangs the tty up; enveloped from one in
@@ -107,6 +107,9 @@ tty_init(Parent, Console, MasterFun) ->
 master(undefined) -> none;
 master(Pid) when node(Pid) =:= node() -> {local, Pid, erlang:monitor(process, Pid)};
 master(Pid) -> {domain, Pid, erx:owner(Pid)}.
+
+presence(none) -> none;
+presence(_Master) -> present.
 
 %% The tty names itself to its master, the console facet that tells the console whose tty
 %% it is (docs/design-live.md, "Between domains"), and again with each resend, which
@@ -149,11 +152,8 @@ effects({Actions, Link0}, Tty) ->
     lists:foreach(fun(Action) -> effect(Action, Tty) end, Actions ++ Sent),
     Tty#{link := Link}.
 
-%% With no master, nothing is sent and no timer runs: the tty stays stopped.
-effect({output, _N, _Bytes}, #{master := none}) -> ok;
 effect({output, N, Bytes}, #{master := {_Origin, Pid, _}}) -> Pid ! {tty_output, N, Bytes};
 effect(open, #{master := Master}) -> announce(Master);
-effect({resend_after, _N}, #{master := none}) -> ok;
 effect({resend_after, N}, _Tty) -> erlang:send_after(?RESEND_MS, self(), {erx_tty_resend, N});
 effect({done, From}, #{console := Console}) -> Console ! {erx_console_written, From};
 effect({input, Bytes}, #{console := Console}) -> Console ! {erx_console_input, Bytes};

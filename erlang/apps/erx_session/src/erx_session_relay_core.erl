@@ -86,9 +86,6 @@ and names in actions.
     link :: erx_tty_link:link(),
     %% The console process, which the console's events and size go to.
     console :: term(),
-    %% Whether the relay has a master: with none, nothing is sent to one and
-    %% a drain is answered at once.
-    master :: none | present,
     %% The group the console last named, which its events carry.
     console_group = none :: term(),
     holder = console :: holder(),
@@ -111,15 +108,15 @@ and names in actions.
 A relay whose console is Console: the console holds the terminal from the
 start, in the editing setting made from the tty's defaults. With `master`
 `none` the relay has no master, as a session's tty may have none
-(erx_session_tty): it sends nothing for one, output is held as it is
-while stopped, a drain is answered at once, and a master message is dropped.
+(erx_session_tty): erx_tty_link sends nothing for one and drops a master
+message, and a drain is answered at once.
 """.
 -spec new(term(), #{master := none | present}) -> core().
-new(Console, #{master := Master}) when Master =:= none; Master =:= present ->
+new(Console, #{master := Master}) ->
     Tty = erx_tty:new(),
     Cooked = erx_tty:termios(Tty),
     {ok, _, Editing} = erx_tty:set(erx_tty_modes:editing(Cooked), Tty),
-    #core{tty = Editing, link = erx_tty_link:new(), console = Console, master = Master,
+    #core{tty = Editing, link = erx_tty_link:new(Master), console = Console,
           cooked = Cooked}.
 
 -doc "Caller's request: its answer, what follows the answer, and the next core.".
@@ -430,8 +427,6 @@ close(Open, #core{opens = Opens} = Core) ->
 
 %%% Events
 
-on_event({master, _Message}, #core{master = none} = Core) ->
-    {[], Core};
 on_event({master, Message}, #core{link = Link} = Core) ->
     {Actions, Link1} = erx_tty_link:master(Message, Link),
     link_actions(Actions, Core#core{link = Link1});
@@ -579,13 +574,13 @@ to_master(Bytes, #core{link = Link} = Core) ->
 %% writers' messages take the room there is, in order; `out` waits are
 %% reported once no message waits and any byte's rendering fits; drains
 %% are answered once nothing waits or nothing would take it; and what is
-%% held goes to the master, if there is one.
+%% held goes to the master.
 settle(Core0) ->
     {Reconciled, Core1} = reconcile(Core0),
     {Pumped, Core2} = pump(Core1),
     {Writable, Core3} = writable(Core2),
     {Drained, Core4} = drained(Core3),
-    {Sent, Link} = send(Core4),
+    {Sent, Link} = erx_tty_link:send(Core4#core.link),
     {Reconciled ++ Pumped ++ Writable ++ Drained ++ Sent, Core4#core{link = Link}}.
 
 pump(#core{writes = Writes} = Core) ->
@@ -621,16 +616,14 @@ writable(#core{waits = Waits, writes = Writes, link = Link, signal = N} = Core) 
             {[], Core}
     end.
 
-send(#core{master = none, link = Link}) -> {[], Link};
-send(#core{master = present, link = Link}) -> erx_tty_link:send(Link).
-
-%% A drain waits for the master to take what is held, unless output is
-%% stopped or there is no master, when nothing would take it.
+%% A drain waits for the master to take what is held, while what is held
+%% flows to a master (erx_tty_link:flowing/1); otherwise nothing would
+%% take it.
 drained(#core{drains = []} = Core) ->
     {[], Core};
-drained(#core{drains = Drains, writes = Writes, link = Link, master = Master} = Core) ->
+drained(#core{drains = Drains, writes = Writes, link = Link} = Core) ->
     Empty = queue:is_empty(Writes) andalso erx_tty_link:held(Link) =:= 0,
-    case Empty orelse erx_tty_link:stopped(Link) orelse Master =:= none of
+    case Empty orelse not erx_tty_link:flowing(Link) of
         true -> {[done(Done) || Done <- Drains] ++ [give_up_name], Core#core{drains = []}};
         false -> {[], Core}
     end.
