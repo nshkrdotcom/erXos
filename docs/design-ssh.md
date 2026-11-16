@@ -411,9 +411,9 @@ point `P` for which `[8]P` is the neutral point, and anyone can make a
 signature that such a key accepts, so `add_login_key` refuses a key that
 does not decode or whose encoding is one of the eight points of small
 order. The facet's tests call the verifier directly, not behind OTP's own
-check, and the verifier is pinned at the security closure
-([plan.md](plan.md#m11-security-closure)), before stage 4, only once
-those tests pass on it ([Verification](#verification)).
+check, and Monocypher 4.0.2 is the verifier
+([design.md](design.md#dependencies)), checked by those tests
+([Verification](#verification)).
 
 **Login keys are Ed25519 only.** The daemon's `public_key` list is
 `ssh-ed25519`, which serves both the host key and user authentication,

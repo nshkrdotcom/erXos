@@ -504,7 +504,7 @@ so it never names a cause it did not see.
 
 **The clock.** On erXos's kernel the clock is the real-time clock's
 reading at boot when the machine has one, so QEMU `virt`'s boots at
-`boot`; on the stopgap, and on a Raspberry Pi 4 without a clock module,
+`boot`; on Fiasco, and on a Raspberry Pi 4 without a clock module,
 every boot starts at 1970-01-01 and stays `unset` until something sets
 it ([design-crypto.md](design-crypto.md#time)). Validation compares
 each certificate's dates with the wall clock; an unset clock reads 1970
@@ -617,7 +617,7 @@ so nothing the guest sends leaves the host. Its image carries:
 
 The fixture's chain is made on the host by the stock oracle's
 `public_key:pkix_test_data/1` with a validity from 1970 to 2099, so it is
-valid on the stopgap's unset clock as on a set one; this is a property
+valid on Fiasco's unset clock as on a set one; this is a property
 of the test's certificate, not of the clock, and the cell's third case
 below shows an ordinary certificate refused. The fixture runs in
 the guest rather than on the host because slirp's TCP guest forward
@@ -642,7 +642,7 @@ big`, which only `httpc`'s erXos edit gives
 
 A third case runs the cell with the fixture's certificate for `/spx`
 made with an ordinary validity, from the build's date to ten years
-later, on a wall clock before 2000: the stopgap's unset clock, or on
+later, on a wall clock before 2000: Fiasco's unset clock, or on
 erXos's kernel QEMU's real-time clock started at 1970 with `-rtc
 base=1970-01-01` (unverified: QEMU's documentation was not read). It
 passes when `spx` shows `no data: clock not set` while `btc` and `eth`

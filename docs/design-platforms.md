@@ -145,7 +145,7 @@ belong to the driver table of
 | IOMMU | SMMUv3, for PCIe only | none described | none assigned to Ethernet, USB or the SD controllers |
 | PCIe bridge | ECAM (`pci-host-ecam-generic`) | `brcm,bcm2711-pcie`, a closed bus with the VL805 at its one position ([design-pcie.md](design-pcie.md#the-bridge-seam), [design-usb.md](design-usb.md#the-bcm2711-bridge)) | `brcm,bcm2712-pcie` |
 | PCIe configuration space held by | the PCIe domain, alone | the PCIe domain, alone | the PCIe domain, alone |
-| Random generator | none; `/chosen/rng-seed` | RNG200, read when `/chosen` holds no seed | RNG200, read when `/chosen` holds no seed |
+| Random generator | none; `/chosen/rng-seed` | RNG200, read when `/chosen`'s seeds are short ([Entropy sources](#entropy-sources)) | RNG200, read when `/chosen`'s seeds are short ([Entropy sources](#entropy-sources)) |
 | Watchdog | none; the kernel's timer alone | power-management watchdog | power-management watchdog |
 | Crash record | the early console, whose log the harness keeps | the early console, and the crash region in RAM | the early console, and the crash region in RAM |
 | Unconfined DMA devices, each in a domain of its own in a release build | the virtio-mmio devices | the SD controller, Ethernet, the VL805 | the SD controllers, RP1, a function on the external connector |
@@ -265,7 +265,7 @@ console is not the card's `serial0`. The mini UART's baud rate is divided from t
 clock, which the firmware may change at run time, so the board's
 `config.txt` sets `enable_uart=1`, which has the firmware pin the core
 clock and set the mini UART's line; the early console, Fiasco's
-console on the stopgap and the Erlang mini-UART driver keep the divisor
+console on Fiasco and the Erlang mini-UART driver keep the divisor
 the firmware set and never compute one, so no core clock rate reaches
 the platform record. The PL011s' clock does: each PL011's entry in the
 record carries its clock in hertz, from its node's `clocks`, and
@@ -467,7 +467,7 @@ does not bound the archive: when the root lands on the archive where the
 loader left it, bootstrap moves the archive, whole, behind the root and
 clear of the device tree, as stock Fiasco's bootstrap moves its modules
 behind the ELF images it loads
-([design-stopgap.md](design-stopgap.md#boot-handoff)). On QEMU `virt`,
+([design-fiasco.md](design-fiasco.md#boot-handoff)). On QEMU `virt`,
 whose tree lies right behind the file, the moved archive goes behind the
 tree too, so a file that passes the root's place needs RAM for its archive
 twice, and is bounded by about half of RAM above the root's place; on a
@@ -569,10 +569,10 @@ whose in-kernel GIC has no ITS
 ([research](research-kernel-bases.md#qemu-virt-under-tcg-and-hvf)). The
 Raspberry Pi 5's MIP block raises SPIs 128 to 191. The Raspberry Pi 4's
 devices that erXos drives use wired interrupts, the VL805 its closed
-bus's INTx line, so it needs no frame. On the stopgap, which may not read
+bus's INTx line, so it needs no frame. On Fiasco, which may not read
 the frame's `MSI_TYPER`, QEMU `virt`'s platform record names the frame's
 base and line range, and the backend binds each line edge-triggered
-([design-pcie.md](design-pcie.md#the-msi-frame-on-the-stopgap)).
+([design-pcie.md](design-pcie.md#the-msi-frame-on-fiasco)).
 
 The GICv2m frame's registers, from FreeBSD's driver at releng/15.1:
 `MSI_TYPER` at `0x008` gives the first line and the count,
@@ -638,7 +638,7 @@ device in Linux's tree for the Pi 4 is `dma-coherent`, so every DMA device
 of the board needs the device NIF's cache maintenance; QEMU `virt` marks
 every virtio-mmio node `dma-coherent`, and its DMA is coherent. Each DMA
 device's record carries its coherence and its range, read at boot from
-the tree the firmware hands over, on the stopgap as on erXos's kernel
+the tree the firmware hands over, on Fiasco as on erXos's kernel
 ([design-device-tree.md](design-device-tree.md),
 [design-device-dma.md](design-device-dma.md#device-addresses-and-reach)). The
 contiguous pool, from the lowest RAM, serves devices with an address
@@ -977,14 +977,15 @@ allowed only a confined one.
 
 QEMU passes 32 bytes in `/chosen/rng-seed`. Both boards have an RNG200
 random generator, which the platform layer reads, 32 bytes, when the
-firmware wrote neither `rng-seed` nor `kaslr-seed` into `/chosen`, and
-for which the kernel waits at most 100 ms; the bytes seed the kernel's
+firmware's `rng-seed` and `kaslr-seed` in `/chosen` hold fewer than 32
+bytes together, the least a release runs on, and for which the kernel
+waits at most 100 ms; the bytes seed the kernel's
 generator at boot
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy),
 [research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
-On the Raspberry Pi 4 under the stopgap, the root reads it on the same
+On the Raspberry Pi 4 under Fiasco, the root reads it on the same
 condition and seeds its generator from it
-([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)). The
+([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)). The
 generator's registers and its read sequence are not stated here: they
 come from a clean-room facts record of the RNG200, written before the
 driver.
@@ -1267,7 +1268,7 @@ in one cluster, so the firmware reads the record through the FAT and
 every other reader, the slot writer and the QEMU harness, reads the
 sector; it then writes the reset count's first value into its sector of
 the reserved area, which fsimg leaves zero, and checks the placement as
-[design-stopgap.md](design-stopgap.md#the-raspberry-pi-4) describes; and
+[design-fiasco.md](design-fiasco.md#the-raspberry-pi-4) describes; and
 it writes `normal(A)`, `medium_record_a`, to a new medium.
 
 **On the Raspberry Pi** the record is the firmware's `autoboot.txt` and the
@@ -1561,9 +1562,9 @@ medium to 2 GiB for a standard-capacity card and to 4 GiB for a
 high-capacity one. The model's bus is not timed, so the base clock is checked on the
 board alone.
 
-### The Raspberry Pi 4 on the stopgap
+### The Raspberry Pi 4 on Fiasco
 
-Before erXos's kernel exists, the Raspberry Pi 4 runs the stopgap Fiasco
+Before erXos's kernel exists, the Raspberry Pi 4 runs Fiasco
 behind the same interface, booted by the same firmware and the same BL31,
 with the console, the host link, the manifest and the Erlang drivers this
 document gives it. Fiasco's generic platform takes PSCI from BL31 and its
@@ -1574,7 +1575,7 @@ a reset, no trial is requested and no device secret is read. The root
 reads the random generator when `/chosen` holds no seed ([Entropy
 sources](#entropy-sources)). The early console's role passes to Fiasco's own
 console on the same UART, and a board's end goes through BL31's PSCI as
-it does on erXos's kernel. [design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)
+it does on erXos's kernel. [design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)
 describes that shape, and M12 of [plan.md](plan.md#m12-storage-networking-boards)
 adds the kernel's items on erXos's kernel.
 

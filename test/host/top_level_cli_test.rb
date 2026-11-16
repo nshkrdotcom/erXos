@@ -20,6 +20,16 @@ class TopLevelCliTest < Minitest::Test
     def check(**) = true
   end
 
+# A check whose run is recorded, so a test can tell that `check` ran it.
+class RecordingCheck
+  def initialize(commands, name)
+    @commands = commands
+    @name = name
+  end
+
+  def check(root:) = @commands << [[@name, root], { name: @name }]
+end
+
   class UnbuiltOracle
     def with_runtime(_flavour) = raise Erx::Error, 'not built'
   end
@@ -75,7 +85,8 @@ class TopLevelCliTest < Minitest::Test
     rc_oracle = ->(runner:) { commands << [['ensure-rc-oracle'], { name: 'rc-oracle', runner: runner }] }
     web = ->(root:, runner:) { commands << [['web-build', root], { name: 'web', runner: runner }] }
     yield runner_class: Factory.new(recording_runner(commands, fail_name: fail_name)),
-          checks_class: Factory.new(PassingChecks.new), arch_terms: PassingChecks.new, runtime: runtime,
+          checks_class: Factory.new(PassingChecks.new), arch_terms: RecordingCheck.new(commands, 'arch-terms'),
+          fiasco_downsides: RecordingCheck.new(commands, 'fiasco-downsides'), runtime: runtime,
           rc_oracle: rc_oracle, web: web
   end
 
@@ -118,6 +129,17 @@ class TopLevelCliTest < Minitest::Test
   def hosted_only = Erx::Runtime::HOSTED_ONLY_TESTS.map { |path| File.join(Erx::ROOT, path) }
 
   def browser_only = Erx::Runtime::BROWSER_TESTS.map { |path| File.join(Erx::ROOT, path) }
+
+def test_check_runs_the_document_checks
+  commands = []
+  with_checks(commands) do |collaborators|
+    status, output = run_cli('check', **collaborators, platform: MACOS)
+    assert_equal 0, status, output
+  end
+  ran = commands.map { |_argv, options| options[:name] }
+  assert_includes ran, 'arch-terms'
+  assert_includes ran, 'fiasco-downsides'
+end
 
   def test_check_runs_the_stack_proof_and_native_integration
     commands = []
@@ -407,7 +429,7 @@ class TopLevelCliTest < Minitest::Test
   end
 
   def test_commands_refuse_unsupported_collaborators
-    %w[check generate check-reproducible check-fuzz check-sanitizers check-ubsan check-stack-proof pack status fetch check-tla check-cbmc check-sources check-arch-terms build boot qemu oracle bench check-oracle gates --help -h].each do |command|
+    %w[check generate check-reproducible check-fuzz check-sanitizers check-ubsan check-stack-proof pack status fetch check-tla check-cbmc check-sources check-arch-terms check-fiasco-downsides build boot qemu oracle bench check-oracle gates --help -h].each do |command|
       assert_raises(ArgumentError, command) { run_cli(command, unexpected: Object.new) }
     end
   end

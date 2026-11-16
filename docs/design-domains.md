@@ -319,56 +319,56 @@ call ([design-runtime.md](design-runtime.md#liberx)).
 | **D4.** A name alone conveys no authority | an operation on a process is authorised by the target domain's own export table, which its runtime alone writes, in three cases, each an act of the owner: encoding its own name into a frame for that peer, which gives `send` alone; a spawn into it, which gives the spawner every right on the child; and an explicit export, the only source of `link` and `exit` otherwise and of `introduce` on a domain pid ([Exports](#exports)); a registered name is never exported, and the sender's runtime keeps every operation on another node's registered name to itself ([Frames](#frames)); nothing a peer does widens what it holds; a missing export gets dead-process semantics; a name a third domain passes on exports nothing; a privileged service's helpers take only handles its facet minted from its own scope ([Authority](#authority)) | an export written by anyone but the owning runtime, or from a name in a received frame; an encoding that gives more than `send`; an operation that takes a raw pid as authority; a helper that acts on a request's name | the three writers of the export table are the only callers of its insert, which a build check enforces; hostile-runtime tests that forward names, forge senders, name unexported pids, and link to, exit and set the group leader of pids they were handed in replies; a build check that service callbacks reach authority-consuming effects only through generated helpers, with a negative fixture |
 | **D5.** The system domain's atom table grows only within bounds its own policy sets: no frame creates an atom, and the domain service makes an atom only of a domain's node name, within the creating principal's `names` quota | the grammar for frames to the system domain has no fun or export tag, and the system domain's peer decodes every frame in ERTS's safe mode, which never creates an atom; the domain service binds a name to one principal for the boot, counts it against that principal's `names` before it makes the atom, and reuses the atom for every later domain of that name ([Domain ids, pids and references](#domain-ids-pids-and-references)) | a decode of another domain's bytes in the system domain outside the peer, or without safe mode; a service that turns request data into atoms, a name made into an atom before its quota check included | a test that a frame with a fresh atom leaves the system domain's atom count unchanged; the fuzz target checks the count after every input; a test that a principal past its `names` creates no domain under a fresh name and leaves the count unchanged; a build check that system-domain code calls atom-creating functions only from an allowlist |
 | **D6.** A domain reports deaths only of its own processes | the receiver knows the sender by the lane; the sender rule requires every frame's sending pid to carry the lane's node name and domain id; a receiving runtime acts on a link exit or `DOWN` only for a link or monitor it holds, which ERTS already checks | a frame accepted with another domain's sending pid | hostile-runtime tests that forge exits and `DOWN`s for other domains' processes and for processes they are not linked to |
-| **D7.** Stopping a domain never needs its runtime | the kernel's `erx_space_stop` stops every thread of a space at once, and the spaces below it stop with it ([design-kernel.md](design-kernel.md#creating-spaces)); a holder of the exit right on the domain pid stops the domain through the system domain, which needs nothing from the domain | a stop path that waits for the runtime | tests that stop a domain whose runtime never returns, runs a long NIF, or never drains its lanes |
+| **D7.** Stopping a domain never needs its runtime (on Fiasco: [FD20](design-fiasco.md#downsides-against-erxoss-kernel)) | the kernel's `erx_space_stop` stops every thread of a space at once, and the spaces below it stop with it ([design-kernel.md](design-kernel.md#creating-spaces)); a holder of the exit right on the domain pid stops the domain through the system domain, which needs nothing from the domain | a stop path that waits for the runtime | tests that stop a domain whose runtime never returns, runs a long NIF, or never drains its lanes |
 | **D9.** Signals from one process to another arrive in the order sent, but for a domain pid's connection-control records about different peer node names | a runtime writes each sending process's frames for one peer into one lane in send order; a domain pid's records travel in its domain's control table, outside the lane, and at most one per peer node name is outstanding ([Connections](#connections)); a lane is a single-producer, single-consumer ring, read in order; `erts_net_message` keeps order per connection; every answer about a process comes from its own runtime, on the same lane behind what it sent before | a path that reorders one pair's frames; an answer about a process written by anyone but its runtime | a property test that interleaves sends, links, monitors of dead and unexported processes, links to processes held without `link`, and exits between three domains and checks per-pair order |
-| **D12.** What a peer can make a runtime hold is bounded by the runtime's own limits, and what a domain can make the system domain hold is a sum fixed when the domain is admitted | the lane a receiver reads is sized by its own `lane`; an open record's private buffer grows as its bytes arrive, up to the receiver's own `max_frame`, never allocated whole on a header's word; a decoded term by its `max_message_heap`, or by the target process's own request limit; what its processes keep queued and undecoded by their queue quotas, past which the funnel leaves the next frame for them in the lane, and, for a process without one, by its own `max_heap_size`; the links and monitors it holds with a peer's processes, and the signals it queues for them, by its `peer_held`, past which it ends the connection; its queue to a peer that does not drain by ERTS's busy limit, past which its senders wait or, sending with `nosuspend`, are refused and told when to try again, plus one frame for each process caught between the busy check and its enqueue ([Flow control](#flow-control)), and in the system domain by `system_queue`, past which a message is dropped and any other signal ends the connection; a process with stock OTP's `async_dist` set queues past the busy limit in its own domain's memory, so a process that must be refused is spawned with the flag cleared; its export table by its `exports`; atoms, funs and exports by its `foreign_atoms`; the system domain's sum per domain is [Flow control](#flow-control)'s | a delivery path that skips a check; a buffer the receiver allocates on a peer's say-so without a bound of its own; a queue in the system domain that grows while a domain does not drain; a funnel that queues a frame on a process at its quota | floods past every limit from many peers at once, and records whose bytes trickle in; the receiver's memory stays within its budget, and the system domain's within the sum per admitted domain |
+| **D12.** What a peer can make a runtime hold is bounded by the runtime's own limits, and what a domain can make the system domain hold is a sum fixed when the domain is admitted (on Fiasco: [FD14, FD25](design-fiasco.md#downsides-against-erxoss-kernel)) | the lane a receiver reads is sized by its own `lane`; an open record's private buffer grows as its bytes arrive, up to the receiver's own `max_frame`, never allocated whole on a header's word; a decoded term by its `max_message_heap`, or by the target process's own request limit; what its processes keep queued and undecoded by their queue quotas, past which the funnel leaves the next frame for them in the lane, and, for a process without one, by its own `max_heap_size`; the links and monitors it holds with a peer's processes, and the signals it queues for them, by its `peer_held`, past which it ends the connection; its queue to a peer that does not drain by ERTS's busy limit, past which its senders wait or, sending with `nosuspend`, are refused and told when to try again, plus one frame for each process caught between the busy check and its enqueue ([Flow control](#flow-control)), and in the system domain by `system_queue`, past which a message is dropped and any other signal ends the connection; a process with stock OTP's `async_dist` set queues past the busy limit in its own domain's memory, so a process that must be refused is spawned with the flag cleared; its export table by its `exports`; atoms, funs and exports by its `foreign_atoms`; the system domain's sum per domain is [Flow control](#flow-control)'s | a delivery path that skips a check; a buffer the receiver allocates on a peer's say-so without a bound of its own; a queue in the system domain that grows while a domain does not drain; a funnel that queues a frame on a process at its quota | floods past every limit from many peers at once, and records whose bytes trickle in; the receiver's memory stays within its budget, and the system domain's within the sum per admitted domain |
 | **D13.** A stale export costs nothing to find | an export's holders live on its name's own record, the process or the active alias, and go with it, at the transition that ends the process or deactivates the alias; a peer's holders end when the connection goes down; a pid names its process by number and serial, so a lookup that finds no live record finds no holder | holders kept anywhere but on their name's own record; an entry keyed in a way a later process can match | a soak test of a million alias exports and deactivations from one live process, with every OTP alias mode, and of pids handed out by processes that then exit; the export table stays at its live names |
-| **D16.** Every page of a connection has one writer, is charged to a child budget of an outer budget, one child per connection, that the system domain destroys only once both parties have let go: the reader's outer budget for a connection between domains, the domain's for its system connection; and only the system domain deletes it | each memory object of a connection is written by one party and mapped read-only by the other: each party's side, and the pixel area of a connection that has one; the system domain carves the connection's children and creates both sides, both bells and the area from them, and gives each party its capabilities without `DESTROY` ([Connections](#connections)); it deletes a connection's objects and destroys its children only once each party has unmapped them or ended, never on a timer while a party lives, and destroys an ended domain's outer budget only once none of its children remains, keeping it meanwhile as the domain's remains, charged to its principal, while the domain itself is released at its end | a page both parties write; a capability with the delete right in a party's table; a lane charged to its writer, to the budget its reader alone maps, to the system domain's own budget, or to an outer budget directly; a deletion while a party that has not answered still maps it | a test that each party's table holds no delete right on a connection's objects; budgets return to their baselines after every test; a hostile peer that rewrites its pages while the other reads them disturbs nothing but its own frames; a survivor that never answers `connection_down` keeps the connection's objects, counted against its own `connections`, never faults on them, and keeps of the ended domain's outer budget only that connection's child, which a test that reads the budget's charge after the end checks, while the ended domain, a configured one, restarts at once; seeded failure: a connection charged to the outer budget directly, under which the survivor keeps the whole outer budget |
-| **D17.** A domain's end reaches each peer behind everything the domain published on their lane | the kernel posts a space's exit record only when no thread of it can run, so the dead domain's write position is final; a runtime told that a connection is down first drains that lane to the position it reads then, waiting on nothing the dead domain would have to do, and only then fires its links and monitors with the peer's processes | a runtime that acts on a connection down before draining; a stop reported while a thread can still run | a test that kills a domain mid-burst on every CPU and checks that each peer sees the burst, then the death |
+| **D16.** Every page of a connection has one writer, is charged to a child budget of an outer budget, one child per connection, that the system domain destroys only once both parties have let go: the reader's outer budget for a connection between domains, the domain's for its system connection; and only the system domain deletes it (on Fiasco: [FD5, FD25](design-fiasco.md#downsides-against-erxoss-kernel)) | each memory object of a connection is written by one party and mapped read-only by the other: each party's side, and the pixel area of a connection that has one; the system domain carves the connection's children and creates both sides, both bells and the area from them, and gives each party its capabilities without `DESTROY` ([Connections](#connections)); it deletes a connection's objects and destroys its children only once each party has unmapped them or ended, never on a timer while a party lives, and destroys an ended domain's outer budget only once none of its children remains, keeping it meanwhile as the domain's remains, charged to its principal, while the domain itself is released at its end | a page both parties write; a capability with the delete right in a party's table; a lane charged to its writer, to the budget its reader alone maps, to the system domain's own budget, or to an outer budget directly; a deletion while a party that has not answered still maps it | a test that each party's table holds no delete right on a connection's objects; budgets return to their baselines after every test; a hostile peer that rewrites its pages while the other reads them disturbs nothing but its own frames; a survivor that never answers `connection_down` keeps the connection's objects, counted against its own `connections`, never faults on them, and keeps of the ended domain's outer budget only that connection's child, which a test that reads the budget's charge after the end checks, while the ended domain, a configured one, restarts at once; seeded failure: a connection charged to the outer budget directly, under which the survivor keeps the whole outer budget |
+| **D17.** A domain's end reaches each peer behind everything the domain published on their lane (on Fiasco: [FD20](design-fiasco.md#downsides-against-erxoss-kernel)) | the kernel posts a space's exit record only when no thread of it can run, so the dead domain's write position is final; a runtime told that a connection is down first drains that lane to the position it reads then, waiting on nothing the dead domain would have to do, and only then fires its links and monitors with the peer's processes | a runtime that acts on a connection down before draining; a stop reported while a thread can still run | a test that kills a domain mid-burst on every CPU and checks that each peer sees the burst, then the death |
 | **D18.** No process acts on a message from another domain that the owner of its protocol did not admit | the peer delivers every message from another domain, to a pid or to an alias, as `{erx_origin, D, Msg}`, `D` the domain of the lane it arrived on, with no flag and no exception (edit 16 of [design-runtime.md](design-runtime.md#the-edits-outside-syserxos)), so such a message never has the shape of one from the receiver's own domain; only the owner of a protocol that crosses domains takes the envelope off, in its own receive and only for its own shapes: `erts_internal` for a spawn's argument list, which ERTS queues as the child's first message, `gen` for call replies, `io` for io replies, `erx_file_remote` for a file server's replies, the io servers for io requests, `gen_server` and `gen_statem` for calls and casts to a server started with `{erx_serve, any}`, and a command domain's run server for `erx_start` and `erx_job` from its session's domain, the second only at a run's alias; each unwrap of a request admits it only when the names its reply goes to are of `D`, and an unwrap of a reply takes it at the request's own alias whatever `D` ([The peer](#the-peer)); everything else reaches its process as an unknown message that carries its origin, and `sys` takes nothing apart | a delivery path that skips the wrap; an OTP module outside the list that matches the envelope, `sys` or `proc_lib` above all; a served unwrap without the check of `From` | the source check of [design.md](design.md#chokepoint-checks) on OTP's modules, with a seeded extra site; every `sys` call from another domain on a `gen_server`, a `gen_statem`, a `gen_event` and a plain `sys` loop times out, the process runs on and its state is unchanged, with the seeded failure of edit 16 delivering raw ([Verification and testing](#verification-and-testing)) |
 
-## On the stopgap
+## On Fiasco
 
 Until erXos's kernel is written, domains and their connections run on the
-stopgap Fiasco behind the same kernel interface
-([design-stopgap.md](design-stopgap.md)). Everything this document
+Fiasco behind the same kernel interface
+([design-fiasco.md](design-fiasco.md)). Everything this document
 specifies above `liberx` is the same code on both: the domain service, the
 funnel, the peer, exports, introductions, the wake handshake and the
 domain library's creation plan. What stands behind the kernel calls is a
-row of [the stopgap's call table](design-stopgap.md#the-call-table) each:
+row of [Fiasco's call table](design-fiasco.md#the-call-table) each:
 
 * a connection's sides are memory objects of the root task's pool, which
   the domain library creates and passes; each party's `liberx` maps its
   own side writable and the peer's read-only, a request the root service
   performs at the rights asked for, and destroying a side revokes it in
   every task that maps it
-  ([Sharing memory between tasks](design-stopgap.md#sharing-memory-between-tasks));
+  ([Sharing memory between tasks](design-fiasco.md#sharing-memory-between-tasks));
 * a bell is an IRQ object that the domain library creates and binds to
   the consumer's group, whose deliveries reach the consumer task's
   readiness dispatcher, and any holder triggers it
-  ([Interrupts and readiness](design-stopgap.md#interrupts-and-readiness));
+  ([Interrupts and readiness](design-fiasco.md#interrupts-and-readiness));
 * the domain library installs a connection's objects into both parties
   with `erx_cap_pass` from its own table into a space it created
-  ([Passing a handle](design-stopgap.md#passing-a-handle)); passing at an
+  ([Passing a handle](design-fiasco.md#passing-a-handle)); passing at an
   IPC rendezvous stays refused, and no connection needs it;
 * a domain's space is a Fiasco task that the root service creates with its
   parent recorded and ends with its sub-spaces, children first; its exit
   record carries the exit status, or `crash`
-  ([Spaces, parents and exit records](design-stopgap.md#spaces-parents-and-exit-records));
+  ([Spaces, parents and exit records](design-fiasco.md#spaces-parents-and-exit-records));
 * budgets and groups are records with nothing charged or enforced, and
   every field of a domain's budgets, `used` included, reports `unsupported`
-  ([Budgets and groups as records](design-stopgap.md#budgets-and-groups-as-records)).
+  ([Budgets and groups as records](design-fiasco.md#budgets-and-groups-as-records)).
 
-D1 to D7, D9, D13 and D17 hold on the stopgap for every domain whose
+D1 to D7, D9, D13 and D17 hold on Fiasco for every domain whose
 runtime goes through `liberx`. D1 to D6, D9 and D13 rest on user-mode code.
 D7 and D17 rest on the stop, which the root service carries out without
 the runtime: it deletes every thread of the space and of the spaces below
 it, and posts the exit record only after the last deletion has returned,
 so a dead domain's write position is final when its end is reported. What
-the stopgap lacks there is a bound on how long a stop takes, since the one
+Fiasco lacks there is a bound on how long a stop takes, since the one
 service thread carries it out among every other request (K18); that bound
 and the tests under hostile load are erXos's kernel's
-([What Phase 1 defers](design-stopgap.md#what-phase-1-defers)). D12's
+([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). D12's
 limits are the runtime's own and hold, but the memory they bound is
 charged to budgets that are records, so D12's assertions about budgets
 report `unsupported`. D16 holds in part: each side has one writer because
@@ -380,20 +380,35 @@ maps a side writable it should only read; development builds run trusted
 code only.
 
 The tests of [Verification and testing](#verification-and-testing) run on
-the stopgap with three limits. The hostile runtimes run, and their verdicts
+Fiasco with three limits. The hostile runtimes run, and their verdicts
 on frames (what the funnel accepts, refuses and decodes, and what a forged
 sender or name gets) count; their bounds on memory charged to a budget, on
 CPU grants and on an innocent peer's latency report `unsupported` and are
 checked on erXos's kernel. The check that no party can delete a
-connection's objects passes through the creator-only destroy, since a
-handle on the stopgap carries no rights; it proves the root service's
-rule, not a kernel's. Lane and wake timings are provisional: a bell on the
-stopgap is an IRQ object behind the root service, which serves the whole
+connection's objects passes through the creator-only destroy, since no
+pass on Fiasco conveys `DESTROY`; it proves the root service's
+rule, not a kernel's. Lane and wake timings are provisional: a bell on
+Phase 1's backend is an IRQ object behind the root service, which serves the whole
 machine on one thread, so no code above `liberx` may depend on a bell's
 latency, and no decision is taken from those numbers. The hosted backend
 carries the rows between tasks too, each domain a macOS process, so the
 lane, connection and funnel tests also run there under the sanitizers
 ([design-runtime.md](design-runtime.md#hosted-mode)).
+
+A release on Fiasco ([design-fiasco.md](design-fiasco.md)) changes four
+of these rows and nothing above `liberx`. A bell's trigger is the
+ringer's own Fiasco invocation, with no right to bind, so a bell's
+latency no longer passes through the root service. Budgets are walls, a
+Fiasco factory for each domain's kernel memory and the root's record for
+its user pages, so D12's budget assertions and the hostile runtimes'
+memory bounds run. A handle is a Fiasco slot with rights the root records
+and Fiasco's capability rights enforce. No task writes its own page
+tables or object space, so a domain that bypasses `liberx` still reaches
+only what the root placed in it and maps nothing itself, and D16's one
+writer per side holds whatever its runtime does. The bound on a stop,
+the CPU grants and an innocent peer's latency within one band stay
+`unsupported`, as the downsides of design-fiasco.md list (FD20, FD15
+and FD31).
 
 ## Data model
 
@@ -3095,7 +3110,7 @@ from a control slot, and the agent acts only on the system domain's.
   Reason}}` when the runtime fails to boot, and `{error, timeout}` when
   `boot_timeout` passes first.
 * `release` names a boot script of the boot image's one domain release,
-  `bin/<release>.boot` ([design-stopgap.md](design-stopgap.md#the-production-image)),
+  `bin/<release>.boot` ([design-fiasco.md](design-fiasco.md#the-production-image)),
   whose release file lists the applications the domain boots; the release
   stores each application's files once for every script. The domain
   service binds it: the runtime's init arguments begin with `-boot
@@ -3104,7 +3119,7 @@ from a control slot, and the agent acts only on the system domain's.
   leaves init to its default script, so a domain boots only the script its
   request names, as a configured row and a session template boot the one
   their `release @artifact.<name>` names, which the manifest's packer binds
-  the same way. On the stopgap the request names the release's run of
+  the same way. On Fiasco the request names the release's run of
   entries by its indexes, `release` and `release_files`, and the script by
   `boot`, and it carries the runtime's own `args`; a request whose `args`
   name `-boot` is refused with `{error, {bad_spec, boot}}`, as the packer

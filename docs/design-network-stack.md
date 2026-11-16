@@ -389,7 +389,7 @@ as ERTS refuses to start without its reference key
 ([design-runtime.md](design-runtime.md#unguessable-references)), and no
 owner falls back to another source; its supervisor restarts it. On
 erXos's kernel the generator is ready before any domain runs, so a read
-fails only on the stopgap, when its backend cannot reach its generator
+fails only on Fiasco, when its backend cannot reach its generator
 service. In
 deterministic mode the kernel's generator is fixed, so the whole stack's
 random values repeat from boot to boot.
@@ -6094,8 +6094,8 @@ where its runtime sets `-erx queue_quota`, and which domains do is an
 open decision ([Open decisions](#open-decisions), 1). Until RT8, the funnel
 delivers every authorised frame whatever its target already holds, so a
 flood that outruns a socket process grows its queue with nothing to stop
-it but the client domain's budget, the gap of the stopgap funnel that
-`TODO.md` records.
+it but the client domain's budget, the funnel's gap that `TODO.md`
+records.
 
 **Answers from the grant.** The grant's reply to a call reaches its
 caller with the envelope already off, since `gen` owns call replies
@@ -6424,7 +6424,7 @@ broken down by stage: completion, classification, checksum, step,
 encoding, posting, the lane crossing and the socket process's hop to the
 owner. The measurements on erXos's
 kernel decide and those on the Raspberry Pi 4 confirm or reopen the
-decision; the same measurements on QEMU on the stopgap are a baseline
+decision; the same measurements on QEMU on Fiasco are a baseline
 that decides nothing, since every interrupt and doorbell there passes the
 stopgap's one service thread (plan.md's gates GN-QEMU, GK3 and GN-board).
 If the established path misses line rate and the breakdown names a pure
@@ -6457,9 +6457,9 @@ in-node and 13 to 21 ms across the lane (medians 14 and 18 ms, 17.9 and
 13.9 MiB/s each way), and 256 sends of 64 KiB ran at 37.2 to 41.6 MiB/s
 in-node and 41.3 to 44.6 MiB/s across the lane (medians 39.6 and 42.8
 MiB/s). The sends show no cost of the lane at this rate, which slirp and
-the stopgap's device path bound; the echo is too short, timed to the
+Fiasco's device path bound; the echo is too short, timed to the
 millisecond, to separate a few milliseconds from noise. These are
-stopgap numbers and decide nothing: the stopgap kernel (modified Fiasco),
+stopgap numbers and decide nothing: the Fiasco kernel (modified Fiasco),
 an Apple M3 Max host at load averages of 7 to 10, HVF, QEMU 11.1.3,
 Homebrew clang 23.1.3 with the tree's default flags, BeamAsm, one guest
 CPU, a 224 MiB machine (raw logs and the script in erxos-history,

@@ -10,7 +10,7 @@ module Erx
         Chokepoints::Elsewhere.new(
           name: 'core-archive-imports', rule: "the cores' archive leaves undefined only the erx_effect_* functions " \
                                                "and Fiasco's memcpy and memset",
-          design: "#{STOPGAP}#interfaces", check: 'CoreArchive::UNDEFINED', test: 'test/host/core_archive_test.rb'
+          design: "#{FIASCO}#interfaces", check: 'CoreArchive::UNDEFINED', test: 'test/host/core_archive_test.rb'
         ),
         Chokepoints::Elsewhere.new(
           name: 'arch-terms', rule: "an architecture's terms appear only in its layer and its documents",
@@ -43,7 +43,7 @@ module Erx
           name: 'test-image-builder', rule: "only the QEMU harnesses Checks::TEST_IMAGE_BUILDERS lists call the " \
                                             "production image's test entry point, and no other tools source passes a " \
                                             "literal true for the packer's test keyword",
-          design: "#{STOPGAP}#the-production-image", check: 'Checks::TEST_IMAGE_BUILDERS',
+          design: "#{FIASCO}#the-production-image", check: 'Checks::TEST_IMAGE_BUILDERS',
           test: 'test/host/checks_test.rb'
         ),
         Chokepoints::Elsewhere.new(

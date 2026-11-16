@@ -82,7 +82,12 @@ Decisions every reader of this document needs:
 * **An app names what it needs; the `apps` row bounds it.** The
   declaration names services, an amount of memory and its code. It has
   no field for a facet parameter, a quota or a grant, so nothing an app
-  declares can reach past the row. Admission is one pure Erlang function
+  declares can reach past the row. On Fiasco an app's session also has
+  thread, object and mapping limits (FD14 of
+  [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel)),
+  which come from the app template's limits, the manifest's `limits
+  session` record, as every other limit of the session does, so the declaration
+  names none of them. Admission is one pure Erlang function
   that the build runs on the host and the system domain runs on the
   machine.
 * **Memory is the kernel's to refuse.** All apps draw on one budget, the
@@ -255,7 +260,7 @@ branch `lvglscreen`, commit `82b02f4ff`) and Doom (the repository
 | the launcher invented a pid, parent, group, directory and masks for `erx_program:start/1` | Doom 7 | programs start through `erx_prog_handler`, which assigns them |
 | presents on a 100 ms timer, no keyboard | Doom 8, 11 | a program started with a window draws through `/dev/draw`, flushes when its frame is done, and reads `/dev/kbd` |
 | `erx_win:open/2` answered `{error, none}` until the display's grant arrived, so the launcher polled | Doom 9 | `erx_app` starts the app's code only once the app's record has come, after its grants |
-| a crashed session's restart was refused with `no_memory` while the ended domain's budget was still held | Doom 10 | an app principal's budget reaches the whole `apps` budget, and property 19 makes that budget hold a session beside the outer budget of one that ended ([An app's principal](#an-apps-principal)) |
+| a crashed session's restart was refused with `no_memory` while the ended domain's budget was still held | Doom 10 | a restart carves a principal's wall of its own beside the ended session's, and property 19 makes the `apps` budget hold a session beside the wall of one that ended ([An app's principal](#an-apps-principal)) |
 | `bin/erx-lvgl` reached only the programs suite's test image (`tools/lib/erx/production_image.rb:95-99`) | kiosk | the toolkit's programs ship with the toolkit in every image |
 | the host test used toolkit internals (`erx_ui:start/1`, `erx_ui_lvgl`'s `open` and `present` funs) | kiosk | `erx_ui_host`, the public host stand-in for a display |
 
@@ -497,7 +502,7 @@ development build takes packages with no edit. The website's image
 carries none: `Platform#site_manifest_source` leaves the row out of the
 site manifest it makes from the development one, with the room it took,
 as it leaves out the domains `site_leaves_out` names
-([design-stopgap.md](design-stopgap.md#the-phase-1-manifest-check)), since the site manifest has
+([design-fiasco.md](design-fiasco.md#the-phase-1-manifest-check)), since the site manifest has
 no display domain for `services` to name and the site machine's 256 MiB
 no room for the row's memory. The Raspberry Pi 4's card, the medium of a
 board the firmware boots from a boot partition, is the other image the
@@ -546,10 +551,11 @@ row. The row's size follows from how the build counts it:
   once share, and the kernel refuses a start that does not fit. So it is
   sized for the apps that run together, not for every app the row can
   hold: two at the default 64 MiB, each with its session's outer budget
-  of 1 MiB, and the outer budget of one that has ended and not yet
-  retired, which clause 4 needs beside a running app, 131 MiB
-  (137,363,456 bytes), which the two-app tests of
-  [Verification and testing](#verification-and-testing) need.
+  of 1 MiB, 130 MiB, which the two-app tests of
+  [Verification and testing](#verification-and-testing) need and which
+  clause 4 needs for a running app beside the principal's wall of one
+  that has ended and not yet retired; the row's 131 MiB (137,363,456
+  bytes) holds them.
   `root_memory` grows by it, and the packer's check of each board's
   development machine proves that the RAM left beside it still holds
   the archive.
@@ -588,7 +594,8 @@ the packages are well formed**, beside the eighteen of
    since every app can bring one row;
 4. the `apps` budget and the app template's limits let the planner of
    property 12 plan one session of the template at its default memory
-   beside the outer budget of one that ended and has not retired;
+   beside the principal's wall of one that ended and has not retired,
+   which holds that session's default memory and outer budget;
 5. every `package` row's package passes the file check and admission on
    the host against this manifest ([Admission](#admission)); the
    `package` rows number at most `max`; the declared memory and the
@@ -609,7 +616,20 @@ the packages are well formed**, beside the eighteen of
    serves its partition; a manifest with an `apps` row holds the service,
    so the build derives the `system` rows every app's session mounts its
    image package through; no facet row of the board's source names it,
-   since only the derived `system` rows do.
+   since only the derived `system` rows do;
+9. on Fiasco, the root's machine-wide tables hold every domain the image
+   can run at once, with the configured domains' shares reserved: for
+   each table [design-fiasco.md](design-fiasco.md#table-sizes) names as
+   shared out among domains (the page index's 4,096 labels for tasks and
+   memory objects) and for the root's own
+   kernel memory, the configured domains' shares, which their limits
+   records' thread, object and mapping limits fix, plus `max` times the
+   app template's share, plus every other session template's share times
+   its principals' `domains` quotas, sum within the table. The domain
+   service admits a session only from what lies outside the configured
+   domains' shares, so apps and sessions, however many run, never take
+   what a configured domain's restart needs. The clause goes with Fiasco:
+   erXos's kernel has no table of the root's (FD30).
 
 Each clause has a seeded violation: a check that counts the app template
 once in property 18, which admits a row whose apps together pass the
@@ -620,7 +640,9 @@ passes the `apps` budget; a `package` row whose declaration needs a
 service the row lacks; a configured domain's `data` row carrying `tree
 apps`; an `apps` row in a manifest with no `system_service`; a
 `system_service` served by a domain that does not hold the `system`
-window; a source facet row of `system_service`.
+window; a source facet row of `system_service`; an `apps` row
+whose `max` times the app template's object limit, beside the configured
+domains' object limits, passes the page index's 4,096 labels.
 
 ### The declaration
 
@@ -1109,17 +1131,27 @@ bounds the registry by their `max`, and the package process gives
 admission the same `max`, so admission and registration cannot disagree
 about how many entries there are.
 
-Its budget is a child of the `apps` budget. Every principal of the
-manifest has a wall, a budget whose cap is its guarantee; an app's is
-**elastic** ([design-kernel.md](design-kernel.md#budgets)), with no
-guarantee and the `apps` budget's guarantee as its cap, fixed for the
-boot. Each session's own and outer budgets are walls carved from it, as
-every domain's are, at the memory the record holds when the session
-starts, so once a session runs, its memory depends on nothing outside
-it; what the kernel judges against the `apps` budget is only whether a
-session can start. A package of the name installed again or updated
-with another `memory` changes the record and so the next session's plan, and no
-budget is resized.
+Its budget is a child of the `apps` budget and, as every budget of a
+principal is, a wall, a budget whose cap is its guarantee
+([design-kernel.md](design-kernel.md#budgets)), on either kernel. It
+exists only while a session of the app does: the domain service carves
+it from the `apps` budget, through the domain library, as it starts the
+app's session, at the
+memory the record holds when the session starts plus that session's
+outer budget as the resource policy sizes it, and destroys it once the
+session has retired, which returns the reservation to `apps`. The
+session's own and outer budgets are walls carved from it, as every
+domain's are, so once a session runs, its memory depends on nothing
+outside it, and what the kernel judges against the `apps` budget is
+only whether the principal's wall can be carved: a carve the `apps`
+budget cannot hold refuses the start with `no_memory`. A session that ended keeps its principal's wall until it
+retires, its outer budget waiting for its peers' disconnects inside it,
+so a restart carves a second wall for the new session beside it, and
+for that moment the principal has two. A package of the name installed
+again or updated with another `memory` changes the record and so the
+next session's wall, and no budget is resized. No budget under `apps`
+is elastic: the sharing between apps is the `apps` wall itself, carved
+for each app that runs and returned when it stops.
 
 ### An app's session
 
@@ -1922,9 +1954,9 @@ through the `apps` grant; neither takes a layout.
 | Subsystem | Its part |
 | --- | --- |
 | the manifest check ([design-system.md](design-system.md#the-manifest)) | the `apps`, `package` and `signer` rows and the rows derived from `apps`; property 19; A10 holds, since an app selects among rows the manifest set |
-| the root task and the resource policy | the `apps` budget carved from the root at boot as a wall, the apps group under `users`; app principals' elastic budgets under it, with no guarantee and the `apps` budget's guarantee as cap |
-| the domain library | the principal table sized for the manifest's principals and `max` apps, whose app entries `erx_dom_apps_place` puts after the manifest's principals; each app entry's elastic budget carved under the `apps` budget at boot; `erx_dom_plan_app_session` planning an app principal's session from the app template, which `erx_dom_plan_session` refuses |
-| the domain service | the app's session: the kept rows, and the app's record, with its package's place and layout, sent once the session's namespace is in place |
+| the root task and the resource policy | the `apps` budget carved from the root at boot as a wall, the apps group under `users`; an app principal's wall carved under it for each of its sessions, at the declared memory and the session's outer budget, and destroyed at that session's retire |
+| the domain library | the principal table sized for the manifest's principals and `max` apps, whose app entries `erx_dom_apps_place` puts after the manifest's principals, with no budget at boot; `erx_dom_plan_app_session` planning an app principal's session from the app template, which `erx_dom_plan_session` refuses |
+| the domain service | the app's session: its principal's wall, carved from the `apps` budget at the start and destroyed at the retire; the kept rows, and the app's record, with its package's place and layout, sent once the session's namespace is in place |
 | the principal service | `register_app/1`, which takes the committed package, called at a committed install or update and at recovery; `app_registry/0`, the registry admission reads; no app principal is unregistered within a boot |
 | the start service ([design-apps.md](design-apps.md#the-start-table)) | its tree at `/etc/start`, holding `ctl`; the package rows after the manifest's; `packages/2`, answered once the dropped apps' sessions have ended and refused for an ended lifetime; the merge's grants for an app from its admission; `purge` in its `ctl` |
 | the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the grant has run it, after every request sent before it through the fid; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
@@ -2218,6 +2250,12 @@ it guards.
   same boot;
 * two apps: neither's `/proc` shows the other's domains; once `data`
   grants are rooted by principal, neither reads the other's `/data`;
+* the principal's wall, on both kernels: two enabled apps start together
+  within the `apps` budget and a third is refused with `no_memory` while
+  both run; an app whose session ended and retired starts again, since
+  its reservation came back; seeded: the principal's wall not destroyed
+  at the retire, so the second start is refused, and a principal's
+  budget carved with no guarantee, so the first session's carve fails;
 * a test program packaged with a display need draws through `/dev/draw`
   and changes its picture at a key that QMP sends; seeded: the program
   started without a window, which ends with its open of `/dev/draw`
@@ -2319,16 +2357,16 @@ this is not on the list.
 | **Commands written into `/proc`** | `/proc` is one read-only tree ([design.md](design.md#decisions)): it shows an app's state, and no command reaches the system through it |
 | **Purge as `rm -r` of the app's directory through a grant over `apps/`** | Every administrator's session would hold a grant over every app's data, with a mount point of its own, and a purge could then remove the directory of a running app, whose grant's root would vanish under it, which the storage design does not define. `service NAME purge` uses the start service's `ctl` that `service` already writes and `remove_app`, which refuses a running app's name before any request |
 | **A recorded signer beside each app's directory, with a different signer refused until a purge** | It needs a record the system domain writes among the app directories, read at every admission and removed with the data, with its own crash ordering. Naming the directory for the signer gives the same separation with no record and no refusal |
-| **An app principal's cap sized from its declared memory** | A package installed again with another `memory` would need a resize of a budget whose ended session may not have retired. Each session is a wall at the declared memory already, so a cap of the whole `apps` budget bounds nothing less and is never resized |
+| **An app principal's budget made at boot, elastic under `apps`, with no guarantee** | Fiasco has no elastic budget, and a factory of size 0 is refused, so that budget would be a wall of nothing there and no session could be carved from it; keeping it on erXos's kernel alone would put a backend difference above `liberx`. A wall carved at each session's start needs no elasticity on either kernel and holds memory only while the app runs |
 | **An update as `rm` and then `cp`** | It leaves no app while the new copy is checked, and none if it is refused. A copy over the installed one keeps the old package until the new one has passed, at the cost of one more publication than an install |
 | **Renaming the new package over the old while the app runs, and restarting it after** | The running session reads its package through an open at the storage service, and whether an open file outlives a rename over its name there is the storage format's to say; a keeper that restarted the session between the rename and the publication would start it with the old layout over the new bytes. Ending the sessions before the rename makes neither matter |
 | **An update that starts its app again when `rc.conf` enables it** | One rule would then apply the file at every row's entry into the table, boot or publication, and an updated app would be down for one restart only. But an install would start an app whose lines an earlier install left in the file, an update would start a row the administrator had stopped, and a recovery after a crash would start whatever its set added, so what runs would follow the package process's history instead of the administrator's commands. Applying the file only at boot and at a row's own command, as FreeBSD's `pkg` starts no service, keeps one source of what runs |
 | **Opens of a replaced package kept readable, as on FreeBSD** | The `apps` tree would have to keep a package file without its name until its last open closed, and recovery would have to find and delete such files. `eio` to an open whose package is gone costs a reopen |
 | **`pkg add`, `pkg delete` and `pkg info` commands** | Each is a command, a grammar and an errno table for what a copy, a removal and a listing already say. A tree the system domain serves keeps the one writer and makes the close the commit, as copying an app into `/Applications` is on macOS |
 | **An app chooses its facet parameters within the row's bounds**, or the builder overrides the derived rows | The build counts every row at its own parameters whatever the app picks, so a lower value saves the machine nothing and adds a rule per parameter to admission and to the mint. A builder who wants other values for every app sets them where the service's defaults live; one who wants them per app makes the app part of the manifest |
-| **An app declares a guarantee and a cap** | Each session's budgets are walls, as every domain's are, so a session's memory is one figure; the elasticity is between apps, in the `apps` budget, where the kernel already provides it |
+| **An app declares a guarantee and a cap** | Each session's budgets are walls, as every domain's are, so a session's memory is one figure; the sharing is between apps, in the `apps` wall each running app's wall is carved from |
 | **A sum of installed apps' memory checked at install** | It judges again what the kernel judges at every start, and it promises less than it seems: which apps run at once depends on what is enabled and started, not on what is installed. It also made recovery order matter, since the sum admitted packages in name order until the budget ran out. The build sums the image's enabled packages, and the kernel judges the rest |
-| **An app principal's budget a wall carved at install** | A removal would have to wait for every retire before giving the memory back. An elastic budget under the `apps` wall needs no wait |
+| **An app principal's budget a wall carved at install** | It holds memory for every installed app, running or not, so fewer apps fit, and a removal would have to wait for every retire before giving the memory back. A wall carved at a session's start holds memory only while the app runs |
 | **A pool**: one principal pays for many apps, and each domain record names both the app it acts for and the pool that pays | Every reader of a principal must then choose the right one of two fields; the inspect scope and the grant records each chose wrong in the review of that design. Each app here is a whole principal, so every reader stays as it is |
 | **A package carries an OTP release with its own boot script** | A boot script pins the versions of the release's applications, so every system update would break every package. `erx_app` starts the app's applications over the `app` release |
 | **An environment field in the declaration** | Its one use was naming the UI renderer, which `erx_ui:open/1` takes as an option; anything else an app wants it can set itself |
@@ -2357,7 +2395,7 @@ this is not on the list.
 | a full-window frame through `/dev/draw` is too slow for a game | medium | a game such as the Doom demo runs below its frame rate | the watch-list measurement; a faster path is a design change of the display's, if needed |
 | the app's code reads slowly through the file protocol and the hash check | medium | slow app starts | `tools/erx bench app-start`; the shared code design maps prepared code later ([design-shared-code.md](design-shared-code.md)) |
 | a mount of a package of `/apps` reads each block through the `apps` tree and the storage domain | medium | a slow `ls -R` or `cat` of a large package | the watch-list measurement; looking inside a package is rare and reads no app's hot path |
-| a restart while the `apps` budget is full waits for the ended session's outer budget to retire | low | one refused restart, counted against the row's intensity | property 19 makes the `apps` budget hold a session beside one outer budget not yet retired |
+| a restart while the `apps` budget is full waits for the ended session's principal's wall to retire | low | one refused restart, counted against the row's intensity | property 19 makes the `apps` budget hold a session beside one principal's wall not yet retired |
 | a package's suffix, `.app`, is also the suffix of an OTP application resource file | low | a reader confuses `/apps/dashboard.app` with `lib/erx_dashboard/ebin/erx_dashboard.app` | the two never share a directory; the SDK's documentation names both |
 | an author who signs a new version with a new key finds the app's data gone | low | the data lies under the old key's directory | `/proc/packages` shows the signer; a purge removes the old directory, and the author keeps the key |
 
@@ -2365,10 +2403,11 @@ Decisions:
 
 1. **An app is a principal of its own**, made from its declaration and
    bounded by one `apps` row; no app joins a class or a pool.
-2. **Memory is shared through one elastic level**: app principals'
-   budgets are elastic under the `apps` wall, each capped at the whole
-   of it and never resized; each session is walled; the build sums the
-   image's enabled packages, and the kernel judges every start.
+2. **Memory is shared through one wall**: an app principal's budget is
+   a wall carved from the `apps` wall when its session starts and
+   destroyed when that session retires, never resized; each session is
+   walled inside it; the build sums the image's enabled packages, and
+   the kernel judges every start.
 3. **A machine trusts only the signer keys its boot image carries**:
    the manifest's `signer` rows, and in a development build its builder's
    development package key. Every package is signed.

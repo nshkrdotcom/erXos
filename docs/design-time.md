@@ -164,7 +164,7 @@ read for this design.
   ([design-kernel.md](design-kernel.md), "Time"). The setter in the tree
   is `erx_time_set_wall(wall_ns)`, whose body stores `wall_ns` minus a
   monotonic reading of its own, taken after the call has crossed to the
-  service on the stopgap (`liberx/backend/fiasco/time_page.c`,
+  service on Fiasco (`liberx/backend/fiasco/time_page.c`,
   `erx_fiasco_time_set_wall_body`), and checks no range; this design
   replaces it with `erx_time_set_offset`, which stores the offset it is
   given ([The construction](#the-construction)).
@@ -356,8 +356,7 @@ The special cases this removes:
   that calls `erx_time_set_offset`, as `erx_watchdog_nif.c` is the one
   that pets the watchdog. On erXos's kernel only the system domain holds
   the time page's `WRITE` right, so wherever else the NIF is linked the
-  call fails; on the stopgap the call checks no right
-  ([Phase 1](#phase-1)).
+  call fails, on Fiasco as on erXos's kernel ([Phase 1](#phase-1)).
 
 Why an app and not the network domain: the network domain is the stack,
 an OTP application usable outside erXos, and the domain that parses every
@@ -474,7 +473,7 @@ and counts it.
   release only weakens this check.
 * **Three ways a clock is set, told apart by the page.**
   * *Initial bootstrap.* While `Cold`, the page is as the boot published
-    it: at the epoch on both boards and the stopgap, or the real-time
+    it: at the epoch on both boards and Fiasco, or the real-time
     clock's reading. The sample steps whatever its distance, as
     `ntpd_sync_on_start=YES` makes FreeBSD's first one. erXos does not
     offer the `NO` setting: every boot without a real-time clock starts
@@ -738,7 +737,7 @@ shown there is one of the known atoms or its four bytes in hex.
   then up to 1000 s per two samples, forward or backward, without limit
   over time. The thresholds guard an honest client against one bad
   measurement, not the system against the client. On erXos's kernel the
-  authority is the facet row; on the stopgap it is held, not enforced
+  authority is the facet row; on Fiasco it is held, not enforced
   ([Phase 1](#phase-1)).
 * **The server decides the time, and so does anyone on its path.** This
   is the residual, recorded in [design.md](design.md#residual-risks) and
@@ -764,23 +763,22 @@ shown there is one of the known atoms or its four bytes in hex.
 
 ## Phase 1
 
-On the Fiasco backend the setter is a service call that takes no
-capability and checks no right: the dispatch hands the request to the
-body without its caller (`liberx/backend/fiasco/service.c`, the
-`ERX_FIASCO_CALL_TIME_SET_WALL` case), so any task's call writes the
-page (`liberx/backend/fiasco/time_page.c`). That only the system domain
-sets the clock is therefore held by the chokepoint and the facet, not
-enforced, which is a residual of trusted code recorded in `TODO.md`;
-erXos's kernel checks `WRITE` on the time page. The range check of
-`erx_time_set_offset` is the body's own and holds on the stopgap as on
+On the Fiasco backend the setter is a service call on the time page's
+handle: the root checks the caller's `WRITE` right on that handle and
+answers `ERX_ERIGHTS` without it, so only the system domain sets the
+clock, as on erXos's kernel, and the chokepoint and the facet stand
+behind that check rather than in its place
+([design-fiasco.md](design-fiasco.md#the-releases-cases), "the wall
+clock"). The range check of
+`erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
-boot is cold. On QEMU `virt` the stopgap's root reads the PL031 once at
+boot is cold. On QEMU `virt` Fiasco's root reads the PL031 once at
 boot and sets the offset from it, so `state` is `boot`. The Raspberry Pi 4
 has no real-time clock of its own: wall time counts from 1970-01-01 until
 the wall-clock keeper sets it from a DS3231 module
 ([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
-([design-stopgap.md](design-stopgap.md), "The hosted backend"), so its
+([design-fiasco.md](design-fiasco.md), "The hosted backend"), so its
 `state` is `boot`; its setter answers `ERX_ENOTSUP`. The tree's hosted
 backend defines no setter at all, a gap recorded in `TODO.md`.
 
@@ -803,7 +801,7 @@ that proves it ran.
 | flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
 | facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included | dropping `W`'s upper bound accepts `time_offset_max + 1` |
 
-The setter's range has a test of its own on the stopgap, in the native
+The setter's range has a test of its own on Fiasco, in the native
 guest's time case (`test/guest/native_space/guest.c`): offsets of 0 and
 `time_offset_max` are stored and read back exactly by `erx_time_offset`,
 and `time_offset_max + 1` and -1 answer `ERX_EINVAL` and leave the page
@@ -891,7 +889,7 @@ reference clock within a second.
   being an OTP application with no erXos authority in it.
 * **Giving the app the time page's `WRITE` right.** No clock record in
   one place for `/proc`, two policies if a second time source comes, and
-  on the stopgap no difference from any task's call.
+  on Fiasco no difference from any task's call.
 * **A relative facet, "add this much".** It applies twice if repeated
   and depends on the wall clock not moving between measurement and
   arrival; the absolute `W` has neither problem.
@@ -951,7 +949,7 @@ These were open and are settled as stated here:
 
 * erXos's designs, linked where used: design-kernel.md ("Time"),
   design-network-stack.md, design-system.md, design-apps.md,
-  design-log.md, design-domains.md, design-runtime.md, design-stopgap.md,
+  design-log.md, design-domains.md, design-runtime.md, design-fiasco.md,
   design-crypto.md.
 * erXos's tree: `liberx/backend/fiasco/time_page.c`,
   `liberx/backend/fiasco/time.h`, `liberx/backend/fiasco/service.c`,

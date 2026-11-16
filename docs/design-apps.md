@@ -498,7 +498,7 @@ app and nothing else:
   template only when its arguments and environment leave room in the
   boot page's strings for the variable at its longest, its key,
   `start_flags_max` bytes and a NUL, beside what it reserves there
-  already ([design-stopgap.md](design-stopgap.md#boot-information)),
+  already ([design-fiasco.md](design-fiasco.md#boot-information)),
   so no session's start fails on its flags.
 * **Read at start.** A session sees the flags of its row as the row was
   last applied, by the boot or the row's own command, and a restart

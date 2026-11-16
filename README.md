@@ -78,7 +78,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   else runs in user mode, the runtimes included. erXos's own kernel
   follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*. Until it is
   written, a near-stock Fiasco stands in behind the same interface.
-  ([kernel](docs/design-kernel.md), [stopgap](docs/design-stopgap.md))
+  ([kernel](docs/design-kernel.md), [Fiasco](docs/design-fiasco.md))
 * **Two-level scheduling, one CPU authority.** The kernel grants CPU time
   to groups of threads. Each runtime schedules its processes on the
   threads its group pays for, without a kernel call. The kernel enforces
@@ -166,8 +166,12 @@ pixels. The [overview](docs/overview.md) tells the longer story.
 ## Current status
 
 erXos is in Phase 1 of the [roadmap](docs/plan.md): the system is up on the
-stopgap Fiasco kernel, and Phase 1b moves the user-facing parts into
-domains of their own. Every build is a development build and prints
+Fiasco kernel, and Phase 1b moves the user-facing parts into
+domains of their own. The next milestone is
+[0.1, the preview](docs/plan.md#01-the-preview),
+erXos's first public preview: a development build for the Raspberry
+Pi 4 and QEMU `virt` with the kiosk and its live quotes on the screen, SSH to `rc`, and Doom
+on QEMU for whoever builds it. Every build is a development build and prints
 `development build: trusted code only`. `tools/erx boot` builds an image
 and boots it in QEMU to the command shell:
 
@@ -203,7 +207,7 @@ Eshell V17.1.1 (type help(). for help)
 
 **Kernel and domains**
 
-* ERTS runs in user mode as the system domain on the stopgap Fiasco, behind
+* ERTS runs in user mode as the system domain on Fiasco, behind
   `liberx`; OTP 29.1.2 and musl live in the tree, modified.
 * Domains each run their own ERTS (interpreter or BeamAsm) in an address
   space of their own. The domain service starts the manifest's domains
@@ -215,7 +219,7 @@ Eshell V17.1.1 (type help(). for help)
 **Erlang runtime and tools**
 
 * The Erlang shell, `erx:i()`, `source(Pid)`, `erx:trace/1` and `/proc`
-  show processes and kernel objects; a value the stopgap cannot measure
+  show processes and kernel objects; a value Fiasco cannot measure
   reads as unsupported or partial.
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle

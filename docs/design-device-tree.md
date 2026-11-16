@@ -9,7 +9,7 @@ written at build time cannot hold a value only the firmware knows. This
 document says how the system domain's `liberx`, the root task, receives
 the tree the firmware handed over, how one bounded reader reads it, and
 how the values it reads reach the device records the root writes
-([design-stopgap.md](design-stopgap.md#device-records)), on the stopgap
+([design-fiasco.md](design-fiasco.md#device-records)), on Fiasco
 Fiasco and on erXos's kernel alike.
 
 Decisions every reader needs:
@@ -31,7 +31,7 @@ Decisions every reader needs:
   It walks the tree through `libfdt` with every check on, recurses
   nowhere and allocates nothing, and has a fuzz target.
 * **The tree reaches the root as a read-only copy at a known place.** On
-  the stopgap, `bootstrap` packs a copy of the tree into pages of its own,
+  Fiasco, `bootstrap` packs a copy of the tree into pages of its own,
   which `sigma0` pages to the root read-only, and the boot handoff record
   names their range. On erXos's kernel, the root holds a read-only object
   of the tree at a well-known slot. `liberx`'s `erx_boot_tree` returns the
@@ -189,11 +189,11 @@ reach, not one it handles:
 
 ## How the tree reaches the root
 
-### On the stopgap
+### On Fiasco
 
 `erx_image_load` makes the copy after the load plan is made and before
 anything it places moves, then writes the handoff page (`erx_image.cc`,
-step 4 of [Boot handoff](design-stopgap.md#boot-handoff)):
+step 4 of [Boot handoff](design-fiasco.md#boot-handoff)):
 
 1. take the room the load plan chose for it: the tree's `totalsize` in
    whole pages, clear of every place the plan gives and of the archive
@@ -250,7 +250,7 @@ the tree's bytes, read-only. The Fiasco backend returns the handoff
 view's range; erXos's kernel's backend maps the `device_tree` object and
 returns the range the machine page names; the hosted backend returns
 `ERX_ENOTSUP`, since a hosted runtime has no devices and its entry adds no
-device record ([design-stopgap.md](design-stopgap.md#device-records)).
+device record ([design-fiasco.md](design-fiasco.md#device-records)).
 Everything above the seam, the reader, the catalogue and the records, is
 the same code on every backend.
 
@@ -263,12 +263,12 @@ host, where its tests and fuzz target run. It reaches the tree only
 through `libfdt` from `fiasco/libfdt/lib/contrib`, compiled with
 `-DFDT_ASSUME_MASK=0`, so no copy's default decides which checks run.
 erXos's kernel links the same file, and its `erx_dma_ranges` is the
-reader's DMA walk. On the stopgap the root task links it in user mode and
+reader's DMA walk. On Fiasco the root task links it in user mode and
 the kernel's core archive leaves it out (`CoreArchive::ROOT_TASK_SOURCES`),
 since Fiasco reads no tree of erXos's and links its own `libfdt`. Besides
 `fdt.c`, `fdt_ro.c`, `fdt_check.c` and `fdt_addresses.c`, the reader links
 `fdt_rw.c` and `fdt_wip.c` only because `fdt_addresses.c` holds a writer;
-it writes nothing. Outside the stopgap's own `fiasco/` tree, only
+it writes nothing. Outside Fiasco's own `fiasco/` tree, only
 `kernel/core/dt.c` and erXos's kernel's `kernel/platform/fdt.c` include
 `libfdt.h`; a build check fails on any other includer.
 
@@ -417,7 +417,7 @@ authority: the `reg` range, rounded out to whole pages, since whole
 pages are what the root maps, must lie inside the row's **window**, the
 `base` and `size` of the manifest row, and outside every memory range of
 the view, since the firmware keeps the framebuffer out of the RAM it
-reports ([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)); a
+reports ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)); a
 range that fails is `outside`. Being outside RAM alone would admit a
 register window the manifest does not list, firmware memory, or a
 device the kernel keeps; the window is a range the build has checked,
@@ -447,7 +447,7 @@ is missing, empty or all zeros is absent, as erXos's kernel leaves it once
 it has used it. The bytes are secret, and whoever asks for them erases
 them. The boot seed's one sequence, `erx_rng_seed` in
 `kernel/core/rng_seed.c`, keys a generator from the counter and mixes each
-present seed in on its own, in that order; the stopgap's root seeds through
+present seed in on its own, in that order; Fiasco's root seeds through
 it in its step 6, and erXos's kernel will
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)).
 
@@ -458,7 +458,7 @@ tree, so nothing downstream holds the tree's bytes.
 
 **When.** The root reads the tree in its step 4, after it has read the
 system manifest and before it builds the pool
-([Boot handoff](design-stopgap.md#boot-handoff)): it accepts the tree,
+([Boot handoff](design-fiasco.md#boot-handoff)): it accepts the tree,
 then asks the reader for each manifest device row's facts and stores them
 in the row's catalogue entry. A refused tree stops the boot with its
 reason, as the other failures of steps 1 to 6 do. On erXos's kernel the
@@ -482,7 +482,7 @@ gains a last number, `MAC`, the hardware address as a 48-bit decimal, 0
 when absent or when the row asks for none:
 `-erx_record given ROLE PERIPHERAL PATH WINDOW_H OFFSET SIZE LINE_H MARK MEM_H
 MEM_SIZE CLOCK COHERENT MAC`, PATH the row's device-tree path
-([design-stopgap.md](design-stopgap.md#device-records)). `erx_device_record:find/3` reads it, refusing a `MAC`
+([design-fiasco.md](design-fiasco.md#device-records)). `erx_device_record:find/3` reads it, refusing a `MAC`
 above `2^48 - 1`, and returns it as `mac => Address` for a nonzero value;
 the record sizes of `include/erx/boot_words.h` grow by its longest form.
 The device's contiguous object is made only when the entry's DMA range is
@@ -532,7 +532,7 @@ firmware's edits from them.
 ## Concurrency and failure
 
 The reader runs once, on the root's first thread, before any other
-thread exists ([Boot handoff](design-stopgap.md#boot-handoff), "Only the
+thread exists ([Boot handoff](design-fiasco.md#boot-handoff), "Only the
 first thread exists until step 7"). The entries it fills are not written
 again, and the copy's pages are read-only and never unmapped, so later
 readers on other threads read values that no longer change.
@@ -711,7 +711,7 @@ claimed for either.
    Recommendation: the object, for the reason under Alternatives.
 3. **The host link's `erx.hostlink=1`.** The word exists because the
    stopgap's root cannot see whether the machine has the host link's UART
-   ([design-stopgap.md](design-stopgap.md#the-command-line)); with the tree
+   ([design-fiasco.md](design-fiasco.md#the-command-line)); with the tree
    in hand it can, as erXos's kernel does. Recommendation: give the host
    link's record exactly when the tree has an enabled node at the
    manifest's `hostlink` path, and delete the word and the harness's

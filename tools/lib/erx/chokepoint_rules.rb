@@ -9,8 +9,8 @@ require_relative 'generated_abi'
 
 module Erx
   # The chokepoint rules M1 binds, as data (docs/design-kernel.md,
-  # "Chokepoint checks"; docs/design-stopgap.md, "Interfaces" and
-  # "Verification and testing"). `make check` evaluates every rule over the
+  # "Chokepoint checks"; docs/design-fiasco.md, "Interfaces" and
+  # "Verification"). `make check` evaluates every rule over the
   # checkout's listed files; each active rule's seed is the violation its
   # host test feeds it. A rule whose sites are not in the tree yet is
   # Pending, and fails the check as soon as a file it awaits appears.
@@ -37,7 +37,7 @@ module Erx
     FIASCO_BACKEND = 'liberx/backend/fiasco/**/*'
     # erXos's own C-family sources and the glue.
     ERXOS_C = Chokepoints::Scope.new(own: true, extra: [GLUE])
-    STOPGAP = 'docs/design-stopgap.md'
+    FIASCO = 'docs/design-fiasco.md'
     KERNEL = 'docs/design-kernel.md'
     # The pipe's files (docs/design-pipes.md, "The ring"): its checks and
     # steps (liberx/erx_pipe_*.c) and their header, a program's pipe ends in
@@ -228,7 +228,7 @@ module Erx
       rule: "the cores' private headers (each *_impl.h below kernel/ outside an import: a core's own, " \
             'and each private ABI layout\'s generated header) are included only by the cores (B4), ' \
             'and each by its own core\'s host tests',
-      design: "#{STOPGAP}#invariants",
+      design: "#{KERNEL}#chokepoint-checks",
       scope: ERXOS_C,
       pattern: PRIVATE_HEADER_INCLUDE,
       sites: [Chokepoints::Site.new(glob: 'kernel/core/*'),

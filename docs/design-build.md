@@ -71,7 +71,7 @@ path also names the helpers a driver runs from its install by path
   read. A compile that asks whether a file exists (`__has_include`,
   `#include_next`) is never stored, since no dependency list names a file
   the search did not find.
-* **The stopgap Fiasco build** is recorded in place: its key is the
+* **Fiasco build** is recorded in place: its key is the
   captured inputs' record (FiascoInputs), the build tools' own Ruby, the
   compiler and the environment the build runs in. Its `PATH` holds the
   directory each package it uses really lives in (GNU make, the cross gcc
@@ -319,7 +319,7 @@ The JSON build record is audit output and cannot create a helper handle or
 replace its expected inputs. A bare executable path and a matching sidecar
 file do not establish that the executable came from the trusted builder.
 
-## The frozen stopgap build
+## The frozen Fiasco build
 
 Output directories have an explicit owner root. The shared directory guard
 resolves that trusted root, checks every existing child component for links
@@ -349,7 +349,7 @@ read from the recorded tree when the image is packed.
 The kernel configuration runs in kernel mode, with `CONFIG_CPU_VIRT`
 disabled, device-tree discovery and the interrupt controllers required by
 QEMU `virt` enabled. Configuration inputs are checked in; the resolved
-configuration is recorded with the executable. The stopgap uses the
+configuration is recorded with the executable. Fiasco uses the
 documented cross GCC/binutils toolchain as subprocesses. erXos's own C17
 code continues to use its LLVM build. Both record compiler identity,
 effective flags, linker maps and dependency files.
@@ -385,7 +385,7 @@ with the two executables' linker evidence.
 
 erXos's bootable file is `bootstrap` alone, built as a flat image, with the
 archive that erXos's packer appends
-([design-stopgap.md](design-stopgap.md#boot-handoff)); `bootstrap` carries no
+([design-fiasco.md](design-fiasco.md#boot-handoff)); `bootstrap` carries no
 Fiasco modules. Starting `liberx`'s root-task entry is the root startup's;
 until it lands, `tools/lib/erx/boot_image.rb` packs the kernel and `sigma0`,
 and a guest test's root task, as files bootstrap places, over the structural
@@ -521,7 +521,7 @@ release medium (`medium.img`), or for a board the firmware boots from a
 boot partition, the Raspberry Pi 4, that partition's files in `boot/`
 and the SD card, `sdcard.img`, the ABI's medium whose slot A's FAT32
 holds them and whose volumes fsimg writes and verifies
-([design-stopgap.md](design-stopgap.md#the-raspberry-pi-4)).
+([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)).
 The Pi's boot ROM reads only 8.3 names, so every name in the
 partition's root that fits 8.3 is stored as its own short entry, with
 the case flags that restore its lowercase spelling, not as a numbered

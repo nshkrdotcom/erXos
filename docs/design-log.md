@@ -141,7 +141,7 @@ domain.
 | **L1.** A line's time and source are the service's | `write` carries a list of levels and texts and nothing else; the log facet's callback forwards it as `{write, Grantee, Records}`, with the grantee bound when the facet was minted, and the service takes the principal and name for that id from the domain service; the service reads the time when it takes the batch | a `write` with a source or time field; a facet that forwards a source from the request | a domain whose text imitates another domain's line head appears under its own id, principal and name; a seeded facet that copies a source from the request fails it |
 | **L2.** No line holds a byte the line escape would not pass | `erx_syslog_core:line/5` is the one function that turns a domain's text into a line, and passes the name and the text through `erx_text:escape_line/1`; the kernel's lines arrive escaped by the kernel, as printable ASCII ([design-kernel.md](design-kernel.md#console-log-and-panic)); the console and the writer receive only lines the core made, and the writer stores nothing else | a second renderer; a consumer handed a record instead of a line | every C0 and C1 control, `Cf`, `Zl`, `Zp`, default-ignorable and invalid UTF-8 class, and every CSI, OSC, DCS, APC, PM and SOS form, as a record's text, reads as tokens on the console's line and in `/var/log/messages`; with the escape removed from `line/5` the test fails |
 | **L3.** No writer waits on a consumer | a consumer receives a batch only as the answer to its own request for the next one, so it holds at most one; lines for it wait in its backlog, which is bounded by bytes and drops its oldest lines past the bound, counted; a `write` is answered when the service has taken it, never when a consumer has | a write answered after a consumer has written the lines; an unbounded backlog; a batch sent without a request | a console driver that never answers and a store that never answers, while domains write at their rate for a minute: every `write` answers within its facet's deadline and the service's heap stays within its bound; a seeded unbounded backlog fails on memory |
-| **L4.** Each kernel record is taken once, by the log service | `erx_syslog` is the only caller of `erx_log:take/0`, which a build check holds; the take and the early console move the ring's one taken position, so a restarted service takes on from where the last take stopped and nothing the early console wrote is taken again ([design-stopgap.md](design-stopgap.md#the-console)) | a second caller of `take/0` | a serial transcript across the handoff holds each kernel record once; the service killed between takes doubles no kernel line on the console or in `kernel/messages`; the build check with a seeded caller in `erx_console` |
+| **L4.** Each kernel record is taken once, by the log service | `erx_syslog` is the only caller of `erx_log:take/0`, which a build check holds; the take and the early console move the ring's one taken position, so a restarted service takes on from where the last take stopped and nothing the early console wrote is taken again ([design-fiasco.md](design-fiasco.md#the-console)) | a second caller of `take/0` | a serial transcript across the handoff holds each kernel record once; the service killed between takes doubles no kernel line on the console or in `kernel/messages`; the build check with a seeded caller in `erx_console` |
 | **L5.** No session's tree reaches a kernel line | the writer appends kernel lines only to `kernel/messages` and the domains' lines only to `messages`; a session's grant of `erx_logfs` serves a fixed set of names, `messages` and its archives, and never lists the store, so `kernel` is not a name in it; only the system domain's own grant serves `kernel` ([The store](#the-store)) | the writer appending a kernel line to `messages`; a session's grant that serves the store's listing or `kernel` | a session's `ls /var/log` lists no `kernel` and its `grep -r . /var/log` finds no kernel line, while the system shell reads `/var/log/kernel/messages`; a seeded tree that serves the store's directory listing fails |
 | **L6.** A failing medium costs only the stored files | `erx_syslog` calls no file operation; every file call is made by a process the writer starts for one step and waits for, whose failure, error or deadline, is a value to the writer, which counts the batch's lines and goes on; the store's backlog is bounded like the console's | a file call in `erx_syslog`; a writer that crashes on a file error | the data partition's server made to fail every request and then to stop answering, for ten minutes: the console lines go on, every `write` answers, the log holds one `failed` line of the writer's, and once the server answers again the store holds `writing again, N lines not stored` and a batch that begins with `lines missed` |
 | **L7.** No line is written twice, and no line is joined to another | the writer hands each batch to one process, once; each batch's process opens the files afresh and appends a newline first when a file's last byte is not one; nothing of it outlives it | a writer that retries a failed batch; files kept open across batches; an append before the repair | a server stand-in that applies a write and drops its reply, one that fails a write part way and one that fails the sync: no line appears twice in the store and each cut line ends in a newline; a seeded writer that retries its batch fails on the duplicate, and a seeded batch process that skips the repair fails on the joined line |
@@ -246,7 +246,7 @@ construction: they are readable where an inspect facet of scope `all`
 answers `/proc/kernel/log`, which in a release build is the system shell
 at a secure line ([design-live.md](design-live.md#inspection), Scopes).
 
-On the stopgap a development build's `data` grant to `root`'s sessions
+On Fiasco a development build's `data` grant to `root`'s sessions
 covers the whole of `/data`, read-write
 ([design-stopgap.md](design-stopgap.md#littlefs-in-the-storage-domain)),
 so those sessions can also read `kernel/messages`, which their scope
@@ -489,9 +489,9 @@ take are on the serial line and in `/proc/kernel/log`, not in
 **The handoff.** The first take is also the handoff of the UART: until
 it, the early console writes every record on the UART, moving the taken
 position as it does, and from it every record waits in the ring for the
-next take. On the stopgap the root service writes the early console and
+next take. On Fiasco the root service writes the early console and
 sets the sink to the ring at the first take
-([design-stopgap.md](design-stopgap.md#the-console)); erXos's kernel
+([design-fiasco.md](design-fiasco.md#the-console)); erXos's kernel
 offers the same `erx_log_take`
 ([design-kernel.md](design-kernel.md#console-log-and-panic)). Since both
 writers move one position, no record is written twice and none is
@@ -607,7 +607,7 @@ does not pass through it:
   there after stopping the other CPUs
   ([design-kernel.md](design-kernel.md#console-log-and-panic)); on the
   stopgap its end path also writes the records nobody has taken
-  ([design-stopgap.md](design-stopgap.md#the-end-path)).
+  ([design-fiasco.md](design-fiasco.md#the-end-path)).
 * **The system domain's** `erlang:display/1`, `erlang:display_string/2`
   and `standard_error` go to its `erx_tty_owner`, `erx_console`, which
   writes their bytes to its driver unchanged
@@ -673,9 +673,9 @@ is lost, as for any consumer.
 
 ## Phase 1
 
-Phase 1 runs on the stopgap, with other domains from M5
+Phase 1 runs on Fiasco, with other domains from M5
 ([plan.md](plan.md)). Everything here is Erlang in the system domain and
-unchanged by erXos's kernel. The kernel ring is the stopgap's, polled
+unchanged by erXos's kernel. The kernel ring is Fiasco's, polled
 since it offers no signal; its rate is per space and its ring shared, so
 one space can push every record out in seconds, which the `kernel log
 records lost` lines and the sequence gaps show. Before the data
@@ -719,7 +719,7 @@ the supervisor's report is in the kernel ring, at `/proc/kernel/log`.
   nothing of the store: a batch's process reads one byte of each file
   and its size.
 * **The kernel's lines** stay where scope `all` reaches (L5), but for
-  the stopgap's whole-partition grant ([The store](#the-store)).
+  a development build's whole-partition grant ([The store](#the-store)).
 * **Who reads `/var/log`** is whoever a facet row grants `varlog`, and the
   tree has no scope of its own: every domain's lines are in it. The
   default manifests grant it to `root`'s template alone, as a UNIX
@@ -747,7 +747,7 @@ Each test names the seeded failure that proves the code under test ran.
 | no wait (L3) | a console driver and a store that never answer, while domains write at their rate for a minute: every `write` answers, the service's heap stays bounded, and each consumer's next batch begins with `lines missed` | a seeded unbounded backlog fails on memory; a `write` answered after the consumer's batch fails on its deadline |
 | the consumer protocol | exhaustively over each role's states, `idle` and `{waiting, From}`, and its events, a request, a second request, a line, the store's batch falling due and the requester's end: each state's next state and answer are as [Consumers and backlogs](#consumers-and-backlogs) says; in a system test, `erx_syslog` killed while the writer is stalled mid-batch and while the console waits: the writer finishes and asks the new service, and the console's next batch comes from the new service | a service that sends a batch without a request sends two to a stalled writer and fails; a consumer that does not ask again after its request's `DOWN` receives nothing and fails |
 | one taker (L4) | a serial transcript across the handoff, with records logged on both sides of it, holds each kernel record once; `erx_syslog` killed between takes doubles none, on the console or in `kernel/messages` | a second take in `erx_console` splits the kernel's lines between the two and fails; the build check fails on it |
-| the handoff order | the stopgap's counter of `l4_vcon_write` calls stays still after `erx_syslog`'s first take, and the console driver's first write follows it | `erx_syslog_sup` started after `user_sup` lets the driver write first and fails |
+| the handoff order | Fiasco's counter of `l4_vcon_write` calls stays still after `erx_syslog`'s first take, and the console driver's first write follows it | `erx_syslog_sup` started after `user_sup` lets the driver write first and fails |
 | kernel lines apart (L5) | a session's `ls /var/log` lists `messages` and no `kernel`, and `grep '^#' /var/log/messages*` finds nothing; the system shell reads `/var/log/kernel/messages` with the boot's kernel lines | a writer that appends kernel lines to `messages` fails; a session's grant that serves the store's listing shows `kernel` and fails |
 | files | `cat /var/log/messages` holds the lines the console showed, in order; `tail -f` shows a line within two seconds of its `write`; `tail -F` follows a rotation | a tree that reports the size of the open rather than the file's leaves `tail -f` silent and fails |
 | rotation | a flood past the size rotates: `messages.0` holds the old lines and at most the count of archives remain | a rotation that keeps one archive too many fails the count |
@@ -820,7 +820,7 @@ None.
 ## References
 
 * erXos's designs, each linked where it is used: design-live.md,
-  design-kernel.md, design-stopgap.md, design-runtime.md,
+  design-kernel.md, design-fiasco.md, design-runtime.md,
   design-domains.md, design-files.md, design-tmp.md and design-shell.md.
 * erXos's tree: `erlang/apps/erx/src/erx_facet.erl` (forwarding and its
   failure answer), `erlang/apps/erx/src/erx_inspect_facet.erl`,

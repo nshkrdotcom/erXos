@@ -35,6 +35,7 @@ begin
   require_relative 'lib/erx/checks'
   require_relative 'lib/erx/hardware'
   require_relative 'lib/erx/arch_terms'
+  require_relative 'lib/erx/fiasco_downsides'
   require_relative 'lib/erx/sysreg'
   require_relative 'lib/erx/oracle_container'
   require_relative 'lib/erx/oracle_hosted'
@@ -104,6 +105,8 @@ module Erx
         sysreg(command_arguments)
       when 'check-arch-terms'
         check_arch_terms(command_arguments, **collaborators)
+      when 'check-fiasco-downsides'
+        check_fiasco_downsides(command_arguments, **collaborators)
       when 'build'
         build(command_arguments, **collaborators)
       when 'check-runtime-seam'
@@ -150,6 +153,7 @@ module Erx
     end
 
     def self.check(input_arguments, runner_class: Runner, checks_class: Checks, arch_terms: ArchTerms,
+                   fiasco_downsides: FiascoDownsides,
                    runtime: method(:with_test_runtime), rc_oracle: method(:ensure_rc_oracle), web: WebBuild.method(:build),
                    platform: RUBY_PLATFORM)
       arguments = input_arguments.dup
@@ -159,6 +163,7 @@ module Erx
       runner = runner_class.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))
       checks_class.new(root: ROOT, runner: runner).run
       arch_terms.check(root: ROOT)
+      fiasco_downsides.check(root: ROOT)
       web.call(root: ROOT, runner: runner)
       rc_oracle.call(runner: runner)
       left_out = []
@@ -730,6 +735,13 @@ module Erx
       no_arguments(arguments)
       ArchTerms.check(root: ROOT)
       Terminal.puts('architecture terms stay within binding layers')
+      0
+    end
+
+    def self.check_fiasco_downsides(arguments)
+      no_arguments(arguments)
+      FiascoDownsides.check(root: ROOT)
+      Terminal.puts('every cited FD row exists in the Fiasco downsides table')
       0
     end
 

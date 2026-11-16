@@ -179,7 +179,7 @@ register writes, which are BIFs, take no lock (`erx_device_bif.c`,
 `erx_device.c:372-420`). The manifest's device record has a DMA mode
 and an amount of DMA memory but no coherence mark and no DMA address
 range; its only flag is `hostile` (`abi/manifest.txt`, `erx_mf_device` and
-`mf_device_flags`). On the stopgap, every device's DMA
+`mf_device_flags`). On Fiasco, every device's DMA
 memory comes from one contiguous pool the root takes from `sigma0`
 at boot, sized for the manifest's devices' memory up to 16 MiB (`liberx/backend/fiasco/vm.c`, `erx_fiasco_vm_init`;
 `liberx/backend/fiasco/page_pool.c`, `erx_fiasco_contig_order`), an object is at most 16 MiB
@@ -409,7 +409,7 @@ call is `badarg` with nothing applied.
 
 **The record.** Each DMA device's catalogue entry, and from it the
 `given` record its holder reads
-([design-stopgap.md](design-stopgap.md#device-records)), carries two
+([design-fiasco.md](design-fiasco.md#device-records)), carries two
 facts the root reads at boot from the device tree the firmware handed
 over, with the reader of [design-device-tree.md](design-device-tree.md):
 
@@ -476,13 +476,13 @@ nothing, a queue any of whose device addresses would reach the width.
 erXos's kernel, `erx_mem_create_contiguous` allocates from the part of
 the device's window that its contiguous pool's RAM backs, the window
 found by the same walk over the same tree, so the kernel's range and the
-record's are one. On the stopgap the root
+record's are one. On Fiasco the root
 makes each device's object from the contiguous pool: the object records
 the entry's offset, `dma_bus - dma_cpu`, for `erx_mem_dma_addr`; a device
 whose range is absent, or whose object's pages would fall outside it,
 gets no DMA memory, and the root prints a line naming the device, its
 range and the pool's physical address
-([design-stopgap.md](design-stopgap.md#the-pool)). EMMC2 has DMA memory
+([design-fiasco.md](design-fiasco.md#the-pool)). EMMC2 has DMA memory
 on both kernels, at the range the firmware wrote for the board's
 revision.
 
@@ -816,7 +816,7 @@ which completes the maintenance before the thread runs elsewhere. Fiasco
 does not: its exception entry has no such barrier
 (`fiasco/kernel/src/kern/arm/64/ivt.S`), and its switch path orders with
 `DMB ISH` at most (`fiasco/kernel/src/lib/libk/arm/mem-arm.cpp:209-231`).
-On the stopgap the condition that makes this safe is instead that no
+On Fiasco the condition that makes this safe is instead that no
 thread is moved while it makes a device call, and it holds by
 construction:
 
@@ -836,7 +836,7 @@ construction:
 
 The one way to break it would be a call that moves a normal scheduler
 from another thread, which no code in the runtime makes. Non-coherent
-DMA on the stopgap is enabled under that condition, and the board pass
+DMA on Fiasco is enabled under that condition, and the board pass
 that enables GENET's DMA confirms the reset reads of
 [Register ownership](#register-ownership) first.
 

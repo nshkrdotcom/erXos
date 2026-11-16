@@ -101,7 +101,7 @@ instead of a command line:
   domains talk by frames on connections, so message rates between
   domains are a first-class load. stats draws one row per domain
   against its grant and budget.
-* **clock** and **month**: the time and the date. On the stopgap the
+* **clock** and **month**: the time and the date. On Fiasco the
   wall clock may not be set: until a sample or a real-time clock sets
   it, wall time is uptime counted from 1970-01-01
   ([design-time.md](design-time.md#what-proc-shows), `state`).

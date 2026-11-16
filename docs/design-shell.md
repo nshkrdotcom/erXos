@@ -981,7 +981,7 @@ other processes stay stopped
 ([design-programs.md](design-programs.md#job-control)). So `fg` and
 `bg` do the same whatever the entry shows: clearing a mark that is not
 set and lifting a cause a program does not hold change nothing, and the
-table needs no state for a job that is partly held. On the stopgap,
+table needs no state for a job that is partly held. On Fiasco,
 which pauses no space, stopping a job stops only its Erlang commands: the
 shell reports those stopped and names the job's programs, which run on, so
 the job table never shows a running program as stopped
@@ -2463,7 +2463,7 @@ remain independent of catalog generation.
 * **Interaction:** line editing, history and completion through a scripted
   terminal; `Ctrl-Z`, `fg`, `bg`, `Ctrl-C` and `kill %N` on a job of
   Erlang commands, of programs, of both, and of programs three generations
-  deep; on the stopgap, `Ctrl-Z` on a job of both, after which the job
+  deep; on Fiasco, `Ctrl-Z` on a job of both, after which the job
   table shows its Erlang commands stopped and its programs running; an
   Erlang command whose helper process the job's stop holds; a stage that
   spawns helpers in a loop while `Ctrl-Z` and then `kill %N` arrive, none

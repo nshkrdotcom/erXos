@@ -50,7 +50,7 @@ Decisions every reader of this document needs:
   object, a domain, a program or a process; every attribute carries a
   status (`ok`, `partial`, `unknown`, `unsupported`, `timeout`, `error`),
   and every value says who reported it: the kernel, a trusted service,
-  the runtime of the domain it describes, or, by its own name, a stopgap
+  the runtime of the domain it describes, or, by its own name, a backend
   that stands in for one of them. A compromised domain can lie
   about its own processes, and the record says so.
 * **The pid space is the inspector's index.** Any process is
@@ -249,7 +249,7 @@ with it.
 | Invariant | Why it holds | What would break it | How it is checked |
 | --- | --- | --- | --- |
 | **V1.** A tty changes a program's bytes only as its `termios` says | every write to a session's or a pseudo-terminal's tty goes through `erx_tty:output/3`, a pure function of the bytes, the room and the output flags, which returns its input with `OPOST` clear and otherwise changes only what a set flag names; nothing after it reads the bytes: `erx_console` copies a connected session's bytes to the console's driver, and the host tool's `console` command copies the terminal stream to its standard output | a filter on the output path; a write path that skips `output/3` | a test at the tty's byte boundary: it writes all 256 byte values and every CSI, OSC, DCS, APC, PM and SOS form through `write`, stdio and `erlang:display_string/2`, and compares the bytes on the line and at the host tool with what was handed to the tty; with an escaping step added on the path, the comparison fails. `io:put_chars/1` is text for the group's editor, not bytes ([The tty](#the-tty)), so its test compares `prim_tty`'s rendering with stock OTP's |
-| **V2.** Inspection never fabricates | every attribute value is a tagged status and carries its reporter (`kernel`, `service`, `runtime` or a stopgap reporter the schema declares); renderers of inspection records print the status and reporter of every value, and the command shell's text commands, which print as FreeBSD's do, print a value without the status `ok` as `-` or not at all, never as a bare number; `top`'s header alone prints a partial figure's number with its reporter named, in the line's label or after the figure ([design-shell.md](design-shell.md#invariants) SH3) | a renderer that drops statuses, or an attribute filled with a default; a partial figure of `top`'s header printed without its reporter named | one test per status and per reporter; a property test that every rendered record shows the same statuses as the record; `top`'s header tests with each figure in turn of every status ([design-shell.md](design-shell.md#invariants) SH3) |
+| **V2.** Inspection never fabricates | every attribute value is a tagged status and carries its reporter (`kernel`, `service`, `runtime` or a backend reporter the schema declares); renderers of inspection records print the status and reporter of every value, and the command shell's text commands, which print as FreeBSD's do, print a value without the status `ok` as `-` or not at all, never as a bare number; `top`'s header alone prints a partial figure's number with its reporter named, in the line's label or after the figure ([design-shell.md](design-shell.md#invariants) SH3) | a renderer that drops statuses, or an attribute filled with a default; a partial figure of `top`'s header printed without its reporter named | one test per status and per reporter; a property test that every rendered record shows the same statuses as the record; `top`'s header tests with each figure in turn of every status ([design-shell.md](design-shell.md#invariants) SH3) |
 | **V3.** The host link's authority is exactly its session's facet table and the trees its configuration lists | calls name a facet by its number in the session table and nothing else; the table is created empty with the session, holds at most 1,024 entries (opening one more fails with `{error, system_limit}`), and dies with it; the files stream reaches only the grants of the listed trees, by `attach`'s tree name, and its fids end with the session | a request path that resolves names to processes; a table or a fid that survives its session; an `attach` that reaches a tree not listed | session replacement tests; a request naming a number of an ended session is refused; an `attach` of an unlisted tree fails with `enoent`, and a fid of a replaced session names nothing |
 | **V4.** A call on the host link executes at most once per session | `erx_hostlink` keeps a window of the 64 highest call identifiers, each unseen, executing or answered, and never moves it past a call still executing: a call that would push one out is answered `{error, busy}` without executing; answered calls keep their replies while the kept replies total at most 1 MiB, and a reply that does not fit is not kept; a duplicate is answered from the window, or with `{error, reply_lost}` when its reply was not kept, and an identifier below the window is refused | a window that forgets executing calls | retry and expiry tests with a lost reply and a duplicate in flight; 64 calls executing when a 65th arrives, which gets `{error, busy}` and runs once when sent again |
 | **V5.** Code enters the system domain only through the install facet | the system domain's runtime loads only installed storage: its release's files and the install arena, which only `erx_code:install_beam/2` writes and which refuses every caller but `erx_code`; `erx_code` takes modules only from install facets, which name them by hash, and checks each blob against its hash; a service that loads bytes it received gets `{error, not_installed}`; nothing reapplies installs after a reboot | a second writer of the install arena, `erx_code` accepting modules from something other than an install facet, or a path that reapplies stored installs | a test that `code:load_binary/3` with bytes from a request fails in the system domain; a test that a domain's code facet cannot load into the system domain; a test that `install_beam/2` refuses other callers; a test that a blob one bit off its hash is refused |
@@ -274,7 +274,7 @@ with it.
 
 -type attr() :: {reporter(), value()}.
 -type reporter() :: kernel | service | runtime
-                  | {stopgap, Name :: atom()}.   % a stopgap reporter of the schema
+                  | {backend, Name :: atom()}.   % a backend reporter of the schema
 -type value() :: {ok, term()} | {partial, term()} | unknown | unsupported
                | {timeout, Milliseconds :: pos_integer()} | {error, term()}.
 
@@ -320,26 +320,27 @@ number the entries skip is an entry the query did not get, so a gap,
 never a made-up entry, is what shows one; `erx_schema:validate_record/1`
 checks the entries with the rest of the record, at most a page of them.
 
-A reporter is one of three categories, or a stopgap reporter: a stopgap
-component that does the kernel's, a service's or a runtime's work in its
-place and reports what it can see of that work under its own name.
+A reporter is one of three categories, or a backend reporter: a
+component behind an interface, such as `liberx`'s Fiasco backend, that
+does the kernel's, a service's or a runtime's work in its place and
+reports what it can see of that work under its own name.
 `liberx`'s Phase 1 backend counts the pages of its pool in the kernel's
-place, so the root's budget's `used` is `{{stopgap, liberx_pool},
+place, so the root's budget's `used` is `{{backend, liberx_pool},
 {partial, Pages}}`, which a renderer prints as the value `[partial]`
 with the reporter `root pool`, and a budget carved from it reports
 `used` as `unsupported`
-([design-stopgap.md](design-stopgap.md#reporting-a-budget)). The schema
-declares each stopgap reporter with the category it stands in for, its
+([design-fiasco.md](design-fiasco.md#reporting-a-budget)). The schema
+declares each backend reporter with the category it stands in for, its
 label, the scope of what it sees and the attributes it may report; a
 record carries only its name, an atom of `erx_schema`. A value the
 kernel interface reports with the attribute's full meaning, or reports
 as `unsupported`, is `kernel`'s, whichever kernel backs the interface; a
-value a stopgap computes in another reporter's place carries the
-stopgap's name, so a stopgap's observation never passes for the
+value a backend computes in another reporter's place carries the
+backend reporter's name, so a backend's observation never passes for the
 kernel's.
 
 The collector of each source assigns the reporter, never the report: an
-attribute from `erx_object_info` is `kernel`'s or that of the stopgap
+attribute from `erx_object_info` is `kernel`'s or that of Fiasco
 reporter the schema lists on it, one from a service's
 records `service`'s, and one from a domain's agent `runtime`'s, whatever
 the agent's frame says.
@@ -357,20 +358,20 @@ an attribute of the topic's kind that lists `kernel` and is not
 | `reported` bit | partial bit | Attribute |
 | --- | --- | --- |
 | set | clear | `{kernel, {ok, V}}` |
-| clear | set | `{{stopgap, S}, {partial, V}}`, S the one stopgap reporter the attribute lists for `kernel` |
+| clear | set | `{{backend, S}, {partial, V}}`, S the one backend reporter the attribute lists for `kernel` |
 | clear, or no such field | clear | `{kernel, unsupported}` |
 | set | set | `{kernel, {error, invalid}}`, a fault of `liberx` |
 
-A partial bit on an attribute that lists no stopgap for `kernel` is a
+A partial bit on an attribute that lists no backend for `kernel` is a
 fault of `liberx` too, and the attribute is `{kernel, {error, invalid}}`,
-so a stopgap's count never passes for the kernel's. A call refused with
+so a backend's count never passes for the kernel's. A call refused with
 `ERX_ENOTSUP` makes every attribute of the topic `{kernel,
 unsupported}`; `ERX_ERANGE` from a topic whose `index` counts entries
 ends the listing and makes no record; any other refusal makes each
 attribute `{kernel, {error, S}}`, S the status's name. The inspector
 makes the call itself, on capabilities it holds, and the partial mask is
 its own `liberx`'s, so no domain's report reaches either mask. The
-kernel names no reporter: the schema names the stopgap reporter of a
+kernel names no reporter: the schema names the backend reporter of a
 field the system domain's `liberx` marks partial.
 
 A value the inspector derives from other attributes, one the schema
@@ -381,7 +382,7 @@ not `ok`, so a partial count never yields a room that reads as exact.
 
 `abi/inspection.txt`, included by the ABI root, declares the kinds, paths,
 attribute keys, types, units, bounds, the reporters each attribute
-admits, the stopgap reporters and visibility rules, in the grammar of
+admits, the backend reporters and visibility rules, in the grammar of
 [design-abi.md](design-abi.md#inspection-schema). Ruby generates bounded
 C builders, Erlang types and `erx_schema`,
 Ruby bindings and validators, and shell/host/`/proc` projections from it
@@ -405,10 +406,10 @@ adding attributes keeps it.
 | `[domains, Id, group]`, `[domains, Id, budget]` | the domain's group and budget, as above, within the facet's scope | kernel |
 | `[domains]`, `[domains, Id]` | domain: name, principal, state and death record (service); budget guarantee, cap and spending, group usage, threads (kernel); atom count, ETS tables, modules, process count, run queue (runtime) | each attribute marked |
 | `[domains, Id, threads]`, `[domains, Id, threads, T]` | the domain's threads by object id, from `ERX_INFO_THREAD` on its space; thread: state and wait kind | kernel |
-| `[domains, Id, capabilities]`, `[domains, Id, mappings]` | the domain's capability table and mapping records, paginated | kernel |
+| `[domains, Id, capabilities]`, `[domains, Id, mappings]` | the domain's capability table and mapping records, paginated, from the space's `handles` and `mappings` topics; in development builds alone, on either kernel, for tests and development ([design-fiasco.md](design-fiasco.md#reporting-kernel-objects)) | kernel; on Fiasco the backend reporter `liberx_placements`, from the root's placement records, each record's object `partial` |
 | `[domains, Id, connections]`, `[domains, Id, connections, Peer]` | the domain's connections: the peer domain and each lane's size (service, from the domain service's records); each doorbell's trigger count (kernel, from the IRQ object); frames accepted and refused on each lane (runtime, from the domain's funnel) | each attribute marked |
 | `[domains, Id, exports]` | the domain's export table: each name as data, a process's `proc_id()` or an alias as `{alias, Owner}`, with the peer domain and rights, paginated | runtime |
-| `[domains, Id, programs]`, `[domains, Id, programs, N]` | for a session's domain, its programs, `N` a program's process id, each a port of the session's runtime: name, owner pid, state, exit status, the fids its handler holds for it, its namespace, its failed write-backs of shared mappings (runtime, from the session's agent); its sub-space's state and charges and its group's usage (kernel, from `INSPECT` on the session's space and group tree); below it, `threads`, `capabilities` and `mappings` of the sub-space as the session's agent relays them from the capabilities it holds, marked runtime, or `unsupported` | each attribute marked |
+| `[domains, Id, programs]`, `[domains, Id, programs, N]` | for a session's domain, its programs, `N` a program's process id, each a port of the session's runtime: name, owner pid, state, exit status, the fids its handler holds for it, its namespace, its failed write-backs of shared mappings (runtime, from the session's agent); its sub-space's state and charges and its group's usage (kernel, from `INSPECT` on the session's space and group tree); below it, `threads`, `capabilities` and `mappings` of the sub-space (the last two in development builds alone) as the session's agent relays them from the capabilities it holds, marked runtime, or `unsupported` | each attribute marked |
 | `[domains, Id, pipes]`, `[domains, Id, pipes, N]` | for a session's domain, its pipes: each end's holder, a program by its number or a process, each ring's size and the bytes its header reports, marked as reported by the ring ([design-pipes.md](design-pipes.md#failure-handling-diagnostics-and-debuggability)) | runtime, from the session's pipe server |
 | `[domains, Id, processes]` | the domain's pids, paginated | runtime |
 | `[domains, Id, crash]` | the domain's last crash dump, paginated; marked truncated when its header says so | service, from the crash area |
@@ -1364,7 +1365,7 @@ figure prints its number with its reporter named by the inspection
 schema's label, through the line escape: when every number of a line
 is partial under one reporter, the line's label names it once, and
 otherwise each partial figure names its own after it, so an `ok`
-number beside it never reads as partial. On the stopgap kernel the
+number beside it never reads as partial. On the Fiasco kernel the
 memory figures and `used` are the `liberx` pool's partial counts, so
 the header reads `Mem (root pool): 118M Total, 74M Free` and `Domain
 4 budget (root pool): 44M Used, - Guarantee [unsupported], - Cap
@@ -1559,7 +1560,7 @@ source there even when no release carries it.
 
 `erx:i(Path)` renders a record as a table in the shell; `tools/erx inspect`
 renders the same record on the host. Both escape every string and show
-every value's reporter, and below the table the scope of each stopgap
+every value's reporter, and below the table the scope of each backend
 reporter it names.
 
 #### The inspect service
@@ -1947,7 +1948,7 @@ memory and work, charged to it.
   `/dev` names its devices by the same encoding
   ([design-system.md](design-system.md#devices)).
 * **Content.** A `status` file has one line per attribute: its name, its
-  value and its reporter, a stopgap reporter by its label, separated by
+  value and its reporter, a backend reporter by its label, separated by
   tabs. A value prints through
   `erx_render`, as the inspector's printers print it: an
   `ok` value bare and every other value as its status, `[unknown]`,
@@ -2027,8 +2028,8 @@ a runtime report trusted or let a decoder bypass the output escaper
   events, doorbell triggers and interrupts
   ([design-kernel.md](design-kernel.md#trace-ring)); `erx_tracer` drains
   it with `erx_trace_read`. A park or a wake has one source, the layer
-  that carries it out: the kernel's ring, or on the stopgap the backend's
-  ([design-stopgap.md](design-stopgap.md#the-trace-ring)). The runtime
+  that carries it out: the kernel's ring, or on Fiasco the backend's
+  ([design-fiasco.md](design-fiasco.md#the-trace-ring)). The runtime
   adapter adds to ERTS's trace only what it alone sees: capacity changes,
   yield requests honoured, refusals, connection closes and unheld frames
   ([design-runtime.md](design-runtime.md#failure-handling-diagnostics-and-debuggability)).
@@ -2082,17 +2083,17 @@ scope `all`.
 the reporter its collector assigns ([Inspection
 records](#inspection-records)):
 
-| Row | Reporter | On erXos's kernel | On the stopgap |
+| Row | Reporter | On erXos's kernel | On Fiasco |
 | --- | --- | --- | --- |
-| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since the stopgap offers no lanes |
-| `backend` | `{stopgap, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-stopgap.md](design-stopgap.md#the-trace-ring)) |
+| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since Fiasco offers no lanes |
+| `backend` | `{backend, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-fiasco.md](design-fiasco.md#the-trace-ring)) |
 | `kernel` | `kernel` | each CPU's ring, read with `erx_trace_read` | one `unsupported` line, from `erx_trace_read`'s `ERX_ENOTSUP` |
 
 A row whose call answers `ERX_ENOTSUP` is shown as `unsupported` when
-its reporter is `kernel`, and left out when its reporter is a stopgap's,
-since a stand-in that does not run reports nothing. On the stopgap the
+its reporter is `kernel`, and left out when its reporter is a backend's,
+since a stand-in that does not run reports nothing. On Fiasco the
 adapter emits none of its own events: what causes them, a grant that
-changes, a yield request or a lane, is a kernel mechanism the stopgap does
+changes, a yield request or a lane, is a kernel mechanism Fiasco does
 not offer. The BIF `erx_trace_ring:read(Source, Cursor, Max)`, with
 `Source` either `backend` or `{kernel, Cpu}`, `Cursor` either `present` or
 a 64-bit cursor and `Max` from 1 to 512, makes the call of its row and
@@ -2354,9 +2355,9 @@ by a driver like the console's, beside `erx_hostlink`; the system
 manifest names the UART by its device-tree path; under QEMU it is a UNIX
 socket
 (`-serial unix:build/qemu/RUN/hostlink.sock,server=on,wait=off` after the
-console's `-serial`, in the run's owner-only directory). On the stopgap the
+console's `-serial`, in the run's owner-only directory). On Fiasco the
 root hands the host link's device record only under `erx.hostlink=1`
-([design-stopgap.md](design-stopgap.md#the-command-line)), which the harness
+([design-fiasco.md](design-fiasco.md#the-command-line)), which the harness
 adds with the second `-serial`.
 
 The transport has one trusted physical or local peer. The harness creates
@@ -2948,13 +2949,13 @@ determinism test of the generated tree.
   domains' records from their facets, have fuzz targets.
 * **Inspection tests:** one per status and per reporter; the collector
   of `erx_object_info` over constructed reports, one per row of its
-  table, a partial bit on an attribute with no stopgap, an attribute the
+  table, a partial bit on an attribute with no backend, an attribute the
   layout has no field for, a `derived` attribute over a partial input,
   and each kind of refusal, `ERX_ERANGE` ending a listing among them,
   each paired with a
   seed that flips one bit or the status and must change the attribute;
-  a host test that every bit of each stopgap backend's `erx_info_partial`
-  names an attribute listing a stopgap for `kernel`, failing on a seeded
+  a host test that every bit of each backend's `erx_info_partial`
+  names an attribute listing a backend for `kernel`, failing on a seeded
   bit for `guarantee`; scope tests for
   facets limited to some domains; a record for every path kind against a
   domain whose agent lies, which must appear marked `runtime`, and whose
@@ -3090,9 +3091,9 @@ determinism test of the generated tree.
   `{erx_untraced, true}` under a trace session over every process, with
   call tracing of the function it calls, is never seen, where one spawned
   without it is, and its mailbox still shows in `process_info`, on the
-  hosted runtime. The stopgap's
+  hosted runtime. Fiasco's
   ring and its four-CPU case are in
-  [design-stopgap.md](design-stopgap.md#verification).
+  [design-fiasco.md](design-fiasco.md#verification).
 * **Host link:** session replacement; a recorded hello and its calls
   replayed after a machine reset with entropy `good`, which match no
   session; a retried call executed once; 64 calls executing when a 65th
