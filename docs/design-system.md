@@ -1639,21 +1639,24 @@ Each step's kernel call is a request to Fiasco's root service, the
 one owner of every Fiasco object, served on its one thread
 ([design-fiasco.md](design-fiasco.md#the-root-service)), each a row of
 [its call table](design-fiasco.md#the-call-table): step 1's budgets and
-step 3's group are records with nothing charged or enforced, so K32's
-walls do not hold; step 2's space is a Fiasco task with its parent and
+step 3's group are walls at their guarantees and a record: each budget
+a Fiasco factory for its kernel memory and the root's charge for its
+pages, so K32's walls hold without borrowing (FD25), and the group's
+grant is a record (FD15); step 2's space is a Fiasco task with its parent and
 fault gate recorded, so the domain's end ends its sub-spaces, and its
 faults reach the root service as Fiasco's fault messages, which become
 fault records at the library's gate; step 4's sides and bells are memory
 objects and IRQ objects of the root, the bells bound by the library to
 each party's group; and step 6's installs are `erx_cap_pass` from the
 library's table into the space it created. A handle on Fiasco
-carries no rights, so the rights step 6 names are the library's own
-discipline, recorded nowhere: the domain gets no delete right on its
-connection's objects because only an object's creator may destroy it,
-and it maps the system domain's side read-only because its own `liberx`
-asks for that. That a domain which bypasses `liberx` is held to step 6's
-rights and that its charges stay within its walls are erXos's kernel's
-([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)); what the
+is a slot whose rights the root records and checks at every service
+call, and whose Fiasco capability carries only the rights those allow
+([design-fiasco.md](design-fiasco.md#passing-a-handle)), so a domain that
+bypasses `liberx` is still held to step 6's rights: it gets no delete
+right on its connection's objects, and the root refuses it a write
+mapping of the system domain's side. What Fiasco lacks against erXos's
+kernel is in
+[Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel); what the
 stopgap means for connections and for the domains' invariants, D7 and D17
 included, is in [design-domains.md](design-domains.md#on-fiasco).
 

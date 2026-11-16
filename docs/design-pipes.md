@@ -986,14 +986,15 @@ maps into its own task; the doorbells are IRQ objects the program's port
 driver binds to the program's group, whose deliveries reach the program task's
 readiness dispatcher; and the installs are `erx_cap_pass` from the
 session's table into the program's space, which the session created.
-Budgets are records there, so `ENOMEM` comes from the root's pool rather
-than the session's budget. A handle on Fiasco carries no rights, so
-the rights step 3 names are recorded nowhere: a program uses only the
-ends its `liberx` was told of, and maps them as step 3 says, because its
-`liberx` does so. That a program which bypasses `liberx` cannot widen
-them, that `TRIGGER` comes without the right to bind, and the ownership
-of ends as a kernel fact are erXos's kernel's
-([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). End of
+Budgets are walls there, so `ENOMEM` comes from the program's or the
+session's budget, as on erXos's kernel (FD25 for what walls lack). A
+handle on Fiasco is a slot whose rights the root records and checks at
+every service call, and whose Fiasco capability carries only the rights
+those allow ([design-fiasco.md](design-fiasco.md#passing-a-handle)), so a
+program that bypasses `liberx` still cannot widen the rights step 3
+names, and its doorbells come with `TRIGGER` and no right to bind. What
+Fiasco lacks against erXos's kernel is in
+[Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel). End of
 stream follows from the session's records of holders, user-mode code, and
 holds on both.
 

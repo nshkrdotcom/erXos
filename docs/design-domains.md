@@ -385,8 +385,8 @@ on frames (what the funnel accepts, refuses and decodes, and what a forged
 sender or name gets) count; their bounds on memory charged to a budget, on
 CPU grants and on an innocent peer's latency report `unsupported` and are
 checked on erXos's kernel. The check that no party can delete a
-connection's objects passes through the creator-only destroy, since a
-handle on Fiasco carries no rights; it proves the root service's
+connection's objects passes through the creator-only destroy, since no
+pass on Fiasco conveys `DESTROY`; it proves the root service's
 rule, not a kernel's. Lane and wake timings are provisional: a bell on
 Phase 1's backend is an IRQ object behind the root service, which serves the whole
 machine on one thread, so no code above `liberx` may depend on a bell's
