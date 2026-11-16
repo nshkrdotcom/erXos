@@ -6,11 +6,11 @@
 EUnit cases of erx_ui_layout, the box model (docs/design-display.md, "The
 box model"): worked layouts of each container and rule, then the
 properties of "Verification and testing" over random trees and window
-sizes. Each property checks the placed tree against the input tree alone,
-not against a second layout: a node within its parent's content box,
-siblings of a column, row, grid or scroll apart, the same shape as the
-input, no node smaller in a larger window, and a padded node's content
-box its rectangle less its pads.
+sizes: a node within its parent's content box, siblings of a column, row,
+grid or scroll apart, the same shape as the input, no node smaller in a
+larger window, a padded node's content box its rectangle less its pads,
+and the layout's contract, a subtree laid out alike wherever its slot
+lies.
 """.
 
 -include_lib("eunit/include/eunit.hrl").
@@ -141,6 +141,7 @@ same_shape_test_() -> {timeout, 120, fun() -> every_tree(fun same_shape/3) end}.
 deterministic_test_() -> {timeout, 120, fun() -> every_tree(fun deterministic/3) end}.
 monotonic_test_() -> {timeout, 120, fun() -> every_tree(fun monotonic/3) end}.
 padded_test_() -> {timeout, 120, fun() -> every_tree(fun padded/3) end}.
+contract_test_() -> {timeout, 120, fun() -> every_tree(fun moved/3) end}.
 
 %% Runs Check(Tree, Size, Placed) over ?TREES random trees and sizes, from
 %% a fixed seed so a failure repeats.
@@ -224,6 +225,27 @@ no_smaller({Rect, Content, Children}, {LargerRect, LargerContent, LargerChildren
                   end, indexed(Children, LargerChildren)).
 
 covers({_, _, LargerW, LargerH}, {_, _, W, H}) -> LargerW >= W andalso LargerH >= H.
+
+%% The layout's contract ("The layout's contract"): what a node gets comes
+%% down as its slot, so the tree laid out in a window of one size and in a
+%% slot of that size at an offset gives the same rectangles, moved by the
+%% offset. The slot is a stack's, after a spacer as wide as the offset
+%% across in a row and one as tall as it down in a column; the row and
+%% the stack are the only weights, so each takes all the room left, and
+%% each spacer comes first, so a tree that needs more than the room is cut
+%% in the stack, never in a spacer.
+moved(Tree, {Width, Height}, Placed) ->
+    {DX, DY} = {rand:uniform(200) - 1, rand:uniform(200) - 1},
+    Slotted = {column, #{},
+               [{spacer, #{height => DY}, []},
+                {row, #{weight => 1},
+                 [{spacer, #{width => DX}, []}, {stack, #{weight => 1}, [Tree]}]}]},
+    {_, _, [_Down, {_, _, [_Across, {_, _, [InSlot]}]}]} =
+        layout(Slotted, {DX + Width, DY + Height}),
+    ?assertEqual(shifted(Placed, DX, DY), InSlot).
+
+shifted({{X, Y, W, H}, {CX, CY, CW, CH}, Children}, DX, DY) ->
+    {{X + DX, Y + DY, W, H}, {CX + DX, CY + DY, CW, CH}, [shifted(C, DX, DY) || C <- Children]}.
 
 %% A shown node's content box is its rectangle less its pad on each side,
 %% or nothing in its middle where the pads do not fit; a scroll's may be
