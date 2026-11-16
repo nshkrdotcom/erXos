@@ -8,7 +8,8 @@ require 'tmpdir'
 require_relative '../lib/erx/generated'
 
 # The fuzz target of the Bluetooth controller's line, erx_h4:split/1, erx_hci:event/2
-# and erx_hci:return/2 (test/erlang/erx_bt_hci_fuzz.erl), compiled from source and run
+# and erx_hci:return/2, and of the patch file, erx_bt_patch:parse/1
+# (test/erlang/erx_bt_hci_fuzz.erl), compiled from source and run
 # alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's), so it needs no hosted
 # build. It runs the sources as they are, then, for each seeded fault, a copy of the
 # module with the fault in place, which must fail with the verdict the fault breaks.
@@ -16,6 +17,7 @@ module ErxBtHciFuzz
   ROOT = File.expand_path('../..', __dir__)
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   HCI = 'erlang/apps/erx_bt/src/erx_hci.erl'
+  PATCH = 'erlang/apps/erx_bt/src/erx_bt_patch.erl'
   FUZZ = 'test/erlang/erx_bt_hci_fuzz.erl'
   # Each of the four runs takes about two seconds; each compile and run is under this
   # deadline, and tools/erx gives the whole runner 300.
@@ -26,6 +28,13 @@ module ErxBtHciFuzz
   Fault = Data.define(:fault, :module_path, :anchor, :replacement, :verdict)
 
   FAULTS = [
+    Fault.new(fault: 'the patch record length not checked against the bytes left',
+              module_path: PATCH,
+              anchor: "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+              replacement: "parse(<<Opcode:16/little, _Length, Payload/binary>>, _Offset, Records) ->\n" \
+                           "    lists:reverse([{Opcode, Payload} | Records]);\n" \
+                           "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+              verdict: '{patch_accepted_wrongly,'),
     Fault.new(fault: 'the ACL bound removed from split/1',
               module_path: H4,
               anchor: 'when Length > ?ERX_BT_ACL_RX_MAX ->',
@@ -56,7 +65,8 @@ module ErxBtHciFuzz
     abort(output) unless status.success? && output.match?(/^fuzz: \d+ rounds ok, /)
     FAULTS.each { |fault| run_fault(fault, seed: seed) }
     puts output[/^fuzz: .*$/]
-    puts "erx_h4 and erx_hci read every controller input without a raise or an atom, and #{FAULTS.size} " \
+    puts "erx_h4 and erx_hci read every controller input, and erx_bt_patch every patch file, without a " \
+         "raise or an atom, and #{FAULTS.size} " \
          'seeded faults each fail their verdict'
   end
 
@@ -72,7 +82,7 @@ module ErxBtHciFuzz
   # replaced module is compiled from its copy there.
   def fuzz(replaced, seed:)
     Dir.mktmpdir('erx-bt-hci-fuzz') do |work|
-      sources = [H4, HCI, FUZZ].map do |source|
+      sources = [H4, HCI, PATCH, FUZZ].map do |source|
         next File.join(ROOT, source) unless replaced.key?(source)
 
         File.join(work, File.basename(source)).tap { |path| File.binwrite(path, replaced.fetch(source)) }

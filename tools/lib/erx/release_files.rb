@@ -136,6 +136,9 @@ module Erx
     #   public_key and ssh (DOMAIN_IMAGE_ONLY). Only this script, session's and app's
     #   name crypto, so no other domain has it on its code path. No manifest names it
     #   yet; the native domain tests boot it (NativeDomain).
+    # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"):
+    #   the Bluetooth stack, whose controller's bytes and radio peers' PDUs no other domain
+    #   parses. No manifest names it yet.
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
     #   programs (erx_desk), the network client, asn1, crypto and public_key, which it
@@ -154,6 +157,7 @@ module Erx
                         'display' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_display', 'erx_fb'].freeze,
                         'client' => [*DOMAIN_BASE, 'erx_memdraw', 'erx_win', 'erx_ui', 'erx_desk'].freeze,
                         'ssh' => [*DOMAIN_BASE, *DOMAIN_IMAGE_ONLY].freeze,
+                        'bt' => [*DOMAIN_BASE, 'erx_bt'].freeze,
                         'app' => [*SESSION_BASE, 'asn1', 'crypto', 'public_key', 'erx_memdraw', 'erx_win', 'erx_ui',
                                   'erx_net_client', 'erx_app'].freeze }.freeze
 

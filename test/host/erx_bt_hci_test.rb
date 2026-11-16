@@ -8,7 +8,8 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 
 # Runs test/erlang/erx_bt_hci_tests.erl, the cases of H4 framing (erx_h4), the HCI codec
-# (erx_hci) and the controller process's core (erx_bt_hci_core), compiled from source on
+# (erx_hci), the controller process's core (erx_bt_hci_core) and, from
+# test/erlang/erx_bt_patch_tests.erl, the patch reader (erx_bt_patch), compiled from source on
 # stock's emulator (ERX_ERL and ERX_ERLC). Then each seeded fault of
 # docs/design-bluetooth.md, "Host tests of the cores", applied to a copy of its module,
 # must fail the case named for it.
@@ -23,14 +24,21 @@ require_relative '../fixtures/erlang_build'
 # it guards, so leaving the state drops it and there is no second one to arm.
 class ErxBtHciTest < Minitest::Test
   APPLICATIONS = %w[erx_bt].freeze
-  TESTS = %w[test/erlang/erx_bt_hci_tests.erl].freeze
+  TESTS = %w[test/erlang/erx_bt_hci_tests.erl test/erlang/erx_bt_patch_tests.erl].freeze
   DEADLINE_SECONDS = '300'
   H4 = 'erlang/apps/erx_bt/src/erx_h4.erl'
   CORE = 'erlang/apps/erx_bt/src/erx_bt_hci_core.erl'
+  PATCH = 'erlang/apps/erx_bt/src/erx_bt_patch.erl'
 
   Seed = Data.define(:fault, :module_path, :anchor, :replacement, :catching_case)
 
   SEEDS = [
+    Seed.new(fault: 'the record length not checked against the bytes left',
+             module_path: PATCH,
+             anchor: "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+             replacement: "parse(<<Opcode:16/little, _Length, Payload/binary>>, _Offset, Records) ->\n    lists:reverse([{Opcode, Payload} | Records]);\n" \
+                          "parse(_Bytes, Offset, _Records) ->\n    throw({truncated, Offset}).",
+             catching_case: 'truncated_last_record_is_refused_whole_test'),
     Seed.new(fault: 'the indicator check removed, so an unknown byte is skipped',
              module_path: H4,
              anchor: "split(<<Indicator, _/binary>>, _Packets) ->\n    {error, {bad_indicator, Indicator}};",
@@ -169,7 +177,7 @@ class ErxBtHciTest < Minitest::Test
     Dir.mktmpdir('erx-bt-hci-test') do |work|
       ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work,
-                      '-eval', 'halt(case eunit:test(erx_bt_hci_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                      '-eval', 'halt(case eunit:test([erx_bt_hci_tests, erx_bt_patch_tests], [verbose]) of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end
   end

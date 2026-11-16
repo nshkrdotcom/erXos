@@ -73,10 +73,16 @@ name() ->
         undefined -> lists:last(binary:split(atom_to_binary(node()), <<"@">>))
     end.
 
-%% erx_bt_patch, which reads a patch whole, is not built yet; a row naming a patch stops
-%% before the line is touched.
-patch(undefined) -> none;
-patch({ok, File}) -> exit({patch_unsupported, File}).
+%% The patch the row names, read whole by erx_bt_patch, with the manufacturer it applies
+%% to; a file the reader refuses ends the process before the line is touched.
+patch(undefined) ->
+    none;
+patch({ok, File}) ->
+    {ok, Manufacturer} = application:get_env(erx_bt, patch_manufacturer),
+    case erx_bt_patch:records(File) of
+        {ok, Records} -> #{manufacturer => Manufacturer, records => Records};
+        {error, Reason} -> exit({patch_refused, File, Reason})
+    end.
 
 handle_info({erx_bt_line_tx, Answer}, State) when Answer =:= written; Answer =:= line_ready ->
     step_noreply(Answer, State);
@@ -115,9 +121,10 @@ handle_cast(_Message, State) ->
     {noreply, State}.
 
 %% A crash report shows sizes, never the controller's or a peer's bytes: the last read and
-%% the incomplete packet are untrusted, and from pairing on they may carry keys.
-format_status(#{state := #hci{rest = Rest} = State} = Status) ->
-    Shown = Status#{state := State#hci{rest = {bytes, byte_size(Rest)}}},
+%% the incomplete packet are untrusted, and from pairing on they may carry keys. The core
+%% shows as its facts, since its plan holds the patch's records, the vendor's firmware.
+format_status(#{state := #hci{core = Core, rest = Rest} = State} = Status) ->
+    Shown = Status#{state := State#hci{core = {facts, erx_bt_hci_core:facts(Core)}, rest = {bytes, byte_size(Rest)}}},
     case Shown of
         #{message := {erx_bt_line_rx, Bytes}} -> Shown#{message := {erx_bt_line_rx, {bytes, byte_size(Bytes)}}};
         #{} -> Shown

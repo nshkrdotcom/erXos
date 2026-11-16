@@ -3,7 +3,8 @@
 
 %% The fuzz target of the controller's line (docs/design-bluetooth.md, "Fuzz targets"):
 %% erx_h4:split/1, erx_hci:event/2 and erx_hci:return/2, the readers of every byte a
-%% controller sends, which is hostile. A round takes one of them and an input this
+%% controller sends, which is hostile, and erx_bt_patch:parse/1, the reader of the patch
+%% file, whose bytes are untrusted too. A round takes one of them and an input this
 %% module writes from the specification's layouts (Core 6.3 Vol 4 Part A, section 2;
 %% Part E, sections 5.4 and 7), used as written, cut, mutated, given a reserved handle,
 %% or replaced by random bytes. Whatever arrives, no reader makes an atom or raises, and
@@ -20,6 +21,10 @@
 %%   decodes, unknown only for one it does not.
 %% * return/2 answers a failed status as failed, and a success as decoded exactly when
 %%   it has its command's layout's length, the values read back as written.
+%% * parse/1 gives records whose encodings are the file byte for byte, each of Write
+%%   RAM or Launch RAM; a written patch back as written; a patch whose last record is
+%%   cut refused as truncated at that record; and a refusal's offset and opcode as the
+%%   file has them.
 %%
 %% Every number is written out here, apart from erx_hci's code, so a layout misread
 %% there disagrees with this module. The seed comes from make check-fuzz.
@@ -51,13 +56,13 @@
 run([Seed]) ->
     rand:seed(exsss, {20, 26, list_to_integer(Seed)}),
     %% Loaded before the first round counts atoms, since loading a module makes its atoms.
-    [{module, _} = code:ensure_loaded(Module) || Module <- [erx_h4, erx_hci, lists, binary]],
-    Readers = [split, event, return],
+    [{module, _} = code:ensure_loaded(Module) || Module <- [erx_h4, erx_hci, erx_bt_patch, lists, binary]],
+    Readers = [split, event, return, patch],
     Outcomes = lists:foldl(fun(_, Tally) -> maps:update_with(round_of(pick(Readers)), fun(N) -> N + 1 end, 1, Tally) end,
                            #{}, lists:seq(1, ?ROUNDS)),
     Accepted = [{Reader, maps:get(Reader, Outcomes, 0)} || Reader <- Readers],
     case lists:all(fun({_, N}) -> N >= ?ROUNDS div 10 end, Accepted) of
-        true -> io:format("fuzz: ~p rounds ok, ~p split, ~p events decoded, ~p returns decoded~n",
+        true -> io:format("fuzz: ~p rounds ok, ~p split, ~p events decoded, ~p returns decoded, ~p patches read~n",
                           [?ROUNDS | [N || {_, N} <- Accepted]]);
         false -> error({too_few_accepted, Accepted})
     end.
@@ -85,7 +90,47 @@ round_of(return) ->
     Said = no_atoms({Name, Return}, fun() -> erx_hci:return(Name, Return) end),
     check_return(Name, Return, Said),
     Expected =:= none orelse Said =:= Expected orelse error({decoded_wrongly, Name, Return, Said}),
-    accepted(return, Said).
+    accepted(return, Said);
+round_of(patch) ->
+    {Input, Expected} = patch_case(),
+    Said = no_atoms(Input, fun() -> erx_bt_patch:parse(Input) end),
+    check_patch(Input, Said),
+    Expected =:= none orelse Said =:= Expected orelse error({patch_read_wrongly, Input, Said}),
+    accepted(patch, Said).
+
+%% A patch of Write RAM and Launch RAM records, as written, with its last record cut
+%% short, mutated, or replaced by random bytes.
+patch_case() ->
+    Records = [{pick([16#FC4C, 16#FC4E]), bytes(rand:uniform(256) - 1)} || _ <- lists:seq(1, rand:uniform(6))],
+    File = encode_patch(Records),
+    case rand:uniform(6) of
+        N when N =< 3 -> {File, {ok, Records}};
+        4 ->
+            {_, Last} = lists:last(Records),
+            Start = byte_size(File) - 3 - byte_size(Last),
+            Cut = rand:uniform(2 + byte_size(Last)),
+            {binary:part(File, 0, byte_size(File) - Cut), {error, {truncated, Start}}};
+        5 -> {mutate(File), none};
+        6 -> {bytes(rand:uniform(64) - 1), none}
+    end.
+
+encode_patch(Records) ->
+    iolist_to_binary([<<Opcode:16/little, (byte_size(Payload)), Payload/binary>> || {Opcode, Payload} <- Records]).
+
+check_patch(Input, {ok, Records}) ->
+    Known = lists:all(fun({Opcode, _}) -> Opcode =:= 16#FC4C orelse Opcode =:= 16#FC4E end, Records),
+    Known andalso encode_patch(Records) =:= Input orelse error({patch_accepted_wrongly, Input, Records});
+check_patch(<<>>, {error, empty}) ->
+    ok;
+check_patch(Input, {error, {truncated, Offset}}) when Offset < byte_size(Input) ->
+    ok;
+check_patch(Input, {error, {foreign_opcode, Offset, Opcode}}) ->
+    case Input of
+        <<_:Offset/binary, Opcode:16/little, _/binary>> when Opcode =/= 16#FC4C, Opcode =/= 16#FC4E -> ok;
+        _ -> error({patch_refused_wrongly, Input, Offset, Opcode})
+    end;
+check_patch(Input, Said) ->
+    error({patch_refused_wrongly, Input, Said}).
 
 no_atoms(Input, Read) ->
     Atoms = erlang:system_info(atom_count),
