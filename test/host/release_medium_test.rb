@@ -252,7 +252,7 @@ class ReleaseMediumTest < Minitest::Test
     boot_start = slot_a + written.slot.boot.slot_offset
     boot_end = boot_start + written.slot.boot.file.length
     gap_start = (boot_end + SECTOR - 1) / SECTOR * SECTOR
-    windows = Medium.windows(data_sectors: written.data_sectors).reject { |window| window.role == :slot_a }
+    windows = Medium.windows(data_sectors: written.data_sectors).reject { |window| window.role == :boot_a }
     # The data window's first sector holds the fresh volume.
     starts = windows.reject { |window| window.role == :data }.map(&:start)
     [*starts.map { |start| start * SECTOR }, *windows.map { |window| window.last * SECTOR },

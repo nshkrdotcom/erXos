@@ -140,7 +140,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 4, view.count('domains')
     assert_equal 12, view.count('devices')
-    assert_equal 6, view.count('windows')
+    assert_equal 9, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -153,7 +153,7 @@ class ManifestStopgapTest < Minitest::Test
     view = @codec.open('manifest', result.bytes)
     assert_equal 2, view.count('domains')
     assert_equal 4, view.count('devices')
-    assert_equal 6, view.count('windows')
+    assert_equal 9, view.count('windows')
     assert_equal 1, view.count('images')
   end
 
@@ -782,7 +782,46 @@ class ManifestStopgapTest < Minitest::Test
   end
 
   def test_a_fixed_role_must_carry_partition_zero
-    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'slot_a', partition: 2))
+    refused(Erx::Manifest::Invalid, 8, 'window.partition', @source + window(role: 'boot_a', partition: 2))
+  end
+
+  # PW1 as the manifest states it: the slot writer's windows, the boot and system
+  # partitions of both slots and the records, are the system domain's alone.
+  def test_a_slot_writer_window_held_by_a_configured_domain_is_refused
+    %w[boot_a boot_b system_a system_b boot_selection reset_count].each do |role|
+      source = changed(@source.sub(/(window #{role}\n)  holder system/, "\\1  holder @domain.storage"))
+      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+    end
+  end
+
+  # The one system window: read-only, on the slot's system partition, held by the
+  # storage domain that holds the block device and so runs the block driver serving it.
+  def test_the_development_manifest_gives_one_read_only_system_window_to_the_storage_domain
+    view = @codec.open('manifest', admit.bytes)
+    windows = (0...view.count('windows')).map { |at| view.fetch('windows', at) }
+    system = windows.select { |row| row.fetch('role') == @codec.member('mf_window_role', 'system') }
+    storage = (0...view.count('domains')).find { |at| view.string(view.fetch('domains', at).fetch('name')) == 'storage' }
+    assert_equal [[storage, @codec.member('mf_window_rights', 'read'), 0]],
+                 system.map { |row| row.values_at('holder', 'rights', 'partition') }
+  end
+
+  def test_a_writable_system_window_is_refused
+    refused(Erx::Manifest::Invalid, 8, 'window.rights',
+            changed(@source.sub(/(window system\n(?:  .*\n)*?)  rights read\n/, "\\1  rights read,write\n")))
+  end
+
+  def test_a_second_system_window_is_refused
+    second = window(role: 'system', partition: 0, holder: '@domain.storage').sub('window seeded', 'window system_again')
+    refused(Erx::Manifest::Invalid, 8, 'window.role', @source + second, message: /at most one/)
+  end
+
+  # Only the block device's holder runs the driver that serves the window, so a system
+  # window named for the system domain or for any other domain would reach no holder.
+  def test_a_system_window_held_by_another_domain_than_the_block_holder_is_refused
+    %w[system @domain.network].each do |holder|
+      source = changed(@source.sub(/(window system\n)  holder @domain.storage/, "\\1  holder #{holder}"))
+      refused(Erx::Manifest::Invalid, 8, 'window.holder', source)
+    end
   end
 
   def test_a_fat_window_must_name_a_primary_partition

@@ -13,14 +13,6 @@ image holds what the manifest names to run and no package. Index:
 Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
-* [High] storage, window roles (`abi/manifest.txt`, `erx_blk_table`,
-  `tools/lib/erx/manifest.rb` property 8, `liberx/system/dom_apply.c`):
-  roles boot A, boot B, system, system A and system B in place of slot A,
-  slot B and verified image; the `system` window, at most one, read-only on
-  the system partition of the slot the `-erx_record boot` words name, given
-  only to the storage domain the manifest names as its holder, and none on
-  an `unknown` boot. Test: the device service's derivation (PW1); seeded: a
-  `system` window derived on an `unknown` boot.
 * [High] storage, the `system` tree (`erlang/apps/erx_storage`,
   `tools/lib/erx/erofs_reads.rb`, `tools/lib/erx/manifest.rb` property 19):
   `erx_storage_system`, a read-only `erx_fs` backend over `erx_erofs` rooted
@@ -120,9 +112,9 @@ that proves the code under test ran.
   partition (U1, U3, U5). Test: the model; seeded: a check that covers the
   boot partition alone, which the model must catch.
 * [Medium] storage, deletions (`erlang/apps/erx_blk/src/erx_blk_image.erl`,
-  `erx_blk_service.erl` `image_windows/0` and `mount_images/0`, the
+  `erx_blk_service.erl` `image_windows/1` and `mount_images/0`, the
   `/images/NAME` child of `erx_blk_sup.erl`, the `{image, Name}` role of
-  `erx_blk_table` and `erx_blk_window`, `abi/manifest.txt`'s
+  `erx_blk_table` (`read_only/1`), `abi/manifest.txt`'s
   `verified_image` window role, the `images` and `extents` tables, the
   `image` declaration and the window's `image` field, `erofs_unchecked`,
   `SLOT_IMAGES_START` and `image_extents` in `release_medium.rb`, and the

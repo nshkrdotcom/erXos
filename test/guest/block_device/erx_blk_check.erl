@@ -72,7 +72,7 @@
          data_read_here/0, lfs_write_here/0, lfs_kill_here/0, lfs_read_here/0,
          blk_kill_here/1, blk_read_here/2]).
 
--define(ROLES, [record, slot_a, slot_b, vault, data]).
+-define(ROLES, [record, boot_a, boot_b, vault, data]).
 
 %% The disk the harness attaches and the sectors it expects written (BlockDevice::SECTORS
 %% and WRITE_SECTORS), and the patterns of tools/lib/erx/block_image.rb: each 512-byte

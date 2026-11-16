@@ -165,8 +165,8 @@ reference(Capacity, Records) when is_integer(Capacity), Capacity >= ?MIN_MEDIUM 
             Fits = Data >= ?MIN_DATA andalso ?ERX_MEDIUM_DATA_START + Data =< Capacity,
             case Fits andalso Tables =:= good(Data) of
                 true -> {ok, [{record, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
-                              {slot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
-                              {slot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
+                              {boot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
+                              {boot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
                               {vault, ?ERX_MEDIUM_VAULT_START, ?ERX_MEDIUM_VAULT_SECTORS},
                               {data, ?ERX_MEDIUM_DATA_START, Data}]};
                 false -> error

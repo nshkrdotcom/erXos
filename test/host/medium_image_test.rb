@@ -32,8 +32,8 @@ class MediumImageTest < Minitest::Test
       c = ->(name) { CODEC.constant("medium_#{name}") }
       extended = c.call('system_a_ebr')
       assert_equal [[0x0e, windows[:record].start, windows[:record].sectors],
-                    [0x0c, windows[:slot_a].start, windows[:slot_a].sectors],
-                    [0x0c, windows[:slot_b].start, windows[:slot_b].sectors],
+                    [0x0c, windows[:boot_a].start, windows[:boot_a].sectors],
+                    [0x0c, windows[:boot_b].start, windows[:boot_b].sectors],
                     [0x0f, extended, data_end - extended]], entries(path, 0)
       # Each logical partition from its own record, each link from the extended partition's
       # start through the next partition's end, and no link after the data partition's.

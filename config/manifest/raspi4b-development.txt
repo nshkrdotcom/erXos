@@ -100,6 +100,15 @@ window data
   partition 0
   rights read,write
   image none
+# system: the booted slot's system partition, read-only for the storage domain, whose
+# block driver serves it (docs/design-stopgap.md, "The booted slot"), as on QEMU virt.
+window system
+  holder @domain.storage
+  device "/emmc2bus/mmc@7e340000"
+  role system
+  partition 0
+  rights read
+  image none
 # network: QEMU virt's network domain row for row (config/manifest/qemu-virt-development.txt,
 # whose comment explains its memory, connections and restarts), an interpreter service
 # domain that holds the net unit, the platform record's GENET (docs/design-platforms.md,

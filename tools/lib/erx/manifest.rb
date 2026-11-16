@@ -1260,7 +1260,7 @@ module Erx
         check_rescue(rows['domains'], edges)
         check_facets_supported
         rows['images'], rows['extents'] = normalize_images(rows.fetch('devices'))
-        rows['windows'] = normalize_windows(rows.fetch('devices'), rows.fetch('images'))
+        rows['windows'] = normalize_windows(rows)
         RootStartup.check(loadable: root_loadable_bytes, baseline: baseline,
                           root_memory: root_memory, platform: @context.platform)
       end
@@ -2279,20 +2279,30 @@ module Erx
         { 'kind' => row.fetch('kind'), 'flags' => row.fetch('flags'), 'head' => head }
       end
 
-      # The slot writer's roles: in Phase 1 the system domain writes the slots.
-      SLOT_WRITER_ROLES = %w[slot_a slot_b boot_selection reset_count].freeze
+      # The roles a configured domain may hold. Every other role, both slots' boot and
+      # system partitions and the two records, is the slot writer's, and in Phase 1 the
+      # system domain writes the slots (PW1), so a role the ABI adds is the system
+      # domain's until it is listed here.
+      CONFIGURED_ROLES = %w[vault data fat system verified_image].freeze
 
-      def normalize_windows(devices, images)
+      # Property 8's windows (docs/design-abi.md, "Devices and partition windows"; PW1 of
+      # docs/design-storage.md): the slot writer's roles are the system domain's alone, and
+      # the one system window is read-only and held by its block device's holder, the
+      # storage domain whose block driver serves it, since the driver hands a window only to
+      # its own domain (docs/design-stopgap.md, "The booted slot").
+      def normalize_windows(tables)
+        devices = tables.fetch('devices')
         rows = records('window').map do |record|
           role = window_role(record)
-          slot_writer = SLOT_WRITER_ROLES.any? { |name| role == @codec.member('mf_window_role', name) }
+          slot_writer = CONFIGURED_ROLES.none? { |name| role == @codec.member('mf_window_role', name) }
           invalid('only the system domain, the slot writer, holds the slot windows', 8, 'window.holder') if
             slot_writer && !(one(record, 'holder').value == 'system' && !one(record, 'holder').quoted)
           { 'holder' => holder_index(one(record, 'holder'), property: 8, field: 'window.holder'),
             'device' => window_device(record, devices), 'role' => role, 'partition' => window_partition(record, role),
             'rights' => window_rights(record, role), 'image' => window_image(record, role) }
-            .tap { |row| check_image_device(row, images) }
+            .tap { |row| check_image_device(row, tables.fetch('images')) }
         end
+        check_system_window(rows, tables)
         placed = rows.map { |row| row.values_at('device', 'role', 'partition', 'image') }
         invalid('two windows name one role and partition', 8, 'window.partition') unless placed.uniq.size == placed.size
         rows.sort_by { |row| row.values_at('holder', 'device', 'role', 'partition', 'image') }
@@ -2312,7 +2322,21 @@ module Erx
         read = @codec.member('mf_window_rights', 'read')
         invalid('a window grants at least read', 8, 'window.rights') if (rights & read).zero?
         invalid('a verified-image window is read-only', 8, 'window.rights') if role == image_role && rights != read
+        invalid('a system window is read-only', 8, 'window.rights') if role == system_role && rights != read
         rights
+      end
+
+      # At most one system window, held by a storage domain: a configured domain, never
+      # the system domain, that holds the window's block device.
+      def check_system_window(rows, tables)
+        system = rows.select { |row| row.fetch('role') == system_role }
+        invalid('a manifest has at most one system window', 8, 'window.role') if system.size > 1
+        system.each do |row|
+          holder = row.fetch('holder')
+          device = tables.fetch('devices').fetch(row.fetch('device')).fetch('path')
+          invalid('a system window is held by the configured domain that holds its block device', 8, 'window.holder') unless
+            holder != @codec.constant('mf_none') && holder == unit_holder(tables, device)
+        end
       end
 
       def window_device(record, devices)
@@ -2354,6 +2378,8 @@ module Erx
                   'hash_algorithm' => 0, 'salt' => Array.new(32, 0), 'root_hash' => Array.new(32, 0) }.freeze
 
       def image_role = @codec.member('mf_window_role', 'verified_image')
+
+      def system_role = @codec.member('mf_window_role', 'system')
 
       # The image table and its extents (docs/design-stopgap.md, "The Phase 1 manifest
       # check"): each image is format erofs_unchecked, since the packer writes no hash

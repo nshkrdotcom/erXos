@@ -289,7 +289,7 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   def test_a_slot_window_held_by_a_configured_domain_is_refused
-    refused(Erx::Manifest::Invalid, 8, 'window.holder', @source.sub("window slot_a\n  holder system", "window slot_a\n  holder @domain.alpha"))
+    refused(Erx::Manifest::Invalid, 8, 'window.holder', @source.sub("window boot_a\n  holder system", "window boot_a\n  holder @domain.alpha"))
   end
 
   def test_a_domain_named_system_is_refused

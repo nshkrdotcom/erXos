@@ -3,14 +3,13 @@
 
 %% The windows on the booted slot's EROFS images (docs/design-storage.md, "Data model";
 %% docs/design-stopgap.md, "Image windows"): the block service's pure core for them, as
-%% erx_blk_table is for the partition table. erx_blk_service hands it the root's boot
-%% records and the release's manifest, and starts a window for each window it returns.
+%% erx_blk_table is for the partition table. erx_blk_service hands it the booted
+%% slot and the release's manifest, and starts a window for each window it returns.
 %%
-%% boot_slot/1 reads the slot from `-erx_record boot VALUE SLOT`, which the native root adds from
-%% the handoff (include/erx/core/boot_pair.h names the words). A boot whose value is
-%% unknown, and a runtime the root gave no such words (the hosted entry), has no slot,
-%% so it serves no image window: a window on an image lies only inside the slot the boot
-%% value names.
+%% The slot is erx_blk_table:booted/1's, read from `-erx_record boot VALUE SLOT`. A boot
+%% whose value is unknown, and a runtime the root gave no such words (the hosted entry),
+%% has no slot, so it serves no image window: a window on an image lies only inside the
+%% slot the boot value names.
 %%
 %% windows/2 reads the manifest with the generated reader, erx_manifest, in three steps:
 %%   1. it picks the system domain's read-only verified_image windows, each naming an image;
@@ -28,42 +27,24 @@
 %% every image and its window on it, so the device fields are not read.
 %%
 %% A refusal names an image by its manifest name, which the reader checked as an
-%% identifier, and otherwise holds only this module's atoms. Unlike the device records'
-%% readers, boot_slot/1 refuses words after the slot: the root writes none, and a plain
-%% erx.arg word joins the last device record instead.
+%% identifier, and otherwise holds only this module's atoms.
 
 -module(erx_blk_image).
 
--export([boot_slot/1, windows/2, place/2]).
--export_type([slot/0, image/0, reason/0]).
+-export([windows/2, place/2]).
+-export_type([image/0, reason/0]).
 
 -include("generated/erx_abi.hrl").
 
--type slot() :: slot_a | slot_b | none.
 %% An image as place/2 takes it: its record's name, format and data_bytes, and its extents
 %% as {SlotOffset, Length}, each in bytes.
 -type image() :: #{name := binary(), format := non_neg_integer(), data_bytes := non_neg_integer(),
                    extents := [{non_neg_integer(), non_neg_integer()}]}.
 -type reason() :: {binary(), format | extent_count | extent_bounds | length}.
 
-%% The slot of `-erx_record boot VALUE SLOT` in Arguments, what erx_device_record:records/0 returns:
-%% none when there is no such word list or its value is unknown; bad_boot for more than
-%% one, or for a value and slot that are not a pair boot_pair.h accepts.
--spec boot_slot(term()) -> {ok, slot()} | {error, bad_boot}.
-boot_slot(Arguments) when is_list(Arguments) ->
-    case [Words || ["boot" | Words] <- Arguments] of
-        [] -> {ok, none};
-        [["unknown", "none"]] -> {ok, none};
-        [[Value, "a"]] when Value =:= "normal"; Value =:= "trial" -> {ok, slot_a};
-        [[Value, "b"]] when Value =:= "normal"; Value =:= "trial" -> {ok, slot_b};
-        _ -> {error, bad_boot}
-    end;
-boot_slot(_Arguments) ->
-    {error, bad_boot}.
-
 %% The image windows of Slot that the manifest Manifest gives the system domain, and why
 %% each other image it names is not served; manifest when the reader refuses the manifest.
--spec windows(binary(), slot()) -> {ok, [erx_blk_table:window()], [reason()]} | {error, manifest}.
+-spec windows(binary(), erx_blk_table:slot() | none) -> {ok, [erx_blk_table:window()], [reason()]} | {error, manifest}.
 windows(_Manifest, none) ->
     {ok, [], []};
 windows(Manifest, Slot) ->
@@ -79,15 +60,16 @@ windows(Manifest, Slot) ->
     end.
 
 %% The window of Image in Slot, or why it has none.
--spec place(image(), slot_a | slot_b) -> {ok, erx_blk_table:window()} | {error, reason()}.
+-spec place(image(), erx_blk_table:slot()) -> {ok, erx_blk_table:window()} | {error, reason()}.
 place(#{name := Name, format := ?ERX_MF_IMAGE_FORMAT_EROFS_UNCHECKED, data_bytes := Bytes,
         extents := [{Offset, Length}]}, Slot) ->
     Sector = ?ERX_VIRTIO_BLK_SECTOR_SIZE,
+    {Start, Sectors} = erx_blk_table:system_partition(Slot),
     case Offset rem Sector =:= 0 andalso Length rem Sector =:= 0 andalso Length > 0
-         andalso Offset + Length =< ?ERX_MEDIUM_SYSTEM_SECTORS * Sector of
+         andalso Offset + Length =< Sectors * Sector of
         false -> {error, {Name, extent_bounds}};
         true when Length =/= Bytes -> {error, {Name, length}};
-        true -> {ok, {{image, Name}, slot_start(Slot) + Offset div Sector, Length div Sector}}
+        true -> {ok, {{image, Name}, Start + Offset div Sector, Length div Sector}}
     end;
 place(#{name := Name, format := ?ERX_MF_IMAGE_FORMAT_EROFS_UNCHECKED}, _Slot) ->
     {error, {Name, extent_count}};
@@ -128,6 +110,3 @@ extents(View, Index, Count, Extents) ->
         {error, _} = Error ->
             Error
     end.
-
-slot_start(slot_a) -> ?ERX_MEDIUM_SYSTEM_A_START;
-slot_start(slot_b) -> ?ERX_MEDIUM_SYSTEM_B_START.

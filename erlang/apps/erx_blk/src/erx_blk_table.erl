@@ -24,17 +24,30 @@
 %% Values are compared as Erlang integers, which do not overflow, so a computed length no
 %% 32-bit field can hold is a difference, not a wrap. place/3 is a window's check of a
 %% request against its sectors.
+%%
+%% The windows' roles are abi/manifest.txt's mf_window_role names (role/1), but the
+%% record partition's, record, which holds both the boot-selection record and the reset
+%% count. admit/2 names a window on each partition of the layout but the two system
+%% partitions: the slot writer's windows on those wait for its grant, so nothing in the
+%% driver's domain writes a system partition. booted/1 names the one window the boot value
+%% decides (PW1 of docs/design-storage.md; docs/design-stopgap.md, "The booted slot"):
+%% system, read-only, on the system partition of the slot that `-erx_record boot VALUE
+%% SLOT` names, and none on a boot that names no slot, an unknown boot, or on boot words
+%% it refuses. read_only/1 is which roles take no write.
 
 -module(erx_blk_table).
 
 -export([records/0, minimum_sectors/0, check_capacity/1, admit/2, place/3]).
--export_type([role/0, window/0, record_name/0, reason/0]).
+-export([booted/1, system_partition/1, read_only/1]).
+-export_type([role/0, window/0, slot/0, record_name/0, reason/0]).
 
 -include("generated/erx_abi.hrl").
 
-%% {image, Name} is a window on one of the booted slot's EROFS images (erx_blk_image).
-%% slot_a and slot_b are the two slots' boot partitions.
--type role() :: record | slot_a | slot_b | vault | data | {image, binary()}.
+%% A name of abi/manifest.txt's mf_window_role (role/1), the record partition's record,
+%% or {image, Name}, a window on one of the booted slot's EROFS images (erx_blk_image).
+-type role() :: record | atom() | {image, binary()}.
+%% A slot as the boot value's words name it.
+-type slot() :: a | b.
 %% A window: its role, its first sector on the medium and its length in sectors.
 -type window() :: {role(), non_neg_integer(), pos_integer()}.
 -type record_name() :: mbr | system_a_ebr | system_b_ebr | vault_ebr | data_ebr.
@@ -80,11 +93,55 @@ admit(Capacity, Sectors) when is_list(Sectors) ->
         {ok, DataSectors} ?= data_sectors(Capacity, proplists:get_value(data_ebr, Read)),
         ok ?= compare(Read, expected(DataSectors)),
         {ok, [{record, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
-              {slot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
-              {slot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
-              {vault, ?ERX_MEDIUM_VAULT_START, ?ERX_MEDIUM_VAULT_SECTORS},
-              {data, ?ERX_MEDIUM_DATA_START, DataSectors}]}
+              {role(?ERX_MF_WINDOW_ROLE_BOOT_A), ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
+              {role(?ERX_MF_WINDOW_ROLE_BOOT_B), ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
+              {role(?ERX_MF_WINDOW_ROLE_VAULT), ?ERX_MEDIUM_VAULT_START, ?ERX_MEDIUM_VAULT_SECTORS},
+              {role(?ERX_MF_WINDOW_ROLE_DATA), ?ERX_MEDIUM_DATA_START, DataSectors}]}
     end.
+
+%% The booted slot and the windows it decides, from Arguments, what
+%% erx_device_record:records/0 returns: the slot and its system window, or none and no
+%% window on a boot that names no slot; on boot words boot_slot/1 refuses, none and no
+%% window too, with the refusal for the caller's log.
+-spec booted(term()) -> {slot() | none, [window()], ok | {error, bad_boot}}.
+booted(Arguments) ->
+    case boot_slot(Arguments) of
+        {ok, Slot} -> {Slot, system_window(Slot), ok};
+        Refused -> {none, [], Refused}
+    end.
+
+%% The slot of `-erx_record boot VALUE SLOT` in Arguments, by the names of
+%% include/erx/core/boot_pair.h: none when there is no such word list or its value is
+%% unknown; bad_boot for more than one, for words after the slot, or for a value and slot
+%% that are not a pair boot_pair.h accepts.
+boot_slot(Arguments) when is_list(Arguments) ->
+    case [Words || ["boot" | Words] <- Arguments] of
+        [] -> {ok, none};
+        [["unknown", "none"]] -> {ok, none};
+        [[Value, "a"]] when Value =:= "normal"; Value =:= "trial" -> {ok, a};
+        [[Value, "b"]] when Value =:= "normal"; Value =:= "trial" -> {ok, b};
+        _ -> {error, bad_boot}
+    end;
+boot_slot(_Arguments) ->
+    {error, bad_boot}.
+
+%% The system window of a boot that booted Slot, on that slot's system partition, or none
+%% on a boot with no slot.
+system_window(none) ->
+    [];
+system_window(Slot) ->
+    {Start, Sectors} = system_partition(Slot),
+    [{role(?ERX_MF_WINDOW_ROLE_SYSTEM), Start, Sectors}].
+
+%% The first sector and the length of Slot's system partition.
+-spec system_partition(slot()) -> {non_neg_integer(), pos_integer()}.
+system_partition(a) -> {?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS};
+system_partition(b) -> {?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}.
+
+%% Whether a window of Role takes no write: the system window and an image window.
+-spec read_only(role()) -> boolean().
+read_only({image, _Name}) -> true;
+read_only(Role) -> Role =:= role(?ERX_MF_WINDOW_ROLE_SYSTEM).
 
 %% The medium's first sector of a request for Count sectors from Sector of Window: einval
 %% for a request that names no sectors, erange for one that leaves the window.
@@ -97,6 +154,11 @@ place({_Role, Start, Sectors}, Sector, Count)
     end;
 place(_Window, _Sector, _Count) ->
     {error, einval}.
+
+%% The name abi/manifest.txt gives the window role of value Value.
+role(Value) ->
+    {Name, Value} = lists:keyfind(Value, 2, ?ERX_MF_WINDOW_ROLE_MEMBERS),
+    Name.
 
 %% Each named record's four entries, or the first record that is not a record.
 read_entries([], Read) ->

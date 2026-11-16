@@ -6,16 +6,22 @@
 %% five records of the partition table through erx_blk, admits them with
 %% erx_blk_table:admit/2, and starts one window, erx_blk_window, per partition the layout
 %% names: the boot-selection record's, boot A's, boot B's, the vault's and the data
-%% partition's. A table that differs from the layout in anything but the data partition's
-%% length, a medium too small for the layout, a record the device does not return and a
-%% machine without a block device each leave the service with no window and one line in
-%% the kernel log naming why: the driver serves none of such a medium.
+%% partition's. A table that differs from the layout in anything but
+%% the data partition's length, a medium too small for the layout, a record the device
+%% does not return and a machine without a block device each leave the service with no
+%% window and one line in the kernel log naming why: the driver serves none of such a
+%% medium.
 %%
-%% Once the table is admitted, it also starts a read-only window on each EROFS image of
-%% the booted slot that the release's manifest gives the system domain, of role
-%% {image, Name}, which erx_blk_image places from the root's -erx_record boot words and the
-%% manifest; a boot with no slot serves none, and an image it refuses is one line of the
-%% log. mount_images/0, the supervisor's next child, mounts each at /images/NAME
+%% Once the table is admitted, it also starts the windows the boot value decides, which
+%% erx_blk_table:booted/1 derives from the -erx_record boot words the domain library
+%% gives the block device's holder: the read-only system window on the booted slot's
+%% system partition (docs/design-stopgap.md, "The booted slot"), which reads no
+%% manifest, and a read-only window on each EROFS image of the
+%% booted slot that the release's manifest gives the system domain, of role
+%% {image, Name}, which erx_blk_image places from the slot and the manifest. A boot with
+%% no slot, an unknown boot, serves neither; so does a boot value the reader refuses,
+%% which is one line of the log, as is each image refused. mount_images/0, the
+%% supervisor's next child, mounts each image at /images/NAME
 %% (docs/design-stopgap.md, "Image windows"). In a storage domain, whose namespace holds
 %% no manifest, the read fails and no image is served, which is one line of the log.
 %%
@@ -26,8 +32,9 @@
 %%
 %% window/1 is where a window's pid is handed out, to any caller in the driver's domain and
 %% for any role. It is the seam the device service replaces: that service names each
-%% client's windows by role and hands their pids out as grants, the slot and record windows
-%% to the slot writer alone (PW1).
+%% client's windows by role and hands their pids out as grants, the boot, system A,
+%% system B and record windows to the slot writer alone and the system window to the
+%% manifest's holder of it (PW1).
 
 -module(erx_blk_service).
 -behaviour(gen_server).
@@ -95,8 +102,10 @@ handle_continue(admit, admitting) ->
 
 -spec serve({ok, [erx_blk_table:window()]} | {error, term()}) -> state().
 serve({ok, Windows}) ->
+    {Slot, System} = booted(erx_blk_table:booted(erx_device_record:records())),
+    Booted = System ++ image_windows(Slot),
     Served = maps:from_list([{Role, start_window(Window)}
-                             || Window = {Role, _Start, _Sectors} <- Windows ++ image_windows()]),
+                             || Window = {Role, _Start, _Sectors} <- Windows ++ Booted]),
     log("partition table admitted; ~b windows", [map_size(Served)]),
     {served, Served};
 %% no_device is either a machine without a disk, a configuration that has no line, or a disk
@@ -111,18 +120,19 @@ start_window(Window) ->
     {ok, Pid} = erx_blk_window:start_link(Window),
     Pid.
 
+%% The booted slot and its system window, with a refused boot value's line in the log.
+booted({Slot, System, ok}) ->
+    {Slot, System};
+booted({Slot, System, {error, Reason}}) ->
+    log("no system window or image is served: ~0p", [Reason]),
+    {Slot, System}.
+
 %% The windows on the booted slot's images (erx_blk_image). The manifest is read only on a
 %% boot that has a slot.
-image_windows() ->
-    case erx_blk_image:boot_slot(erx_device_record:records()) of
-        {ok, none} ->
-            [];
-        {ok, Slot} ->
-            slot_images(Slot, file:read_file(manifest_path()));
-        {error, Reason} ->
-            log("no image is served: ~0p", [Reason]),
-            []
-    end.
+image_windows(none) ->
+    [];
+image_windows(Slot) ->
+    slot_images(Slot, file:read_file(manifest_path())).
 
 slot_images(Slot, {ok, Manifest}) ->
     case erx_blk_image:windows(Manifest, Slot) of

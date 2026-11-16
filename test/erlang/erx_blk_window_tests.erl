@@ -18,7 +18,8 @@ window_test_() ->
     {foreach, fun() -> ok end, fun(ok) -> end_registered() end,
      [fun a_window_whose_device_ended_answers_eio/0,
       fun a_window_opened_after_a_restart_reaches_the_new_device/0,
-      fun a_window_binds_on_its_first_reach/0]}.
+      fun a_window_binds_on_its_first_reach/0,
+      fun a_system_window_takes_no_write/0]}.
 
 end_registered() ->
     case whereis(erx_blk) of
@@ -90,6 +91,18 @@ a_window_binds_on_its_first_reach() ->
     ?assertEqual({error, eio}, erx_blk_window:read(Window, 0, 1)),
     Device = start_device(),
     ?assertEqual(ok, erx_blk_window:flush(Window)),
+    unlink(Window),
+    exit(Window, kill),
+    stop_device(Device).
+
+%% The system window is read-only (PW1): a write answers erofs before it reaches a device,
+%% so with no device process running it is erofs and not eio, and a read reaches the device.
+a_system_window_takes_no_write() ->
+    {ok, Window} = erx_blk_window:start_link({system, 8, 16}),
+    ?assertEqual({error, erofs}, erx_blk_window:write(Window, 0, <<1:(?SECTOR)/unit:8>>)),
+    Device = start_device(),
+    ?assertEqual({error, erofs}, erx_blk_window:write(Window, 0, <<1:(?SECTOR)/unit:8>>)),
+    ?assertEqual({ok, <<0:(?SECTOR)/unit:8>>}, erx_blk_window:read(Window, 0, 1)),
     unlink(Window),
     exit(Window, kill),
     stop_device(Device).

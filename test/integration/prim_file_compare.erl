@@ -433,7 +433,7 @@ ram_window(Bytes) ->
 ram_window_loop(Bytes) ->
     receive
         {'$gen_call', From, info} ->
-            gen:reply(From, {ok, #{role => slot_a, sectors => byte_size(Bytes) div 512}});
+            gen:reply(From, {ok, #{role => system, sectors => byte_size(Bytes) div 512}});
         {'$gen_call', From, {read, Sector, Count}} ->
             gen:reply(From, {ok, binary:part(Bytes, Sector * 512, Count * 512)})
     end,

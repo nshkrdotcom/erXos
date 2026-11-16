@@ -51,12 +51,51 @@ table(Data) ->
 admit(Capacity, Table) ->
     erx_blk_table:admit(Capacity, [record(Entries) || {_Name, Entries} <- Table]).
 
+%% The layout's windows, each partition's under its role in abi/manifest.txt's
+%% mf_window_role, but the record partition's, which holds two of those roles' records.
 windows(Data) ->
     [{record, ?ERX_MEDIUM_RECORD_START, ?ERX_MEDIUM_RECORD_SECTORS},
-     {slot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
-     {slot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
+     {boot_a, ?ERX_MEDIUM_BOOT_A_START, ?ERX_MEDIUM_BOOT_SECTORS},
+     {boot_b, ?ERX_MEDIUM_BOOT_B_START, ?ERX_MEDIUM_BOOT_SECTORS},
      {vault, ?ERX_MEDIUM_VAULT_START, ?ERX_MEDIUM_VAULT_SECTORS},
      {data, ?ERX_MEDIUM_DATA_START, Data}].
+
+-define(SYSTEM_A, {system, ?ERX_MEDIUM_SYSTEM_A_START, ?ERX_MEDIUM_SYSTEM_SECTORS}).
+-define(SYSTEM_B, {system, ?ERX_MEDIUM_SYSTEM_B_START, ?ERX_MEDIUM_SYSTEM_SECTORS}).
+
+%% Every layout role but the record partition's, and the system window's, is the name
+%% abi/manifest.txt gives a window role.
+roles_are_the_manifest_s_test() ->
+    {a, System, ok} = erx_blk_table:booted([["boot", "normal", "a"]]),
+    Roles = [Role || {Role, _, _} <- windows(?DATA) ++ System, Role =/= record],
+    ?assertEqual([], Roles -- [Name || {Name, _Value} <- ?ERX_MF_WINDOW_ROLE_MEMBERS]).
+
+%% PW1, the derivation from the boot words: the one system window lies on the system
+%% partition of the slot `-erx_record boot VALUE SLOT` names, and a boot that names no
+%% slot, an unknown boot or a runtime given no such words, has none.
+booted_test_() ->
+    [?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["console", "pl011"], ["boot", "normal", "a"]])),
+     ?_assertEqual({a, [?SYSTEM_A], ok}, erx_blk_table:booted([["boot", "trial", "a"]])),
+     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([["boot", "normal", "b"]])),
+     ?_assertEqual({b, [?SYSTEM_B], ok}, erx_blk_table:booted([["boot", "trial", "b"]])),
+     ?_assertEqual({none, [], ok}, erx_blk_table:booted([["boot", "unknown", "none"]])),
+     ?_assertEqual({none, [], ok}, erx_blk_table:booted([])),
+     ?_assertEqual({none, [], ok}, erx_blk_table:booted([["console", "pl011", "1", "2", "3"]]))].
+
+%% Every pair boot_pair.h refuses, a word too many or too few, two lists, and terms that
+%% are not init's arguments: no slot and no window, and the refusal.
+booted_refusals_test_() ->
+    [?_assertEqual({none, [], {error, bad_boot}}, erx_blk_table:booted(Arguments))
+     || Arguments <- [[["boot", "unknown", "a"]], [["boot", "normal", "none"]], [["boot", "normal", "c"]],
+                      [["boot", "other", "a"]], [["boot", "normal"]], [["boot"]], [["boot", "normal", "a", "x"]],
+                      [["boot", "normal", "a"], ["boot", "normal", "a"]], [["boot", 1, "a"]],
+                      not_a_list, <<"boot normal a">>]].
+
+%% The system window is read-only, as an image window is; every layout window is not.
+read_only_test_() ->
+    [?_assert(erx_blk_table:read_only(system)),
+     ?_assert(erx_blk_table:read_only({image, <<"release">>})) |
+     [?_assertNot(erx_blk_table:read_only(Role)) || {Role, _, _} <- windows(?DATA)]].
 
 %% The admitted table equals the layout: the five records are read where the layout puts
 %% them, and the good table's windows are the layout's partitions.

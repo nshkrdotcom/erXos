@@ -110,6 +110,7 @@ module ManifestContextFixture
   SESSION_TEMPLATE = /^session system\n(?:  .*\n)*/
   # The development manifest's apps row.
   APPS_ROW = /^apps\n(?:  .*\n)*/
+  SYSTEM_WINDOW = /^window system\n(?:  .*\n)*/
   SYSTEM_QUOTA = /^(principal system\n(?:  .*\n)*?  domains )\d+$/
   MAX_DOMAINS = /^(  max_domains )\d+$/
 
@@ -157,11 +158,12 @@ module ManifestContextFixture
   # source without its configured domains, storage, network, web and display: their rows
   # removed and what they hold but the display unit held by the system domain, as a
   # manifest that configures no domain holds them. A session facet is removed where the
-  # source still has it, and so is its apps row, whose services those domains serve.
+  # source still has it, and so is its apps row, whose services those domains serve, and
+  # its system window, which only a storage domain holds (property 8).
   def domainless(source)
     raise ArgumentError, 'the manifest has no configured domain holder' unless source.match?(DOMAIN_HOLDER)
 
-    appless = source.sub(APPS_ROW, '')
+    appless = source.sub(APPS_ROW, '').sub(SYSTEM_WINDOW, '')
     held = SESSION_FACETS.reduce(appless.gsub(DOMAIN_HOLDER, '  holder system')) { |text, facet| text.sub(facet, '') }
     DOMAIN_ROWS.reduce(held) { |text, row| substitute(text, row, '') }
   end

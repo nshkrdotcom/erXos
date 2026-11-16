@@ -34,7 +34,7 @@ window(Bytes, Serve) -> spawn(fun() -> serve(Bytes, Serve) end).
 serve(Bytes, Serve) ->
     receive
         {'$gen_call', From, info} ->
-            gen:reply(From, {ok, #{role => slot_a, sectors => byte_size(Bytes) div ?SECTOR}});
+            gen:reply(From, {ok, #{role => system, sectors => byte_size(Bytes) div ?SECTOR}});
         {'$gen_call', From, {read, Sector, Count}} when Sector rem 8 =:= 0, Count rem 8 =:= 0 ->
             Part = binary:part(Bytes, Sector * ?SECTOR, Count * ?SECTOR),
             gen:reply(From, Serve(Sector div 8, Count div 8, Part))

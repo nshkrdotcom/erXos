@@ -9,10 +9,11 @@
 # storage, network, web and display, as docs/design-stopgap.md's "The Phase 1 manifest check"
 # admits them, and the system principal's session template, from which the console starts root's
 # session at boot (docs/design-system.md, "Booting"). The storage domain is an
-# interpreter service domain that holds the block unit and its data and release
-# windows and runs the block driver and littlefs at /data (docs/design-stopgap.md,
-# "littlefs in the storage domain"); the slot writer's four windows stay the
-# system domain's (property 8). It serves storage_ctl, its driver-control facet,
+# interpreter service domain that holds the block unit and its data, release and
+# read-only system windows and runs the block driver and littlefs at /data
+# (docs/design-stopgap.md, "littlefs in the storage domain" and "The booted slot"); the
+# slot writer's six windows, both slots' boot and system partitions and the two records,
+# stay the system domain's (property 8). It serves storage_ctl, its driver-control facet,
 # to the system domain alone (property 8; docs/design-system.md, "The holder's
 # driver-control facet"), and data, an erx_fs grant of /data's tree, to the system
 # domain and to root's session (property 16; docs/design-stopgap.md, "littlefs in the
@@ -271,17 +272,31 @@ unit block
 unit display
   placement "display"
   holder @domain.display
-window slot_a
+window boot_a
   holder system
   device "/virtio_mmio@a003e00"
-  role slot_a
+  role boot_a
   partition 0
   rights read,write
   image none
-window slot_b
+window boot_b
   holder system
   device "/virtio_mmio@a003e00"
-  role slot_b
+  role boot_b
+  partition 0
+  rights read,write
+  image none
+window system_a
+  holder system
+  device "/virtio_mmio@a003e00"
+  role system_a
+  partition 0
+  rights read,write
+  image none
+window system_b
+  holder system
+  device "/virtio_mmio@a003e00"
+  role system_b
   partition 0
   rights read,write
   image none
@@ -298,6 +313,13 @@ window reset_count
   role reset_count
   partition 0
   rights read,write
+  image none
+window system
+  holder @domain.storage
+  device "/virtio_mmio@a003e00"
+  role system
+  partition 0
+  rights read
   image none
 window data
   holder @domain.storage

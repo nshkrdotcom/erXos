@@ -99,15 +99,23 @@ enum mf_dma u32
   value unconfined 2
 flags mf_device_flags u32
   bit hostile 0
+# A partition window's role (docs/design-abi.md, "Devices and partition windows"): the
+# slots' boot and system partitions and the two records are the slot writer's; system is
+# the one read-only window on the system partition of the slot the boot value names, and
+# an unknown boot has none (docs/design-storage.md, PW1). verified_image is a window on
+# one EROFS image of the booted slot (docs/design-stopgap.md, "Image windows").
 enum mf_window_role u32
-  value slot_a 1
-  value slot_b 2
+  value boot_a 1
+  value boot_b 2
   value boot_selection 3
   value reset_count 4
   value vault 5
   value data 6
   value fat 7
-  value verified_image 8
+  value system 8
+  value system_a 9
+  value system_b 10
+  value verified_image 11
 flags mf_window_rights u32
   bit read 0
   bit write 1

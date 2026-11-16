@@ -30,7 +30,7 @@ module Erx
     DATA_SECTORS = CODEC.constant('medium_data_sectors_min') + 2048
     # A bound on what the suite's checker reads: the layout and 4 GiB of data partition.
     MAX_SECTORS = CODEC.constant('medium_data_start') + (1 << 23)
-    ROLES = %i[record slot_a slot_b vault data].freeze
+    ROLES = %i[record boot_a boot_b vault data].freeze
 
     # One window: its role, its first sector on the medium and its length.
     Window = Data.define(:role, :start, :sectors) do
@@ -53,17 +53,17 @@ module Erx
     def constant(name) = CODEC.constant("medium_#{name}")
 
     # The windows of a medium whose data partition has data_sectors sectors, in the
-    # order erx_blk_table admits them. slot_a and slot_b are the slots' boot partitions.
+    # order erx_blk_table admits them: every partition's but the two system partitions'.
+    # The system window the boot value adds lies on one of those, so it is not listed.
     def windows(data_sectors: DATA_SECTORS)
       [Window.new(role: :record, start: constant('record_start'), sectors: constant('record_sectors')),
-       Window.new(role: :slot_a, start: constant('boot_a_start'), sectors: constant('boot_sectors')),
-       Window.new(role: :slot_b, start: constant('boot_b_start'), sectors: constant('boot_sectors')),
+       Window.new(role: :boot_a, start: constant('boot_a_start'), sectors: constant('boot_sectors')),
+       Window.new(role: :boot_b, start: constant('boot_b_start'), sectors: constant('boot_sectors')),
        Window.new(role: :vault, start: constant('vault_start'), sectors: constant('vault_sectors')),
        Window.new(role: :data, start: constant('data_start'), sectors: data_sectors)].freeze
     end
 
-    # Every partition a piece may lie in: the windows and the two system partitions,
-    # which the driver admits and serves no window on.
+    # Every partition a piece may lie in: the windows and the two system partitions.
     def partitions(data_sectors:)
       windows(data_sectors: data_sectors) +
         [Window.new(role: :system_a, start: constant('system_a_start'), sectors: constant('system_sectors')),
