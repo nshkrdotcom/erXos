@@ -4495,6 +4495,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
+* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): the relay is
+  built and tested but nothing starts it, so `erx_session_tty` stays each session tty's line driver, raw,
+  with no line discipline. It replaces `erx_session_tty`'s tty process as `erx_console`'s driver once the
+  console of the session role reads through an open of the relay
+  ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol), "The console reads on demand";
+  edit 72 of [design-runtime.md](docs/design-runtime.md)), the shell sends `foreground` and `erx_cmd`
+  reads through `open_reader/1`; `erx_session_tty` is then deleted, and the runtime's writers find
+  `erx_tty_owner` held.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
   (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and
   output; reports are pooled across receivers.
