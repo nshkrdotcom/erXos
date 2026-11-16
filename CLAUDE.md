@@ -153,7 +153,7 @@ These shape every design and change; the rules below apply them.
   the policy of its patches among them; the kernel stack proof and the
   kernel-side chokepoints check those cores, and the rest waits for
   erXos's kernel.
-* **A stopgap promises little.** Its design commits only to what the
+* **What a stopgap promises.** Its design commits only to what the
   milestone using it needs and its tests check: no memory errors, no
   deadlock, and the results of the calls it offers, for trusted
   workloads. A stopgap a release ships, as R1 ships Fiasco, also
