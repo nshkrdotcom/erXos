@@ -44,7 +44,7 @@ domain. Monitoring the domain pid watches the domain: it ends with
 or stopped.
 """.
 
--export([create/1, start_session/2, info/1, introduce/2, web_line/2, stop/2, id/1, node/1, pid/1]).
+-export([create/1, start_session/2, start_app/2, info/1, introduce/2, web_line/2, stop/2, id/1, node/1, pid/1]).
 -export([system_principal/0, system_principal_request/0, system_namespace/0, display_settled/1]).
 -export([inspect_view/1]).
 -export_type([domain/0, spec/0]).
@@ -123,6 +123,24 @@ the manifest does not name, and every error of create/1 else.
           {ok, domain()} | {error, term()}.
 start_session(Principal, Start) when is_integer(Principal), Principal > 0 ->
     gen_server:call(erx_domain_srv, {start_session, Principal, Start}, infinity).
+
+-doc """
+Starts a session of the app Name, a package registered in this boot
+(docs/design-packaging.md, "An app's session"), with Start as for
+start_session/2 but no console: the domain library plans the app template
+under the app's entry with the memory its record holds, the session holds
+the template's packages row and the rows the app's admission kept and no
+other, its name is Name_N, and once its namespace is in place it is handed
+the app's record, from which erx_app mounts /app and starts the app. The
+start service's keepers are its only callers (PK7, the build check
+app-starters), since an app principal has no credentials and no login
+starts its session (AP2). {error, no_app} for a name not registered, a
+display the session does not hold refuses it as start_session/2 does, and
+every error of create/1 else.
+""".
+-spec start_app(binary(), #{display => atom(), default_display => atom()}) -> {ok, domain()} | {error, term()}.
+start_app(Name, Start) when is_binary(Name), is_map(Start) ->
+    gen_server:call(erx_domain_srv, {start_app, Name, Start}, infinity).
 
 -doc """
 The domains Scope covers, `all` or `{principal, P}`, each with its

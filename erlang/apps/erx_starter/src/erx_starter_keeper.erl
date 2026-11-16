@@ -5,14 +5,21 @@
 -moduledoc """
 A keeper (docs/design-apps.md, "Keeping a session"): one process that
 holds one session. It asks the domain service for its principal's session
-with erx_domain:start_session/2 and links to the session's domain pid.
-The link is both halves of the keeper's contract:
+with erx_domain:start_session/2, or for an app's with
+erx_domain:start_app/2, of which keepers are the only callers (PK7), and
+links to the session's domain pid. The link is both halves of the keeper's
+contract:
 
 * the session's end is the domain pid's end with {domain_down, Id, Info},
   which ends the keeper with that reason, so its supervisor counts it;
 * the keeper's end, for any reason, a kill included, is an exit signal to
   the domain pid, which stops the domain (erx_domain_pid), so the session
   ends with its keeper and none outlives the row that kept it.
+
+The keeper traps exits, so its supervisor's shutdown, which waits for it
+without a bound, stops the session and returns only once the domain pid
+has ended: a row's supervisor that has stopped holds no session, which a
+publication that drops an app answers on (docs/design-packaging.md, PK7).
 
 A start the service refuses ends the keeper with {shutdown, {refused,
 Reason}}, an end its supervisor counts and proc_lib reports no crash for.
@@ -33,46 +40,80 @@ service it serves and is refused without making one.
 -export([start_link/2]).
 -export([keep/2]).
 
--spec start_link(pos_integer(), #{display => binary(), default_display => binary()}) -> {ok, pid()}.
-start_link(Principal, Start) ->
-    {ok, proc_lib:spawn_link(?MODULE, keep, [Principal, Start])}.
+%% Whose session a keeper holds: a manifest principal's, by its number, or an app's, by
+%% its name.
+-type who() :: pos_integer() | {app, binary()}.
+
+-spec start_link(who(), #{display => binary(), default_display => binary()}) -> {ok, pid()}.
+start_link(Who, Start) ->
+    {ok, proc_lib:spawn_link(?MODULE, keep, [Who, Start])}.
 
 -doc false.
-keep(Principal, Start) ->
+keep(Who, Start) ->
+    process_flag(trap_exit, true),
     Keeper = self(),
-    Helper = spawn_link(fun() -> start(Keeper, Principal, Start) end),
+    Helper = spawn_link(fun() -> start(Keeper, Who, Start) end),
     receive
         {Helper, {ok, Domain}} ->
             %% A session that ended before the keeper took it is an end too.
-            try link(erx_domain:pid(Domain))
+            Pid = erx_domain:pid(Domain),
+            try link(Pid)
             catch error:noproc -> exit({shutdown, {ended, erx_domain:id(Domain)}})
             end,
             Helper ! {Keeper, taken},
-            %% The link ends the keeper when the session ends.
-            receive after infinity -> ok end;
+            hold(Pid, Helper);
         {Helper, {error, Reason}} ->
-            exit({shutdown, {refused, Reason}})
+            exit({shutdown, {refused, Reason}});
+        {'EXIT', Helper, Reason} ->
+            exit(Reason);
+        {'EXIT', _Supervisor, Reason} ->
+            %% Stopped while the start runs: the helper, linked to the keeper, stops the
+            %% session the start makes and ends once that session has ended, so the
+            %% keeper ends only then too.
+            receive {'EXIT', Helper, _} -> exit(Reason) end
+    end.
+
+%% The session held: its end is the keeper's, and the keeper's stop by its supervisor
+%% stops the session and ends only once the session has ended. The keeper's links are
+%% its supervisor, the helper, which ends normally once the keeper took the session, and
+%% the domain pid.
+hold(Pid, Helper) ->
+    receive
+        {'EXIT', Pid, Reason} ->
+            exit(Reason);
+        {'EXIT', Helper, normal} ->
+            hold(Pid, Helper);
+        {'EXIT', _Supervisor, Reason} ->
+            Monitor = monitor(process, Pid),
+            exit(Pid, Reason),
+            receive {'DOWN', Monitor, process, Pid, _} -> exit(Reason) end
     end.
 
 %% The helper: the start, held by a link until the keeper takes it.
-start(Keeper, Principal, Start) ->
+start(Keeper, Who, Start) ->
     process_flag(trap_exit, true),
-    case start_session(Principal, Start) of
+    case start_session(Who, Start) of
         {ok, Domain} = Started ->
             Pid = erx_domain:pid(Domain),
             link(Pid),
             Keeper ! {self(), Started},
             receive
                 {Keeper, taken} -> unlink(Pid);
-                {'EXIT', Keeper, _} -> exit(Pid, abandoned)
+                {'EXIT', Keeper, _} ->
+                    Monitor = monitor(process, Pid),
+                    exit(Pid, abandoned),
+                    receive {'DOWN', Monitor, process, Pid, _} -> exit(abandoned) end
             end;
         {error, _} = Refused ->
             Keeper ! {self(), Refused}
     end.
 
-start_session(Principal, Start) ->
-    try erx_domain:start_session(Principal, maps:map(fun(_Key, Name) -> binary_to_existing_atom(Name) end, Start))
+start_session(Who, Start) ->
+    try do_start(Who, maps:map(fun(_Key, Name) -> binary_to_existing_atom(Name) end, Start))
     catch
         error:badarg -> {error, no_service};
         exit:{Reason, {gen_server, call, _}} -> {error, Reason}
     end.
+
+do_start({app, Name}, Start) -> erx_domain:start_app(Name, Start);
+do_start(Principal, Start) -> erx_domain:start_session(Principal, Start).

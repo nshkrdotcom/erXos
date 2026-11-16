@@ -64,6 +64,8 @@
 -define(T, 2).
 -define(THIRD, 99).
 -define(LIMITS, #{max_request => 4096}).
+%% The rows of a session of template 0 of config/1: data, from S.
+-define(ROWS, [{data, ?S, ?LIMITS}]).
 %% A marked grant's limits as its mint carries them: the session mark added.
 -define(MARKED_LIMITS, #{max_request => 4096, session => true}).
 
@@ -311,19 +313,19 @@ session_grants(State) -> erx_domain_mints:grants(State).
 
 %% S1 = 5 ready, session 9 ready and introduced: its grant is minting tag 1.
 session_minting() ->
-    {_, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, 0, 9, none}, {introduced, 1, ok}], sessions()),
+    {_, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok}], sessions()),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)),
     State.
 
 %% Session 9's grant installed, and session 10's.
 two_sessions_installed() ->
-    {_, State} = run([{session_ready, 0, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
+    {_, State} = run([{session_ready, ?ROWS, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
                       {minted, 5, 2, {ok, facet(5)}}, {installed, 9, 1}, {installed, 10, 2}],
                      session_minting()),
     State.
 
 session_ready_installs_test() ->
-    {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, 0, 9, none}, {introduced, 1, ok},
+    {Actions, State} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok},
                             {minted, 5, 1, {ok, facet(5)}}, {installed, 9, 1}], sessions()),
     ?assertEqual([[],
                   [{arm, 1, 10000}, {introduce, 1, 5, 9}],
@@ -340,7 +342,7 @@ files_sessions() -> erx_domain_mints:new((config([{template, 0}]))#{files => [da
 in_place(Starting, State) -> erx_domain_mints:in_place({session, 9}, Starting, State).
 
 namespace_waits_for_its_files_grants_test() ->
-    {_, Idle} = run([{session_ready, 0, 9, none}], files_sessions()),
+    {_, Idle} = run([{session_ready, ?ROWS, 9, none}], files_sessions()),
     %% No operation: the session waits while its server is starting, and not once it
     %% has ended or never started, when /data answers I/O error.
     ?assertNot(in_place([?S], Idle)),
@@ -359,13 +361,13 @@ namespace_waits_for_its_files_grants_test() ->
     ?assert(in_place([], Unprovided)).
 
 namespace_waits_for_no_other_grant_test() ->
-    {_, Minting} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, 0, 9, none}, {introduced, 1, ok}], sessions()),
+    {_, Minting} = run([ready(?S, 5, #{data => mint(5)}), {session_ready, ?ROWS, 9, none}, {introduced, 1, ok}], sessions()),
     ?assert(in_place([?S], Minting)),
     ?assert(erx_domain_mints:in_place({session, 10}, [?S], Minting)),
     ?assert(erx_domain_mints:in_place({session, 10}, [?S], files_sessions())).
 
 session_before_its_server_waits_test() ->
-    {Actions, State} = run([{session_ready, 0, 9, none}, ready(?S, 5, #{data => mint(5)})], sessions()),
+    {Actions, State} = run([{session_ready, ?ROWS, 9, none}, ready(?S, 5, #{data => mint(5)})], sessions()),
     ?assertEqual([[], [{arm, 1, 10000}, {introduce, 1, 5, 9}]], Actions),
     ?assertEqual(#{{{session, 9}, data} => {introducing, {5, 9}, 1}}, session_grants(State)).
 
@@ -377,7 +379,7 @@ session_end_cancels_and_drops_its_late_replies_test() ->
     ?assertEqual(#{}, session_grants(State)).
 
 two_sessions_get_two_grants_test() ->
-    {Actions, State} = run([{session_ready, 0, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
+    {Actions, State} = run([{session_ready, ?ROWS, 10, none}, {introduced, 2, ok}, {minted, 5, 1, {ok, facet(5)}},
                             {minted, 5, 2, {ok, facet(5)}}, {installed, 10, 1}, {installed, 9, 2},
                             {installed, 9, 1}, {installed, 10, 2}], session_minting()),
     ?assertEqual([[{arm, 2, 10000}, {introduce, 2, 5, 10}],
@@ -403,12 +405,12 @@ server_restart_regrants_every_live_session_test() ->
                    {{session, 10}, data} => {introducing, {8, 10}, 4}}, session_grants(State)).
 
 second_report_of_a_live_session_is_refused_test() ->
-    {Actions, State} = run([{session_ready, 0, 9, none}, {session_ended, 77}], session_minting()),
+    {Actions, State} = run([{session_ready, ?ROWS, 9, none}, {session_ended, 77}], session_minting()),
     ?assertEqual([[{refused, stale_report, {session, 9}}], []], Actions),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)).
 
-session_of_a_template_without_grants_holds_nothing_test() ->
-    {Actions, State} = run([{session_ready, 1, 11, none}, {session_ended, 11}], session_minting()),
+session_of_no_rows_holds_nothing_test() ->
+    {Actions, State} = run([{session_ready, [], 11, none}, {session_ended, 11}], session_minting()),
     ?assertEqual([[], []], Actions),
     ?assertEqual(#{{{session, 9}, data} => {minting, {5, 9}, 1}}, session_grants(State)).
 
@@ -418,7 +420,7 @@ repeated_sessions_leave_no_entry_test() ->
     {_, Ready} = run([ready(?S, 5, #{data => mint(5)})], sessions()),
     Cycle = fun(Id, State) ->
                     {[_, [{arm, Tag, _}, _] | _], Next} =
-                        run([{session_ended, Id - 1}, {session_ready, 0, Id, none}], State),
+                        run([{session_ended, Id - 1}, {session_ready, ?ROWS, Id, none}], State),
                     {_, Done} = run([{introduced, Tag, ok}, {minted, 5, Tag, {ok, facet(5)}}, {installed, Id, Tag}], Next),
                     Done
             end,
@@ -447,8 +449,8 @@ session_mark_test() ->
     %% Session 9 is data's display session; session 10 and session 11, which names a
     %% display its template is not granted, are not, and row G's limits lose session.
     {First, Minting} = minted_limits([ready(?S, 5, #{data => mint(5)}), ready(?T, 6, #{other => mint(6)}),
-                                      ready(?G, 7, #{}), {session_ready, 0, 9, {display, data}},
-                                      {session_ready, 0, 10, none}, {session_ready, 0, 11, {display, log}}],
+                                      ready(?G, 7, #{}), {session_ready, marked_rows(), 9, {display, data}},
+                                      {session_ready, marked_rows(), 10, none}, {session_ready, marked_rows(), 11, {display, log}}],
                                      marked()),
     ?assertEqual(#{{7, data} => ?LIMITS,
                    {9, data} => ?MARKED_LIMITS, {9, other} => ?LIMITS,
@@ -459,14 +461,33 @@ session_mark_test() ->
     ?assertEqual(#{{7, data} => ?LIMITS, {9, data} => ?MARKED_LIMITS,
                    {10, data} => ?LIMITS, {11, data} => ?LIMITS}, Again).
 
-%% A start may name as its display only a windows service its template is granted: data,
-%% and not other, a grant of another interface.
+%% The rows of a session of marked()'s template 0: data and other.
+marked_rows() -> [{data, ?S, ?LIMITS}, {other, ?T, ?LIMITS}].
+
+%% An app's session holds the rows its plan gave it and no other row of its template
+%% (docs/design-packaging.md, "An app's session"): session 12 of template 0 holds only
+%% data, and no mint of other is asked for it, while session 10 holds both; each one's
+%% grants end with it alone.
+session_holds_only_its_rows_test() ->
+    {Minted, State} = minted_limits([ready(?S, 5, #{data => mint(5)}), ready(?T, 6, #{other => mint(6)}),
+                                     {session_ready, marked_rows(), 10, none},
+                                     {session_ready, [{data, ?S, ?LIMITS}], 12, none}],
+                                    marked()),
+    ?assertEqual(#{{10, data} => ?LIMITS, {10, other} => ?LIMITS, {12, data} => ?LIMITS}, Minted),
+    ?assertEqual([{?G, data}, {{session, 10}, data}, {{session, 10}, other}, {{session, 12}, data}],
+                 lists:sort(maps:keys(erx_domain_mints:grants(State)))),
+    {_, Ended} = run([{session_ended, 12}], State),
+    ?assertEqual([{?G, data}, {{session, 10}, data}, {{session, 10}, other}],
+                 lists:sort(maps:keys(erx_domain_mints:grants(Ended)))).
+
+%% A start may name as its display only a windows service its session holds: data,
+%% and not other, a grant of another interface, nor anything for a session of no rows.
 granted_names_the_templates_displays_test() ->
-    ?assert(erx_domain_mints:granted(0, data, marked())),
-    ?assertNot(erx_domain_mints:granted(0, other, marked())),
-    ?assertNot(erx_domain_mints:granted(0, log, marked())),
-    ?assertNot(erx_domain_mints:granted(1, data, marked())),
-    ?assertNot(erx_domain_mints:granted(0, "data", marked())).
+    ?assert(erx_domain_mints:granted(marked_rows(), data, marked())),
+    ?assertNot(erx_domain_mints:granted(marked_rows(), other, marked())),
+    ?assertNot(erx_domain_mints:granted(marked_rows(), log, marked())),
+    ?assertNot(erx_domain_mints:granted([], data, marked())),
+    ?assertNot(erx_domain_mints:granted(marked_rows(), "data", marked())).
 
 invalid_template_grants_are_refused_test() ->
     Owner = fun ?MODULE:owner/1,
@@ -604,9 +625,12 @@ check_current_pair(Grants, Env, Node, Seen) ->
                          element(2, Grant) =:= current_pair(Key, Env) orelse violation(current_pair, Node, state, Seen)
                  end, Grants).
 
+%% A session holds a grant exactly while it is ready and its rows name the grant: an
+%% app's session whose rows leave data out never holds data, though its template does.
 check_session_entries(Grants, #{sessions := Sessions}, Node, Seen) ->
     Held = lists:sort([Id || {{session, Id}, data} := _ <- Grants]),
-    Held =:= lists:sort([Id || Id := ready <- Sessions]) orelse violation(session_entries, Node, state, Seen).
+    Held =:= lists:sort([Id || Id := ready <- Sessions, rows(Id) =/= []])
+        orelse violation(session_entries, Node, state, Seen).
 
 check_honest_progress(Grants, #{msgs := Msgs, reqs := Reqs, honest := Honest} = Env, Node, Seen) ->
     Stuck = [Key || Key := Grant <- Grants, element(1, Grant) =/= installed,
@@ -618,6 +642,11 @@ check_honest_progress(Grants, #{msgs := Msgs, reqs := Reqs, honest := Honest} = 
 current_pair({system, data}, Env) -> {ready_id(?S, Env), 4};
 current_pair({?G, data}, Env) -> {ready_id(?S, Env), ready_id(?G, Env)};
 current_pair({{session, Id}, data}, Env) -> {ready_id(?S, Env), ready_session(Id, Env)}.
+
+%% The rows a session's report carries: a session whose id is a multiple of three is an
+%% app's session that kept no row of its template, any other holds the template's data.
+rows(Id) when Id rem 3 =:= 0 -> [];
+rows(_Id) -> ?ROWS.
 
 %% A session with an odd id is its display's session: its report marks data.
 mark(Id) when Id rem 2 =:= 1 -> {display, data};
@@ -680,7 +709,7 @@ provides(?T, Id, honest) -> #{data => mint(Id)}.
 session_moves(#{sessions := Sessions, session_starts := Left, next_id := Id, reqs := Reqs} = Env) ->
     [{{session_start, Id}, none, Env#{sessions := Sessions#{Id => running}, session_starts := Left - 1, next_id := Id + 1}}
      || Left > 0] ++
-    [{{session_report, S}, {session_ready, 0, S, mark(S)}, Env#{sessions := Sessions#{S := ready}}} || S := running <- Sessions] ++
+    [{{session_report, S}, {session_ready, rows(S), S, mark(S)}, Env#{sessions := Sessions#{S := ready}}} || S := running <- Sessions] ++
     [{{session_end, S}, {session_ended, S},
       Env#{sessions := maps:remove(S, Sessions), reqs := [Req || Req <- Reqs, party(Req) =/= S]}}
      || S := _ <- Sessions].

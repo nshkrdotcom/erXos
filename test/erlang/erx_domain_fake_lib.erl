@@ -31,7 +31,7 @@
 %% so the process dictionary keeps each domain's pid and node and each connection.
 -module(erx_domain_fake_lib).
 -export([start_log/0, next_call/0, kill_and_await/1]).
--export([register/0, configured/0, configured/3, templates/0, apps/0, session/5, create/1, start/1, stop/2, retire/1, crash/1,
+-export([register/0, configured/0, configured/3, templates/0, apps/0, session/5, app_session/6, create/1, start/1, stop/2, retire/1, crash/1,
          connect/6, disconnect/1]).
 -export([open_side/2, close_side/2, export/3]).
 -export([agent/2, reader/1]).
@@ -91,6 +91,11 @@ session_made(undefined, Id, Template, Name, Display, DomainPid) ->
     log({session, Id, Template, Name, Display}), {ok, created(Id, 4)};
 session_made(_Live, _Id, Template, Name, _Display, DomainPid) ->
     log({refused, Template, Name, DomainPid}), {error, elimit}.
+%% A session of an app's entry, as the library plans the app template under it with
+%% the app's declared memory; any number may stand at once.
+app_session(Id, Entry, Memory, Name, Display, DomainPid) when is_pid(DomainPid), is_atom(Display) ->
+    put({domain, Id}, {DomainPid, Name}),
+    log({app_session, Id, Entry, Memory, Name, Display}), {ok, created(Id, 4)}.
 configured(Id, Row, DomainPid) when is_pid(DomainPid) ->
     {ok, #{domains := Rows}} = configured(),
     [Name] = [Name || #{row := R, name := Name} <- Rows, R =:= Row],

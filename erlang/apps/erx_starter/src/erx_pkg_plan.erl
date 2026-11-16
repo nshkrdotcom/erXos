@@ -84,7 +84,7 @@ whether that was all of them.
                 | {header, place(), binary()}
                 | {admit, erx_pkg_header:checked()}
                 | {path_entry, place(), binary(), entry()}
-                | {register, binary(), erx_app_admit:admitted()}
+                | {register, published()}
                 | list
                 | {delete, binary()}
                 | {publish, [published()]}
@@ -199,7 +199,7 @@ step({header, Place, File}, {error, Reason}, Plan) ->
 step({admit, Checked}, {ok, Admitted}, #{judged := {Place, File, Checked}} = Plan) ->
     #{header := #{name := Name}} = Checked,
     entry(Place, File, accepted(Checked), authenticated(Place, Checked, admitted, none),
-          [{register, Name, Admitted}],
+          [{register, #{name => Name, place => Place, checked => Checked, admitted => Admitted}}],
           publishing(Place, Checked, Admitted, Plan#{judged := none}));
 step({admit, Checked}, {error, Reason}, #{judged := {Place, File, Checked}} = Plan) ->
     entry(Place, File, accepted(Checked), authenticated(Place, Checked, refused, Reason), [],
@@ -208,7 +208,7 @@ step({path_entry, _, _, _}, ok, #{after_entry := [Register]} = Plan) ->
     emit(Register, Plan#{after_entry := []});
 step({path_entry, _, _, _}, ok, #{after_entry := []} = Plan) ->
     next(Plan);
-step({register, _, _}, ok, Plan) ->
+step({register, _}, ok, Plan) ->
     next(Plan);
 step(list, {ok, Names, More}, #{config := #{max := Max}, tasks := Tasks} = Plan)
   when is_list(Names), is_boolean(More) ->

@@ -31,14 +31,19 @@ incarnation owns, are kept. Every other entry, and a value that is not a map
 or is larger than the row's declarations, is refused, as a refused action
 that erx_domain_srv logs and counts; the incarnation is ready all the same.
 
-Sessions. A grant to a session template is a grant to every session made
-from it. A session is one incarnation, never restarted, named by its id:
-its ready report, {session_ready, Template, Id, Marked}, adds a grant keyed by
-{session, Id} for each of the template's grants, and its end,
+Sessions. A session is one incarnation, never restarted, named by its id.
+Its rows, the facet rows of configured domains' services it holds, are
+decided once, by the service, when the session is planned: a template's
+session holds every row granted to its template, and an app's session the
+app template's packages row and the rows its admission kept, and no other
+(docs/design-packaging.md, "An app's session"). Its ready report,
+{session_ready, Rows, Id, Marked}, carries them and adds a grant keyed by
+{session, Id} for each, so no session holds a row its plan did not give
+it, whatever else its template is granted; its end,
 {session_ended, Id}, cancels their operations and deletes them, so the
 core holds entries only for live sessions, each its own. The service
-passes a session's report on at most once and before its end, and names
-the template from its own record of the domain, never from the report;
+passes a session's report on at most once and before its end, and takes
+its rows from its own record of the domain, never from the report;
 a second report of a live session is refused as stale, and an end of a
 session the core does not hold changes nothing.
 
@@ -143,7 +148,7 @@ serves the display's service.
 %% untrusted events' fields are any term a domain sent.
 -type event() :: {ready, row(), id(), node(), Provides :: term()}
                | {ended, row(), id()}
-               | {session_ready, template(), id(), marked()}
+               | {session_ready, [{name(), row(), map()}], id(), marked()}
                | {session_ended, id()}
                | {introduced, tag(), ok | {error, term()}}
                | {minted, Origin :: non_neg_integer(), Tag :: term(), Reply :: term()}
@@ -162,8 +167,7 @@ serves the display's service.
                      grants := #{key() => #{server := row(), limits := map(), mark := boolean(),
                                             state := grant()}},
                      rows := #{row() => incarnation()},
-                     templates := #{template() => [{name(), Server :: row(), Limits :: map()}]},
-                     sessions := #{id() => template()},
+                     sessions := #{id() => ready},
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
@@ -201,17 +205,18 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
                                       andalso lists:member(Name, maps:get(Server, Declared, []))
                           end, Grants),
     Valid orelse error(badarg),
-    {ForTemplates, ForDomains} = lists:partition(fun({{template, _}, _, _, _}) -> true; (_) -> false end, Grants),
+    %% A template's grants are held by its sessions, each from its own ready report.
     Entries = maps:from_list([{{Grantee, Name}, entry(Server, Limits, false)}
-                              || {Grantee, Name, Server, Limits} <- ForDomains]),
-    Templates = maps:groups_from_list(fun({{template, T}, _, _, _}) -> T end,
-                                      fun({_, Name, Server, Limits}) -> {Name, Server, Limits} end, ForTemplates),
+                              || {Grantee, Name, Server, Limits} <- Grants, not is_template(Grantee)]),
     Windows = maps:get(windows, Config, []),
-    #{declared => Declared, grants => Entries, rows => #{}, templates => Templates, sessions => #{},
+    #{declared => Declared, grants => Entries, rows => #{}, sessions => #{},
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
 entry(Server, Limits, Mark) -> #{server => Server, limits => Limits, mark => Mark, state => idle}.
+
+is_template({template, _}) -> true;
+is_template(_Grantee) -> false.
 
 -doc "Each grant's state, by its key.".
 -spec grants(state()) -> #{key() => grant()}.
@@ -219,25 +224,23 @@ grants(#{grants := Grants}) ->
     #{Key => Grant || Key := #{state := Grant} <- Grants}.
 
 -doc """
-Whether the manifest grants template Template's sessions the display Name,
-a service of the windows interface of a configured domain: the services a
-session's start may name as its display (erx_domain_srv), so a start names
-only a display its template is granted.
+Whether a session of Rows, the facet rows its plan gave it, holds the
+display Name, a service of the windows interface of a configured domain:
+the services a session's start may name as its display (erx_domain_srv),
+so a start names only a display the session holds.
 """.
--spec granted(template(), term(), state()) -> boolean().
-granted(Template, Name, #{templates := Templates, windows := Windows}) ->
-    lists:member(Name, Windows) andalso lists:keymember(Name, 1, maps:get(Template, Templates, [])).
+-spec granted([{name(), row() | system, map()}], term(), state()) -> boolean().
+granted(Rows, Name, #{windows := Windows}) ->
+    lists:member(Name, Windows) andalso lists:keymember(Name, 1, Rows).
 
 -doc """
 The names of the services of configured domains the manifest grants
-Grantee, sorted: a configured row's, the system domain's, or, for
-{template, T}, those of every session made from template T. Only
+Grantee, sorted: a configured row's or the system domain's; a session's
+are its rows, which the service holds. Only
 Grantee's own grants, so a domain's ready answer, which names them, says
 nothing of another domain's (erx_domain_srv).
 """.
--spec granted_names(row() | system | {template, template()}, state()) -> [name()].
-granted_names({template, Template}, #{templates := Templates}) ->
-    lists:usort([Name || {Name, _Server, _Limits} <- maps:get(Template, Templates, [])]);
+-spec granted_names(row() | system, state()) -> [name()].
 granted_names(Grantee, #{grants := Grants}) ->
     lists:usort([Name || {Holder, Name} <- maps:keys(Grants), Holder =:= Grantee]).
 
@@ -290,16 +293,14 @@ step({ended, Row, Id}, #{rows := Rows} = State) ->
         #{} ->
             reconcile(State#{rows := Rows#{Row => {Id, ended}}})
     end;
-step({session_ready, Template, Id, Marked}, #{sessions := Sessions, templates := Templates, grants := Grants} = State) ->
-    case {Sessions, Templates} of
-        {#{Id := _}, _} ->
+step({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
+    case Sessions of
+        #{Id := _} ->
             {[{refused, stale_report, {session, Id}}], State};
-        {#{}, #{Template := Granted}} ->
+        #{} ->
             Added = maps:from_list([{{{session, Id}, Name}, entry(Server, Limits, {display, Name} =:= Marked)}
-                                    || {Name, Server, Limits} <- Granted]),
-            reconcile(State#{sessions := Sessions#{Id => Template}, grants := maps:merge(Grants, Added)});
-        {#{}, #{}} ->
-            {[], State}
+                                    || {Name, Server, Limits} <- Rows]),
+            reconcile(State#{sessions := Sessions#{Id => ready}, grants := maps:merge(Grants, Added)})
     end;
 step({session_ended, Id}, #{sessions := Sessions} = State) ->
     case maps:take(Id, Sessions) of

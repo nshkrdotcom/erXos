@@ -17,7 +17,7 @@ of the start service's application, and a call taken between two actions,
 recovery's decisions are erx_pkg_plan's; this process carries out each
 action it gives: every request on the packages through erx_pkg_io, named
 by this pid as its lifetime, admission through `erx_app_admit:admit/3`,
-registration through `erx_principal:register_app/2`, and the publication
+registration through `erx_principal:register_app/1`, and the publication
 through `erx_starter:packages/2`. A failed change stops the process, which
 ends the lifetime: erx_pkg_io refuses every later request of it, and the
 next lifetime's recovery starts again.
@@ -151,7 +151,7 @@ effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
 effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
     erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
-effect({register, Name, Admitted}, _State) ->
-    erx_principal:register_app(Name, Admitted);
+effect({register, Package}, _State) ->
+    erx_principal:register_app(Package);
 effect({publish, Set}, _State) ->
     erx_starter:packages(self(), Set).

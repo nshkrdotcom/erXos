@@ -6,7 +6,7 @@
 The plan of an app's session, `erx_domain_core:app_session/4`
 (docs/design-packaging.md, "An app's session", and its verification row):
 a header is admitted (`erx_app_admit:admit/3`) and registered
-(`erx_principal:register/3`) as the package process does, and the plan is
+(`erx_principal:register/2`) as the package process does, and the plan is
 made from the record the registry holds. The session's rows are the
 `packages` row and the rows its needs name; its principal, from which every
 facet's scope is computed, is the app's entry; its memory is the declared
@@ -48,7 +48,10 @@ started(Header, Signer, Manifest, Apps) ->
     #{name := Name} = Header,
     {ok, Admitted} = erx_app_admit:admit(#{header => Header, signer => Signer}, Manifest,
                                          erx_principal:registry(Apps)),
-    {ok, Registered} = erx_principal:register(Name, Admitted, Apps),
+    Checked = #{header => Header#{layout => #{}, start => {applications, [Name]}}, signer => Signer,
+                sha256 => <<0:256>>, extent => 1},
+    {ok, Registered} = erx_principal:register(#{name => Name, place => installed, checked => Checked,
+                                                admitted => Admitted}, Apps),
     {ok, Record} = erx_principal:app(Name, Registered),
     {erx_domain_core:app_session(Name, Record, ?APPS, template_rows()), Registered}.
 

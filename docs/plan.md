@@ -1966,7 +1966,7 @@ next available item of the plan.
    from `apps`, and property 19; the `apps` budget and app principals'
    elastic budgets under it; the domain library's app entries and
    `erx_dom_plan_session` taking an app principal;
-   `erx_principal:register_app/2`; the package format in
+   `erx_principal:register_app/1`; the package format in
    `abi/formats/package.txt`, `erx_pkg_header:check_file/2` with its fuzz
    target, `erx_app_admit` with its corpus, run on the host by the
    packer; `erx_verity` reading an image from a file; the app's session

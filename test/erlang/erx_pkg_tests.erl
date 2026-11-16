@@ -147,9 +147,9 @@ recovery_test() ->
     ?assertEqual(whereis(erx_pkg), Lifetime),
     ?assertEqual([{<<"dashboard">>, system}, {<<"clock">>, installed}],
                  [{Name, Place} || #{name := Name, place := Place} <- Set]),
-    ?assertEqual([{<<"dashboard">>, 0, image}, {<<"clock">>, 1, development}],
-                 [{Name, Entry, Signer}
-                  || {Name, #{entry := Entry, signer := Signer}}
+    ?assertEqual([{<<"dashboard">>, system, 0, image}, {<<"clock">>, installed, 1, development}],
+                 [{Name, Place, Entry, Signer}
+                  || {Name, Place, #{entry := Entry, signer := Signer}}
                          <- ets:lookup_element(erx_pkg_medium, registered, 2)]),
     stop(Sup).
 

@@ -135,6 +135,18 @@ it; git history is the record of completed work.
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
   does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
+  `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
+  before the kept row is installed, because configured domain `a` ends after its introduction to the
+  session, for a reason not yet found. Also open: the pixel area of an app session's pairs is still the
+  app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows; the
+  record's `{Ref, app, App}` step and erx_app's registered wait, which design-packaging.md's "An app's
+  session" must name (it still says the ready answer hands the record); `erx_principal:app_record()` and
+  `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
+  `/pkg/NAME.app` is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
+  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  a keeper's stop waits without bound for its session's end.
 * [Medium] apps, the domain library (`liberx/system/dom_core.c`, `dom_plan_in`): a request's plan
   (`erx_dom_plan_request`, `erx_domain_lib:create/1`) under an app entry's principal is not refused, so
   a domain that is not the app template can take the entry's one domain slot, against "neither entry

@@ -23,8 +23,8 @@ class ErxPrincipalTest < Minitest::Test
 
   FAULTS = [
     Fault.new(name: 'an unregister that frees an entry within the boot',
-              edits: [['-export([new/1, register/3, registry/1, app/2]).',
-                       '-export([new/1, register/3, registry/1, app/2, unregister/2]).'],
+              edits: [['-export([new/1, register/2, registry/1, app/2, fetch_name/2]).',
+                       '-export([new/1, register/2, registry/1, app/2, fetch_name/2, unregister/2]).'],
                       ["    maps:find(Name, Names).\n",
                        "    maps:find(Name, Names).\n\nunregister(Name, \#{names := Names} = Apps) ->\n" \
                        "    Apps\#{names := maps:remove(Name, Names)}.\n"]],

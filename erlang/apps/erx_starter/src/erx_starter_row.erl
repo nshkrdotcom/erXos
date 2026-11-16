@@ -28,5 +28,6 @@ start_link(Row) ->
 
 init(#{principal := Principal, start := Start, restarts := Restarts, period := Period}) ->
     Keeper = #{id => keeper, start => {erx_starter_keeper, start_link, [Principal, Start]},
-               restart => permanent, shutdown => 5000},
+               %% The keeper ends only once its session has (erx_starter_keeper).
+               restart => permanent, shutdown => infinity},
     {ok, {#{strategy => one_for_one, intensity => Restarts, period => Period}, [Keeper]}}.

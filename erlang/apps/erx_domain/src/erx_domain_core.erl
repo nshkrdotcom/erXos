@@ -58,7 +58,12 @@ state is a bug of the caller and fails with a badmatch.
                     pid := pid() | undefined, ref := reference() | undefined,
                     connection := non_neg_integer(),
                     ctl_slots := non_neg_integer(), reader := non_neg_integer(),
-                    facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none}.
+                    facets := #{atom() => {pid(), map()}}, start := start(), inspect := pid() | none,
+                    rows := [session_row()], app := map() | none}.
+%% A session's facet row, decided once as the session is planned (erx_domain_srv): the
+%% service's name, its server, a configured row or system, and the grant's limits; a
+%% domain of no session holds none. An app's session alone carries the app's record.
+-type session_row() :: {atom(), non_neg_integer() | system, map()}.
 %% A session's start beyond its console (erx_domain:start_session/2): the display it is
 %% the session of, or the display it only takes as its default; a domain of no session has
 %% none.
@@ -221,7 +226,7 @@ take(Name, #{node := Node} = Binding, Principal, Origin,
      #{next_id := Id, names := Names, domains := Domains} = State) ->
     Domain = #{id => Id, name => Name, node => Node, principal => Principal, origin => Origin,
                state => building, pid => undefined, ref => undefined, connection => 0,
-               ctl_slots => 0, reader => 0, facets => #{}, start => #{}, inspect => none},
+               ctl_slots => 0, reader => 0, facets => #{}, start => #{}, inspect => none, rows => [], app => none},
     Next = State#{next_id := Id + 1, names := Names#{erx_ident:to_binary(Name) => Binding#{holder := Id}},
                   domains := Domains#{Id => Domain}},
     {ok, Domain, Next}.
@@ -239,7 +244,8 @@ ready (erx_domain_srv), and Start, if given, is a session's start beyond its con
 built(Id, #{connection := Connection, ctl_slots := CtlSlots, reader := Reader} = Created, Pid, Ref, State) ->
     update(Id, building, #{state => built, connection => Connection, ctl_slots => CtlSlots, reader => Reader,
                            pid => Pid, ref => Ref, facets => maps:get(facets, Created, #{}),
-                           start => maps:get(start, Created, #{})}, State).
+                           start => maps:get(start, Created, #{}), rows => maps:get(rows, Created, []),
+                           app => maps:get(app, Created, none)}, State).
 
 -doc "Domain Id's first thread started.".
 -spec running(pos_integer(), state()) -> state().
