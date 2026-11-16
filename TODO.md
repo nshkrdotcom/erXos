@@ -2878,26 +2878,6 @@ it; git history is the record of completed work.
   `AppPack.describe`; and `tools/erx app run DIR`.
   Fix: each with its own package.
 * [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
-* [Medium] apps, the Raspberry Pi 4 card (`config/manifest/raspi4b-development.txt`): the card the website
-  offers is packed from the development manifest, so it carries the `apps` row, where design-packaging.md
-  takes the row out of the browser image alone; harmless while no packed record carries the row, but once
-  development images trust their builder's key, every downloaded card would trust the site builder's.
-  Fix: the design says whether a distributed card takes packages, and the card build follows it.
-* [High] apps, restricted packages (`tools/lib/erx/pack_provenance.rb`, the `package` receipt): every
-  image refuses a package whose license is absent or not permissive, where step 4 of "Adding an app to an
-  image" lets one enter a local test image built to allow restricted inputs, so `examples/doom` (GPL-2.0)
-  cannot be added to any image yet. Fix: a build switch for such a local image that the site build and the
-  board cards cannot set, and a registration status for a package it admits, with the test that a
-  restricted package still fails without it.
-* [Medium] apps, the development manifests' `apps` row (`config/manifest/*-development.txt`): each board grows four
-  sums by hand for the row (the display domain's outer budget by `max` pixel areas and lanes, the system
-  principal's memory, root_memory and max_domains), so `limits display` is copied into both board files to
-  differ in `outer` alone and `Manifest::Edit.without_apps` gives back only the row's memory and max, leaving
-  the pixel areas reserved when a harness keeps the display domain (`site_manifest_source(keep: display)`);
-  and `max_connections` is not grown for an app's system connection and its three grants, so a second
-  running app's start is refused once the spare rows for restarts are used. Fix: property 19's check adds
-  the row's share to the board's declared figures instead of the manifest holding it, which removes the copy
-  and makes `without_apps` exact; the connections counted with it.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
