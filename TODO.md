@@ -501,7 +501,7 @@ it; git history is the record of completed work.
   only from what lies outside the configured domains' shares
   ([design-fiasco.md](docs/design-fiasco.md#memory-and-budgets), FD14;
   [design-system.md](docs/design-system.md#the-manifest) lists the fields).
-* [High] 0.2 on Fiasco, `tools/lib/erx` manifest check: property 19's clause 8
+* [High] 0.2 on Fiasco, `tools/lib/erx` manifest check: property 19's clause 9
   ([design-packaging.md](docs/design-packaging.md#the-builds-check)), the root's machine-wide tables and its
   kernel memory holding the configured domains' shares plus `max` times the app template's and every session
   template's share, the configured shares reserved, with its seeded violation: an `apps` row whose `max` times
@@ -2260,12 +2260,19 @@ it; git history is the record of completed work.
   ([design-display.md](docs/design-display.md#dependencies)). It blocks
   no release: 0.2 ships LVGL under its release contract
   ([design-display.md](docs/design-display.md#lvgls-release-contract)).
+* [Medium] build, document links: no `make check` step resolves the `file.md#anchor` links of the design
+  documents, `TODO.md`, `README.md`, `CLAUDE.md` and the comments of `tools/`, `test/` and the sources, so
+  a section that moves or is renamed leaves dangling anchors that nothing reports (five into
+  `design-stopgap.md` and one into `design-files.md` were found by hand). Add a check that reads each
+  document's headings, forms each anchor as the viewer does, and fails on a link whose file or anchor does not
+  exist, with a seeded dangling anchor; a rule that links go through a constant, as `chokepoint_rules.rb`'s
+  `design:` fields do, needs the same check over the interpolated strings.
 * [Low] comments, the C17 cores' seam with Fiasco's glue: [design-fiasco.md](docs/design-fiasco.md#interfaces)
-  "Interfaces" describes it, but `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11`,
-  `tools/lib/erx/glue_imports.rb:10` and `tools/lib/erx/chokepoint_rules.rb:12` cite a `docs/design-stopgap.md` "Interfaces" that does not exist,
-  `chokepoint_rules.rb`'s `STOPGAP` design link names `docs/design-stopgap.md#invariants`, and
-  `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Point them at design-fiasco.md's
-  "Interfaces". The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
+  "Interfaces" describes it, but `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11` and `tools/lib/erx/glue_imports.rb:10` cite a `docs/design-stopgap.md` "Interfaces" that does not exist,
+  and `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Point them at design-fiasco.md's
+  "Interfaces". So do the comments of about 190 files under `tools`, `test`, `liberx` and `erlang` that cite `docs/design-stopgap.md` sections now in
+  design-fiasco.md ("Device paths", "The command line", "Deterministic mode", "The stack proof", "The Raspberry Pi 4" and others;
+  find them with `grep -rn design-stopgap tools test liberx erlang`). The eager-FP notices of the fork (`fiasco/kernel/src/kern/fpu.cpp:1-2`,
   `kern/arm/64/fpu-arm.cpp:1-2` and the other files that carry "lazy FP switching is deleted") cite only
   design-kernel.md; point them at design-fiasco.md's "The release's Fiasco build" too.
 * [Medium] build, `tools/lib/erx/production_image.rb:1906-1909`: the root's link records `libl4sys.p.a` and
@@ -7470,7 +7477,7 @@ to the corpus and follow rc
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
+* [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-fiasco.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
   Fiasco sanitizes the processor state it restores; acceptable for Phase 1's trusted domains, and gone with erXos's
@@ -7852,7 +7859,7 @@ to the corpus and follow rc
 
 * [Medium] stopgap, Phase 1b's deferred guarantees: every guarantee the
   user-facing system on the stopgap rests on but does not get is a row of
-  [What Phase 1 defers](docs/design-stopgap.md#what-phase-1-defers),
+  [Downsides against erXos's kernel](docs/design-fiasco.md#downsides-against-erxoss-kernel),
   with the milestone that closes it; that table is the one list. Those that
   untrusted input reaches: unconfined DMA (M9's kernel part, M11), where a
   device can write any page, so every driver domain (storage, network,
@@ -9048,7 +9055,7 @@ document's "residual risks accepted" paragraph.
 * [Low] storage, the release image across domains (`liberx/system/dom_apply.c`,
   `erlang/apps/erx_blk/src/erx_blk_service.erl`, `erx_blk_image.erl`): with the block
   unit held by the storage domain, no image window is served
-  ([design-fiasco.md](docs/design-fiasco.md#image-windows)): the storage domain's
+  ([design-fiasco.md](docs/design-fiasco.md#the-booted-slot)): the storage domain's
   namespace holds no manifest, and `erx_blk_image` picks only windows the system domain
   holds. Nothing outside tests reads `/images/release` yet. When a reader appears, have
   the domain library write each image window's placement (image name, format, extent)

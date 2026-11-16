@@ -46,7 +46,7 @@ module Erx
         Chokepoints::Forbidden.new(
           name: 'glue-reads-no-utcb',
           rule: 'the glue reads no UTCB field and no user address of a UTCB: it hands the cores the kernel mapping',
-          design: "#{STOPGAP}#transport",
+          design: "#{FIASCO}#transport",
           scope: Chokepoints::Scope.new(own: false, extra: [GLUE]),
           pattern: /->\s*(?:values|buffers|buf_desc|utcb_addr|error)\b|\.(?:access|usr)\s*\(/,
           seed: { 'fiasco/kernel/src/erx/seeded.cpp' => "void f(T *t) { t->utcb().access()->values[0]; }\n" }

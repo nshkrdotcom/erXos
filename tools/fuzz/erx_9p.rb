@@ -11,7 +11,7 @@ require_relative '../lib/erx/generated'
 # compiled from the checked-in generated sources (the codec and the grammar it is checked
 # against) and run alone on stock's emulator (ERX_ERL and ERX_ERLC, the oracle's). It runs
 # the codec as it is, then a copy that skips the msize check, which must fail: that shows
-# the oversized rounds reach the check (docs/design-files.md#verification).
+# the oversized rounds reach the check (docs/design-files.md#verification-and-testing).
 module Erx9pFuzz
   ROOT = File.expand_path('../..', __dir__)
   # The generated sources and headers named here are in build/gen.

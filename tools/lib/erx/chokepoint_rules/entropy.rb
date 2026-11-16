@@ -25,7 +25,7 @@ module Erx
           name: 'entropy-take',
           rule: 'only erx_entropy_take calls erx_entropy_read, so every caller of the generator gets its bytes ' \
                 'out of the UTCB with the words that held them zeroed',
-          design: "#{STOPGAP}#the-call-table",
+          design: "#{FIASCO}#the-call-table",
           scope: Chokepoints::Scope.new(own: true, extra: [GLUE, 'otp/**/*', 'musl/**/*'],
                                         except: ['otp/erts/emulator/asmjit/**/*']),
           pattern: Regexp.union(/\berx_entropy_read\b/, include_of(ENTROPY_READ)),
