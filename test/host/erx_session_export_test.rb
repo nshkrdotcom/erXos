@@ -44,7 +44,7 @@ class ErxSessionExportTest < Minitest::Test
               to: '{ok, Text} when Count < 0 -> {error, einval};',
               caught_by: 'ctl_reads_whole_at_offset_zero_and_never_opens_for_writing_test'),
     Fault.new(name: 'an export that opens /dev/tty',
-              from: "opened(tty, _Access, _Flags, _Fs) ->\n    {error, enxio};\n",
+              from: "open(tty, _Flags, _Fs) ->\n    {error, enxio};\n",
               to: '',
               caught_by: 'the_export_answers_an_lopen_of_tty_with_enxio_test')
   ].freeze
