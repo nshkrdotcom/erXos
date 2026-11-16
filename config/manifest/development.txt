@@ -278,6 +278,24 @@ service packages
 service system
   server @domain.storage
   interface files
+# login_keys: root's SSH login keys, the 51-byte blobs of the record volume's
+# authorized_keys, which the storage domain reads through its record_volume window and
+# serves as a files service of one file, root; its name is login_keys_service
+# (abi/manifest.txt), and its one grant is the system domain's, read-only
+# (docs/design-ssh.md, "Who publishes it").
+service login_keys
+  server @domain.storage
+  interface files
+facet login_keys
+  grantee system
+  service @service.login_keys
+  parameter rights ro
+  operations none
+  max_request 131072
+  in_flight 16
+  reductions 100000
+  period_ns 1000000000
+  max_heap_size 262144
 service net
   server @domain.network
   interface net

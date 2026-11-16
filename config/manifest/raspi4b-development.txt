@@ -93,6 +93,17 @@ unit rng
   holder system
 # data: the card's data partition, whose sectors the medium layout gives (partition 0,
 # abi/medium.txt), read-write for the storage domain alone, as on QEMU virt.
+# record_volume: the whole record partition, the FAT volume that holds root's
+# authorized_keys, read-only for the storage domain, the system window's holder, which
+# serves the keys it names as login_keys (docs/design-ssh.md, "Root's login keys on the
+# medium"; docs/design-storage.md, "Removable media: FAT").
+window record_volume
+  holder @domain.storage
+  device "/emmc2bus/mmc@7e340000"
+  role record_volume
+  partition 0
+  rights read
+  image none
 window data
   holder @domain.storage
   device "/emmc2bus/mmc@7e340000"

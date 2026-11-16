@@ -1223,7 +1223,9 @@ layout of `abi/medium.txt` fixes them, so the slot writer, which is the
 same code on every platform, writes one format; the Raspberry Pi's is
 chosen because its firmware cannot read another. The record's partition
 is the medium's first, 8 MiB long (`medium_record_sectors`), one FAT16
-volume laid out in MiB regions, the layout's alignment and the erase unit
+volume labelled `ERXOS`, since it is the volume a user writes first-boot
+files to ([design-ssh.md](design-ssh.md#roots-login-keys-on-the-medium)),
+laid out in MiB regions, the layout's alignment and the erase unit
 the medium assumes, so that the record and the reset count each have an
 erase unit of their own. Counted from the partition's first sector:
 
@@ -1234,9 +1236,15 @@ erase unit of their own. Counted from the partition's first sector:
 * MiB 2 holds the end of the reserved area, both FATs and the root
   directory;
 * the data area starts at sector 6144, 3 MiB in, with `autoboot.txt`,
-  whose one 512-byte cluster is the record (`medium_record_select_start`).
+  whose one 512-byte cluster is the record (`medium_record_select_start`);
+  the rest of the record's erase unit (`medium_erase_sectors`), with the
+  layout's values clusters 3 to 2049, is marked bad in both FATs, so
+  no FAT writer, the image build's or a user's computer's, puts a file in
+  the record's erase unit, and files such as `authorized_keys` start at
+  MiB 4 ([design-storage.md](design-storage.md#removable-media-fat)).
 
-The 5 MiB data area in 512-byte clusters is 10,240 clusters, a FAT16 by
+The 5 MiB data area in 512-byte clusters is 10,240 clusters, 8,192 of
+them free for files, a FAT16 by
 the cluster count the FAT specification sets
 ([design-storage.md](design-storage.md#references)). The partition
 starts 1 MiB into the medium (`medium_record_start`), so it ends at
@@ -1283,7 +1291,7 @@ request its one-shot `tryboot` flag
   firmware boots the slot the `[tryboot]` section names, S; and a commit
   writes the other encoding, which names S.
 * Each slot is a boot partition the firmware reads, a FAT partition
-  holding the firmware's files and the single bootable file as the
+  labelled `ERXSLOTA` or `ERXSLOTB` holding the firmware's files and the single bootable file as the
   kernel file, which carries the boot image inside it, and a system
   partition, the EROFS file system of
   [design-storage.md](design-storage.md#data-model), which no firmware
@@ -1604,7 +1612,8 @@ make pack PLATFORM=raspi4b
 It writes `build/production-image/raspi4b/sdcard.img`.
 
 **The bootloader must be 2022-12-01 or later.** The card's partition 1
-holds only `autoboot.txt` with `tryboot_a_b=1`, and each slot holds its
+holds no boot files, only `autoboot.txt` with `tryboot_a_b=1` and, when
+a user adds it, root's `authorized_keys`, and each slot holds its
 own `config.txt`. A bootloader older than the 2022-12-01 release does not
 know `tryboot_a_b`: the 2022-10-18 beta first loaded `config.txt` in
 that mode, and the 2022-12-01 release made it the default

@@ -72,6 +72,10 @@ framebuffers_round(Arguments) ->
 
 system_image_round(Arguments) ->
     Said = erx_device_record:system_image(Arguments),
+    case erx_device_record:record_volume(Arguments) =:= record_volume_reference(Arguments) of
+        true -> ok;
+        false -> error({record_volume_disagrees_with_reference, Arguments})
+    end,
     case Said of
         {ok, Image} when is_map(Image) -> ok;
         {error, {bad_device_record, Text}} when is_list(Text) -> ok
@@ -165,20 +169,27 @@ framebuffer_spec(_Words) ->
     bad.
 
 %% Exactly one system_image record of five words: three decimals of 64 bits, a salt of 1 to
-%% 32 bytes and a root hash of 32, both in lowercase hex.
+%% 32 bytes and a root hash of 32, both in lowercase hex; and a sixth, record_volume, or
+%% none.
 system_image_reference(Arguments) ->
     case [Words || ["system_image" | Words] <- Arguments] of
-        [[Length, Offset, Tree, Salt, Root]] ->
-            case {[decimal(Word, ?U64) || Word <- [Length, Offset, Tree]], lower_hex(Salt, "{1,32}"),
-                  lower_hex(Root, "{32}")} of
-                {[L, O, T], S, R} when is_integer(L), is_integer(O), is_integer(T), is_binary(S), is_binary(R) ->
-                    {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
-                _ ->
-                    {error, bad_device_record}
-            end;
+        [[Length, Offset, Tree, Salt, Root]] -> image_reference(Length, Offset, Tree, Salt, Root);
+        [[Length, Offset, Tree, Salt, Root, "record_volume"]] -> image_reference(Length, Offset, Tree, Salt, Root);
+        _ -> {error, bad_device_record}
+    end.
+
+image_reference(Length, Offset, Tree, Salt, Root) ->
+    case {[decimal(Word, ?U64) || Word <- [Length, Offset, Tree]], lower_hex(Salt, "{1,32}"), lower_hex(Root, "{32}")} of
+        {[L, O, T], S, R} when is_integer(L), is_integer(O), is_integer(T), is_binary(S), is_binary(R) ->
+            {ok, #{image_offset => 0, image_length => L, tree_offset => O, tree_length => T, salt => S, root_hash => R}};
         _ ->
             {error, bad_device_record}
     end.
+
+%% The record names the window when the reference takes it and it has six words.
+record_volume_reference(Arguments) ->
+    element(1, system_image_reference(Arguments)) =:= ok andalso
+        [length(Words) || ["system_image" | Words] <- Arguments] =:= [6].
 
 %% Pairs of lowercase hex digits, as many as Count says, as the bytes they spell.
 lower_hex(Word, Count) ->
@@ -264,10 +275,10 @@ framebuffer_entry(Words) ->
         _ -> ["framebuffer" | Fields ++ Words]
     end.
 
-%% A system_image record, most of five words, each nearly always well formed so the
-%% accepting path is reached often, and otherwise at or just past its bound: a salt of no
-%% bytes, of one digit or of 33 bytes, an odd count or an upper-case digit, a root hash a
-%% byte short or long.
+%% A system_image record, most of five words, some of six whose sixth is record_volume,
+%% each nearly always well formed so the accepting path is reached often, and otherwise at
+%% or just past its bound: a salt of no bytes, of one digit or of 33 bytes, an odd count or
+%% an upper-case digit, a root hash a byte short or long.
 system_image_entry() ->
     Pick = fun(List) -> lists:nth(rand:uniform(length(List)), List) end,
     Hex = fun(Bytes) -> [Pick("0123456789abcdef") || _ <- lists:seq(1, 2 * Bytes)] end,
@@ -278,6 +289,7 @@ system_image_entry() ->
     case rand:uniform(6) of
         1 -> ["system_image" | lists:sublist(Fields, rand:uniform(5) - 1)];
         2 -> ["system_image" | Fields ++ [word()]];
+        3 -> ["system_image" | Fields ++ ["record_volume"]];
         _ -> ["system_image" | Fields]
     end.
 

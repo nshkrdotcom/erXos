@@ -274,3 +274,22 @@ a_second_or_no_system_image_record_refuses_test() ->
                  erx_device_record:system_image([system_image_words(), system_image_words()])),
     ?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([["boot", "normal", "a"]])),
     ?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([])).
+
+%% The record names the record_volume window as a sixth word, the role's name in
+%% abi/manifest.txt, when the domain library gives it to the window's holder: the layout
+%% is read as without it, and record_volume/1 answers true for that record alone, false
+%% for a record without the word, and false for a record it refuses, whatever it names.
+a_system_image_record_names_the_record_volume_window_test() ->
+    Named = system_image_words() ++ ["record_volume"],
+    ?assertEqual(erx_device_record:system_image([system_image_words()]), erx_device_record:system_image([Named])),
+    ?assert(erx_device_record:record_volume([["boot", "normal", "a"], Named])),
+    ?assertNot(erx_device_record:record_volume([system_image_words()])),
+    ?assertNot(erx_device_record:record_volume([])),
+    ?assertNot(erx_device_record:record_volume([Named, Named])),
+    ?assertNot(erx_device_record:record_volume([setelement_list(6, Named, "")])).
+
+%% Any other sixth word, or a word after record_volume, refuses the record.
+another_sixth_system_image_word_refuses_test() ->
+    [?assertMatch({error, {bad_device_record, [_ | _]}}, erx_device_record:system_image([Words]))
+     || Words <- [system_image_words() ++ ["system"], system_image_words() ++ ["record_volume", "record_volume"],
+                  system_image_words() ++ ["Record_volume"], system_image_words() ++ [""]]].

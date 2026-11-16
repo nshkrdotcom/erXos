@@ -427,6 +427,10 @@ module Erx
                    name: 'fuzz-erx-ssh-wire', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_quotes.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-quotes', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_boot_keys.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-boot-keys', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_fat_read.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-fat-read', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-bt-hci', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
