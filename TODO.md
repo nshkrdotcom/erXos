@@ -2867,19 +2867,27 @@ it; git history is the record of completed work.
   environment is cleared by `Oracle::CLEAN_ERLANG_ENV`'s deny-list, which misses `ERLC_EMULATOR` and
   `ERLC_USE_SERVER` (an allow-list spawn in `Erx::Runner` is the fix by construction); and a compile error
   shows only as the runner's log path. Fix: add each with the SDK package.
-* [High] apps, `tools/erx pack --app DIR [--enable NAME]` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
-  `Erx::ImageApps` plans what an image takes for its packages (the file at the release's `pkg/NAME.app`, the
-  `package` rows bound to artifacts the host file check described) and the manifest check binds and packs
-  the rows, but nothing calls it yet. What
-  remains: the command, which packs DIR with the in-tree packer (`AppPack.pack` with an SDK exported into the
-  build tree, until the SDK's `host/bin` exports `erx-app`) or takes a package file as given; `ProductionImage`
-  taking the plan into `assemble` (the entries in the domain release with a receipt each, the artifacts merged
-  into `ProductionImage.artifacts`, the rows appended to the image's copy of the manifest source); the
-  package's license judged as an archive's (step 4 of "Adding an app to an image"), which needs a receipt kind
-  for a package that is not the tree's; every development build (`Pack`'s `Manifest::Context`) handing the
-  public half of the builder's `Erx::PackageKey` as the context's `development_key`, which the check packs
-  beside an `apps` row, not only those `pack --app` builds; `--signer FILE`; and the development manifests'
-  `apps` row.
+* [High] apps, `tools/erx pack --app` ([design-packaging.md](docs/design-packaging.md#adding-an-app-to-an-image)):
+  the command packs an app directory with the in-tree packer (`AppPack.pack` with an SDK exported into
+  `build/app-sdk`), not the exported SDK's `host/bin/erx-app`, which does not exist yet (the SDK entry above);
+  no build hands the public half of the builder's `Erx::PackageKey` to the manifest check as
+  `Manifest::Context`'s `development_key`, so no image trusts its builder's key yet, where every development
+  build, not only those `pack --app` builds, should; the packer does not yet run the machine's manifest
+  reader (`erx_pkg_manifest:system_config/1`) on the host over the packed manifest, beside
+  `AppPack.describe`; and `tools/erx app run DIR`.
+  Fix: each with its own package.
+* [Medium] apps, package notices (`tools/lib/erx/production_image.rb`, `package_external`): a package is registered with no notice document, so an image carrying a third-party MIT or BSD package names its license in NOTICES but holds neither the license text nor its copyright line, which both licenses ask of a binary distribution. Fix: a declaration field naming the notice file in the package image, which the build cites.
+* [Medium] apps, the Raspberry Pi 4 card (`config/manifest/raspi4b-development.txt`): the card the website
+  offers is packed from the development manifest, so it carries the `apps` row, where design-packaging.md
+  takes the row out of the browser image alone; harmless while no packed record carries the row, but once
+  development images trust their builder's key, every downloaded card would trust the site builder's.
+  Fix: the design says whether a distributed card takes packages, and the card build follows it.
+* [High] apps, restricted packages (`tools/lib/erx/pack_provenance.rb`, the `package` receipt): every
+  image refuses a package whose license is absent or not permissive, where step 4 of "Adding an app to an
+  image" lets one enter a local test image built to allow restricted inputs, so `examples/doom` (GPL-2.0)
+  cannot be added to any image yet. Fix: a build switch for such a local image that the site build and the
+  board cards cannot set, and a registration status for a package it admits, with the test that a
+  restricted package still fails without it.
 * [Low] apps, packer's hash tree (`tools/lib/erx/app_package.rb`, `verity_tree`): the tree's level
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on

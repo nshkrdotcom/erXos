@@ -1,3 +1,4 @@
 app dashboard
   needs display
   applications erx_dashboard
+  license "BSD-2-Clause"
