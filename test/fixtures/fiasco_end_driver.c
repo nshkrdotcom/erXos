@@ -6,11 +6,9 @@
 /*
  * How each end of the machine ends it, on the host (docs/design-stopgap.md, "The end
  * path"): only a requested power-off turns it off, and every end nobody ordered resets
- * it, so that an update's trial boot falls back; only an end the service takes drains
- * the debug log.
+ * it, so that an update's trial boot falls back.
  */
 
-#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -22,14 +20,13 @@ static const struct {
 	const char		*name;
 	erx_fiasco_end_cause_t	 cause;
 	uint32_t		 how;
-	bool			 drains;
 } cases[] = {
-	{ "a requested power-off", ERX_FIASCO_END_ASKED_OFF, ERX_END_OFF, true },
-	{ "a requested reset", ERX_FIASCO_END_ASKED_RESET, ERX_END_RESET, true },
-	{ "the root's stop", ERX_FIASCO_END_STOP, ERX_END_RESET, true },
-	{ "a root fault", ERX_FIASCO_END_FAULT, ERX_END_RESET, true },
-	{ "a missed pet", ERX_FIASCO_END_PET, ERX_END_RESET, false },
-	{ "a refusal", ERX_FIASCO_END_REFUSED, ERX_END_RESET, false },
+	{ "a requested power-off", ERX_FIASCO_END_ASKED_OFF, ERX_END_OFF },
+	{ "a requested reset", ERX_FIASCO_END_ASKED_RESET, ERX_END_RESET },
+	{ "the root's stop", ERX_FIASCO_END_STOP, ERX_END_RESET },
+	{ "a root fault", ERX_FIASCO_END_FAULT, ERX_END_RESET },
+	{ "a missed pet", ERX_FIASCO_END_PET, ERX_END_RESET },
+	{ "a refusal", ERX_FIASCO_END_REFUSED, ERX_END_RESET },
 };
 
 static const char *
@@ -45,14 +42,9 @@ main(void)
 
 	for (size_t i = 0; i < sizeof(cases) / sizeof(cases[0]); i++) {
 		const uint32_t how = erx_fiasco_end_how(cases[i].cause);
-		const bool drains = erx_fiasco_end_drains_log(cases[i].cause);
 
 		if (how != cases[i].how) {
 			printf("%s ends %s, not %s\n", cases[i].name, how_name(how), how_name(cases[i].how));
-			failed = 1;
-		}
-		if (drains != cases[i].drains) {
-			printf("%s %s the debug log, but must not\n", cases[i].name, drains ? "drains" : "skips");
 			failed = 1;
 		}
 	}

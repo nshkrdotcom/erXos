@@ -13,6 +13,7 @@
  * are the root's own (end.c), which the probe links for its end.
  */
 
+#include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
 
@@ -20,7 +21,6 @@
 #include "erx/core/dispatch.h"
 #include "erx/core/effects.h"
 #include "erx/log.h"
-#include "liberx/backend/fiasco/console.h"
 #include "liberx/backend/fiasco/generated/calls.h"
 #include "liberx/backend/fiasco/log.h"
 
@@ -50,6 +50,13 @@ erx_fiasco_call(uint64_t number, const uint64_t args[ERX_TRAP_ARG_COUNT],
 	};
 
 	erx_dispatch(&caller, number, args, results);
+}
+
+/* The probe's one thread runs the cores, so whichever thread asks owns the log. */
+bool
+erx_fiasco_log_owned(void)
+{
+	return (true);
 }
 
 erx_status_t

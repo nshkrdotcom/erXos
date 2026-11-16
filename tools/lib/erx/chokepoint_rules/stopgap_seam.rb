@@ -255,7 +255,6 @@ module Erx
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/libc_root.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/runtime_entry.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/root_no_program.c', permits: /\Aerx_fiasco_console_write\z/),
-                  Chokepoints::Site.new(glob: 'liberx/backend/fiasco/log.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/vm.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c', permits: /\Aerx_fiasco_console_write\z/),
                   Chokepoints::Site.new(glob: 'liberx/backend/fiasco/entropy.c', permits: /\Aerx_fiasco_console_write\z/),
@@ -276,6 +275,21 @@ module Erx
                   Chokepoints::Site.new(glob: 'test/guest/native_domain/guest.c', permits: /\Aerx_fiasco_console_write\z/)],
           seed: { 'liberx/backend/fiasco/seeded.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n",
                   'liberx/backend/fiasco/root.c' => "void f(void) { l4_vcon_write(0, \"x\", 1); }\n" }
+        ),
+        # The machine's end is static in end.c, behind erx_fiasco_end and its closed set of
+        # causes; a second caller of the platform control, in any of its forms, would end the
+        # machine with no cause
+        # and no last line.
+        Chokepoints::Forbidden.new(
+          name: 'fiasco-machine-end',
+          rule: 'only the end path, liberx/backend/fiasco/end.c, turns the machine off or resets it, so every end names ' \
+                'its cause and writes its last line',
+          design: "#{STOPGAP}#the-end-path",
+          scope: ERXOS_C,
+          pattern: /\bl4_platform_ctl_\w+/,
+          sites: [Chokepoints::Site.new(glob: 'liberx/backend/fiasco/end.c')],
+          seed: { 'liberx/backend/fiasco/service.c' => "void f(void) { l4_platform_ctl_system_shutdown(0, 1); }\n",
+                  'test/guest/native_crash/guest.c' => "void f(void) { l4_platform_ctl_system_shutdown_u(0, 0, 0); }\n" }
         ),
         # The range table and the pool take no lock, because the service alone runs a
         # body once it is up, and the first thread only before that.

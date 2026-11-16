@@ -480,11 +480,13 @@ it; git history is the record of completed work.
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
-* [Medium] stopgap, `liberx/backend/fiasco/end.c`: whether an end drains the debug log ring is decided by its
-  cause (`erx_fiasco_end_drains_log`), but safety depends on the thread: a test root's `ERX_FIASCO_END_ASKED_OFF`
-  drains from its own thread, safe only while no task logs through the service, and a refusal on the service
-  skips a drain that would be safe. Decide the drain from the calling thread instead. No chokepoint check yet
-  keeps `l4_platform_ctl_system_shutdown` to `end.c`; add one with a seed.
+* [Medium] stopgap, `liberx/backend/fiasco/end.c` and `service.c`: nothing tests that an end on the service drains
+  the debug log (`erx_fiasco_log_owned`); a broken owner check would lose the emergency-path lines once the log is
+  handed to the console, and no gate would fail. Add a native cell that hands the log to the console, logs a record
+  and ends on the service, its judge requiring the record before `erx: end`, with a `check-native-seeds` seed that
+  makes the check false. The owner check also rests on the service alone calling `erx_debug_log_read`, `_take`,
+  `_hand_to_console` and `_take_back` in a root; only `erx_dispatch` has a chokepoint (`dispatch-one-caller`); add
+  one for those with a seed.
 * [Medium] tooling, `tools/lib/erx/system_domain_regrant.rb` and `session_domain.rb`: the regrant judge does not
   read the end line, so a root fault that powered off would pass, and its fixture `abort.log` still ends
   `erx: end off` and needs recapturing first; the session suite's halt boot could require `erx: end off`, which

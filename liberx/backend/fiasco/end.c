@@ -5,14 +5,14 @@
 
 /*
  * The end path (docs/design-stopgap.md, "The end path"), and the effects the crash
- * codec asks of it. Best effort, with no lock. No thread is stopped first. Every end
- * names its cause, and the cause alone decides what it does (end_how.c): an end the
- * service takes, the root's fault, its stop and erx_machine_end, first writes the debug
- * log's records that wait for a reader to the console, so none is lost; a refusal, which
- * may come on any thread, and the watchdog's end skip the ring, and the watchdog's end
- * writes only its frame. Every end then writes its last line, erx: end off or erx: end
- * reset, and only a requested power-off turns the machine off. machine_end is static, so
- * nothing ends the machine without a cause.
+ * codec asks of it. Best effort, with no lock. No thread is stopped first. An end on the
+ * thread that owns the debug log (erx_fiasco_log_owned) first writes the records that
+ * wait for a reader to the console, so none is lost; on any other thread a write to the
+ * ring may be under way, so the ring is skipped, and the watchdog's end writes only its
+ * frame. Every end names its cause, which alone decides how it ends (end_how.c): it
+ * writes its last line, erx: end off or erx: end reset, and only a requested power-off
+ * turns the machine off. machine_end is static, so nothing ends the machine without a
+ * cause.
  */
 
 #include <l4/sys/platform_control.h>
@@ -88,7 +88,7 @@ erx_fiasco_end(erx_fiasco_end_cause_t cause, const erx_crash_fault_t *fault)
 	static const char message[] = "root task fault";
 
 	end_take();
-	if (erx_fiasco_end_drains_log(cause))
+	if (erx_fiasco_log_owned())
 		erx_debug_log_take_back();
 	if (fault != NULL) {
 		const erx_crash_input_t input = { .form = ERX_CRASH_FORM_FULL, .cause = ERX_CRASH_CAUSE_FAULT,
@@ -120,8 +120,8 @@ erx_fiasco_task_crash_write(const erx_crash_fault_t *fault)
 
 /*
  * The cores' one caller in a root is one thread, the service, or a probe's one thread
- * with no service (log.c), so the debug log's lock is empty. A test root's own
- * power-off drains the ring from its own thread, when no task is left to log.
+ * with no service (log.c), so the debug log's lock is empty, and an end drains the ring
+ * only on that thread.
  */
 void
 erx_effect_log_lock(void)
