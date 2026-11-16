@@ -7415,6 +7415,13 @@ document's "residual risks accepted" paragraph.
 
 ## Planned features
 
+* [Low] protocol apps, one clock seam (`erlang/apps/erx_net/src/erx_net_clock.erl`; the process edges of
+  `erx_bt`, USB, Wi-Fi and `erx_ntpd`): each protocol process keeps one wake-up timer at its core's
+  `next_deadline/1` (docs/design.md, "Deadlines in state"), and only `erx_net` has a clock module, with the
+  virtual clock for deterministic runs and the one-timer `arm_by/2` and `hinted/1`. Whether the other apps
+  share one clock module, and where it lives, is an open design question: a shared module is a new
+  mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
+  is usable outside erXos.
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for

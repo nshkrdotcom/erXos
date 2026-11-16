@@ -1491,6 +1491,21 @@ received buffer's bytes into a fresh binary at completion and returns the
 buffer to its pool, so no binary aliases memory a device can write, and
 transmit copies into the pool; both copies are per-byte C.
 
+**Deadlines in state.** Time follows the same rule. Every pure protocol
+core with a timeout keeps each deadline as an absolute time inside the
+state it guards, takes the current time as an input to every step, and
+answers its earliest deadline through a pure `next_deadline/1`
+(`infinity` when it has none). Only the process at its edge reads the
+clock: it keeps one wake-up timer no later than that deadline, and the
+timer's message is a hint to step the core with the current time, never
+an event in itself. Leaving a state drops its deadline, so nothing is
+cancelled and no stale timer message needs recognising; a late, early or
+repeated wake-up costs one look; and the core's tests treat the clock as
+one more input, exhaustively where the core is explored
+([style.md](style.md#functional-core)). The network stack's connections
+are the model
+([design-network-stack.md](design-network-stack.md#deadlines-not-timers)).
+
 Every piece of native driver code other than the device NIF is a native
 shim, a row of the driver table, a stopgap or third-party shim such as a
 ported sDDF driver included, and without the row none runs

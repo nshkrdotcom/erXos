@@ -45,8 +45,8 @@ Decisions every reader needs:
   stock `receive {tcp, S, Data}` code works in every domain. There is no
   process per layer.
 * **Deadlines, not timers.** A connection's timers are deadlines in its
-  state, as FreeBSD 15 keeps them, and the process holds one Erlang timer
-  at the earliest. A timer message is a hint to look at the clock, never
+  state, as FreeBSD 15 keeps them and as every protocol core keeps them
+  ([design.md](design.md#drivers-and-dma), "Deadlines in state"), and the process holds one Erlang timer at the earliest. A timer message is a hint to look at the clock, never
   an event in itself, so a late, early or duplicate one changes nothing.
 * **Every packet queue is credited.** A process that hands packets to
   another does so only against a credit the receiver published. Every

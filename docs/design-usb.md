@@ -515,9 +515,8 @@ returns, as the network stack's owners do
 | the **bus process**, one per controller | the topology: every hub's ports, every device's enumeration and its functions, the places each occupies, the one port allowed at address zero | `erx_usb_bus_core` | port requests, control transfers, starting and stopping function processes, place assignments |
 | a **function process**, one per claimed interface | one interface: a HID report layout and fold, a hub's status pipe, a BOT engine with its logical units and media | `erx_hid_core`, `erx_usb_hub_core`, `erx_usb_bot_core` | transfers on its pipes, records into its input number, media into drives |
 
-Every timer is a deadline in the owner's state, and the step answers the
-next deadline among its actions, as the network stack's owners do
-([design-network-stack.md](design-network-stack.md#deadlines-not-timers)).
+Every timer is a deadline in the owner's state, and `next_deadline/1`
+answers the earliest ([design.md](design.md#drivers-and-dma), "Deadlines in state").
 No caller strings operations together: a function asks for one
 `reset_pipe` and the controller runs every command and request of the
 reset; the bus asks for one detach and the controller runs the whole

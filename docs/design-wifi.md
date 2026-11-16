@@ -1515,7 +1515,8 @@ and nothing in the network domain calls it.
   most the handful the station's state machine has in flight. A frame
   that finds no credit is dropped and counted.
 * **Timers belong to the station and the chip process**, as deadlines
-  checked at each event; the cores take the time as an input.
+  in their state; the cores take the time as an input and answer
+  `next_deadline/1` ([design.md](design.md#drivers-and-dma), "Deadlines in state").
 
 ## Failure handling
 
