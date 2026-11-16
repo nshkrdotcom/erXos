@@ -384,6 +384,64 @@ A second is as the ticks divide it: a write is charged to the table of the
 last turn, so across a turn that comes late a domain can have up to twice
 the rate stored under one second's time.
 
+### Reports carry no term
+
+OTP's own reports quote what a process held. `proc_lib`'s crash report
+prints the message queue and the dictionary
+(`otp/lib/stdlib/src/proc_lib.erl:953`); the termination reports of
+`gen_server` and `gen_statem` print the last message, the state, the
+queue and the postponed events (`gen_server.erl:2785`,
+`gen_statem.erl:4983`); `gen_server`'s report of a message it has no
+clause for quotes the message (`:2442`); a supervisor's reports print a
+child's start arguments and exit reason (`supervisor.erl:318-324`); and
+every reason that carries a stack trace carries its top frame's
+arguments, which `format_status/1` never sees. In a domain whose
+processes hold secrets or a peer's bytes, each of those is a leak,
+whichever process held the term and whatever raised.
+
+The **report filter**, `erx_report`, closes them at one place. It is a
+primary logger filter, so every event of the runtime passes it, and it
+rewrites each event of OTP's domain (a `domain` starting with `otp`)
+to a report of names: the report's label, the process and its registered
+name, the error's class, the reason's leading atom and the stack
+trace's modules, functions and arities. It drops every other term: the
+format string and its arguments, the last message, the queue, the
+dictionary, the state, the rest of the reason, each frame's arguments
+and location, a crash report's neighbours, and every metadata key but
+the time, the process, its group leader, the domain and the logging
+function. Each kept field is kept only after its shape is checked. A
+domain's own events, outside OTP's domain, pass unchanged; they are
+built from named fields. The emulator's error for a process that is not
+a `proc_lib` process is rewritten too, to the process alone.
+
+The filter is total: logger removes a filter that raises
+(`otp/lib/kernel/src/logger_backend.erl`, `handle_filter_failed/4`),
+after which every later report would pass whole, and a filter that
+answers `ignore` leaves that event as it was. It does neither for an
+event of OTP's domain.
+
+A domain's primary filters are its runtime's, so a domain takes the
+filter when its application's start calls `erx_report:install/0`,
+before it starts a process: the Bluetooth domain's `erx_bt_app`
+([design-bluetooth.md](design-bluetooth.md#security)), the WiFi
+domain's ([design-wifi.md](design-wifi.md#security)) and the network
+domain's
+([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives)).
+The system domain installs none. What that leaves open (the system
+domain's relays, logger's forwarding of an event to its group leader's
+node before any filter runs, the legacy `error_logger` calls that carry
+no `otp` domain) is a security residual in TODO.md.
+
+The filter reaches only reports. An exit reason still reaches the
+monitors and links of the process that exits, and a waiting caller of
+`gen_server:call/3` or `gen_statem:call/3` exits with it; a
+`function_clause` there names the arguments. Exit reasons cross
+domains ([design-domains.md](design-domains.md#operations-on-another-process)),
+so they are why a core's edge refuses a bad action with
+`error/1` rather than a clause failure
+([style.md](style.md#functional-core)), and why a process that holds
+secrets sets `process_flag(sensitive, true)`.
+
 ### The kernel's records
 
 Every 100 ms `erx_syslog` calls `erx_log:take/0`, which answers the

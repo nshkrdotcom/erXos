@@ -2203,7 +2203,7 @@ so that there PT, PWE and `rand` are never terms.
 | **WF2.** Only `erx_blk_write` issues a command to either SD controller, and no SDIO command writes a medium | the SDIO table in `erx_blk_write`; `sdio_issue/2` and `sd_issue/2` each refuse the other kind's record | a second issuing module; an SD command on the legacy record; a CMD53 on EMMC2 | U4's build check, unchanged; host tests of both refusals |
 | **WF3.** A client never writes a register the host's state depends on, and never issues a CMD53 the wire, the function or the controller cannot carry | `erx_sdio:check/2` refuses the list whole, checking the three limits apart | a CMD52 or CMD53 write that reaches a host-owned CCCR register or a block-size register; a byte-mode CMD53 of more than 512 bytes | the host core's property test over addresses and lengths, seeded below |
 | **WF4.** No data frame passes between the chip and the network domain while the port is closed, and `wlan0`'s link is up exactly while it is open | the chip process gates both directions on the station's `port` request; the link message is the port; the table lets the join machine reach `open` from `keys` only by `set_keys_confirm`, or from `joining` by `connect_confirm` for an open network, and `rekey` only from `open` | a frame forwarded before the keys are in | the exhaustive join test and the fake chip's port test |
-| **WF5.** No PMK or PT, and no passphrase ever, is held by the WiFi domain: the key holder keeps the first two and answers only a commit, an exchange's KCK and a PTK, and the passphrase stays in the administrator's session. The PTK's KCK and KEK and SAE's KCK leave the WiFi domain nowhere; the installed keys reach the chip through the storage domain; and no report or dump of the WiFi domain carries a term its processes held | `wpa_key`'s five operations return no entry's key; `wpa_admin` takes a PMK and hashed values, never a passphrase, and the WiFi domain holds no `wpa_admin`; `ether` carries frames, credits and a link state; `erx_wifi_report` rewrites every report of OTP's domain to names, classes and arities; the holders are `sensitive` ([Where the secrets live](#security)) | an operation that returns a PMK; a station that derives a PTK itself; a passphrase in a request to the holder; a KCK in a termination report; a station's stack in a crash dump | the interfaces' schemas carry no entry key and no passphrase; a build check that only `erx_wpa_arith` calls a PTK derivation or `crypto`'s SAE functions and only `erx_wpa_holder` calls it, that only `erx_wpa_secret` calls `crypto:pbkdf2_hmac/5`, and the unchanged check that the network stack calls no `crypto`; the diagnostics test below. A development build's holder is inside the WiFi domain, the residual of [Security](#security) |
+| **WF5.** No PMK or PT, and no passphrase ever, is held by the WiFi domain: the key holder keeps the first two and answers only a commit, an exchange's KCK and a PTK, and the passphrase stays in the administrator's session. The PTK's KCK and KEK and SAE's KCK leave the WiFi domain nowhere; the installed keys reach the chip through the storage domain; and no report or dump of the WiFi domain carries a term its processes held | `wpa_key`'s five operations return no entry's key; `wpa_admin` takes a PMK and hashed values, never a passphrase, and the WiFi domain holds no `wpa_admin`; `ether` carries frames, credits and a link state; the report filter `erx_report` rewrites every report of OTP's domain to names, classes and arities; the holders are `sensitive` ([Where the secrets live](#security)) | an operation that returns a PMK; a station that derives a PTK itself; a passphrase in a request to the holder; a KCK in a termination report; a station's stack in a crash dump | the interfaces' schemas carry no entry key and no passphrase; a build check that only `erx_wpa_arith` calls a PTK derivation or `crypto`'s SAE functions and only `erx_wpa_holder` calls it, that only `erx_wpa_secret` calls `crypto:pbkdf2_hmac/5`, and the unchanged check that the network stack calls no `crypto`; the diagnostics test below. A development build's holder is inside the WiFi domain, the residual of [Security](#security) |
 | **WF6.** Every byte from the chip, the air, the configuration or `ctl` is parsed once, by a bounds-checked core with a fuzz target, before any decision | the cores of [The chip](#the-chip), [The supplicant](#the-supplicant), `erx_sae`, `erx_wpa_conf` and `erx_wifi_fs` | a field read from an unchecked binary | the fuzz targets of [Untrusted input](#untrusted-input) |
 | **WF7.** Every attachment starts from a reset card, and nothing of an ended attachment acts on the next | `attach` runs the bring-up from the controller's reset for all and the card's I/O reset, and makes a fresh `Ref` that every `run` and notice carries | a client that meets the previous client's chip state; a list of the old attachment run on the new | the host test that a second attach after a client's death resets and refuses the old `Ref`, with the fake card |
 | **WF8.** No key is installed from a message whose replay counter, MIC, nonce, key data or RSN element check failed, and only a message authenticated by its MIC raises the replay watermark | the handshakes' checks are the only path to a `set_keys` request; the watermark moves only in the accepting steps of message 3 and group message 1 | an install after a failed check; a watermark raised by message 1 | the exhaustive join test with forged and replayed messages |
@@ -2439,20 +2439,12 @@ fields:
 
 * **Reports carry no term.** Every process of the WiFi domain is a
   `proc_lib` process, as OTP's behaviours are, so every report its end
-  makes is a logger event of OTP's domain: the termination reports of
-  `gen_server` and `gen_statem` (`otp/lib/stdlib/src/gen_server.erl:2785`,
-  `gen_statem.erl:4983`), `proc_lib`'s crash report (`proc_lib.erl:954`),
-  the supervisor's error reports (`supervisor.erl:318-324`) and
-  `gen_server`'s report of a message it has no clause for, which quotes
-  the message (`:2442`). The application's start installs one primary
-  logger filter in its domain, `erx_wifi_report`, which rewrites every
-  event of OTP's domain to the process, its name, the error's class, the
-  reason's leading atom and the stack trace's modules, functions and
-  arities, and drops every other term: arguments, the last message, the
-  queue, the state and the rest of the reason. So no report carries a
-  term a process held, whichever process held it and whatever raised;
-  the network stack trims its records the same way
-  ([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives)).
+  makes is a logger event of OTP's domain. The application's start
+  installs the report filter, `erx_report`
+  ([design-log.md](design-log.md#reports-carry-no-term)), which rewrites
+  every event of OTP's domain to names, classes and arities and drops
+  every other term. So no report carries a term a process held,
+  whichever process held it and whatever raised.
   The station's `/proc` paths and its own log lines are built from named
   fields, none of them a secret. `sys:get_status/1` returns a process's
   state whole, but only to a caller in the WiFi domain: from another
@@ -2795,7 +2787,7 @@ code under test ran.
   the `forget` case fails.
 * **Diagnostics with marked secrets.** On the host, the station, the
   chip process over the fake chip, `erx_wifi_fs`, the development
-  holder and `wlankey` run with `erx_wifi_report` installed and a logger
+  holder and `wlankey` run with `erx_report` installed and a logger
   handler that keeps every formatted event. Every secret is chosen to
   be found: a passphrase and an SAE password of a marker pattern, from
   which the test computes the PMK, the hashed values and PT, and the
@@ -2984,8 +2976,8 @@ under load. QEMU has no WiFi device for any machine.
   `erx_wifi_mlme`, `erx_wifi_station`, `erx_wifi_sta`,
   `erx_wifi_choose`, `erx_wifi_join`, `erx_wifi_memory`, `erx_wpa_key`,
   `erx_wpa_kdf`, `erx_sae`, `erx_wpa_conf`, `erx_wifi_keys`,
-  `erx_wpa_holder`, `erx_wpa_arith`, `erx_wifi_keys_dev`, `erx_wifi_fs`
-  and `erx_wifi_report`; `erx_wpa_secret` and the `wlankey` command;
+  `erx_wpa_holder`, `erx_wpa_arith`, `erx_wifi_keys_dev` and `erx_wifi_fs`,
+  with `erx_report` installed at the application's start; `erx_wpa_secret` and the `wlankey` command;
   `erx_ether` and `erx_net_ether` in `erx_net`.
 * Host tooling: the test access point's profiles and the harness
   command that starts hostapd with one.

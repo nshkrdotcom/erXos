@@ -6298,7 +6298,11 @@ record the exception and the event, a frame's length and its first 128
 bytes escaped, in the kernel log, and count it. The record keeps the
 stack trace with each frame's arguments replaced by their count, and a
 socket's exit reason is the exception's class and reason alone, so a
-`function_clause` never carries the control block into a log; a
+`function_clause` never carries the control block into a log. OTP's
+own reports of the same exits, which print the mailbox and each frame's
+arguments, pass the report filter, `erx_report`, which the network
+domain's start installs
+([design-log.md](design-log.md#reports-carry-no-term)). A
 socket's `format_status` likewise leaves out its buffers, its
 reassembly queue and its generator, and a socket process's what it
 holds, so `sys:get_status` shows neither a
