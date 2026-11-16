@@ -45,7 +45,7 @@ own (effects/0): permanent, so a declared application's end ends the session; a
 host test passes a mount over a fixture directory and `temporary`, so a failed
 start ends only the case.
 """.
--type effects() :: #{mount := fun((binary(), erx_verity_tree:layout()) -> ok | {error, term()}),
+-type effects() :: #{mount := fun(() -> ok | {error, term()}),
                      root := string(),
                      type := permanent | temporary}.
 
@@ -76,16 +76,17 @@ run(Record, Effects) ->
         throw:{erx_app, Reason} -> {error, Reason}
     end.
 
-%% The session's own effects: the image mounted read and execute at /app, through
-%% erx_verity with the domain service's root hash, and the app's paths under it.
+%% The session's own effects: the package's image mounted read and execute at /app,
+%% and the app's paths under it. The mount names the session's own package, `app`:
+%% erx_ns's process takes the file's place and layout from the record the session's
+%% agent keeps, so nothing this process passes chooses what /app holds.
 effects() ->
-    #{mount => fun(Place, Layout) -> erx_ns:mount({erofs, {file, Place, Layout}}, <<"/app">>, [rx]) end,
+    #{mount => fun() -> erx_ns:mount({erofs, app}, <<"/app">>, [rx]) end,
       root => "/app",
       type => permanent}.
 
-start_app(#{place := Place, layout := Layout, start := {applications, Names}},
-          #{mount := Mount, root := Root, type := Type}) ->
-    case Mount(Place, Layout) of
+start_app(#{start := {applications, Names}}, #{mount := Mount, root := Root, type := Type}) ->
+    case Mount() of
         ok -> ok;
         {error, Reason} -> fail({mount, Reason})
     end,

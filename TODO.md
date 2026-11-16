@@ -121,38 +121,6 @@ it; git history is the record of completed work.
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
   `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
   allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
-* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist, and the domain service sends an app's session its record after the ready
-  answer (`erx:app/0`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
-  the app template, the session template naming no principal (`mf_none`), sized into the principal and
-  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
-  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
-  today. The session's plan (`erx_domain_core:app_session/4`, from the registry's record, which keeps
-  the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
-  `erx_dom_lib_app_session`) exist; no caller uses them yet. What remains: the domain service's
-  start of an app's session from its `erx_principal:app/2` record, which needs the app template's
-  facet rows by index (the library's `grants`, in facet-table order) and a mint core that grants a
-  session a subset of its template's rows, where `erx_domain_mints` grants every session of a
-  template all of them; `machine_principal` and the mints' parameters naming an app principal,
-  which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
-  signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
-  it; the app
-  principal's CPU group under an apps group, which the stopgap's flat groups leave out;
-  `erx_ns:mount/3` of an image file through `erx_verity`, which
-  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
-  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
-  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
-  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
-  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
-  and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
-  leave out; the session plan
-  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record sent after the ready answer, and
-  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
-  `erx_app` calls as `{erofs, app}`; a native app's start and the record's `window`, which wait for
-  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
-  `{not_supported, program}` until then).
-  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
-  `{not_supported, program}` until then).
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
   `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
   before the kept row is installed, because configured domain `a` ends after its introduction to the
@@ -169,7 +137,9 @@ it; git history is the record of completed work.
   the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
-  which `erx_app` calls as `{erofs, app}`; a native app's start and the record's
+  which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
+  EROFS mount of [todo-system-partition.md](docs/todo-system-partition.md) lands, so every Erlang
+  app's session ends with `{mount, einval}`; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):

@@ -37,7 +37,12 @@ that proves the code under test ran.
   through the app template's `rx` `packages` and `system` grants, and
   each mount's files keyed by a tree of its own; the image check needing
   `rx` on the entry and on the grant beneath it (design-files.md, "Rights
-  beneath an entry"); `erx_ns.erl` has only `{erofs, Image}`, an image its caller opened, which goes, and `erx_ns` joins `Erx::ErofsReads`'s `MOUNTERS`. Test: the
+  beneath an entry"); `erx_ns.erl` has only `{erofs, Image}`, an image its caller opened, which goes, and `erx_ns` joins `Erx::ErofsReads`'s `MOUNTERS`.
+  `erx_app` mounts `/app` as `{erofs, app}`, which `erx_ns` answers with `einval`
+  until this lands; a record that names an image package's file on the
+  `system` grant also waits on the `system` tree item above. When `erx_ns`
+  reads the record's layout, `erx_app:app_record()` moves into `erx`, so the
+  layer that trusts the layout owns its type. Test: the
   package mounts' host test of design-packaging.md and F6's `/x` test;
   seeded: a mount that takes its rights from its options, which mounts a
   file of `/apps` `rx`; a mount bounded only by its grant's rights, which
