@@ -13,6 +13,10 @@ request. It is the one caller of
 erx_clock_nif:set_offset/1, which a chokepoint check holds
 (tools/lib/erx/chokepoint_rules/clock.rb).
 
+When it starts on a clock that reads before the build's date, the floor
+of erx_clock_core, it sets the clock to that date, `approximate`, so
+certificate checks work before anyone sets the time.
+
 A facet forwards `{sample, Source, Sample}` or `{set, Source, W}`, Source
 the grantee's domain. For each the service reads the time page, takes
 erx_clock_core's decision, applies a step through the setter and answers
@@ -32,8 +36,35 @@ start_link() ->
 
 -doc false.
 init([]) ->
+    Floor = start_at_floor(erx_build:facts()),
     %% The monotonic clock the page's offset is added to, as date reads it.
-    {ok, erx_clock_core:new(os:perf_counter(nanosecond))}.
+    {ok, erx_clock_core:new(os:perf_counter(nanosecond), Floor)}.
+
+%% A clock that reads before the build's date when the service starts, as every
+%% boot without a real-time clock does, starts at it, approximate
+%% (docs/design-time.md, "The approximate start"). A restart finds the page
+%% approximate or set and leaves it. Answers the floor, which a build without
+%% a date leaves 0: no floor and no start, which is worth a line.
+start_at_floor(Facts) ->
+    Floor = erx_clock_core:build_floor(Facts),
+    case Floor of
+        0 -> logger:warning("erx_clock: the build facts give no date (~0p): no floor", [Facts]);
+        _ -> ok
+    end,
+    case erx_clock_nif:read() of
+        {ok, Page} -> apply_start(erx_clock_core:start(Page, Floor));
+        {error, limit} -> ok
+    end,
+    Floor.
+
+apply_start({step, W}) ->
+    Date = calendar:system_time_to_rfc3339(W, [{unit, nanosecond}, {offset, "Z"}]),
+    case erx_clock_nif:set_offset(W) of
+        ok -> logger:notice("erx_clock: clock not set, started at the build date ~s, approximate", [Date]);
+        {error, Status} -> logger:warning("erx_clock: starting at the build date ~s refused: ~p", [Date, Status])
+    end;
+apply_start(none) ->
+    ok.
 
 -doc false.
 handle_call({sample, Source, Sample}, _From, Record) ->

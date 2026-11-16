@@ -2,7 +2,9 @@
 
 A machine without a battery-backed clock starts every boot near
 1970-01-01, and file times, log lines and certificate checks are wrong
-until something sets the wall clock. This document is the contract for
+until something sets the wall clock. The clock service starts such a
+clock at the build's date, an approximate time good enough for
+certificate checks, and this document is the contract for
 setting it from the network with SNTP, the simple subset of NTP that RFC
 4330 specifies: who measures, who sets, what a step is, what the
 operator configures and sees, and how it is tested. The kernel's clock
@@ -35,10 +37,17 @@ Decisions every reader needs:
   `ntpd_enable="YES"` and `ntpd_flags="SERVER ..."` in `/etc/rc.conf`
   start it at boot against the operator's servers
   ([Configuration](#configuration)).
+* **A clock with no reading starts at the build date.** When the clock
+  service starts on a clock that reads before the build's date, the
+  commit time of the image's source, it sets the clock to that date, and
+  `/proc` shows it `approximate` until a sample or `date` sets it. So
+  HTTPS works from boot without anyone setting the clock, at the cost of
+  accepting a certificate that expired between the build and the real date
+  ([The approximate start](#the-approximate-start)).
 * **One unrestricted step per boot, then steps above 128 ms.** While the
-  page is as the boot left it, a sample sets the clock whatever its
-  distance, as `ntpd -g` allows once; never to a time before the release's
-  floor date. After that an offset above 128 ms is stepped when two
+  page is as the boot or the approximate start left it, a sample sets the
+  clock whatever its distance, as `ntpd -g` allows once; never to a time
+  before the floor, the build's date. After that an offset above 128 ms is stepped when two
   samples in a row show it in the same direction, an offset of 1000 s or
   more is refused, and smaller offsets are left alone. There is no slew
   ([Steps](#steps)).
@@ -281,9 +290,11 @@ the page is published and is never reset during a boot
 ([design-kernel.md](design-kernel.md), "Time"), so `seq = 0` is a fact
 of the boot, true until something first changes the page and false from
 then to the next boot. The clock service reads it with the offset,
-through `erx_time_offset`, and takes **cold start** to mean exactly
-`seq = 0`. No party holds this state, so no crash, restart or lost
-answer can renew or lose it (T-R8).
+through `erx_time_offset`, and takes **cold start** to mean that only
+the boot changed the page, `seq = 0`, or only the approximate start did,
+which leaves the offset exactly the floor
+([The approximate start](#the-approximate-start)). No party holds this
+state, so no crash, restart or lost answer can renew or lose it (T-R8).
 
 The special cases this removes:
 
@@ -441,7 +452,7 @@ The answer is `{ok, Action}`:
 | --- | --- |
 | `{stepped, StepNs}` | the page now holds `W`; the clock moved by `StepNs`, signed |
 | `held` | the sample is recorded and the clock left alone |
-| `{refused, floor}` | the sample's time is before the release's floor date; nothing changed |
+| `{refused, floor}` | the sample's time is before the floor, the build's date; nothing changed |
 | `{refused, panic}` | the sample is 1000 s or more from a clock this boot has already changed; nothing changed |
 
 or `{error, badarg}`, `{error, unavailable}` (no clock service),
@@ -498,18 +509,21 @@ sample. A step that the setter refuses stores the refusal as the last
 step error and answers it; a step it applies stores its time and size
 and counts it.
 
-* **The floor.** `floor` is the UTC date of the system release's source,
-  a constant of `erx_clock_core` raised when a release is made, so no
-  sample sets the clock before the software it runs was written, as RFC
-  8633 section 5.2 asks of implementations. A floor that lags the
-  release only weakens this check.
+* **The floor.** `floor` is the build's date, the commit time of the
+  image's source that the build facts carry
+  ([The approximate start](#the-approximate-start)), so no sample sets
+  the clock before the software it runs was written, as RFC 8633 section
+  5.2 asks of implementations. A build that could not read its commit,
+  from a tree that is no git checkout, has no floor: it refuses no
+  sample and starts no clock.
 * **Three ways a clock is set, told apart by the page.**
   * *Initial bootstrap.* While `Cold`, the page is as the boot published
-    it: at the epoch on both boards and Fiasco, or the real-time
-    clock's reading. The sample steps whatever its distance, as
+    it, at the epoch or at the real-time clock's reading, or as the
+    approximate start left it, at the build's date. The sample steps whatever its distance, as
     `ntpd_sync_on_start=YES` makes FreeBSD's first one. erXos does not
     offer the `NO` setting: every boot without a real-time clock starts
-    56 years from the server, so the client could never set the clock.
+    at the build date, as far from the server as the image is old, so the
+    client could not set the clock once that passed 1000 s.
   * *Automatic restart.* A crash and restart of the ntpd session or of
     the clock service changes nothing on the page, so the next sample
     meets the panic threshold if the clock was changed this boot. A
@@ -544,6 +558,67 @@ and counts it.
 * **Leap seconds are not inserted.** The LI field is used only to reject
   an unsynchronized server. After a leap second the clock is a second
   off and the next two samples step it back.
+
+## The approximate start
+
+A board without a real-time clock, and QEMU `virt` on Fiasco, boots at
+1970-01-01, where every certificate a public authority issues is not yet
+valid, so nothing reaches live data over TLS until someone sets the
+clock. The build knows a better time: the image cannot run before its
+source was committed. So the clock service, when it starts, sets a clock
+that reads before that date to it.
+
+* **The date is a build fact.** The build facts file of each release,
+  which `uname -v` reads (`erx_build`, `tools/lib/erx/build_facts.rb`),
+  carries `date`, the commit time of the image's source in seconds since
+  the epoch, read from git. It is a fact of the commit, not of the moment
+  of the build, so two builds of one commit stay byte-identical
+  (`make check-reproducible`). `erx_clock_core:build_floor/1` turns it into the
+  floor in nanoseconds, the one value both the start and the
+  [Steps](#steps) table's floor row use; a build without the date has
+  floor 0.
+* **The start.** `erx_clock_core:start/2` answers a step to offset
+  `floor`, wall time "the build's date plus the uptime", when the page is
+  cold (`seq = 0`) and reads before the floor, `M + C < floor`; for any
+  other page, `none`. The service applies it through the setter once, in
+  its `init`, before any facet's request, and logs one line with the
+  date. A clock the boot set at or past the floor, from a real-time
+  clock or the hosted backend's host clock, is left as it is, so the
+  start never moves a clock backward; one whose real-time clock reads
+  before the floor, a module with a flat battery, starts at the floor
+  too.
+* **The state is the page's.** `erx_clock_core:state/2` reads
+  `approximate` from a page whose `seq` has moved and whose offset is
+  exactly the floor, the only change the start makes. So a restarted
+  service finds the page approximate, or set if anything changed it
+  since, and starts nothing: a restart can neither undo a set nor renew
+  the start. A step that lands on exactly the floor's offset, to the
+  nanosecond, reads as approximate too, and so makes the next sample
+  unrestricted again: root can do that with a set of exactly that
+  offset, and a holder of `sample` by steering its samples onto it,
+  which an attacker on the network cannot, since `W` depends on the
+  client's own counter readings. Telling the start's one write from
+  any other by the page's sequence closes it (`TODO.md`).
+* **Approximate is cold.** A sample meets an approximate clock as it
+  meets one the boot left alone: the first steps whatever its distance,
+  since a build may be months older than the real date. A set by hand
+  replaces it like any other clock, and `date` below the floor stays the
+  operator's word ([What it changes](#what-it-changes)).
+* **Readers.** `date` writes the wall time as FreeBSD's does, so at boot
+  it writes the build's date plus the uptime; `/proc/time/status` shows
+  `state` `approximate`, and the desktop clock the time with the caption
+  "approximate, from the build date"
+  ([design-desktop-programs.md](design-desktop-programs.md#clock)).
+
+**What it costs.** Certificate validity is checked against the wall
+clock ([design-crypto.md](design-crypto.md#time)), and validation treats
+an approximate clock as a set one: that is its point. A certificate that
+expired after the build date but before the real date is therefore
+accepted until something sets the clock; a certificate not yet valid at the build date
+but valid at the real date is refused. The window is the image's age.
+For development builds and 0.1, trusted code on a machine its operator
+watches, that is accepted; whether a release build keeps the start, or
+refuses TLS on an approximate clock, is [open](#open-decisions).
 
 ## The client
 
@@ -713,7 +788,7 @@ restart.
 
 | Attribute | Source, lifetime | Value |
 | --- | --- | --- |
-| `state` | page, boot | `unset` while `seq` and the offset are zero, so wall time is uptime counted from 1970-01-01; `boot` while `seq` is zero and the offset is not, the boot's real-time clock reading or the hosted backend's host clock; `set` once the page has changed this boot |
+| `state` | page, boot | `unset` while `seq` and the offset are zero, so wall time is uptime counted from 1970-01-01, which a running clock service leaves only on a build without a date; `boot` while `seq` is zero and the offset is not, the boot's real-time clock reading or the hosted backend's host clock; `approximate` while the offset is the floor, as [the approximate start](#the-approximate-start) leaves it, or `unset` or `boot` where the setter refused the start, so wall time is the build's date plus the uptime; `set` once anything else has changed the page this boot |
 | `record_since` | record | monotonic time of the service's start, in seconds |
 | `sample_at` | record | wall time of the last sample, or `none` |
 | `offset_ns` | record | the last sample's `D`, signed |
@@ -734,10 +809,10 @@ shown there is one of the known atoms or its four bytes in hex.
 
 ## Setting the clock by hand
 
-A board without a real-time clock boots at 1970-01-01, and with network
-time off, as it is by default, nothing sets the wall clock; an HTTPS
-client then refuses every certificate
-([design-crypto.md](design-crypto.md#time)). The operator sets it with
+A board without a real-time clock starts at the build's date
+([The approximate start](#the-approximate-start)), and with network
+time off, as it is by default, nothing sets the wall clock closer; it
+is as far behind as the image is old. The operator sets it with
 `date`, as on FreeBSD, and no network is needed for it.
 
 ### The command
@@ -895,10 +970,10 @@ both thresholds included, does not apply to it. The answer is `{ok,
   wall-clock keeper of [design-header-io.md](design-header-io.md#devrtc)
   holds a real-time clock it writes a set like any other correction, as
   FreeBSD's `date` writes the hardware clock (`date.1`). A board without
-  one, the Raspberry Pi 4 without a clock module, boots at 1970-01-01
-  again, as does QEMU `virt` on Fiasco, whose root does not read the
-  PL031 ([Phase 1](#phase-1)); there the operator sets the clock after
-  each boot, which the user documentation says.
+  one, the Raspberry Pi 4 without a clock module, starts at the build's
+  date again, as does QEMU `virt` on Fiasco, whose root does not read the
+  PL031 ([Phase 1](#phase-1)); there the operator sets the exact time
+  after each boot, which the user documentation says.
 
 ### Failure paths
 
@@ -989,6 +1064,17 @@ command raise.
   certificate look valid to [design-crypto.md](design-crypto.md)'s checks.
   Network Time Security (RFC 8633 section 4.3) is the remedy and is not
   designed here.
+* **An approximate clock passes certificates the real date would
+  refuse.** Until the clock is set, validation reads the build's date
+  plus the uptime, so a certificate that expired between the build and
+  the real date is accepted; the window is the image's age. It is
+  accepted for development builds and 0.1; a release build's choice is
+  open ([The approximate start](#the-approximate-start)). No party can
+  renew the start: it follows from a cold page, which only a reboot
+  gives, though a step onto exactly the floor's offset makes the page
+  approximate again ([The approximate start](#the-approximate-start)).
+  A certificate first valid after the build date is refused, so the
+  start helps only an image younger than its peers' certificates.
 * **An off-path attacker** must guess a 64-bit nonce and a random source
   port, and send from the server's address and port, to have a reply or
   a kiss believed.
@@ -1018,9 +1104,10 @@ nothing there checks them. The range check of
 the kernel. The page starts zeroed, `seq` and offset included, so every
 boot is cold. The Fiasco backend puts no real-time clock's reading in
 the page at boot: QEMU `virt`'s PL031 is read only by erXos's kernel,
-and the Raspberry Pi 4 has no clock of its own. So on both `state` is
-`unset` and wall time counts from 1970-01-01 until root's `date` or
-`ntpd` sets the clock, or, on a Pi 4 with a DS3231 module, the
+and the Raspberry Pi 4 has no clock of its own. So on both the clock
+service starts the clock at the build's date, `approximate`
+([The approximate start](#the-approximate-start)), until root's `date` or
+`ntpd` sets it, or, on a Pi 4 with a DS3231 module, the
 wall-clock keeper does
 ([design-header-io.md](design-header-io.md#devrtc)). The hosted backend reads
 its offset once from the host's clock and keeps it
@@ -1044,6 +1131,7 @@ that proves it ran.
 | distance | a reply with root delay -4 s, dispersion 2 s and measured delay 0.1 s is refused; one with root delay -4 s, dispersion 0 and measured delay 0.1 s has distance 0.05 s | adding the signed root delay unclamped accepts the first |
 | decide | every row of [Steps](#steps), over `Cold`, the floor, the three distance bands and the three `excess` values | dropping the two-sample rule steps on a single 200 ms sample; dropping the floor row steps a cold clock to 1999 |
 | restart | a record emptied as a restarted service's is, with `Cold` false, refuses a sample 2000 s off | deciding cold from an empty record instead of the page steps it |
+| approximate start | `start/2` steps a cold page reading before the floor, at 1970 or a real-time clock's earlier reading, to the floor, and leaves a cold page at or past the floor, every page changed this boot and every page when the floor is 0; `state/2` reads each page's state; an approximate page meets a sample 2000 s or 56 years off as a cold one does and one before the floor is refused; the floor is the record's | a start without the floor's comparison moves a boot clock past the floor back to it; a start over any page renews it on a page set below the floor; dropping the approximate clause refuses the 2000 s sample as panic; a constant floor admits a sample the record's later floor refuses |
 | schedule | over generated event sequences, no two polls to an address closer than 64 s, a burst only on an address's first poll, re-resolution not before the TTL, and an error answer leaves the interval unchanged | a floor of 8 s fails the spacing property |
 | flags | `ERX_START_FLAGS` values give their server lists; empty, nine entries, a bad label and a 254-byte name end with their reasons | accepting a ninth entry passes the nine-entry case |
 | facet decode | every bound is refused one past its edge, `W` at `time_offset_max + 1` and `Distance` at `clock_distance_max_ns` included, for `sample` and `set` alike | dropping `W`'s upper bound accepts `time_offset_max + 1` |
@@ -1123,6 +1211,10 @@ kiss code. The guest's test manifest enables ntpd with
   after check 4, with the peer's kiss carrying LI 3, ignores both.
 * **Refusals.** A session without the facet row has no `clock` name;
   `ntpd_flags=""` ends the row with `no servers` and leaves it down.
+* **The approximate start.** On QEMU `virt` on Fiasco, with no
+  real-time clock, root's session runs `date +%Y%m%d%H` before any set,
+  and it writes the hour of the image's commit time or the next one
+  (`session_domain`).
 * **Set by hand.** With ntpd off, root's session runs `date
   203001011200`; `date +%Y%m%d%H%M` there and `os:system_time(second)`
   in another domain read the new time within a second, and
@@ -1231,6 +1323,13 @@ These were open and are settled as stated here:
    `date` with the right time already recovers the clock without a reboot
    ([What it changes](#what-it-changes)); what stays open is handing the
    next correction back to an unrestricted sample.
+2. **The approximate start in a release build.** A release runs
+   untrusted workloads, and an approximate clock accepts a certificate
+   that expired between the build and the real date. The choices: keep
+   the start, as development builds and 0.1 do; keep it and have
+   validation refuse TLS while `state` is `approximate`, so a release
+   needs `ntpd` or a real-time clock for HTTPS; or drop it. It is the
+   release's decision, recorded in `TODO.md`.
 
 ## References
 

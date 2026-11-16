@@ -60,7 +60,7 @@ inspection 1
   text app_reason 512 utf8
   # The clock (docs/design-time.md, "What /proc shows"): the time page's
   # state, and the clock service's record of its samples and steps.
-  atoms clock_state unset boot set
+  atoms clock_state unset boot approximate set
   atoms clock_refusal unsupported limit badarg
   integer seconds 0 0xffffffffffffffff unit s
   integer wall_time 0 0xffffffffffffffff unit ns

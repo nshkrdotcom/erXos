@@ -11,7 +11,8 @@ performs its effects.
 
 A tick is a reading. Each tick asks the inspector for `[time]`, whose
 `state` says whether the wall clock is `set`, read at `boot` from the
-real-time clock or `unset`, and for `[]`, whose `uptime` an unset clock
+real-time clock, started `approximate` at the build date or `unset`, and
+for `[]`, whose `uptime` an unset clock
 shows instead of a date, since an unset clock's reading is the time since
 boot counted from 1970. The reading is shown once both have answered or
 failed; until then the window keeps showing the last one, so a minute
@@ -34,7 +35,8 @@ next_deadline/1 answers it. An early tick, after a step back, is not
 dropped: it shows the minute its reading gives.
 
 What clock shows by the state (the design's table): `set` the time and
-date; `boot` the same and "from the real-time clock"; `unset` `--:--`,
+date; `boot` the same and "from the real-time clock"; `approximate` the
+same and "approximate, from the build date"; `unset` `--:--`,
 "Clock not set" and the minutes since boot; and a state that is not `ok`
 the time and date with the status token beside the zone. Every status
 reaches the tree as an `attr()` the widget schema takes: the reporter the
@@ -121,6 +123,7 @@ view(#clock{shown = #{now := Now, time := Time, machine := Machine}}) ->
     case clock_state(attr(Time, state)) of
         unset -> unset_face(Machine);
         boot -> dated(Now, utc(), [label(<<"from the real-time clock">>, caption)]);
+        approximate -> dated(Now, utc(), [label(<<"approximate, from the build date">>, caption)]);
         set -> dated(Now, utc(), []);
         {token, Token} -> dated(Now, {row, #{}, [utc(), label(Token, caption)]}, [])
     end.
@@ -164,7 +167,8 @@ attr({ok, _Record}, _Name) -> {kernel, unknown};
 attr({error, unsupported}, _Name) -> {kernel, unsupported};
 attr({error, Reason}, _Name) -> {kernel, {error, Reason}}.
 
-clock_state({_Reporter, {ok, State}}) when State =:= unset; State =:= boot; State =:= set ->
+clock_state({_Reporter, {ok, State}})
+  when State =:= unset; State =:= boot; State =:= approximate; State =:= set ->
     State;
 clock_state({Reporter, Value}) ->
     {token, token(Reporter, Value)}.

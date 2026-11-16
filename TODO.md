@@ -7494,6 +7494,19 @@ to the corpus and follow rc
 
 ## Security residuals
 
+* [Medium] clock, the approximate start in a release build (`erlang/apps/erx/src/erx_clock_core.erl`,
+  `start/2`; [design-time.md](docs/design-time.md#the-approximate-start), open decision 2): a clock without
+  a reading starts at the build's date, and certificate validation treats it as set, so until the clock
+  is set a certificate that expired between the build and the real date is accepted. Accepted for
+  development builds and 0.1; a release build decides whether to keep the start, refuse TLS while
+  `state` is `approximate`, or drop it. A release build must also carry a date: without one the floor is
+  0, which refuses no sample.
+* [Medium] clock, `approximate` is re-entered by a step onto the floor (`erx_clock_core:state/2`): the state
+  is "the page changed and its offset is exactly the floor", so a set of exactly that offset, or a
+  sample a holder of `clock` steers onto it, makes the next sample unrestricted again, which open
+  decision 1 of [design-time.md](docs/design-time.md#open-decisions) reserves to a reboot. Fix by
+  having `erx_clock_nif:read/0` give the page's sequence, so `approximate` is "exactly one write, and
+  offset is the floor", which no later step can restore.
 * [Low] shell, plain spawns that hold the shell's variables (design-shell.md, "Failure handling,
   diagnostics and debuggability"): every evaluator process starts through
   `erx_shell_runner:spawn_evaluator/3`, whose end names nothing, but a few processes that hold

@@ -224,8 +224,11 @@ Eshell V17.1.1 (type help(). for help)
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle
   time and ready threads) and the clock's state at `/proc/time/status`:
-  unset, boot or set. The domains listing at `/proc` shows each domain a
-  caller's scope covers, with a record of its name, principal, state and
+  unset, boot, approximate or set. A machine with no real-time clock
+  starts at the build's date, approximate, so HTTPS works from boot
+  while the image is younger than its peers' certificates.
+  The domains listing at `/proc` shows each domain a caller's scope
+  covers, with a record of its name, principal, state and
   run queue; another domain's group and budget read as unsupported on the
   stopgap, which answers for the system domain's own only.
 * A host link lets `tools/erx load`, `watch` and `files` replace modules in

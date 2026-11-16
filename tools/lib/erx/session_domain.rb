@@ -13,6 +13,7 @@ require_relative 'qemu'
 require_relative 'qemu_cells'
 require_relative 'release_medium'
 require_relative 'runner'
+require_relative 'source_revision'
 require_relative 'web_build'
 require_relative 'web_guest'
 
@@ -199,6 +200,11 @@ module Erx
     # `service -e` there: the configured domains in boot order and the enabled rows, read
     # from /proc/apps through the session's inspect facet, with status 0.
     SERVICE_E = "service -e && echo service-listed\r"
+    # The approximate start (docs/design-time.md, "The approximate start"): QEMU on Fiasco
+    # gives no real-time clock, so the clock service started the clock at the build date,
+    # the commit's time, and a reading date at the session writes that hour, or the next
+    # one after the minutes of the boot (date_boot_hours).
+    DATE_BOOT = "date +%Y%m%d%H\r"
     # Set by hand (docs/design-time.md, "Verification and testing"): root's session sets
     # the wall clock with date through its clock grant, which writes the time it set, and a
     # reading date writes it back; 12:30 UTC that day is SET_EPOCH_S. Its Erlang shell's
@@ -333,9 +339,16 @@ module Erx
       end
     end
 
-    # The production checkpoints to the system's command shell, then the cell. points must
-    # end at the command shell.
-    def root_session_checkpoints(points)
+    # The lines a reading date (DATE_BOOT) may write at the session on a clock started at
+    # build_date, the image's commit time: its hour, or the next one.
+    def date_boot_hours(build_date)
+      hours = [build_date, build_date + 3600].map { |time| time.utc.strftime('%Y%m%d%H') }
+      /\A(?:#{hours.join('|')})\r*\n\z/n
+    end
+
+    # The production checkpoints to the system's command shell, then the cell, on an image
+    # whose build date is build_date. points must end at the command shell.
+    def root_session_checkpoints(points, build_date:)
       raise Error, 'the production checkpoints do not end at the shell' unless points.last.fetch(:name) == 'release-shell'
 
       shell = ProductionImage::Run::ERLANG_SHELL
@@ -355,7 +368,8 @@ module Erx
        { name: 'session-proc-status', pattern: PROC_UPTIME, seconds: 60, type: START_LISTED }.freeze,
        { name: 'session-start-listed', pattern: line('start-listed'), seconds: 60, type: START_CTL_REFUSED }.freeze,
        { name: 'session-start-ctl-refused', pattern: line('start-ctl-refused-invalid argument'), seconds: 60, type: SERVICE_E }.freeze,
-       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: DATE_SET }.freeze,
+       { name: 'session-service-e', pattern: line('service-listed'), seconds: 60, type: DATE_BOOT }.freeze,
+       { name: 'session-date-boot', pattern: date_boot_hours(build_date), seconds: 60, type: DATE_SET }.freeze,
        { name: 'session-date-set', pattern: line(DATE_SET_LINE), seconds: 60, type: DATE_READ }.freeze,
        { name: 'session-date-read', pattern: line(DATE_SET_LINE), seconds: 60, type: ERL }.freeze,
        shell.merge(name: 'root_1-erlang-shell', type: "node().\r").freeze,
@@ -453,11 +467,16 @@ module Erx
         medium = written.fresh(directory: directory)
         points = ProductionImage::Run.checkpoints(built, root: @root, watchdog: MediumBoot::Run::WATCHDOG, cpus: count,
                                                          manifest_source: @manifest, memory_mib: @machine.memory_mib)
+        # The build date the image's build facts name, its source's commit time.
+        revision = SourceRevision.read(root: @root, runner: @runner)
+        raise Error, 'the session cell needs a git checkout: its date check reads the build date' unless revision
+
+        build_date = revision.committed_at
         report = Qemu.new(root: @root, runner: @runner, program: @qemu)
                      .run(platform: @machine.platform, accel: accel, cpus: count, remote: remote, image: built.single,
                           memory_mib: @machine.memory_mib,
                           disks: [QemuPlan::Disk.new(path: medium)],
-                          checkpoints: SessionDomain.root_session_checkpoints(points),
+                          checkpoints: SessionDomain.root_session_checkpoints(points, build_date: build_date),
                           **web_check(accel, count, built, directory: File.join(directory, 'boot')))
         SessionDomain.burst_whole!(File.binread(report.fetch('serial_log')))
       end
