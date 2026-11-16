@@ -1906,9 +1906,13 @@ On the stopgap a group is a record in `liberx`'s Fiasco backend and gives
 readiness only; quotas, urgency resolution, charging, shared areas and the
 finishing share are unsupported, per the backend's table
 ([design-stopgap.md](design-stopgap.md#the-call-table)), and threads run on
-Fiasco's fixed priorities. The features of configurations C0 to C2 are
-erXos's kernel's alone
-([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
+Fiasco's fixed priorities, each at its domain's band
+([design-fiasco.md](design-fiasco.md#the-scheduler-on-fiasco)). The
+features of configurations C0 to C2 are erXos's kernel's alone
+([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)),
+except the stages that a release on Fiasco may add after it, each a
+contained change to the fork with its policy in the C17 cores
+([design-fiasco.md](design-fiasco.md#stages-beyond-bands)).
 
 ## Failure handling, diagnostics and debuggability
 

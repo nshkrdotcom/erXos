@@ -395,6 +395,20 @@ carries the rows between tasks too, each domain a macOS process, so the
 lane, connection and funnel tests also run there under the sanitizers
 ([design-runtime.md](design-runtime.md#hosted-mode)).
 
+A release on Fiasco ([design-fiasco.md](design-fiasco.md)) changes four
+of these rows and nothing above `liberx`. A bell's trigger is the
+ringer's own Fiasco invocation, with no right to bind, so a bell's
+latency no longer passes through the root service. Budgets are walls, a
+Fiasco factory for each domain's kernel memory and the root's record for
+its user pages, so D12's budget assertions and the hostile runtimes'
+memory bounds run. A handle is a Fiasco slot with rights the root records
+and Fiasco's capability rights enforce. No task writes its own page
+tables or object space, so a domain that bypasses `liberx` still reaches
+only what the root placed in it and maps nothing itself, and D16's one
+writer per side holds whatever its runtime does. The bound on a stop,
+the CPU grants and an innocent peer's latency within one band stay
+`unsupported`, as the downsides of design-fiasco.md list.
+
 ## Data model
 
 ### Domain ids, pids and references

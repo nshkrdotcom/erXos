@@ -104,6 +104,14 @@ construction: only the root writes them, and the root writes its record with eac
 map into an occupied slot empties it first (`map_util-objs.cpp:110-114`), so no slot holds two
 things.
 
+One object every thread reaches without a slot is itself: Fiasco resolves the special selector to
+the calling thread with full rights (`Obj_cap::deref`, `thread_object.cpp:61-73`). A thread can
+therefore change its own registers, its own pager and exception handler, and its own vCPU state.
+Each of those names other objects only through slots of its own task, which hold nothing but what
+the root placed, so the worst a thread does with itself is point its faults at an object that does
+not answer them and stop: it harms only its own domain, which the root sees when the thread no
+longer answers or its space ends.
+
 ### Handles are slots
 
 A handle is the index of a slot in the caller's own object space. The root picks the index when it
@@ -165,8 +173,9 @@ restricts its threads to a CPU set and to a range of priorities, `prio_offset` t
 fetched 2026-11-15, SHA-256 `57b4c33485cf6a8ea404fd4471d4250eb62c2f57268cd5b4f7eb7e5a8eacb06f`).
 The scheduler is in [its own section](#the-scheduler-on-fiasco).
 
-Because the root holds every thread capability, a space cannot steer its faults away from its
-creator: the root sets every thread's pager and exception handler to the task's gate. A whole-space
+The root sets every thread's pager and exception handler to the task's gate. A thread may repoint
+its own through the self selector, but only at slots of its own task, so its faults reach the root
+or no one, and a thread whose faults reach no one stops itself alone. A whole-space
 pause, which `fork`'s copy and job control need
 ([design-programs.md](design-programs.md)), is the root stopping each thread of the space in turn by
 an artificial exception (`L4_THREAD_EX_REGS_TRIGGER_EXCEPTION`, `thread_object.cpp:657`) whose
@@ -223,6 +232,7 @@ what a user or an app sees. Release notes and the user documentation carry it.
 | budgets with caps above guarantees, borrowing, and every charge returning at once (K3, K32) | every domain budget is a wall at its guarantee; kernel memory is fixed per domain at creation | a program is refused while its session has memory free in another part, or is sized at its largest; an app's elastic budget is its guarantee | erXos's kernel |
 | CPU grants to runtime groups, quotas charged up the group tree, own-group charging | per-domain priority bands, CPU sets and thread limits | a domain spinning at its band's top takes its CPUs from every lower band and shares its band round robin in proportion to its threads; CPU use per domain is reported as unsupported; M10's "one runs out of CPU alone" holds between bands, not within one | stage 5 of [the scheduler](#stages-beyond-bands), or erXos's kernel |
 | the cooperation ladder: status words, deferred preemption, published urgency, group park in the kernel, capacity advice the kernel stands behind | none in the first release; park and wake through semaphores and a dispatcher thread per task, as today | ERTS behaves as stock BEAM does on a general-purpose kernel: it spins briefly and backs off on a lock whose holder is preempted, and wakes go through one more thread switch | stages 1 to 4, or erXos's kernel |
+| a kernel call runs on the caller's own thread and is charged to its own group, so what one domain makes another spend is bounded and declared | setup, faults and every service call run on the root service's one thread, at the root's band | an app flooding the root with requests or faults takes CPU from every lower band on the root's CPU and delays every other domain's setup and faults; isolation of memory and capabilities rests on the root's decoder and placement code as well as on Fiasco | erXos's kernel |
 | the executor rule refused by the kernel | refused by `liberx`'s stubs | a runtime that bypasses `liberx` can stall its own executors, harming only itself | erXos's kernel |
 | a whole-space hold that every call it started runs out under (K30) | the root stops each thread by an artificial exception | `fork` and job control work; a thread inside a long kernel call stops when that call returns or is cancelled, as Fiasco's exception delivery decides | erXos's kernel |
 | a stop's bounded finishing path, exit records from the kernel (K18, K28) | the root ends trees and posts exit records, as today | an exit record arrives when the root's walk completes, with no bound under hostile load | erXos's kernel |
@@ -310,8 +320,13 @@ its own memory and its connections' rings. With them it can:
   pays at most one wake per take;
 * spend its own memory and kernel memory to their walls, and fail with `ERX_ENOMEM` there;
 * spin every thread it may create at its band's priority, the scheduler row of the downsides;
-* invoke every slot index of its object space with any arguments, reaching only Fiasco's code for
-  the objects placed there and for empty slots: this is the surface the fuzz campaign covers.
+* send requests and take faults as fast as its threads can, which the root service serves on its
+  own thread at the root's band, above the system domain and the drivers: the root's time spent
+  on them is taken from every band below it on the root's CPU, and every other domain's setup and
+  faults wait behind them, the root-load row of the downsides;
+* invoke every slot index of its object space with any arguments, and itself through the special
+  selector, reaching only Fiasco's code for the objects placed there, for empty slots and for its
+  own threads: this is the surface the fuzz campaign covers.
 
 It cannot reach another domain's memory or objects without a Fiasco defect, create a mapping that
 is writable and executable, change any object space or page table, bind or steal a peer's doorbell,
@@ -344,6 +359,7 @@ forms, one per kernel, and the first release reaches the first.
 | doorbell floods | runs | runs |
 | sub-space churn | runs | runs |
 | a spinning domain against a higher band's latency | runs | runs as the grant test |
+| a request and fault flood against a neighbour's setup and latency | `unsupported` | runs |
 | CPU grants and an innocent peer's latency within one band | `unsupported` | runs |
 | stops and exit records under hostile load | `unsupported` | runs |
 | DMA outside a device's window | runs where the platform has an IOMMU | runs where the platform has an IOMMU |
@@ -373,8 +389,16 @@ come after it.
 **License.** With the header replaced and the debugger off, the shipped kernel is Fiasco's MIT code
 and erXos's BSD-2-Clause additions. `bootstrap` and `sigma0` ship under the link closure their
 import records (`fiasco/bootstrap/ORIGIN.md`, `fiasco/l4re-core/ORIGIN.md`), and a release build
-check fails if any file of the image's link closure is recorded with a license that is not
-permissive. Fiasco's notices go into `NOTICES` like every other third-party component's
+check fails if any file compiled or linked into the image's kernel, `bootstrap` or `sigma0` is
+recorded with a license that is not permissive; the check counts headers, since `kobject_rpc.h`
+is one. The one allowed exception is the cross compiler's `stdarg.h`, `stdbool.h` and `stddef.h`,
+GPL-3.0-or-later WITH GCC-exception-3.1 ([design.md](design.md#dependencies)): they define only
+macros and types, and the exception lets Target Code that GCC generates with them be conveyed
+"under terms of your choice" (`COPYING.RUNTIME`, section 1, of `aarch64-elf-gcc` 16.2.0, SHA-256
+`9d6b43ce4d8de0c878bf16b54d8e7a10d9bd42b75178153e3af6a815bdc90f74`), so the check allows exactly
+those three files, by name and hash, and only when GCC builds Fiasco. A
+release therefore pins the `aarch64-elf-gcc` release that builds Fiasco beside the LLVM release
+that builds the rest. Fiasco's notices go into `NOTICES` like every other third-party component's
 ([design.md](design.md#licenses-and-notices)).
 
 ## Upstream security fixes
@@ -462,7 +486,10 @@ hooks.
 * **Which features are R1's.** "All the user features" is read as everything user-facing in
   [plan.md](plan.md) before M7: users (M10), POSIX's rest (track P), the second tier (track Q), the
   boards' storage and updates (M12), and track D's last parts. Recommendation: R1 is those, with
-  each milestone's criteria that need erXos's kernel left at the milestone's kernel part.
+  each milestone's criteria that need erXos's kernel left at the milestone's kernel part. Track Q
+  is the costly one: its copy-on-write children, store tracking and space copy (`erx_mem_child`,
+  `erx_mem_dirty`, `erx_space_copy`) are refused by the backend today, and on Fiasco the root would
+  serve them as an L4 pager does, by faults it resolves, at a cost not yet estimated.
 * **The bands.** Recommendation: the six of [Bands](#bands), fixed in the manifest's schema,
   with no per-domain choice of priority beyond the band.
 * **The pause.** The root stopping threads one at a time, as above, or a whole-task pause patched

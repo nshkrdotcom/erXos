@@ -483,8 +483,10 @@ changes, and refuses a generated file checked in or edited. Independent fixtures
 set, which name the GPL-headed files the stopgap keeps
 ([design.md](design.md#dependencies)); since `kobject_rpc.h`, which every
 build includes, is one of them, any distribution outside the project, in
-source or binary form, waits for erXos's kernel, as CLAUDE.md's rule for
-stopgaps requires. `lld` installed.
+source or binary form, waits for R1's clean-room header and its release
+build with the debugger off
+([design-fiasco.md](design-fiasco.md#the-releases-fiasco-build)), as
+CLAUDE.md's rule for stopgaps requires. `lld` installed.
 
 ## M1: The system boots on Fiasco
 
@@ -2248,7 +2250,8 @@ neighbour answering. The release notes carry the downsides table.
 * The downsides table is in the release notes and the user
   documentation.
 
-Release images are built and their hashes published as M11 says.
+Release images are built and their hashes published as M11 says, with the
+`aarch64-elf-gcc` release that builds Fiasco pinned beside LLVM's.
 
 **After R1.** Fiasco's scheduler stages follow, once everything else
 works, in this order: status words, deferred preemption, group park in
