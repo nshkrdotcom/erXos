@@ -311,7 +311,7 @@ simplicity first, speed second. Paths are relative to `otp/`; `beam/` is
 | Device drivers | linked-in drivers | Erlang processes over the device NIF | **redone**: a driver is an Erlang process; the C under it is the device NIF, parsing nothing ([The device NIF](#the-device-nif)) | a device that lies corrupts no memory |
 | Operating-system adaptation | the UNIX sys layer, UNIX signals, dynamic loading | `liberx` | **dropped**; `sys/erxos` implements the little that remains (time, float conversion, the C path for standard output and error, `prim_file`'s platform layer, crash output, the adapter) | nothing to adapt to |
 | Time | the time supervisor's correction over OS clocks (`erl_time_sup.c`) | the counter and the time page | **redone**: one clock; correction for imperfect clocks deleted; Erlang's monotonic and system time semantics kept | the counter is exact |
-| Code from storage | `erl_prim_loader` through `prim_file` | boot-image slices mapped read-only | **kept**, with whole-file reads returning binaries over the slice's pages, without a copy, and an EROFS image's files read by the EROFS reader, preloaded Erlang, from blocks the hash-checking primitive returned; the code server checks the hash of every blob it fetches from the code service ([Code in the system domain](#code-in-the-system-domain)) | `init` and boot scripts need no change, and a slice's files are covered by the boot image's validation |
+| Code from storage | `erl_prim_loader` through `prim_file` | boot-image slices mapped read-only | **kept**, with whole-file reads returning binaries over the slice's pages, without a copy, and an EROFS image's files read by the EROFS reader, preloaded Erlang, from blocks the hash-checking reader, `erx_verity`, returned; the code server checks the hash of every blob it fetches from the code service ([Code in the system domain](#code-in-the-system-domain)) | `init` and boot scripts need no change, and a slice's files are covered by the boot image's validation |
 | Executing Erlang code | the interpreter and BeamAsm, one per build | memory objects mapped writable at one address and executable at another | **both kept**, as three runtime images: the system image, of the interpreter build without OpenSSL, for the system domain; the interpreter image, the same build with OpenSSL, for command domains and deterministic mode; the BeamAsm image for other domains ([BeamAsm](#beamasm), [design-crypto.md](design-crypto.md#three-runtime-images-and-openssl-in-two-of-them)) | the interpreter keeps generated code, JIT objects and C++ out of the trusted base and is deterministic; BeamAsm is up to four times faster; OpenSSL's constructor would run in any domain that maps it, so only an image without it keeps it out of the trusted base |
 | Crash diagnostics | crash dumps to a file | a crash area handed out at domain creation | **redone**: the dump goes to the crash area, and the domain stops itself ([Crash handling](#crash-handling)) | one diagnostic path, read by the system domain |
 | Tracing | trace sessions and tracers | the kernel trace ring | **both kept, one viewer** ([design-live.md](design-live.md#tracing)) | they observe different layers |
@@ -2290,11 +2290,11 @@ server of its own:
   and the EROFS reader, `erx_erofs`, Erlang preloaded in every runtime image,
   serves the operation in the calling process from blocks it reads from
   the image's file through the domain's grant and
-  hands to the hash-checking primitive, which checks them against the
+  hands to the hash-checking reader, `erx_verity`, which checks them against the
   image's dm-verity tree, whose root comes from a header the system
   domain's file check authenticated, or, for the system partition, from
   the manifest the boot image holds, and returns only blocks that
-  matched; the reader parses no block that the primitive did not return
+  matched; the reader parses no block that `erx_verity` did not return
   ([design-storage.md](design-storage.md#invariants) E1);
 * **a RAM file system** per domain at `/tmp`, an `erx_fs` server,
   `erx_ramfs`, that runs in the domain and is mounted as a grant like any
@@ -3279,7 +3279,7 @@ loads any code it is given.
 **Every fetch names a hash.** Code reaches a domain from three places.
 Its release's files come from its slice of the boot image, whose index the
 kernel validated at boot, or from an EROFS image whose blocks the
-hash-checking primitive checks against the image's verity tree
+hash-checking reader, `erx_verity`, checks against the image's verity tree
 ([Files](#files)). Hot-loaded code comes from the code service, and the
 code server fetches each blob as `{Module, Hash}`, the SHA-256 of the
 module's file, and checks the bytes against the hash before ERTS's loader
@@ -3293,7 +3293,7 @@ version for erXos: the inspector shows it, and a domain's history of the
 hashes it loaded is what a rollback chooses from. ERTS's own MD5
 of a module's code chunks (`module_info(md5)`) stays as stock OTP computes
 it. The check uses `erx_bytes:sha256/1`, the SHA-256 primitive that the
-hash-checking primitive also uses
+hash-checking reader, `erx_verity`, also uses
 ([Per-byte primitives](#per-byte-primitives)), so checking a blob needs
 no OpenSSL in any domain, the system domain included
 ([design.md](design.md#dependencies)).
@@ -4075,7 +4075,7 @@ across them is the conformance suite.
 | The JIT's code space is exhausted | the JIT object cannot grow | the module unloaded | the loader | `{error, system_limit}` from the load; a counter in the inspector |
 | An encoding error in the translator | the repaired error path | the translation discarded | the loader | `{error, badfile}`; a log line naming the module |
 | A write to the release file system or an EROFS image | `erx_prim_file` | nothing | none needed | `{error, erofs}` |
-| An EROFS block fails its hash check | the hash-checking primitive under the EROFS reader | the mount, read-only | none needed | `{error, eio}` for the read, and a log line naming the image and the block |
+| An EROFS block fails its hash check | the hash-checking reader, `erx_verity`, under the EROFS reader | the mount, read-only | none needed | `{error, eio}` for the read, and a log line naming the image and the block |
 | The RAM file system reaches its cap | the cap's check in `erx_ramfs`, which refuses the whole request of at most 64 KiB ([design-tmp.md](design-tmp.md#failure-handling)) | the file as before the refused request; a larger write keeps the requests before it, as after a short write ([design-files.md](design-files.md#open-files-and-offsets)) | none needed | `{error, enospc}`, and `ENOSPC` in a program writing through its session's grant or at the write-back of its shared mapping |
 | The crash dump exceeds the crash area | the dump writer's bound | the dump cut at the area's end, with its stored length and `ERX_DUMP_TRUNCATED` in the header | none needed | the inspector marks the dump truncated |
 | The console's driver has no free transmit buffer | `{error, empty}` from its pool | the unwritten bytes in the console service | the console service, once the driver reports room | output delayed, never reordered or dropped |

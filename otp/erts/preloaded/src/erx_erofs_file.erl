@@ -132,7 +132,7 @@ pread(Fd, Positions) ->
     on_open(Fd, fun(File) -> read_each(File, Positions, []) end).
 
 read_each(_, [], Results) ->
-    {ok, reverse(Results, [])};
+    {ok, lists:reverse(Results, [])};
 read_each(File, [{Offset, Size} | Positions], Results) when is_integer(Offset), is_integer(Size) ->
     case read_placed(File, Offset, Size) of
         {ok, Data} -> read_each(File, Positions, [Data | Results]);
@@ -287,7 +287,3 @@ allocate(Fd, _Offset, _Length) -> on_open(Fd, fun(_) -> {error, ebadf} end).
                list()) -> {error, enotsup}.
 sendfile(_Fd, _Socket, _Offset, _Bytes, _ChunkSize, _Headers, _Trailers, _Flags) ->
     {error, enotsup}.
-
-%% lists:reverse/2, which this module cannot call (lists is not preloaded).
-reverse([], Tail) -> Tail;
-reverse([Head | List], Tail) -> reverse(List, [Head | Tail]).

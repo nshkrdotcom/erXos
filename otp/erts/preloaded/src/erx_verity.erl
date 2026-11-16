@@ -64,16 +64,17 @@ closure (docs/plan.md, M11).
 -define(ANSWER_WAIT, 40000).
 
 %% An open image: its window, the window block that is the image's block 0, the image's
-%% size in blocks, and how its blocks are checked: unchecked, or against the tree's salt,
-%% its root hash and the window block where each level of the tree starts, the lowest
-%% first.
+%% size in blocks, and how its blocks are checked: unchecked, or against the tree's salt
+%% (kept as the SHA-256 state after it, made once at open and continued by every block's
+%% hash, since a state is a value), its root hash and the window block where each level
+%% of the tree starts, the lowest first.
 -record(window, {pid :: pid(),
                  base :: non_neg_integer(),
                  blocks :: non_neg_integer(),
                  tree :: unchecked | checking()}).
 
 %% How an open image's blocks are checked against its tree.
--type checking() :: #{salt := binary(), root_hash := <<_:256>>, starts := [non_neg_integer()]}.
+-type checking() :: #{salted := erx_bytes:sha256_state(), root_hash := <<_:256>>, starts := [non_neg_integer()]}.
 
 -doc "An open image: its window, which only this module reads through.".
 -opaque image() :: #window{}.
@@ -124,9 +125,10 @@ opened(Pid, WindowBlocks, #{image_offset := Offset, image_length := Length, tree
     case TreeLength =:= TreeBlocks * ?BLOCK andalso TreeOffset div ?BLOCK + TreeBlocks =< WindowBlocks of
         true ->
             Lengths = erx_verity_tree:levels(Blocks),
-            Starts = starts(reverse(Lengths, []), TreeOffset div ?BLOCK, []),
+            Starts = starts(lists:reverse(Lengths, []), TreeOffset div ?BLOCK, []),
             {ok, #window{pid = Pid, base = Offset div ?BLOCK, blocks = Blocks,
-                         tree = #{salt => Salt, root_hash => Root, starts => Starts}}};
+                         tree = #{salted => erx_bytes:sha256_update(erx_bytes:sha256_init(), Salt),
+                                  root_hash => Root, starts => Starts}}};
         false ->
             {error, eio}
     end;
@@ -171,7 +173,7 @@ path(#{starts := Starts}, First, Last) ->
     path(Starts, First, Last, []).
 
 path([], _First, _Last, Spans) ->
-    reverse(Spans, []);
+    lists:reverse(Spans, []);
 path([Start | Starts], First, Last, Spans) ->
     path(Starts, First div ?HASHES, Last div ?HASHES, [{Start, First, Last} | Spans]).
 
@@ -190,7 +192,7 @@ checked(Tree, Spans, Answers) ->
     end.
 
 whole([], Blocks) ->
-    {ok, reverse(Blocks, [])};
+    {ok, lists:reverse(Blocks, [])};
 whole([{ok, Block} | Answers], Blocks) when is_binary(Block), byte_size(Block) =:= ?BLOCK ->
     whole(Answers, [Block | Blocks]);
 whole(_, _) ->
@@ -210,14 +212,14 @@ levels([{_Base, First, Last} | Spans], Read, Levels) ->
 %% block holding one hash. It returns the last level's blocks, the data, when every block
 %% matched.
 -spec check(checking(), [level(), ...]) -> {ok, [binary()]} | {error, eio}.
-check(#{salt := Salt, root_hash := Root}, [_ | _] = Levels) ->
-    check(Salt, {0, [Root]}, Levels).
+check(#{salted := Salted, root_hash := Root}, [_ | _] = Levels) ->
+    check(Salted, {0, [Root]}, Levels).
 
-check(_Salt, {_First, Checked}, []) ->
+check(_Salted, {_First, Checked}, []) ->
     {ok, Checked};
-check(Salt, Parent, [Level | Levels]) ->
-    case matches(Salt, Parent, Level) of
-        true -> check(Salt, Level, Levels);
+check(Salted, Parent, [Level | Levels]) ->
+    case matches(Salted, Parent, Level) of
+        true -> check(Salted, Level, Levels);
         false -> {error, eio}
     end.
 
@@ -225,22 +227,22 @@ check(Salt, Parent, [Level | Levels]) ->
 %% level: block I's hash is hash I of the parent level, its parent blocks read from index
 %% ParentFirst, HASHES hashes in each (the root, at index 0, is the one hash). A block
 %% whose slot lies outside the parent blocks read does not match.
-matches(Salt, {ParentFirst, Parents}, {First, Blocks}) ->
+matches(Salted, {ParentFirst, Parents}, {First, Blocks}) ->
     Hashes = iolist_to_binary(Parents),
     SlotOffset = (First - ParentFirst * ?HASHES) * ?ERX_VERITY_HASH_SIZE,
     SlotOffset >= 0 andalso SlotOffset =< byte_size(Hashes)
-        andalso hashed(Salt, binary:part(Hashes, SlotOffset, byte_size(Hashes) - SlotOffset), Blocks).
+        andalso hashed(Salted, binary:part(Hashes, SlotOffset, byte_size(Hashes) - SlotOffset), Blocks).
 
 %% Whether each block hashes to the next hash of Hashes.
-hashed(_Salt, _Hashes, []) ->
+hashed(_Salted, _Hashes, []) ->
     true;
-hashed(Salt, <<Hash:?ERX_VERITY_HASH_SIZE/binary, Hashes/binary>>, [Block | Blocks]) ->
-    Hash =:= hash(Salt, Block) andalso hashed(Salt, Hashes, Blocks);
-hashed(_Salt, _Hashes, _Blocks) ->
+hashed(Salted, <<Hash:?ERX_VERITY_HASH_SIZE/binary, Hashes/binary>>, [Block | Blocks]) ->
+    Hash =:= hash(Salted, Block) andalso hashed(Salted, Hashes, Blocks);
+hashed(_Salted, _Hashes, _Blocks) ->
     false.
 
-hash(Salt, Block) ->
-    erx_bytes:sha256_final(erx_bytes:sha256_update(erx_bytes:sha256_update(erx_bytes:sha256_init(), Salt), Block)).
+hash(Salted, Block) ->
+    erx_bytes:sha256_final(erx_bytes:sha256_update(Salted, Block)).
 
 %% The window's answers to Requests, in order, or error once one is missing: the window
 %% ended or did not answer by the deadline. Each request is a gen_server call made by
@@ -260,7 +262,7 @@ call(Pid, Requests) ->
     Answers.
 
 answers(_, [], _, Answers) ->
-    {ok, reverse(Answers, [])};
+    {ok, lists:reverse(Answers, [])};
 answers(Monitor, [Tag | Tags], Deadline, Answers) ->
     receive
         {Tag, Answer} -> answers(Monitor, Tags, Deadline, [Answer | Answers]);
@@ -274,18 +276,16 @@ drop(Tags) ->
     _ = [receive {Tag, _} -> ok after 0 -> ok end || Tag <- Tags],
     ok.
 
-%% lists:seq/2, lists:split/2, lists:zip/2 and lists:reverse/2, which this module cannot
-%% call (lists is not preloaded): From to To in order onto a tail, a list's first N
-%% elements and the rest, two lists paired, and a list reversed onto a tail. As indexes/3
-%% makes no index of an empty range, split/3 takes no element for a count below one.
+%% lists:seq/2, lists:split/2 and lists:zip/2, which this module cannot call (lists is not
+%% preloaded; its reverse/2 is a BIF): From to To in order onto a tail, a list's first N
+%% elements and the rest, and two lists paired. As indexes/3 makes no index of an empty
+%% range, split/3 takes no element for a count below one.
 indexes(To, From, Indexes) when To < From -> Indexes;
 indexes(To, From, Indexes) -> indexes(To - 1, From, [To | Indexes]).
 
-split(N, List, Taken) when N =< 0 -> {reverse(Taken, []), List};
+split(N, List, Taken) when N =< 0 -> {lists:reverse(Taken, []), List};
 split(N, [Head | List], Taken) -> split(N - 1, List, [Head | Taken]).
 
 zip([A | As], [B | Bs]) -> [{A, B} | zip(As, Bs)];
 zip([], []) -> [].
 
-reverse([], Tail) -> Tail;
-reverse([Head | List], Tail) -> reverse(List, [Head | Tail]).
