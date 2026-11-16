@@ -12,6 +12,7 @@
 # text. log_write_text_max is the service's bound on one record's text, distinct from
 # and larger than the kernel ring's log_text_max (2112 bytes).
 service log 9
+  served_as message
   operation write 1
 limit log_write_max u32 16
 limit log_write_text_max u32 4096

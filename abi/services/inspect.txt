@@ -20,6 +20,7 @@
 # docs/todo-performance.md sets them. A word is 8 bytes, as manifest max_message_heap
 # and OTP's max_heap_size count it.
 service inspect 7
+  served_as message
   operation inspect 1
   operation entries 2
 limit inspect_reply_max u32 262144

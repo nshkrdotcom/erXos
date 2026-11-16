@@ -6,6 +6,7 @@
 # domain sends the system domain's caller what goes back to the browser. The
 # development manifest grants it to the system domain.
 service web 6
+  served_as message
   operation connect 1
   operation data 2
   operation close 3

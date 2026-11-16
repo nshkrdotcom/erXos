@@ -2565,7 +2565,9 @@ and sends it in the ready answer with any other facet the domain gets
 there. So these facets reach every incarnation and every session with
 its ready answer, before any installation, and end with it, or with the
 process behind them. For a service of an interface `abi/services` declares
-`served_as tree` (`files` and `line`) the process
+`served_as tree` (`files` and `line`; `windows` is left out because
+property 18 makes a configured domain, never the system domain, the server of
+every `windows` service) the process
 behind it is the supervisor of its tree's grants (`erx_fs_grants`), and
 the domain service asks it for an `erx_fs` grant bound to the grantee and
 ending with its domain pid, in place of a facet in front of it, as a

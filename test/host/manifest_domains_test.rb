@@ -875,7 +875,7 @@ class ManifestDomainsTest < Minitest::Test
   # granted with no parameter stated, could not satisfy.
   def test_an_apps_row_names_only_services_whose_parameters_have_defaults
     root = File.expand_path('../..', __dir__)
-    needy = Erx::ABI::Syntax.parse("service needy 99\n  parameter depth 1 u64 one range 1 2 checked_by windows_grant\n",
+    needy = Erx::ABI::Syntax.parse("service needy 99\n  served_as message\n  parameter depth 1 u64 one range 1 2 checked_by windows_grant\n",
                                    path: 'abi/services/needy.txt')
     sources = Erx::ABI::Sources.read(root: root)
     codec = Erx::ABI::Codec.new(Erx::ABI::Model.validate(

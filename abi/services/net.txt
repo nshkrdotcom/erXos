@@ -9,5 +9,7 @@
 # envelope (docs/design-domains.md, "Floors from a protocol";
 # docs/design-network-stack.md, "Message sizes").
 service net 3
+  served_as message
 service netadmin 4
+  served_as message
 limit net_max_frame_min u32 131072

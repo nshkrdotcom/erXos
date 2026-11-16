@@ -263,6 +263,7 @@ principal's data grant is rooted at its own directory
 
 ```text
 service log 9
+  served_as message
   operation write 1
 limit log_write_max u32 16
 limit log_write_text_max u32 4096

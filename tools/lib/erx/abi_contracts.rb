@@ -565,10 +565,10 @@ module Erx
       # Service interfaces have a namespace of their own, as their constants'
       # service_ prefix says, so an interface may share its name with a right
       # or a type (the inspect interface and the inspect right).
-      # How a service's grants are served, where not as a message facet: tree, an erx_fs
-      # grant of one tree (docs/design-abi.md, "Services, facets and their parameter
-      # schemas").
-      SERVED_AS = %w[tree].freeze
+      # How a service's grants are served, which every interface states: message, a facet
+      # in front of the service's process, or tree, an erx_fs grant of one tree
+      # (docs/design-abi.md, "Services, facets and their parameter schemas").
+      SERVED_AS = %w[message tree].freeze
 
       def services(declarations)
         seen_numbers = {}
@@ -602,7 +602,7 @@ module Erx
             when 'served_as'
               Model.arity(line, 2)
               line.fail!('duplicate served_as') if served_as
-              line.fail!('served_as must be tree') unless SERVED_AS.include?(words[0])
+              line.fail!("served_as must be #{SERVED_AS.join(' or ')}") unless SERVED_AS.include?(words[0])
               served_as = words[0]
             when 'parameter'
               key, id, kind, cardinality, *bound = words
@@ -624,6 +624,7 @@ module Erx
             end
           end
           declaration.fail!('liveness must name a declared operation') if liveness && !operations.key?(liveness)
+          declaration.fail!('service must state served_as') unless served_as
           Model.unique_values(operations, label: 'operation', line: declaration.line)
           Model.unique_values(parameters.transform_values { |value| value.fetch(:number) }, label: 'parameter', line: declaration.line)
           { name: name, number: number,

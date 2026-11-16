@@ -848,7 +848,7 @@ marked(#{}) -> none.
 %% domain, exported to it and ends with the domain pid (mint/5). A spec's facet and a
 %% message service's facet stand in front of the process the spec or the service
 %% named (erx_facet:start/3) and end with it too; their callback is erx_domain_facet,
-%% or the one system_facet/4 picks for the service. A files service's grant is an
+%% or the one system_facet/4 picks for the service. A tree service's grant is an
 %% erx_fs grant its erx_fs_grants supervisor starts, and ends with that supervisor. The answer
 %% goes to the domain pid, which hands it to the domain's agent for init (edit 65). Init
 %% waits for it, so every domain that reported is answered, with no facets too. Granted,
@@ -871,7 +871,7 @@ grant_facets(Id, Served, Granted, #{core := Core, exports := Exports} = State) -
 %% The facet of a service the system domain serves, for a domain of Principal: the
 %% inspect facet, whose scope erx_domain_core:inspect_scope/3 alone decides
 %% (docs/design-live.md, "The inspect service"), an erx_domain_facet in front of the
-%% service's process, or, for a files service, the grant its erx_fs_grants supervisor
+%% service's process, or, for a tree service, the grant its erx_fs_grants supervisor
 %% starts (mint/5).
 system_facet(inspect, {message, Behind, Limits}, Principal,
              #{inspect_policy := #{roots := Roots, development := Development}}) ->
@@ -882,25 +882,25 @@ system_facet(log, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_log_facet, Behind, Limits};
 system_facet(_Name, {message, Behind, Limits}, _Principal, _State) ->
     {facet, erx_domain_facet, Behind, Limits#{behind => Behind}};
-system_facet(machine, {files, Grants, Limits}, Principal, #{principals := #{system := System, names := Names}}) ->
+system_facet(machine, {tree, Grants, Limits}, Principal, #{principals := #{system := System, names := Names}}) ->
     %% docs/design-system.md, "A session's request": the grant's own argument is its
     %% grantee's principal, `system` for the system principal (root's template) and the
     %% name otherwise, which the tree's ctl handler passes to the coordinator, so the log
     %% line names whoever the grant was made for and no request names anyone.
-    {files, Grants, machine_principal(Principal, System, Names), Limits};
-system_facet(_Name, {files, Grants, Limits}, _Principal, _State) ->
-    {files, Grants, Limits}.
+    {tree, Grants, machine_principal(Principal, System, Names), Limits};
+system_facet(_Name, {tree, Grants, Limits}, _Principal, _State) ->
+    {tree, Grants, Limits}.
 
 machine_principal(System, System, _Names) -> system;
 machine_principal(Principal, _System, Names) -> maps:get(Principal, Names).
 
-%% How the system domain serves its service Name to a grantee: files, an erx_fs grant,
+%% How the system domain serves its service Name to a grantee: tree, an erx_fs grant,
 %% for a service of Trees, those of the interfaces abi/services declares served_as
 %% tree, whose clients speak 9P (docs/design-system.md, "Facets of the system domain's
 %% services"), and message, a facet in front of the service's process, for any other.
 served_kind(Name, Trees) ->
     case lists:member(Name, Trees) of
-        true -> files;
+        true -> tree;
         false -> message
     end.
 
@@ -913,10 +913,10 @@ keep_web_line(Id, Node, #{web_line := Line}, #{web_lines := Lines} = State) when
 keep_web_line(_Id, _Node, _Provides, State) ->
     State.
 
-mint(Id, DomainPid, Name, {files, Grants, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
-mint(Id, DomainPid, Name, {files, Grants, Args, Limits}, Exports) ->
-    mint_files(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end, Exports);
+mint(Id, DomainPid, Name, {tree, Grants, Limits}, Exports) ->
+    mint_tree(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Limits, Binding) end, Exports);
+mint(Id, DomainPid, Name, {tree, Grants, Args, Limits}, Exports) ->
+    mint_tree(Id, DomainPid, Name, fun(Binding) -> erx_fs_grants:grant(Grants, Args, Limits, Binding) end, Exports);
 mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
     case erx_facet:start(Callback, Grant#{grantee => Id, ends_with => [DomainPid, Behind]}, #{exports => Exports}) of
         {ok, Facet} ->
@@ -930,17 +930,17 @@ mint(Id, DomainPid, Name, {facet, Callback, Behind, Grant}, Exports) ->
             false
     end.
 
-%% A files service's grant serves the domain alone, in its envelope and with its names,
+%% A tree service's grant serves the domain alone, in its envelope and with its names,
 %% and ends with its domain pid; its supervisor's end ends it too. Grant starts it,
 %% with the grant's own argument where the service computed one at the mint
 %% (system_facet/4); a supervisor that ended while the service minted is a refusal.
-mint_files(Id, DomainPid, Name, Grant, Exports) ->
+mint_tree(Id, DomainPid, Name, Grant, Exports) ->
     Binding = #{client => Id, ends_with => DomainPid, exports => Exports},
     case try Grant(Binding) catch exit:Exit -> {error, {exit, Exit}} end of
         {ok, Pid} ->
             {true, Pid};
         {error, Reason} ->
-            logger:error("erx_domain: domain ~b's files grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
+            logger:error("erx_domain: domain ~b's tree grant ~ts did not start: ~0P", [Id, Name, Reason, 8]),
             false
     end.
 
@@ -949,7 +949,7 @@ mint_files(Id, DomainPid, Name, Grant, Exports) ->
 %% name, and none for a domain a request made: Behind is the process the service
 %% named for it with erx_facet:serve/2, which the system domain's services do as they
 %% start. For a message service Limits are the grant's limits that erx_facet applies,
-%% max_request and in_flight, checked as a spec's are (grant/1); for a files service they
+%% max_request and in_flight, checked as a spec's are (grant/1); for a tree service they
 %% are the row's, which erx_fs_grants checks as it starts the grant. A service with no
 %% living process, or a grant whose limits fail that check, is left out and logged, so
 %% the domain finds the name absent,
@@ -998,8 +998,8 @@ served_grant(message, Behind, Limits) ->
         {ok, {Behind, Checked}} -> {ok, {message, Behind, Checked}};
         invalid -> invalid
     end;
-served_grant(files, Grants, Limits) ->
-    {ok, {files, Grants, Limits}}.
+served_grant(tree, Grants, Limits) ->
+    {ok, {tree, Grants, Limits}}.
 
 %% Domain Id's create answered at its ready report; a session's start waits on for its
 %% namespace (answer_in_place/1).

@@ -37,7 +37,7 @@ class FacetNamesTest < Minitest::Test
                  "  period_ns 1000000000\n  max_heap_size 65536\n"
 
   # A small table: one interface citing one heading, one service of it and its facet.
-  def table(interface: "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n",
+  def table(interface: "# The seeded interface (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n  served_as message\n",
             manifest: "service seeded\n  server @domain.a\n  interface seeded\nfacet seeded\n  grantee system\n" \
                       "  service @service.seeded\n#{FACET_LIMITS}")
     [{ INTERFACE => interface, MANIFEST => manifest }, { DOC => "# Seeded\n\n## The `seeded` service\n" }]
@@ -106,8 +106,8 @@ class FacetNamesTest < Minitest::Test
   # An interface's name is no facet: only a manifest service grants one.
   def test_an_interface_no_service_instantiates_is_no_facet
     assert_equal [[MODULE, 1]], found("f() -> erx:cap(other).\n",
-                                      interface: "# (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n" \
-                                                 "service other 10\n")
+                                      interface: "# (#{DOC}, \"The `seeded` service\").\nservice seeded 9\n  served_as message\n" \
+                                                 "service other 10\n  served_as message\n")
   end
 
   def test_an_exempt_name_outside_its_listed_files_fails
@@ -125,8 +125,8 @@ class FacetNamesTest < Minitest::Test
   end
 
   def test_an_interface_without_a_design_section_fails
-    assert_equal [[INTERFACE, 2]], found('', interface: "# No citation.\nservice seeded 9\n")
-    assert_equal [[INTERFACE, 2]], found('', interface: "# (#{DOC}, \"Missing\").\nservice seeded 9\n")
+    assert_equal [[INTERFACE, 2]], found('', interface: "# No citation.\nservice seeded 9\n  served_as message\n")
+    assert_equal [[INTERFACE, 2]], found('', interface: "# (#{DOC}, \"Missing\").\nservice seeded 9\n  served_as message\n")
   end
 
   def test_an_exemption_no_use_names_fails
@@ -179,7 +179,7 @@ class FacetNamesTest < Minitest::Test
   def test_the_generated_table_refuses_a_manifest_violation
     files, = table
     Dir.mktmpdir do |root|
-      write(root, files.merge(INTERFACE => "service other 9\n"))
+      write(root, files.merge(INTERFACE => "service other 9\n  served_as message\n"))
       error = assert_raises(Erx::Error) { Erx::FacetNames.generation(root: root) }
       assert_match "service seeded's interface seeded", error.message
     end

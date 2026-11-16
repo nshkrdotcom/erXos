@@ -131,9 +131,9 @@ class ErxDomainTest < Minitest::Test
               from: 'end, maps:get(Grantee, Served, []))).',
               to: 'end, lists:append(maps:values(Served)))).',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_without_files_grant'),
-    # A files grant of a system domain's service bound to another domain than its
+    # A tree grant of a system domain's service bound to another domain than its
     # grantee: the grant exports itself to that domain, not to the session.
-    Fault.new(name: 'a files grant bound to another client', file: SERVICE,
+    Fault.new(name: 'a tree grant bound to another client', file: SERVICE,
               from: 'Binding = #{client => Id, ends_with => DomainPid, exports => Exports},',
               to: 'Binding = #{client => Id + 1, ends_with => DomainPid, exports => Exports},',
               tests: 'erx_domain_mints_srv_tests', caught_by: 'session_files_grant'),

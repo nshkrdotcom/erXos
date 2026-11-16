@@ -523,18 +523,20 @@ class AbiSchemaTest < Minitest::Test
   end
 
   def test_service_interface_numbers_are_unique
-    assert_raises(Erx::ABI::SchemaError) { schema("service first 1\nservice second 1\n") }
+    assert_raises(Erx::ABI::SchemaError) { schema("service first 1\n  served_as message\nservice second 1\n  served_as message\n") }
   end
 
-  # served_as tree marks an interface whose grants are erx_fs grants of one tree, which
-  # ?ERX_TREE_SERVICES lists by number for the domain service; an interface without it is
-  # served as a message facet. Seeds: a value outside the closed set, a missing or extra
-  # word, and the member stated twice.
-  def test_served_as_tree_is_listed_and_any_other_spelling_is_refused
-    parsed = schema("service plain 2\nservice carried 3\n  served_as tree\n")
-    assert_equal({ 'plain' => nil, 'carried' => 'tree' }, parsed.services.to_h { |service| [service.fetch(:name), service.fetch(:served_as)] })
+  # served_as says how the domain service serves an interface's grants: tree, as erx_fs
+  # grants of one tree (?ERX_TREE_SERVICES lists those by number), or message, as facets.
+  # It is mandatory, so no interface is served as a message by omission. Seeds: a service
+  # without it, a value outside the closed set, a missing or extra word, and the member
+  # stated twice.
+  def test_served_as_is_mandatory_and_any_other_spelling_is_refused
+    parsed = schema("service plain 2\n  served_as message\nservice carried 3\n  served_as tree\n")
+    assert_equal({ 'plain' => 'message', 'carried' => 'tree' }, parsed.services.to_h { |service| [service.fetch(:name), service.fetch(:served_as)] })
     assert_includes Erx::ABI::ErlangEmitter.header(parsed), "-define(ERX_TREE_SERVICES, [3]).\n"
-    ['  served_as message', '  served_as', '  served_as tree tree', "  served_as tree\n  served_as tree"].each do |member|
+    ['', '  served_as files', '  served_as', '  served_as tree tree', "  served_as tree\n  served_as tree",
+     "  served_as message\n  served_as tree"].each do |member|
       assert_raises(Erx::ABI::SchemaError, member) { schema("service carried 3\n#{member}\n") }
     end
   end
@@ -552,13 +554,13 @@ class AbiSchemaTest < Minitest::Test
   FACET_ROW = "enum mf_parameter_kind u32\n  value u64 1\nlayout erx_mf_facet wire_le 8 8\n  field queue u64 0\n"
 
   def test_service_parameters_are_tabled_and_a_set_or_a_limit_s_name_is_refused
-    declared = "service shown 3\n  parameter area 2 u64 one range 1 9 checked_by grant\n"
+    declared = "service shown 3\n  served_as message\n  parameter area 2 u64 one range 1 9 checked_by grant\n"
     header = Erx::ABI::CEmitter.header(schema(FACET_ROW + declared))
     assert_includes header, '{ ERX_SERVICE_SHOWN, 2, "area", ERX_MF_PARAMETER_U64, true, UINT64_C(1), UINT64_C(9) },'
     assert_includes header, '#define ERX_SERVICE_PARAMETERS_MAX 1'
     ['  parameter many 2 u64 set 4 range 1 9 checked_by grant',
      '  parameter queue 2 u64 optional range 1 9 checked_by grant'].each do |line|
-      assert_raises(Erx::ABI::SchemaError) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n#{line}\n")) }
+      assert_raises(Erx::ABI::SchemaError) { Erx::ABI::CEmitter.header(schema("#{FACET_ROW}service shown 3\n  served_as message\n#{line}\n")) }
     end
   end
 
