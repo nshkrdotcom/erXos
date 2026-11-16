@@ -117,6 +117,7 @@ enum mf_parameter_kind u32
   value principal 7
   value device 8
   value bytes 9
+  value member 10
 # A name that is an identifier, a domain's or a service's among them
 # (docs/design-system.md, "Identifiers"): 1 to this many bytes.
 limit identifier_max u32 63
@@ -549,6 +550,7 @@ reader manifest erx_manifest @manifest_bytes_max
     case principal facet_parameters[].index
     case device facet_parameters[].index
     case bytes facet_parameters[].bytes
+    case member facet_parameters[].scalar
   range facet_parameters[].scalar 0 1 when facet_parameters[].kind boolean
   index facet_parameters[].index domains when facet_parameters[].kind domain
   index facet_parameters[].index principals when facet_parameters[].kind principal

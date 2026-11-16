@@ -429,7 +429,8 @@ board's source does not hold and the build record lists:
   ABI file gives as its defaults. A service may be named in `services`
   only if its ABI file declares a default for every parameter its rows
   take: `abi/services/windows.txt` declares `windows_default` and
-  `windows_pixels_default`, and `files` and `net` declare no parameter.
+  `windows_pixels_default`, `abi/services/files.txt` gives `rights` the
+  default `rw`, and `net` declares no parameter.
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));

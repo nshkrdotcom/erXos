@@ -1704,10 +1704,12 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them. A service declaring a parameter that no
-      # checker here consumes is unusable: no facet of it is admitted, since nothing would
-      # check what it grants.
-      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze }.freeze
+      # clipboard as their declarations bound them; files_grant takes a files facet's
+      # rights, whose member kind alone bounds them to ro, rw and rx, and which the grant
+      # applies at run time. A service declaring a parameter that no checker here consumes
+      # is unusable: no facet of it is admitted, since nothing would check what it grants.
+      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
+                         'files_grant' => %w[rights].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within
@@ -1739,7 +1741,8 @@ module Erx
       end
 
       # One value of its declared kind: an integer within its range, yes or no for a
-      # boolean, or quoted bytes within their bound. A set and the reference kinds are
+      # boolean, quoted bytes within their bound, or the bare name of one of a member
+      # kind's members, which is the value. A set and the reference kinds are
       # refused while no service declares one, so nothing here guesses their spelling.
       def parameter_value(key, parameter, token, line)
         kind = parameter.fetch(:kind)
@@ -1762,6 +1765,10 @@ module Erx
           invalid("facet parameter #{key} is empty or over #{maximum} bytes", 2, 'facet.parameter') unless
             value.bytesize.between?(kind == 'bytes' ? 0 : 1, maximum)
           value
+        when 'member'
+          members = parameter.fetch(:members)
+          line.fail!("parameter #{key} is one of #{members.join(', ')}") if token.quoted || !members.include?(token.value)
+          token.value
         else
           unsupported("facet parameter #{key} is a #{kind} reference, which no service declares", 'facet.parameter')
         end
@@ -1776,6 +1783,7 @@ module Erx
         when 'u64' then row.merge('scalar' => value)
         when 'i64' then row.merge('scalar' => value & ((1 << 64) - 1))
         when 'boolean' then row.merge('scalar' => value ? 1 : 0)
+        when 'member' then row.merge('scalar' => parameter.fetch(:minimum) + parameter.fetch(:members).index(value))
         else row.merge('bytes' => value)
         end
       end

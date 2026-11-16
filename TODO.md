@@ -2078,6 +2078,24 @@ it; git history is the record of completed work.
   tree") says it waits for a record.
 * [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
   only by `erx_fs`'s one request per open file; give them a cap of their own.
+* [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
+  `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
+  C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
+  with a files facet stating `rights ro` (its limits carry `rights := ro`) and forged rows refused (scalar 0 and 4,
+  kind u64 under key 1), with seeds for an off-by-one bound and a dropped `- minimum`, and give
+  `tools/fuzz/manifest_seeds.rb` a files facet with `rights` so the fuzz target reaches the member case.
+* [Medium] `abi/services/files.txt`: the default of `rights` when a row states none, `rw`, is said in the file's
+  comment and applied in `erx_fs_grants:grant_options/1`; a `parameter` line has no way to declare a default, so
+  it is not one generated fact. Add `default MEMBER` to member parameters (checked a member, emitted as a macro),
+  and decide whether a security parameter's default should be `rw`, `ro` or none (a required parameter).
+* [Low] `tools/lib/erx/abi_contracts.rb` `services`: the `allowed` parameter kinds copy `mf_parameter_kind`'s
+  members, and the kind switches of `dom_boot_view.c`, `erx_domain_terms.c` and `tools/fuzz/manifest_fuzz.c` end
+  in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
+  drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
+  view but should be refused at the declaration.
+* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
+  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
+  needs an `rx` mount); the mount should take the facet's rights.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with

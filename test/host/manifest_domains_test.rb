@@ -541,6 +541,26 @@ class ManifestDomainsTest < Minitest::Test
     end
   end
 
+  # A files facet's rights, the files interface's member parameter (abi/services/files.txt):
+  # ro, rw or rx, each packed as its member's value; any other word, rwx among them, a
+  # quoted name or a number is refused.
+  def test_a_files_facet_s_rights_are_one_of_ro_rw_and_rx
+    floor = @codec.constant('files_max_frame_min')
+    granted = lambda do |line|
+      @source + service('f', '@domain.beta').sub('interface 1', 'interface files') +
+        facet('f', '@domain.alpha', '@service.f').sub('max_request 1', "max_request #{floor}") + line
+    end
+    member = @codec.member('mf_parameter_kind', 'member')
+    %w[ro rw rx].each do |rights|
+      view = @codec.open('manifest', admit(granted.call("  parameter rights #{rights}\n")).bytes)
+      assert_equal [[1, member, @codec.member('files_rights', rights)]],
+                   rows(view, 'facet_parameters').map { |row| row.values_at('key', 'kind', 'scalar') }
+    end
+    ['rwx', 'wr', '"ro"', '2'].each do |value|
+      assert_raises(Erx::ABI::SchemaError, value) { admit(granted.call("  parameter rights #{value}\n")) }
+    end
+  end
+
   # Property 16 for inspect: a grantee of an inspect facet, here a session template, and
   # its server, the system domain, each run with max_frame, max_message_heap and
   # funnel_depth at least the interface's floors, as the development manifest's
