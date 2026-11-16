@@ -108,12 +108,6 @@ module Erx
     def self.tool?(path) = File.file?(path) && File.executable?(path)
     private_class_method :toolchain_files
 
-    # Where another checkout keeps verified archives, derived from a cache
-    # directory such as <checkout>/build/third_party.
-    def self.archive_directory(cache)
-      File.join(File.dirname(File.expand_path(cache)), 'downloads')
-    end
-
     # The named steps of steps, in their order; a name steps lacks is refused.
     def self.subset(steps, names:)
       missing = names - steps.map(&:name)
@@ -228,24 +222,12 @@ module Erx
     # verified downloads, or is already here from `make fetch`.
     # The archive's own failures say how to get it; a stale tree's say what to remove.
     def obtain_source(id)
-      begin
-        local_archive(id)
-      rescue Error => e
-        raise Error, "#{e.message}; run `make fetch` or set ERX_SOURCE_CACHE to another checkout's build/third_party"
+      # Dependencies#fetch downloads a missing archive; with no cache setup must not.
+      unless @cache || File.file?(@dependencies.archive_path_of(id))
+        raise Error, "source #{id} is not downloaded; run `make fetch` or set ERX_SOURCE_CACHE " \
+                     "to another checkout's build/third_party"
       end
-      @dependencies.fetch(source_id: id)
-    end
-
-    # Dependencies#fetch would download a missing archive; setup must not.
-    def local_archive(id)
-      archive = @dependencies.archive_path_of(id)
-      if @cache && !File.file?(archive)
-        origin = File.join(self.class.archive_directory(@cache), File.basename(archive))
-        raise Error, "source not found in ERX_SOURCE_CACHE: #{origin}" unless File.file?(origin)
-
-        @dependencies.adopt(id, from: origin)
-      end
-      raise Error, "source #{id} is not downloaded" unless File.file?(archive)
+      @dependencies.fetch(cache: @cache, source_id: id)
     end
 
     # The LLVM tools the native builds need, for each of ERX_CLANG and ERX_LLD

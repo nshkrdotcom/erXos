@@ -9,11 +9,22 @@ require 'zlib'
 require 'socket'
 require_relative '../../tools/lib/erx/dependencies'
 
+# The real runner, which extracts archives, except that it refuses to run docker, which would contact a registry.
+class NoDockerRunner < Erx::Runner
+  def run(argv, **options)
+    raise Erx::Error, "docker must not run: #{argv.join(' ')}" if argv.first == 'docker'
+
+    super
+  end
+end
+
 class DependenciesTest < Minitest::Test
   def setup
     @directory = Dir.mktmpdir('erx-deps-')
-    @cache = File.join(@directory, 'cache')
-    Dir.mkdir(@cache)
+    # Another checkout's source cache, and the downloads directory beside it that holds the archives.
+    @cache = File.join(@directory, 'other/build/third_party')
+    @downloads = File.join(@directory, 'other/build/downloads')
+    FileUtils.mkdir_p([@cache, @downloads])
   end
 
   def teardown
@@ -161,7 +172,7 @@ class DependenciesTest < Minitest::Test
   end
 
   def prepare_cached_source(tar_program: 'tar', members: nil)
-    archive = File.join(@cache, 'source.tar.gz')
+    archive = File.join(@downloads, 'source.tar.gz')
     stream = StringIO.new(''.b)
     Gem::Package::TarWriter.new(stream) do |tar|
       tar.mkdir('source-1', 0o755)
@@ -172,10 +183,17 @@ class DependenciesTest < Minitest::Test
     entry = source.merge('directory' => 'source-1',
                          'sha256' => Digest::SHA256.file(archive).hexdigest)
     entry['members'] = members if members
+    keep_in_downloads(entry)
     lock = File.join(@directory, 'deps.lock')
     File.write(lock, JSON.generate('version' => 1, 'sources' => [entry]))
     runner = Erx::Runner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
     Erx::Dependencies.new(root: @directory, runner: runner, tar_program: tar_program)
+  end
+
+  # Files the archive in the downloads directory under the name Dependencies looks for.
+  def keep_in_downloads(entry)
+    FileUtils.cp(File.join(@downloads, 'source.tar.gz'),
+                 File.join(@downloads, "#{entry.fetch('id')}-#{entry.fetch('sha256')}.tar.gz"))
   end
 
   def extracted_file
@@ -214,7 +232,7 @@ class DependenciesTest < Minitest::Test
     FileUtils.mkdir_p(outside)
     FileUtils.mkdir_p(File.join(@directory, 'build'))
     name = "fixture-#{entry.fetch('sha256')}.tar.gz"
-    FileUtils.cp(File.join(@cache, 'source.tar.gz'), File.join(outside, name))
+    FileUtils.cp(File.join(@downloads, 'source.tar.gz'), File.join(outside, name))
     File.symlink(outside, File.join(@directory, 'build/downloads'))
     assert_raises(Erx::Error) { dependencies.archive_for('fixture') }
   end
@@ -233,6 +251,7 @@ class DependenciesTest < Minitest::Test
     prepare_cached_source
     entry = JSON.parse(File.read(File.join(@directory, 'deps.lock'))).fetch('sources').first
     sources = [entry, entry.merge('id' => 'other'), entry.merge('id' => 'bad', 'sha256' => '0' * 64)]
+    sources.drop(1).each { |pinned| keep_in_downloads(pinned) }
     File.write(File.join(@directory, 'deps.lock'), JSON.generate('version' => 1, 'sources' => sources))
     runner = Erx::Runner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
     [Erx::Dependencies.new(root: @directory, runner: runner), entry]
@@ -294,15 +313,35 @@ class DependenciesTest < Minitest::Test
 
   def test_bad_hash_publishes_neither_archive_nor_tree
     dependencies = prepare_cached_source
-    File.write(File.join(@cache, 'source.tar.gz'), 'bad')
+    File.write(Dir.glob(File.join(@downloads, 'fixture-*')).first, 'bad')
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
     assert_empty Dir.glob(File.join(@directory, 'build/downloads/*.tar.gz'))
   end
 
+  # An OCI image is not in a source cache: fetching every source from a cache
+  # fills the archives and leaves the image to its own fetch, never running docker. Naming the image with a cache is
+  # refused.
+  def test_a_cache_fills_the_archives_and_leaves_an_oci_image_unfetched
+    prepare_cached_source
+    entry = JSON.parse(File.read(File.join(@directory, 'deps.lock'))).fetch('sources').first
+    File.write(File.join(@directory, 'deps.lock'), JSON.generate('version' => 1, 'sources' => [image_source, entry]))
+    runner = NoDockerRunner.new(owner_root: @directory, log_dir: File.join(@directory, 'logs'))
+    dependencies = Erx::Dependencies.new(root: @directory, runner: runner)
+    dependencies.fetch(cache: @cache)
+    assert_equal 'safe', File.read(extracted_file)
+    assert_equal [image_source], dependencies.images
+    error = assert_raises(Erx::Error) { dependencies.fetch(cache: @cache, source_id: 'image') }
+    assert_includes error.message, 'without --cache'
+  end
+
+  def test_archive_directory_is_the_sibling_downloads_of_the_cache
+    assert_equal '/x/build/downloads', Erx::Dependencies.archive_directory('/x/build/third_party')
+  end
+
   def test_missing_cache_does_not_fall_back_to_network
     dependencies = prepare_cached_source
-    File.unlink(File.join(@cache, 'source.tar.gz'))
+    FileUtils.rm(Dir.glob(File.join(@downloads, 'fixture-*')))
     assert_raises(Erx::Error) { dependencies.fetch(cache: @cache) }
     refute File.exist?(File.join(@directory, 'build/third_party/fixture'))
   end

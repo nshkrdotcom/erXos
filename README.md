@@ -563,7 +563,11 @@ with its own log in `build/logs/`.
 It never downloads. `ERX_SOURCE_CACHE` names another checkout's
 `build/third_party`; the archives in the `downloads` directory beside it
 are copied only after their SHA-256 matches `deps.lock`. Without it, the
-sources must already be there from `make fetch`. It does not fetch
+sources must already be there from `make fetch`. `tools/erx fetch --cache DIR`
+does the same for every source at once, with DIR the other checkout's
+`build/third_party`: it fills each source the cache holds, names each it does
+not, and leaves an OCI image (the Docker cache holds those) to
+`tools/erx fetch --source ID`. Setup does not fetch
 `arm-registers`, `tla-tools`, `herdtools7` or the oracle image
 (`Erx::Setup::SKIPPED_SOURCES`): only `tools/erx sysreg refresh` reads
 the first, only `make check-tla` uses the second, only

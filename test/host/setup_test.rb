@@ -73,22 +73,6 @@ class SetupTest < Minitest::Test
   def test_tla_tools_is_not_a_step
     refute(NAMES.any? { |name| name.include?('tla') })
   end
-
-  def test_archive_directory_is_the_sibling_downloads_of_the_cache
-    assert_equal '/x/build/downloads', Erx::Setup.archive_directory('/x/build/third_party')
-  end
-
-  def test_adopt_refuses_bytes_that_do_not_match_the_pin
-    Dir.mktmpdir('erx-setup-') do |root|
-      FileUtils.copy_file(File.expand_path('../../deps.lock', __dir__), File.join(root, 'deps.lock'))
-      runner = Erx::Runner.new(owner_root: root, log_dir: File.join(root, 'build/logs'))
-      dependencies = Erx::Dependencies.new(root: root, runner: runner)
-      bogus = File.join(root, 'bogus.tar.gz')
-      File.binwrite(bogus, 'not the pinned bytes')
-      assert_raises(Erx::Error) { dependencies.adopt('musl', from: bogus) }
-      assert_empty Dir.glob(File.join(root, 'build/downloads/*.tar.gz'))
-    end
-  end
 end
 
 # The decisions of Setup that keep it off the network and keep it from trusting a
@@ -361,7 +345,7 @@ class SetupDecisionsTest < Minitest::Test
       cache = File.join(root, 'empty/build/third_party')
       FileUtils.mkdir_p(File.join(root, 'empty/build/downloads'))
       error = assert_raises(Erx::Error) { setup_for(root, runner, cache: cache).send(:obtain_source, 'musl') }
-      assert_match(/not found in ERX_SOURCE_CACHE/, error.message)
+      assert_match(/not found in source cache/, error.message)
       assert_empty runner.programs
       assert_empty Dir.glob(File.join(root, 'build/downloads/*'))
     end
@@ -390,19 +374,6 @@ class SetupDecisionsTest < Minitest::Test
       assert_equal "hello\n", File.read(File.join(root, 'build/third_party/libc-test/libc-test-63e36e9/hello.txt'))
       assert setup.send(:source_valid?, 'libc-test')
       refute_includes runner.programs, 'git'
-    end
-  end
-
-  def test_adopt_keeps_matching_bytes_and_leaves_an_existing_archive_alone
-    with_tree do |root, runner, sample, sha|
-      dependencies = Erx::Dependencies.new(root: root, runner: runner)
-      archive = dependencies.adopt('musl', from: sample)
-      assert_equal File.join(root, 'build/downloads', "musl-#{sha}.tar.gz"), archive
-      assert_equal sha, Digest::SHA256.file(archive).hexdigest
-      assert_equal [archive], Dir.glob(File.join(root, 'build/downloads/*'))
-      File.write(sample, 'other bytes')
-      assert_equal archive, dependencies.adopt('musl', from: sample)
-      assert_equal sha, Digest::SHA256.file(archive).hexdigest, 'an existing archive is not replaced'
     end
   end
 end
