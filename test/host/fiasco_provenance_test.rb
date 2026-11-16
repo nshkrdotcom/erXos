@@ -141,10 +141,14 @@ class FiascoProvenanceTest < Minitest::Test
                      'code' => [], 'configuration' => [config], 'metadata' => [],
                      'object_list' => [], 'objects' => [], 'tools' => ['fiasco/kernel/tool/generator'] }]
       end
+      inputs = { config => { 'mode' => 'text', 'sha256' => Digest::SHA256.hexdigest('CONFIG_FEATURE=y') } }
+      release = profiles.first(4).to_h { |relative, entry| [relative.sub('kernel/', 'kernel-release/'), entry] }
+      release.each_key { |relative| FileUtils.mkdir_p(File.dirname(File.join(root, 'build/fiasco', relative))) }
+      release.each_key { |relative| File.write(File.join(root, 'build/fiasco', relative), 'generated configuration') }
       profile = { 'version' => 1, 'recipes' => { 'fiasco/kernel/tool/generator' => Digest::SHA256.file(recipe).hexdigest },
-                  'profiles' => profiles, 'compile_dependencies' => {},
-                  'inputs' => { config => { 'mode' => 'text', 'sha256' => Digest::SHA256.hexdigest('CONFIG_FEATURE=y') } },
-                  'image' => { 'entry' => 'banner', 'qemu_command' => 'fixed command' } }
+                  Erx::BuildKind::DEVELOPMENT => { 'profiles' => profiles, 'compile_dependencies' => {}, 'inputs' => inputs,
+                                                   'image' => { 'entry' => 'banner', 'qemu_command' => 'fixed command' } },
+                  Erx::BuildKind::RELEASE => { 'profiles' => release, 'compile_dependencies' => {}, 'inputs' => inputs } }
       File.write(File.join(root, 'config/provenance/fiasco-generation.json'), JSON.generate(profile))
       auditor = Erx::FiascoProvenance.new(root: root, runner: nil)
       auditor.instance_variable_set(:@sources, {})
@@ -165,6 +169,60 @@ class FiascoProvenanceTest < Minitest::Test
       other.send(:load_generation_profiles)
       assert_raises(Erx::Error) { other.send(:fixed_generation, output) }
     end
+  end
+
+  # A release kernel reads its own section of the profile: the generated files
+  # of build/fiasco/kernel-release, which a development audit does not know.
+  def test_each_build_kind_reads_its_own_section_of_the_profile
+    generation_fixture do |root, _auditor, _recipe|
+      output = File.join(root, 'build/fiasco/kernel-release/header1.h')
+      release = Erx::FiascoProvenance.new(root: root, runner: nil, kind: Erx::BuildKind::RELEASE)
+      release.instance_variable_set(:@sources, {})
+      release.send(:load_generation_profiles)
+      assert_equal 'configuration', release.send(:fixed_generation, output).fetch('role')
+      development = Erx::FiascoProvenance.new(root: root, runner: nil)
+      development.send(:load_generation_profiles)
+      assert_nil development.send(:fixed_generation, output)
+    end
+  end
+
+  # A release kernel is audited alone, from its own directory; a development
+  # build's audit reads its kernel and the users its image packs.
+  def test_a_release_audit_reads_only_the_release_kernel
+    Dir.mktmpdir do |temporary|
+      root = File.realpath(temporary)
+      release = Erx::FiascoProvenance.new(root: root, runner: nil, kind: Erx::BuildKind::RELEASE).executable_maps
+      assert_equal({ 'kernel' => %w[fiasco fiasco.map].map { |name| File.join(root, 'build/fiasco/kernel-release', name) } }, release)
+      development = Erx::FiascoProvenance.new(root: root, runner: nil).executable_maps
+      assert_equal %w[kernel bootstrap sigma0], development.keys
+      assert_equal File.join(root, 'build/fiasco/kernel/fiasco'), development.fetch('kernel').first
+    end
+  end
+
+  # The seeded fault the release check exists for: jdb_object.cpp linked into
+  # a release kernel, under the license its row in fiasco/kernel/ORIGIN.md
+  # records, is refused by name; permissive terms, a choice with a permissive
+  # branch, an exception to a permissive license and GCC's own headers pass.
+  def test_a_release_kernel_refuses_each_source_a_release_may_not_carry
+    repository = File.expand_path('../..', __dir__)
+    license = Erx::Origin.new(root: File.join(repository, 'fiasco/kernel')).imported_file('src/kern/jdb_object.cpp').fetch('license')
+    jdb = 'build/fiasco/inputs/fiasco/kernel/src/kern/jdb_object.cpp'
+    gcc = '/toolchain/include/stdarg.h'
+    sources = [{ 'path' => jdb, 'license' => license },
+               { 'path' => 'kip.cpp', 'license' => 'MIT' },
+               { 'path' => 'fdt.c', 'license' => '(GPL-2.0-or-later OR BSD-2-Clause)' },
+               { 'path' => 'stddef.h', 'license' => 'Apache-2.0 WITH LLVM-exception' },
+               { 'path' => gcc, 'license' => Erx::FiascoProvenance::GCC_LICENSE },
+               { 'path' => 'build/fiasco/kernel-release/auto/main.cc' }]
+    assert_equal [[jdb, 'GPL-2.0-only']], Erx::FiascoProvenance.non_permissive(sources, toolchain: [gcc])
+    assert_equal [[gcc, Erx::FiascoProvenance::GCC_LICENSE]], Erx::FiascoProvenance.non_permissive(sources.drop(1), toolchain: [])
+
+    auditor = Erx::FiascoProvenance.new(root: repository, runner: nil, kind: Erx::BuildKind::RELEASE)
+    report = { 'state' => 'complete', 'unresolved' => [], 'sources' => sources.first(1) }
+    error = assert_raises(Erx::Error) { auditor.check_permissive(report) }
+    assert_includes error.message, "#{jdb} (GPL-2.0-only)"
+    blocked = report.merge('state' => 'blocked', 'unresolved' => ['source has no origin: fixture.c'])
+    assert_includes assert_raises(Erx::Error) { auditor.check_permissive(blocked) }.message, 'fixture.c'
   end
 
   def test_stale_generator_or_missing_profile_is_refused
@@ -189,7 +247,7 @@ class FiascoProvenanceTest < Minitest::Test
       File.write(File.join(root, config), '${PROJECT_ROOT}/path')
       path = File.join(root, 'config/provenance/fiasco-generation.json')
       profile = JSON.parse(File.read(path))
-      profile.fetch('inputs').fetch(config)['sha256'] = Digest::SHA256.hexdigest('${PROJECT_ROOT}/path')
+      profile.fetch(Erx::BuildKind::DEVELOPMENT).fetch('inputs').fetch(config)['sha256'] = Digest::SHA256.hexdigest('${PROJECT_ROOT}/path')
       File.write(path, JSON.generate(profile))
       assert_raises(Erx::Error) { auditor.send(:load_generation_profiles) }
     end
@@ -234,9 +292,7 @@ class FiascoProvenanceTest < Minitest::Test
     Dir.mktmpdir do |root|
       root = File.realpath(root)
       build = File.join(root, 'build/fiasco')
-      Erx::FiascoProvenance::MAPS.each_value do |artifact, map|
-        artifact_path = File.join(build, artifact)
-        map_path = File.join(build, map)
+      Erx::FiascoProvenance.new(root: root, runner: nil).executable_maps.each_value do |artifact_path, map_path|
         FileUtils.mkdir_p(File.dirname(map_path))
         File.binwrite(artifact_path, 'first artifact')
         File.binwrite(File.join(File.dirname(map_path), 'root.o'), 'object')

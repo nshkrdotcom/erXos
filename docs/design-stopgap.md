@@ -246,7 +246,12 @@ instead wait on the console with interrupts off. `FiascoConfig` checks the resol
 leaves unset: every kernel needs `CONFIG_FPU`, `CONFIG_PERFORMANCE`, `CONFIG_PERF_CNT_USER`
 (with `CONFIG_PERF_CNT`, which only JDB turns on by default) and `CONFIG_SYNC_CLOCK`, and none
 has `CONFIG_LAZY_FPU`, `CONFIG_ARM_SVE` or `CONFIG_CPU_VIRT`; a release kernel's has neither
-`CONFIG_JDB` nor `CONFIG_INPUT`. The kernel's own
+`CONFIG_JDB` nor `CONFIG_INPUT`. A release kernel links only sources under permissive terms:
+its build runs the link audit (`FiascoProvenance`, over the release section of
+`config/provenance/fiasco-generation.json`) over the kernel alone and fails naming each
+source whose license, as its import record gives it, is neither permissive
+(`LicenseExpression.permissive?`) nor GCC's on the cross compiler's `stdarg.h`, `stdbool.h`
+and `stddef.h`; so `jdb_object.cpp` (GPL-2.0-only) is built only with `CONFIG_JDB`. The kernel's own
 changes are `erx_handoff.cpp`: it accepts the record, refusing a boot value and slot that are not
 one of the machine page's pairs, prints the banner (`development build: trusted code only`, the
 build identifier, the index hash, then `erx: boot value <unknown|normal|trial> slot <none|a|b>`,

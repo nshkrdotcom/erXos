@@ -27,6 +27,16 @@ class FiascoTest < Minitest::Test
       nil
     end
 
+    # The release kernel's license check is the link audit's, which
+    # fiasco_provenance_test.rb covers; here it accepts every kernel.
+    AcceptingAudit = Data.define do
+      def capture_construction = nil
+      def audit = {}
+      def check_permissive(_report) = nil
+    end
+
+    def provenance_auditor(kind:) = AcceptingAudit.new
+
     # The cores' archive has its own tests (core_archive_test.rb); here it
     # is a fixed result whose paths the kernel make must receive.
     def build_boot_cores

@@ -14,14 +14,17 @@ require_relative 'build_inputs'
 require_relative 'core_archive'
 require_relative 'cross_toolchain'
 require_relative 'host_path'
+require_relative 'build_kind'
+require_relative 'license_expression'
 
 module Erx
   # Audits the inherited build's recorded evidence. This is an evidence report,
   # missing source records prevent a successful build record.
   class FiascoProvenance
     PARTS = %w[kernel mk l4re-core bootstrap libfdt drivers-frst].freeze
-    MAPS = {
-      'kernel' => ['kernel/fiasco', 'kernel/fiasco.map'],
+    # The executables a development build's image packs beside its kernel, and
+    # their link maps, under build/fiasco. A release kernel is audited alone.
+    USER_MAPS = {
       'bootstrap' => ['users/pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain/bootstrap.elf',
                       'users/pkg/bootstrap/server/src/OBJ-arm64_armv8a-nofpu-plain/bootstrap.elf.map'],
       'sigma0' => ['users/pkg/l4re-core/sigma0/server/src/OBJ-arm64_armv8a-std-l4f/sigma0',
@@ -33,15 +36,46 @@ module Erx
     ERXOS_NOTICE = Attribution::ERXOS_NOTICE
     ERXOS_HEADER_LINES = 8
 
+    # The reviewed generated files of each build kind's link closure, in one
+    # file: the recipes they are made from, which both kinds share, and a
+    # section per kind (BuildKind) with the keys and the number of generated
+    # files named here. Only a development build's fixes an image's construction.
+    GENERATION_PROFILE = 'config/provenance/fiasco-generation.json'
+    GENERATION_SECTIONS = {
+      BuildKind::DEVELOPMENT => { 'keys' => %w[compile_dependencies image inputs profiles], 'profiles' => 8 }.freeze,
+      BuildKind::RELEASE => { 'keys' => %w[compile_dependencies inputs profiles], 'profiles' => 4 }.freeze
+    }.freeze
+
+    # The license terms a release kernel may carry (docs/design.md, the
+    # dependency table): an expression LicenseExpression.permissive? accepts, or
+    # GCC's on the cross gcc's headers the external registry records
+    # (gcc_registry, GCC_HEADERS).
+    def self.non_permissive(sources, toolchain:)
+      sources.filter_map do |source|
+        license = source['license']
+        # A record without a license is derived (a generated file, whose sources
+        # are recorded beside it) or unresolved, which blocks the audit.
+        next if license.nil? || LicenseExpression.permissive?(license)
+        next if license == GCC_LICENSE && toolchain.include?(source.fetch('path'))
+
+        [source.fetch('path'), license]
+      end
+    end
+
     # compiler, when the build compiled the C17 cores, is the clang that
     # did; the audit records its identity and that of its llvm-ar. cross is
     # the cross gcc and binutils (CrossToolchain) the audit runs and records,
     # the build's own when Fiasco passes it, else CrossToolchain.find's when
     # first needed; their ar reads the archives unless archive_program names
     # another.
-    def initialize(root:, runner:, external: [], archive_program: nil, compiler: nil, cross: nil)
+    # kind is the build kind (BuildKind) whose kernel the audit reads, in
+    # Fiasco.kernel_directory, with that kind's generation profile.
+    def initialize(root:, runner:, kind: BuildKind::DEVELOPMENT, external: [], archive_program: nil, compiler: nil, cross: nil)
+      require_relative 'fiasco'
       @root = File.realpath(root)
       @build = File.join(@root, 'build/fiasco')
+      @kind = BuildKind.fetch(kind)
+      @kernel = Fiasco.kernel_directory(root: @root, kind: @kind)
       @runner = runner
       @compiler = compiler
       @cross = cross
@@ -65,6 +99,15 @@ module Erx
          .group_by { |path| File.basename(path) }
     end
 
+    # Each executable the audit reads, by name: its artifact and link map. The
+    # kernel is the build kind's; a development build adds its image's users.
+    def executable_maps
+      kernel = { 'kernel' => [File.join(@kernel, 'fiasco'), File.join(@kernel, 'fiasco.map')] }
+      return kernel unless BuildKind.development?(@kind)
+
+      kernel.merge(USER_MAPS.transform_values { |paths| paths.map { |path| File.join(@build, path) } })
+    end
+
     def audit
       @audit_complete = false
       @checked_catalog = nil
@@ -81,8 +124,8 @@ module Erx
       load_generation_profiles
       archive_tool = tool_identity(@archive_requested || cross_toolchain.program('ar'), role: 'archive')
       @archive_program = archive_tool.fetch('path')
-      executables = MAPS.map do |name, (artifact, map)|
-        audit_executable(name, File.join(@build, artifact), File.join(@build, map))
+      executables = executable_maps.map do |name, (artifact, map)|
+        audit_executable(name, artifact, map)
       end
       tools = [archive_tool]
       image = nil
@@ -96,7 +139,7 @@ module Erx
         programs = tools.to_h { |tool| [tool.fetch('program'), tool.fetch('path')] }
         @image_objcopy = programs.fetch(cross_toolchain.program('objcopy'))
         @image_perl = programs.fetch('perl')
-        image = audit_image(executables)
+        image = audit_image(executables) if BuildKind.development?(@kind)
         @bytes.each do |path, snapshot|
           unless BoundedFile.read(path, maximum: PackProvenance::MAX_METADATA) == snapshot
             raise Error, "Fiasco audit input changed: #{label(path)}"
@@ -118,11 +161,25 @@ module Erx
       raise Error, "invalid Fiasco build records: #{error.message}"
     end
 
+    # Refuses a kernel whose audit report is incomplete, or which links a
+    # source under terms a release may not carry (non_permissive), naming
+    # each such source and its license.
+    def check_permissive(report)
+      unless report.fetch('state') == 'complete'
+        raise Error, "the kernel's link audit is incomplete: #{report.fetch('unresolved').first(3).join('; ')}"
+      end
+      refused = self.class.non_permissive(report.fetch('sources'), toolchain: @external.keys.map { |path| label(path) })
+      return if refused.empty?
+
+      raise Error, 'the kernel links sources a release may not carry: ' +
+                   refused.map { |path, license| "#{path} (#{license})" }.join(', ')
+    end
+
     def capture_construction
       require_relative 'fiasco'
       load_build_inputs
       environment = command_environment
-      kernel = File.join(@build, 'kernel')
+      kernel = @kernel
       emit = lambda do |directory, output, variable, arguments|
         @runner.run(['gmake', '-C', directory, *arguments, "CROSS_COMPILE=#{cross_toolchain.prefix}", *Fiasco.host_variables,
                      '--eval=.PHONY: erx-provenance',
@@ -134,6 +191,8 @@ module Erx
       emit.call(kernel, '.erx-bootstrap-inputs', 'OBJ_BOOTSTRAP',
                 ['-f', File.join(source, 'src/Makefile.sub2'),
                  "srcdir=#{source}/src", "objbase=#{kernel}"])
+      return unless BuildKind.development?(@kind)
+
       emit.call(File.join(@build, 'users/pkg/l4re-core/minimal_l4re/OBJ-arm64_armv8a-std-l4f'),
                 '.erx-archive-inputs', 'OBJS_libc_minimal_l4re.a', [])
     end
@@ -312,15 +371,24 @@ module Erx
     end
 
     def load_generation_profiles
-      @generation_profile = File.join(@root, 'config/provenance/fiasco-generation.json')
-      @generation = JsonInput.parse(read(@generation_profile), max_bytes: 1024 * 1024, label: 'Fiasco generation profile')
-      unless @generation.is_a?(Hash) && @generation.keys.sort == %w[compile_dependencies image inputs profiles recipes version] && @generation['version'] == 1 &&
-             @generation['profiles'].is_a?(Hash) && @generation['profiles'].size == 8 && @generation['recipes'].is_a?(Hash) &&
-             @generation['recipes'].size.between?(1, 8192) && @generation['compile_dependencies'].is_a?(Hash) &&
+      @generation_profile = File.join(@root, GENERATION_PROFILE)
+      profile = JsonInput.parse(read(@generation_profile), max_bytes: 1024 * 1024, label: 'Fiasco generation profile')
+      shape = GENERATION_SECTIONS.fetch(@kind)
+      section = profile.is_a?(Hash) && profile[@kind]
+      unless profile.is_a?(Hash) && profile.keys.sort == (%w[recipes version] + GENERATION_SECTIONS.keys).sort && profile['version'] == 1 &&
+             profile['recipes'].is_a?(Hash) && profile['recipes'].size.between?(1, 8192) &&
+             section.is_a?(Hash) && section.keys.sort == shape.fetch('keys')
+        raise Error, 'invalid fixed Fiasco generation profile'
+      end
+      # This kind's view: its section and the shared recipes.
+      @generation = section.merge('recipes' => profile.fetch('recipes'))
+      unless @generation['profiles'].is_a?(Hash) && @generation['profiles'].size == shape.fetch('profiles') &&
+             @generation['compile_dependencies'].is_a?(Hash) &&
              @generation['compile_dependencies'].size <= 64 && @generation['inputs'].is_a?(Hash) && @generation['inputs'].size.between?(1, 8192) &&
-             @generation['image'].is_a?(Hash) && @generation['image'].keys.sort == %w[entry qemu_command] && @generation['image']['entry'] == 'banner' &&
-             @generation['image']['qemu_command'].is_a?(String) && @generation['image']['qemu_command'].ascii_only? &&
-             !@generation['image']['qemu_command'].match?(/[\x00-\x1f\x7f]/)
+             (!@generation.key?('image') ||
+              (@generation['image'].is_a?(Hash) && @generation['image'].keys.sort == %w[entry qemu_command] && @generation['image']['entry'] == 'banner' &&
+               @generation['image']['qemu_command'].is_a?(String) && @generation['image']['qemu_command'].ascii_only? &&
+               !@generation['image']['qemu_command'].match?(/[\x00-\x1f\x7f]/)))
         raise Error, 'invalid fixed Fiasco generation profile'
       end
       @generation.fetch('compile_dependencies').each do |object, dependency|
@@ -333,7 +401,9 @@ module Erx
       @generation.fetch('recipes').each do |relative, expected|
         path = project_input(relative)
         raise Error, "stale Fiasco generation recipe: #{relative}" unless digest(path) == expected
-        if relative.start_with?('fiasco/') && !relative.start_with?('fiasco/kernel/')
+        # The users build stages its sources in build/fiasco/source; a release
+        # kernel is built alone, from the kernel part, and stages none.
+        if BuildKind.development?(@kind) && relative.start_with?('fiasco/') && !relative.start_with?('fiasco/kernel/')
           part, suffix = relative.delete_prefix('fiasco/').split('/', 2)
           staged = part == 'mk' ? File.join(@build, 'source', suffix) : File.join(@build, 'source/pkg', part, suffix)
           raise Error, "stale staged Fiasco recipe: #{relative}" unless digest(staged) == expected
@@ -560,7 +630,7 @@ module Erx
                                               'status' => item.fetch('status'), 'notices' => item.fetch('notices'))
       elsif (captured = erxos_source(path))
         attribute_erxos(path, captured: captured)
-      elsif path.start_with?(File.join(@build, 'kernel/auto/'))
+      elsif path.start_with?(File.join(@kernel, 'auto/'))
         attribute_kernel_generated(path)
       elsif fixed_generation(path)
         # The fixed profile records input-code ancestry without inventing a
@@ -641,14 +711,14 @@ module Erx
     end
 
     def attribute_kernel_generated(path)
-      relative = path.delete_prefix(File.join(@build, 'kernel/') )
-      graph = File.join(@build, 'kernel/.Modules.deps')
+      relative = path.delete_prefix(@kernel + '/')
+      graph = File.join(@kernel, '.Modules.deps')
       lines = read(graph).lines
       output = module_rule(lines, target: relative)
       stamp = output && output.split(':', 2).last.split.first
       rule = stamp && module_rule(lines, target: stamp)
       names = rule && rule.split(':', 2).last.split
-      vpath = File.join(@build, 'kernel/.erx-vpath')
+      vpath = File.join(@kernel, '.erx-vpath')
       directories = File.file?(vpath) ? read(vpath).split : []
       source_root = @inputs ? File.join(@inputs.part('kernel'), 'src') : File.join(@root, 'fiasco/kernel/src')
       unless directories.all? { |directory| directory.match?(/\A[\w\/-]+\z/) && !directory.split('/').include?('..') && !directory.start_with?('/') }
