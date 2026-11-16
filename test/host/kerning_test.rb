@@ -38,6 +38,8 @@ class KerningTest < Minitest::Test
   BODY_TEXTS = ['AV', 'To', 'Ty', '",'].freeze
   BODY_WIDTHS = [17, 15, 15, 9].freeze
   HALF = Rational(1, 2)
+  # The LVGL fonts here are compiled, not kept, so their license line is a stand-in.
+  NOTICE = Erx::Glyphs::FontNotice.new(license: 'OFL-1.1', line: 'test').freeze
   # The line-length check's lines: the first 400 ASCII lines of 8 to 70
   # characters ("Whole pixels and the pen").
   LINES = 400
@@ -184,7 +186,7 @@ class KerningTest < Minitest::Test
     body = role('body')
     first, second = indices(body, 'AV')
     refute_nil kern(body, first, second), 'AV has no pair'
-    assert_equal 0, body.subfont.glyphs.fetch(indices(body, "­").first).width, 'the soft hyphen is drawn'
+    assert_equal 0, body.subfont.glyphs.fetch(indices(body, "\u00AD").first).width, 'the soft hyphen is drawn'
     source = lvgl_font(body)
     assert_equal subfont_view(body, LVGL_TEXT), lvgl_view(source, LVGL_TEXT)
     seeded = source.sub(".kern_scale = #{Erx::Glyphs::LvglFont::KERN_SCALE},", '.kern_scale = 16,')
@@ -241,7 +243,7 @@ class KerningTest < Minitest::Test
   def kern(entry, first, second) = entry.subfont.pairs.find { |a, b, _| [a, b] == [first, second] }&.last
 
   def lvgl_font(entry) = Erx::Glyphs::LvglFont.c_source(entry.subfont, role: entry.role, ranges: entry.ranges,
-                                                         sources: ['test'])
+                                                         sources: ['test'], notice: NOTICE)
 
   # What the probe should print for each character of TEXT, from the
   # subfont: the advance kerned by the next character, the ink's box, its
