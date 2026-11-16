@@ -1622,15 +1622,20 @@ crash record rather than in the harness's kill: the deadline counts from QEMU's 
 
 ### The end path
 
-A root fault, the root's own stop and `erx_machine_end` reach it on the service, a missed pet on the watchdog. It is best effort and takes no lock.
+Every end of the machine is `erx_fiasco_end` with a named cause (`liberx/backend/fiasco/end.c`), and the machine's end itself is
+private to that file, so nothing ends the machine without one. A root fault, the root's own stop and `erx_machine_end` reach it on
+the service, a missed pet on the watchdog, and a refusal, of the boot or of a kernel or service step the root cannot go on without,
+on whichever root thread met it. A task holds no platform control, so a task's reaper that is refused sleeps instead. A test
+root's own power-off, when its test passes or fails, is a requested one, made on its own thread once no task is left to log
+through the service. It is best effort and takes no lock.
 The service answers `erx_machine_end` for the root task alone and refuses it from any other task with `ERX_ENOTSUP`, as it refuses
 `erx_log_take`, since on erXos's kernel only the root resource carries the `POWER` the call needs
 ([design-kernel.md](design-kernel.md#kernel-calls), K31).
 
 1. **One caller.** An atomic exchange of the `ending` word; the loser sleeps forever.
-2. **The log.** On the service, which alone writes the log ring, lines the log service has not taken go out through `l4_vcon_write`; lines it has taken and the console has not yet
-   written are not among them ([design-log.md](design-log.md#the-emergency-path)). On the watchdog the service may be mid-write, so the
-   ring is skipped.
+2. **The log.** For an end the service takes, since the service alone writes the log ring, lines the log service has not taken go out through `l4_vcon_write`; lines it has taken and the console has not yet
+   written are not among them ([design-log.md](design-log.md#the-emergency-path)). On the watchdog, and for a refusal, which may come on
+   any thread, the service may be mid-write, so the ring is skipped.
 3. **The record.** After a fault or missed pet, the crash frame that [design-kernel.md](design-kernel.md) defines and
    `tools/lib/erx/crash_frame.rb` reads, through `l4_vcon_write`. No thread is stopped first.
 4. **The end.** A last line through `l4_vcon_write`, `erx: end off` for `ERX_END_OFF` and `erx: end reset` otherwise, as erXos's
@@ -1639,11 +1644,12 @@ The service answers `erx_machine_end` for the root task alone and refuses it fro
    (`platform_control_object.cpp:88`). Under `-no-reboot` this ends QEMU. If the call returns, the thread sleeps until the harness's
    deadline.
 
-Which end each cause takes is one pure function, `erx_fiasco_end_how` (`liberx/backend/fiasco/end_how.c`), and the host tests
-hold it to this: `erx_machine_end` ends as it asks, the root's own stop with `ERX_END_OFF`, and a root fault and a missed pet,
-which nobody asked for, with `ERX_END_RESET`, so that an update's trial boot that faults or hangs falls back to its other
-slot ([design-system.md](design-system.md#boot)). This is `erx.panic=reset` on every build: the stopgap has no `halt`, so a
-fault or hang that repeats on every boot repeats the reset.
+Which end each cause takes, and whether it drains the log, are pure functions over the closed set of causes, `erx_fiasco_end_how`
+and `erx_fiasco_end_drains_log` (`liberx/backend/fiasco/end_how.c`), and the host tests hold them to this: only a requested
+power-off ends with `ERX_END_OFF`; `erx_machine_end` with `ERX_END_RESET` and every end nobody ordered, the root's own stop
+(ERTS's `halt` on a boot that fails), a root fault, a missed pet and a refusal, end with `ERX_END_RESET`, so that an update's
+trial boot that fails, faults or hangs falls back to its other slot ([design-system.md](design-system.md#boot)). This is `erx.panic=reset` on every build: the stopgap has no `halt`, so a
+failure, fault or hang that repeats on every boot repeats the reset.
 
 ### Device records
 

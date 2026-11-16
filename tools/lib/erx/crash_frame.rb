@@ -20,6 +20,9 @@ module Erx
     CODEC = ABI::Generated::CODEC
 
     BEGIN_MARKER = CODEC.fixed_bytes('crash_frame_begin').b.freeze
+    # The end path's last line after the frame of an end nobody asked for, a root fault
+    # or a missed pet: those reset the machine (docs/design-stopgap.md, "The end path").
+    RESET_LINE = /erx: end reset\r*\n\z/n
     END_MARKER = CODEC.fixed_bytes('crash_frame_end').b.freeze
     LINE_CHARS = CODEC.constant('crash_frame_line')
     LINE_BYTES = LINE_CHARS / 4 * 3

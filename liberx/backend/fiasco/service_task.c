@@ -536,7 +536,7 @@ task_delete(uint64_t cap)
 
 	if (task_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, cap))) {
 		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
 }
 

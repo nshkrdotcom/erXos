@@ -267,5 +267,5 @@ root_refuse(const char *reason)
 	root_append(line, &used, reason);
 	root_append(line, &used, "\n");
 	erx_fiasco_console_write(line, used);
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 }

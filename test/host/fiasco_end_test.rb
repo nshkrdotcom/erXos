@@ -15,14 +15,21 @@ class FiascoEndTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   CORE = 'liberx/backend/fiasco/end_how.c'
   DRIVER = 'test/fixtures/fiasco_end_driver.c'
-  # Each seed moves one cause's case label to another cause's end: name => [the cause,
-  # the cause whose end it joins, the driver's diagnostic]. The first two are the old
-  # power-off on a missed pet and on a root fault.
+  # Each seed moves one cause's case label to another cause's group in one of the two
+  # switches: name => [the function, the cause, the cause whose group it joins, the
+  # driver's diagnostic]. The first four are the old power-off on a missed pet, a root
+  # fault, the root's stop and a refusal; the last drains the log off the service.
   MUTANTS = {
-    'a missed pet powers off' => ['PET', 'STOP', 'a missed pet ends off, not reset'],
-    'a root fault powers off' => ['FAULT', 'STOP', 'a root fault ends off, not reset'],
-    'a requested power-off resets' => ['ASKED_OFF', 'PET', 'a requested power-off ends reset, not off']
+    'a missed pet powers off' => [:how, 'PET', 'ASKED_OFF', 'a missed pet ends off, not reset'],
+    'a root fault powers off' => [:how, 'FAULT', 'ASKED_OFF', 'a root fault ends off, not reset'],
+    'the root stop powers off' => [:how, 'STOP', 'ASKED_OFF', "the root's stop ends off, not reset"],
+    'a refusal powers off' => [:how, 'REFUSED', 'ASKED_OFF', 'a refusal ends off, not reset'],
+    'a requested power-off resets' => [:how, 'ASKED_OFF', 'PET', 'a requested power-off ends reset, not off'],
+    'a refusal drains the log' => [:drains, 'REFUSED', 'FAULT', 'a refusal drains the debug log, but must not']
   }.freeze
+  # Where each function's switch begins in the core.
+  FUNCTIONS = { how: "erx_fiasco_end_how(erx_fiasco_end_cause_t cause)\n",
+                drains: "erx_fiasco_end_drains_log(erx_fiasco_end_cause_t cause)\n" }.freeze
 
   def self.label(cause) = "\tcase ERX_FIASCO_END_#{cause}:\n"
 
@@ -45,17 +52,25 @@ class FiascoEndTest < Minitest::Test
   def test_each_cause_ends_the_machine_as_the_design_says
     log, status = Open3.capture2e(build(File.join(ROOT, CORE), name: 'end'), stdin_data: '')
     assert status.success?, log
-    assert_equal "end: 5 cases\n", log
+    assert_equal "end: 6 cases\n", log
   end
 
-  MUTANTS.each do |name, (cause, joins, diagnostic)|
+  # The core with the cause's label moved to the group of joins' label, inside function's
+  # switch alone, since both switches name every cause.
+  def self.seeded(source, function:, cause:, joins:)
+    start = source.index(FUNCTIONS.fetch(function))
+    finish = source.index("\n}\n", start)
+    moved, kept = [cause, joins].map { |of| label(of) }
+    body = source[start...finish]
+    raise "#{function} has no #{moved.strip} or #{kept.strip}" unless body.include?(moved) && body.include?(kept)
+
+    source[0...start] + body.sub(moved, '').sub(kept) { kept + moved } + source[finish..]
+  end
+
+  MUTANTS.each do |name, (function, cause, joins, diagnostic)|
     define_method("test_mutant_#{name.tr(' -', '__')}") do
-      moved, kept = [cause, joins].map { |of| FiascoEndTest.label(of) }
-      source = File.read(File.join(ROOT, CORE))
-      assert_includes source, moved
-      assert_includes source, kept
       seeded = File.join(@directory, "#{name.tr(' ', '-')}.c")
-      File.write(seeded, source.sub(moved, '').sub(kept) { kept + moved })
+      File.write(seeded, FiascoEndTest.seeded(File.read(File.join(ROOT, CORE)), function: function, cause: cause, joins: joins))
       log, status = Open3.capture2e(build(seeded, name: "#{name} driver"), stdin_data: '')
       refute status.success?, "#{name}: the driver passed: #{log}"
       assert_includes log, diagnostic

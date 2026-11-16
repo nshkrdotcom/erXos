@@ -34,6 +34,12 @@ class NativeCrashTest < Minitest::Test
     assert_match(/access/, refusal(log('read_only_write'), 'decommitted'))
   end
 
+  def test_a_root_fault_that_powered_off_is_refused
+    powered_off = log('trap').sub(/erx: end reset\r*\n\z/n, "erx: end off\r\n")
+    refute_equal log('trap'), powered_off
+    assert_match(/did not end by a reset/, refusal(powered_off, 'trap'))
+  end
+
   def test_a_trap_held_to_a_memory_case_disagrees_on_the_kind
     assert_match(/kind/, refusal(log('trap'), 'decommitted'))
   end

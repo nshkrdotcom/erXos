@@ -9,7 +9,8 @@
  * which is the kernel's own dispatch and log cores, as on the hosted backend.
  * Each record goes out through the kernel's log object as it is written. A
  * public UTCB of this file's own holds what the caller stores, since each
- * native call overwrites the native UTCB's message registers.
+ * native call overwrites the native UTCB's message registers. The cores' effects
+ * are the root's own (end.c), which the probe links for its end.
  */
 
 #include <stddef.h>
@@ -35,28 +36,6 @@ erx_utcb_t *
 erx_utcb_self(void)
 {
 	return (&erx_fiasco_public_utcb);
-}
-
-void
-erx_effect_log_lock(void)
-{
-}
-
-void
-erx_effect_log_unlock(void)
-{
-}
-
-void
-erx_effect_console_write(const char *line, size_t length)
-{
-	erx_fiasco_console_write(line, length);
-}
-
-uint64_t
-erx_effect_clock_ns(void)
-{
-	return (erx_fiasco_clock_ns());
 }
 
 void

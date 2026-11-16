@@ -22,8 +22,6 @@ module Erx
     WATCHDOG = CrashFrame::CODEC.member('crash_cause', 'watchdog')
     DEADLINE_NS = 2_000_000_000
     UNCAUGHT_LINE = /^erx: watchdog: (UNCAUGHT|.* FAILED)/n
-    # The end path's last line: a missed pet resets the machine (docs/design-stopgap.md, "The end path").
-    RESET_LINE = /erx: end reset\r*\n\z/n
 
     module_function
 
@@ -44,7 +42,7 @@ module Erx
       record = result.record
       raise Error, "the record's cause disagrees: #{record}" unless record.fetch('cause') == WATCHDOG
       raise Error, "the record's time since the pet disagrees: #{record}" unless record.fetch('since_pet_ns') >= DEADLINE_NS
-      raise Error, 'the machine did not end by a reset' unless RESET_LINE.match?(serial)
+      raise Error, 'the machine did not end by a reset' unless CrashFrame::RESET_LINE.match?(serial)
 
       record
     end

@@ -838,7 +838,7 @@ service_thread_delete(uint32_t task, uint32_t index)
 	if (service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_thread_cap(task, index))) ||
 	    service_failed(l4_task_delete_obj(L4_BASE_TASK_CAP, erx_fiasco_task_semaphore_cap(task, index)))) {
 		erx_fiasco_console_write(line, sizeof(line) - 1);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
 }
 

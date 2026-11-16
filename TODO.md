@@ -480,16 +480,15 @@ it; git history is the record of completed work.
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
-* [High] stopgap, `liberx/backend/fiasco`: only a root fault and a missed pet reset the machine
-  (`erx_fiasco_end_how`). The root's own stop (`service_task.c`, `ERX_FIASCO_END_STOP`), which is how
-  ERTS's `halt(String)` on a boot that fails ends, and the direct `erx_fiasco_machine_off` ends (`root.c`'s
-  refusals, `libc_root*.c`, the kernel-refusal ends in `service.c`, `service_task.c`, `thread.c`, `vm.c`)
-  still power off, so a trial that fails that way does not fall back. design-system.md files those exits
-  with faults. Decide whether an unordered stop resets; then make `erx_fiasco_machine_end` private to
-  `end.c` so every end names a cause.
-* [Medium] tooling, `tools/lib/erx/native_crash.rb` and `system_domain_regrant.rb`: their judges do not read
-  the end line, so a root fault that powered off would pass; only `native_watchdog` checks for `erx: end reset`.
-  The crash suite's fixture logs have no end line and need recapturing first.
+* [Medium] stopgap, `liberx/backend/fiasco/end.c`: whether an end drains the debug log ring is decided by its
+  cause (`erx_fiasco_end_drains_log`), but safety depends on the thread: a test root's `ERX_FIASCO_END_ASKED_OFF`
+  drains from its own thread, safe only while no task logs through the service, and a refusal on the service
+  skips a drain that would be safe. Decide the drain from the calling thread instead. No chokepoint check yet
+  keeps `l4_platform_ctl_system_shutdown` to `end.c`; add one with a seed.
+* [Medium] tooling, `tools/lib/erx/system_domain_regrant.rb` and `session_domain.rb`: the regrant judge does not
+  read the end line, so a root fault that powered off would pass, and its fixture `abort.log` still ends
+  `erx: end off` and needs recapturing first; the session suite's halt boot could require `erx: end off`, which
+  init's halt after a refused commit, now a reset, no longer prints. The crash and watchdog suites check the end line.
 * [Low] stopgap, the crash suite's end-path row: `erx_machine_end` runs only with
   `ERX_END_OFF`; under `-no-reboot` both ends exit QEMU, so the suite cannot tell
   them apart, and the refusal of a bad `how` has no case.
