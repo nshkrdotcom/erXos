@@ -18,9 +18,13 @@ is checked whole against its section's layout, so a length that does not match i
 -include("generated/erx_abi.hrl").
 
 -export([command/1, opcode/1, event/2, return/2]).
--export_type([command/0, command_name/0, event/0, return/0]).
+-export_type([command/0, command_name/0, event/0, return/0, handle/0]).
 
--type handle() :: 0..16#FFF.
+%% A Connection_Handle's bits, the low ones of its word.
+-define(HANDLE_MASK, ((1 bsl ?ERX_HCI_HANDLE_BITS) - 1)).
+
+-doc "A Connection_Handle's 12 bits, as a handle word carries them (Part E, section 5.4.2).".
+-type handle() :: 0..?HANDLE_MASK.
 -type address() :: <<_:48>>.
 
 -doc "The commands the host sends, by the names of abi/formats/bluetooth.txt's OCF enums.".
@@ -164,9 +168,9 @@ le_event(Subevent, _) when Subevent =:= ?ERX_HCI_LE_SUBEVENT_CONNECTION_COMPLETE
 le_event(Subevent, _) ->
     {unknown, {le_meta, Subevent}}.
 
-%% A Connection_Handle's 12 meaningful bits, from 0x000 to 0xEFF (5.4.2); a reserved
+%% A Connection_Handle's meaningful bits, at most hci_handle_max (5.4.2); a reserved
 %% handle makes the event malformed.
-handle(Word) when Word band 16#FFF =< ?ERX_HCI_HANDLE_MAX -> Word band 16#FFF;
+handle(Word) when Word band ?HANDLE_MASK =< ?ERX_HCI_HANDLE_MAX -> Word band ?HANDLE_MASK;
 handle(_Word) -> throw(malformed).
 
 -doc """
