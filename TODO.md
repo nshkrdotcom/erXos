@@ -183,6 +183,9 @@ it; git history is the record of completed work.
   system domain still reaches root's shell about 3.2 times sooner under TCG (the measurement and the order
   of work are in [todo-performance.md](docs/todo-performance.md), "every domain loads its own kernel and
   stdlib"; raw logs in ~/erxos-history/boot-slow-2026-11-11 and boot-fast-2026-11-11).
+  Order of work: first measure a session's pages at its prompt, with the funnel's scratch sized by frame,
+  which replaces the design's memory estimates; then build the image if the adopters and that measurement
+  still call for it.
 * [Medium] architecture: evaluate the remaining
   [simplification candidates](docs/todo-simplification.md), recording for
   each the mechanism it removes, its cost and the evidence needed to adopt
@@ -564,15 +567,6 @@ it; git history is the record of completed work.
   but code-making does not yet follow from the image.
 * [Low] stopgap, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
   `mprotect` over one `ENOTSUP`, where FreeBSD does both; nothing reaches it until musl maps objects.
-* [Medium] stopgap, `liberx/backend/fiasco/service_task.c` (`erx_fiasco_task_mem_dma_body`) and the contiguous
-  object of `vm.c`: the object does not record `bus - cpu`, so `erx_mem_dma_addr` gives a device the CPU address
-  of its memory, where [design-device-tree.md](docs/design-device-tree.md) ("The `given` record") and
-  [design-device-dma.md](docs/design-device-dma.md) ("Device addresses and reach") have it give the bus address.
-  Until it does, `erx_boot_dma_absent` (`liberx/backend/core/boot_manifest.c`) refuses a device whose DMA range has
-  bus addresses unlike its CPU addresses, with the reason `offset`, and the device gets no DMA memory: the Raspberry
-  Pi 4's EMMC2 (unit `sd`, config/platforms/raspi4b.json), whose bus addresses start at 0xc0000000, gets none of
-  its 1 MiB and moves blocks by programmed I/O. Record
-  the offset in the object the root makes from the tree's range, and drop `offset`.
 * [Low] stopgap, `liberx/backend/fiasco/runtime_entry.c` (`tree_facts`): the root accepts the firmware's tree
   and joins its facts to the catalogue's entries once, before any give, but after step 8 of
   [Boot handoff](docs/design-stopgap.md#boot-handoff) rather than in step 4, because the catalogue is the domain
@@ -4061,7 +4055,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the machine's end is only its last step. design-system.md "Shutting down" also has
   `erx_dom_end_begin` with its ending record and absolute deadline, which the fault thread
   enforces; no domain created or restarted once the end has begun; the vault's quiesce and
-  the storage freeze, with the end chosen from their outcomes. The coordinator's one entry,
+  the storage freeze (the durability facet's checkpoint and freeze, which `erx_lfs` does not serve), with
+  the end chosen from their outcomes. The coordinator's one entry,
   `erx_machine:request/2`, takes `reboot` and `halt` from the system shell and from a
   session's `/machine/ctl`, writes the one log line and answers a second request `busy`, but
   it keeps the accepted request in its own state in place of the ending record and then asks

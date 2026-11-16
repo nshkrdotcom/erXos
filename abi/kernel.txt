@@ -740,7 +740,7 @@ layout erx_trace_record shared 8 64
 # registers as bootstrap read them (kernel/arch/<arch>/cpu_id.c), one word for each
 # member of the architecture file's cpu_id_word, at the word the member numbers; the root
 # takes the CPU feature words of every boot information page from them. The record's size
-# is 2424 bytes and 8 per member, so a member added grows the declared size (and the
+# is 2424 bytes, the offset of cpu_id, plus 8 per member, so a member added grows the declared size (and the
 # options block's copy, fiasco/*/koptions-def.h) or generation fails.
 layout erx_boot_handoff wire_le 8 2464
   field version u32 0

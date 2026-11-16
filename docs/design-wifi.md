@@ -89,33 +89,32 @@ Decisions every reader needs:
 
 1. [Context](#context)
 2. [Requirements](#requirements)
-3. [What the code does today](#what-the-code-does-today)
-4. [The construction](#the-construction)
-5. [The SDIO host in the storage domain](#the-sdio-host-in-the-storage-domain)
-6. [The `sdio` interface](#the-sdio-interface)
-7. [The WiFi domain](#the-wifi-domain)
-8. [The chip](#the-chip)
-9. [The station](#the-station)
-10. [The supplicant](#the-supplicant)
-11. [SAE and protected management frames](#sae-and-protected-management-frames)
-12. [Configuration, credentials and control](#configuration-credentials-and-control)
-13. [The `ether` interface and `wlan0`](#the-ether-interface-and-wlan0)
-14. [OTP's `crypto`: SAE's arithmetic](#otps-crypto-saes-arithmetic)
-15. [Invariants](#invariants)
-16. [Concurrency and ordering](#concurrency-and-ordering)
-17. [Failure handling](#failure-handling)
-18. [Refusals and error results](#refusals-and-error-results)
-19. [Untrusted input](#untrusted-input)
-20. [Security](#security)
-21. [Facts this design does not have](#facts-this-design-does-not-have)
-22. [Performance](#performance)
-23. [Verification](#verification)
-24. [Interfaces](#interfaces)
-25. [Edits to other designs](#edits-to-other-designs)
-26. [Alternatives considered](#alternatives-considered)
-27. [Lineage](#lineage)
-28. [Decisions](#decisions)
-29. [Sources](#sources)
+3. [The construction](#the-construction)
+4. [The SDIO host in the storage domain](#the-sdio-host-in-the-storage-domain)
+5. [The `sdio` interface](#the-sdio-interface)
+6. [The WiFi domain](#the-wifi-domain)
+7. [The chip](#the-chip)
+8. [The station](#the-station)
+9. [The supplicant](#the-supplicant)
+10. [SAE and protected management frames](#sae-and-protected-management-frames)
+11. [Configuration, credentials and control](#configuration-credentials-and-control)
+12. [The `ether` interface and `wlan0`](#the-ether-interface-and-wlan0)
+13. [OTP's `crypto`: SAE's arithmetic](#otps-crypto-saes-arithmetic)
+14. [Invariants](#invariants)
+15. [Concurrency and ordering](#concurrency-and-ordering)
+16. [Failure handling](#failure-handling)
+17. [Refusals and error results](#refusals-and-error-results)
+18. [Untrusted input](#untrusted-input)
+19. [Security](#security)
+20. [Facts this design does not have](#facts-this-design-does-not-have)
+21. [Performance](#performance)
+22. [Verification](#verification)
+23. [Interfaces](#interfaces)
+24. [Edits to other designs](#edits-to-other-designs)
+25. [Alternatives considered](#alternatives-considered)
+26. [Lineage](#lineage)
+27. [Decisions](#decisions)
+28. [Sources](#sources)
 
 ## Context
 
@@ -318,19 +317,6 @@ hunting-and-pecking and other groups, PMKSA caching, Bluetooth on the
 same chip, and SoftMAC chips, where net80211's MLME and a regulatory
 table come back.
 
-## What the code does today
-
-The legacy controller is held by the storage domain inside the `sd`
-unit, which the manifest names `block`. No device-kinds row matches it,
-so it has no record, no register window and no driver; EMMC2's SD device
-process is the only member of the shared line's owner
-([design-storage.md](design-storage.md#the-sd-host-controller);
-`config/manifest/raspi4b-development.txt`). The network domain runs
-`genet0`; nothing in the tree speaks SDIO, Broadcom's protocols or WPA.
-OTP's `crypto` is unchanged and exports no point arithmetic: its NIF
-multiplies the generator inside key generation and ECDH only
-(`otp/lib/crypto/c_src/ec.c:491, 894`).
-
 ## The construction
 
 ### WiFi is a domain that makes a medium
@@ -475,7 +461,7 @@ decision, and the SDIO host takes only the first:
   whose CMD52 and CMD53 answer R5 and whose counted CMD53 needs no stop
   command (SDIO 5.3.1, p.39), so the SDIO host never runs it.
 
-The one change is to the wait: its data track, today one block
+The one change is to the wait: its data track, which names one block
 (`{read | write, Size, 1}`), takes a count of blocks, from 1 to 511, so a
 block-mode CMD53 is one command's wait with that many buffer events
 before transfer complete; EMMC2's identification commands keep their

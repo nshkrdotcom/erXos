@@ -175,23 +175,6 @@ What the sources say, read at the pins of [Sources](#sources):
 * **S7.** Clients see one host key per installation, the same across
   reboots and updates.
 
-## What the code does today
-
-Stage 1 of [Stages](#stages) is built. `crypto`, `public_key`, `asn1`
-and `ssh` are imported into `otp/`, and every domain's runtime image
-carries them (`tools/lib/erx/domain_image_apps.rb`). In a development
-build, `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in
-root's session starts OTP's daemon there with the development login key
-and root's host key, and the network domain's QEMU case
-(`tools/lib/erx/network_domain.rb`) logs in through a host forward with
-the host's `ssh`; in a second boot of the same image, root's login
-writes `reset` to the session's `/machine/ctl` and the machine resets
-([design-system.md](design-system.md#a-sessions-request)).
-`tools/erx boot` gives its guest no network device, and
-the QEMU case's forward is a free port it does not print, so `tools/erx
-ssh` reaches no guest yet. No SSH domain is in
-any manifest, and `abi/services/` declares no login service for one.
-
 ## Overview
 
 ```
@@ -703,8 +686,8 @@ identifier.
 ### Stages
 
 1. **Crypto and the Erlang shell** (1b-G). [design-crypto.md](design-crypto.md)
-   whole; `ssh` imported with its edits; in a development build,
-   `erx_ssh_dev:start(Port)` run in root's session starts `ssh:daemon` in
+   whole; `crypto`, `public_key`, `asn1` and `ssh` imported with their edits and carried by every domain's runtime image (`tools/lib/erx/domain_image_apps.rb`); in a development build,
+   `erx_ssh_dev:start(Port)` (`erlang/apps/erx_session`) run in root's session starts `ssh:daemon` in
    that session, through root's own `net` grant, with OTP's Erlang shell
    (`shell` set to start `shell:start/0`) and OTP's `erlang_eval` exec,
    which evaluates a command's expression and prints its value. Its host

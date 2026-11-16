@@ -168,7 +168,7 @@ length it reports, and notes that a driver that does not know how much
 was written must zero the buffer beforehand to avoid leaking data
 (Virtio 1.2, sections 2.7.8 and 2.7.8.2).
 
-**What the code does today.** The device NIF runs virtio's split ring
+**The stopgap's NIF and pool.** The device NIF runs virtio's split ring
 through the sequencer below, with `G` and `L` from the architecture
 layer, and with the record's coherence mark, which the root takes from
 the firmware's device tree ([design-device-tree.md](design-device-tree.md)):
@@ -184,8 +184,9 @@ memory comes from one contiguous pool the root takes from `sigma0`
 at boot, sized for the manifest's devices' memory up to 16 MiB (`liberx/backend/fiasco/vm.c`, `erx_fiasco_vm_init`;
 `liberx/backend/fiasco/page_pool.c`, `erx_fiasco_contig_order`), an object is at most 16 MiB
 (`abi/erx_abi.txt`, `mem_contiguous_max`) and aligned to a page, its device address is its physical address
-(`vm.c`, `erx_fiasco_vm_object_dma_addr`), and the create's limit is read as a physical address
-(`vm.c`, `erx_fiasco_vm_contiguous_create`). Fiasco lets user mode clean and invalidate by address
+less the range's CPU address plus its bus address
+(`vm.c`, `erx_fiasco_vm_contiguous_create` and `erx_fiasco_vm_object_dma_addr`),
+and the range's `cpu` and `last` are read as physical addresses. Fiasco lets user mode clean and invalidate by address
 and read the cache type register
 (`fiasco/kernel/src/kern/arm/64/cpu-arm-64.cpp:34-48`).
 
@@ -313,7 +314,7 @@ index, then each used entry it covers; GENET's receive completion reads
 the producer index, then the status of each descriptor it covers, at
 most the queue's size; GENET's transmit completion reads the consumer
 index; ADMA2's reads `interrupt`. A value out of its bound breaks the
-queue, as a malformed used entry does today.
+queue, as a malformed used entry does.
 
 A plan is a list over a closed set of steps:
 
@@ -503,7 +504,7 @@ range above.
 it can change an address the device uses, how many bytes the device moves
 at an address, which descriptors the device takes as valid, how it reads
 a descriptor, or how it reports the end of a transfer the NIF tracks.
-The SVD source marks each register `ownedByNif`, as it does today, and
+The SVD source marks each register `ownedByNif`, and
 may instead mark single fields of a register; the generator refuses a
 register with neither. A wholly owned register is refused to `write/3`
 and `write_field/4`, as now. For a register with an owned field,
