@@ -87,7 +87,9 @@ int	erx_space_stop(uint64_t space, int64_t status);
  * device's object ERX_ETYPE, a slice as dst ERX_ERIGHTS, each before any byte moves.
  * erx_fiasco_release_entry is a task's erx_release_entry over the slice release names, its
  * file checked first when check is set; with entry NULL only the check is made.
- * Paged objects are not offered: their three calls are ERX_ENOTSUP.
+ * A paged object (erx_mem_create_paged) maps nowhere until sealed and is never mapped
+ * writable; erx_mem_supply copies into it as erx_mem_copy does until erx_mem_seal, and
+ * then ERX_ERIGHTS. Only the root makes one with ERX_MEM_CODE, the one that may run.
  */
 int	erx_image_slice(uint64_t budget, uint64_t image, uint64_t first, uint64_t count, uint64_t *slice)
 	    ERX_WARN_UNUSED_RESULT;

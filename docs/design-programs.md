@@ -1271,18 +1271,18 @@ The filler:
    through the fid it opened and copying each read's bytes into a staging
    object of the session's, from which `erx_mem_supply` copies them into
    the file object; the call names its source as a memory object, an
-   offset and a length, since no kernel call takes an address, and into
-   a code object it leaves each page it wrote coherent for instruction
-   fetch, so no map, which waits for the seal, reaches a stale
-   instruction ([design-arch-aarch64.md](design-arch-aarch64.md#cache-maintenance)
-   for AArch64). It then
+   offset and a length, since no kernel call takes an address. It then
    asks that fid's `getattr` again. A version that changed while it copied
    means the bytes may mix two versions, so the object is discarded and
    filled once more, and a file that changes again fails the request with
    `ETXTBSY`, as Linux refuses to run a file open for writing. A read that
    fails or times out fails the fill and the request with the read's
    error.
-4. **Seals** the object and closes its `SUPPLY` capability, and the
+4. **Seals** the object and closes its `SUPPLY` capability; a code
+   object's first seal makes each of its pages coherent for instruction
+   fetch, so no map, which waits for the seal, reaches a stale
+   instruction ([design-arch-aarch64.md](design-arch-aarch64.md#cache-maintenance)
+   for AArch64). The
    command server enters a code object under the key and, in the step
    that ends the fill's hold, hands it to the request and to every
    request that waited on the fill, each the start's or the row's hold

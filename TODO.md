@@ -148,9 +148,8 @@ it; git history is the record of completed work.
   image check of the `rx` grant, the filler's read, the command server's code object), the domain library's
   `code_object/2` answers `enotsup`, and the loader `erx_exec` does not exist (only `erx_elf_plan` does). So a
   native app's start of `/app/bin/NAME` is refused `{program, einval}` and the session ends; no installable
-  native package (the Doom demo) runs until this lands. Also needs the stopgap backend's rows for paged
-  objects, sealing, supply with its code-cache maintenance, and `ERX_MEM_CODE` (plan.md, 1b-B's backend
-  rows). The session asks for code objects through the `code_objects` facet
+  native package (the Doom demo) runs until this lands. Also needs the stopgap backend's `erx_mem_child`,
+  an eager copy (design-stopgap.md, the call table). The session asks for code objects through the `code_objects` facet
   (`abi/services/code_objects.txt`, design-system.md, "The `code_objects` facet"), which every session gets
   by the domain service's own policy and which is not declared yet; the command server's holds (fill, start,
   row) decide every drop (design-programs.md, "Holds and drops"). Links are settled: a package mount answers

@@ -24,6 +24,7 @@
 #define MODE_CODE_WRITE	13	/* writes the first word of its own code, which faults at its gate */
 #define MODE_MAKER	14	/* in its domain group: makes and installs a program's handles, runs it: ends with 0 */
 #define MODE_RINGER	15	/* beside MODE_MAKER's child: may not unbind the child's doorbell, rings it: ends with 0 */
+#define MODE_CODE_RUN	16	/* may not make a code object, runs the root's at CODE_ADDR: ends with its result */
 #define MODE_MASK	UINT64_C(0xff)
 #define SLOT_SHIFT	8u
 
@@ -34,6 +35,8 @@
 
 /* Where the root maps a slice of the image's domain release into a task, and its pages. */
 #define SLICE_ADDR	UINT64_C(0x4000800000)
+#define CODE_ADDR	UINT64_C(0x4000e00000)
+#define CODE_STATUS	79	/* what the root's code object returns: mov x0, #79; ret */
 #define SLICE_PAGES	2u
 /*
  * The image's domains/sample/ release, which tools/lib/erx/native_space.rb writes: a

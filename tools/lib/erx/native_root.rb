@@ -40,7 +40,7 @@ module Erx
     # What every root task needs: its entry, its console and its compiler's memcpy.
     RUNTIME = %W[#{BACKEND}/arch/aarch64/root_start.S #{BACKEND}/console.c #{BACKEND}/root_mem.c].freeze
     # The root's own memory and objects: the effects over sigma0 and the four pure cores.
-    VM = %W[#{BACKEND}/vm.c #{BACKEND}/page_pool.c #{BACKEND}/object.c liberx/backend/core/vm_table.c
+    VM = %W[#{BACKEND}/vm.c #{BACKEND}/vm_rules.c #{BACKEND}/page_pool.c #{BACKEND}/object.c liberx/backend/core/vm_table.c
             liberx/backend/core/grow_table.c liberx/backend/core/handles.c #{BACKEND}/fault_gate.c #{BACKEND}/budget.c
             liberx/backend/core/gate.c].freeze
     # The root service and what it runs on: threads, waits and the end path. The
