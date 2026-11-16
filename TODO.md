@@ -7211,12 +7211,10 @@ to the corpus and follow rc
   rights of the grant an EROFS mount's fid came through, since a 9P client cannot learn a grant's rights,
   so `{erofs, app}` mounts `rx` without refusing an `ro` or `rw` grant with `eacces` and keeps no grant
   rights for the image check; that the mount is `rx` only through an `rx` grant (F6 of design-files.md)
-  rests on the manifest alone. Property 19 derives the app template's `system` row `rx`
-  (`app_facets` in `tools/lib/erx/manifest.rb`), so an image package's `/app` goes through an `rx`
-  grant; its `packages` row is still `ro`, so an installed package's `/app` is mounted `rx` through an
-  `ro` grant until that row turns `rx` with `tree installed` in the uploads item of
-  [todo-system-partition.md](docs/todo-system-partition.md), since an `rx` grant rooted at `packages/`
-  would reach an upload in progress. What either mount holds is bound by the record's root hash, which
+  rests on the manifest alone. Property 19 derives the app template's `system` and `packages` rows
+  `rx` (`app_facets` in `tools/lib/erx/manifest.rb`), the `packages` row with `tree installed`, which
+  roots its grant at `packages/installed/` (`erx_lfs:subtree/2`), so an image or installed package's
+  `/app` goes through an `rx` grant that reaches no upload in progress. What either mount holds is bound by the record's root hash, which
   the domain service sets. How a client learns a grant's rights is an open question for
   design-files.md. Development builds run trusted code only; this blocks release.
 * [Low] manifest check, `signer` rows: a signer key of small order, or one that does not

@@ -452,9 +452,9 @@ board's source does not hold and the build record lists:
   `windows_pixels_default`, `abi/services/files.txt` gives `rights` the
   default `rw`, `net` declares no parameter, and each of the three
   declares the five quantities. A service of the files interface is
-  refused until the storage service's `tree` parameter exists, since
-  without `tree apps` its grant would reach the whole tree rather than
-  the app's own directory.
+  refused until the data partition's storage service roots a grant at
+  `tree apps`, since without it its grant would reach the whole tree
+  rather than the app's own directory.
   A row of the data partition's storage service carries the parameter
   `tree apps`, which roots its grants among the app directories ([Where
   an app's files lie](#where-an-apps-files-lie));

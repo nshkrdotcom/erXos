@@ -44,8 +44,10 @@ only_the_system_domains_mint_request_is_granted_test() ->
 %% Grant options -------------------------------------------------------------
 
 %% A row's limits become the grant's bounds, capped at erx_fs_grant's, and its rights the
-%% grant's, rw where it states none; a row below 9P's least message size, with a bound
-%% that is not positive, or with rights other than ro, rw and rx, is refused.
+%% grant's, rw where it states none, and its tree the grant's root, the tree's own where
+%% it states none; a row below 9P's least message size, with a bound that is not
+%% positive, with rights other than ro, rw and rx, or with a tree that is no member of
+%% files_tree, is refused.
 grant_options_test() ->
     ?assertEqual({ok, #{rights => rw, in_flight => 64, msize => 65560}}, erx_fs_grants:grant_options(#{})),
     ?assertEqual({ok, #{rights => rw, in_flight => 16, msize => 65560, max_heap_size => 262144}},
@@ -57,15 +59,27 @@ grant_options_test() ->
                  erx_fs_grants:grant_options(#{in_flight => 1, max_request => 4096})),
     [?assertEqual({ok, #{rights => Rights, in_flight => 64, msize => 65560}},
                   erx_fs_grants:grant_options(#{rights => Rights})) || Rights <- [ro, rw, rx]],
+    [?assertEqual({ok, #{rights => rx, tree => Tree, in_flight => 64, msize => 65560}},
+                  erx_fs_grants:grant_options(#{rights => rx, tree => Tree})) || Tree <- [apps, installed]],
     [?assertEqual({error, einval}, erx_fs_grants:grant_options(Limits))
      || Limits <- [#{max_request => 4095}, #{in_flight => 0}, #{max_heap_size => 0}, #{max_heap_size => 100},
                    #{in_flight => many}, #{max_request => -1}, #{max_heap_size => big},
-                   #{rights => rwx}, #{rights => <<"ro">>}, #{rights => 1}]].
+                   #{rights => rwx}, #{rights => <<"ro">>}, #{rights => 1},
+                   #{tree => packages}, #{tree => <<"installed">>}, #{tree => 2}]].
 
 %% Limits a row would refuse start no grant and export nothing.
 refused_limits_start_no_grant_test() ->
     with_grants(fun(Grants) ->
         ?assertEqual({error, einval}, grant(Grants, #{max_request => 1}, connection())),
+        receive {exported, _, _, _, _} -> error(exported) after 0 -> ok end,
+        ?assertEqual([], grants(Grants))
+    end).
+
+%% A row's tree that its tree's module roots no grant at, as the test tree roots none,
+%% starts no grant and exports nothing, so no grant reaches past the root it names.
+unrooted_tree_starts_no_grant_test() ->
+    with_grants(fun(Grants) ->
+        ?assertEqual({error, einval}, grant(Grants, #{rights => rx, tree => installed}, connection())),
         receive {exported, _, _, _, _} -> error(exported) after 0 -> ok end,
         ?assertEqual([], grants(Grants))
     end).

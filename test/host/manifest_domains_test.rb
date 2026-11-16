@@ -931,9 +931,10 @@ class ManifestDomainsTest < Minitest::Test
       [facet.fetch('grantee_kind'), facet.fetch('grantee'), services.fetch(facet.fetch('service')), rights.call(facet)]
     end
     session = @codec.member('mf_grantee', 'session')
-    ro, rw = %w[ro rw].map { |name| @codec.member('files_rights', name) }
+    rw, rx = %w[rw rx].map { |name| @codec.member('files_rights', name) }
+    installed = @codec.member('files_tree', 'installed')
     assert_includes granted, [@codec.member('mf_grantee', 'system'), 0, 'packages', [rw]]
-    assert_equal [session, template, 'packages', [ro]], granted.fetch(apps.fetch('packages_facet'))
+    assert_equal [session, template, 'packages', [rx, installed]], granted.fetch(apps.fetch('packages_facet'))
     app_services = view.each('app_services').to_a
     assert_equal [[session, template, 'b', []]], app_services.map { |row| granted.fetch(row.fetch('facet')) }
     assert_equal ['b'], app_services.map { |row| services.fetch(row.fetch('service')) }
@@ -943,13 +944,15 @@ class ManifestDomainsTest < Minitest::Test
   end
 
   # Property 19's refusals of what would derive the template wrongly: a source facet
-  # carrying tree apps, which only a derived row may; a source facet naming the template,
+  # carrying a tree, apps or installed, which only a derived row may; a source facet naming the template,
   # which no @session.NAME reaches, since it names no principal; an apps row with no
   # limits session record, or one that does not enable SPACES; and a service whose ABI
   # file leaves a quantity out.
   def test_property_19_refuses_what_would_derive_the_template_wrongly
-    tree = facet('treed', '@domain.alpha', '@service.packages') + "  parameter tree apps\n"
-    refused(Erx::Manifest::Invalid, 19, 'facet.parameter', for_apps(@source + self.class.apps + tree, 8), message: /tree apps/)
+    %w[apps installed].each do |tree|
+      row = facet('treed', '@domain.alpha', '@service.packages') + "  parameter tree #{tree}\n"
+      refused(Erx::Manifest::Invalid, 19, 'facet.parameter', for_apps(@source + self.class.apps + row, 8), message: /carries a tree/)
+    end
     app = facet('app_packages', '@session.app', '@service.packages')
     assert_raises(Erx::Manifest::Invalid) { admit(for_apps(@source + self.class.apps + app, 8)) }
     session = /^limits session\n(?:  .*\n)*/

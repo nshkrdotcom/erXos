@@ -1989,8 +1989,9 @@ message size it agrees to at `version`, which it advertises but does not check a
 its process's heap bound in words, shared binaries included. `reductions` and `period_ns` bind no grant, as they bind no facet yet. The grantee's
 namespace reads its `data` grant at each lookup, so the mint keeps no record of what it handed out. The volume's `packages/` directory is
 the files service `packages` ([design-packaging.md](design-packaging.md#where-a-package-lies)), with a mint of its own beside `data`'s that
-works the same way: each of its grants roots at `packages/`, answers `..` there itself, and takes no `.` or `..` as a name, so it reaches
-nothing else of the volume, and the mount makes the directory when the volume lacks it. Only a domain the manifest grants `data`
+works the same way: each of its grants roots at `packages/`, or at `packages/installed/` when its row states `tree installed`, as the
+app template's does (`erx_lfs:subtree/2`), answers `..` there itself, and takes no `.` or `..` as a name, so it reaches nothing else
+of the volume, and the mount makes both directories when the volume lacks them. Only a domain the manifest grants `data`
 mounts its `data` facet at `/data`, read-write and on the tree `data`, with `erx_ns:mount_facets/1` ([design-files.md](design-files.md), "A
 facet's mount"): the system domain's domain service once it has read the manifest, and a session domain as `erx_session` starts
 (`erx_session_app`), from the names of its granted facets its ready answer carries. The mount names the facet, never a grant, so every lookup
