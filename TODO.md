@@ -480,6 +480,17 @@ it; git history is the record of completed work.
   log, and nothing shows that a write to the archive faults. The same holds
   for the crash frame's write removed. `make check-native-seeds` keeps the threads
   and watchdog suites' seeds.
+* [Medium] stopgap, `liberx/backend/fiasco/end.c` and `service.c`: nothing tests that an end on the service drains
+  the debug log (`erx_fiasco_log_owned`); a broken owner check would lose the emergency-path lines once the log is
+  handed to the console, and no gate would fail. Add a native cell that hands the log to the console, logs a record
+  and ends on the service, its judge requiring the record before `erx: end`, with a `check-native-seeds` seed that
+  makes the check false. The owner check also rests on the service alone calling `erx_debug_log_read`, `_take`,
+  `_hand_to_console` and `_take_back` in a root; only `erx_dispatch` has a chokepoint (`dispatch-one-caller`); add
+  one for those with a seed.
+* [Medium] tooling, `tools/lib/erx/system_domain_regrant.rb` and `session_domain.rb`: the regrant judge does not
+  read the end line, so a root fault that powered off would pass, and its fixture `abort.log` still ends
+  `erx: end off` and needs recapturing first; the session suite's halt boot could require `erx: end off`, which
+  init's halt after a refused commit, now a reset, no longer prints. The crash and watchdog suites check the end line.
 * [Low] stopgap, the crash suite's end-path row: `erx_machine_end` runs only with
   `ERX_END_OFF`; under `-no-reboot` both ends exit QEMU, so the suite cannot tell
   them apart, and the refusal of a bad `how` has no case.
@@ -1676,6 +1687,21 @@ it; git history is the record of completed work.
   It should fill `struct utsname` from `erx/abi.h`'s `ERX_UNAME_SYSNAME_STRING`, `ERX_UNAME_RELEASE_STRING` and
   `ERX_ARCH_MACHINE_STRING`, and the node name from the host part of the boot information's node name, which the shell's `uname`
   (`erlang/apps/erx_shell/src/erx_cmd_uname.erl`) reads as init's `-sname` or `-name`, with no value of its own; `docs/design-shell.md`, "Text commands".
+* [Low] musl, `musl/include/sys/ttydefaults.h`: the `TTYDEF_*` flags and the `C*` characters are FreeBSD's
+  (`sys/sys/ttydefaults.h`), but they restate `erx_tty:new/0`'s defaults by hand. Generate the header from
+  the tty's defaults, or move the defaults into `abi/termios.txt`, so the C and Erlang defaults have one
+  source.
+* [Low] musl, `abi/termios.txt`: the generated `bits/termios.h` defines only the table's names, so a FreeBSD
+  program naming a bit erx_tty drops (`ECHOPRT`, `FLUSHO`, `PENDIN`, `EXTPROC`, `CIGNORE`, `CRTSCTS`,
+  `MDMBUF` and the other modem flow-control flags) or `TABDLY`, `TAB0`, `EXTA` and `EXTB` does not build,
+  where FreeBSD's `tcsetattr` would drop the bit. Every name is also visible without `_BSD_SOURCE`, where
+  FreeBSD hides its BSD names unless `__BSD_VISIBLE`. Give the table a line for a name a program may write
+  that the tty drops, and a visibility column, when a ported program needs them.
+* [Low] musl, `musl/include/termios.h`: `TCSANOW`, `TCIFLUSH` and `TCOOFF` and their siblings are FreeBSD's
+  numbers (`include/termios.h:59-72`) copied by hand, and `TCSASOFT` is missing (musl's `tcsetattr` refuses
+  any action above `TCSAFLUSH`). No seam reads them yet: `tcflush` and `tcflow` fail with `ENOTTY` in a
+  program and `ENOSYS` in the root domain. Move them into `abi/termios.txt` when the program protocol
+  carries them, so the seam's decoder reads the same numbers.
 * [Low] bootstrap, CPU feature words (`kernel/arch/aarch64/cpu_id.c`): only the boot CPU's identification
   registers are read, and every CPU is taken to have its features. QEMU `virt` and the Raspberry Pi boards
   have identical CPUs; a board whose CPUs differ needs the intersection over all of them.
@@ -5098,6 +5124,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: erasing a UTF-8 character backs over one column, where FreeBSD measures it with `teken_wcwidth` and backs over two for a double-width character (`tty_ttydisc.c:889-962`).
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: waiters are keyed by open, so a blocking read and a `poll` of one open replace each other and the read loses its `VMIN`/`VTIME` timer. Key a wait by a handle (`{Open, read}`, `{Open, poll}`) before the terminal relay lets two threads wait on one open.
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: `set/2` re-arms every waiting read's timer and forgets which reads timed out, even when `VMIN`, `VTIME` and `ICANON` did not change, so frequent `tcsetattr` calls keep a timed read of another open waiting, where FreeBSD fixes the deadline at the read's start (`sys/kern/tty_ttydisc.c:314-318`). Re-arm only on a change, and keep the expiry in the waiter's own state.
+* [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: `?VDISABLE` (0xff) and `?MAX_SPEED` restate
+  `abi/termios.txt`'s `UNNAMED` byte and the codec's 32-bit word, which musl's generated `bits/vdisable.h`
+  and `erx_abi_termios` take from the table; a changed `UNNAMED` would leave a byte that C programs think
+  disabled live in the tty. Export them from `erx_abi_termios` and use them in `erx_tty`.
 * [Medium] session, `erlang/apps/erx_session/src/erx_tty.erl`: no flush of held input or output, which `tcflush`, `TCSAFLUSH` (`readpassphrase`) and FreeBSD's flush on last close (`tty.c:1768-1773`, `tty_ttydisc.c:104-108`) need; add `flush/2` and name it in design-live.md ("The tty"). `TOSTOP` is in the flag table, but design-programs.md has a first-tier `tcsetattr` with it fail with `EINVAL`; the relay must refuse it until the second tier.
 * [Medium] session, `test/erlang/erx_tty_tests.erl`: the exploration checks what readers get, not what is echoed or sent to the master (caret notation, erase widths, reprint, the output flags and the column), its only `set` event flips `ICANON`, and the seeded faults design-live.md names for the timers and the bound (a `read_wait` that starts no timer, a `poll` that starts one, the bound removed) and for stale timers and lost wakeups are not planted. The flag tables are written out again in the test and the fuzz target; export them from `erx_tty` or generate all three from the program protocol's termios table.
 * [Low] session, `erlang/apps/erx_session/src/erx_tty.erl`: a full raw queue switched to cooked holds no line end and takes none, so reads get `eagain` until a signal flushes it; FreeBSD's cooked read takes a partial canonicalized line (`tty_ttydisc.c:236-256`). `read/3`, `input/3`, `output/3` and `status/3` crash on a non-integer or negative size where `set/2` and `size/3` return `einval`, so the relay checks those arguments.

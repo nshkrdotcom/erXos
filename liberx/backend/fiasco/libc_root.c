@@ -40,7 +40,7 @@ erx_fiasco_root_main(void)
 		while (reason[length] != '\0')
 			length++;
 		erx_fiasco_console_write(reason, length);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_REFUSED, NULL);
 	}
 	erx_fiasco_libc_root_start(main, (erx_fiasco_cpu_features_t){ .hwcap = features.hwcap,
 	    .hwcap2 = features.hwcap2 });

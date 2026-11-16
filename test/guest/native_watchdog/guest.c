@@ -46,16 +46,16 @@ erx_fiasco_root_main(void)
 
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	if (erx_watchdog_parse(argument, sizeof(argument) - 1, &config) != ERX_WATCHDOG_PARSE_OK) {
 		say("erx: watchdog: the argument did not parse FAILED\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	reason = erx_fiasco_watchdog_start(&config, ERX_WATCHDOG_MODE_NORMAL);
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	say("erx: watchdog: armed\n");
 	stop = erx_fiasco_clock_ns() + PETTING_NS;
@@ -69,5 +69,5 @@ erx_fiasco_root_main(void)
 	while (erx_fiasco_clock_ns() < stop)
 		continue;
 	say("erx: watchdog: UNCAUGHT the machine outlived its deadline\n");
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }

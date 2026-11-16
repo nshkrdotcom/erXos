@@ -1,13 +1,12 @@
-#define _BSD_SOURCE
 #include <termios.h>
-#include <sys/ioctl.h>
 
+/* FreeBSD's struct termios holds each speed as its rate, in its own member. */
 speed_t cfgetospeed(const struct termios *tio)
 {
-	return tio->c_cflag & CBAUD;
+	return tio->c_ospeed;
 }
 
 speed_t cfgetispeed(const struct termios *tio)
 {
-	return (tio->c_cflag & CIBAUD) / (CIBAUD/CBAUD);
+	return tio->c_ispeed;
 }

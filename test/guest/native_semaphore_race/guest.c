@@ -209,22 +209,22 @@ erx_fiasco_root_main(void)
 
 	if (reason != NULL) {
 		say(reason);
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	say("erx: semaphore-race: service up\n");
 	if (erx_fiasco_test_cpu_count() < 2) {
 		say("erx: semaphore-race: needs two CPUs FAILED\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	/* This thread stays on the boot CPU, CPU 0, and the waiter runs on CPU 1. */
 	if (!start_waiter()) {
 		say("erx: semaphore-race: the waiter did not start FAILED\n");
-		erx_fiasco_machine_off();
+		erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 	}
 	/* The second case last: on a kernel with the race it leaves the waiter still queued. */
 	undisturbed = run_case("ipc_wait_undisturbed", WAITER_SLEEPS, &round);
 	second_waits = run_case("second_down_waits", WAITER_DOWNS, &round);
 	if (undisturbed && second_waits)
 		say("erx: semaphore-race: done\n");
-	erx_fiasco_machine_off();
+	erx_fiasco_end(ERX_FIASCO_END_ASKED_OFF, NULL);
 }

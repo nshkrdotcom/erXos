@@ -1,11 +1,9 @@
 #define _BSD_SOURCE
 #include <termios.h>
-#include <sys/ioctl.h>
-#include <errno.h>
 
+/* Both speeds, as FreeBSD's cfsetspeed sets them (lib/libc/gen/termios.c). */
 int cfsetspeed(struct termios *tio, speed_t speed)
 {
-	int r = cfsetospeed(tio, speed);
-	if (!r) cfsetispeed(tio, 0);
-	return r;
+	tio->c_ispeed = tio->c_ospeed = speed;
+	return 0;
 }

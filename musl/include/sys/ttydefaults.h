@@ -1,18 +1,22 @@
 #ifndef _SYS_TTYDEFAULTS_H
 #define _SYS_TTYDEFAULTS_H
 
-#define TTYDEF_IFLAG (BRKINT | ISTRIP | ICRNL | IMAXBEL | IXON | IXANY)
-#define TTYDEF_OFLAG (OPOST | ONLCR | XTABS)
-#define TTYDEF_LFLAG (ECHO | ICANON | ISIG | IEXTEN | ECHOE|ECHOKE|ECHOCTL)
-#define TTYDEF_CFLAG (CREAD | CS7 | PARENB | HUPCL)
+#define TTYDEF_IFLAG (BRKINT | ICRNL | IMAXBEL | IXON | IXANY | IUTF8)
+#define TTYDEF_OFLAG (OPOST | ONLCR)
+#define TTYDEF_LFLAG_NOECHO (ICANON | ISIG | IEXTEN)
+#define TTYDEF_LFLAG_ECHO (TTYDEF_LFLAG_NOECHO | ECHO | ECHOE | ECHOKE | ECHOCTL)
+#define TTYDEF_LFLAG TTYDEF_LFLAG_ECHO
+#define TTYDEF_CFLAG (CREAD | CS8 | HUPCL)
 #define TTYDEF_SPEED (B9600)
 #define CTRL(x) ((x)&037)
 #define CEOF CTRL('d')
 
-#define CEOL '\0'
-#define CSTATUS '\0'
+/* FreeBSD's (sys/sys/ttydefaults.h): CEOL is the disabled byte, 0xff. */
+#define CEOL 0xff
+#define CSTATUS CTRL('t')
 
 #define CERASE 0177
+#define CERASE2 CTRL('h')
 #define CINTR CTRL('c')
 #define CKILL CTRL('u')
 #define CMIN 1

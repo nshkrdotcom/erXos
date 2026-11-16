@@ -6,6 +6,7 @@
 #ifndef ERX_FIASCO_LOG_H
 #define ERX_FIASCO_LOG_H
 
+#include <stdbool.h>
 #include <stdint.h>
 
 #include "erx/abi.h"
@@ -21,6 +22,13 @@ erx_utcb_t *erx_utcb_self(void);
  */
 void erx_fiasco_call(uint64_t number, const uint64_t args[ERX_TRAP_ARG_COUNT],
     uint64_t results[ERX_TRAP_RESULT_COUNT]);
+
+/*
+ * Whether the calling thread is the one that runs the debug log's cores, the service
+ * thread in a root (service.c) or a probe's one thread (log.c): the only thread on
+ * which an end may drain the ring, since no other write to it can be under way.
+ */
+bool erx_fiasco_log_owned(void);
 
 /* Monotonic time since an arbitrary start, from the architecture's counter. */
 uint64_t erx_fiasco_clock_ns(void);

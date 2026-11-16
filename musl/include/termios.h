@@ -16,9 +16,21 @@ typedef unsigned char cc_t;
 typedef unsigned int speed_t;
 typedef unsigned int tcflag_t;
 
-#define NCCS 32
-
 #include <bits/termios.h>
+
+/* FreeBSD's numbers (include/termios.h). */
+#define TCOOFF 1
+#define TCOON  2
+#define TCIOFF 3
+#define TCION  4
+
+#define TCIFLUSH  1
+#define TCOFLUSH  2
+#define TCIOFLUSH 3
+
+#define TCSANOW   0
+#define TCSADRAIN 1
+#define TCSAFLUSH 2
 
 speed_t cfgetospeed (const struct termios *);
 speed_t cfgetispeed (const struct termios *);
@@ -39,6 +51,9 @@ int tcflow (int, int);
 pid_t tcgetsid (int);
 
 #if defined(_GNU_SOURCE) || defined(_BSD_SOURCE)
+#define OXTABS TAB3
+#define CCEQ(val, c) ((c) == (val) && (val) != _POSIX_VDISABLE)
+
 void cfmakeraw(struct termios *);
 int cfsetspeed(struct termios *, speed_t);
 #endif
