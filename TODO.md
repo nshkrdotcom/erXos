@@ -78,8 +78,16 @@ it; git history is the record of completed work.
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
   the release's `pkg/NAME.app`, and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
-  the config from the manifest and the library's app entries, but no boot runs the package process: no
-  manifest has the app template yet (the property 19 item above), so the library places no entries.
+  the config from the manifest and the library's app entries. QEMU virt's development manifest has the
+  `apps` row and the check derives the app template, so every development boot runs the package process:
+  a boot of the apps suite's unlisted image (HVF, 1 CPU) showed `erx_domain_lib:apps/0`'s max 4, and
+  erx_pkg, 0.33 s into the system domain and before the storage domain had mounted its volume, ran its
+  recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
+  four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
+  boot carried on, and `erx_pkg:packages/0` answers `noproc`. The QEMU check that awaits it (typed at the
+  system's Erlang shell in the unlisted boot, expecting `{packages,4,#{packages => #{},scan => {ok,0}}}`)
+  is kept out of the tree until it can pass. Building the publication is the first step; the listing
+  taken before the volume is mounted is the second (see the retry below).
   What remains: `erx_starter:packages/2` and the start table's package rows, with the start table's boot waiting for the
   boot's package set before it applies `rc.conf` (erx_pkg_sup starts before the table, so a publication can
   otherwise find no table, and a restart of the table restarts no erx_pkg, so the table takes the
@@ -114,6 +122,15 @@ it; git history is the record of completed work.
   starters of an app's sessions (PK7), with a check that no other caller starts one; the app
   principal's CPU group under an apps group, which the stopgap's flat groups leave out;
   `erx_ns:mount/3` of an image file through `erx_verity`, which
+  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
+  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
+  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
+  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
+  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
+  and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
+  leave out; the session plan
+  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
+  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
