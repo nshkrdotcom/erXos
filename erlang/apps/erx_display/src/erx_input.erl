@@ -48,7 +48,7 @@ window sees an up or a move it saw no down for.
 %% The design names a driver's record record(), as "Input events" spells it.
 -compile({nowarn_redefined_builtin_type, {record, 0}}).
 
--export([new/1, step/3, dropped/1]).
+-export([new/1, step/3, screen/1, dropped/1]).
 -export_type([config/0, state/0, record/0, in/0, view/0, out/0]).
 
 -type code() :: 0..?ERX_EVDEV_KEY_MAX.
@@ -136,6 +136,13 @@ step(In, #{policy_state := PolicyState} = View, State) ->
     {Step, Taken} = take(In, #step{view = View, policy_state = PolicyState}, State),
     {#step{outs = Outs, policy_state = PolicyState1, drops = Drops}, Next} = wake(Step, Taken),
     {lists:reverse(Outs), PolicyState1, Next#input{dropped = Next#input.dropped + Drops}}.
+
+-doc """
+The screen the router holds, or `none` before the first: the window
+system's one screen, since only a non-empty rectangle is taken as one.
+""".
+-spec screen(state()) -> erx_wm:rect() | none.
+screen(#input{screen = Screen}) -> Screen.
 
 -doc "How many records and answers the router has dropped.".
 -spec dropped(state()) -> non_neg_integer().

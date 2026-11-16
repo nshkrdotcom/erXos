@@ -1488,12 +1488,9 @@ it; git history is the record of completed work.
   picks without raising, and a cancel keeps the pick, so the keyboard may go to a covered window; Escape while
   the menu is held goes to the current window and leaves the menu open, which the design does not state; the
   menu's rectangles, fixed at its press, can lie off a screen re-attached smaller while it is held, against
-  `erx_wm`'s rule that every rectangle lies within the screen; and the four commands are spelled in
-  `erx_wm:menu_item()`, rio's `command()` and `?COMMANDS`.
-* [Low] `erlang/apps/erx_display/src/erx_input.erl`, `erx_winfs.erl`: `destination/1` ends in a catch-all, so a
-  new route that should give the policy its gesture would silently go nowhere; and the screen has two copies,
-  `erx_winfs`'s `screen_rect` and `erx_input`'s, with different checks: an attach of an empty rectangle is taken
-  by `erx_winfs` and refused by `erx_input`, leaving the policy's input on the old screen.
+  `erx_wm`'s rule that every rectangle lies within the screen.
+* [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
+  should give the policy its gesture would silently go nowhere.
 * [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
   keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
   each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
