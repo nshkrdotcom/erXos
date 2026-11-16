@@ -149,7 +149,7 @@ recovery_test() ->
                  [{Name, Place} || #{name := Name, place := Place} <- Set]),
     ?assertEqual([{<<"dashboard">>, system, 0, image}, {<<"clock">>, installed, 1, development}],
                  [{Name, Place, Entry, Signer}
-                  || {Name, Place, #{entry := Entry, signer := Signer}}
+                  || {Name, Place, Entry, #{signer := Signer}}
                          <- ets:lookup_element(erx_pkg_medium, registered, 2)]),
     stop(Sup).
 

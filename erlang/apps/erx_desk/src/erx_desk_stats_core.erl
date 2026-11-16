@@ -71,7 +71,7 @@ more.
 -type time() :: integer().
 
 -type input() :: {tick, Now :: time()}
-               | {inspected, tag(), answer()}
+               | {inspected, tag(), answer(), Read :: time()}
                | {failed, tag(), Reason :: term()}.
 -type effect() :: {inspect, tag(), path()}
                 | {tick_after, Ms :: non_neg_integer()}
@@ -134,7 +134,7 @@ step({tick, Now}, #stats{sampling = true, sample = none} = State) ->
         State#stats{sample = #{time => Now, waiting => #{}, answers => #{}}});
 step({tick, _Now}, State) ->
     {State, []};
-step({inspected, Tag, Answer}, State) ->
+step({inspected, Tag, Answer, _Read}, State) ->
     answered(Tag, Answer, State);
 step({failed, Tag, Reason}, State) ->
     answered(Tag, {error, Reason}, State).

@@ -14,6 +14,9 @@ the sessions the branch keeps.
   sets, until unmark/1, at `start` or `enable`.
 * The text of rc.conf the table was last made from, so a restarted table
   has the table it had while rc.conf is unread.
+* The last package set the table took (erx_starter:packages/2), so a
+  restarted table has the rows of every app it keeps without asking the
+  package process for its set.
 
 Only the table writes the records, from its own process, and each write
 replaces what it changes in one step, so a table that ends at any point
@@ -21,7 +24,7 @@ finds either the record before the write or the record after it.
 """.
 -behaviour(gen_server).
 
--export([start_link/0, mark/1, unmark/1, stopped/0, record/1, recorded/0]).
+-export([start_link/0, mark/1, unmark/1, stopped/0, record/1, recorded/0, record_set/1, recorded_set/0]).
 -export([init/1, handle_call/3, handle_cast/2]).
 
 -spec start_link() -> gen_server:start_ret().
@@ -53,9 +56,20 @@ record(Text) ->
 recorded() ->
     gen_server:call(?MODULE, recorded).
 
-%% The state: the stopped marks, an ordset of names, and the recorded text.
+-doc "Records Set as the last package set the table took.".
+-spec record_set([erx_pkg_plan:published()]) -> ok.
+record_set(Set) ->
+    gen_server:call(?MODULE, {record_set, Set}).
+
+-doc "The set record_set/1 last recorded; before the first, the empty set.".
+-spec recorded_set() -> [erx_pkg_plan:published()].
+recorded_set() ->
+    gen_server:call(?MODULE, recorded_set).
+
+%% The state: the stopped marks, an ordset of names, the recorded text and the
+%% recorded package set.
 init([]) ->
-    {ok, #{stopped => ordsets:new(), text => none}}.
+    {ok, #{stopped => ordsets:new(), text => none, set => []}}.
 
 handle_call({mark, Name}, _From, #{stopped := Stopped} = State) ->
     {reply, ok, State#{stopped := ordsets:add_element(Name, Stopped)}};
@@ -66,7 +80,11 @@ handle_call(stopped, _From, #{stopped := Stopped} = State) ->
 handle_call({record, Text}, _From, State) ->
     {reply, ok, State#{text := {ok, Text}}};
 handle_call(recorded, _From, #{text := Text} = State) ->
-    {reply, Text, State}.
+    {reply, Text, State};
+handle_call({record_set, Set}, _From, State) ->
+    {reply, ok, State#{set := Set}};
+handle_call(recorded_set, _From, #{set := Set} = State) ->
+    {reply, Set, State}.
 
 handle_cast(_Request, State) ->
     {noreply, State}.

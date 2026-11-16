@@ -48,13 +48,13 @@ key its grant's end deleted, ends the listener as its grant's exit does.
 **What it does.** `{link, P}` and `{unlink, P}`; `{bind, Conn, Acceptor}`, the message
 `{bind, self(), Acceptor}` to the connection; `{reply, N, Reply}`, `{erx_net, self(),
 {reply, N, Reply}}` to its socket process; `take_unit`, one unit taken back from its accept
-credit; `stop`, its end. After each step it arms the clock for the core's earliest
-deadline. The core keeps time in milliseconds and the clock in microseconds, so the
-listener gives the core `erx_net_clock:now() div 1000` and arms at a deadline times 1000:
-a hint comes at or after that, when the deadline is due.
+credit; `{stop, Reason}`, its end, always the last. After each step it arms the clock for
+the core's earliest deadline. The core keeps time in milliseconds and the clock in
+microseconds, so the listener gives the core `erx_net_clock:now() div 1000` and arms at a
+deadline times 1000: a hint comes at or after that, when the deadline is due.
 
-**Its end.** It ends normally when the core says `stop`, at its socket process's exit, or
-at `close`, and deletes its key as it does. Its
+**Its end.** It ends normally when the core says `{stop, normal}`, at its socket process's
+exit, or at `close`, and deletes its key as it does. Its
 grant is its parent, so gen_server ends it at the grant's exit, with the grant's reason,
 before the core sees that exit. Its exit reaches every queued connection through their
 links, and each aborts with a RST; a connection already sent `bind` ignores it. Its socket
@@ -147,7 +147,7 @@ handle_info({bound, Conn}, S) when is_pid(Conn) ->
 handle_info({'EXIT', Pid, _}, S) ->
     step({exit, Pid}, S);
 handle_info({erx_net_clock, hint}, S) ->
-    step(expired, S#state{armed = infinity});
+    step(expired, S#state{armed = erx_net_clock:hinted(S#state.armed)});
 handle_info(Msg, #state{socket = Socket, origin = Origin} = S) ->
     case erx_net_admit:request(tcp_listen, Origin, Socket, Msg) of
         {ok, {call, N, {accept, Acceptor, Timeout}}} -> step({accept, N, Acceptor, Timeout}, S);
@@ -175,9 +175,9 @@ step(Event, #state{core = Core0} = S) ->
 
 perform([], #state{core = Core, armed = Armed} = S) ->
     {noreply, S#state{armed = erx_net_clock:arm_by(to_us(erx_tcp_listen_core:next_deadline(Core)), Armed)}};
-perform([stop | _], #state{key = Key} = S) ->
+perform([{stop, Reason}], #state{key = Key} = S) ->
     ok = erx_net_bind:delete(Key),
-    {stop, normal, S};
+    {stop, Reason, S};
 perform([Action | Rest], S) ->
     ok = effect(Action, S),
     perform(Rest, S).
@@ -213,7 +213,7 @@ request(N, close, #state{key = Key} = S) ->
     %% The port is free before close is answered, as FreeBSD's soclose frees it before
     %% close returns, so a listen on it right after the answer is not refused eaddrinuse.
     ok = erx_net_bind:delete(Key),
-    perform([{reply, N, ok}, stop], S).
+    perform([{reply, N, ok}, {stop, normal}], S).
 
 addr(any) -> any;
 addr({A, B, C, D}) -> <<A, B, C, D>>.

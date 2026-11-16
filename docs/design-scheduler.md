@@ -171,8 +171,10 @@ policy that sizes grants prevents that, the kernel does not repair it
 * Fiasco's vCPU interface, through which a worker of a POSIX program takes
   its signals; no executor is ever armed for it
   ([design-kernel.md](design-kernel.md#vcpu-upcalls)).
-* The scheduling constraints of the L4Re microkernel, which cap groups of
-  threads conjunctively, and Resource Containers' separation of the
+* The scheduling constraints of the L4Re research paper (RTAS 2026), which
+  cap groups of threads conjunctively and which the tree's Fiasco does not
+  have ([research](research-hierarchical-scheduling.md#scheduling-constraints-rtas-2026)),
+  and Resource Containers' separation of the
   resource principal from the protection domain, which lets a domain hold
   more than one group ([research](research-hierarchical-scheduling.md)).
 * Genode's split of resource accounting: memory per session, CPU by quota
@@ -1740,7 +1742,7 @@ in A that acts only for it.
    runtime, as a busy port blocks in stock ERTS. B's own quota is not
    spent while they wait, and A is asked for no more than B's facet
    admits.
-2. A's executors run B's facet and the file processes it spawns, charged
+2. A's executors run B's facet and the grant processes it spawns, charged
    to A's group and to the groups above it. Every nanosecond of this is
    A's, whatever B sends (S6), and A's quota per period caps it (S4).
 3. C's save arrives on C's lane; C triggers the lane's doorbell. The
@@ -2305,8 +2307,12 @@ client's.**
 **Flattening onto Fiasco's fixed priorities.**
 
 * *How it works.* Map every group to a priority band and every thread to a
-  priority, and use the L4Re microkernel's scheduling constraints to cap
-  groups.
+  priority; a group's CPU share can then come only from what Fiasco has: a scheduling context per
+  thread with a fixed priority and a time quantum, round robin within a
+  priority (`src/kern/sched_context-fixed_prio.cpp:107-111`, `:236-241`;
+  `Ready_queue_fp::requeue`, `src/kern/ready_queue_fp.cpp:158-164`). Fiasco
+  has no object that caps a group of threads as a whole; the scheduling
+  constraints of the L4Re research paper are not in its tree.
 * *Why it lost.* That is close to C1 already. erXos's own kernel owns its
   scheduler, so the group tree is a first-class object rather than an
   encoding; the stopgap's groups give readiness only.

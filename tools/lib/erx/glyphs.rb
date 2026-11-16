@@ -2,11 +2,15 @@
 # SPDX-License-Identifier: BSD-2-Clause
 # frozen_string_literal: true
 
+require 'digest'
 require 'fileutils'
 require 'tmpdir'
 require_relative 'error'
+require_relative 'generated_abi'
 require_relative 'abi_theme'
 require_relative 'gpos'
+require_relative 'origin'
+require_relative 'bounded_file'
 require_relative 'output_directory'
 require_relative 'raster'
 require_relative 'glyphs_menu'
@@ -19,6 +23,14 @@ module Erx
   # into build/glyphs as ROLE.subfont, each role's glyphs a second time as
   # its LVGL font's C source (LvglFont), and the body role's a third time as
   # the window menu's Erlang module (Menu). Nothing here is checked in.
+  #
+  # The generated files hold glyph data derived from the role's font, so
+  # each opens with a header (font_notice, header) that gives the license
+  # the font's import records for the font file in its ORIGIN.md (OFL-1.1
+  # for Inter, font data only) and a line naming the file, the import's
+  # release and the copyright line of the import's LICENSE.txt. The
+  # generators themselves stay erXos's, under BSD-2-Clause. A subfont file
+  # is binary and has no place for a header; it holds the same data.
   #
   # A role's subfont holds one glyph for each code point of its font's
   # ranges, in ascending order across the ranges, so glyph i is the i-th code
@@ -65,13 +77,18 @@ module Erx
     # A font(7) field: a word right-justified in 11 bytes, then a blank.
     FIELD = 11
     CHANNEL = 'k8'
-    MAX_X = 0xffff
-    ROW = 0..255
-    LEFT = -128..127
-    ADVANCE = 0..255
-    ADJUSTMENT = -128..127
+    # The subfont format's field bounds (abi/formats/subfont.txt).
+    CODEC = ABI::Generated::CODEC
+    MAX_X = CODEC.constant('subfont_x_max')
+    ROW = 0..CODEC.constant('subfont_row_max')
+    LEFT = CODEC.constant('subfont_left_min')..CODEC.constant('subfont_left_max')
+    ADVANCE = 0..CODEC.constant('subfont_advance_max')
+    ADJUSTMENT = CODEC.constant('subfont_adjustment_min')..CODEC.constant('subfont_adjustment_max')
     PAIRS = 'kern'
     HALF = Rational(1, 2)
+    # The license file of a font's import, beside its ORIGIN.md.
+    FONT_LICENSE = 'LICENSE.txt'
+    LICENSE_BYTES = 1 << 20
 
     class Refused < Error; end
 
@@ -82,6 +99,20 @@ module Erx
     # A glyph's entry and the coverage drawn in its columns, nil for an
     # absent glyph.
     Placed = Data.define(:glyph, :coverage)
+    # What a generated file of a role's glyphs declares of the font they derive
+    # from: LICENSE, an SPDX expression, and LINE, one line naming the font file,
+    # its release and its copyright. Both go into a generated file's opening
+    # comment, so each is printable ASCII and never ends a C comment.
+    FontNotice = Data.define(:license, :line) do
+      def initialize(license:, line:)
+        [license, line].each do |text|
+          next if text.is_a?(String) && text.match?(/\A[\x20-\x7e]+\z/) && !text.include?('*/')
+
+          raise Refused, "font notice #{text.inspect} is not printable ASCII without a comment's end"
+        end
+        super
+      end
+    end
 
     # A k8 subfont: an image WIDTH by HEIGHT whose PIXELS are its rows top
     # first, one byte of coverage each, the baseline ASCENT rows down,
@@ -129,6 +160,7 @@ module Erx
     # and returns their paths as Written. Font paths in the theme are beneath
     # root.
     def write(root:, program:, runner:, theme: Glyphs.theme(root: root), output_root: root)
+      notices = theme.roles.transform_values { |role| font_notice(theme, role, root: root) }
       subfonts = theme.roles.transform_values do |role|
         font = theme.fonts.fetch(role.font)
         asked = requests(role, font)
@@ -138,11 +170,13 @@ module Erx
       end
       menu_role = theme.roles[Menu::ROLE] || raise(Refused, "the theme has no #{Menu::ROLE} role, which the window menu takes")
       menu = Menu.erlang(subfonts.fetch(Menu::ROLE), code_points: code_points(theme.fonts.fetch(menu_role.font)),
-                         sources: [ABI::Theme::SOURCE, font_file(theme, menu_role)])
+                         sources: [ABI::Theme::SOURCE, font_file(theme, menu_role)],
+                         notice: notices.fetch(Menu::ROLE))
       lvgl_fonts = subfonts.to_h do |name, subfont|
         role = theme.roles.fetch(name)
         [LvglFont.file(name), LvglFont.c_source(subfont, role: role, ranges: theme.fonts.fetch(role.font).ranges,
-                                                   sources: [ABI::Theme::SOURCE, font_file(theme, role)])]
+                                                   sources: [ABI::Theme::SOURCE, font_file(theme, role)],
+                                                   notice: notices.fetch(name))]
       end
       files = subfonts.to_h { |name, subfont| [subfont_file(name), subfont.encode] }.merge(lvgl_fonts, Menu::FILE => menu)
       paths = publish(files, output_root: output_root)
@@ -158,6 +192,39 @@ module Erx
     end
 
     def subfont_file(name) = "#{name}#{EXTENSION}"
+
+    # ROLE's FontNotice, from its font's import beneath root: the license
+    # ORIGIN.md records for the font file's current bytes (its row in changes,
+    # else in files, whose SHA-256 must be the file's), the first word of the
+    # import's revision as its release, and the first line of its LICENSE.txt,
+    # which must be a copyright line.
+    def font_notice(theme, role, root:)
+      font = theme.fonts.fetch(role.font)
+      file = font.files.fetch(role.weight)
+      path = font_file(theme, role)
+      inventory = Origin.new(root: File.join(root, font.directory)).inventory
+      row = inventory.fetch('changes')[file] || inventory.fetch('files')[file]
+      refuse(role, "#{path} has no row in its import's ORIGIN.md") unless row
+      refuse(role, "#{path} is not the file its ORIGIN.md row records") unless
+        Digest::SHA256.file(File.join(root, path)).hexdigest == row.fetch('sha256')
+      license_file = File.join(font.directory, FONT_LICENSE)
+      copyright = BoundedFile.read(File.join(root, license_file), maximum: LICENSE_BYTES).lines.first.to_s.chomp
+      refuse(role, "#{license_file} does not open with a copyright line") unless copyright.start_with?('Copyright ')
+      FontNotice.new(license: row.fetch('license'),
+                     line: "Glyph data derived from #{file} #{inventory.fetch('revision').split.first}, #{copyright}")
+    end
+
+    # The opening comment lines of a generated file of a role's glyphs, without
+    # their comment leaders: erXos's copyright, NOTICE's license and line, and
+    # that GENERATOR wrote it from SOURCES.
+    def header(notice, generator:, sources:)
+      ['Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>',
+       "SPDX-License-Identifier: #{notice.license}",
+       notice.line,
+       "Generated by tools/erx build glyphs (#{generator}) from",
+       *sources[0...-1].map { |source| "#{source}," }, "#{sources.last}.",
+       'Do not edit this file.']
+    end
 
     # FILES, their contents by name, in a new directory beside OUTPUT, which
     # then replaces it whole; returns each file's final path by name.
@@ -247,7 +314,7 @@ module Erx
       unless ADJUSTMENT.cover?(pixels)
         refuse(role, "glyph #{coverage.index}'s kerning of #{units} units is an adjustment of #{pixels} pixels")
       end
-      refuse(role, "glyph #{coverage.index}'s kerned advance of #{kerned} pixels leaves 0 to 255") unless ADVANCE.cover?(kerned)
+      refuse(role, "glyph #{coverage.index}'s kerned advance of #{kerned} pixels leaves #{ADVANCE.min} to #{ADVANCE.max}") unless ADVANCE.cover?(kerned)
       pixels
     end
 

@@ -1544,8 +1544,8 @@ tmp_erxos("release") ->
 
 %% Open after unlink: what a file holds is given back at its last close, and a
 %% process that opens a file, removes it and is killed gives it back too. The
-%% grant answers a close when it hands the clunk to the file's owner, so the
-%% charge comes back just after close returns, and both checks wait for it. It
+%% grant answers a close once the tree's clunk has run, and both checks wait
+%% for the charge to come back. It
 %% compares /tmp's free blocks before and after, so it also runs alone (main/1,
 %% "tmp-held").
 tmp_held(Show) ->
@@ -1582,7 +1582,7 @@ tmp_wait_free(Name, Free, Tries) ->
         _ -> receive after 20 -> tmp_wait_free(Name, Free, Tries - 1) end
     end.
 
-%% The tree process, its grant and every process linked to the grant: the file owners.
+%% The tree process, its grant and every process linked to the grant.
 tmp_processes(Tree) ->
     {links, [Sup]} = process_info(Tree, links),
     [Grant] = [Pid || {grant, Pid, _, _} <- supervisor:which_children(Sup)],

@@ -41,7 +41,7 @@ class ErxAppTest < Minitest::Test
                                        'case eunit:test(erx_app_tests, [verbose]) of ok -> halt(0); _ -> halt(1) end.',
                                        stdin_data: '', chdir: work)
       assert status.success?, output
-      assert_match(/All 5 tests passed/, output)
+      assert_match(/All 4 tests passed/, output)
     end
   end
 

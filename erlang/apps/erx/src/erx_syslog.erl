@@ -118,7 +118,7 @@ handle_call({next, Role}, {Pid, _Tag} = From, State = #state{clock = Clock, syst
                                                              consumers = Consumers})
   when Role =:= console; Role =:= store ->
     Monitor = monitor(process, Pid),
-    {Actions, Next} = erx_syslog_core:ask(Role, {From, Monitor}, Clock(), System, Consumers),
+    {Next, Actions} = erx_syslog_core:ask(Role, {From, Monitor}, Clock(), System, Consumers),
     {noreply, act(Actions, State#state{consumers = Next})};
 handle_call(_Request, _From, State) ->
     {reply, {error, badarg}, State}.
@@ -156,13 +156,15 @@ info(_Message, State) ->
     {noreply, State}.
 
 %% A crash report or sys:get_status/1 shows neither the backlogs nor the last message,
-%% which hold other domains' text, so no domain's bytes appear in the system domain's
-%% own report.
+%% which hold other domains' text, and of a crash's reason only its leading atom
+%% (erx_report:reason_name/1), so no domain's bytes appear in the system domain's own
+%% report.
 -spec format_status(gen_server:format_status()) -> gen_server:format_status().
 format_status(Status) ->
     maps:map(fun(state, #state{} = State) -> State#state{consumers = held_back};
                 (message, _Message) -> held_back;
                 (log, Log) -> [held_back || _ <- Log];
+                (reason, Reason) -> erx_report:reason_name(Reason);
                 (_Key, Value) -> Value
              end, Status).
 
@@ -176,7 +178,7 @@ written(Source, Records, State = #state{clock = Clock, rate = Rate}) ->
 %% may fall due with no line added.
 tick(Now, State = #state{system = System, rate = Rate, consumers = Consumers}) ->
     {Drops, NextRate} = erx_syslog_core:turn(Now, System, Rate),
-    {Actions, Next} = erx_syslog_core:due(Now, System, Consumers),
+    {Next, Actions} = erx_syslog_core:due(Now, System, Consumers),
     joined(Now, [{messages, Line} || Line <- Drops],
            act(Actions, State#state{rate = NextRate, consumers = Next})).
 
@@ -201,7 +203,7 @@ notes(Now, Texts, State = #state{system = System}) ->
     joined(Now, [{messages, erx_syslog_core:note(Now, System, Text)} || Text <- Texts], State).
 
 joined(Now, Lines, State = #state{system = System, consumers = Consumers}) ->
-    {Actions, Next} = erx_syslog_core:lines(Now, System, Lines, Consumers),
+    {Next, Actions} = erx_syslog_core:lines(Now, System, Lines, Consumers),
     act(Actions, State#state{consumers = Next}).
 
 %% The core's actions: a batch answers its request, and an answered or replaced

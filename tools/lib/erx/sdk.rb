@@ -81,6 +81,9 @@ module Erx
     # The erXos applications the SDK carries: each holding a public module, and each erXos
     # application those depend on, in ErlangApps::APPLICATIONS' order. owners maps a module
     # to its application, depends an application to the applications its resource file names.
+    # A resource file's runtime_dependencies are not followed: they are needs on the target
+    # (erx's console runs erx_shell:console/0) that the SDK's use on the host never meets,
+    # and stock OTP's application loading ignores them.
     def self.applications(entries, owners:, depends:)
       roots = entries.map(&:module_name).uniq.map do |module_name|
         owners.fetch(module_name) { raise Error, "#{PUBLIC}: #{module_name} is in no erXos application" }

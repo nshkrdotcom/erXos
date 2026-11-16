@@ -109,17 +109,17 @@ request(Op, Sector, Count) ->
 wait_limit_test() ->
     T = request(read, 0, 1),
     ?assertEqual(10000, ?H:deadline(T)),
-    ?assertMatch({[{issue, transfer}], _}, ?H:step(T, {start, 9999})),
-    ?assertMatch({[{answer, {error, {device, deadline}}}], _}, ?H:step(T, {start, 10000})),
-    ?assertMatch({[], _}, ?H:step(T, {tick, 9999})),
-    {[{answer, {error, {device, deadline}}}], Done} = ?H:step(T, {tick, 10000}),
+    ?assertMatch({_, [{issue, transfer}]}, ?H:step(T, {start, 9999})),
+    ?assertMatch({_, [{answer, {error, {device, deadline}}}]}, ?H:step(T, {start, 10000})),
+    ?assertMatch({_, []}, ?H:step(T, {tick, 9999})),
+    {Done, [{answer, {error, {device, deadline}}}]} = ?H:step(T, {tick, 10000}),
     ?assertEqual(none, ?H:deadline(Done)).
 
 in_flight_bound_test() ->
-    {_, T} = ?H:step(request(write, 0, 2), {start, 9000}),
+    {T, _} = ?H:step(request(write, 0, 2), {start, 9000}),
     ?assertEqual(27000, ?H:deadline(T)),
-    ?assertMatch({[], _}, ?H:step(T, {tick, 26999})),
-    ?assertMatch({[{fail, in_flight_bound}], _}, ?H:step(T, {tick, 27000})).
+    ?assertMatch({_, []}, ?H:step(T, {tick, 26999})),
+    ?assertMatch({_, [{fail, in_flight_bound}]}, ?H:step(T, {tick, 27000})).
 
 %% Each layer answers before its caller gives up: erx_blk:call/1 waits 30 s.
 deadlines_below_the_callers_test() ->
@@ -188,7 +188,7 @@ every_transfer_sequence_test_() ->
      end}.
 
 explore(Op, Sector, Count) ->
-    {[{issue, transfer}], T} = ?H:step(request(Op, Sector, Count), {start, ?ISSUED}),
+    {T, [{issue, transfer}]} = ?H:step(request(Op, Sector, Count), {start, ?ISSUED}),
     Last = Sector + Count =:= 64,
     walk(T, {Op, Count, Last}, script(Op, Count), 0, [], 2).
 
@@ -203,7 +203,7 @@ early(_) -> false.
 
 visit(T, {Op, Count, Last} = Shape, [What | Rest] = Script, Moved, Path, Ticks, Event) ->
     Path1 = [Event | Path],
-    {Actions, T1} = ?H:step(T, Event),
+    {T1, Actions} = ?H:step(T, Event),
     case {oracle({Op, Count, Last, Moved}, What, Event), Actions} of
         {fail, [{fail, _}]} ->
             ?assertEqual(done, ?H:phase(T1)),
@@ -222,7 +222,7 @@ visit(T, {Op, Count, Last} = Shape, [What | Rest] = Script, Moved, Path, Ticks, 
 
 next(T, _Shape, [], _Moved, _Path) ->
     ?assertEqual(done, ?H:phase(T)),
-    lists:foreach(fun(E) -> ?assertMatch({[], _}, ?H:step(T, E)) end, alphabet()),
+    lists:foreach(fun(E) -> ?assertMatch({_, []}, ?H:step(T, E)) end, alphabet()),
     0;
 next(T, Shape, Script, Moved, Path) ->
     walk(T, Shape, Script, Moved, Path, 2).
@@ -238,11 +238,11 @@ out_of_range_elsewhere_fails_the_transfer_test() ->
     ?assertMatch([{fail, {auto_cmd12, _}}], finish(read, 62, 2, 16#80080900)).
 
 finish(Op, Sector, Count, Auto) ->
-    {_, T0} = ?H:step(request(Op, Sector, Count), {start, ?ISSUED}),
-    {[], T1} = ?H:step(T0, {command_complete, 16#900}),
+    {T0, _} = ?H:step(request(Op, Sector, Count), {start, ?ISSUED}),
+    {T1, []} = ?H:step(T0, {command_complete, 16#900}),
     Ready = case Op of read -> buffer_read_ready; write -> buffer_write_ready end,
-    T2 = lists:foldl(fun(_, T) -> element(2, ?H:step(T, Ready)) end, T1, lists:seq(1, Count)),
-    element(1, ?H:step(T2, {transfer_complete, Auto})).
+    T2 = lists:foldl(fun(_, T) -> element(1, ?H:step(T, Ready)) end, T1, lists:seq(1, Count)),
+    element(2, ?H:step(T2, {transfer_complete, Auto})).
 
 %%% The 1.8 V refusal
 
@@ -299,13 +299,13 @@ version_test_() ->
 %% A flush is CMD13 alone, answered as a write's status.
 flush_test_() ->
     New = ?H:new(#{op => flush, accepted => 0}),
-    {Issue, Issued} = ?H:step(New, {start, ?ISSUED}),
+    {Issued, Issue} = ?H:step(New, {start, ?ISSUED}),
     [?_assertEqual([{issue, status}], Issue),
      ?_assertEqual(?ISSUED + 18000, ?H:deadline(Issued)),
-     ?_assertMatch({[{answer, ok}], _}, ?H:step(Issued, {command_complete, 16#900})),
-     ?_assertMatch({[{fail, {not_ready, _}}], _}, ?H:step(Issued, {command_complete, 16#800})),
-     ?_assertMatch({[{fail, {interrupt, command_timeout}}], _}, ?H:step(Issued, {error, command_timeout})),
-     ?_assertMatch({[{fail, {unexpected, status, buffer_read_ready}}], _}, ?H:step(Issued, buffer_read_ready))].
+     ?_assertMatch({_, [{answer, ok}]}, ?H:step(Issued, {command_complete, 16#900})),
+     ?_assertMatch({_, [{fail, {not_ready, _}}]}, ?H:step(Issued, {command_complete, 16#800})),
+     ?_assertMatch({_, [{fail, {interrupt, command_timeout}}]}, ?H:step(Issued, {error, command_timeout})),
+     ?_assertMatch({_, [{fail, {unexpected, status, buffer_read_ready}}]}, ?H:step(Issued, buffer_read_ready))].
 
 %% spaced/2 makes its write and leaves at least 6 us between two writes.
 spaced_test() ->

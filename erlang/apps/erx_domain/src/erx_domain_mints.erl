@@ -168,7 +168,7 @@ serves the display's service.
                      grants := #{key() => #{server := row(), limits := map(), mark := boolean(),
                                             state := grant()}},
                      rows := #{row() => incarnation()},
-                     sessions := #{id() => ready},
+                     sessions := sets:set(id()),
                      next_tag := tag(),
                      owner := fun((pid()) -> non_neg_integer()),
                      files := [name()],
@@ -213,7 +213,7 @@ new(#{services := Services, grants := Grants, owner := Owner} = Config) when is_
     Entries = maps:from_list([{{Grantee, Name}, entry(Server, Limits, false)}
                               || {Grantee, Name, Server, Limits} <- Grants, not is_template(Grantee)]),
     Windows = maps:get(windows, Config, []),
-    #{declared => Declared, grants => Entries, rows => #{}, sessions => #{},
+    #{declared => Declared, grants => Entries, rows => #{}, sessions => sets:new([{version, 2}]),
           next_tag => 1, owner => Owner, files => maps:get(files, Config, []), windows => Windows,
           areas => areas(Windows, Grants), deadline => maps:get(deadline, Config, ?DEADLINE)}.
 
@@ -280,8 +280,13 @@ settled(idle, Server, Starting) -> not lists:member(Server, Starting);
 settled(_Pending, _Server, _Starting) -> false.
 
 -doc "The next state and the actions to perform for Event, in order.".
--spec step(event(), state()) -> {[action()], state()}.
-step({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
+-spec step(event(), state()) -> {state(), [action()]}.
+step(Event, State) ->
+    {Actions, Next} = on_event(Event, State),
+    {Next, Actions}.
+
+%% Event's actions and the next state, as the decisions below build them.
+on_event({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
     case Rows of
         #{Row := Newest} when Id =< element(1, Newest) ->
             {[{refused, stale_report, {Row, Id}}], State};
@@ -290,33 +295,34 @@ step({ready, Row, Id, Node, Provides}, #{rows := Rows} = State) ->
             {Actions, Next} = reconcile(State#{rows := Rows#{Row => {Id, ready, Node, Accepted}}}),
             {[{refused, Reason, Detail} || {Reason, Detail} <- Refusals] ++ Actions, Next}
     end;
-step({ended, Row, Id}, #{rows := Rows} = State) ->
+on_event({ended, Row, Id}, #{rows := Rows} = State) ->
     case Rows of
         #{Row := Newest} when Id < element(1, Newest) ->
             {[], State};
         #{} ->
             reconcile(State#{rows := Rows#{Row => {Id, ended}}})
     end;
-step({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
-    case Sessions of
-        #{Id := _} ->
+on_event({session_ready, Rows, Id, Marked}, #{sessions := Sessions, grants := Grants} = State) ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             {[{refused, stale_report, {session, Id}}], State};
-        #{} ->
+        false ->
             Added = maps:from_list([{{{session, Id}, Name}, entry(Server, Limits, {display, Name} =:= Marked)}
                                     || {Name, Server, Limits} <- Rows]),
-            reconcile(State#{sessions := Sessions#{Id => ready}, grants := maps:merge(Grants, Added)})
+            reconcile(State#{sessions := sets:add_element(Id, Sessions), grants := maps:merge(Grants, Added)})
     end;
-step({session_ended, Id}, #{sessions := Sessions} = State) ->
-    case maps:take(Id, Sessions) of
-        {_Template, Rest} ->
+on_event({session_ended, Id}, #{sessions := Sessions} = State) ->
+    case sets:is_element(Id, Sessions) of
+        true ->
             %% With the session gone its grants have no pair, so reconcile cancels
             %% their operations; then nothing of the session is kept.
+            Rest = sets:del_element(Id, Sessions),
             {Actions, #{grants := Grants} = Next} = reconcile(State#{sessions := Rest}),
             {Actions, Next#{grants := maps:filter(fun({Grantee, _}, _) -> Grantee =/= {session, Id} end, Grants)}};
-        error ->
+        false ->
             {[], State}
     end;
-step({introduced, Tag, Result}, State) ->
+on_event({introduced, Tag, Result}, State) ->
     case find(Tag, State) of
         {Key, {introducing, Pair, Tag}} when Result =:= ok ->
             {[mint_request(Key, Pair, Tag, State)], set_grant(Key, {minting, Pair, Tag}, State)};
@@ -325,7 +331,7 @@ step({introduced, Tag, Result}, State) ->
         _ ->
             {[], State}
     end;
-step({minted, Origin, Tag, Reply}, State) ->
+on_event({minted, Origin, Tag, Reply}, State) ->
     case find(Tag, State) of
         {Key, {minting, {Origin, GranteeId} = Pair, Tag}} ->
             case is_owned_reply(Reply, Origin, State) of
@@ -343,7 +349,7 @@ step({minted, Origin, Tag, Reply}, State) ->
         none ->
             drop(unknown_tag, {minted, Origin}, State)
     end;
-step({installed, Origin, Tag}, State) ->
+on_event({installed, Origin, Tag}, State) ->
     case find(Tag, State) of
         {Key, {installing, {_, Origin} = Pair, Tag, Facet}} ->
             {[{disarm, Tag}], set_grant(Key, {installed, Pair, Facet}, State)};
@@ -355,7 +361,7 @@ step({installed, Origin, Tag}, State) ->
             drop(unknown_tag, {installed, Origin}, State)
     end;
 %% A deadline whose operation ended already was disarmed with its message on the way.
-step({deadline, Tag}, State) ->
+on_event({deadline, Tag}, State) ->
     case find(Tag, State) of
         {Key, Pending} ->
             fail_at_deadline(Key, carried_pair(Pending), {deadline, element(1, Pending)}, State);
@@ -519,9 +525,9 @@ current_pair({Grantee, Name} = Key, #{rows := Rows} = State) ->
 ready_id(system, _State) ->
     ?SYSTEM_ID;
 ready_id({session, Id}, #{sessions := Sessions}) ->
-    case Sessions of
-        #{Id := _} -> Id;
-        #{} -> none
+    case sets:is_element(Id, Sessions) of
+        true -> Id;
+        false -> none
     end;
 ready_id(Row, #{rows := Rows}) ->
     case Rows of

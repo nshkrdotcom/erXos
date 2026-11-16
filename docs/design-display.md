@@ -978,9 +978,14 @@ modifiers and the other keys that type no character are runes of
 9front's private-use range ([Input events](#input-events)). Because
 every `k` and `K` record carries the whole set, a reader that lost
 records to the queue's bound has the right set again at the next one. A read of
-`mouse`, `kbd` or `wctl` is a
-helper-mode read that waits for a record
-([The `erx_fs` behaviour](design-files.md#serving-the-erx_fs-behaviour)).
+`mouse` or `kbd` that finds no record waits for one as a waiting request
+whose keeper is the window process
+([The `erx_fs` behaviour](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"), so the window's other files, a clunk of the fid
+and a flush go on while it waits, and a clunk answers the waiting read
+`EINTR`; a held `ctl` write (below) waits the same way. A read of `wctl`
+answers at once with the window's rectangle and state at the read, as
+the terminal reads it after each `r` record.
 Only these names exist; `cons`, `winname`, `consctl` and `wsys` do not,
 since a terminal is a program's choice and attachment by name is gone.
 
@@ -1268,12 +1273,13 @@ step the core with it, and continue from the next byte, until the write
 is consumed or a message fails. Because the depth function reads the
 planned connection, an image a `b` allocated earlier in the same write
 has its depth and one an `f` freed has none, and there is no second table
-of depths to keep in step with the images. The fold returns the planned
-connection and the list of `erx_memdraw` operations, or the errno and the
-offset of the message that failed. The draw connection performs the
-operations only after the fold returns, so a write is decoded and checked
-whole before any of it is applied, and a write that fails applies
-nothing (plan, then apply).
+of depths to keep in step with the images. The fold returns `{Conn, Ops}`,
+the planned connection and the list of `erx_memdraw` operations, or the
+connection as it was and the one action `{error, Errno, Offset}`, the
+errno and offset of the message that failed. The draw connection
+performs the operations only after the fold returns, so a write is
+decoded and checked whole before any of it is applied, and a write that
+fails applies nothing (plan, then apply).
 
 **A message never spans writes.** Each write holds whole messages, as
 Plan 9's `devdraw` requires: a message whose fields or payload run
@@ -1547,6 +1553,30 @@ children list that is not a proper list is `children` at its node. No operation 
 of the web, since the generator checks every kind's largest `insert`
 against it ([design-web.md](design-web.md#uis-the-browser-renderer)); a
 larger picture goes in a draw window.
+
+An app reads the schema's types and bounds through
+`erx_ui_schema:property(Name)`, the one table function the SDK makes
+public ([design-packaging.md](design-packaging.md#the-sdk)). It answers
+`error` for a name `ui.txt` does not declare. Otherwise it answers a map,
+the module's `property_info()`, with these keys:
+
+* `number`: the property's number on the wire, 1 to 255;
+* `type`: its value type, below;
+* `common`: whether every kind takes it;
+* `status`: whether its value may also be an `attr()` that carries one;
+* `detail`: `state` for an event whose detail is its kind's state value,
+  and `none` otherwise;
+* `default`: present only when the property's absence means a value.
+  It is that value: an integer, a boolean or an enum's atom.
+
+A value type, the module's `value_type()`, is one of:
+
+* `{integer, Min, Max}`, `{text, MaxBytes}` or `{bytes, MaxBytes}`;
+* `{enum, Atoms}` or `{image, Atoms}`, the atoms in number order;
+* `{list, Item, MaxItems, None}`: `Item` is an integer, text or enum
+  type, and `None` says whether the atom `none` may also be an item,
+  which only a list of integers allows;
+* `boolean`, `key`, `event` or `presentation`.
 
 A node's **identity** across trees is its parent's identity, its kind,
 its fixed properties, and its `key` when present or its index among its
@@ -1884,10 +1914,10 @@ events before it in the update put the pointer; `SYN_REPORT` sends what
 is kept. When an event would take a sum past a record's range, the sum
 is sent as it stands with all else kept, and a new sum starts at that
 event, so no sum overflows and no movement is clamped away; a wheel
-event's own value is clamped
-to a record's range first. An absolute position is each axis clamped
-to its range and normalized across it as `(V - Min) * 65535 div (Max -
-Min)`; the core takes a range only with `Min` below `Max`, and a device
+event's own value is clamped to a record's range first
+(`erx_input_codec:wheel/1`). An absolute position is each axis clamped
+to its range and spread across a record's axis by `erx_input_codec:axis/3`
+([design-abi.md](design-abi.md#input-records)); the core takes a range only with `Min` below `Max`, and a device
 that lacks either axis, answering its `ABS_INFO` with size 0 (virtio
 1.2, section 5.8.5.2), has none. The core reads a configuration answer
 by its `size` alone, as section 5.8.5.1 asks, since QEMU's reads as
@@ -2202,7 +2232,7 @@ device](#the-display-device)). `erx_winfs` stamps each record, end and
 tick with its own clock as it takes it, so the step reads no clock.
 
 ```erlang
--spec step(in(), view(), state()) -> {[out()], PolicyState :: term(), state()}.
+-spec step(in(), view(), state()) -> {state(), [out()]}.
 -type in() :: {record, Source :: pid(), Device :: binary(), At :: integer(), record()}
             | {gone, Source :: pid(), At :: integer()} % the source's process ended
             | {tick, At :: integer()}                  % the timer fired
@@ -2213,9 +2243,15 @@ tick with its own clock as it takes it, so the step reads no clock.
 %% What the screen shows: its shown windows, topmost first, each with its
 %% rectangle and the time of the last frame in which it gained pixels.
 -type displayed() :: [{window_id(), erx_wm:rect(), Gained :: integer()}].
--type out() :: {to, window_id(), input()} | {wm, term()} | {delete, window_id()}
-             | {windows, [erx_wm:window()]} | {wake, At :: integer() | none}.
+-type out() :: {policy_state, term()} | {to, window_id(), input()} | {wm, term()}
+             | {delete, window_id()} | {windows, [erx_wm:window()]}
+             | {wake, At :: integer() | none}.
 ```
+
+A step's first answer is `{policy_state, P}`, the policy's state after
+any question the step asked it, which `erx_winfs` keeps before it
+performs the rest, so a new table it commits is laid out with it and
+the windows left after a delete are arranged with it.
 
 Its state, made by `new/1` from the manifest entry's layout, repeat
 times and chord:
@@ -2598,10 +2634,21 @@ its last present. A write to `ctl` reaches it as a binary, which
 pixel area ([The window tree](#the-window-tree)); it then calls
 `erx_screen:present_request/2`, which returns at once as
 `erx_display:flush_request/3` does, keeps at most one present in flight
-to `erx_screen` and holds its client's write until the answer, so the
+to `erx_screen` and holds its client's write, as a waiting request it
+keeps ([The window tree](#the-window-tree)), until the answer, so the
 window still takes input while it waits; it then records the buffer as its last present
 and answers the write. A second `ctl` write that arrives while a present
-is in flight is held too, and queues behind it. When `erx_screen` ends
+is in flight is held too, and queues behind it. The write whose present
+is in flight is begun ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests", rule 3): the screen may already show it, so a flush
+or a clunk of its fid answers it with the present's own answer when
+`erx_screen` gives it, never `EINTR`; a write still queued has begun
+nothing, and a flush or a clunk answers it `EINTR` at once and takes it
+off the queue. The window keeps its held writes and its waiting reads in
+one `erx_fs_waits` set, at most its grant's 64 requests in flight, each
+a `ctl` line of at most 1,024 bytes or a read's count, so its process's
+heap bound, which the display sets, covers them with its pending input
+and its last present. When `erx_screen` ends
 while a present is in flight, the held write is answered `EIO` and the
 last buffer stays as it was. A refused line fails the write with `EINVAL`,
 and the display domain's log records the window and the reason. Input
@@ -2618,9 +2665,10 @@ the window presents its last buffer, whole, as if its client had: a
 request that arrives while a present is in flight waits for its answer
 and then goes before any queued write, and one that arrives before the
 window has a last buffer does nothing. A read of `mouse` or `kbd` takes
-one whole record, waiting for one, and one whose count cannot hold a
-record fails with `EINVAL`. A `label` write replaces the label whole,
-and one at a nonzero offset fails with `EINVAL`, erXos's choice. The
+one whole record, waiting for one, and one whose count cannot hold the
+record it would take fails with `EINVAL` and leaves that record
+queued. A `label` write replaces the label whole, and one at a nonzero
+offset fails with `EINVAL`, erXos's choice. The
 window ends with its holder, its directory or its grant, and holds
 nothing that outlives it: its buffer is its client's memory.
 
@@ -2711,8 +2759,8 @@ connection gets a binary, which `erx_draw_core:plan/2` decodes and
 checks whole, message by message against the connection as planned so
 far ([Draw messages](#draw-messages)). Its step takes the planned
 connection and one decoded message and returns the next state and the
-`erx_memdraw` operation to perform, or an errno from the refusals that
-section lists. A failure fails the write with that errno, and the
+`erx_memdraw` operation to perform, or, as its one action, an errno from
+the refusals that section lists. A failure fails the write with that errno, and the
 session's log records the connection, the errno and the offset of the
 message. The process performs the operations only after the fold has
 consumed the whole write, so a failed write applies none of them. The
@@ -2892,14 +2940,44 @@ said.
   is at the read, and one of fewer fails with `EINVAL`, as devdraw
   refuses a short read (`devdraw.c:1123-1124`); a read at any other
   offset answers no bytes, so `cat` stops after one line. Each read asks
-  the connection anew, and the tree has made image 0 anew before it hands
-  the program an `r` record of `mouse`, so the next read after one shows
+  the connection anew, and the connection has made image 0 anew before
+  it hands the program an `r` record of `mouse`, so the next read after one shows
   the resized image 0
   ([design-files.md](design-files.md#a-programs-window), "A resize"). It is a call answered between writes, so it
   never shows a write half applied. `ctl` takes no write: draw(3)'s
   write of an image id selects another image's information (lines
   92-95), which no erXos client needs, and an open for writing fails
   with `EACCES`.
+
+**The program's input.** The connection is also the keeper of its
+program's reads of `kbd` and `mouse`, which wait for a record at the
+display ([design-files.md](design-files.md#a-programs-window);
+[design-files.md](design-files.md#serving-the-erx_fs-behaviour),
+"Waiting requests"). It keeps them in one `erx_fs_waits` set and has
+at most one read of each file at the display, as the window serves its
+own readers ([The window process](#the-window-process)): it marks the
+first begun, sends it on the window handle's fid with
+`erx_win:send_read/4`, which returns an opaque request id at once, and
+answers it with the display's reply when that arrives, then begins the
+next of that file in the order they arrived. A flush of a read still
+waiting in the set answers it `EINTR` at once; a flush of the read at
+the display goes on to it with `erx_win:send_flush/2`, which takes
+that id, and is answered with what the display answers. So every
+window of a session takes at most two of the session's display grant's
+64 requests in flight for its program's input, and a program that
+keeps many reads waiting takes no more of them than one that keeps
+one. The set holds at most the `/dev` tree's grant's 64 requests in
+flight, each a read's count, which its heap bound covers beside its
+images. A flush that arrives while a `v` of the connection
+waits for its present is taken once the present is answered, which the
+screen does within one frame of the device or ends with its driver
+([design-files.md](design-files.md#a-programs-window)). The connection
+shares one life with the program's handler, its `/dev` grant and its
+window, since the fids it relays the reads on are the handler's: its
+end ends the handler, and the handler's end ends the window, so no read
+it passed on is left at the window to take a key
+([design-files.md](design-files.md#a-programs-window), "Ownership and
+lifetime").
 
 The text is a pure function of the core's state,
 `erx_draw_core:ctl/1`, tested on the host. So the core's record of an
@@ -2936,9 +3014,9 @@ else of it. A terminal owns four things:
   xterm-compatible subset, named `xterm` as FreeBSD's console is; rio's
   mouse-driven text editing is a program's choice on top, not the
   terminal's.
-* **Its tty**, which the session's terminal relay serves
-  ([The tty](design-live.md#the-tty)). The terminal asks the relay for a
-  new tty, as a program's `posix_openpt` makes a pseudo-terminal
+* **Its tty**, which a terminal relay of the session serves
+  ([The tty](design-live.md#the-tty)). The terminal asks the session for a
+  new tty, driven by a terminal relay of its own, as a program's `posix_openpt` makes a pseudo-terminal
   ([design-programs.md](design-programs.md#the-terminal)), becomes its
   master, and starts the session's command shell on it with
   `TERM=xterm`. A master in the tty's own domain exchanges the tty's
@@ -4402,7 +4480,20 @@ and allocates nothing; `resize/2` and `label/2` write `wctl`
 and `label`; and `read_at/4` and `write_at/4` read and write the bytes
 of `kbd`, `mouse`, `wctl` or `label` at an offset on the handle's fid of
 that name, for a relay such as a program's `/dev` tree
-([design-files.md](design-files.md#a-programs-window)); neither takes
+([design-files.md](design-files.md#a-programs-window)), and
+`send_read/4` sends such a read of `kbd` or `mouse` and returns at
+once with an opaque request id, its reply arriving at the caller as a
+message that `reply/2` takes for that id, and `send_flush/2` flushes
+the request an id names, for the draw connection that keeps a
+program's input reads ([The draw connection](#the-draw-connection));
+the three use `erx_file_remote`'s exchange split in its two halves, a
+send that answers the id, which holds the request's alias, the request
+and a monitor of the display's grant, and a take that finds the id's
+reply or that grant's `DOWN`, which answers `eio`, so a reply is taken
+out of its envelope and held to its request by the same code as every
+`erx_file_remote` call's
+([design-files.md](design-files.md#erlang-clients-prim_file-and-erx_file_remote));
+none of them takes
 `ctl`, which only `present/2` and `present/3` write.
 
 **A window over a range it does not own.** The LVGL renderer's frames
@@ -5197,7 +5288,40 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   reader without its record-length check fails it; a window's end
   leaving the display domain's memory as it was before the window,
   measured by the domain's budget; a seeded window process that keeps
-  its image of the buffer fails it.
+  its image of the buffer fails it. Through a real grant, a `kbd` read
+  waiting on a hidden window leaves the window's `label` writable and
+  its fid's clunk answered within 1 s, after the read's `EINTR`, and a
+  key typed after a second `kbd` read is sent reaches that read; a
+  seeded `erx_winfs` whose `read` calls the window and waits for the
+  record makes the clunk miss its deadline
+  ([design-files.md](design-files.md#verification-and-testing),
+  "Waiting requests"). Two fids opened on one window's `kbd` through
+  one grant, whose handles are equal, each with a read waiting:
+  clunking one answers its read `EINTR` and leaves the
+  other's waiting for the next key, which it gets; seeded: a grant that
+  keys waiting requests by handle, which answers both reads `EINTR`.
+  Against a screen model that holds its answer, a `ctl` write whose
+  present is in flight and one queued behind it, both flushed: the
+  queued write is answered `EINTR` at once, and the first is answered,
+  after the screen model's answer, with that answer, then its flush;
+  seeded: a window that answers every flushed write `EINTR`, which
+  answers the first before the screen does. A program's `/dev/kbd`
+  read waiting at its window's draw connection, then the program's
+  close: the close is answered within 1 s, and the next key reaches the
+  window's next reader; seeded: a draw connection that does not pass
+  the flush on to the display, whose close misses its deadline. The
+  same read, then a `/dev/draw` write with a `v` whose present a screen
+  model holds for 200 ms, then the `kbd` close and a write of
+  `/dev/null`: both are answered after the screen model's answer and
+  within 1 s of it; with the screen model ending during the hold
+  instead, the draw write fails, and the close and the write
+  follow within 1 s; seeded: a window that does not answer its held
+  `ctl` write when `erx_screen` ends, under which the close misses its
+  deadline. The same read with the
+  connection killed: the handler, the program and the window end
+  within 1 s; seeded: a handler that does not watch its connection, which
+  keeps the window alive with the dead connection's read at the
+  display.
 * **The window system.** `erx_wm_rio` and `erx_wm_single` are pure and
   tested over sequences of place requests and input events; a property
   test that the single policy shows at most one window and delivers every

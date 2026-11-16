@@ -442,8 +442,8 @@ enter(_State, Stop) -> Stop.
 %% in the order the core made them; the timer becomes a transition action.
 perform([], D, Timers) ->
     {keep_state, D, lists:reverse(Timers)};
-perform([stop | _], D, _Timers) ->
-    {stop, normal, D};
+perform([{stop, Reason}], D, _Timers) ->
+    {stop, Reason, D};
 perform([{request, N, Request} | Rest], #data{sock = Sock} = D, Timers) ->
     Sock ! {erx_net, self(), {call, N, Request}},
     perform(Rest, D, Timers);

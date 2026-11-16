@@ -34,3 +34,72 @@ installs it.
 
 GlobalSign Root CA expires on 2028-01-28; the others expire between
 2035 and 2040.
+
+No license covers a root certificate: it is a public key and a name,
+facts and not a creative work
+([design.md](../../docs/design.md#dependencies)). The inventory below
+records that as `LicenseRef-root-certificate` for each file, which
+`tools/lib/erx/license_expression.rb` admits to every image, and
+`config/provenance/import-notices.json` names this record as the notice
+of that grant, so an image's NOTICES carries each root's publisher, URL
+and fingerprint.
+
+The import has no archive, so `archive_sha256` below is the SHA-256 of
+the listing `shasum -a 256` prints for the five files, sorted by name,
+one `<sha256>  <file>` line each with a final newline. The `files` rows
+record the bytes in the tree, so `globalsign-root-ca.pem`'s is the PEM
+file's SHA-256, not the fetched DER file's.
+
+```json
+{
+  "version": 1,
+  "repository": "each root publisher's own repository, by the URL in the table above",
+  "revision": "fetched 2026-11-15",
+  "archive_sha256": "58a502c1ffa681223fc673ca018534109329250326455ef1b9e9f2f2ca2f4f2e",
+  "exclusions": [],
+  "removed": [],
+  "files": {
+    "digicert-global-root-g3.pem": {
+      "license": "LicenseRef-root-certificate",
+      "evidence": "a root certificate: a public key and a name, facts and not a creative work, which no license covers (docs/design.md, the dependency table)",
+      "reviewed": true,
+      "sha256": "1914cd2d4cde263315f9e32c7683fc0e1b921919ad12b256d49bf782011c03cc",
+      "kind": "file",
+      "non_ascii_lines": []
+    },
+    "globalsign-root-ca.pem": {
+      "license": "LicenseRef-root-certificate",
+      "evidence": "a root certificate: a public key and a name, facts and not a creative work, which no license covers (docs/design.md, the dependency table)",
+      "reviewed": true,
+      "sha256": "df68841998b7fd098a9517fe971e97890be0fc93bbe1b2a1ef63ebdea3111c80",
+      "kind": "file",
+      "non_ascii_lines": []
+    },
+    "gts-root-r4.pem": {
+      "license": "LicenseRef-root-certificate",
+      "evidence": "a root certificate: a public key and a name, facts and not a creative work, which no license covers (docs/design.md, the dependency table)",
+      "reviewed": true,
+      "sha256": "7e8b80d078d3dd77d3ed2108dd2b33412c12d7d72cb0965741c70708691776a2",
+      "kind": "file",
+      "non_ascii_lines": []
+    },
+    "isrg-root-x1.pem": {
+      "license": "LicenseRef-root-certificate",
+      "evidence": "a root certificate: a public key and a name, facts and not a creative work, which no license covers (docs/design.md, the dependency table)",
+      "reviewed": true,
+      "sha256": "22b557a27055b33606b6559f37703928d3e4ad79f110b407d04986e1843543d1",
+      "kind": "file",
+      "non_ascii_lines": []
+    },
+    "isrg-root-x2.pem": {
+      "license": "LicenseRef-root-certificate",
+      "evidence": "a root certificate: a public key and a name, facts and not a creative work, which no license covers (docs/design.md, the dependency table)",
+      "reviewed": true,
+      "sha256": "a13d881e11fe6df181b53841f9fa738a2d7ca9ae7be3d53c866f722b4242b013",
+      "kind": "file",
+      "non_ascii_lines": []
+    }
+  },
+  "changes": {}
+}
+```

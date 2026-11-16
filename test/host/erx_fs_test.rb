@@ -26,8 +26,11 @@ class ErxFsTest < Minitest::Test
   TESTS = [GRAMMAR] + %w[
     test/erlang/erx_fs_test_tree.erl
     test/erlang/erx_fs_stale_tree.erl
+    test/erlang/erx_fs_stream_tree.erl
     test/erlang/erx_fs_tests.erl
+    test/erlang/erx_fs_core_model_tests.erl
     test/erlang/erx_fs_version_tests.erl
+    test/erlang/erx_fs_waits_tests.erl
     test/erlang/erx_storage_mint_tests.erl
     test/erlang/stand_in/erx_dist.erl
     test/erlang/stand_in/erx_connections.erl
@@ -36,6 +39,8 @@ class ErxFsTest < Minitest::Test
   SERVER = 'erlang/apps/erx_files/src/erx_fs.erl'
   MINT = 'erlang/apps/erx_storage/src/erx_storage_mint.erl'
   VERSION = 'erlang/apps/erx_files/src/erx_fs_version.erl'
+  WAITS = 'erlang/apps/erx/src/erx_fs_waits.erl'
+  STREAM = 'test/erlang/erx_fs_stream_tree.erl'
   TABLE = 'abi/protocols/9p.txt'
 
   Fault = Data.define(:name, :file, :from, :to, :caught_by)
@@ -73,20 +78,20 @@ class ErxFsTest < Minitest::Test
               from: "decode(_, _) ->\n    drop.", to: "decode(Frame, Grant) ->\n    decode_frame(Frame, Grant).",
               caught_by: 'frames_come_only_from_the_client_domain_test'),
     Fault.new(name: 'a fid in use is made again', file: GRANT,
-              from: 'is_map_key(Fid, Fids) -> {error, einval};', to: 'is_map_key(Fid, Fids), Fid < 0 -> {error, einval};',
+              from: 'is_map_key(Fid, Fids) orelse is_map_key(Fid, Closing) -> {error, einval};',
+              to: 'is_map_key(Fid, Closing) -> {error, einval};',
               caught_by: 'fid_in_use_is_refused_test'),
     Fault.new(name: 'the pool admits one fid more', file: GRANT,
-              from: 'map_size(Fids) >= Pool -> {error, emfile};', to: 'map_size(Fids) > Pool -> {error, emfile};',
+              from: 'map_size(Fids) + map_size(Closing) >= Pool -> {error, emfile};', to: 'map_size(Fids) + map_size(Closing) > Pool -> {error, emfile};',
               caught_by: 'fid_flood_stops_at_the_pool_test'),
     Fault.new(name: "an owner's monitor stays after its last fid", file: GRANT,
-              from: "                         effects = [{demonitor, Ref} | Effects]};",
-              to: "                         effects = element(2, {Ref, Effects})};",
+              from: 'effects = [{demonitor, Ref} | Effects]}};',
+              to: 'effects = element(2, {Ref, Effects})}};',
               caught_by: 'monitor_is_removed_at_the_last_fid_test'),
     Fault.new(name: 'an ended owner stays known, so its later fids go unmonitored', file: GRANT,
-              from: 'drain(lists:foldl(fun end_fid/2, Grant, maps:keys(Fids)));',
-              to: '{Effects, Ended} = drain(lists:foldl(fun end_fid/2, Grant, maps:keys(Fids))),' \
-                  "\n            {Effects, Ended#grant{owners = (Ended#grant.owners)\#{Owner => " \
-                  '#owner{monitor = Ref, fids = #{}}}}};',
+              from: 'Forgotten = drain(Grant#grant{owners = Rest, effects = [{demonitor, Ref} | Effects]}),',
+              to: 'Forgotten = drain(Grant#grant{owners = Rest#{Owner => #owner{monitor = Ref, fids = #{}}},' \
+                  ' effects = [{demonitor, Ref} | Effects]}),',
               caught_by: 'ended_owner_leaves_no_fid_test'),
     Fault.new(name: 'a walk that stops keeps its new fid', file: GRANT,
               from: "walked(_, _, _, {stopped, Qids, _, Grant}) ->\n    {{ok, lists:reverse(Qids)}, Grant};",
@@ -103,9 +108,13 @@ class ErxFsTest < Minitest::Test
                   "            loop(Grant, ConnectionMonitor)\n",
               caught_by: 'a_refused_export_leaves_no_grant_test'),
     Fault.new(name: 'a grant outlives its connection', file: SERVER,
-              from: '            exit({shutdown, connection_ended});',
-              to: '            ?MODULE:loop(Grant, ConnectionMonitor);',
+              from: '?MODULE:drain(perform(erx_fs_grant:client_ended(Grant)));',
+              to: '?MODULE:loop(Grant, ConnectionMonitor);',
               caught_by: 'the_grant_ends_with_its_connection_test'),
+    Fault.new(name: 'a grant that ends at once when its client ends', file: SERVER,
+              from: '?MODULE:drain(perform(erx_fs_grant:client_ended(Grant)));',
+              to: 'exit({shutdown, connection_ended});',
+              caught_by: 'a_grant_whose_client_ended_drains_test'),
     Fault.new(name: 'a grant for its own domain ignores ends_with', file: SERVER,
               from: 'connection_monitor(_Client, #{ends_with := Process}) when is_pid(Process) ->',
               to: 'connection_monitor(Client, #{ends_with := Process}) when is_pid(Process), Client =/= own ->',
@@ -123,8 +132,9 @@ class ErxFsTest < Minitest::Test
               to: 'connection_to(_System, _Grantee) -> {ok, none}.',
               caught_by: 'the_grant_ends_with_its_connection_test'),
     Fault.new(name: 'the in-flight bound admits one more', file: GRANT,
-              from: 'when InFlight >= Max ->', to: 'when InFlight > Max ->',
-              caught_by: 'in_flight_bound_test'),
+              from: "  when InFlight >= Max ->\n    finish(Alias, Request, {error, emfile}, Grant);",
+              to: "  when InFlight > Max ->\n    finish(Alias, Request, {error, emfile}, Grant);",
+              caught_by: 'a_window_of_waiting_reads_is_still_flushed_and_clunked_test'),
     Fault.new(name: 'an rx grant writes', file: GRANT,
               from: 'case Rights =:= rw orelse', to: 'case Rights =/= ro orelse',
               caught_by: 'read_only_grants_refuse_every_writing_operation_test_'),
@@ -133,13 +143,10 @@ class ErxFsTest < Minitest::Test
               to: "writes({lcreate, _, _, _, _, _}) ->\n    false;",
               caught_by: 'lcreate_is_refused_whatever_its_flags_test'),
     Fault.new(name: 'a refused remove keeps its fid', file: GRANT,
-              from: 'end_fid_whatever_the_outcome({remove, Fid}, Grant) -> end_fid_if_held(Fid, Grant);',
-              to: 'end_fid_whatever_the_outcome({remove, Fid}, Grant) -> element(1, {Grant, fun end_fid_if_held/2, Fid});',
+              from: "        {refuse, Alias, Posix, {Ends, Fid} = Request} when Ends =:= clunk; Ends =:= remove ->\n" \
+                    "            end_fid(Alias, Fid, Request, {error, Posix}, Grant);\n",
+              to: '',
               caught_by: 'refused_remove_still_clunks_its_fid_test'),
-    Fault.new(name: 'a refused clunk keeps its fid', file: GRANT,
-              from: 'end_fid_whatever_the_outcome({clunk, Fid}, Grant) -> end_fid_if_held(Fid, Grant);',
-              to: 'end_fid_whatever_the_outcome({clunk, Fid}, Grant) -> element(1, {Grant, fun end_fid_if_held/2, Fid});',
-              caught_by: 'in_flight_bound_test'),
     Fault.new(name: 'the version counter wraps', file: VERSION,
               from: "draw(_, ?LAST) ->\n    {error, eio};",
               to: "draw(Counter, ?LAST) ->\n    {ok, atomics:add_get(Counter, 1, 1)};",
@@ -153,20 +160,20 @@ class ErxFsTest < Minitest::Test
               to: 'What = {file, Mode band 8#7777, Flags band bnot 8#200},',
               caught_by: 'lcreate_with_exclusive_answers_eexist_test'),
     Fault.new(name: 'a write answers the offset it was sent at', file: GRANT,
-              from: '        {ok, Count, At} -> {ok, Count, At};',
-              to: '        {ok, Count, _} -> {ok, Count, Offset};',
+              from: 'may_wait(write, Module:write(Handle, Offset, Data, Fs));',
+              to: 'may_wait(write, case Module:write(Handle, Offset, Data, Fs) of {ok, C, _} -> {ok, C, Offset}; O -> O end);',
               caught_by: 'append_answers_order_two_appenders_test'),
     Fault.new(name: 'a write answers its count and offset swapped', file: GRANT,
-              from: '        {ok, Count, At} -> {ok, Count, At};',
-              to: '        {ok, Count, At} -> {ok, At, Count};',
+              from: 'shaped(write, {ok, Count, At}) -> {ok, Count, At};',
+              to: 'shaped(write, {ok, Count, At}) -> {ok, At, Count};',
               caught_by: 'write_answers_where_it_wrote_test'),
     Fault.new(name: "a size change through an open goes by the node's permission", file: GRANT,
-              from: '        #{Fid := #fid{open = {open, Node, Handle}}} -> {{to_file, Node, {setattr,',
-              to: '        #{Fid := #fid{open = {open, Node, Handle}}} when Node =:= none -> {{to_file, Node, {setattr,',
+              from: '#{Fid := #fid{open = {open, _, _}}} -> on_open(Fid, Grant, fun(Handle) -> {setattr,',
+              to: '#{Fid := #fid{open = {open, Node, _}}} when Node =:= none -> on_open(Fid, Grant, fun(Handle) -> {setattr,',
               caught_by: 'truncate_through_a_read_only_open_is_refused_test'),
     Fault.new(name: "an ended fid keeps its file open", file: GRANT,
-              from: "#grant{effects = Effects} = Grant1 =\n        released(Open, repath(Path, [], Grant#grant{fids = Fids1})),",
-              to: "#grant{effects = Effects} = Grant1 =\n        element(3, {fun released/2, Open, repath(Path, [], Grant#grant{fids = Fids1})}),",
+              from: 'Closed = closed(Open, Grant1),',
+              to: 'Closed = element(1, {ok, fun closed/2, Open}),',
               caught_by: 'owner_end_clunks_its_open_fids_test'),
     Fault.new(name: 'a listing is not fitted to its count', file: GRANT,
               from: '{ok, Entries} -> fit_listing(Entries, Count);',
@@ -183,13 +190,81 @@ class ErxFsTest < Minitest::Test
               to: 'change(unlink, [Dir, Name, element(1, {any, Node})], Grant)',
               caught_by: 'remove_after_a_rename_leaves_the_new_name_test'),
     Fault.new(name: 'an alias in flight takes a second request', file: GRANT,
-              from: "  when is_map_key(Alias, Pending) ->\n    finish(Alias, Request, {error, einval}",
-              to: "  when is_map_key(Alias, Pending), Alias =:= none ->\n    finish(Alias, Request, {error, einval}",
+              from: "        {_, Alias, _, _} when is_map_key(Alias, Live) ->\n            dropped(Grant);\n",
+              to: '',
               caught_by: 'an_alias_in_flight_takes_no_second_request_test'),
-    Fault.new(name: 'a file answer is taken whatever its tag', file: GRANT,
-              from: '#{Alias := #pending{by = Tag}} when is_reference(Tag) -> complete(Alias, Reply, Grant);',
-              to: '#{Alias := #pending{}} when is_reference(Tag) -> complete(Alias, Reply, Grant);',
-              caught_by: 'file_owner_answers_through_its_tag_test'),
+    Fault.new(name: "a grant that checks only requests' aliases", file: GRANT,
+              from: '{_, Alias, _, _} when is_map_key(Alias, Live) ->',
+              to: '{_, Alias, _, _} when is_map_key(Alias, Live), element(1, element(2, map_get(Alias, Live))) =:= held ->',
+              caught_by: 'a_window_of_waiting_reads_is_still_flushed_and_clunked_test'),
+    Fault.new(name: 'flushes counted in the window', file: GRANT,
+              from: "window(_) -> 0.\n", to: "window({flush, _}) -> 1;\nwindow(_) -> 0.\n",
+              caught_by: 'a_window_of_waiting_reads_is_still_flushed_and_clunked_test'),
+    Fault.new(name: 'a flush of a flush waits behind it', file: GRANT,
+              from: "        \#{Old := \#live{what = {flush, _}}} -> finish(Alias, Request, ok, Grant);\n", to: '',
+              caught_by: 'a_flush_of_a_flush_is_answered_at_once_test'),
+    Fault.new(name: 'a remove that never unlinks', file: GRANT,
+              from: '#{Fid := #fid{path = Path}} -> end_fid(Alias, Fid, Request, unlinked(Path, Grant), Grant);',
+              to: '#{Fid := #fid{path = Path}} -> end_fid(Alias, Fid, Request, element(1, {closed, Path}), Grant);',
+              caught_by: 'a_remove_unlinks_when_it_is_admitted_test'),
+    Fault.new(name: 'a second flush answered ok at once', file: GRANT,
+              from: '#{Old := #live{}} -> dropped(Grant);', to: '#{Old := #live{}} -> finish(Alias, Request, ok, Grant);',
+              caught_by: 'a_window_of_waiting_reads_is_still_flushed_and_clunked_test'),
+    Fault.new(name: 'a grant that counts clunks in the window', file: GRANT,
+              from: "admit(Alias, _, {clunk, Fid} = Request, Grant) ->\n",
+              to: "admit(Alias, _, {clunk, _} = Request, \#grant{in_flight = InFlight, in_flight_max = Max} = Grant)\n" \
+                  "  when InFlight >= Max ->\n" \
+                  "    finish(Alias, Request, {error, emfile}, Grant);\n" \
+                  "admit(Alias, _, {clunk, Fid} = Request, Grant) ->\n",
+              caught_by: 'a_window_of_waiting_reads_is_still_flushed_and_clunked_test'),
+    Fault.new(name: 'a grant that runs the clunk while the read still waits', file: GRANT,
+              from: "                [] ->\n                    run_clunk(Fid, Ending, Grant1);",
+              to: "                _ ->\n                    run_clunk(Fid, Ending, Grant1);",
+              caught_by: 'a_clunk_of_a_waiting_read_is_answered_after_its_eintr_test'),
+    Fault.new(name: 'a grant that answers a flush of a waiting clunk at once', file: GRANT,
+              from: 'flush_waits(Alias, Old, Entry, #grant{aliases = Live} = Grant) ->',
+              to: "flush_waits(Alias, Old, \#live{what = ending}, Grant) ->\n    finish(Alias, {flush, Old}, ok, Grant);\n" \
+                  'flush_waits(Alias, Old, Entry, #grant{aliases = Live} = Grant) ->',
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: "a grant that frees a fid's number when it takes the clunk", file: GRANT,
+              from: 'is_map_key(Fid, Fids) orelse is_map_key(Fid, Closing) -> {error, einval};',
+              to: 'is_map_key(Fid, Fids) -> {error, einval};',
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: "a grant that answers a flush before the keeper's answer", file: GRANT,
+              from: '#{Old := #live{flush = none} = Entry} -> flush_waits(Alias, Old, Entry, Grant);',
+              to: '#{Old := #live{flush = none, what = #held{}}} -> ' \
+                  'then(drain(flush_at_keeper(Old, Grant)), fun(G) -> finish(Alias, Request, ok, G) end);' \
+                  "\n        \#{Old := \#live{flush = none} = Entry} -> flush_waits(Alias, Old, Entry, Grant);",
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: "a clunk that runs without flushing its fid's waits", file: GRANT,
+              from: "drain(lists:foldl(fun flush_at_keeper/2,\n",
+              to: "drain(lists:foldl(fun(_, G) -> G end,\n",
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: 'a grant that keys waits by handle', file: GRANT,
+              from: '<- Live, Of =:= Fid],', to: '<- Live, is_integer(Of)],',
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: 'a grant that takes no other frame while a clunk waits', file: GRANT,
+              from: "        {admit, Alias, Owner, Request} ->\n            admit(Alias, Owner, Request, Grant)\n",
+              to: "        {admit, Alias, _, Request} when map_size(Grant\#grant.closing) > 0 ->\n" \
+                  "            finish(Alias, Request, {error, eagain}, Grant);\n" \
+                  "        {admit, Alias, Owner, Request} ->\n            admit(Alias, Owner, Request, Grant)\n",
+              caught_by: 'every_order_of_the_events_keeps_the_waiting_rules_test_'),
+    Fault.new(name: 'a stream tree whose read waits inside its callback', file: STREAM,
+              from: "read({stream, _}, _Offset, Count, Keeper) ->\n    {wait, Keeper, {read, Count}};",
+              to: "read({stream, _}, _Offset, _Count, _Keeper) ->\n    receive after 3000 -> {error, eintr} end;",
+              caught_by: 'a_write_is_answered_while_a_read_waits_test'),
+    Fault.new(name: "a keeper's end that answers nothing", file: GRANT,
+              from: "{\#{Ref := \#live{what = {keeper, ClientAlias}}}, _} ->\n            settle_held(Ref, ClientAlias, {error, eio}, Grant);",
+              to: "{\#{Ref := \#live{what = {keeper, _}}}, _} ->\n            {[], Grant};",
+              caught_by: 'a_keepers_end_answers_its_reads_eio_test'),
+    Fault.new(name: 'a flush of a waiting request that stays in the grant', file: GRANT,
+              from: 'effects = [{flush, Keeper, KeeperAlias} | Effects]};',
+              to: 'effects = element(1, {Effects, Keeper, KeeperAlias})};',
+              caught_by: 'a_flush_of_a_waiting_read_reaches_its_keeper_test'),
+    Fault.new(name: 'a keeper that is the grant itself', file: GRANT,
+              from: 'when is_pid(Keeper), node(Keeper) =:= node(), Keeper =/= Self ->',
+              to: 'when is_pid(Keeper), node(Keeper) =:= node(), Self =/= none ->',
+              caught_by: 'a_keeper_that_is_the_grant_is_eio_test'),
     Fault.new(name: "a directory's make answering a next state is taken for a file's", file: GRANT,
               from: 'changed(make, Other) -> failed(Other);',
               to: "changed(make, {ok, Node, Qid, _}) -> {ok, Node, Qid};\nchanged(make, Other) -> failed(Other);",
@@ -199,19 +274,15 @@ class ErxFsTest < Minitest::Test
               to: 'failed(Other) when element(1, Other) =:= error -> {error, eio}.',
               caught_by: 'answers_with_a_state_are_eio_in_the_grant_test'),
     Fault.new(name: 'a reply the grammar rejects keeps the grant its operation built', file: GRANT,
-              from: 'false -> {{error, eio}, tree_holds(Built, Before)}',
-              to: 'false -> {{error, eio}, element(1, {Built, tree_holds(Built, Before)})}',
+              from: 'false -> {{error, eio}, kept_when_rejected(Request, Built, Before)}',
+              to: 'false -> {{error, eio}, element(1, {Built, kept_when_rejected(Request, Built, Before)})}',
               caught_by: 'malformed_qids_change_nothing_test'),
-    Fault.new(name: "a rejected reply undoes a remove's clunk", file: GRANT,
-              from: 'Ended = end_fid_whatever_the_outcome(Request, Grant),',
-              to: 'Ended = element(1, {Grant, fun end_fid_whatever_the_outcome/2, Request}),',
-              caught_by: 'rejected_remove_still_clunks_its_fid_test'),
     Fault.new(name: "a rejected lcreate leaves the tree's handle open", file: GRANT,
               from: "                            _ = Module:clunk(Handle, Fs),\n" \
                     '                            {{error, eio}, Grant}',
               to: '                            {{error, eio}, element(2, {Handle, Grant})}',
               caught_by: 'malformed_qids_leave_the_grant_serving_test'),
-    Fault.new(name: 'a listing with an improper tail crashes the file process', file: GRANT,
+    Fault.new(name: 'a listing with an improper tail crashes the grant', file: GRANT,
               from: '    case entries(Entries) of',
               to: '    case is_list(Entries) andalso lists:all(fun(Entry) -> entries([Entry]) end, Entries) of',
               caught_by: 'improper_listing_is_eio_test'),
@@ -225,7 +296,15 @@ class ErxFsTest < Minitest::Test
     Fault.new(name: 'a file opened is listed by the tree', file: TABLE,
               from: "  operation readdir 40\n    request fid fid directory\n",
               to: "  operation readdir 40\n    request fid fid node\n",
-              caught_by: 'directory_operations_on_a_file_or_a_link_reach_no_tree_test')
+              caught_by: 'directory_operations_on_a_file_or_a_link_reach_no_tree_test'),
+    Fault.new(name: 'an answer/3 that leaves its entry', file: WAITS,
+              from: "erlang:send(Alias, ?ERX_FS_ANSWER(Alias, Result)),\n            forget(Wait, Waits);",
+              to: "erlang:send(Alias, ?ERX_FS_ANSWER(Alias, Result)),\n            Waits;",
+              caught_by: 'a_keeper_that_answers_a_thousand_reads_holds_nothing_test'),
+    Fault.new(name: 'a set that does not monitor the grant', file: WAITS,
+              from: '#{} -> {erlang:monitor(process, Grant), #{}}',
+              to: '#{} -> {make_ref(), #{}}',
+              caught_by: 'a_grants_end_drops_its_requests_test')
   ].freeze
 
   def test_the_cases_pass
@@ -269,7 +348,7 @@ class ErxFsTest < Minitest::Test
       # EUnit's line for its test; the logger stays quiet so each verdict keeps its line.
       Open3.capture2e('gtimeout', '-k', '10', '300', ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                       'logger:set_primary_config(level, none), ' \
-                      'halt(case eunit:test([erx_fs_tests, erx_fs_version_tests, erx_storage_mint_tests], [verbose]) ' \
+                      'halt(case eunit:test([erx_fs_tests, erx_fs_core_model_tests, erx_fs_version_tests, erx_fs_waits_tests, erx_storage_mint_tests], [verbose]) ' \
                       'of ok -> 0; _ -> 1 end)',
                       chdir: work, stdin_data: '')
     end

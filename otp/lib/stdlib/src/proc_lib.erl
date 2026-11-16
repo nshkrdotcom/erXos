@@ -17,6 +17,10 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: a process that keeps its terms out of its reports
+%% (gen:hides_terms/1) is reported without its mailbox, its dictionary or its
+%% frames' arguments, and with its reason through format_status/1 (edit 75).
+%%
 %% %CopyrightEnd%
 %%
 -module(proc_lib).
@@ -960,25 +964,40 @@ crash_report(Class, Reason, StartF, Stacktrace) ->
                  error_logger=>#{tag=>error_report,type=>crash_report}}).
 
 my_info(Class, Reason, [], Stacktrace) ->
-    my_info_1(Class, Reason, Stacktrace);
-my_info(Class, Reason, StartF, Stacktrace) ->
+    my_info_1({Class, Reason, Stacktrace}, shown);
+my_info(Class, Reason, {Mod,_,_} = StartF, Stacktrace) ->
     [{initial_call, StartF}|
-     my_info_1(Class, Reason, Stacktrace)].
+     case gen:hides_terms(Mod) of
+         true -> my_info_1(gen:hidden_error_info(Mod, Class, Reason, Stacktrace), hidden);
+         false -> my_info_1({Class, Reason, Stacktrace}, shown)
+     end].
 
-my_info_1(Class, Reason, Stacktrace) ->
+%% erXos, edit 75: a process that keeps its terms out of its reports
+%% (gen:hides_terms/1, decided by the initial module or the callback module
+%% gen_statem changed to) is reported with gen:hidden_error_info/4 as its
+%% error_info and with its mailbox and dictionary empty, as stock OTP reports
+%% those of a process that set process_flag(sensitive, true); the queue's
+%% length stays. Any other process, and one whose initial call is unknown, is
+%% reported whole, as stock OTP reports it.
+my_info_1(ErrorInfo, Visibility) ->
     Keys = [registered_name, dictionary, message_queue_len,
             links, trap_exit, status, heap_size, stack_size, reductions],
     PInfo = get_process_info(self(), Keys),
     {dictionary, Dict} = lists:keyfind(dictionary,1,PInfo),
+    {Messages, ReportDict} =
+        case Visibility of
+            shown -> {get_messages(self()), {dictionary, cleaned_dict(Dict)}};
+            hidden -> {{messages, []}, {dictionary, []}}
+        end,
     [{pid, self()},
      lists:keyfind(registered_name,1,PInfo),
      {process_label, get_label(self())},
-     {error_info, {Class,Reason,Stacktrace}},
+     {error_info, ErrorInfo},
      {ancestors, get_ancestors()},
      lists:keyfind(message_queue_len,1,PInfo),
-     get_messages(self()),
+     Messages,
      lists:keyfind(links, 1, PInfo),
-     {dictionary, cleaned_dict(Dict)},
+     ReportDict,
      lists:keyfind(trap_exit, 1, PInfo),
      lists:keyfind(status, 1, PInfo),
      lists:keyfind(heap_size, 1, PInfo),
@@ -1028,6 +1047,9 @@ clean_dict([{'$ancestors',_}|Dict]) ->
 clean_dict([{'$initial_call',_}|Dict]) ->
     clean_dict(Dict);
 clean_dict([{'$process_label',_}|Dict]) ->
+    clean_dict(Dict);
+%% erXos, edit 75: gen's record of gen_statem's callback module (gen:hides_terms/1).
+clean_dict([{'$erx_status_module',_}|Dict]) ->
     clean_dict(Dict);
 clean_dict([E|Dict]) ->
     [E|clean_dict(Dict)];

@@ -74,10 +74,10 @@ it; git history is the record of completed work.
   `apps` row only because it declares no quantity, so adding them would let apps administer the network.
   Make grantability an explicit fact (a mark on the interface the check reads, or a refusal by interface
   beside inspect and files) and require quantities only of grantable interfaces.
-* [Medium] ABI, the facet quantity fields are copied by hand: `FACET_QUANTITIES`
-  (`tools/lib/erx/abi_contracts.rb`) repeats `erx_mf_facet`'s field names and widths from
-  `abi/manifest.txt`, and `facet_row` in `tools/lib/erx/manifest.rb` the key list; take both from the
-  codec's layout.
+* [Low] ABI, which of `erx_mf_facet`'s fields are quantities is stated in Ruby, not in
+  `abi/manifest.txt`: `FACET_QUANTITIES` (`tools/lib/erx/abi_contracts.rb`) names the five fields, whose
+  widths come from the layout. Mark them in the layout (a quantities sub-layout, or a field mark the
+  reader keeps) so the list is derived.
 * [Low] apps, the derivation's readability (`tools/lib/erx/manifest.rb`): `app_template` rebuilds the
   session row and SPACES check `normalize_sessions` writes (one `session_row` for both); `named_artifact`
   duplicates `artifact`'s kind check; `app_facets` maps positional triples where a small `Data` value
@@ -98,7 +98,7 @@ it; git history is the record of completed work.
   recovery to the publication and crashed there on `erx_starter:packages/2`, which does not exist (`undef`),
   four times, until erx_pkg_sup reached its intensity and stopped; the start service and the rest of the
   boot carried on, and `erx_pkg:packages/0` answers `noproc`. The publication (`erx_starter:packages/2`: the set's rows after the manifest's, kept by keepers of
-  `{app, Name}`, a dropped app's keepers stopped before the answer, the table's ask on restart) and the
+  `{app, Name}`, a dropped app's keepers stopped before the answer, the set kept across a restart of the table) and the
   listing's wait for the system domain's namespace are built, and the apps suite's unlisted boot checks
   `{packages,4,#{packages => #{},scan => {ok,0}}}`. What remains: a listing that still fails after the wait
   leaves the scan `unknown`, and nothing lists the installed packages again before the next lifetime (the later
@@ -113,22 +113,17 @@ it; git history is the record of completed work.
   directory with `file:list_dir_all/1` and keeps the first `pkg_scan_max` names, so the listing is not one
   bounded read at a time (Phase 1: the storage domain is trusted).
 * [Medium] apps, the package set's publication (`erlang/apps/erx_starter/src/erx_starter.erl`,
-  `publish/2` and `apply_text/2`): the decision which keepers a set drops and the filter that keeps a
-  restarted table from stopping an app's held row before the set returns are made in the effect layer,
-  not in `erx_start_table` beside `reconcile/3`, whose "stop a held name Merged does not name" branch is
-  now dead in its one caller; no case restarts the table while an app runs or exercises `erx_pkg:ask_set/0`,
-  and no seeded fault removes the filter. The table keeps `rows`/`grants` beside `manifest_rows`/
-  `manifest_grants` (two copies of the manifest's rows). `packages/2` ignores its `Lifetime`, which the
-  design checks (docs/design-packaging.md, "The package lifetime"). Until the set arrives, rc.conf's lines
-  for apps are logged as `{undeclared, App}` and shown as skipped.
+  `publish/2`): the decision which keepers a set drops is made in the effect layer, not in
+  `erx_start_table` beside `reconcile/3`. Until the boot's set arrives, rc.conf's lines for apps are
+  logged as `{undeclared, App}` and shown as skipped.
 * [Medium] apps, chokepoints (`tools/lib/erx/chokepoint_rules/apps.rb`): `starter-reach` covers the start
   table and its keepers, not packaging's `erx_pkg*`, and design-packaging.md's own checks are not built:
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
-  `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
+  `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
   allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
-  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
-  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
+  and the `app` script exist, and the domain service sends an app's session its record after the ready
+  answer (`erx:app/0`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
   the app template, the session template naming no principal (`mf_none`), sized into the principal and
   held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
   check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
@@ -141,8 +136,7 @@ it; git history is the record of completed work.
   template all of them; `machine_principal` and the mints' parameters naming an app principal,
   which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
   signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
-  it; the record in the ready answer, whose place, layout and
-  applications the registry does not keep; the app
+  it; the app
   principal's CPU group under an apps group, which the stopgap's flat groups leave out;
   `erx_ns:mount/3` of an image file through `erx_verity`, which
   held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
@@ -152,21 +146,18 @@ it; git history is the record of completed work.
   `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
   and the inspect scope; the app principal's CPU group under an apps group, which the stopgap's flat groups
   leave out; the session plan
-  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
+  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record sent after the ready answer, and
   its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
   `erx_app` calls as `{erofs, app}`; a native app's start and the record's `window`, which wait for
   `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
-  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
-  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  `{not_supported, program}` until then).
   `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
   `{not_supported, program}` until then).
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
   `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
   before the kept row is installed, because configured domain `a` ends after its introduction to the
   session, for a reason not yet found. Also open: the pixel area of an app session's pairs is still the
-  app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows; the
-  record's `{Ref, app, App}` step and erx_app's registered wait, which design-packaging.md's "An app's
-  session" must name (it still says the ready answer hands the record); `erx_principal:app_record()` and
+  app template's (`erx_domain_mints:pair_area/3` by template), to be decided from the session's rows.
 * [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`,
   the `app` script, the boot view's app entries (the check derives the app template from the `apps` row, so
   QEMU virt's development image boots with four app entries, `erx_domain_lib:apps/0`'s max 4 at the
@@ -180,11 +171,9 @@ it; git history is the record of completed work.
   the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
   which `erx_app` calls as `{erofs, app}`; a native app's start and the record's
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
-  (`erx_app` ends with `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app`
-  script, which the runtime does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
-  `erx_principal:app_record()` and
-  `package()` copy `erx_app:app_record()` and `erx_pkg_plan:published()`, and an image package's place
+  an image package's place
   `/pkg/NAME.app`, which becomes `/system/NAME.app`, is written in `erx_principal` beside `erx_pkg_medium`'s (one owner wanted); the
   `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
   through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
@@ -207,6 +196,9 @@ it; git history is the record of completed work.
   system domain still reaches root's shell about 3.2 times sooner under TCG (the measurement and the order
   of work are in [todo-performance.md](docs/todo-performance.md), "every domain loads its own kernel and
   stdlib"; raw logs in ~/erxos-history/boot-slow-2026-11-11 and boot-fast-2026-11-11).
+  Order of work: first measure a session's pages at its prompt, with the funnel's scratch sized by frame,
+  which replaces the design's memory estimates; then build the image if the adopters and that measurement
+  still call for it.
 * [Medium] architecture: evaluate the remaining
   [simplification candidates](docs/todo-simplification.md), recording for
   each the mechanism it removes, its cost and the evidence needed to adopt
@@ -588,15 +580,6 @@ it; git history is the record of completed work.
   but code-making does not yet follow from the image.
 * [Low] stopgap, `musl/src/internal/erxos/syscall.c`: `munmap` of part of an object's mapping is `EINVAL` and
   `mprotect` over one `ENOTSUP`, where FreeBSD does both; nothing reaches it until musl maps objects.
-* [Medium] stopgap, `liberx/backend/fiasco/service_task.c` (`erx_fiasco_task_mem_dma_body`) and the contiguous
-  object of `vm.c`: the object does not record `bus - cpu`, so `erx_mem_dma_addr` gives a device the CPU address
-  of its memory, where [design-device-tree.md](docs/design-device-tree.md) ("The `given` record") and
-  [design-device-dma.md](docs/design-device-dma.md) ("Device addresses and reach") have it give the bus address.
-  Until it does, `erx_boot_dma_absent` (`liberx/backend/core/boot_manifest.c`) refuses a device whose DMA range has
-  bus addresses unlike its CPU addresses, with the reason `offset`, and the device gets no DMA memory: the Raspberry
-  Pi 4's EMMC2 (unit `sd`, config/platforms/raspi4b.json), whose bus addresses start at 0xc0000000, gets none of
-  its 1 MiB and moves blocks by programmed I/O. Record
-  the offset in the object the root makes from the tree's range, and drop `offset`.
 * [Low] stopgap, `liberx/backend/fiasco/runtime_entry.c` (`tree_facts`): the root accepts the firmware's tree
   and joins its facts to the catalogue's entries once, before any give, but after step 8 of
   [Boot handoff](docs/design-stopgap.md#boot-handoff) rather than in step 4, because the catalogue is the domain
@@ -1346,6 +1329,12 @@ it; git history is the record of completed work.
 * [Low] `erlang/apps/erx_win/src/erx_draw_conn.erl`, [The draw connection](docs/design-display.md#the-draw-connection):
   a connection ends only with its window's holder; a window ended otherwise (its directory removed, its display
   lost) leaves it running, each present failing with `EIO`. End it when a present answers that the window is gone.
+* [Medium] `erlang/apps/erx_win/src/erx_draw_conn.erl`, `perform_write/2`: design-files.md ("A program's window")
+  promises that a `draw` write holds its grant's later requests for at most one present, but the write runs every
+  operation in its callback, each `v` waiting for its present, so a write alternating drawing and `v` holds the
+  grant, a `kbd` clunk among its requests, and the connection's input replies and flushes for several presents.
+  Give a draw write keeper handling that stays responsive between presents, or restate the promise and bound the
+  whole write's delay; add a regression with several drawing and `v` pairs in one write followed by a `kbd` clunk.
 * [Medium] `erlang/apps/erx_win/src/erx_vt.erl`, [The terminal
   emulator](docs/design-display.md#the-terminal-emulator): the oracle test
   (`test/host/erx_vt_oracle_test.rb`, libvterm 0.3.3 with `test/vt/vterm_dump.c`) runs only the per-row cases
@@ -1511,12 +1500,9 @@ it; git history is the record of completed work.
   picks without raising, and a cancel keeps the pick, so the keyboard may go to a covered window; Escape while
   the menu is held goes to the current window and leaves the menu open, which the design does not state; the
   menu's rectangles, fixed at its press, can lie off a screen re-attached smaller while it is held, against
-  `erx_wm`'s rule that every rectangle lies within the screen; and the four commands are spelled in
-  `erx_wm:menu_item()`, rio's `command()` and `?COMMANDS`.
-* [Low] `erlang/apps/erx_display/src/erx_input.erl`, `erx_winfs.erl`: `destination/1` ends in a catch-all, so a
-  new route that should give the policy its gesture would silently go nowhere; and the screen has two copies,
-  `erx_winfs`'s `screen_rect` and `erx_input`'s, with different checks: an attach of an empty rectangle is taken
-  by `erx_winfs` and refused by `erx_input`, leaving the policy's input on the old screen.
+  `erx_wm`'s rule that every rectangle lies within the screen.
+* [Low] `erlang/apps/erx_display/src/erx_input.erl`: `destination/1` ends in a catch-all, so a new route that
+  should give the policy its gesture would silently go nowhere.
 * [Medium] `test/host/display_domain_test.rb`: the suite has no cell under `rio`: keys typed at a clicked window
   keep reaching it while a second client makes, raises, hides and shows a window, with a seeded policy that picks
   each new window ([Verification and testing](docs/design-display.md#verification-and-testing), the window
@@ -2122,7 +2108,10 @@ it; git history is the record of completed work.
   names it.
 * [Medium] desktop, the glyph step's output enters no runtime build (`build/glyphs`, `tools/lib/erx/erlang_apps.rb`):
   `erx_menu_glyphs.erl` is written beside the subfonts, and nothing compiles it into `erx_display`; the build would
-  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15).
+  then need erx-raster and the FreeType pin. Decide how with `erx_wm_menu` (plan 8.15). Its outputs declare
+  OFL-1.1 (Inter's glyph data); the release packer attributes a generated `build/` source by its SPDX line with
+  erXos's `LICENSE` as the notice and no font-data statement (`tools/lib/erx/pack_provenance.rb` `attribute`), so
+  it refuses them until the build that takes them in states them font data with Inter's `LICENSE.txt` as notice.
 * [Low] desktop, the glyph step's refusals of a glyph offset beyond a byte or an advance beyond 255 have no test
   (`test/host/glyphs_test.rb`).
 * [Medium] liberx, capability calls (`liberx/backend/api.h`, `docs/design-abi.md` "Program protocol"): the program
@@ -2184,19 +2173,17 @@ it; git history is the record of completed work.
   `opendir`, `stat` and `syslog` (file BIOs, the `file:` store loader, `X509_LOOKUP` by directory) and keeps
   `OPENSSLDIR="/usr/local/ssl"`; K5 holds because `no-autoload-config` stops the implicit loads and OTP's `crypto` names
   no file. Give Configure an `--openssldir` of erXos's, so a caller that does name OpenSSL's directory finds erXos's.
-* [High] HTTPS clients, the trust store in the domain release (`config/trust/`, `tools/lib/erx/trust_store.rb`,
-  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the five roots, their record and the reader are in the
-  tree and `pubkey_os_cacerts` has its `{unix, erxos}` row, but no build writes `cacerts.pem` into `public_key`'s
-  `priv` of the domain release, so `public_key:cacerts_get/0` raises `failed_load_cacerts` on erXos and the full
-  kiosk's quotes cannot fetch. The pack's provenance check attributes every receipt source through an import
-  record with a license per file; the roots need no license (public keys and names, facts), so the check takes a
-  recorded `none` for them, and `config/trust` needs a row in the images' imports, before the release names the store. Then: the layout row
-  for `priv/cacerts.pem`, a test image's extra roots, and the design's "store on QEMU" row.
+* [Medium] HTTPS clients, the trust store's remaining checks (`tools/lib/erx/release_files.rb`, `trust_store`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): every release that holds `public_key` carries
+  `priv/cacerts.pem`, built from `config/trust/` and attributed through its inventory, but a test image cannot yet
+  add roots of its own after the tree's, and the design's "store on QEMU" row (`public_key:cacerts_get/0` in a
+  session of the interpreter image) has no suite.
 * [Medium] HTTPS clients, the store by construction (`tools/lib/erx/trust_store.rb`): build it from `config/trust/ORIGIN.md`'s
   rows instead of a `*.pem` glob (which is case-insensitive on macOS and follows links): each recorded file a regular
   file by `lstat`, its bytes matching the recorded SHA-256, one block decoding to exactly one DER certificate (two
   certificates base64ed into one block, or an empty block, pass the form check today), and any other entry of the
-  directory refused. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
+  directory refused. Build `cacerts.pem` and its receipt's hashes from that one read: `ReleaseFiles#trust_store`
+  reads the roots for the store and again for the receipt, so the two are not bound to the same bytes. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
 * [Medium] HTTPS clients, the rest of design-crypto's client work: `inets`' `httpc_bound` edit and its tests (CR8),
   and `ssl` in the web domain's script for its listener
   ([design-crypto.md](docs/design-crypto.md#otps-applications)).
@@ -2264,14 +2251,6 @@ it; git history is the record of completed work.
 * [Medium] `erlang/apps/erx_display/src/erx_winfs.erl`: `start_link/1` given a service starts the single policy with an
   empty configuration; the window policy and its chord come from the display domain's manifest entry
   ([design-display.md](docs/design-display.md#windows-and-the-window-system)).
-* [Medium] `erx_fs` and `erx_window` (`erlang/apps/erx_files/src/erx_fs.erl`): a waiting `mouse` or `kbd` read cannot
-  be cancelled by the client's flush, since `erx_fs` has no helper mode, so the file's owner blocks and the flush
-  waits; a client reading `kbd` on a hidden window hangs. design-display.md says these reads are helper-mode reads that
-  wait for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: a `wctl` read answers at once; design-display.md ("The window
-  tree") says it waits for a record.
-* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: held `ctl` writes and `mouse` and `kbd` readers are bounded
-  only by `erx_fs`'s one request per open file; give them a cap of their own.
 * [Medium] facet parameters, the `member` kind (`liberx/system/dom_boot_view.c` `boot_parameter`,
   `otp/erts/emulator/nifs/erxos/erx_domain_terms.c` `parameter_term`): no test drives a packed member row through the
   C view and the NIF. Extend `test/host/facet_parameters_test.rb` and `test/erlang/erx_facet_parameters_tests.erl`
@@ -2290,11 +2269,54 @@ it; git history is the record of completed work.
 * [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
   `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
   needs an `rx` mount); the mount should take the facet's rights.
+* [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
+  grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
+  which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
+  aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
+  and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
+  keeper, which shares one life with the handler. What is left is the one tree that still waits for an event inside
+  a callback, the Bluetooth line service's `pair` file (`erx_line`, design-bluetooth.md, "The controller's line"),
+  which stops its whole grant, every other request, clunk and flush of it included, until the event comes, as each
+  wait for an event left in a callback does now that callbacks run in the grant. `erx_fs_locks`, the tree's lock
+  table, does not exist yet (the grant serves no lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants`
+  supervises it and its grants' supervisor `rest_for_one`, as design-files.md ("Locks") has it.
+* [Low] display client, a dropped grant's read (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `handle_info/2`'s
+  `dropped` clause): the end of a grant that sent the connection reads forgets them but leaves the one of each file
+  already at the display there, so the next read of that file waits until a record answers the dead one, and that
+  record goes nowhere. Unreachable while the connection has one grant, which shares its life (`start_window/1`'s
+  link); sending the display a flush of each such read makes it hold without the shared life.
+* [Low] display, a session's display grant (design-display.md, "The program's input"): a window takes at most two
+  of the grant's 64 requests in flight for its input, one for a present and one for a relayed `wctl`, `label` or
+  `clipboard` call, so a session whose `windows` quota passes 16 can still fill the grant with ordinary programs and
+  make a present answer `emfile`. State the count per window and bound the quota by it, or record the limit.
+* [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
+  design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
+  fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and
+  only `erx_fs_tests:a_grant_whose_client_ended_drains_test` covers the drain. Add a `client_end` event that checks no
+  reply follows it, each fid's clunk runs once and `drained/1` holds after settling, and seed that fault.
+* [Medium] Bluetooth line, held `data` writes (design-bluetooth.md, "The controller's line"): a write the line has
+  handed `erx_pl011` while the controller holds CTS off under `rts_cts` flow waits on the device with no deadline, so its
+  flush, its fid's clunk and the drain of a grant whose Bluetooth domain ended wait until the line's next `reset`, which
+  an idle domain, or one ended past its restart intensity, never sends. Give the driver's write a deadline that ends the
+  driver and answers `eio`, or bound it by the controller's 5 s command deadline.
+* [Medium] files, a lock table's end (design-files.md, "Locks"): `erx_fs_grants` ends every grant of its tree with the
+  table, the system domain's own grants included, which are not remounted (the `own/1,2` item below), and the table's
+  `max_heap_size` is not derived from a bound on the grants it serves. Name that bound and the heap it gives.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grants.erl`: the per-grant `Args` (`start_link/2`, `grant/4`) are not named by
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
   `EPERM` (no `setattr`); an open with `O_TRUNC` is the one way to empty it.
-* [Low] `erlang/apps/erx_display/src/erx_window.erl`: `kbd` gives only `c` records; `k` and `K` are not produced.
+* [Medium] display, the keepers' heaps (`erlang/apps/erx_display/src/erx_window.erl`,
+  `erlang/apps/erx_win/src/erx_draw_conn.erl`): design-files.md ("What waiting holds") has a keeper run under a
+  `max_heap_size` its tree sets from its counts, and design-display.md has the display set the window's ("The window
+  process") and the draw connection's cover its held reads beside its images ("The program's input"), but names
+  neither value, so both start with none. Name each in design-display.md (the window's from its 64 held requests of
+  at most 1,024 bytes, its pending input and its last present; the connection's from its 64 held reads and its
+  images, whose `erx_memdraw` memory a heap bound may not count, unverified) and set it.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: no test covers a flush or a clunk of a `ctl` write whose
+  present is in flight (answered with the present's answer, never `EINTR`) or of one waiting behind it (`EINTR`);
+  `never_answers/0` in `test/erlang/erx_winfs_tests.erl` holds such a present, with a seeded fault that drops
+  `began/2` in `pump/1`.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: the window table carries no label, so a decorating policy cannot
   see it.
 * [Low] `erlang/apps/erx_display/src/erx_screen.erl`: a present the core refuses (a rectangle past the coordinate limit
@@ -2685,10 +2707,8 @@ it; git history is the record of completed work.
   `lo0` with `ip4 => dhcp` fails `erx_net_if_core:new/1` with `function_clause`, and a binary name
   `<<"lo0">>` adds a second `lo0`. Take only a static `ip4` and `ingress` from a configured `lo0`,
   refuse the rest at `start_link` with a named error, and test it.
-* [Low] network, `erx_net_driver`: a driver's crash report carries its mailbox (`proc_lib`), so
-  pending frames, on `lo0` local traffic, reach the log; `erx_net_loop:transmit/2` raises on a
-  zone whose bytes are not iodata where its doc says `malformed`. Mark the driver `sensitive` or
-  keep the loop's queue in its state, and drop a bad list as `malformed`.
+* [Low] network, `erx_net_loop:transmit/2`: it raises on a zone whose bytes are not iodata where
+  its doc says `malformed`; drop a bad list as `malformed`.
 * [Low] erx_net TCP ICMP (`erx_tcp_icmp`, `erx_tcp_input:tcp_mss`): an MTU a too-big
   report gives in SYN-SENT lowers the MSS until the SYN-ACK, which recomputes it from the
   path, so the first full-size segment is lost again; FreeBSD keeps it in the host cache
@@ -2907,11 +2927,6 @@ it; git history is the record of completed work.
   arithmetic is written twice, in the packer's Ruby and in `erx_verity_tree`; the packed-app EUnit cases
   check they agree. Fix: take the level lengths from one source when the packer runs the file check on
   the host OTP.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl:229-244`, `run_job/3`): the
-  grant answers a client's clunk when it hands the clunk to the file's owner and drops the tree's `clunk`
-  answer, where design-files.md has every tree's `clunk` answer `ok` or an errno and the grant pass it back
-  once the owner has run it. Fix: the owner's clunk job answers with the callback's result, and the
-  behaviour's callback spec widens to `ok | {error, posix()}`; the test design-files.md names, with its seed.
 * [Medium] shell, `host` (`erlang/apps/erx_shell/src/erx_cmd_host.erl`, `run/2`): a name or server
   argument with an empty label or a label over 63 bytes (`host a..b`, `host .foo`, `host www .foo`)
   crashes the command with `function_clause` from `inet_dns:encode_labels`, which stock OTP 29.1.2
@@ -2931,12 +2946,18 @@ it; git history is the record of completed work.
   `erx_net_if_core` (counted `unsupported`); an `erx_net` application module and its `env` keys
   (the stack starts with `erx_net_sup:start_link/1`); the credit limits are fixed defines, not
   application keys; a datagram socket's credit counts datagrams, not bytes of its receive
-  buffer. Build checks still to add: the clock chokepoint (`erlang:send_after`, `monotonic_time`
-  and the rest only in `erx_net_clock`), `erx_net_bind` as the only demultiplexing inserter,
+  buffer. Build checks still to add: the clock chokepoint's `receive ... after` rule (its calls are
+  checked: `net_checks.rb`'s `clock`, which allows `erx_net_driver` and `erx_genet` whole where the design
+  names only the driver's hold and the MDIO and PHY waits), `erx_net_bind` as the only demultiplexing inserter,
   `erx_net_if` as the only configuration writer and `erx_net_credit` as the only batch sender.
   With IPv6 interface addresses, `lo0` takes `::1/128` and `fe80::1%lo0` as it comes up, as
   FreeBSD's `in6_ifattach` gives them (`in6_ifattach.c:541-543`, `:816-823`); `erx_net_sup`
   gives `lo0` 127.0.0.1/8 alone.
+* [Medium] network, the cookie keys' rotation (`erlang/apps/erx_net/src/erx_net_tables.erl`'s
+  `{erx_net_clock, hint}`): each hint rotates the keys and arms the next, so a stray or repeated hint would
+  start a second chain and rotate twice as often, halving how long a cookie is accepted. Keep the reseed
+  deadline in the owner's state and rotate only once `now/0` reaches it, with a test of the deadline armed,
+  and take the lifetime from `erx_tcp_syncache`'s `SYNCOOKIE_LIFETIME` instead of a second define.
 * [Medium] network, virtio-net transport (`erlang/apps/erx_net/erxos/erx_virtio_net.erl`): what the
   first package leaves. No host tests of its pure functions (`frame/3`, `mtu/2`, `lladdr/2`,
   `link_state/2`, `segments/1`, `erx_net_app:interfaces/1`): export them under `TEST` or move
@@ -3199,9 +3220,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   driver case's pid with `erx_command_srv:reserve/1`, the shell's process as its speaker. The
   `program-start` chokepoint keeps every Erlang source but the handler from naming `erx_program`, but the
   suite's driver cases type `erx_program:start/1` at a shell, which no build check reads.
-* [Low] ERTS, `sys/erxos/erx_program_core.h`: `ERX_PROGRAM_PID_MIN` and `ERX_PROGRAM_PID_MAX` are written
-  by hand beside the generated `ERX_PROG_PID_MAX` of `abi/protocols/prog.txt`'s `prog_pid_max`; use the
-  generated limit.
 * [Low] ERTS, `sys/erxos/erx_program_drv.c`: the gate worker's 64 registrations (two a program) bound a
   session to 32 programs at once, each start past that refused with `elimit`.
 * [Low] session, `erx_command_srv`: a row drops at any `{'DOWN', _, process, Speaker, _}` the server takes,
@@ -3297,14 +3315,31 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
-  `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
-  relay's line discipline serves the tty's readers.
-* [Medium] session, `erx_session_export`: a write to `/dev/tty` waits until the tty takes it
-  (`erx_console:write/2`, a call without a timeout), and a stopped tty holds 4 KiB, so writes to a
-  stopped tty fill the `rw` grant's 64 requests in flight and that grant answers `emfile` to every
-  program of the session, for `/etc` too. Have the terminal relay that owns the tty serve
-  `/dev/tty`'s opens, or answer a write once the relay accepts it, so a stopped tty blocks its
-  writers alone, as on UNIX.
+  `/etc/passwd` names, is missing.
+* [Medium] shell, `erx_shell` (`above_terminal/1`) and `erx_shell_jobs` (`above/2`): the flag that
+  gives the console the terminal while `erl` runs is a boolean the caller sets back in a `try ... after`,
+  so a stage running `erl` that is killed leaves the line's terminal with the console until the line
+  ends, and two `erl` in one line share the flag. Monitor each caller of `{above, true}` and keep the
+  live callers in the line, so the console holds while the set is not empty.
+* [Medium] shell, a job's leader (`erx_shell.erl`, `leader/1`) passes input requests to the shell's
+  group, and the group answers an interrupt to whichever input request is current, so a job reading
+  through `io:get_line` at the prompt would take a `Ctrl-C` the shell never counts, after which every
+  `foreground` lags the relay's count and later jobs' reads stay parked. No command reads that way
+  yet; have the leader refuse input requests, so the group has one reader by construction.
+* [Low] shell, `erx_shell_jobs`: a key the relay reports for the line just before `erl`'s
+  `{above, true}` stops or ends the line while the Erlang shell, led by its own group, runs on.
+  Every exported step of the table settles on its own; one dispatching entry that always settles
+  would make the rule hold for steps added later. `fg` resumes the job before the relay gives it
+  the terminal.
+* [Medium] programs, a program's `/dev/tty` (`erlang/apps/erx/src/erx_prog_handler.erl`,
+  `erlang/apps/erx_session/src/erx_session_export.erl`): the export serves `tty` as a name alone and answers
+  every open of it `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
+  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an open
+  of its tty's relay through `erx_session_relay:open_writer/2` under the program's job, through which its
+  reads, writes, watches and controls go to the relay, never through the file protocol. Until it does, a
+  program's open of `/dev/tty` (musl's `getpass`, a `ctermid` user) fails with `ENXIO`, and its standard
+  streams reach the terminal only through its starter's pumps (the item under shell, `erx_shell_program`,
+  below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -4080,7 +4115,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the machine's end is only its last step. design-system.md "Shutting down" also has
   `erx_dom_end_begin` with its ending record and absolute deadline, which the fault thread
   enforces; no domain created or restarted once the end has begun; the vault's quiesce and
-  the storage freeze, with the end chosen from their outcomes. The coordinator's one entry,
+  the storage freeze (the durability facet's checkpoint and freeze, which `erx_lfs` does not serve), with
+  the end chosen from their outcomes. The coordinator's one entry,
   `erx_machine:request/2`, takes `reboot` and `halt` from the system shell and from a
   session's `/machine/ctl`, writes the one log line and answers a second request `busy`, but
   it keeps the accepted request in its own state in place of the ending record and then asks
@@ -4644,6 +4680,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   intensity, 1 restart in 5 s), so a bug that crashes the `/dev` grant twice within 5 s
   ends the system domain and resets the machine. Move it under a supervisor whose end
   the domain service survives, when the device service gets its own.
+* [Low] devices, `erx_devfs`, `/dev`'s ctl writes: the facet call is the control tree's bounded work, with
+  `erx_driver_ctl`'s 30 s deadline as the bound its grant may stop for (design-system.md, "The `/dev`
+  tree"), and that bound is per write, not per tree: the facet takes no other request while a start runs,
+  which nothing bounds (`erx_driver_ctl`'s moduledoc), so a second write queues behind the first and may
+  answer `eio` after 30 s of its own for an operation not yet begun; a start that never returns holds
+  the facet for good, and each later write then holds the grant 30 s before it answers `eio`. Bound the
+  driver's start where the facet waits for it.
 * [Low] devices, `erx_devfs`: `/dev` shows only the block device. Its `status` has no
   `path` line, because the catalogue that reaches Erlang has no device-tree path, and
   its `driver` line is `[unknown]`, because no facet says which process drives a unit.
@@ -4654,6 +4697,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   volume or, with a request of a volume of its own, writes any sector of the data window;
   a forged `done` answers one client's request with another's result. Tie each request to
   its volume in the NIF and tag each run with a fresh reference.
+* [High] storage, littlefs: one open does not see another's writes. Each open is a littlefs file of its own
+  (`lfs_file_t` in its slot), a write changes only the file it was made through
+  (`otp/erts/emulator/nifs/erxos/erx_littlefs_nif.c:707`), and a read through another open of the same file stops at
+  that open's own recorded size and block chain (`littlefs/lfs.c:3505`), so running the volume's calls one at a time
+  in its worker does not show one open's write to another. design-files.md ("Serving", "Each tree makes its own
+  requests atomic") requires every open to see the file as it is, with only its access mode and position its own, and
+  OTP's `file_SUITE` checks it through a reader opened before the writes
+  (`otp/lib/kernel/test/file_SUITE.erl:3393-3397, 3516-3520`). Make the file's state shared across its opens in the
+  port, keeping access modes and positions per open, with tests of two opens reading and writing one file, disjoint
+  writes, a truncate and appends from both, regression first.
 * [Medium] storage, littlefs: a crafted image whose directory tail points back at itself,
   off the list mount checks, makes `lfs_dir_find` and `lfs_dir_read` loop forever on a
   dirty I/O thread, and every caller of `/data` waits with it (`erx_lfs` calls have no
@@ -4858,18 +4911,10 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   O(D^2); renames of two directories grow a path without bound. Cap a fid's path length (a walk past it refuses), or
   count steps per shared path suffix so a clone is one increment ([todo-performance.md](docs/todo-performance.md)).
 * [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: the grant's hold bookkeeping (`held`, `steps`, `loose`) has
-  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`tree_holds/2`), `remove`
-  and `owner_down` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
+  no test of its own: `erx_fs_test_tree` has no `forget`, so a rejected walk reply's holds (`kept_when_rejected/3`), `remove`
+  and an owner's `down/3` with walked fids are seen only end to end, or not at all. Give the test tree `forget`, check in
   `fid_table_model_test_` that the tree holds exactly the walked nodes the fids name after every step, and consider
   making the forget an effect `{forget, Node}` the shell performs, so the core sends nothing.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: an open file's owner process is one per grant, keyed by the node,
-  where `docs/design-files.md` starts one per open file on any grant; a file open through two grants of one tree has
-  two owners, so its requests are ordered against each other only by the tree. /tmp serves one grant per tree. Add
-  a per-tree registry of owners before a tree is served on more than one grant.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: no read helper exists, so an open file's owner calls `read` itself
-  whatever the module's `read_mode/0` says, and a read that waits for a medium holds up the file's other requests.
-  Build the helper of `docs/design-files.md` (state-stamped results the owner's core accepts or retries) with the
-  first tree that answers `helper`.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl:71-72`: `lopen` and `lcreate` answer an `Iounit` of 0, which
   `erx_file_remote` reads as `ERX_P9_IO_MAX` (`otp/erts/preloaded/src/erx_file_remote.erl:515-518`), where
   `docs/design-files.md`'s operation table has the server answer 65,536 inside the machine. The two size a client's
@@ -4882,15 +4927,17 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   through a program's table, so that nothing on a window tree enters a program ("A program's window"): for example
   a description the program's handler opens through the program's own table for the starter, or one whose tree,
   part of its identity, the handler refuses when it is `windows`.
-* [Medium] `erlang/apps/erx_files/src/erx_fs_grant.erl`: a clunk of an opened fid is answered at once and its file process
-  leaves `files` when its last clunk is queued, so a tree whose `clunk` is slow can gather file processes still
-  draining clunks, beyond the pool and outside the in-flight bound, and two processes of one file can run at once.
-  /tmp's clunk is one in-memory step. Defer the clunk's answer to the file process (counted in flight), or keep the
-  file in a closing state that new opens join, before a tree with a slow `clunk` is served.
 * [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`: `add_fid` and `end_fid` push effects into the grant's state, which
   every exported step must drain, and an owner's monitor is `pending` until the shell hands its reference back with
-  `monitored/3`, as an open file's owner is until `file_started/4`. Thread the effects through the step's return instead, so a step that both makes and ends one
+  `monitored/3`. Thread the effects through the step's return instead, so a step that both makes and ends one
   owner's fid can never emit `{demonitor, pending}`.
+* [Low] `erlang/apps/erx_files/src/erx_fs_grant.erl`, the pure core: design-files.md ("Serving") has the core take
+  each callback result and return the callbacks to run as effects, but `call/3`, `unlinked/2`, `forget_loose/1` and
+  `close_fid/3` run callbacks themselves, as the module's own doc says ("The core calls the tree's callback module
+  itself"), so replaying a transition repeats an unlink or a clunk instead of reproducing an effect list, and
+  `test/erlang/erx_fs_core_model_tests.erl` counts clunks in the process dictionary. Make the grant's shell the
+  callbacks' one executor, feeding their results to pure transitions, and correct the module doc; the forget part
+  is the `{forget, Node}` effect the hold bookkeeping item above considers, so one change closes both.
 
 * [Medium] `abi/manifest.txt`: the `devices[].selector` choice does not make `base`, `size` and `line` inactive for
   selector 2, so a PCIe row with any of them nonzero is admitted, where `docs/design-abi.md` says they are zero; and
@@ -5001,18 +5048,56 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] runtime, `liberx/backend/core/boot_manifest.c`: the printable rule for `system_args` lives in the reader, so `Manifest.admit` packs a manifest that then fails at boot, and `domains[].args`, the same string class, is not covered. The rule belongs in the `args` class of the ABI generator.
 * [Low] runtime, `tools/fuzz/release_fuzz.c`: does not call `erx_release_check` or compare `erx_release_fs_lookup`'s index with the entry's, and has no seed at the longest path; its `fix_index` is a copy of `pack_fuzz.c`'s.
 * [Medium] runtime, `erlang/apps/erx/src/erx_console.erl`: the `Ctrl-G` menu (`erx_console_menu`) lists, connects and detaches; interrupting and killing a session, lock and log out (`docs/design-live.md`, "Job control") come with logins (M10), and `erx:console_size/2` is not built.
+* [Medium] session, terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`): each tty of the
+  session has a relay, which its console reads on demand, but `erx_cmd` does not read through
+  `open_reader/2` ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)). The runtime's
+  writers' sender, `otp/lib/kernel/src/erx_output.erl`, which the design and the `relay-name` rule name, is
+  not in the tree, so nothing sends `tty_write` or `tty_drain`, nor are edit 35's trap and edit 42
+  (`beam/bif.c`), which reach it; and `erx_tty_owner` is missing from `erx_session.app.src`'s
+  `registered` list.
+* [Medium] session, terminal relay requests (`erlang/apps/erx_session/src/erx_session_relay.erl`): the
+  chokepoints keep `erx_tty_owner` and the request for an open made for reading to `erx_session_relay`, and
+  an open is opaque, but a module that holds a relay's pid can still build any other request by hand
+  (`{tty, Open, ...}`, `{foreground, ...}`, `{console_group, G}`), which nothing checks. Option: one request
+  tag, `{erx_relay, Req}`, that the relay requires of every call, with one atom chokepoint keeping
+  `erx_relay` to `erx_session_relay`, which replaces the `relay-requests` shape rule.
+* [Medium] shell and programs, finding a tty's relay ([design-shell.md](docs/design-shell.md#the-terminal-relays-protocol)):
+  a relay other than the domain's line's holds no name, and no design names how a program's handler, a
+  command domain's stream relay or `erx_cmd` finds the relay of the tty its job runs on. Suggested home:
+  the shell's `terminal()` map, which already carries the console's terminal functions, gains the relay's
+  pid, and the shell passes it to each job it starts.
+* [Medium] session, a command's output through the console (`erlang/apps/erx/src/erx_console.erl`,
+  `onlcr/1`): an Erlang command writes through the console's write/1, which turns each newline into CR-LF
+  for a cooked tty, and the relay's `OPOST` and `ONLCR`, set while the command's job holds the terminal,
+  turn it again, so the master gets CR CR LF (`test/erlang/erx_session_tty_tests.erl` compares output
+  with carriage returns aside). Commands writing through `erx_cmd`'s opens, whose bytes only the relay
+  processes, remove the console's conversion for a relay's console.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `read_for_ask/2`):
+  a process of the session's domain that sets the tty raw with `VMIN` 0 and `VTIME` 0 (an open's
+  `tcsetattr` with SIGTTOU ignored) makes the console's one-byte watch ready at once and its read answer
+  `{ok, <<>>}`, which `read_for_ask/2` has no clause for, so the console crashes and the line's shells
+  end. Watching again would spin; the console should not watch while such a setting holds, or read
+  through a mode of its own.
+* [Medium] session, the console's reads of the relay (`erlang/apps/erx/src/erx_console.erl`, `reader()`):
+  (1) The console-read
+  cases and seeded faults the design's Verification lists beyond the seven in
+  `test/erlang/erx_console_reads_tests.erl` (reads per ask, held bytes across a signal, one held set per
+  group, an interrupt queued before a read, one ask through blink and interrupt, a late event) are not
+  written, and the interrupt case does not pin that the group keeps its ask. (2) The ask, report, read and
+  event decisions are effects in the console; a pure core returning actions would let them be tested
+  without a relay. (3) After the relay gives up its name at a halt, a group's ask makes the console's call
+  exit `noproc`.
 * [Medium] session, terminal relay core (`erlang/apps/erx_session/src/erx_session_relay_core.erl`):
-  (1) An `out` watch is reported at any free byte, though `output/3` never splits a rendering, so a newline
-  under `ONLCR` with 1 byte free is `eagain` and a poll loop spins until the master takes output; report at
-  a low-water mark after reading FreeBSD's `ttydev_poll`. (2) The drain row's "no master is connected" has
-  no state behind it in the core or the link. (3) The exploration checks safety only, and its alphabets
-  leave out close, hangup, `tcsetattr`, timers and output; reports are pooled across receivers.
-  (4) Each owner of `erx_tty_link` must call `send/1` at the end of its step (the relay core's `settle/1`,
-  `erx_session_tty:effects/2`, the tests' models); a driver that forgets sends nothing and nothing fails. A
-  one-event entry that applies the event and then `send/1` would make it hold by construction for every
-  owner but the core. (5) `erx_tty:input/3` returns a room the relay core discards, since it derives the
-  next room from the link; drop it from the result, or use it. (6) `input/3`'s per-call room and output
-  stopped live in the persistent `#tty{}` record, reset by `input/3`; thread them as a call-local value.
+  (1) The exploration checks safety only, and its alphabets leave out close, hangup, `tcsetattr`, timers and
+  output; reports are pooled across receivers.
+  (2) `erx_tty:input/3` returns a room the relay core discards, since it derives the next room from the
+  link; drop it from the result, or use it.
+  (3) `input/3`'s per-call room and output stopped live in the persistent `#tty{}` record, reset by
+  `input/3`; thread them as a call-local value.
+  (4) A writer's message (`{write, Done, Bytes}`) has no size bound and the queue no length bound; with no
+  master it drains only by a flush or a hangup. The writers are synchronous and in the session's own domain.
+  Writers whose messages refill the room exactly as it empties hold `out` waits off for as long as they keep
+  it up, since an `out` wait is reported only while no message waits.
 * [Medium] session, how the console learns a session's tty (`docs/design-live.md`, "Between domains"): the design has the console learn the tty from a `tty` agent in the session domain's ready report, but the relay needs `erx:cap(console)`, which init sets only after that report, so a relay started by the boot script has no master and one started after the report is not in it. Edit 65's `tty` agent, the domain pid's check that every agent is a pid of the domain's node, and a way for the session's creator to read the agents are not built; `erx_console:add_session/2` takes the tty from whoever creates the session. Settle the order when root's session starts at boot.
 * [Low] tests, `test/integration/runtime_console_test.rb` (`make check-runtime-hosted`): the cases that start the Erlang shell wait for `1> ` at the start of a line, but the hosted system domain is a named node and its shell prompts `(system@erxos)1> `, so every `with_erxos` case times out before it begins. Match the prompt with its node name, or make the patterns node-agnostic as the `Ctrl-G` case is.
 * [Medium] domain service, `erlang/apps/erx_domain/src/erx_domain_core.erl`: the names quota is the constant `NAMES_QUOTA`, 64, for every principal; the manifest's per-principal `names` is read by no one. Take each principal's from its row, as the domain quota is.
@@ -6231,14 +6316,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the bridge reads the whole manifest at each session's start;
   design-live.md still says the host tool counts credit from its hello's
   first byte, where it now counts from the hello's reply.
-* [Medium] files, `erx_fs_grant` (`erlang/apps/erx_files/src/erx_fs_grant.erl`,
-  `admit/4`): a flush of a deferred request only waits behind it, and no
-  grant abandons a request at a flush, as design-files.md's Flush allows;
-  so a deferred request whose file process never answers (a stuck job, a
-  waiting lock once locks are served) holds its slot at the grant, and its
-  tag at the host link bridge, until the session ends. Abandoning at a
-  flush (answer only the flush, drop the file process's late answer) lets
-  a flush free both.
 * [Medium] security residual, host link's 9P bridge
   (`erlang/apps/erx_hostlink/src/erx_hostlink_files.erl`, `tree_grant/3`):
   the bridge uses the system domain's own grants and its tags bound, 64,
@@ -6570,6 +6647,13 @@ to the corpus and follow rc
   tree ends with it", and only "no `SIGHUP`" is in the compatibility
   table. List them there as documented differences with tests
   ([design-programs.md](docs/design-programs.md#a-programs-end)).
+* [Medium] system, the principal service (`erlang/apps/erx_domain/src/erx_principal.erl`): only its app half,
+  the registry of app principals, is built. The rest of its role in design-system.md's service table is not:
+  principals, credentials, sessions and quotas, and each session's credentials facet with `login_keys`,
+  `add_login_key` and `del_login_key`. Nor is the `erx_principal:number()` type that design-system.md's
+  domain service record names: a principal is a `pos_integer()` in `erx_domain_core`'s types, and
+  the domain service starts sessions from the system manifest's principals itself. They come with M10 and SSH's fourth stage
+  ([design-ssh.md](docs/design-ssh.md#stages)); then `erx_domain_core` takes the type from `erx_principal`.
 * [Low] system, principals: a principal can be created but never resized
   or removed. Add both to the principal service, with what happens to its
   sessions, domains, overlays and vault files
@@ -7070,9 +7154,67 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
+* [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
+  (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
+  step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a
+  bare `stop` with `[stop | _]`, dropping any action after it where the one loop refuses it. Move
+  each to `{stop, Reason}` and the one loop, then add a source check that no module but
+  `erx_actions` has a clause on a stop at a list's head.
 
 ## Security residuals
 
+* [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
+  system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
+  `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
+  is on another node before any primary filter runs; OTP's legacy `error_logger` calls
+  (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no `otp` domain; so do
+  erXos's own events that print a raw term; and in the system domain, which takes no filter, a
+  process that holds another domain's bytes keeps them out of its own reports only through its
+  `format_status/1` (edit 75), so the supervisor's `child_terminated` report still quotes the
+  child's raw exit reason (`supervisor.erl:318-324`, `:1426`), and with `error_logger_format_depth`
+  set `proc_lib`'s `receive_messages/1` (`proc_lib.erl:1046`) takes the mailbox of a process that
+  set `process_flag(sensitive, true)` and has no `format_status/1` into its crash report, which
+  stock OTP does too. Also whole in a process that hides its terms: `gen_server`'s
+  `no_handle_info` warning shows the raw message; `gen_event`'s report of a handler's crash shows
+  the raw stack trace; an exit reason `{Reason, Stack}` keeps its frames' arguments wherever it is
+  quoted, since exit reasons stay raw; process labels and logger metadata pass as they are; and
+  the protection rests on `'$initial_call'` and `'$erx_status_module'` in the process dictionary,
+  which the process itself can erase; and a process whose initial module is not the module
+  `gen_statem:enter_loop` or `gen_server:enter_loop` enters is decided by its initial module in
+  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). The filter is an entry of the primary filter list, so a
+  filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
+  whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
+  moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
+  logged as its summary where stock OTP drops it. Make the rewrite a fixed stage of
+  `logger_backend:log_allowed/2` ahead of the list (edit 57), which closes all three, run it
+  before remote forwarding; have the supervisor's report pass the reason through the child's
+  `format_status/1` when the child's module is known, and `receive_messages/1` honour
+  `sensitive`.
+
+* [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
+  `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
+  does not otherwise know as its master's, and its pid travels in every open, so any process of the
+  domain that holds an open can send it master messages (input, a hangup, a size). Acceptable for Phase
+  1's trusted domains. Fix: the relay names the reference of its monitor of the master in its `tty_open`,
+  and the master tags each message with it, which the relay requires.
+* [Medium] bluetooth, ACL packets on the line at a disconnection (`erlang/apps/erx_bt/src/erx_bt_hci_core.erl`,
+  the Disconnection Complete clause of `event/2`; docs/design-bluetooth.md "Commands and data credits"): a
+  Disconnection Complete drops the handle's packets still waiting for the writer and its disconnect, but the
+  packet the writer holds, and packets written that the controller has not yet read, are already on the line; if
+  the controller has given the handle to a new peer by the time it reads them, they reach the new link. (A
+  disconnect handed to the writer and unanswered cannot: a connection on its handle ends the controller process.) Narrow it in
+  the link slice, where the link protocol can tie each packet to its connection.
+* [Medium] bluetooth, a disconnect racing the peer's (`erx_bt_hci_core`'s `answered/4`; docs/design-bluetooth.md
+  "Commands and data credits"): a disconnect answered with any failure other than Unknown Connection Identifier
+  ends the controller process, and a controller may answer Command Disallowed (0x0C) to a disconnect that meets a
+  termination already in progress, so a remote peer leaving as the host disconnects it may reset every link.
+  Check Core 6.3 Vol 4 Part E 7.1.6 and 7.7.5 for the statuses a controller sends in that race, and accept the
+  ones that mean the handle is going.
+* [Low] bluetooth, the advertising enable's deadline refilled (`erx_bt_hci_core`'s `command/2`): at the
+  connection limit with `Num_HCI_Command_Packets` 0, a controller alternating LE Connection Complete and
+  Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
+  enable never times out and the core never stops; the controller process should end when a command stays
+  unsent across refills for longer than `bt_command_timeout_ms`.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and
@@ -7530,7 +7672,7 @@ to the corpus and follow rc
   `flush/4` also costs a window's visible tiles times its 16 dirty
   rectangles.
 
-* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes an open file's answer `{erx_fs_file, Tag, Alias, Reply}` and an
+* [Low] `erlang/apps/erx_files/src/erx_fs.erl`: a grant takes a keeper's answer at its wait's alias and a fid
   owner's `DOWN` by matching Erlang references, which a process that can guess one can forge (`list_to_ref/1` on the
   server's node, a crafted external term from a client node). A forged answer can only answer the client's own request
   in flight early, and a forged `DOWN` clunk a fid early. Bind both to the sender when erXos's kernel carries a
@@ -7769,7 +7911,7 @@ document's "residual risks accepted" paragraph.
   names at any node. Settle it before the network carrier lands: give envelopes from
   network entries a `D` no domain id can equal, and add the test that a remote node of
   creation equal to a client's id is refused at its grant.
-* [Medium] File clients (`erx_file_remote.erl`, `collect/3`): an alias stays active
+* [Medium] File clients (`erx_file_remote.erl`, `arrived/1` and `take/2`): an alias stays active
   until its reply arrives and the wait while the server lives has no deadline, so a
   server of another domain can hold a request open and send its alias, or the
   caller's pid it was handed as the owner, messages of any other shape without limit;
@@ -7811,6 +7953,18 @@ document's "residual risks accepted" paragraph.
   the palette and a Return runs its selected offer. The reserved chord's overlay is the planned way to
   tell windows apart; a rule that a covered current window takes no Return is the cheaper fix if one is
   needed first.
+* [Low] network, a crash of a socket core's shell (`erlang/apps/erx_net_client/src/erx_gen_tcp.erl` and
+  `erx_gen_udp.erl`): `format_status/1` redacts the `#data{}`, but a crash's stack trace never passes
+  through it. A shell that ends on an action `perform/3` does not know, on a `{stop, Reason}` that is
+  not the last action, or on a crash inside the core's `step/2`, logs a `function_clause` or `badmatch`
+  whose top frame carries the remaining actions or the event and the whole `#data{}` or core, with the
+  peer's bytes held or in flight: in gen_statem's termination report, whose stack trace it logs
+  outside `format_status/1`, and in proc_lib's crash report, which also logs the mailbox (queued
+  `erx_net` pushes) and the process dictionary. The exit reason `{function_clause, Stacktrace}` also
+  reaches the shell's monitors and a waiting caller. Only a bug of a core reaches it. Fix: a logger
+  filter in the client's domain that rewrites such reports to names, classes and arities, as the WiFi
+  design's `erx_wifi_report` does (docs/design-wifi.md, "Security"); the Bluetooth domain's filter
+  takes the same shape.
 
 ## Planned features
 
@@ -7818,6 +7972,107 @@ document's "residual risks accepted" paragraph.
   [design-find-act.md](docs/design-find-act.md#decisions), decision 3): `[apps]` is visible only at scope `all`, so a
   release build's palette lists no apps and `service -e` cannot read `declared_enable`; design-apps decides which
   sessions see the row names, and the palette follows it.
+* [Medium] WiFi supplicant cores (`erlang/apps/erx_wifi`, `erx_wpa_kdf`, `erx_wpa_key`;
+  [design-wifi.md](docs/design-wifi.md#the-supplicant)), left by the first slice:
+  - the bytes the MIC covers have no independent oracle: a recorded message 3 from hostapd
+    (a capture, or one built by hostapd's own code on the host) checked through `decode`,
+    `mic_input` and `check_mic`, with a seeded fault; wpa_supplicant 2.12's tarball carries
+    no such frame (its hwsim tests are not in it);
+  - `build/4` takes an untyped `map()`: a caller that leaves out a key gets a `function_clause`
+    whose arguments carry the KCK; a map type per message kind lets Dialyzer catch it;
+  - the MIC input ends at the key data, while wpa_supplicant covers the whole EAPOL body
+    (`wpa.c:4005`); a body longer than its key data fails the MIC (safe, but not
+    wpa_supplicant's behavior);
+  - whether a second RSN element in message 3 is allowed is checked against the standard (the
+    codec refuses it);
+  - the codec reads no Transition Disable KDE (the Wi-Fi Alliance's OUI, `wpa_common.h:155`),
+    so `erx_wifi_join` reports no `{transition_disable, SSID}` ("The 4-way handshake"), and
+    Verification's property and seed for it wait with it;
+  - `erx_wifi_join` takes the station's own RSN element and RSNXE in the `join` request; nothing
+    builds them from the candidate's AKM and PMF yet, which wants the RSN element's layout in
+    `abi/formats/ieee80211.txt`;
+  - SAE's secret half is not built: the key holder (`erx_wpa_holder` over `erx_wpa_arith`),
+    `wlankey`'s hashed values (`erx_wpa_secret`) and `crypto`'s `sae_pt/3`, `sae_commit/5`
+    and `sae_key/5` ("OTP's `crypto`: SAE's arithmetic"). `erx_sae`'s tests stand on
+    `test/erlang/erx_sae_peer.erl`, whose arithmetic on Erlang integers matches Annex J.10's
+    vectors; the holder's cases and seeds of Verification (the element not negated,
+    `sae_key/5`'s `badarg` escaping, a keyseed salted with zeros whatever the list, the
+    entropy seam's scalar of 1) and the recorded hostapd exchange wait for them. The call
+    that performs a request to the holder belongs to the station's process;
+  - `erx_sae` takes a password identifier in `new/1`, but `erx_wifi_join` passes none, since
+    the choice's candidate does not carry the identifier the holder's names report;
+  - SAE's `keying` state: no join-level case drives a holder's `bad_element` through
+    `erx_wifi_join`, whose `sae_step/4` keeps the exchange a drop returns (reverting it to
+    `{drop, Check}` fails no test), and the exploration's check that a counted drop changes
+    nothing but `counts` would fail on that answer; and a drop carries no deadline, so a
+    deadline met in `keying` followed by `bad_element` leaves no resend of the commit before
+    the exchange's end, which the station's ordering of the holder's answers keeps from
+    happening;
+  - the join's state holds SAE's KCK while the exchange runs, so the station's process must
+    keep it out of crash reports, `sys` and `/proc`, the first through the report filter
+    `erx_report` its domain takes at boot;
+  - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
+    exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
+  - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
+    fields exist only after `join`, so Dialyzer cannot catch a missing one (a record or a
+    map type per phase would); message 3's checks are spread over `eapol/4`, `message/5`,
+    `protected_key_data/3` and `message_3/5` rather than one named sequence in the design's
+    order; `{disconnect, Ref, Reason}` carries the machine's own reason, which wants one
+    mapping to 802.11 reason codes ("RSN element different"); group message 2 goes out
+    before the install it answers, as message 4 does, which the design's group paragraph
+    does not state; `step/3` fails on an event kind outside the table, a contract the
+    station's process must keep;
+  - the join's exploration: no property says that once the access point has message 4 and
+    every install is confirmed the port is open without another frame (liveness always
+    starts a new handshake); the end of a rekey is not checked against the chip's
+    confirmed slots as the port's opening is; the seed that removes `eapol`'s `open` cell
+    is caught by liveness, not as an edge never taken, since the edge list is read from
+    the seeded table;
+  - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
+    emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
+    semiblock are written beside their layout counts.
+
+* [Low] WiFi station's choice (`erx_wifi_choose`;
+  [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:
+  - the BSS record carries no group management cipher, so a PMF BSS that offers
+    BIP-GMAC-256 rather than BIP-CMAC-128 is admitted and then fails its join; admission
+    could refuse it `cipher_unsupported` once the scan's element parser reads that field;
+  - the blocks a view holds must have every key filled in: `erx_wpa_conf` fills a parsed
+    block over `erx_wifi_choose:default_block/0`, the one statement of the defaults, and
+    a block without `priority` or `ieee80211w` is not refused by the choice itself;
+  - the generated-view property counts none of the cases it reaches (picks, `bss` and
+    `secret_failed` holds, SSIDs marked by the names), so a generator change that stops
+    reaching one goes unnoticed.
+
+* [Medium] bluetooth, the line's service side (docs/design-bluetooth.md "The controller's line"):
+  `abi/services/line.txt` declares the interface, but the line service, `erx_line`, is not written, so the
+  controller group runs only over a model line in host tests. It is blocked on the file layer: `erx_fs` runs
+  each open file's requests one at a time in one file process (`erlang/apps/erx_files/src/erx_fs.erl`, the
+  moduledoc's "file process"), so a `data` read that waits for the controller would hold the writer's `data`
+  writes through the same grant, and the bring-up would deadlock; design-files.md's helper reads, which let
+  other operations run while a read waits, are not built (nothing reads `read_mode/0`) and retry a read whose
+  file state changed, which a stream cannot. The design needs a decision on how a tree serves a read that
+  waits beside writes. Behind it: the `line_grant` checker and `device` parameter values in
+  `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`), `erx_ns:place(line)` (the facet-name
+  check refuses it until a manifest publishes `line`), `erx_pl011:program/2` with `init => fresh`,
+  `erx_uart_sup` and its line groups, and the power line's steps of a reset. The writer opens `data` and
+  `ctl` with `[write, binary]`, which the client sends as an `lcreate` with `O_WRONLY|O_TRUNC`, so
+  `erx_line` takes that open through `make/4` and ignores `O_TRUNC`, as `erx_machine_fs`'s `ctl` does.
+* [Medium] bluetooth, `erx_bt_sup`'s restart intensity (`erlang/apps/erx_bt/src/erx_bt_sup.erl`;
+  docs/design-bluetooth.md "Concurrency" and "Failure handling"): the design gives none, so OTP's default of
+  one restart in 5 s applies; a controller group that exhausts its own 5 restarts in 60 s about every 30 s is
+  restarted by `erx_bt_sup` each time, and the domain never ends as the failure table says. Making the group
+  `significant` with `auto_shutdown => any_significant`, or a chosen intensity, settles it in the design first.
+* [Medium] bluetooth, advertised UUIDs (`erx_bt_hci`'s `config/0`; docs/design-bluetooth.md "Advertising"):
+  no GATT table (`erx_gatt_srv:advertised/0`) exists, so no service UUID is advertised; stage 1's advertising
+  needs the table's declarations brought forward from stage 2.
+* [Low] protocol apps, one clock seam (`erlang/apps/erx_net/src/erx_net_clock.erl`; the process edges of
+  `erx_bt`, USB, Wi-Fi and `erx_ntpd`): each protocol process keeps one wake-up timer at its core's
+  `next_deadline/1` (docs/design.md, "Deadlines in state"), and only `erx_net` has a clock module, with the
+  virtual clock for deterministic runs and the one-timer `arm_by/2` and `hinted/1`. Whether the other apps
+  share one clock module, and where it lives, is an open design question: a shared module is a new
+  mechanism and needs a design, and `erx_net` must keep depending only on `kernel` and `stdlib`, since it
+  is usable outside erXos.
 * [Medium] `examples/dashboard`, the basic kiosk of plan part 4a: the app and its host test
   (`test/host/erx_dashboard_test.rb`, the frame against `test/display/reference/dashboard`) exist; its
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
@@ -7827,10 +8082,9 @@ document's "residual risks accepted" paragraph.
   for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
 
-* [High] `examples/dashboard` full kiosk, `ssl` and `inets` (otp/lib has neither; `tools/lib/erx/release_files.rb`'s
-  `app` script lists `asn1`, `crypto` and `public_key` only) and the trust store (no `cacerts.pem` in
-  `public_key`'s `priv`, no `{unix, erxos}` row in `pubkey_os_cacerts`): the image has neither, which blocks a
-  real fetch of the live quotes on the target ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
+  above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
+  through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
   `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;
@@ -7900,8 +8154,7 @@ document's "residual risks accepted" paragraph.
   clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
   `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
   ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
-  colour-space chunks as sRGB; `erx_desk:reload/1`, which needs the window process `erx_desk_window` (plan 8.4)
-  ([design-desktop-programs.md](docs/design-desktop-programs.md#the-construction)); the theme's sizes as
+  colour-space chunks as sRGB; the theme's sizes as
   logical pixels at the window's scale. Each is small and lands with the next change to its module.
   Transitions ([Motion](docs/design-desktop-programs.md#motion)) come after the basic desktop runs,
   widgets first; window transitions wait for a Raspberry Pi measurement of a moving window. The trusted
@@ -8086,7 +8339,7 @@ document's "residual risks accepted" paragraph.
   command domain, before the relay's ready report: a program or a narrowed command that a `Ctrl-C` ends could read a
   key typed after it. Design the handshake: each handler and stream relay answers the shell once its program or run
   has taken the signal, and the shell sends `{foreground, Job, current, Signals}` only after every answer; with it
-  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/1` (and join the
+  the handler and the stream relay open the terminal with `erx_session_relay:open_reader/2` (and join the
   chokepoint's list), the stream relay names a terminal stream `{relayed, read_write, tty}` and copies its input, the handler's
   reads pass as "Reading a terminal" describes, and that section's tests run.
 * [Low] shell, the console's group's line history (`otp/lib/kernel/src/group.erl` `save_line_buffer`, `:1294-1305`):
@@ -8102,11 +8355,27 @@ document's "residual risks accepted" paragraph.
   later as an opt-in scheduler flag.
 * [Medium] desktop, the release of `erx_desk` (`tools/lib/erx/release_files.rb`, `RELEASE_SCRIPTS`):
   design-desktop-programs.md ("Shipping and starting") puts `erx_desk` in the desktop session's release, and
-  `erx_desk_files_core` calls `erx_ui_schema` and `erx_ui_model`, so `erx_desk` names `erx_ui` in its
+  `erx_desk_files_core` calls `erx_ui_schema`, so `erx_desk` names `erx_ui` in its
   `applications`. Only the client script, a domain holding a display's grant, holds `erx_ui`, so `erx_desk` ships
-  there and not in the session script, where systools would refuse the boot script. When 8.4 adds `erx_desk_sup`
-  and the commands, settle which script a desktop session boots: the client script, or the session script with
-  `erx_memdraw`, `erx_win` and `erx_ui` added.
+  there and not in the session script, where systools would refuse the boot script. Settle which script a desktop
+  session boots: the client script, or the session script with `erx_memdraw`, `erx_win` and `erx_ui` added. Until
+  then the command `clock` (`erx_desk_cmd_clock`) is in no command namespace, since every shell builds its table
+  from `erx_shell` alone (`erx_shell_namespace:from_applications([erx_shell])` in `erx_session_sup`,
+  `erx_shell_runner` and `erx_shell_script`), and it names no `-behaviour(erx_cmd)`, which would make `erx_desk`
+  build after `erx_shell`. 8.4's QEMU cell, `clock` opened in the desktop session, waits on this.
+* [Medium] SDK boundary check (`test/erlang/erx_sdk_boundary.erl`; D1 in
+  [design-desktop-programs.md](docs/design-desktop-programs.md#verification-and-testing), and the SDK's boundary row of
+  [design-packaging.md](docs/design-packaging.md#verification-and-testing)): a call handed to stock OTP as data, a
+  `{Module, Function, Args}` to `proc_lib:spawn/3`, `timer:apply_after/4`, `erpc:call/4`, a child spec's `start`, or
+  `erlang:make_fun/3`, reaches neither of `outside/2`'s lists, since xref resolves such triples only for `apply` and
+  `spawn`; and a pinned variable call is pinned per caller function and callee shape, so a second call of the same
+  shape in that function passes, and a caller may match `{[], _}` and drop the variable half. Close it by
+  construction: refuse a literal atom naming a non-public erXos module and the atom-making BIFs, put each pinned call
+  alone in a one-call function (the window's worker can dispatch its effect through a local function, which removes
+  its `worker/4` pin), and have the check take the reviewed list and answer one list of violations.
+* [Medium] desktop, clock's dimmed reading ([design-desktop-programs.md](docs/design-desktop-programs.md#clock),
+  the state table and D3): a state that is not `ok` asks for the time and date in the `tertiary` colour, which
+  `abi/formats/ui.txt` cannot express; clock shows them in their roles with the status token beside the zone.
 * [Low] desktop, stats (`erlang/apps/erx_desk/src/erx_desk_stats_core.erl`,
   [design-desktop-programs.md](docs/design-desktop-programs.md#what-it-reads)): `abi/inspection.txt` declares no
   `[domains, Id, connections]` path, so the inspector answers it `{error, scope}`, as for a path that names

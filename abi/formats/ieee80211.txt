@@ -1,0 +1,185 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# IEEE 802.11's values that the WiFi domain's supplicant reads and writes
+# (docs/design-wifi.md, "The supplicant"): the AKM table, the sizes of the keys and
+# nonces, the EAPOL-Key frame, its Key Information bits, and the key data's elements
+# and KDEs. A value erXos has no use for is not entered.
+#
+# The sources are wpa_supplicant 2.12 (https://w1.fi/releases/wpa_supplicant-2.12.tar.gz,
+# SHA-256 08e23937e16d0155e55cab2b51f51fbe10d80a1aa91c4e15442645059b737ef6), under the
+# BSD-3-Clause license: src/common/wpa_common.h, src/common/eapol_common.h,
+# src/common/ieee802_11_defs.h and src/common/wpa_common.c, cited by line.
+
+# The AKM suites the station supports, as the suite type under the 00-0f-ac OUI
+# (wpa_common.h, lines 80, 84 and 86), and the one table of what differs between them
+# (docs/design-wifi.md, "One table per AKM"): the PTK's derivation, the EAPOL-Key MIC
+# and the Key Descriptor Version in Key Information. PSK derives with PRF-SHA1 and
+# protects with HMAC-SHA1 truncated to 16 bytes under version 2; PSK-SHA256 and SAE
+# derive with KDF-SHA256 and protect with AES-128-CMAC, under version 3 and under 0,
+# "defined by the AKM" (wpa_common.c, lines 375-409 and 576-599; wpa_common.h, lines
+# 217-221).
+enum ieee80211_akm u8
+  value psk 2
+  value psk_sha256 6
+  value sae 8
+enum wpa_kdf u8
+  value prf_sha1 1
+  value kdf_sha256 2
+enum wpa_mic u8
+  value hmac_sha1_128 1
+  value aes_128_cmac 2
+enum wpa_key_version u8
+  value akm_defined 0
+  value hmac_sha1_aes 2
+  value aes_128_cmac 3
+translation wpa_akm_kdf ieee80211_akm wpa_kdf
+  map psk prf_sha1
+  map psk_sha256 kdf_sha256
+  map sae kdf_sha256
+translation wpa_akm_mic ieee80211_akm wpa_mic
+  map psk hmac_sha1_128
+  map psk_sha256 aes_128_cmac
+  map sae aes_128_cmac
+translation wpa_akm_key_version ieee80211_akm wpa_key_version
+  map psk hmac_sha1_aes
+  map psk_sha256 aes_128_cmac
+  map sae akm_defined
+
+# The secrets and keys, in bytes: a PMK of 32 (the PSK's PBKDF2-HMAC-SHA1 of the
+# passphrase over the SSID, 4,096 iterations), the nonces of 32 (wpa_common.h, line 21),
+# and the KCK, KEK and TK of 16 each for every AKM above with CCMP-128, so the PTK is
+# 384 bits (wpa_common.c, lines 566-576). A passphrase is 8 to 63 bytes, an SSID 1 to
+# 32.
+limit wpa_pmk_size u32 32
+limit wpa_psk_iterations u32 4096
+limit wpa_passphrase_min u32 8
+limit wpa_passphrase_max u32 63
+limit ieee80211_ssid_max u32 32
+limit wpa_nonce_size u32 32
+limit wpa_key_size u32 16
+limit wpa_ptk_bits u32 384
+limit wpa_mic_size u32 16
+# AES key wrap's initial value (RFC 3394, section 2.2.3.1), and its block, a
+# semiblock of 8 bytes; wrapped key data is at least two semiblocks and the integrity
+# value.
+limit aes_wrap_iv u64 0xa6a6a6a6a6a6a6a6
+limit aes_wrap_semiblock u32 8
+
+# The EAPOL frame that carries a key: version 1, which wpa_supplicant sends by default
+# (wpa_supplicant/config.h, line 12), packet type 3 (eapol_common.h, line 44), and the
+# RSN key descriptor, 2 (lines 49-50). The station accepts versions 1 to 3, the
+# highest wpa_supplicant knows (lines 34-38), and refuses the rest.
+limit eapol_version u8 1
+limit eapol_version_max u8 3
+limit eapol_type_key u8 3
+limit eapol_key_descriptor_rsn u8 2
+
+# The EAPOL-Key frame up to its key data, with the 16-byte MIC of every AKM above
+# (wpa_common.h, lines 237-250; eapol_common.h, lines 18-22): the EAPOL header, then
+# the descriptor, all big-endian but the Key RSC, which is the little-endian receive
+# counter of the group key it carries and so is kept as bytes here.
+layout erx_eapol_key packed_be 1 99
+  field version u8 0
+  field type u8 1
+  field body_length u16 2
+  field descriptor u8 4
+  field key_info u16 5
+  field key_length u16 7
+  field replay_counter u64 9
+  field nonce u8 17 count 32
+  field iv u8 49 count 16
+  field rsc u8 65 count 8
+  field reserved u8 73 count 8
+  field mic u8 81 count 16
+  field data_length u16 97
+
+# Key Information's bits (wpa_common.h, lines 217-234): the descriptor version in bits
+# 0-2, the key type (1 pairwise, 0 group), Install, Ack, MIC, Secure, Error, Request and Encrypted Key
+# Data.
+limit wpa_key_info_version_mask u16 0x0007
+limit wpa_key_info_pairwise u16 0x0008
+limit wpa_key_info_install u16 0x0040
+limit wpa_key_info_ack u16 0x0080
+limit wpa_key_info_mic u16 0x0100
+limit wpa_key_info_secure u16 0x0200
+limit wpa_key_info_error u16 0x0400
+limit wpa_key_info_request u16 0x0800
+limit wpa_key_info_encrypted u16 0x1000
+
+# The key data's elements: the RSN element (ieee802_11_defs.h, line 344), the RSNXE
+# (line 495), and the vendor-specific element (line 488) that carries each KDE under
+# the 00-0f-ac OUI with its data type (wpa_common.h, lines 135-151, 356). The padding
+# of encrypted key data, 0xdd and zero bytes, starts at a vendor element of length
+# zero or a 0xdd that is the last byte (wpa_common.c, lines 4096-4102): the end
+# marker, after which nothing is read. A lone last byte other than 0xdd, which
+# wpa_supplicant ignores, is refused as truncated. A vendor element too short for an
+# OUI and a type carries no KDE and is skipped.
+enum wpa_key_data_tag u8
+  value rsn 48
+  value vendor 221
+  value rsnxe 244
+elements wpa_key_data packed_le wpa_key_data_tag u8 end vendor
+  element rsn once bytes 2 255
+  element vendor many bytes 1 255
+  element rsnxe once bytes 1 255
+limit wpa_kde_oui u32 0x000fac
+enum wpa_kde_type u8
+  value gtk 1
+  value igtk 9
+
+# A GTK KDE's data after the OUI and type: the key id in bits 0-1 and Tx in bit 2 of
+# its first byte, a reserved byte, then the GTK, 16 bytes for CCMP-128 (wpa_common.h,
+# lines 362-367). An IGTK KDE's: the key id, 4 or 5, the IPN, the little-endian
+# receive counter of BIP, and the IGTK, 16 bytes for BIP-CMAC-128 (lines 369-374,
+# 174), so 28 bytes with the OUI and type.
+layout erx_wpa_gtk_kde packed_le 1 18
+  field key_info u8 0
+  field reserved u8 1
+  field gtk u8 2 count 16
+limit wpa_gtk_kde_id_mask u8 0x03
+limit wpa_gtk_kde_tx u8 0x04
+layout erx_wpa_igtk_kde packed_le 1 24
+  field key_id u16 0
+  field ipn u8 2 count 6
+  field igtk u8 8 count 16
+limit wpa_igtk_key_id_min u16 4
+limit wpa_igtk_key_id_max u16 5
+
+# SAE's Authentication frames (docs/design-wifi.md, "SAE and protected management
+# frames"), whose body the station builds and parses: the algorithm number, SAE's 3
+# (ieee802_11_defs.h, line 96), the transaction sequence number, commit or confirm
+# (lines 106-107), and the status codes the station tells apart: success, an
+# anti-clogging token request, an unknown password identifier, and a commit under
+# hash-to-element (lines 134, 199, 231, 233); any other is the peer's refusal.
+# All three are little-endian 16-bit fields, as every field of the body is.
+enum ieee80211_auth_algorithm u16
+  value sae 3
+enum sae_transaction u16
+  value commit 1
+  value confirm 2
+enum ieee80211_status u16
+  value success 0
+  value anti_clogging_token_required 76
+  value unknown_password_identifier 123
+  value sae_hash_to_element 126
+# The elements after a commit's scalar and element, each an extension element (tag 255,
+# line 496) named by its extension id: the password identifier, the Rejected Groups
+# list and the anti-clogging token container (lines 514, 531-532).
+limit ieee80211_eid_extension u8 255
+enum ieee80211_eid_ext u8
+  value password_identifier 33
+  value rejected_groups 92
+  value anti_clogging_token 93
+# The one group the station offers, 19, the NIST P-256 curve, whose scalar and each
+# coordinate are 32 bytes; the KCK of hash-to-element on it is 32 bytes (sae.h, line 12),
+# and the confirm's send-confirm counter stops at its 16-bit maximum (sae.c, lines
+# 2410-2411). A password identifier is at most 64 bytes (docs/design-wifi.md,
+# "Credentials"). A Rejected Groups list is what follows the extension id in one
+# extension element: its length byte, at most 255, less that id, so at most 254 bytes,
+# 127 groups.
+limit sae_group u16 19
+limit sae_scalar_size u32 32
+limit sae_kck_size u32 32
+limit sae_send_confirm_max u16 0xffff
+limit sae_password_identifier_max u32 64
+limit sae_rejected_groups_max u32 254

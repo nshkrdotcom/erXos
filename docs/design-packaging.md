@@ -877,7 +877,7 @@ open asks it, as a read of an open of it does ([Identity](#apps));
 neither touches the installed package. An `lopen` for reading reads, as
 any open does.
 
-**Reads.** The `apps` tree's file process for an open sends each read
+**Reads.** The `apps` tree's `read` callback, in the reader's grant, sends each read
 to `erx_pkg_io`, naming the qid path of the package the open recorded
 ([Identity](#apps)). `erx_pkg_io`, as it takes the read, answers `eio`
 and sends nothing unless its path table holds that path for the name;
@@ -1022,7 +1022,7 @@ its data on macOS and deleting a package keeps a user's files on
 FreeBSD, so a package of the same name and signer copied in again finds
 its data where it was. An administrator removes the data on purpose with
 a purge, `service NAME purge`, which the start service's `ctl` takes as
-`purge NAME`; that file's owner hands it to the package process and
+`purge NAME`; that write's callback, in the writer's grant, hands it to the package process and
 awaits the answer itself, outside the start table
 ([design-apps.md](design-apps.md#concurrency)). The package process
 carries it out with the storage service's `remove_app` request on the
@@ -1155,16 +1155,17 @@ grants among them
 ([design-system.md](design-system.md#a-session-takes-the-console)),
 and before the session's start is answered, so the app's code never
 starts before its grants exist and its package is readable when it
-starts. The session's connection agent keeps the record and sends it on
-to `erx_app` if that process is registered; `erx_app` registers its name
-before it looks for the record, takes the one the agent kept or else
-waits for it, so the record reaches it whichever comes first. `erx_app`
-mounts `/app` with `erx_ns:mount({erofs, app}, "/app", [rx])`, and
-`erx_ns`'s process takes the place and the layout from the record the
-agent keeps; a mount the reader refuses ends the session with the
-reason. The root hash is the domain service's and `rx` is the grant's,
-so nothing the session's code passes chooses what `/app` holds or
-whether it runs. The
+starts. The session's connection agent keeps the record, which the
+domain pid sends it as `{erx_app, App}`
+([design-domains.md](design-domains.md#messages-between-the-domain-service-and-a-runtime)),
+and `erx_app` asks the agent for it (`erx:app/0`), which answers at once
+if it holds the record and else once it comes, so the record reaches
+`erx_app` whichever comes first. `erx_app` mounts `/app` with
+`erx_ns:mount({erofs, app}, "/app", [rx])`, and `erx_ns`'s process takes
+the place and the layout from the record the agent keeps; a mount the
+reader refuses ends the session with the reason. The root hash is the
+domain service's and `rx` is the grant's, so nothing the session's code
+passes chooses what `/app` holds or whether it runs. The
 session's name is drawn from the app's own pool, `dashboard_1`.
 
 `/app` is the domain's like any mount, so the session's programs see it
@@ -1188,12 +1189,14 @@ indices of the app template's `packages` and `system` rows and of the
 facet row of each of its services, the names of the manifest's principals,
 configured domains, services and facet rows, and the names of the
 image's packages; and the boot's registry of app principals, each
-name's entry and signer. It answers `{ok, Admitted}`, the principal's
-entry (the name's existing one or a free one, which it reserves nothing
-in), the indices of the facet rows kept, the `packages` and `system`
-rows and one for each need, the start row's display and the signer, which registration
-records for check 4 to compare, or `{error, Reason}`, the first
-of these that fails:
+name's entry and signer. It reserves no entry and answers none:
+registration takes the entry the same rule (`erx_app_admit:entry/4`)
+gives the name when the package is committed, the one check 4 found,
+since the package process alone admits and registers, one package at a
+time. It answers `{ok, Admitted}`, the indices of the facet rows kept,
+the `packages` and `system` rows and one for each need, the start row's
+display, the declared memory and the signer, which registration records
+for check 4 to compare, or `{error, Reason}`, the first of these that fails:
 
 1. the manifest has an `apps` row: `no_apps`;
 2. the header's ABI version and architecture are the image's: `{abi,
@@ -1337,8 +1340,9 @@ with a display, and saves screendumps, as Doom's `run.rb boot` did.
 ### Starting an app
 
 `erx_app`, an application of the `app` release, does nothing until the
-app's record has come ([An app's session](#an-apps-session)): it
-registers its name, then takes the record or waits for it. It depends
+app's record has come ([An app's session](#an-apps-session)): it asks
+the connection agent for the record (`erx:app/0`), which answers once
+the record has come. It depends
 on `erx_session`, whose
 command server starts a native app's program, so it starts only once
 that server serves. Once the record has come, it:
@@ -1394,8 +1398,8 @@ takes one request at a time and finishes the one it has begun before it
 takes another, and refuses with `eio`, doing nothing, a request whose
 lifetime has ended, which it tells with `erlang:is_process_alive/1`,
 since `erx_pkg`, `erx_pkg_io`, the start service and the `apps` tree's
-file processes all run in the system domain's one runtime. A **copy
-handle**, which the `apps` tree's file process for a copy holds, is the
+grants all run in the system domain's one runtime. A **copy
+handle**, the handle of the `apps` tree's open of a copy, is the
 pair of a lifetime and a slot, so its writes and its close are requests
 of that lifetime, refused once it has ended.
 
@@ -1737,7 +1741,7 @@ header.
 | the POSIX-lite personality, musl's functions as [design-programs.md](design-programs.md#the-posix-lite-personality) defines them | liberx's kernel calls and every `erx_*` C function |
 | a program's `main`, its standard descriptors, and a program that draws: `/dev/draw` with the draw protocol, `/dev/kbd`, `/dev/mouse`, `/dev/wctl` | the channel, the program protocol and the startup message |
 | `app.txt`'s grammar and the package format | the boot image, the manifest and its rows |
-| Erlang: `erx_ui:open/1`, `tree/2` and `close/1`, its messages and the widget schema of `abi/formats/ui.txt`; `erx_win` and `erx_draw`'s exported functions, for an app that draws itself; `erx_prog_handler:start/1`; stock OTP 29.1.2 | every other function of erXos, `erx_ui:start/1` and the modules `erx_ui_lvgl` and `erx_ui_model` among them |
+| Erlang: `erx_ui:open/1`, `tree/2` and `close/1`, its messages and the widget schema of `abi/formats/ui.txt`, whose properties and bounds `erx_ui_schema:property/1` gives as [design-display.md](design-display.md#widget-trees) states, with the types its spec names, and its trees, of type `erx_ui_schema:tree()`; `erx_win` and `erx_draw`'s exported functions, for an app that draws itself; `erx_prog_handler:start/1`; stock OTP 29.1.2 | every other function of erXos, `erx_ui:start/1` and the modules `erx_ui_lvgl` and `erx_ui_model` among them |
 
 **Erlang's host test entry.** `erx_ui_host` stands in for a display on
 the host, under stock OTP 29.1.2:
@@ -1838,7 +1842,7 @@ The reason of every refusal goes to the log. Who holds `start`, and so
 **The `apps` tree**, in the system domain, takes `lcreate`, `lopen`, `write`,
 `clunk`, `read`, `getattr`, `readdir` and `unlinkat` as [`/apps`](#apps)
 says, with the same errnos. Its `clunk` answers the copy's verdict,
-which the file service passes back to the client once the file's owner
+which the file service passes back to the client once the grant
 has run it
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)).
 
@@ -1909,7 +1913,7 @@ through the `apps` grant; neither takes a layout.
 | the domain service | the app's session: the kept rows, and the app's record, with its package's place and layout, sent once the session's namespace is in place |
 | the principal service | `register_app/1`, which takes the committed package, called at a committed install or update and at recovery; `app_registry/0`, the registry admission reads; no app principal is unregistered within a boot |
 | the start service ([design-apps.md](design-apps.md#the-start-table)) | its tree at `/etc/start`, holding `ctl`; the package rows after the manifest's; `packages/2`, answered once the dropped apps' sessions have ended and refused for an ended lifetime; the merge's grants for an app from its admission; `purge` in its `ctl` |
-| the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the file's owner has run it, after every request sent before it; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
+| the file service ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)) | a tree's `clunk` answers `ok` or `{error, Errno}`, and `erx_fs` answers the client's clunk with it once the grant has run it, after every request sent before it through the fid; the fid ends whatever the answer, as clunk(5) says; the `apps` facet mounted at `/apps` as any facet with a mount point; a session's export naming each local provider's tree when it is mounted ([design-files.md](design-files.md#narrowing-for-a-program)) |
 | the shell ([design-shell.md](design-shell.md#commands)) | `cp` opens its target itself, copies in pieces as its info report needs, and reports a failed close of the target as it reports a failed write; `mount FILE DIR`, the EROFS mount `{header, FILE}` of a package file of `/apps`, `ro`, `einval` for any other file; `service NAME purge` |
 | the storage service ([design-storage.md](design-storage.md#interfaces)) | the `packages` tree, the data partition's directory, with `new/` and `installed/` and `tree installed` rooted at `installed/`; the `system` tree, the booted slot's system partition's `apps/`, read-only, from the storage domain that serves `system`; `apps/` and `tree apps`, rooted at `apps/NAME/SIGNER/`; `remove_app` on the durability facet |
 | the EROFS reader | `erx_verity` reading an image from one fid of a file, which `erx_ns`'s process opens and owns and every reading process of the session sends its reads on, at an offset, with a layout `erx_ns`'s process took itself, from the app's record for `/app` or from the header the `apps` tree served through the same fid for the shell's `mount`, at rights no wider than that fid's grant's; and, in the storage domain that serves `system`, the system partition's own image, read through `erx_verity` over its window against the root hash of that domain's boot record ([design-storage.md](design-storage.md#the-system-tree)) |
@@ -1931,14 +1935,14 @@ It does no file operation itself: every request on `packages` and every
 request when it is done, so a slow storage domain delays a close, a
 removal or a walk, `getattr` or read of `/apps`, each of which waits
 behind a slow checkpoint `erx_pkg_io` has begun, but not the package
-set's answers or the start table. The `apps` tree's file owner for a
-copy waits for the package process's answer before it answers the close,
-as any tree's owner runs a file's requests in turn
-([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). The
+set's answers or the start table. The `apps` tree's `clunk` of a copy
+waits, in the closing client's grant, for the package process's answer
+before the grant answers the close, as a callback waits for its tree's
+processes ([design-files.md](design-files.md#serving-the-erx_fs-behaviour)). The
 package process waits for the start table at each publication, and the
 table never waits for the package process, so the two never wait on each
-other: a purge is awaited by the start service's `ctl` file owner, not
-by the table, and the package process takes it in turn with its closes
+other: a purge is awaited by the `ctl` write's callback in the writer's
+grant, not by the table, and the package process takes it in turn with its closes
 and removals, after the publication of the one it is carrying out
 ([design-apps.md](design-apps.md#concurrency)).
 
@@ -1952,10 +1956,9 @@ without an app and its deletion, or the rename of its update, leaves the
 app stopped; the recovery's publication brings its row back with no
 record, `installed`, on whichever package its name then holds, and its
 own `start` runs it. A crash of the start service's table process loses
-nothing the package process holds: on its restart it asks the package
-process for the set with a message and waits for no answer; the package
-process answers by publishing its set, in turn with its closes, removals
-and purges, and the table applies `rc.conf` to the rows it holds no
+nothing the package process holds: on its restart it takes the last set
+it took from its records process, and applies `rc.conf` to the rows it
+holds no
 record for only when the boot mark says the boot is not done, and
 otherwise leaves them with no record, `installed`
 ([design-apps.md](design-apps.md#concurrency)).
@@ -2177,7 +2180,7 @@ it guards.
 | the directory's bound | an ABI change leaves `max` installed packages refused at the next recovery; a copy of a new name fails its close with `enospc` and leaves no file; after one `rm` the copy installs; the recovery's listing stays within `pkg_scan_max` | a bound that counts admitted packages alone, which installs the new name beside `max` refused ones |
 | the build's check | each clause of property 19 | each seeded violation of [The build's check](#the-builds-check) |
 | `examples/dashboard` through the SDK | its frame through `erx_ui_host` matches its reference, and a click on Pause changes only the status line and buttons | a status line one pixel taller |
-| the SDK's boundary | the example compiles, and xref finds every call it makes into erXos's modules in `public.txt`, by module, function and arity | the example calling `erx_ui:start/1`, exported by a public module but not public, which the check refuses |
+| the SDK's boundary | the example compiles, and xref finds every call it makes into erXos's modules in `public.txt`, by module, function and arity; a call whose callee xref cannot name, through a variable module or fun, is answered apart, and the app's check pins those to a list it has reviewed, empty for the SDK test's probe app | the example calling `erx_ui:start/1`, exported by a public module but not public, which the check refuses; the example calling through a variable module, which the check answers apart |
 | no list names an example | a source check over `tools/lib/erx`, `config/manifest` and the test lists finds no path under `examples/` | `erx_dashboard` added to `ErlangApps::APPLICATIONS` |
 
 **QEMU tests**, in the suites of the plan's parts that bring them:

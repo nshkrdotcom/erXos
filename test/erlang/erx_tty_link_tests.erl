@@ -39,7 +39,7 @@ the master.
 
 
 every_sequence_test_() ->
-    {timeout, 300, fun() -> walk(?DEPTH, #world{link = erx_tty_link:new()}, []) end}.
+    {timeout, 300, fun() -> walk(?DEPTH, #world{link = erx_tty_link:new(present)}, []) end}.
 
 walk(0, _World, _Trace) ->
     ok;
@@ -176,14 +176,14 @@ check_drained(#world{writers = Writers, got = Got, written = Written, master_hun
 %% output already taken does nothing, so a burst of output is never followed a second
 %% later by a burst of messages to the master.
 resend_timer_test() ->
-    {_, L0} = erx_tty_link:write(w, <<"a">>, erx_tty_link:new()),
+    {_, L0} = erx_tty_link:write(w, <<"a">>, erx_tty_link:new(present)),
     {[{output, 0, <<"a">>}, {resend_after, 0}], L1} = erx_tty_link:send(L0),
     ?assertMatch({[open, {output, 0, <<>>}, {resend_after, 0}], _}, erx_tty_link:timeout(0, L1)),
     {[], L2} = erx_tty_link:master({tty_taken, 0}, L1),
     ?assertMatch({[], _}, erx_tty_link:timeout(0, L2)).
 
 input_and_size_checks_test() ->
-    L = erx_tty_link:new(),
+    L = erx_tty_link:new(present),
     ?assertMatch({[{input, <<"ab">>}], _}, erx_tty_link:master({tty_input, <<"ab">>}, L)),
     {[], L1} = erx_tty_link:master({tty_input, binary:copy(<<"x">>, 4097)}, L),
     {[], L2} = erx_tty_link:master({tty_input, "ab"}, L1),
@@ -200,13 +200,24 @@ writes_nobody_waits_on_are_bounded_test() ->
     %% rest is dropped and counted.
     Chunk = binary:copy(<<"y">>, 1024),
     Final = lists:foldl(fun(_, L) -> element(2, erx_tty_link:write(none, Chunk, L)) end,
-                        erx_tty_link:new(), lists:seq(1, 4 + 64 + 3)),
+                        erx_tty_link:new(present), lists:seq(1, 4 + 64 + 3)),
     ?assertEqual(4096, erx_tty_link:held(Final)),
     ?assertEqual(64, erx_tty_link:waiting(Final)),
     ?assertMatch(#{output_dropped := 3}, erx_tty_link:counts(Final)).
 
+%% A tty with no master sends nothing, so it holds 4 KiB and its writer
+%% waits, asks for no timer, and drops every message as from a master.
+no_master_test() ->
+    {[], L1} = erx_tty_link:write(a, binary:copy(<<"z">>, 5000), erx_tty_link:new(none)),
+    {[], L2} = erx_tty_link:send(L1),
+    ?assertEqual({4096, 1, false}, {erx_tty_link:held(L2), erx_tty_link:waiting(L2),
+                                    erx_tty_link:flowing(L2)}),
+    ?assertMatch({[], _}, erx_tty_link:timeout(0, L2)),
+    ?assertMatch({[], _}, erx_tty_link:master({tty_input, <<"ab">>}, L2)),
+    ?assertMatch({[], _}, erx_tty_link:master(tty_hangup, L2)).
+
 a_hangup_ends_every_wait_test() ->
-    {_, L1} = erx_tty_link:write(a, binary:copy(<<"z">>, 5000), erx_tty_link:new()),
+    {_, L1} = erx_tty_link:write(a, binary:copy(<<"z">>, 5000), erx_tty_link:new(present)),
     {_, L2} = erx_tty_link:write(b, <<"later">>, L1),
     ?assertEqual({[hangup, {done, a}, {done, b}], 0},
                  begin {Actions, L3} = erx_tty_link:master(tty_hangup, L2),

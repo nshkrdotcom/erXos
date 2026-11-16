@@ -93,7 +93,10 @@ new() -> erx_domain_mints:new(config([?G])).
 
 %% Steps Events in order; the actions of each, and the last state.
 run(Events, State) ->
-    lists:mapfoldl(fun erx_domain_mints:step/2, State, Events).
+    lists:mapfoldl(fun(Event, S) ->
+                           {Next, Actions} = erx_domain_mints:step(Event, S),
+                           {Actions, Next}
+                   end, State, Events).
 
 grant(State) -> maps:get({?G, data}, erx_domain_mints:grants(State)).
 
@@ -559,7 +562,7 @@ bfs(Queue, Seen, Transitions) ->
 step(none, Core, Env, _Node, _Label, _Seen) ->
     {Core, Env};
 step(Event, Core, Env, Node, Label, Seen) ->
-    {Actions, Core1} = erx_domain_mints:step(Event, Core),
+    {Core1, Actions} = erx_domain_mints:step(Event, Core),
     check_acknowledged(Event, Core, Core1, Env, Node, Label, Seen),
     Env1 = lists:foldl(fun(Action, E) -> apply_action(Action, E, Node, Label, Seen) end, Env, Actions),
     {Core1, Env1}.

@@ -4,6 +4,7 @@
 
 require 'digest'
 require_relative 'abi_binary'
+require_relative 'build_kind'
 require_relative 'device_kinds'
 require_relative 'generated_abi'
 require_relative 'manifest_frontend'
@@ -81,15 +82,13 @@ module Erx
 
       def initialize(build_kind:, platform:, catalog:, root_entry:, artifacts:,
                      provenance:, device_kinds:, sizing: nil, development_key: nil)
-        unless %w[development release].include?(build_kind)
-          raise Invalid.new('unknown checked build kind', property: 'context', field: 'build_kind')
-        end
+        build_kind = BuildKind.fetch(build_kind)
         unless platform.is_a?(Hash) && catalog.is_a?(Array) && artifacts.is_a?(Hash) &&
                provenance.is_a?(Array) && root_entry.is_a?(Integer) && root_entry.between?(0, catalog.size - 1) &&
                device_kinds.is_a?(Array) && !device_kinds.empty? && device_kinds.all? { |kind| device_kind?(kind) }
           raise Invalid.new('incomplete checked context', property: 'context', field: 'input')
         end
-        unless development_key.nil? || (development_key.is_a?(String) && build_kind == 'development')
+        unless development_key.nil? || (development_key.is_a?(String) && BuildKind.development?(build_kind))
           raise Invalid.new('only a development build trusts a development package key', property: 'context',
                                                                                           field: 'development_key')
         end
@@ -107,7 +106,7 @@ module Erx
           end
           normalized
         end
-        @build_kind = build_kind.dup.freeze
+        @build_kind = build_kind
         @platform = Snapshot.copy(platform)
         @catalog = Snapshot.copy(catalog)
         @root_entry = root_entry
@@ -473,7 +472,7 @@ module Erx
         machine = @source.machine
         flags = flags(machine, 'flags', 'manifest_flags')
         development = (flags & @codec.member('manifest_flags', 'development')) != 0
-        unless development == (@context.build_kind == 'development')
+        unless development == BuildKind.development?(@context.build_kind)
           invalid('configuration conflicts with checked build kind', 9, 'machine.flags')
         end
         partial = (flags & @codec.member('manifest_flags', 'partial_boot')) != 0
@@ -1537,7 +1536,7 @@ module Erx
       # system_queue as a source row's does when it states none.
       def derived_quantities(interface, name)
         declared = @codec.schema.services.find { |service| service.fetch(:number) == interface }&.fetch(:quantities) || {}
-        missing = ABI::Contracts::FACET_QUANTITIES.keys - declared.keys
+        missing = ABI::Contracts::FACET_QUANTITIES - declared.keys
         invalid("services names #{name}, whose interface declares no #{missing.join(', ')}", 19, 'apps.services') unless
           missing.empty?
         declared.merge('queue' => number(@source.machine, 'system_queue'))
@@ -2171,7 +2170,7 @@ module Erx
         { 'name' => name, 'grantee_kind' => kind, 'grantee' => index,
           'service' => service,
           'operations' => { 'table' => 'facet_operations', 'first' => 0, 'count' => 0 },
-          'queue' => queue }.merge(%w[max_request in_flight reductions period_ns max_heap_size].to_h { |key| [key, number(record, key)] })
+          'queue' => queue }.merge(ABI::Contracts::FACET_QUANTITIES.to_h { |key| [key, number(record, key)] })
       end
 
       # What the stopgap cannot honour, refused once properties 2, 10 and 11 hold: a

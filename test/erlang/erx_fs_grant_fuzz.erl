@@ -4,31 +4,56 @@
 %% Random sequences of messages through erx_fs_grant, the pure core of one erx_fs grant,
 %% over erx_fs_test_tree: valid requests on a few fids and names of the tree, requests with
 %% one field replaced, arbitrary terms, frames whose alias or owner belongs to another
-%% domain, frames in another domain's envelope or bare, flushes, owners going down and
-%% file answers with the wrong tag. A sequence's grant serves the server's own domain or
-%% another, ?CLIENT, whose frames arrive in its envelope, {erx_origin, ?CLIENT, Frame},
+%% domain, frames in another domain's envelope or bare, flushes, owners going down, and
+%% the answers and ends of the keepers that hold waiting requests, with now and then an
+%% answer or a DOWN of no request held. A sequence's grant serves the server's own domain
+%% or another, ?CLIENT, whose frames arrive in its envelope, {erx_origin, ?CLIENT, Frame},
 %% with names of its node, as edit 16 delivers them; erx_dist's stand-in reads a name's
-%% domain as the BIF does. A shell here performs the core's effects as erx_fs does,
-%% holding back a file process's jobs for a while so requests stay in flight and flushes
-%% find them.
+%% domain as the BIF does.
+%%
+%% The grant's tree is this module: its callbacks pass every call on to erx_fs_test_tree,
+%% but a third of its reads and writes answer {wait, Keeper, Request}, where Keeper is one
+%% of the sequence's two keepers or, now and then, the grant itself or a process of another
+%% node, which the core must answer eio. A shell here performs the core's effects as erx_fs
+%% does, with references of its own in place of monitors, and holds each request handed to
+%% a keeper until a later step answers it, validly or not, or ends its keeper.
 %%
 %% Whatever arrives, the core never raises, and:
 %% * a reply goes only to an alias of the client's domain whose frame, in the client's
 %%   envelope or bare for the server's own domain, awaits one, and
 %%   decode_reply/2 accepts it for that frame's request (an error reply, for a frame the
 %%   grammar refused); the core runs the same check before it replies, so what this adds
-%%   is the alias, the count and the order: a flush answered ok comes after what it flushed;
-%% * a file process gets only jobs with its own tag, none after its last clunk, and the
-%%   grant's open files each have a running process;
-%% * the fids stay within the pool, the owners and the open files within the fids, the
-%%   requests in flight within 64, and the grant's owners are exactly the owners the shell
-%%   holds a monitor for;
-%% * at the end of a sequence, with every job run and every owner down, every frame that
-%%   awaits a reply has had exactly one, and the grant holds nothing.
-%% The seed comes from make check-fuzz.
+%%   is the alias, the count and the order: a flush answered ok comes after what it flushed,
+%%   unless what it flushed is a flush, of which a flush is answered at once;
+%% * a frame sent to an alias that still awaits its reply, and a second flush of an alias
+%%   whose first flush still waits, are dropped: nothing answers them;
+%% * a clunk or a remove answered other than ebadf is answered when no request of its fid
+%%   is held at a keeper;
+%% * a wait names one of the sequence's keepers, a process of this node that is not the
+%%   grant; a flush the core admits for a request a keeper holds goes to that keeper, under
+%%   the request's reference, a flush goes to a keeper only for a request it holds, and
+%%   once for each;
+%% * a keeper's answer to a request it holds answers the request once: with the answer
+%%   when the grammar accepts it for the request, eio when not; a keeper's end answers each
+%%   request it held eio once; an answer to no request held answers nothing and counts as
+%%   refused, and a DOWN of no monitor answers nothing;
+%% * the fids stay within the pool, the owners within the fids, the requests in flight
+%%   within 64, the grant's owners are exactly the owners the shell holds a monitor for,
+%%   and the requests it reports waiting are exactly those the shell holds at keepers;
+%% * at the end of a sequence, with every owner down and every request at a keeper answered
+%%   or its keeper ended, every frame that awaits a reply has had exactly one, and the
+%%   grant holds nothing, no live alias included.
+%% The seed comes from make check-fuzz. tools/fuzz/erx_fs_grant.rb also seeds six faults in
+%% the core, each of which these checks must catch within the seed's sequences: a pool
+%% admitting one fid more, a grant taking any domain's names for another domain's, a flush
+%% kept from the keeper that holds its request, a grant that checks only requests' aliases,
+%% a second flush answered ok at once, and a clunk that runs without flushing its fid's waits.
 
 -module(erx_fs_grant_fuzz).
 -export([run/1]).
+%% The tree's callbacks, as erx_fs_test_tree exports them.
+-export([root/1, walk/3, getattr/2, open/3, read/4, readdir/4, readlink/2, statfs/1, clunk/2,
+         write/4, make/4, setattr/3, unlink/4, rename/5]).
 
 -define(G, erx_9p_grammar).
 -define(CORE, erx_fs_grant).
@@ -36,19 +61,21 @@
 -define(SEQUENCES, 30000).
 -define(STEPS, 60).
 -define(IN_FLIGHT_MAX, 64).
--define(ALL_JOBS, 1 bsl 30).
 -define(FOREIGN, <<"other@far">>).
 %% Another domain a grant may serve, and a third domain, as their names carry them.
 -define(CLIENT, 5).
 -define(THIRD, 9).
 -define(DOMAIN_NODE, <<"d@erxos11">>).
 
-%% The shell's view of one sequence: the core, the tree's handle, the domain the grant
-%% serves, the frames each of that domain's aliases awaits a reply for (each numbered in the order sent) and the replies it has had,
-%% the monitor it holds for each owner, and each live file process with its tag and the
-%% jobs it has not run yet, oldest first.
--record(shell, {core, fs, client, owners, awaited = #{}, replies = #{}, sent = 0, monitors = #{},
-                files = #{}, aliases = [], pool, tally = #{}}).
+%% The shell's view of one sequence: the core, the domain the grant serves, the owners and
+%% keepers its frames and tree name, the frames each of that domain's aliases awaits a
+%% reply for (each numbered in the order sent) and the replies it has had, the monitor it
+%% holds for each owner, each request held at a keeper by the reference of its wait, with
+%% the keeper, the alias and the request, the references of the waits already settled, and
+%% those of the waits a flush was sent for.
+-record(shell, {core, client, owners, keepers, awaited = #{}, replies = #{}, sent = 0,
+                monitors = #{}, held = #{}, settled = [], flushed = [], aliases = [], pool,
+                tally = #{}}).
 
 run([Seed]) ->
     rand:seed(exsss, {16#f5, 16#9a, list_to_integer(Seed)}),
@@ -61,21 +88,27 @@ sequence(Tally) ->
     {ok, #{tree := Tree} = Fs} = ?TREE:init([]),
     Client = pick([own, ?CLIENT]),
     Owners = owners(Client),
+    Keepers = [spawn_link(fun idle/0) || _ <- [1, 2]],
     Pool = pick([1, 2, 3, 8, 4096]),
-    Core = ?CORE:new(#{module => ?TREE, fs => Fs, rights => pick([ro, rw, rx]),
+    Core = ?CORE:new(#{module => ?MODULE, fs => {Fs, Keepers}, rights => pick([ro, rw, rx]),
                        client => Client, pool => Pool}),
-    Shell = #shell{core = Core, fs = Fs, client = Client, owners = Owners, pool = Pool, tally = Tally},
-    %% Most sequences open as a client does, so later requests find a session and a fid.
+    Shell = #shell{core = Core, client = Client, owners = Owners, keepers = Keepers, pool = Pool,
+                   tally = Tally},
+    %% Most sequences open as a client does, so later requests find a session and a fid,
+    %% and half of them open a file on fid 1, so reads and writes reach a keeper.
+    Session = [{version, 8192, <<"9P2000.L">>}, {attach, 0, 16#ffffffff, <<"u">>, <<"test">>, 0}],
     Prologue = case rand:uniform(4) of
                    1 -> [];
-                   _ -> [{version, 8192, <<"9P2000.L">>}, {attach, 0, 16#ffffffff, <<"u">>, <<"test">>, 0}]
+                   2 -> Session;
+                   _ -> Session ++ [{walk, 0, 1, [<<"f">>]}, {lopen, 1, pick([0, 1, 2])}]
                end,
     Opened = lists:foldl(fun(Request, S) -> checked(frame(delivered(request_frame(Request, S), S), S)) end,
                          Shell, Prologue),
     Steps = lists:foldl(fun(_, S) -> checked(step(S)) end, Opened,
                         lists:seq(1, rand:uniform(?STEPS))),
     Counted = finished(Steps),
-    [begin unlink(Pid), exit(Pid, kill) end || Pid <- [Tree | Owners], Pid =/= self(), node(Pid) =:= node()],
+    [begin unlink(Pid), exit(Pid, kill) end
+     || Pid <- [Tree | Owners ++ Keepers], Pid =/= self(), node(Pid) =:= node()],
     Counted.
 
 idle() ->
@@ -87,27 +120,68 @@ owners(own) -> [self() | [spawn_link(fun idle/0) || _ <- [1, 2]]];
 owners(Client) -> [domain_pid(Client, N) || N <- [1, 2, 3]].
 
 step(Shell) ->
-    case rand:uniform(20) of
+    case rand:uniform(24) of
         N when N =< 13 -> frame(delivered(request_frame(request(Shell), Shell), Shell), Shell);
         14 -> frame(delivered(request_frame(mutated(request(Shell)), Shell), Shell), Shell);
         15 -> frame(odd_frame(Shell), Shell);
         16 -> owner_down(Shell);
-        17 -> stray_answer(Shell);
-        _ -> run_jobs(rand:uniform(4), Shell)
+        N when N =< 19 -> answer(Shell);
+        20 -> keeper_down(Shell);
+        21 -> stray_answer(Shell);
+        22 -> stray_down(Shell);
+        _ -> flush_held(Shell)
     end.
 
 %% One message to the core, with what the shell expects back for it.
 frame(Frame, #shell{core = Core} = Shell) ->
     {Effects, Core1} = ?CORE:handle_frame(Frame, Core),
-    effects(Effects, expect(Frame, Shell#shell{core = Core1})).
+    Expected = expected(Frame, Shell),
+    forwarded(Frame, Expected, Effects, Shell),
+    effects(Effects, expect(Expected, Effects, Shell#shell{core = Core1})).
 
-expect(Message, #shell{awaited = Awaited, client = Client} = Shell) ->
+%% What the shell expects of a frame: a reply to its alias, nothing for one the core may
+%% not answer, or that the core drops it, unanswered, for an alias that awaits a reply
+%% already, or as a second flush, the core admits, of an alias whose first flush still
+%% waits.
+expected(Message, #shell{client = Client} = Shell) ->
     Ours = fun(Alias) -> of_client(Alias, Client) end,
-    Expected = case ?G:decode_request_frame(frame_of(Message, Client)) of
-                   {ok, Alias, _, Request} -> Ours(Alias) andalso {Alias, {request, Request}};
-                   {error, Alias, _} -> Ours(Alias) andalso {Alias, refused};
-                   error -> false
-               end,
+    case ?G:decode_request_frame(frame_of(Message, Client)) of
+        {ok, Alias, Owner, Request} ->
+            %% A flush whose owner is not the client's is refused before it is looked at.
+            Ours(Alias) andalso
+                case live(Alias, Shell) orelse Ours(Owner) andalso second_flush(Request, Shell) of
+                    true -> {dropped, Alias};
+                    false -> {Alias, {request, Request}}
+                end;
+        {error, Alias, _} ->
+            Ours(Alias) andalso
+                case live(Alias, Shell) of
+                    true -> {dropped, Alias};
+                    false -> {Alias, refused}
+                end;
+        error ->
+            false
+    end.
+
+%% Whether Alias awaits the reply to a frame of its.
+live(Alias, #shell{awaited = Awaited, replies = Replies}) ->
+    length(maps:get(Alias, Awaited, [])) > length(maps:get(Alias, Replies, [])).
+
+%% Whether a flush names a live alias that a live flush already names: that flush waits
+%% for it, since a flush stays unanswered only while what it names does.
+second_flush({flush, Old}, #shell{awaited = Awaited} = Shell) ->
+    live(Old, Shell) andalso
+        lists:any(fun({Alias, Frames}) ->
+                          live(Alias, Shell) andalso element(2, lists:last(Frames)) =:= {request, {flush, Old}}
+                  end, maps:to_list(Awaited));
+second_flush(_, _) ->
+    false.
+
+expect({dropped, Alias}, Effects, Shell) ->
+    [R || {reply, A, R} <- Effects, A =:= Alias] =:= []
+        orelse error({check_failed, dropped_frame_answered, Alias, Effects}),
+    counted(dropped, Shell);
+expect(Expected, _, #shell{awaited = Awaited} = Shell) ->
     case Expected of
         {A, What} ->
             Sent = Shell#shell.sent,
@@ -115,6 +189,22 @@ expect(Message, #shell{awaited = Awaited, client = Client} = Shell) ->
                         sent = Sent + 1, aliases = [A | Shell#shell.aliases]};
         false ->
             Shell
+    end.
+
+%% A flush of the client's that the core holds rather than answers, for a request a keeper
+%% holds, goes on to that keeper in the same step.
+forwarded(_, {dropped, _}, _, _) ->
+    true;
+forwarded(Frame, _, Effects, #shell{client = Client, held = Held, flushed = Flushed}) ->
+    case ?G:decode_request_frame(frame_of(Frame, Client)) of
+        {ok, Alias, _, {flush, Old}} ->
+            Flushes = [{flush, Keeper, Ref} || Ref := {Keeper, A, _} <- Held, A =:= Old,
+                                               not lists:member(Ref, Flushed)],
+            Answered = [Reply || {reply, A, Reply} <- Effects, A =:= Alias] =/= [],
+            Forwarded = not of_client(Alias, Client) orelse Answered orelse Flushes -- Effects =:= [],
+            Forwarded orelse error({check_failed, flush_kept_from_keeper, Old, Flushes, Effects});
+        _ ->
+            true
     end.
 
 %% The core's effects, performed in order as erx_fs performs them.
@@ -132,17 +222,22 @@ effects([{demonitor, Ref} | Rest], #shell{monitors = Monitors} = Shell) ->
         [Owner] -> effects(Rest, Shell#shell{monitors = maps:remove(Owner, Monitors)});
         [] -> error({demonitor_of_no_monitor, Ref})
     end;
-effects([{start_file, Node, ?TREE, Fs} | Rest], #shell{core = Core, fs = Fs, files = Files} = Shell) ->
-    {Process, Tag} = {spawn_link(fun idle/0), make_ref()},
-    effects(Rest, Shell#shell{core = ?CORE:file_started(Node, Process, Tag, Core),
-                              files = Files#{Process => {Tag, queue:new()}}});
-%% A file process takes only jobs with its own tag, and none once it has ended.
-effects([{run, Process, Tag, Job} | Rest], #shell{files = Files} = Shell) ->
-    case Files of
-        #{Process := {Tag, Jobs}} ->
-            effects(Rest, Shell#shell{files = Files#{Process := {Tag, queue:in(Job, Jobs)}}});
+%% A request goes only to one of the sequence's keepers, as the tree's request for its
+%% client's read or write, and is held there under a reference of its own.
+effects([{wait, Alias, Keeper, Request} | Rest], #shell{core = Core, held = Held} = Shell) ->
+    lists:member(Keeper, Shell#shell.keepers) orelse error({check_failed, wait_at_no_keeper, Keeper}),
+    {_, {request, Asked}} = lists:last(maps:get(Alias, Shell#shell.awaited)),
+    element(1, Asked) =:= element(1, Request) orelse error({check_failed, wait_for_another_request, Asked, Request}),
+    Ref = make_ref(),
+    effects(Rest, counted({keeper, held}, Shell#shell{core = ?CORE:waiting(Alias, Ref, Core),
+                                                      held = Held#{Ref => {Keeper, Alias, Asked}}}));
+effects([{flush, Keeper, Ref} | Rest], #shell{held = Held, flushed = Flushed} = Shell) ->
+    lists:member(Ref, Flushed) andalso error({check_failed, flushed_twice, Keeper, Ref}),
+    case Held of
+        #{Ref := {Keeper, _, _}} ->
+            effects(Rest, counted({keeper, flushed}, Shell#shell{flushed = [Ref | Flushed]}));
         #{} ->
-            error({check_failed, job_for_no_file_process, Process, Tag, Job})
+            error({check_failed, flush_of_no_held_request, Keeper, Ref})
     end;
 effects([Effect | _], _) ->
     error({unexpected_effect, Effect}).
@@ -151,17 +246,43 @@ effects([Effect | _], _) ->
 %% that tells them apart, so the replies an alias has had must match its frames one to
 %% one in some order, each valid for the frame it matches.
 %% A flush answered ok comes after the replies of every frame it may have flushed: those
-%% sent with its old tag before it (docs/design-files.md, flush).
-replied(Alias, Reply, #shell{awaited = Awaited, replies = Replies, tally = Tally} = Shell) ->
+%% sent with its old tag before it (docs/design-files.md, flush), unless the last of them
+%% is a flush, which a flush of answers at once.
+replied(Alias, Reply, #shell{awaited = Awaited, replies = Replies} = Shell) ->
     Waiting = [What || {_, What} <- maps:get(Alias, Awaited, [])],
     Had = [Reply | maps:get(Alias, Replies, [])],
     matched(Had, Waiting) orelse error({check_failed, unexpected_reply, Alias, Reply, Waiting}),
     Flushes = [{Sent, Old} || {Sent, {request, {flush, Old}}} <- maps:get(Alias, Awaited, []), Reply =:= ok],
     Flushes =:= [] orelse lists:any(fun({Sent, Old}) -> flushed_after(Old, Sent, Shell) end, Flushes)
+        orelse lists:any(fun({Sent, Old}) -> of_a_flush(Old, Sent, Shell) end, Flushes)
         orelse error({check_failed, flush_answered_first, Alias, Flushes}),
     [What | _] = [W || W <- Waiting, valid_reply(W, Reply)],
+    settled_fid(lists:last(Waiting), Reply, Shell),
     Key = {case What of {request, R} -> element(1, R); refused -> refused end, outcome(Reply)},
-    Shell#shell{replies = Replies#{Alias => Had}, tally = Tally#{Key => maps:get(Key, Tally, 0) + 1}}.
+    counted(Key, Shell#shell{replies = Replies#{Alias => Had}}).
+
+%% A clunk or a remove that ended its fid is answered once no request of the fid is held;
+%% one answered ebadf named no fid, or a closing one, and one answered einval or erofs
+%% may have been refused before the core looked at the fid, for an owner of another
+%% domain or a remove on a read-only grant, which a fid the core does not hold answers.
+settled_fid({request, {Ends, Fid}}, Reply, #shell{held = Held})
+  when (Ends =:= clunk orelse Ends =:= remove),
+       not (Reply =:= {error, ebadf} orelse Reply =:= {error, einval} orelse Reply =:= {error, erofs}) ->
+    Waiting = [Asked || _ := {_, _, Asked} <- Held, element(2, Asked) =:= Fid],
+    Waiting =:= [] orelse error({check_failed, clunk_before_its_fids_requests, Fid, Reply, Waiting});
+settled_fid(_, _, _) ->
+    true.
+
+of_a_flush(Old, Sent, #shell{awaited = Awaited}) ->
+    case [What || {S, What} <- maps:get(Old, Awaited, []), S < Sent] of
+        [_ | _] = Before ->
+            case lists:last(Before) of
+                {request, {flush, _}} -> true;
+                _ -> false
+            end;
+        [] ->
+            false
+    end.
 
 flushed_after(Old, Sent, #shell{awaited = Awaited, replies = Replies}) ->
     Before = [S || {S, _} <- maps:get(Old, Awaited, []), S < Sent],
@@ -181,33 +302,51 @@ valid_reply(refused, {error, _} = Reply) ->
 valid_reply(refused, _) ->
     false.
 
-%% Each file process runs its own jobs in the order they were sent, and the processes run
-%% concurrently: each step runs the next job of a file process drawn at random. A process
-%% ends at its last clunk, which must be its last job.
-run_jobs(0, Shell) ->
-    Shell;
-run_jobs(N, #shell{files = Files, fs = Fs} = Shell) ->
-    case [Process || Process := {_, Jobs} <- Files, not queue:is_empty(Jobs)] of
-        [] ->
-            Shell;
-        Busy ->
-            Process = pick(Busy),
-            {Tag, Jobs} = maps:get(Process, Files),
-            {{value, Job}, Rest} = queue:out(Jobs),
-            Shell1 = Shell#shell{files = Files#{Process := {Tag, Rest}}},
-            case ?CORE:run_job(Job, ?TREE, Fs) of
-                {answer, Alias, Reply} ->
-                    {Effects, Core} = ?CORE:file_answer(Tag, Alias, Reply, Shell1#shell.core),
-                    run_jobs(N - 1, effects(Effects, Shell1#shell{core = Core}));
-                continue ->
-                    run_jobs(N - 1, Shell1);
-                stop ->
-                    queue:is_empty(Rest) orelse error({check_failed, job_after_last_clunk, queue:to_list(Rest)}),
-                    unlink(Process),
-                    exit(Process, kill),
-                    run_jobs(N - 1, Shell1#shell{files = maps:remove(Process, Files)})
-            end
-    end.
+%% A keeper's answer to a request it holds: one its tree might give, eintr as for a
+%% flushed request, or one that is none of the callback's shapes or breaks the grammar.
+answer(#shell{held = Held} = Shell) when map_size(Held) =:= 0 ->
+    frame(delivered(request_frame(request(Shell), Shell), Shell), Shell);
+answer(#shell{core = Core, held = Held} = Shell) ->
+    Ref = pick(lists:sort(maps:keys(Held))),
+    #{Ref := {_, _, Request}} = Held,
+    Result = result(Request),
+    Reply = case ?G:decode_reply(Request, Result) of
+                {ok, Result} -> Result;
+                _ -> {error, eio}
+            end,
+    {Effects, Core1} = ?CORE:answered(Ref, Result, Core),
+    settled(Ref, Reply, Effects, counted({keeper, answered}, Shell#shell{core = Core1})).
+
+result({read, _, _, Count}) ->
+    pick([{ok, binary:copy(<<"k">>, min(Count, pick([0, 3, 200])))}, {error, eintr}, {error, eagain},
+          {ok, 3, 0}, {ok, binary:copy(<<"k">>, min(Count, 300) + 1)}, random_field()]);
+result({write, _, Offset, Data}) ->
+    pick([{ok, byte_size(Data), Offset}, {error, eintr}, {error, enospc},
+          {ok, byte_size(Data) + 1, Offset}, {ok, <<>>}, random_field()]).
+
+%% A keeper's end: the DOWN of the grant's monitor of it for each request it holds.
+keeper_down(#shell{keepers = Keepers} = Shell) ->
+    Keeper = pick(Keepers),
+    Refs = lists:sort([Ref || Ref := {K, _, _} <- Shell#shell.held, K =:= Keeper]),
+    lists:foldl(fun(Ref, #shell{core = Core} = S) ->
+                        {Effects, Core1} = ?CORE:down(Ref, Keeper, Core),
+                        settled(Ref, {error, eio}, Effects, counted({keeper, down}, S#shell{core = Core1}))
+                end, Shell, Refs).
+
+%% The effects that settle a request held at a keeper answer its alias exactly once, with
+%% Reply, then the flushes that waited on it.
+settled(Ref, Reply, Effects, #shell{held = Held, settled = Settled} = Shell) ->
+    {{_, Alias, _}, Rest} = maps:take(Ref, Held),
+    [R || {reply, A, R} <- Effects, A =:= Alias] =:= [Reply]
+        orelse error({check_failed, keeper_answer_not_passed_on, Alias, Reply, Effects}),
+    effects(Effects, Shell#shell{held = Rest, settled = [Ref | Settled]}).
+
+%% A flush of a request a keeper holds, which the core sends on to the keeper.
+flush_held(#shell{held = Held} = Shell) when map_size(Held) =:= 0 ->
+    frame(delivered(request_frame(request(Shell), Shell), Shell), Shell);
+flush_held(#shell{held = Held} = Shell) ->
+    Old = pick(lists:sort([Alias || _ := {_, Alias, _} <- Held])),
+    frame(delivered(request_frame({flush, Old}, Shell), Shell), Shell).
 
 %% An owner's DOWN, with its monitor's reference or, now and then, another one, which
 %% changes nothing. Its fids end, and the last one's demonitor removes the shell's monitor.
@@ -217,50 +356,101 @@ owner_down(#shell{core = Core, owners = Owners, monitors = Monitors} = Shell) ->
               1 -> make_ref();
               _ -> maps:get(Owner, Monitors, make_ref())
           end,
-    {Effects, Core1} = ?CORE:owner_down(Ref, Owner, Core),
+    {Effects, Core1} = ?CORE:down(Ref, Owner, Core),
     #shell{monitors = After} = Shell1 = effects(Effects, Shell#shell{core = Core1}),
     Gone = maps:get(Owner, Monitors, none) =/= Ref orelse not is_map_key(Owner, After),
     Gone orelse error({check_failed, monitor_kept_after_down, Owner}),
     Shell1.
 
-%% A file answer the core did not ask for: a tag no file process has, for an alias in
-%% flight or not. It answers nothing.
+%% A keeper's answer to no request held: a new reference, or one whose request was settled
+%% already. It answers nothing and counts as refused.
 stray_answer(#shell{core = Core} = Shell) ->
-    Alias = pick([make_ref() | Shell#shell.aliases]),
-    {Effects, Core1} = ?CORE:file_answer(make_ref(), Alias, random_field(), Core),
-    effects(Effects, Shell#shell{core = Core1}).
+    Ref = pick([make_ref() | Shell#shell.settled]),
+    #{refused := Refused} = ?CORE:info(Core),
+    {Effects, Core1} = ?CORE:answered(Ref, pick([{ok, <<"k">>}, {error, eintr}, random_field()]), Core),
+    #{refused := Counted} = ?CORE:info(Core1),
+    {Effects, Counted} =:= {[], Refused + 1} orelse error({check_failed, stray_answer_taken, Ref, Effects}),
+    counted({keeper, stray_answer}, Shell#shell{core = Core1}).
 
-checked(#shell{core = Core, monitors = Monitors, pool = Pool} = Shell) ->
-    #{fids := Fids, owners := Owners, files := Files, in_flight := InFlight} = ?CORE:info(Core),
+%% A DOWN of no monitor the grant holds, for a keeper's settled request or none, changes
+%% nothing.
+stray_down(#shell{core = Core} = Shell) ->
+    Ref = pick([make_ref() | Shell#shell.settled]),
+    Pid = pick(Shell#shell.keepers ++ Shell#shell.owners),
+    {Effects, Core1} = ?CORE:down(Ref, Pid, Core),
+    Effects =:= [] orelse error({check_failed, stray_down_taken, Ref, Effects}),
+    Shell#shell{core = Core1}.
+
+checked(#shell{core = Core, monitors = Monitors, held = Held, pool = Pool} = Shell) ->
+    #{fids := Fids, owners := Owners, waiting := Waiting, in_flight := InFlight} = ?CORE:info(Core),
     Bounds = [{fids_within_pool, Fids =< Pool}, {owners_within_fids, Owners =< Fids},
-              {files_within_fids, Files =< Fids}, {in_flight_within_bound, InFlight =< ?IN_FLIGHT_MAX},
+              {in_flight_within_bound, InFlight =< ?IN_FLIGHT_MAX},
               {owners_are_monitored, Owners =:= map_size(Monitors)},
-              {files_are_running, Files =< map_size(Shell#shell.files)}],
+              {waiting_are_held, Waiting =:= map_size(Held)},
+              {waiting_within_in_flight, Waiting =< InFlight}],
     case [Name || {Name, false} <- Bounds] of
         [] -> Shell;
         Broken -> error({check_failed, Broken})
     end.
 
+%% Every owner goes down, then every request at a keeper is answered or its keeper ends.
 finished(Shell) ->
-    Ran = run_jobs(?ALL_JOBS, Shell),
     Down = lists:foldl(fun(Owner, #shell{core = Core, monitors = Monitors} = S) ->
                                case Monitors of
                                    #{Owner := Ref} ->
-                                       {Effects, Core1} = ?CORE:owner_down(Ref, Owner, Core),
+                                       {Effects, Core1} = ?CORE:down(Ref, Owner, Core),
                                        effects(Effects, S#shell{core = Core1});
                                    #{} -> S
                                end
-                       end, Ran, Ran#shell.owners),
-    #shell{core = Core, awaited = Awaited, replies = Replies} = Done = run_jobs(?ALL_JOBS, Down),
+                       end, Shell, Shell#shell.owners),
+    #shell{core = Core, awaited = Awaited, replies = Replies} = Done = settle_all(Down),
     Info = ?CORE:info(Core),
-    Empty = maps:with([fids, owners, files, in_flight], Info) =:=
-        #{fids => 0, owners => 0, files => 0, in_flight => 0},
+    Empty = maps:with([fids, owners, waiting, in_flight, aliases], Info) =:=
+        #{fids => 0, owners => 0, waiting => 0, in_flight => 0, aliases => 0},
     Empty orelse error({check_failed, held_at_the_end, Info}),
-    map_size(Done#shell.files) =:= 0 orelse error({check_failed, file_process_left, Done#shell.files}),
     Unanswered = [{Alias, Waiting} || Alias := Waiting <- Awaited,
                                       length(Waiting) =/= length(maps:get(Alias, Replies, []))],
     Unanswered =:= [] orelse error({check_failed, unanswered, Unanswered}),
     Done#shell.tally.
+
+settle_all(#shell{held = Held} = Shell) when map_size(Held) =:= 0 ->
+    Shell;
+settle_all(Shell) ->
+    settle_all(case rand:uniform(2) of
+                   1 -> answer(Shell);
+                   2 -> keeper_down(Shell)
+               end).
+
+counted(Key, #shell{tally = Tally} = Shell) ->
+    Shell#shell{tally = Tally#{Key => maps:get(Key, Tally, 0) + 1}}.
+
+%% The tree's callbacks: erx_fs_test_tree's, on the tree's own handle, but for a third of
+%% the reads and writes, which wait at a keeper: mostly one of the sequence's two, now and
+%% then the grant itself, which runs the callback, or a process of another node.
+root({Fs, _}) -> ?TREE:root(Fs).
+walk(Dir, Name, {Fs, _}) -> ?TREE:walk(Dir, Name, Fs).
+getattr(Node, {Fs, _}) -> ?TREE:getattr(Node, Fs).
+open(Node, Flags, {Fs, _}) -> ?TREE:open(Node, Flags, Fs).
+readdir(Handle, Offset, Max, {Fs, _}) -> ?TREE:readdir(Handle, Offset, Max, Fs).
+readlink(Node, {Fs, _}) -> ?TREE:readlink(Node, Fs).
+statfs({Fs, _}) -> ?TREE:statfs(Fs).
+clunk(Handle, {Fs, _}) -> ?TREE:clunk(Handle, Fs).
+make(Dir, Name, What, {Fs, _}) -> ?TREE:make(Dir, Name, What, Fs).
+setattr(Target, Attr, {Fs, _}) -> ?TREE:setattr(Target, Attr, Fs).
+unlink(Dir, Name, Kind, {Fs, _}) -> ?TREE:unlink(Dir, Name, Kind, Fs).
+rename(Dir, Name, NewDir, NewName, {Fs, _}) -> ?TREE:rename(Dir, Name, NewDir, NewName, Fs).
+
+read(Handle, Offset, Count, Tree) ->
+    may_wait({read, Handle, Offset, Count}, Tree, fun(Fs) -> ?TREE:read(Handle, Offset, Count, Fs) end).
+
+write(Handle, Offset, Data, Tree) ->
+    may_wait({write, Handle, Offset, Data}, Tree, fun(Fs) -> ?TREE:write(Handle, Offset, Data, Fs) end).
+
+may_wait(Request, {Fs, Keepers}, Call) ->
+    case rand:uniform(3) of
+        1 -> {wait, pick(Keepers ++ Keepers ++ [self(), foreign_pid()]), Request};
+        _ -> Call(Fs)
+    end.
 
 outcome({error, Posix}) -> Posix;
 outcome(_) -> ok.

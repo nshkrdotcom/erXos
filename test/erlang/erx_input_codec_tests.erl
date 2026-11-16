@@ -6,8 +6,9 @@
 %% every kind of record, release included, round trips at the edges of its bounds; a
 %% term one past a bound is not a record and does not encode; the bytes of a record
 %% with an unknown tag, a field past its bound or a nonzero padding byte are dropped
-%% and counted, with the records around them kept; and the bytes after the last
-%% whole record come back to be read with the next.
+%% and counted, with the records around them kept; the bytes after the last
+%% whole record come back to be read with the next; and a driver's values are held
+%% to a record's fields by the codec's clamps.
 -module(erx_input_codec_tests).
 -include_lib("eunit/include/eunit.hrl").
 
@@ -94,3 +95,18 @@ the_bytes_after_the_last_whole_record_come_back_test() ->
               ?assertEqual({[], 0, Part}, erx_input_codec:decode(Part)),
               ?assertEqual({[{wheel, 1}], 0, Part}, erx_input_codec:decode(<<Good/binary, Part/binary>>))
       end, lists:seq(1, ?SIZE - 1)).
+
+%% A driver's values held to a record: a move and a wheel step clamped to their fields'
+%% ranges, and a device axis's position clamped to its range and spread across 0..65535,
+%% its ends at the record's ends whatever the device's range.
+a_device_value_is_held_to_its_field_test() ->
+    ?assertEqual([-16#80000000, -1, 16#7fffffff],
+                 [erx_input_codec:rel(V) || V <- [-16#80000001, -1, 16#80000000]]),
+    ?assertEqual([-128, -128, 0, 127, 127], [erx_input_codec:wheel(V) || V <- [-1000, -128, 0, 127, 1000]]).
+
+a_device_axis_spreads_across_the_record_s_axis_test() ->
+    ?assertEqual([0, 0, 32767, 65535, 65535],
+                 [erx_input_codec:axis(V, -10, 10) || V <- [-11, -10, 0, 10, 11]]),
+    ?assertEqual([0, 65535], [erx_input_codec:axis(V, 0, 1) || V <- [0, 1]]),
+    ?assertEqual([0, 65535], [erx_input_codec:axis(V, 0, 16#7fffffff) || V <- [0, 16#7fffffff]]),
+    ?assertError(function_clause, erx_input_codec:axis(5, 5, 5)).

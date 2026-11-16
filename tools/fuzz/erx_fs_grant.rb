@@ -9,14 +9,16 @@ require_relative '../lib/erx/generated'
 
 # The fuzz target of erx_fs_grant, the pure core of each erx_fs grant: random sequences of
 # frames and local messages, decoded by erx_9p_grammar, through the core over
-# erx_fs_test_tree, with every reply checked against the grammar and the core's bounds
-# checked after every step (test/erlang/erx_fs_grant_fuzz.erl), for grants of the server's
-# own domain and of another. Compiled from source and run on stock's emulator (ERX_ERL and
-# ERX_ERLC, the oracle's). It runs the core as it is, then each seeded fault, which a check
-# must catch: a fid pool admitting one fid more shows the sequences reach the pool's bound
-# and the check reads it; a grant taking any domain's names for another domain's shows
-# they send a third domain's names to a grant of another domain, and the reply check
-# reads whose alias each reply goes to.
+# erx_fs_test_tree, some of whose reads and writes wait at a keeper, with every reply
+# checked against the grammar and the core's bounds checked after every step
+# (test/erlang/erx_fs_grant_fuzz.erl), for grants of the server's own domain and of
+# another. Compiled from source and run on stock's emulator (ERX_ERL and ERX_ERLC, the
+# oracle's). It runs the core as it is, then each seeded fault, which a check must catch:
+# a fid pool admitting one fid more shows the sequences reach the pool's bound and the
+# check reads it; a grant taking any domain's names for another domain's shows they send
+# a third domain's names to a grant of another domain, and the reply check reads whose
+# alias each reply goes to; a flush kept from the keeper that holds its request shows
+# they flush requests held at keepers, and the check follows each such flush.
 module ErxFsGrantFuzz
   ROOT = File.expand_path('../..', __dir__)
   # The generated sources and headers named here are in build/gen.
@@ -28,10 +30,23 @@ module ErxFsGrantFuzz
   Fault = Data.define(:name, :from, :to)
   FAULTS = [
     Fault.new(name: 'a pool admitting one fid more',
-              from: 'map_size(Fids) >= Pool -> {error, emfile};', to: 'map_size(Fids) > Pool -> {error, emfile};'),
+              from: 'map_size(Fids) + map_size(Closing) >= Pool -> {error, emfile};',
+              to: 'map_size(Fids) + map_size(Closing) > Pool -> {error, emfile};'),
     Fault.new(name: "a grant taking any domain's names for another domain's",
               from: 'of_client(Name, Client) -> erx_dist:owner(Name) =:= Client.',
-              to: 'of_client(Name, Client) -> erx_dist:owner(Name) > 0 andalso is_integer(Client).')
+              to: 'of_client(Name, Client) -> erx_dist:owner(Name) > 0 andalso is_integer(Client).'),
+    Fault.new(name: 'a flush kept from the keeper that holds its request',
+              from: 'effects = [{flush, Keeper, KeeperAlias} | Effects]};',
+              to: 'effects = Effects};'),
+    Fault.new(name: "a grant that checks only requests' aliases",
+              from: '{_, Alias, _, _} when is_map_key(Alias, Live) ->',
+              to: '{_, Alias, _, _} when is_map_key(Alias, Live), element(1, element(2, map_get(Alias, Live))) =:= held ->'),
+    Fault.new(name: 'a second flush answered ok at once',
+              from: '#{Old := #live{}} -> dropped(Grant);',
+              to: '#{Old := #live{}} -> finish(Alias, Request, ok, Grant);'),
+    Fault.new(name: "a clunk that runs without flushing its fid's waits",
+              from: "                [] ->\n                    run_clunk(Fid, Ending, Grant1);",
+              to: "                _ ->\n                    run_clunk(Fid, Ending, Grant1);")
   ].freeze
   DEADLINE_SECONDS = '300'
 

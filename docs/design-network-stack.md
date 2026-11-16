@@ -45,8 +45,8 @@ Decisions every reader needs:
   stock `receive {tcp, S, Data}` code works in every domain. There is no
   process per layer.
 * **Deadlines, not timers.** A connection's timers are deadlines in its
-  state, as FreeBSD 15 keeps them, and the process holds one Erlang timer
-  at the earliest. A timer message is a hint to look at the clock, never
+  state, as FreeBSD 15 keeps them and as every protocol core keeps them
+  ([design.md](design.md#drivers-and-dma), "Deadlines in state"), and the process holds one Erlang timer at the earliest. A timer message is a hint to look at the clock, never
   an event in itself, so a late, early or duplicate one changes nothing.
 * **Every packet queue is credited.** A process that hands packets to
   another does so only against a credit the receiver published. Every
@@ -5248,7 +5248,7 @@ The state is the effect shell's; what is presented, granted and replied
 is decided by a pure step, `erx_gen_tcp_core:step(Event, Core) ->
 {Core, [Action]}` and its datagram twin, whose actions are messages to
 the owner, replies to callers, requests and grants to the socket, and
-`stop`, as every stack process decides
+`{stop, normal}`, always the last, as every stack process decides
 ([One owner, one step](#one-owner-one-step)). The core reads no clock;
 the socket process arms a timer for each deadline it holds, a waiting
 recv's, of a connection or of a datagram socket, and each waiting
@@ -6298,7 +6298,11 @@ record the exception and the event, a frame's length and its first 128
 bytes escaped, in the kernel log, and count it. The record keeps the
 stack trace with each frame's arguments replaced by their count, and a
 socket's exit reason is the exception's class and reason alone, so a
-`function_clause` never carries the control block into a log; a
+`function_clause` never carries the control block into a log. OTP's
+own reports of the same exits, which print the mailbox and each frame's
+arguments, pass the report filter, `erx_report`, which the network
+domain takes at boot
+([design-log.md](design-log.md#reports-carry-no-term)). A
 socket's `format_status` likewise leaves out its buffers, its
 reassembly queue and its generator, and a socket process's what it
 holds, so `sys:get_status` shows neither a
@@ -7718,8 +7722,9 @@ Each with a test proving it catches a violation:
 * only `erx_net_tables` reads the configuration tables, so every reader
   gets them through its `configuration/0` and `snapshot/3`'s pid check;
 * only `erx_net_credit` sends packet batches between stack processes;
-* only `erx_net_clock` reads a clock or arms a timer in `erx_net`: no
-  other module calls `erlang:monotonic_time`, `erlang:system_time`,
+* only `erx_net_clock` reads a clock or arms a timer in `erx_net`, but
+  the driver's hold and the Pi 4 Ethernet's MDIO and PHY waits, which pace
+  a supervisor or a device on the host's clock: no other module calls `erlang:monotonic_time`, `erlang:system_time`,
   `os:timestamp`, `erlang:start_timer`, `erlang:send_after` or the
   `timer` module, or writes a `receive ... after` with a timeout other
   than `infinity` or 0, and no module of `erx_net` or `erx_net_client`

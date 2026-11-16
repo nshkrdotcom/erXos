@@ -4,10 +4,10 @@
 %% EUnit cases of the session's export's fixed tree (docs/design-files.md, "Narrowing
 %% for a program"): erx_session_export's callbacks, called without a grant and through
 %% real erx_fs grants of each of the session's rights, for a made-up principal and
-%% command list, with stand-ins for the kernel's generator and the session's tty that
-%% report to the test; erx_shell_namespace:commands/1, which names what /bin lists; and
-%% erx_session_sup:export_args/3, what the session starts the export from. test/host/erx_session_export_test.rb runs them on stock's
-%% emulator.
+%% command list, with a stand-in for the kernel's generator that reports to the test;
+%% erx_shell_namespace:commands/1, which names what /bin lists; and
+%% erx_session_sup:export_args/3, what the session starts the export from.
+%% test/host/erx_session_export_test.rb runs them on stock's emulator.
 -module(erx_session_export_tests).
 
 -include_lib("eunit/include/eunit.hrl").
@@ -17,15 +17,13 @@
 -define(COMMANDS, [<<"ls">>, <<"cat">>, <<"echo">>]).
 
 %% The tree's state, with a generator that answers bytes of 7 and reports each read's
-%% size, and a tty that reports each write.
+%% size.
 fs() ->
     Test = self(),
     fs(fun(Size) -> Test ! {entropy, Size}, binary:copy(<<7>>, Size) end).
 
 fs(Entropy) ->
-    Test = self(),
-    init(#{principal => ?PRINCIPAL, commands => ?COMMANDS, entropy => Entropy,
-           tty => fun(Bytes) -> Test ! {tty, Bytes}, ok end}).
+    init(#{principal => ?PRINCIPAL, commands => ?COMMANDS, entropy => Entropy}).
 
 init(Args) ->
     ok = erx_fs_version:init(),
@@ -64,7 +62,7 @@ mode(Path, Fs) ->
     Mode.
 
 messages() ->
-    receive {Tag, _} = Message when Tag =:= tty; Tag =:= entropy -> [Message | messages()]
+    receive {entropy, _} = Message -> [Message | messages()]
     after 0 -> []
     end.
 
@@ -200,19 +198,18 @@ a_refused_generator_read_answers_eio_test() ->
     Fs = fs(fun(_Size) -> error({entropy, ebusy}) end),
     ?assertEqual({error, eio}, read([<<"dev">>, <<"urandom">>], 16, Fs)).
 
-tty_takes_writes_unchanged_and_refuses_reads_test() ->
+%% tty is a name alone (docs/design-files.md, "Native clients"): a walk and a getattr
+%% reach it, and the handler that opens it makes a terminal's description instead, an
+%% open of the terminal relay under the program's job, so no open of it, in any mode,
+%% nor a create that would open it, reaches a handle of this tree.
+tty_is_a_name_that_never_opens_test() ->
     Fs = fs(),
-    {ok, Tty} = open([<<"dev">>, <<"tty">>], ?ERX_P9_O_RDWR, Fs),
-    Bytes = <<"\e[1mbold\e[0m\r\n">>,
-    ?assertEqual({ok, byte_size(Bytes), 0}, erx_session_export:write(Tty, 0, Bytes, Fs)),
-    ?assertEqual([{tty, Bytes}], messages()),
-    ?assertEqual({error, enotsup}, erx_session_export:read(Tty, 0, 16, Fs)).
-
-a_write_to_an_ended_tty_fails_alone_test() ->
-    Fs = init(#{principal => ?PRINCIPAL, commands => [],
-                tty => fun(_Bytes) -> exit(noproc) end}),
-    {ok, Tty} = open([<<"dev">>, <<"tty">>], ?ERX_P9_O_WRONLY, Fs),
-    ?assertEqual({error, eio}, erx_session_export:write(Tty, 0, <<"x">>, Fs)).
+    {ok, tty, Qid} = walk([<<"dev">>, <<"tty">>], Fs),
+    [?assertEqual({error, enxio}, open([<<"dev">>, <<"tty">>], Flags, Fs))
+     || Flags <- [0, ?ERX_P9_O_WRONLY, ?ERX_P9_O_RDWR]],
+    ?assertEqual({error, enxio},
+                 erx_session_export:make(dev, <<"tty">>, {file, 8#666, ?ERX_P9_O_WRONLY}, Fs)),
+    {ok, #{qid := Qid}} = erx_session_export:getattr(tty, Fs).
 
 %% ---------------------------------------------------------------------------
 %% /etc
@@ -302,13 +299,11 @@ bin_lists_the_erlang_commands_alone_test() ->
 %% ---------------------------------------------------------------------------
 
 %% A grant of the tree with Rights, as erx_session_sup starts it, with a generator of
-%% sevens and a tty that reports each write; fid 1 is attached to its root.
+%% sevens; fid 1 is attached to its root.
 grant(Rights) ->
     ok = erx_fs_version:init(),
-    Test = self(),
     Args = #{principal => ?PRINCIPAL, commands => ?COMMANDS,
-             entropy => fun(Size) -> binary:copy(<<7>>, Size) end,
-             tty => fun(Bytes) -> Test ! {tty, Bytes}, ok end},
+             entropy => fun(Size) -> binary:copy(<<7>>, Size) end},
     {ok, Grant} = erx_fs:start_link(erx_session_export, Args, Rights),
     unlink(Grant),
     {ok, _Qid} = call(Grant, {attach, 1, ?ERX_P9_NOFID, <<"user">>, <<"export">>, 0}),
@@ -346,16 +341,22 @@ the_rw_grant_reads_etc_and_lists_dev_as_character_devices_test() ->
                  listing(Grant, 3)),
     exit(Grant, kill).
 
-the_rw_grant_creates_into_a_device_and_writes_the_tty_test() ->
+the_rw_grant_creates_into_a_device_test() ->
     Grant = grant(rw),
     walk_to(Grant, 2, [<<"dev">>]),
     ?assertMatch({ok, _Qid, _Iounit},
                  call(Grant, {lcreate, 2, <<"null">>, ?ERX_P9_O_WRONLY, 8#644, 0})),
     ?assertEqual({ok, 3, 0}, call(Grant, {write, 2, 0, <<"abc">>})),
-    walk_to(Grant, 3, [<<"dev">>, <<"tty">>]),
-    {ok, _, _} = call(Grant, {lopen, 3, ?ERX_P9_O_WRONLY}),
-    ?assertEqual({ok, 2, 0}, call(Grant, {write, 3, 0, <<"hi">>})),
-    receive {tty, Bytes} -> ?assertEqual(<<"hi">>, Bytes) after 2000 -> erlang:error(no_tty) end,
+    exit(Grant, kill).
+
+%% The design's case (docs/design-files.md, "Verification and testing"): an lopen of
+%% /dev/tty answers enxio, whatever its access, and leaves the fid unopened.
+the_export_answers_an_lopen_of_tty_with_enxio_test() ->
+    Grant = grant(rw),
+    walk_to(Grant, 2, [<<"dev">>, <<"tty">>]),
+    [?assertEqual({error, enxio}, call(Grant, {lopen, 2, Flags}))
+     || Flags <- [0, ?ERX_P9_O_WRONLY, ?ERX_P9_O_RDWR]],
+    ?assertEqual({error, ebadf}, call(Grant, {write, 2, 0, <<"hi">>})),
     exit(Grant, kill).
 
 the_rx_grant_lists_bin_and_refuses_writes_test() ->
@@ -379,22 +380,21 @@ export_args_take_the_number_and_the_node_names_prefix_test() ->
 
 %% A program's own /dev (docs/design-files.md, "A program's window"), over the
 %% stand-ins of test/erlang/stand_in for the window and the draw connection: the
-%% tree's state, its window and its connection. The window's mouse answers Mouse.
-window_fs(Display, Mouse) ->
+%% tree's state, its window and its connection.
+window_fs(Display) ->
     persistent_term:put(erx_win, self()),
-    {ok, Window} = erx_win:open(Display, #{answers => #{mouse => {ok, Mouse}}}),
+    {ok, Window} = erx_win:open(Display, #{}),
     {ok, Conn} = erx_draw_conn:start(#{window => Window}),
     Fs = init(#{window => #{window => Window, conn => Conn, display => Display,
                             clipboard => erx_win:clipboard(Display)}}),
     {Fs, Conn}.
 
--define(MOUSE(Kind), <<Kind, 0:((?ERX_WINDOWS_MOUSE_RECORD - 1) * 8)>>).
 -define(WINDOW_DEV, [<<"null">>, <<"tty">>, <<"urandom">>, <<"zero">>, <<"draw">>, <<"ctl">>, <<"kbd">>,
                      <<"mouse">>, <<"wctl">>, <<"label">>]).
 
 a_programs_dev_holds_the_devices_and_its_window_test() ->
-    {Fs, _} = window_fs(d, ?MOUSE($m)),
-    {Clip, _} = window_fs(clip, ?MOUSE($m)),
+    {Fs, _} = window_fs(d),
+    {Clip, _} = window_fs(clip),
     ?assertEqual([<<"dev">>], names([], Fs)),
     ?assertEqual(?WINDOW_DEV, names([<<"dev">>], Fs)),
     ?assertEqual(?WINDOW_DEV ++ [<<"clipboard">>], names([<<"dev">>], Clip)),
@@ -404,7 +404,7 @@ a_programs_dev_holds_the_devices_and_its_window_test() ->
     ?assertEqual({error, eacces}, erx_session_export:make(dev, <<"w1">>, {dir, 8#755, 0}, Fs)).
 
 ctl_reads_whole_at_offset_zero_and_never_opens_for_writing_test() ->
-    {Fs, _} = window_fs(d, ?MOUSE($m)),
+    {Fs, _} = window_fs(d),
     {ok, Ctl} = open([<<"dev">>, <<"ctl">>], 0, Fs),
     {ok, Text} = erx_session_export:read(Ctl, 0, 4096, Fs),
     ?assertEqual(144, byte_size(Text)),
@@ -413,21 +413,20 @@ ctl_reads_whole_at_offset_zero_and_never_opens_for_writing_test() ->
     ?assertEqual({error, eacces}, open([<<"dev">>, <<"ctl">>], ?ERX_P9_O_WRONLY, Fs)),
     ?assertEqual({error, eacces}, open([<<"dev">>, <<"ctl">>], ?ERX_P9_O_RDWR, Fs)).
 
-%% The first field of the stand-in's ctl counts the resized/1 calls.
-resizes(Fs) ->
-    {ok, Text} = read([<<"dev">>, <<"ctl">>], 144, Fs),
-    binary_to_integer(string:trim(binary:part(Text, 0, 11))).
-
-an_r_record_of_mouse_remakes_image_0_before_the_read_answers_test() ->
-    {Fs, _} = window_fs(d, ?MOUSE($r)),
-    ?assertEqual({ok, ?MOUSE($r)}, read([<<"dev">>, <<"mouse">>], ?ERX_WINDOWS_MOUSE_RECORD, Fs)),
-    ?assertEqual(1, resizes(Fs)),
-    {Moved, _} = window_fs(d, ?MOUSE($m)),
-    {ok, _} = read([<<"dev">>, <<"mouse">>], ?ERX_WINDOWS_MOUSE_RECORD, Moved),
-    ?assertEqual(0, resizes(Moved)).
+%% A read of kbd or mouse, which waits for a record, waits at the draw connection, its
+%% keeper, which relays it; nothing of it reaches the window from the callback.
+kbd_and_mouse_reads_wait_at_the_connection_test() ->
+    {Fs, Conn} = window_fs(d),
+    flush_win(),
+    {ok, Kbd} = open([<<"dev">>, <<"kbd">>], 0, Fs),
+    {ok, Mouse} = open([<<"dev">>, <<"mouse">>], 0, Fs),
+    ?assertEqual({wait, Conn, {read, kbd, 3, 64}}, erx_session_export:read(Kbd, 3, 64, Fs)),
+    ?assertEqual({wait, Conn, {read, mouse, 0, ?ERX_WINDOWS_MOUSE_RECORD}},
+                 erx_session_export:read(Mouse, 0, ?ERX_WINDOWS_MOUSE_RECORD, Fs)),
+    ?assertEqual([], win_events()).
 
 a_draw_write_is_one_call_of_the_connection_test() ->
-    {Fs, Conn} = window_fs(d, ?MOUSE($m)),
+    {Fs, Conn} = window_fs(d),
     {ok, Draw} = open([<<"dev">>, <<"draw">>], ?ERX_P9_O_RDWR, Fs),
     ?assertEqual({ok, 3, 0}, erx_session_export:write(Draw, 0, <<"abc">>, Fs)),
     ?assertEqual({error, eio}, erx_session_export:write(Draw, 0, <<"bad">>, Fs)),
@@ -436,16 +435,16 @@ a_draw_write_is_one_call_of_the_connection_test() ->
     ?assertEqual({error, ebadf}, read([<<"dev">>, <<"ctl">>], 144, Fs)).
 
 the_window_files_relay_on_the_windows_own_handle_test() ->
-    {Fs, _} = window_fs(d, ?MOUSE($m)),
+    {Fs, _} = window_fs(d),
     flush_win(),
     {ok, Wctl} = open([<<"dev">>, <<"wctl">>], ?ERX_P9_O_RDWR, Fs),
     ?assertEqual({ok, 4, 0}, erx_session_export:write(Wctl, 0, <<"move">>, Fs)),
-    {ok, _} = read([<<"dev">>, <<"kbd">>], 64, Fs),
+    {ok, _} = read([<<"dev">>, <<"label">>], 64, Fs),
     ?assertEqual({error, eacces}, open([<<"dev">>, <<"kbd">>], ?ERX_P9_O_WRONLY, Fs)),
-    ?assertEqual([{write_at, wctl, 0, <<"move">>}, {read_at, kbd, 0, 64}], win_events()).
+    ?assertEqual([{write_at, wctl, 0, <<"move">>}, {read_at, label, 0, 64}], win_events()).
 
 each_clipboard_open_has_a_fid_of_its_own_test() ->
-    {Fs, _} = window_fs(clip, ?MOUSE($m)),
+    {Fs, _} = window_fs(clip),
     flush_win(),
     {ok, A} = open([<<"dev">>, <<"clipboard">>], ?ERX_P9_O_RDWR bor ?ERX_P9_O_TRUNC, Fs),
     {ok, B} = open([<<"dev">>, <<"clipboard">>], 0, Fs),

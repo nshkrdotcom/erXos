@@ -6,6 +6,7 @@ require 'minitest/autorun'
 require 'open3'
 require 'tmpdir'
 require_relative '../../tools/lib/erx/data_volume'
+require_relative '../../tools/lib/erx/erlang_apps'
 require_relative '../../tools/lib/erx/generated'
 require_relative '../../tools/lib/erx/runner'
 require_relative '../../tools/lib/erx/host_os'
@@ -73,12 +74,14 @@ class ErxLittlefsTest < Minitest::Test
     Erx::DataVolume.format(root: ROOT, owner_root: directory, runner: runner, directory: directory, data_sectors: 2048)
   end
 
+  # With the build's -I flags (ErlangApps.include_flags), relative to the tree, so a
+  # module finds every application's headers, the generated ones included.
   def compile_modules(directory)
     File.write(File.join(directory, 'erx_log.erl'), LOG_STUB)
     sources = [File.join(directory, 'erx_log.erl'), *MODULES.map { |path| File.join(ROOT, path) }]
     output, status = Open3.capture2e(clean_environment, File.join(OTP, 'bin/erlc'), '-pa', directory,
-                                     '-I', File.join(ROOT, 'build/gen/erlang/apps/erx/include'), '-o', directory,
-                                     *sources, stdin_data: '')
+                                     *Erx::ErlangApps.include_flags(root: ROOT), '-o', directory,
+                                     *sources, chdir: ROOT, stdin_data: '')
     assert status.success?, output
   end
 

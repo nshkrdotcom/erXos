@@ -9,6 +9,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/square_font'
 require_relative '../../tools/lib/erx/glyphs'
+require_relative '../../tools/lib/erx/origin'
 require_relative '../../tools/lib/erx/memdraw_build'
 
 # The glyph step (docs/design-desktop-programs.md, "Type"): erx-raster, built
@@ -94,6 +95,7 @@ class GlyphsTest < Minitest::Test
     name = "\x06one.tf".b
     assert_equal 1, medium.scan(name).size, 'the post table names one.tf once'
     File.binwrite(File.join(fonts, 'Inter-Medium.ttf'), medium.sub(name, "\x06one.tx".b))
+    import(fonts, rules: { '*' => 'OFL-1.1' }, copyright: 'Copyright (c) 2016 The Inter Project Authors')
     theme = theme_of(THEME.gsub(/^  role .*\n/, '')
                           .sub("  # The spacing scale", "  role numeric font ui size 13 line 20 weight medium figures tabular\n  # The spacing scale"))
     error = assert_raises(Erx::Glyphs::Refused) { write(root: @work, theme: theme, program: :tree) }
@@ -141,6 +143,46 @@ class GlyphsTest < Minitest::Test
     assert_equal "[none,#{glyphs.join(',')},none]", output.lines.last.chomp
   end
 
+  # Every generated file of the theme holds glyph data derived from Inter,
+  # so it declares the license Inter's import records for the role's font
+  # file and names that file, Inter's release and Inter's copyright line,
+  # and not erXos's own license, which covers the generators.
+  def test_generated_files_declare_the_fonts_license
+    written = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) })
+    theme = theme_of(THEME)
+    copyright = File.foreach(File.join(ROOT, 'display/fonts/inter/LICENSE.txt')).first.chomp
+    [*written.lvgl, ['body', written.menu]].each do |name, path|
+      role = theme.roles.fetch(name)
+      file = theme.fonts.fetch(role.font).files.fetch(role.weight)
+      text = File.read(path)
+      head = text.lines.first(4).join
+      assert_includes head, "SPDX-License-Identifier: OFL-1.1\n", path
+      assert_includes head, "Glyph data derived from #{file} v4.1, #{copyright}\n", path
+      refute_includes text, 'BSD-2-Clause', path
+    end
+  end
+
+  # The license is the one the font's import records for the font file: the
+  # square font's import records Apache-2.0 for Square.ttf and MIT for the
+  # rest.
+  def test_generated_files_take_the_license_the_fonts_import_records
+    written = square_subfont(:tree)
+    [written.menu, written.lvgl.fetch('body')].each do |path|
+      head = File.read(path).lines.first(4).join
+      assert_includes head, "SPDX-License-Identifier: Apache-2.0\n", path
+      assert_includes head, "Glyph data derived from Square.ttf v1.0, Copyright (c) 2026 The Square Test\n", path
+    end
+  end
+
+  # A font file that is not the one its import records, as when it changed
+  # after the import, is refused before any glyph is rasterised.
+  def test_font_file_its_import_does_not_record_is_refused
+    square_import
+    File.binwrite(File.join(@work, 'fonts/Square.ttf'), SquareFont.bytes + "\0".b)
+    error = assert_raises(Erx::Glyphs::Refused) { write(root: @work, theme: square_theme, program: :tree) }
+    assert_equal 'role body: fonts/Square.ttf is not the file its ORIGIN.md row records', error.message
+  end
+
   private
 
   # The body role's character of each subfont glyph index.
@@ -177,18 +219,40 @@ class GlyphsTest < Minitest::Test
   end
 
 
-  # Glyphs over the square font: a role of U+0041 to U+0043 at 16 pixels in
+  # Glyphs over the square font, an import of its own whose ORIGIN.md
+  # records it as Apache-2.0: a role of U+0041 to U+0043 at 16 pixels in
   # a 20-pixel line, through the tree's or the seeded erx-raster.
   def square_subfont(program)
+    square_import
+    write(root: @work, theme: square_theme, program: program)
+  end
+
+  # The square font as an import of its own beneath @work/fonts.
+  def square_import
     FileUtils.mkdir_p(File.join(@work, 'fonts'))
     File.binwrite(File.join(@work, 'fonts/Square.ttf'), SquareFont.bytes)
-    theme = theme_of(THEME.gsub(/^  (?:font|range|role) .*\n/, '').sub("  # The spacing scale", <<~ROWS.gsub(/^/, '  ').chomp))
+    import(File.join(@work, 'fonts'), rules: { 'Square.ttf' => 'Apache-2.0', '*' => 'MIT' },
+                                      copyright: 'Copyright (c) 2026 The Square Test')
+  end
+
+  def square_theme
+    theme_of(THEME.gsub(/^  (?:font|range|role) .*\n/, '').sub("  # The spacing scale", <<~ROWS.gsub(/^/, '  ').chomp))
       font square fonts regular Square.ttf
       range square 0041-0043
       role body font square size 16 line 20 weight regular
       # The spacing scale
     ROWS
-    write(root: @work, theme: theme, program: program)
+  end
+
+  # DIRECTORY's files as an import at release v1.0 with a LICENSE.txt whose
+  # first line is COPYRIGHT, each file's license the first of RULES whose
+  # pattern it matches.
+  def import(directory, rules:, copyright:)
+    File.write(File.join(directory, 'LICENSE.txt'), "#{copyright}\n")
+    review = { 'rules' => rules.map { |pattern, license| { 'pattern' => pattern, 'license' => license, 'evidence' => 'test' } },
+               'default_license' => 'NOASSERTION', 'default_evidence' => 'test' }
+    Erx::Origin.new(root: directory).write(repository: 'https://example.invalid/fonts', revision: 'v1.0 (test)',
+                                           archive_sha256: '0' * 64, review: review)
   end
 
   # The squares' subfont as their geometry gives it. The ascender and

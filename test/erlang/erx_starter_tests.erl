@@ -71,7 +71,10 @@ namespace_test_() ->
 %% manifest row enables, and the installed package notes, which no row enables.
 packages_test_() ->
     {foreach, fun() -> setup(fun(_Dir) -> ok end, answer, (manifest())#{packages := #{<<"dash">> => true}}) end,
-     fun cleanup/1, [fun a_published_app_has_a_keeper_row/1]}.
+     fun cleanup/1, [fun a_published_app_has_a_keeper_row/1,
+                     fun a_restarted_table_keeps_the_last_package_set/1,
+                     fun a_restarted_table_stops_a_held_row_its_set_dropped/1,
+                     fun a_publication_of_an_ended_lifetime_is_refused/1]}.
 
 unreadable(Dir) ->
     file:make_dir(filename:join(Dir, "rc.conf")).
@@ -312,6 +315,55 @@ a_published_app_has_a_keeper_row(_) ->
             ?assertNot(is_process_alive(Dash)),
             ?assertEqual(unmade, run(<<"dash">>)),
             ?assertEqual(none, run(<<"notes">>))
+    end.
+
+%% A restarted table takes the last package set from the keepers' branch, so dash,
+%% which the set enables, keeps its row and its session with no publication after
+%% the restart (no package process runs here).
+a_restarted_table_keeps_the_last_package_set(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            ok = erx_starter:packages(self(), [package(<<"dash">>, system)]),
+            Dash = started({app, <<"dash">>}),
+            ok = restart_table(),
+            ok = wait_until(fun() -> maps:get(rc_conf, erx_starter:rows()) =:= read end),
+            ?assertEqual(running, run(<<"dash">>)),
+            ?assert(is_process_alive(Dash)),
+            ?assertEqual(none, started_within({app, <<"dash">>}, 200))
+    end.
+
+%% A table that ends after it recorded a set without dash and before it stopped
+%% dash's row, as the record written here leaves it, leaves the row held with no
+%% row of the table's: the restarted table's first reconciling stops it
+%% (erx_start_table:reconcile/3).
+a_restarted_table_stops_a_held_row_its_set_dropped(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            ok = erx_starter:packages(self(), [package(<<"dash">>, system)]),
+            Dash = started({app, <<"dash">>}),
+            ok = erx_starter_records:record_set([]),
+            ok = restart_table(),
+            ok = wait_until(fun() -> not is_process_alive(Dash) end),
+            ?assertEqual(unmade, run(<<"dash">>))
+    end.
+
+%% A publication names its lifetime, and the table refuses one whose lifetime has
+%% ended with eio, taking nothing of it (docs/design-packaging.md, "The package
+%% lifetime"): dash gets no row and no session.
+a_publication_of_an_ended_lifetime_is_refused(_) ->
+    fun() ->
+            ok = watch(),
+            _ = started(?KIOSK),
+            _ = started(?LOGGER),
+            {Ended, Ref} = spawn_monitor(fun() -> ok end),
+            receive {'DOWN', Ref, process, Ended, _} -> ok end,
+            ?assertEqual({error, eio}, erx_starter:packages(Ended, [package(<<"dash">>, system)])),
+            ?assertEqual(none, started_within({app, <<"dash">>}, 200)),
+            ?assertEqual(unmade, run(<<"dash">>))
     end.
 
 %% A package of a set erx_pkg publishes, with what the table reads of it.

@@ -12,8 +12,8 @@ the end of each step, sends what is held, as FreeBSD wakes the device once
 after a step's input or a write (ttydisc_rint_done, tty_ttydisc.c:1293-1305;
 the end of ttydisc_write, :653-658). So nothing a step drops, by a flush,
 reaches the master before the drop, and what the master has outstanding
-changes only between steps. erx_session_tty and erx_session_relay_core
-carry the actions out.
+changes only between steps. erx_session_relay_core carries the actions
+out.
 
 The tty has one output outstanding at a time, numbered from 0. It sends
 the bytes held once, as `{tty_output, N, Bytes}`, and asks for a timer; when
@@ -50,10 +50,16 @@ VSTART do. Output stopped is recorded here alone; writes still fill what
 is held while it is stopped, as FreeBSD's do. room/1 is the room the line
 discipline is given, derived from what it holds, so its owner counts
 nothing itself.
+
+A tty may have no master, as a session's tty has none when erx:cap(console)
+names none. That is fixed at new/1: such a tty sends nothing, so it holds
+4 KiB and its writers wait, as while output is stopped, and drops every
+message as from a master. flowing/1 says whether what is held goes
+anywhere, so an owner waits for output to drain only while it does.
 """.
 
--export([new/0, write/3, master/2, timeout/2, flush/1, stop/1, start/1, send/1]).
--export([held/1, room/1, stopped/1, waiting/1, counts/1]).
+-export([new/1, write/3, master/2, timeout/2, flush/1, stop/1, start/1, send/1]).
+-export([held/1, room/1, stopped/1, flowing/1, waiting/1, counts/1]).
 
 -export_type([link/0, writer/0, action/0, master_message/0]).
 
@@ -65,7 +71,7 @@ nothing itself.
 -define(MAX_INPUT, 4096).
 -define(MAX_SIDE, 65535).
 
-%% Who waits on a write: a term erx_session_tty hands back, or none.
+%% Who waits on a write: a term the relay hands back, or none.
 -type writer() :: term().
 -type master_message() :: {tty_taken, non_neg_integer()}
                         | {tty_input, binary()}
@@ -80,6 +86,8 @@ nothing itself.
                 | hangup.
 
 -record(link, {
+          %% Whether the tty has a master, fixed at new/1.
+          master :: none | present,
           %% The number the next new output gets.
           next = 0 :: non_neg_integer(),
           %% The output sent and not yet taken, and its size, which counts as held.
@@ -100,9 +108,12 @@ nothing itself.
 
 -opaque link() :: #link{}.
 
--doc "A tty with nothing written, no size and no master message seen.".
--spec new() -> link().
-new() -> #link{}.
+-doc """
+A tty with nothing written, no size and no master message seen, whose
+master is `present` or `none` for as long as it lives.
+""".
+-spec new(none | present) -> link().
+new(Master) when Master =:= none; Master =:= present -> #link{master = Master}.
 
 -doc """
 Writer writes Bytes. The writer is done at once if its bytes all fit and
@@ -122,6 +133,8 @@ write(Writer, Bytes, L = #link{waiting = Waiting, unowned = Unowned}) ->
 
 -doc "One of the master's messages, checked as the design's table says.".
 -spec master(term(), link()) -> {[action()], link()}.
+master(_Message, L = #link{master = none}) ->
+    {[], L};
 master({tty_taken, N}, L = #link{outstanding = {N, _Size}, hung_up = false}) ->
     fill(L#link{outstanding = none});
 master({tty_taken, _N}, L) ->
@@ -180,13 +193,15 @@ start(L) -> L#link{stopped = false}.
 
 -doc """
 The end of a step: what is held goes to the master as a new output, if
-nothing is outstanding and output is not stopped.
+there is a master, nothing is outstanding and output is not stopped.
 """.
 -spec send(link()) -> {[action()], link()}.
-send(L = #link{outstanding = none, held = Held, next = N, stopped = false})
-  when Held =/= <<>> ->
-    {[{output, N, Held}, {resend_after, N}],
-     L#link{outstanding = {N, byte_size(Held)}, held = <<>>, next = N + 1}};
+send(L = #link{outstanding = none, held = Held, next = N}) when Held =/= <<>> ->
+    case flowing(L) of
+        true -> {[{output, N, Held}, {resend_after, N}],
+                 L#link{outstanding = {N, byte_size(Held)}, held = <<>>, next = N + 1}};
+        false -> {[], L}
+    end;
 send(L) ->
     {[], L}.
 
@@ -207,6 +222,13 @@ held(#link{outstanding = Outstanding, held = Held}) ->
 -doc "Whether output is stopped.".
 -spec stopped(link()) -> boolean().
 stopped(#link{stopped = Stopped}) -> Stopped.
+
+-doc """
+Whether what is held goes to a master: there is one and output is not
+stopped. While it does not, nothing would take the bytes.
+""".
+-spec flowing(link()) -> boolean().
+flowing(#link{master = Master, stopped = Stopped}) -> Master =:= present andalso not Stopped.
 
 -doc "The number of writers waiting.".
 -spec waiting(link()) -> non_neg_integer().

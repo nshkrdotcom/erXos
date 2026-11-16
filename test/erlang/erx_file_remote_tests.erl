@@ -2,7 +2,7 @@
 %% SPDX-License-Identifier: BSD-2-Clause
 
 %% EUnit cases of erx_file_remote's exchange with a server, sent/2 (docs/design-files.md,
-%% Erlang clients), on stock's emulator. A process of the test plays the server, and the
+%% Erlang clients), and of its two halves, send/2 and take/2, on stock's emulator. A process of the test plays the server, and the
 %% connection as well: a reply from a server of another domain is one it puts in the
 %% envelope of edit 16, {erx_origin, D, Reply}, itself. The client takes a reply at a
 %% request's alias bare or in one envelope, whatever D, holds it to its request, and
@@ -80,6 +80,77 @@ pipelined_replies_meet_their_requests_test() ->
                           (_Alias, 3) -> []
                        end),
     ?assertEqual([{error, enoent}, ok, {error, eio}], erx_file_remote:sent(Server, [?CLUNK, ?CLUNK, ?CLUNK])).
+
+%% The exchange's two halves, for a keeper that holds a read while it serves others
+%% (docs/design-display.md, "Erlang clients"): send/2 answers a request's id at once, and
+%% take/2 tells whether a message the caller received is that id's reply, held to its
+%% request by the grammar, or its grant's end, which answers eio.
+-define(READ, {read, 1, 0, 8}).
+
+%% The earlier cases leave messages no take matched in the test's mailbox; each case
+%% here starts from an empty one, and next/0 takes the first message to arrive, as a
+%% keeper's receive loop takes it.
+empty() ->
+    receive _ -> empty() after 0 -> ok end.
+
+next() ->
+    receive Message -> Message after 1000 -> erlang:error(no_message) end.
+
+sent_read(Answer) ->
+    ok = empty(),
+    {ok, Id} = erx_file_remote:send({server(1, Answer), <<"t">>, rw}, ?READ),
+    Id.
+
+sent_read_answers_eio_at_its_grants_end_test() ->
+    Id = sent_read(fun(_Alias, 1) -> [] end),
+    ?assertEqual({reply, {error, eio}}, erx_file_remote:take(next(), Id)).
+
+sent_read_reply_is_held_to_its_request_test() ->
+    Read = fun(Messages) ->
+                   Id = sent_read(fun(Alias, 1) -> Messages(Alias) end),
+                   erx_file_remote:take(next(), Id)
+           end,
+    ?assertEqual({reply, {ok, <<"k">>}}, Read(fun(Alias) -> [{erx_9p, Alias, {ok, <<"k">>}}] end)),
+    ?assertEqual({reply, {ok, <<"k">>}}, Read(fun(Alias) -> [{erx_origin, ?SERVER, {erx_9p, Alias, {ok, <<"k">>}}}] end)),
+    ?assertEqual({reply, {error, eio}}, Read(fun(Alias) -> [{erx_9p, Alias, ok}] end)),
+    ?assertEqual({reply, {error, eio}}, Read(fun(Alias) -> [{erx_origin, ?SERVER, {erx_9p, Alias, {ok, 1}}}] end)).
+
+%% A message not at the id's alias is not its reply; the grant's end met first still
+%% leaves the reply that arrived before it to answer.
+sent_read_takes_only_its_own_reply_test() ->
+    Id = sent_read(fun(Alias, 1) -> [{erx_9p, make_ref(), {ok, <<"x">>}}, {erx_9p, Alias, {ok, <<"k">>}}] end),
+    ?assertEqual(no_reply, erx_file_remote:take(next(), Id)),
+    Down = receive {'DOWN', _, process, _, _} = Message -> Message after 1000 -> erlang:error(no_down) end,
+    ?assertEqual({reply, {ok, <<"k">>}}, erx_file_remote:take(Down, Id)).
+
+%% The send half refuses what exchange/2 refuses, before anything is sent.
+send_refuses_as_the_exchange_does_test() ->
+    Server = server(1, fun(_Alias, 1) -> [] end),
+    ?assertEqual({error, einval}, erx_file_remote:send({Server, <<"t">>, rw}, {read, -1, 0, 8})),
+    ?assertEqual({error, erofs}, erx_file_remote:send({Server, <<"t">>, ro}, {write, 1, 0, <<"k">>})),
+    ?assertEqual({error, einval}, erx_file_remote:send({Server, <<"t">>, rw}, {walk, 1, 2, [<<"..">>]})),
+    ?assertEqual(true, is_process_alive(Server)),
+    exit(Server, kill).
+
+%% A flush names the read's alias, and the two replies are each taken for their own id:
+%% the read's with the record the server had already taken for it.
+flush_names_the_sent_read_test() ->
+    Server = spawn(fun() ->
+                           {Read, Flush} = receive {erx_9p, A, _, ?READ} -> receive {erx_9p, F, _, {flush, A}} -> {A, F} end end,
+                           Read ! {erx_9p, Read, {ok, <<"k">>}},
+                           Flush ! {erx_9p, Flush, ok},
+                           receive stop -> ok end
+                   end),
+    Grant = {Server, <<"t">>, rw},
+    ok = empty(),
+    {ok, Id} = erx_file_remote:send(Grant, ?READ),
+    {ok, FlushId} = erx_file_remote:send_flush(Grant, Id),
+    First = next(),
+    Second = next(),
+    ?assertEqual(no_reply, erx_file_remote:take(Second, Id)),
+    ?assertEqual({reply, {ok, <<"k">>}}, erx_file_remote:take(First, Id)),
+    ?assertEqual({reply, ok}, erx_file_remote:take(Second, FlushId)),
+    Server ! stop.
 
 %% A native program's open, open_flags/4, against a server of one tree: a directory d, a
 %% file f and a link l at its root. Its walk stops at the first name that is not a

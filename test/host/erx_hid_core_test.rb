@@ -17,8 +17,9 @@ require_relative '../../tools/lib/erx/abi'
 # phantom report releases the keys held; the state reduced to one previous report, so a
 # report of id 2 releases id 1's keys; the transfer sized without the report-id byte, so
 # the longest numbered report is cut short; the interrupt length taken as one 64-byte
-# packet, so a report two packets long is cut short (the design's named fault); and a
-# position normalized over one step too many, so an axis's maximum falls short of 65535.
+# packet, so a report two packets long is cut short (the design's named fault); and an
+# axis's range taken one too long, so its maximum falls short of 65535 (the scaling
+# itself is erx_input_codec's, whose own cases check it).
 #
 # The module maps usages through abi/formats/hid.txt while the cases write each code
 # out, so one more seeded fault edits a copy of the table instead, with the generated
@@ -52,9 +53,9 @@ class ErxHidCoreTest < Minitest::Test
              anchor: 'transfer_length(#{largest := Largest, numbered := false}) -> Largest.',
              replacement: 'transfer_length(#{largest := Largest, numbered := false}) -> min(64, Largest).',
              catching_case: 'a_report_two_packets_long_folds_whole_test'),
-    Seed.new(fault: 'a position normalized over one step too many',
-             anchor: '* ?ERX_INPUT_AXIS_MAX div (Max - Min).',
-             replacement: '* ?ERX_INPUT_AXIS_MAX div (Max - Min + 1).',
+    Seed.new(fault: "an axis's range taken one too long",
+             anchor: 'R#report{x = erx_input_codec:axis(V, Min, Max)}',
+             replacement: 'R#report{x = erx_input_codec:axis(V, Min, Max + 1)}',
              catching_case: 'an_absolute_position_normalizes_to_0_and_65535_at_its_ends_test')
   ].freeze
 

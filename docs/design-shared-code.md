@@ -88,8 +88,9 @@ A domain's whole page count is not part of this evidence. The run above
 also counted the system domain's `liberx` pool pages, 36.2 MiB, but that
 count includes the funnel's check scratch at 16 MiB per lane connection,
 which the funnel sizes by each frame's bytes instead
-(`erx_etf_scratch_bytes`, `liberx/erx_etf.c:1347`). The first step of
-[When this is built](#when-this-is-built) measures a session's pages.
+(`erx_etf_scratch_bytes`, `liberx/erx_etf.c:1347`). A measurement of a session's pages at its
+prompt, with the funnel's scratch sized by frame, replaces the estimates of
+[Memory saved and what it costs](#memory-saved-and-what-it-costs).
 
 **What the image's contents cost in one domain.** `erlang:memory(code)` is
 the module table, the export table and entries, the fun table and entries,
@@ -131,7 +132,7 @@ are `init`, `prim_tty`, `erl_erts_errors`, `erl_kernel_errors`,
 interpreter, `erl_lint` 316,899 of it; `init`'s and `prim_tty`'s beam
 files are 69,796 and 64,856 bytes.
 
-**What the code does today.** Each domain's loader prepares every module
+**How a domain loads code.** Each domain's loader prepares every module
 itself. `beam_load_finalize_code` (`otp/erts/emulator/beam/emu/emu_load.c:560`)
 allocates the code with `ERTS_ALC_T_CODE` and the literal area with
 `ERTS_ALC_T_LITERAL` (`emu_load.c:70`, `:280`, `:324`), so both are the
@@ -197,43 +198,6 @@ From the working agreement, quoted where they are rules:
    diagnostic, never misread.
 9. No domain can write a page another domain runs, and no domain learns
    another's state through shared code.
-
-## When this is built
-
-The design is ready; its implementation waits for the system to need it.
-
-* **The trigger.** Three domains that adopt the image running at once,
-  or the start time of command domains needing what adoption saves. The
-  system domain never adopts the image, and with two adopters the image
-  about breaks even ([Memory saved and what it costs](#memory-saved-and-what-it-costs)),
-  so a count of interpreter domains overstates the gain. In 1b-E's manifest
-  of [plan.md](plan.md) root's session and the storage, network and web
-  domains run the interpreter, so four domains could adopt the image.
-  The storage and network domains choose it over BeamAsm, the default of
-  [design-runtime.md](design-runtime.md#beamasm) for an ordinary domain,
-  because BeamAsm compiles every module it loads, which slows a boot of
-  several runtimes on one CPU. The price is bulk TCP, which the interpreter
-  moves at less than half BeamAsm's rate; BeamAsm's memory cost at rest is
-  only about 0.4 MB (the medium boot cell's `DlJitExtra`).
-* **The order of work before it.** Each step is cheaper than this design
-  and helps every domain, whether or not it adopts an image:
-  1. Measure a session's pages at its prompt, with the funnel's scratch
-     sized by frame, replacing the estimates of [Memory saved and what it
-     costs](#memory-saved-and-what-it-costs).
-  2. Build this design, if the count of adopters and the session's
-     measurement still call for it.
-
-  The session's measurement also weighs [binding less per
-  domain](#alternatives-considered): if sessions use a small part of the
-  image, the cells and atoms each adopter builds for the whole image
-  weigh more against what it saves.
-* **What it saves.** Measured: a domain at a shell holds about 10.4 MB of
-  code, literals and atoms (the system domain above). Estimated, until
-  the benchmark below runs: an image of about 12 MB, resident once; about
-  7 MB saved per adopting domain at a shell, 5 to 7 MB for a session's
-  release; so the image costs about 5 MB more than it saves with one
-  adopting domain, about breaks even with two, and saves about 7 MB for
-  each one after that.
 
 ## The image
 
@@ -990,6 +954,21 @@ them.
   about 7 MB. Four sessions or command domains would hold about 26 MB
   instead of about 42 MB.
 
+**Who adopts.** The system domain never adopts the image. Root's session
+and the storage, network and web domains run the interpreter (the
+manifest of 1b-E in [plan.md](plan.md)), so they and the display domain can adopt it; a
+count of interpreter domains overstates the gain, since with two adopters
+the image about breaks even. The storage and network domains choose the
+interpreter over BeamAsm, the default of
+[design-runtime.md](design-runtime.md#beamasm) for an ordinary domain,
+because BeamAsm compiles every module it loads, which slows a boot of
+several runtimes on one CPU. The price is bulk TCP, which the interpreter
+moves at less than half BeamAsm's rate; BeamAsm's memory cost at rest is
+only about 0.4 MB (the medium boot cell's `DlJitExtra`). If sessions use
+a small part of the image, the cells and atoms each adopter builds for
+the whole image weigh more against what it saves ([binding less per
+domain](#alternatives-considered)).
+
 **Start-up.** Boot carries nothing for the image: no domain is created
 for it and nothing is copied. Each adopting domain inserts about 18,000
 atoms and 9,000 cells and has its image mapped, instead of preparing its
@@ -1425,7 +1404,7 @@ collector.
   `erx_image_map`, which shares the executable's read-only segments.
 * [design-live.md](design-live.md): the host link, its transports and
   their estimated throughput.
-* [plan.md](plan.md): 1b-E, the trigger's milestone.
+* [plan.md](plan.md): 1b-E, the manifest that runs the interpreter domains.
 * [research-g5-beamasm.md](research-g5-beamasm.md): the interpreter's load
   times and footprint.
 * `otp/erts/emulator/beam/emu/emu_load.c`, `module.c`, `beam_bp.c`,

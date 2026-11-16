@@ -327,7 +327,7 @@ act({forward, Notice}, H) ->
     %% monitor tells the program.
     _ = try erx_pipe_srv:forward(Notice) catch exit:_ -> lost end,
     H;
-act({stop, Status}, #h{port = Port} = H) ->
+act({end_program, Status}, #h{port = Port} = H) ->
     %% A program already ending refuses the stop; its exit status follows.
     _ = driver(Port, fun() -> erx_program:stop(Port, anchor, Status) end, {error, einval}),
     H;

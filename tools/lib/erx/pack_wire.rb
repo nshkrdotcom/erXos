@@ -4,6 +4,7 @@
 
 require 'tmpdir'
 require_relative 'bounded_file'
+require_relative 'build_kind'
 require_relative 'runner'
 
 module Erx
@@ -108,9 +109,10 @@ module Erx
     # Every offset of the archive, with all three hash fields zero, decided
     # before the first byte is written. A refusal leaves the output untouched.
     def plan(rows, root_entry:, build_kind:, budget:, test_code:)
-      check_request(rows, root_entry: root_entry, build_kind: build_kind, budget: budget)
+      development = BuildKind.development?(build_kind) # any other kind raises
+      check_request(rows, root_entry: root_entry, budget: budget)
       raise Error, 'invalid pack test-code mark' unless [true, false].include?(test_code)
-      raise Error, 'only a development build carries test code' if test_code && build_kind != 'development'
+      raise Error, 'only a development build carries test code' if test_code && !development
       strings = rows.map { |row| row.fetch('path').b }.join
       raise Error, 'pack strings exceed their bound' if strings.bytesize > @codec.constant('pack_strings_max')
       header_size = @codec.layout_size('erx_pack_header')
@@ -130,7 +132,7 @@ module Erx
         entry
       end.freeze
       raise Error, 'complete pack exceeds host budget' if cursor > budget
-      flags = (build_kind == 'development' ? @codec.member('pack_flags', 'development') : 0) |
+      flags = (development ? @codec.member('pack_flags', 'development') : 0) |
               (test_code ? @codec.member('pack_flags', 'test_code') : 0)
       header = { 'version' => @codec.constant('pack_version'), 'flags' => flags,
                  'total_size' => cursor, 'nentries' => rows.size, 'entry_size' => entry_size,
@@ -140,9 +142,8 @@ module Erx
       Layout.new(header: header, entries: entries, strings: strings.freeze, index_end: index_end, total: cursor)
     end
 
-    def check_request(rows, root_entry:, build_kind:, budget:)
+    def check_request(rows, root_entry:, budget:)
       unless rows.is_a?(Array) && rows.size.between?(1, @codec.constant('pack_entries_max')) &&
-             %w[development release].include?(build_kind) &&
              root_entry.is_a?(Integer) && root_entry.between?(0, rows.size - 1) &&
              budget.is_a?(Integer) && budget.between?(1, 512 * 1024 * 1024)
         raise Error, 'invalid canonical pack serialization request'

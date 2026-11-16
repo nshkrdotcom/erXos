@@ -617,7 +617,9 @@ on the host:
   `ICANON`, `VEOF` or `VEOL` moves what the new mode counts as complete to
   the readable bytes (`tty.c:1803-1812`), and every waiter waits again under
   the new rules.
-* `hangup(Tty)`, for the master's `tty_hangup`, makes every waiter ready and
+* `hangup(Tty)`, for the master's `tty_hangup`, drops the input the tty
+  holds, as FreeBSD's carrier loss flushes both queues
+  (`sys/kern/tty_ttydisc.c:713-714`), makes every waiter ready, and makes
   every later read that finds no bytes an end of file.
 * `size(Rows, Columns, Tty)` takes a new window size, each from 1 to 65,535,
   and refuses any other. It returns `winch` when the size differs from the
@@ -758,9 +760,12 @@ while the tty is connected at a console line, the UART or the host link's
 tier a program that holds a pseudo-terminal's master;
 so a session's `/dev/tty` and a `/dev/pts/N` are one thing with different
 masters ([design-programs.md](design-programs.md#the-terminal)). Each master
-has a tty of its own: the console's is made as the session starts, and a
-master in the session's domain asks the relay for a new one, as
-`posix_openpt` makes a pseudo-terminal.
+has a tty of its own, driven by a terminal relay of its own
+([design-shell.md](design-shell.md#the-terminal-relays-protocol)): the
+console's is made as the session starts, and its relay alone holds the
+name the runtime's writers look for; a master in the session's domain
+asks the session for a new one, as `posix_openpt` makes a
+pseudo-terminal.
 
 The system shell's tty lives in `erx_console` and is simpler. Programs run only
 under a session's domain (V8), so no program opens it and nothing can call
@@ -823,8 +828,10 @@ takes an output only once its line driver has written it, so a session
 has at most one output in the console and the driver together. A master
 in another domain is heard only through the envelope of its own domain
 (D18). Once `tty_hangup` holds, the tty drops what it holds and takes every
-later write at once with nothing sent, and the relay ends every shell on
-the tty and then the tty, as a UNIX session ends with its terminal's
+later write at once with nothing sent, and the relay sends the tty's
+console `erx_console_eof` at once, whether or not a read waits, so the
+console ends every shell on the tty and then the tty ends, as a UNIX
+session ends with its terminal's
 hangup; the session's other ttys run on. A master in the tty's own domain
 is watched, and its end is the tty's hangup, as a pseudo-terminal master's
 close is.
@@ -2569,8 +2576,10 @@ in use, requests and flushes together, at its grants or held; a request
 beyond 32 fails with `emfile`, and a message that would take a 65th tag,
 or one on a tag in use, is discarded and counted. The grants are the system
 domain's own, shared with its processes, and a grant's 64 requests in
-flight cannot be reserved, so a flush the bridge sends may still be
-refused there, and it then waits behind its request. The flushes of one
+flight cannot be reserved, so a request the bridge sends may still be
+refused there; a flush is never refused, since a grant admits one flush
+waiting for each request in flight besides them
+([design-files.md](design-files.md#bounds)). The flushes of one
 request are answered in the order they came, after the request is
 answered or abandoned, with at most one of them at the grant at a time,
 and a flush of a flush joins the flushes of the request it names, so the

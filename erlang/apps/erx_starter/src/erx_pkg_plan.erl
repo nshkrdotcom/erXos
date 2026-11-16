@@ -54,7 +54,11 @@ serves no byte of it.
 """.
 -type entry() :: {accepted, <<_:256>>, pos_integer(), pos_integer()} | refused.
 
-%% `admitted`'s signer is `checked`'s: admission copies it.
+-doc """
+A package the plan has committed, the one type erx_principal:register_app/1
+registers and the start table publishes: its name, where it lies, its checked
+header and its admission, whose signer is `checked`'s, since admission copies it.
+""".
 -type published() :: #{name := binary(), place := place(),
                        checked := erx_pkg_header:checked(),
                        admitted := erx_app_admit:admitted()}.

@@ -42,6 +42,23 @@ module Erx
 
     def self.record_path(name) = "config/platforms/#{name}.json"
 
+    # The part of RAM Fiasco keeps as its kernel memory on erXos's build (64-bit,
+    # CONFIG_KMEM_SIZE_AUTO, no -kmemsize option): 6% of the free memory it counts, at
+    # most 3328 MiB (fiasco/kernel/src/kern/config.cpp, Config::kmem_size with the 64bit
+    # kmem_per_cent and kmem_max), rounded up to the 2 MiB superpage
+    # (kern/kmem_alloc.cpp, Kmem_alloc::determine_kmem_alloc_size, which
+    # arm/kmem_alloc-arm.cpp's Kmem_alloc::Kmem_alloc calls with SUPERPAGE_SIZE). Fiasco
+    # counts less than all of RAM free, so on ram_bytes this bounds what it takes. A record's
+    # fiasco_reserve is checked equal to it, and every other machine derives its own from it.
+    FIASCO_KMEM_PER_CENT = 6
+    FIASCO_KMEM_MAX = 3328 << 20
+    FIASCO_SUPERPAGE = 2 << 20
+
+    def self.fiasco_reserve(ram_bytes)
+      kmem = [ram_bytes / 100 * FIASCO_KMEM_PER_CENT, FIASCO_KMEM_MAX].min
+      (kmem + FIASCO_SUPERPAGE - 1) / FIASCO_SUPERPAGE * FIASCO_SUPERPAGE
+    end
+
     # The record's fields in whole MiB, each checked at construction.
     MIB_FIELDS = { 'ram_first' => 0.., 'ram_bytes' => 1.., 'fiasco_reserve' => 1.. }.freeze
 
@@ -55,8 +72,9 @@ module Erx
         raise Error, "#{self.class.record_path(name)}: #{field} must be a whole number of MiB in #{mib}" unless
           bytes.is_a?(Integer) && (bytes % (1 << 20)).zero? && mib.cover?(bytes >> 20)
       end
-      raise Error, "#{self.class.record_path(name)}: fiasco_reserve must be less than ram_bytes" unless
-        record.fetch('fiasco_reserve') < record.fetch('ram_bytes')
+      reserve = self.class.fiasco_reserve(record.fetch('ram_bytes'))
+      raise Error, "#{self.class.record_path(name)}: fiasco_reserve must be Fiasco's kernel memory on ram_bytes, " \
+                   "#{reserve >> 20} MiB" unless record.fetch('fiasco_reserve') == reserve
       withheld = record.fetch('root_withheld') { raise Error, "#{self.class.record_path(name)}: no root_withheld" }
       raise Error, "#{self.class.record_path(name)}: root_withheld must be a positive number of bytes" unless
         withheld.is_a?(Integer) && withheld.positive?
@@ -115,7 +133,6 @@ module Erx
     # RAM's first address, where the root's place is counted from (ProductionImage::Machine).
     def ram_first = record.fetch('ram_first')
     def memory_mib = record.fetch('ram_bytes') >> 20
-    def fiasco_reserve_mib = record.fetch('fiasco_reserve') >> 20
     # What a boot keeps from RAM less fiasco_reserve besides the archive and the pool's
     # page index, in bytes (Manifest::RootStartup.boot_kept).
     def root_withheld = record.fetch('root_withheld')

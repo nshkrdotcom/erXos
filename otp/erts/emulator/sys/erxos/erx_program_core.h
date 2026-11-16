@@ -50,9 +50,6 @@
 
 #include "erx/abi.h"
 
-/* The pids a spec may name: 0 and 1 are not programs' (docs/design-programs.md). */
-#define ERX_PROGRAM_PID_MIN	INT64_C(2)
-#define ERX_PROGRAM_PID_MAX	INT64_C(0x7fffffff)
 /* What closing the port stops a running program with: SIGKILL's end. */
 #define ERX_PROGRAM_KILLED	(ERX_EXIT_SIGNAL + ERX_SIGKILL)
 
@@ -142,7 +139,7 @@ typedef struct {
 typedef struct {
 	const uint8_t	*image;
 	size_t		image_len;
-	int64_t		pid;		/* ERX_PROGRAM_PID_MIN..ERX_PROGRAM_PID_MAX */
+	int64_t		pid;		/* ERX_PROG_PID_MIN..ERX_PROG_PID_MAX */
 	uint64_t	guarantee;	/* of the program's budget, at most cap */
 	uint64_t	cap;		/* at most the session's pool for programs */
 	uint64_t	slots;		/* the data area's 64 KiB slots, 1 to ERX_PROG_DATA_SLOTS_MAX */

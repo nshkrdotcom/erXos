@@ -49,7 +49,7 @@ open `eio`, so it reaches no file.
 
 -export([start_mint/0, log/1]).
 -export([init/1, root/1, walk/3, getattr/2, open/3, read/4, readdir/4,
-         statfs/1, clunk/2, read_mode/0]).
+         statfs/1, clunk/2]).
 -export_type([tree/0]).
 
 -ifdef(TEST).
@@ -197,9 +197,6 @@ statfs(_Tree) ->
 -doc false.
 clunk(_Handle, _Tree) ->
     ok.
-
--doc false.
-read_mode() -> helper.
 
 %% ---------------------------------------------------------------------------
 %% Nodes

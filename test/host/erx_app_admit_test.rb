@@ -40,8 +40,8 @@ class ErxAppAdmitTest < Minitest::Test
     'root not kept' => Fault.new(file: DOMAIN_CORE, from: "session_reserved(?SYSTEM_PREFIX) ->\n    true;\n", to: ''),
     'steps 4 and 5 swapped' =>
       Fault.new(file: MODULE,
-                from: "    Entry = check_entry(Name, Signer, Max, Registry),\n    check_memory(Memory, Budget),\n",
-                to: "    check_memory(Memory, Budget),\n    Entry = check_entry(Name, Signer, Max, Registry),\n"),
+                from: "    check_entry(Name, Signer, Max, Registry),\n    check_memory(Memory, Budget),\n",
+                to: "    check_memory(Memory, Budget),\n    check_entry(Name, Signer, Max, Registry),\n"),
     'identifier rule reduced to its length' =>
       Fault.new(file: MODULE,
                 from: "    case erx_ident:new(Bin) of\n        {error, bad_identifier} -> false;\n        _ -> true\n    end.",
@@ -85,18 +85,18 @@ class ErxAppAdmitTest < Minitest::Test
   end
 
   def accepted
-    [[package('dashboard'), 'vendor', :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
-     [package('notes', needs: %w[data]), :development, :base, ok(1, [PACKAGES, DATA], :none)],
-     [package('board', needs: %w[display panel]), :development, :base, ok(1, [PACKAGES, DISPLAY, PANEL], :none)],
-     [package('kiosk', needs: []), :image, :base, ok(1, [PACKAGES], :none)],
-     [package('clock'), 'vendor', :base, ok(0, [PACKAGES, DISPLAY, DATA], 'display')],
-     [package('clock', needs: %w[panel]), 'vendor', :full, ok(0, [PACKAGES, PANEL], 'panel')],
-     [package('a' * MAX_NAME), :development, :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
-     [package('room_a'), :development, :base, ok(1, [PACKAGES, DISPLAY, DATA], 'display')],
+    [[package('dashboard'), 'vendor', :base, ok([PACKAGES, DISPLAY, DATA], 'display')],
+     [package('notes', needs: %w[data]), :development, :base, ok([PACKAGES, DATA], :none)],
+     [package('board', needs: %w[display panel]), :development, :base, ok([PACKAGES, DISPLAY, PANEL], :none)],
+     [package('kiosk', needs: []), :image, :base, ok([PACKAGES], :none)],
+     [package('clock'), 'vendor', :base, ok([PACKAGES, DISPLAY, DATA], 'display')],
+     [package('clock', needs: %w[panel]), 'vendor', :full, ok([PACKAGES, PANEL], 'panel')],
+     [package('a' * MAX_NAME), :development, :base, ok([PACKAGES, DISPLAY, DATA], 'display')],
+     [package('room_a'), :development, :base, ok([PACKAGES, DISPLAY, DATA], 'display')],
      [package('min_memory', memory: Seeds.codec.constant('app_memory_min')), :development, :base,
-      ok(1, [PACKAGES, DISPLAY, DATA], 'display', memory: Seeds.codec.constant('app_memory_min'))],
+      ok([PACKAGES, DISPLAY, DATA], 'display', memory: Seeds.codec.constant('app_memory_min'))],
      [package('max_memory', memory: 128 * MIB), :development, :base,
-      ok(1, [PACKAGES, DISPLAY, DATA], 'display', memory: 128 * MIB)]]
+      ok([PACKAGES, DISPLAY, DATA], 'display', memory: 128 * MIB)]]
   end
 
   def refused
@@ -143,8 +143,8 @@ class ErxAppAdmitTest < Minitest::Test
       error(Tuple.new([:memory, (128 * MIB) + 1]))]]
   end
 
-  def ok(entry, rows, display, memory: 64 * MIB)
-    Tuple.new([:ok, { entry: entry, rows: rows, display: display, memory: memory }])
+  def ok(rows, display, memory: 64 * MIB)
+    Tuple.new([:ok, { rows: rows, display: display, memory: memory }])
   end
 
   def error(reason) = Tuple.new([:error, reason])

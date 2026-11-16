@@ -95,10 +95,10 @@ shipped_load_test() ->
                                      quota => #{pixels => 1024 * 1024, side => 16384}}),
     Colour = {alloc, 2, 0, 0, ?K8, 1, {0, 0, 1, 1}, {0, 0, 1, 1}, 0},
     Loaded = lists:foldl(fun(Message, State) ->
-                                 {ok, Next, _} = erx_draw_core:step(State, Message),
+                                 {Next, _} = step(State, Message),
                                  Next
                          end, Connection, erx_font:load(Subfont, 1) ++ [Colour]),
-    {ok, _, Draws} = erx_draw_core:step(Loaded, {string, 0, 2, 1, {10, 20}, {0, 0, 640, 480}, {0, 0}, [$o, $k]}),
+    {_, Draws} = step(Loaded, {string, 0, 2, 1, {10, 20}, {0, 0, 640, 480}, {0, 0}, [$o, $k]}),
     ?assertMatch([{draw, 0, _, 2, _, 1, {OX, OTop}, _, _}, {draw, 0, _, 2, _, 1, {KX, KTop}, _, _}], Draws).
 
 %% Rows, one compressed block and a block per row read as the same subfont.
@@ -177,7 +177,7 @@ tiles(Chan, W, H) ->
     Connection = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => ?ARGB32,
                                      quota => #{pixels => 1024 * 1024, side => 32768}}),
     lists:foldl(fun(Message, State) ->
-                        {ok, Next, _} = erx_draw_core:step(State, Message),
+                        {Next, _} = step(State, Message),
                         Next
                 end, Connection, Messages),
     Loads = [{R, P} || {load, 1, R, P} <- Messages],
@@ -316,13 +316,20 @@ runs_draw_test() ->
                                      quota => #{pixels => 1024 * 1024, side => 16384}}),
     Colour = {alloc, 2, 0, 0, ?K8, 1, {0, 0, 1, 1}, {0, 0, 1, 1}, 0},
     Loaded = lists:foldl(fun(Message, State) ->
-                                 {ok, Next, _} = erx_draw_core:step(State, Message),
+                                 {Next, _} = step(State, Message),
                                  Next
                          end, Connection, erx_font:load(Subfont, 1) ++ [Colour]),
     Draws = lists:append([begin
                               Message = {string, 0, 2, 1, {10 + X, 20}, {0, 0, 640, 480}, {X, 0}, Glyphs},
-                              {ok, _, Run} = erx_draw_core:step(Loaded, Message),
+                              {_, Run} = step(Loaded, Message),
                               Run
                           end || {X, Glyphs} <- erx_font:runs(Subfont, [2, 0, 2, 2])]),
     ?assertEqual([10 - 1, 10 + 8, 10 + 205 - 1, 10 + 213 - 1],
                  [X0 || {draw, 0, {X0, _, _, _}, 2, _, 1, _, _, _} <- Draws]).
+
+%% erx_draw_core:step/2 for a message the case expects the core to take: a
+%% refusal or a stop among its actions fails the case.
+step(State, Message) ->
+    {Next, Ops} = erx_draw_core:step(State, Message),
+    ?assertEqual([], [Op || Op <- Ops, is_tuple(Op), lists:member(element(1, Op), [error, stop])]),
+    {Next, Ops}.

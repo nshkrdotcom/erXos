@@ -56,7 +56,7 @@ raises on any report, which `test/erlang/erx_hid_core_fuzz.erl` checks.
 
 -opaque state() :: #{entries := #{erx_hid_desc:report_id() => entry()}, counts := counts()}.
 
--type axis() :: 0..?ERX_INPUT_AXIS_MAX.
+-type axis() :: erx_input_codec:input_axis().
 
 %% An evdev key or button code, as the translations of abi/formats/hid.txt give it.
 -type code() :: non_neg_integer().
@@ -129,20 +129,20 @@ new(#{reports := Reports}) ->
     #{entries => maps:map(fun(_, _) -> #{held => [], position => none} end, Reports),
       counts => #{unmapped => 0, short => 0, unknown_id => 0}}.
 
--doc "The records one report gives, and the state after it.".
--spec step(erx_hid_desc:layout(), binary(), state()) -> {[erx_input_codec:record()], state()}.
+-doc "The state after one report, and the records it gives.".
+-spec step(erx_hid_desc:layout(), binary(), state()) -> {state(), [erx_input_codec:record()]}.
 step(#{reports := Reports, numbered := Numbered}, Report, State) when is_binary(Report) ->
     case framed(Numbered, Report) of
         {Id, Body} when is_map_key(Id, Reports) ->
             #{fields := Fields, bytes := Bytes} = maps:get(Id, Reports),
             case byte_size(Body) >= Bytes of
                 true -> fold(Id, lists:foldl(fun(Field, R) -> read(Field, Body, R) end, #report{}, Fields), State);
-                false -> {[], count(short, 1, State)}
+                false -> {count(short, 1, State), []}
             end;
         {_Id, _Body} ->
-            {[], count(unknown_id, 1, State)};
+            {count(unknown_id, 1, State), []};
         empty ->
-            {[], count(short, 1, State)}
+            {count(short, 1, State), []}
     end.
 
 -doc "How many reports and key usages were dropped, by reason.".
@@ -160,7 +160,7 @@ count(Why, N, State = #{counts := Counts}) ->
 %% gives the moves, then the edges of the union of every id's held set.
 fold(Id, R, State) ->
     case phantom(R) of
-        true -> {[], State};
+        true -> {State, []};
         false -> replaced(Id, R, State)
     end.
 
@@ -172,7 +172,7 @@ replaced(Id, R, State = #{entries := Entries}) ->
     Next = Entries#{Id := #{held => lists:usort(R#report.held), position => Position}},
     Moves = moves(R, Position =/= maps:get(position, Old)) ++ wheel(R#report.wheel),
     Edges = edges(held(Entries), held(Next)),
-    {Moves ++ Edges, count(unmapped, R#report.unmapped, State#{entries := Next})}.
+    {count(unmapped, R#report.unmapped, State#{entries := Next}), Moves ++ Edges}.
 
 held(Entries) -> lists:usort(lists:append([Held || _ := #{held := Held} <- Entries])).
 
@@ -181,17 +181,15 @@ position(#report{x = X, y = Y}, _) when X =/= none, Y =/= none -> {X, Y};
 position(_, Last) -> Last.
 
 moves(#report{dx = DX, dy = DY, x = X, y = Y}, Moved) ->
-    [{pointer, rel, clamp(DX, ?ERX_INPUT_REL_MIN, ?ERX_INPUT_REL_MAX), clamp(DY, ?ERX_INPUT_REL_MIN, ?ERX_INPUT_REL_MAX)}
+    [{pointer, rel, erx_input_codec:rel(DX), erx_input_codec:rel(DY)}
      || DX =/= 0 orelse DY =/= 0]
         ++ [{pointer, abs, X, Y} || Moved].
 
 wheel(0) -> [];
-wheel(Steps) -> [{wheel, clamp(Steps, ?ERX_INPUT_WHEEL_MIN, ?ERX_INPUT_WHEEL_MAX)}].
+wheel(Steps) -> [{wheel, erx_input_codec:wheel(Steps)}].
 
 edges(Old, New) ->
     [{key, up, Code} || Code <- ordsets:subtract(Old, New)] ++ [{key, down, Code} || Code <- ordsets:subtract(New, Old)].
-
-clamp(V, Min, Max) -> min(max(V, Min), Max).
 
 %% Each value of a field adds what it says to the report.
 read(Field = #{count := Count}, Body, R) ->
@@ -220,8 +218,9 @@ variable(buttons, _, 0, _, R) -> R;
 variable(buttons, Usage, _, _, R) -> R#report{held = [erx_abi_translations:hid_button_key(?ID(Usage)) | R#report.held]};
 variable(x, _, V, #{relative := true}, R) -> R#report{dx = R#report.dx + V};
 variable(y, _, V, #{relative := true}, R) -> R#report{dy = R#report.dy + V};
-variable(x, _, V, Field, R) -> R#report{x = normalized(V, Field)};
-variable(y, _, V, Field, R) -> R#report{y = normalized(V, Field)};
+%% An absolute axis's range has its maximum above its minimum, as role/2 requires.
+variable(x, _, V, #{min := Min, max := Max}, R) -> R#report{x = erx_input_codec:axis(V, Min, Max)};
+variable(y, _, V, #{min := Min, max := Max}, R) -> R#report{y = erx_input_codec:axis(V, Min, Max)};
 variable(wheel, _, V, _, R) -> R#report{wheel = R#report.wheel + V};
 variable(none, _, _, _, R) -> R.
 
@@ -248,11 +247,6 @@ key(Usage, R) ->
         none -> R#report{unmapped = R#report.unmapped + 1};
         Code -> R#report{held = [Code | R#report.held]}
     end.
-
-%% Clamped to the logical range and spread across the record's axis, as the
-%% virtio-input driver does (docs/design-display.md, "The display device").
-normalized(V, #{min := Min, max := Max}) ->
-    (clamp(V, Min, Max) - Min) * ?ERX_INPUT_AXIS_MAX div (Max - Min).
 
 %% Value i of a variable field has usage i of its ranges, flattened, or the last one;
 %% a field with no usage has none.

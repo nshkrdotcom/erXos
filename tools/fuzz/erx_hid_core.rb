@@ -28,11 +28,11 @@ INCLUDE = File.join(ROOT, 'build/gen/erlang/apps/erx/include')
 Seed = Data.define(:fault, :anchor, :replacement, :marker)
 SEEDS = [
   Seed.new(fault: 'a position normalized without its clamp',
-           anchor: '(clamp(V, Min, Max) - Min) * ?ERX_INPUT_AXIS_MAX',
-           replacement: '(V - Min) * ?ERX_INPUT_AXIS_MAX',
+           anchor: 'R#report{x = erx_input_codec:axis(V, Min, Max)}',
+           replacement: 'R#report{x = V}',
            marker: 'out_of_bounds'),
   Seed.new(fault: 'wheel steps handed on without their record range',
-           anchor: 'wheel(Steps) -> [{wheel, clamp(Steps, ?ERX_INPUT_WHEEL_MIN, ?ERX_INPUT_WHEEL_MAX)}].',
+           anchor: 'wheel(Steps) -> [{wheel, erx_input_codec:wheel(Steps)}].',
            replacement: 'wheel(Steps) -> [{wheel, Steps}].',
            marker: 'out_of_bounds')
 ].freeze

@@ -17,7 +17,7 @@ It starts as
 and keeps directories, files and links, made, removed and renamed through
 `make`, `unlink` and `rename`, and opens, reads and writes files and lists
 directories. As an `erx_fs` tree with open files must, it keeps its nodes
-where the grant and every file owner reach them: in a process of its own,
+where every grant reaches them: in a process of its own,
 linked to the one that ran `init/1`, which applies each callback whole, so
 every callback is atomic. Its handle, `Fs`, holds that process and the
 observer.

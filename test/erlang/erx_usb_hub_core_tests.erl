@@ -21,7 +21,7 @@ the_machine_keeps_one_bitmap_in_flight_test() ->
 
 %% Explores the machine for Ports to a fixed point; {ok, StatesSeen} or {error, Why}.
 explore(Ports) ->
-    {[{changed, First}], S0} = erx_usb_hub_core:step(start, erx_usb_hub_core:new(Ports)),
+    {S0, [{changed, First}]} = erx_usb_hub_core:step(start, erx_usb_hub_core:new(Ports)),
     case First =:= lists:seq(1, Ports) ++ [hub] of
         true -> explore(Ports, [{S0, {0, 1}}], #{{S0, {0, 1}} => true});
         false -> {error, {first_report, First}}
@@ -56,7 +56,7 @@ reports(Ports) ->
         ++ [<<(1 bsl P):(8 * Length)/little>> || P <- lists:seq(0, Ports)].
 
 follow(Ports, Event, State, {Posted, Unhandled}) ->
-    {Actions, Next} = erx_usb_hub_core:step(Event, State),
+    {Next, Actions} = erx_usb_hub_core:step(Event, State),
     After = lists:foldl(fun({post, Length}, {P, U}) when Length =:= Ports div 8 + 1 -> {P + 1, U};
                            ({changed, Set}, {P, U}) -> valid_set(Ports, Set), {P, U + 1};
                            ({stop, _}, _) -> stopped
@@ -79,12 +79,12 @@ valid_set(Ports, Set) ->
         andalso lists:all(fun(hub) -> true; (P) -> P >= 1 andalso P =< Ports end, Set).
 
 a_report_naming_nothing_posts_again_test() ->
-    {[{post, 1}], S} = erx_usb_hub_core:step(handled, element(2, erx_usb_hub_core:step(start, erx_usb_hub_core:new(4)))),
-    ?assertMatch({[{post, 1}], _}, erx_usb_hub_core:step({transfer, {ok, <<0>>}}, S)),
-    ?assertMatch({[{post, 1}], _}, erx_usb_hub_core:step({transfer, {ok, <<2#11100000>>}}, S)),
-    ?assertMatch({[{changed, [2, hub]}], _}, erx_usb_hub_core:step({transfer, {ok, <<2#101>>}}, S)),
-    ?assertMatch({[{changed, [1, 2, 3, 4, hub]}], _}, erx_usb_hub_core:step({transfer, {ok, <<>>}}, S)),
-    ?assertMatch({[{stop, {transfer, halted}}], _}, erx_usb_hub_core:step({transfer, {error, halted}}, S)).
+    {S, [{post, 1}]} = erx_usb_hub_core:step(handled, element(1, erx_usb_hub_core:step(start, erx_usb_hub_core:new(4)))),
+    ?assertMatch({_, [{post, 1}]}, erx_usb_hub_core:step({transfer, {ok, <<0>>}}, S)),
+    ?assertMatch({_, [{post, 1}]}, erx_usb_hub_core:step({transfer, {ok, <<2#11100000>>}}, S)),
+    ?assertMatch({_, [{changed, [2, hub]}]}, erx_usb_hub_core:step({transfer, {ok, <<2#101>>}}, S)),
+    ?assertMatch({_, [{changed, [1, 2, 3, 4, hub]}]}, erx_usb_hub_core:step({transfer, {ok, <<>>}}, S)),
+    ?assertMatch({_, [{stop, {transfer, halted}}]}, erx_usb_hub_core:step({transfer, {error, halted}}, S)).
 
 the_bitmap_names_bit_n_as_port_n_test() ->
     ?assertEqual([1, 3, hub], erx_usb_hub_core:bitmap(3, <<2#1011>>)),

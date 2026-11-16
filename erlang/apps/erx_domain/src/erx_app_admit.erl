@@ -70,16 +70,17 @@ domains, services and facet rows; and the names of the image's packages.
                                     signer := erx_pkg_header:authenticator()}}.
 
 -doc """
-What an admitted package holds: its principal's entry, which admission
-reserves nothing in; the indices of the app template's facet rows its
-session keeps, the `packages` row and one row for each need, ascending;
-its start row's display, its one `windows` need if it has exactly one and
-`none` otherwise; its declared memory, which its sessions' own budgets
-hold; and the signer the file check named, which registration records in
-the registry for `check_entry` to compare.
+What an admitted package holds: the indices of the app template's facet
+rows its session keeps, the `packages` row and one row for each need,
+ascending; its start row's display, its one `windows` need if it has
+exactly one and `none` otherwise; its declared memory, which its sessions'
+own budgets hold; and the signer the file check named, which registration
+records in the registry for `check_entry` to compare. It holds no entry:
+registration takes the one `entry/4` gives the name then, the one
+`check_entry` found, since only the package process registers and it
+admits and registers one package at a time.
 """.
--type admitted() :: #{entry := non_neg_integer(),
-                      rows := [non_neg_integer()],
+-type admitted() :: #{rows := [non_neg_integer()],
                       display := none | binary(),
                       memory := pos_integer(),
                       signer := erx_pkg_header:authenticator()}.
@@ -116,11 +117,10 @@ admitted(#{header := #{name := Name, memory := Memory, needs := Needs} = Header,
       services := Offered} = check_apps(AppsRow),
     check_built_for_image(Header),
     check_name(Name, Signer, Manifest),
-    Entry = check_entry(Name, Signer, Max, Registry),
+    check_entry(Name, Signer, Max, Registry),
     check_memory(Memory, Budget),
     Kept = check_needs(Needs, Offered),
-    #{entry => Entry,
-      rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
+    #{rows => lists:sort([PackagesRow | [Row || #{row := Row} <- Kept]]),
       display => display([Service || #{name := Service,
                                        windows := true} <- Kept]),
       memory => Memory,
@@ -159,15 +159,15 @@ is_identifier(Bin) ->
 
 check_entry(Name, Signer, Max, Registry) ->
     case entry(Name, Signer, Max, Registry) of
-        {ok, Entry} -> Entry;
+        {ok, _Entry} -> ok;
         {error, Reason} -> refuse(Reason)
     end.
 
 -doc """
 The entry of `Max` that `Name`, signed by `Signer`, takes in `Registry`: a
 name the registry holds keeps its entry, for its own signer only, and a new
-name takes the lowest entry no name holds. Admission and registration
-(`erx_principal:register/2`) both decide by it.
+name takes the lowest entry no name holds. Admission refuses by it, and
+registration (`erx_principal:register/2`) takes the entry it gives.
 """.
 -spec entry(binary(), erx_pkg_header:authenticator(), non_neg_integer(), registry()) ->
     {ok, non_neg_integer()} | {error, {signer_changed, binary()} | apps_full}.

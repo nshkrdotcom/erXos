@@ -420,6 +420,8 @@ module Erx
                    name: 'fuzz-erx-apps-ctl', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_quotes.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-quotes', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_bt_hci.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-bt-hci', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_machine_ctl.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-machine-ctl', deadline: 300, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_blk_request.rb'), '--seed', options.fetch(:seed).to_s],
@@ -485,6 +487,10 @@ module Erx
                    name: 'fuzz-erx-erofs', deadline: 1800, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_f2fs.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-f2fs', deadline: 900, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_wpa_key.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-wpa-key', deadline: 600, chdir: ROOT, env: environment)
+        runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_sae.rb'), '--seed', options.fetch(:seed).to_s],
+                   name: 'fuzz-erx-sae', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_pkg_header.rb'), '--seed', options.fetch(:seed).to_s],
                    name: 'fuzz-erx-pkg-header', deadline: 600, chdir: ROOT, env: environment)
         runner.run([RbConfig.ruby, File.join(ROOT, 'tools/fuzz/erx_hostlink_frame.rb'), '--seed', options.fetch(:seed).to_s],

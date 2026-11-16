@@ -7,7 +7,7 @@ The domain's `/tmp`: the `erx_fs` callback module over `erx_ramfs_core`, and
 the one tree process that holds the tree (docs/design-tmp.md).
 
 The tree exists only in the tree process, as one `erx_ramfs_core` value. Each
-callback, in the grant or in a file's owner, turns its 9P2000.L arguments into
+callback, in the grant, turns its 9P2000.L arguments into
 one core request, sends it to the tree process and waits for the reply, which
 it turns back into the protocol's terms. The tree process runs every request
 as one `erx_ramfs_core:step/4` with a fresh stamp of the domain's version
@@ -37,7 +37,7 @@ and `erx_ramfs_sup` restarts `/tmp` whole.
 
 -export([start_link/2, serve/1]).
 -export([init/1, root/1, walk/3, forget/2, getattr/2, open/3, read/4, readdir/4,
-         readlink/2, statfs/1, clunk/2, read_mode/0, write/4, make/4,
+         readlink/2, statfs/1, clunk/2, write/4, make/4,
          setattr/3, unlink/4, rename/5, fsync/2]).
 
 %% The tree's name, which a mount's {tree, Name} and attach's Aname name.
@@ -129,7 +129,7 @@ step(Request, _Root, Tree) ->
 time_ns() ->
     os:system_time(nanosecond).
 
-%% One request to the tree process, from a grant or an owner. The alias ends
+%% One request to the tree process, from a grant. The alias ends
 %% with the reply, and the monitor turns the tree's end into the caller's.
 call({Pid, Secret}, Request) ->
     Alias = erlang:monitor(process, Pid, [{alias, reply_demonitor}]),
@@ -208,9 +208,6 @@ clunk(Handle, Server) ->
     _ = call(Server, {clunk, Handle}),
     ok.
 
--doc false.
-read_mode() ->
-    immediate.
 
 -doc false.
 write(Handle, Offset, Data, Server) ->

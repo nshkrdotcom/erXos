@@ -37,8 +37,8 @@ module ErxFileRemoteFuzz
                to: "chunk_end(whole, [directory | _], Walks, Replies) -> walk_reply(Walks, Replies, []);\n",
                caught_by: 'walk_reply'),
     Mutant.new(what: "a client taking another alias's reply out of an envelope",
-               from: "        {erx_origin, _, {erx_9p, Alias, Reply}} -> {reply, Reply};\n        {'DOWN'",
-               to: "        {erx_origin, _, {erx_9p, _, Reply}} -> {reply, Reply};\n        {'DOWN'",
+               from: "-define(ENVELOPED(Alias, Reply), {erx_origin, _, {erx_9p, Alias, Reply}}).\n",
+               to: "-define(ENVELOPED(Alias, Reply), {erx_origin, _, {erx_9p, _, Reply}}).\n",
                caught_by: 'sent')
   ].freeze
   DEADLINE_SECONDS = '240'

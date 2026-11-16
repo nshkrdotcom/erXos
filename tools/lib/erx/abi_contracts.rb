@@ -562,12 +562,12 @@ module Erx
         end
       end
 
-      # The quantities a facet row carries (erx_mf_facet, abi/manifest.txt), each with
-      # its field's width in bits. A service's `quantity KEY VALUE` lines are the values
-      # a facet row the build derives for it takes (docs/design-abi.md, "Services, facets
-      # and their parameter schemas"); each is positive and fits its field.
-      FACET_QUANTITIES = { 'max_request' => 32, 'in_flight' => 32, 'reductions' => 64,
-                           'period_ns' => 64, 'max_heap_size' => 64 }.freeze
+      # The quantities a facet row carries, each a field of FACET_LAYOUT (abi/manifest.txt).
+      # A service's `quantity KEY VALUE` lines are the values a facet row the build derives
+      # for it takes (docs/design-abi.md, "Services, facets and their parameter schemas");
+      # each is positive and fits its field, whose width the layout gives.
+      FACET_QUANTITIES = %w[max_request in_flight reductions period_ns max_heap_size].freeze
+      FACET_LAYOUT = 'erx_mf_facet'
 
       # Service interfaces have a namespace of their own, as their constants'
       # service_ prefix says, so an interface may share its name with a right
@@ -620,9 +620,9 @@ module Erx
             when 'quantity'
               Model.arity(line, 3)
               key, value = words
-              width = FACET_QUANTITIES[key] || line.fail!("quantity names none of #{FACET_QUANTITIES.keys.join(', ')}")
+              line.fail!("quantity names none of #{FACET_QUANTITIES.join(', ')}") unless FACET_QUANTITIES.include?(key)
               line.fail!('duplicate quantity') if quantities.key?(key)
-              quantities[key] = Model.positive(value, line, maximum: (1 << width) - 1)
+              quantities[key] = Model.positive(value, line, maximum: types.fetch(FACET_LAYOUT).fetch_field(key).type.maximum)
             else line.fail!('unknown service metadata member')
             end
           end

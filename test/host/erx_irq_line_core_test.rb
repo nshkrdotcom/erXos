@@ -22,26 +22,26 @@ class ErxIrqLineCoreTest < Minitest::Test
 
   SEEDS = [
     Seed.new(fault: 'an acknowledgement at the first done',
-             anchor: '        Rest -> {[], Core#core{phase = {round, Rest, Again}}}',
-             replacement: '        Rest -> {[ack], Core#core{phase = {round, Rest, Again}}}',
+             anchor: '        Rest -> {Core#core{phase = {round, Rest, Again}}, []}',
+             replacement: '        Rest -> {Core#core{phase = {round, Rest, Again}}, [ack]}',
              catching_cases: [EXHAUSTIVE, 'the_line_is_acknowledged_after_the_last_answer_test']),
     Seed.new(fault: 'Again dropped, so a firing during a round tells no one',
              anchor: "step(fire, #core{phase = {round, Waiting, _}} = Core) ->\n" \
-                     '    {[], Core#core{phase = {round, Waiting, true}}};',
-             replacement: "step(fire, #core{phase = {round, _, _}} = Core) ->\n    {[], Core};",
+                     '    {Core#core{phase = {round, Waiting, true}}, []};',
+             replacement: "step(fire, #core{phase = {round, _, _}} = Core) ->\n    {Core, []};",
              catching_cases: [EXHAUSTIVE, 'a_firing_after_an_answer_tells_every_member_again_test']),
     Seed.new(fault: 'a down that leaves W unchanged',
              anchor: '        {round, Waiting, Again} -> answered(M, Waiting, Again, Left);',
-             replacement: '        {round, _, _} -> {[], Left};',
+             replacement: '        {round, _, _} -> {Left, []};',
              catching_cases: [EXHAUSTIVE, 'a_join_then_its_down_in_a_round_acknowledges_test']),
     Seed.new(fault: 'a join in held that does not add its member, so its down leaves the line masked',
              anchor: '    Joined = Core#core{members = Members#{M => {Pid, Dev}}},' "\n" \
-                     '    {[{notify, Pid, Dev}], Joined#core{phase = {round, [M], false}}};',
-             replacement: '    {[{notify, Pid, Dev}], Core};',
+                     '    {Joined#core{phase = {round, [M], false}}, [{notify, Pid, Dev}]};',
+             replacement: '    {Core, [{notify, Pid, Dev}]};',
              catching_cases: [EXHAUSTIVE, 'a_join_then_its_down_in_held_acknowledges_test']),
     Seed.new(fault: 'a firing with no member acknowledged at once',
-             anchor: '    {[], Core#core{phase = held}};',
-             replacement: '    {[ack], Core#core{phase = idle}};',
+             anchor: '    {Core#core{phase = held}, []};',
+             replacement: '    {Core#core{phase = idle}, [ack]};',
              catching_cases: [EXHAUSTIVE, 'a_firing_with_no_member_holds_the_line_test'])
   ].freeze
 

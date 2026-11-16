@@ -64,8 +64,8 @@ then the rows, so a reader that raced a writer finds a newer generation at its n
 -define(DEMUX, erx_net_demux).
 -define(DRIVERS, erx_net_drivers).
 -define(SECRETS, erx_net_secrets).
-%% SYNCOOKIE_LIFETIME (sys/netinet/tcp_syncache.h), in milliseconds: the cookie keys' rotation.
--define(SYNCOOKIE_LIFETIME, 15000).
+%% SYNCOOKIE_LIFETIME (sys/netinet/tcp_syncache.h), in microseconds: the cookie keys' rotation.
+-define(SYNCOOKIE_LIFETIME, 15000000).
 
 -doc "Starts the owner and creates the tables.".
 -spec start_link() -> {ok, pid()} | {error, term()}.
@@ -209,7 +209,7 @@ init([]) ->
     Syncache = erx_tcp_syncache:secrets(Secrets, erx_net_clock:entropy(16),
                                         erx_net_clock:entropy(16)),
     true = ets:insert(?SECRETS, {syncache, Syncache}),
-    _ = erlang:send_after(?SYNCOOKIE_LIFETIME, self(), syncookie_reseed),
+    ok = arm_reseed(),
     {ok, #{}}.
 
 -doc false.
@@ -245,10 +245,12 @@ handle_cast(_Msg, Watched) ->
     {noreply, Watched}.
 
 -doc false.
-handle_info(syncookie_reseed, Watched) ->
+%% The reseed is the one deadline the owner arms, one at a time, so its hint comes at or
+%% after it and always finds the rotation due.
+handle_info({erx_net_clock, hint}, Watched) ->
     Syncache = erx_tcp_syncache:rotate(erx_net_clock:entropy(16), syncache_secrets()),
     true = ets:insert(?SECRETS, {syncache, Syncache}),
-    _ = erlang:send_after(?SYNCOOKIE_LIFETIME, self(), syncookie_reseed),
+    ok = arm_reseed(),
     {noreply, Watched};
 handle_info({'DOWN', Ref, process, _, _}, Watched) ->
     case maps:take(Ref, Watched) of
@@ -293,6 +295,10 @@ held(Transport, Family, Port) ->
                  udp -> [{udp, Family, '_', P, '_', '_'}, {udp, Family, '_', P}]
              end,
     ets:select(?DEMUX, [{{Shape, '_', '_'}, [], ['$_']} || Shape <- Shapes]).
+
+%% The next rotation of the cookie keys, on the stack's clock.
+arm_reseed() ->
+    erx_net_clock:arm(erx_net_clock:now() + ?SYNCOOKIE_LIFETIME).
 
 notify_resolver(Watched) ->
     _ = [Pid ! {erx_net_tables, resolver} || {resolver, Pid} <- maps:values(Watched)],

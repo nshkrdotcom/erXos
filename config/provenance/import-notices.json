@@ -52,6 +52,9 @@
     }},
     {"path": "ctaes", "notices": [], "grants": {
       "MIT": [{"path": "ctaes/COPYING", "sha256": "705391f5c3000c942b63c028977a372a5fb12eb0abc6210b3d835115e2544a06"}]
+    }},
+    {"path": "config/trust", "notices": [], "grants": {
+      "LicenseRef-root-certificate": [{"path": "config/trust/ORIGIN.md", "sha256": "aaf7171226cb9227bfc5c847ff84c09654aeeae1dc7ab5d68f387ce1049c1609"}]
     }}
   ]
 }

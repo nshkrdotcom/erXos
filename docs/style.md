@@ -249,6 +249,67 @@ Erlang code takes the same shape: pure functions decide, and the
 `gen_server` or `gen_statem` callback performs the effects their result
 names.
 
+Every Erlang core's step returns one shape, `{State, Actions}`: the next
+state, then the list of actions the edge performs in order. A core that
+ends says so with the action `{stop, Reason}`, always the last, and the
+edge performs the actions before it and then stops, never stepping the
+state beside a stop again. No step returns a separate stop or error
+variant, so every edge takes a step's result apart the same way:
+
+```erlang
+-spec step(event(), state()) -> {state(), [action()]}.
+
+%% The edge: its effect performs one action that is not a stop.
+effect({write, Bytes}, S) -> ...
+
+settle({Core, Actions}, S) ->
+    case erx_actions:perform(Actions, fun effect/2, S#s{core = Core}) of
+        {continue, Next} -> {noreply, Next};
+        {stop, Reason, Next} -> {stop, Reason, Next}
+    end.
+```
+
+Every edge performs a step's actions through the one loop,
+`erx_actions:perform/3`, and writes only its effect, never a loop of its
+own. A stop with actions after it is the core's bug, and the loop
+refuses it before performing any action after it. It refuses with
+`error(stop_not_last)`, whose stack trace names the loop's arity and not
+its arguments: a `function_clause` there would put the whole state in
+the stack trace, which `format_status/1` does not filter.
+
+A core with timeouts keeps its deadlines in its state and takes the time
+as an input ([design.md](design.md#drivers-and-dma), "Deadlines in
+state"). Each deadline lives in the variant it guards, so leaving the
+state drops it, and the edge alone reads the clock and keeps one timer:
+
+```erlang
+-type slot() :: idle | {wait, Deadline :: integer()} | {sent, Request :: term(), Deadline :: integer()}.
+
+step(Input, Now, Core) -> ...           % a new deadline is Now plus its timeout
+
+next_deadline(#core{slot = idle}) -> infinity;
+next_deadline(#core{slot = {wait, Deadline}}) -> Deadline;
+next_deadline(#core{slot = {sent, _Request, Deadline}}) -> Deadline.
+
+%% The edge: the timer's message is only a hint to step with the time.
+handle_info(wake, S) -> settle(step(expired, now(), S)).
+```
+
+`expired` runs every deadline at or before the time it is given and
+changes nothing otherwise. An explorer of such a core keeps the clock in
+its world: the clock starts at 0 and moves only to the core's
+`next_deadline/1`, by stepping `expired` there, and every other input
+steps at the clock. At each state it checks that `expired` just before
+the deadline returns the state unchanged with no actions, and that
+`expired` at the deadline stops the core or changes it. Since no time
+passes between other inputs, a deadline restarted at the clock equals one
+kept, so each input that must keep the deadline is stepped once more a
+millisecond later, where only a kept deadline stays the same. Each deadline is
+the clock at arming plus a fixed timeout, so the states stay finite when
+only finitely many deadlines can pass without ending the run; the
+explorer states that bound and asserts it, and a case covers a late
+wake-up.
+
 ## C
 
 ### Layout and whitespace

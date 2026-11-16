@@ -78,6 +78,12 @@ class AbiPackedTest < Minitest::Test
     elements tlv packed_be tlv_tag u16
       element word once tlv_word
       element text once bytes 0 8
+    enum kd_tag u8
+      value data 1
+      value pad 221
+    elements kd packed_le kd_tag u8 end pad
+      element data many bytes 0 255
+      element pad many bytes 1 255
   ABI
 
   def schema(body)
@@ -214,7 +220,10 @@ class AbiPackedTest < Minitest::Test
       'a body of another byte order' => ['element word once tlv_word', 'element word once ie_part', /not a layout of storage/],
       'a body its length cannot count' => ['element vendor many bytes 1 255', 'element vendor many bytes 1 256', /outside 0..255/],
       'bounds out of order' => ['element name once bytes 0 4', 'element name once bytes 5 4', /minimum exceeds/],
-      'a malformed body' => ['element name once bytes 0 4', 'element name once range 0 4', /expected bytes MIN MAX/]
+      'a malformed body' => ['element name once bytes 0 4', 'element name once range 0 4', /expected bytes MIN MAX/],
+      'a malformed end marker' => ['u8 end pad', 'u8 until pad', /\[end MEMBER\]/],
+      'an end marker of no member' => ['end pad', 'end pads', /end marker pads is not a member of kd_tag/],
+      'an end marker that is also an empty element' => ['element pad many bytes 1 255', 'element pad many bytes 0 255', /at least one byte/]
     }.each do |label, (text, broken, message)|
       assert_includes ELEMENTS_SAMPLE, text, label
       assert_match message, refused(ELEMENTS_SAMPLE.sub(text, broken)), label
@@ -254,6 +263,12 @@ class AbiPackedTest < Minitest::Test
     [refused = Refused(fun() -> erx_abi_packed:encode_elements(ies, Bad) end)
      || Bad <- [[{name, <<>>}, {name, <<>>}], [{name, <<"abcde">>}], [{vendor, <<>>}],
                 [{other, <<>>}], [{part, \#{kind => 1}}], [not_a_pair]]],
+    {ok, [{data, <<"a">>}]} = erx_abi_packed:decode_elements(kd, <<1,1,"a", 221,0, 7,9>>),
+    {ok, [{data, <<"a">>}]} = erx_abi_packed:decode_elements(kd, <<1,1,"a", 221>>),
+    {ok, [{pad, <<"p">>}, {data, <<>>}]} = erx_abi_packed:decode_elements(kd, <<221,1,"p", 1,0, 221,0,0>>),
+    {error, truncated} = erx_abi_packed:decode_elements(kd, <<1,1,"a", 0>>),
+    <<221,1,"p", 1,0>> = erx_abi_packed:encode_elements(kd, [{pad, <<"p">>}, {data, <<>>}]),
+    refused = Refused(fun() -> erx_abi_packed:encode_elements(kd, [{pad, <<>>}]) end),
     io:format("elements ok~n"), halt(0).
   ERLANG
 
@@ -270,6 +285,16 @@ class AbiPackedTest < Minitest::Test
     fault = ['when Length =< byte_size(Rest) ->', 'when Length =< byte_size(Rest) + 1 ->']
     output, status = run_generated(schema(ELEMENTS_SAMPLE), ELEMENTS_EXPRESSION, fault: fault)
     refute status.success?, output
+  end
+
+  # The end marker's two clauses, each seeded away: a length-zero header read as an
+  # element, and a lone trailing tag read as a truncated header.
+  def test_the_element_expression_catches_a_missing_end_marker
+    [["header(kd, <<221:8, 0:8, _/binary>>) ->", "header(kd, <<221:8, 1:8, _/binary>>) ->"],
+     ["header(kd, <<221:8>>) ->", "header(kd, <<222:8>>) ->"]].each do |fault|
+      output, status = run_generated(schema(ELEMENTS_SAMPLE), ELEMENTS_EXPRESSION, fault: fault)
+      refute status.success?, output
+    end
   end
 
   def test_the_big_endian_expression_catches_a_flipped_byte_order

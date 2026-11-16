@@ -53,8 +53,8 @@ module Erx
     # whole run; stdlib's suites fill about 97 MiB of /tmp, past its 4 MiB cap. The
     # archive, which carries a group's suites, their data and stock's applications,
     # is 55 MB for the compiler group, past the 48 MiB the development layout leaves
-    # bootstrap for it. A 2 GiB machine, whose Fiasco keeps about 123 MiB for kernel
-    # memory where the development machine's keeps 10 MiB, gives the system domain
+    # bootstrap for it. A 2 GiB machine, whose Fiasco keeps 124 MiB for kernel
+    # memory where the development machine's keeps 32 MiB (Platform.fiasco_reserve), gives the system domain
     # 1 GiB more and /tmp a 160 MiB cap; nothing else of the manifest changes, and
     # that 1 GiB also holds the 256 MiB cap of Common Test's log tree
     # (OracleSuites::ERXOS_LOG_CAP) beside /tmp's. The manifest's arithmetic would
@@ -62,7 +62,7 @@ module Erx
     # 187 MiB, since QEMU puts the device tree at 128 MiB or, for a longer file, at the
     # next 2 MiB boundary behind it (docs/design-platforms.md, "Boot").
     def self.machine(platform)
-      ProductionImage::Machine.development(platform).with(memory_mib: 2048, fiasco_reserve_mib: 160, system_growth_mib: 1024,
+      ProductionImage::Machine.development(platform).with(memory_mib: 2048, system_growth_mib: 1024,
                                                           tmp_growth_mib: 156, root_mib: 192)
     end
     MAX_SERIAL_BYTES = 256 * 1024 * 1024

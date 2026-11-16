@@ -20,7 +20,8 @@ require_relative '../../tools/lib/erx/screen_reference'
 # show another label.
 class ErxUiHostTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
-  APPLICATIONS = %w[erx erx_memdraw erx_win erx_ui].freeze
+  # The application an app's test starts; ErlangBuild adds what it depends on.
+  APPLICATIONS = %w[erx_ui].freeze
   HOST = 'sdk/erx_ui_host.erl'
   TESTS = [HOST, 'test/erlang/erx_ui_host_check.erl'].freeze
   REFERENCES = File.join(ROOT, 'test/display/reference')
@@ -60,12 +61,12 @@ class ErxUiHostTest < Minitest::Test
 
   private
 
-  # The applications and the check, compiled, with each application's file,
-  # since erx_ui_host starts erx_ui, and so erx_win and erx_memdraw, as an app's
-  # test starts it.
+  # The applications and the check, compiled, with the file of each application
+  # compiled, since erx_ui_host starts erx_ui and so everything it depends on, as an
+  # app's test starts it.
   def compile(work, replaced: {})
     ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
-    APPLICATIONS.each do |application|
+    ErlangBuild.with_dependencies(APPLICATIONS).each do |application|
       File.write(File.join(work, "#{application}.app"), Erx::ErlangApps.read_sources(root: ROOT, application: application).resource)
     end
   end

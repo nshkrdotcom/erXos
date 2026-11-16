@@ -23,7 +23,10 @@ hello() -> in({hello, erx_web_proto:hash()}).
 
 %% Feeds INPUTS in turn and returns the actions of the last and the state.
 run(Inputs, State) ->
-    lists:foldl(fun(Input, {_Actions, Now}) -> erx_web_conn:step(Input, Now) end, {[], State}, Inputs).
+    lists:foldl(fun(Input, {_Actions, Now}) ->
+                        {Next, Actions} = erx_web_conn:step(Input, Now),
+                        {Actions, Next}
+                end, {[], State}, Inputs).
 
 greeted() -> element(2, run([hello()], conn())).
 
@@ -46,48 +49,48 @@ record(Text) ->
 
 anything_before_hello_closes_with_bye_protocol_test() ->
     Early = [in({open, 1, uis}), in({next, 1}), in({close, 1}), {in, <<255>>}, {text, <<"hello">>}],
-    [?assertEqual(bye(protocol), readable(element(1, erx_web_conn:step(Input, conn())))) || Input <- Early],
-    ?assertEqual(bye(mismatch), readable(element(1, erx_web_conn:step(in({hello, <<0:256>>}), conn())))),
+    [?assertEqual(bye(protocol), readable(element(2, erx_web_conn:step(Input, conn())))) || Input <- Early],
+    ?assertEqual(bye(mismatch), readable(element(2, erx_web_conn:step(in({hello, <<0:256>>}), conn())))),
     ?assertEqual([{send, {welcome, <<"alice">>, <<"build-1">>}}],
-                 readable(element(1, erx_web_conn:step(hello(), conn())))).
+                 readable(element(2, erx_web_conn:step(hello(), conn())))).
 
 the_seventeenth_view_is_busy_and_uses_its_number_test() ->
     {_, Sixteen} = run([in({open, View, uis}) || View <- lists:seq(1, 16)], greeted()),
-    {Busy, Full} = erx_web_conn:step(in({open, 17, uis}), Sixteen),
+    {Full, Busy} = erx_web_conn:step(in({open, 17, uis}), Sixteen),
     ?assertEqual([{send, {ended, 17, <<"busy">>}}], readable(Busy)),
-    ?assertEqual({[], Full}, erx_web_conn:step(in({next, 17}), Full)),
-    ?assertEqual(bye(protocol), readable(element(1, erx_web_conn:step(in({open, 17, uis}), Full)))).
+    ?assertEqual({Full, []}, erx_web_conn:step(in({next, 17}), Full)),
+    ?assertEqual(bye(protocol), readable(element(2, erx_web_conn:step(in({open, 17, uis}), Full)))).
 
 a_reused_or_lower_view_number_closes_with_bye_protocol_test() ->
     {_, Closed} = run([in({open, 5, uis}), in({close, 5})], greeted()),
-    ?assertEqual(bye(protocol), readable(element(1, erx_web_conn:step(in({open, 5, uis}), Closed)))),
-    ?assertEqual(bye(protocol), readable(element(1, erx_web_conn:step(in({open, 3, uis}), Closed)))).
+    ?assertEqual(bye(protocol), readable(element(2, erx_web_conn:step(in({open, 5, uis}), Closed)))),
+    ?assertEqual(bye(protocol), readable(element(2, erx_web_conn:step(in({open, 3, uis}), Closed)))).
 
 a_second_next_before_its_answer_closes_with_bye_protocol_test() ->
     {_, Asked} = run([in({open, 1, uis}), {opened, 1, pid(101)}, {update, 1, {uis, []}}, in({next, 1})], greeted()),
-    ?assertEqual([{stop, pid(101)} | bye(protocol)], readable(element(1, erx_web_conn:step(in({next, 1}), Asked)))),
+    ?assertEqual([{stop_view, pid(101)} | bye(protocol)], readable(element(2, erx_web_conn:step(in({next, 1}), Asked)))),
     %% The open asks for the first update, so a next before it is a second request too.
     {_, Opening} = run([in({open, 1, uis})], greeted()),
-    ?assertEqual(bye(protocol), readable(element(1, erx_web_conn:step(in({next, 1}), Opening)))).
+    ?assertEqual(bye(protocol), readable(element(2, erx_web_conn:step(in({next, 1}), Opening)))).
 
 the_last_view_number_closes_with_bye_limit_before_the_wrap_test() ->
     {Opened, Below} = run([in({open, ?LAST_VIEW - 1, uis})], greeted()),
     ?assertEqual([{open, ?LAST_VIEW - 1, uis}], Opened),
-    ?assertEqual(bye(limit), readable(element(1, erx_web_conn:step(in({open, ?LAST_VIEW, uis}), Below)))).
+    ?assertEqual(bye(limit), readable(element(2, erx_web_conn:step(in({open, ?LAST_VIEW, uis}), Below)))).
 
 %% Too large as a whole, one text over its own bound, and a list over its
 %% count all end the view too_large.
 a_record_over_one_message_ends_its_view_too_large_test() ->
     {_, Open} = run([in({open, 1, {path, [<<"a">>]}}), {opened, 1, pid(101)}], greeted()),
     Many = {entries, lists:duplicate(1001, {gap, 1})},
-    [?assertEqual([{stop, pid(101)}, {send, {ended, 1, <<"too_large">>}}],
-                  readable(element(1, erx_web_conn:step({update, 1, Body}, Open))))
+    [?assertEqual([{stop_view, pid(101)}, {send, {ended, 1, <<"too_large">>}}],
+                  readable(element(2, erx_web_conn:step({update, 1, Body}, Open))))
      || Body <- [record(binary:copy(<<"x">>, 65536)), record(binary:copy(<<"x">>, 70000)), Many]].
 
 a_reason_that_is_no_name_is_sent_as_closed_test() ->
     {_, Open} = run([in({open, 1, uis}), {opened, 1, pid(101)}], greeted()),
-    {Actions, _} = erx_web_conn:step({ended, 1, {shutdown, x}}, Open),
-    ?assertEqual([{stop, pid(101)}, {send, {ended, 1, <<"closed">>}}], readable(Actions)).
+    {_, Actions} = erx_web_conn:step({ended, 1, {shutdown, x}}, Open),
+    ?assertEqual([{stop_view, pid(101)}, {send, {ended, 1, <<"closed">>}}], readable(Actions)).
 
 %% Pull sampling: a view that answers 100 times while the browser is
 %% paused has one of them sent, and the connection keeps none of the rest;
@@ -95,16 +98,16 @@ a_reason_that_is_no_name_is_sent_as_closed_test() ->
 a_paused_browser_is_sent_one_update_and_the_core_keeps_none_test() ->
     Big = binary:copy(<<"x">>, 30000),
     {_, Open} = run([in({open, 1, {path, [<<"a">>]}}), {opened, 1, pid(101)}], greeted()),
-    {First, Answered} = erx_web_conn:step({update, 1, record(<<"change 1">>)}, Open),
+    {Answered, First} = erx_web_conn:step({update, 1, record(<<"change 1">>)}, Open),
     ?assertEqual([{send, {update, 1, record(<<"change 1">>)}}], readable(First)),
     Changes = [{update, 1, record(<<Big/binary, (integer_to_binary(N))/binary>>)} || N <- lists:seq(2, 100)],
     {Dropped, Paused} = run(Changes, Answered),
     ?assertEqual([], Dropped),
     ?assertEqual(Answered, Paused),
     ?assert(byte_size(term_to_binary(Paused)) < 1024),
-    {Next, Asked} = erx_web_conn:step(in({next, 1}), Paused),
-    ?assertEqual([{next, pid(101)}], Next),
-    {Last, _} = erx_web_conn:step({update, 1, record(<<"change 100">>)}, Asked),
+    {Asked, Pull} = erx_web_conn:step(in({next, 1}), Paused),
+    ?assertEqual([{next, pid(101)}], Pull),
+    {_, Last} = erx_web_conn:step({update, 1, record(<<"change 100">>)}, Asked),
     ?assertEqual([{send, {update, 1, record(<<"change 100">>)}}], readable(Last)).
 
 %% Every input sequence from a small alphabet, explored breadth first over
@@ -154,7 +157,7 @@ applies({opened, View, _Pid}, #model{reported = Reported}) -> not lists:member(V
 applies(_Input, _Model) -> true.
 
 checked_step(Input, Core, Model) ->
-    {Actions, Next} = erx_web_conn:step(Input, Core),
+    {Next, Actions} = erx_web_conn:step(Input, Core),
     try check(Input, readable(Actions), Model) of
         #model{} = Checked -> {Next, Checked}
     catch
@@ -162,7 +165,7 @@ checked_step(Input, Core, Model) ->
     end.
 
 check(_Input, Actions, #model{closed = true} = Model) ->
-    [throw(after_close) || Action <- Actions, element(1, Action) =/= stop],
+    [throw(after_close) || Action <- Actions, element(1, Action) =/= stop_view],
     after_actions(Actions, Model);
 check(Input, Actions, #model{hello = false} = Model) ->
     case {Input =:= hello(), Actions} of
@@ -184,7 +187,7 @@ before_hello(Input, Actions, Model) ->
                        end;
                    {text, _} -> bye(protocol);
                    tick -> [{close, idle}];
-                   {opened, _, Pid} -> [{stop, Pid}];
+                   {opened, _, Pid} -> [{stop_view, Pid}];
                    _ -> []
                end,
     Expected =:= Actions orelse throw({before_hello, Expected}),
@@ -252,7 +255,7 @@ action({next, Pid}, Model) ->
 action({event, Pid, _}, #model{ui = Ui} = Model) ->
     lists:member(live_view(Pid, Model), Ui) orelse throw({event_to_no_ui, Pid}),
     Model;
-action({stop, Pid}, #model{live = Live} = Model) ->
+action({stop_view, Pid}, #model{live = Live} = Model) ->
     Model#model{live = maps:remove(Pid, Live)};
 action(Action, _Model) ->
     throw({unexpected, Action}).

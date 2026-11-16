@@ -56,7 +56,7 @@ class SdkTest < Minitest::Test
 
   def test_the_boundary_refuses_an_erxos_function_of_a_stock_module
     seeded = File.read(PROBE).sub('erx_ui:close(Window)', 'prim_file:erx_mounts()')
-    assert_equal '[{{erx_sdk_probe,run,1},{prim_file,erx_mounts,0}}]', outside(seeded)
+    assert_equal '{[{{erx_sdk_probe,run,1},{prim_file,erx_mounts,0}}],[]}', outside(seeded)
   end
 
   def test_the_applications_are_the_public_modules_and_their_erxos_dependencies
@@ -99,17 +99,24 @@ class SdkTest < Minitest::Test
   end
 
   def test_an_app_that_keeps_to_the_sdk_passes_the_boundary
-    assert_equal '[]', outside(File.read(PROBE))
+    assert_equal '{[],[]}', outside(File.read(PROBE))
   end
 
   def test_the_boundary_refuses_a_function_of_a_public_module_that_is_not_public
     seeded = File.read(PROBE).sub('erx_ui:open(Options)', 'erx_ui:start(Options)')
-    assert_equal '[{{erx_sdk_probe,run,1},{erx_ui,start,1}}]', outside(seeded)
+    assert_equal '{[{{erx_sdk_probe,run,1},{erx_ui,start,1}}],[]}', outside(seeded)
   end
 
   def test_the_boundary_refuses_a_module_the_sdk_does_not_carry
     seeded = File.read(PROBE).sub('erx_ui:close(Window)', 'erx_starter:packages(Window, [])')
-    assert_equal '[{{erx_sdk_probe,run,1},{erx_starter,packages,2}}]', outside(seeded)
+    assert_equal '{[{{erx_sdk_probe,run,1},{erx_starter,packages,2}}],[]}', outside(seeded)
+  end
+
+  # A call through a variable module could reach any function, so the check answers it
+  # apart, and an app that keeps to the SDK makes none.
+  def test_the_boundary_answers_a_call_through_a_variable_module
+    seeded = File.read(PROBE).sub('erx_ui:close(Window)', '(maps:get(ui, Options)):close(Window)')
+    assert_equal "{[],[{{erx_sdk_probe,run,1},{'$M_EXPR',close,1}}]}", outside(seeded)
   end
 
   def test_no_list_names_an_example

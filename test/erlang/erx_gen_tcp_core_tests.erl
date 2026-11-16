@@ -409,7 +409,7 @@ listener_down() ->
     {C3, A3} = step(socket_down, C2),
     ?assertEqual([{request, 2, close}, {reply, f1, {error, closed}}, {reply, f2, {error, closed}},
                   {discard, sp1}, {discard, sp2}], A3),
-    ?assertEqual([{reply, f3, ok}, stop], element(2, call(f3, close, C3))).
+    ?assertEqual([{reply, f3, ok}, {stop, normal}], element(2, call(f3, close, C3))).
 
 listener_enotconn() ->
     C = listener(#{}),

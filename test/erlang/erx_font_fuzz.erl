@@ -122,18 +122,19 @@ loads(Subfont, Bytes, Admit) ->
                                      quota => #{pixels => 64 * 1024 * 1024, side => 1 bsl 20}}),
     [Alloc | Rest] = Messages = erx_font:load(Subfont, 1),
     lists:foreach(fun(Message) -> encodes(Message, Bytes) end, Messages),
+    %% A refusal is a step's one action.
     case {erx_draw_core:step(Connection, Alloc), Admit} of
-        {{ok, Allocated, _}, _} ->
+        {{_, [{error, _}]}, may} ->
+            ok;
+        {{_, [{error, Errno}]}, must} ->
+            error({load_refused, Bytes, Alloc, Errno});
+        {{Allocated, _}, _} ->
             lists:foldl(fun(Message, State) ->
                                 case erx_draw_core:step(State, Message) of
-                                    {ok, Next, _} -> Next;
-                                    {error, Errno} -> error({load_refused, Bytes, Message, Errno})
+                                    {_, [{error, Errno}]} -> error({load_refused, Bytes, Message, Errno});
+                                    {Next, _} -> Next
                                 end
-                        end, Allocated, Rest);
-        {{error, _}, may} ->
-            ok;
-        {{error, Errno}, must} ->
-            error({load_refused, Bytes, Alloc, Errno})
+                        end, Allocated, Rest)
     end.
 
 encodes(Message, Bytes) ->

@@ -103,12 +103,12 @@ notices_name_the_program_test_() ->
                    erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {closed, 9, 1}}})),
      ?_assertEqual({C, [{forward, {drained, {program, ?PID}, 9, 1, 3}}]},
                    erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {drained, 9, 1, 3}}})),
-     ?_assertMatch({_, [{stop, ?REFUSED}]}, erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {closed, 0, 1}}}))].
+     ?_assertMatch({_, [{end_program, ?REFUSED}]}, erx_prog_handler_core:step(C, {frame, {erx_prog, 1, {closed, 0, 1}}}))].
 
 %% The handler keeps no child record and its program holds no signal
 %% right, so a program's kill and probe reach the program itself alone.
 kill_of_itself_with_sigkill_stops_it_and_answers_ok_test() ->
-    ?assertMatch({_, [{stop, ?KILLED}, ?ANSWER(3, ok)]},
+    ?assertMatch({_, [{end_program, ?KILLED}, ?ANSWER(3, ok)]},
                  erx_prog_handler_core:step(running(), ?ASK(3, {kill, ?PID, sigkill}))).
 
 kill_beyond_reach_is_esrch_test_() ->
@@ -136,7 +136,7 @@ kill_of_itself_with_another_signal_is_enosys_test() ->
 %% the program.
 session_sigkill_stops_the_program_test_() ->
     {C1, Stop} = erx_prog_handler_core:step(running(), {signal, sigkill}),
-    [?_assertEqual([{stop, ?ERX_EXIT_SIGNAL + 9}], Stop),
+    [?_assertEqual([{end_program, ?ERX_EXIT_SIGNAL + 9}], Stop),
      ?_assertMatch({_, []}, erx_prog_handler_core:step(C1, {signal, sigkill}))
      | [?_assertMatch({_, []}, erx_prog_handler_core:step(running(), {signal, Signal}))
         || Signal <- [sigint, sigterm, sigchld, sigtstp, nosuch]]].
@@ -294,7 +294,7 @@ data_slot_past_the_program_slots_is_einval_test_() ->
 %% A kill reaches the program while a file request waits.
 kill_while_a_file_request_waits_test() ->
     {C1, _} = erx_prog_handler_core:step(running(), ?ASK(7, {file, lopen, <<"x">>, 0})),
-    ?assertMatch({_, [{stop, ?KILLED}, ?ANSWER(3, ok)]},
+    ?assertMatch({_, [{end_program, ?KILLED}, ?ANSWER(3, ok)]},
                  erx_prog_handler_core:step(C1, ?ASK(3, {kill, ?PID, sigkill}))).
 
 %% Narrowing: each path an entry of its own, rooted where the path lies on
@@ -481,19 +481,19 @@ replies_queue_behind_the_frame_out_test() ->
 %% A frame the program's grammar refuses stops the program, as the driver
 %% stops one for a malformed record, and the handler goes on.
 refused_frames_stop_the_program_test_() ->
-    [?_assertMatch({_, [{stop, ?REFUSED}]}, erx_prog_handler_core:step(running(), {frame, Frame}))
+    [?_assertMatch({_, [{end_program, ?REFUSED}]}, erx_prog_handler_core:step(running(), {frame, Frame}))
      || Frame <- [{erx_prog, 1, 0, anything}, {erx_prog, 1, 0, {kill, ?PID, 0}},
                   {erx_prog, 1, 0, {kill, 1, sigterm}}, {erx_prog, 1, 16, {probe, ?PID}},
                   {erx_prog, 2, 0, {probe, ?PID}}, {erx_prog, 1, 0, {probe, ?PID, extra}},
                   {erx_prog, 1, {closed, 9}}, {erx_start, 1, #{}}, <<"bytes">>, [], self()]].
 
 refused_frames_after_a_stop_ask_nothing_more_test() ->
-    {C1, [{stop, ?REFUSED}]} = erx_prog_handler_core:step(running(), {frame, {erx_prog, 1, 0, nope}}),
+    {C1, [{end_program, ?REFUSED}]} = erx_prog_handler_core:step(running(), {frame, {erx_prog, 1, 0, nope}}),
     ?assertMatch({_, []}, erx_prog_handler_core:step(C1, {frame, {erx_prog, 1, 0, nope}})),
     ?assertMatch({_, []}, erx_prog_handler_core:step(C1, stop)).
 
 stop_once_then_exit_test() ->
-    {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
+    {C1, [{end_program, 265}]} = erx_prog_handler_core:step(running(), stop),
     {C2, []} = erx_prog_handler_core:step(C1, stop),
     {C3, []} = erx_prog_handler_core:step(C2, {exit_status, 265}),
     ?assertEqual({ended, {shutdown, {program_exit, {signaled, sigkill}}}}, erx_prog_handler_core:phase(C3)),
@@ -501,7 +501,7 @@ stop_once_then_exit_test() ->
 
 %% A program that exited before the stop reached it keeps its own status.
 a_stop_behind_an_exit_keeps_its_status_test() ->
-    {C1, [{stop, 265}]} = erx_prog_handler_core:step(running(), stop),
+    {C1, [{end_program, 265}]} = erx_prog_handler_core:step(running(), stop),
     {C2, []} = erx_prog_handler_core:step(C1, {exit_status, 3}),
     ?assertEqual({ended, {shutdown, {program_exit, {exited, 3}}}}, erx_prog_handler_core:phase(C2)).
 
@@ -513,7 +513,7 @@ refused_send_stops_the_program_test() ->
     {C1, [{send, _}]} = erx_prog_handler_core:step(running(), {report, {pipe_lost, 9, 1}}),
     {C2, []} = erx_prog_handler_core:step(C1, {report, {pipe_lost, 9, 2}}),
     {C3, Actions} = erx_prog_handler_core:step(C2, {sent, {error, enomem}}),
-    ?assertEqual([{stop, 265}], Actions),
+    ?assertEqual([{end_program, 265}], Actions),
     %% Nothing queued behind the lost frame reaches the program.
     ?assertEqual({C3, []}, erx_prog_handler_core:step(C3, room)),
     %% Nor does a report that arrives after it, while the stop takes effect.

@@ -93,7 +93,8 @@ reachable() -> reachable([new(?SMALL_QUOTA)], #{}).
 reachable([], Seen) -> maps:keys(Seen);
 reachable([State | States], Seen) when is_map_key(State, Seen) -> reachable(States, Seen);
 reachable([State | States], Seen) ->
-    Next = [N || Msg <- changes(), {ok, N, _} <- [erx_draw_core:step(State, Msg)]],
+    %% A refusal steps to State itself, which this marks seen.
+    Next = [N || Msg <- changes(), {N, _Actions} <- [erx_draw_core:step(State, Msg)]],
     reachable(Next ++ States, Seen#{State => true}).
 
 exploration_test_() ->
@@ -113,14 +114,25 @@ explore(State, Msg) ->
     Name = name(Msg),
     Expected = expected_errno(State, Msg),
     case erx_draw_core:step(State, Msg) of
-        {error, Errno} ->
-            ?assertEqual({Msg, Expected}, {Msg, Errno}),
+        {Same, [{error, Errno}]} ->
+            ?assertEqual({Msg, Expected, State}, {Msg, Errno, Same}),
             {Name, Errno};
-        {ok, Next, Ops} ->
+        Stepped ->
             ?assertEqual({Msg, Expected}, {Msg, ok}),
+            {Next, Ops} = going(Stepped),
             check_invariants(State, Msg, Next, Ops),
             {Name, ok}
     end.
+
+%% The cases' step and plan, which go on: an error or a stop among the
+%% actions fails the case. A case that expects a refusal calls the core.
+step(State, Msg) -> going(erx_draw_core:step(State, Msg)).
+
+plan(State, Bytes) -> going(erx_draw_core:plan(State, Bytes)).
+
+going({_State, Actions} = Result) ->
+    ?assertEqual([], [Action || Action <- Actions, is_tuple(Action), lists:member(element(1, Action), [error, stop])]),
+    Result.
 
 name(Msg) when is_atom(Msg) -> Msg;
 name(Msg) -> element(1, Msg).
@@ -262,16 +274,16 @@ depth(_) -> 0.
 %% side of 16,384 reaches, and pixels charged over several pages.
 large_quota_test() ->
     State = new(#{pixels => 64 * 1024 * 1024, side => 16384}),
-    ?assertEqual({error, einval}, erx_draw_core:step(State, alloc(1, ?K8, {0, 0, 16384, 16384}))),
+    ?assertEqual({State, [{error, einval}]}, erx_draw_core:step(State, alloc(1, ?K8, {0, 0, 16384, 16384}))),
     %% 8,192 by 8,191 bytes is 16,382 pages, two short of the quota.
-    {ok, Big, _} = erx_draw_core:step(State, alloc(1, ?K8, {0, 0, 8192, 8191})),
+    {Big, _} = step(State, alloc(1, ?K8, {0, 0, 8192, 8191})),
     ?assertEqual(8192 * 8191, maps:get(bytes, Big)),
-    {ok, Full, _} = erx_draw_core:step(Big, alloc(2, ?K8, {0, 0, 8192, 1})),
+    {Full, _} = step(Big, alloc(2, ?K8, {0, 0, 8192, 1})),
     ?assertEqual(64 * 1024 * 1024, maps:get(bytes, Full)),
-    {ok, Odd, _} = erx_draw_core:step(State, alloc(1, ?ARGB32, {0, 0, 33, 33})),
+    {Odd, _} = step(State, alloc(1, ?ARGB32, {0, 0, 33, 33})),
     ?assertEqual(2 * ?PAGE, maps:get(bytes, Odd)),
-    ?assertEqual({error, enomem}, erx_draw_core:step(Big, alloc(2, ?K8, {0, 0, 8193, 1}))),
-    {ok, Freed, [{free, 1}]} = erx_draw_core:step(Big, {free, 1}),
+    ?assertEqual({Big, [{error, enomem}]}, erx_draw_core:step(Big, alloc(2, ?K8, {0, 0, 8193, 1}))),
+    {Freed, [{free, 1}]} = step(Big, {free, 1}),
     ?assertEqual(0, maps:get(bytes, Freed)).
 
 alloc(Id, Chan, R) -> {alloc, Id, 0, 0, Chan, 0, R, R, 0}.
@@ -279,28 +291,28 @@ alloc(Id, Chan, R) -> {alloc, Id, 0, 0, Chan, 0, R, R, 0}.
 %% A b's clip rectangle as devdraw sets it, and c's sticky replicate bit.
 clip_test() ->
     State = new(?SMALL_QUOTA),
-    {ok, _, [{alloc, 1, _, _, {1, 1, 4, 4}, false, _}]} =
-        erx_draw_core:step(State, {alloc, 1, 0, 0, ?K8, 0, {0, 0, 4, 4}, {1, 1, 9, 9}, 0}),
-    {ok, _, [{alloc, 1, _, _, {5, 5, 6, 6}, false, _}]} =
-        erx_draw_core:step(State, {alloc, 1, 0, 0, ?K8, 0, {0, 0, 4, 4}, {5, 5, 6, 6}, 0}),
-    {ok, Repl, [{alloc, 1, _, _, {1, 1, 9, 9}, true, _}]} =
-        erx_draw_core:step(State, {alloc, 1, 0, 0, ?K8, 1, {0, 0, 4, 4}, {1, 1, 9, 9}, 0}),
-    ?assertMatch({ok, _, [{clip, 1, true, {0, 0, 1, 1}}]}, erx_draw_core:step(Repl, {clip, 1, 0, {0, 0, 1, 1}})).
+    {_, [{alloc, 1, _, _, {1, 1, 4, 4}, false, _}]} =
+        step(State, {alloc, 1, 0, 0, ?K8, 0, {0, 0, 4, 4}, {1, 1, 9, 9}, 0}),
+    {_, [{alloc, 1, _, _, {5, 5, 6, 6}, false, _}]} =
+        step(State, {alloc, 1, 0, 0, ?K8, 0, {0, 0, 4, 4}, {5, 5, 6, 6}, 0}),
+    {Repl, [{alloc, 1, _, _, {1, 1, 9, 9}, true, _}]} =
+        step(State, {alloc, 1, 0, 0, ?K8, 1, {0, 0, 4, 4}, {1, 1, 9, 9}, 0}),
+    ?assertMatch({_, [{clip, 1, true, {0, 0, 1, 1}}]}, step(Repl, {clip, 1, 0, {0, 0, 1, 1}})).
 
 %% An arc as alpha's high bits say; a string as the draws of its glyphs.
 shapes_and_strings_test() ->
     State = new(#{pixels => 16 * ?PAGE, side => 64}),
     E = fun(Kind, Alpha) -> {Kind, 0, 0, {1, 1}, 2, 1, 1, {0, 0}, Alpha, 90} end,
-    ?assertMatch({ok, _, [{ellipse, 0, 0, {1, 1}, 2, 1, 1, {0, 0}, ?SOVERD}]},
-                 erx_draw_core:step(State, E(ellipse, 5))),
-    ?assertMatch({ok, _, [{arc, 0, 0, _, 2, 1, 1, _, 5, 90, _}]}, erx_draw_core:step(State, E(ellipse, 16#80000005))),
-    ?assertMatch({ok, _, [{fill_arc, 0, 0, _, 2, 1, _, -16#40000000, 90, _}]},
-                 erx_draw_core:step(State, E(fill_ellipse, 16#c0000000))),
+    ?assertMatch({_, [{ellipse, 0, 0, {1, 1}, 2, 1, 1, {0, 0}, ?SOVERD}]},
+                 step(State, E(ellipse, 5))),
+    ?assertMatch({_, [{arc, 0, 0, _, 2, 1, 1, _, 5, 90, _}]}, step(State, E(ellipse, 16#80000005))),
+    ?assertMatch({_, [{fill_arc, 0, 0, _, 2, 1, _, -16#40000000, 90, _}]},
+                 step(State, E(fill_ellipse, 16#c0000000))),
     Write = << <<(erx_draw_codec:encode(M))/binary>>
                || M <- [{alloc, 1, 0, 0, ?K8, 0, {0, 0, 8, 10}, {0, 0, 8, 10}, 0}, {font, 1, 2, 7},
                         {glyph, 1, 0, 1, {2, 1, 5, 9}, {3, 3}, 255, 4}, {op, 3},
                         {string_bg, 0, 0, 1, {10, 20}, {0, 0, 4, 4}, {6, 6}, 0, {1, 2}, [1, 1]}] >>,
-    {ok, _, Ops} = erx_draw_core:plan(State, Write),
+    {_, Ops} = plan(State, Write),
     ?assertEqual([{alloc, 1, ?K8, {0, 0, 8, 10}, {0, 0, 8, 10}, false, 0},
                   {draw, 1, {2, 1, 5, 9}, 0, {3, 3}, opaque, {3, 3}, 10, dst},
                   {draw, 0, {10, 13, 18, 23}, 0, {1, 2}, opaque, {0, 0}, 3, {0, 0, 4, 4}},
@@ -320,15 +332,15 @@ plan_case(Chan, Depth) ->
     Pixels = binary:copy(<<16#a5>>, erx_draw_image:bytes_per_line(R, Depth) * 2),
     B = erx_draw_codec:encode({alloc, 1, 0, 0, Chan, 0, R, R, 0}),
     Y = erx_draw_codec:encode({load, 1, R, Pixels}),
-    {ok, Planned, [{alloc, 1, Chan, R, R, false, 0}, {load, 1, R, Pixels}]} =
-        erx_draw_core:plan(State, <<B/binary, Y/binary>>),
+    {Planned, [{alloc, 1, Chan, R, R, false, 0}, {load, 1, R, Pixels}]} =
+        plan(State, <<B/binary, Y/binary>>),
     ?assertEqual(pages(byte_size(Pixels)), maps:get(bytes, Planned)),
     F = erx_draw_codec:encode({free, 1}),
-    ?assertEqual({error, enoent, byte_size(B) + byte_size(F)},
+    ?assertEqual({State, [{error, enoent, byte_size(B) + byte_size(F)}]},
                  erx_draw_core:plan(State, <<B/binary, F/binary, Y/binary>>)),
     Window = binary:copy(<<1>>, 4 * 4 * 4),
-    {ok, _, [{load, 0, ?WINDOW, Window}]} =
-        erx_draw_core:plan(State, erx_draw_codec:encode({load, 0, ?WINDOW, Window})).
+    {_, [{load, 0, ?WINDOW, Window}]} =
+        plan(State, erx_draw_codec:encode({load, 0, ?WINDOW, Window})).
 
 %% A y cut across two writes fails the first at the y's offset, a write
 %% over the file protocol's payload fails whole, and no write that fails
@@ -338,11 +350,11 @@ plan_failures_test() ->
     V = erx_draw_codec:encode(flush),
     Y = erx_draw_codec:encode({load, 0, ?WINDOW, binary:copy(<<0>>, 64)}),
     Cut = binary:part(Y, 0, byte_size(Y) - 1),
-    ?assertEqual({error, einval, byte_size(V)}, erx_draw_core:plan(State, <<V/binary, Cut/binary>>)),
-    ?assertEqual({error, einval, 0}, erx_draw_core:plan(State, binary:copy(V, 65537))),
-    {ok, State, Flushes} = erx_draw_core:plan(State, binary:copy(V, 65536)),
+    ?assertEqual({State, [{error, einval, byte_size(V)}]}, erx_draw_core:plan(State, <<V/binary, Cut/binary>>)),
+    ?assertEqual({State, [{error, einval, 0}]}, erx_draw_core:plan(State, binary:copy(V, 65537))),
+    {State, Flushes} = plan(State, binary:copy(V, 65536)),
     ?assertEqual(65536, length(Flushes)),
-    ?assertEqual({ok, State, []}, erx_draw_core:plan(State, <<>>)).
+    ?assertEqual({State, []}, plan(State, <<>>)).
 
 %% An l keeps a glyph's rows to a byte each and its left as a signed byte,
 %% as devdraw's FChar does, and an s draws the glyph from those.
@@ -352,7 +364,7 @@ glyph_record_test() ->
                || M <- [{alloc, 1, 0, 0, ?K8, 0, {0, 0, 8, 10}, {0, 0, 8, 10}, 0}, {font, 1, 1, 7},
                         {glyph, 1, 0, 0, {0, -1, 2, 300}, {0, 0}, 200, 3},
                         {string, 0, 0, 1, {10, 20}, {0, 0, 4, 4}, {6, 6}, [0]}] >>,
-    {ok, _, [_Alloc, _Copy, Glyph]} = erx_draw_core:plan(State, Write),
+    {_, [_Alloc, _Copy, Glyph]} = plan(State, Write),
     %% Rows 255 and 44, left -56: the glyph's rectangle is inverted, which
     %% erx_memdraw draws as nothing.
     ?assertEqual({draw, 0, {-46, 268, -44, 57}, 0, {-50, 261}, 1, {0, 255}, ?SOVERD, {0, 0, 4, 4}}, Glyph).
@@ -363,7 +375,7 @@ last_read_test() ->
     State = new(?SMALL_QUOTA),
     Write = << <<(erx_draw_codec:encode(M))/binary>>
                || M <- [{read, 0, {0, 0, 4, 4}}, flush, {read, 0, {0, 0, 1, 1}}, {op, 0}] >>,
-    {ok, Planned, Ops} = erx_draw_core:plan(State, Write),
+    {Planned, Ops} = plan(State, Write),
     ?assertEqual({0, [flush, {read, 0, {0, 0, 1, 1}}]}, {maps:get(op, Planned), Ops}).
 
 %% The last read stays where the write put it: it reads the pixels as they
@@ -374,17 +386,17 @@ last_read_keeps_its_place_test() ->
     Write = << <<(erx_draw_codec:encode(M))/binary>>
                || M <- [{alloc, 1, 0, 0, 16#48081828, 0, R, R, 0}, {read, 1, R},
                         {draw, 1, 0, 0, R, {0, 0}, {0, 0}}, {free, 1}] >>,
-    {ok, _Planned, Ops} = erx_draw_core:plan(State, Write),
+    {_Planned, Ops} = plan(State, Write),
     ?assertMatch([{alloc, 1, _, _, _, _, _}, {read, 1, R}, {draw, 1, R, 0, _, 0, _, _, dst}, {free, 1}], Ops).
 
 %% A resized window's image 0 takes the new rectangle and keeps the
 %% client's images; a load inside the new rectangle passes.
 resize_test() ->
-    {ok, State, _} = erx_draw_core:step(new(?SMALL_QUOTA), alloc(1, ?K8, {0, 0, 2, 2})),
+    {State, _} = step(new(?SMALL_QUOTA), alloc(1, ?K8, {0, 0, 2, 2})),
     Load = {load, 0, {0, 0, 8, 8}, <<>>},
-    ?assertEqual({error, einval}, erx_draw_core:step(State, Load)),
+    ?assertEqual({State, [{error, einval}]}, erx_draw_core:step(State, Load)),
     Resized = erx_draw_core:resize(State, {0, 0, 8, 8}),
-    ?assertMatch({ok, _, [{load, 0, _, _}]}, erx_draw_core:step(Resized, Load)),
+    ?assertMatch({_, [{load, 0, _, _}]}, step(Resized, Load)),
     ?assertEqual(maps:get(1, maps:get(images, State)), maps:get(1, maps:get(images, Resized))).
 
 %% The fuzz target's connection plans: it holds one image at each depth.
@@ -398,7 +410,7 @@ prelude() ->
     Chans = [?K1, 16#32, 16#34, ?K8, 16#051625, 16#081828, ?ARGB32],
     Write = << <<(erx_draw_codec:encode({alloc, Id, 0, 0, Chan, 0, {-2, -2, 6, 6}, {0, 0, 4, 4}, 0}))/binary>>
                || {Id, Chan} <- lists:zip(lists:seq(1, 7), Chans) >>,
-    {ok, State, _} = erx_draw_core:plan(new(#{pixels => 64 * ?PAGE, side => 64}), Write),
+    {State, _} = plan(new(#{pixels => 64 * ?PAGE, side => 64}), Write),
     State.
 
 %% Within erx_memdraw's limits on a shape's points (erx_draw_core, SHAPE_COORD).
@@ -415,7 +427,7 @@ ctl_test_() ->
     Text = fun(Fields) -> iolist_to_binary(io_lib:format(lists:append(lists:duplicate(12, "~11s ")), Fields)) end,
     State = erx_draw_core:new(#{r => {0, 0, 640, 480}, chan => XRGB32,
                                 quota => #{pixels => 64 * ?PAGE, side => 640}}),
-    {ok, Clipped, _} = erx_draw_core:step(State, {clip, 0, 0, {-2147483648, 0, 1, 1}}),
+    {Clipped, _} = step(State, {clip, 0, 0, {-2147483648, 0, 1, 1}}),
     Resized = erx_draw_core:resize(Clipped, {0, 0, 800, 600}),
     [?_assertEqual(144, byte_size(erx_draw_core:ctl(State))),
      ?_assertEqual(Text(["0", "0", "x8r8g8b8", "0", "0", "0", "640", "480", "0", "0", "640", "480"]),

@@ -580,7 +580,7 @@ class ProductionImageTest < Minitest::Test
     source = frontend.render(frontend.read(Erx::ProductionImage.without_sessions(plain)))
     refute_equal plain, source, 'the development manifest has a session template'
     refute_match(/^session /, source)
-    machine = DEVELOPMENT.with(memory_mib: 2048, fiasco_reserve_mib: 160, system_growth_mib: 1024, tmp_growth_mib: 64, root_mib: 64)
+    machine = DEVELOPMENT.with(memory_mib: 2048, system_growth_mib: 1024, tmp_growth_mib: 64, root_mib: 64)
     grown = machine.manifest(plain)
     { 'root_memory' => 1024, 'system_baseline' => 1024, 'tmp' => 64 }.each do |field, growth|
       assert_equal manifest_number(source, field) + (growth << 20), manifest_number(grown, field)
@@ -589,15 +589,15 @@ class ProductionImageTest < Minitest::Test
     assert_equal %w[root_memory system_baseline tmp], changed.sort
     assert_equal source, DEVELOPMENT.manifest(plain)
     assert_equal PLATFORM.record, DEVELOPMENT.record, 'the development machine is the record'
-    assert_equal(PLATFORM.record.merge('ram_bytes' => 2048 << 20, 'fiasco_reserve' => 160 << 20),
+    assert_equal(PLATFORM.record.merge('ram_bytes' => 2048 << 20, 'fiasco_reserve' => 124 << 20),
                  machine.record)
-    wider = DEVELOPMENT.with(memory_mib: 2048, fiasco_reserve_mib: 160, system_growth_mib: 0, tmp_growth_mib: 64, root_mib: 64)
+    wider = DEVELOPMENT.with(memory_mib: 2048, system_growth_mib: 0, tmp_growth_mib: 64, root_mib: 64)
     assert_raises(Erx::Error) { wider.manifest(source) }
   end
 
   # A manifest without exactly one line of a grown field is refused, never left ungrown.
   def test_a_manifest_without_one_line_of_a_grown_field_is_refused
-    machine = DEVELOPMENT.with(memory_mib: 1024, fiasco_reserve_mib: 96, system_growth_mib: 256, tmp_growth_mib: 0, root_mib: 64)
+    machine = DEVELOPMENT.with(memory_mib: 1024, system_growth_mib: 256, tmp_growth_mib: 0, root_mib: 64)
     ["  root_memory 1\n  system_baseline 1\n", "  system_baseline 1\n  tmp 1\n", "  root_memory 1\n  tmp 1\n",
      "  root_memory 1\n  root_memory 2\n  system_baseline 1\n  tmp 1\n"].each do |source|
       assert_raises(Erx::Error) { machine.manifest(source) }
@@ -693,33 +693,18 @@ class ProductionImageTest < Minitest::Test
     assert_operator root_memory, :<, (machine.memory_mib - machine.fiasco_reserve_mib) << 20
   end
 
-  # Fiasco's kernel memory on this build (64-bit, CONFIG_KMEM_SIZE_AUTO, no -kmemsize):
-  # 6% of the free memory it counts, at most RAM, rounded up to its 2 MiB superpage
-  # (fiasco/kernel/src/kern/config.cpp, Config::kmem_size; arm/kmem_alloc-arm.cpp,
-  # Kmem_alloc::Kmem_alloc, which passes SUPERPAGE_SIZE and takes the top of the highest
-  # free region). A model of Fiasco's rule, not an oracle: the hand-kept fiasco_reserve
-  # figures of the development and site machines are held to it below.
-  FIASCO_KMEM_PER_CENT = 6
-  FIASCO_SUPERPAGE = 2 << 20
-
-  def fiasco_kmem_bound(memory_mib)
-    kmem = (memory_mib << 20) / 100 * FIASCO_KMEM_PER_CENT
-    (kmem + FIASCO_SUPERPAGE - 1) / FIASCO_SUPERPAGE * FIASCO_SUPERPAGE
-  end
-
   # The refusal boot proves root_memory_fits, which the root reaches only once it holds the
   # contiguous pool: one run, aligned to its own size, of up to CONTIGUOUS_POOL_MAX_BYTES.
   # The run is sought only above the root's room: below it lie the archive, which a refusal
-  # image keeps short of the root, and the device tree. Fiasco's kernel memory takes the top of RAM,
-  # so the run must fit between the two. A machine without such a run refuses the boot at
+  # image keeps short of the root, and the device tree. Fiasco's kernel memory
+  # (Platform.fiasco_reserve) takes the top of the highest free region, the top of RAM
+  # (fiasco/kernel/src/kern/arm/kmem_alloc-arm.cpp, Kmem_alloc::Kmem_alloc), so the run
+  # must fit between the two. A machine without such a run refuses the boot at
   # the pool, and the root_memory refusal never shows.
   def test_the_refusal_machine_leaves_the_largest_contiguous_pool_its_run
-    assert_equal DEVELOPMENT.fiasco_reserve_mib << 20, fiasco_kmem_bound(DEVELOPMENT.memory_mib)
-    site = Erx::ProductionImage::Machine.site(PLATFORM)
-    assert_equal site.fiasco_reserve_mib << 20, fiasco_kmem_bound(site.memory_mib)
     pool = Erx::Manifest::RootStartup::CONTIGUOUS_POOL_MAX_BYTES
     memory_mib = Erx::ProductionImage::TOO_LITTLE_MEMORY_MIB
-    kmem_start = PLATFORM.ram_first + (memory_mib << 20) - fiasco_kmem_bound(memory_mib)
+    kmem_start = PLATFORM.ram_first + (memory_mib << 20) - Erx::Platform.fiasco_reserve(memory_mib << 20)
     past_root = DEVELOPMENT.root_address + (Erx::ProductionImage::ROOT_ROOM_MIB << 20)
     run_start = (past_root + pool - 1) / pool * pool
     assert_operator run_start + pool, :<=, kmem_start,
@@ -894,7 +879,7 @@ class ProductionImageTest < Minitest::Test
   LOGGED_IMAGE = 0x4dc000
   LOGGED_DMA_MEMORY = 1_310_720
   # The machine that boot ran on: 256 MiB, of which Fiasco kept 16 MiB.
-  LOGGED_MACHINE = DEVELOPMENT.with(memory_mib: 256, fiasco_reserve_mib: 16)
+  LOGGED_MACHINE = DEVELOPMENT.with(memory_mib: 256)
 
   def kept_verifier(machine)
     Dir.mktmpdir('erx-kept-') do |directory|

@@ -45,7 +45,7 @@ ui.txt stays the one source.
 """.
 
 -export([empty/0, pair/3, delta/2, apply_ops/2, hit/4]).
--export_type([realised/0, node_id/0, diff_op/0, tree/0, next/0]).
+-export_type([realised/0, node_id/0, diff_op/0, next/0]).
 
 -record(ui_node, {parent :: node_id() | 0 | none,
                   kind :: atom(),
@@ -63,8 +63,6 @@ ui.txt stays the one source.
                  | commit.
 -doc "The number pair/3 gives next; past the last node_id() when none is left.".
 -type next() :: 1..16#100000000.
--doc "An application's widget tree, valid by erx_ui_schema:validate/2.".
--type tree() :: {Kind :: atom(), Props :: #{atom() => term()}, Children :: [tree()]}.
 -doc "A realised tree: each node by its number, and the top, 0.".
 -opaque realised() :: #{node_id() | 0 => #ui_node{}}.
 
@@ -89,7 +87,7 @@ property the tree omits keeps the realised node's value while the node's
 new properties admit it. Answers the realised tree and the number to give
 next, or `{error, limit}` when a node would need a number past 2^32 - 1.
 """.
--spec pair(realised(), tree(), Next :: next()) -> {realised(), next()} | {error, limit}.
+-spec pair(realised(), erx_ui_schema:tree(), Next :: next()) -> {realised(), next()} | {error, limit}.
 pair(Ui, Tree, Next) when is_integer(Next), Next >= 1, Next =< ?PAST_LAST_ID ->
     try pair_children(?TOP, children(?TOP, Ui), [Tree], Ui, {#{}, Next}) of
         {Root, {Paired, Next1}} ->

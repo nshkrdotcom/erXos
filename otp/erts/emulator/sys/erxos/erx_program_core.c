@@ -95,7 +95,7 @@ erx_program_spec_check(const erx_program_spec_t *spec, uint64_t pool)
 {
 	if (!image_path_valid(spec->image, spec->image_len))
 		return (ERX_EINVAL);
-	if (spec->pid < ERX_PROGRAM_PID_MIN || spec->pid > ERX_PROGRAM_PID_MAX)
+	if (spec->pid < ERX_PROG_PID_MIN || spec->pid > ERX_PROG_PID_MAX)
 		return (ERX_ERANGE);
 	if (spec->guarantee > spec->cap || spec->slots < 1 || spec->slots > ERX_PROG_DATA_SLOTS_MAX)
 		return (ERX_EINVAL);

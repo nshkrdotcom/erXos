@@ -86,6 +86,24 @@ class NetChecksTest < Minitest::Test
     assert_empty source_rules("#{SRC}/erx_net_x.erl", body)
   end
 
+  # A timer or a clock read the stack's clock cannot see, in a module that is not one of
+  # the clock's readers.
+  def test_clock_reads_and_timers_fail_outside_the_clock_readers
+    ['erlang:send_after(15000, self(), reseed)', 'erlang:monotonic_time()', "erlang:\n  system_time(second)",
+     'os:timestamp()', 'timer:sleep(10)', 'fun erlang:start_timer/3'].each do |body|
+      assert_equal [['clock', 2]], source_rules("#{SRC}/erx_net_tables.erl", body), body
+    end
+  end
+
+  def test_clock_reads_pass_in_the_readers_comments_and_strings
+    %w[erx_net_clock erx_net_driver].each do |name|
+      assert_empty source_rules("#{SRC}/#{name}.erl", 'erlang:send_after(T, self(), m)')
+    end
+    assert_empty source_rules('erlang/apps/erx_net/erxos/erx_genet.erl', 'timer:sleep(1)')
+    body = "%% erlang:send_after is not used\n\"timer:sleep\", erx_net_clock:arm(D), erx_timer:x()"
+    assert_empty source_rules("#{SRC}/erx_net_x.erl", body)
+  end
+
   def test_wrap_literals_and_shifts_fail_in_tcp_modules
     ['X band 16#ffffffff', 'X band 16#FFFF_FFFF', 'X rem 4294967296', 'X rem 4_294_967_296',
      '(1 bsl 32)', 'D bsl  31', 'D < 2147483648', 'X band 2#11111111111111111111111111111111',

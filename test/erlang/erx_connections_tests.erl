@@ -31,7 +31,7 @@ agent_test_() ->
      || {Name, Case} <- [{mapped_then_lost, fun mapped_then_lost/1}, {ended_before_up, fun ended_before_up/1},
                          {owner_ended, fun owner_ended/1}, {refused_hand_over, fun refused_hand_over/1},
                          {refused_open, fun refused_open/1}, {down, fun down/1}, {forged, fun forged/1},
-                         {facets, fun facets/1}, {installs, fun installs/1}, {connection, fun connection/1},
+                         {facets, fun facets/1}, {app, fun app/1}, {installs, fun installs/1}, {connection, fun connection/1},
                          {area_down, fun area_down/1}, {area_lost, fun area_lost/1},
                          {area_lost_then_down, fun area_lost_then_down/1}, {area_refused, fun area_refused/1}]]
     %% area_collected starts its own agent, with erx_area:map/4 in place of the stand-in fun.
@@ -282,26 +282,53 @@ facets(Agent) ->
     %% The answer's names of the facets the manifest grants the domain, which come later
     %% by installation, are kept for erx:granted/0, the atoms alone, before init hears
     %% of the facets, so a domain mounts only what it is granted; a forged answer
-    %% changes them, and sets no app record (erx:app/0), no more than it changes the facets.
+    %% changes them no more than it changes the facets.
     Init = whereis(init),
     Facet = spawn(fun() -> receive stop -> ok end end),
     erlang:trace(Init, true, ['receive']),
     try
         Agent ! {erx_origin, ?PEER, {erx_facets, #{forged => Facet}, [forged]}},
-        Agent ! {erx_origin, ?PEER, {erx_app, #{place => <<"forged">>}}},
         Agent ! {erx_facets, #{forged => Facet}, [forged]},
         Agent ! {erx_origin, ?SYSTEM, {erx_facets, [forged], [forged]}},
         Agent ! {erx_origin, ?SYSTEM, {erx_origin, ?PEER, {erx_facets, #{forged => Facet}, [forged]}}},
         record(Agent, {erx_facets, #{echo => Facet, <<"bin">> => Facet, bad => 3}, [data, <<"bin">>, 3 | tail]}),
-        ?assertEqual(5, erx_connections:dropped()),
+        ?assertEqual(4, erx_connections:dropped()),
         First = init_facets(2000),
         erlang:trace(Init, false, ['receive']),
         ?assertEqual([#{echo => Facet}], First ++ init_facets(100)),
-        ?assertEqual([data], persistent_term:get({erx, granted})),
-        ?assertEqual(undefined, erx:app())
+        ?assertEqual([data], persistent_term:get({erx, granted}))
     after
         persistent_term:erase({erx, granted}),
         Facet ! stop
+    end.
+
+app(Agent) ->
+    %% erx_app asks the agent for the app's record (erx:app/0), which the agent answers
+    %% once the record has come in the system connection's envelope: a question asked
+    %% before it waits for it, and one asked after is answered with the record the agent
+    %% kept. A record a peer sends, or one sent bare, is dropped and counted, and answers
+    %% no one; so is a second record, which leaves the first one kept.
+    Test = self(),
+    Record = #{place => <<"/packages/clock.app">>, layout => #{}, start => {applications, [<<"clock">>]}},
+    Early = spawn(fun() -> Test ! {early, erx:app()} end),
+    asking(Early),
+    Agent ! {erx_origin, ?PEER, {erx_app, #{place => <<"forged">>}}},
+    Agent ! {erx_app, #{place => <<"forged">>}},
+    ?assertEqual(2, erx_connections:dropped()),
+    ?assertEqual(timeout, receive {early, Early1} -> Early1 after 0 -> timeout end),
+    record(Agent, {erx_app, Record}),
+    ?assertEqual({ok, Record}, receive {early, Answer} -> Answer after 2000 -> timeout end),
+    record(Agent, {erx_app, #{place => <<"second">>}}),
+    ?assertEqual(3, erx_connections:dropped()),
+    ?assertEqual({ok, Record}, erx:app()).
+
+%% Waits until Pid waits in its call, its question queued at the agent, or has ended,
+%% answered at once.
+asking(Pid) ->
+    case erlang:process_info(Pid, status) of
+        {status, waiting} -> ok;
+        undefined -> ok;
+        _ -> erlang:yield(), asking(Pid)
     end.
 
 installs(Agent) ->

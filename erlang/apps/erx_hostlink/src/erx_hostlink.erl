@@ -175,8 +175,9 @@ handle_info(_Other, State) ->
 The state and the message being handled as a crash report or
 `sys:get_status/1` shows them: the session's snapshot
 (erx_hostlink_session:info/1), which holds counts and sizes, never a
-payload's bytes, and of the message only that one was there, since it may
-hold the host's bytes or a reply.
+payload's bytes; of the message only that one was there, since it may
+hold the host's bytes or a reply; no sys log; and of a crash's reason only
+its leading atom (erx_report:reason_name/1).
 """.
 format_status(Status) ->
     maps:map(fun(state, #state{core = Core, output_bytes = Out, held = Held}) ->
@@ -184,6 +185,10 @@ format_status(Status) ->
                        held_bytes => byte_size(Held)};
                 (message, _Message) ->
                      hidden;
+                (log, _Log) ->
+                     [];
+                (reason, Reason) ->
+                     erx_report:reason_name(Reason);
                 (_Key, Value) ->
                      Value
              end, Status).

@@ -10,6 +10,7 @@ require_relative 'boot_file'
 require_relative 'boot_partition'
 require_relative 'build_facts'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'build_path'
 require_relative 'compiler_rt'
 require_relative 'crash_frame'
@@ -55,7 +56,7 @@ module Erx
   class ProductionImage
     # The kind of build every image is, which the archive header's development bit
     # records and uname -i names (BuildFacts.configuration).
-    BUILD_KIND = 'development'
+    BUILD_KIND = BuildKind::DEVELOPMENT
     # The code that gathers and writes the build-facts file (BuildFacts, SourceRevision,
     # build_facts_file, made_entry and Fiasco#kernel_name), which its receipt names as its sources.
     BUILD_FACTS_SOURCES = %w[tools/lib/erx/build_facts.rb tools/lib/erx/source_revision.rb tools/lib/erx/production_image.rb
@@ -76,12 +77,13 @@ module Erx
     # What a machine keeps for the root's image past its place: the image is about 5 MiB.
     ROOT_ROOM_MIB = 8
     LICENSE = 'LICENSE'
-    # The trees imported into the source tree that the root builds from: BLAKE3 for its
-    # reader of the archive and the entropy generator's mixing, ChaCha20 for that
-    # generator's stream, OTP for the release's beams, libfdt for its device-tree reader,
-    # and musl for the HWCAP_* bits the CPU feature decoder (cpu_features.c) takes from its header.
-    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent', 'otp' => 'permanent',
-                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent' }.freeze
+    # The trees imported into the source tree that the image builds from: BLAKE3 for the
+    # root's reader of the archive and the entropy generator's mixing, ChaCha20 for that
+    # generator's stream, libfdt for its device-tree reader, musl for the HWCAP_* bits the
+    # CPU feature decoder (cpu_features.c) takes from its header, and the releases' own
+    # (ReleaseFiles::IMPORTS): OTP for their beams and the trust store's roots.
+    IMPORTS = { 'kernel/crypto/blake3' => 'permanent', 'kernel/crypto/chacha20' => 'permanent',
+                'fiasco/libfdt' => 'permanent', 'musl' => 'permanent', **ReleaseFiles::IMPORTS }.freeze
 
     # The emulator's archive, which holds littlefs's objects beside ERTS's own
     # (otp/erts/emulator/Makefile.in's OS_OBJS), so its attribution carries
@@ -192,9 +194,9 @@ module Erx
     # The C++ runtime archives' notices, in the fetched llvm-project tree.
     LIBCXX_NOTICES = { 'libc++.a' => 'libcxx/LICENSE.TXT', 'libc++abi.a' => 'libcxxabi/LICENSE.TXT' }.freeze
 
-    # The machine an image boots on: its board's platform record (Platform), its RAM, the part of it Fiasco keeps
-    # (fiasco_reserve, which grows with RAM, since Fiasco sizes its kernel memory as
-    # 6% of it), system_growth_mib, which is added to both root_memory and
+    # The machine an image boots on: its board's platform record (Platform), its RAM, from
+    # which the part Fiasco keeps follows (fiasco_reserve_mib, by Platform.fiasco_reserve),
+    # system_growth_mib, which is added to both root_memory and
     # system_baseline of the development manifest, and tmp_growth_mib, which is added
     # to /tmp's cap and is part of the system growth, since /tmp lives in the baseline,
     # and root_mib, the root task's place in MiB from the start of RAM (root_address),
@@ -209,24 +211,27 @@ module Erx
     # larger archive (OracleQemu) names a larger one, and Pack's manifest check proves
     # the grown manifest against the platform record of that machine as it proves the
     # development one.
-    Machine = Data.define(:platform, :memory_mib, :fiasco_reserve_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
-      # The record's own machine: its RAM and fiasco_reserve, the root at NativeRoot's
+    Machine = Data.define(:platform, :memory_mib, :system_growth_mib, :tmp_growth_mib, :root_mib) do
+      # The record's own machine: its RAM, the root at NativeRoot's
       # development place.
       def self.development(platform)
-        new(platform: platform, memory_mib: platform.memory_mib, fiasco_reserve_mib: platform.fiasco_reserve_mib,
+        new(platform: platform, memory_mib: platform.memory_mib,
             system_growth_mib: 0, tmp_growth_mib: 0, root_mib: NativeRoot::DEVELOPMENT_ROOT_MIB)
       end
 
       # The machine the website's emulator boots the site image on: the RAM site/terminal.js
-      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), Fiasco's
-      # part of it at 6%, rounded up, and the root at the development place.
-      def self.site(platform) = development(platform).with(memory_mib: 256, fiasco_reserve_mib: 16)
+      # gives its guest (RAM_MIB, which test/host/site_test.rb holds to this), and the root
+      # at the development place.
+      def self.site(platform) = development(platform).with(memory_mib: 256)
 
       def initialize(platform:, **numbers)
         raise Error, 'a machine is on a Platform' unless platform.is_a?(Platform)
 
         super
       end
+
+      # The part of the RAM Fiasco keeps as its kernel memory.
+      def fiasco_reserve_mib = Platform.fiasco_reserve(memory_mib << 20) >> 20
 
       # The root's place, with room for the root's image (about 5 MiB) before RAM ends.
       def root_address
@@ -490,7 +495,7 @@ module Erx
                       root_task: root_task, added_archives: [*domain.archives, *added.archives], apps: apps,
                       images: images, manifest_source: manifest_source, erts: erts, jit: jit, output: archive,
                       imports: IMPORTS.merge(added.imports),
-                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root), *made_sources, *domain.inputs,
+                      inputs: [kernel, sigma0, *ReleaseFiles.inputs_of(release, root: @root, otp: erts.otp), *made_sources, *domain.inputs,
                                *packages.flat_map { |entry| entry.values_at('artifact', 'receipt') }, *added.inputs].uniq,
                       test_code: test_code, machine: machine)
         single = File.join(directory, ImageRecord::IMAGE)
@@ -514,7 +519,7 @@ module Erx
           marked = flags.anybits?(@codec.member('pack_flags', 'test_code'))
           raise Error, 'the archive header disagrees with the test-code mark asked for' unless marked == test_code
           raise Error, "the archive header disagrees with the build kind #{BUILD_KIND} the build facts name" unless
-            flags.anybits?(@codec.member('pack_flags', 'development')) == (BUILD_KIND == 'development')
+            flags.anybits?(@codec.member('pack_flags', 'development')) == BuildKind.development?(BUILD_KIND)
 
           File.rename(unchecked, single)
         ensure
@@ -1718,7 +1723,7 @@ module Erx
       jit_image = { 'path' => JIT_RUNTIME_PATH, 'kind' => @codec.member('entry_kind', 'image'), 'flags' => 0, 'jit' => true,
                     'id' => 'jit-runtime', 'artifact' => beamasm.fetch(:program), 'receipt' => beamasm.fetch(:receipt) }
       Added.new(entries: [image, jit_image, *releases, *toolkit.entries, *domain_release.directories].freeze,
-                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, applications: release.applications),
+                inputs: [*runtime.fetch(:inputs), *beamasm.fetch(:inputs), *ReleaseFiles.inputs_of(releases, root: @root, otp: erts.otp, applications: release.applications),
                          *toolkit.inputs].freeze,
                 imports: {}.freeze, archives: toolkit.archives)
     end

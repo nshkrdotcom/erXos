@@ -116,8 +116,9 @@ handle_call({request, Term}, _From, Store) ->
 
 -doc """
 The state as a crash report or `sys:get_status/1` shows it: the store's size and its
-blobs' hashes, never its bytes, and of the request being served only its kind, so no
-report carries bytes from outside.
+blobs' hashes, never its bytes, of the request being served only its kind, and of a
+crash's reason only its leading atom (erx_report:reason_name/1), so no report carries
+bytes from outside.
 """.
 -spec format_status(gen_server:format_status()) -> gen_server:format_status().
 format_status(Status) ->
@@ -126,6 +127,7 @@ format_status(Status) ->
                      {request, element(1, Request)};
                 (message, _Message) -> request;
                 (log, _Log) -> [];
+                (reason, Reason) -> erx_report:reason_name(Reason);
                 (_Key, Value) -> Value
              end, Status).
 

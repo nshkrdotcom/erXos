@@ -1,0 +1,16 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The bounds of a subfont's fields (font(7); docs/design-desktop-programs.md, "Type"
+# and "Kerning"), which tools/lib/erx/glyphs.rb writes and erx_font reads. A glyph's
+# first column in the image is two bytes, its top and bottom rows and its advance one
+# byte each, and its offset from the pen a signed byte; a kerning pair's adjustment is
+# a signed byte. A subfont's image is therefore at most subfont_x_max columns wide and
+# subfont_row_max rows tall, and a kerned advance stays within a glyph's advance.
+
+limit subfont_x_max u16 0xffff
+limit subfont_row_max u8 255
+limit subfont_left_min i8 -128
+limit subfont_left_max i8 127
+limit subfont_advance_max u8 255
+limit subfont_adjustment_min i8 -128
+limit subfont_adjustment_max i8 127

@@ -406,6 +406,8 @@ take(Msg, M) ->
 
 step(Event, #m{core = Core0, now = Now} = M) ->
     {Core, Actions} = erx_tcp_listen_core:step(Event, Core0, #{now => Now}),
+    %% A stop is the last action of its step.
+    [] = [Stop || {stop, _} = Stop <- lists:sublist(Actions, max(0, length(Actions) - 1))],
     lists:foldl(fun act/2, M#m{core = Core}, Actions).
 
 act({link, Sp}, #m{sps = Sps, mbox = Mbox, l_links = Links} = M) ->
@@ -446,7 +448,7 @@ act({reply, N, Reply}, #m{in_flight = InFlight, m_waiting = W, calls = Calls, no
         bad = M#m.bad ++ Bad};
 act(take_unit, #m{units = Units} = M) ->
     M#m{units = Units - 1};
-act(stop, M) ->
+act({stop, normal}, M) ->
     listener_end(M).
 
 %% The listener's end: each connection linked to it gets its exit, its socket process

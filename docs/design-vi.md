@@ -213,7 +213,7 @@ search being typed, the last message, and `Insert` at its right end
 while inserting. A message longer than the row is cut at a character
 boundary. `^G` and `:f` show `FILE: [Modified] line L of N --P%--`, with
 `[Modified]` only when the buffer has changes and `[New file]` for a file
-that does not exist yet.
+that does not exist.
 
 **Differences from nvi**, each a choice for this version and each pinned
 by a test:
@@ -233,22 +233,6 @@ by a test:
 * A file whose last line has no newline is written without one; nvi adds
   it. A file `vi` creates, or an empty one it fills, ends in a newline, as
   in nvi.
-
-## What the code does today
-
-No `vi` exists. `erx_cmd`
-(`erlang/apps/erx_shell/src/erx_cmd.erl`) gives a command `read/1` and
-`read_line/1` only over a pipe from a neighbouring Erlang stage, and
-refuses every other input (`no_input/1`); the shell's
-runner hands every command a null standard input and the terminal's write
-function as its standard output (`erx_shell_runner.erl:90`). `columns/1`
-and `rows/1` read `COLUMNS` and `LINES` and then, when a standard stream
-is the terminal, the size the terminal holds. `catch_events/1`,
-`requested/1`, the shell's delivery of `{erx_cmd, winch}` and `stop/1`
-exist. The terminal stream as a relay open, `tty/2`, `watch/1`, `read/2` and
-the terminal form of `read/1`, which need the session's terminal relay and
-its line discipline `erx_tty`, are the interfaces of [design-shell.md](design-shell.md#interfaces)
-this design builds on.
 
 ## Overview
 

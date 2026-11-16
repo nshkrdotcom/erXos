@@ -11,8 +11,9 @@ require_relative '../fixtures/erlang_build'
 
 # The input records' codec generated from abi/formats/input.txt (docs/design-abi.md,
 # "Input records"): the EUnit cases of erx_input_codec on stock's emulator (ERX_ERL
-# and ERX_ERLC), the same cases against a codec with one bound check removed, which
-# must fail them, and the samples of the declaration the generator refuses, each
+# and ERX_ERLC), the same cases against a codec with one bound check removed and
+# against one whose axis spreads over one step too many, which must fail them, and
+# the samples of the declaration the generator refuses, each
 # breaking one rule of the grammar.
 class ErxInputCodecTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
@@ -22,6 +23,8 @@ class ErxInputCodecTest < Minitest::Test
   TESTS = %w[test/erlang/erx_input_codec_tests.erl].freeze
   # The seeded fault: a touch's slot loses its upper bound.
   SEED = ['Value >= 0 andalso Value =< 9.', 'Value >= 0.'].freeze
+  # Another: a device's axis spread over one step too many, so its maximum falls short.
+  AXIS_SEED = ['* 65535 div (Max - Min).', '* 65535 div (Max - Min + 1).'].freeze
   # A declaration the samples below each break in one place.
   SAMPLE = <<~ABI
     input
@@ -32,6 +35,8 @@ class ErxInputCodecTest < Minitest::Test
       record touch 3
         field phase @input_touch_phase
       record release 4
+      record wheel 5
+        field steps @input_wheel
   ABI
 
   def test_eunit_cases_pass
@@ -49,9 +54,17 @@ class ErxInputCodecTest < Minitest::Test
     assert_match(/each_bad_record_is_dropped_and_counted_and_its_neighbours_kept_test.*failed/, output)
   end
 
+  def test_an_axis_spread_over_one_step_too_many_fails_its_case
+    text = File.read(File.join(ROOT, MODULE))
+    assert_equal 1, text.scan(AXIS_SEED.first).size, 'the seed no longer applies to the generated codec'
+    output, status = eunit({ MODULE => text.sub(*AXIS_SEED) })
+    refute status.success?, output
+    assert_match(/a_device_axis_spreads_across_the_record_s_axis_test.*failed/, output)
+  end
+
   def test_the_sample_is_accepted
     input = validate(SAMPLE)
-    assert_equal [1, 2, 3, 4], input.records.map(&:tag)
+    assert_equal [1, 2, 3, 4, 5], input.records.map(&:tag)
     assert_equal 5, input.size
   end
 
@@ -67,12 +80,23 @@ class ErxInputCodecTest < Minitest::Test
       'a field name with an underscore' => ['field x @input_axis', 'field x_y @input_axis', /invalid input field name/],
       'a field named twice' => ['field dx @input_rel', "field dx @input_rel\n    field dx @input_rel", /duplicate input field/],
       'an unknown member' => ['record release 4', 'message release 4', /unknown input member/],
-      'an argument' => ["input\n", "input 1\n", /expected input/]
+      'an argument' => ["input\n", "input 1\n", /expected input/],
+      'no input_wheel field' => ['field steps @input_wheel', 'field steps @input_rel', /no input field has scalar type input_wheel/],
+      'no input_axis field' => ['field x @input_axis', 'field x @input_rel', /no input field has scalar type input_axis/]
     }.each do |label, (text, broken, message)|
       assert_includes SAMPLE, text, label
       error = assert_raises(Erx::ABI::SchemaError, label) { validate(SAMPLE.sub(text, broken)) }
       assert_match message, error.message, label
     end
+  end
+
+  # axis/3 scales a device's range onto input_axis from 0, so an input_axis that
+  # starts elsewhere is refused.
+  def test_an_axis_that_does_not_start_at_0_is_refused
+    declarations = Erx::ABI::Syntax.parse(SAMPLE, path: Erx::ABI::Input::SOURCE)
+    shifted = root_types.merge('input_axis' => root_types.fetch('input_axis').dup.tap { |type| type.minimum = 1 })
+    error = assert_raises(Erx::ABI::SchemaError) { Erx::ABI::Input.validate(declarations, types: shifted) }
+    assert_match(/input_axis must start at 0/, error.message)
   end
 
   def test_a_second_declaration_or_one_elsewhere_is_refused

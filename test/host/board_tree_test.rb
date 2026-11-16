@@ -20,7 +20,8 @@ class BoardTreeTest < Minitest::Test
 
   def test_memory_cells_split_each_number_into_the_trees_cells
     assert_equal [0, 0, 0x3b400000], Erx::BoardTree.memory_cells(PI, address_cells: 2, size_cells: 1)
-    high = record(ram_first: 0x1_4000_0000, ram_bytes: 0x1_0000_0000)
+    high = record(ram_first: 0x1_4000_0000, ram_bytes: 0x1_0000_0000,
+                  fiasco_reserve: Erx::Platform.fiasco_reserve(0x1_0000_0000))
     assert_equal [1, 0x4000_0000, 1, 0], Erx::BoardTree.memory_cells(high, address_cells: 2, size_cells: 2)
     assert_raises(Erx::Error) { Erx::BoardTree.memory_cells(high, address_cells: 2, size_cells: 1) }
     assert_raises(Erx::Error) { Erx::BoardTree.memory_cells(PI, address_cells: 3, size_cells: 1) }

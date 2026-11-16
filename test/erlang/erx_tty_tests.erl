@@ -306,6 +306,13 @@ hangup_readies_every_waiter_test() ->
     eof = element(1, erx_tty:read(r, 64, H)),
     eof = element(1, erx_tty:read(r, 64, element(3, erx_tty:set(erx_tty:termios(raw(0, 0)), H)))).
 
+%% A hangup drops the input the tty holds, a line ended and one being typed, as
+%% FreeBSD's carrier loss flushes the input queue: every later read is the end of file.
+hangup_drops_the_input_test() ->
+    {[], H} = erx_tty:hangup(element(2, input(<<"ab\ncd">>, erx_tty:new()))),
+    eof = element(1, erx_tty:read(r, 64, H)),
+    eof = element(1, erx_tty:read(r, 64, element(3, erx_tty:set(erx_tty:termios(raw(1, 0)), H)))).
+
 %% All of Bytes, as an owner feeds them with Room for the master: input/3
 %% again on what a signal key left untaken, with the room it returned,
 %% the actions joined in order.
@@ -441,7 +448,7 @@ step(toggle, #model{tty = Tty, spec = Spec} = M, Path) ->
     acted(Actions, set, M#model{tty = Tty1, spec = Spec1, expired = []}, Path);
 step(hangup, #model{tty = Tty, spec = Spec} = M, Path) ->
     {Actions, Tty1} = erx_tty:hangup(Tty),
-    acted(Actions, hangup, M#model{tty = Tty1, spec = Spec#spec{hungup = true}}, Path).
+    acted(Actions, hangup, M#model{tty = Tty1, spec = Spec#spec{hungup = true, ready = [], line = []}}, Path).
 
 forget(Open, #model{expired = Expired} = M) ->
     M#model{expired = lists:delete(Open, Expired)}.

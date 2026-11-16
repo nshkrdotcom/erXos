@@ -9,6 +9,7 @@ require 'open3'
 require_relative 'abi'
 require_relative 'dom_planner'
 require_relative 'build_inputs'
+require_relative 'build_kind'
 require_relative 'error'
 require_relative 'json_input'
 require_relative 'manifest'
@@ -96,9 +97,9 @@ module Erx
         domains = domain_entries(manifest_source, root_task)
         entries = [root_entry(root_task), *files, *system_release.directories, *domains]
         _erofs, images = ReleaseMedium.image(entries: files, directory: @directory, runner: @runner)
-        catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root)))
+        catalog = root_task.fetch('catalog').merge(BuildInputs.pack(root: @root, paths: ReleaseFiles.inputs_of([*files, *domains], root: @root, otp: @otp)))
         pack_with(tools, catalog).build(
-          entries: entries, root_path: 'system/root', build_kind: 'development',
+          entries: entries, root_path: 'system/root', build_kind: BuildKind::DEVELOPMENT,
           platform: @platform.record,
           artifacts: ProductionImage.artifacts(archive_paths(entries), images: images),
           manifest_source: manifest_source, output: output
@@ -146,7 +147,7 @@ module Erx
                checker: tools.fetch('checker'), hasher: tools.fetch('hasher'),
                domain_planner: DomainPlanner.new(helper: tools.fetch('domains'), runner: @runner),
                provenance: PackProvenance.new(root: @root, catalog: catalog, external: toolchain, runner: @runner,
-                                              imports: { File.join(@root, 'otp') => 'permanent' }))
+                                              imports: ReleaseFiles::IMPORTS))
     end
 
     def toolchain

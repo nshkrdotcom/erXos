@@ -89,33 +89,32 @@ Decisions every reader needs:
 
 1. [Context](#context)
 2. [Requirements](#requirements)
-3. [What the code does today](#what-the-code-does-today)
-4. [The construction](#the-construction)
-5. [The SDIO host in the storage domain](#the-sdio-host-in-the-storage-domain)
-6. [The `sdio` interface](#the-sdio-interface)
-7. [The WiFi domain](#the-wifi-domain)
-8. [The chip](#the-chip)
-9. [The station](#the-station)
-10. [The supplicant](#the-supplicant)
-11. [SAE and protected management frames](#sae-and-protected-management-frames)
-12. [Configuration, credentials and control](#configuration-credentials-and-control)
-13. [The `ether` interface and `wlan0`](#the-ether-interface-and-wlan0)
-14. [OTP's `crypto`: SAE's arithmetic](#otps-crypto-saes-arithmetic)
-15. [Invariants](#invariants)
-16. [Concurrency and ordering](#concurrency-and-ordering)
-17. [Failure handling](#failure-handling)
-18. [Refusals and error results](#refusals-and-error-results)
-19. [Untrusted input](#untrusted-input)
-20. [Security](#security)
-21. [Facts this design does not have](#facts-this-design-does-not-have)
-22. [Performance](#performance)
-23. [Verification](#verification)
-24. [Interfaces](#interfaces)
-25. [Edits to other designs](#edits-to-other-designs)
-26. [Alternatives considered](#alternatives-considered)
-27. [Lineage](#lineage)
-28. [Decisions](#decisions)
-29. [Sources](#sources)
+3. [The construction](#the-construction)
+4. [The SDIO host in the storage domain](#the-sdio-host-in-the-storage-domain)
+5. [The `sdio` interface](#the-sdio-interface)
+6. [The WiFi domain](#the-wifi-domain)
+7. [The chip](#the-chip)
+8. [The station](#the-station)
+9. [The supplicant](#the-supplicant)
+10. [SAE and protected management frames](#sae-and-protected-management-frames)
+11. [Configuration, credentials and control](#configuration-credentials-and-control)
+12. [The `ether` interface and `wlan0`](#the-ether-interface-and-wlan0)
+13. [OTP's `crypto`: SAE's arithmetic](#otps-crypto-saes-arithmetic)
+14. [Invariants](#invariants)
+15. [Concurrency and ordering](#concurrency-and-ordering)
+16. [Failure handling](#failure-handling)
+17. [Refusals and error results](#refusals-and-error-results)
+18. [Untrusted input](#untrusted-input)
+19. [Security](#security)
+20. [Facts this design does not have](#facts-this-design-does-not-have)
+21. [Performance](#performance)
+22. [Verification](#verification)
+23. [Interfaces](#interfaces)
+24. [Edits to other designs](#edits-to-other-designs)
+25. [Alternatives considered](#alternatives-considered)
+26. [Lineage](#lineage)
+27. [Decisions](#decisions)
+28. [Sources](#sources)
 
 ## Context
 
@@ -318,19 +317,6 @@ hunting-and-pecking and other groups, PMKSA caching, Bluetooth on the
 same chip, and SoftMAC chips, where net80211's MLME and a regulatory
 table come back.
 
-## What the code does today
-
-The legacy controller is held by the storage domain inside the `sd`
-unit, which the manifest names `block`. No device-kinds row matches it,
-so it has no record, no register window and no driver; EMMC2's SD device
-process is the only member of the shared line's owner
-([design-storage.md](design-storage.md#the-sd-host-controller);
-`config/manifest/raspi4b-development.txt`). The network domain runs
-`genet0`; nothing in the tree speaks SDIO, Broadcom's protocols or WPA.
-OTP's `crypto` is unchanged and exports no point arithmetic: its NIF
-multiplies the generator inside key generation and ECDH only
-(`otp/lib/crypto/c_src/ec.c:491, 894`).
-
 ## The construction
 
 ### WiFi is a domain that makes a medium
@@ -475,7 +461,7 @@ decision, and the SDIO host takes only the first:
   whose CMD52 and CMD53 answer R5 and whose counted CMD53 needs no stop
   command (SDIO 5.3.1, p.39), so the SDIO host never runs it.
 
-The one change is to the wait: its data track, today one block
+The one change is to the wait: its data track, which names one block
 (`{read | write, Size, 1}`), takes a count of blocks, from 1 to 511, so a
 block-mode CMD53 is one command's wait with that many buffer events
 before transfer complete; EMMC2's identification commands keep their
@@ -1025,7 +1011,7 @@ features, and erXos has one chip.
 ## The station
 
 `erx_wifi_station` is one process around one pure function,
-`erx_wifi_sta:step(State, Event, Ctx) -> {Actions, State}`. The process
+`erx_wifi_sta:step(State, Event, Ctx) -> {State, Actions}`. The process
 performs the actions, owns the timers, and gives every step the time
 and 32 fresh random bytes in `Ctx`; the function reads nothing else.
 It is made of three parts, each a pure module with one job, and a thin
@@ -1033,8 +1019,8 @@ lifecycle around them:
 
 | Part | Interface | Decides | Keeps |
 | --- | --- | --- | --- |
-| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [Verdict], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
-| the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Actions, Join}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
+| the choice, `erx_wifi_choose` | `choose(View) -> #{verdicts := [{Bss, Verdict}], pick := Candidate \| none}` | which BSS to join, and for every other BSS seen why not | nothing |
+| the join machine, `erx_wifi_join` | `step(Join, Event, Ctx) -> {Join, Actions}` | one join, from the request to an open port: SAE, the handshakes, rekeys, the port, and how the join ended | the association's state |
 | the failure memory, `erx_wifi_memory` | `fail/3`, `ok/2`, `held/3` | which BSS and which secret failed lately, and until when each is held | a bounded map |
 | the lifecycle, in `erx_wifi_sta` | the step above | whether the radio is up, when to scan, when to ask the choice, and the `ctl` commands | the configuration, the names, the marks it has learned, the scan table, `want` |
 
@@ -1149,7 +1135,7 @@ station cannot then tell a network it has no secret for from one whose
 secret it cannot reach, so it says neither.
 
 **The pick** is the candidate of the highest `priority`, then the
-strongest signal. A held BSS is never the pick.
+strongest signal, then the lowest address. A held BSS is never the pick.
 
 **Failure never changes admission.** `admit/4` takes no memory, so what
 is admitted, and with which AKM and PMF, is the same after any history
@@ -1206,7 +1192,7 @@ says where each kind of event applies and which states may follow:
 | `eapol`, a received EAPOL-Key frame | | | | `keys`, `idle` | `open`, `rekey`, `idle` | `rekey`, `idle` |
 | `set_keys_confirm` | | | | `keys`, `open`, `idle` | `open`, `idle` | `rekey`, `open`, `idle` |
 | `disconnected` | | `idle` | `idle` | `idle` | `idle` | `idle` |
-| `deadline` | | `joining`, `idle` | `sae`, `idle` | `keys`, `idle` | | `open` |
+| `deadline` | | `idle` | `sae`, `idle` | `idle` | | `open` |
 
 An empty cell is an event that does not apply: `step/3` drops it,
 counts it as `unexpected_event` and changes nothing. A filled cell names
@@ -1252,7 +1238,12 @@ What the cells do:
   join.
 * **`disconnected`**, the firmware's link down or the access point's
   deauthentication or disassociation, ends the join in every state.
-* **`deadline`** in `rekey` drops the pending PTK and returns to
+* **`deadline`** ends the join in `joining` and `keys`; in `sae` it is
+  the exchange's own, which sends a frame again or ends, and once the
+  exchange is accepted it is the connect's, which ends the join; one that comes
+  before its time is dropped, counted as `early_deadline`, and takes no
+  edge, as a handler takes none for any event it refuses. In `rekey` it
+  drops the pending PTK and returns to
   `open` under the keys still installed: a message 1 has no MIC, so a
   forged one may start a rekey, and must not end the association. A
   genuine rekey that stalls is the access point's to end, which it does
@@ -1313,7 +1304,7 @@ A held BSS, and every BSS of an SSID whose secret is held, is not a
 candidate until the hold ends; the verdict says which and until when.
 Holds are compared with the time at each choice, so the memory has no
 timer of its own, as iwd's blocklist has none (iwd fact 20). It holds at
-most 32 BSS records, dropping the one whose hold ends first, and one
+most 32 BSS records, dropping, of the others, the one whose hold ends first, and one
 record per SSID with a secret. A restart of the domain empties it.
 
 What the memory is for:
@@ -1684,7 +1675,15 @@ counted as `bad_element`, and the exchange goes on to the peer's
 genuine commit.
 
 Its states are wpa_supplicant's: nothing, committed, confirmed, accepted
-(`sae.h:113-115`). How far the three functions are constant-time is a
+(`sae.h:113-115`), with two while the holder works: committing while it
+makes the commit, and keying while it makes the KCK of the peer's
+commit. A commit the checks pass moves committed to keying; the KCK
+moves keying to confirmed, with the confirm sent; and `bad_element`
+returns keying to committed, as it was before that commit. While
+keying, any other commit is dropped, counted as `sae_unexpected`, so
+the station confirms only over the commit whose KCK it asked for,\nwhatever order the events arrive in; a
+refusal still ends the exchange, and nothing is sent again, since the
+peer's commit answered the station's. How far the three functions are constant-time is a
 residual of [Security](#security). A network that offers SAE without
 hash-to-element in its RSNXE (bit 5, `ieee802_11_defs.h:632`) is not an
 SAE candidate: hunting-and-pecking derives its element per exchange, in
@@ -2190,7 +2189,7 @@ so that there PT, PWE and `rand` are never terms.
 | **WF2.** Only `erx_blk_write` issues a command to either SD controller, and no SDIO command writes a medium | the SDIO table in `erx_blk_write`; `sdio_issue/2` and `sd_issue/2` each refuse the other kind's record | a second issuing module; an SD command on the legacy record; a CMD53 on EMMC2 | U4's build check, unchanged; host tests of both refusals |
 | **WF3.** A client never writes a register the host's state depends on, and never issues a CMD53 the wire, the function or the controller cannot carry | `erx_sdio:check/2` refuses the list whole, checking the three limits apart | a CMD52 or CMD53 write that reaches a host-owned CCCR register or a block-size register; a byte-mode CMD53 of more than 512 bytes | the host core's property test over addresses and lengths, seeded below |
 | **WF4.** No data frame passes between the chip and the network domain while the port is closed, and `wlan0`'s link is up exactly while it is open | the chip process gates both directions on the station's `port` request; the link message is the port; the table lets the join machine reach `open` from `keys` only by `set_keys_confirm`, or from `joining` by `connect_confirm` for an open network, and `rekey` only from `open` | a frame forwarded before the keys are in | the exhaustive join test and the fake chip's port test |
-| **WF5.** No PMK or PT, and no passphrase ever, is held by the WiFi domain: the key holder keeps the first two and answers only a commit, an exchange's KCK and a PTK, and the passphrase stays in the administrator's session. The PTK's KCK and KEK and SAE's KCK leave the WiFi domain nowhere; the installed keys reach the chip through the storage domain; and no report or dump of the WiFi domain carries a term its processes held | `wpa_key`'s five operations return no entry's key; `wpa_admin` takes a PMK and hashed values, never a passphrase, and the WiFi domain holds no `wpa_admin`; `ether` carries frames, credits and a link state; `erx_wifi_report` rewrites every report of OTP's domain to names, classes and arities; the holders are `sensitive` ([Where the secrets live](#security)) | an operation that returns a PMK; a station that derives a PTK itself; a passphrase in a request to the holder; a KCK in a termination report; a station's stack in a crash dump | the interfaces' schemas carry no entry key and no passphrase; a build check that only `erx_wpa_arith` calls a PTK derivation or `crypto`'s SAE functions and only `erx_wpa_holder` calls it, that only `erx_wpa_secret` calls `crypto:pbkdf2_hmac/5`, and the unchanged check that the network stack calls no `crypto`; the diagnostics test below. A development build's holder is inside the WiFi domain, the residual of [Security](#security) |
+| **WF5.** No PMK or PT, and no passphrase ever, is held by the WiFi domain: the key holder keeps the first two and answers only a commit, an exchange's KCK and a PTK, and the passphrase stays in the administrator's session. The PTK's KCK and KEK and SAE's KCK leave the WiFi domain nowhere; the installed keys reach the chip through the storage domain; and no report or dump of the WiFi domain carries a term its processes held | `wpa_key`'s five operations return no entry's key; `wpa_admin` takes a PMK and hashed values, never a passphrase, and the WiFi domain holds no `wpa_admin`; `ether` carries frames, credits and a link state; the report filter `erx_report` rewrites every report of OTP's domain to names, classes and arities; the holders are `sensitive` ([Where the secrets live](#security)) | an operation that returns a PMK; a station that derives a PTK itself; a passphrase in a request to the holder; a KCK in a termination report; a station's stack in a crash dump | the interfaces' schemas carry no entry key and no passphrase; a build check that only `erx_wpa_arith` calls a PTK derivation or `crypto`'s SAE functions and only `erx_wpa_holder` calls it, that only `erx_wpa_secret` calls `crypto:pbkdf2_hmac/5`, and the unchanged check that the network stack calls no `crypto`; the diagnostics test below. A development build's holder is inside the WiFi domain, the residual of [Security](#security) |
 | **WF6.** Every byte from the chip, the air, the configuration or `ctl` is parsed once, by a bounds-checked core with a fuzz target, before any decision | the cores of [The chip](#the-chip), [The supplicant](#the-supplicant), `erx_sae`, `erx_wpa_conf` and `erx_wifi_fs` | a field read from an unchecked binary | the fuzz targets of [Untrusted input](#untrusted-input) |
 | **WF7.** Every attachment starts from a reset card, and nothing of an ended attachment acts on the next | `attach` runs the bring-up from the controller's reset for all and the card's I/O reset, and makes a fresh `Ref` that every `run` and notice carries | a client that meets the previous client's chip state; a list of the old attachment run on the new | the host test that a second attach after a client's death resets and refuses the old `Ref`, with the fake card |
 | **WF8.** No key is installed from a message whose replay counter, MIC, nonce, key data or RSN element check failed, and only a message authenticated by its MIC raises the replay watermark | the handshakes' checks are the only path to a `set_keys` request; the watermark moves only in the accepting steps of message 3 and group message 1 | an install after a failed check; a watermark raised by message 1 | the exhaustive join test with forged and replayed messages |
@@ -2245,8 +2244,10 @@ so that there PT, PWE and `rand` are never terms.
   reads at most 32 frames a notice. A frame or indication that finds no
   credit is dropped and counted.
 * **Timers belong to the station and the chip process**, as deadlines
-  checked at each event; the cores take the time as an input, and the
-  memory's holds are compared with it, never timed.
+  in their state, checked at each event; the cores take the time as an
+  input and answer `next_deadline/1` ([design.md](design.md#drivers-and-dma),
+  "Deadlines in state"), and the memory's holds are compared with it,
+  never timed.
 
 ## Failure handling
 
@@ -2424,20 +2425,12 @@ fields:
 
 * **Reports carry no term.** Every process of the WiFi domain is a
   `proc_lib` process, as OTP's behaviours are, so every report its end
-  makes is a logger event of OTP's domain: the termination reports of
-  `gen_server` and `gen_statem` (`otp/lib/stdlib/src/gen_server.erl:2785`,
-  `gen_statem.erl:4983`), `proc_lib`'s crash report (`proc_lib.erl:954`),
-  the supervisor's error reports (`supervisor.erl:318-324`) and
-  `gen_server`'s report of a message it has no clause for, which quotes
-  the message (`:2442`). The application's start installs one primary
-  logger filter in its domain, `erx_wifi_report`, which rewrites every
-  event of OTP's domain to the process, its name, the error's class, the
-  reason's leading atom and the stack trace's modules, functions and
-  arities, and drops every other term: arguments, the last message, the
-  queue, the state and the rest of the reason. So no report carries a
-  term a process held, whichever process held it and whatever raised;
-  the network stack trims its records the same way
-  ([design-network-stack.md](design-network-stack.md#what-fails-and-what-survives)).
+  makes is a logger event of OTP's domain. The domain takes the
+  report filter, `erx_report`, at boot
+  ([design-log.md](design-log.md#reports-carry-no-term)), which rewrites
+  every event of OTP's domain to names, classes and arities and drops
+  every other term. So no report carries a term a process held,
+  whichever process held it and whatever raised.
   The station's `/proc` paths and its own log lines are built from named
   fields, none of them a secret. `sys:get_status/1` returns a process's
   state whole, but only to a caller in the WiFi domain: from another
@@ -2780,7 +2773,7 @@ code under test ran.
   the `forget` case fails.
 * **Diagnostics with marked secrets.** On the host, the station, the
   chip process over the fake chip, `erx_wifi_fs`, the development
-  holder and `wlankey` run with `erx_wifi_report` installed and a logger
+  holder and `wlankey` run with `erx_report` installed and a logger
   handler that keeps every formatted event. Every secret is chosen to
   be found: a passphrase and an SAE password of a marker pattern, from
   which the test computes the PMK, the hashed values and PT, and the
@@ -2969,8 +2962,8 @@ under load. QEMU has no WiFi device for any machine.
   `erx_wifi_mlme`, `erx_wifi_station`, `erx_wifi_sta`,
   `erx_wifi_choose`, `erx_wifi_join`, `erx_wifi_memory`, `erx_wpa_key`,
   `erx_wpa_kdf`, `erx_sae`, `erx_wpa_conf`, `erx_wifi_keys`,
-  `erx_wpa_holder`, `erx_wpa_arith`, `erx_wifi_keys_dev`, `erx_wifi_fs`
-  and `erx_wifi_report`; `erx_wpa_secret` and the `wlankey` command;
+  `erx_wpa_holder`, `erx_wpa_arith`, `erx_wifi_keys_dev` and `erx_wifi_fs`,
+  over the report filter `erx_report` the domain takes at boot; `erx_wpa_secret` and the `wlankey` command;
   `erx_ether` and `erx_net_ether` in `erx_net`.
 * Host tooling: the test access point's profiles and the harness
   command that starts hostapd with one.

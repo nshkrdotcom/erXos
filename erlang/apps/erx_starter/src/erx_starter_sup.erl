@@ -105,7 +105,7 @@ stop_row(Name) ->
     stop(Name).
 
 -doc "Starts one keeper of principal Principal's session with Start, which nothing starts again.".
--spec start_once(binary(), pos_integer() | {app, binary()}, map()) -> supervisor:startchild_ret().
+-spec start_once(binary(), erx_starter_keeper:who(), map()) -> supervisor:startchild_ret().
 start_once(Name, Principal, Start) ->
     supervisor:start_child(?KEEPERS, #{id => {once, Name}, start => {erx_starter_keeper, start_link, [Principal, Start]},
                                        restart => temporary, shutdown => infinity}).
