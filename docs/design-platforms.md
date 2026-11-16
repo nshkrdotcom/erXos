@@ -476,9 +476,10 @@ file. The development
 machine, 512 MiB, links the root 64 MiB into RAM, below the device tree at
 128 MiB, which keeps it inside small machines; a single file longer than
 about 62 MiB has its archive moved. Below 256 MiB
-the device tree sits at half of RAM, so on a machine of roughly 127 to
-137 MiB it lands on the root and bootstrap refuses the boot with
-`place_overlap`. The QEMU oracle's machine, 2 GiB, links it 192 MiB into
+the device tree sits at half of RAM, or right behind a file that ends
+higher, so on a machine of roughly 127 to 137 MiB, or on one below
+144 MiB whose file ends on the root, it lands on the root and bootstrap
+refuses the boot with `place_overlap`. The QEMU oracle's machine, 2 GiB, links it 192 MiB into
 RAM, above its single file of about 188 MiB, which so stays in place. In the two-file
 form, for debugging, `-initrd` on the oracle's machine places the boot
 image at `0x48000000` with the device tree directly after it. The root
