@@ -416,7 +416,7 @@ The Bluetooth domain is a configured `service` domain of the manifest,
 named `bt` (node `bt@erxos`), of the principal that owns the machine's
 services, on the BeamAsm image, whose OpenSSL its Security Manager calls
 through OTP's `crypto` ([Stage 4](#stage-4-pairing-and-bonding)). It holds
-no device. Its release ships `kernel`, `stdlib`, `erx`, `erx_files`,
+no device. Its release script, `bt`, ships `kernel`, `stdlib`, `erx`, `erx_files`,
 `crypto` and `erx_bt`. Its manifest row holds:
 
 * one grant of the `line` interface, which the system domain's line

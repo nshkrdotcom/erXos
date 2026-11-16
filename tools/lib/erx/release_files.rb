@@ -132,12 +132,12 @@ module Erx
     #   pixel areas and its widget servers run there and in neither the system domain nor
     #   the display domain (G9, DisplayRelease), and the desktop's programs, erx_desk
     #   (docs/design-desktop-programs.md), which draw through it.
-    #   No manifest names it yet: it is the client side's release, which DisplayRelease
+    #   No manifest names it: it is the client side's release, which DisplayRelease
     #   reads, and a client domain's own script takes the same applications.
     # * ssh, the SSH domain's (docs/design-ssh.md, "The SSH domain"): asn1, crypto,
     #   public_key and ssh (docs/design-ssh.md lists no more). Only this script, session's and app's
-    #   name crypto, so no other domain has it on its code path. No manifest names it
-    #   yet; the native domain tests boot it (NativeDomain).
+    #   name crypto, so no other domain has it on its code path. No manifest names it;
+    #   the native domain tests boot it (NativeDomain).
     # * app, an app's session, which the app template boots (docs/design-packaging.md,
     #   "The apps row"): the client side of the display as client's without the desktop's
     #   programs (erx_desk), the network client, asn1, crypto, public_key, ssl and inets,
@@ -148,9 +148,12 @@ module Erx
     #   the session's servers.
     # * usb, the USB domain's (docs/design-usb.md, "Domains and authority"): the USB
     #   stack, erx_usb, so no other domain parses what a USB device writes. No manifest
-    #   names it.
-    # * bt, the Bluetooth domain's (docs/design-bluetooth.md): the Bluetooth stack,
-    #   erx_bt, so no other domain parses what a controller writes. No manifest names it.
+    #   names it; it exists because check_released requires a release for erx_usb.
+    # * bt, the Bluetooth domain's (docs/design-bluetooth.md, "The Bluetooth domain"): the
+    #   Bluetooth stack, erx_bt, so no other domain parses what a controller writes. No
+    #   manifest names it; it exists because check_released requires a release for
+    #   erx_bt. erx_bt holds no Security Manager (stage 4), so the script
+    #   leaves out the crypto the design's release ships.
     # session and app each take SESSION_BASE, whose erx_session (DOMAIN_ONLY) they only
     # load, as every session template's -eval starts it once the domain holds its facets.
     RELEASE_SCRIPTS = { 'erts' => DOMAIN_BASE,
