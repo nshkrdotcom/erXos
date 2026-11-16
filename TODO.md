@@ -2125,12 +2125,10 @@ it; git history is the record of completed work.
   serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
   `call/2`), so a client reading `kbd` on a hidden window stops its whole grant, every other request, clunk and
   flush of it included, until a key comes, as each wait for an event left in a callback does, since callbacks run
-  in the grant: the draw connection's reads and writes (`erx_session_export.erl:296, 351`); the `/dev/tty`
-  write and `/dev`'s `ctl` writes, which no design gives a keeper, are the items "`/dev/tty` writes" and
-  "`/dev`'s ctl writes" below;
+  in the grant: the draw connection's reads and writes (`erx_session_export.erl:297, 345`);
   and a program's `/dev/kbd` and
   `/dev/mouse` reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
-  (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
+  (`erlang/apps/erx_session/src/erx_session_export.erl:307, 318`), where design-files.md ("A program's window") has
   the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
   id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
   `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
@@ -3146,25 +3144,14 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   the session's local providers, named from the session's counter when it is mounted
   (docs/design-files.md, "Narrowing for a program"), is not there; `/bin` lists the Erlang commands
   alone, not the boot image's programs the command namespace lists, so `/bin/rc`, the shell
-  `/etc/passwd` names, is missing; and `/dev/tty` answers a read with `enotsup` until the terminal
-  relay's line discipline serves the tty's readers.
-* [High] session, `erx_session_export`, `/dev/tty` writes: the export opens `tty` for writing and hands
-  each write to its `tty` fun inside the write callback, and the fun it uses outside the tests,
-  `erx_session_tty:write/1`, does not exist (`erx_session_export.erl`, `init/1`; the moduledoc still names
-  it). The tree a program reaches is its window's own `/dev` (`start_window/1`, which passes no `tty`, and
-  `erx_prog_handler_core:exported/1`, which lists `tty`), so by reading the code a windowed program's write
-  to `/dev/tty` raises `undef` in that grant, which catches nothing (`erx_fs_grant:call/3`); the grant is
-  linked to the program's handler, which does not trap exits, so the program ends (unverified by a run).
-  The session's own `rw` grant has the same fault, reached by nothing today; once mounted, six such writes
-  within 10 s would pass `erx_session_sup`'s intensity and end the session. A fun that called the tty
-  would wait inside the callback while the tty is stopped, holding the grant's every other request, clunk
-  and flush. design-files.md ("Native clients": the export serves `tty` as a name only and answers an
-  `lopen` of it with `enxio`; "Verification and testing" names the test and its seeded fault) gives the
-  export no tty writes at all: the handler makes a terminal's description whose writes go to the terminal
-  relay (design-programs.md, "The terminal", `erx_session_relay:open_writer/1`, which nothing calls yet),
-  so no tty write waits at a server and no keeper holds one. Conform: answer the `lopen` with `enxio` and
-  delete the write clause, the `tty` fun and the item above's `enotsup` read; the terminal's description
-  in `erx_prog_handler` is then what gives programs terminal output, and stays an item until built.
+  `/etc/passwd` names, is missing.
+* [Medium] session, `erx_prog_handler`, `/dev/tty`: the export serves `tty` as a name alone and answers an
+  open of it with `enxio` (design-files.md, "Native clients"), but no program's handler yet makes the
+  terminal's description that design-programs.md ("The terminal", "`/dev/tty`") has it make instead: an
+  open of the terminal relay under the program's job, through which its reads, writes, watches and controls
+  go to the relay, never through the file protocol. Until it does, a program's open of `/dev/tty` fails
+  with `enxio`, and its standard streams reach the terminal only through its starter's pumps (the item
+  under shell, `erx_shell_program`, below).
 * [Low] session, `erx_session_export`: its statfs answers devfs's type for a tree that also holds
   `/bin` and `/etc` (`abi/protocols/9p.txt`, `p9_magic`, one type per kind of tree), its files show
   uid 0 where the design's owner of a file its server records none for is `nobody`
@@ -4492,19 +4479,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   intensity, 1 restart in 5 s), so a bug that crashes the `/dev` grant twice within 5 s
   ends the system domain and resets the machine. Move it under a supervisor whose end
   the domain service survives, when the device service gets its own.
-* [Medium] devices, `erx_devfs`, `/dev`'s ctl writes: a `ctl` write calls the holder's driver-control
-  facet inside the write callback (`control/3`), and `erx_driver_ctl`'s stop, start or restart may take
-  up to its 30 s call deadline, during which the control tree's grant answers nothing else, its clunks
-  and flushes included. design-files.md ("Waiting requests") hands a request that waits for an event to
-  a keeper of the tree, but design-system.md ("The `/dev` tree") gives the control tree no process
-  but its grant, so no keeper is named. Either the design counts the facet call as the tree's bounded
-  work, as a disk's read is, with its 30 s as the bound a grant may stop for, or it names a keeper: one
-  process started with the control tree, holding its `ctl` writes in `erx_fs_waits`, sending each to the
-  facet with `gen_server:send_request/2` and marking it begun at once, answering at the facet's reply,
-  and `eio` at the facet's end or its own 30 s timer. Either way the bound is per write, not per tree: the
-  facet takes no other request while a start runs, which nothing bounds (`erx_driver_ctl`'s moduledoc), so
-  the next write queues behind it; and a write that times out answers `eio` for an operation the facet may
-  still complete.
+* [Low] devices, `erx_devfs`, `/dev`'s ctl writes: the facet call is the control tree's bounded work, with
+  `erx_driver_ctl`'s 30 s deadline as the bound its grant may stop for (design-system.md, "The `/dev`
+  tree"), and that bound is per write, not per tree: the facet takes no other request while a start runs,
+  which nothing bounds (`erx_driver_ctl`'s moduledoc), so a second write queues behind the first and may
+  answer `eio` after 30 s of its own for an operation not yet begun; a start that never returns holds
+  the facet for good, and each later write then holds the grant 30 s before it answers `eio`. Bound the
+  driver's start where the facet waits for it.
 * [Low] devices, `erx_devfs`: `/dev` shows only the block device. Its `status` has no
   `path` line, because the catalogue that reaches Erlang has no device-tree path, and
   its `driver` line is `[unknown]`, because no facet says which process drives a unit.

@@ -28,8 +28,9 @@ for it, and calls the holder's driver-control facet for a ctl write.
   to erx_driver_ctl's own bound, and a call that fails or exits answers
   `eio` and ends nothing here. The write runs in the grant, which calls
   every callback itself, so until the facet answers, every other request of
-  that grant, its clunks and flushes among them, waits behind it (TODO.md,
-  `/dev`'s ctl writes).
+  that grant, its clunks and flushes among them, waits behind it: the call
+  is the tree's bounded work, and its deadline the bound the grant may stop
+  for (docs/design-system.md, "The /dev tree").
 
 In Phase 1 the design's device service is the system domain's domain
 service: its supervisor starts the control tree with start_link/0, which
