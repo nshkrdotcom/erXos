@@ -61,6 +61,10 @@ module Erx
       # The limit (abi/kernel.txt) naming the null capability, which a
       # capability kind excludes.
       CAP_NULL = 'cap_null'
+      # The limit (abi/protocols/prog.txt) naming FreeBSD's OFF_MAX, an offset
+      # kind's bound; an offset's C value is int64_t, so it is INT64_MAX.
+      OFF_MAX = 'off_max'
+      INT64_MAX = (1 << 63) - 1
       LENGTHS = { 'u16' => 65_535, 'u32' => 65_536 }.freeze
       # Names become Erlang atoms and functions: no reserved word, no dot, and no
       # kind whose check would clash with a BIF or a helper of the generated module.
@@ -111,7 +115,7 @@ module Erx
             line.fail!('expected errors type N') unless words.size == 2 && words.first == 'type'
             error_type = number(words[1], 255, line, constants).fetch(:value)
             errors = error_numbers(children, line, constants)
-          when 'integer', 'capability', 'text', 'tuple', 'list', 'map', 'union'
+          when 'integer', 'capability', 'offset', 'time', 'text', 'tuple', 'list', 'map', 'union'
             kind_name = atom_name(words.first, line: line)
             line.fail!("reserved kind name #{kind_name}") if RESERVED_KINDS.include?(kind_name)
             if kinds.key?(kind_name) || BASE_KINDS.include?(kind_name) || totals.key?(kind_name)
@@ -165,6 +169,8 @@ module Erx
         case form
         when 'integer' then integer_kind(words, line, constants)
         when 'capability' then capability_kind(words, line, constants)
+        when 'offset' then offset_kind(words, line, constants)
+        when 'time' then time_kind(words, line)
         when 'text' then text_kind(words, line, constants)
         when 'tuple'
           line.fail!('a tuple has 1 to 32 elements') unless words.size.between?(1, MAX_FIELDS)
@@ -275,6 +281,41 @@ module Erx
         { form: 'integer', base: 'u64'.b, local: false,
           except: number("@#{CAP_NULL}", (1 << 64) - 1, line, constants),
           unique: true, capability: true }.freeze
+      end
+
+      # "offset NAME [in MIN MAX]": a file offset (docs/design-abi.md,
+      # "Program protocol"), FreeBSD's off_t: a signed 64-bit integer, from 0
+      # to OFF_MAX unless the range given reaches below 0, as lseek's
+      # offset relative to its whence does. Its base, i64, is its own: no
+      # integer kind spells it, so a frame protocol's every 64-bit kind is
+      # told apart by its declaration, a capability or an offset, and the C
+      # check reads an offset as int64_t, never as erx_cap_t.
+      def offset_kind(words, line, constants)
+        line.fail!("an offset needs the limit #{OFF_MAX}") unless constants.key?(OFF_MAX)
+        off_max = constants.fetch(OFF_MAX).value
+        line.fail!("the limit #{OFF_MAX} is int64_t's maximum, an offset's C value") unless off_max == INT64_MAX
+        range = case words
+                in [] then [0, off_max]
+                in ['in', low, high] then [low, high].map { |word| Model.numeric(word, constants, line) }
+                else line.fail!('an offset takes no option but in MIN MAX')
+                end
+        unless range.all? { |value| value.between?(-off_max - 1, off_max) }
+          line.fail!("an offset's range lies within #{-off_max - 1}..#{off_max}")
+        end
+        line.fail!('an offset range has MIN above MAX') if range.first > range.last
+        min, max = range.map { |value| { value: value, constant: nil }.freeze }
+        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, signed: true, offset: true }.freeze
+      end
+
+      # "time NAME": a time in whole seconds since the epoch (docs/design-abi.md,
+      # "Program protocol"), FreeBSD's time_t: any signed 64-bit integer. Its base
+      # is an offset's, i64, and so is its range check, but its C value is
+      # erx_profile_time_t, a struct of its own, so a time is never passed where
+      # an offset or a capability is expected, nor either where a time is.
+      def time_kind(words, line)
+        line.fail!('a time takes no options') unless words.empty?
+        min, max = [-INT64_MAX - 1, INT64_MAX].map { |value| { value: value, constant: nil }.freeze }
+        { form: 'integer', base: 'i64'.b, local: false, min: min, max: max, signed: true, time: true }.freeze
       end
 
       # max N, then "utf8", "refuse" and its refusals, "assign", "path",

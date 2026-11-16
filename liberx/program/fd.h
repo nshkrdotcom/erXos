@@ -37,6 +37,18 @@
 
 #include "liberx/program/fd_plan.h"
 
+/*
+ * POSIX names a struct stat's times st_atim, st_mtim and st_ctim, as musl
+ * does.  macOS, which builds the program layer for its host tests, names
+ * them st_atimespec, st_mtimespec and st_ctimespec; this is the one place
+ * the program layer and its test drivers learn the difference.
+ */
+#ifdef __APPLE__
+#define st_atim	st_atimespec
+#define st_mtim	st_mtimespec
+#define st_ctim	st_ctimespec
+#endif
+
 struct erx_pipe_end;
 
 typedef enum erx_prog_obj_kind {
@@ -175,18 +187,29 @@ int	erx_prog_fd_mmap(int fd, size_t len, int prot, int flags, off_t offset, void
  * device of mode 0666, a pipe end a FIFO of mode 0600 and size 0, and a mem
  * range a regular file of mode 0600 whose size is its bytes (their parity
  * with FreeBSD is unverified, TODO.md).  Every other field is 0.  A file's
- * attributes need a request the protocol does not offer: -ENOSYS.
+ * are the attributes its server gives (erx_prog_file_getattr).
  */
 int	erx_prog_fd_fstat(int fd, struct stat *st);
 
 /*
  * lseek of slot fd: null's new offset, which only an lseek moves, as
  * FreeBSD's /dev/null keeps one (erx_prog_seek_plan, with no contents to
- * end at), -ESPIPE for a pipe end or a mem range, whatever whence, -ENOSYS
- * for a file, whose description's offset the protocol offers no request to
- * move, and -EBADF for an empty slot.
+ * end at), a file's, which its description moves (erx_prog_file_seek),
+ * -ESPIPE for a pipe end or a mem range, whatever whence, as FreeBSD's
+ * kern_lseek answers an object that is not seekable, and -EBADF for an
+ * empty slot.
  */
 off_t	erx_prog_fd_lseek(int fd, off_t offset, int whence);
+/*
+ * pread and pwrite of len bytes of slot fd at offset, which move no offset,
+ * as FreeBSD's kern_pread and kern_preadv do: -EINVAL for a len past
+ * SSIZE_MAX, -EBADF for an empty slot, -ESPIPE for a pipe end or a mem
+ * range, which are not seekable, then -EINVAL for a negative offset, but on null,
+ * a character device, which reads nothing and takes every byte at any
+ * offset; a file's bytes are erx_prog_file_pread's and erx_prog_file_pwrite's.
+ */
+ssize_t	erx_prog_fd_pread(int fd, void *buf, size_t len, off_t offset);
+ssize_t	erx_prog_fd_pwrite(int fd, const void *buf, size_t len, off_t offset);
 /*
  * ioctl of slot fd, with the generic requests of FreeBSD's kern_ioctl:
  * FIOCLEX and FIONCLEX set and clear the slot's FD_CLOEXEC, FIONBIO sets or

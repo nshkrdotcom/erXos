@@ -145,3 +145,16 @@ directory_opens_only_a_directory_test_() ->
     [?_assertEqual({error, enotdir}, open({target, [<<"f">>]}, ?ERX_P9_O_DIRECTORY, none)),
      ?_assertMatch({ok, _}, open({target, [<<"d">>]}, ?ERX_P9_O_DIRECTORY, none)),
      ?_assertMatch({ok, _}, open({target, [<<"f">>]}, 0, none))].
+
+%% Where a seek moves an offset, as FreeBSD's vn_seek moves a regular file's and stock
+%% OTP answers on the development host: a sum past off_t is eoverflow, a negative one
+%% einval.
+seek_to_follows_freebsd_test_() ->
+    Max = ?ERX_OFF_MAX,
+    [?_assertEqual({ok, 15}, erx_file_remote:seek_to(10, 5)),
+     ?_assertEqual({ok, 0}, erx_file_remote:seek_to(10, -10)),
+     ?_assertEqual({error, einval}, erx_file_remote:seek_to(10, -11)),
+     ?_assertEqual({error, einval}, erx_file_remote:seek_to(0, -Max - 1)),
+     ?_assertEqual({ok, Max}, erx_file_remote:seek_to(Max - 1, 1)),
+     ?_assertEqual({error, eoverflow}, erx_file_remote:seek_to(Max, 1)),
+     ?_assertEqual({error, eoverflow}, erx_file_remote:seek_to(1, Max))].

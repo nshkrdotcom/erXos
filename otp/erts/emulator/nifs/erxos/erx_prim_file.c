@@ -526,7 +526,12 @@ efile_seek(efile_data_t *d, enum efile_seek_t seek, Sint64 offset, Sint64 *new_p
 		d->posix_errno = EINVAL;
 		return (0);
 	}
-	if (__builtin_add_overflow(base, offset, &position) || position < 0) {
+	/* FreeBSD's seek rule (erx_file_remote:seek_to/2): base is at least 0, so only a sum past it overflows. */
+	if (__builtin_add_overflow(base, offset, &position)) {
+		d->posix_errno = EOVERFLOW;
+		return (0);
+	}
+	if (position < 0) {
 		d->posix_errno = EINVAL;
 		return (0);
 	}

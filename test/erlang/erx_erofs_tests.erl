@@ -226,6 +226,13 @@ open_file_reads_as_stock_test() ->
     ?assertEqual({ok, 12000}, file:position(Fd, {cur, -388})),
     ?assertEqual({ok, binary:part(Big, 12000, 388)}, file:read(Fd, 1000)),
     ?assertEqual({error, einval}, file:position(Fd, {bof, -1})),
+    %% Past off_t, as stock OTP answers on the development host: a sum is eoverflow and
+    %% an offset that is no off_t badarg, and neither moves the offset.
+    ?assertEqual({error, eoverflow}, file:position(Fd, {cur, (1 bsl 63) - 1})),
+    ?assertEqual({error, eoverflow}, file:position(Fd, {eof, (1 bsl 63) - 1})),
+    ?assertEqual({error, badarg}, file:position(Fd, {bof, 1 bsl 63})),
+    ?assertEqual({error, badarg}, file:position(Fd, {cur, -(1 bsl 63) - 1})),
+    ?assertEqual({ok, 12388}, file:position(Fd, cur)),
     ?assertEqual({ok, binary:part(Big, 4090, 10)}, file:pread(Fd, 4090, 10)),
     ?assertEqual(eof, file:pread(Fd, 12388, 1)),
     ?assertEqual({error, einval}, file:pread(Fd, -1, 1)),

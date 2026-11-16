@@ -39,7 +39,7 @@ class ProgFileTest < Minitest::Test
   TSAN = ['-fsanitize=thread'].freeze
   COMPILER = ENV.fetch('ERX_CLANG', 'clang')
   # The driver's errors are the host's own numbers; the stand-in answers in them too.
-  E = %i[ENOENT EIO EBADF EACCES EEXIST ENOTDIR EINVAL EMFILE EFAULT ENAMETOOLONG ENOSYS EBUSY]
+  E = %i[ENOENT EIO EBADF EACCES EEXIST ENOTDIR EINVAL EMFILE EFAULT ENAMETOOLONG ENOSYS EBUSY EOVERFLOW]
       .to_h { |name| [name, -Errno.const_get(name)::Errno] }.freeze
 
   FLAGS_CASE = 'O_DIRECTORY and O_NOFOLLOW as 9P2000.L values, whatever O_CREAT, and O_NONBLOCK as nothing'
@@ -168,11 +168,32 @@ class ProgFileTest < Minitest::Test
       ['fcntl 0 getfl rdonly', Fcntl::O_RDWR.to_s],
       ['log', 'lcreate:/f:0x2:0600 lopen:/f:0x401']
     ],
-    'what a file does not offer' => [
+    # lseek moves the description's offset as FreeBSD's vn_seek does; pread and pwrite
+    # leave it; a whence past SEEK_END and a negative pread offset send nothing. fstat
+    # reports the attributes the server gave and 0 for the others, atime's value included,
+    # and the handler's error as its errno.
+    'lseek, pread, pwrite and fstat of a file' => [
       ['slots 1', 'ok'],
       ['open cwd /f rdwr|creat 0600', '0'],
-      ['lseek 0', E[:ENOSYS].to_s],
-      ['fstat 0', E[:ENOSYS].to_s]
+      ['write 0 hello', '5'],
+      ['lseek 0 0 cur', '5'],
+      ['lseek 0 -2 end', '3'],
+      ['read 0 100', '2 lo'],
+      ['lseek 0 -6 cur', E[:EINVAL].to_s],
+      ['lseek 0 9223372036854775807 cur', E[:EOVERFLOW].to_s],
+      ['lseek 0 0 data', E[:EINVAL].to_s],
+      ['pread 0 3 1', '3 ell'],
+      ['read 0 100', '0 -'],
+      ['pwrite 0 1 EL', '2'],
+      ['pread 0 100 0', '5 hELlo'],
+      ['pread 0 4 -1', "#{E[:EINVAL]} -"],
+      ['pread 0 4 99', '0 -'],
+      ['fstat 0', '0 100640 2 0 0 5 0.0 -86400.999999999 0.0'],
+      ["fail #{-E[:EOVERFLOW]}", 'ok'],
+      ['fstat 0', E[:EOVERFLOW].to_s],
+      ['log', 'lcreate:/f:0x2:0600 write:0:5:0 seek:0:0:cur seek:0:-2:eof read:0:100:0 seek:0:-6:cur ' \
+              'seek:0:9223372036854775807:cur pread:0:1:3:0 read:0:100:0 pwrite:0:1:2:0 pread:0:0:100:0 ' \
+              'pread:0:99:4:0 getattr:0 getattr:0']
     ]
   }.freeze
 
@@ -188,6 +209,13 @@ class ProgFileTest < Minitest::Test
 
   # A seeded fault, the case that must catch it, and the edit that plants it.
   MUTANTS = {
+    'a negative pread offset is sent' =>
+      ['lseek, pread, pwrite and fstat of a file', FD, "\tif (offset < 0)\n\t\treturn (-EINVAL);\n\tif (len == 0)\n", "\tif (len == 0)\n"],
+    'a getattr error is read as attributes' =>
+      ['lseek, pread, pwrite and fstat of a file', FILE_C,
+       "\tif (answer->which == ERX_PROG_GETATTR_REPLY_ERROR)\n\t\treturn (-answer->u.error.errnum);\n", ''],
+    'a time the server did not give is read' =>
+      ['lseek, pread, pwrite and fstat of a file', FILE_C, '.tv_sec = has ? time.seconds : 0', '.tv_sec = time.seconds'],
     'a slot taken is not marked taken' => ['two threads take turns at one data slot', DATA, "\ttaken |= UINT32_C(1) << slot;\n", ''],
     'a read answer past its count is copied' =>
       ['a read answer past its count is EIO', FILE_C, "if (answer->u.ok.io_done > count)\n", "if (false)\n"],

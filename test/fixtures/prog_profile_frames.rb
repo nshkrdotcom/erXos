@@ -32,7 +32,7 @@ module ProgProfileFrames
     def frame(term) = "\x83".b + term
     def small(n) = [97, n].pack('CC')
     def int(n) = [98, n].pack('Cl>')
-    def small_big(n) = [110, magnitude(n).bytesize, 0].pack('CCC') + magnitude(n)
+    def small_big(n) = [110, magnitude(n.abs).bytesize, n.negative? ? 1 : 0].pack('CCC') + magnitude(n.abs)
     def large_big(n) = [111, magnitude(n).bytesize, 0].pack('CNC') + magnitude(n)
     def atom(name) = [119, name.bytesize].pack('CC') + name.b
     def long_atom(name) = [118, name.bytesize].pack('Cn') + name.b

@@ -21,6 +21,10 @@ module Erx
     # without a hand-written switch to forget it.
     class ProfileEmitter
       INTEGER_TYPES = { 'u8' => 'uint8_t', 'u16' => 'uint16_t', 'u32' => 'uint32_t', 'u64' => 'uint64_t' }.freeze
+      # An offset's C type, FreeBSD's off_t (Protocols.offset_kind).
+      OFFSET_TYPE = 'int64_t'
+      # A time's C type, FreeBSD's time_t in a struct of its own (Protocols.time_kind).
+      TIME_TYPE = 'erx_profile_time_t'
       BASE_MAX = { 'u8' => 0xff, 'u16' => 0xffff, 'u32' => 0xffff_ffff, 'u64' => 0xffff_ffff_ffff_ffff }.freeze
 
       def self.outputs(schema)
@@ -107,7 +111,12 @@ module Erx
         return 'uint8_t' if name == 'slot'
 
         case kind.fetch(:form)
-        when 'integer' then kind[:capability] ? 'erx_cap_t' : INTEGER_TYPES.fetch(kind.fetch(:base))
+        when 'integer'
+          if kind[:capability] then 'erx_cap_t'
+          elsif kind[:offset] then OFFSET_TYPE
+          elsif kind[:time] then TIME_TYPE
+          else INTEGER_TYPES.fetch(kind.fetch(:base))
+          end
         when 'text' then 'erx_profile_text_t'
         when 'list' then "#{prefix}_#{name}_iter_t"
         when 'union' then atoms_only?(kind) ? 'uint16_t' : "#{prefix}_#{name}_t"
@@ -324,6 +333,8 @@ module Erx
       end
 
       def integer_members(name, kind)
+        return signed_members(kind) if kind[:signed]
+
         values = kind[:values]&.map { |item| item.fetch(:value) }
         low = values&.min || kind.dig(:min, :value) || 0
         high = values&.max || kind.dig(:max, :value) || BASE_MAX.fetch(kind.fetch(:base))
@@ -332,6 +343,18 @@ module Erx
         members << ".except = UINT64_C(#{kind.dig(:except, :value)}), .has_except = true" if kind[:except]
         members << '.unique = true' if kind[:unique]
         members.join(",\n\t    ")
+      end
+
+      # A signed kind's range, an offset's or a time's: int64_t bounds held in min
+      # and max as their two's complement (erx/profile.h); -2^63 has no literal of
+      # its own in C.
+      def signed_members(kind)
+        bound = lambda do |number|
+          value = number.fetch(:value)
+          value == -(1 << 63) ? '(uint64_t)INT64_MIN' : "(uint64_t)INT64_C(#{value})"
+        end
+        ['.form = ERX_PROFILE_INTEGER', '.sign = true',
+         ".min = #{bound.call(kind.fetch(:min))}", ".max = #{bound.call(kind.fetch(:max))}"].join(",\n\t    ")
       end
 
       def text_members(kind)

@@ -237,7 +237,11 @@ erx_fiasco_libc_fd(long n, const long args[6], long *result)
 		*result = erx_prog_sigaction((int)args[0], (const struct sigaction *)args[1], (struct sigaction *)args[2]);
 		return (true);
 	case SYS_pread64:
+		*result = erx_prog_fd_pread(fd, (void *)args[1], (size_t)args[2], (off_t)args[3]);
+		return (true);
 	case SYS_pwrite64:
+		*result = erx_prog_fd_pwrite(fd, (const void *)args[1], (size_t)args[2], (off_t)args[3]);
+		return (true);
 	case SYS_preadv:
 	case SYS_pwritev:
 	case SYS_preadv2:

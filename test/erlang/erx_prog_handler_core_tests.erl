@@ -23,6 +23,7 @@ nothing follows the end.
 
 -include_lib("eunit/include/eunit.hrl").
 -include("generated/erx_abi.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -define(PID, 21).
 -define(HAND(N), {pipe_hand, N, {pipe, read, {9, N}, #{lock => {hand, 1}}}}).
@@ -210,13 +211,75 @@ clunk_takes_the_open_out_at_once_test() ->
 unknown_open_is_ebadf_test_() ->
     [?_assertMatch({_, [?ANSWER(3, {error, ebadf})]},
                    erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, Request)))
-     || Request <- [{file, read, 1, 4, 0}, {file, write, 1, 4, 0}, {file, clunk, 1}]].
+     || Request <- [{file, read, 1, 4, 0}, {file, write, 1, 4, 0}, {file, clunk, 1},
+                    {file, pread, 1, 0, 4, 0}, {file, pwrite, 1, 0, 4, 0}, {local, seek, 1, 0, bof}]].
+
+%% A pread goes to the description at its own offset, and its bytes are copied as a
+%% read's are, never more than it asked for.
+pread_copies_then_answers_its_count_test() ->
+    At = 1 bsl 40,
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pread, 0, At, 4, 2})),
+    {C2, Copy} = erx_prog_handler_core:step(C1, {file_done, 3, {ok, <<"wad!">>}}),
+    ?assertEqual([{pread, desc, 3, At, 4}], Relayed),
+    ?assertEqual([{copy_in, 3, 2, <<"wad!">>}], Copy),
+    ?assertEqual({ok, 4}, answer(erx_prog_handler_core:step(C2, {file_copied, 3, ok}))).
+
+pread_past_the_end_answers_zero_test() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pread, 0, 99, 4, 2})),
+    ?assertEqual({ok, 0}, answer(erx_prog_handler_core:step(C1, {file_done, 3, eof}))).
+
+pread_longer_than_its_count_is_eio_test() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pread, 0, 0, 4, 2})),
+    ?assertEqual({error, eio}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, <<"five!">>}}))).
+
+pwrite_answers_its_count_test() ->
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pwrite, 0, 7, 9, 1})),
+    ?assertEqual([{pwrite, desc, 3, 1, 7, 9}], Relayed),
+    ?assertEqual({ok, 9}, answer(erx_prog_handler_core:step(C1, {file_done, 3, ok}))),
+    {C2, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, pwrite, 0, 7, 9, 1})),
+    ?assertEqual({error, enospc}, answer(erx_prog_handler_core:step(C2, {file_done, 3, {error, enospc}}))).
+
+%% A getattr goes to the description, and its reply holds each attribute the record
+%% gives and no key for one it does not: no uid, no atime and no nanoseconds here.
+getattr_answers_the_attributes_given_test_() ->
+    {C1, Relayed} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, getattr, 0})),
+    Info = #file_info{size = 5, mode = 8#100600, links = 1, gid = 20, mtime = -1, ctime = 1 bsl 40},
+    [?_assertEqual([{getattr, desc, 3}], Relayed),
+     ?_assertEqual({ok, #{size => 5, mode => 8#100600, nlink => 1, gid => 20, mtime => -1, ctime => 1 bsl 40}},
+                   answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, Info}}))),
+     ?_assertEqual({error, eio}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {error, eio}})))].
+
+%% An attribute past its field is eoverflow, as FreeBSD's freebsd11_stat answers an
+%% nlink past its old nlink_t; the largest of each is sent.
+getattr_past_a_field_is_eoverflow_test_() ->
+    {C1, _} = erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, {file, getattr, 0})),
+    Done = fun(Info) -> answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, Info}})) end,
+    Max = #file_info{links = 16#ffffffff, size = ?ERX_OFF_MAX, mode = 16#ffff, uid = 16#ffffffff,
+                     atime = -(1 bsl 63), mtime = (1 bsl 63) - 1},
+    [?_assertMatch({ok, #{nlink := 16#ffffffff, size := ?ERX_OFF_MAX}}, Done(Max)),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{links = 1 bsl 32})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{size = ?ERX_OFF_MAX + 1})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{mode = 16#10000})),
+     ?_assertEqual({error, eoverflow}, Done(Max#file_info{mtime = 1 bsl 63}))].
+
+%% A seek goes to the description, which answers the offset it reached or its error.
+seek_answers_the_offset_reached_test_() ->
+    Ask = fun(Request) -> erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, Request)) end,
+    {C1, Relayed} = Ask({local, seek, 0, -5, cur}),
+    [?_assertEqual([{seek, desc, 3, -5, cur}], Relayed),
+     ?_assertEqual({ok, 95}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, 95}}))),
+     ?_assertEqual({error, einval}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {error, einval}}))),
+     ?_assertEqual({error, eoverflow}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {error, eoverflow}}))),
+     %% An offset past off_t from the description is never sent as one.
+     ?_assertEqual({error, eio}, answer(erx_prog_handler_core:step(C1, {file_done, 3, {ok, 1 bsl 63}})))].
+
 
 %% The program was started with 4 slots: slot 4 is past them.
 data_slot_past_the_program_slots_is_einval_test_() ->
     [?_assertMatch({_, [?ANSWER(3, {error, einval})]},
                    erx_prog_handler_core:step(opened(running(), 7, desc), ?ASK(3, Request)))
-     || Request <- [{file, read, 0, 4, 4}, {file, write, 0, 4, 15}]].
+     || Request <- [{file, read, 0, 4, 4}, {file, write, 0, 4, 15}, {file, pread, 0, 0, 4, 4},
+                    {file, pwrite, 0, 0, 4, 15}]].
 
 %% A kill reaches the program while a file request waits.
 kill_while_a_file_request_waits_test() ->

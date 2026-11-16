@@ -303,15 +303,19 @@ act({open, Slot, Path, Flags, Mode, Table, Cwd}, H) ->
 act({read, Description, Slot, Count}, H) ->
     ok = erx_file_description:read(Description, Slot, Count),
     H;
-act({write, Description, Slot, Data, Count}, #h{port = Port} = H) ->
-    %% The bytes are taken from the data slot before the write is queued.
-    case driver(Port, fun() -> erx_program:data_read(Port, Data, Count) end, {error, edead}) of
-        {ok, Bytes} ->
-            ok = erx_file_description:write(Description, Slot, Bytes),
-            H;
-        {error, Errno} ->
-            {event, {file_done, Slot, {error, Errno}}, H}
-    end;
+act({pread, Description, Slot, Offset, Count}, H) ->
+    ok = erx_file_description:pread(Description, Slot, Offset, Count),
+    H;
+act({write, Description, Slot, Data, Count}, H) ->
+    taken(H, Slot, Data, Count, fun(Bytes) -> erx_file_description:write(Description, Slot, Bytes) end);
+act({pwrite, Description, Slot, Data, Offset, Count}, H) ->
+    taken(H, Slot, Data, Count, fun(Bytes) -> erx_file_description:pwrite(Description, Slot, Offset, Bytes) end);
+act({seek, Description, Slot, Offset, Whence}, H) ->
+    ok = erx_file_description:seek(Description, Slot, Offset, Whence),
+    H;
+act({getattr, Description, Slot}, H) ->
+    ok = erx_file_description:getattr(Description, Slot),
+    H;
 act({copy_in, Slot, Data, Bytes}, #h{port = Port} = H) ->
     Copied = driver(Port, fun() -> erx_program:data_write(Port, Data, Bytes) end, {error, edead}),
     {event, {file_copied, Slot, Copied}, H};
@@ -320,6 +324,17 @@ act({clunk, Description, Slot}, H) ->
     H;
 act(exit, H) ->
     H.
+
+%% A write's bytes, Count of them taken from data slot Data before the write
+%% is queued by Write; a failed take answers the request's slot.
+taken(#h{port = Port} = H, Slot, Data, Count, Write) ->
+    case driver(Port, fun() -> erx_program:data_read(Port, Data, Count) end, {error, edead}) of
+        {ok, Bytes} ->
+            ok = Write(Bytes),
+            H;
+        {error, Errno} ->
+            {event, {file_done, Slot, {error, Errno}}, H}
+    end.
 
 %% A call of the program driver on the program's port, or Ended, the driver's
 %% answer for a program that has ended, once the port is closed. The driver

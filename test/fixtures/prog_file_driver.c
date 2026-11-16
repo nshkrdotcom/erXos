@@ -347,6 +347,106 @@ serve_write(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
 	r->u.ok.io_done = n;
 }
 
+/* A pread at its own offset, which moves no open's. */
+static void
+serve_pread(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
+{
+	const struct open *const o = open_find(q->u.file_pread.open);
+	const uint64_t at = (uint64_t)q->u.file_pread.file_offset;
+	const size_t left = o->file->size > at ? o->file->size - (size_t)at : 0;
+	const size_t n = left < q->u.file_pread.io_count ? left : q->u.file_pread.io_count;
+	char line[96];
+
+	if (n > 0)
+		memcpy(slot_bytes(q->u.file_pread.data_slot), o->file->bytes + at, n);
+	snprintf(line, sizeof(line), "pread:%u:%lld:%u:%u", q->u.file_pread.open,
+	    (long long)q->u.file_pread.file_offset, q->u.file_pread.io_count, q->u.file_pread.data_slot);
+	log_line(line);
+	r->which = ERX_PROG_IO_REPLY_OK;
+	r->u.ok.io_done = (uint32_t)n;
+}
+
+/* A pwrite at its own offset, which moves no open's. */
+static void
+serve_pwrite(const erx_prog_request_t *q, erx_prog_io_reply_t *r)
+{
+	const struct open *const o = open_find(q->u.file_pwrite.open);
+	const uint64_t at = (uint64_t)q->u.file_pwrite.file_offset;
+	const uint32_t n = q->u.file_pwrite.io_count;
+	char line[96];
+
+	if (at > FILE_BYTES || n > FILE_BYTES - at)
+		fail("a pwrite past the stand-in's file");
+	memcpy(o->file->bytes + at, slot_bytes(q->u.file_pwrite.data_slot), n);
+	if (at + n > o->file->size)
+		o->file->size = (size_t)(at + n);
+	snprintf(line, sizeof(line), "pwrite:%u:%lld:%u:%u", q->u.file_pwrite.open,
+	    (long long)q->u.file_pwrite.file_offset, n, q->u.file_pwrite.data_slot);
+	log_line(line);
+	r->which = ERX_PROG_IO_REPLY_OK;
+	r->u.ok.io_done = n;
+}
+
+/* A seek, as the description moves its offset (erx_file_remote:seek_to/2). */
+static void
+serve_seek(const erx_prog_request_t *q, erx_prog_seek_reply_t *r)
+{
+	static const char *const names[] = { "bof", "cur", "eof" };
+	struct open *const o = open_find(q->u.local_seek.open);
+	const int64_t offset = q->u.local_seek.seek_offset;
+	int64_t base;
+	char line[96];
+
+	switch (q->u.local_seek.whence) {
+	case ERX_PROG_WHENCE_BOF:
+		base = 0;
+		break;
+	case ERX_PROG_WHENCE_CUR:
+		base = (int64_t)o->offset;
+		break;
+	default:
+		base = (int64_t)o->file->size;
+		break;
+	}
+	snprintf(line, sizeof(line), "seek:%u:%lld:%s", q->u.local_seek.open, (long long)offset,
+	    names[q->u.local_seek.whence]);
+	log_line(line);
+	if (offset > 0 && base > INT64_MAX - offset) {
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_ERROR, .u.error.errnum = EOVERFLOW };
+	} else if (base + offset < 0) {
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_ERROR, .u.error.errnum = EINVAL };
+	} else {
+		o->offset = (size_t)(base + offset);
+		*r = (erx_prog_seek_reply_t){ .which = ERX_PROG_SEEK_REPLY_OK, .u.ok.file_offset = base + offset };
+	}
+}
+
+/*
+ * A getattr, as a description answers from a server that gives the mode, the
+ * links, the size and the modification time to the nanosecond, and neither
+ * owner nor the other times; atime holds a value it did not give, which
+ * the client must not read.  After a fail, its errno, the stat left holding
+ * values the client must not read either.
+ */
+static void
+serve_getattr(const erx_prog_request_t *q, erx_prog_getattr_reply_t *r)
+{
+	struct open *const o = open_find(q->u.file_getattr.open);
+	char line[32];
+
+	snprintf(line, sizeof(line), "getattr:%u", q->u.file_getattr.open);
+	log_line(line);
+	*r = (erx_prog_getattr_reply_t){ .which = ERX_PROG_GETATTR_REPLY_OK,
+	    .u.ok.stat = { .has_mode = true, .mode = S_IFREG | 0640, .has_nlink = true, .nlink = 2,
+		.has_size = true, .size = (int64_t)o->file->size, .has_mtime = true,
+		.mtime = { .seconds = -86400 }, .has_mtime_nsec = true, .mtime_nsec = 999999999,
+		.atime = { .seconds = 77 }, .atime_nsec = 5 } };
+	if (fail_next != 0) {
+		r->which = ERX_PROG_GETATTR_REPLY_ERROR;
+		r->u.error.errnum = fail_next;
+	}
+}
+
 /* The handler's answer to request q, into *reply. */
 static void
 serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
@@ -401,6 +501,18 @@ serve(const erx_prog_request_t *q, erx_prog_reply_t *reply)
 			break;
 		}
 		serve_write(q, &reply->u.file_write);
+		break;
+	case ERX_PROG_REQUEST_FILE_PREAD:
+		serve_pread(q, &reply->u.file_pread);
+		break;
+	case ERX_PROG_REQUEST_FILE_PWRITE:
+		serve_pwrite(q, &reply->u.file_pwrite);
+		break;
+	case ERX_PROG_REQUEST_LOCAL_SEEK:
+		serve_seek(q, &reply->u.local_seek);
+		break;
+	case ERX_PROG_REQUEST_FILE_GETATTR:
+		serve_getattr(q, &reply->u.file_getattr);
 		break;
 	case ERX_PROG_REQUEST_FILE_CLUNK:
 		open_find(q->u.file_clunk.open)->file = NULL;
@@ -597,6 +709,7 @@ main(int argc, char **argv)
 	static char line[ERX_PROG_PATH_MAX + 256];
 	char word[32], arg[ERX_PROG_PATH_MAX + 64], arg2[256];
 	unsigned long long a, b;
+	long long off;
 	FILE *script;
 	int fd;
 
@@ -648,12 +761,31 @@ main(int argc, char **argv)
 			while (erx_prog_fd_dup(fd) >= 0)
 				n++;
 			printf("%d\n", n);
-		} else if (strcmp(word, "lseek") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
-			printf("%lld\n", (long long)erx_prog_fd_lseek(fd, 0, SEEK_CUR));
-		} else if (strcmp(word, "fstat") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
-			struct stat st;
+		} else if (strcmp(word, "lseek") == 0 && sscanf(line, "%*s %d %lld %31s", &fd, &off, arg) == 3) {
+			const int whence = strcmp(arg, "set") == 0 ? SEEK_SET : strcmp(arg, "cur") == 0 ? SEEK_CUR :
+			    strcmp(arg, "end") == 0 ? SEEK_END : 3;
 
-			printf("%d\n", erx_prog_fd_fstat(fd, &st));
+			printf("%lld\n", (long long)erx_prog_fd_lseek(fd, (off_t)off, whence));
+		} else if (strcmp(word, "pread") == 0 && sscanf(line, "%*s %d %llu %lld", &fd, &a, &off) == 3) {
+			char buf[256] = { 0 };
+			const ssize_t got = erx_prog_fd_pread(fd, buf, a < sizeof(buf) - 1 ? (size_t)a : sizeof(buf) - 1, (off_t)off);
+
+			printf("%zd %s\n", got, got > 0 ? buf : "-");
+		} else if (strcmp(word, "pwrite") == 0 && sscanf(line, "%*s %d %lld %255s", &fd, &off, arg) == 3) {
+			printf("%zd\n", erx_prog_fd_pwrite(fd, arg, strlen(arg), (off_t)off));
+		} else if (strcmp(word, "fstat") == 0 && sscanf(line, "%*s %d", &fd) == 1) {
+			/* fstat FD: its status, then mode nlink uid gid size and each time's seconds.nanoseconds. */
+			struct stat st;
+			const int status = erx_prog_fd_fstat(fd, &st);
+
+			if (status != 0)
+				printf("%d\n", status);
+			else
+				printf("0 %o %lu %u %u %lld %lld.%ld %lld.%ld %lld.%ld\n", (unsigned)st.st_mode,
+				    (unsigned long)st.st_nlink, (unsigned)st.st_uid, (unsigned)st.st_gid,
+				    (long long)st.st_size, (long long)st.st_atim.tv_sec, st.st_atim.tv_nsec,
+				    (long long)st.st_mtim.tv_sec, st.st_mtim.tv_nsec,
+				    (long long)st.st_ctim.tv_sec, st.st_ctim.tv_nsec);
 		} else if (strcmp(word, "fcntl") == 0 && sscanf(line, "%*s %d %31s %255s", &fd, arg, arg2) == 3) {
 			/* fcntl FD getfd|getfl|setfl FLAGS: FLAGS as an open's, rdonly for none. */
 			const int cmd = strcmp(arg, "getfd") == 0 ? F_GETFD : strcmp(arg, "getfl") == 0 ? F_GETFL : F_SETFL;

@@ -25,9 +25,9 @@
 #   slots a request may name.
 # * An open is any u16, an entry of the program's open table.
 # * A mem descriptor's range is in pages of erx_abi.txt's page_size, a first
-#   page from 1 and a count from 1, each a u32, since every u64 of a frame
-#   is a capability: the mapping starts below 2^44 bytes and ends below 2^45, and
-#   page 0 is never mapped.
+#   page from 1 and a count from 1, each a u32, which the startup message's
+#   C layout holds: the mapping starts below 2^44 bytes and ends below 2^45,
+#   and page 0 is never mapped.
 # * A file request's path is any text without a NUL a program's open
 #   names, relative or absolute, up to prog_path_max bytes. It is not held
 #   to UTF-8 here: the handler resolves it through the program's namespace
@@ -44,6 +44,19 @@
 #   count no grammar can state, so the handler holds a reply to it and
 #   liberx copies no more than it asked for (docs/design-programs.md,
 #   "Reads and writes").
+# * A pread's or a pwrite's offset is 0 to 2^63 - 1, FreeBSD's off_t: liberx
+#   answers a negative one with EINVAL itself, as FreeBSD's kern_preadv
+#   does. A seek's offset is any off_t, relative to its whence, bof, cur or
+#   eof (SEEK_SET, SEEK_CUR, SEEK_END, which liberx alone maps), and its
+#   reply's the offset reached, 0 to 2^63 - 1 (docs/design-programs.md,
+#   "Open-file descriptions").
+# * A getattr's attributes are FreeBSD's struct stat fields that a file's
+#   server gives, each a key of stat only when it gave it: a mode as
+#   mode_t's 16 bits, an nlink, a uid and a gid as u32, a size as an
+#   off_t, and each time as a time_t of whole seconds with its nanoseconds
+#   apart, 0 to 999999999. The handler answers EOVERFLOW for a server's
+#   value past its field, as FreeBSD's freebsd11_stat answers an nlink past
+#   its old nlink_t (docs/design-programs.md, "Descriptors and files").
 # * data_slot's bound is prog_data_slots_max - 1, written out, since a
 #   bound here names a limit or a number and no sum of them.
 #
@@ -69,12 +82,20 @@
 # slotted frame from the program. "capability NAME" declares a capability handle:
 # a u64 other than cap_null; no two capabilities of a frame are equal.
 # A handle is 64 bits, so every other u64 kind or field fails, as does an
-# integer excepting cap_null. For a union a frame to the program carries,
+# integer excepting cap_null. "offset NAME [in MIN MAX]" declares a file
+# offset, FreeBSD's off_t: a signed 64-bit integer, 0 to 2^63 - 1 unless
+# the range reaches below 0, which no integer kind spells and whose C
+# value is int64_t, never a capability. "time NAME" declares a time_t of
+# whole seconds, any signed 64-bit integer, whose C value is
+# erx_profile_time_t, neither an offset nor a capability. For a union a frame to the program carries,
 # the generator walks each case's capabilities and refuses one nested
 # inside another kind.
 
 limit prog_frame_max u32 196608
 limit prog_pid_max u32 2147483647
+# FreeBSD's OFF_MAX, the largest off_t: an offset kind's bound, and a file's
+# offset and size wherever erXos's Erlang holds one (erx_file_remote).
+limit off_max u64 0x7fffffffffffffff
 limit prog_args_max u32 131072
 limit prog_path_max u32 4096
 limit prog_fds_max u32 1024
@@ -128,6 +149,13 @@ protocol erx_prog
   integer data_slot u8 in 0 15
   integer io_count u32 in 1 @prog_data_slot_bytes
   integer io_done u32 in 0 @prog_data_slot_bytes
+  offset file_offset
+  offset seek_offset in -0x8000000000000000 0x7fffffffffffffff
+  integer stat_mode u16 in 0 0xffff
+  integer stat_nlink u32 in 0 0xffffffff
+  integer stat_id u32 in 0 0xffffffff
+  integer time_nsec u32 in 0 999999999
+  time file_time
   total args @prog_args_max
   text arg max @prog_args_max utf8 refuse nul sum args
   text env_var max @prog_args_max utf8 refuse nul assign sum args
@@ -216,6 +244,31 @@ protocol erx_prog
   union io_reply
     case ok io_done
     case error errno
+  union whence
+    case bof
+    case cur
+    case eof
+  union seek_reply
+    case ok file_offset
+    case error errno
+  # getattr's reply: the attributes the file's server gave, each key present
+  # only when it gave that field, so a field it did not give is never sent
+  # as a value.
+  map stat
+    optional mode stat_mode
+    optional nlink stat_nlink
+    optional uid stat_id
+    optional gid stat_id
+    optional size file_offset
+    optional atime file_time
+    optional atime_nsec time_nsec
+    optional mtime file_time
+    optional mtime_nsec time_nsec
+    optional ctime file_time
+    optional ctime_nsec time_nsec
+  union getattr_reply
+    case ok stat
+    case error errno
   union clunk_reply
     case ok
     case error errno
@@ -240,8 +293,18 @@ protocol erx_prog
     reply io_reply
     case file =write open io_count data_slot
     reply io_reply
+    case file =pread open file_offset io_count data_slot
+    reply io_reply
+    case file =pwrite open file_offset io_count data_slot
+    reply io_reply
+    case file =getattr open
+    reply getattr_reply
     case file =clunk open
     reply clunk_reply
+    # An operation the session answers from its own tables: lseek on the
+    # open's description (docs/design-programs.md, "The program protocol").
+    case local =seek open seek_offset whence
+    reply seek_reply
   union notice
     case closed pipe_id end_id
     case drained pipe_id end_id wend

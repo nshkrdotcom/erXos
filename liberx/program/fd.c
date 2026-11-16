@@ -671,7 +671,7 @@ erx_prog_fd_fstat(int fd, struct stat *st)
 		st->st_size = (off_t)mem_of(obj)->bytes;
 		break;
 	case ERX_PROG_OBJ_FILE:
-		result = -ENOSYS;
+		result = erx_prog_file_getattr(erx_prog_file_of(obj), st);
 		break;
 	}
 	erx_prog_obj_put(obj);
@@ -701,9 +701,72 @@ erx_prog_fd_lseek(int fd, off_t offset, int whence)
 	case ERX_PROG_OBJ_MEM:
 		break;
 	case ERX_PROG_OBJ_FILE:
-		result = -ENOSYS;
+		result = erx_prog_file_seek(erx_prog_file_of(obj), offset, whence);
 		break;
 	}
+	erx_prog_obj_put(obj);
+	return (result);
+}
+
+/* Which of the two positioned calls obj_pio makes. */
+typedef enum pio {
+	PIO_READ,
+	PIO_WRITE
+} pio_t;
+
+/*
+ * A pread or a pwrite (call) of len bytes at buf, at offset, through obj,
+ * which the caller holds a counted reference to: the count or a negative
+ * errno, in kern_preadv's order of checks after kern_pread's of len.
+ */
+static ssize_t
+obj_pio(erx_prog_obj_t *obj, pio_t call, uint8_t *buf, size_t len, off_t offset)
+{
+
+	switch (obj->kind) {
+	case ERX_PROG_OBJ_NULL:
+		return (call == PIO_READ ? 0 : (ssize_t)len);
+	case ERX_PROG_OBJ_PIPE:
+	case ERX_PROG_OBJ_MEM:
+		return (-ESPIPE);
+	case ERX_PROG_OBJ_FILE:
+		break;
+	}
+	if (offset < 0)
+		return (-EINVAL);
+	if (len == 0)
+		return (0);
+	return (call == PIO_READ ? erx_prog_file_pread(erx_prog_file_of(obj), buf, len, offset) :
+	    erx_prog_file_pwrite(erx_prog_file_of(obj), buf, len, offset));
+}
+
+ssize_t
+erx_prog_fd_pread(int fd, void *buf, size_t len, off_t offset)
+{
+	erx_prog_obj_t *obj;
+	ssize_t result;
+
+	if (len > SSIZE_MAX)
+		return (-EINVAL);
+	if ((obj = erx_prog_fd_get(fd)) == NULL)
+		return (-EBADF);
+	result = obj_pio(obj, PIO_READ, buf, len, offset);
+	erx_prog_obj_put(obj);
+	return (result);
+}
+
+ssize_t
+erx_prog_fd_pwrite(int fd, const void *buf, size_t len, off_t offset)
+{
+	erx_prog_obj_t *obj;
+	ssize_t result;
+
+	if (len > SSIZE_MAX)
+		return (-EINVAL);
+	if ((obj = erx_prog_fd_get(fd)) == NULL)
+		return (-EBADF);
+	/* obj_pio only reads buf for a pwrite. */
+	result = obj_pio(obj, PIO_WRITE, (uint8_t *)(uintptr_t)buf, len, offset);
 	erx_prog_obj_put(obj);
 	return (result);
 }

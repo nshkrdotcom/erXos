@@ -2111,8 +2111,8 @@ it; git history is the record of completed work.
   `getegid` from its `uid`.
 * [Low] programs, `writev` through the seam (`liberx/backend/fiasco/program_task.c`, `vector_call`) writes each entry
   separately, so entries that sum to at most `PIPE_BUF` are not one atomic write against another writer of the same
-  pipe; gather them into one pipe write. `lseek` ignores `whence` and `ioctl` its request (`liberx/program/fd.c`), so
-  a bad `whence` answers 0 and `FIONBIO` on a pipe answers `ENOTTY`.
+  pipe; gather them into one pipe write. `ioctl` ignores its request on a pipe (`liberx/program/fd.c`), so
+  `FIONBIO` on a pipe answers `ENOTTY`.
 * [Low] programs, the program's seam keeps two lists by hand (`liberx/backend/fiasco/program_task.c`,
   `erx_fiasco_libc_fd`): the calls it hands back to musl's rows (`musl/src/internal/erxos/syscall.c`), which must name
   every row that names no descriptor, and the calls that name a descriptor, which answer `EBADF` for one the table does
@@ -2120,9 +2120,8 @@ it; git history is the record of completed work.
   it, and an unlisted descriptor call answers `ENOSYS`, not `EBADF`. Generate both from one table of musl's calls with
   the argument that names a descriptor, or have musl's descriptor-free rows be one function the seam hands back to.
 * [Low] programs, descriptor calls the table does not offer yet (`liberx/backend/fiasco/program_task.c`,
-  `erx_fiasco_libc_fd`; `liberx/program/fd.c`): `pread`, `pwrite` and their vector forms answer `ENOSYS` on a
-  descriptor the table holds, where FreeBSD's `kern_pread` gives a pipe end `ESPIPE` and `/dev/null` its read of 0 or
-  its write of every byte; `FIONREAD` on a pipe end is `ENOTTY`, where FreeBSD's `pipe_ioctl` gives the bytes
+  `erx_fiasco_libc_fd`; `liberx/program/fd.c`): `preadv`, `pwritev` and their `2` forms answer `ENOSYS` on a
+  descriptor the table holds, where FreeBSD's `kern_preadv` answers as `pread` and `pwrite` do; `FIONREAD` on a pipe end is `ENOTTY`, where FreeBSD's `pipe_ioctl` gives the bytes
   readable; `F_GETOWN` and `F_SETOWN` are `EINVAL`. Answer each from the object's kind in the table.
 * [Medium] programs, the spawn's send (`liberx/program/spawn.c`, `send_spawn`; docs/design-programs.md, "Starting
   a program", step 2) must settle, before it is written, what the plan alone cannot: each `addopen` made in action
@@ -3076,9 +3075,36 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   copy after the program ended. The handler's stand-in `erx_program:data_read/3` answers `enosys`, so
   its effect suite never runs a write that succeeds. `prim_file:erx_open_at/5` and `erx_file_remote:open_flags/4` have no
   host test against a stand-in file server; the handler's effect suite stands in `erx_file_description`.
-  The other operations of the `{file, ...}` row wait too; `pread`, `pwrite`, `lseek` and `getattr` need
-  a 64-bit offset or size, which the frame profile cannot spell, since it refuses every `u64` but a
-  capability (docs/design-abi.md, "Program protocol").
+  The other operations of the `{file, ...}` row wait too. No QEMU case runs a program's `pwrite` end to
+  end yet (the programs suite's `fileio` runs `lseek`, `pread` and `fstat`).
+* [Low] programs, `fstat` of a file (`liberx/program/file.c` `erx_prog_file_getattr`; abi/protocols/prog.txt
+  `stat`): `st_ino`, `st_dev` and `st_rdev` are not carried and read 0. `ino` and `rdev` need an unsigned
+  64-bit kind the frame profile does not have (`integer ... u64` is refused in a frame protocol, which keeps
+  a capability's spelling unique); `dev` is a `phash2` stand-in (`erx_file_remote`'s `major_device`), of no use
+  without `ino`, since a program pairs the two to tell files apart. `st_blksize` and `st_blocks` read 0 too,
+  though 9P's `getattr` gives both; `st_blocks` 0 beside a non-zero size reads as a sparse file to `du` and
+  libarchive. The description (`erx_file_description`, `file:read_file_info/2`) gives no nanoseconds, since
+  `#file_info{}` has no field for them and `erx_file_remote:file_info/2` drops the server's `*_nsec`, so the
+  reply's `atime_nsec`, `mtime_nsec` and `ctime_nsec` keys have no producer and every `tv_nsec` reads 0.
+  A time before 1970 is `EOVERFLOW` if a 9P server sends it as its two's complement in the `u64` field
+  (abi/protocols/9p.txt `atime_sec`), since `erx_file_remote` passes it on unsigned (unverified which
+  servers do).
+* [Low] programs, FreeBSD's seek rule (a sum past `OFF_MAX` is `EOVERFLOW`, a negative one `EINVAL`, as
+  `vn_seek` in sys/kern/vfs_vnops.c answers) has one Erlang home, `erx_file_remote:seek_to/2`, which both
+  backends' `file:position/2` and so a program's file description follow, but it is spelled again in C:
+  the release file system's `efile_seek` (`otp/erts/emulator/nifs/erxos/erx_prim_file.c`), which no host test
+  reaches, and on the program's side `erx_prog_seek_plan` (`liberx/program/fd_plan.c`) for `/dev/null`'s offset, and the file
+  client's stand-in (`test/fixtures/prog_file_driver.c`, `serve_seek`). Decide whether null's offset moves
+  to a description too. No host test runs the real description's `pread`, `pwrite` or seek; the handler's
+  suites stand it in. The two backends also each keep `moved/2`'s whence handling and its `badarg` guard for an
+  offset outside off_t; one function taking the eof size and the offset cell would hold the whole decision,
+  and `erx_file_remote`'s guard has no test through `file:position/2` (the EROFS copy has one) [Medium].
+* [Low] programs, `liberx/program/file.c`: a `pwrite` whose end passes `OFF_MAX` is sent, and the server may
+  write part of it before `erx_file_remote` answers `eio`, where FreeBSD's `ffs_write` refuses it whole with
+  `EFBIG`; `lseek`'s `SEEK_DATA` and `SEEK_HOLE` answer `EINVAL` without a request, where FreeBSD's `vn_seek`
+  asks the file system; and `pread` or `pwrite` on an open of the wrong access mode answers `EINVAL` for a
+  negative offset and 0 for no bytes before the handler's `EBADF`, where FreeBSD's `fget_read` checks the mode
+  first (`fd.c` `obj_pio`, which can read `obj_access`; `read` has the same gap).
 * [Medium] liberx program layer, `liberx/program/fd.c` (`status_change`): a file's `O_APPEND` is fixed
   at its open, and `F_SETFL` that would change it is `EINVAL`, since no request tells the handler's
   description of the change. musl's `fdopen(fd, "a")` (musl/src/stdio/__fdopen.c) therefore fails

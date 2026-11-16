@@ -9,7 +9,7 @@ alone, and an open answers the handler at once with this stand-in's
 answer, enoent, so no description runs.
 """.
 
--export([table/0, open/6, read/3, write/3, clunk/2]).
+-export([table/0, open/6, read/3, write/3, pread/4, pwrite/4, seek/4, getattr/2, clunk/2]).
 
 table() -> [#{point => [], provider => release, root => [], rights => ro}].
 
@@ -19,4 +19,8 @@ open(Slot, _Path, _Flags, _Mode, _Table, _Cwd) ->
 
 read(_Description, _Slot, _Count) -> ok.
 write(_Description, _Slot, _Bytes) -> ok.
+pread(_Description, _Slot, _Offset, _Count) -> ok.
+pwrite(_Description, _Slot, _Offset, _Bytes) -> ok.
+seek(_Description, _Slot, _Offset, _Whence) -> ok.
+getattr(_Description, _Slot) -> ok.
 clunk(_Description, _Slot) -> ok.

@@ -37,7 +37,7 @@ module Erx
                            if %i[max values atom except].count { |option| kind[option] } > 1
                              declaration.fail!("kind #{name}: a file protocol's integer takes one of max, values, or ATOM and except")
                            end
-                           kind[:capability] || kind[:unique] || kind[:refers] || kind[:min]
+                           kind[:capability] || kind[:signed] || kind[:unique] || kind[:refers] || kind[:min]
                          when 'text'
                            if kind.fetch(:max).fetch(:value) > LENGTHS.fetch(kind.fetch(:length))
                              declaration.fail!("kind #{name}: max past its #{kind.fetch(:length)} length")
@@ -130,7 +130,7 @@ module Erx
 
         # A capability is a value of a kind declared "capability NAME"
         # (Protocols.capability_kind); u64_rule! leaves a frame protocol no
-        # other 64-bit kind that could hold a handle.
+        # other 64-bit kind but an offset or a time, which the generator types apart.
         def capability?(kinds, name)
           kinds.dig(name, :capability) == true
         end
@@ -181,7 +181,10 @@ module Erx
         # frame protocol's every u64 is a capability: an integer kind of base
         # u64 that is not one, or u64 itself as an element or field, fails.
         # A handle spelled any other way, null or not, is then refused, not
-        # left for the walk to miss.
+        # left for the walk to miss. A 64-bit file offset is declared
+        # offset NAME (Protocols.offset_kind), whose base, i64, is its own and
+        # whose C type is int64_t, so it is never read as a handle nor a
+        # handle as it.
         def u64_rule!(declaration, kinds)
           offender, = kinds.find do |_, kind|
             plain = kind.fetch(:form) == 'integer' && kind.fetch(:base) == 'u64' && !kind[:capability]
@@ -189,7 +192,7 @@ module Erx
           end
           return unless offender
 
-          declaration.fail!("kind #{offender}: a frame protocol's u64 is a capability: declare it capability NAME")
+          declaration.fail!("kind #{offender}: a frame protocol's u64 is a capability: declare it capability NAME, or an offset offset NAME")
         end
 
         def nine_p_kinds?(kinds)
@@ -243,7 +246,8 @@ module Erx
           element = kinds.dig(element, :elements)&.first || element if kinds.dig(element, :form) == 'tuple'
           kind = kinds[element]
           return element if FRAME_BUILTINS.include?(element) || BASE_KINDS.include?(element) && element != 'alias'
-          return element if kind && kind.fetch(:form) == 'integer'
+          # The C check compares keys as u64, so a signed kind, an offset or a time, is none.
+          return element if kind && kind.fetch(:form) == 'integer' && !kind[:signed]
           return element if kind && kind.fetch(:form) == 'union' && kind.fetch(:cases).all? { |item| item.fetch(:fields).empty? }
 
           nil

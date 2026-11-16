@@ -332,10 +332,11 @@ grants({erx_prog, _, Slot, Reply}) when is_integer(Slot), Slot >= 0, Slot < ?ERX
     {Slot, reply_grants(Reply)}.
 
 %% A reply's grants: those of each descriptor it carries, pipe's two ends, and
-%% none for kill's, probe's and clunk's, or for an open's number or a read's or
-%% write's count.
+%% none for kill's, probe's and clunk's, for an open's number or a read's or
+%% write's count, or for a getattr's attributes.
 reply_grants({ok, Read, Write}) -> descriptor_grants(Read) ++ descriptor_grants(Write);
 reply_grants({ok, Number}) when is_integer(Number) -> [];
+reply_grants({ok, Stat}) when is_map(Stat) -> [];
 reply_grants(ok) -> [];
 reply_grants({error, _Errno}) -> [].
 

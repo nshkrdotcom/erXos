@@ -74,10 +74,14 @@ pending included, is `emfile`; otherwise it is resolved and opened over
 the narrowed namespace alone, and its answer is a new open. An `lcreate`
 with `O_DIRECTORY` creates nothing: it is resolved as an `lopen`, as
 FreeBSD's `vn_open_cred` looks up `O_CREAT | O_DIRECTORY`.
-A `read`, `write` or `clunk` of an open not in the table is `ebadf`, and a
-data slot past the program's slots is `einval`. A read's answer longer
-than the request's count is `eio` and is never copied; otherwise its
-bytes are copied into the slot, and the copy's answer is the reply's. A `clunk` takes the open
+A `read`, `pread`, `write`, `pwrite`, `seek`, `getattr` or `clunk` of an open not in
+the table is `ebadf`, and a data slot past the program's slots is `einval`.
+A `pread` or `pwrite` names its own offset and a `seek` moves the
+description's, which the description does through file:position/2. A
+read's answer longer than the request's count is `eio` and is never copied; otherwise its
+bytes are copied into the slot, and the copy's answer is the reply's. A `getattr`'s
+reply holds the attributes the file's server gave and no other (stat/1),
+and is `eoverflow` when one lies past what the protocol carries. A `clunk` takes the open
 out of the table at once, and its description closes after the requests
 it holds. An error the protocol has no name for is `eio`.
 
@@ -102,6 +106,7 @@ session code and the program's own driver.
 """.
 
 -include("generated/erx_abi.hrl").
+-include_lib("kernel/include/file.hrl").
 
 -export([new/3, step/2, phase/1]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
@@ -148,9 +153,12 @@ session code and the program's own driver.
 -type description() :: pid().
 %% A pending file request: the reply case it answers, and for a read or a
 %% write its count, and for a read the data slot its bytes go to.
--type pending() :: file_lopen | file_lcreate | file_clunk
-                 | {file_read, pos_integer(), slot()} | {file_copied, non_neg_integer()}
-                 | {file_write, pos_integer()}.
+%% A read's answer is copied into its data slot (copy), then answered with
+%% the count copied (copied); a write's is answered with its count (count).
+-type pending() :: file_lopen | file_lcreate | file_clunk | file_getattr | local_seek
+                 | {copy, file_read | file_pread, pos_integer(), slot()}
+                 | {copied, file_read | file_pread, non_neg_integer()}
+                 | {count, file_write | file_pwrite, pos_integer()}.
 
 -type action() :: holder
                 | {inherit, term()}
@@ -170,7 +178,11 @@ session code and the program's own driver.
                 | {open, slot(), binary(), non_neg_integer(), none | non_neg_integer(),
                    erx_path:table(), erx_path:place()}
                 | {read, description(), slot(), pos_integer()}
+                | {pread, description(), slot(), non_neg_integer(), pos_integer()}
                 | {write, description(), slot(), slot(), pos_integer()}
+                | {pwrite, description(), slot(), slot(), non_neg_integer(), pos_integer()}
+                | {seek, description(), slot(), integer(), bof | cur | eof}
+                | {getattr, description(), slot()}
                 | {copy_in, slot(), slot(), binary()}
                 | {clunk, description(), slot()}
                 | exit.
@@ -398,15 +410,16 @@ step(#core{phase = running, pending = Pending} = C, {file_opened, Slot, Result})
     end;
 step(#core{phase = running, pending = Pending} = C, {file_done, Slot, Result}) ->
     case maps:take(Slot, Pending) of
-        {{file_read, _, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
-        {{file_write, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
-        {file_clunk, Rest} -> done(C#core{pending = Rest}, Slot, file_clunk, Result);
+        {{copy, _, _, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
+        {{count, _, _} = Waiting, Rest} -> done(C#core{pending = Rest}, Slot, Waiting, Result);
+        {Case, Rest} when Case =:= file_clunk; Case =:= file_getattr; Case =:= local_seek ->
+            done(C#core{pending = Rest}, Slot, Case, Result);
         _ -> {C, []}
     end;
 step(#core{phase = running, pending = Pending} = C, {file_copied, Slot, Result}) ->
     case {maps:take(Slot, Pending), Result} of
-        {{{file_copied, Done}, Rest}, ok} -> file_reply(C#core{pending = Rest}, file_read, Slot, {ok, Done});
-        {{{file_copied, _}, Rest}, {error, Errno}} -> file_reply(C#core{pending = Rest}, file_read, Slot, {error, Errno});
+        {{{copied, Case, Done}, Rest}, ok} -> file_reply(C#core{pending = Rest}, Case, Slot, {ok, Done});
+        {{{copied, Case, _}, Rest}, {error, Errno}} -> file_reply(C#core{pending = Rest}, Case, Slot, {error, Errno});
         _ -> {C, []}
     end;
 step(C, _Event) ->
@@ -439,10 +452,20 @@ from_program(C, {erx_prog, _, Slot, {file, lcreate, Path, Flags, Mode}}) ->
     open(C, Slot, file_lcreate, Path, Flags, Mode);
 from_program(C, {erx_prog, _, Slot, {file, read, Open, Count, Data}}) ->
     on_open(C, Slot, file_read, Open, Data,
-            fun(Desc) -> {{file_read, Count, Data}, {read, Desc, Slot, Count}} end);
+            fun(Desc) -> {{copy, file_read, Count, Data}, {read, Desc, Slot, Count}} end);
 from_program(C, {erx_prog, _, Slot, {file, write, Open, Count, Data}}) ->
     on_open(C, Slot, file_write, Open, Data,
-            fun(Desc) -> {{file_write, Count}, {write, Desc, Slot, Data, Count}} end);
+            fun(Desc) -> {{count, file_write, Count}, {write, Desc, Slot, Data, Count}} end);
+from_program(C, {erx_prog, _, Slot, {file, pread, Open, Offset, Count, Data}}) ->
+    on_open(C, Slot, file_pread, Open, Data,
+            fun(Desc) -> {{copy, file_pread, Count, Data}, {pread, Desc, Slot, Offset, Count}} end);
+from_program(C, {erx_prog, _, Slot, {file, pwrite, Open, Offset, Count, Data}}) ->
+    on_open(C, Slot, file_pwrite, Open, Data,
+            fun(Desc) -> {{count, file_pwrite, Count}, {pwrite, Desc, Slot, Data, Offset, Count}} end);
+from_program(C, {erx_prog, _, Slot, {local, seek, Open, Offset, Whence}}) ->
+    on_open(C, Slot, local_seek, Open, fun(Desc) -> {local_seek, {seek, Desc, Slot, Offset, Whence}} end);
+from_program(C, {erx_prog, _, Slot, {file, getattr, Open}}) ->
+    on_open(C, Slot, file_getattr, Open, fun(Desc) -> {file_getattr, {getattr, Desc, Slot}} end);
 from_program(#core{opens = Opens} = C, {erx_prog, _, Slot, {file, clunk, Open}}) ->
     case maps:take(Open, Opens) of
         {Desc, Rest} -> relay(C#core{opens = Rest}, Slot, file_clunk, {clunk, Desc, Slot});
@@ -470,11 +493,16 @@ create_mode(_Flags, Mode) -> Mode.
 %% A read or a write of Open through data slot Data, relayed to the open's
 %% description as Relay says, or refused.
 on_open(#core{opens = Opens, slots = Slots} = C, Slot, Case, Open, Data, Relay) ->
+    case maps:is_key(Open, Opens) of
+        true when Data >= Slots -> file_reply(C, Case, Slot, {error, einval});
+        _ -> on_open(C, Slot, Case, Open, Relay)
+    end.
+
+%% A request on Open, relayed to the open's description as Relay says, or refused.
+on_open(#core{opens = Opens} = C, Slot, Case, Open, Relay) ->
     case maps:find(Open, Opens) of
         error ->
             file_reply(C, Case, Slot, {error, ebadf});
-        {ok, _} when Data >= Slots ->
-            file_reply(C, Case, Slot, {error, einval});
         {ok, Desc} ->
             {Waiting, Action} = Relay(Desc),
             relay(C, Slot, Waiting, Action)
@@ -491,25 +519,49 @@ opened(#core{opens = Opens} = C, Slot, Case, {ok, Desc}) ->
 opened(C, Slot, Case, {error, Errno}) ->
     file_reply(C, Case, Slot, {error, Errno}).
 
-%% A read's, a write's or a clunk's answer. A read's bytes are copied into
-%% the data slot, and the copy's answer, file_copied, gives the reply that
-%% names their count; never more bytes than the request asked for are
-%% copied, which no grammar can hold a reply to.
-done(C, Slot, {file_read, Count, Data}, {ok, Bytes}) when byte_size(Bytes) =< Count ->
-    relay(C, Slot, {file_copied, byte_size(Bytes)}, {copy_in, Slot, Data, Bytes});
-done(C, Slot, {file_read, _, _}, {ok, _TooMany}) ->
-    file_reply(C, file_read, Slot, {error, eio});
-done(C, Slot, {file_read, _, _}, eof) ->
-    file_reply(C, file_read, Slot, {ok, 0});
-done(C, Slot, {file_write, Count}, ok) ->
-    file_reply(C, file_write, Slot, {ok, Count});
+%% A read's, a write's, a seek's, a getattr's or a clunk's answer. A read's bytes are
+%% copied into the data slot, and the copy's answer, file_copied, gives the
+%% reply that names their count; never more bytes than the request asked
+%% for are copied, which no grammar can hold a reply to. A seek's offset
+%% past off_t, which the protocol cannot carry, is eio, and a getattr's
+%% attribute past its field is eoverflow, as FreeBSD's freebsd11_stat
+%% answers an nlink past its old nlink_t: the protocol's grammar holds each
+%% field's bound.
+done(C, Slot, {copy, Case, Count, Data}, {ok, Bytes}) when byte_size(Bytes) =< Count ->
+    relay(C, Slot, {copied, Case, byte_size(Bytes)}, {copy_in, Slot, Data, Bytes});
+done(C, Slot, {copy, Case, _, _}, {ok, _TooMany}) ->
+    file_reply(C, Case, Slot, {error, eio});
+done(C, Slot, {copy, Case, _, _}, eof) ->
+    file_reply(C, Case, Slot, {ok, 0});
+done(C, Slot, {count, Case, Count}, ok) ->
+    file_reply(C, Case, Slot, {ok, Count});
+done(C, Slot, local_seek, {ok, Offset}) when Offset >= 0, Offset =< ?ERX_OFF_MAX ->
+    file_reply(C, local_seek, Slot, {ok, Offset});
+done(C, Slot, local_seek, {ok, _Past}) ->
+    file_reply(C, local_seek, Slot, {error, eio});
+done(C, Slot, file_getattr, {ok, #file_info{} = Info}) ->
+    Stat = {ok, stat(Info)},
+    case erx_prog_grammar:build_reply(file_getattr, Slot, Stat) of
+        {ok, _} -> reply(C, file_getattr, Slot, Stat);
+        {error, {range, _}} -> reply(C, file_getattr, Slot, {error, eoverflow})
+    end;
 done(C, Slot, file_clunk, ok) ->
     file_reply(C, file_clunk, Slot, ok);
 done(C, Slot, Waiting, {error, Errno}) ->
     file_reply(C, case_of(Waiting), Slot, {error, Errno}).
 
-case_of({Case, _, _}) -> Case;
-case_of({Case, _}) -> Case;
+%% A getattr's attributes: each field of the description's record that
+%% holds a value, so a field the server did not give is no key at all.
+%% The record holds whole seconds and no nanoseconds, so no time's
+%% nanoseconds are given.
+stat(#file_info{mode = Mode, links = Links, uid = Uid, gid = Gid, size = Size,
+                atime = ATime, mtime = MTime, ctime = CTime}) ->
+    maps:filter(fun(_, Value) -> is_integer(Value) end,
+                #{mode => Mode, nlink => Links, uid => Uid, gid => Gid, size => Size,
+                  atime => ATime, mtime => MTime, ctime => CTime}).
+
+case_of({copy, Case, _, _}) -> Case;
+case_of({count, Case, _}) -> Case;
 case_of(Case) -> Case.
 
 %% A file request's reply. Its error comes from a file server or the

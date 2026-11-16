@@ -54,6 +54,20 @@ class ProgProfileDeclarationsTest < Minitest::Test
       /kind handle: a frame protocol's u64 is a capability/,
     "  union probe\n    case a pipe_id u64\n  frame probe to erx_probe probe\n" =>
       /kind probe: a frame protocol's u64 is a capability/,
+    # An offset is its own declaration: no integer spells its base, it takes no
+    # capability's options, and its range is off_t's.
+    '  integer probe i64' => /an integer is u8, u16, u32 or u64/,
+    "  offset off2 except @cap_null\n  tuple probe off2" => /an offset takes no option but in MIN MAX/,
+    "  offset off2 unique\n  tuple probe off2" => /an offset takes no option but in MIN MAX/,
+    "  offset off2 in 0 0x8000000000000000\n  tuple probe off2" => /an offset's range lies within/,
+    "  offset off2 in -0x8000000000000001 0\n  tuple probe off2" => /an offset's range lies within/,
+    "  offset off2 in 5 4\n  tuple probe off2" => /an offset range has MIN above MAX/,
+    # The C check compares keys as u64, so an offset, which may be negative, keys no list.
+    "  offset off2\n  tuple at off2 fd\n  list probe at max 4 ascending" => /an ascending list needs an integer or atom key/,
+    # A time is its own declaration: it takes no range or option, and keys no list.
+    "  time t2 in 0 1\n  tuple probe t2" => /a time takes no options/,
+    "  time t2 unique\n  tuple probe t2" => /a time takes no options/,
+    "  time t2\n  tuple at t2 fd\n  list probe at max 4 ascending" => /an ascending list needs an integer or atom key/,
     "  capability cap2 unique\n  tuple probe cap2" => /a capability takes no options/,
     "  capability cap2\n  tuple probe cap2" => /a protocol has at most one unique kind/,
     "#{TOTALS}\n  tuple probe #{(1..9).map { |n| "x#{n}" }.join(' ')}" => /at most 8 totals/,

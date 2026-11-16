@@ -74,6 +74,34 @@ int	erx_prog_file_openat(int dirfd, const char *path, int flags, mode_t mode);
  */
 ssize_t	erx_prog_file_read(erx_prog_file_t *file, void *buf, size_t len);
 ssize_t	erx_prog_file_write(erx_prog_file_t *file, const void *buf, size_t len);
+/*
+ * pread and pwrite: as read and write, at offset, 0 to OFF_MAX, and each
+ * part after the bytes the parts before it moved, leaving the description's
+ * offset where it was.  A part that would start past OFF_MAX is not made.
+ */
+ssize_t	erx_prog_file_pread(erx_prog_file_t *file, void *buf, size_t len, off_t offset);
+ssize_t	erx_prog_file_pwrite(erx_prog_file_t *file, const void *buf, size_t len, off_t offset);
+/*
+ * lseek: {local, seek, Open, Offset, Whence}, which moves the description's
+ * offset as FreeBSD's vn_seek moves a regular file's.  The offset reached,
+ * or a negative errno: -EINVAL for a whence other than SEEK_SET, SEEK_CUR
+ * and SEEK_END, sending nothing, and the handler's -EINVAL for a negative
+ * result and -EOVERFLOW for one past OFF_MAX.
+ */
+off_t	erx_prog_file_seek(erx_prog_file_t *file, off_t offset, int whence);
+
+/*
+ * fstat: {file, getattr, Open}.  *st holds each attribute the file's server
+ * gave: st_mode, st_nlink, st_uid, st_gid, st_size and the access,
+ * modification and status change times, and 0 for each it did not give,
+ * since struct stat marks no field unknown.  A time's tv_nsec is the
+ * nanoseconds the server gave, and 0 when it gave whole seconds alone, as a
+ * description's record holds them.  st_dev, st_ino, st_rdev, st_blksize and
+ * st_blocks are 0: the protocol carries none of them.  0, or a negative
+ * errno: the handler's, -EOVERFLOW for an attribute past its field among
+ * them.
+ */
+int	erx_prog_file_getattr(erx_prog_file_t *file, struct stat *st);
 
 /*
  * Lets go of a file whose last reference went: {file, clunk, Open}, whose
