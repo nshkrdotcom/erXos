@@ -76,8 +76,11 @@ abi/formats/input.txt declares, with its bounds and its binary form.
 -doc "The window table, the display's session and the policy, as erx_winfs holds them.".
 -type view() :: #{windows := [erx_wm:window()], session := erx_wm:session(),
                   policy := module(), policy_state := term()}.
--doc "What erx_winfs performs: a delivery, the policy's word, an end, a new table, the timer.".
--type out() :: {to, erx_wm:window_id(), erx_wm:input()} | {wm, term()}
+-doc """
+What erx_winfs performs: the policy's state, a delivery, the policy's word, an end, a
+new table, the timer.
+""".
+-type out() :: {policy_state, term()} | {to, erx_wm:window_id(), erx_wm:input()} | {wm, term()}
              | {delete, erx_wm:window_id()} | {windows, [erx_wm:window()]}
              | {wake, At :: integer() | none}.
 
@@ -128,14 +131,17 @@ new(#{keymap := Layout, repeat_delay := Delay, repeat_period := Period, chord :=
     #input{config = Config#{chord := case Chord of none -> none; _ -> ordsets:from_list(Chord) end}}.
 
 -doc """
-Steps one input: returns what erx_winfs is to perform, in order, the
-policy's state after any question the step asked it, and the next state.
+Steps one input: returns the next state and what erx_winfs is to perform, in
+order, first `{policy_state, P}`, the policy's state after any question the step
+asked it, which erx_winfs keeps before it performs the rest, so a commit and an
+arrange use it.
 """.
--spec step(in(), view(), state()) -> {[out()], term(), state()}.
+-spec step(in(), view(), state()) -> {state(), [out()]}.
 step(In, #{policy_state := PolicyState} = View, State) ->
     {Step, Taken} = take(In, #step{view = View, policy_state = PolicyState}, State),
     {#step{outs = Outs, policy_state = PolicyState1, drops = Drops}, Next} = wake(Step, Taken),
-    {lists:reverse(Outs), PolicyState1, Next#input{dropped = Next#input.dropped + Drops}}.
+    {Next#input{dropped = Next#input.dropped + Drops},
+     [{policy_state, PolicyState1} | lists:reverse(Outs)]}.
 
 -doc """
 The screen the router holds, or `none` before the first: the window

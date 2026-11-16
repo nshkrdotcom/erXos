@@ -17,6 +17,11 @@
 %% See the License for the specific language governing permissions and
 %% limitations under the License.
 %%
+%% Modified by erXos: the terminate report of a process that hides its terms
+%% (gen:hides_terms/1) shows its stack trace without arguments, a change of the
+%% callback module changes which module decides that, and a crash of format_status
+%% shows none of what it was asked to hide (edit 75).
+%%
 %% %CopyrightEnd%
 %%
 -module(gen_statem).
@@ -4004,7 +4009,7 @@ loop_actions_list(
                             push_callback_module ->
                                 [NewModule | P#params.modules]
                         end,
-                    case get_callback_mode(P, NewModules) of
+                    case install_callback_modules(P, NewModules) of
                         #params{} = P_1 ->
                             {NextState,_NewData} = NextState_NewData,
                             Debug_1 =
@@ -4037,7 +4042,7 @@ loop_actions_list(
             if
                 StateCall ->
                     NewModules = tl(P#params.modules),
-                    case get_callback_mode(P, NewModules) of
+                    case install_callback_modules(P, NewModules) of
                         #params{} = P_1 ->
                             {NextState,_NewData} = NextState_NewData,
                             Debug_1 =
@@ -4831,6 +4836,18 @@ get_callback_mode(P, [Module | _] = Modules) ->
             {Class,Reason,Stacktrace}
     end.
 
+%% erXos, edit 75: the actions change_callback_module, push_callback_module and
+%% pop_callback_module change the module whose format_status/1 speaks for the
+%% process in every report (gen:hides_terms/1).
+install_callback_modules(P, [Module | _] = Modules) ->
+    case get_callback_mode(P, Modules) of
+        #params{} = P_1 ->
+            ok = gen:status_module_changed(Module),
+            P_1;
+        Failure ->
+            Failure
+    end.
+
 callback_mode_result(P, Modules, CallbackModeResult) ->
     callback_mode_result(
       P, Modules, CallbackModeResult,
@@ -4974,23 +4991,25 @@ error_info(
                              timeouts => Timeouts,
                              log => sys:get_log(Debug)},
                           [get(),State,Data]),
-    NewState = case maps:find('$status', Status) of
+    Shown = shown_status(Status),
+    NewState = case maps:find('$status', Shown) of
                    error ->
-                       {maps:get(state,Status),maps:get(data,Status)};
+                       {maps:get(state,Shown),maps:get(data,Shown)};
                    {ok, S} ->
                        S
                end,
     ?LOG_ERROR(#{label=>{gen_statem,terminate},
                  name=>Name,
-                 queue=>maps:get(queue,Status),
-                 postponed=>maps:get(postponed,Status),
+                 queue=>maps:get(queue,Shown),
+                 postponed=>maps:get(postponed,Shown),
                  modules=>Modules,
                  callback_mode=>params_callback_mode(CallbackMode),
                  state_enter=>StateEnter,
                  state=>NewState,
-                 timeouts=>{length(Timeouts),maps:get(timeouts,Status)},
-                 log=>maps:get(log,Status),
-                 reason=>{Class,maps:get(reason,Status),Stacktrace},
+                 timeouts=>{length(Timeouts),maps:get(timeouts,Shown)},
+                 log=>maps:get(log,Shown),
+                 reason=>{Class,maps:get(reason,Shown),
+                          gen:report_stacktrace(Mod, Stacktrace)},
                  client_info=>client_stacktrace(Q),
                  process_label=>proc_lib:get_label(self())},
                #{domain=>[otp],
@@ -4998,6 +5017,17 @@ error_info(
                  error_logger=>
                      #{tag=>error,
                        report_cb=>fun gen_statem:format_log/1}}).
+
+%% erXos, edit 75: when format_status crashed or gave an answer gen cannot
+%% use, the report shows none of what the callback was asked to hide: gen's
+%% text for the failure stands in for the state and the reason, and the
+%% queue, the postponed events, the timeouts' events and the log are shown
+%% empty. Stock OTP shows them raw.
+shown_status(#{'EXIT' := Failure} = Status) ->
+    Status#{state => Failure, data => Failure, reason => Failure,
+            queue => [], postponed => [], timeouts => [], log => []};
+shown_status(Status) ->
+    Status.
 
 client_stacktrace([]) ->
     undefined;

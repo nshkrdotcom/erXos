@@ -30,9 +30,16 @@ tablet() -> layout(erx_hid_desc_tests:tablet()).
 
 %% Folds reports in turn and answers the records of each.
 fold(Layout, Reports) ->
-    {Records, _} = lists:mapfoldl(fun(Report, State) -> erx_hid_core:step(Layout, Report, State) end,
-                                  erx_hid_core:new(Layout), Reports),
+    {_, Records} = steps(Layout, Reports),
     Records.
+
+%% Folds reports in turn: the state after the last, and the records of each.
+steps(Layout, Reports) ->
+    {Records, State} = lists:mapfoldl(fun(Report, S) ->
+                                          {Next, Out} = erx_hid_core:step(Layout, Report, S),
+                                          {Out, Next}
+                                      end, erx_hid_core:new(Layout), Reports),
+    {State, Records}.
 
 %% A one-byte key array under report id Id.
 key_array(Id) ->
@@ -85,14 +92,13 @@ the_wheel_is_clamped_to_its_record_range_test() ->
 
 short_reports_and_unknown_ids_are_dropped_and_counted_test() ->
     Layout = tablet(),
-    {Records, State} = lists:mapfoldl(fun(Report, S) -> erx_hid_core:step(Layout, Report, S) end,
-                                      erx_hid_core:new(Layout), [<<1, 0, 0, 0>>, <<2, 0, 0, 0, 0, 0>>, <<>>]),
+    {State, Records} = steps(Layout, [<<1, 0, 0, 0>>, <<2, 0, 0, 0, 0, 0>>, <<>>]),
     ?assertEqual([[], [], []], Records),
     ?assertEqual(#{short => 2, unknown_id => 1, unmapped => 0}, erx_hid_core:counts(State)).
 
 a_key_usage_with_no_code_is_dropped_and_counted_test() ->
     Layout = keyboard(),
-    {Records, State} = erx_hid_core:step(Layout, <<0, 0, 16#02, 16#04, 0, 0, 0, 0>>, erx_hid_core:new(Layout)),
+    {State, Records} = erx_hid_core:step(Layout, <<0, 0, 16#02, 16#04, 0, 0, 0, 0>>, erx_hid_core:new(Layout)),
     ?assertEqual([{key, down, ?KEY_A}], Records),
     ?assertEqual(#{short => 0, unknown_id => 0, unmapped => 1}, erx_hid_core:counts(State)).
 

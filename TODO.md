@@ -2682,10 +2682,8 @@ it; git history is the record of completed work.
   `lo0` with `ip4 => dhcp` fails `erx_net_if_core:new/1` with `function_clause`, and a binary name
   `<<"lo0">>` adds a second `lo0`. Take only a static `ip4` and `ingress` from a configured `lo0`,
   refuse the rest at `start_link` with a named error, and test it.
-* [Low] network, `erx_net_driver`: a driver's crash report carries its mailbox (`proc_lib`), so
-  pending frames, on `lo0` local traffic, reach the log; `erx_net_loop:transmit/2` raises on a
-  zone whose bytes are not iodata where its doc says `malformed`. Mark the driver `sensitive` or
-  keep the loop's queue in its state, and drop a bad list as `malformed`.
+* [Low] network, `erx_net_loop:transmit/2`: it raises on a zone whose bytes are not iodata where
+  its doc says `malformed`; drop a bad list as `malformed`.
 * [Low] erx_net TCP ICMP (`erx_tcp_icmp`, `erx_tcp_input:tcp_mss`): an MTU a too-big
   report gives in SYN-SENT lowers the MSS until the SYN-ACK, which recomputes it from the
   path, so the first full-size segment is lost again; FreeBSD keeps it in the host cache
@@ -7137,8 +7135,42 @@ to the corpus and follow rc
   so `{disabled, reset_disabled}` and `unsupported_speed` are reached by no case, and it checks no route or
   translator parameter of Address Device. With one external hub it cannot reach a hub given up while a port below it holds the
   turn and another hub could reset; `a_hub_given_up_keeps_its_childs_turn_test` covers that case alone.
+* [Low] Erlang edges (docs/style.md, "Functional core"): `erx_tcp_listen` (`:176`), `erx_gen_tcp`
+  (`:443`), `erx_pipe_srv` (`:312`), `erx_prog_handler` (`:264`) and `erx_blk_sd` (`:394`) walk a
+  step's actions with a loop of their own rather than `erx_actions:perform/3`; the first two match a
+  bare `stop` with `[stop | _]`, dropping any action after it where the one loop refuses it. Move
+  each to `{stop, Reason}` and the one loop, then add a source check that no module but
+  `erx_actions` has a clause on a stop at a list's head.
 
 ## Security residuals
+
+* [Medium] logging, `erx_report` (design-log.md, "Reports carry no term"): every domain but the
+  system domain takes the filter at boot (edit 57 of design-runtime.md). What passes whole:
+  `logger:log_allowed/4` (`otp/lib/kernel/src/logger.erl`) forwards an event whose group leader
+  is on another node before any primary filter runs; OTP's legacy `error_logger` calls
+  (`application_master.erl:407`, `file_server.erl`, `gen.erl:790`) carry no `otp` domain; so do
+  erXos's own events that print a raw term; and in the system domain, which takes no filter, a
+  process that holds another domain's bytes keeps them out of its own reports only through its
+  `format_status/1` (edit 75), so the supervisor's `child_terminated` report still quotes the
+  child's raw exit reason (`supervisor.erl:318-324`, `:1426`), and with `error_logger_format_depth`
+  set `proc_lib`'s `receive_messages/1` (`proc_lib.erl:1046`) takes the mailbox of a process that
+  set `process_flag(sensitive, true)` and has no `format_status/1` into its crash report, which
+  stock OTP does too. Also whole in a process that hides its terms: `gen_server`'s
+  `no_handle_info` warning shows the raw message; `gen_event`'s report of a handler's crash shows
+  the raw stack trace; an exit reason `{Reason, Stack}` keeps its frames' arguments wherever it is
+  quoted, since exit reasons stay raw; process labels and logger metadata pass as they are; and
+  the protection rests on `'$initial_call'` and `'$erx_status_module'` in the process dictionary,
+  which the process itself can erase; and a process whose initial module is not the module
+  `gen_statem:enter_loop` or `gen_server:enter_loop` enters is decided by its initial module in
+  its crash report (no erXos or OTP caller does so: each enters `?MODULE`). The filter is an entry of the primary filter list, so a
+  filter an application adds later (`ssh_app.erl:114`) runs before it and sees the report
+  whole, `logger:reconfigure/0` and `set_primary_config(filters, _)` empty the list for a
+  moment or for good, and with `filter_default => stop` an OTP report no other filter logs is
+  logged as its summary where stock OTP drops it. Make the rewrite a fixed stage of
+  `logger_backend:log_allowed/2` ahead of the list (edit 57), which closes all three, run it
+  before remote forwarding; have the supervisor's report pass the reason through the child's
+  `format_status/1` when the child's module is known, and `receive_messages/1` honour
+  `sensitive`.
 
 * [Medium] session, a window's terminal relay (`erlang/apps/erx_session/src/erx_session_relay.erl`,
   `handle_info/2`): a relay whose master is in the session's own domain takes every plain message it
@@ -7971,7 +8003,8 @@ document's "residual risks accepted" paragraph.
     the exchange's end, which the station's ordering of the holder's answers keeps from
     happening;
   - the join's state holds SAE's KCK while the exchange runs, so the station's process must
-    keep it out of crash reports, `sys` and `/proc` with the logger filter below;
+    keep it out of crash reports, `sys` and `/proc`, the first through the report filter
+    `erx_report` its domain takes at boot;
   - the join's exploration derives an SAE join's PTK from its fixed PMK, not from the
     exchange's, which `erx_sae_tests` checks the holder and the access point agree on;
   - `erx_wifi_join`'s review left: the join is one map with `_ => _` whose association
@@ -7991,10 +8024,7 @@ document's "residual risks accepted" paragraph.
     the seeded table;
   - hand-copied facts: `-type akm()` repeats the `ieee80211_akm` enum (the generator could
     emit a type per enum), and the 64- and 48-bit widths of the RSC, IPN and unwrap
-    semiblock are written beside their layout counts;
-  - ordering: `erx_wifi_report`'s logger filter (design-wifi.md, "Security") must land with
-    the first process that calls these cores, since a `function_clause` in `pmk/2` or
-    `build/4` carries the passphrase or the KCK in its arguments.
+    semiblock are written beside their layout counts.
 
 * [Low] WiFi station's choice (`erx_wifi_choose`;
   [design-wifi.md](docs/design-wifi.md#choosing-a-network)), left by its first slice:

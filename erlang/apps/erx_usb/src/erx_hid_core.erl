@@ -129,20 +129,20 @@ new(#{reports := Reports}) ->
     #{entries => maps:map(fun(_, _) -> #{held => [], position => none} end, Reports),
       counts => #{unmapped => 0, short => 0, unknown_id => 0}}.
 
--doc "The records one report gives, and the state after it.".
--spec step(erx_hid_desc:layout(), binary(), state()) -> {[erx_input_codec:record()], state()}.
+-doc "The state after one report, and the records it gives.".
+-spec step(erx_hid_desc:layout(), binary(), state()) -> {state(), [erx_input_codec:record()]}.
 step(#{reports := Reports, numbered := Numbered}, Report, State) when is_binary(Report) ->
     case framed(Numbered, Report) of
         {Id, Body} when is_map_key(Id, Reports) ->
             #{fields := Fields, bytes := Bytes} = maps:get(Id, Reports),
             case byte_size(Body) >= Bytes of
                 true -> fold(Id, lists:foldl(fun(Field, R) -> read(Field, Body, R) end, #report{}, Fields), State);
-                false -> {[], count(short, 1, State)}
+                false -> {count(short, 1, State), []}
             end;
         {_Id, _Body} ->
-            {[], count(unknown_id, 1, State)};
+            {count(unknown_id, 1, State), []};
         empty ->
-            {[], count(short, 1, State)}
+            {count(short, 1, State), []}
     end.
 
 -doc "How many reports and key usages were dropped, by reason.".
@@ -160,7 +160,7 @@ count(Why, N, State = #{counts := Counts}) ->
 %% gives the moves, then the edges of the union of every id's held set.
 fold(Id, R, State) ->
     case phantom(R) of
-        true -> {[], State};
+        true -> {State, []};
         false -> replaced(Id, R, State)
     end.
 
@@ -172,7 +172,7 @@ replaced(Id, R, State = #{entries := Entries}) ->
     Next = Entries#{Id := #{held => lists:usort(R#report.held), position => Position}},
     Moves = moves(R, Position =/= maps:get(position, Old)) ++ wheel(R#report.wheel),
     Edges = edges(held(Entries), held(Next)),
-    {Moves ++ Edges, count(unmapped, R#report.unmapped, State#{entries := Next})}.
+    {count(unmapped, R#report.unmapped, State#{entries := Next}), Moves ++ Edges}.
 
 held(Entries) -> lists:usort(lists:append([Held || _ := #{held := Held} <- Entries])).
 

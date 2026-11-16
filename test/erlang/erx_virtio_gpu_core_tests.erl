@@ -135,31 +135,31 @@ display_info(Width, Height, Enabled) ->
 %% The bring-up, one request at a time: the display's size, the screen image's region,
 %% the resource, its backing (the region), then the scanout; ready with the geometry.
 setup_in_order_test() ->
-    {{post, Info}, S0} = erx_virtio_gpu_core:setup_start(1 bsl 24),
+    {S0, [{post, Info}]} = erx_virtio_gpu_core:setup_start(1 bsl 24),
     ?assertEqual(erx_virtio_gpu_core:display_info_request(), Info),
-    {{region, Bytes}, S1} = erx_virtio_gpu_core:setup_next(S0, {answer, decoded(Info, display_info(640, 480, 1))}),
+    {S1, [{region, Bytes}]} = erx_virtio_gpu_core:setup_next(S0, {answer, decoded(Info, display_info(640, 480, 1))}),
     ?assertEqual(640 * 4 * 480 + 8, Bytes),
-    {{post, Create}, S2} = erx_virtio_gpu_core:setup_next(S1, {region, r}),
+    {S2, [{post, Create}]} = erx_virtio_gpu_core:setup_next(S1, {region, r}),
     ?assertEqual(erx_virtio_gpu_core:create_2d_request(1, 2, 640, 480), Create),
-    {{post, Attach}, S3} = erx_virtio_gpu_core:setup_next(S2, {answer, ok}),
+    {S3, [{post, Attach}]} = erx_virtio_gpu_core:setup_next(S2, {answer, ok}),
     ?assertEqual(erx_virtio_gpu_core:attach_backing_request(1, r), Attach),
-    {{post, Scanout}, S4} = erx_virtio_gpu_core:setup_next(S3, {answer, ok}),
+    {S4, [{post, Scanout}]} = erx_virtio_gpu_core:setup_next(S3, {answer, ok}),
     ?assertEqual(erx_virtio_gpu_core:set_scanout_request(0, 1, {640, 480}), Scanout),
-    ?assertMatch({{ready, #{geometry := #{width := 640, height := 480, stride := 2560, length := 2560 * 480},
-                            region := r, resource := 1, chan := 16#68081828}}, _},
+    ?assertMatch({_, [{ready, #{geometry := #{width := 640, height := 480, stride := 2560, length := 2560 * 480},
+                                region := r, resource := 1, chan := 16#68081828}}]},
                  erx_virtio_gpu_core:setup_next(S4, {answer, ok})).
 
 decoded({_Segments, Expect}, Bytes) -> erx_virtio_gpu_core:decode(Expect, Bytes).
 
 %% A disabled scanout, a screen past the memory, and an event out of its step each stop it.
 setup_stops_test() ->
-    {_, S0} = erx_virtio_gpu_core:setup_start(1 bsl 24),
-    ?assertMatch({{stop, {mode, disabled}}, _},
+    {S0, _} = erx_virtio_gpu_core:setup_start(1 bsl 24),
+    ?assertMatch({_, [{stop, {mode, disabled}}]},
                  erx_virtio_gpu_core:setup_next(S0, {answer, erx_virtio_gpu_core:decode(display_info, display_info(640, 480, 0))})),
-    ?assertMatch({{stop, {mode, {size, 4096, 4096}}}, _},
+    ?assertMatch({_, [{stop, {mode, {size, 4096, 4096}}}]},
                  erx_virtio_gpu_core:setup_next(S0, {answer, erx_virtio_gpu_core:decode(display_info, display_info(4096, 4096, 1))})),
-    ?assertMatch({{stop, {unexpected, display_info, {region, r}}}, _}, erx_virtio_gpu_core:setup_next(S0, {region, r})),
-    ?assertMatch({{stop, {unexpected, display_info, {answer, ok}}}, _}, erx_virtio_gpu_core:setup_next(S0, {answer, ok})).
+    ?assertMatch({_, [{stop, {unexpected, display_info, {region, r}}}]}, erx_virtio_gpu_core:setup_next(S0, {region, r})),
+    ?assertMatch({_, [{stop, {unexpected, display_info, {answer, ok}}}]}, erx_virtio_gpu_core:setup_next(S0, {answer, ok})).
 
 two() ->
     {ok, Requests} = erx_virtio_gpu_core:flush_plan([{0, 0, 1, 1}], screen(), 7, 99),
@@ -170,35 +170,35 @@ two() ->
 frame_posts_waits_and_finishes_test() ->
     [{Transfer, _}, {Flush, _}] = two(),
     F0 = erx_virtio_gpu_core:frame_start(two(), 10),
-    {{post, 10, Transfer}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    {{post, 11, Flush}, F2} = erx_virtio_gpu_core:frame_step(F1, next),
-    {wait, F3} = erx_virtio_gpu_core:frame_step(F2, next),
-    {wait, F4} = erx_virtio_gpu_core:frame_step(F3, {answers, [{10, hdr(?NODATA, 0, 0)}]}),
-    ?assertMatch({{done, [ok, ok], 12}, _}, erx_virtio_gpu_core:frame_step(F4, {answers, [{11, hdr(?NODATA, ?FENCE_FLAG, 99)}]})),
-    ?assertMatch({{done, [], 5}, _}, erx_virtio_gpu_core:frame_step(erx_virtio_gpu_core:frame_start([], 5), next)).
+    {F1, [{post, 10, Transfer}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    {F2, [{post, 11, Flush}]} = erx_virtio_gpu_core:frame_step(F1, next),
+    {F3, [wait]} = erx_virtio_gpu_core:frame_step(F2, next),
+    {F4, [wait]} = erx_virtio_gpu_core:frame_step(F3, {answers, [{10, hdr(?NODATA, 0, 0)}]}),
+    ?assertMatch({_, [{done, [ok, ok], 12}]}, erx_virtio_gpu_core:frame_step(F4, {answers, [{11, hdr(?NODATA, ?FENCE_FLAG, 99)}]})),
+    ?assertMatch({_, [{done, [], 5}]}, erx_virtio_gpu_core:frame_step(erx_virtio_gpu_core:frame_start([], 5), next)).
 
 %% A full queue takes the request back: it waits for an answer and is posted again; full
 %% with nothing in flight would wait for ever, so it stops.
 frame_full_test() ->
     [{Transfer, _}, {Flush, _}] = two(),
     F0 = erx_virtio_gpu_core:frame_start(two(), 0),
-    {{post, 0, Transfer}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{stop, {queue, full}}, _}, erx_virtio_gpu_core:frame_step(F1, {full, 0})),
-    {{post, 1, Flush}, F2} = erx_virtio_gpu_core:frame_step(F1, next),
-    {wait, F3} = erx_virtio_gpu_core:frame_step(F2, {full, 1}),
-    {{post, 1, Flush}, _} = erx_virtio_gpu_core:frame_step(F3, {answers, [{0, hdr(?NODATA, 0, 0)}]}).
+    {F1, [{post, 0, Transfer}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{stop, {queue, full}}]}, erx_virtio_gpu_core:frame_step(F1, {full, 0})),
+    {F2, [{post, 1, Flush}]} = erx_virtio_gpu_core:frame_step(F1, next),
+    {F3, [wait]} = erx_virtio_gpu_core:frame_step(F2, {full, 1}),
+    {_, [{post, 1, Flush}]} = erx_virtio_gpu_core:frame_step(F3, {answers, [{0, hdr(?NODATA, 0, 0)}]}).
 
 %% An answer the device refused, one that fails its check, and a tag not in flight stop it.
 frame_stops_on_bad_answers_test() ->
     F0 = erx_virtio_gpu_core:frame_start(two(), 0),
-    {_, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{stop, {answer, 0, {device, invalid_parameter}}}, _},
+    {F1, _} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{stop, {answer, 0, {device, invalid_parameter}}}]},
                  erx_virtio_gpu_core:frame_step(F1, {answers, [{0, hdr(16#1205, 0, 0)}]})),
-    ?assertMatch({{stop, {answer, 0, {length, 1}}}, _}, erx_virtio_gpu_core:frame_step(F1, {answers, [{0, <<0>>}]})),
-    ?assertMatch({{stop, {tag, 1}}, _}, erx_virtio_gpu_core:frame_step(F1, {answers, [{1, hdr(?NODATA, 0, 0)}]})).
+    ?assertMatch({_, [{stop, {answer, 0, {length, 1}}}]}, erx_virtio_gpu_core:frame_step(F1, {answers, [{0, <<0>>}]})),
+    ?assertMatch({_, [{stop, {tag, 1}}]}, erx_virtio_gpu_core:frame_step(F1, {answers, [{1, hdr(?NODATA, 0, 0)}]})).
 
 %% Tags wrap at 2^64, as erx_device:post/4 takes them.
 frame_tags_wrap_test() ->
     F0 = erx_virtio_gpu_core:frame_start(two(), 16#ffffffffffffffff),
-    {{post, 16#ffffffffffffffff, _}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{post, 0, _}, _}, erx_virtio_gpu_core:frame_step(F1, next)).
+    {F1, [{post, 16#ffffffffffffffff, _}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{post, 0, _}]}, erx_virtio_gpu_core:frame_step(F1, next)).

@@ -1606,6 +1606,15 @@ The vault cannot keep a bond's key from the Bluetooth domain or the
 controller, which needs it in clear in LE Long Term Key Request Reply;
 what any store gives is sealing at rest and one owner, not containment.
 
+No report of the domain carries a radio peer's or the controller's
+bytes, nor a key: the domain takes the report filter, `erx_report`,
+at boot, before any process of it starts
+([design-log.md](design-log.md#reports-carry-no-term)), so the crash
+of a process with controller bytes in its mailbox or its stack trace's
+arguments (an unknown action, a `function_clause` in a core, the
+`badarg` of a send to a line process that has gone) is logged as names,
+classes and arities.
+
 ### Attack classes
 
 * **KNOB, key size downgrade.** Every key is 16 octets by construction:

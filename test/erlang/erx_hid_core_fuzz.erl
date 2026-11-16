@@ -47,7 +47,7 @@ layout_round(Layout) ->
     Count.
 
 step(Layout, Report, State, Held, N) ->
-    {Records, Next} = try erx_hid_core:step(Layout, Report, State)
+    {Next, Records} = try erx_hid_core:step(Layout, Report, State)
                       catch Class:Reason:Stack -> fail(crash, Layout, Report, {Class, Reason, Stack})
                       end,
     [fail(out_of_bounds, Layout, Report, Record) || Record <- Records, not erx_input_codec:valid(Record)],

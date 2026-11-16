@@ -178,7 +178,7 @@ holder(Dev, Line) ->
     end.
 
 step(Event, Owner = #owner{core = Core}) ->
-    {Actions, Next} = erx_irq_line_core:step(Event, Core),
+    {Next, Actions} = erx_irq_line_core:step(Event, Core),
     lists:foreach(fun(Action) -> perform(Action, Owner) end, Actions),
     Owner#owner{core = Next}.
 

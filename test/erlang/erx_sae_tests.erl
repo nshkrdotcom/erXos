@@ -62,12 +62,12 @@ key_vector_test() ->
 frames_vector_test() ->
     <<19:16/little, Scalar:32/binary, Element:64/binary>> = ?LOCAL_COMMIT,
     <<19:16/little, PeerScalar:32/binary, PeerElement:64/binary>> = ?PEER_COMMIT,
-    {[{keys, {sae_commit, #{ssid := ?SSID, spa := ?SPA, aa := ?AA}}}], S1, {running, _}} = start(),
-    {[{auth_frame, Commit}], S2, {running, _}} = step(S1, {key, {ok, Scalar, Element}}),
+    {S1, [{keys, {sae_commit, #{ssid := ?SSID, spa := ?SPA, aa := ?AA}}}, {deadline, _}]} = start(),
+    {S2, [{auth_frame, Commit}, {deadline, _}]} = step(S1, {key, {ok, Scalar, Element}}),
     ?assertEqual(<<?H2E_COMMIT, (?LOCAL_COMMIT)/binary>>, Commit),
-    {[{keys, Ask}], S3, {running, _}} = step(S2, {auth_frame, <<?H2E_COMMIT, (?PEER_COMMIT)/binary>>}),
+    {S3, [{keys, Ask}, {deadline, _}]} = step(S2, {auth_frame, <<?H2E_COMMIT, (?PEER_COMMIT)/binary>>}),
     ?assertEqual({sae_key, #{ssid => ?SSID, scalar => PeerScalar, element => PeerElement, rejected => <<>>}}, Ask),
-    {[{auth_frame, Confirm}], _S4, {running, _}} = step(S3, {key, {ok, ?KCK}}),
+    {_S4, [{auth_frame, Confirm}, {deadline, _}]} = step(S3, {key, {ok, ?KCK}}),
     Mac = crypto:mac(hmac, sha256, ?KCK, [<<1:16/little>>, Scalar, Element, PeerScalar, PeerElement]),
     ?assertEqual(<<3, 0, 2, 0, 0, 0, 1, 0, Mac/binary>>, Confirm).
 
@@ -95,23 +95,23 @@ reflected_commit_test() ->
     {S, _H, Ap, Commit} = committed(#{}),
     <<_:8/binary, Scalar:32/binary, Element:64/binary>> = Commit,
     <<_:8/binary, ApScalar:32/binary, ApElement:64/binary>> = erx_sae_peer:ap_commit(Ap),
-    [?assertEqual({[], S, {drop, sae_reflected}}, step(S, {auth_frame, peer_commit(Sc, El)}))
+    [?assertEqual({S, [{drop, sae_reflected}]}, step(S, {auth_frame, peer_commit(Sc, El)}))
      || {Sc, El} <- [{Scalar, Element}, {Scalar, ApElement}, {ApScalar, Element}]].
 
 invalid_element_dropped_before_the_holder_test() ->
     {S, _H, Ap, _Commit} = committed(#{}),
     #{p := P} = erx_sae_peer:curve(),
     <<_:8/binary, ApScalar:32/binary, X:32/binary, Y:32/binary>> = erx_sae_peer:ap_commit(Ap),
-    [?assertEqual({[], S, {drop, bad_element}}, step(S, {auth_frame, peer_commit(ApScalar, Element)}))
+    [?assertEqual({S, [{drop, bad_element}]}, step(S, {auth_frame, peer_commit(ApScalar, Element)}))
      || Element <- [<<P:256, Y/binary>>, <<X/binary, P:256>>, <<(P + 1):256, Y/binary>>, <<-1:512>>]].
 
 off_curve_element_dropped_then_genuine_commit_test() ->
     {S, H, Ap0, Commit} = committed(#{}),
     {_, Ap} = erx_sae_peer:ap_take(Commit, Ap0),
     <<_:8/binary, ApScalar:32/binary, X:32/binary, Y:256>> = erx_sae_peer:ap_commit(Ap),
-    {[{keys, Ask}], S1, {running, _}} = step(S, {auth_frame, peer_commit(ApScalar, <<X/binary, (Y bxor 1):256>>)}),
+    {S1, [{keys, Ask}, {deadline, _}]} = step(S, {auth_frame, peer_commit(ApScalar, <<X/binary, (Y bxor 1):256>>)}),
     {{error, bad_element}, H1} = erx_sae_peer:holder(Ask, H),
-    ?assertEqual({[], S, {drop, bad_element}}, step(S1, {key, {error, bad_element}})),
+    ?assertEqual({S, [{drop, bad_element}]}, step(S1, {key, {error, bad_element}})),
     {accepted, _, _, _, _} = run(S, H1, Ap, [{auth_frame, erx_sae_peer:ap_commit(Ap)}]).
 
 %% While the holder makes the KCK of the peer's commit, a second commit, here a valid
@@ -119,10 +119,10 @@ off_curve_element_dropped_then_genuine_commit_test() ->
 second_commit_while_keying_dropped_test() ->
     {S, H, Ap0, Commit} = committed(#{}),
     {[ApCommit], Ap} = erx_sae_peer:ap_take(Commit, Ap0),
-    {[{keys, Ask}], K, {running, _}} = step(S, {auth_frame, ApCommit}),
+    {K, [{keys, Ask}, {deadline, _}]} = step(S, {auth_frame, ApCommit}),
     Other = erx_sae_peer:ap_new(#{pt => pt(), aa => ?AA, spa => ?SPA, rand => <<43:256>>, mask => <<1000033:256>>}),
-    ?assertEqual({[], K, {drop, sae_unexpected}}, step(K, {auth_frame, erx_sae_peer:ap_commit(Other)})),
-    ?assertMatch({[], _, {running, 5000}}, step(K, deadline, 1000)),
+    ?assertEqual({K, [{drop, sae_unexpected}]}, step(K, {auth_frame, erx_sae_peer:ap_commit(Other)})),
+    ?assertMatch({_, [{deadline, 5000}]}, step(K, deadline, 1000)),
     {Answer, H1} = erx_sae_peer:holder(Ask, H),
     {accepted, _, _, _, _} = run(K, H1, Ap, [{key, Answer}]).
 
@@ -130,55 +130,55 @@ scalar_out_of_range_test() ->
     {S, _H, Ap, _Commit} = committed(#{}),
     #{r := R} = erx_sae_peer:curve(),
     <<_:40/binary, ApElement:64/binary>> = erx_sae_peer:ap_commit(Ap),
-    [?assertEqual({[], S, {drop, bad_element}}, step(S, {auth_frame, peer_commit(<<Scalar:256>>, ApElement)}))
+    [?assertEqual({S, [{drop, bad_element}]}, step(S, {auth_frame, peer_commit(<<Scalar:256>>, ApElement)}))
      || Scalar <- [0, 1, R, R + 1, (1 bsl 256) - 1]],
-    {[{keys, {sae_key, _}}], _, _} = step(S, {auth_frame, peer_commit(<<(R - 1):256>>, ApElement)}).
+    {_, [{keys, {sae_key, _}}, {deadline, _}]} = step(S, {auth_frame, peer_commit(<<(R - 1):256>>, ApElement)}).
 
 downgrade_list_naming_group_19_ends_the_exchange_test() ->
     {S, _H, Ap, _Commit} = committed(#{}),
     Commit = erx_sae_peer:ap_commit(Ap),
-    ?assertMatch({[], _, {failed, bss}}, step(S, {auth_frame, <<Commit/binary, 255, 5, 92, 20, 0, 19, 0>>})),
-    [?assertEqual({[], S, {drop, sae_malformed}}, step(S, {auth_frame, <<Commit/binary, 255, Len, 92, List/binary>>}))
+    ?assertMatch({_, [{stop, {failed, bss}}]}, step(S, {auth_frame, <<Commit/binary, 255, 5, 92, 20, 0, 19, 0>>})),
+    [?assertEqual({S, [{drop, sae_malformed}]}, step(S, {auth_frame, <<Commit/binary, 255, Len, 92, List/binary>>}))
      || {Len, List} <- [{4, <<20, 0, 21>>}, {1, <<>>}]].
 
 confirm_send_confirm_is_verified_test() ->
     {S, Ap} = confirmed(#{}),
     <<Head:6/binary, 1:16/little, Mac/binary>> = erx_sae_peer:ap_confirm(Ap, 1),
-    ?assertMatch({[], _, {failed, secret}}, step(S, {auth_frame, <<Head/binary, 2:16/little, Mac/binary>>})),
-    ?assertMatch({[], _, accepted}, step(S, {auth_frame, erx_sae_peer:ap_confirm(Ap, 9)})).
+    ?assertMatch({_, [{stop, {failed, secret}}]}, step(S, {auth_frame, <<Head/binary, 2:16/little, Mac/binary>>})),
+    ?assertMatch({_, [{stop, accepted}]}, step(S, {auth_frame, erx_sae_peer:ap_confirm(Ap, 9)})).
 
 wrong_confirm_ends_as_secret_test() ->
     {S, Ap} = confirmed(#{}),
     <<Frame:39/binary, Last>> = erx_sae_peer:ap_confirm(Ap, 1),
-    ?assertMatch({[], _, {failed, secret}}, step(S, {auth_frame, <<Frame/binary, (Last bxor 1)>>})).
+    ?assertMatch({_, [{stop, {failed, secret}}]}, step(S, {auth_frame, <<Frame/binary, (Last bxor 1)>>})).
 
 statuses_test() ->
     {S, _H, Ap, _Commit} = committed(#{}),
     <<_:6/binary, Body/binary>> = erx_sae_peer:ap_commit(Ap),
-    ?assertMatch({[], _, {failed, secret}}, step(S, {auth_frame, <<3, 0, 1, 0, 123, 0>>})),
-    ?assertMatch({[], _, {failed, bss}}, step(S, {auth_frame, <<3, 0, 1, 0, 77, 0, 19, 0>>})),
-    ?assertMatch({[], _, {failed, bss}}, step(S, {auth_frame, <<3, 0, 2, 0, 1, 0>>})),
-    ?assertEqual({[], S, {drop, sae_malformed}}, step(S, {auth_frame, <<3, 0, 1, 0, 0, 0, Body/binary>>})),
-    ?assertEqual({[], S, {drop, sae_malformed}}, step(S, {auth_frame, <<0, 0, 1, 0, 126, 0, Body/binary>>})),
-    ?assertEqual({[], S, {drop, sae_unexpected}}, step(S, {auth_frame, <<3, 0, 2, 0, 0, 0, 1, 0, 0:256>>})),
+    ?assertMatch({_, [{stop, {failed, secret}}]}, step(S, {auth_frame, <<3, 0, 1, 0, 123, 0>>})),
+    ?assertMatch({_, [{stop, {failed, bss}}]}, step(S, {auth_frame, <<3, 0, 1, 0, 77, 0, 19, 0>>})),
+    ?assertMatch({_, [{stop, {failed, bss}}]}, step(S, {auth_frame, <<3, 0, 2, 0, 1, 0>>})),
+    ?assertEqual({S, [{drop, sae_malformed}]}, step(S, {auth_frame, <<3, 0, 1, 0, 0, 0, Body/binary>>})),
+    ?assertEqual({S, [{drop, sae_malformed}]}, step(S, {auth_frame, <<0, 0, 1, 0, 126, 0, Body/binary>>})),
+    ?assertEqual({S, [{drop, sae_unexpected}]}, step(S, {auth_frame, <<3, 0, 2, 0, 0, 0, 1, 0, 0:256>>})),
     {C, _Ap} = confirmed(#{}),
-    ?assertMatch({[], _, {failed, secret}}, step(C, {auth_frame, <<3, 0, 2, 0, 1, 0>>})),
-    ?assertEqual({[], C, {drop, sae_unexpected}}, step(C, {auth_frame, erx_sae_peer:ap_commit(Ap)})),
-    ?assertEqual({[], C, {drop, sae_unexpected}}, step(C, {auth_frame, erx_sae_peer:ap_token_request(Ap#{token := <<"x">>})})).
+    ?assertMatch({_, [{stop, {failed, secret}}]}, step(C, {auth_frame, <<3, 0, 2, 0, 1, 0>>})),
+    ?assertEqual({C, [{drop, sae_unexpected}]}, step(C, {auth_frame, erx_sae_peer:ap_commit(Ap)})),
+    ?assertEqual({C, [{drop, sae_unexpected}]}, step(C, {auth_frame, erx_sae_peer:ap_token_request(Ap#{token := <<"x">>})})).
 
 %% Each frame is sent again 1 s after the last at most twice; the exchange ends 5 s
 %% after it started, as `bss` before the confirm and as `secret` after it.
 retry_limits_test() ->
     {S, _H, _Ap, Commit} = committed(#{}),
-    {[{auth_frame, Commit}], S1, {running, 2000}} = step(S, deadline, 1000),
-    {[{auth_frame, Commit}], S2, {running, 3000}} = step(S1, deadline, 2000),
-    {[], S3, {running, 5000}} = step(S2, deadline, 3000),
-    {[], _, {failed, bss}} = step(S3, deadline, 5000),
+    {S1, [{auth_frame, Commit}, {deadline, 2000}]} = step(S, deadline, 1000),
+    {S2, [{auth_frame, Commit}, {deadline, 3000}]} = step(S1, deadline, 2000),
+    {S3, [{deadline, 5000}]} = step(S2, deadline, 3000),
+    {_, [{stop, {failed, bss}}]} = step(S3, deadline, 5000),
     {C, Ap} = confirmed(#{}),
-    {[{auth_frame, Confirm2}], C1, {running, 2000}} = step(C, deadline, 1000),
-    {[{auth_frame, Confirm3}], C2, {running, 3000}} = step(C1, deadline, 2000),
-    {[], C3, {running, 5000}} = step(C2, deadline, 3000),
-    {[], _, {failed, secret}} = step(C3, deadline, 5000),
+    {C1, [{auth_frame, Confirm2}, {deadline, 2000}]} = step(C, deadline, 1000),
+    {C2, [{auth_frame, Confirm3}, {deadline, 3000}]} = step(C1, deadline, 2000),
+    {C3, [{deadline, 5000}]} = step(C2, deadline, 3000),
+    {_, [{stop, {failed, secret}}]} = step(C3, deadline, 5000),
     {_, Ap1} = erx_sae_peer:ap_take(Confirm2, Ap),
     {_, Ap2} = erx_sae_peer:ap_take(Confirm3, Ap1),
     ?assertEqual([2, 3], erx_sae_peer:ap_confirms(Ap2)).
@@ -186,24 +186,24 @@ retry_limits_test() ->
 %% The station's identifier goes in its commit, and the peer's commit must carry it.
 password_identifier_test() ->
     Sae = erx_sae:new(#{ssid => ?SSID, spa => ?SPA, aa => ?AA, identifier => <<"psk4internet">>}),
-    {[{keys, Ask}], S0, _} = step(Sae, start),
+    {S0, [{keys, Ask}, {deadline, _}]} = step(Sae, start),
     {Answer, _} = erx_sae_peer:holder(Ask, erx_sae_peer:holder_new(pt(), draws())),
-    {[{auth_frame, Commit}], S, _} = step(S0, {key, Answer}),
+    {S, [{auth_frame, Commit}, {deadline, _}]} = step(S0, {key, Answer}),
     ?assertEqual(<<255, 13, 33, "psk4internet">>, binary:part(Commit, byte_size(Commit), -15)),
     ApCommit = erx_sae_peer:ap_commit(ap(#{})),
-    ?assertEqual({[], S, {drop, sae_malformed}}, step(S, {auth_frame, ApCommit})),
-    ?assertEqual({[], S, {drop, sae_malformed}}, step(S, {auth_frame, <<ApCommit/binary, 255, 4, 33, "psk">>})),
-    {[{keys, {sae_key, _}}], _, _} = step(S, {auth_frame, <<ApCommit/binary, 255, 13, 33, "psk4internet">>}),
+    ?assertEqual({S, [{drop, sae_malformed}]}, step(S, {auth_frame, ApCommit})),
+    ?assertEqual({S, [{drop, sae_malformed}]}, step(S, {auth_frame, <<ApCommit/binary, 255, 4, 33, "psk">>})),
+    {_, [{keys, {sae_key, _}}, {deadline, _}]} = step(S, {auth_frame, <<ApCommit/binary, 255, 13, 33, "psk4internet">>}),
     ?assertError(function_clause, erx_sae:new(#{ssid => ?SSID, spa => ?SPA, aa => ?AA, identifier => binary:copy(<<"i">>, 65)})).
 
 %% A holder that has not answered by the exchange's end, or that has no exchange,
 %% ends it as `bss`.
 holder_failures_test() ->
-    {[{keys, _}], S0, {running, 5000}} = start(),
-    {[], _, {failed, bss}} = step(S0, deadline, 5000),
+    {S0, [{keys, _}, {deadline, 5000}]} = start(),
+    {_, [{stop, {failed, bss}}]} = step(S0, deadline, 5000),
     {S, _H, Ap, _Commit} = committed(#{}),
-    {[{keys, _}], S1, _} = step(S, {auth_frame, erx_sae_peer:ap_commit(Ap)}),
-    {[], _, {failed, bss}} = step(S1, {key, {error, no_commit}}).
+    {S1, [{keys, _}, {deadline, _}]} = step(S, {auth_frame, erx_sae_peer:ap_commit(Ap)}),
+    {_, [{stop, {failed, bss}}]} = step(S1, {key, {error, no_commit}}).
 
 tested_after_the_confirm_test() ->
     {S, _H, _Ap, _Commit} = committed(#{}),
@@ -225,10 +225,10 @@ malformed_frames_test() ->
         ++ [<<3, 0, 1, 0, 126, 0, 19, 0, (rand:bytes(96))/binary, 255, (rand:uniform(256) - 1), Ext, (rand:bytes(rand:uniform(20)))/binary>>
             || Ext <- [33, 92, 93], _ <- lists:seq(1, 200)],
     [case {Sae, Frame, step(Sae, {auth_frame, Frame})} of
-         {_, _, {[], Sae, {drop, _}}} -> ok;
-         {C, <<3, 0, 2, 0, 0, 0, _:34/binary, _/binary>>, {[], _, {failed, secret}}} -> ok;
-         {S, <<3, 0, 1, 0, 126, 0, _/binary>>, {[{keys, {sae_key, _}}], _, {running, _}}} -> ok;
-         {S, <<3, 0, 1, 0, 76, 0, _/binary>>, {[{auth_frame, _}], _, {running, _}}} -> ok
+         {_, _, {Sae, [{drop, _}]}} -> ok;
+         {C, <<3, 0, 2, 0, 0, 0, _:34/binary, _/binary>>, {_, [{stop, {failed, secret}}]}} -> ok;
+         {S, <<3, 0, 1, 0, 126, 0, _/binary>>, {_, [{keys, {sae_key, _}}, {deadline, _}]}} -> ok;
+         {S, <<3, 0, 1, 0, 76, 0, _/binary>>, {_, [{auth_frame, _}, {deadline, _}]}} -> ok
      end || Sae <- [S, C], Frame <- Frames].
 
 %% ---- The exchange's parties ----
@@ -251,25 +251,25 @@ peer_commit(Scalar, Element) -> <<?H2E_COMMIT, 19, 0, Scalar/binary, Element/bin
 
 %% The station after its commit, with its holder and an access point that has not seen it.
 committed(Config) ->
-    {[{keys, Ask}], S0, _} = start(),
+    {S0, [{keys, Ask}, {deadline, _}]} = start(),
     {Answer, H} = erx_sae_peer:holder(Ask, erx_sae_peer:holder_new(pt(), draws())),
-    {[{auth_frame, Commit}], S, _} = step(S0, {key, Answer}),
+    {S, [{auth_frame, Commit}, {deadline, _}]} = step(S0, {key, Answer}),
     {S, H, ap(Config), Commit}.
 
 %% The station after its confirm, and the access point that took its commit.
 confirmed(Config) ->
     {S, H, Ap0, Commit} = committed(Config),
     {[ApCommit], Ap} = erx_sae_peer:ap_take(Commit, Ap0),
-    {[{keys, Ask}], S1, _} = step(S, {auth_frame, ApCommit}),
+    {S1, [{keys, Ask}, {deadline, _}]} = step(S, {auth_frame, ApCommit}),
     {Answer, _} = erx_sae_peer:holder(Ask, H),
-    {[{auth_frame, _Confirm}], C, _} = step(S1, {key, Answer}),
+    {C, [{auth_frame, _Confirm}, {deadline, _}]} = step(S1, {key, Answer}),
     {C, Ap}.
 
 %% A whole exchange at time 0: the holder answers each request before any other
 %% event, the access point answers each frame the station sends; an exchange that
 %% takes more than 20 steps has stalled.
 exchange(Config) ->
-    {[{keys, Ask}], S0, _} = start(),
+    {S0, [{keys, Ask}, {deadline, _}]} = start(),
     {Answer, H} = erx_sae_peer:holder(Ask, erx_sae_peer:holder_new(pt(), draws())),
     run(S0, H, ap(Config), [{key, Answer}]).
 
@@ -277,17 +277,19 @@ run(S, H, Ap, Events) -> run(S, H, Ap, Events, [], 20).
 
 run(S, H, Ap, Events, Sent, Budget) when Events =:= []; Budget =:= 0 -> {stalled, S, H, Ap, lists:reverse(Sent)};
 run(S0, H0, Ap0, [Event | Queue], Sent0, Budget) ->
-    {Actions, S, Outcome} = step(S0, Event),
+    {S, Actions} = step(S0, Event),
     {Front, Back, H, Ap, Sent} =
         lists:foldl(fun({keys, Ask}, {F, B, Hh, A, Sn}) ->
                             {Answer, Hh1} = erx_sae_peer:holder(Ask, Hh),
                             {F ++ [{key, Answer}], B, Hh1, A, Sn};
                        ({auth_frame, Frame}, {F, B, Hh, A, Sn}) ->
                             {Replies, A1} = erx_sae_peer:ap_take(Frame, A),
-                            {F, B ++ [{auth_frame, R} || R <- Replies], Hh, A1, [Frame | Sn]}
+                            {F, B ++ [{auth_frame, R} || R <- Replies], Hh, A1, [Frame | Sn]};
+                       ({deadline, _}, Acc) -> Acc;
+                       ({stop, _}, Acc) -> Acc
                     end, {[], [], H0, Ap0, Sent0}, Actions),
-    case Outcome of
-        accepted -> {accepted, S, H, Ap, lists:reverse(Sent)};
-        {failed, Class} -> {{failed, Class}, S, H, Ap, lists:reverse(Sent)};
-        _ -> run(S, H, Ap, Front ++ Queue ++ Back, Sent, Budget - 1)
+    case Actions of
+        [{stop, accepted}] -> {accepted, S, H, Ap, lists:reverse(Sent)};
+        [{stop, {failed, Class}}] -> {{failed, Class}, S, H, Ap, lists:reverse(Sent)};
+        [_ | _] -> run(S, H, Ap, Front ++ Queue ++ Back, Sent, Budget - 1)
     end.

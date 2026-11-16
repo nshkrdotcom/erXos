@@ -165,3 +165,11 @@ await(Done, Tries) ->
         true -> ok;
         false -> timer:sleep(10), await(Done, Tries - 1)
     end.
+
+%% proc_lib's crash report hands format_status/1 the reason alone (docs/design-log.md,
+%% "Reports carry no term"), and the controller's and a link's callbacks answer it
+%% without crashing, since a crashed callback shows no reason at all. The Bluetooth
+%% domain takes the report filter, which hides the reason's terms.
+format_status_takes_a_reason_alone_test() ->
+    Status = #{reason => {badmatch, <<1, 2, 3>>}},
+    [?assertMatch(#{reason := _}, Mod:format_status(Status)) || Mod <- [erx_bt_hci, erx_bt_link]].

@@ -259,11 +259,23 @@ variant, so every edge takes a step's result apart the same way:
 ```erlang
 -spec step(event(), state()) -> {state(), [action()]}.
 
-%% The edge: perform each action in order; a stop ends the process.
-perform([{stop, Reason}], _S) -> {stop, Reason};
-perform([Action | Actions], S) -> perform(Actions, effect(Action, S));
-perform([], S) -> {ok, S}.
+%% The edge: its effect performs one action that is not a stop.
+effect({write, Bytes}, S) -> ...
+
+settle({Core, Actions}, S) ->
+    case erx_actions:perform(Actions, fun effect/2, S#s{core = Core}) of
+        {continue, Next} -> {noreply, Next};
+        {stop, Reason, Next} -> {stop, Reason, Next}
+    end.
 ```
+
+Every edge performs a step's actions through the one loop,
+`erx_actions:perform/3`, and writes only its effect, never a loop of its
+own. A stop with actions after it is the core's bug, and the loop
+refuses it before performing any action after it. It refuses with
+`error(stop_not_last)`, whose stack trace names the loop's arity and not
+its arguments: a `function_clause` there would put the whole state in
+the stack trace, which `format_status/1` does not filter.
 
 A core with timeouts keeps its deadlines in its state and takes the time
 as an input ([design.md](design.md#drivers-and-dma), "Deadlines in

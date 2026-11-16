@@ -193,29 +193,29 @@ enable(#state{regs = Regs} = S) ->
 
 %% Identification: each action of erx_blk_sd_card in order; an issue is always the last
 %% action of a step, and its answer is the card core's next event.
-identify(S, {[{issue, Step}], Card}) ->
+identify(S, {Card, [{issue, Step}]}) ->
     {Event, Next} = command(S, Step),
     identify(Next, erx_blk_sd_card:step(Card, Event));
-identify(S, {[{reset, Line} | Rest], Card}) ->
+identify(S, {Card, [{reset, Line} | Rest]}) ->
     maybe
         {ok, Next} ?= reset(S, line_reset(Line)),
-        identify(Next, {Rest, Card})
+        identify(Next, {Card, Rest})
     end;
-identify(S, {[{wait, Ms} | Rest], Card}) ->
+identify(S, {Card, [{wait, Ms} | Rest]}) ->
     ok = timer:sleep(Ms),
-    identify(S, {Rest, Card});
-identify(#state{regs = Regs} = S, {[{bus_width, 4} | Rest], Card}) ->
-    identify(S#state{regs = erx_blk_sd_regs:write_field(Regs, control0, bus_4bit, 1)}, {Rest, Card});
-identify(S, {[{clock, Hz} | Rest], Card}) ->
+    identify(S, {Card, Rest});
+identify(#state{regs = Regs} = S, {Card, [{bus_width, 4} | Rest]}) ->
+    identify(S#state{regs = erx_blk_sd_regs:write_field(Regs, control0, bus_4bit, 1)}, {Card, Rest});
+identify(S, {Card, [{clock, Hz} | Rest]}) ->
     maybe
         {ok, Next} ?= clock(S, Hz),
-        identify(Next, {Rest, Card})
+        identify(Next, {Card, Rest})
     end;
-identify(S, {[{identified, Card}], _Card}) ->
+identify(S, {_Card, [{identified, Card}]}) ->
     {ok, S#state{card = Card}};
-identify(_S, {[{refuse, Reason}], _Card}) ->
+identify(_S, {_Card, [{refuse, Reason}]}) ->
     {error, {refused, Reason}};
-identify(_S, {Actions, _Card}) ->
+identify(_S, {_Card, Actions}) ->
     {error, {identify, {actions, length(Actions)}}}.
 
 line_reset(cmd) -> reset_cmd;
@@ -388,7 +388,7 @@ request(#job{op = Op, sector = Sector, plan = Plan, accepted = Accepted}, Sector
 transfer(State = #state{current = none}, _Event) ->
     {noreply, State};
 transfer(State = #state{current = {Job, T, Read, Timer}}, Event) ->
-    {Actions, Next} = erx_blk_sd_host:step(T, Event),
+    {Next, Actions} = erx_blk_sd_host:step(T, Event),
     perform(Actions, State#state{current = {Job, Next, Read, Timer}}).
 
 perform([], State = #state{current = {Job, T, Read, Timer}}) ->

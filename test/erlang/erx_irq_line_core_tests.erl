@@ -27,7 +27,7 @@ step(Event, Core) -> erx_irq_line_core:step(Event, Core).
 %% process.
 joined(Members) ->
     lists:foldl(fun({Ref, Dev}, Core) ->
-                        {[], Next} = step({join, Ref, self(), Dev}, Core),
+                        {Next, []} = step({join, Ref, self(), Dev}, Core),
                         Next
                 end, erx_irq_line_core:new(), Members).
 
@@ -44,13 +44,13 @@ notices(Devs) -> lists:sort([notice(Dev) || Dev <- Devs]).
 a_firing_after_an_answer_tells_every_member_again_test() ->
     A = make_ref(),
     B = make_ref(),
-    {Told, Round} = step(fire, joined([{A, dev_a}, {B, dev_b}])),
+    {Round, Told} = step(fire, joined([{A, dev_a}, {B, dev_b}])),
     ?assertEqual(notices([dev_a, dev_b]), lists:sort(Told)),
-    {AfterA, AAnswered} = step({done, A}, Round),
+    {AAnswered, AfterA} = step({done, A}, Round),
     ?assertEqual([], AfterA),
-    {AfterFire, Again} = step(fire, AAnswered),
+    {Again, AfterFire} = step(fire, AAnswered),
     ?assertEqual([], AfterFire),
-    {[First | Next], NextRound} = step({done, B}, Again),
+    {NextRound, [First | Next]} = step({done, B}, Again),
     ?assertEqual(ack, First),
     ?assertEqual(notices([dev_a, dev_b]), lists:sort(Next)),
     ?assertEqual({round, lists:sort([A, B]), false}, erx_irq_line_core:phase(NextRound)).
@@ -59,54 +59,54 @@ a_firing_after_an_answer_tells_every_member_again_test() ->
 the_line_is_acknowledged_after_the_last_answer_test() ->
     A = make_ref(),
     B = make_ref(),
-    {_, Round} = step(fire, joined([{A, dev_a}, {B, dev_b}])),
-    {AfterA, AAnswered} = step({done, A}, Round),
+    {Round, _} = step(fire, joined([{A, dev_a}, {B, dev_b}])),
+    {AAnswered, AfterA} = step({done, A}, Round),
     ?assertEqual([], AfterA),
-    {AfterB, Ended} = step({done, B}, AAnswered),
+    {Ended, AfterB} = step({done, B}, AAnswered),
     ?assertEqual([ack], AfterB),
     ?assertEqual(idle, erx_irq_line_core:phase(Ended)).
 
 %% A firing with no member holds the line: nothing is told and nothing acknowledged.
 a_firing_with_no_member_holds_the_line_test() ->
-    {Actions, Held} = step(fire, erx_irq_line_core:new()),
+    {Held, Actions} = step(fire, erx_irq_line_core:new()),
     ?assertEqual([], Actions),
     ?assertEqual(held, erx_irq_line_core:phase(Held)),
-    ?assertEqual({[], Held}, step(fire, Held)).
+    ?assertEqual({Held, []}, step(fire, Held)).
 
 %% A member that joins during a round is not told of it, and is told of the next.
 a_member_that_joins_during_a_round_is_told_in_the_next_test() ->
     A = make_ref(),
     B = make_ref(),
-    {[_], Round} = step(fire, joined([{A, dev_a}])),
-    {Join, Joined} = step({join, B, self(), dev_b}, Round),
+    {Round, [_]} = step(fire, joined([{A, dev_a}])),
+    {Joined, Join} = step({join, B, self(), dev_b}, Round),
     ?assertEqual([], Join),
-    {[], Again} = step(fire, Joined),
-    {[ack | Next], _} = step({done, A}, Again),
+    {Again, []} = step(fire, Joined),
+    {_, [ack | Next]} = step({done, A}, Again),
     ?assertEqual(notices([dev_a, dev_b]), lists:sort(Next)).
 
 %% A join and then that member's down, in idle, in a round and in held, leaves no
 %% member; from a round or held it acknowledges.
 a_join_then_its_down_in_idle_changes_nothing_test() ->
     M = make_ref(),
-    {[], Down} = step({down, M}, joined([{M, dev}])),
+    {Down, []} = step({down, M}, joined([{M, dev}])),
     ?assertEqual([], erx_irq_line_core:members(Down)),
     ?assertEqual(idle, erx_irq_line_core:phase(Down)).
 
 a_join_then_its_down_in_a_round_acknowledges_test() ->
     M = make_ref(),
-    {[_], Round} = step(fire, joined([{M, dev}])),
-    {Actions, Down} = step({down, M}, Round),
+    {Round, [_]} = step(fire, joined([{M, dev}])),
+    {Down, Actions} = step({down, M}, Round),
     ?assertEqual([ack], Actions),
     ?assertEqual([], erx_irq_line_core:members(Down)),
     ?assertEqual(idle, erx_irq_line_core:phase(Down)).
 
 a_join_then_its_down_in_held_acknowledges_test() ->
     M = make_ref(),
-    {[], Held} = step(fire, erx_irq_line_core:new()),
-    {Told, Round} = step({join, M, self(), dev}, Held),
+    {Held, []} = step(fire, erx_irq_line_core:new()),
+    {Round, Told} = step({join, M, self(), dev}, Held),
     ?assertEqual([notice(dev)], Told),
     ?assertEqual([M], erx_irq_line_core:members(Round)),
-    {Actions, Down} = step({down, M}, Round),
+    {Down, Actions} = step({down, M}, Round),
     ?assertEqual([ack], Actions),
     ?assertEqual([], erx_irq_line_core:members(Down)),
     ?assertEqual(idle, erx_irq_line_core:phase(Down)).
@@ -178,7 +178,7 @@ successors({Core, Model}, {Count, Trace}, Refs, Acc) ->
     lists:foldl(
       fun(Event, Acc1) ->
               Trace1 = [Event | Trace],
-              {Actions, Core1} = step(core_event(Event, Refs), Core),
+              {Core1, Actions} = step(core_event(Event, Refs), Core),
               Model1 = check(Event, Actions, Core1, Model, Refs, Trace1),
               maps:update_with({Core1, Model1}, fun({N, T}) -> {N + Count, T} end,
                                {Count, Trace1}, Acc1)

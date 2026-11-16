@@ -37,7 +37,7 @@ card(Params) ->
 %% Runs identification to its end: {Outcome, Actions, Card, States}, States
 %% each state with the phase it was in when an event reached it.
 run(Params) ->
-    {Actions, State} = erx_blk_sd_card:start(),
+    {State, Actions} = erx_blk_sd_card:start(),
     loop(Actions, State, card(Params), [], [], ?EVENT_BUDGET).
 
 loop(_Actions, _State, _Card, _Seen, _States, 0) ->
@@ -49,7 +49,7 @@ loop(Actions, State, Card, Seen, States, Budget) ->
         {issue, Step} ->
             [] = [A || A <- lists:droplast(Actions), element(1, A) =:= issue],
             {Event, Card1} = ?M:command(Step, Card),
-            {Next, State1} = erx_blk_sd_card:step(State, Event),
+            {State1, Next} = erx_blk_sd_card:step(State, Event),
             loop(Next, State1, Card1, Seen1, [State | States], Budget - 1);
         {identified, _} = Done ->
             {Done, Seen1, Card, lists:reverse([State | States])};
@@ -196,19 +196,19 @@ a_standard_capacity_card_sets_its_block_length_test() ->
 %% CMD8's timeout returns the command and data line resets and CMD55, in
 %% that order, and the illegal-command bit of the next R1 is accepted.
 cmd8_timeout_resets_both_lines_then_asks_cmd55_test() ->
-    {_, S0} = erx_blk_sd_card:start(),
-    {_, S1} = erx_blk_sd_card:step(S0, {response, none}),
+    {S0, _} = erx_blk_sd_card:start(),
+    {S1, _} = erx_blk_sd_card:step(S0, {response, none}),
     ?assertEqual(if_cond_1, erx_blk_sd_card:phase(S1)),
-    {Actions, S2} = erx_blk_sd_card:step(S1, timeout),
+    {S2, Actions} = erx_blk_sd_card:step(S1, timeout),
     ?assertEqual([{reset, cmd}, {reset, dat}, {issue, {cmd, 55, 0}}], Actions),
-    {Next, _} = erx_blk_sd_card:step(S2, {response, 16#00400020}),
+    {_, Next} = erx_blk_sd_card:step(S2, {response, 16#00400020}),
     ?assertEqual([{issue, {acmd, 41, 0}}], Next).
 
 illegal_command_without_a_cmd8_timeout_is_refused_test() ->
-    {_, S0} = erx_blk_sd_card:start(),
-    {_, S1} = erx_blk_sd_card:step(S0, {response, none}),
-    {_, S2} = erx_blk_sd_card:step(S1, {response, 16#1AA}),
-    ?assertMatch({[{refuse, {app_inquiry, {r1, 16#00400020}}}], _},
+    {S0, _} = erx_blk_sd_card:start(),
+    {S1, _} = erx_blk_sd_card:step(S0, {response, none}),
+    {S2, _} = erx_blk_sd_card:step(S1, {response, 16#1AA}),
+    ?assertMatch({_, [{refuse, {app_inquiry, {r1, 16#00400020}}}]},
                  erx_blk_sd_card:step(S2, {response, 16#00400020})).
 
 %% The cache step over scripted answers (the design's four cases).
@@ -283,7 +283,7 @@ every_state_takes_every_event_test_() ->
      end}.
 
 check_pair({{Phase, Version, Visit} = Key, S, Event}) ->
-    {Actions, S1} = try erx_blk_sd_card:step(S, Event)
+    {S1, Actions} = try erx_blk_sd_card:step(S, Event)
                     catch C:R -> error({raised, Key, Event, C, R})
                     end,
     lists:foreach(fun valid_action/1, Actions),

@@ -66,33 +66,33 @@ message of a member's monitor.
 new() -> #core{}.
 
 -doc """
-One event in, the actions to perform in order and the next core out. A done or a down
+One event in, the next core and the actions to perform in order out. A done or a down
 naming no member changes nothing. A join of a member the core already holds is a fault
 of the owner, which made the monitor, and fails with `function_clause`.
 """.
--spec step(event(), core()) -> {[action()], core()}.
+-spec step(event(), core()) -> {core(), [action()]}.
 step(fire, #core{phase = idle} = Core) ->
     start_round(Core);
 step(fire, #core{phase = {round, Waiting, _}} = Core) ->
-    {[], Core#core{phase = {round, Waiting, true}}};
+    {Core#core{phase = {round, Waiting, true}}, []};
 step(fire, #core{phase = held} = Core) ->
-    {[], Core};
+    {Core, []};
 step({join, M, Pid, Dev}, #core{members = Members, phase = held} = Core)
   when not is_map_key(M, Members) ->
     Joined = Core#core{members = Members#{M => {Pid, Dev}}},
-    {[{notify, Pid, Dev}], Joined#core{phase = {round, [M], false}}};
+    {Joined#core{phase = {round, [M], false}}, [{notify, Pid, Dev}]};
 step({join, M, Pid, Dev}, #core{members = Members} = Core)
   when not is_map_key(M, Members) ->
-    {[], Core#core{members = Members#{M => {Pid, Dev}}}};
+    {Core#core{members = Members#{M => {Pid, Dev}}}, []};
 step({done, M}, #core{phase = {round, Waiting, Again}} = Core) ->
     answered(M, Waiting, Again, Core);
 step({done, _}, Core) ->
-    {[], Core};
+    {Core, []};
 step({down, M}, #core{members = Members, phase = Phase} = Core) ->
     Left = Core#core{members = maps:remove(M, Members)},
     case Phase of
         {round, Waiting, Again} -> answered(M, Waiting, Again, Left);
-        _ -> {[], Left}
+        _ -> {Left, []}
     end.
 
 -doc "The members the core holds, in order.".
@@ -109,21 +109,21 @@ phase(#core{phase = Phase}) -> Phase.
 answered(M, Waiting, Again, Core) ->
     case ordsets:del_element(M, Waiting) of
         [] -> end_round(Again, Core);
-        Rest -> {[], Core#core{phase = {round, Rest, Again}}}
+        Rest -> {Core#core{phase = {round, Rest, Again}}, []}
     end.
 
 %% Acknowledge the line; if it fired during the round, start the next round.
 end_round(false, Core) ->
-    {[ack], Core#core{phase = idle}};
+    {Core#core{phase = idle}, [ack]};
 end_round(true, Core) ->
-    {Notices, Next} = start_round(Core#core{phase = idle}),
-    {[ack | Notices], Next}.
+    {Next, Notices} = start_round(Core#core{phase = idle}),
+    {Next, [ack | Notices]}.
 
 %% A firing in idle: tell every member, or hold the line when there is none.
 start_round(#core{members = Members} = Core) when map_size(Members) =:= 0 ->
-    {[], Core#core{phase = held}};
+    {Core#core{phase = held}, []};
 start_round(#core{members = Members} = Core) ->
     Told = lists:sort(maps:to_list(Members)),
     Notices = [{notify, Pid, Dev} || {_, {Pid, Dev}} <- Told],
     Waiting = ordsets:from_list([M || {M, _} <- Told]),
-    {Notices, Core#core{phase = {round, Waiting, false}}}.
+    {Core#core{phase = {round, Waiting, false}}, Notices}.

@@ -156,13 +156,15 @@ info(_Message, State) ->
     {noreply, State}.
 
 %% A crash report or sys:get_status/1 shows neither the backlogs nor the last message,
-%% which hold other domains' text, so no domain's bytes appear in the system domain's
-%% own report.
+%% which hold other domains' text, and of a crash's reason only its leading atom
+%% (erx_report:reason_name/1), so no domain's bytes appear in the system domain's own
+%% report.
 -spec format_status(gen_server:format_status()) -> gen_server:format_status().
 format_status(Status) ->
     maps:map(fun(state, #state{} = State) -> State#state{consumers = held_back};
                 (message, _Message) -> held_back;
                 (log, Log) -> [held_back || _ <- Log];
+                (reason, Reason) -> erx_report:reason_name(Reason);
                 (_Key, Value) -> Value
              end, Status).
 

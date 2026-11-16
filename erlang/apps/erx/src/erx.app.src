@@ -3,7 +3,7 @@
 
 %% erXos's runtime services (docs/design-runtime.md): the carrier between domains and
 %% its connection agent, the console and hosted mode's console driver, the log sink's
-%% handler, the kernel log, the namespace, the watchdog's petter, a driver's view
+%% handler and the report filter, the kernel log, the namespace, the watchdog's petter, a driver's view
 %% of its device and its device record, the hold on a header pin, chip select or PWM
 %% channel, the decisions of a shared interrupt line's owner, the inspector and its
 %% collectors, the tracer and its ring reader, the pipe server's decisions, erx's
@@ -33,6 +33,7 @@
              erx_abi_signals,
              erx_abi_termios,
              erx_abi_translations,
+             erx_actions,
              erx_app_records,
              erx_area,
              erx_build,
@@ -79,6 +80,7 @@
              erx_process_records,
              erx_prog_handler,
              erx_prog_handler_core,
+             erx_report,
              erx_runtime_records,
              erx_schema,
              erx_source,

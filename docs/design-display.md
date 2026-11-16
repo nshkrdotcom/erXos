@@ -2232,7 +2232,7 @@ device](#the-display-device)). `erx_winfs` stamps each record, end and
 tick with its own clock as it takes it, so the step reads no clock.
 
 ```erlang
--spec step(in(), view(), state()) -> {[out()], PolicyState :: term(), state()}.
+-spec step(in(), view(), state()) -> {state(), [out()]}.
 -type in() :: {record, Source :: pid(), Device :: binary(), At :: integer(), record()}
             | {gone, Source :: pid(), At :: integer()} % the source's process ended
             | {tick, At :: integer()}                  % the timer fired
@@ -2243,9 +2243,15 @@ tick with its own clock as it takes it, so the step reads no clock.
 %% What the screen shows: its shown windows, topmost first, each with its
 %% rectangle and the time of the last frame in which it gained pixels.
 -type displayed() :: [{window_id(), erx_wm:rect(), Gained :: integer()}].
--type out() :: {to, window_id(), input()} | {wm, term()} | {delete, window_id()}
-             | {windows, [erx_wm:window()]} | {wake, At :: integer() | none}.
+-type out() :: {policy_state, term()} | {to, window_id(), input()} | {wm, term()}
+             | {delete, window_id()} | {windows, [erx_wm:window()]}
+             | {wake, At :: integer() | none}.
 ```
+
+A step's first answer is `{policy_state, P}`, the policy's state after
+any question the step asked it, which `erx_winfs` keeps before it
+performs the rest, so a new table it commits is laid out with it and
+the windows left after a delete are arranged with it.
 
 Its state, made by `new/1` from the manifest entry's layout, repeat
 times and chord:
