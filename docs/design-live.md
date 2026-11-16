@@ -617,7 +617,9 @@ on the host:
   `ICANON`, `VEOF` or `VEOL` moves what the new mode counts as complete to
   the readable bytes (`tty.c:1803-1812`), and every waiter waits again under
   the new rules.
-* `hangup(Tty)`, for the master's `tty_hangup`, makes every waiter ready and
+* `hangup(Tty)`, for the master's `tty_hangup`, drops the input the tty
+  holds, as FreeBSD's carrier loss flushes both queues
+  (`sys/kern/tty_ttydisc.c:713-714`), makes every waiter ready, and makes
   every later read that finds no bytes an end of file.
 * `size(Rows, Columns, Tty)` takes a new window size, each from 1 to 65,535,
   and refuses any other. It returns `winch` when the size differs from the
@@ -823,8 +825,10 @@ takes an output only once its line driver has written it, so a session
 has at most one output in the console and the driver together. A master
 in another domain is heard only through the envelope of its own domain
 (D18). Once `tty_hangup` holds, the tty drops what it holds and takes every
-later write at once with nothing sent, and the relay ends every shell on
-the tty and then the tty, as a UNIX session ends with its terminal's
+later write at once with nothing sent, and the relay sends the tty's
+console `erx_console_eof` at once, whether or not a read waits, so the
+console ends every shell on the tty and then the tty ends, as a UNIX
+session ends with its terminal's
 hangup; the session's other ttys run on. A master in the tty's own domain
 is watched, and its end is the tty's hangup, as a pseudo-terminal master's
 close is.

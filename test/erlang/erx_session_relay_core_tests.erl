@@ -349,6 +349,15 @@ the_end_of_file_test() ->
     T6 = ev({master, tty_hangup}, T5),
     ?assertMatch({eof, _}, do(pa, {tty_read, ar, 4096, N2}, T6)).
 
+%% A hangup tells the console at once, with no read waiting while a job holds, and
+%% drops the input typed before it, so the job's next read is the end of file.
+a_hangup_tells_the_console_at_once_test() ->
+    {_, T0} = take(console, type(<<"ab\n">>, a_holds())),
+    T1 = ev({master, tty_hangup}, T0),
+    ?assertMatch({[erx_console_eof], _}, take(console, T1)),
+    {_, N, T2} = report(pa, ar, ok(pa, {watch, ar, [{read, 4096}]}, T1)),
+    ?assertMatch({eof, _}, do(pa, {tty_read, ar, 4096, N}, T2)).
+
 %% Two shells keep their own numbers.
 two_shells_test() ->
     T0 = type(?CTRL_C, a_holds()),

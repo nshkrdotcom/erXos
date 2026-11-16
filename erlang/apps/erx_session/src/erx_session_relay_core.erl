@@ -477,10 +477,13 @@ link_action({resend_after, _} = Resend, Core) -> {[Resend], Core};
 link_action({done, _Writer}, Core) -> {[], Core};
 link_action({input, Bytes}, Core) -> typed(Bytes, Core);
 link_action({size, Rows, Columns}, Core) -> resize(Rows, Columns, Core);
-link_action(hangup, #core{tty = Tty} = Core) ->
+%% The hangup is the permanent end of the console's line, told at once whether or
+%% not a read waits (erx_tty_link emits hangup at most once), before the waits it readies.
+link_action(hangup, #core{tty = Tty, console = Console} = Core) ->
     {Actions, Tty1} = erx_tty:hangup(Tty),
     {Ready, Core1} = carry(Actions, Core#core{tty = Tty1}),
-    {Ready ++ drop_writes(Core1), Core1#core{writes = queue:new()}}.
+    {[{send, Console, erx_console_eof} | Ready] ++ drop_writes(Core1),
+     Core1#core{writes = queue:new()}}.
 
 %% Typed bytes go to input/3 until none is left: it stops after each
 %% signal key, and the next call gets the room the link holds after it.

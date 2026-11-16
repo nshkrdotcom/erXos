@@ -2537,8 +2537,9 @@ for its current group's outstanding ask (edit 72), each read's answer
 taken as a message in order with the relay's events, and it answers the
 ask with the characters the bytes read complete, holding the bytes of a
 character not yet complete for the group they were read for, so the
-relay sends it no
-`erx_console_input` and no `erx_console_eof`. It names its current group
+relay sends it no `erx_console_input`. The relay sends it
+`erx_console_eof` once, at the line's hangup, whether or not an ask is
+outstanding, and the console ends every shell on the line at it. It names its current group
 to the relay at its start and at each change, with `{console_group,
 Group}`, so that the relay's events name the group they were made for.
 The system console ignores its groups' asks

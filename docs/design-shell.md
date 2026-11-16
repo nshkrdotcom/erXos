@@ -237,9 +237,11 @@ what a terminal needs added:
   to it when the command starts ([Pipelines](#pipelines)).
 * **What rc does that erXos cannot.** `exec` and `rfork` fail with a
   diagnostic, since the shell has no image to replace and no process to
-  fork; `fn sigint` and `fn sighup` run when the shell itself is
-  interrupted or its terminal goes away, as in rc; a list variable reaches
-  a program's environment with its elements joined by U+0001, as
+  fork; `fn sigint` runs when the shell itself is interrupted, as in rc,
+  but `fn sighup` never runs, since a hangup ends every shell on its tty
+  at once ([The terminal relay's protocol](#the-terminal-relays-protocol));
+  a list variable reaches a program's environment with its elements
+  joined by U+0001, as
   plan9port's rc exports lists, and programs get `PATH=/bin`.
 * **An escape to Erlang.** The builtin `erl EXPR` evaluates an Erlang
   expression in the session's evaluator and prints its value; the Erlang
@@ -1389,7 +1391,11 @@ stopped, as FreeBSD's do.
   every reader does. The relay is that console's line driver for the rest:
   it takes the console's writes and sends it the size, as the console's
   driver messages ([design-runtime.md](design-runtime.md), "`erx_stdio`,
-  hosted mode's console driver"), and it sends the console no input.
+  hosted mode's console driver"), and it sends the console no input. At
+  the master's hangup it sends the console `erx_console_eof`, once, the
+  permanent end of the line, whether or not a read is outstanding, before
+  the waits the hangup readies; the console ends every shell on the line
+  at it.
 * The runtime's writers reach it through `erx_tty_owner`:
   `erlang:display_string/2`, `erlang:display/1`, `standard_error` and a
   normal halt.
@@ -2096,13 +2102,16 @@ held the terminal, so they were the job's and no later reader's, and
 the signal discards the input typed with them unless `NOFLSH` is set.
 
 **Failure.** The relay is its console's line and ends with it, and the
-console of the session role ends when the line hangs up, and every shell
-on it ends too. A call to a relay that has ended exits
+console of the session role ends when the line hangs up, told by the
+relay's `erx_console_eof` whether or not a read is outstanding, and
+every shell on it ends too. A call to a relay that has ended exits
 in the caller, whose job ends with the shell. An open whose maker ends is
 closed at its monitor's `'DOWN'`. So a command ended by `Ctrl-C` leaves
 no wait behind it, and no caller has to close an open on every path.
-After a hangup, every armed wait is ready, and every later read that
-finds no bytes reads the end of file
+After a hangup, the tty drops the input it holds, as FreeBSD's carrier
+loss flushes both queues (`sys/kern/tty_ttydisc.c:713-714`), every armed
+wait is ready, and every later read that finds no bytes reads the end
+of file
 ([design-live.md](design-live.md#the-tty)). A parked wait gets no report,
 since its job ends with the session's shell.
 
@@ -2652,6 +2661,9 @@ remain independent of catalog generation.
     the report at the timer's end is followed by a read answered `{ok,
     <<>>}`; after a hangup a read answers `eof`. Seeded: a relay that
     answers the end of file `{ok, <<>>}`, which fails the first case.
+  * The hangup told at once: with `A` holding and no read waiting, the
+    master's hangup sends the console `erx_console_eof`, and A's read
+    after it answers `eof` though a line was typed before it.
   * Two shells: a second test process acts as another shell, with group
     `G2`. The first gives `A` the terminal under `G1`, takes the event of
     a `Ctrl-C` and sends `{foreground, console, {G1, 1}}`; the console
@@ -2870,6 +2882,11 @@ remain independent of catalog generation.
     interrupts the evaluation and the prompt returns. Seeded: an editing
     setting with `ISIG` clear, where the byte waits unread and the
     evaluation goes on.
+  * A hangup with no read outstanding, while a job holds the terminal
+    and the shell waits on it, as the Erlang shell does while it
+    evaluates: every shell on the line and the console end at once.
+    Seeded: a relay that sends the console no `erx_console_eof`, whose
+    shells live on.
 * **The job table and the terminal.** EUnit cases of the job table's core,
   which returns the `foreground` requests and job effects it decides, in
   the order it decides them; the table counts each signal it takes, and

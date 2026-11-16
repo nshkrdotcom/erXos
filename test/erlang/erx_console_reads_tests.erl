@@ -75,6 +75,21 @@ a_hangup_ends_the_console_test() ->
                          receive {'DOWN', Ref, process, Console, normal} -> ok after ?WAIT_MS -> error(console_lives) end
                  end).
 
+%% A hangup with no read outstanding, while a job holds the terminal and the shell
+%% waits on it as the Erlang shell does while it evaluates, ends every shell on the
+%% line and the console at once: no read has to find the end of file first.
+a_hangup_with_no_read_outstanding_ends_the_console_test() ->
+    with_console(fun(Relay, Shell) ->
+                         Console = persistent_term:get({erx_console, line}),
+                         Ref = monitor(process, Console),
+                         ShellRef = monitor(process, Shell),
+                         Shell ! {foreground, job, self()},
+                         ?assertMatch({ok, _Termios, 0}, receive {foregrounded, Answer} -> Answer after ?WAIT_MS -> timeout end),
+                         Relay ! tty_hangup,
+                         receive {'DOWN', ShellRef, process, Shell, _} -> ok after ?WAIT_MS -> error(shell_lives) end,
+                         receive {'DOWN', Ref, process, Console, normal} -> ok after ?WAIT_MS -> error(console_lives) end
+                 end).
+
 %%% The console, the relay and the stand-in shell
 
 with_console(Case) ->

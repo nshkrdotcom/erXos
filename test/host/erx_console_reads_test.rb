@@ -11,11 +11,14 @@ require_relative '../fixtures/erlang_build'
 # reading its terminal relay on demand (docs/design-shell.md, "The console reads on
 # demand"), on stock's emulator (ERX_ERL and ERX_ERLC, which make check supplies) with
 # the tree's group.erl loaded in place of stock's. `user` is erx_test_user, so no group
-# runs stock's code when the tree's is loaded. The seeded fault is stock's group, which
-# never asks its driver for input in a shell's group (edit 72 of design-runtime.md).
+# runs stock's code when the tree's is loaded. The seeded faults: stock's group, which
+# never asks its driver for input in a shell's group (edit 72 of design-runtime.md),
+# and a relay core that tells the console nothing at a hangup.
 class ErxConsoleReadsTest < Minitest::Test
   CASES = %w[test/erlang/erx_test_user.erl test/erlang/erx_console_reads_tests.erl].freeze
   GROUP = 'otp/lib/kernel/src/group.erl'
+  CORE = 'erlang/apps/erx_session/src/erx_session_relay_core.erl'
+  NOTICE = '{[{send, Console, erx_console_eof} | Ready]'
   DEADLINE = '120'
   LOAD_GROUP = 'code:unstick_mod(group), {module, group} = code:load_abs("group"), '
 
@@ -31,11 +34,19 @@ class ErxConsoleReadsTest < Minitest::Test
     assert_match(/a_typed_line_reaches_the_shell_test\S*\.\.\.\*failed\*/, output)
   end
 
+  def test_a_relay_that_sends_no_hangup_notice_fails
+    source = File.binread(File.join(ErlangBuild::ROOT, CORE))
+    flunk "#{CORE} no longer holds #{NOTICE.inspect}" unless source.include?(NOTICE)
+    output, status = eunit(LOAD_GROUP, replaced: { CORE => source.sub(NOTICE, '{Ready') })
+    refute status.success?, output
+    assert_match(/a_hangup_with_no_read_outstanding_ends_the_console_test\S*\.\.\.\*failed\*/, output)
+  end
+
   private
 
-  def eunit(load)
+  def eunit(load, replaced: {})
     Dir.mktmpdir('erx-console-reads-test') do |work|
-      ErlangBuild.compile(work, applications: %w[erx erx_session], tests: CASES + [GROUP])
+      ErlangBuild.compile(work, applications: %w[erx erx_session], tests: CASES + [GROUP], replaced: replaced)
       # Stock group, in the seeded run, wherever it would load from.
       File.delete(File.join(work, 'group.beam')) if load.empty?
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE, ENV.fetch('ERX_ERL'), '-noshell', '-user', 'erx_test_user',

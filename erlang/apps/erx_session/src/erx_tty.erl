@@ -230,12 +230,14 @@ size(_, _, _) ->
     {error, einval}.
 
 -doc """
-The master hung up. Every waiter is ready, and from now on every read that
-finds no bytes returns `eof`.
+The master hung up. The input the tty holds is dropped, as FreeBSD's
+carrier loss flushes both queues (sys/kern/tty_ttydisc.c:713-714), every
+waiter is ready, and from now on every read that finds no bytes returns
+`eof`.
 """.
 -spec hangup(tty()) -> {[action()], tty()}.
 hangup(Tty) ->
-    rewait(Tty#tty{hungup = true}).
+    rewait(Tty#tty{hungup = true, ready = <<>>, line = <<>>, reprintpos = 0}).
 
 -doc "The bytes a read can take now, FreeBSD's FIONREAD (ttydisc_bytesavail).".
 -spec waiting(tty()) -> non_neg_integer().

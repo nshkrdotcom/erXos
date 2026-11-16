@@ -170,7 +170,7 @@ a_timed_read_test() ->
         exit(Group, kill)
     end).
 
-%% The master's end is the tty's hangup: an armed wait is ready, and a read
+%% The master's end is the tty's hangup: the console is told, an armed wait is ready, and a read
 %% that finds no bytes reads the end of file.
 the_masters_end_hangs_up_test() ->
     Master = group(),
@@ -178,6 +178,8 @@ the_masters_end_hangs_up_test() ->
         {ok, Open} = ?RELAY:open_reader(console),
         ok = ?RELAY:watch(Open, {read, 1}),
         exit(Master, kill),
+        %% The console hears of the hangup first, before the wait it readies.
+        erx_console_eof = next(),
         {ready, Open, [{read, 1}], N} = next(),
         ?assertEqual(eof, ?RELAY:read(Open, 1, N))
     end).
