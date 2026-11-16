@@ -2789,10 +2789,9 @@ by side; (f) needs (b) and (c).
      Disable mark; it needs the firmware's `sae_ext` capability,
      which W1 reads, and without it WPA3 is reported unsupported.
 
-  The key holder's release form, the vault's purpose or a WiFi key
-  domain, waits for the decision
-  [design-wifi.md](design-wifi.md#open-decisions) records; W0 to W5
-  do not wait for it.
+  The key holder's release form is a purpose of the vault
+  ([design-wifi.md](design-wifi.md#decisions), 1); W0 to W5 are built
+  on the development holder behind the same two interfaces.
 
 **Dependencies.**
 
@@ -2875,7 +2874,7 @@ by side; (f) needs (b) and (c).
 * **WiFi off the board.** QEMU has no WiFi device. (f)'s cores run on the
   host against recordings, published vectors and wpa_supplicant and
   hostapd 2.12, WPA2's on the FreeBSD x86-64 test host and SAE's on the
-  test access point's host, since hostapd's BSD driver carries no SAE
+  Linux test access point, since hostapd's BSD driver carries no SAE
   frames; a fake chip behind the
   `sdio` interface runs the WiFi domain in hosted mode and on QEMU
   `virt`, where the network stack's suites run over `wlan0` unchanged

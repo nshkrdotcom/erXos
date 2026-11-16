@@ -6745,9 +6745,8 @@ to the corpus and follow rc
   domain can also write that file, so enroll a network, and a `pending`
   Transition Disable mark is lost with the domain's restart. No
   passphrase enters the domain: `wlankey` derives in the session. It
-  blocks release. The vault's purpose or a WiFi key domain closes it,
-  once the placement is decided
-  ([design-wifi.md](docs/design-wifi.md#open-decisions), 1), and the
+  blocks release. The vault's purpose closes it
+  ([design-wifi.md](docs/design-wifi.md#decisions), 1), and the
   release manifest check refuses a `wifi` row without `wpa_key` or with
   `wpa_admin`.
 * [Medium] WiFi, SAE not constant-time throughout

@@ -55,8 +55,7 @@ Decisions every reader needs:
   each PTK, and never gives out the secret itself, as Plan 9's factotum
   answers 9front's supplicant. The WiFi domain holds only the keys of
   the association in progress. The key holder is a purpose of the vault
-  or a key domain of WiFi's own ([Credentials](#credentials)), a
-  placement that is [Open decisions](#open-decisions), 1; development
+  ([Credentials](#credentials); [Decisions](#decisions), 1); development
   builds run it inside the WiFi domain over a file, a residual that
   blocks release.
 * **Only the administrator enrolls a network, and no passphrase leaves
@@ -115,7 +114,7 @@ Decisions every reader needs:
 25. [Edits to other designs](#edits-to-other-designs)
 26. [Alternatives considered](#alternatives-considered)
 27. [Lineage](#lineage)
-28. [Open decisions](#open-decisions)
+28. [Decisions](#decisions)
 29. [Sources](#sources)
 
 ## Context
@@ -347,8 +346,8 @@ multiplies the generator inside key generation and ECDH only
   on the line   attach,   |                | offer, frames,
                 run,      |                | credits, link
                 notices   +-- wpa_key --> key holder <-- wpa_admin -- root's session
-                              names,      (vault or      set, forget  (wlankey)
-                              mark,       key domain)
+                              names,      (vault,        set, forget  (wlankey)
+                              mark,       purpose)
                               sae_commit,
                               sae_key, ptk
 ```
@@ -1339,7 +1338,7 @@ What the memory is for:
   hold that only a person could end would turn a few minutes of radio
   interference into an outage of an unattended board; a hold with a
   ceiling ends an hour after the interference does
-  ([Open decisions](#open-decisions), 2).
+  ([Decisions](#decisions), 2).
 * **The memory paces retries.** A network whose only access point
   fails is tried again when its hold ends, at 10 s and then less often,
   so no other backoff follows a failed join.
@@ -1734,7 +1733,7 @@ given a passphrase and nothing else could never join a WPA3 access
 point, so erXos's defaults admit the strongest AKM the secret serves
 and protect management frames wherever the access point can. A block
 that states `key_mgmt` or `ieee80211w` means what it means to
-wpa_supplicant ([Open decisions](#open-decisions), 3).
+wpa_supplicant ([Decisions](#decisions), 3).
 
 The file holds no secret. `psk`, `sae_password` and `sae_password_id`
 are refused with the reason `{config, Line, secret_in_file}`, and the log
@@ -1901,7 +1900,9 @@ is `wlankey`'s pure derivation: the PMK by `crypto:pbkdf2_hmac/5`
 HKDF.
 
 The seam is the same wherever the holder is; the placements differ in
-what a break of the WiFi domain reaches:
+what a break of the WiFi domain reaches. The release placement is (a);
+(c) and (b) are the alternatives it was chosen over
+([Decisions](#decisions), 1):
 
 | Placement | A break of the WiFi domain's parsers yields | What it costs |
 | --- | --- | --- |
@@ -1911,12 +1912,10 @@ what a break of the WiFi domain reaches:
 
 (b) keeps neither of this design's two guarantees for a break of the
 parsers, no password equivalent and no enrollment, so it is not a
-release placement: it is the development build's stopgap below. The
-release placement is (a) or (c), [Open decisions](#open-decisions), 1;
-under both, the passphrase stays in the administrator's session, the
-WiFi domain holds `wpa_key` alone, and the station's code is the same.
-This document describes (a) where the placement shows. It is the
-vault's own rule, that no key enters a domain that uses it
+release placement: it is the development build's stopgap below. Under
+(a), the passphrase stays in the administrator's session, the WiFi
+domain holds `wpa_key` alone, and the station's code is the same as
+under (b). (a) is the vault's own rule, that no key enters a domain that uses it
 ([design-system.md](design-system.md#the-vault)), applied to WiFi: the
 chip needs the session's keys, the TK, GTK and IGTK, in clear, but
 never the PMK or PT, so those are a key facet's material and not a
@@ -1948,11 +1947,6 @@ state slot's. In the vault's terms:
   [The SAE-only mark](#the-sae-only-mark) says.
 * **What the vault logs.** Each `set`, `forget` and `mark`, with the
   grantee, as it logs a token's release; no join is logged.
-
-Under (c) the key domain runs the same core and `erx_wpa_arith`, keeps
-the entries in its state slot's blob, which it decodes as untrusted
-input with a fuzz target as every slot's grantee does, and answers a
-`mark` whose `put` the vault refuses with `pending`.
 
 **A development build, before the release placement,** runs the
 holder as `erx_wifi_keys_dev`, a process of the WiFi domain that serves
@@ -2271,7 +2265,7 @@ so that there PT, PWE and `rand` are never terms.
 | A key install is refused | `set_keys_confirm` | the WiFi domain | the join ends: the station deauthenticates and deletes what it installed |
 | The key holder answers `unavailable`, or not within 2 s | the station | the configuration, open networks of a block, the station's marks, and a port already open, until its next rekey asks for a PTK | a join that needed the answer ends with the class `none`; the names are `unavailable`, so every protected network and every SSID no block names reads `keys_unavailable` and no open BSS is admitted but by a statement; the station asks `names` again before each choice; `wlankey` reports `unavailable` |
 | The holder cannot publish a change: a trial boot, or a store that fails | the publication's answer | the change in the holder's memory, for a mark | `set` and `forget` answer `unavailable`; a mark is recorded and answered `pending`, enforced, and written at the next change the holder publishes ([The SAE-only mark](#the-sae-only-mark)) |
-| The holder restarts, the vault or the key domain | the facet's answers | the entries and the `kept` marks, which are its file | the exchange in progress is lost with it: the join ends, and the next join starts a new one; a `pending` mark is lost, which the station logged as pending when it learned it |
+| The holder restarts, the vault | the facet's answers | the entries and the `kept` marks, which are its file | the exchange in progress is lost with it: the join ends, and the next join starts a new one; a `pending` mark is lost, which the station logged as pending when it learned it |
 | The SDIO host faults | `erx_sdio_sup` | EMMC2, `/data` and line 126, on which the host never signalled | restarted 3 times in 60 s, then WiFi stays down until the storage domain's next start |
 | The storage domain restarts | the attachment's monitor | the network domain | the WiFi domain ends with its attachment, and its restart waits for the storage domain's facet, as at boot |
 | The WiFi domain restarts | the offer's monitor in the network domain | `genet0` and every connection on it; the networks' entries | `wlan0`'s link ends; the new chip process offers again once its firmware runs, and the station joins with an empty memory |
@@ -2328,7 +2322,7 @@ the host:
 | `erx_sae` | SAE commit and confirm bodies | `fuzz_sae` |
 | `erx_wpa_conf` | `wpa_supplicant.conf` | `fuzz_wpa_conf` |
 | `erx_wifi_fs` | `ctl` commands | `fuzz_wifi_ctl` |
-| `erx_wpa_holder` | the requests of `wpa_key` and `wpa_admin`, at the holder; a development build's `keys` file; under a key domain, its state slot's blob | `fuzz_wpa_holder` |
+| `erx_wpa_holder` | the requests of `wpa_key` and `wpa_admin`, at the holder; a development build's `keys` file | `fuzz_wpa_holder` |
 | `erx_ether` | the `ether` messages, at the driver | `fuzz_ether` |
 
 Every layout they read is declared once: `abi/formats/sdio.txt` (the
@@ -2387,7 +2381,7 @@ secret again, and no passphrase passes through it, since `wlankey`
 derives in the administrator's session. A key facet is an oracle for
 its purpose's protocol role, as the vault's SSH and TLS facets are
 ([design-system.md](design-system.md#security)); what the purpose adds
-to the vault, under (a), is its arithmetic and three checked values of
+to the vault is its arithmetic and three checked values of
 the air's choosing, the peer's scalar, element and Rejected Groups
 list, inside the boundary of every principal's keys.
 
@@ -2857,9 +2851,9 @@ simulated radio, `wtap(4)`; that `wtap` carries hostapd on FreeBSD 15.1
 is *unverified*. The SAE recordings cannot come from there: hostapd
 2.12's BSD driver, like wpa_supplicant's, has no operation that sends
 or receives a management frame such as SAE's authentication frames
-(`driver_bsd.c:1752-1790`), so they come from the test access point's
-host ([Open decisions](#open-decisions), 4), as do the WPA2 ones if
-`wtap` does not serve. Seeded: a recording with one byte of the access
+(`driver_bsd.c:1752-1790`), so they come from the Linux test access point
+([Decisions](#decisions), 4), as do the WPA2 ones if `wtap` does not
+serve. Seeded: a recording with one byte of the access
 point's nonce changed, which the comparison fails.
 
 **The fake chip and its air.** An Erlang process that plays the card
@@ -2896,8 +2890,8 @@ in well under a second:
 | the holder stalled to its 2 s deadline on every call while the chip floods EAPOL-Key frames, SAE frames, events and 1,000 BSSs a scan, then a scan whose end never comes | the station's mailbox never holds more than the credit and the requests in flight, the BSS table never more than 64, the drops are counted, the scan ends at its deadline, and the genuine handshake completes once the holder answers | a chip process that ignores the credit; a BSS table without its bound; the chip process's scan deadline removed |
 | the WiFi domain's parsers ended by an exception during a handshake | the domain restarts, joins again, and nothing marked is in a report | the report filter left out |
 
-**The test access point.** hostapd 2.12, unmodified, on a host with a
-radio that can serve as an access point, started by the Ruby harness
+**The test access point.** hostapd 2.12, unmodified, on a Linux host with
+a radio that can serve as an access point, started by the Ruby harness
 with one of a fixed set of profiles, each a generated configuration:
 `open`, `wpa2`, `wpa2-rekey` (a group rekey every 30 s), `wpa2-wrong`
 (another passphrase), `wpa3`, `transition`, `transition-td` (Transition
@@ -2916,10 +2910,11 @@ frames is chosen with the host, *unverified* until then. Fuchsia drives
 an access point from its tests in the same way
 (`wlan/tests/README.md`). The board's side stays a checklist run by
 hand, and each of its steps names the profile it needs, so a step is
-repeatable and its access point is the same every time. Which host and
-radio serve is [Open decisions](#open-decisions), 4; until one does, a
-commodity router set by hand stands in, and the steps that need
-`wpa2-rekey`, `transition-td`, `twin` and the injected frames wait.
+repeatable and its access point is the same every time. The Linux host
+serves every profile; the FreeBSD x86-64 test host, the data peer of
+[Performance](#performance), serves the `open` profile and the WPA2
+ones, which need no management frame of hostapd's driver
+([Decisions](#decisions), 4).
 
 **The board,** by hand, as the Pi's checklist runs: W0's and W1's log
 lines; no scan before a country is configured, with `no_country` at
@@ -2946,9 +2941,8 @@ under load. QEMU has no WiFi device for any machine.
   the `ether` interface.
 * `abi/services/wpa_key.txt` and `abi/services/wpa_admin.txt`: the key
   holder's two interfaces, the station's five operations and the
-  administrator's two, served by the holder wherever decision 1 places
-  it; under (a) the vault's purpose `{wpa, Service}` with its two facets
-  ([Credentials](#credentials)).
+  administrator's two, served by the vault's purpose
+  `{wpa, Service}` with its two facets ([Credentials](#credentials)).
 * `abi/formats/sdio.txt`, `abi/formats/bwfm.txt`,
   `abi/formats/ieee80211.txt`, `abi/formats/wpa_keys.txt`: the layouts
   and tables above.
@@ -2961,8 +2955,7 @@ under load. QEMU has no WiFi device for any machine.
 * The device-kinds row `sdio sdhci` for the legacy controller.
 * The Pi's manifests: the `wifi` domain, the services `wifi_sdio`,
   `wlan0`, `wifi` and `wifi_etc`, their facet rows, `wpa_key` granted to
-  the `wifi` domain and `wpa_admin` to root's session template; under
-  (c), the `wifikeys` domain and its state slot; in a development
+  the `wifi` domain and `wpa_admin` to root's session template; in a development
   manifest, the `data` grant of the WiFi domain's own directory and
   `wpa_admin` served by the WiFi domain, which the release manifest
   check refuses.
@@ -2992,15 +2985,14 @@ under load. QEMU has no WiFi device for any machine.
   hostapd; the license allowlist admits Cypress's license for those
   three files in the WiFi application's release of a Raspberry Pi image.
 * **[design-system.md](design-system.md):** with
-  [Open decisions](#open-decisions), 1: under (a), the vault's purposes
-  gain `{wpa, Service}`, with two facets, `wpa_key` for the WiFi domain
-  and `wpa_admin` for the administrator's session template, whose exact
+  [Decisions](#decisions), 1: the vault's purposes gain
+  `{wpa, Service}`, with two facets, `wpa_key` for the WiFi domain and
+  `wpa_admin` for the administrator's session template, whose exact
   inputs are the seven operations of [Credentials](#credentials) and
-  whose entries are a sealed section of the machine's file; under (c),
-  a `wifikeys` domain joins the configured domains as a state slot's
-  grantee. Under both, the state slots' description stops naming the
-  WiFi chip's keys, since what the chip needs in clear is the session's
-  keys, not the networks'.
+  whose entries are a sealed section of the machine's file. The state
+  slots' text keeps Bluetooth's bonds as its example and stops naming
+  the WiFi chip's keys, since what the chip needs in clear is the
+  session's keys, not the networks'.
 * **[design-shared-devices.md](design-shared-devices.md):** the legacy
   SD controller leaves the example of a device of no kind (the
   auxiliary SPI controllers remain one); it is the example of a
@@ -3024,9 +3016,10 @@ under load. QEMU has no WiFi device for any machine.
   functions, which the host oracle does not have.
 * **[design-bluetooth.md](design-bluetooth.md):** Wi-Fi provisioning's
   app derives a network's PMK and hashed values as `wlankey` does and
-  hands them to the key holder through a `wpa_admin` facet of its own
-  session template, never to the WiFi domain; no state slot of
-  Bluetooth's holds them.
+  hands them to the vault's `{wpa, Service}` purpose through a
+  `wpa_admin` facet of its own session template, never to the WiFi
+  domain; no state slot of Bluetooth's holds them, and the Bluetooth
+  design's text on WiFi provisioning names that facet.
 * **[TODO.md](../TODO.md):** the security residuals of
   [Security](#security): the development key holder and SAE's
   arithmetic that is not constant-time throughout, each blocking
@@ -3134,8 +3127,9 @@ in a state slot and serves both facets gives the same containment and
 leaves the vault as it is. It costs a domain, two interfaces served from
 it and manifest rows for a second key agent beside the one the system
 has, and it keeps the secrets as Erlang terms where the vault keeps keys
-in resources. It is the placement to take if the vault must not learn a
-protocol's arithmetic ([Open decisions](#open-decisions), 1).
+in resources. It would keep SAE's arithmetic and the values the air
+chooses out of the vault, which holds every principal's keys; the vault
+takes them instead ([Decisions](#decisions), 1).
 
 **Secrets given through the WiFi domain's `ctl`.** One command beside
 the others, and the station would learn of every change at once. But
@@ -3147,8 +3141,8 @@ administrator's facet removes both, at the cost of the `names` command
 or a wait for the next choice.
 
 **The passphrase to the holder, which derives the keys.** The holder
-would take one value and do PBKDF2 itself, and under (a) or (c) the
-passphrase would stay out of the WiFi domain too. But in a development
+would take one value and do PBKDF2 itself, and under the vault's
+purpose the passphrase would stay out of the WiFi domain too. But in a development
 build, where the holder is a process of the WiFi domain, it would enter
 it, and every placement would have to take a passphrase and check its
 form. Deriving in `wlankey` keeps the passphrase in the one session
@@ -3244,7 +3238,7 @@ the only window this design has onto iwd.
 
 | Idea | From | What erXos does, and why it differs |
 | --- | --- | --- |
-| The supplicant asks an agent for the PTK and never holds the PMK | 9front's `aux/wpa` and factotum (`wpa.c:474-520`) | the key holder, a purpose of the vault, which is itself made after factotum, or a key domain of WiFi's own (open decision 1). It also does SAE's two secret steps, which 9front lacks, and keeps the PMK an exchange agrees, so the WiFi domain holds no PMK of any kind |
+| The supplicant asks an agent for the PTK and never holds the PMK | 9front's `aux/wpa` and factotum (`wpa.c:474-520`) | the key holder, a purpose of the vault, which is itself made after factotum (decision 1). It also does SAE's two secret steps, which 9front lacks, and keeps the PMK an exchange agrees, so the WiFi domain holds no PMK of any kind |
 | The firmware's supplicant off; the host runs the handshakes | OpenBSD's `bwfm` (`bwfm.c:565-569`) | the same, in Erlang, in a domain instead of the kernel |
 | One program holds the whole station, with no supplicant beside it and no protocol between them | iwd (fact 1); OpenBSD's net80211 | the station is one process whose parts are pure functions, where iwd's are modules around one event loop and callbacks (fact 8) |
 | Policy apart from the connection's state machine, and roaming apart from both | Fuchsia's policy component, SME and roam monitor | three functions and one process, where Fuchsia has four components and the protocols between them |
@@ -3284,119 +3278,111 @@ per-network histories and hidden-network probabilities
 (`network_config.rs:24-58`), which a block's `scan_ssid` states as a
 fact, and software CCMP, which a FullMAC chip does itself.
 
-## Open decisions
+## Decisions
 
-Settled, and not open: what lies only in GPL sources, the Pi 4's device
-tree and Linux's SDIO and controller drivers, reaches this design only
-through the clean-room facts record
-[research-wifi-pi4.md](research-wifi-pi4.md), and iwd only through
-[research-wifi-iwd.md](research-wifi-iwd.md); each was written by a
-separate agent who wrote no part of the design, and the design cites
-them by fact number. Every other value comes from FreeBSD, OpenBSD,
-brcmfmac's ISC sources as FreeBSD carries them, wpa_supplicant, 9front,
-Fuchsia's BSD-licensed files and the published specifications, each
-cited by file and line or section in [Sources](#sources); no design or
-code agent reads the GPL or LGPL sources. What neither settles is a
-board fact, left to the board probe
+What lies only in GPL sources, the Pi 4's device tree and Linux's SDIO
+and controller drivers, reaches this design only through the clean-room
+facts record [research-wifi-pi4.md](research-wifi-pi4.md), and iwd only
+through [research-wifi-iwd.md](research-wifi-iwd.md); each was written
+by a separate agent who wrote no part of the design, and the design
+cites them by fact number. Every other value comes from FreeBSD,
+OpenBSD, brcmfmac's ISC sources as FreeBSD carries them,
+wpa_supplicant, 9front, Fuchsia's BSD-licensed files and the published
+specifications, each cited by file and line or section in
+[Sources](#sources); no design or code agent reads the GPL or LGPL
+sources. What neither settles is a board fact, left to the board probe
 ([Facts this design does not have](#facts-this-design-does-not-have)).
 
-Open, each with its options, the design's recommendation, and the
-recommendation of the design's external review (Codex
-`gpt-6-astra`):
+Four choices shape the rest, each with its reasons and the alternatives
+it was chosen over:
 
-1. **Where the key holder runs in a release build.** It changes the
-   vault's design, which keeps WiFi's keys in a state slot shared with
-   Bluetooth's bonds ([design-system.md](design-system.md#state-slots)).
-   Under both options the passphrase stays in the administrator's
-   session, the WiFi domain holds `wpa_key` alone and `wpa_admin` goes
-   to the administrator's session, so no break of the parsers yields a
-   password equivalent or enrolls a network; the station's code is the
-   same.
-   * *(a) A purpose of the vault,* `{wpa, Service}`, as written in
-     [Credentials](#credentials). The mechanism is the vault's existing
-     one, key facets with exact inputs, and the entries live in its
-     resources, never as terms. The vault gains the PTK and SAE
-     arithmetic over its key resources, an entries section, and three
-     fixed-length inputs the air chose.
-   * *(c) A key domain of WiFi's own,* `wifikeys`, over a state slot.
-     The same containment with the vault unchanged, for one more
-     domain, two interfaces served from it, a second key agent, and
-     entries that are Erlang terms in that domain.
-   * *(b) The state slot, with the holder a process of the WiFi
-     domain,* is not a release option: the WiFi domain would hold every
-     PMK and PT and write the store itself, so a break of its parsers
-     could read the password equivalents and enroll a network. It is
-     the development build's stopgap only.
+1. **In a release build the key holder is a purpose of the vault,
+   `{wpa, Service}`.** The mechanism is the vault's existing one, key
+   facets with exact inputs, as written in
+   [Credentials](#credentials); the entries live in the vault's
+   resources, never as terms. The vault gains the PTK and SAE
+   arithmetic over its key resources, an entries section, and three
+   fixed-length inputs the air chose. The reason is the vault's own
+   rule, that no key enters a domain that uses it
+   ([design-system.md](design-system.md#the-vault)): the state slot
+   that keeps Bluetooth's bonds
+   ([design-system.md](design-system.md#state-slots)) is for a secret
+   that must leave the vault at every use, because the controller needs
+   the bond's key, which is true of the session's keys and not of the
+   PMK or PT. Under this placement the passphrase stays in the
+   administrator's session, the WiFi domain holds `wpa_key` alone and
+   `wpa_admin` goes to the administrator's session, so no break of the
+   parsers yields a password equivalent or enrolls a network.
+   * *Rejected: a key domain of WiFi's own,* `wifikeys`, over a state
+     slot. It gives the same containment with the vault unchanged, and
+     it would keep SAE's new arithmetic and the values the air chooses
+     outside the boundary of every principal's keys. It costs one more
+     domain, two interfaces served from it, a second key agent beside
+     the vault, and entries that are Erlang terms in that domain; the
+     vault, a larger trusted component, is taken instead because it
+     adds no domain and no second agent.
+   * *Development builds only: the state slot, with the holder a
+     process of the WiFi domain.* It is not a release option: the WiFi
+     domain would hold every PMK and PT and write the store itself, so
+     a break of its parsers could read the password equivalents and
+     enroll a network. It is the development build's stopgap, a
+     residual that blocks release
+     ([Where the holder runs](#where-the-holder-runs)).
 
-   The design recommends (a): the state slot was chosen because the
-   chip needs the keys, which is true of the session's keys and not of
-   the PMK or PT; for those the vault's own rule, that no key enters a
-   domain that uses it, applies, and (a) is that rule, with no new
-   domain. The external review recommends (c): it keeps SAE's new
-   arithmetic, and the values the air chooses, outside the boundary of
-   every principal's keys; it counts the extra domain and interface as
-   real costs, and (a) as simpler in structure but a larger trusted
-   vault. Nothing before release waits on the answer: W4 and W5 are
-   built on the development holder behind the same two interfaces, and
-   only the release backend, the vault's or the new domain's edit and
-   the manifest's rows differ.
-2. **How long a failing secret is held.**
-   * *(a) Until the secret changes,* as Android does. The fewest
-     attempts; but anyone in range who impersonates the access point
-     three times stops the board's WiFi until an administrator acts.
-   * *(b) For a time that doubles to a ceiling of an hour,* ended at
-     once by a new secret, as written in
-     [Failure memory](#failure-memory). At most 24 attempts a day with a
-     wrong secret, an impostor's silent exchanges counted among them;
-     an outage ends within an hour of the interference.
-
-   The design recommends (b), for boards nobody attends. The external
-   review agrees: a permanent hold lets an impostor disable an
-   unattended board indefinitely; it asks that exchanges which exposed
-   a test of the secret be counted, which the `secret` class does
-   ([Joining](#joining)), and takes the exact ceiling for policy, not a
-   protocol requirement.
-3. **What a block's left-out keys mean.**
-   * *(a) erXos's default block:* `WPA-PSK WPA-PSK-SHA256 SAE` and
-     `ieee80211w=1`. A passphrase alone joins WPA2 and WPA3; a block
-     written for wpa_supplicant without those keys negotiates PMF and
-     SAE where the access point offers them, which wpa_supplicant would
-     not.
-   * *(b) wpa_supplicant's defaults:* `WPA-PSK` and no PMF. Blocks mean
-     exactly what they mean on FreeBSD; WPA3 then needs a block that
-     says so, and a front end must write one.
-
-   The design recommends (a): the difference from FreeBSD is toward the
-   stronger join of the same network, and it is what lets one
-   `wlankey set` make a network joinable. The external review agrees,
-   for WPA2 and WPA3 interoperation and opportunistic PMF, provided
-   PSK's exposure to offline guessing is stated
-   ([Choosing a network](#choosing-a-network); [Security](#security)),
-   SAE-only policy stays expressible, and no open network is inferred
-   from a missing name, which WF16 holds.
-4. **The test access point's host and radio.**
-   * *(a) An access-point-capable radio on the FreeBSD x86-64 test
-     host,* with hostapd started by the harness. It serves the open and
-     WPA2 profiles at most: hostapd 2.12's BSD driver has no operation
-     that sends or receives management frames, so unmodified hostapd on
-     FreeBSD cannot run SAE (`driver_bsd.c:1752-1790`), and `wpa3`,
-     `transition` and `transition-td` need another host whatever radio
-     FreeBSD drives.
-   * *(b) A small Linux machine as the access point,* driven the same
-     way. hostapd's widest hardware support, every profile, SAE's
-     recordings for the differential test and a monitor interface for
-     the injected frames; one more host to keep.
-   * *(c) A commodity router set by hand.* Nothing to buy or keep; the
-     group rekey period, Transition Disable and the refusing twin are
-     then whatever the router offers.
-
-   The design recommends (b), since W5 cannot be tested on FreeBSD's
-   driver at all, with the FreeBSD test host kept as the data peer of
-   [Performance](#performance) and for the WPA2 recordings over `wtap`
-   if it serves; (c) only until (b) is set up. The external review
-   recommends the same, (b), FreeBSD as the data peer and for the WPA2
-   tests it supports, and a router only for early bring-up. W0 to W3
-   need none of the three.
+   The station's code is the same under all three: W4 and W5 are built
+   on the development holder behind the same two interfaces, and only
+   the release backend, the vault's edit and the manifest's rows
+   differ.
+2. **A failing secret is held for a time that doubles to a ceiling of
+   one hour,** ended at once by a new secret, as written in
+   [Failure memory](#failure-memory). At most 24 attempts a day are
+   made with a wrong secret, an impostor's silent exchanges counted
+   among them; an outage ends within an hour of the interference. The
+   exchanges that exposed a test of the secret are the ones counted,
+   which the `secret` class does ([Joining](#joining)). The exact
+   ceiling is a policy, not a protocol requirement.
+   * *Rejected: hold until the secret changes,* as Android does. It
+     makes the fewest attempts, but anyone in range who impersonates
+     the access point three times stops the board's WiFi until an
+     administrator acts, which lets an impostor disable an unattended
+     board indefinitely.
+3. **A key a block leaves out has erXos's default block's value:**
+   `key_mgmt=WPA-PSK WPA-PSK-SHA256 SAE` and `ieee80211w=1`. A
+   passphrase alone joins WPA2 and WPA3, and a block written for
+   wpa_supplicant without those keys negotiates PMF and SAE where the
+   access point offers them, which wpa_supplicant would not. The
+   difference from FreeBSD is toward the stronger join of the same
+   network, and it is what lets one `wlankey set` make a network
+   joinable. Three things go with it: PSK's exposure to offline
+   guessing is stated ([Choosing a network](#choosing-a-network);
+   [Security](#security)); SAE-only policy stays expressible, by
+   `key_mgmt=SAE` in a block or a Transition Disable mark; and no open
+   network is inferred from a missing name, which WF16 holds.
+   * *Rejected: wpa_supplicant's defaults,* `WPA-PSK` and no PMF.
+     Blocks would mean exactly what they mean on FreeBSD, but WPA3
+     would then need a block that says so, and a front end would have
+     to write one.
+4. **The WPA3 test access point is a Linux host running hostapd, with
+   a radio that can serve as an access point.** hostapd's widest
+   hardware support, every profile, SAE's recordings for the
+   differential test and a monitor interface for the injected frames
+   are there; it is one more host to keep. The FreeBSD x86-64 test
+   host stays the data peer of [Performance](#performance) and serves
+   the `open` profile and the WPA2 ones, over a radio or `wtap` if it
+   serves ([Verification](#verification)). W0 to W3 need no access
+   point.
+   * *Rejected: FreeBSD alone.* hostapd 2.12's BSD driver has no
+     operation that sends or receives management frames, so
+     unmodified hostapd on FreeBSD cannot run SAE
+     (`driver_bsd.c:1752-1790`), and `wpa3`, `transition` and
+     `transition-td` need another host whatever radio FreeBSD drives;
+     W5 cannot be tested on FreeBSD's driver at all.
+   * *Not a test access point: a commodity router set by hand.* It
+     costs nothing to buy or keep, but the group rekey period,
+     Transition Disable and the refusing twin are then whatever the
+     router offers. It may stand in for early bring-up, and the steps
+     that need `wpa2-rekey`, `transition-td`, `twin` and the injected
+     frames wait for the Linux host.
 
 ## Sources
 
