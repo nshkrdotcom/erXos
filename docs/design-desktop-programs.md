@@ -42,7 +42,7 @@ Decisions every reader of this document needs:
   `erx_ui`, drawn by the Erlang renderer on the desktop and by LVGL or
   the browser where those are the medium. None opens a draw connection.
   The widget format gains what the four need and states as meaning: a
-  `graph` kind, `icon`, `role`, `area` and `current` properties, icons
+  `graph` kind, `icon`, `role`, `area`, `current` and `name` properties, icons
   on a `list` and activation of a list item ([Widget format
   additions](#widget-format-additions)).
 * **Shipped in the session's release, started by commands.** The four
@@ -130,8 +130,8 @@ and it takes no other system's assets, names or icons.
   `column`, `row`, `grid`, `scroll`, `stack`, `label`, `button`,
   `checkbox`, `slider`, `input`, `list`, `image`, `spacer` and `graph`, and
   four enumerations, `ui_align`, `ui_role`, `ui_area` and `ui_icon`. It
-  carries a text's role, a container's area, icons, a button's `current`
-  and a list's `on_submit`, as [Widget format
+  carries a text's role, a container's area, icons, a button's `current`,
+  a node's `name` and a list's `on_submit`, as [Widget format
   additions](#widget-format-additions) describes.
 * **Drawing.** `display/libmemdraw` is 9front's `libmemdraw`. Its draw
   reads a mask without an alpha channel as grey and uses the grey as
@@ -292,8 +292,10 @@ What follows from this shape:
 * **Idle costs nothing.** The only timers are the core's `tick_after`
   effects. files sets none; month sets one for the next midnight, only
   while it marks a today; clock sets one for the next minute; stats one
-  for the next sample. The renderers have no timer
-  (design-display's G6).
+  for the next sample. A renderer draws only for a change of the tree
+  and for the transitions that change starts, each of which ends with
+  one final present after its deadline ([Motion](#motion);
+  design-display's G6).
 * **The window never waits.** Every read is a worker's, so a file server
   or a domain that does not answer delays only its own answer, and the
   window takes input meanwhile.
@@ -306,7 +308,25 @@ What follows from this shape:
 * **Host testing is the core's.** A core is a pure function of its
   inputs, with time an input, so its tests feed recorded inspector
   records, listings and ticks and compare trees, with no display and no
-  machine.
+  machine. They reach a tree's nodes through `erx_ui_query`, a module of
+  the host tests that finds the one node of a given kind, text, role or
+  `name`, refusing a query that matches none or several, and turns that
+  node's event into the input the widget server would send, such as
+  `{ui, Window, Term, click}` for a button's `on_click`; it refuses an
+  event on a node that is disabled, hidden or under a hidden node, where
+  no renderer reports one, and one the server would drop. So a test reads
+  "click Back, expect the parent folder's listing" and never indexes a
+  tree by position.
+* **A core reloads in place.** In development, `tools/erx load` puts a
+  new `erx_desk_<name>_core` into the session's runtime through the
+  session's code facet
+  ([design-live.md](design-live.md#code-from-the-host)), and
+  `erx_desk:reload(Name)`, called at the session's Erlang shell, has
+  every open window of that program call the new core's `view/1` on the
+  state it holds and hand the tree. The state is kept, since the window
+  holds it and calls its core by module name, which reaches the newest
+  version; a core that cannot read the old state crashes its window,
+  which ends as any crash ends it, and the command opens a fresh one.
 
 ## The visual language
 
@@ -317,8 +337,9 @@ one deep accent used sparingly, hairline separators instead of boxes,
 generous space, and type that carries the hierarchy. Depth is a single
 level: a section lifts off the window by a soft shadow, and nothing
 floats above that. Corners are rounded on controls and sections and
-square on windows. Motion is a graph moving by one sample. Nothing
-glows, blurs or animates for its own sake.
+square on windows. Motion is brief and follows a change: a control
+eases into its new state, a section fades in, a graph moves by one
+sample. Nothing glows, blurs or animates for its own sake.
 
 It is original by construction: the palette, the proportions and the
 icons below are erXos's own, and nothing is taken from another system's
@@ -383,6 +404,9 @@ theme 1
   contrast secondary on window surface sunken 4.5
   contrast on_accent on accent 4.5
   icons display/icons/icons.txt sizes 16 32
+  transition press  120 ease_out                 # ms; a button's down and up
+  transition state  160 ease_out                 # checked, selected, current, value
+  transition reveal 200 ease_out                 # visible from false to true
 ```
 
 The colour values are the starting palette, tuned with the first
@@ -398,7 +422,22 @@ checked constraint, as the spec discipline asks:
 * every `role` names a declared font and weight, and a size and line
   height on the 4-pixel grid where the line height is concerned;
 * every `space` and `radius` value is a whole number of units or
-  pixels, and `radius window` is 0 (see Windows, below).
+  pixels, and `radius window` is 0 (see Windows, below);
+* every member of `ui_transition` has one `transition` row, with a
+  duration of at most 250 ms and a curve of `linear` or `ease_out`; a
+  seeded `transition press 400` fails the build.
+
+**Sizes and the scale.** Every size the theme states, a role's size and
+line, the `unit`, a radius, the hairline and a shadow, is in logical
+pixels, as a tree's `width`, `height` and `pad` are, and a renderer
+draws them at the window's scale, which the window's `ctl` gives
+([design-display.md](design-display.md#the-window-tree)). `erx_mask`
+makes its masks at run time at whatever size it is asked, but the glyph
+step makes glyph and icon sets at build for each scale the image
+carries, and the image carries one, 1: a denser panel brings its 2x set
+when one is a target, and a fractional scale waits for glyphs rasterised
+at run time. So no program states a pixel, and none changes when a scale
+is added.
 
 ### Type
 
@@ -586,13 +625,38 @@ title bar ([Decisions](#decisions), 4).
 
 ### Motion
 
-Motion appears in one place, where it means something: a graph
-advances by one sample when a new sample arrives, so the newest value
-enters at the right and the oldest leaves at the left. Nothing is
-tweened between samples: an interpolated scroll would need a renderer
-timer or a tree many times a second, and an idle window must cost
-nothing (G6). Pressing a control changes it once, as LVGL is already
-configured to do (`lv_conf.h:41`).
+Motion is one concept, the **transition**: a short change from a node's
+old look to its new one, declared in the theme, started only by a
+change of the tree and run by the renderer that owns the node's pixels.
+The theme's `transition` rows name a closed set, `ui_transition`, which
+the theme's grammar fixes ([design-abi.md](design-abi.md#theme)), each
+started by a change of the tree's properties: `press`, a button's down
+and up; `state`, a change of `checked`, `selected`, `current` or
+`value`; `reveal`, a node's `visible` turning true. A transition moves
+colour and opacity only, never a rectangle, so the layout is computed
+once and a transition redraws only the node's own rectangle; a press
+touches a few kilobytes. Its frames interpolate until its deadline, its
+start plus its duration, at most 250 ms, and one final present after
+the deadline draws its end, as soon as the device has answered the
+present before; then the window is idle again (design-display's G6,
+"nothing paints without a change or a transition a change started").
+The Erlang renderer draws a transition's frames at the answers of its
+presents and has no timer
+([design-display.md](design-display.md#the-widget-server)); LVGL takes
+the durations from `erx/theme.h` as its styles' transitions; the
+browser takes them from `theme.ts` as CSS transitions. An application
+never animates: it hands trees, and what moves follows from their
+difference.
+
+A graph advances by one sample when a new sample arrives, so the newest
+value enters at the right and the oldest leaves at the left; nothing is
+tweened between samples, which would be a tree many times a second.
+
+Transitions of windows, a window opening, closing or hiding, are a later
+part of the same concept, run by `erx_screen`, which owns the screen's
+pixels. They wait for a measurement on the Raspberry Pi that shows a
+window can move smoothly there, by copies or by the plane compositor's
+planes ([design-display.md](design-display.md#graphics-hardware)).
 
 ### Icons
 
@@ -627,7 +691,7 @@ additions](#widget-format-additions)): `folder`, `document`, `text`,
 
 ## Widget format additions
 
-The four programs need six additions to `abi/formats/ui.txt`. Each
+The four programs need seven additions to `abi/formats/ui.txt`. Each
 states what a node is, not how it looks, so every renderer draws it as
 fits its medium ([design-display.md](design-display.md#widget-trees)),
 and each arrives in the validator, the binary form and the readers of
@@ -640,6 +704,7 @@ all three languages from the one declaration.
 | `icon` | a property of a root `@enum` of type `u8`, the icon set, on `label` and `button` | the item the node stands for, drawn beside its text; a renderer without the icon shows the text alone |
 | `icons` | a list of the same enumeration, on `list`, marked `parallel items` | each item's icon |
 | `current` | a boolean, `false` when absent, on `button` | the button stands for the current one of its set: today in a month, the current folder in a path. A renderer marks it, the Erlang renderer and LVGL with the accent's ring, the browser with `aria-current` |
+| `name` | a text of at most 255 bytes of UTF-8, on every kind | what the node is called where it shows no text of its own, files' back and forward buttons among them; no renderer draws it, and it is how a test, the browser and an assistive reader name the node |
 | kind `graph` | properties `samples`, `min`, `max`, `mark` and `text` | a series of at most 240 numbers, oldest first, each an integer within `min` and `max` or `none`; `mark` an optional reference value within them, such as a grant; `text` the caption, an `attr()` like any text |
 
 `on_submit` on `list`, the existing event with the `selected` index as
@@ -1147,7 +1212,7 @@ the menu's labels, reads them as data.
 | **D3.** A clock never shows an unset clock's reading as the date | the clock and month cores take the state as an input and show a date only for `set` or `boot`, and dimmed with a token when the state is not `ok` | a core that formats the reading without the state | the clock core's test for each state, with a seeded core that ignores `unset` showing `00:12` on 1 January 1970 and failing it |
 | **D4.** Every action of files reaches the item the person chose | the core acts by index into its own listing of raw names, within the page whose list node is keyed by the listing's generation; the tree holds only shown text | a lookup by shown text; a list key that survives a new listing | a listing whose names `a<U+202E>b`, the eight characters of a token, and a name cut to the same 128 bytes as another, each opened by index and reaching its own file, with a seeded lookup by shown text opening the wrong one; a double click reported on the list of a listing a refresh has replaced, dropped by the widget server, with a seeded key that leaves out the generation opening an item of the new listing |
 | **D5.** Every tree a core builds is valid, whatever the input | names and texts are cut to the schema's bounds at character boundaries, lists to 256 items, previews to 200 lines | a raw name in an `items` entry; a list longer than 256 | a property test over random listings, names of every length to 255 bytes, previews and inspector records, each tree passing `erx_ui_schema`, with a seeded core that skips the cut failing it |
-| **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; the renderers have none (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
+| **D6.** An idle window costs nothing | the only timers are the core's `tick_after`; a renderer draws only for a tree's change and the transitions it starts (G6) | a periodic redraw; a tick from files, or from month without a today | on the host, an idle files window and a month window without a today, each for a simulated day, issue no tree; a month with a today issues one at midnight; clock issues one a minute; with a seeded once-a-second tick in clock the test fails |
 | **D7.** The palette meets its contrast rules | the generator checks every `contrast` row | a colour edited without the rule | the generator's test with a seeded `secondary` too light, failing the build |
 | **D8.** A listing costs the session bounded memory and work | the listing worker runs under a heap cap, and information is asked for one page of at most 256 names | a worker spawned without the cap; a lookup of every name | files: bounds, below |
 | **D9.** No worker outlives its window, and a cancelled worker sends nothing | workers are linked, the window traps exits, ends with `shutdown` or its crash reason, and unlinks before it kills | a window that ends `normal`; a kill without the unlink | the window's lifetime tests, below |
@@ -1227,6 +1292,16 @@ reader; a seeded `erx_ui_lvgl` that escapes without cutting fails it.
 
 **The theme.** D7, and a `contrast` row naming an undeclared colour, refused.
 
+**`name`, the query and the reload.** The validator takes `name` on
+every kind and refuses one of 256 bytes, with its reason and path, where
+a seeded bound of 256 accepts it. Each program's core tests find files'
+back button by its `name` alone, so a seeded files core whose back
+button carries none fails them at the query. On the host, a files window
+with two folders of history, its core reloaded with a version whose
+`view/1` adds a label, presents the label with the same folder and
+history, where a seeded `reload` that starts the window again from
+`init` loses the history and fails it.
+
 **On QEMU, the `display_domain` suite.** One test, in the suite's one
 cell, HVF at one CPU: the desktop's session runs `files` on a folder
 of the suite's image and `month 11 2026`, and a screenshot through
@@ -1282,17 +1357,20 @@ Inter's glyphs and of erXos's icons, never FreeType's code.
 
 ## Decisions
 
-1. **The new mechanisms this design names.** Two are new and accepted:
-   the theme, `abi/theme.txt` with its generated module, header and
-   constants, and six additions to `ui.txt` (`role`, `area`, `icon`,
-   `icons`, `current` and `graph`, with list activation as a kind
-   line), with three grammar additions: lists of integers or
+1. **The new mechanisms this design names.** Three are new and
+   accepted: the theme, `abi/theme.txt` with its generated module,
+   header and constants; seven additions to `ui.txt` (`role`, `area`,
+   `icon`, `icons`, `current`, `name` and `graph`, with list activation
+   as a kind line), with three grammar additions: lists of integers or
    enumerations with an optional `none`, `within` applied to each value
-   of a list, and `parallel`. The theme is the one source the look
-   needs, without which every renderer and the decorations would each
-   carry their own copy of the palette; the additions are meaning the
-   tree should state, and each renderer gains them through the one
-   declaration.
+   of a list, and `parallel`; and the transition, declared in the theme
+   and run by each renderer ([Motion](#motion)). The theme is the one
+   source the look needs, without which every renderer and the
+   decorations would each carry their own copy of the palette; the
+   additions are meaning the tree should state, and each renderer gains
+   them through the one declaration; the transition keeps motion out of
+   applications and bounded in time, so the idle window still costs
+   nothing.
 2. **Copy, move, rename and delete are not files'.** The commands do
    them; a window that deletes needs a trash or an undo, confirmation
    and conflict policy, which deserve their own design once there is a

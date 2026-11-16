@@ -441,6 +441,21 @@ the protocol stands; if the numbers miss the gate, the lock is not taken.
   the same tree whose `present/1` returns at once, on HVF; the fix on the
   table is to derive the layout only after a message that called the
   policy or changed the table.
+* **[Medium] display, the clipboard's 500 ms on the Raspberry Pi 4**
+  ([design-display.md](design-display.md#the-window-process), "The
+  clipboard"): `windows_clipboard_ms` is provisional and unmeasured on
+  the Pi. A shell command's copy must reach `/clipboard` within it of
+  Return, and a command such as `echo` may first wait for its stage to
+  be admitted ([design-shell.md](design-shell.md#pipelines), "Admission"), so a copy that comes
+  late fails with `EACCES`, and one that straddles the boundary leaves
+  the clipboard empty or part-replaced. Settled natively on a 4 GB Pi 4,
+  from the key's up to the last request of the copy, for `echo x >
+  /dev/clipboard` at a shell and for a terminal's copy at a drag's
+  release, idle and under a competing workload (a build in another
+  session, a stats window sampling), counting the copies whose open and
+  write fall on either side of the boundary. The fixes on the table are
+  another value of the constant and the one-step copy of design-display's
+  open decision; authorization is never extended by file activity.
 * **[Medium] display, pixel areas reserved and unused**
   ([design-display.md](design-display.md#the-pixel-area)): an area is
   charged whole when its connection is made. Settled by the bytes

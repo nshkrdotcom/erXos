@@ -1480,11 +1480,21 @@ its reporter:
   inspector calls the same collectors in its own runtime.
 
 **Scopes.** Queries arrive through an inspect facet whose scope is `all` or
-a principal's domains. The scope lives only in the facet, in the system
+a principal's domains, and which also carries its grantee's principal.
+Both live only in the facet, in the system
 domain, fixed when the facet is minted ([The inspect
 service](#the-inspect-service)); a holder sends a path and its options and
 nothing else, so no view and no value of the holder's own runtime can
-translate or widen it. In the system domain, whose services are its own,
+translate or widen them. The scope decides every attribute but those of
+the visibility class `display`, a window's tree, which the principal
+decides and no scope reaches, `all` included: the inspector answers
+one only to a caller whose principal is that of the domain that owns
+the path or that of the session of the display the window is on, which
+it resolves at each query from the domain service's records of the
+domain's grants and of each display's session
+([design-display.md](design-display.md#the-widget-server)). To every
+other caller such an attribute is outside the scope, with the answer
+that gives. In the system domain, whose services are its own,
 `erx:i/1`, the shell's commands and `/proc` call the inspector in the same
 runtime at scope `all`. A session's inspect facet has scope over its
 principal's own domains, with one exception: in a development build
@@ -1585,8 +1595,9 @@ grantee's principal, the manifest's system-shell principals and its
 development flag: `all` for a system-shell principal (`root` in a
 development build) in a development build, and otherwise
 `{principal, P}`, the
-principal's domains. The scope is a parameter the domain service
-computes at the mint ([design-system.md](design-system.md#facets-a-configured-domain-serves),
+principal's domains, and with the grantee's principal itself, which a
+facet of scope `all` would otherwise not carry. Both are parameters the
+domain service computes at the mint ([design-system.md](design-system.md#facets-a-configured-domain-serves),
 "Parameters the domain service computes at the mint"). The inspector resolves `{principal, P}` at each
 query from the domain service's records, its death records included,
 so a domain the principal starts later is in scope from its start and
@@ -1614,9 +1625,13 @@ as a UNIX user sees their own processes, and a runtime's own
 between: they start a query worker (below) at scope `all` in the same
 runtime and wait for its answer, so a system-domain query asks other
 domains' agents as a facet's does, and the system shell's calls present
-the system-shell facet besides. In front of the inspector, the facet's
+the system-shell facet besides, whose principal is the caller's; the
+system domain's other calls, the host link's among them, carry no
+principal and so read no attribute of the class `display`. In front of
+the inspector, the facet's
 callback decodes each request with `erx_inspect_query` (Bounds, below),
-hands the path, the options and its own scope to a query worker it starts
+hands the path, the options, its own scope and its grantee's principal
+to a query worker it starts
 for its grantee, and forwards the request to it, up to the grant's limit
 in flight, which the default manifests set to 2, so a query that waits
 on a slow domain holds up no other holder's query and the inspector's work is charged to the

@@ -12,7 +12,8 @@ require_relative '../fixtures/erlang_build'
 # paging, the text test and preview, D5), against the erx_desk application compiled from
 # source with warnings as errors on stock's emulator (ERX_ERL and ERX_ERLC, which make
 # check supplies). Each row's seeded fault is then compiled into a copy of the core,
-# which must fail the row's case.
+# which must fail the row's case. The cases act on the trees through erx_ui_query, so a
+# node a person could not act on fails them.
 class ErxDeskFilesCoreTest < Minitest::Test
   SOURCE = 'erlang/apps/erx_desk/src/erx_desk_files_core.erl'
   TEST = 'erx_desk_files_core_tests'
@@ -71,6 +72,16 @@ class ErxDeskFilesCoreTest < Minitest::Test
       text: '    cut_middle(valid_utf8(Name), item_max()).',
       broken: '    valid_utf8(Name).',
       test: "{generator, #{TEST}, valid_trees_whatever_the_input_test_}"
+    ),
+    back_unnamed: Mutant.new(
+      text: '#{name => <<"Back">>}',
+      broken: '#{}',
+      test: "{#{TEST}, a_folder_too_large_keeps_the_history_test}"
+    ),
+    list_not_activated: Mutant.new(
+      text: 'on_submit => {open, Key}, ',
+      broken: '',
+      test: "{#{TEST}, a_link_to_a_folder_opens_it_test}"
     )
   }.freeze
 
@@ -100,7 +111,7 @@ class ErxDeskFilesCoreTest < Minitest::Test
   def eunit(mutant, tests)
     Dir.mktmpdir('erx-desk-files-core-test') do |work|
       replaced = mutant ? { SOURCE => edited(mutant) } : {}
-      ErlangBuild.compile(work, applications: %w[erx_desk], tests: ["test/erlang/#{TEST}.erl"],
+      ErlangBuild.compile(work, applications: %w[erx_desk], tests: ["test/erlang/erx_ui_query.erl", "test/erlang/#{TEST}.erl"],
                                 replaced: replaced)
       Open3.capture2e('gtimeout', '-k', '10', DEADLINE, ENV.fetch('ERX_ERL'), '-noshell', '-pa', work, '-eval',
                       "halt(case eunit:test(#{tests}, [verbose]) of ok -> 0; _ -> 1 end).",

@@ -389,6 +389,14 @@ it; git history is the record of completed work.
   Packages 6 and 7 build on the designs of the netmap transport and the socket process, whose
   push carries `{data, [binary()]}`, at most 64 binaries and one piece in all. Package 4 also
   ends the tap helper's items under Bugs by subsystem.
+* [Medium] display, GPU acceleration (OpenGL-class) for the desktop and kiosk apps, design after
+  research ([plan.md](docs/plan.md#track-d-windows-widgets-and-the-web), part 10). A research record
+  first (the Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes, Mesa or what replaces it, how a client's
+  driver reaches a render service), then a design of the render service. The display's side is fixed in
+  [design-display.md](docs/design-display.md#graphics-hardware), "What a render service owes the
+  display": a client presents only a buffer whose jobs have ended, a buffer stays a range of the client's
+  pixel area, the present's answer releases it, and an accepted job keeps its ranges and the area alive
+  until its device can no longer reach them, whoever ends first.
 
 ## Stopgap replacements
 
@@ -7833,6 +7841,25 @@ document's "residual risks accepted" paragraph.
   An `erx_mask` function from the rectangle, radius and blur to the parts and their places would be
   the one source; the theme's generator checks that `shadow`'s offset is at most its blur
   ([design-desktop-programs.md](docs/design-desktop-programs.md#anti-aliasing-corners-and-depth-coverage-masks)).
+
+* [Medium] display and desktop, the UI survey's decisions as designed but not built
+  ([research-ui-synthesis.md](docs/research-ui-synthesis.md), section 8): `ctl`'s read with the scale
+  (`1/1`) and the last present's report with `TAKEN` and `SHOWN` apart, from the drivers' `flushed()`
+  answers and `info/1`'s `period`, and `erx_win:report/1`
+  ([design-display.md](docs/design-display.md#the-window-tree)); the clipboard served only through the
+  keyboard window's grant within `windows_clipboard_ms` of a key or button there, a copy replacing the
+  clipboard whole at its close, and the manifest check's refusal of `clipboard` for a configured domain on a `single` display;
+  `erx_input`'s "seen before pressed" on every gesture's first down, from `erx_screen`'s `{shown, D}`
+  ([design-display.md](docs/design-display.md#the-input-router)); `erx_png` reading the
+  colour-space chunks as sRGB; `erx_desk:reload/1`, which needs the window process `erx_desk_window` (plan 8.4)
+  ([design-desktop-programs.md](docs/design-desktop-programs.md#the-construction)); the theme's sizes as
+  logical pixels at the window's scale. Each is small and lands with the next change to its module.
+  Transitions ([Motion](docs/design-desktop-programs.md#motion)) come after the basic desktop runs,
+  widgets first; window transitions wait for a Raspberry Pi measurement of a moving window. The trusted
+  overlay on the reserved chord and the `windows` grant's `principal` come with the login design, and
+  the window tree's inspection path with its first reader, carrying `erx_ui_model:public/1`'s tree under
+  the visibility class `display`, with the `inspect` grant's `principal` beside its scope
+  ([design-live.md](docs/design-live.md#inspection)).
 
 * [Low] desktop, a dark palette ([design-desktop-programs.md](docs/design-desktop-programs.md#colour),
   `abi/theme.txt`): the theme has one light palette. A dark one adds a second value to every `color` and

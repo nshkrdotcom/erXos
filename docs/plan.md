@@ -1278,7 +1278,7 @@ inserts it into the command line; a Raspberry Pi 4 kiosk boots into one
 full-screen application, takes touch input and turns its panel off when
 idle.
 
-**Scope.** Nine parts, each ending in its own exit criteria. The first
+**Scope.** Ten parts, each ending in its own exit criteria. The first
 slice needs no device: a browser on the developer's host over the host
 link, which every QEMU guest already has. The window stack comes next,
 since the kiosk and the desktop are both its clients: a kiosk is the
@@ -1333,7 +1333,7 @@ For the desktop programs:
 * the cores of `stats`, `clock`, `month` and `files`, the theme's
   generator, the glyph step and `erx_mask`.
 
-In this track W1 to W8 name design-web's invariants and G1 to G9
+In this track W1 to W8 name design-web's invariants and G1 to G10
 design-display's, not the plan's gates or E-S1's workloads. Parts that
 land after M11 repeat M11's closure over what they add.
 
@@ -1478,7 +1478,7 @@ land after M11 repeat M11's closure over what they add.
    the desktop session's release, with `erx_desk_window` and the pure
    cores of `stats`, `clock`, `month` and `files`, each an Erlang
    command that opens one window; the widget format's additions,
-   `role`, `area`, `icon`, `icons`, `current`, list activation and the
+   `role`, `area`, `icon`, `icons`, `current`, `name`, list activation and the
    `graph` kind with `none` samples, through the validator, the binary form, the readers
    in Erlang, C and TypeScript, and the Erlang, LVGL and browser
    renderers; `abi/theme.txt` and its generator, writing `erx_theme`,
@@ -1496,6 +1496,15 @@ land after M11 repeat M11's closure over what they add.
    `erx_web_login`, its cookies and a session per login; the manifest
    check's refusal of plain HTTP in a release build
    ([design-web.md](design-web.md#the-network-front-end)).
+10. **GPU acceleration**, OpenGL-class rendering for the desktop and for
+    kiosk apps, after part 8 and after a research record and a design of
+    its own: a render service in the domain that holds the GPU fills
+    clients' buffers in their own pixel areas, and the clients present
+    them as any buffer
+    ([design-display.md](design-display.md#graphics-hardware)). The
+    Raspberry Pi's V3D and QEMU's virtio-gpu 3D modes are the candidate
+    devices. Its packages, exit criteria and gates are written with its
+    design; no other part waits for it.
 
 **Exit criteria, the web over the host link.** Random messages of every
 kind round-trip between the Erlang and the TypeScript codecs, both
@@ -3843,7 +3852,8 @@ Each is small, adds its tests, and leaves `make check` green.
 | An MSI translation service in the interrupt controller | QEMU `virt`'s MSI frame serves both accelerators ([design-platforms.md](design-platforms.md#msi-frames)) | with a board that needs it |
 | Unmapping the kernel from user-mode page tables | needed only on cores that Arm lists as affected by rogue data cache loads | with each board port, from Arm's list of affected cores |
 | The release process: who keeps the release signing key and how it is replaced; whether release builds offer a host link | erXos is a prototype and makes no releases | when erXos makes releases |
-| Graphics, audio | not needed for the thesis | not planned |
+| Audio | not needed for the thesis | not planned |
+| GPU acceleration | the desktop and the kiosks run on software rendering first; OpenGL-class rendering needs research and a design of its own | planned, [Track D](#track-d-windows-widgets-and-the-web) part 10 |
 | USB | not needed for the thesis; wanted for keyboards, pointers and USB sticks on QEMU and the Raspberry Pi 4 | [Track U](#track-u-usb), in Phase 1b below the first two apps |
 | Bluetooth's later stages: Wi-Fi provisioning from a phone, HID over GATT, classic Bluetooth | track B's first consumer is a phone talking to a peripheral; provisioning needs 1b-I's WiFi, part (f), and HID over GATT the central role and the USB design's HID cores ([design-bluetooth.md](design-bluetooth.md#later-stages)) | in that order, each when its consumer is named |
 | x86-64 | out of scope | not planned |

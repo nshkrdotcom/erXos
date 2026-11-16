@@ -112,6 +112,7 @@ ui 1
   prop current 32 boolean default false
   prop samples 33 samples
   prop mark 34 bound
+  prop name 35 short common
   kind column 1 children
     prop area
   kind row 2 children

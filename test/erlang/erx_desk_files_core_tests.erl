@@ -42,12 +42,19 @@ files(_Name) -> file(100).
 stat(#file_info{} = Info) -> {ok, Info};
 stat({error, _} = Refused) -> Refused.
 
+%% The core's step on an event the test makes up, one a person cannot make
+%% on the tree shown, such as one on a replaced listing or a disabled button.
 ui(Event, Detail, S) -> erx_desk_files_core:step({ui, window, Event, Detail}, S).
 
-%% Selects or opens the item at Index of the list shown, as the toolkit
-%% reports it: the list's own event term, which names its listing.
-choose(select, Index, S) -> ui({select, key(S)}, {change, Index}, S);
-choose(open, Index, S) -> ui({open, key(S)}, {submit, Index}, S).
+%% The core's step on what the widget server sends when a person does
+%% Action to the one node of the tree shown that Query finds.
+act(Query, Action, S) ->
+    Input = erx_ui_query:input(window, Query, Action, erx_desk_files_core:view(S)),
+    erx_desk_files_core:step(Input, S).
+
+%% Selects or opens the item at Index of the list shown.
+choose(select, Index, S) -> act(#{kind => list}, {change, Index}, S);
+choose(open, Index, S) -> act(#{kind => list}, {submit, Index}, S).
 
 key(S) ->
     [#{key := Key}] = props(list, erx_desk_files_core:view(S)),
@@ -118,7 +125,7 @@ sorted_byte_for_byte_test() ->
 
 %% The window after the hidden-names toggle is set to Checked.
 toggled(Checked, S) ->
-    {S1, Effects} = ui(hidden, {change, Checked}, S),
+    {S1, Effects} = act(#{kind => checkbox, text => <<"Hidden files">>}, {change, Checked}, S),
     element(1, stated(fun files/1, S1, Effects)).
 
 names_that_name_no_entry_are_left_out_test() ->
@@ -159,7 +166,7 @@ names_that_show_alike_open_their_own_files_test() ->
     %% Copy path hands the raw name's bytes too.
     {Selected, _} = choose(select, 1, S),
     ?assertEqual({snarf, <<?DIR/binary, "/", (lists:nth(2, Sorted))/binary>>},
-                 effect(snarf, element(2, ui(copy_path, click, Selected)))).
+                 effect(snarf, element(2, act(#{text => <<"Copy path">>}, click, Selected)))).
 
 %% A renderer's event on the list of a listing a refresh replaced is
 %% dropped by the widget server's model, since the list's key names the
@@ -169,12 +176,14 @@ an_event_on_a_replaced_listing_is_dropped_test() ->
     {R1, Next} = erx_ui_model:pair(erx_ui_model:empty(), erx_desk_files_core:view(S1), 1),
     [Old] = list_nodes(R1),
     ?assertMatch({fire, {select, _}, {change, 1}, _}, erx_ui_model:hit(R1, Old, on_change, 1)),
-    {S2, E2} = ui(refresh, click, S1),
+    ?assertMatch({fire, {open, _}, {submit, 1}, _}, erx_ui_model:hit(R1, Old, on_submit, 1)),
+    {S2, E2} = act(#{text => <<"Refresh">>}, click, S1),
     {list, Tag, ?DIR} = effect(list, E2),
     {S3, E3} = erx_desk_files_core:step({listed, Tag, {ok, [<<"c">>, <<"d">>]}}, S2),
     {S4, _} = stated(fun files/1, S3, E3),
     {R2, _} = erx_ui_model:pair(R1, erx_desk_files_core:view(S4), Next),
     ?assertEqual(drop, erx_ui_model:hit(R2, Old, on_change, 1)),
+    ?assertEqual(drop, erx_ui_model:hit(R2, Old, on_submit, 1)),
     [New] = list_nodes(R2),
     ?assertMatch({fire, {select, _}, {change, 1}, _}, erx_ui_model:hit(R2, New, on_change, 1)).
 
@@ -184,11 +193,11 @@ an_event_on_a_replaced_listing_is_dropped_test() ->
 an_event_chosen_in_a_replaced_listing_is_dropped_by_the_core_test() ->
     {S1, _} = opened(?DIR, numbered(300), fun files/1),
     Stale = fun(S) -> [ui({Event, key(S1)}, {Detail, 1}, S) || {Event, Detail} <- [{select, change}, {open, submit}]] end,
-    {Refreshed, _} = ui(refresh, click, S1),
+    {Refreshed, _} = act(#{text => <<"Refresh">>}, click, S1),
     ?assertEqual([{Refreshed, []}, {Refreshed, []}], Stale(Refreshed)),
     Toggled = toggled(true, S1),
     ?assertEqual([{Toggled, []}, {Toggled, []}], Stale(Toggled)),
-    {Turned, E} = ui({page, 1}, click, S1),
+    {Turned, E} = act(#{text => <<"Next">>}, click, S1),
     {Paged, _} = stated(fun files/1, Turned, E),
     ?assertEqual([{Paged, []}, {Paged, []}], Stale(Paged)).
 
@@ -214,9 +223,9 @@ a_large_folder_pages_by_256_test() ->
     ?assertEqual(lists:sublist(Names, 256), First),
     {S2, _} = stated(fun files/1, S1, E1),
     ?assertEqual([<<"Items 1 to 256 of 1,204">>], [T || T <- texts(label, S2), binary:match(T, <<"Items">>) =/= nomatch]),
-    {S3, E3} = ui({page, 1}, click, S2),
+    {S3, E3} = act(#{text => <<"Next">>}, click, S2),
     {S4, _} = stated(fun files/1, S3, E3),
-    {S5, E5} = ui({page, 1}, click, S4),
+    {S5, E5} = act(#{text => <<"Next">>}, click, S4),
     {stat, _, ?DIR, Third} = effect(stat, E5),
     ?assertEqual(lists:sublist(Names, 513, 256), Third),
     {S6, _} = stated(fun files/1, S5, E5),
@@ -225,11 +234,12 @@ a_large_folder_pages_by_256_test() ->
     {read, _, Path, ?READ_MAX} = effect(read, element(2, choose(open, 5, S6))),
     ?assertEqual(<<?DIR/binary, "/n0517">>, Path),
     %% The last page holds the rest, and next stops there.
-    {S7, E7} = ui({page, 1}, click, S6),
-    {S8, E8} = ui({page, 1}, click, element(1, stated(fun files/1, S7, E7))),
+    {S7, E7} = act(#{text => <<"Next">>}, click, S6),
+    {S8, E8} = act(#{text => <<"Next">>}, click, element(1, stated(fun files/1, S7, E7))),
     {stat, _, ?DIR, Last} = effect(stat, E8),
     ?assertEqual(lists:nthtail(1024, Names), Last),
     {S9, _} = stated(fun files/1, S8, E8),
+    ?assertError({cannot_act, _}, act(#{text => <<"Next">>}, click, S9)),
     ?assertEqual({S9, []}, ui({page, 1}, click, S9)).
 
 an_answer_for_a_page_left_is_dropped_test() ->
@@ -237,6 +247,7 @@ an_answer_for_a_page_left_is_dropped_test() ->
     [{list, Tag, ?DIR} | _] = [E || {list, _, _} = E <- E0],
     {S1, E1} = erx_desk_files_core:step({listed, Tag, {ok, numbered(300)}}, S0),
     {stat, Old, ?DIR, _} = effect(stat, E1),
+    %% The page loads with no Next shown: the click is one the server sent before.
     {S2, E2} = ui({page, 1}, click, S1),
     ?assert(lists:member({cancel, Old}, E2)),
     ?assertEqual({S2, []}, erx_desk_files_core:step({stated, Old, [file(1) || _ <- lists:seq(1, 256)]}, S2)).
@@ -299,7 +310,7 @@ a_folder_too_large_keeps_the_history_test() ->
     ?assertEqual(<<?DIR/binary, "/big">>, Big),
     {S2, []} = erx_desk_files_core:step({failed, Tag, killed}, S1),
     ?assert(lists:member(<<"This folder is too large to show here">>, texts(label, S2))),
-    {_S3, E3} = ui(back, click, S2),
+    {_S3, E3} = act(#{name => <<"Back">>}, click, S2),
     ?assertMatch({list, _, ?DIR}, effect(list, E3)).
 
 %%% D5: every tree a core builds is valid, whatever the input

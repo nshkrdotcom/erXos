@@ -45,7 +45,13 @@ class ErxUiLayoutTest < Minitest::Test
              replacement: '_ = Quotas, {Ends, _} = lists:mapfoldl(fun(Weight, Sum) -> ' \
                           '{Left * (Sum + Weight) div Total, Sum + Weight} end, 0, Weights), ' \
                           'element(1, lists:mapfoldl(fun(End, Start) -> {End - Start, End} end, 0, Ends))',
-             catching_case: 'monotonic_test_')
+             catching_case: 'monotonic_test_'),
+    # A line that starts on an odd window pixel loses one pixel of its room, so its
+    # shares and cuts depend on where it lies, not on its slot alone.
+    Seed.new(fault: "a line's lengths that depend on its distance from the window's origin",
+             anchor: 'Lengths = distribute(Room, ',
+             replacement: 'Lengths = distribute(max(0, Room - start(Direction, Content) rem 2), ',
+             catching_case: 'contract_test_')
   ].freeze
 
   def test_layout_cases_pass_under_eunit
