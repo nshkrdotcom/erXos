@@ -26,6 +26,7 @@ include medium.txt
 include formats/erofs.txt
 include formats/f2fs.txt
 include formats/ieee80211.txt
+include formats/ssh.txt
 include kernel.txt
 include signals.txt
 include errno.txt
