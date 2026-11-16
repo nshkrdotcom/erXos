@@ -2119,31 +2119,29 @@ it; git history is the record of completed work.
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
   aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
-  and 4 to 6, "Bounds") has it. What is left is the trees that still wait for an event inside a callback, which
-  blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
+  and 4 to 6, "Bounds") has it; a program's `/dev/kbd` and `/dev/mouse` reads wait at its draw connection, their
+  keeper, which shares one life with the handler. What is left is the trees that still wait for an event inside a
+  callback, which blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
   the `pair` file, and stops its whole grant, every other request, clunk and flush of it included, until the event
   comes, as each wait for an event left in a callback does now that callbacks run
-  in the grant: a `/dev/tty` write to a stopped tty (`erx_session_export:write/4`, `Tty(Bytes)`), the draw
-  connection's reads and writes (`erx_session_export.erl:296, 351`), and a `ctl` write to `/dev`'s driver files,
-  whose `erx_driver_ctl` stop, start or restart may take up to its 30 s call deadline (`erx_devfs.erl`, `control/3`);
-  and a program's `/dev/kbd` and
-  `/dev/mouse` reads, which `erx_session_export:read/4` relays by a synchronous `erx_win:read_at/4`
-  (`erlang/apps/erx_session/src/erx_session_export.erl:308, 318`), where design-files.md ("A program's window") has
-  the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
-  id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
-  `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
-  Once built, `erx_draw_conn` keeps those requests in `erx_fs_waits`, bounded by each grant's 64 requests in
-  flight, as `erx_window` keeps its window's `mouse` and `kbd` reads and `ctl` writes. The same change has the
-  `erx_file_remote`'s exchange split in its send and take halves (`send/2`, `take/2`, `send_flush/2`), and making
-  image 0 anew itself for an `r` record.
-  Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
-  requests in flight. The same change admits a clunk or `remove` at any bound and keeps the fid's number until the
-  clunk is answered, answers a flush of a waiting clunk after it, has a grant whose client ended drain, and has the
-  program's handler end at its draw connection's end (`erx_session_export:start_window/1`), so the handler, the
-  connection, the `/dev` grant and the window share one life, as design-files.md's rule 5, "What waiting holds" and
-  "Ownership and lifetime" state. `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
+  in the grant: a `/dev/tty` write to a stopped tty (`erx_session_export:write/4`, `Tty(Bytes)`), and a `ctl` write
+  to `/dev`'s driver files, whose `erx_driver_ctl` stop, start or restart may take up to its 30 s call deadline
+  (`erx_devfs.erl`, `control/3`). `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
   lock, `erx_fs_grant.erl:591`); when it is built, `erx_fs_grants` supervises it and its grants' supervisor
   `rest_for_one`, as design-files.md ("Locks") has it.
+* [Medium] display client, a program's input reads (`erlang/apps/erx_win/src/erx_draw_conn.erl`, `relay/6`): the draw
+  connection sends every `kbd` and `mouse` read its program has waiting on to the display at once, and every window of
+  a session sits on the session's one display grant, whose 64 requests in flight they share
+  (`erx_fs_grant.erl:577-579`), so windowed programs that keep enough reads waiting make the session's presents, `wctl`
+  reads and opens answer `emfile`. Sending at most one read per file to the display, and beginning the next when it is
+  answered, as `erx_window` serves its readers, bounds it at two per window; design-display.md ("The program's
+  input") then states it. The same connection has no `max_heap_size`, which "What waiting holds" asks of a keeper.
+* [Medium] session, a program's window (`test/erlang/erx_win_dev_tests.erl`, `erx_session_export:start_window/1`): no
+  test ends the handler and the `/dev` grant at the draw connection's end through `start_window/1`'s link, and no seed
+  drops the link; `a_connection_killed_under_the_program_answers_ebadf_test` still checks a tree that serves after its
+  connection has ended, a state the link leaves only until its signal lands. A connection's `dropped` grant leaves its
+  reads at the display, safe only because the connection has one grant that shares its life; flushing them there
+  makes that hold without the shared life.
 * [Medium] files, the grant's drain (`test/erlang/erx_fs_core_model_tests.erl`, `erx_fs_grant:client_ended/1`):
   design-files.md ("Verification and testing") has the core's model explore the client's end and names the seeded
   fault "a grant that ends at its client's end without its fids' clunks", but `?EVENTS` has no client-end event and

@@ -33,10 +33,12 @@ class ErxSessionExportTest < Minitest::Test
               from: "{ok, << <<(Entropy(Size))/binary>> || Size <- Sizes >>}",
               to: '{ok, Entropy(Count)}',
               caught_by: 'urandom_reads_the_generator_within_its_bound_test'),
-    Fault.new(name: 'a mouse relay that never remakes image 0',
-              from: '_ = [erx_draw_conn:resized(Conn)',
-              to: '_ = [ok',
-              caught_by: 'an_r_record_of_mouse_remakes_image_0_before_the_read_answers_test'),
+    Fault.new(name: 'a kbd or mouse read that waits for its record inside the callback',
+              from: "read({File, _}, Offset, Count, \#{window := \#{conn := Conn}}) when File =:= kbd; File =:= mouse ->\n" \
+                    "    %% A read that waits for a record waits at the draw connection, its keeper.\n" \
+                    "    {wait, Conn, {read, File, Offset, Count}};\n",
+              to: '',
+              caught_by: 'kbd_and_mouse_reads_wait_at_the_connection_test'),
     Fault.new(name: 'a ctl read that answers a short count',
               from: '{ok, Text} when byte_size(Text) > Count -> {error, einval};',
               to: '{ok, Text} when Count < 0 -> {error, einval};',

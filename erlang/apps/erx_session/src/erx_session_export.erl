@@ -48,10 +48,12 @@ holds `dev` alone, which holds the four devices and the window's names,
   erx_draw_conn:ctl/1's text, one of fewer `einval`, and a read at any other
   offset no bytes (docs/design-display.md, "The connection's files").
 * `kbd`, `mouse`, `wctl` and `label` are relayed on the window handle's own
-  fids (erx_win:read_at/4 and write_at/4), which no request of this tree
-  walks or opens; no relay reaches the window's `ctl`. A `mouse` read that
-  answers an `r` record makes image 0 anew (erx_draw_conn:resized/1) before
-  it answers, whatever that call answers.
+  fids, which no request of this tree walks or opens; no relay reaches the
+  window's `ctl`. A read of `kbd` or `mouse`, which waits for a record, is a
+  waiting request whose keeper is the draw connection (`{wait, Conn,
+  {read, File, Offset, Count}}`), which relays it and makes image 0 anew for
+  an `r` record before it answers; `wctl` and `label` answer at once, and are
+  relayed within the callback (erx_win:read_at/4 and write_at/4).
 * `clipboard` is opened on a fid of its own per open (erx_win:clipboard_open/2),
   owned by this grant and clunked by the open's clunk.
 
@@ -107,7 +109,9 @@ A program's own `/dev` on a window of its own on `Display` (docs/design-files.md
 "A program's window"), started in the calling process, the program's handler, which
 becomes the one owner of all three: the window's holder (erx_win:open/2), the draw
 connection's starter and what the tree's grant ends with. Each therefore ends when the
-handler does, whatever its reason, and a refused start undoes nothing by hand. Answers
+handler does, whatever its reason, and a refused start undoes nothing by hand. The
+handler is linked to the connection, which ends `normal` only at the handler's end, so
+the connection's end ends the handler, as a crash of the tree's grant does. Answers
 the tree's grant, `enodev` in a domain without the display client or with no grant of
 `Display`, the window's or the connection's own errno, or `eio` for a tree that does not
 start. The display's window modules are named here, in the session's application,
@@ -119,6 +123,10 @@ start_window(Display) ->
     maybe
         {ok, Window} ?= open_window(Display),
         {ok, Conn} ?= erx_draw_conn:start(#{window => Window}),
+        %% The handler ends at the connection's end, which keeps its program's input
+        %% reads at the display on the window's fids (docs/design-files.md, "A program's
+        %% window", "Ownership and lifetime").
+        true = link(Conn),
         Args = #{window => #{window => Window, conn => Conn, display => Display,
                              clipboard => erx_win:clipboard(Display)}},
         {ok, _} ?= tree(erx_fs:start_link(?MODULE, Args, rw, #{client => own, ends_with => self()}))
@@ -303,17 +311,9 @@ read({ctl, _}, 0, Count, #{window := #{conn := Conn}}) ->
     end;
 read({ctl, _}, _Offset, _Count, _Fs) ->
     {ok, <<>>};
-read({mouse, _}, Offset, Count, #{window := #{window := Window, conn := Conn}}) ->
-    %% The program never sees an r before image 0 has the window's new size.
-    Answer = erx_win:read_at(Window, mouse, Offset, Count),
-    case Answer of
-        {ok, Records} ->
-            _ = [erx_draw_conn:resized(Conn)
-                 || <<Kind, _:(?ERX_WINDOWS_MOUSE_RECORD - 1)/binary>> <= Records, Kind =:= $r],
-            Answer;
-        {error, _} ->
-            Answer
-    end;
+read({File, _}, Offset, Count, #{window := #{conn := Conn}}) when File =:= kbd; File =:= mouse ->
+    %% A read that waits for a record waits at the draw connection, its keeper.
+    {wait, Conn, {read, File, Offset, Count}};
 read({File, _}, Offset, Count, #{window := #{window := Window}}) when ?IS_RELAYED(File) ->
     erx_win:read_at(Window, File, Offset, Count);
 read({{clipboard, Clipboard}, _}, Offset, Count, _Fs) ->

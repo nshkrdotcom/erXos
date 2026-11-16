@@ -111,12 +111,26 @@ class ErxWinTest < Minitest::Test
              replacement: '{error, _} = Refused -> Refused;',
              suite: 'erx_win_dev_tests',
              catching_case: 'the_clipboard_opens_on_a_fid_of_its_own_test'),
-    Seed.new(fault: 'a program /dev whose mouse relay never remakes image 0',
-             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
-             anchor: '_ = [erx_draw_conn:resized(Conn)',
-             replacement: '_ = [ok',
+    Seed.new(fault: "a connection that answers a program's r record before it remakes image 0",
+             path: CONN_SOURCE,
+             anchor: 'answer(Wait, Answer, Remade)',
+             replacement: '_ = Remade, answer(Wait, Answer, Conn)',
              suite: 'erx_win_dev_tests',
-             catching_case: 'a_resize_reaches_ctl_before_the_program_sees_its_r_test')
+             catching_case: 'a_resize_reaches_ctl_before_the_program_sees_its_r_test'),
+    Seed.new(fault: "a program's kbd read that waits for its record inside the callback",
+             path: 'erlang/apps/erx_session/src/erx_session_export.erl',
+             anchor: "read({File, _}, Offset, Count, \#{window := \#{conn := Conn}}) when File =:= kbd; File =:= mouse ->\n" \
+                     "    %% A read that waits for a record waits at the draw connection, its keeper.\n" \
+                     "    {wait, Conn, {read, File, Offset, Count}};\n",
+             replacement: '',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test'),
+    Seed.new(fault: "a connection that never sends a program's flush on to the display",
+             path: CONN_SOURCE,
+             anchor: '{begun, Wait, _Read, Flushing} -> {noreply, flush(Wait, Conn#conn{waits = Flushing})};',
+             replacement: '{begun, _Wait, _Read, Flushing} -> {noreply, Conn#conn{waits = Flushing}};',
+             suite: 'erx_win_dev_tests',
+             catching_case: 'a_waiting_kbd_read_holds_up_nothing_of_its_grant_test')
   ].freeze
 
   def setup
@@ -160,11 +174,11 @@ class ErxWinTest < Minitest::Test
 
   private
 
-  # The cases of suite EUnit reports failed: each case's report runs from its
-  # "suite: case..." line to the next, with the fixture's crash reports in between.
+  # The cases of suite EUnit reports failed or timed out: each case's report runs from
+  # its "suite: case..." line to the next, with the fixture's crash reports in between.
   def failed_cases(suite, output)
     output.split(/^  #{suite}: /).drop(1).filter_map do |report|
-      report[/\A\w+/] if report.include?('*failed*')
+      report[/\A\w+/] if report.include?('*failed*') || report.include?('*timed out*')
     end
   end
 

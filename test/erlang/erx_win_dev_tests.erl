@@ -14,7 +14,9 @@
 %% Cases: the corpus of the program's requests reaches no walk and no write at the display;
 %% a window removed and made again under the same name is never reached through the old
 %% tree; a resize reaches the program as an r record of mouse, after which ctl shows the
-%% new rectangle; a connection killed under the program makes draw answer ebadf while the
+%% new rectangle; a kbd read waiting for a key holds up no other request of the grant, a
+%% flush answers it eintr and gives the next key to the next read, and the window's end
+%% answers a read still held eio; a connection killed under the program makes draw answer ebadf while the
 %% tree serves the rest; erx_win's clipboard probe answers the grant's clipboard, an open
 %% the display refuses leaves no fid on the display's grant, and an open holds one of the
 %% opener's.
@@ -47,8 +49,8 @@ with_dev(Case) ->
                        end).
 
 %% The window, its connection and the tree's grant, as erx_session_export:start_window/1 makes
-%% them but for the window's name, w1, which the cases walk to, and the tree's end, which
-%% with_dev/1 brings about rather than the test process's; fid 1 is attached to the root.
+%% them but for the window's name, w1, which the cases walk to, the tree's end, which
+%% with_dev/1 brings about rather than the test process's, and the link to the connection; fid 1 is attached to the root.
 dev() ->
     ok = erx_fs_version:init(),
     {ok, Window} = erx_win:open(?SERVICE, #{name => <<"w1">>}),
@@ -65,6 +67,17 @@ call(Grant, Request) ->
     Alias = alias([reply]),
     Grant ! {erx_9p, Alias, self(), Request},
     receive {erx_9p, Alias, Reply} -> Reply after ?WAIT -> erlang:error({no_reply, Request}) end.
+
+%% One request sent and not waited for: the alias its reply comes to, which stays active
+%% after the reply, so a second reply to it would arrive too.
+send(Grant, Request) ->
+    Alias = alias(),
+    Grant ! {erx_9p, Alias, self(), Request},
+    Alias.
+
+%% The reply at Alias, or none when none arrives within Wait milliseconds.
+replied(Alias, Wait) ->
+    receive {erx_9p, Alias, Reply} -> Reply after Wait -> none end.
 
 %% A walk of Path from Grant's root fid into a new fid: the fid, or the walk's error,
 %% enoent for one that stopped short.
@@ -203,6 +216,32 @@ a_resize_reaches_ctl_before_the_program_sees_its_r_test() ->
         {ok, <<Kind, _/binary>>} = read(Tree, [<<"dev">>, <<"mouse">>], ?ERX_WINDOWS_MOUSE_RECORD),
         ?assertEqual($r, Kind),
         ?assertEqual([0, 0, 6, 3], ctl_rect(Tree))
+    end).
+
+%% A kbd read waits at the draw connection, its keeper, not in the grant
+%% (docs/design-files.md, "A program's window"): while no key comes, the grant answers
+%% another fid's request and a clunk; a flush answers the read eintr, and the key typed
+%% then goes to the next read, none of it to the flushed one; the window's end answers
+%% a read still held eio.
+a_waiting_kbd_read_holds_up_nothing_of_its_grant_test() ->
+    with_dev(fun(#{grant := Display}, #{tree := Tree}) ->
+        {ok, Kbd} = open(Tree, [<<"dev">>, <<"kbd">>], 0),
+        Flushed = send(Tree, {read, Kbd, 0, 64}),
+        ?assertEqual({ok, <<>>}, read(Tree, [<<"dev">>, <<"null">>], 16)),
+        {ok, Null} = open(Tree, [<<"dev">>, <<"null">>], 0),
+        ?assertEqual(ok, call(Tree, {clunk, Null})),
+        ?assertEqual(ok, call(Tree, {flush, Flushed})),
+        ?assertEqual({error, eintr}, replied(Flushed, 0)),
+        ok = erx_winfs:input(<<"kbd">>, {key, down, 30}),
+        %% The key down is a k record and the rune it types a c record.
+        ?assertMatch({ok, <<"k", _/binary>>}, call(Tree, {read, Kbd, 0, 64})),
+        ?assertMatch({ok, <<"c", _/binary>>}, call(Tree, {read, Kbd, 0, 64})),
+        ?assertEqual(none, replied(Flushed, 0)),
+        Held = send(Tree, {read, Kbd, 0, 64}),
+        {ok, _} = call(Display, {attach, ?ROOT, ?ERX_P9_NOFID, <<"user">>, ?ERX_WINDOWS_TREE_BYTES, 0}),
+        {ok, W1} = walk(Display, [<<"w1">>]),
+        ok = call(Display, {remove, W1}),
+        ?assertEqual({error, eio}, replied(Held, ?WAIT))
     end).
 
 a_connection_killed_under_the_program_answers_ebadf_test() ->

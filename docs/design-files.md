@@ -1750,7 +1750,7 @@ files are:
 | --- | --- | --- |
 | `draw` | a write is one `erx_draw_conn:write/2` of its bytes, a read one `erx_draw_conn:read/2` | read and write |
 | `ctl` | a read answers the connection's `erx_draw_core:ctl/1` text | read only |
-| `kbd`, `mouse`, `wctl`, `label` | a read or a write, at the program's offset, is one `erx_win:read_at/4` or `erx_win:write_at/4` of the window handle's open fid of that name | `kbd` and `mouse` read only, as the display opens them (`erlang/apps/erx_display/src/erx_winfs.erl:638-642`); `wctl` and `label` read and write |
+| `kbd`, `mouse`, `wctl`, `label` | a read or a write, at the program's offset, is one read or write of the window handle's open fid of that name: a read of `kbd` or `mouse` waits at the draw connection, which sends it with `erx_win:send_read/4`, and the others are one `erx_win:read_at/4` or `erx_win:write_at/4` | `kbd` and `mouse` read only, as the display opens them (`erlang/apps/erx_display/src/erx_winfs.erl:638-642`); `wctl` and `label` read and write |
 | `clipboard`, when that grant carries `clipboard` | relayed to the display's `clipboard`, on a fid opened for the open | read and write |
 
 **The relayed fids.** `erx_win:open/2` walks and opens the window's
@@ -1765,9 +1765,11 @@ window removed and another made under the same name is never reached
 through the old handle: its fids answer what the display answers for a
 window that is gone. The tree relays `kbd`, `mouse`, `wctl` and `label`
 on those fids through `erx_win:read_at(Window, File, Offset, Count)` and
-`erx_win:write_at(Window, File, Offset, Bytes)`, two functions of
-`erx_win`, which owns the handle's representation, whose `File` is one of
-`kbd`, `mouse`, `wctl` and `label`: no clause takes `ctl`, so no request
+`erx_win:write_at(Window, File, Offset, Bytes)`, and the draw connection
+relays the reads of `kbd` and `mouse` through `erx_win:send_read(Window,
+File, Offset, Count)` (below), functions of `erx_win`, which owns the
+handle's representation, whose `File` is one of `kbd`, `mouse`, `wctl`
+and `label`: no clause takes `ctl`, so no request
 a program sends reaches the window's `ctl`, which only the draw
 connection's presents write. The tree walks nothing in
 the window's directory and opens nothing there: every program open of
@@ -1800,7 +1802,7 @@ with is taken from the window's queue, so the tree's `read` answers it
 as a waiting request ([Serving](#serving-the-erx_fs-behaviour),
 "Waiting requests") whose keeper is the window's draw connection, a
 process the tree already has
-(`erlang/apps/erx_session/src/erx_session_export.erl:121`): the
+(`erlang/apps/erx_session/src/erx_session_export.erl:125`): the
 connection marks the request begun, sends the read on the handle's fid
 with `erx_win:send_read/4`, which returns an opaque request id without
 waiting for the reply, and answers the
@@ -1834,7 +1836,7 @@ and its names are among the export's names there.
 
 **A resize.** The connection's image 0 has the window's size only after
 `erx_draw_conn:resized/1`
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:129-136, 183-190`), and a
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:153-160, 207-209, 291-301`), and a
 program learns of a resize from an `r` record of `mouse`
 ([design-display.md](design-display.md#the-window-tree)). The
 connection is the one place both meet, since it keeps every read of
@@ -1847,7 +1849,7 @@ one at a time, so a write already running finishes on the old image 0
 and the next starts on the new. A resize whose record no read has
 yet taken leaves image 0 as it was until a read takes it, and a
 resize that fails, for a window that has gone or whose rectangle
-cannot be read (`erlang/apps/erx_win/src/erx_win.erl:301-311`),
+cannot be read (`erlang/apps/erx_win/src/erx_win.erl:347-354`),
 leaves image 0 as it was; the read answers
 the record either way. Then `ctl` shows the size image 0 has, and a
 frame drawn at it is shown clipped to the window, as the display shows
@@ -1905,7 +1907,7 @@ the entry, and the start is refused with `EINVAL` before the window is
 opened. A step that fails refuses the start with its errno: the window's
 as [design-programs.md](design-programs.md#the-handler) lists them, the
 connection's (`ENOMEM` when image 0 cannot be made,
-`erlang/apps/erx_win/src/erx_draw_conn.erl:158-169`), and `EIO` for a
+`erlang/apps/erx_win/src/erx_draw_conn.erl:182-193`), and `EIO` for a
 grant that does not start. The handler undoes nothing by hand: a refused
 start ends it, and what it made ends with it, as follows.
 
@@ -1913,7 +1915,8 @@ start ends it, and what it made ends with it, as follows.
 the connection and the tree's grant, and each watches the handler with
 a monitor, so each ends at the handler's end whatever its reason. The
 handler in turn ends at the end of the connection or of the tree's
-grant, whatever its reason, since it monitors both, so the four share
+grant, whatever its reason, since it is linked to both and neither
+ends `normal` before the handler does, so the four share
 one life. The connection
 relays the program's input reads on the window handle's fids, whose
 owner is the handler, so a connection that ended while the handler
@@ -1928,7 +1931,7 @@ reaches a linked process as a signal it ignores
 ends the window when its holder ends
 ([design-display.md](design-display.md#the-window-tree)); the connection
 monitors its starter and stops at its end
-(`erlang/apps/erx_win/src/erx_draw_conn.erl:159, 201-202`), giving back
+(`erlang/apps/erx_win/src/erx_draw_conn.erl:183, 220-221`), giving back
 its buffer's lease, after which the buffer's range is free
 ([design-display.md](design-display.md#the-pixel-area)); and the tree's
 grant ends with what its `ends_with` names
@@ -1939,7 +1942,7 @@ grant's pid is written into this program's table and nowhere else, and
 a program holds no pid (F9). While the program runs:
 
 * a connection that ends, for an allocation that failed after its plan
-  (`erlang/apps/erx_win/src/erx_draw_conn.erl:232-233`) or any other
+  (`erlang/apps/erx_win/src/erx_draw_conn.erl:321-323`) or any other
   reason, ends the handler, and the program with it, and the
   starter's `'DOWN'` carries the connection's reason as the handler's
   own end; nothing restarts the connection;
