@@ -36,18 +36,22 @@ encodes it, the file's name, and the decoded image's size and SHA-256 (hex).
                  bytes := pos_integer(), sha256 := binary()}.
 
 -doc """
-The F2FS corpus images that deps.lock, at Lock, pins, in its order. The
-caller has validated deps.lock with the schema (Erx::DependencySchema), the
-one check of its rows, which bounds decoded_bytes.
+The F2FS corpus images that deps.lock, at Lock, pins, in its order: every
+source whose id starts with "f2fs-", each of which must pin its decoded
+image. The caller has validated deps.lock with the schema
+(Erx::DependencySchema), the one check of its rows, which bounds
+decoded_bytes.
 """.
 -spec pins(file:filename_all()) -> [pin()].
 pins(Lock) ->
     {ok, Text} = file:read_file(Lock),
     #{<<"sources">> := Sources} = json:decode(Text),
-    [#{id => binary_to_list(Id), form => form(Id), filename => binary_to_list(Filename),
-       bytes => Bytes, sha256 => Sha256}
-     || #{<<"id">> := <<"f2fs-", _/binary>> = Id, <<"filename">> := Filename,
-          <<"decoded_bytes">> := Bytes, <<"decoded_sha256">> := Sha256} <- Sources].
+    [pin(Source) || #{<<"id">> := <<"f2fs-", _/binary>>} = Source <- Sources].
+
+pin(#{<<"id">> := Id, <<"filename">> := Filename,
+      <<"decoded_bytes">> := Bytes, <<"decoded_sha256">> := Sha256}) ->
+    #{id => binary_to_list(Id), form => form(Id), filename => binary_to_list(Filename),
+      bytes => Bytes, sha256 => Sha256}.
 
 form(<<"f2fs-fuchsia">>) -> fuchsia;
 form(<<"f2fs-syzkaller-", _/binary>>) -> syzkaller.

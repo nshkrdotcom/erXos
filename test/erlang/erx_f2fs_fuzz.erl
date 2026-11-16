@@ -9,8 +9,15 @@
 %% with its bitmaps, one with its SIT bitmap in a payload block, an orphan block, NAT
 %% and SIT blocks and journals, a summary block and compact summaries, inodes with
 %% addresses, inline data and inline dentries, and a dentry block, which must each
-%% read as valid first (failure `seed`). Then each case mutates one,
-%% by byte writes biased to the fixed fields or by setting one decoded field to a
+%% read as valid first (failure `seed`). The superblock and checkpoint seeds are also
+%% the corpus images' (docs/design-f2fs.md, "Corpora"), each decoded once from the
+%% file the fetch step put under the directory the runner names and checked against
+%% its deps.lock pin: its superblock's fields and its valid checkpoint packs, an image
+%% that does not decode or read failing the run with `seed`, naming it. A superblock
+%% or checkpoint case starts from a fixture or a corpus image's seed as often. NAT,
+%% SIT, inode and dentry blocks of the images wait for a walk of their trees. Then
+%% each case mutates one, by byte writes biased to the fixed fields or by setting
+%% one decoded field to a
 %% boundary or random value, with the checksum mostly fixed up by the tests' own
 %% bitwise CRC so that the mutation reaches the rules behind it, and reads it with
 %% blocks of other sizes and payloads of other lengths among the inputs. Every read
@@ -61,9 +68,10 @@
 -define(AREA_FIELDS, [segment0_blkaddr, cp_blkaddr, sit_blkaddr, nat_blkaddr,
                       ssa_blkaddr, main_blkaddr]).
 
-run([Seed, Cases]) ->
+run([Seed, Cases, ThirdParty, Lock]) ->
     rand:seed(exsss, list_to_integer(Seed)),
     Count = list_to_integer(Cases),
+    load_corpus(ThirdParty, Lock),
     check_seeds(),
     Kinds = [fun superblock_case/0, fun area_case/0, fun checkpoint_case/0,
              fun orphan_case/0, fun nat_case/0, fun nat_journal_case/0,
@@ -95,21 +103,60 @@ header_fields() -> erx_f2fs_codec_tests:checkpoint_fields().
 %% The superblock a pack of this payload belongs to.
 super_with(Payload) -> (super_fields())#{cp_payload => length(Payload)}.
 
-%% A header and its payload: the bitmaps in the header, or the SIT bitmap in one
-%% payload block.
+%% The fixture's superblock fields or, as often, a corpus image's.
+some_super() ->
+    case rand:uniform(2) of
+        1 -> super_fields();
+        2 -> pick([Super || {Super, _Packs} <- corpus()])
+    end.
+
+%% The fixture's packs, each a superblock, a header and its payload: the bitmaps in
+%% the header, or the SIT bitmap in one payload block.
 packs() ->
     Fields = header_fields(),
     InHeader = erx_f2fs_codec_tests:checkpoint_block(Fields, random_bytes(128)),
     WithPayload = erx_f2fs_codec_tests:checkpoint_block(
                     Fields#{sit_ver_bitmap_bytesize => 3000}, random_bytes(64)),
-    [{InHeader, []}, {WithPayload, [random_bytes(?BLOCK)]}].
+    [{super_with(Payload), Header, Payload}
+     || {Header, Payload} <- [{InHeader, []}, {WithPayload, [random_bytes(?BLOCK)]}]].
+
+%% A fixture's pack or, as often, a corpus image's.
+some_pack() ->
+    case rand:uniform(2) of
+        1 -> pick(packs());
+        2 -> pick(corpus_packs())
+    end.
+
+%% The corpus images' valid packs, each with its image's superblock.
+corpus_packs() ->
+    [{Super, Header, Payload} || {Super, Packs} <- corpus(), {Header, Payload} <- Packs].
+
+%% The images deps.lock at Lock pins, each decoded once from its file under
+%% ThirdParty: its superblock's fields and its valid checkpoint packs.
+load_corpus(ThirdParty, Lock) ->
+    persistent_term:put({?MODULE, corpus},
+                        [corpus_image(ThirdParty, Pin) || Pin <- erx_f2fs_corpus:pins(Lock)]).
+
+corpus_image(ThirdParty, #{id := Id} = Pin) ->
+    maybe
+        {ok, Image} ?= erx_f2fs_corpus:image(Pin, erx_f2fs_corpus:fetched(ThirdParty, Pin)),
+        {ok, Super, Packs} ?= erx_f2fs_corpus:metadata(Image),
+        {Super, Packs}
+    else
+        Failure -> fail(seed, {Id, Failure})
+    end.
+
+corpus() -> persistent_term:get({?MODULE, corpus}).
 
 check_seeds() ->
     Super = erx_f2fs_codec_tests:superblock_block(super_fields()),
     {ok, _} = expect(seed, erx_f2fs_codec:superblock(Super)),
-    [{ok, _} = expect(seed, erx_f2fs_codec:checkpoint(super_with(Payload), Header,
-                                                      Payload))
-     || {Header, Payload} <- packs()],
+    [{ok, _} = expect(seed, erx_f2fs_codec:checkpoint(PackSuper, Header, Payload))
+     || {PackSuper, Header, Payload} <- packs()],
+    %% A corpus superblock re-encoded from its fields reads, as the cases need.
+    [{ok, _} = expect(seed, erx_f2fs_codec:superblock(
+                              super_block(erx_abi_packed:encode(erx_f2fs_super_block, Fields))))
+     || {Fields, _Packs} <- corpus()],
     Orphans = erx_f2fs_codec_tests:orphan_block([7, 8, 9], 3),
     {ok, [7, 8, 9]} = expect(seed, erx_f2fs_codec:orphan_block(Orphans)),
     expect(seed, erx_f2fs_codec:nat_block(erx_f2fs_codec_tests:nat_block(nat_entries()))),
@@ -230,7 +277,7 @@ expect(Property, Result) -> fail(Property, Result).
 %%% Cases
 
 superblock_case() ->
-    Fields = super_fields(),
+    Fields = some_super(),
     Record = case rand:uniform(3) of
                  1 -> mutate_field(erx_f2fs_super_block, Fields);
                  2 -> mutate_bytes(erx_abi_packed:encode(erx_f2fs_super_block,
@@ -245,8 +292,8 @@ superblock_case() ->
 %% others, so the read must fail with areas.
 area_case() ->
     Field = lists:nth(rand:uniform(length(?AREA_FIELDS)), ?AREA_FIELDS),
-    Fields = super_fields(),
-    Moved = maps:get(Field, Fields) + delta(),
+    Fields = some_super(),
+    Moved = maps:get(Field, Fields) + delta(maps:get(Field, Fields)),
     Record = erx_abi_packed:encode(erx_f2fs_super_block, Fields#{Field => Moved}),
     Block = super_block(fix(Record, ?ERX_F2FS_SUPER_BLOCK_OFF_CRC)),
     case erx_f2fs_codec:superblock(Block) of
@@ -255,7 +302,7 @@ area_case() ->
     end.
 
 checkpoint_case() ->
-    {Header, Payload} = lists:nth(rand:uniform(2), packs()),
+    {Super, Header, Payload} = some_pack(),
     <<Fixed:?ERX_F2FS_CHECKPOINT_SIZE/binary, Rest/binary>> = Header,
     Mutated = case rand:uniform(2) of
                   1 ->
@@ -276,7 +323,7 @@ checkpoint_case() ->
     read(checkpoint, fun erx_f2fs_codec:checkpoint/1, [resize(Block)]),
     read(checkpoint, fun erx_f2fs_codec:checkpoint_copy/1, [resize(Block)]),
     Result = read(checkpoint, fun erx_f2fs_codec:checkpoint/3,
-                  [super_with(Payload), resize(Block), Pages]),
+                  [Super, resize(Block), Pages]),
     case Result of
         {ok, #{sit_version_bitmap := Sit, nat_version_bitmap := Nat,
                sit_ver_bitmap_bytesize := SitBytes,
@@ -579,9 +626,12 @@ resize(Block) ->
         _ -> Block
     end.
 
-delta() ->
+%% A non-zero move of an address at Value that keeps it non-negative.
+delta(0) ->
+    pick([1, 2, 511, 512, 1024, rand:uniform(100000)]);
+delta(Value) ->
     Magnitude = pick([1, 2, 511, 512, 1024, rand:uniform(100000)]),
-    pick([Magnitude, -min(Magnitude, 512)]).
+    pick([Magnitude, -min(Magnitude, Value)]).
 
 pick(List) -> lists:nth(rand:uniform(length(List)), List).
 

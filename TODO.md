@@ -4797,8 +4797,16 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   per name, not per inode, and no listing bounds the bytes it folds, so a sparse file of F2FS's
   largest size, or many links to it, ends only at the test's deadline.
 * [Medium] test, F2FS corpora (`test/erlang/erx_f2fs_corpus_tests.erl`): the corpus test checks
-  features and segments per section, not `-a` or `-e cold`. The codec's fuzz target is not yet
-  seeded from corpus blocks, which design-f2fs.md's "Reading the medium" asks for.
+  features and segments per section, not `-a` or `-e cold`. The codec's fuzz target takes its
+  superblock and checkpoint seeds from the corpus images, but not yet their NAT, SIT, summary, inode
+  and dentry blocks, which design-f2fs.md's "Reading the medium" asks for and which wait for stage 2's
+  walk of each image's trees. The corpus seeds add few shapes: every image's packs are header-only
+  and none sets `SB_CHKSUM`, so weighting distinct shapes rather than images would serve better.
+* [Low] test, F2FS corpus reader (`test/erlang/erx_f2fs_corpus.erl`): the zstd context sets no
+  `windowLogMax`, so a hostile frame can make it allocate zstd's 128 MiB window cap; a file's form is
+  derived from its source id's prefix, which a third form would want in its deps.lock row; no case
+  covers bytes after a stream's end; and the fuzz runner, unlike the corpus test, does not check
+  `fetched?` first, so an unfetched corpus fails as `{file, enoent}` without the fetch command.
 * [Low] test, F2FS listing's `file_reader/1`: OTP's file_info holds `st_rdev`, `st_dev` and `st_ino` in
   32 bits (`otp/erts/emulator/nifs/common/prim_file_nif.h` l.87-89), so a device whose major or minor
   needs the high bits of a 64-bit `dev_t` decodes to another number, and on a host file system with
