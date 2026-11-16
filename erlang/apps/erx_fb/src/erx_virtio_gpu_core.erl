@@ -276,27 +276,29 @@ setup_next(S = #{step := Step}, Event) ->
 frame_start(Requests, Tag) when is_integer(Tag), Tag >= 0, Tag =< ?U64_MAX ->
     #{todo => lists:enumerate(Requests), inflight => #{}, answers => #{}, tag => Tag}.
 
-%% The frame's next action after Event: `next` after a post the queue took, and to begin;
+%% The frame after Event and its next action: `next` after a post the queue took, and to begin;
 %% `{full, Tag}` after the queue refused the post of Tag, whose request goes back to the
-%% front; `{answers, Completions}`, what erx_device:complete/2 returned.
--spec frame_step(frame(), frame_event()) -> {frame_action(), frame()}.
+%% front; `{answers, Completions}`, what erx_device:complete/2 returned. The action is
+%% always one: a post, `wait` for the line's next delivery before the frame's deadline,
+%% `done` or a stop.
+-spec frame_step(frame(), frame_event()) -> {frame(), [frame_action()]}.
 frame_step(F = #{todo := [Next = {_Place, {Segments, _Expect}} | Rest], inflight := Inflight, tag := Tag}, next) ->
-    {{post, Tag, Segments}, F#{todo := Rest, inflight := Inflight#{Tag => Next}, tag := (Tag + 1) band ?U64_MAX}};
+    {F#{todo := Rest, inflight := Inflight#{Tag => Next}, tag := (Tag + 1) band ?U64_MAX}, [{post, Tag, Segments}]};
 frame_step(F = #{todo := [], inflight := Inflight, answers := Answers, tag := Tag}, next) ->
     case map_size(Inflight) of
-        0 -> {{done, [Answer || {_Place, Answer} <- lists:sort(maps:to_list(Answers))], Tag}, F};
-        _ -> {wait, F}
+        0 -> {F, [{done, [Answer || {_Place, Answer} <- lists:sort(maps:to_list(Answers))], Tag}]};
+        _ -> {F, [wait]}
     end;
 %% Only the post just made can be refused, so its tag is the next one's again and tags
 %% stay consecutive; with nothing else in flight no answer would ever free the queue.
 frame_step(F = #{todo := Todo, inflight := Inflight, tag := Next}, {full, Tag}) when (Tag + 1) band ?U64_MAX =:= Next ->
     case maps:take(Tag, Inflight) of
-        {Posted, Rest} when map_size(Rest) > 0 -> {wait, F#{todo := [Posted | Todo], inflight := Rest, tag := Tag}};
-        {_Posted, _Rest} -> {{stop, {queue, full}}, F};
-        error -> {{stop, {tag, Tag}}, F}
+        {Posted, Rest} when map_size(Rest) > 0 -> {F#{todo := [Posted | Todo], inflight := Rest, tag := Tag}, [wait]};
+        {_Posted, _Rest} -> {F, [{stop, {queue, full}}]};
+        error -> {F, [{stop, {tag, Tag}}]}
     end;
 frame_step(F, {full, Tag}) ->
-    {{stop, {tag, Tag}}, F};
+    {F, [{stop, {tag, Tag}}]};
 frame_step(F, {answers, Completions}) ->
     answer_each(Completions, F).
 
@@ -309,11 +311,11 @@ answer_each([{Tag, Bytes} | Rest], F = #{inflight := Inflight, answers := Answer
     case maps:take(Tag, Inflight) of
         {{Place, {_Segments, Expect}}, Left} ->
             case decode(Expect, Bytes) of
-                {error, Reason} -> {{stop, {answer, Tag, Reason}}, F};
+                {error, Reason} -> {F, [{stop, {answer, Tag, Reason}}]};
                 Answer -> answer_each(Rest, F#{inflight := Left, answers := Answers#{Place => Answer}})
             end;
         error ->
-            {{stop, {tag, Tag}}, F}
+            {F, [{stop, {tag, Tag}}]}
     end.
 
 fenced_request(Type, Body, Fence) -> request(<<(header(Type, Fence))/binary, Body/binary>>, {nodata, Fence}).

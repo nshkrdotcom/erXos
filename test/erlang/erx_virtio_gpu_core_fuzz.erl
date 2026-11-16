@@ -152,25 +152,25 @@ check_frame() ->
 
 %% Posted maps each tag in flight to its request's expect(); Answered counts the answers
 %% reference/2 accepted.
-drive(_Action, Requests, _Posted, _Answered, 0) ->
+drive(_Step, Requests, _Posted, _Answered, 0) ->
     error({frame_never_ends, Requests});
-drive({{post, Tag, Segments}, Frame}, Requests, Posted, Answered, Steps) ->
+drive({Frame, [{post, Tag, Segments}]}, Requests, Posted, Answered, Steps) ->
     {Segments, Expect} = lists:keyfind(Segments, 1, Requests),
     case rand:uniform(6) of
         1 -> after_full(erx_virtio_gpu_core:frame_step(Frame, {full, Tag}), Requests, Posted, Answered, Steps - 1);
         _ -> drive(erx_virtio_gpu_core:frame_step(Frame, next), Requests, Posted#{Tag => Expect}, Answered, Steps - 1)
     end;
-drive({wait, Frame}, Requests, Posted, Answered, Steps) when map_size(Posted) > 0 ->
+drive({Frame, [wait]}, Requests, Posted, Answered, Steps) when map_size(Posted) > 0 ->
     %% Now and then an empty batch, as a spurious delivery of the line drains nothing.
     Batch = [answer_to(Tag, Posted) || Tag <- lists:sublist(shuffle(maps:keys(Posted)), rand:uniform(map_size(Posted) + 1) - 1)],
     {Taken, Outcome} = judge(Batch, Posted, Answered),
     Next = erx_virtio_gpu_core:frame_step(Frame, {answers, Batch}),
     case {Outcome, Next} of
-        {{stop, Why}, {{stop, Why}, _}} -> ok;
+        {{stop, Why}, {_, [{stop, Why}]}} -> ok;
         {continue, _} -> drive(Next, Requests, maps:without(Taken, Posted), Answered + length(Taken), Steps - 1);
         _ -> error({frame_disagrees_with_reference, Batch, Outcome, Next})
     end;
-drive({{done, Answers, _Tag}, _Frame}, Requests, Posted, Answered, _Steps) ->
+drive({_Frame, [{done, Answers, _Tag}]}, Requests, Posted, Answered, _Steps) ->
     case map_size(Posted) =:= 0 andalso Answered =:= length(Requests) andalso length(Answers) =:= Answered of
         true -> ok;
         false -> error({done_early, Requests, Posted, Answered})
@@ -180,9 +180,9 @@ drive(Other, Requests, Posted, Answered, _Steps) ->
 
 %% After a refused post: the frame waits when something else is in flight, and stops when
 %% nothing is.
-after_full({wait, Frame}, Requests, Posted, Answered, Steps) when map_size(Posted) > 0 ->
-    drive({wait, Frame}, Requests, Posted, Answered, Steps);
-after_full({{stop, {queue, full}}, _Frame}, _Requests, Posted, _Answered, _Steps) when map_size(Posted) =:= 0 ->
+after_full({Frame, [wait]}, Requests, Posted, Answered, Steps) when map_size(Posted) > 0 ->
+    drive({Frame, [wait]}, Requests, Posted, Answered, Steps);
+after_full({_Frame, [{stop, {queue, full}}]}, _Requests, Posted, _Answered, _Steps) when map_size(Posted) =:= 0 ->
     ok;
 after_full(Other, Requests, Posted, _Answered, _Steps) ->
     error({full_wrong, Other, Requests, Posted}).

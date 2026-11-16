@@ -188,21 +188,25 @@ run_frame(Requests, State = #state{tag = Tag}) ->
     Deadline = erlang:monotonic_time(millisecond) + ?ANSWER_DEADLINE_MS,
     perform(erx_virtio_gpu_core:frame_step(Frame, next), Deadline, State).
 
-perform({{post, Tag, Segments}, Frame}, Deadline, State = #state{dev = Dev, queue = Queue}) ->
+perform({Frame, [{post, Tag, Segments}]}, Deadline, State = #state{dev = Dev, queue = Queue}) ->
     case erx_device:post(Dev, Queue, Tag, Segments) of
         ok -> perform(erx_virtio_gpu_core:frame_step(Frame, next), Deadline, State);
         {error, full} -> perform(erx_virtio_gpu_core:frame_step(Frame, {full, Tag}), Deadline, State);
         {error, broken} -> {error, broken, State}
     end;
-perform({wait, Frame}, Deadline, State) ->
+perform({Frame, [wait]}, Deadline, State) ->
     case await(Deadline, State) of
         {ok, Completions} -> perform(erx_virtio_gpu_core:frame_step(Frame, {answers, Completions}), Deadline, State);
         {error, Reason} -> {error, Reason, State}
     end;
-perform({{done, Answers, Tag}, _Frame}, _Deadline, State) ->
+perform({_Frame, [{done, Answers, Tag}]}, _Deadline, State) ->
     {ok, Answers, State#state{tag = Tag}};
-perform({{stop, Reason}, _Frame}, _Deadline, State) ->
-    {error, Reason, State}.
+perform({_Frame, [{stop, Reason}]}, _Deadline, State) ->
+    {error, Reason, State};
+%% Any other list is the core's fault, refused with error/1, whose stack trace names
+%% no argument.
+perform({_Frame, _Actions}, _Deadline, _State) ->
+    error(frame_actions).
 
 %% The next delivery of the line before the frame's deadline, then what the device
 %% returned; a delivery may be spurious, which returns nothing, and the frame then waits

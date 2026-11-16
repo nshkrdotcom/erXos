@@ -170,35 +170,35 @@ two() ->
 frame_posts_waits_and_finishes_test() ->
     [{Transfer, _}, {Flush, _}] = two(),
     F0 = erx_virtio_gpu_core:frame_start(two(), 10),
-    {{post, 10, Transfer}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    {{post, 11, Flush}, F2} = erx_virtio_gpu_core:frame_step(F1, next),
-    {wait, F3} = erx_virtio_gpu_core:frame_step(F2, next),
-    {wait, F4} = erx_virtio_gpu_core:frame_step(F3, {answers, [{10, hdr(?NODATA, 0, 0)}]}),
-    ?assertMatch({{done, [ok, ok], 12}, _}, erx_virtio_gpu_core:frame_step(F4, {answers, [{11, hdr(?NODATA, ?FENCE_FLAG, 99)}]})),
-    ?assertMatch({{done, [], 5}, _}, erx_virtio_gpu_core:frame_step(erx_virtio_gpu_core:frame_start([], 5), next)).
+    {F1, [{post, 10, Transfer}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    {F2, [{post, 11, Flush}]} = erx_virtio_gpu_core:frame_step(F1, next),
+    {F3, [wait]} = erx_virtio_gpu_core:frame_step(F2, next),
+    {F4, [wait]} = erx_virtio_gpu_core:frame_step(F3, {answers, [{10, hdr(?NODATA, 0, 0)}]}),
+    ?assertMatch({_, [{done, [ok, ok], 12}]}, erx_virtio_gpu_core:frame_step(F4, {answers, [{11, hdr(?NODATA, ?FENCE_FLAG, 99)}]})),
+    ?assertMatch({_, [{done, [], 5}]}, erx_virtio_gpu_core:frame_step(erx_virtio_gpu_core:frame_start([], 5), next)).
 
 %% A full queue takes the request back: it waits for an answer and is posted again; full
 %% with nothing in flight would wait for ever, so it stops.
 frame_full_test() ->
     [{Transfer, _}, {Flush, _}] = two(),
     F0 = erx_virtio_gpu_core:frame_start(two(), 0),
-    {{post, 0, Transfer}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{stop, {queue, full}}, _}, erx_virtio_gpu_core:frame_step(F1, {full, 0})),
-    {{post, 1, Flush}, F2} = erx_virtio_gpu_core:frame_step(F1, next),
-    {wait, F3} = erx_virtio_gpu_core:frame_step(F2, {full, 1}),
-    {{post, 1, Flush}, _} = erx_virtio_gpu_core:frame_step(F3, {answers, [{0, hdr(?NODATA, 0, 0)}]}).
+    {F1, [{post, 0, Transfer}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{stop, {queue, full}}]}, erx_virtio_gpu_core:frame_step(F1, {full, 0})),
+    {F2, [{post, 1, Flush}]} = erx_virtio_gpu_core:frame_step(F1, next),
+    {F3, [wait]} = erx_virtio_gpu_core:frame_step(F2, {full, 1}),
+    {_, [{post, 1, Flush}]} = erx_virtio_gpu_core:frame_step(F3, {answers, [{0, hdr(?NODATA, 0, 0)}]}).
 
 %% An answer the device refused, one that fails its check, and a tag not in flight stop it.
 frame_stops_on_bad_answers_test() ->
     F0 = erx_virtio_gpu_core:frame_start(two(), 0),
-    {_, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{stop, {answer, 0, {device, invalid_parameter}}}, _},
+    {F1, _} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{stop, {answer, 0, {device, invalid_parameter}}}]},
                  erx_virtio_gpu_core:frame_step(F1, {answers, [{0, hdr(16#1205, 0, 0)}]})),
-    ?assertMatch({{stop, {answer, 0, {length, 1}}}, _}, erx_virtio_gpu_core:frame_step(F1, {answers, [{0, <<0>>}]})),
-    ?assertMatch({{stop, {tag, 1}}, _}, erx_virtio_gpu_core:frame_step(F1, {answers, [{1, hdr(?NODATA, 0, 0)}]})).
+    ?assertMatch({_, [{stop, {answer, 0, {length, 1}}}]}, erx_virtio_gpu_core:frame_step(F1, {answers, [{0, <<0>>}]})),
+    ?assertMatch({_, [{stop, {tag, 1}}]}, erx_virtio_gpu_core:frame_step(F1, {answers, [{1, hdr(?NODATA, 0, 0)}]})).
 
 %% Tags wrap at 2^64, as erx_device:post/4 takes them.
 frame_tags_wrap_test() ->
     F0 = erx_virtio_gpu_core:frame_start(two(), 16#ffffffffffffffff),
-    {{post, 16#ffffffffffffffff, _}, F1} = erx_virtio_gpu_core:frame_step(F0, next),
-    ?assertMatch({{post, 0, _}, _}, erx_virtio_gpu_core:frame_step(F1, next)).
+    {F1, [{post, 16#ffffffffffffffff, _}]} = erx_virtio_gpu_core:frame_step(F0, next),
+    ?assertMatch({_, [{post, 0, _}]}, erx_virtio_gpu_core:frame_step(F1, next)).
