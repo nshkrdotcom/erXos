@@ -8,6 +8,7 @@ require_relative 'bounded_file'
 require_relative 'data_volume'
 require_relative 'erofs_image'
 require_relative 'error'
+require_relative 'image_apps'
 require_relative 'medium_image'
 
 module Erx
@@ -15,8 +16,9 @@ module Erx
   # file's medium layout (MediumImage) whose slot A holds a production image's bootable
   # file in its boot partition and the release's EROFS image in its system partition,
   # which fsimg writes from the system release's files at the paths the boot image's
-  # archive gives them (ProductionImage::Built#release), followed by the image's dm-verity
-  # tree (system_partition). The boot-selection record
+  # archive gives them (ProductionImage::Built#release) and the image's packages at
+  # apps/NAME.app (ImageApps::Plan#entries), followed by the image's dm-verity tree
+  # (system_partition). The boot-selection record
   # commits slot A (BootRecord.sector), and the rest of its partition, slot B and the
   # vault's partition hold zeros. The data partition holds a fresh littlefs volume (DataVolume): writing a
   # medium is installation, the one step that formats /data, since the guest's mount
@@ -94,13 +96,19 @@ module Erx
     end
 
     # Writes the system release's EROFS image, EROFS in directory, from entries, the
-    # release's entries (ProductionImage::Built#release); the file holds the image alone.
+    # release's entries (ProductionImage::Built#release), and the packages of apps
+    # (ImageApps::Plan) at apps/NAME.app; the file holds the image alone. apps/ is there
+    # with no package in it too, so the storage domain's `system` tree, rooted at it, is
+    # served on every medium, and "no system tree" in its log is always a fault
+    # (erx_storage_system).
     # Returns its path and the artifacts the packer hands the manifest check: the image
     # under the name the manifest's input names, with its one extent in the slot and the
     # tree the system partition holds after it, its offset from the partition's start, its
     # length, and its salt and root hash in lowercase hex.
-    def image(entries:, directory:, runner:)
-      path = ErofsImage.new(runner: runner).write(files: files(entries), name: IMAGE, output: File.join(directory, EROFS))
+    def image(entries:, directory:, runner:, apps: ImageApps.none)
+      path = ErofsImage.new(runner: runner).write(files: files([*entries, *apps.entries.map { |at, file| { 'path' => at, 'artifact' => file } }]),
+                                                  directories: [ImageApps::PARTITION_DIRECTORY], name: IMAGE,
+                                                  output: File.join(directory, EROFS))
       system = system_partition(path)
       extents = [{ 'slot_offset' => system.image.slot_offset, 'length' => system.image.file.length }]
       tree = { 'offset' => system.tree_offset, 'length' => system.tree.bytes.bytesize,
@@ -135,10 +143,12 @@ module Erx
     # its Extent, as image_extents places it.
     def image_extent(path) = image_extents([slot_file(IMAGE, path)]).fetch(0)
 
-    # The EROFS image's files: each release entry's archive path, mapped to its built file.
+    # The EROFS image's files: each entry's path in the partition, a release file's or a
+    # package's, mapped to its built file. A path named twice is refused, so a package
+    # never stands in for a release file.
     def files(entries)
       paths = entries.map { |entry| entry.fetch('path') }
-      raise Error, 'the release names a path twice' unless paths.uniq.size == paths.size
+      raise Error, 'the system partition names a path twice' unless paths.uniq.size == paths.size
 
       entries.to_h { |entry| [entry.fetch('path'), entry.fetch('artifact')] }
     end

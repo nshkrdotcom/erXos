@@ -22,12 +22,13 @@ through `erx_starter:packages/2`. A failed change stops the process, which
 ends the lifetime: erx_pkg_io refuses every later request of it, and the
 next lifetime's recovery starts again.
 
-The listing of `packages/` waits for the domain service's answer that the
+Every action of the recovery waits for the domain service's answer that the
 system domain's namespace is in place (`erx_domain:system_namespace/0`), as
-the start table's first read of `rc.conf` does, so the `packages` grant is
-installed before it when the storage domain made it in time. The request
-goes out as the process starts and only the `list` action waits for its
-answer; an error answer, a domain service that ended, lists all the same.
+the start table's first read of `rc.conf` does, so the `packages` grant the
+listing reads and the `system` grant an image package is read through are
+installed before it when the storage domain made them in time. The request
+goes out as the process starts; an error answer, a domain service that
+ended, carries the recovery on all the same.
 
 `packages/0` answers the scan and each package's record, which
 `/proc/packages` shows; until the recovery is done the scan is `unknown`
@@ -143,7 +144,7 @@ handle_info(Message, #{namespace := Request} = State) when Request =/= settled -
 handle_info(_Message, State) ->
     {noreply, State}.
 
-%% The namespace's answer: a `list` action that waits for it is carried out now.
+%% The namespace's answer: the action that waits for it is carried out now.
 namespace_settled(Answer, State) ->
     case Answer of
         {reply, ok} -> ok;
@@ -151,21 +152,21 @@ namespace_settled(Answer, State) ->
             logger:warning("packages: no answer to the wait for the system domain's namespace: ~0P", [Why, 8])
     end,
     case State of
-        #{action := list} -> self() ! step;
+        #{action := _} -> self() ! step;
         #{} -> ok
     end,
     {noreply, State}.
-
-%% The listing waits for the namespace (namespace_settled/2); every other
-%% action is carried out in the next message.
-recover({list, Plan}, #{namespace := Request} = State) when Request =/= settled ->
-    {noreply, State#{action => list, plan => Plan}};
 
 recover({{done, #{scan := Scan, packages := Packages}}, _Plan}, State) ->
     {noreply, maps:without([action, plan], State#{scan := Scan, packages := Packages})};
 recover({{stop, Reason}, _Plan}, State) ->
     logger:error("packages: the recovery stops: ~0tp", [Reason]),
     {stop, {recovery, Reason}, State};
+%% Every action waits for the namespace (namespace_settled/2): the listing reads
+%% /packages and a header of an image package the system grant, both in place only
+%% once it has settled. Every action is otherwise carried out in the next message.
+recover({Action, Plan}, #{namespace := Request} = State) when Request =/= settled ->
+    {noreply, State#{action => Action, plan => Plan}};
 recover({Action, Plan}, State) ->
     self() ! step,
     {noreply, State#{action => Action, plan => Plan}}.
@@ -181,8 +182,15 @@ effect({delete, File}, _State) ->
     erx_pkg_io:request({delete, self(), File});
 effect({path_entry, Place, File, Entry}, _State) ->
     erx_pkg_io:request({path_entry, self(), Place, File, Entry});
-effect({admit, Checked}, #{config := #{manifest := Manifest}}) ->
-    erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry());
+effect({admit, #{header := #{name := Name}} = Checked}, #{config := #{manifest := Manifest}}) ->
+    case erx_app_admit:admit(Checked, Manifest, erx_principal:app_registry()) of
+        {ok, _} = Admitted ->
+            logger:notice("packages: admitted ~ts", [Name]),
+            Admitted;
+        {error, Reason} = Refused ->
+            logger:notice("packages: refused ~ts: ~0P", [Name, Reason, 8]),
+            Refused
+    end;
 effect({register, Package}, _State) ->
     erx_principal:register_app(Package);
 effect({publish, Set}, _State) ->

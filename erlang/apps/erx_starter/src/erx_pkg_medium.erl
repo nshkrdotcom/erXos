@@ -16,9 +16,14 @@ erx_pkg_io calls it.
   file client, erx_file_remote, in erx_pkg_io's own process. While the
   grant is not in place the path is the root's and the directory absent,
   which the listing answers as `{error, absent}`.
-* **The image's packages**, on the stopgap, lie in the boot image's
-  domain release at `pkg/NAME.app` (docs/design-packaging.md, "Phase 1"),
-  read from the release like every file of it.
+* **The image's packages** lie at `apps/NAME.app` in the booted slot's
+  system partition, which the storage domain serves read-only as the
+  `system` tree, rooted at `apps/` (erx_storage_system). The system domain
+  reads each through its grant of the `system` facet (erx:cap(system)),
+  walked by name with the file client, erx_file_remote, as erx_ns walks the
+  record's place, so no path of the namespace and nothing of the partition
+  outside `apps/` is reached. While the grant is not in place every read
+  answers `{error, enoent}`.
 
 Every answer is one of the erx_pkg_io callbacks' contract: a positioned
 read at or past the end of a file reads no bytes, as pread(2) does, and
@@ -47,7 +52,7 @@ list(Max) ->
 -doc "The length of a package, which must be a regular file.".
 -spec size(erx_pkg_io:place(), binary()) -> {ok, non_neg_integer()} | {error, atom()}.
 size(Place, File) ->
-    case file:read_file_info(path(Place, File), [raw]) of
+    case info(Place, path(Place, File)) of
         {ok, #file_info{type = regular, size = Size}} -> {ok, Size};
         {ok, #file_info{}} -> {error, einval};
         {error, _} = Error -> Error
@@ -57,7 +62,7 @@ size(Place, File) ->
 -spec pread(erx_pkg_io:place(), binary(), non_neg_integer(), non_neg_integer()) ->
     {ok, binary()} | {error, atom()}.
 pread(Place, File, Offset, Size) ->
-    case file:open(path(Place, File), [read, raw, binary]) of
+    case opened(Place, path(Place, File)) of
         {ok, Fd} ->
             try file:pread(Fd, Offset, Size) of
                 {ok, Bytes} -> {ok, Bytes};
@@ -82,8 +87,40 @@ path(Place, File) when File =/= <<>>, File =/= <<".">>, File =/= <<"..">> ->
     nomatch = binary:match(File, [<<"/">>, <<0>>]),
     place(Place, File).
 
+%% An installed package's path in the namespace, and an image package's name in
+%% the system tree, whose root is the partition's apps/.
 place(installed, File) -> <<?INSTALLED/binary, $/, File/binary>>;
-place(system, File) -> filename:join([code:root_dir(), <<"pkg">>, File]).
+place(system, File) -> File.
+
+%% The #file_info{} of an installed package at its path, or of an image package
+%% of that name on the system grant.
+info(installed, Path) ->
+    file:read_file_info(Path, [raw]);
+info(system, Name) ->
+    on_system(fun(Grant) -> found(erx_file_remote:read_file_info(Grant, {target, [Name]}, true)) end).
+
+%% The package opened to read, a descriptor file:pread/3 and file:close/1 take.
+opened(installed, Path) ->
+    file:open(Path, [read, raw, binary]);
+opened(system, Name) ->
+    on_system(fun(Grant) -> found(erx_file_remote:open(Grant, {target, [Name]}, [read, binary])) end).
+
+%% The file client's answer for a name on the tree. A walk that failed answers its
+%% error, a missing name enoent; the tree serves no link, so a walk that passed and
+%% would follow one is einval.
+found(#file_info{} = Info) -> {ok, Info};
+found({ok, _} = Opened) -> Opened;
+found({error, _} = Error) -> Error;
+found({resume, _, {_Kinds, {error, _} = Error}}) -> Error;
+found({resume, _, {_Kinds, ok}}) -> {error, einval}.
+
+%% Act on the system domain's read-only grant of the system tree, or enoent while
+%% its facet registry holds none.
+on_system(Act) ->
+    case erx:cap(system) of
+        Pid when is_pid(Pid) -> Act({Pid, <<"system">>, ro});
+        _ -> {error, enoent}
+    end.
 
 %% The file client gives a name it can decode as characters, and one it
 %% cannot as its bytes.

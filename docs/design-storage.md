@@ -1328,7 +1328,9 @@ A package block a client reads through the tree is therefore hashed
 twice, once here against the partition's tree and once in the client
 against the package's ([todo-performance.md](todo-performance.md)). The backend serves the partition's `apps/` as the tree's
 root, so a grant reaches the packages and nothing else the packer
-wrote; since every block matches the root hash the manifest records,
+wrote. The packer writes `apps/` on every medium, empty when the image
+has no package, so a partition without it is a fault, which the backend
+logs as `no system tree` and serves as no tree; since every block matches the root hash the manifest records,
 the partition holds only what the packer wrote, and nothing secret. It has no writing callback, and every grant of it is `ro` or `rx`, the
 app template's `rx` so that `/app` can be mounted through it, so
 every writing operation is refused before any callback

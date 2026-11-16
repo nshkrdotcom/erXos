@@ -78,7 +78,7 @@ effects() ->
 
 start_app(#{start := {applications, Names}}, #{mount := Mount, root := Root, type := Type}) ->
     case Mount() of
-        ok -> ok;
+        ok -> logger:notice("erx_app: mounted /app");
         {error, Reason} -> fail({mount, Reason})
     end,
     lists:foreach(fun add_path/1, ebins(Root)),

@@ -18,7 +18,7 @@ class ImageRecordTest < Minitest::Test
                                                committed_at: Time.at(1_794_160_931).utc)
   FACTS = Erx::BuildFacts::Facts.new(revision: REVISION.to_s, date: 1_794_160_931,
                                      configuration: 'qemu-virt/development', kernel: 'fiasco-50bbe8a98119')
-  PACKAGE = { 'path' => 'domain/pkg/doom.app', 'sha256' => 'd' * 64 }.freeze
+  PACKAGE = { 'path' => 'apps/doom.app', 'sha256' => 'd' * 64 }.freeze
 
   # Writes an image and its record into a directory of their own, and yields the
   # image's path and SHA-256.

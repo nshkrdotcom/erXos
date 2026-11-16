@@ -482,6 +482,24 @@ module Erx
          verify: ->(text) { raise Error, "the shell read #{text.inspect} from the image" unless whole.match?(text) } }.freeze]
     end
 
+    # QEMU's own tree for a boot of machine with cpus, disks and display (a
+    # QemuPlan::Display or nil), dumped by qemu with those devices so it lists what the boot
+    # attaches, with the firmware's /chosen properties for the slot parser's choice
+    # (chosen_source) added; written in directory, whose path it answers.
+    def firmware_tree(runner:, qemu:, machine:, image:, disks:, choice:, cpus:, directory:, display: nil)
+      stock = File.join(directory, 'virt.dtb')
+      tree = File.join(directory, 'firmware.dtb')
+      source = File.join(directory, 'firmware.dts')
+      argv = QemuPlan.argv(platform: machine.platform, accel: 'hvf', image: image, serial: '/dev/null', cpus: cpus,
+                           memory_mib: machine.memory_mib, program: qemu, disks: disks, display: display)
+      at = argv.index('-machine') + 1
+      runner.run([*argv[0...at], "#{argv[at]},dumpdtb=#{stock}", *argv[(at + 1)..]], name: 'qemu-dumpdtb-firmware', deadline: 30)
+      listing = File.read(runner.run(['dtc', '-q', '-I', 'dtb', '-O', 'dts', stock], name: 'dtc-firmware', deadline: 30).fetch('log'))
+      File.write(source, listing + chosen_source(choice))
+      runner.run(['dtc', '-q', '-I', 'dts', '-O', 'dtb', '-o', tree, source], name: 'dtc-firmware-tree', deadline: 30)
+      tree
+    end
+
     # Boots the production image from its release medium to the shell under HVF.
     class Run
       # Under HVF the watchdog numbers are the kernel's defaults, whatever they are.
@@ -534,23 +552,9 @@ module Erx
         'passed'
       end
 
-      # QEMU's own tree for this boot's machine with the firmware's /chosen properties. The
-      # dump's plan has the host link, as the boot's does, so the tree has the host link's UART
-      # and its /chosen/bootargs carry erx.hostlink=1.
       def firmware_tree(count, image, disks, choice, directory)
-        stock = File.join(directory, 'virt.dtb')
-        tree = File.join(directory, 'firmware.dtb')
-        source = File.join(directory, 'firmware.dts')
-        argv = QemuPlan.argv(platform: @machine.platform, accel: 'hvf', image: image, serial: '/dev/null', cpus: count,
-                             memory_mib: @machine.memory_mib,
-                             program: @qemu, disks: disks)
-        machine = argv.index('-machine') + 1
-        @runner.run([*argv[0...machine], "#{argv[machine]},dumpdtb=#{stock}", *argv[(machine + 1)..]],
-                    name: 'qemu-dumpdtb-firmware', deadline: 30)
-        listing = File.read(@runner.run(['dtc', '-q', '-I', 'dtb', '-O', 'dts', stock], name: 'dtc-firmware', deadline: 30).fetch('log'))
-        File.write(source, listing + MediumBoot.chosen_source(choice))
-        @runner.run(['dtc', '-q', '-I', 'dts', '-O', 'dtb', '-o', tree, source], name: 'dtc-firmware-tree', deadline: 30)
-        tree
+        MediumBoot.firmware_tree(runner: @runner, qemu: @qemu, machine: @machine, image: image, disks: disks, choice: choice,
+                                 cpus: count, directory: directory)
       end
     end
 

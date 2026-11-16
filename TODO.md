@@ -88,7 +88,7 @@ it; git history is the record of completed work.
   ([design-packaging.md](docs/design-packaging.md#boot-and-recovery)), `erlang/apps/erx_starter/src/erx_pkg*.erl`:
   the file check, the recovery's plan (one action per message), erx_pkg_io with its path table, one route for
   every medium answer and its bound on a read, `erx_pkg_medium` over the `packages` grant at `/packages` and
-  the release's `pkg/NAME.app`, which the system partition replaces
+  the `system` grant's `NAME.app`, the system partition's `apps/NAME.app`
   ([docs/todo-system-partition.md](docs/todo-system-partition.md)), and erx_pkg under erx_pkg_sup are built; the start service's supervisor starts
   erx_pkg_io (never restarted, its end resets the machine) and, given a config, erx_pkg_sup. `erx_pkg:system_config/0` builds
   the config from the manifest and the library's app entries. QEMU virt's development manifest has the
@@ -142,10 +142,10 @@ it; git history is the record of completed work.
   `window`, which wait for `erx_prog_handler:start/1`'s `window` option and the monitor its start returns
   (`erx_app` ends with `{not_supported, program}` until then).
 * [Medium] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`):
-  an image package's place
-  `{system, [apps, NAME.app]}` is written in `erx_principal` beside `erx_pkg_medium`'s `pkg/NAME.app` (one owner wanted); the
-  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console facet
-  through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
+  an image package's place on the `system` grant is written in `erx_principal:place/2` and again in
+  `erx_pkg_medium` (`place/2`, `on_system/1`, beside `erx_ns:facet_grant/1`'s grant tuple; one owner wanted); the
+  `app-starters` chokepoint repeats `start-callers`' call forms; `start_app/2` lets a console
+  facet through to the planner; a record can be sent when the `packages` grant failed (fails safe at the mount);
   a keeper's stop waits without bound for its session's end.
 * [Low] apps, `erx_starter_keeper`: a session that ends before its keeper takes it ends the keeper with
   `noproc`, the exit its trapped link brings, so the supervisor reports a crash naming no session where
@@ -8128,9 +8128,22 @@ document's "residual risks accepted" paragraph.
   first QEMU boot comes with part 4b's package. design-packaging.md's verification row for
   `examples/dashboard` describes a Pause click and a status line, which this dashboard of a clock, a date
   and a quotes panel does not have, and its host test goes through `erx_ui_host` and the SDK's boundary
-  check, which this host test does not. The plan's idle-kiosk check (G6, no wake for a minute) cannot hold
-  for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
+  check, which this host test does not. G6 (design-display.md) holds when no device request comes between
+  two changes of the tree. The kiosk cell (`tools/lib/erx/kiosk.rb`) boots it as an image package and
+  checks its frame; no QEMU test checks G6 yet: the cell's next step counts the driver's
+  requests between two of the dashboard's clock ticks, where a seeded timer that repaints with no change
+  fails the count. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
+
+* [Medium] the kiosk cell (`tools/lib/erx/kiosk.rb`), left from its review: its boot repeats
+  MediumBoot::Run's (fresh medium, slot parse, firmware tree, the boot value spliced after the image's
+  identity) instead of sharing one MediumBoot function; it loads `test/fixtures/dashboard_screen.rb`
+  from tools/lib, whose `generated_tree` sets the host tests' sanitizer environment in the gate process,
+  so the renderer and the part of ErlangBuild it needs belong in tools/lib without that side effect;
+  `packages: refused` is logged for admission refusals only, not for a header the file check refuses;
+  AppPack builds an app's beams into the app directory's own `ebin/`, which each run of the cell or of
+  `tools/erx pack --app` leaves in the source tree. `ls /apps` and a dropped `--enable` are not yet
+  cases of its boot.
 
 * [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
   above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches

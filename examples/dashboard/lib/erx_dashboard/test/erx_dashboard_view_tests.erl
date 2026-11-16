@@ -17,6 +17,10 @@ clock_test() ->
     ?assertEqual(<<"00:00">>, erx_dashboard_view:clock({{1970, 1, 1}, {0, 0, 59}})),
     ?assertEqual(<<"23:59">>, erx_dashboard_view:clock({{2026, 1, 1}, {23, 59, 0}})).
 
+minute_test() ->
+    ?assertEqual(<<"2026-11-15 09:41">>, erx_dashboard_view:minute({{2026, 11, 15}, {9, 41, 7}})),
+    ?assertEqual(<<"1970-01-01 00:00">>, erx_dashboard_view:minute({{1970, 1, 1}, {0, 0, 59}})).
+
 date_test() ->
     ?assertEqual(<<"Sunday, 15 November 2026">>, erx_dashboard_view:date(?TIME)),
     ?assertEqual(<<"Thursday, 1 January 1970">>,

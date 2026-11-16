@@ -17,6 +17,8 @@
 -define(O_RDONLY, 0).
 -define(O_WRONLY, 1).
 -define(O_TRUNC, 8#1000).
+%% The one line a mount that serves its tree hands its log.
+-define(SERVED, <<"serving the system tree">>).
 
 %% Fixtures --------------------------------------------------------------
 
@@ -29,12 +31,14 @@ partition(Name) ->
     {Bytes, [Words]}.
 
 %% The tree mounted on partition Name with the layout its records name, through mount/3,
-%% which the module exports to TEST alone, its log lines sent to the caller.
+%% which the module exports to TEST alone, its log lines sent to the caller; lines an
+%% earlier mount of the same process sent and no case read are dropped first.
 open(Name) ->
     {Bytes, Records} = partition(Name),
     open(Bytes, Records).
 
 open(Bytes, Records) ->
+    _ = logged(),
     Self = self(),
     erx_storage_system:mount(erx_erofs_tests:window(Bytes), erx_device_record:system_image(Records),
                              fun(Line) -> Self ! {log, Line} end).
@@ -115,7 +119,34 @@ good_partition_serves_apps_test() ->
     {ok, _, _} = call(Grant, {lopen, 4, ?O_RDONLY}),
     ?assertEqual({ok, listed()}, names(Grant, 4)),
     ?assertMatch({ok, #{type := ?ERX_P9_MAGIC_EROFS}}, call(Grant, {statfs, 1})),
-    ?assertEqual([], logged()).
+    ?assertEqual([?SERVED], logged()).
+
+%% The packer's partition serves the image's packages, written at apps/NAME.app of the
+%% system partition, and nothing of the release beside them.
+packed_partition_serves_the_image_packages_test() ->
+    Grant = grant(open("packed"), ro),
+    {ok, []} = call(Grant, {walk, 1, 9, []}),
+    {ok, _, _} = call(Grant, {lopen, 9, ?O_RDONLY}),
+    ?assertEqual({ok, [<<"big.app">>, <<"small.app">>]}, names(Grant, 9)),
+    {ok, [_]} = call(Grant, {walk, 1, 2, [<<"big.app">>]}),
+    {ok, _, _} = call(Grant, {lopen, 2, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(20000, 3)}, read_all(Grant, 2, 4096)),
+    {ok, [_]} = call(Grant, {walk, 1, 3, [<<"small.app">>]}),
+    {ok, _, _} = call(Grant, {lopen, 3, ?O_RDONLY}),
+    ?assertEqual({ok, erx_erofs_tests:contents(100, 1)}, read_all(Grant, 3, 4096)),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"system">>]})),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"README">>]})),
+    ?assertEqual([?SERVED], logged()).
+
+%% The packer's partition of an image with no package still holds apps/, so the
+%% tree mounts and serves it empty, logging only that it serves it.
+packed_partition_without_packages_serves_an_empty_tree_test() ->
+    Grant = grant(open("packed-empty"), ro),
+    {ok, []} = call(Grant, {walk, 1, 9, []}),
+    {ok, _, _} = call(Grant, {lopen, 9, ?O_RDONLY}),
+    ?assertEqual({ok, []}, names(Grant, 9)),
+    ?assertEqual({error, enoent}, call(Grant, {walk, 1, 4, [<<"system">>]})),
+    ?assertEqual([?SERVED], logged()).
 
 %% Writing -------------------------------------------------------------------
 
@@ -173,7 +204,7 @@ changed_partition_under_the_original_root_answers_eio_test() ->
     ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"big.app">>]})),
     ?assertEqual({error, eio}, call(Grant, {walk, 1, 2, [<<"small.app">>]})),
     ?assertEqual({error, eio}, call(Grant, {lopen, 1, ?O_RDONLY})),
-    ?assertNotEqual([], logged()),
+    ?assertNotEqual([], logged() -- [?SERVED]),
     Own = grant(open("changed-own"), rx),
     {ok, [_]} = call(Own, {walk, 1, 2, [<<"big.app">>]}),
     {ok, _, _} = call(Own, {lopen, 2, ?O_RDONLY}),

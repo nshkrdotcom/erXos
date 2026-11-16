@@ -2193,12 +2193,24 @@ it guards.
 
 **QEMU tests**, in the suites of the plan's parts that bring them:
 
-* a kiosk image with `examples/dashboard` added by `tools/erx pack --app
-  --enable dashboard` boots to its UI on the display, whose screendump
-  matches the host test's reference, and `ls /apps` shows
-  `dashboard.app`, read from the `system` tree, while the boot image
-  holds no package; seeded: `--enable` dropped, and the screen stays
-  blank;
+* the kiosk cell (`tools/lib/erx/kiosk.rb`, suite `kiosk`): the
+  production image of the development machine with `examples/dashboard`
+  packed, signed and enabled as `tools/erx pack --app examples/dashboard
+  --enable dashboard` does it, so the package lies at
+  `apps/dashboard.app` of the slot's system partition, boots from its
+  release medium with a display, the harness playing the firmware. The
+  serial log shows the storage domain serving the `system` tree, the
+  package admitted, the app's session mounting `/app`, and the
+  dashboard's line naming the minute its clock showed; the screendump
+  equals the dashboard as the host's erx-lvgl draws it with the sample
+  board (the host test's renderer) at that minute or the next, since
+  the guest's clock is not pinned. Seeded: one bit of the header's root
+  hash flipped and the package row bound to the altered header, so the
+  build's file check never sees it: the package is admitted by its row,
+  its `/app` mount is refused and nothing is shown. `ls /apps` showing
+  `dashboard.app` while the boot image holds no package, and
+  `--enable` dropped leaving the screen blank, are further cases of the
+  same boot;
 * two apps: neither's `/proc` shows the other's domains; once `data`
   grants are rooted by principal, neither reads the other's `/data`;
 * a test program packaged with a display need draws through `/dev/draw`

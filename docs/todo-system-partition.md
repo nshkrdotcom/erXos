@@ -13,11 +13,12 @@ image holds what the manifest names to run and no package. Index:
 Each item lands with its tests, each passing case beside a seeded fault
 that proves the code under test ran.
 
-* [High] storage, the `system` tree (`erlang/apps/erx_storage`):
-  the packer and fsimg writing
-  the partition's hash tree after its image and refusing an image and
-  tree larger than the partition, and the update
-  writing the tree and the manifest with the partition. Test: a
+* [High] storage, the `system` tree (`erlang/apps/erx_storage`): the
+  packer writes the partition's hash tree after its image, the image's
+  packages at `apps/NAME.app`, and refuses an image and tree larger than
+  the partition (`tools/lib/erx/release_medium.rb`); what remains is the
+  update writing the tree and the manifest with the partition, which
+  waits on the slot writer (the update item below). Test: a
   QEMU test that reads a multi-block package file through the grant;
   seeded: a write through the grant, which must answer `erofs` before any
   callback, and a flipped bit in the partition's directory, which must
@@ -57,14 +58,6 @@ that proves the code under test ran.
   app's grant during an upload answering `enoent`, which
   `erx_littlefs_tests`'s `a_tree_reaches_only_its_own` checks of a file
   in `new/` without the upload process.
-* [High] apps, packages out of the boot image (`tools/lib/erx/production_image.rb`
-  `package_entries`, `erlang/apps/erx_starter/src/erx_pkg_medium.erl`
-  `place(system, ..)`, `erx_principal`): the packer writes each image package
-  to `apps/NAME.app` in the slot's system partition; the package process
-  reads image packages' headers through the `system` grant; the app's
-  record names `NAME.app` on the `system` grant. Test: `ls /apps` on a kiosk image
-  shows the image's package, read-only; seeded: the package left in the
-  boot image, which the packer check below must refuse.
 * [High] build, the boot image rule (`tools/lib/erx/production_image.rb`):
   a packer check that every file of the boot image is an artifact a
   manifest row names by its role (the kernel, the root, the system release
@@ -87,7 +80,8 @@ that proves the code under test ran.
   signer's of the name but `image`; nothing written on a trial boot
   ([design-packaging.md](design-packaging.md#boot-and-recovery)). Test: the
   recovery over a directory holding such a package, on a normal and on a
-  trial boot; seeded: the shadow check dropped, which lists the name twice.
+  trial boot, and `ls /apps` on a kiosk image showing the image's package,
+  read-only; seeded: the shadow check dropped, which lists the name twice.
 * [High] update, the slot writer and the update for two partitions
   (the slot writer and update service are not yet built; the TLA+ model
   and the host's exhaustive model of
