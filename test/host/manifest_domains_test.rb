@@ -60,8 +60,8 @@ class ManifestDomainsTest < Minitest::Test
     ManifestContextFixture.with_quota(@plain, rows.size) + APP_LIMITS + rows.join
   end
 
-  def admit(source = @source, planner: @planner)
-    Erx::Manifest.admit(source: source, codec: @codec, context: @context, planner: planner)
+  def admit(source = @source, planner: @planner, context: @context)
+    Erx::Manifest.admit(source: source, codec: @codec, context: context, planner: planner)
   end
 
   def refused(klass, property, field, source = @source, planner: @planner, message: nil)
@@ -931,5 +931,70 @@ class ManifestDomainsTest < Minitest::Test
   def test_a_package_row_is_refused_until_its_package_can_be_checked
     refused(Erx::Manifest::Unsupported, 'unsupported', 'package',
             with_room(@source + self.class.apps + "package clock\n  input @artifact.clock\n", 8))
+  end
+
+  # Property 8's line clause (docs/design-system.md, "The manifest"; docs/design-bluetooth.md,
+  # "The controller's line"): the platform with two more UARTs, each a unit of its own,
+  # line_a and line_b, held by the system domain unless HOLDERS says otherwise, the
+  # system domain's line service, and GRANTS (ManifestContextFixture.with_line).
+  def line_context(lines: {})
+    Erx::Manifest::Context.new(**ManifestContextFixture.domain_arguments(@codec)
+                                                       .merge(platform: ManifestContextFixture.line_platform(@platform, lines: lines)))
+  end
+
+  def with_line(*grants, base: @source, holders: {}) = ManifestContextFixture.with_line(base, *grants, holders: holders)
+  def line_grant(*given, **options)
+    ManifestContextFixture.line_grant(*given, floor: @codec.constant('files_max_frame_min'), **options)
+  end
+
+  def refused_line(property, field, source, message, context: line_context)
+    error = assert_raises(Erx::Manifest::Invalid) { admit(source, context: context) }
+    assert_equal [property, field], [error.property, error.field], error.message
+    assert_match message, error.message
+  end
+
+  # A line grant's uart, a device reference, is packed as its device row's index.
+  def test_a_line_grant_packs_its_uart_as_its_device_row
+    view = @codec.open('manifest', admit(with_line(line_grant('la', '@domain.alpha', '/pl011@9050000')), context: line_context).bytes)
+    uart = rows(view, 'devices').index { |device| view.string(device.fetch('path')) == '/pl011@9050000' }
+    kinds = %w[device u64 identifier].map { |kind| @codec.member('mf_parameter_kind', kind) }
+    assert_equal [[1, kinds[0], 0, '', uart], [2, kinds[1], 115_200, '', 0], [3, kinds[2], 0, 'none', 0]],
+                 rows(view, 'facet_parameters').map { |row| [*row.values_at('key', 'kind', 'scalar'), view.string(row.fetch('bytes')), row.fetch('index')] }
+  end
+
+  # Seeds: a uart naming no placed device, a device that is no UART, the console's and
+  # the host link's UARTs, a UART another domain holds, and a flow of neither word.
+  def test_a_line_grant_names_a_uart_of_the_system_domain_s_that_no_other_use_takes
+    { '/pl011@9070000' => [2, /names no placed device/], '/virtio_mmio@a003e00' => [8, /names no UART/],
+      @platform.fetch('console') => [8, /console's or the host link's/],
+      @platform.fetch('hostlink') => [8, /console's or the host link's/] }.each do |uart, (property, message)|
+      refused_line(property, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', uart)), message)
+    end
+    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'), holders: { 'line_a' => '@domain.beta' }),
+                 /not the system domain's/)
+    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'xon')), /none or rts_cts/)
+    admit(with_line(line_grant('la', '@domain.alpha', '/pl011@9050000', flow: 'rts_cts')), context: line_context)
+  end
+
+  # Seeds: a line UART on the console's interrupt line, and a line service a configured
+  # domain serves.
+  def test_the_system_domain_serves_the_line_off_the_console_s_interrupt_line
+    grant = with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'))
+    console_line = @platform.fetch('units').flat_map { |unit| unit.fetch('devices') }
+                            .find { |device| device['path'] == @platform.fetch('console') }.fetch('line')
+    refused_line(8, 'facet.parameter', grant, /share interrupt line #{console_line}/, context: line_context(lines: { 'line_a' => console_line }))
+    refused_line(8, 'service.server', grant.sub("service line\n  server system\n", "service line\n  server @domain.beta\n"),
+                 /only the system domain serves the line/)
+  end
+
+  # Seeds: two grants of one UART; two line grants of different UARTs, since one line
+  # service serves one line (TODO.md); and a grant to a session template.
+  def test_a_manifest_grants_one_line_to_a_configured_domain
+    refused_line(8, 'facet.parameter', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
+                                                 line_grant('lb', '@domain.beta', '/pl011@9050000')), /two line grants/)
+    refused_line(8, 'facet.service', with_line(line_grant('la', '@domain.alpha', '/pl011@9050000'),
+                                               line_grant('lb', '@domain.beta', '/pl011@9060000')), /at most one line grant/)
+    refused_line(8, 'facet.grantee', with_line(line_grant('ls', '@session.system', '/pl011@9050000'),
+                                               base: with_session(self.class.session)), /no configured domain/)
   end
 end

@@ -674,6 +674,12 @@ it; git history is the record of completed work.
   framebuffer the harness's stand-in for the firmware sets up (design-platforms.md, "The firmware's framebuffer
   under QEMU"); the firmware's own node and a full-size screen are checked on the board by hand
   (design-platforms.md, "Trying a card on a board", step 5). No session is granted the display, as on QEMU virt.
+* [Medium] `tools/lib/erx/manifest.rb`, `GRANT_CHECKERS`: a service is admitted when every parameter's
+  `checked_by` names a helper listed there, but each checker (`check_display_grants`, `check_line_grants`) picks its
+  facets by interface, and only a comment ties a helper's name to its method, so a new service declaring
+  `checked_by line_grant` on another interface would have its `device` parameter resolved and checked by nothing.
+  Map each helper to its keys and its method and dispatch each facet to its helper's checker, so a checked parameter
+  is checked by construction.
 * [Medium] `tools/lib/erx/manifest.rb`, `check_framebuffer_windows`: a framebuffer window is checked against the
   platform record's register windows and RAM, not against the board tree's every `reg` and `ranges` (the GIC, the
   local peripherals, PCIe windows), which the record does not list; checking it against the board's own tree
@@ -7671,15 +7677,14 @@ document's "residual risks accepted" paragraph.
   `erx_line_fs`, and its keeper, `erx_line`, are written and run in host tests over a model driver
   (`test/erlang/erx_line_tests.erl`), but nothing serves them, so the controller group still runs only over a model
   line. Missing: the line's start, which serves `erx_line_fs` through `erx_fs_grants` and `erx_facet:serve/2` as
-  `erx_machine_fs` does, under `erx_uart_sup` and its line groups; the `line_grant` checker and `device` parameter
-  values in `tools/lib/erx/manifest.rb` (`GRANT_CHECKERS`, `parameter_value`); `erx_ns:place(line)` (the
-  facet-name check refuses it until a manifest publishes `line`); a line's driver record, which carries `init => fresh`
+  `erx_machine_fs` does, under `erx_uart_sup` and its line groups; `erx_ns:place(line)` (the
+  facet-name check refuses it until a manifest publishes `line`); a line's driver record, keyed by the index of the
+  UART's device row that the grant's `uart` carries (`erx_domain_lib:configured/0`), which carries `init => fresh`
   to `erx_pl011:program/1`; and the power line's steps 2 and 4 of a reset, which `erx_line` does not
-  run, as on a platform with no power line. Two questions the designs leave open block the serving: how the
-  `uart` parameter, a `device` reference, reaches the system domain, since the boot view and the packer refuse every
-  reference kind (docs/design-system.md, "A facet row's parameters reach the mint by name"); and how the one
-  process `erx_facet:serve(line, _)` names reaches the tree of each grant, when several grants of `line` name
-  different UARTs.
+  run, as on a platform with no power line. Property 8 and design-bluetooth.md give the line service one tree for
+  each grant of `line`, but the manifest check (`check_line_grants` in `tools/lib/erx/manifest.rb`) admits at most
+  one `line` facet in a manifest, since the design leaves open how the one process `erx_facet:serve(line, _)` names
+  reaches the tree of each grant when several grants name different UARTs; settle that and lift the limit.
 * [Medium] bluetooth, `erx_pl011`'s start effects (`run/3`, `discard/2`): `program/1`'s step lists are tested, but no
   test runs the steps over the device stand-in (`test/erlang/stand_in/erx_device.erl`), so a drain that ignores `RXFE`
   or its bound, or a step sent to the wrong register, passes; trace `keep` against the sequence it replaced and the

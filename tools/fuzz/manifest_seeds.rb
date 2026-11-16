@@ -20,12 +20,15 @@ module Erx
   # start row for that template, left off and with its own restart intensity, and the
   # display_domain suite's manifest with its client's grant of the display stating each
   # parameter of the windows interface a facet row may, so the facet table holds parameter
-  # rows.
+  # rows, and the configured domains' with alpha granted the line on a UART of its own,
+  # so a parameter row holds a device reference.
   module ManifestSeeds
     SESSION_FACET = "facet session_probe\n  grantee @session.system\n  service @service.probe\n  operations none\n" \
                     "  max_request 64\n  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n"
     START_ROW = "start system\n  enable NO\n  restarts 3\n  restart_period_s 60\n"
     WINDOWS_PARAMETERS = "  parameter pixels 4194304\n  parameter windows 2\n  parameter clipboard yes\n"
+    # The UART line_grant's grant names.
+    LINE_UART = ManifestContextFixture::LINE_UARTS.fetch('line_a').first
 
     module_function
 
@@ -54,6 +57,7 @@ module Erx
                              context: domain_context, planner: ManifestContextFixture.accepting_planner)
       PackFuzz.prefix_seeds(development.bytes).merge('empty' => empty.bytes, 'system-args-escape' => escape.bytes,
                                                      'windows-grant' => windows_grant(repository, codec),
+                                                     'line-grant' => line_grant(repository, codec),
                                                      'domains' => domains.bytes, 'session-grantee' => session.bytes,
                                                      'start-row' => start.bytes, 'raspi4b' => pi.bytes,
                                                      'boot-timeout-zero' => boot_timeout(codec, domains.bytes, 0))
@@ -69,6 +73,18 @@ module Erx
       context = Manifest::Context.new(**arguments, platform: platform_of(repository, 'qemu-virt'))
       planner = ->(view) { %w[domains introductions sessions].to_h { |key| [key, view.fetch(key == 'domains' ? 'order' : key).map { 0 }] } }
       Manifest.admit(source: source, codec: codec, context: context, planner: planner).bytes
+    end
+
+    # The configured domains' manifest (ManifestContextFixture.domain_source) on QEMU virt
+    # with two more UARTs, alpha granted the line on the first
+    # (ManifestContextFixture.with_line), as the check packs it.
+    def line_grant(repository, codec)
+      source = Platform.load(root: repository, name: 'qemu-virt').manifest_source(repository)
+      grant = ManifestContextFixture.line_grant('line', '@domain.alpha', LINE_UART, floor: codec.constant('files_max_frame_min'))
+      context = Manifest::Context.new(**ManifestContextFixture.domain_arguments(codec),
+                                      platform: ManifestContextFixture.line_platform(platform_of(repository, 'qemu-virt')))
+      Manifest.admit(source: ManifestContextFixture.with_line(ManifestContextFixture.domain_source(source), grant),
+                     codec: codec, context: context, planner: ManifestContextFixture.accepting_planner).bytes
     end
 
     # The platform record config/platforms/NAME.json.

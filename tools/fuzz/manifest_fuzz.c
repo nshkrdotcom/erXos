@@ -86,8 +86,9 @@ declares(const erx_service_parameter_t *declared, size_t ndeclared, const erx_se
  * Whether the view carries facet row facet_row's parameters as facet's, each
  * of them: one per row, so none is dropped; each a declaration of the
  * service's interface, in strictly ascending number order, so none is
- * stated twice; of a kind the boot carries and within its declared bound;
- * and with every declaration the interface requires among them.
+ * stated twice; of a kind the boot carries and within its declared bound,
+ * a device reference a row of the view's devices; and with every
+ * declaration the interface requires among them.
  */
 static bool
 parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, const erx_mf_facet_t *facet_row)
@@ -122,6 +123,9 @@ parameters_admitted(const erx_dom_view_t *dom, const erx_dom_facet_t *facet, con
 		case ERX_MF_PARAMETER_NAMESPACE_PATH:
 		case ERX_MF_PARAMETER_BYTES:
 			within = value->bytes != NULL && value->bytes_len <= parameter->maximum;
+			break;
+		case ERX_MF_PARAMETER_DEVICE:
+			within = value->index < dom->ndevices;
 			break;
 		default:
 			within = false;

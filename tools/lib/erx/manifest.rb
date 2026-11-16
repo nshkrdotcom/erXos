@@ -957,7 +957,7 @@ module Erx
         unless @context.platform['console'] == console && (@context.platform.fetch('hostlink', '') == hostlink)
           invalid('UART paths disagree with checked platform', 8, 'machine.console')
         end
-        check_uart_lines(rows, console, hostlink)
+        check_uart_lines(rows, console, hostlink.empty? ? {} : { hostlink => 'machine.hostlink' })
       end
 
       # Property 8's pin controller clause (docs/design-header-io.md, "The pin controller and
@@ -1076,20 +1076,21 @@ module Erx
                 'machine.console')
       end
 
-      # Property 8's line clause (docs/design-shared-devices.md, "Lines inside a domain"):
-      # the console and the host link each start their own UART's driver, and the owner of
-      # its line when the line is shared, and a line has one binder, so the two UARTs must
-      # not name one line. Both UARTs are placed device-tree devices (check_uarts).
-      def check_uart_lines(rows, console, hostlink)
-        return if hostlink.empty?
+      # Property 8's interrupt-line clause (docs/design-shared-devices.md, "Lines inside a
+      # domain"): the console starts its own UART's driver, and the owner of its line when
+      # the line is shared, and a line has one binder, so no other UART, the host link's or
+      # a line grant's, of others by path with the field that names it, is on the console's
+      # line; those UARTs may share lines with each other. Every UART here is a placed
+      # device-tree device (check_uarts, parameter_value).
+      def check_uart_lines(rows, console, others)
+        return if console.empty?
 
-        console_line, hostlink_line = [console, hostlink].map do |path|
-          rows.fetch('devices').find { |device| device['path'] == path }.fetch('line')
+        line_of = ->(path) { rows.fetch('devices').find { |device| device['path'] == path }.fetch('line') }
+        others.each do |path, field|
+          next unless line_of.call(path) == line_of.call(console)
+
+          invalid("console #{console} and UART #{path} share interrupt line #{line_of.call(console)}", 8, field)
         end
-        return unless console_line == hostlink_line
-
-        invalid("console #{console} and host link #{hostlink} UARTs share interrupt line #{console_line}", 8,
-                'machine.hostlink')
       end
 
       # The holder of the unit whose devices include the device at path.
@@ -1609,6 +1610,7 @@ module Erx
         check_network_grants(rows, tables)
         check_files_grants(rows, tables)
         check_inspect_grants(rows, tables)
+        check_line_grants(rows, packed.map(&:first), tables)
         order = rows.each_index.sort_by { |at| [rows.fetch(at).fetch('name'), *grantee.call(rows.fetch(at))] }
         first = 0
         facets = order.map do |at|
@@ -1624,10 +1626,12 @@ module Erx
       # declarations give in checked_by, each with the keys it consumes (docs/design-abi.md,
       # "Services, facets and their parameter schemas"): windows_grant is property 18,
       # check_display_grants, which reads pixels and session, and range-checks windows and
-      # clipboard as their declarations bound them. A service declaring a parameter that no
-      # checker here consumes is unusable: no facet of it is admitted, since nothing would
-      # check what it grants.
-      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze }.freeze
+      # clipboard as their declarations bound them; line_grant is property 8's line clause,
+      # check_line_grants, which reads uart and flow and range-checks rate. A service
+      # declaring a parameter that no checker here consumes is unusable: no facet of it is
+      # admitted, since nothing would check what it grants.
+      GRANT_CHECKERS = { 'windows_grant' => %w[windows pixels clipboard session].freeze,
+                         'line_grant' => %w[uart rate flow].freeze }.freeze
 
       # A facet record's parameters resolved against its service's declarations: every
       # stated key is declared, appears once and has a value of its declared kind within
@@ -1639,18 +1643,19 @@ module Erx
         unless declared.all? { |key, parameter| GRANT_CHECKERS.fetch(parameter.fetch(:helper), []).include?(key) }
           unsupported("facet #{row.fetch('name')}'s service declares a parameter no grant checker consumes", 'facet.parameter')
         end
-        values = resolve_parameters(record, declared)
+        values = resolve_parameters(record, declared, tables.fetch('devices'))
         [values.freeze, values.map { |key, value| parameter_row(declared.fetch(key), value) }.sort_by { |item| item.fetch('key') }]
       end
 
-      # A facet record's parameter lines, KEY VALUE, as a map from key to value.
-      def resolve_parameters(record, declared)
+      # A facet record's parameter lines, KEY VALUE, as a map from key to value, a device
+      # reference resolved against devices, the placed device rows.
+      def resolve_parameters(record, declared, devices)
         values = record.parameters.each_with_object({}) do |(key_token, value_token), result|
           key = key_token.value
           parameter = (!key_token.quoted && declared[key]) ||
                       invalid("facet parameter #{key} is not declared by its service", 2, 'facet.parameter')
           invalid("facet parameter #{key} is stated twice", 2, 'facet.parameter') if result.key?(key)
-          result[key] = parameter_value(key, parameter, value_token, record.line)
+          result[key] = parameter_value(key, parameter, value_token, record.line, devices)
         end
         declared.each do |key, parameter|
           invalid("facet parameter #{key} is required", 2, 'facet.parameter') if parameter.fetch(:cardinality) == 'one' && !values.key?(key)
@@ -1659,9 +1664,12 @@ module Erx
       end
 
       # One value of its declared kind: an integer within its range, yes or no for a
-      # boolean, or quoted bytes within their bound. A set and the reference kinds are
-      # refused while no service declares one, so nothing here guesses their spelling.
-      def parameter_value(key, parameter, token, line)
+      # boolean, quoted bytes within their bound, or for a device reference the index in
+      # devices of the device-tree row at the quoted path, which its grant checker judges
+      # (docs/design-abi.md, "Services, facets and their parameter schemas"). A set and
+      # the domain and principal references are refused while no service declares one, so
+      # nothing here guesses their spelling.
+      def parameter_value(key, parameter, token, line, devices)
         kind = parameter.fetch(:kind)
         unsupported("facet parameter #{key} is a set, which no service declares", 'facet.parameter') if
           parameter.fetch(:cardinality) == 'set'
@@ -1682,6 +1690,11 @@ module Erx
           invalid("facet parameter #{key} is empty or over #{maximum} bytes", 2, 'facet.parameter') unless
             value.bytesize.between?(kind == 'bytes' ? 0 : 1, maximum)
           value
+        when 'device'
+          line.fail!("parameter #{key} requires a quoted device-tree path") unless token.quoted
+          dt = @codec.member('mf_selector', 'dt')
+          devices.index { |device| device.fetch('selector') == dt && device['path'] == token.value } ||
+            invalid("facet parameter #{key} names no placed device", 2, 'facet.parameter')
         else
           unsupported("facet parameter #{key} is a #{kind} reference, which no service declares", 'facet.parameter')
         end
@@ -1696,8 +1709,45 @@ module Erx
         when 'u64' then row.merge('scalar' => value)
         when 'i64' then row.merge('scalar' => value & ((1 << 64) - 1))
         when 'boolean' then row.merge('scalar' => value ? 1 : 0)
+        when 'device' then row.merge('index' => value)
         else row.merge('bytes' => value)
         end
+      end
+
+      # Property 8's clause for the line interface (docs/design-system.md, "The manifest";
+      # docs/design-bluetooth.md, "The controller's line"): the system domain serves every
+      # line service, and each grant of one, of facets with values, their resolved
+      # parameters in the same order, names by its uart a UART whose unit the system domain
+      # holds, which is neither the console's nor the host link's, is not on the console's
+      # interrupt line (check_uart_lines) and which no other grant names, and holds flow to
+      # none or rts_cts. The grantee is a configured domain, which mounts the tree its
+      # application start reads. The manifest grants the interface at most once, since one
+      # line service serves one line (TODO.md, the line's service side); the duplicate check
+      # runs first, so it holds once that limit is lifted.
+      def check_line_grants(facets, values, tables)
+        interface = fetch_interface('line')
+        if tables.fetch('services').any? { |row| row.fetch('interface') == interface && row.fetch('server') != @codec.constant('mf_none') }
+          invalid('only the system domain serves the line interface', 8, 'service.server')
+        end
+        grants = facets.zip(values).select { |row, _| tables.fetch('services').fetch(row.fetch('service')).fetch('interface') == interface }
+        console = @context.platform['console']
+        reserved = [console, @context.platform.fetch('hostlink', '')]
+        uarts = grants.map do |row, given|
+          named = "line grant #{row.fetch('name')}"
+          invalid("#{named} is granted to no configured domain", 8, 'facet.grantee') unless row.fetch('grantee_kind') == grantee_kind('domain')
+          device = tables.fetch('devices').fetch(given.fetch('uart'))
+          path = device.fetch('path')
+          invalid("#{named}'s uart #{path} names no UART", 8, 'facet.parameter') unless device.fetch('role') == device_role('uart')
+          invalid("#{named}'s uart #{path} is the console's or the host link's", 8, 'facet.parameter') if reserved.include?(path)
+          unless unit_holder(tables, path) == @codec.constant('mf_none')
+            invalid("#{named}'s uart #{path} is not the system domain's", 8, 'facet.parameter')
+          end
+          invalid("#{named}'s flow is none or rts_cts", 8, 'facet.parameter') unless %w[none rts_cts].include?(given.fetch('flow'))
+          given.fetch('uart')
+        end
+        check_uart_lines(tables, console, uarts.to_h { |uart| [tables.fetch('devices').fetch(uart).fetch('path'), 'facet.parameter'] })
+        invalid('two line grants name one UART', 8, 'facet.parameter') unless uarts.uniq.size == uarts.size
+        invalid('a manifest holds at most one line grant', 8, 'facet.service') if grants.size > 1
       end
 
       # The displays (docs/design-display.md, "A display's session"), sorted by their

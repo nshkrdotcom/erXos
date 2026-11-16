@@ -2606,12 +2606,16 @@ rows against the parameters its service's interface declares, from a
 table the build generates from `abi/services` (`erx_service_parameters`
 in `erx/abi.h`), so each row names a declared parameter once, in number
 order, of its declared kind and within its declared bound, and no
-parameter the interface requires is left out; a row of a reference kind,
-which nothing yet carries to the domain service, is refused, as the
-manifest check refuses one. `erx_domain_lib:configured/0` then gives
+parameter the interface requires is left out. A device reference, such
+as the `line` grant's `uart`, is the index of its device row, which the
+manifest check resolves from the device-tree path the facet row states
+and the reader checks against the device table; a domain or principal
+reference, which no service declares, is refused, as the manifest check
+refuses one. `erx_domain_lib:configured/0` then gives
 each checked parameter in the grant's `Limits` under its declared name,
 beside the row's six limit fields: an integer kind as an integer, a
-boolean as `true` or `false`, and text or bytes as a binary. The
+boolean as `true` or `false`, text or bytes as a binary, and a device
+reference as its row's index in the manifest's device table. The
 generator refuses a parameter that takes a limit field's name, so the
 two never meet in one map, and a `set` declaration, whose many values
 the view does not carry. So the `windows` grant's `pixels`, `windows`

@@ -177,6 +177,36 @@ module ManifestContextFixture
     source.sub(pattern, replacement)
   end
 
+  # Two UARTs beyond a board's console and host link, each a unit of its own, line_a and
+  # line_b, by path, register base and interrupt line, for the line interface's grants
+  # (docs/design-bluetooth.md, "The controller's line").
+  LINE_UARTS = { 'line_a' => ['/pl011@9050000', 0x9050000, 41], 'line_b' => ['/pl011@9060000', 0x9060000, 42] }.freeze
+
+  # The platform record with the LINE_UARTS units added, each a copy of the console's
+  # UART row at its own path, base and interrupt line, or the line lines gives by unit.
+  def line_platform(platform, lines: {})
+    console = platform.fetch('units').flat_map { |unit| unit.fetch('devices') }.find { |device| device['path'] == platform.fetch('console') }
+    units = LINE_UARTS.map do |key, (path, base, line)|
+      { 'key' => key, 'devices' => [console.merge('path' => path, 'base' => base, 'line' => lines.fetch(key, line), 'placement_key' => key)] }
+    end
+    platform.merge('units' => platform.fetch('units') + units)
+  end
+
+  # source with the unit records of the LINE_UARTS, each held by the system domain unless
+  # holders, by unit name, says otherwise, the system domain's line service and grants.
+  def with_line(source, *grants, holders: {})
+    units = LINE_UARTS.keys.map { |key| "unit #{key}\n  placement \"#{key}\"\n  holder #{holders.fetch(key, 'system')}\n" }
+    source + units.join + "service line\n  server system\n  interface line\n" + grants.join
+  end
+
+  # A facet row granting grantee the line service on the UART at uart, its max_request
+  # floor, the files_max_frame_min of a tree served as an erx_fs grant.
+  def line_grant(name, grantee, uart, floor:, flow: 'none')
+    "facet #{name}\n  grantee #{grantee}\n  service @service.line\n  operations none\n  max_request #{floor}\n" \
+      "  in_flight 1\n  reductions 1\n  period_ns 1\n  max_heap_size 1\n" \
+      "  parameter uart \"#{uart}\"\n  parameter rate 115200\n  parameter flow \"#{flow}\"\n"
+  end
+
   # A planner that plans every configured domain, introduction and session, for
   # checks that test the rest.
   def accepting_planner = ->(view) { { 'domains' => view.fetch('order').map { 0 }, 'introductions' => view.fetch('introductions').map { 0 },
