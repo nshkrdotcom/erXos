@@ -126,9 +126,11 @@ Decisions every reader of this document needs:
   reports of its device: which pixel comes from which window, and by
   which path it reaches the panel, a copy into the screen image or the
   device reading the client's buffer. A graphics device added later, a
-  2D engine, a plane compositor or a 3D GPU, adds a buffer source or a
-  composition path ([Graphics hardware](#graphics-hardware)); no client
-  and no policy changes.
+  2D engine, a plane compositor or a 3D GPU, adds a buffer source, a
+  composition path or a render service beside the display ([Graphics
+  hardware](#graphics-hardware)); no file of the display, no command and
+  no policy changes. GPU rendering for the desktop and for kiosk apps is
+  planned through such a service.
 * **A presentation is a type and a canonical text, and grants nothing.**
   Every value the inspector and the Erlang shell's printers emit already
   carries its type from the inspection schema. Its text is the form the shell parses back
@@ -154,10 +156,13 @@ Decisions every reader of this document needs:
   fault costs that session and no other. Native code of unknown
   provenance, LVGL among it, runs in a sub-space of the session that
   uses it.
-* **Nothing paints without a change.** Every byte that reaches a panel
-  follows from a client's present of a changed rectangle or from a change
-  of the windows' geometry. No timer redraws, so an idle display costs no
-  CPU and a panel can sleep.
+* **Nothing paints without a change or a transition a change started.**
+  Every byte that reaches a panel follows from a client's present of a
+  changed rectangle or from a change of the windows' geometry, and a
+  renderer presents only for a change of its tree or for the frames of a
+  transition that change started, which ends within the theme's bound
+  ([Motion](design-desktop-programs.md#motion)). No timer redraws an idle
+  window, so an idle display costs no CPU and a panel can sleep.
 
 ## Context
 
@@ -275,9 +280,9 @@ is not driven by this design, which says where each attaches
 15. A changed pixel is copied at most once between the client's
     renderer and the device, and not at all where the device can read
     the client's buffer.
-16. A graphics device added later adds a buffer source or a composition
-    path. It changes no file a client uses, no command, no policy and no
-    renderer's interface.
+16. A graphics device added later adds a buffer source, a composition
+    path or a render service. It changes no file of the display that a
+    client uses, no command, no policy and no renderer's interface.
 
 ## Overview
 
@@ -427,7 +432,7 @@ other.
 | **G3.** What a client makes the display domain spend is bounded by its grant | memory: the grant's `pixels` is the size of the client's pixel area, charged when the connection is made and never grown, and its `windows` bounds the client's window processes, each of which holds one present, at most 16 rectangles, a label and at most 4 KiB of pending `mouse` and of pending `kbd`; the display holds no image, font or tree of a client; a write carries at most the file protocol's 64 KiB, and a `ctl` or `wctl` line at most 1,024 bytes; `erx_screen` never waits on the driver, so its mailbox drains while a frame is with the device, and what it holds meanwhile is state, not a queue: the newest layout, which replaces the one before, and at most one waiting present for each live window, dropped when the window ends ([The screen](#the-screen-and-its-one-path-to-the-device)). CPU: a window has one present in flight; `erx_screen` gathers the presents that arrive while the device is busy into one frame and copies for each window at most its present's 16 rectangles, each clipped to the window's visible region, once a frame, so a client that presents as fast as it is answered costs one such copy for each frame of the device and delays no other window by more | a buffer the display allocates for a client; a window with two presents composed in one frame; an unbounded queue; a layout kept for each change instead of the newest; a waiting present kept after its window's end; a call to the driver that blocks `erx_screen`; a layout change that asks a client for work | a client that makes windows past its quota, refused with `EDQUOT`, with the domain's memory unchanged; against a driver model that never answers, a client that writes 100,000 `wctl` moves and makes and removes 100,000 windows leaves `erx_screen`'s message queue empty between messages and its heap within the bound computed from the windows quota, where a seeded `erx_screen` that calls the driver synchronously, or that keeps every layout, fails the bound; a client that floods presents from one window while another window's one present is answered within two frames, where a seeded window process that sends its next present before the last is answered fails it; the queue bounds of the data model |
 | **G4.** A presentation grants nothing | a presentation is a type and a canonical text; the terminal emulator's only actions on one are to insert its text as keyboard input and to highlight the presentations of the types an input context names; a widget's only action is the `{select, Type, Value}` event to its application; neither carries a facet, a grant or a capability, and the command that then runs is checked by the shell's facets as any typed command is ([Authority](design.md#authority)) | a terminal that calls a service for a clicked link; a widget server that performs the action a presentation names | a session without an inspect facet clicks a pid presentation and the inserted `i` command fails with `no_facet`; the link parser's fuzz target; a source check that `erx_term` and `erx_ui_server` call no facet |
 | **G5.** Attributed text in a window is displayed only through the line escape, and a program's output reaches its terminal window unchanged | a window's label, a widget's `present` text and a widget's text drawn from a record value are escaped by the displayer with `erx_text:escape_line/1` ([Attributed text](design-live.md#attributed-text)): the menu in the display domain, a renderer in the session; the terminal emulator takes its bytes from a tty, which changes nothing but what `termios` says (V1), and interprets them as a terminal does | a label drawn raw; a terminal emulator that filters a program's bytes | the attributed-text test corpus of design-live sent as a label, as a `present` text and as a record value in a widget; V1's byte test with a terminal window in place of the serial line |
-| **G6.** Nothing paints without a change | the only path to the device is `erx_screen`, which composes on a window's present and on a change of the layout, and repaints from the buffers it already maps when the driver restarts or the panel wakes; the driver pushes only the rectangles it is given; no process of the display domain has a redraw timer; no renderer has one either: the LVGL program, built with animations off, blocks on its standard input until a record arrives or its next LVGL timer is due, so it reports only what a change invalidated | a periodic repaint; a push of the whole screen for a small change; an LVGL timer that fires without a change | an idle display for one minute makes no device request, counted at the driver, on the desktop and on a kiosk under LVGL, where a seeded animation in the LVGL build fails it; a one-pixel change makes exactly one push of one rectangle; moving a window pushes exactly the area whose content changed |
+| **G6.** Nothing paints without a change or a transition a change started | the only path to the device is `erx_screen`, which composes on a window's present and on a change of the layout, and repaints from the buffers it already maps when the driver restarts or the panel wakes; the driver pushes only the rectangles it is given; no process of the display domain has a redraw timer; a renderer draws only for a change of its tree and for the frames of a transition that change started, each declared in the theme with a duration the generator bounds ([Motion](design-desktop-programs.md#motion)): the Erlang renderer has no timer and draws a transition's next frame at the answer of its last present, and the LVGL program, whose only animations are the theme's transitions, blocks on its standard input until a record arrives or its next LVGL timer is due, which is only while a transition runs | a periodic repaint; a push of the whole screen for a small change; a transition that restarts at its end or outlasts its duration; an LVGL timer that fires with no change and no transition running | an idle display for one minute makes no device request, counted at the driver, on the desktop and on a kiosk under LVGL, where a seeded animation in the LVGL build fails it; a press on a button under each renderer makes presents only within the theme's `press` duration after the press and its release, and none after, where a seeded transition that starts again at its end fails it; a one-pixel change makes exactly one push of one rectangle; moving a window pushes exactly the area whose content changed |
 | **G7.** A widget never fabricates | a `present` property and a value drawn from a record keep their `attr()` status; the renderer shows every status other than `ok` as its token, as `erx_render` does (V2) | a widget that drops a status | the status tests of design-live run through a widget tree, for each status and reporter |
 | **G8.** What a program writes to a terminal window costs bounded memory, and nothing of it comes back as input | `erx_vt`'s state is bounded by its size and the constants of [Bounds](#bounds): parameters, intermediates and strings are capped, the scrollback is capped in cells and the link table in entries, and an endless sequence costs no memory; its only replies are DA's and DSR's fixed forms, whose variable parts are numbers it computes; it is Erlang, so a fault in it ends one terminal process, not its session's runtime | a buffer that grows with a sequence; a report that echoes text, such as a title report; a native parser of program output | the fuzz target asserts the state's size against the bound computed from the size and the constants, where a seeded scrollback without its cap fails it; the reply test sends every query form, a title report among them, and checks every reply against the three forms, where a seeded title report fails it; the chokepoint check that only `erx_vt` interprets a terminal's output |
 | **G9.** The display domain interprets nothing a client drew | a client's bytes reach the display domain as the file protocol's terms, which the funnel and the protocol's grammar check, as one `ctl` or `wctl` line, which a pure parser reads, as a label or the clipboard's bytes, which are kept and never parsed, and as pixels, which `erx_memdraw` copies between images over rectangles the display computed; the display release holds no draw decoder, no `Y` or PNG decoder, no font reader, no widget schema and no renderer, and has no sub-space | a decoder of client bytes in the display release; a NIF of it that takes a client's binary and parses it | an xref check that the display release contains none of the session's draw, font, picture and widget modules, with a seeded dependency failing it; the build check over the release's NIFs (Chokepoints) |
@@ -450,6 +455,7 @@ other.
                     holder := pid(),           % the mkdir's Owner; the window ends with it
                     rect := rect(),            % on the screen; the policy's to set
                     state := shown | hidden,
+                    changed := integer(),      % ms: last change of rect, state or stacking place
                     label := binary(),         % attributed text, escaped when drawn
                     proc := pid()}.            % the window process
 %% What a window process holds besides its row of the table:
@@ -481,6 +487,14 @@ layout virtio-gpu, a plane compositor and a GPU all take, and one in
 `r5g6b5` rows of 2 times its width rounded up to 4 bytes. A buffer has no
 header and no field: the display computes every address in it from the
 `present` that named it, checked, and from nothing the area holds.
+
+**Colour.** Every channel's values are sRGB-encoded, the screen's and
+every buffer's, and where a channel has alpha its colour channels are
+premultiplied by it, the convention `libmemdraw`'s arithmetic assumes.
+Composition copies values and converts none. `erx_png` shows every PNG
+as sRGB: it reads the colour-space chunks (`gAMA`, `cHRM`, `sRGB`,
+`iCCP`, `cICP`) as changing nothing and refuses no file for carrying
+one.
 
 A display's grant carries its quotas, from the manifest's facet
 parameters: `windows`, the windows it may hold at once; `pixels`, the
@@ -916,7 +930,7 @@ is, whose operations are the file protocol's own, with the parameters
 client's directory, so the client sees:
 
 ```text
-/N/ctl      read: the display's channel; write: a present
+/N/ctl      read: the display's channel and scale, the last present's report; write: a present
 /N/mouse    read: 49-byte records 'm x y buttons msec' and 'r ...' after a resize
 /N/kbd      read: records 'c' runes typed, 'k' keys down, 'K' keys down after a release
 /N/wctl     read: the window's rectangle and state; write: a geometry command
@@ -984,8 +998,39 @@ buffer; the window it made for a moment took a window id and showed none
 of the client's pixels. A client re-reads `screen` at an
 `r` record of any of its windows, to size the next window it opens.
 
-**`ctl`.** A read answers one line, the display's channel descriptor. A
-write is one command of one line:
+**`ctl`.** A read answers the display's line and, once the window has
+presented, a second line, the report of its last answered present:
+
+```text
+CHAN SCALE
+presented AT PERIOD WAY
+```
+
+`CHAN` is the display's channel descriptor. `SCALE` is the window's
+scale, pixels to a logical pixel, as a fraction `N/D` of two decimal
+numbers. A renderer multiplies by it every size the theme and a widget
+tree state, which are logical pixels
+([design-desktop-programs.md](design-desktop-programs.md#the-theme-one-declaration));
+a draw client works in pixels and may read it or not. Buffers,
+rectangles and presents stay in pixels, so the scale changes nothing the
+display does. The display answers only a scale for which the image
+carries glyph and icon sets, and the image carries the sets of one,
+`1/1`; a panel that needs another brings its sets, and the display's
+manifest entry then names its scale, with no change to this file.
+
+The report says what became of the present: `AT` is the millisecond at
+which the device took the frame that showed it, on the clock whose
+milliseconds `mouse` records carry; `PERIOD` the device's refresh period
+in microseconds; and `WAY` how its pixels reached the screen, `copy` or
+`direct`, or `none` when none did, the window being hidden or covered or
+the panel off. A value the driver cannot give is the word `unknown`, as a
+panel on a serial bus has no refresh period, and none is filled in from
+another clock. A window has one present in flight, so a read after the
+answer reports that present. `tools/erx bench` measures from an input to
+the frame that answers it with these, and a renderer paces a transition
+by the answers ([The widget server](#the-widget-server)).
+
+A write is one command of one line:
 
 ```text
 present OFFSET WIDTH HEIGHT [X0 Y0 X1 Y1]...
@@ -1417,6 +1462,7 @@ are in [Widget format](design-abi.md#widget-format). The properties:
 | `current` | boolean; `false` when absent | `button` | the button stands for the current one of its set, such as today in a month; a renderer marks it |
 | `samples` | at most 240 integers within `min` and `max`, or `none`, oldest first | `graph` | the series the graph draws; `none` is a sample not taken |
 | `mark` | integer within `min` and `max` | `graph` | a reference value drawn across the series, such as a grant |
+| `name` | at most 255 bytes of UTF-8 | every kind | what the node is called where it shows no text of its own, such as a button with an icon alone; never drawn, it names the node to a test, the browser and an assistive reader |
 | `on_click` | event | `button` | |
 | `on_change` | event | `checkbox`, `slider`, `input`, `list` | the user changed the node's state |
 | `on_submit` | event | `input`, `list` | the user pressed enter, or activated the selected entry of a `list` by a double click or Return; a `list`'s value is its `selected` index |
@@ -1976,7 +2022,20 @@ window that is not the current one, which the policy takes for itself,
 as Plan 9's rio takes the click that selects a window, answering
 `{windows, Table}` with that window raised and picked, so the click
 reaches no client; and a menu item that names a window, which picks the
-window it shows, moves or resizes. `place/6` and `arrange/4` never
+window it shows, moves or resizes. A down picks a window only where the
+person has had it in view under that point: a button's down only when
+the pointer entered the window after the window last changed, and a
+touch's down, which has no pointer before it, only when the window has
+not changed for 200 ms (`windows_pick_ms` of `abi/services/windows.txt`).
+A window's `changed` is the time `erx_winfs` stamps on its row when the
+policy's answer changes its rectangle, its state or its place in the
+stacking order; the policy reads it and keeps, from the pointer events it
+is asked about, the window the pointer last entered and when. Any other
+down on a window that is not current picks nothing and, like every pick,
+reaches no client. So a client that makes, shows, moves or raises its
+window under a resting pointer gets neither the click nor the keyboard,
+and a window the pointer was already in costs the person nothing.
+`place/6` and `arrange/4` never
 change the pick, so a client's request moves no keyboard: a `wctl`
 `top` raises its window and no more, `hide` then `show` hides and shows
 it, and a `mkdir` makes a window placed and raised as every new window
@@ -2032,10 +2091,18 @@ or wait for it, and no client comes to depend on receiving it. The
 chord is the set of keys the entry names, by evdev code; it fires on
 the down of one of its keys that makes the keys held, over every
 device of the display, include that set, whatever other keys are held,
-and that down, its repeats and its up reach no window. It opens
-nothing: which trusted screen it brings up, a
-login or a lock, is the login design's ([Risks and
-decisions](#risks-and-decisions), 14).
+and that down, its repeats and its up reach no window. It opens the
+display's **trusted overlay**, drawn by the display domain as the menu
+is and above it: every shown window dimmed and named by its true
+principal, never by its label. The name comes from the window's grant,
+which carries its grantee's principal as a parameter the domain service
+computes at the mint, as the `machine` grant does
+([design-system.md](design-system.md#facets-a-configured-domain-serves)),
+so no client can choose what the overlay calls it. Which trusted screens
+the overlay also holds, a login, a lock or a prompt, and whether a
+border carries a principal's mark while windows of more than one
+principal are shown, are the login design's ([Risks and
+decisions](#risks-and-decisions), 14); no title bar carries a name.
 
 The **layout** is the shown windows in stacking order, each with its
 window process, its rectangle and its decorations from `decorate/3`, a
@@ -2449,6 +2516,20 @@ race can leave a mix of both. It is one display's,
 shared by every grant on that display whose facet row turns `clipboard`
 on, as X's selection is shared by a display's clients; `clipboard` is off
 unless the row turns it on (Security says with whom).
+
+The clipboard moves only at a person's act. `erx_winfs` serves a request
+on `/clipboard`, an open, a read or a write, only when it comes through
+the grant that holds the window taking the keyboard, the current window
+under the overlapping policy and the shown one under the single, and
+only within 500 ms (`windows_clipboard_ms` of
+`abi/services/windows.txt`) of a key's or button's down or up that the
+router delivered to that window. Any other request fails with `EACCES`
+and changes nothing. The check is on every request, so a fid opened in
+time and kept reads and writes nothing later. The up counts as the
+down does, so a selection made by a drag copies at its release, and a
+command typed at a shell copies when it writes within that time of
+Return. A grant that
+holds no window, a configured domain's, can neither read nor write it.
 
 ### The draw connection
 
@@ -3422,6 +3503,32 @@ So every node lies within its parent's content box, siblings in a
 column, row, grid or scroll never overlap, and no node shrinks when the
 window grows.
 
+**The layout's contract.** What a node needs goes up and what it gets
+comes down, and nothing else crosses it. Its natural size depends on its
+own properties, its subtree and `Measure`, and on nothing above it; its
+parent gives it a slot; the size of its `Rect` is a function of its
+natural size, its `align` and its slot's size, and where the slot lies is
+its parent's choice alone. This is Flutter's contract of constraints
+down, sizes up and the parent placing
+([research-ui-toolkits.md](research-ui-toolkits.md#flutter-and-impeller)). So a
+subtree whose properties and slot size are unchanged lays out to the
+same rectangles moved with its slot, which is the cache a later
+`erx_ui_layout` can keep, if layout shows in a profile, with no change
+to its interface.
+
+**Transitions.** The widget format fixes what starts each transition,
+and the theme its duration and curve
+([Motion](design-desktop-programs.md#motion)). When a delta changes a
+property that starts one, or a button the renderer hit-tested is
+pressed or released, the Erlang renderer draws the node at the change's
+start and, at each answer of its last present, draws it again at the
+time of that answer, until the duration has passed and the node is
+drawn at its end; a report whose `WAY` is `none` ends it at once. It
+interpolates colour and opacity only, never a rectangle, so a transition
+redraws the node's own rectangle and the layout is computed once. It has
+no timer: the device's pace is its clock, and with no change and no
+transition running it draws nothing.
+
 The **LVGL renderer**, `erx_ui_lvgl`, starts the native program
 `erx-lvgl` as a program of its own session, as the session starts any
 program ([design-programs.md](design-programs.md#starting-a-program)):
@@ -3516,13 +3623,16 @@ renderer waits longer on a program that stopped reading. Its standard
 output is read by a process linked to `erx_ui_lvgl` that holds the read
 end, handed to it with `erx_pipe_srv:inherit/2`, and passes each read on
 as a port passes its data, so `erx_ui_lvgl` waits on its mailbox alone. The
-program's fonts are LVGL's, and it is built with animations and blinking
-cursors off. Between records it blocks in `poll` on its standard input
+program's fonts are LVGL's, and it is built with blinking cursors off
+and with no animation but the theme's transitions, which it sets as its
+styles' transitions from `erx/theme.h`
+([Motion](design-desktop-programs.md#motion)). Between records it blocks in `poll` on its standard input
 with the deadline `lv_timer_handler` returns, or with none when no LVGL
 timer is due; the POSIX-lite personality gives a native program `poll`
 with a deadline over its pipe ends
 ([design-programs.md](design-programs.md#the-posix-lite-personality)).
-So an idle program runs nothing and reports nothing (G6). The renderers
+So an idle program runs nothing and reports nothing (G6), and a
+transition keeps a timer due only until it ends. The renderers
 pass the same parity test (Verification), which compares meaning, and an
 application cannot tell them apart except by pixels.
 
@@ -3540,6 +3650,22 @@ token when the status is not `ok` (G7), and a click sends the owner
 `on_select`. An inspector window is an ordinary application: it renders
 a record as a tree of labels with `present` properties and, on a select,
 queries the inspector through its own inspect facet (G4).
+
+**Who may read a window's tree.** The realised tree is what the window
+shows, its text included, as data. Beyond its renderer, it reaches a
+reader only at one inspection path, `[domains, Id, uis, N]` of the
+domain that runs the server, `N` the server's number in that domain,
+shown at `/proc/domains/Id/uis/N/tree` and answered by the runtime's
+agent, marked `runtime`. The path is built with its first reader, the
+inspector's "what is this?" or an assistive reader, and its access rule
+is fixed here. Two principals read it: the window's own, and the
+person at the display, the principal of the display's session on the
+display the window is on; no other inspect facet reads it, whatever its
+scope. The person at the display already sees every pixel of the window
+and its own principal wrote it, so the path tells neither anything new,
+while a reader of every window's tree, beside a source of input, would
+hold the whole of the display. A secret `input`'s text is never kept by
+the server, so the path cannot show it.
 
 ### A display's session
 
@@ -3925,11 +4051,40 @@ written.
 Three properties keep these additions from reaching clients. A buffer is
 described by its width, height and the display's channel, and its rows
 are 32 bits aligned, the layout each of these devices takes. A client
-learns of the display only its channel and its window's size, and of
-composition only the answer to its present. And every path falls back
+learns of the display only its channel, its scale and its window's size,
+and of composition only the answer to its present and that present's
+report. And every path falls back
 to the copy path, which needs nothing of the buffer but that the display
 can read it; a device resource the CPU cannot read is the one case that
 must add its composition path with its source.
+
+**What a render service owes the display.** GPU rendering, OpenGL-class,
+is planned for the desktop and for kiosk apps
+([plan.md](plan.md#track-d-windows-widgets-and-the-web), part 10), and
+its design follows research of its own. Whatever it settles, it reaches
+the display through the one `present` and these three rules, so the
+display gains no party, no fence and no message for it:
+
+* **A buffer is finished before it is presented.** A client presents a
+  buffer only after the render service has answered that every job
+  writing it has ended. The display reads a presented buffer at once, as
+  it reads a CPU-drawn one, and never waits on a job or speaks to the
+  service; a client that presents early shows its own window part-drawn
+  and nothing else, as a client that draws in its shown buffer does.
+* **A buffer stays a range of its client's pixel area.** The system
+  domain makes the area from memory the device reaches, a buffer source
+  of the table above, and the render service maps for its device only
+  the ranges of the client it serves; the display's mapping stays
+  read-only and no buffer is the service's or the display's.
+* **The present's answer is the release.** From the answer to a present
+  of another buffer the display no longer reads this one, so the client
+  may hand it to the service again; with two buffers a client renders
+  one while the other is shown, as a CPU client does.
+
+A kiosk app that renders through the service shows its frames on the
+direct path wherever the device can scan out its buffer: the single
+policy gives its one window the whole screen, so a GPU-rendered frame
+reaches the panel with no copy in the display.
 
 ### Erlang clients
 
@@ -3944,7 +4099,9 @@ buffers](#windows-and-buffers)), and returns a handle holding the fids
 of the window's files, the display's channel as `screen` answered it,
 the buffer and the window's rectangle; `image/1` answers an `erx_memdraw` image over the buffer at the
 window's size; `present/2` writes the present for a list of rectangles
-and waits for its answer; `mouse/1` and `kbd/1` read records;
+and waits for its answer; `report/1` reads `ctl` and answers the
+window's scale and the last present's report, `#{scale, at, period,
+way}`, with `unknown` where the display wrote it; `mouse/1` and `kbd/1` read records;
 `resized/1`, after an `r` record, re-reads the window's rectangle and
 answers an image at the new size over the same buffer, clipped to it,
 and allocates nothing; `resize/2` and `label/2` write `wctl`
@@ -4020,9 +4177,12 @@ connection does not support, an image past its size limits, or its quota.
 **The window tree**, as the data model lists it, served by `erx_winfs`
 through the file protocol and declared as the interface `windows` in
 `abi/services/windows.txt`, with the grant's parameters `windows`,
-`pixels` and `clipboard`, and `session`, which no facet row sets and the
-domain service sets for the display's session alone; the `present`
-command of `ctl`; `wctl`'s commands
+`pixels` and `clipboard`, `session`, which no facet row sets and the
+domain service sets for the display's session alone, and `principal`,
+the grantee's principal, which the domain service sets on every mint;
+the constants `windows_clipboard_bytes`, `windows_clipboard_ms` and
+`windows_pick_ms`; `ctl`'s read, the display's line and the last
+present's report, and its `present` command; `wctl`'s commands
 `resize -r X0 Y0 X1 Y1`, `move -r X0 Y0 X1 Y1`, `hide`, `show`, `top`,
 which raises the window and gives it no keyboard ([Windows and the
 window system](#windows-and-the-window-system)), and `bottom`, each one
@@ -4371,16 +4531,24 @@ the window and the reason.
   makes the domain service mark one. Under the overlapping policy no
   client takes the keyboard by asking, by making a window or by
   outlasting another: keys go only to the window the user last picked
-  with a click or the menu, while it is shown
+  with a click or the menu, while it is shown, and a click picks only a
+  window the pointer entered after the window last changed, so no client
+  takes a click by putting its window under the pointer
   ([Windows and the window system](#windows-and-the-window-system)).
 * **The clipboard** is shared, per display, by every grant on it whose
   facet row turns `clipboard` on, whatever its principal: the sessions of
   those rows' templates, their terminals and every program they give
-  `/dev/clipboard`, and the configured domains those rows name. What one of
-  them copies, any other can read. `clipboard` is off unless a row turns it
-  on, so an app reads a person's clipboard only where the board's
-  manifest turned it on for both; a grant without it has no `/clipboard`,
-  and its copy and paste stay within a program or a terminal window.
+  `/dev/clipboard`. `clipboard` is off unless a row turns it on, so an
+  app reads a person's clipboard only where the board's manifest turned
+  it on for both; a grant without it has no `/clipboard`, and its copy
+  and paste stay within a program or a terminal window. Among those that
+  share it, it moves only at the person's act: a request is served only
+  through the grant holding the window that takes the keyboard, within
+  500 ms of a key or button the person pressed or released there
+  ([The window process](#the-window-process)). So a principal reads only
+  what the person pastes into its window and writes only what the person
+  copies there; a timer, a program in the background and a configured
+  domain, which holds no window, do neither.
 * **Presentations grant nothing** (G4). The link carries a type and a
   text; the terminal inserts text; the shell checks facets. A hostile
   program cannot make the terminal emit a presentation that does more
@@ -4411,11 +4579,9 @@ the window and the reason.
   client. Implicit bidirectional reordering of displayed text is
   not escaped, as in design-live. A window can draw a convincing copy of
   another window's content, a terminal's included; under the overlapping
-  policy the border marks the window that takes the keyboard and the menu
-  names windows by label. A client that raises its window under the
-  pointer just before the user clicks there takes that click, and with
-  it the keyboard; the border then marks its window as the current one.
-  Any program writing
+  policy the border marks the window that takes the keyboard, the menu
+  names windows by label and the reserved chord's overlay names each by
+  its principal. Any program writing
   to a terminal can write an input context, as the shell does, and so
   highlight presentations the shell did not ask for; a click on one
   still inserts only the presentation's text, shown in the command line
@@ -4724,10 +4890,18 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   a second client makes a window, raises it with `top`, and hides and
   shows it; the second client's `kbd` reads nothing, where a seeded
   policy that picks each new window fails it. With window A current
-  and window B topmost, a click on B moves the border on the screen and
-  the next key to B together, where a seeded `erx_winfs` that hands
-  over the layout only when the table changes leaves the border on A
-  while the key reaches B. The menu, drawn as
+  and window B topmost, the pointer moved into B and a click there move
+  the border on the screen and the next key to B together, where a seeded
+  `erx_winfs` that hands over the layout only when the table changes
+  leaves the border on A while the key reaches B. The pick rule, in
+  `erx_wm_rio`'s own tests with times as inputs: with the pointer resting
+  over A, B raised under it with `top` and then clicked picks nothing,
+  reaches no client and leaves keys going to A, where a seeded policy
+  that ignores `changed` picks B; the pointer leaving B and entering it
+  again, then a click, picks B, where a seeded policy that asks for
+  re-entry on every click fails it; a touch's down 100 ms after B is
+  raised picks nothing and one 200 ms after picks B, where a seeded delay
+  of 0 fails the first. The menu, drawn as
   an overlay, lies above every window and reaches the screen only
   through `erx_screen:overlay/2`.
 * **The input router.** `erx_input` is a pure state machine and is
@@ -4798,6 +4972,23 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
   `open/2` that sizes the buffer by the window's rectangle answers one
   clipped to the first placement. A `mkdir` of `screen` or `clipboard`
   fails with `EEXIST`.
+* **The clipboard's rule.** Against a router model with times as inputs,
+  the grant holding the current window writes `/clipboard` 100 ms after
+  a key's up in it and a second grant reads the bytes 100 ms after a
+  click in its window, once picked; the same write 600 ms after the up,
+  a read through a grant whose window is not current, and a read through
+  a configured domain's grant, which holds no window, each fail with
+  `EACCES` and leave the clipboard as it was, where a seeded `erx_winfs`
+  that checks the grant and not the time fails the first and one that
+  checks the time and not the grant fails the second; a fid opened in
+  time and read again 600 ms later fails, where a seeded check made only
+  at the open fails it.
+* **The `ctl` read.** A window that has not presented reads one line,
+  its channel and `1/1`; after a present on the copy path its report
+  names `copy` and a time no earlier than the write's, and after a
+  present while the panel is off, `none`; against a driver model that
+  reports no refresh period, `PERIOD` is `unknown`, where a seeded
+  window that fills it from the display's own frame count fails it.
 * **A window over a lent range.** An `erx_ui_lvgl` window at 1920 by
   1080 in the default pixel area of 8 MiB shows the program's first
   frame, where a seeded `open/2` that allocates a buffer despite
@@ -4930,6 +5121,16 @@ pixel quota, is refused before anything is inflated, where a seeded removal of t
     another fail the second, a leftover shared by rounding running sums
     fails the fourth, and a layout that ignores the pad, or that keeps a
     filling node inside its pads, fails the last;
+  * the layout's contract: one random subtree placed in slots of one size
+    at random offsets lays out to the same rectangles moved by the
+    offset, where a seeded layout that rounds a weighted share against
+    the window's origin fails it;
+  * transitions under the Erlang renderer, against a window model that
+    answers each present 16 ms after it: a button's press draws frames
+    only until the theme's `press` duration has passed and then its end
+    state, and a report of `none` draws the end state at once, where a
+    seeded transition that starts again at its end fails the first and a
+    seeded renderer that ignores `WAY` fails the second;
   * the binary form: each generated reader, in Erlang, C and TypeScript,
     has a fuzz target, and the three accept the same inputs and decode
     the same operations and events; a reader with two property numbers
@@ -5304,7 +5505,11 @@ Decisions:
 6. **The clipboard** is shared per display, as X does, by the grants
    whose facet rows turn `clipboard` on; it is off by default, so no app
    reads a person's clipboard unless the board's manifest says so, and
-   Security states who shares it.
+   Security states who shares it. Among those, a copy or a paste is served
+   only through the grant holding the window that takes the keyboard,
+   within 500 ms of a key or button there, so a configured domain, which
+   holds no window, can neither copy nor paste ([The window
+   process](#the-window-process)).
 7. **The input context.** The shell announces the argument types each
    command accepts with `-erx_args`, so the terminal highlights the
    presentations a command can take.
@@ -5351,7 +5556,8 @@ Decisions:
     domain's view of what is typed is stated as an X server's is. It
     settles how a person proves who they are at a display, what shows
     the prompt and which domain sees the passphrase; what the reserved
-    chord brings up and what of a locked session stays on the screen;
+    chord's overlay holds besides the windows' principals, whether a
+    border marks a principal while principals mix, and what of a locked session stays on the screen;
     which sessions and windows a log out ends; several principals on
     one display, in turn or side by side, and who shares the clipboard
     then; how an operator reaches a shell on a kiosk's own screen;

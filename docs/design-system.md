@@ -2587,8 +2587,10 @@ manifest's system-shell principals and its development flag
 grant's `session`, the session mark the domain service fixes for the
 display's session and copies into every mint of that grant
 ([design-display.md](design-display.md#the-pixel-area)); and the
-`machine` grant's `principal`, the grantee's principal, which the tree's
-log line names ([A session's request](#a-sessions-request)). A service that
+`machine` and `windows` grants' `principal`, the grantee's principal,
+which the tree's log line names ([A session's request](#a-sessions-request))
+and the display's trusted overlay shows for each window
+([design-display.md](design-display.md#windows-and-the-window-system)). A service that
 needs a value only the domain service knows takes it the same way, never
 through a facet row or a protocol of its own.
 
