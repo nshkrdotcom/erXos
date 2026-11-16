@@ -1469,19 +1469,22 @@ from an open that may not read is answered `ok` and parked: the relay
 keeps it, with its caller, outside the line discipline, so no `VTIME`
 timer runs for it. A watch of `out` is never parked, since a background
 job's writes go through in the first tier. It is reported once no writer's
-message waits and a byte of room is free for the master, as FreeBSD's
-`poll` reports `POLLOUT` (`ttydev_poll`, `sys/kern/tty.c`); output
-stopped does not matter, as it does not to FreeBSD's `poll`. Once a write
-has found too little room for all its bytes, the watch waits instead for
-FreeBSD's low-water mark, nine tenths of the 4 KiB free, as FreeBSD wakes
-a writer that a full output queue held (`TF_HIWAT_OUT`,
-`ttydisc_wakeup_watermark`, `sys/kern/tty_ttydisc.c`). The room reaching
-the mark ends that wait, checked as the master takes output and before
-the writers' messages take the room again; a flush ends it only through
-the room, since the relay's flush keeps the output the master has. FreeBSD's `poll` itself reports at one byte
-even then, so a program whose next rendering is wider, a newline under
-`ONLCR` with one byte free, would spin between `poll` and `EAGAIN` until
-the master takes output.
+message waits and the room free for the master fits one more byte's
+widest rendering, a tab under `TAB3` (`erx_tty:widest_rendering/0`),
+so the write a report lets go takes at least its first byte; output
+stopped does not matter, as it does not to FreeBSD's `poll`. This departs
+from FreeBSD, whose `poll` reports `POLLOUT` at one free byte
+(`ttydev_poll`, `sys/kern/tty.c`): a line discipline never splits a
+byte's rendering, so a program whose next byte renders wider, a newline
+under `ONLCR` with one byte free, would spin between `poll` and `EAGAIN`
+until the master takes output. FreeBSD's blocked writer does not spin,
+since it waits for the low-water mark (`TF_HIWAT_OUT`,
+`sys/kern/tty_ttydisc.c`) and blocking writers go one at a time
+(`TF_BUSY_OUT`, `sys/kern/tty.c`). The relay's writers' messages are not
+serialised with its `out` waits, so such a mark would be state that a
+writer adding between the master's takes keeps from clearing; the rule
+depends on the room alone, so nothing holds a watch off while the room
+is there.
 
 **The ordering rule.** The answer goes before anything the request sets
 off. A watch whose condition already holds is answered `ok` and then

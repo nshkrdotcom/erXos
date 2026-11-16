@@ -88,7 +88,7 @@ class ErxSessionRelayCoreTest < Minitest::Test
     mode_ignored: Fault.new(text: "on_open(_Caller, {tty_read, _, _, _}, #open{mode = write}, Core) ->\n    " \
                                   "{{error, ebadf}, [], Core};\n",
                             broken: '', case_name: /the_mode_test/),
-    out_without_room: Fault.new(text: 'andalso not Full andalso Free > 0 of', broken: 'andalso not Full andalso Free >= 0 of',
+    out_without_room: Fault.new(text: 'andalso Free >= erx_tty:widest_rendering() of', broken: 'andalso Free >= 0 of',
                                 case_name: /output_takes_the_links_room_test/),
     # A step sends what is held once, at its end: a send inside it, at
     # each echo or when output starts, puts bytes the step's flush drops
@@ -109,17 +109,9 @@ class ErxSessionRelayCoreTest < Minitest::Test
     never_reconciled: Fault.new(text: '{Reconciled, Core1} = reconcile(Core0),',
                                 broken: '{Reconciled, Core1} = {[], Core0},',
                                 case_name: /input_on_demand_test/),
-    # Once a write found too little room, an out wait waits for the low-water mark.
-    out_at_one_byte: Fault.new(text: 'andalso not Full andalso Free > 0 of', broken: 'andalso Free > 0 of',
-                               case_name: /an_out_wait_waits_for_the_low_water_mark_test/),
-    # A write refused for want of room does not make out waits wait for the mark.
-    eagain_forgets_full: Fault.new(text: '{0, Actions, Core1} -> {eagain, Actions, Core1};',
-                                   broken: '{0, Actions, _Core1} -> {eagain, Actions, Core};',
-                                   case_name: /an_out_wait_waits_for_the_low_water_mark_test/),
-    # Out waits wait for the mark even once the room has reached it.
-    mark_never_clears: Fault.new(text: 'Core#core{full = Core#core.full andalso Free < ?LOW_WATER}.',
-                                 broken: 'Core#core{full = Core#core.full andalso Free < ?LOW_WATER + 4096}.',
-                                case_name: /an_out_wait_waits_for_the_low_water_mark_test/),
+    # An out wait reported at one free byte lets a newline under ONLCR find no room.
+    out_at_one_byte: Fault.new(text: 'andalso Free >= erx_tty:widest_rendering() of', broken: 'andalso Free > 0 of',
+                               case_name: /an_out_wait_waits_for_room_for_any_byte_test/),
     # With no master, a drain waits for output no one takes.
     no_master_drain_waits: Fault.new(text: 'erx_tty_link:stopped(Link) orelse Master =:= none of',
                                      broken: 'erx_tty_link:stopped(Link) orelse Master =:= nobody of',

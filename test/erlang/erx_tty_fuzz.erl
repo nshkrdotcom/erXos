@@ -125,9 +125,14 @@ steps(N, Termios, Counted, Tty, {Read, In}) ->
             check_actions(Actions),
             steps(N - 1, Termios, Counted, Tty1, {Read, In});
         4 ->
-            Room = rand:uniform(300) - 1,
-            {Taken, Out, Tty1} = erx_tty:output(random_bytes(), Room, Tty),
+            Widest = erx_tty:widest_rendering(),
+            Room = pick([rand:uniform(300) - 1, Widest - 1, Widest]),
+            Bytes = random_bytes(),
+            {Taken, Out, Tty1} = erx_tty:output(Bytes, Room, Tty),
             check(byte_size(Out) =< Room andalso Taken >= 0, output_over_room, {Room, Out}),
+            %% The relay reports an out watch at this room: the write it lets go
+            %% must take a byte.
+            check(Taken > 0 orelse Room < Widest, output_none_with_room, {Room, Bytes}),
             steps(N - 1, Termios, Counted, Tty1, {Read, In})
     end.
 

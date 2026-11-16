@@ -62,7 +62,7 @@ have nothing to act on, since a master reports no breaks or parity errors
 and takes no flow control.
 """.
 
--export([new/0, master_room/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
+-export([new/0, master_room/0, widest_rendering/0, termios/1, set/2, winsize/1, size/3, input/3, output/3,
          read_wait/3, poll_wait/2, cancel/2, timer/2, read/3, status/3,
          hangup/1, waiting/1, dropped/1]).
 -export_type([tty/0, termios/0, open/0, timer/0, room/0, action/0]).
@@ -81,6 +81,8 @@ and takes no flow control.
 -define(STATUS_ROOM, 256).
 %% Erlang has no escape for BEL.
 -define(BELL, 7).
+%% Columns from one tab stop to the next.
+-define(TAB_WIDTH, 8).
 
 %% The termios map and its tables, every flag and character a termios may
 %% hold, are the ABI file's termios table (abi/termios.txt), which
@@ -175,6 +177,15 @@ master at most, and the room a signal's flush_output leaves.
 """.
 -spec master_room() -> pos_integer().
 master_room() -> ?MASTER_ROOM.
+
+-doc """
+The most bytes output/3 renders one byte into, whatever the termios: a tab
+under TAB3 at a tab stop, which becomes a tab's width of spaces. A newline
+under ONLCR becomes two bytes, and every other byte one or none. A room this
+large takes the next byte of any write.
+""".
+-spec widest_rendering() -> pos_integer().
+widest_rendering() -> ?TAB_WIDTH.
 
 -doc "The tty's termios, for tcgetattr.".
 -spec termios(tty()) -> termios().
@@ -577,11 +588,11 @@ erase_visually(Char, Actions, Tty) ->
             emit(<<$\b>>, Actions, back(1, Tty));
         false when Char =:= $\t ->
             %% The tab's width is what the line before it leaves to the
-            %% column, within 1 to 8.
+            %% column, within 1 to a tab's width.
             Before = line_width(Tty),
             Width = case Before >= Tty#tty.column of
                         true -> 1;
-                        false -> min(8, Tty#tty.column - Before)
+                        false -> min(?TAB_WIDTH, Tty#tty.column - Before)
                     end,
             emit(binary:copy(<<$\b>>, Width), Actions, Tty#tty{column = Before});
         false when Utf8 ->
@@ -652,7 +663,7 @@ line_width(#tty{line = Line, reprintpos = Shown, writepos = Start} = Tty) ->
                 true -> 2;
                 false -> 0
             end,
-    lists:foldl(fun($\t, Width) -> Width + 8 - Width rem 8;
+    lists:foldl(fun($\t, Width) -> Width + ?TAB_WIDTH - Width rem ?TAB_WIDTH;
                    (Char, Width) ->
                         case caret(Char) of
                             true -> Width + Caret;
@@ -740,7 +751,7 @@ post($\^D, Tty) ->
 post($\b, Tty) ->
     {<<$\b>>, back(1, Tty)};
 post($\t, #tty{column = Column} = Tty) ->
-    Width = 8 - Column rem 8,
+    Width = ?TAB_WIDTH - Column rem ?TAB_WIDTH,
     Bytes = case on(tab3, Tty) of
                 true -> binary:copy(<<$\s>>, Width);
                 false -> <<$\t>>

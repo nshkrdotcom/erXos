@@ -40,9 +40,6 @@ and names in actions.
 
 %% Reads, writes and a read's count carry at most this many bytes.
 -define(MAX_BYTES, 4096).
-%% The room an out wait waits for once a write found too little: FreeBSD's
-%% output low-water mark, nine tenths of the room (sys/kern/tty.c:145).
--define(LOW_WATER, (erx_tty:master_room() * 9) div 10).
 
 -type open() :: term().
 -type kind() :: read | in | out.
@@ -105,9 +102,6 @@ and names in actions.
     groups = #{} :: #{term() => {non_neg_integer(), non_neg_integer()}},
     %% The writers' messages not yet all through output/3, oldest first.
     writes = queue:new() :: queue:queue({done(), binary()}),
-    %% A write found too little room for all its bytes, and the room has not
-    %% reached the low-water mark since: FreeBSD's TF_HIWAT_OUT.
-    full = false :: boolean(),
     drains = [] :: [done()]
 }).
 
@@ -568,14 +562,11 @@ drop_writes(#core{writes = Writes}) ->
 done({To, Message}) -> {send, To, Message}.
 
 %% Bytes through output/3 with the room free now, and what it took to the
-%% link, which holds it within that room. A write that leaves bytes untaken
-%% makes out waits wait for the low-water mark, as FreeBSD's ttydisc_write
-%% sets TF_HIWAT_OUT (sys/kern/tty_ttydisc.c:628-629).
-put_output(Bytes, #core{tty = Tty, link = Link, full = Full} = Core) ->
+%% link, which holds it within that room.
+put_output(Bytes, #core{tty = Tty, link = Link} = Core) ->
     {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
     {Taken, Out, Tty1} = erx_tty:output(Bytes, Free, Tty),
-    Short = Taken < byte_size(Bytes),
-    {Actions, Core1} = to_master(Out, Core#core{tty = Tty1, full = Full orelse Short}),
+    {Actions, Core1} = to_master(Out, Core#core{tty = Tty1}),
     {Taken, Actions, Core1}.
 
 to_master(<<>>, Core) ->
@@ -585,29 +576,17 @@ to_master(Bytes, #core{link = Link} = Core) ->
     link_actions(Actions, Core#core{link = Link1}).
 
 %% The end of every step: the waits are reconciled with who may read; the
-%% wait for the low-water mark ends if the room has reached it; the
 %% writers' messages take the room there is, in order; `out` waits are
-%% reported once no message waits and room is free; drains are answered once nothing
-%% waits or nothing would take it; and what is held goes to the master, if
-%% there is one.
+%% reported once no message waits and any byte's rendering fits; drains
+%% are answered once nothing waits or nothing would take it; and what is
+%% held goes to the master, if there is one.
 settle(Core0) ->
     {Reconciled, Core1} = reconcile(Core0),
-    {Pumped, Core2} = pump(ebb(Core1)),
+    {Pumped, Core2} = pump(Core1),
     {Writable, Core3} = writable(Core2),
     {Drained, Core4} = drained(Core3),
     {Sent, Link} = send(Core4),
     {Reconciled ++ Pumped ++ Writable ++ Drained ++ Sent, Core4#core{link = Link}}.
-
-%% The room has reached the low-water mark, so out waits wait for one byte
-%% again: checked before the writers' messages take the room, as FreeBSD
-%% checks it where the device takes output, before a writer refills the
-%% queue (ttydisc_wakeup_watermark from ttydisc_getc,
-%% sys/kern/tty_ttydisc.c:1331-1349, :1368). A flush or a hangup ends the
-%% wait through the room too; a flush keeps the outstanding output, which
-%% FreeBSD's tty_flush does not, so it does not end it on its own.
-ebb(#core{link = Link} = Core) ->
-    {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
-    Core#core{full = Core#core.full andalso Free < ?LOW_WATER}.
 
 pump(#core{writes = Writes} = Core) ->
     case queue:out(Writes) of
@@ -624,14 +603,16 @@ pump(#core{writes = Writes} = Core) ->
             {[], Core}
     end.
 
-%% An out wait is reported once no writer's message waits and a byte is
-%% free, as FreeBSD's poll has it (ttydev_poll, sys/kern/tty.c:667), unless
-%% a write found too little room and the room has not reached the low-water
-%% mark since (ebb/1), as FreeBSD wakes a writer the full queue held only at
-%% the mark. Output stopped does not matter, as it does not to FreeBSD's poll.
-writable(#core{waits = Waits, writes = Writes, link = Link, full = Full, signal = N} = Core) ->
+%% An out wait is reported once no writer's message waits and the room fits
+%% the widest rendering of one byte, so the write it lets go takes at least
+%% its first byte. FreeBSD's poll reports at one free byte (ttydev_poll,
+%% sys/kern/tty.c:667), where a newline under ONLCR is EAGAIN and a
+%% program polling for out would spin until the master took output. The
+%% rule keeps no state, so no writer can hold it off while the room is
+%% there. Output stopped does not matter, as it does not to FreeBSD's poll.
+writable(#core{waits = Waits, writes = Writes, link = Link, signal = N} = Core) ->
     {Free, _Kept, _Stopped} = erx_tty_link:room(Link),
-    case queue:is_empty(Writes) andalso not Full andalso Free > 0 of
+    case queue:is_empty(Writes) andalso Free >= erx_tty:widest_rendering() of
         true ->
             Ready = lists:sort([{Open, Caller} || {Open, out} := #wait{caller = Caller} <- Waits]),
             {[{send, Caller, {ready, Open, [out], N}} || {Open, Caller} <- Ready],

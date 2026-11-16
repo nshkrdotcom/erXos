@@ -454,21 +454,29 @@ a_drain_waits_for_the_master_test() ->
     T5 = ev({drain, {ph, drained}}, type(<<19>>, T2)),
     {[drained], _} = take(ph, T5).
 
-%% An out wait is reported at one free byte, as FreeBSD's poll is, but once
-%% a write found too little room, at the low-water mark: a newline under
-%% ONLCR with one byte free is eagain, and the watch after it waits for the
-%% master, as FreeBSD wakes a writer once TF_HIWAT_OUT's mark is reached;
-%% from then on a watch is reported at one byte again. A flush keeps the
-%% outstanding output, so it does not end the wait.
-an_out_wait_waits_for_the_low_water_mark_test() ->
+%% An out wait is reported once the room fits the widest rendering of one
+%% byte, not at one free byte as FreeBSD's poll is, at which a newline
+%% under ONLCR is eagain: with one byte free the watch waits for the
+%% master's take.
+an_out_wait_waits_for_room_for_any_byte_test() ->
     {{ok, 4095}, T1} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, a_holds()),
-    {out, _, T2} = report(pa, aw, ok(pa, {watch, aw, [out]}, T1)),
+    {eagain, T2} = do(pa, {write, aw, <<"\n">>}, T1),
+    T3 = no_report(pa, ok(pa, {watch, aw, [out]}, T2)),
+    {out, _, _} = report(pa, aw, ev({master, {tty_taken, 0}}, T3)).
+
+%% A writer that keeps adding between the master's takes does not hold an
+%% out wait off: after a newline found too little room, the take of output
+%% 0 leaves 2049 bytes free and the take of output 1, after the writer
+%% added 411, 3685, and each reports the watch. A rule that waited, after a
+%% short write, for nine tenths of the 4 KiB free reported neither.
+a_steady_writer_does_not_hold_an_out_wait_off_test() ->
+    T1 = ev({write, {pw, written}, binary:copy(<<"x">>, 2048)}, a_holds()),
+    T2 = ev({write, {pw, written}, binary:copy(<<"x">>, 2047)}, T1),
     {eagain, T3} = do(pa, {write, aw, <<"\n">>}, T2),
     T4 = no_report(pa, ok(pa, {watch, aw, [out]}, T3)),
-    T5 = no_report(pa, type(?CTRL_C, T4)),
-    {out, _, T6} = report(pa, aw, ev({master, {tty_taken, 0}}, T5)),
-    {{ok, 4095}, T7} = do(pa, {write, aw, binary:copy(<<"x">>, 4095)}, T6),
-    {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T7)).
+    {out, _, T5} = report(pa, aw, ev({master, {tty_taken, 0}}, T4)),
+    T6 = ev({master, {tty_taken, 1}}, ev({write, {pw, written}, binary:copy(<<"x">>, 411)}, T5)),
+    {out, _, _} = report(pa, aw, ok(pa, {watch, aw, [out]}, T6)).
 
 %% With no master, nothing is sent and a drain is answered at once, with
 %% bytes held and a writer's message waiting; a message as from a master is
