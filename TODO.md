@@ -2144,19 +2144,17 @@ it; git history is the record of completed work.
   `opendir`, `stat` and `syslog` (file BIOs, the `file:` store loader, `X509_LOOKUP` by directory) and keeps
   `OPENSSLDIR="/usr/local/ssl"`; K5 holds because `no-autoload-config` stops the implicit loads and OTP's `crypto` names
   no file. Give Configure an `--openssldir` of erXos's, so a caller that does name OpenSSL's directory finds erXos's.
-* [High] HTTPS clients, the trust store in the domain release (`config/trust/`, `tools/lib/erx/trust_store.rb`,
-  [design-crypto.md](docs/design-crypto.md#the-trust-store)): the five roots, their record and the reader are in the
-  tree and `pubkey_os_cacerts` has its `{unix, erxos}` row, but no build writes `cacerts.pem` into `public_key`'s
-  `priv` of the domain release, so `public_key:cacerts_get/0` raises `failed_load_cacerts` on erXos and the full
-  kiosk's quotes cannot fetch. The pack's provenance check attributes every receipt source through an import
-  record with a license per file; the roots need no license (public keys and names, facts), so the check takes a
-  recorded `none` for them, and `config/trust` needs a row in the images' imports, before the release names the store. Then: the layout row
-  for `priv/cacerts.pem`, a test image's extra roots, and the design's "store on QEMU" row.
+* [Medium] HTTPS clients, the trust store's remaining checks (`tools/lib/erx/release_files.rb`, `trust_store`,
+  [design-crypto.md](docs/design-crypto.md#the-trust-store)): every release that holds `public_key` carries
+  `priv/cacerts.pem`, built from `config/trust/` and attributed through its inventory, but a test image cannot yet
+  add roots of its own after the tree's, and the design's "store on QEMU" row (`public_key:cacerts_get/0` in a
+  session of the interpreter image) has no suite.
 * [Medium] HTTPS clients, the store by construction (`tools/lib/erx/trust_store.rb`): build it from `config/trust/ORIGIN.md`'s
   rows instead of a `*.pem` glob (which is case-insensitive on macOS and follows links): each recorded file a regular
   file by `lstat`, its bytes matching the recorded SHA-256, one block decoding to exactly one DER certificate (two
   certificates base64ed into one block, or an empty block, pass the form check today), and any other entry of the
-  directory refused. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
+  directory refused. Build `cacerts.pem` and its receipt's hashes from that one read: `ReleaseFiles#trust_store`
+  reads the roots for the store and again for the receipt, so the two are not bound to the same bytes. Also assert in `release_files_test.rb` that the session and app scripts load `ssl` and `inets`.
 * [Medium] HTTPS clients, the rest of design-crypto's client work: `inets`' `httpc_bound` edit and its tests (CR8),
   and `ssl` in the web domain's script for its listener
   ([design-crypto.md](docs/design-crypto.md#otps-applications)).
@@ -7994,9 +7992,9 @@ document's "residual risks accepted" paragraph.
   for a clock of minutes, so it needs a kiosk whose tree does not change, or a reworded criterion. plan.md
   and design-quotes.md agree: the full kiosk's live quotes are the dashboard's own source.
 
-* [High] `examples/dashboard` full kiosk, the trust store and `httpc`'s bounds: no `cacerts.pem` in
-  `public_key`'s `priv` and no `httpc_bound` edit (the two items under "HTTPS clients" above), which block a
-  real fetch of the live quotes on the target ([design-crypto.md](docs/design-crypto.md#https-clients)).
+* [High] `examples/dashboard` full kiosk, `httpc`'s bounds: no `httpc_bound` edit (the item under "HTTPS clients"
+  above), which a real fetch of the live quotes on the target waits for, and no run on the target that fetches
+  through the image's trust store ([design-crypto.md](docs/design-crypto.md#https-clients)).
 
 * [Medium] `examples/dashboard` full kiosk: the live dashboard's reference frame, `dashboard-live` under
   `test/display/reference/` (the dashboard's tree for a fixed time and a fixed live board), is not recorded;

@@ -13,6 +13,7 @@ require_relative 'error'
 require_relative 'manifest_frontend'
 require_relative 'oracle'
 require_relative 'runtime'
+require_relative 'trust_store'
 
 module Erx
   # The system release's files as entries for Pack#build: the beams, application files
@@ -26,7 +27,8 @@ module Erx
   # is laid out the same way under domains/erxos/, from the same builds, without the
   # system mark: each file of the applications its boot scripts name, once, and a boot
   # script bin/<name>.boot for each name (domain_boot), whose release file lists only
-  # that script's applications.
+  # that script's applications. A release that holds public_key also carries the image's
+  # trust store as its priv/cacerts.pem (TrustStore).
   class ReleaseFiles
     # In the release file's order, each after the applications it depends on.
     APPLICATIONS = [*Runtime::APPLICATIONS, *ErlangApps::APPLICATIONS].freeze
@@ -62,6 +64,10 @@ module Erx
 
     NAME = 'erxos'
     BOOT_DEADLINE = 120
+    # The imported trees the release's files come from, as a pack registers them
+    # (PackProvenance): OTP for the applications, and the trust store's roots for
+    # public_key's cacerts.pem (trust_store).
+    IMPORTS = { 'otp' => 'permanent', TrustStore::DIRECTORY => 'permanent' }.freeze
     # A file of the release: its path in the archive, the built file and what it came from.
     ReleaseFile = Data.define(:path, :artifact, :sources)
 
@@ -308,7 +314,7 @@ module Erx
     # What one application ships, as paths under its directory to the files they copy:
     # its beams and .app from the build at otp, no .appup since an update replaces a whole
     # slot, and its headers (headers). The release and the oracle's hosted tree both lay
-    # an application out from here.
+    # an application out from here; only the release adds public_key's trust store.
     def self.application_layout(root:, otp:, application:)
       ebin = File.join(otp, 'lib', application, 'ebin')
       built = Dir.glob('*.{beam,app}', base: ebin).sort.map { |name| ["ebin/#{name}", File.join(ebin, name)] }
@@ -388,14 +394,27 @@ module Erx
     private
 
     # A header is its own source; a built file names the one it is compiled from.
+    # public_key also carries the trust store.
     def application_files
       @release.applications.flat_map do |application|
         directory = "#{@release.prefix}lib/#{application}-#{version(application)}"
-        self.class.application_layout(root: @root, otp: @otp, application: application).map do |path, artifact|
+        files = self.class.application_layout(root: @root, otp: @otp, application: application).map do |path, artifact|
           sources = path.start_with?('include/') ? [artifact] : sources_of(application, File.basename(path))
           ReleaseFile.new(path: "#{directory}/#{path}", artifact: artifact, sources: sources)
         end
+        application == TrustStore::APPLICATION ? [*files, trust_store(prefix: directory)] : files
       end
+    end
+
+    # The image's trust store as a file under prefix, public_key's directory in the archive
+    # (docs/design-crypto.md, "The trust store"): the tree's roots joined in name order,
+    # written beside the receipts, with each root as a source.
+    def trust_store(prefix:)
+      trust_directory = File.join(@root, TrustStore::DIRECTORY)
+      artifact = File.join(@directory, 'trust', File.basename(TrustStore::PATH))
+      FileUtils.mkdir_p(File.dirname(artifact))
+      File.binwrite(artifact, TrustStore.store(trust_directory))
+      ReleaseFile.new(path: "#{prefix}/#{TrustStore::PATH}", artifact: artifact, sources: TrustStore.roots(trust_directory))
     end
 
     # The source a built file is compiled from: for erXos's applications one of the

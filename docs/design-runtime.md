@@ -345,7 +345,8 @@ included; `sasl` and `tools` where a
 release asks for them. Each shipped application ships its beams, its
 `.app` and its `include/*.hrl` headers, so code compiled on erXos finds
 them through `include_lib` as on stock, and no `.appup`, since an update
-replaces a whole slot. Every beam the emulator embeds or a release ships, the
+replaces a whole slot; `public_key` also ships the image's trust store,
+`priv/cacerts.pem` ([design-crypto.md](design-crypto.md#the-trust-store)). Every beam the emulator embeds or a release ships, the
 preloaded modules included, is compiled from source by the runtime build with
 `+deterministic`, the preloaded modules again by every build, since make's
 rule for a beam names only its source and not the generated headers it
