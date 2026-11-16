@@ -5167,8 +5167,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   behind the image it is handed that does not answer holds every mount, bind and unmount of the
   domain for up to 40 s a read (three reads a mount); the mount belongs in a monitored worker whose
   result the process applies once it checks the point again. No test.
-* [Medium] runtime, `erx_verity`: there is no cache, neither of checked tree blocks, so each read
-  fetches its tree path again, nor the reader's ETS table
+* [Medium] runtime, `erx_verity`: it caches no checked tree block, so each read
+  fetches its tree path again, and the reader keeps no ETS table
   of 256 metadata blocks per image ([design-storage.md](docs/design-storage.md#reading-erofs-images)
   step 4), so every lookup reads its inode and directory blocks again; a log of a failed read goes only
   to the reader's mount log function.

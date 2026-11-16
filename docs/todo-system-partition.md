@@ -107,9 +107,9 @@ that proves the code under test ran.
   `verified_image` window role, the `images` and `extents` tables, the
   `image` declaration and the window's `image` field, `erofs_unchecked`,
   `SLOT_IMAGES_START` and `image_extents` in `release_medium.rb`, and the
-  slot's `release.erofs` copy): delete them. Until then every storage
-  domain's boot logs `erx_blk_service: no image is served: the manifest:
-  enoent`, since `image_windows/1` reads a manifest its namespace does not
+  slot's `release.erofs` copy): delete them. Until then a boot with a
+  slot logs `erx_blk_service: no image is served: the manifest: enoent` in
+  the block device's holder, since `image_windows/1` reads a manifest its namespace does not
   hold. The release copy's only readers are the `SLOT_IMAGES_START` cases
   of `test/host/release_medium_test.rb` and `test/host/boot_partition_test.rb`,
   which move to reading the system partition's image, as the medium boot's

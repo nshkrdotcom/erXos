@@ -460,19 +460,19 @@ module Erx
     # storage domain to run erx_storage, and so the block driver, and then, at that node
     # over erpc, opens the system partition's EROFS image on the system window, checked
     # against the layout of the node's system_image record (docs/design-stopgap.md, "The
-    # booted slot"), mounts it at /images/release in the storage domain's namespace and
-    # prints the MD5 of IMAGE_FILE as the mount shows it; it must be the MD5 of the file
-    # the packer put in the image. A call that raises answers {image_md5, {Class, Reason}}.
+    # booted slot"), mounts it with the EROFS reader itself, so nothing joins the
+    # storage domain's namespace, and prints the MD5 of IMAGE_FILE as the reader reads it;
+    # it must be the MD5 of the file the packer put in the image. A call that raises answers {image_md5, {Class, Reason}}.
     # The echo of the line does not start {image_md5, so only the answer matches.
     def image_checkpoints(shell, release)
       entry = release.find { |candidate| IMAGE_FILE.match?(candidate.fetch('path')) }
       raise Error, 'the release has no stdlib lists module to read from the image' unless entry
 
-      path = "/images/release/#{entry.fetch('path')}"
+      names = entry.fetch('path').split('/').map { |name| "<<\"#{name}\">>" }.join(',')
       digest = Digest::MD5.file(entry.fetch('artifact')).hexdigest.upcase
       read = "fun()->{ok,ImLayout}=erx_device_record:system_image(),{ok,ImPid}=erx_blk_service:window(system)," \
-             "{ok,ImImage}=erx_verity:open(ImPid,ImLayout),ok=erx_ns:mount({erofs,ImImage},<<\"/images/release\">>,[])," \
-             "case file:read_file(\"#{path}\") of {ok,B}->binary:encode_hex(erlang:md5(B));E->E end end"
+             "{ok,ImImage}=erx_verity:open(ImPid,ImLayout),{ok,ImFs}=erx_erofs:mount(ImImage,fun(_)->ok end)," \
+             "case erx_erofs:read_file(ImFs,[#{names}]) of {ok,B}->binary:encode_hex(erlang:md5(B));E->E end end"
       expression = "ImWait=fun ImW(0)->timeout;ImW(N)->case lists:keymember(erx_storage,1,try erpc:call('#{STORAGE_NODE}'," \
                    "application,which_applications,[],1000) catch _:_->[] end) of true->ok;false->timer:sleep(500),ImW(N-1) end end," \
                    "{image_md5,try ok=ImWait(240),erpc:call('#{STORAGE_NODE}',#{read},60000) catch ImC:ImR->{ImC,ImR} end}.\r"

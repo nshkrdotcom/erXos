@@ -70,7 +70,9 @@ class MediumBootTest < Minitest::Test
     assert_includes shell.fetch(:type), '{ok,ImPid}=erx_blk_service:window(system)'
     assert_includes shell.fetch(:type), '{ok,ImImage}=erx_verity:open(ImPid,ImLayout)'
     refute_includes shell.fetch(:type), 'erx_blk_image'
-    assert_match %r{file:read_file\("/images/release/system/lib/stdlib-7\.0/ebin/lists\.beam"\)}, shell.fetch(:type)
+    assert_includes shell.fetch(:type),
+                    'erx_erofs:read_file(ImFs,[<<"system">>,<<"lib">>,<<"stdlib-7.0">>,<<"ebin">>,<<"lists.beam">>])'
+    refute_includes shell.fetch(:type), 'erx_ns:mount'
     assert shell.fetch(:type).end_with?(".\r")
     verify = answer.fetch(:verify)
     hex = Digest::MD5.file(@lists).hexdigest.upcase
