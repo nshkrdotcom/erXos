@@ -246,6 +246,57 @@ shown_soon(Grant, Fid, Tries) ->
         _ -> timer:sleep(20), shown_soon(Grant, Fid, Tries - 1)
     end.
 
+%% Waiting reads ---------------------------------------------------------------
+
+%% docs/design-display.md, "The window tree": a read of kbd that finds no record waits
+%% at the window process, its keeper, so the grant goes on with its client's other
+%% requests; a flush of the read and a clunk of its fid answer it EINTR, and a key that
+%% comes after takes no flushed read.
+a_waiting_kbd_read_holds_up_nothing_of_its_grant_test_() ->
+    {timeout, 60, fun waiting_reads/0}.
+
+waiting_reads() ->
+    World = start(answer),
+    Session = mint(?SESSION, #{session => true, windows => 2}),
+    {ok, _} = mkdir(Session, <<"shown">>),
+    {ok, _} = mkdir(Session, <<"hidden">>),
+    Label = open(Session, 2, <<"hidden">>, <<"label">>, ?O_RDWR),
+    Wctl = open(Session, 3, <<"hidden">>, <<"wctl">>, ?O_RDWR),
+    HiddenKbd = open(Session, 4, <<"hidden">>, <<"kbd">>, ?O_RDONLY),
+    ShownKbd = open(Session, 5, <<"shown">>, <<"kbd">>, ?O_RDONLY),
+    ?assertEqual(<<"hidden">>, state(Session, Wctl)),
+    %% A read of the hidden window's kbd waits; a write and a clunk on other fids of
+    %% the same grant are answered meanwhile.
+    Hidden = send(Session, {read, HiddenKbd, 0, 64}),
+    ?assertEqual({ok, 4, 0}, write(Session, Label, <<"term">>)),
+    ?assertEqual(ok, call(Session, {clunk, Wctl})),
+    ?assertEqual(none, reply_within(Hidden, ?QUIET)),
+    %% Its flush answers it EINTR, then the flush is answered.
+    Flush = send(Session, {flush, Hidden}),
+    ?assertEqual({error, eintr}, reply_within(Hidden, ?WAIT)),
+    ?assertEqual(ok, reply_within(Flush, ?WAIT)),
+    %% A flushed read of the shown window takes no key: the next read has it.
+    Shown = send(Session, {read, ShownKbd, 0, 64}),
+    ?assertEqual(ok, call(Session, {flush, Shown})),
+    ?assertEqual({error, eintr}, reply_within(Shown, ?WAIT)),
+    ok = key_a(),
+    ?assertEqual({ok, <<"ka", 0>>}, read(Session, ShownKbd)),
+    %% A clunk of the fid answers the read waiting on it EINTR first.
+    Clunked = send(Session, {read, HiddenKbd, 0, 64}),
+    ?assertEqual(ok, call(Session, {clunk, HiddenKbd})),
+    ?assertEqual({error, eintr}, reply_within(Clunked, 0)),
+    stop(World).
+
+%% Request sent to Grant, whose reply comes to the test under the alias answered.
+send(Grant, Request) ->
+    Alias = alias([reply]),
+    Grant ! {erx_9p, Alias, self(), Request},
+    Alias.
+
+%% The reply to Alias within Timeout milliseconds, or none.
+reply_within(Alias, Timeout) ->
+    receive {erx_9p, Alias, Reply} -> Reply after Timeout -> none end.
+
 %% The overlapping policy ------------------------------------------------------
 
 the_overlapping_policy_s_click_moves_the_border_and_the_keyboard_together_test_() ->

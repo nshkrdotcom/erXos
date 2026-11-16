@@ -2121,10 +2121,8 @@ it; git history is the record of completed work.
   aliases, and a grant whose client has ended drains, as design-files.md ("Serving", "Waiting requests", rules 1, 2
   and 4 to 6, "Bounds") has it. What is left is the trees that still wait for an event inside a callback, which
   blocks the Bluetooth line service (`erx_line`, design-bluetooth.md, "The controller's line"),
-  the `pair` file, a window's `mouse` and `kbd` reads and held `ctl` writes, which `erx_winfs:read/4` and `write/4`
-  serve today by a `gen_server:call` with no timeout to `erx_window` (`erlang/apps/erx_display/src/erx_winfs.erl`,
-  `call/2`), so a client reading `kbd` on a hidden window stops its whole grant, every other request, clunk and
-  flush of it included, until a key comes, as each wait for an event left in a callback does now that callbacks run
+  the `pair` file, and stops its whole grant, every other request, clunk and flush of it included, until the event
+  comes, as each wait for an event left in a callback does now that callbacks run
   in the grant: a `/dev/tty` write to a stopped tty (`erx_session_export:write/4`, `Tty(Bytes)`), the draw
   connection's reads and writes (`erx_session_export.erl:296, 351`), and a `ctl` write to `/dev`'s driver files,
   whose `erx_driver_ctl` stop, start or restart may take up to its 30 s call deadline (`erx_devfs.erl`, `control/3`);
@@ -2134,8 +2132,8 @@ it; git history is the record of completed work.
   the window's draw connection keep them, sending each with `erx_win:send_read/4`, which answers an opaque request
   id, taking its reply with `erx_win:reply/2` and its flush with `erx_win:send_flush/2`, all three over
   `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
-  Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
-  requests in flight. The same change has the
+  Once built, `erx_draw_conn` keeps those requests in `erx_fs_waits`, bounded by each grant's 64 requests in
+  flight, as `erx_window` keeps its window's `mouse` and `kbd` reads and `ctl` writes. The same change has the
   program's handler end at its draw connection's end (`erx_session_export:start_window/1`), so the handler, the
   connection, the `/dev` grant and the window share one life, as design-files.md's rule 5, "What waiting holds" and
   "Ownership and lifetime" state. `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
@@ -2158,7 +2156,16 @@ it; git history is the record of completed work.
   design-files.md; name them there or fold them into the grant's options.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: `/clipboard` answers size 0 to `getattr`, and `ftruncate` of it fails with
   `EPERM` (no `setattr`); an open with `O_TRUNC` is the one way to empty it.
-* [Low] `erlang/apps/erx_display/src/erx_window.erl`: `kbd` gives only `c` records; `k` and `K` are not produced.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`, `take/3`: a `kbd` read is refused only below 6 bytes, the
+  bound of a `c` record, but a `k` or `K` record carries every held key and modifier (each modifier 3 bytes of
+  UTF-8), so a read of 6 to 8 bytes takes a 9-byte record off the queue, the grant's reply check answers it `EIO`,
+  and the key is lost. Answer a reader whose count cannot hold the head record `EINVAL` without taking it
+  (`serve_records/2`; the held `{read, File, Count}` keeps the count), with a test that holds Ctrl and Shift.
+* [Medium] `erlang/apps/erx_display/src/erx_window.erl`: the window, the keeper of its `mouse`, `kbd` and `ctl`
+  requests, starts with no `max_heap_size`, where design-display.md has the display set one from the counts of
+  held requests; and no test covers a flush or a clunk of a `ctl` write whose present is in flight (answered
+  with the present's answer, never `EINTR`) or of one waiting behind it (`EINTR`); `never_answers/0` in
+  `test/erlang/erx_winfs_tests.erl` holds such a present, with a seeded fault that drops `began/2` in `pump/1`.
 * [Low] `erlang/apps/erx_display/src/erx_winfs.erl`: the window table carries no label, so a decorating policy cannot
   see it.
 * [Low] `erlang/apps/erx_display/src/erx_screen.erl`: a present the core refuses (a rectangle past the coordinate limit

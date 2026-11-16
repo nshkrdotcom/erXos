@@ -23,7 +23,7 @@ class ErxWinfsTest < Minitest::Test
                erx_wm_single erx_wm_rio erx_input].map { |name| "erlang/apps/erx_display/src/#{name}.erl" } +
             %w[build/gen/erlang/apps/erx_display/src/erx_keymap.erl build/gen/erlang/apps/erx/src/generated/erx_input_codec.erl
                build/gen/erlang/apps/erx_memdraw/src/erx_theme.erl]
-  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
+  FILES = %w[erx_fs erx_fs_grant erx_fs_grants erx_fs_node erx_fs_version erx_fs_waits].map { |name| "erlang/apps/erx_files/src/#{name}.erl" }
   MODULES = (['erlang/apps/erx_memdraw/src/erx_memdraw.erl', 'erlang/apps/erx_memdraw/src/erx_chan.erl', GRAMMAR] + DISPLAY + FILES +
              ['erlang/apps/erx/src/erx_facet.erl', 'erlang/apps/erx_fb/src/erx_fb_sup.erl', 'test/erlang/erx_winfs_tests.erl']).freeze
   # The display's log is the debug log of erx_log's NIF, which stock's emulator has not.
@@ -40,6 +40,11 @@ class ErxWinfsTest < Minitest::Test
   TABLE_ONLY = '    Presented = case Next#winfs.windows =:= State#winfs.windows of ' \
                'true -> Next; false -> present(Next) end,'
   CLICK_CASE = '{generator, erx_winfs_tests, the_overlapping_policy_s_click_moves_the_border_and_the_keyboard_together_test_}'
+  # The seeded fault: a read of kbd or mouse that waits for its record inside the tree's
+  # callback, in the grant, instead of at the window process.
+  STREAM_READ = '    {wait, Proc, {read, File, Count}};'
+  READ_IN_CALLBACK = '    receive {erx_window_record, Record} -> {ok, Record} end;'
+  WAITING_CASE = '{generator, erx_winfs_tests, a_waiting_kbd_read_holds_up_nothing_of_its_grant_test_}'
 
   def setup
     skip 'stock OTP not built: make oracle-bootstrap' unless File.directory?(OTP)
@@ -67,6 +72,17 @@ class ErxWinfsTest < Minitest::Test
     assert_match(/click_picks/, text)
   end
 
+  # docs/design-display.md, "The window tree": a kbd read that waits inside the callback
+  # holds up its grant, so the write on another fid gets no reply.
+  def test_a_read_waiting_in_the_callback_fails_the_waiting_case
+    source = File.read(File.join(ROOT, WINFS))
+    raise "#{WINFS} no longer holds #{STREAM_READ.inspect}" unless source.include?(STREAM_READ)
+
+    text, status = eunit(WAITING_CASE, replaced: { WINFS => source.sub(STREAM_READ, READ_IN_CALLBACK) })
+    refute status.success?, text
+    assert_match(/no_reply,\{write,2/, text)
+  end
+
   private
 
   # Compiles the modules, with each path of Replaced compiled from its text instead, and
@@ -81,7 +97,7 @@ class ErxWinfsTest < Minitest::Test
     end
     sources << File.join(@directory, 'erx_log.erl')
     text, status = Open3.capture2e(Erx::MemdrawBuild::CLEAN_ENVIRONMENT, File.join(OTP, 'bin/erlc'),
-                                   '-I', INCLUDE, '-I', File.join(ROOT, 'erlang/apps/erx_display/src'),
+                                   '-I', INCLUDE, '-I', File.join(ROOT, 'erlang/apps/erx_display/src'), '-I', File.join(ROOT, 'erlang/apps/erx_files/include'),
                                    '-o', @directory, *sources, stdin_data: '')
     assert status.success?, text
     environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@directory))

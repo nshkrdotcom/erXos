@@ -8,6 +8,18 @@ tree"): it serves the window's `ctl`, `mouse`, `kbd` and `label` files to
 the tree's callbacks in `erx_winfs`, holds the window's pending input and
 its last present, and is told its rectangle and state by `erx_winfs`.
 
+**Waiting requests.** A read of `mouse` or `kbd` and a write of `ctl` wait
+for an event, a record or a present, so the tree's callback hands them
+here (docs/design-files.md, "Serving: the `erx_fs` behaviour", "Waiting
+requests"), and this process is their keeper: it holds them in one
+`erx_fs_waits` set, the window's only record of them, and answers each
+once through it. The readers of a file and the writes still to present
+are the set's requests of that kind in the order they arrived. A flush or
+a clunk of a request not yet answered reaches the set, which answers a
+read, or a write not yet presented, `EINTR`; a write whose present is in
+flight is answered when the present is. The other files' reads and writes
+are calls answered at once.
+
 **ctl.** A read answers the display's channel descriptor. A write is one
 `present` line, read by `erx_winctl:parse/1` and checked against the
 client's pixel area: the offset a multiple of the page size, and the
@@ -19,13 +31,14 @@ grant without an area `ENXIO`, and neither is shown.
 
 **Presents.** At most one is in flight to `erx_screen`, through
 `erx_screen:present_request/2`, which returns at once; the write that
-asked for it is held until the answer, so the window still takes input.
-On `ok` the buffer becomes the last present and the write is answered;
-the screen's refusal answers the write with it, and the screen's end with
-`EIO`. A write that arrives while one is in flight queues behind it. A
+asked for it is marked begun and held until the answer, so the window
+still takes input. On `ok` the buffer becomes the last present and the
+write is answered; the screen's refusal answers the write with it, and
+the screen's end with `EIO`. A write that arrives while one is in flight
+waits behind it. A
 request to present again (`{erx_screen, present_again}`) presents the last
 buffer whole, as if the client had, with no write to answer: it waits for
-the present in flight to be answered, goes before queued writes, and does
+the present in flight to be answered, goes before waiting writes, and does
 nothing while there is no last buffer.
 
 **Input.** A pointer event is a 49-byte `mouse` record
@@ -49,6 +62,7 @@ line written whole.
 -behaviour(gen_server).
 
 -include("generated/erx_abi.hrl").
+-include("erx_fs_waits.hrl").
 
 -export([start_link/1]).
 -export([init/1, handle_call/3, handle_cast/2, handle_info/2]).
@@ -56,8 +70,7 @@ line written whole.
 %% A queue of records, its bytes and its count of dropped records.
 -record(records, {queue = queue:new() :: queue:queue(binary()),
                   bytes = 0 :: non_neg_integer(),
-                  dropped = 0 :: non_neg_integer(),
-                  readers = queue:new() :: queue:queue(gen_server:from())}).
+                  dropped = 0 :: non_neg_integer()}).
 
 -record(window, {id :: pos_integer(),
                  chan :: binary(),
@@ -75,9 +88,18 @@ line written whole.
                  %% The unshifted rune of each key whose down the window received and
                  %% whose up it has not, or none for a key that has none.
                  keys = #{} :: #{non_neg_integer() => erx_wm:rune() | none},
-                 %% The present in flight, its buffer and whose write it answers.
-                 in_flight = none :: none | {gen_server:request_id(), map(), gen_server:from() | again},
-                 waiting = queue:new() :: queue:queue({gen_server:from(), map()}),
+                 %% The requests the window keeps (erx_fs_waits), each its own term: a
+                 %% {read, mouse | kbd, Count}, or a ctl write checked into
+                 %% {present, Present, Written}, Written the answer its write takes once
+                 %% presented. A request refused in the step that takes it is held as it
+                 %% came, for that step only.
+                 waits = erx_fs_waits:new() :: erx_fs_waits:waits(),
+                 %% The present in flight, its buffer and whose write it answers: the
+                 %% begun write's request and its answer, or again. They are copied out of
+                 %% the set, since a write whose grant has ended is dropped from it while
+                 %% its present still makes the buffer the last one.
+                 in_flight = none :: none | {gen_server:request_id(), map(),
+                                             again | {erx_fs_waits:wait(), {ok, non_neg_integer(), non_neg_integer()}}},
                  again = false :: boolean()}).
 
 -doc """
@@ -102,24 +124,6 @@ handle_call({read, wctl, Offset, Count}, _From, #window{rect = Rect, state = Sta
     {reply, slice(Text, Offset, Count), W};
 handle_call({read, label, Offset, Count}, _From, #window{label = Label} = W) ->
     {reply, slice(Label, Offset, Count), W};
-handle_call({read, mouse, _Offset, Count}, _From, W) when Count < ?ERX_WINDOWS_MOUSE_RECORD ->
-    {reply, {error, einval}, W};
-handle_call({read, mouse, _Offset, _Count}, From, #window{mouse = Mouse} = W) ->
-    {noreply, serve(W#window{mouse = wait(From, Mouse)})};
-handle_call({read, kbd, _Offset, Count}, _From, W) when Count < 6 ->
-    %% A kbd record is at most 6 bytes: c, four of UTF-8 and the NUL.
-    {reply, {error, einval}, W};
-handle_call({read, kbd, _Offset, _Count}, From, #window{kbd = Kbd} = W) ->
-    {noreply, serve(W#window{kbd = wait(From, Kbd)})};
-handle_call({write, ctl, _Offset, Line}, From, W) ->
-    case check(Line, W) of
-        {ok, Present} ->
-            {noreply, pump(W#window{waiting = queue:in({From, Present}, W#window.waiting)})};
-        {error, Reason} = Refused ->
-            _ = erx_log:debug(["erx_window ", integer_to_binary(W#window.id),
-                               ": present refused: ", atom_to_binary(Reason)]),
-            {reply, Refused, W}
-    end;
 handle_call({write, label, 0, Label}, _From, W) when is_binary(Label) ->
     {reply, ok, W#window{label = Label}};
 handle_call(_Request, _From, W) ->
@@ -135,26 +139,60 @@ handle_cast(_Request, W) ->
     {noreply, W}.
 
 -doc false.
+handle_info(?ERX_FS_WAIT(Wait, Request), W) ->
+    {noreply, take(Wait, Request, W)};
 handle_info({erx_screen, present_again}, #window{buffer = none} = W) ->
     {noreply, W};
 handle_info({erx_screen, present_again}, W) ->
     {noreply, pump(W#window{again = true})};
-handle_info(Message, #window{in_flight = {Request, Present, Who}} = W) ->
-    case gen_server:check_response(Message, Request) of
-        no_reply ->
-            {noreply, W};
-        {reply, ok} ->
-            ok = answer(Who, ok),
-            {noreply, pump(W#window{in_flight = none, buffer = maps:without([rects], Present)})};
-        {reply, {error, _} = Refused} ->
-            ok = answer(Who, Refused),
-            {noreply, pump(W#window{in_flight = none})};
-        {error, {_Reason, _Screen}} ->
-            ok = answer(Who, {error, eio}),
-            {noreply, pump(W#window{in_flight = none})}
-    end;
-handle_info(_Message, W) ->
-    {noreply, W}.
+handle_info(Message, #window{waits = Waits} = W) ->
+    case erx_fs_waits:info(Message, Waits) of
+        {flushed, Settled} -> {noreply, W#window{waits = Settled}};
+        %% The one begun request is the write whose present is in flight, which the
+        %% present's answer settles.
+        {begun, _Wait, _Request, Flushing} -> {noreply, W#window{waits = Flushing}};
+        {dropped, Dropped} -> {noreply, W#window{waits = Dropped}};
+        unknown -> {noreply, screen_answer(Message, W)}
+    end.
+
+%% Waiting requests ------------------------------------------------------------
+
+%% A request the tree's callback handed here: a read waits for a record and a checked
+%% ctl write for its present; either is answered at once when it cannot wait.
+take(Wait, {read, mouse, Count}, W) when Count < ?ERX_WINDOWS_MOUSE_RECORD ->
+    refuse(Wait, {read, mouse, Count}, {error, einval}, W);
+take(Wait, {read, kbd, Count}, W) when Count < 6 ->
+    %% A kbd record is at most 6 bytes: c, four of UTF-8 and the NUL.
+    refuse(Wait, {read, kbd, Count}, {error, einval}, W);
+take(Wait, {read, File, _Count} = Read, W) when File =:= mouse; File =:= kbd ->
+    serve(hold(Wait, Read, W));
+take(Wait, {write, ctl, Offset, Line}, W) ->
+    case check(Line, W) of
+        {ok, Present} ->
+            pump(hold(Wait, {present, Present, {ok, byte_size(Line), Offset}}, W));
+        {error, Reason} = Refused ->
+            _ = erx_log:debug(["erx_window ", integer_to_binary(W#window.id),
+                               ": present refused: ", atom_to_binary(Reason)]),
+            refuse(Wait, {write, ctl, Offset, Line}, Refused, W)
+    end.
+
+hold(Wait, Request, #window{waits = Waits} = W) ->
+    W#window{waits = erx_fs_waits:hold(?ERX_FS_WAIT(Wait, Request), Waits)}.
+
+%% A request answered in the step that takes it, through the set as every answer is.
+refuse(Wait, Request, Refused, W) ->
+    answer(Wait, Refused, hold(Wait, Request, W)).
+
+answer(Wait, Result, #window{waits = Waits} = W) ->
+    W#window{waits = erx_fs_waits:answer(Wait, Result, Waits)}.
+
+%% The reads of File still waiting, and the checked ctl writes, each in the order
+%% it arrived.
+readers(File, #window{waits = Waits}) ->
+    [Wait || {Wait, {read, Of, _}, waiting} <- erx_fs_waits:list(Waits), Of =:= File].
+
+writes(#window{waits = Waits}) ->
+    [{Wait, Present, Written} || {Wait, {present, Present, Written}, waiting} <- erx_fs_waits:list(Waits)].
 
 %% ctl -----------------------------------------------------------------------
 
@@ -171,13 +209,16 @@ check(Line, #window{area = Area, depth = Depth}) ->
     end.
 
 %% Sends the next present when none is in flight: a deferred present-again first,
-%% then the oldest held write. A screen that cannot be reached answers eio.
+%% then the oldest waiting write, marked begun before it is sent. A screen that
+%% cannot be reached answers eio.
 pump(#window{in_flight = none, again = true, buffer = Buffer} = W) when Buffer =/= none ->
     send(again, Buffer#{rects => []}, W#window{again = false});
-pump(#window{in_flight = none, waiting = Waiting} = W) ->
-    case queue:out(Waiting) of
-        {{value, {From, Present}}, Rest} -> send(From, Present, W#window{waiting = Rest});
-        {empty, _} -> W#window{again = false}
+pump(#window{in_flight = none, waits = Waits} = W) ->
+    case writes(W) of
+        [{Wait, Present, Written} | _] ->
+            send({Wait, Written}, Present, W#window{waits = erx_fs_waits:began(Wait, Waits)});
+        [] ->
+            W#window{again = false}
     end;
 pump(W) ->
     W.
@@ -187,12 +228,28 @@ send(Who, Present, #window{id = Id, area = {Area, _}} = W) ->
         {ok, Request} ->
             W#window{in_flight = {Request, Present, Who}};
         {error, eio} = Refused ->
-            ok = answer(Who, Refused),
-            pump(W)
+            pump(answer_write(Who, Refused, W))
     end.
 
-answer(again, _Reply) -> ok;
-answer(From, Reply) -> gen_server:reply(From, Reply).
+%% The screen's answer to the present in flight; any other message is not the window's.
+screen_answer(Message, #window{in_flight = {Request, Present, Who}} = W) ->
+    case gen_server:check_response(Message, Request) of
+        no_reply ->
+            W;
+        {reply, ok} ->
+            pump(answer_write(Who, ok, W#window{in_flight = none, buffer = maps:without([rects], Present)}));
+        {reply, {error, _} = Refused} ->
+            pump(answer_write(Who, Refused, W#window{in_flight = none}));
+        {error, {_Reason, _Screen}} ->
+            pump(answer_write(Who, {error, eio}, W#window{in_flight = none}))
+    end;
+screen_answer(_Message, W) ->
+    W.
+
+%% A present's answer to the write that asked for it, which a present-again has not.
+answer_write(again, _Reply, W) -> W;
+answer_write({Wait, Written}, ok, W) -> answer(Wait, Written, W);
+answer_write({Wait, _Written}, Refused, W) -> answer(Wait, Refused, W).
 
 %% Input ---------------------------------------------------------------------
 
@@ -234,34 +291,31 @@ push(Record, #records{queue = Queue, bytes = Bytes, dropped = Dropped} = Records
             Records#records{queue = queue:in(Record, Queue), bytes = Bytes + Size}
     end.
 
-wait(From, #records{readers = Readers} = Records) ->
-    Records#records{readers = queue:in(From, Readers)}.
-
 %% Answers waiting readers while records are pending; a mouse reader takes the
 %% resize record before any queued one.
-serve(#window{resized = true, mouse = #records{readers = Readers} = Mouse, pointer = Pointer} = W) ->
-    case queue:out(Readers) of
-        {{value, From}, Rest} ->
-            gen_server:reply(From, {ok, record($r, Pointer)}),
-            serve(W#window{resized = false, mouse = Mouse#records{readers = Rest}});
-        {empty, _} ->
-            serve_queues(W)
+serve(#window{resized = true, pointer = Pointer} = W) ->
+    case readers(mouse, W) of
+        [Wait | _] -> serve(answer(Wait, {ok, record($r, Pointer)}, W#window{resized = false}));
+        [] -> serve_records(kbd, serve_records(mouse, W))
     end;
 serve(W) ->
-    serve_queues(W).
+    serve_records(kbd, serve_records(mouse, W)).
 
-serve_queues(#window{mouse = Mouse, kbd = Kbd} = W) ->
-    W#window{mouse = serve_records(Mouse), kbd = serve_records(Kbd)}.
-
-serve_records(#records{queue = Queue, readers = Readers, bytes = Bytes} = Records) ->
-    case {queue:out(Queue), queue:out(Readers)} of
-        {{{value, Record}, RestQueue}, {{value, From}, RestReaders}} ->
-            gen_server:reply(From, {ok, Record}),
-            serve_records(Records#records{queue = RestQueue, readers = RestReaders,
-                                          bytes = Bytes - byte_size(Record)});
+serve_records(File, W) ->
+    #records{queue = Queue, bytes = Bytes} = Records = queue_of(File, W),
+    case {queue:out(Queue), readers(File, W)} of
+        {{{value, Record}, Rest}, [Wait | _]} ->
+            Taken = Records#records{queue = Rest, bytes = Bytes - byte_size(Record)},
+            serve_records(File, answer(Wait, {ok, Record}, with_queue(File, Taken, W)));
         _ ->
-            Records
+            W
     end.
+
+queue_of(mouse, #window{mouse = Mouse}) -> Mouse;
+queue_of(kbd, #window{kbd = Kbd}) -> Kbd.
+
+with_queue(mouse, Mouse, W) -> W#window{mouse = Mouse};
+with_queue(kbd, Kbd, W) -> W#window{kbd = Kbd}.
 
 %% Text files ----------------------------------------------------------------
 
