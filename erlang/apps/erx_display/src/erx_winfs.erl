@@ -511,9 +511,11 @@ place_request(Client, Id, Bytes, State) ->
 route(In, #winfs{windows = Windows, session = Session, policy = Policy,
                  policy_state = PolicyState, input = Input} = State) ->
     View = #{windows => Windows, session => Session, policy => Policy, policy_state => PolicyState},
-    {Outs, PolicyState1, Input1} = erx_input:step(In, View, Input),
-    lists:foldl(fun perform/2, State#winfs{policy_state = PolicyState1, input = Input1}, Outs).
+    {Input1, Outs} = erx_input:step(In, View, Input),
+    lists:foldl(fun perform/2, State#winfs{input = Input1}, Outs).
 
+perform({policy_state, PolicyState}, State) ->
+    State#winfs{policy_state = PolicyState};
 perform({to, Id, Event}, #winfs{windows = Windows} = State) ->
     _ = [gen_server:cast(Proc, {input, Event}) || #{id := I, proc := Proc} <- Windows, I =:= Id],
     State;

@@ -48,7 +48,7 @@ view(#{session := Session, screen := Screen}) ->
 
 step(In, #{state := State, got := Got, wake := Wake} = World) ->
     View = #{windows := Windows} = view(World),
-    {Outs, #{}, Next} = erx_input:step(In, View, State),
+    {Next, [{policy_state, #{}} | Outs]} = erx_input:step(In, View, State),
     {Got1, Wake1} = lists:foldl(
                       fun({to, Id, #{event := Event}}, {G, Wk}) ->
                               {ok, #{state := WindowState}} = erx_wm:fetch(Id, Windows),
@@ -177,18 +177,18 @@ repeat_test() ->
     #{state := S0, at := At, wake := Due} = W0,
     ?assertEqual(At + 500, Due),
     View = view(W0),
-    ?assertMatch({[], _, _}, erx_input:step({tick, Due - 1}, View, S0)),
-    {Outs, _, S1} = erx_input:step({tick, Due}, View, S0),
+    ?assertMatch({_, [{policy_state, _}]}, erx_input:step({tick, Due - 1}, View, S0)),
+    {S1, [{policy_state, _} | Outs]} = erx_input:step({tick, Due}, View, S0),
     ?assertMatch([{to, 1, #{event := {key, repeat, ?A, $a, $a, []}}}, {wake, _}], Outs),
-    {Outs2, _, _} = erx_input:step({record, maps:get(s1, maps:get(sources, W0)), <<"s1">>, Due + 1,
-                                    {key, up, ?A}}, View, S1),
+    Up = {record, maps:get(s1, maps:get(sources, W0)), <<"s1">>, Due + 1, {key, up, ?A}},
+    {_, [{policy_state, _} | Outs2]} = erx_input:step(Up, View, S1),
     ?assertMatch([{to, 1, #{event := {key, up, ?A, $a, $a, []}}}, {wake, none}], Outs2).
 
 %% Records before the first screen are dropped and counted.
 before_the_screen_test() ->
     S0 = erx_input:new(?CONFIG),
     View = view(#{session => <<"a">>, screen => ?SCREEN}),
-    {[], #{}, S1} = erx_input:step({record, self(), <<"k">>, 0, {key, down, ?A}}, View, S0),
+    {S1, [{policy_state, #{}}]} = erx_input:step({record, self(), <<"k">>, 0, {key, down, ?A}}, View, S0),
     ?assertEqual(1, erx_input:dropped(S1)).
 
 %% Random ----------------------------------------------------------------------
@@ -207,7 +207,7 @@ random_run(Steps) ->
                          none -> View0;
                          _ -> view(#{session => <<"a">>, screen => Screen1})
                      end,
-              {Outs, _, S1} = erx_input:step(In, View, S),
+              {S1, [{policy_state, _} | Outs]} = erx_input:step(In, View, S),
               [inside(X, Y, Screen1) || {to, _, #{event := {pointer, X, Y, _}}} <- Outs],
               {S1, Screen1}
       end, {erx_input:new(?CONFIG), none}, lists:seq(1, Steps)).
