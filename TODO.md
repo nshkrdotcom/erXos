@@ -9517,6 +9517,55 @@ document's "residual risks accepted" paragraph.
   `erx_ssh_dev:start/1`, so the two agree only by the harness's typing
   it. A constant of `abi/erx_abi.txt` that both read would make them one
   fact.
+* [Medium] SSH stage 1, card keys (`tools/lib/erx/manifest.rb`,
+  `check_login_keys_service`; [design-ssh.md](docs/design-ssh.md#invariants)
+  H8): `erx_ssh_dev` reads root's keys from the session's grant of
+  `login_keys`, but the manifest check gives that tree's grants only to
+  the system domain, so no manifest can grant it to root's session and
+  stage 1 admits only the development key. Granting it to root's session
+  widens H8's readers, an open decision; until it is made, the keys a
+  user writes to the card do not log in.
+* [Medium] SSH stage 1, the port ([design-ssh.md](docs/design-ssh.md#stages),
+  `tools/lib/erx/manifest.rb`, `check_net_ports`): the daemon listens on
+  2222, since the check gives a privileged port only to a configured
+  domain and root's session is not one. Whether stage 1 takes port 22 is
+  an open decision.
+* [Low] SSH stage 1, the channel's refusal
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `refuse/2`): it
+  decides that a request wants a reply by the tuple's shape (an integer
+  second element and a boolean third) instead of matching the request
+  shapes OTP's `ssh_connection` delivers, so a request of another shape is
+  silently ignored.
+* [Low] SSH stage 1, copied limits
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`): `MAX_TERM`
+  repeats `erx_ssh_line_core`'s and `MAX_SIDE` repeats `erx_tty`'s and
+  `erx_tty_link`'s; one owner exported or generated would make each one
+  fact.
+* [Low] SSH stage 1, empty output
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `tty_output`):
+  an empty piece of the tty's output is sent as a zero-length channel
+  data message instead of being skipped.
+* [Low] SSH stage 1, channels per connection
+  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `daemon/2`): the daemon
+  sets no `max_channels`, so one admitted connection can open a tty per
+  channel without bound.
+* [Low] SSH stage 1, the card read untested
+  (`erlang/apps/erx_session/src/erx_ssh_dev.erl`, `medium_file/0`): the
+  host tests give the key callback a stand-in for the read of
+  `login_keys`; the read through `erx:cap(login_keys)` and
+  `erx_file_remote` runs in no test, and cannot on QEMU until root's
+  session holds the grant (the card keys item above).
+* [Low] SSH stage 1, signals
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `ending/3`): the
+  tty's ending maps to SSH's signal names by one clause for `sigint`,
+  while `erx_console:shell_ending/1` reports `{signaled, S}` for every
+  signal of the generated `ERX_SSH_LINE_SIGNAL_MEMBERS`, so a shell ended
+  by another of them crashes the channel instead of sending its
+  exit-signal. The name should come from that table.
+* [Low] SSH stage 1, the release string
+  (`erlang/apps/erx_session/src/erx_ssh_dev_channel.erl`, `EXEC_REFUSED`):
+  the exec refusal names release 0.1 in a literal that must change by
+  hand with the release.
 * [Low] SSH stage 1, the chokepoint on login keys
   (`tools/lib/erx/checks.rb`, `LOGIN_KEY_ENTRY`): the check matches the
   keyword `login_key:` only, so `:login_key => key` or a splatted hash
