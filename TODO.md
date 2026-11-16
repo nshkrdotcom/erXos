@@ -2134,6 +2134,11 @@ it; git history is the record of completed work.
   `erx_file_remote`'s exchange, which `erx_win` does not have yet, and making image 0 anew itself for an `r` record.
   Once built, `erx_draw_conn` keeps those requests in `erx_fs_waits`, bounded by each grant's 64 requests in
   flight, as `erx_window` keeps its window's `mouse` and `kbd` reads and `ctl` writes. The same change has the
+  `erx_file_remote`'s exchange split in its send and take halves (`send/2`, `take/2`, `send_flush/2`), and making
+  image 0 anew itself for an `r` record.
+  Once built, `erx_window` and `erx_draw_conn` keep those requests in `erx_fs_waits`, bounded by each grant's 64
+  requests in flight. The same change admits a clunk or `remove` at any bound and keeps the fid's number until the
+  clunk is answered, answers a flush of a waiting clunk after it, has a grant whose client ended drain, and has the
   program's handler end at its draw connection's end (`erx_session_export:start_window/1`), so the handler, the
   connection, the `/dev` grant and the window share one life, as design-files.md's rule 5, "What waiting holds" and
   "Ownership and lifetime" state. `erx_fs_locks`, the tree's lock table, does not exist yet (the grant serves no
@@ -7597,7 +7602,7 @@ document's "residual risks accepted" paragraph.
   names at any node. Settle it before the network carrier lands: give envelopes from
   network entries a `D` no domain id can equal, and add the test that a remote node of
   creation equal to a client's id is refused at its grant.
-* [Medium] File clients (`erx_file_remote.erl`, `collect/3`): an alias stays active
+* [Medium] File clients (`erx_file_remote.erl`, `arrived/1` and `take/2`): an alias stays active
   until its reply arrives and the wait while the server lives has no deadline, so a
   server of another domain can hold a request open and send its alias, or the
   caller's pid it was handed as the owner, messages of any other shape without limit;

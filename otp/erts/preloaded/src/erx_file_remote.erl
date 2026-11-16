@@ -34,11 +34,11 @@
 %% a write's reply sets the offset by the rule of design-files.md's Open files and
 %% offsets (offset_after/4).
 %%
-%% Every request passes exchange/2, which checks it against the generated protocol
-%% grammar, erx_9p_grammar, refuses a walk that names "..", which the grammar lets a
-%% server take, so no walk this client sends names ".", ".." or an empty name, and sends
-%% nothing that writes through rights other than rw; the grammar holds each reply to its
-%% request. A server's reply is untrusted: a reply of any other shape answers eio and
+%% Every request passes exchange/2, or send/2, its send half for one request, which
+%% checks it against the generated protocol grammar, erx_9p_grammar, refuses a walk that
+%% names "..", which the grammar lets a server take, so no walk this client sends names
+%% ".", ".." or an empty name, and sends nothing that writes through rights other than
+%% rw; the grammar holds each reply to its request. A server's reply is untrusted: a reply of any other shape answers eio and
 %% raises nothing in the caller, which may be the code server. A server of another
 %% domain's reply arrives in the envelope of edit 16, {erx_origin, D, {erx_9p, Alias,
 %% Reply}}, and is taken as a bare one is, whatever D, as gen takes a call's reply (edit
@@ -57,8 +57,13 @@
 %% walk_reply/2 for the fuzz target (test/erlang/erx_file_remote_fuzz.erl), and sent/2,
 %% the exchange with a server, for it and for test/erlang/erx_file_remote_tests.erl.
 -export([walk/2, link_text/2, passed/2, refused/2, walk_reply/2, sent/2]).
-%% The exchange every request passes, for erx_win, which holds a window's fids itself.
--export([exchange/2]).
+%% The exchange every request passes, for erx_win, which holds a window's fids itself,
+%% and its two halves, for a draw connection that holds a program's reads of kbd and
+%% mouse while it serves others (docs/design-display.md, Erlang clients): send/2 sends
+%% one request and answers its id at once, send_flush/2 sends a flush of the request an
+%% id names, and take/2 tells whether a message the caller received answers an id.
+-export([exchange/2, send/2, send_flush/2, take/2]).
+-export_type([request_id/0]).
 -export([read_file_info/3, read_link/2, list_dir/2, write_file_info/3, make_dir/2,
          del_dir/2, delete/2, rename/3, make_link/3, make_symlink/3]).
 -export([open/3, open_flags/4, read_file/2, set_cwd/2, identity/2, statfs/2]).
@@ -85,6 +90,18 @@
 %% How a walk's last name must be for the operation to stand: anything (nofollow), not a
 %% link, which the operation follows (follow), or a directory, a parent's (directory).
 -type mode() :: follow | nofollow | directory.
+%% A request sent and not yet answered: the alias its reply comes to, the request the
+%% grammar holds that reply to, and a monitor of the grant's process, which the
+%% requests of one exchange share.
+-record(request_id, {alias :: reference(), request :: tuple(), monitor :: reference()}).
+-opaque request_id() :: #request_id{}.
+
+%% A reply at a request's alias: bare from a server of this domain, or in one envelope
+%% from a server of another, whatever its domain. Every take matches these two, and the
+%% grant's end at the request's monitor.
+-define(DOWN(Monitor), {'DOWN', Monitor, process, _, _}).
+-define(BARE(Alias, Reply), {erx_9p, Alias, Reply}).
+-define(ENVELOPED(Alias, Reply), {erx_origin, _, {erx_9p, Alias, Reply}}).
 
 %% The domain's umask, which a host's kernel would take off stock's modes.
 -define(UMASK, 8#022).
@@ -1238,17 +1255,50 @@ text(Encoded) when byte_size(Encoded) > 0, binary_part(Encoded, byte_size(Encode
 text(Path) ->
     Path.
 
-%% Every request the client sends passes here, so what holds here holds for every
-%% operation: a request the protocol's grammar refuses sends nothing and answers einval,
-%% as does a walk that names "..", which the grammar lets a server take but which only
-%% the resolver acts on (design-files.md, Resolving a path); and a request that writes,
-%% through rights other than rw, sends nothing and answers erofs, as the grant's own
-%% funnel would. Nothing else is sent; else each request goes to an alias of its own, all
-%% at once, and the replies are answered in order.
+%% Every request the client sends passes here or send/2, so what holds here holds for
+%% every operation: a request the protocol's grammar refuses sends nothing and answers
+%% einval, as does a walk that names "..", which the grammar lets a server take but which
+%% only the resolver acts on (design-files.md, Resolving a path); and a request that
+%% writes, through rights other than rw, sends nothing and answers erofs, as the grant's
+%% own funnel would. Nothing else is sent; else each request goes to an alias of its own,
+%% all at once, and the replies are answered in order.
+-spec exchange(grant(), [tuple()]) -> [term()].
 exchange({Pid, _, Rights}, Requests) ->
     case refused(Requests, Rights) of
         none -> sent(Pid, Requests);
         Why -> [{error, Why} || _ <- Requests]
+    end.
+
+%% The send half of the exchange for one request, refused as exchange/2 refuses it: the
+%% request's id, whose answer take/2 finds among the messages the caller receives.
+-spec send(grant(), tuple()) -> {ok, request_id()} | {error, einval | erofs}.
+send({Pid, _, Rights}, Request) ->
+    case refused([Request], Rights) of
+        none -> {ok, sent_request(Pid, erlang:monitor(process, Pid), Request)};
+        Why -> {error, Why}
+    end.
+
+%% A flush of the request Id names, which names it by its alias (design-files.md,
+%% Flush), sent on the grant the request went to. The grant answers the request before
+%% the flush, and take/2 takes each for its own id.
+-spec send_flush(grant(), request_id()) -> {ok, request_id()} | {error, einval | erofs}.
+send_flush(Grant, #request_id{alias = Alias}) ->
+    send(Grant, {flush, Alias}).
+
+%% The take half: {reply, Answer} when Message is the reply at Id's alias, held to its
+%% request by the grammar, or the end of Id's grant, which answers with the reply that
+%% arrived before the end, else eio; no_reply for any other message, which the caller
+%% keeps or drops. Taking an answer ends the id's alias and monitor.
+-spec take(term(), request_id()) -> {reply, term()} | no_reply.
+take(Message, #request_id{monitor = Monitor} = Id) ->
+    case classified(Message, Id) of
+        {reply, Reply} ->
+            erlang:demonitor(Monitor, [flush]),
+            {reply, settled(Id, Reply)};
+        down ->
+            {reply, ended(Id)};
+        no_reply ->
+            no_reply
     end.
 
 -spec refused([tuple()], ro | rw | rx) -> none | einval | erofs.
@@ -1272,53 +1322,66 @@ dot_dot(_) -> false.
 
 
 %% Each reply is held to its request by the grammar; any other term is eio. Once the
-%% grant's process has ended, a request whose reply has not arrived answers eio.
+%% grant's process has ended, a request whose reply has not arrived answers eio. The
+%% requests share one monitor of the grant, so a remote grant is monitored once for them.
 sent(Pid, Requests) ->
     Monitor = erlang:monitor(process, Pid),
-    Sent = [{send(Pid, Request), Request} || Request <- Requests],
-    Replies = collect(Sent, Monitor, live),
+    Ids = [sent_request(Pid, Monitor, Request) || Request <- Requests],
+    Answers = collect(Ids, live),
     erlang:demonitor(Monitor, [flush]),
-    Replies.
+    Answers.
 
-send(Pid, Request) ->
+sent_request(Pid, Monitor, Request) ->
     Alias = erlang:alias(),
     erlang:send(Pid, {erx_9p, Alias, self(), Request}),
-    Alias.
+    #request_id{alias = Alias, request = Request, monitor = Monitor}.
 
-%% Liveness is live until the server's monitor fires, and gone after. Each alias stays
-%% active until its reply's shape arrives, so a message of another shape sent to it
-%% cannot end it before the reply; the alias ends when the reply is taken or the server
-%% is gone. A message of another shape at a live alias is not taken and stays in the
-%% caller's mailbox (a security residual in TODO.md).
-collect([], _, _) ->
+%% Liveness is live until the grant's monitor fires, and gone after, when each request
+%% left answers with what arrived before the end.
+collect([], _) ->
     [];
-collect([{Alias, Request} | Sent] = Waiting, Monitor, Liveness) ->
-    case reply(Alias, Monitor, Liveness) of
-        {reply, Reply} ->
-            erlang:unalias(Alias),
-            [decoded(Request, Reply) | collect(Sent, Monitor, Liveness)];
-        down ->
-            collect(Waiting, Monitor, gone);
-        none ->
-            erlang:unalias(Alias),
-            [{error, eio} | collect(Sent, Monitor, gone)]
+collect([Id | Ids], live) ->
+    case arrived(Id) of
+        {reply, Reply} -> [settled(Id, Reply) | collect(Ids, live)];
+        down -> [ended(Id) | collect(Ids, gone)]
+    end;
+collect([Id | Ids], gone) ->
+    [ended(Id) | collect(Ids, gone)].
+
+%% Waits for what answers Id: {reply, Reply} at its alias, or down at its grant's end.
+%% Each alias stays active until its reply's shape arrives, so a message of another
+%% shape sent to it cannot end it before the reply; the alias ends when the reply is
+%% taken or the grant is gone. A message of another shape at a live alias is not taken
+%% here and stays in the caller's mailbox (a security residual in TODO.md).
+arrived(#request_id{alias = Alias, monitor = Monitor}) ->
+    receive
+        ?BARE(Alias, Reply) -> {reply, Reply};
+        ?ENVELOPED(Alias, Reply) -> {reply, Reply};
+        ?DOWN(Monitor) -> down
     end.
 
-%% Waits for the reply at Alias, bare from a server of this domain or in one envelope
-%% from a server of another. While the server is live it returns {reply, Reply}, or down
-%% when the server's monitor fires first. Once the server is gone it returns
-%% {reply, Reply} for a reply that arrived before the server's end, and none otherwise.
-reply(Alias, Monitor, live) ->
+%% What a message the caller already received is to Id, as arrived/1 tells it, or
+%% no_reply when it is neither.
+classified(Message, #request_id{alias = Alias, monitor = Monitor}) ->
+    case Message of
+        ?BARE(Alias, Reply) -> {reply, Reply};
+        ?ENVELOPED(Alias, Reply) -> {reply, Reply};
+        ?DOWN(Monitor) -> down;
+        _ -> no_reply
+    end.
+
+%% Id's reply, held to its request; the alias takes nothing more.
+settled(#request_id{alias = Alias, request = Request}, Reply) ->
+    erlang:unalias(Alias),
+    decoded(Request, Reply).
+
+%% Once Id's grant has ended, the reply that arrived before its end, else eio.
+ended(#request_id{alias = Alias, request = Request}) ->
+    erlang:unalias(Alias),
     receive
-        {erx_9p, Alias, Reply} -> {reply, Reply};
-        {erx_origin, _, {erx_9p, Alias, Reply}} -> {reply, Reply};
-        {'DOWN', Monitor, process, _, _} -> down
-    end;
-reply(Alias, _, gone) ->
-    receive
-        {erx_9p, Alias, Reply} -> {reply, Reply};
-        {erx_origin, _, {erx_9p, Alias, Reply}} -> {reply, Reply}
-    after 0 -> none
+        ?BARE(Alias, Reply) -> decoded(Request, Reply);
+        ?ENVELOPED(Alias, Reply) -> decoded(Request, Reply)
+    after 0 -> {error, eio}
     end.
 
 decoded(Request, Reply) ->
