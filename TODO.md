@@ -6694,12 +6694,6 @@ to the corpus and follow rc
   Disconnection Complete empties and refills the slot, and each refill starts a fresh deadline, so the
   enable never times out and the core never stops; the controller process should end when a command stays
   unsent across refills for longer than `bt_command_timeout_ms`.
-* [Medium] bluetooth, requests that name only a handle (`erx_bt_hci_core:step/3`'s `{send, ...}` and
-  `{disconnect, ...}`; docs/design-bluetooth.md "Commands and data credits"): the controller reuses handles, so a
-  request of a link that has gone, handled after the handle's Disconnection Complete and a new LE Connection
-  Complete, would send the old link's packet to, or disconnect, the new peer. The design puts the filter in the
-  controller process, which passes on only the requests of the handle's current link; the link slice should make it
-  hold by construction instead, with a connection identity given in `link_up` and required in every request.
 * [Low] stopgap, Fiasco's vCPU state area ([vCPU upcalls on Fiasco](docs/design-stopgap.md#vcpu-upcalls-on-fiasco)):
   the area lives in kernel-user memory its program can write, so a program can set its own pending flag or rewrite
   the saved frame it is resumed with. It harms only that program, since `erx_vcpu_resume` validates the frame and

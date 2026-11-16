@@ -54,18 +54,18 @@ class ErxBtHciTest < Minitest::Test
              catching_case: 'a_disconnect_answered_by_status_frees_the_slot_test'),
     Seed.new(fault: 'a handle kept live after its Disconnection Complete',
              module_path: CORE,
-             anchor: '{[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),',
-             replacement: '{[{link_down, Handle}], Core#core{links = Links,',
+             anchor: 'Core#core{links = maps:remove(Handle, Links),',
+             replacement: 'Core#core{links = Links,',
              catching_case: 'disconnection_returns_a_handles_packets_test'),
     Seed.new(fault: "a completion's count taken without the in-flight bound",
              module_path: CORE,
-             anchor: '#{Handle := InFlight} when Count =< InFlight - Queued -> Links#{Handle := InFlight - Count};',
-             replacement: '#{Handle := InFlight} -> Links#{Handle := InFlight - Count};',
+             anchor: '#{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->',
+             replacement: '#{Handle := {Serial, InFlight}} ->',
              catching_case: 'a_forged_completion_stops_test'),
     Seed.new(fault: 'advertising not enabled again after a disconnection',
              module_path: CORE,
-             anchor: '{[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),',
-             replacement: '{[{link_down, Handle}], Core#core{advertising = true, links = maps:remove(Handle, Links),',
+             anchor: 'Core#core{links = maps:remove(Handle, Links),',
+             replacement: 'Core#core{advertising = true, links = maps:remove(Handle, Links),',
              catching_case: 'advertising_resumes_after_a_disconnection_test'),
     Seed.new(fault: "a completion's bound counting packets still on the writer's list",
              module_path: CORE,
@@ -131,6 +131,13 @@ class ErxBtHciTest < Minitest::Test
              module_path: CORE,
              anchor: 'case next_deadline(Core) =< Now of',
              replacement: 'case next_deadline(Core) =< Now + 1 of',
+             catching_case: 'explored_core_keeps_its_invariants_test_'),
+    Seed.new(fault: "a request's link identity ignored, so a gone link's packet reaches its handle's next peer",
+             module_path: CORE,
+             anchor: "current({Handle, Serial}, #core{links = Links}) ->\n    case Links of\n" \
+                     "        \#{Handle := {Serial, InFlight}} -> {current, InFlight};",
+             replacement: "current({Handle, _Serial}, #core{links = Links}) ->\n    case Links of\n" \
+                          "        \#{Handle := {_, InFlight}} -> {current, InFlight};",
              catching_case: 'explored_core_keeps_its_invariants_test_')
   ].freeze
 

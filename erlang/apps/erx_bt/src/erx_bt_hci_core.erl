@@ -42,8 +42,17 @@ the core never decides a disconnect for a handle after its Disconnection Complet
 connection on a handle whose disconnect is handed to the writer and unanswered stops,
 since the controller may carry that disconnect out on the new peer. A disconnect
 answered with a status other than success or Unknown Connection Identifier (the handle
-has gone, which Disconnection Complete reports or has reported) stops. Requests name a
-handle only: the process passes on only those of the handle's current link.
+has gone, which Disconnection Complete reports or has reported) stops.
+
+**Links** are named by their handle and the connection that gave it, `{Handle, Serial}`,
+the serial counting the core's connections: `link_up` gives a link its name, every
+action for a link carries it, and every request comes in one envelope that carries it,
+`{request, Link, Request}`. The envelope's one clause asks `current/2` before any
+request is read, and a name that is not its handle's current link is refused, so a
+request of a link that has gone changes nothing: its packet or disconnect never
+reaches the peer the controller gave the handle next. Names are unique within one run
+of the core; a stop ends every link with it (its group restarts), so the process maps
+full names to link processes and no link outlives the core that named it.
 
 **ACL credits** (Part E, 4.1.1): each live handle counts its packets in flight, and the
 free credits are the controller's buffer count less their sum, so a completion can never
@@ -77,9 +86,10 @@ slice): this core sends what it is given.
 
 -export([new/1, step/3, next_deadline/1, facts/1]).
 -export_type([time/0]).
--export_type([config/0, input/0, action/0, core/0]).
+-export_type([config/0, input/0, action/0, core/0, link/0, request/0]).
 
 -type handle() :: 0..16#FFF.
+-type link() :: {handle(), pos_integer()}.     % a handle and the serial of the connection on it
 -type config() :: #{connections := 1..?ERX_BT_CONNECTIONS_MAX, address := <<_:48>>,
                     advertising_data := binary(), scan_response_data := binary(),
                     patch := none | #{manufacturer := 0..16#FFFF, records := [{0..16#FFFF, binary()}]}}.
@@ -87,10 +97,10 @@ slice): this core sends what it is given.
 -type input() :: start | line_ready | written | expired
                | {event, erx_hci:event()}
                | {acl, handle(), 0..3, 0..3, binary()}
-               | {send, handle(), 0..3, binary()}
-               | {disconnect, handle(), byte()}.
--type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, handle(), map()} | {link_down, handle()}
-                | {to_link, handle(), term()} | {busy, handle()}.
+               | {request, link(), request()}.
+-type request() :: {send, 0..3, binary()} | {disconnect, byte()}.
+-type action() :: line_reset | {write, binary()} | {ready, map()} | {link_up, link(), map()} | {link_down, link()}
+                | {to_link, link(), term()} | {busy, link()}.
 
 %% A bring-up step: reset the line, send a command under a label, or wait.
 -type step() :: line_reset | {command, term(), erx_hci:command()} | {wait, pos_integer()}.
@@ -107,7 +117,8 @@ slice): this core sends what it is given.
     out = [] :: [{handle(), binary()}],        % ACL packets for the writer, in order, each with its handle
     credits = 0 :: 0..?ERX_BT_ACL_CREDITS_MAX,
     acl_tx_max = 0 :: 0..16#FFFF,
-    links = #{} :: #{handle() => non_neg_integer()},  % packets in flight per live handle
+    serial = 0 :: non_neg_integer(),           % the connections so far, the last link's serial
+    links = #{} :: #{handle() => {Serial :: pos_integer(), InFlight :: non_neg_integer()}},  % per live handle
     advertising = false :: boolean(),
     disconnects = [] :: [{handle(), {asked, Reason :: byte()} | taken}],  % live handles only
     facts = #{} :: map(),
@@ -156,7 +167,9 @@ whether advertising is on.
 """.
 -spec facts(core()) -> map().
 facts(#core{facts = Facts, dropped = Dropped, limit = Limit, links = Links, advertising = Advertising} = Core) ->
-    Facts#{dropped => Dropped, limit => Limit, links => Links, free => free(Core), advertising => Advertising}.
+    InFlight = #{Handle => N || Handle := {_Serial, N} <- Links},
+    Facts#{dropped => Dropped, limit => Limit, links => InFlight, free => free(Core),
+            advertising => Advertising}.
 
 -doc """
 One input at the time `Now`: the actions to perform, in order, and the next state; or
@@ -215,31 +228,47 @@ untimed(written, #core{writer = busy} = Core) ->
     {[], Core#core{writer = idle}};
 untimed({event, Event}, Core) ->
     event(Event, Core);
-untimed({acl, Handle, Boundary, _Broadcast, Data}, #core{links = Links} = Core) ->
-    case is_map_key(Handle, Links) of
-        true -> {[{to_link, Handle, {acl, Boundary, Data}}], Core};
-        false -> {[], dropped(Core)}
-    end;
-untimed({send, Handle, Boundary, Data}, #core{links = Links} = Core) ->
-    case Links of
-        #{Handle := InFlight} ->
-            case InFlight < share(Core) andalso free(Core) > 0 of
-                true -> {[], Core#core{out = Core#core.out ++ [{Handle, erx_h4:acl(Handle, Boundary, Data)}],
-                                       links = Links#{Handle := InFlight + 1}}};
-                false -> {[{busy, Handle}], Core}
-            end;
-        #{} -> {[], Core}
-    end;
-untimed({disconnect, Handle, Reason}, #core{links = Links, disconnects = Pending} = Core) ->
-    case is_map_key(Handle, Links) andalso not lists:keymember(Handle, 1, Pending) of
-        true -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
-        false -> {[], Core}
+untimed({acl, Handle, Boundary, _Broadcast, Data}, Core) ->
+    to_link(Handle, {acl, Boundary, Data}, Core);
+untimed({request, Link, Request}, Core) ->
+    case current(Link, Core) of
+        {current, InFlight} -> request(Request, Link, InFlight, Core);
+        gone -> {[], Core}
     end;
 untimed(Input, _Core) ->
     stop({unexpected_input, Input}).
 
+%% A request's link: its packets in flight when it is its handle's current link, else
+%% gone. Every request comes in one envelope, whose one clause asks this first.
+current({Handle, Serial}, #core{links = Links}) ->
+    case Links of
+        #{Handle := {Serial, InFlight}} -> {current, InFlight};
+        #{} -> gone
+    end.
+
+%% A request of a link current on its handle, which has InFlight packets in flight.
+request({send, Boundary, Data}, {Handle, Serial} = Link, InFlight,
+        #core{links = Links, out = Out} = Core) ->
+    case InFlight < share(Core) andalso free(Core) > 0 of
+        true ->
+            Packet = erx_h4:acl(Handle, Boundary, Data),
+            {[], Core#core{out = Out ++ [{Handle, Packet}],
+                           links = Links#{Handle := {Serial, InFlight + 1}}}};
+        false ->
+            {[{busy, Link}], Core}
+    end;
+request({disconnect, Reason}, {Handle, _Serial}, _InFlight,
+        #core{disconnects = Pending} = Core) ->
+    case lists:keymember(Handle, 1, Pending) of
+        false -> {[], Core#core{disconnects = Pending ++ [{Handle, {asked, Reason}}]}};
+        true -> {[], Core}
+    end;
+request(Request, Link, _InFlight, _Core) ->
+    stop({unexpected_input, {request, Link, Request}}).
+
 %% The credits no live handle holds, and a link's share of all of them.
-free(#core{credits = Credits, links = Links}) -> Credits - lists:sum(maps:values(Links)).
+free(#core{credits = Credits, links = Links}) ->
+    Credits - lists:sum([InFlight || _ := {_Serial, InFlight} <- Links]).
 
 %% At least one: the bring-up keeps the limit at most the credits.
 share(#core{credits = Credits, limit = Limit}) -> Credits div Limit.
@@ -260,15 +289,16 @@ event({le_connection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, Info}, Core) ->
 event({le_connection_complete, _Failed, _Handle, _Info}, Core) ->
     {[], Core};
 event({disconnection_complete, ?ERX_HCI_STATUS_SUCCESS, Handle, _Reason}, #core{links = Links} = Core) ->
-    case is_map_key(Handle, Links) of
-        true ->
+    case Links of
+        #{Handle := {Serial, _}} ->
             %% A packet still waiting for the writer is dropped with its handle, which the
             %% controller may give the next peer, and so is the handle's disconnect. The
             %% packet the writer already holds is on the line (TODO.md, security residuals).
-            {[{link_down, Handle}], Core#core{links = maps:remove(Handle, Links),
-                                              out = [Item || {Owner, _} = Item <- Core#core.out, Owner =/= Handle],
-                                              disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};
-        false ->
+            {[{link_down, {Handle, Serial}}],
+             Core#core{links = maps:remove(Handle, Links),
+                       out = [Item || {Owner, _} = Item <- Core#core.out, Owner =/= Handle],
+                       disconnects = lists:keydelete(Handle, 1, Core#core.disconnects)}};
+        #{} ->
             {[], dropped(Core)}
     end;
 event({Kind, _Status, Handle} = Event, Core) when Kind =:= encryption_key_refresh_complete;
@@ -285,10 +315,11 @@ event({unknown, _Code}, Core) ->
 event(malformed, _Core) ->
     stop(malformed_event).
 
+%% A controller's report for a handle goes to the handle's current link, named in full.
 to_link(Handle, Event, #core{links = Links} = Core) ->
-    case is_map_key(Handle, Links) of
-        true -> {[{to_link, Handle, Event}], Core};
-        false -> {[], dropped(Core)}
+    case Links of
+        #{Handle := {Serial, _}} -> {[{to_link, {Handle, Serial}, Event}], Core};
+        #{} -> {[], dropped(Core)}
     end.
 
 %% A completion returns a live handle's packets, never more than it has given the
@@ -297,7 +328,8 @@ to_link(Handle, Event, #core{links = Links} = Core) ->
 complete({Handle, Count}, Out, Links) ->
     Queued = length([Owner || {Owner, _} <- Out, Owner =:= Handle]),
     case Links of
-        #{Handle := InFlight} when Count =< InFlight - Queued -> Links#{Handle := InFlight - Count};
+        #{Handle := {Serial, InFlight}} when Count =< InFlight - Queued ->
+            Links#{Handle := {Serial, InFlight - Count}};
         #{Handle := _} -> stop({completion_beyond_in_flight, Handle, Count});
         #{} -> stop({completion_for_dead_handle, Handle})
     end.
@@ -311,9 +343,11 @@ connected(Handle, _Info, #core{slot = {sent, {disconnect, Handle}, _, _, _}}) ->
     stop({connection_while_disconnecting, Handle});
 connected(Handle, _Info, #core{links = Links, limit = Limit}) when map_size(Links) >= Limit ->
     stop({connection_beyond_limit, Handle});
-connected(Handle, Info, #core{links = Links, acl_tx_max = TxMax, slot = Slot} = Core) ->
-    {[{link_up, Handle, Info#{acl_tx_max => TxMax, share => share(Core)}}],
-     Core#core{links = Links#{Handle => 0}, advertising = false, slot = overtaken(Slot)}}.
+connected(Handle, Info, #core{links = Links, serial = Last, acl_tx_max = TxMax, slot = Slot} = Core) ->
+    Serial = Last + 1,
+    {[{link_up, {Handle, Serial}, Info#{acl_tx_max => TxMax, share => share(Core)}}],
+     Core#core{links = Links#{Handle => {Serial, 0}}, serial = Serial, advertising = false,
+               slot = overtaken(Slot)}}.
 
 %% A connection while the advertising enable is sent came from that enable, which the
 %% controller has carried out and not yet answered: its answer must leave advertising
