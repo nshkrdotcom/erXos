@@ -675,7 +675,7 @@ is lost, as for any consumer.
 
 Phase 1 runs on Fiasco, with other domains from M5
 ([plan.md](plan.md)). Everything here is Erlang in the system domain and
-unchanged by erXos's kernel. The kernel ring is the stopgap's, polled
+unchanged by erXos's kernel. The kernel ring is Fiasco's, polled
 since it offers no signal; its rate is per space and its ring shared, so
 one space can push every record out in seconds, which the `kernel log
 records lost` lines and the sequence gaps show. Before the data
@@ -719,7 +719,7 @@ the supervisor's report is in the kernel ring, at `/proc/kernel/log`.
   nothing of the store: a batch's process reads one byte of each file
   and its size.
 * **The kernel's lines** stay where scope `all` reaches (L5), but for
-  the stopgap's whole-partition grant ([The store](#the-store)).
+  a development build's whole-partition grant ([The store](#the-store)).
 * **Who reads `/var/log`** is whoever a facet row grants `varlog`, and the
   tree has no scope of its own: every domain's lines are in it. The
   default manifests grant it to `root`'s template alone, as a UNIX
@@ -747,7 +747,7 @@ Each test names the seeded failure that proves the code under test ran.
 | no wait (L3) | a console driver and a store that never answer, while domains write at their rate for a minute: every `write` answers, the service's heap stays bounded, and each consumer's next batch begins with `lines missed` | a seeded unbounded backlog fails on memory; a `write` answered after the consumer's batch fails on its deadline |
 | the consumer protocol | exhaustively over each role's states, `idle` and `{waiting, From}`, and its events, a request, a second request, a line, the store's batch falling due and the requester's end: each state's next state and answer are as [Consumers and backlogs](#consumers-and-backlogs) says; in a system test, `erx_syslog` killed while the writer is stalled mid-batch and while the console waits: the writer finishes and asks the new service, and the console's next batch comes from the new service | a service that sends a batch without a request sends two to a stalled writer and fails; a consumer that does not ask again after its request's `DOWN` receives nothing and fails |
 | one taker (L4) | a serial transcript across the handoff, with records logged on both sides of it, holds each kernel record once; `erx_syslog` killed between takes doubles none, on the console or in `kernel/messages` | a second take in `erx_console` splits the kernel's lines between the two and fails; the build check fails on it |
-| the handoff order | the stopgap's counter of `l4_vcon_write` calls stays still after `erx_syslog`'s first take, and the console driver's first write follows it | `erx_syslog_sup` started after `user_sup` lets the driver write first and fails |
+| the handoff order | Fiasco's counter of `l4_vcon_write` calls stays still after `erx_syslog`'s first take, and the console driver's first write follows it | `erx_syslog_sup` started after `user_sup` lets the driver write first and fails |
 | kernel lines apart (L5) | a session's `ls /var/log` lists `messages` and no `kernel`, and `grep '^#' /var/log/messages*` finds nothing; the system shell reads `/var/log/kernel/messages` with the boot's kernel lines | a writer that appends kernel lines to `messages` fails; a session's grant that serves the store's listing shows `kernel` and fails |
 | files | `cat /var/log/messages` holds the lines the console showed, in order; `tail -f` shows a line within two seconds of its `write`; `tail -F` follows a rotation | a tree that reports the size of the open rather than the file's leaves `tail -f` silent and fails |
 | rotation | a flood past the size rotates: `messages.0` holds the old lines and at most the count of archives remain | a rotation that keeps one archive too many fails the count |

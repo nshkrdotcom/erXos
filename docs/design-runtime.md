@@ -3161,7 +3161,7 @@ around them.
   ([design-fiasco.md](design-fiasco.md#the-call-table)). How good the
   seed is belongs to the machine, not to a call: `entropy_quality` in the
   machine information and the boot banner report it, a release build
-  refuses a weak seed at boot, and the stopgap's banner names the seeds it
+  refuses a weak seed at boot, and Fiasco's banner names the seeds it
   mixed (`/chosen`'s seeds or, on the Raspberry Pi 4, the RNG200), or says
   its seed comes from the counter alone
   ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)). Any
@@ -3424,7 +3424,7 @@ and sleeps again; `__timedwait` is retried by the mutex, read-write lock,
 condition variable and `pthread_join` loops; `sem_timedwait` and
 `aio_suspend` return `EINTR` to their caller, which POSIX allows for both.
 `__timedwait` itself turns `EINTR` into 0 until a signal handler has been
-installed. ERTS never calls `pthread_cancel`. The stopgap backend refuses
+installed. ERTS never calls `pthread_cancel`. The Fiasco backend refuses
 `erx_thread_stop` and its siblings with `ERX_ENOTSUP`
 (`liberx/backend/core/refused.c`), so on Phase 1 a cancel acts at the
 target's next cancellation point, as
@@ -4062,7 +4062,7 @@ Until a release promises compatibility, a change to one of these layouts
 replaces it outright: no runtime reads an earlier version, and a version
 field serves only to make a mismatch fail loudly. The two kernel
 backends of `liberx` expose the same calls, so each runtime image runs on
-the stopgap and on erXos's kernel unchanged; a runtime that compares results
+Fiasco and on erXos's kernel unchanged; a runtime that compares results
 across them is the conformance suite.
 
 ## Failure handling, diagnostics and debuggability

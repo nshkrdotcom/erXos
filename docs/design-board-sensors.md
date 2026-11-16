@@ -422,7 +422,7 @@ read, and the window lies inside the core's own buffer page.
 
 The core is the mailbox core of
 [design-usb.md](design-usb.md#verification): C17, built for the host,
-used by the stopgap's root backend and by erXos's kernel alike. On the
+used by Fiasco's root backend and by erXos's kernel alike. On the
 stopgap the backend implements the call in the root task over the
 mailbox page it maps, with the same core
 ([design-usb.md](design-usb.md#the-vl805s-firmware), "On Fiasco").
@@ -607,7 +607,7 @@ already show.
 * **What a request costs, and who pays.** Every request holds the
   worker, one of the system runtime's dirty I/O schedulers, two by default
   ([design-runtime.md](design-runtime.md#configuration), `+SDio`), and,
-  while the kernel or the stopgap's root backend polls the mailbox, a
+  while the kernel or Fiasco's root backend polls the mailbox, a
   CPU of the system group. The runtime charges that kernel call its
   elapsed time, at ERTS's rate of four reductions a microsecond
   (`erl_process.h:2975-2984`, with `CONTEXT_REDS` 4000 at

@@ -474,7 +474,7 @@ and counts it.
   release only weakens this check.
 * **Three ways a clock is set, told apart by the page.**
   * *Initial bootstrap.* While `Cold`, the page is as the boot published
-    it: at the epoch on both boards and the stopgap, or the real-time
+    it: at the epoch on both boards and Fiasco, or the real-time
     clock's reading. The sample steps whatever its distance, as
     `ntpd_sync_on_start=YES` makes FreeBSD's first one. erXos does not
     offer the `NO` setting: every boot without a real-time clock starts
@@ -774,7 +774,7 @@ enforced, which is a residual of trusted code recorded in `TODO.md`;
 erXos's kernel checks `WRITE` on the time page. The range check of
 `erx_time_set_offset` is the body's own and holds on Fiasco as on
 the kernel. The page starts zeroed, `seq` and offset included, so every
-boot is cold. On QEMU `virt` the stopgap's root reads the PL031 once at
+boot is cold. On QEMU `virt` Fiasco's root reads the PL031 once at
 boot and sets the offset from it, so `state` is `boot`. The Raspberry Pi 4
 has no real-time clock of its own: wall time counts from 1970-01-01 until
 the wall-clock keeper sets it from a DS3231 module

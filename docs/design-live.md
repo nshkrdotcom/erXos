@@ -339,7 +339,7 @@ stopgap's name, so a stopgap's observation never passes for the
 kernel's.
 
 The collector of each source assigns the reporter, never the report: an
-attribute from `erx_object_info` is `kernel`'s or that of the stopgap
+attribute from `erx_object_info` is `kernel`'s or that of Fiasco
 reporter the schema lists on it, one from a service's
 records `service`'s, and one from a domain's agent `runtime`'s, whatever
 the agent's frame says.
@@ -2079,7 +2079,7 @@ records](#inspection-records)):
 
 | Row | Reporter | On erXos's kernel | On Fiasco |
 | --- | --- | --- | --- |
-| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since the stopgap offers no lanes |
+| `erts` | `runtime`, the system domain's included | OTP's trace events of the selection, its frames, and the adapter's events | OTP's `in` and `out` events of the selection; no frames, since Fiasco offers no lanes |
 | `backend` | `{stopgap, liberx_trace}`, labelled `liberx trace` | none: `erx_backend_trace_read` answers `ERX_ENOTSUP` and the row is left out | the root's ring ([design-fiasco.md](design-fiasco.md#the-trace-ring)) |
 | `kernel` | `kernel` | each CPU's ring, read with `erx_trace_read` | one `unsupported` line, from `erx_trace_read`'s `ERX_ENOTSUP` |
 
@@ -2087,7 +2087,7 @@ A row whose call answers `ERX_ENOTSUP` is shown as `unsupported` when
 its reporter is `kernel`, and left out when its reporter is a stopgap's,
 since a stand-in that does not run reports nothing. On Fiasco the
 adapter emits none of its own events: what causes them, a grant that
-changes, a yield request or a lane, is a kernel mechanism the stopgap does
+changes, a yield request or a lane, is a kernel mechanism Fiasco does
 not offer. The BIF `erx_trace_ring:read(Source, Cursor, Max)`, with
 `Source` either `backend` or `{kernel, Cpu}`, `Cursor` either `present` or
 a 64-bit cursor and `Max` from 1 to 512, makes the call of its row and
@@ -3085,7 +3085,7 @@ determinism test of the generated tree.
   `{erx_untraced, true}` under a trace session over every process, with
   call tracing of the function it calls, is never seen, where one spawned
   without it is, and its mailbox still shows in `process_info`, on the
-  hosted runtime. The stopgap's
+  hosted runtime. Fiasco's
   ring and its four-CPU case are in
   [design-fiasco.md](design-fiasco.md#verification).
 * **Host link:** session replacement; a recorded hello and its calls

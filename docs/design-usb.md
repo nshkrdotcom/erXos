@@ -284,7 +284,7 @@ QEMU's `raspi4b` lacks the PCIe root port
 (`docs/system/arm/raspi.rst:30-45`), so the VL805 runs only on a board;
 that model's USB is a DWC2, which [DWC2](#dwc2) covers.
 
-**The stopgap.** In the tree's backend, `erx_irq_create` of
+**Fiasco.** In the tree's backend, `erx_irq_create` of
 `ERX_IRQ_MSI` is `ERX_ENOTSUP` and a line's IRQ object is the root's
 alone to make (`liberx/backend/fiasco/irq.c:188-190`), and the tree's
 Phase 1 manifest check allows no holder of PCIe configuration space.
@@ -1004,11 +1004,11 @@ with this design's probes, each with what settles it:
 
 **QEMU `virt`: MSI.** On erXos's kernel the kernel drives the MSI
 frame and the give creates the MSI as an IRQ object on it
-([design-platforms.md](design-platforms.md#msi-frames)). The stopgap
+([design-platforms.md](design-platforms.md#msi-frames)). Fiasco
 uses MSI too, and not the function's INTx line: QEMU's bus is not
 closed, since the harness can put any function at any position, and an
 MSI over the frame is the same call above `liberx` in both phases. On
-the stopgap the backend implements that call: `erx_irq_create` of
+Fiasco the backend implements that call: `erx_irq_create` of
 `ERX_IRQ_MSI`, in the root, takes a free line of the range the frame
 serves, as the platform record names it, makes a Fiasco IRQ object
 bound to that line through Fiasco's interrupt controller, and answers
@@ -1098,7 +1098,7 @@ parts propose ([plan.md](plan.md#track-u-usb)):
   makes every unconfined device's (`liberx/system/dom_apply.c:420-425`).
 * **Interrupts.** QEMU `virt`'s MSI and the Pi 4's INTx line as
   [Interrupts](#interrupts) says.
-* **DMA.** Unconfined on both targets: the stopgap's harness starts QEMU
+* **DMA.** Unconfined on both targets: Fiasco's harness starts QEMU
   `virt` with no IOMMU, and the Pi 4 has none.
 
 **What the Phase 1 manifest check must allow.** Property 3 changes from
@@ -1239,7 +1239,7 @@ neither the tag nor the value. Its contract:
 On Fiasco the backend implements the call in the root task, which
 maps the mailbox's page and keeps a page of its own as the buffer, with
 the same deadline, answer match, rule after a timeout and results; the
-root is the trusted base and the stopgap reads no device secret. A call
+root is the trusted base and Fiasco reads no device secret. A call
 that answers other than `ERX_OK` reports the function `not_ready`, with
 `vl805 firmware not loaded`, and `0x50` is not read again. The
 operation is what makes the bridge's reset path
@@ -2632,7 +2632,7 @@ kernel; [The Phase 1 part](#the-phase-1-part) says what the backend and
 the manifest check add. Phase 1's residuals for USB and PCIe, each
 recorded here as the design's and in `TODO.md` when the code lands:
 
-* **No isolation between tasks.** The stopgap promises none: a task that
+* **No isolation between tasks.** Fiasco promises none: a task that
   bypasses `liberx` is stopped by nothing
   ([design-fiasco.md](design-fiasco.md#what-phase-1-code-must-not-assume)).
   The PCIe domain, the USB domain and the display domain are apart by
@@ -2753,7 +2753,7 @@ served in arrival order; one command is in flight at a time, while
 transfers on different pipes are in flight together, up to their blocks'
 buffers. No NIF call waits: `negotiate/2` answers `ebusy` and is called
 again on a timer, as the other forms' installs are. Device calls run on
-normal schedulers, so the stopgap's condition for non-coherent DMA, that
+normal schedulers, so Fiasco's condition for non-coherent DMA, that
 no thread moves between its maintenance and its barrier, holds for this
 form as for the others.
 
@@ -2876,7 +2876,7 @@ targeted traces carry the longer sequences.
 | the BCM2711 bridge driver, against a model of its registers whose link can fall at any step and whose VL805 loses its firmware at every PERST# | bring-up writes the facts record's sequence in its order, with 100 ms between PERST#'s release and the first configuration request; every access below the root port is bracketed by two link reads, and a value read while the link fell is never used; the enumerator reads bus 0 only at device 0, function 0, and bus 1 only at device 0; the decision table holds for every start: a link up with firmware present is kept and nothing is reset, any other state is turned off when up, brought up and notified; every PERST# release is followed by the notification | the bus-0 rule removed; the link read after the access removed, so a value read across a fall is reported; the reset run on a link up with firmware present; the notification skipped after a reset; the 100 ms wait dropped |
 | the stack's own bounds, on the host, and in the QEMU suite on both phases for the cases QEMU can drive | a connection storm, a hub reporting changes without pause, a keyboard reporting as fast as its interval allows with the display not reading, and a stick answering every command with a failure each stay within R6's constants: one bitmap per hub, the enumeration throttle, a stream's one read, the queue and block capacities, one process per function and medium, the NIF's work per call | the enumeration throttle removed, so the storm's attempts exceed 3 in 60 s |
 | the FAT server's mount over a raw window whose flush answers in turn `ok`, `enotsup`, `eio`, and nothing before the window ends, landing with the FAT server | over `ok` the volume mounts writable; over `enotsup` it mounts read-only, a write answers `erofs`, and the mount's inspection record says `no flush: read-only`; over `eio` and over the window's end the mount is refused, the walk answers `eio`, the record names the failure, the window has received no write, and a walk over a window that then answers `ok` mounts writable | the mount's flush skipped, so the first write is accepted on the `enotsup` window and the dirty flag is written on the `eio` one; every answer but `ok` taken as `enotsup`, so the `eio` window mounts read-only |
-| the mailbox core behind `erx_firmware_request`, C17 built for the host, which the stopgap's root and erXos's kernel both use, against a model mailbox that answers a request at once, late or never, and can hold an answer to another buffer | an answer naming another buffer is discarded and the request takes only its own; no answer within the deadline gives `ERX_ETIMEDOUT`, and every later call gives it at once with no write to the mailbox or the buffer; a call with another request in flight gives `ERX_EBUSY` and writes nothing; a success answer with the tag's response bit clear gives `ERX_ENOTSUP`; a resource of another device gives `ERX_ENOTSUP` before the mailbox is touched | the buffer's address match removed, so a late answer to a timed-out request completes the next one; the rule after a timeout removed, so a second call rewrites the buffer the firmware may still answer into |
+| the mailbox core behind `erx_firmware_request`, C17 built for the host, which Fiasco's root and erXos's kernel both use, against a model mailbox that answers a request at once, late or never, and can hold an answer to another buffer | an answer naming another buffer is discarded and the request takes only its own; no answer within the deadline gives `ERX_ETIMEDOUT`, and every later call gives it at once with no write to the mailbox or the buffer; a call with another request in flight gives `ERX_EBUSY` and writes nothing; a success answer with the tag's response bit clear gives `ERX_ENOTSUP`; a resource of another device gives `ERX_ENOTSUP` before the mailbox is touched | the buffer's address match removed, so a late answer to a timed-out request completes the next one; the rule after a timeout removed, so a second call rewrites the buffer the firmware may still answer into |
 
 The chokepoint rules carry their own seeded violations: a module of
 `erx_usb` other than `erx_xhci` calling `erx_device:post/4`, and a module

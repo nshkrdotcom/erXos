@@ -1626,7 +1626,7 @@ queue when the caller's start arrives, so the rule holds for every caller
 by construction and no caller retries.
 
 **On Fiasco.** The plan, its checks and its undo are the same code.
-Each step's kernel call is a request to the stopgap's root service, the
+Each step's kernel call is a request to Fiasco's root service, the
 one owner of every Fiasco object, served on its one thread
 ([design-fiasco.md](design-fiasco.md#the-root-service)), each a row of
 [its call table](design-fiasco.md#the-call-table): step 1's budgets and
@@ -2325,7 +2325,7 @@ its seeded fault:
   the `machine` service and mounts one grant of them at `/machine` in the
   system domain's namespace, which a second start replaces. Seed: a
   start that leaves the own grant unmounted fails.
-* **The stopgap's root check**, a case of the native task guest
+* **Fiasco's root check**, a case of the native task guest
   (`test/guest/native_task`), since the Fiasco backend's service has no
   host build: a task's `erx_machine_end(res, ERX_END_RESET)` returns
   `ERX_ENOTSUP`, and the task's next line still reaches the console.
@@ -3251,7 +3251,7 @@ the domain library's boot view builds an entry per device, placed on its
 unit's holder, checks the units against the devices' register pages and
 lines, and refuses the whole view when devices that share a page or a
 line are in two unit rows, or when a device is marked confined,
-since the stopgap lists no IOMMU stream; the manifest check builds the same view, so such a
+since Fiasco lists no IOMMU stream; the manifest check builds the same view, so such a
 manifest fails the build, and no domain is created from a placement the
 view did not admit. The development manifest gives the block and network devices each
 a domain of its own: the block device to the storage domain, which
@@ -3263,7 +3263,7 @@ the host link. A manifest that configures a display domain gives it
 virtio-gpu and virtio-input; the development manifest configures none.
 The Phase 1 manifest check allows these unconfined devices in a development build, and
 property 9 refuses them in a release manifest as it does on erXos's kernel;
-the stopgap builds no release. In the storage domain a driver's end ends the domain, whose restart gives
+Fiasco builds no release. In the storage domain a driver's end ends the domain, whose restart gives
 the device back; other drivers die and restart under their supervisors as
 this section describes. Every driver's DMA reaches all memory,
 so a driver, or a domain that parses hostile bytes beside one, can reach
@@ -5088,7 +5088,7 @@ lines of C++ inside the trusted base, for a domain whose work is bounded
 control; erXos runs the interpreter there.
 
 **L4Re's `moe` and `ned` as the root task.** They implement L4Re's own
-object model and loader, which erXos does not use; the stopgap keeps only
+object model and loader, which erXos does not use; Fiasco keeps only
 Fiasco's kernel, `bootstrap` and `sigma0`
 ([design-kernel.md](design-kernel.md#the-current-implementation-the-modified-fiasco)).
 

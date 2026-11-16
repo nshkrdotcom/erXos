@@ -335,7 +335,7 @@ Fiasco behind the same kernel interface
 specifies above `liberx` is the same code on both: the domain service, the
 funnel, the peer, exports, introductions, the wake handshake and the
 domain library's creation plan. What stands behind the kernel calls is a
-row of [the stopgap's call table](design-fiasco.md#the-call-table) each:
+row of [Fiasco's call table](design-fiasco.md#the-call-table) each:
 
 * a connection's sides are memory objects of the root task's pool, which
   the domain library creates and passes; each party's `liberx` maps its
@@ -365,7 +365,7 @@ D7 and D17 rest on the stop, which the root service carries out without
 the runtime: it deletes every thread of the space and of the spaces below
 it, and posts the exit record only after the last deletion has returned,
 so a dead domain's write position is final when its end is reported. What
-the stopgap lacks there is a bound on how long a stop takes, since the one
+Fiasco lacks there is a bound on how long a stop takes, since the one
 service thread carries it out among every other request (K18); that bound
 and the tests under hostile load are erXos's kernel's
 ([Downsides against erXos's kernel](design-fiasco.md#downsides-against-erxoss-kernel)). D12's
@@ -380,7 +380,7 @@ maps a side writable it should only read; development builds run trusted
 code only.
 
 The tests of [Verification and testing](#verification-and-testing) run on
-the stopgap with three limits. The hostile runtimes run, and their verdicts
+Fiasco with three limits. The hostile runtimes run, and their verdicts
 on frames (what the funnel accepts, refuses and decodes, and what a forged
 sender or name gets) count; their bounds on memory charged to a budget, on
 CPU grants and on an innocent peer's latency report `unsupported` and are

@@ -895,7 +895,7 @@ The **buffer place** is the same in every program: from
 `prog_mem_base`, 0x7f00000000, for at most `prog_mem_bytes`, 1 GiB, two
 limits of `abi/protocols/prog.txt`. It holds the largest buffer, 16,384
 pixels square at 4 bytes a pixel. Its first page is below 2^32, as the
-startup message's page number needs. It lies inside the stopgap's task
+startup message's page number needs. It lies inside Fiasco's task
 range, from 2^38 to 2^39 (`liberx/backend/fiasco/vm.h`, `vm.c`), above
 the address `task.ld` links a program at, 0x4000100000, so one value
 serves both kernels and no image of the boot image meets it.
@@ -4706,7 +4706,7 @@ or its devices do not allow:
   The display's `liberx` maps it read-only and the client's read-write;
   nothing holds a domain that bypasses `liberx`, and its charge to the
   display's budget is a record.
-* **No direct path on virtio-gpu.** QEMU `virt` under the stopgap has no
+* **No direct path on virtio-gpu.** QEMU `virt` under Fiasco has no
   IOMMU, so virtio-gpu attaches over virtio-mmio, unconfined, and
   reaches only its own contiguous memory. Its driver reports `direct`
   false, and every frame takes the copy path: one copy of the changed
@@ -4724,7 +4724,7 @@ or its devices do not allow:
 Phase 1 defers the hardware of [Graphics hardware](#graphics-hardware),
 the bounds a hostile client is held to in CPU, and the confinement of the
 display's devices; each is the target design above and none is built on
-the stopgap.
+Fiasco.
 
 ## Compatibility and migration
 

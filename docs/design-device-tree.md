@@ -31,7 +31,7 @@ Decisions every reader needs:
   It walks the tree through `libfdt` with every check on, recurses
   nowhere and allocates nothing, and has a fuzz target.
 * **The tree reaches the root as a read-only copy at a known place.** On
-  the stopgap, `bootstrap` packs a copy of the tree into pages of its own,
+  Fiasco, `bootstrap` packs a copy of the tree into pages of its own,
   which `sigma0` pages to the root read-only, and the boot handoff record
   names their range. On erXos's kernel, the root holds a read-only object
   of the tree at a well-known slot. `liberx`'s `erx_boot_tree` returns the
@@ -248,7 +248,7 @@ the kernel's core archive leaves it out (`CoreArchive::ROOT_TASK_SOURCES`),
 since Fiasco reads no tree of erXos's and links its own `libfdt`. Besides
 `fdt.c`, `fdt_ro.c`, `fdt_check.c` and `fdt_addresses.c`, the reader links
 `fdt_rw.c` and `fdt_wip.c` only because `fdt_addresses.c` holds a writer;
-it writes nothing. Outside the stopgap's own `fiasco/` tree, only
+it writes nothing. Outside Fiasco's own `fiasco/` tree, only
 `kernel/core/dt.c` and erXos's kernel's `kernel/platform/fdt.c` include
 `libfdt.h`; a build check fails on any other includer.
 
@@ -427,7 +427,7 @@ is missing, empty or all zeros is absent, as erXos's kernel leaves it once
 it has used it. The bytes are secret, and whoever asks for them erases
 them. The boot seed's one sequence, `erx_rng_seed` in
 `kernel/core/rng_seed.c`, keys a generator from the counter and mixes each
-present seed in on its own, in that order; the stopgap's root seeds through
+present seed in on its own, in that order; Fiasco's root seeds through
 it in its step 6, and erXos's kernel will
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy)).
 

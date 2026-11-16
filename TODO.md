@@ -56,7 +56,7 @@ it; git history is the record of completed work.
   packages' session outer budgets in the `apps` budget sum, an enabled row meeting property 17's display
   and planning clauses, and admission on the host (`erx_app_admit:admit/3` on the packed manifest);
   clause 1's inspect scope; clause 2's counts in the principal table, the session-name atoms and each
-  server's connections, which the stopgap check sums for no principal (QEMU virt's manifest reckons the
+  server's connections, which Fiasco check sums for no principal (QEMU virt's manifest reckons the
   storage, network and display domains' connection quotas and `max_connections` by hand, in its comments,
   and `Manifest::Edit.without_apps` repeats that reckoning; the check should sum each grant's instances
   over distinct grantee and server pairs against each server's quota and `max_connections`); and the
@@ -135,6 +135,40 @@ it; git history is the record of completed work.
   that `erx_pkg` and `erx_pkg_io` call no `erx_domain:stop/2`, and that only `erx_pkg` calls
   `erx_principal:register_app/1` and `erx_starter:packages/2` (docs/design-packaging.md, "Verification and testing"). Add a `pkg-reach` rule
   allowing `erx_domain:system_namespace/0` and `erx_domain_lib:apps/0`, and a publishers rule.
+* [High] apps, an app's session ([design-packaging.md](docs/design-packaging.md#an-apps-session)): `erx_app`
+  and the `app` script exist, and the ready answer carries an app's record (`erx:app/0`), always `none` today
+  (`erx_domain_srv:grant_facets/4`). The boot view places the app entries (`erx_dom_apps_place`) from the packed `apps` row and
+  the app template, the session template naming no principal (`mf_none`), sized into the principal and
+  held tables, and `erx_domain_lib:apps/0` answers them; no manifest has the template yet, since the
+  check derives none (the property 19 item), so the view refuses any manifest with an `apps` row
+  today. The session's plan (`erx_domain_core:app_session/4`, from the registry's record, which keeps
+  the admission's rows) and the library's entry (`erx_domain_lib:app_session/6` over
+  `erx_dom_lib_app_session`) exist; no caller uses them yet. What remains: the domain service's
+  start of an app's session from its `erx_principal:app/2` record, which needs the app template's
+  facet rows by index (the library's `grants`, in facet-table order) and a mint core that grants a
+  session a subset of its template's rows, where `erx_domain_mints` grants every session of a
+  template all of them; `machine_principal` and the mints' parameters naming an app principal,
+  which the manifest's names do not hold, and a `tree apps` grant's root `apps/NAME/SIGNER/`, whose
+  signer is the registry record's and outside the plan, so the plan's PK10 comparison does not cover
+  it; the record in the ready answer, whose place, layout and
+  applications the registry does not keep; the app
+  principal's CPU group under an apps group, which Fiasco's flat groups leave out;
+  `erx_ns:mount/3` of an image file through `erx_verity`, which
+  held tables, and `erx_domain_lib:apps/0` answers them; the check derives the template from the `apps`
+  row, so QEMU virt's development image boots with four app entries (`erx_domain_lib:apps/0`'s max 4 at
+  the system's Erlang shell under HVF), and no app's session is started from them yet. What remains: the library entry and NIF over
+  `erx_dom_plan_app_session` and the domain service's start of an app's session from its
+  `erx_principal:app/2` record, its name from the app's pool and its principal number known to the mints
+  and the inspect scope; the app principal's CPU group under an apps group, which Fiasco's flat groups
+  leave out; the session plan
+  in `erx_domain_core` whose rows are `packages` and the kept needs, with the record in the ready answer, and
+  its host test with the three seeded faults; `erx_ns:mount/3` of an image file through `erx_verity`, which
+  `erx_app` calls as `{erofs, {file, Place, Layout}}`; a native app's start and the record's `window`, which wait for
+  `erx_prog_handler:start/1`'s `window` option (`erx_app` ends with
+  `{not_supported, program}` until then); and OTP's `ssl` and `inets` in the `app` script, which the runtime
+  does not build yet ([design-crypto.md](docs/design-crypto.md#https-clients)).
+  `erx_prog_handler:start/1`'s `window` option and the monitor its start returns (`erx_app` ends with
+  `{not_supported, program}` until then).
 * [High] apps, the start of an app's session (`erx_domain:start_app/2`, `erx_domain_srv`): its host test
   `erx_domain_mints_srv_tests:app_session/0` is written and not run: in its fixture the start is answered
   before the kept row is installed, because configured domain `a` ends after its introduction to the
@@ -148,7 +182,7 @@ it; git history is the record of completed work.
   and the domain service's start (`erx_domain:start_app/2`, which sends the app's record as
   `{Ref, app, App}` once the session's namespace is in place) exist. What remains: the start service's
   package rows (`erx_starter:packages/2`) and their keepers, the only starters of an app's sessions (PK7);
-  the app principal's CPU group under an apps group, which the stopgap's flat groups leave out; a `tree
+  the app principal's CPU group under an apps group, which Fiasco's flat groups leave out; a `tree
   apps` grant's root `apps/NAME/SIGNER/`, whose signer is the registry record's and outside the plan, so
   the plan's PK10 comparison does not cover it; `erx_ns:mount/3` of an image file through `erx_verity`,
   which `erx_app` calls as `{erofs, app}` and `erx_ns` refuses with `einval` until the file-backed
@@ -459,9 +493,9 @@ it; git history is the record of completed work.
   performance counters directly, and they count every thread and kernel
   mode too: one domain can observe another's activity. erXos's kernel
   leaves user-mode counters disabled
-  ([design-kernel.md](docs/design-kernel.md#security)). The stopgap keeps
+  ([design-kernel.md](docs/design-kernel.md#security)). Fiasco keeps
   them for profiling while development builds run trusted code only; they
-  go with the stopgap at M7, or earlier once the profiling feature under
+  go with Fiasco at M7, or earlier once the profiling feature under
   Planned features gives a confined way to count.
 
 * [Medium] kernel, Track K, the slot list's insert
@@ -730,7 +764,7 @@ it; git history is the record of completed work.
   ([design-device-dma.md](docs/design-device-dma.md)) and follow the record's coherence mark. The
   `net_device` suite's `noncoherent` cell runs the non-coherent path on QEMU `virt` under HVF and TCG
   ([design-device-tree.md](docs/design-device-tree.md), "The live tree on QEMU"), so user mode runs `DC CVAC`
-  and `DC CIVAC` under the stopgap on both; QEMU's DMA is coherent, so the cell shows that the maintenance
+  and `DC CIVAC` under Fiasco on both; QEMU's DMA is coherent, so the cell shows that the maintenance
   runs and costs no traffic, not that it is sufficient. A device whose DMA is not coherent has not run it: the
   Raspberry Pi 4's given devices have no queues yet. The host tests count the
   maintenance a non-coherent queue issues but do not run it. What is missing besides: the hosted
@@ -758,7 +792,7 @@ it; git history is the record of completed work.
 * [Medium] `abi/manifest.txt`, `liberx/system/dom_core.c`, `erlang/apps/erx_display/src/erx_winfs.erl`, [A display's
   session](docs/design-display.md#a-displays-session): a display's manifest entry carries no `display_keymap`,
   `display_repeat_delay_ms`, `display_repeat_period_ms` or reserved chord, and the domain service puts none of
-  them in the display domain's environment, so `erx_winfs` starts the router with the stopgap defaults: keymap
+  them in the display domain's environment, so `erx_winfs` starts the router with Fiasco defaults: keymap
   `us`, a repeat delay of 500 ms and a period of 126 ms, and no chord. Add the entry's fields, the environment
   variables and their reading, and check the repeat values against the entry's as the router's tests require.
 * [Medium] `test/erlang/erx_input_tests.erl`, [Verification and testing](docs/design-display.md#verification-and-testing)
@@ -2075,6 +2109,13 @@ it; git history is the record of completed work.
   ([design-display.md](docs/design-display.md#dependencies)). It blocks
   no release: R1 ships LVGL under its release contract
   ([design-display.md](docs/design-display.md#lvgls-release-contract)).
+* [Low] docs, the C17 cores' seam with Fiasco's glue: no design section describes it, though
+  `fiasco/kernel/src/Makeconf:395`, `include/erx/core/watchdog.h:11`,
+  `tools/lib/erx/glue_imports.rb:10` and `tools/lib/erx/chokepoint_rules.rb:12` cite a
+  `docs/design-stopgap.md` "Interfaces" that no longer exists, `chokepoint_rules.rb`'s
+  `STOPGAP` design link names `docs/design-stopgap.md#invariants`, and
+  `test/host/stack_proof_claim.rb:5` cites a "B8" of that document. Write the seam into
+  [design-fiasco.md](docs/design-fiasco.md) and point the citations and the rule's link at it.
 * [Low] stopgap, the host link's boot word: the host link is opt-in through
   `erx.hostlink=1` (`liberx/backend/fiasco/boot_args.c`,
   `liberx/backend/core/boot_manifest.c`), because the root takes the host
@@ -3245,13 +3286,13 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   image build. Either leave such a branch out of the revision, as newvers.sh leaves out a detached
   head, or widen the shape in both `BuildFacts::SHAPES` and `erx_build`, since `uname` writes the
   revision through the field escape anyway.
-* [Medium] liberx Fiasco backend, `liberx/backend/fiasco/service.h` (`erx_ipc_wait`): the stopgap's
+* [Medium] liberx Fiasco backend, `liberx/backend/fiasco/service.h` (`erx_ipc_wait`): the Fiasco backend's
   open wait returns design-kernel.md's tag and label, but only for fault and exit records, the one
   message its gates carry. Decide whether BK8b's IRQ deliveries share the same open wait before
   any thread other than the gate worker (`sys/erxos/erx_gate.c`), which binds only the domain's
   fault gate, waits in it.
 * [Medium] ERTS, `sys/erxos/erx_program_drv.c` (`PROGRAM_POOL`): no session has a pool for programs
-  yet, and the stopgap reports no budget's cap, so the driver checks a spec's cap against
+  yet, and Fiasco reports no budget's cap, so the driver checks a spec's cap against
   `UINT64_MAX` and only the carve of the program's budget bounds it. Give the session its pool, as
   docs/design-runtime.md, "Programs as ports", step 1 has it, and check against that.
 * [Medium] ERTS, `sys/erxos/erx_program_drv.c`: a failed `erx_space_stop` of a program's anchor is
@@ -3872,12 +3913,12 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] domain library, `liberx/system/dom_boot.c` (`erx_dom_boot_up`): each principal's
   group is a plain `erx_group_create(0, 0)`: no `users` group with the manifest's
   `users_share`, no principal group under it, and the principal's share never applied
-  (docs/design-system.md, "The root task", step 2). The stopgap ignores the parent, so
+  (docs/design-system.md, "The root task", step 2). Fiasco ignores the parent, so
   nothing notices yet.
 * [Medium] domain library, `liberx/system/dom_apply.c`: two stopgap details reach permanent
-  code: the fault thread's `erx_dom_lib_take` uses the stopgap's `erx_ipc_wait(deadline,
+  code: the fault thread's `erx_dom_lib_take` uses the Fiasco backend's `erx_ipc_wait(deadline,
   *label)` before the target receive signature is settled (the `erx_ipc_wait` item above),
-  and the boot image is named by 0, the root's name for the stopgap's whole archive, in `erx_image_slice` and
+  and the boot image is named by 0, the root's name for Fiasco's whole archive, in `erx_image_slice` and
   `erx_image_map`;
   `erx_dom_held_t` should hold the image's handle.
 * [Medium] domain library, `liberx/system/dom_apply.c` (`apply_pass`): design-system.md A7
@@ -3901,7 +3942,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   entries in other tables stay stale until their holder closes them, so a refused connect
   leaves up to three stale entries in each party's table that the party never learns, and a
   disconnect leaves the party's three to close. erXos's kernel clears them at the delete;
-  the stopgap is not to rebuild that. The library's own close after a destroy relies on the
+  Fiasco is not to rebuild that. The library's own close after a destroy relies on the
   stopgap's stale entries too: under K25 that close names a freed slot, so the Phase 2
   library must not close what a delete already cleared.
 * [Medium] domain library, `test/guest/native_domain`: no case fails a step after it made its
@@ -4004,7 +4045,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   `runtimes/emu` and, under `erx.det=1`, forces `runtimes/emu` for every domain, configured rows
   included, whatever it names (design-runtime.md, "BeamAsm"), once the boot's mode reaches the
   system domain. Until then a create names the BeamAsm image by its index and gets it in any boot mode.
-  The release name replaces the stopgap's `boot` field too: once the library takes the
+  The release name replaces Fiasco's `boot` field too: once the library takes the
   release by name it binds `-boot` itself, and the two bindings in the manifest's packer
   (`Erx::Manifest#boot_args`) and the service (`boot_args/2`) go, with the gap
   design-domains.md records for system-domain code that calls `erx_domain_lib:create/1`
@@ -6177,7 +6218,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Medium] scheduler, the pick core is configuration C0's
   (`kernel/sched/sched.c`, `erx_sched_pick`): it has no finishing level,
   no throttled lists and no published urgency yet, which the design's
-  Pick and dispatch names and erXos's own kernel needs. The stopgap keeps
+  Pick and dispatch names and erXos's own kernel needs. Fiasco keeps
   Fiasco's ready queue until it leaves, so nothing on the target calls
   `erx_sched_wake`, `erx_sched_remove` or `erx_sched_pick` before Track K's
   kernel does. The pick also has no way to give back a thread whose switch is
@@ -6188,7 +6229,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   changed, or the core own the walk's plan, when the first caller lands.
 * [High] scheduler, Track K, the cross-CPU protocol has no model and no code
   ([Concurrency](docs/design-scheduler.md#concurrency), `include/erx/sched.h`).
-  It does not block M1: the stopgap keeps Fiasco's dispatch, and nothing on
+  It does not block M1: Fiasco keeps its own dispatch, and nothing on
   the target calls the core's pick. The first deliverable is the model the
   design's Verification names, with the stack switch as separate steps; no
   code calls `erx_sched_pick` across CPUs before it passes. Then transcribe
@@ -6208,7 +6249,7 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   has no test, since no single-threaded script can observe it. Add the
   decision traces the parity test of
   [design-scheduler.md](docs/design-scheduler.md#verification-and-testing)
-  names, when the stopgap can produce them.
+  names, when Fiasco can produce them.
 * [Medium] scheduler, S4: a deferred preemption lets an executor run
   `grace_us` past exhaustion as debt, so a period can reach the quota plus
   one quantum plus the grace per CPU, where S4 promises one quantum.
@@ -6800,7 +6841,7 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
-* [Medium] stopgap, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): the stopgap's root reads the
+* [Medium] stopgap, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): Fiasco's root reads the
   PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
   certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
   Today the page starts zeroed and the wall clock reads 1970-01-01.
@@ -6871,7 +6912,7 @@ to the corpus and follow rc
   Fiasco's `memcpy` and `memset`, the archive's two other allowed
   undefined symbols, that way. The reading needs confirming; the
   bullet then says so.
-* [Medium] build, stack proof: the stopgap proof's entries are every
+* [Medium] build, stack proof: the Fiasco proof's entries are every
   exported function of the cores' archive (`tools/lib/erx/core_archive.rb`),
   a superset of the ones the kernel image references
   ([design-fiasco.md](docs/design-fiasco.md)). Read the entries from the
@@ -7309,7 +7350,7 @@ to the corpus and follow rc
   the dispatch passes the body the request's `wall_ns` alone, never its `caller`, and checks no right, so any
   task sets the wall clock. [design-time.md](docs/design-time.md#phase-1) holds the one setter by the
   `[only_erx_clock_nif]` imports section and the facet for trusted code; erXos's kernel checks `WRITE` on the
-  time page. A Phase 1 residual, not fixed in the stopgap.
+  time page. A Phase 1 residual, not fixed in Fiasco.
 * [Medium] WiFi's key holder before its release placement, development
   builds only ([design-wifi.md](docs/design-wifi.md#where-the-holder-runs)):
   the holder runs as a process of the WiFi domain, so the networks'
@@ -7472,7 +7513,7 @@ to the corpus and follow rc
   is the better source of the scope; with it the line's own `scope` goes. Not yet consistent at `all` in a
   session's runtime: `[domains, 4, threads]` through `entries/2` is gated only on the domain, not on the runtime
   (`erx_inspector:collects_domain/2` covers `collect/2` alone), and `/proc/cpus` answers a partial empty
-  listing where the stopgap refuses a task's `erx_object_info`, which `erx_kernel_records:listing/6` should
+  listing where Fiasco refuses a task's `erx_object_info`, which `erx_kernel_records:listing/6` should
   answer `unsupported`.
 
 * [Low] liberx Fiasco backend, `service.c` (`service_thread_handle`): the handle
@@ -7772,7 +7813,7 @@ to the corpus and follow rc
   posts wakes and refreshes in a loop spends another party's time on the
   home CPUs of its threads, charged to whoever runs there, and a configure of
   a group whose threads a hostile child created takes as long as those threads,
-  on the parent's time. The stopgap accepts this. Charge the receiver's work to the requester's path, as the finishing
+  on the parent's time. Fiasco accepts this. Charge the receiver's work to the requester's path, as the finishing
   share's approach to kills does.
 * [Medium] Entropy generator's burn on the kernel's objects
   (`kernel/core/rng.c`, `test/host/rng_test.rb`): the residue test runs
@@ -7812,7 +7853,7 @@ to the corpus and follow rc
   `liberx/erx_lane.c` that only `erx_lane_take`'s path loads from the
   producer's side and only `erx_lane_put`'s from the consumer's is held by
   review.
-  It reads a listed set of inherited trees (OTP, musl, the stopgap
+  It reads a listed set of inherited trees (OTP, musl, Fiasco
   kernel), so a new in-tree import that runs in a domain, such as toybox,
   is outside it until listed; read every listed file less named
   exclusions instead. Close it by construction once the mapping calls
@@ -7957,7 +7998,7 @@ document's "residual risks accepted" paragraph.
   adds the queue quota (design-runtime.md edit 15), the funnel delivers every authorised frame whatever the target
   process already holds queued, so a peer can grow any process's queue it can name without bound, and two domains
   that send toward each other in a cycle grow each other's queues with nothing to stop them. RT8's quota leaves the
-  next frame in the lane at a process at its quota; the stopgap has no bound here. The lane driver's finish
+  next frame in the lane at a process at its quota; Fiasco has no bound here. The lane driver's finish
   pauses there too, as at any time (design-runtime.md, "Connections in ERTS"); until the quota lands that clause
   of the finish has nothing to act on.
 * [Low] domains, control records (`erlang/apps/erx_domain/src/erx_domain_links.erl`, the system
@@ -9202,7 +9243,7 @@ document's "residual risks accepted" paragraph.
   specification, generated like other system registers; what the
   inspector shows; the cost on the switch path, measured with
   `tools/erx bench`. Decide whether ERTS's `perf` support and
-  `erlang:statistics` use it. Replaces the stopgap's direct user access
+  `erlang:statistics` use it. Replaces Fiasco's direct user access
   (Stopgap replacements above).
 * [Medium] erx_blk, `tools/lib/erx/chokepoint_rules/device.rb`: the rule "only `erx_blk_write` calls `erx_device:post/4`" is
   tree-wide, but every virtio driver will post; once a second poster joins `SITES`, the write path's argument also

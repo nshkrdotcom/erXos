@@ -642,7 +642,7 @@ big`, which only `httpc`'s erXos edit gives
 
 A third case runs the cell with the fixture's certificate for `/spx`
 made with an ordinary validity, from the build's date to ten years
-later, on a wall clock before 2000: the stopgap's unset clock, or on
+later, on a wall clock before 2000: Fiasco's unset clock, or on
 erXos's kernel QEMU's real-time clock started at 1970 with `-rtc
 base=1970-01-01` (unverified: QEMU's documentation was not read). It
 passes when `spx` shows `no data: clock not set` while `btc` and `eth`

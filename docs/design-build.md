@@ -349,7 +349,7 @@ read from the recorded tree when the image is packed.
 The kernel configuration runs in kernel mode, with `CONFIG_CPU_VIRT`
 disabled, device-tree discovery and the interrupt controllers required by
 QEMU `virt` enabled. Configuration inputs are checked in; the resolved
-configuration is recorded with the executable. The stopgap uses the
+configuration is recorded with the executable. Fiasco uses the
 documented cross GCC/binutils toolchain as subprocesses. erXos's own C17
 code continues to use its LLVM build. Both record compiler identity,
 effective flags, linker maps and dependency files.

@@ -24,7 +24,7 @@
 const RAM_MIB = 256;
 const CPU_CORES = 1;
 // No erx.hostlink=1: v64's machine has one UART, the console, so there is
-// no host link UART to drive (docs/design-stopgap.md, "The command line").
+// no host link UART to drive (docs/design-fiasco.md, "The command line").
 const CMDLINE = "erx.watchdog=1,30,600";
 const MANIFEST = "boot.json";
 // The bounds on what boot.json may ask the page to hold: the image and the
@@ -40,7 +40,7 @@ const DISK_CHUNK_BYTES = 1 << 16;
 // erXos's platform record says (config/platforms/qemu-virt.json): the disk
 // on the last transport, the top page's, and the network device on the last
 // transport of the page below, since a 4 KiB page holds eight transports
-// and is one device's alone (docs/design-stopgap.md). v64 has no setting
+// and is one device's alone (docs/design-fiasco.md). v64 has no setting
 // for a device's transport: it gives each the next one down from the last,
 // the disks first and the network device after them, so on its own the
 // network device would take the disk's page. The disk is therefore

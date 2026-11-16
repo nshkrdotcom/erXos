@@ -57,7 +57,7 @@ Ground rules:
   case by case with stock OTP 29.1.2 in the host's isolated Linux oracle
   ([design.md](design.md#testing-and-the-oracle)). A fast subset runs with
   `make check` on every change; the full suites at every major change (to
-  the kernel or the stopgap, the scheduler, memory, the funnel and the
+  the kernel or Fiasco, the scheduler, memory, the funnel and the
   connections' carrier, the adapter, the loader, or the build of OTP or
   musl) and at each milestone's exit. `make check-oracle` also runs musl's
   `libc-test`, and from M13 erXos's F2FS's deep runs against Linux's
@@ -78,10 +78,10 @@ Ground rules:
   its formats. [Stopgaps](#stopgaps) names the milestone that replaces each;
   a third-party stopgap also has its `TODO.md` item, while a stopgap
   mechanism of erXos's own is tracked here alone. The replacement runs
-  differentially against the stopgap over the test corpus, which for the
+  differentially against Fiasco over the test corpus, which for the
   kernel is Phase 1 and 1b's system's; every difference is a bug in the
   replacement, a
-  documented improvement with a test, or a bug in the stopgap recorded as
+  documented improvement with a test, or a bug in Fiasco recorded as
   such.
 * **Checks before the code they police.** The generators and the
   generated-tree tests, the stack proof and each chokepoint check land before or with the first
@@ -140,7 +140,7 @@ numbers are names; the table's order is the order.
 | **Phase 1** | | | | |
 | M0 The tree, the toolchain and the oracle | focused stock OTP 29.1.2 cases verify the offline Linux test runner; native Mac OTP supplies bootstrap tools; the frozen Fiasco set builds from the tree; every generated file regenerates unchanged | 4,000 lines of Ruby | | G0 |
 | M1 The system boots on Fiasco | the near-stock Fiasco prints erXos's banner and starts `liberx`'s root entry as the root task under HVF; the root allocates, maps and reuses memory, runs threads with TLS and timed waits, runs a second task through a read-execute alias and ends it, takes an interrupt through the readiness interface, and ends the machine with a crash record on a stopped pet; the production image boots to the point where ERTS starts | 3,000 to 4,500 lines of C17 | M0, G0 | |
-| Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as the stopgap's | 3,000 lines of C17 | M0 | |
+| Track H Hosted mode | the runtime runs as a Mac process under the sanitizers; once the Fiasco backend's rows between tasks have settled, domains and their connections run as Mac processes too, over the same backend rows as Fiasco's | 3,000 lines of C17 | M0 | |
 | M3 The shell is the operating system | `1>` on the serial console, from ERTS in the system domain in user mode, started by the root task | 8,000 lines of C, 1,000 of Erlang | M1, track H | G3 |
 | M4 The machine is an object | save in the editor on the Mac, run in the machine; follow a process to its source; ERTS and backend events on one timeline, the kernel's row unsupported | 10,000 lines of Erlang, 3,000 of Ruby, 2,000 of C | M3 | |
 | M6 Immutable code, lasting data | the shell reads a file of the slot's system partition through the `system` tree on a QEMU disk; a file under `/data` survives a power cut | estimated in the subsystems' design documents | M4 | |
@@ -167,7 +167,7 @@ numbers are names; the table's order is the order.
 | M2 The execution contract holds | a native test domain and a hostile domain share four CPUs by grants; no wakeup is lost; a blocking call from an executor is refused | 4,000 lines of C17 | M7 | G2 |
 | M5's kernel part | a hostile runtime attacks a neighbour's funnel for ten minutes without effect; a domain killed under load gives every charge back to its principal's budget | in track K's figure | M2 | G5, confirmed |
 | M9's kernel part | the drivers' restarts over virtio-pci with MSIs, each device's DMA confined behind the IOMMU, and the PCIe domain alone reaching configuration space | the PCIe enumerator and the MSI frame's driver, within M9's figure | M7 | G9, then G6 |
-| Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; the stopgap's vCPU row | GP |
+| Track P, the rest | a UNIX program recompiled unchanged pipes, polls, spawns children and takes `SIGINT` | in track P's figure | track P's first part; Fiasco's vCPU row | GP |
 | M8 Cooperation earns its place | the ladder from plain threads to full cooperation, measured on seven workloads, with each feature kept or dropped by its numbers | 4,000 lines of C17 and C | G6 | G8 |
 | M10 Users without a container runtime | two users, two domains, one runs out of memory or CPU alone | 4,000 lines of Erlang | M8, M9's kernel part | |
 | Track Q The second tier | toybox's `sh` runs a script with subshells and `less` pages a log in a terminal session, and a dynamically linked program loads a library with `dlopen` | the programs' estimate in [design-programs.md](design-programs.md#performance), and the session's shared mappings, an estimated 3,000 lines of Erlang; the kernel's part is track K's | track P, M7 | GQ |
@@ -290,7 +290,7 @@ baseline conditions; unknown or unsupported results stay explicit.
 
 | Gate | When | Comparison and required evidence | Decision |
 | --- | --- | --- | --- |
-| GP, programs and pipes | track P, in hosted mode first and under HVF on Fiasco before the first part of track P is complete; the stopgap's numbers are provisional, since each object a program's start makes is one request to the backend's root service there | a program's start from the session's `spawn` to its `main` (`tools/erx bench spawn`) against the budget of [design-programs.md](design-programs.md#performance); a `make`-shaped workload of many short children over pipes with a paused pager, and `tools/erx bench pipe` with one writer and with 256 writers; latency, throughput, memory per program and per pipe, and the session's Erlang work per request | the channel's and the data area's defaults, completion batching in the handler, whether the pipe server keeps one ring per write end ([design-pipes.md](design-pipes.md#the-ring)); whether a program's start needs a cheaper path than one kernel call per object is decided at GK3, on erXos's kernel |
+| GP, programs and pipes | track P, in hosted mode first and under HVF on Fiasco before the first part of track P is complete; Fiasco's numbers are provisional, since each object a program's start makes is one request to the backend's root service there | a program's start from the session's `spawn` to its `main` (`tools/erx bench spawn`) against the budget of [design-programs.md](design-programs.md#performance); a `make`-shaped workload of many short children over pipes with a paused pager, and `tools/erx bench pipe` with one writer and with 256 writers; latency, throughput, memory per program and per pipe, and the session's Erlang work per request | the channel's and the data area's defaults, completion batching in the handler, whether the pipe server keeps one ring per write end ([design-pipes.md](design-pipes.md#the-ring)); whether a program's start needs a cheaper path than one kernel call per object is decided at GK3, on erXos's kernel |
 
 GQ also measures the fill and the write-back cost of the session's shared
 mappings with `tools/erx bench mmap`
@@ -473,7 +473,7 @@ oracle records a focused Linux stock case and correctly reports controlled
 passes, failures, skips, timeouts and interrupted/incomplete runs. It proves
 loopback peer operation and absence of external networking, and removes
 its container including daemonized test children on success or cancellation;
-the stopgap boots to Fiasco's banner under HVF in the harness; a
+Fiasco boots to Fiasco's banner under HVF in the harness; a
 build twice from clean gives identical structural `ERXPACK` fixtures, with
 startup and policy admission explicitly unsupported; the fuzz target of the
 boot-image validator runs its budget clean.
@@ -485,7 +485,7 @@ before publishing output, regenerates the tree when an input or output
 changes, and refuses a generated file checked in or edited. Independent fixtures check generated parsers and mappings.
 
 **Gate G0.** The import: the license scan and link closure of the Fiasco
-set, which name the GPL-headed files the stopgap keeps
+set, which name the GPL-headed files Fiasco keeps
 ([design.md](design.md#dependencies)); since `kobject_rpc.h`, which every
 build includes, is one of them, any distribution outside the project, in
 source or binary form, waits for R1's clean-room header and its release
@@ -588,7 +588,7 @@ calls (K18); the refill and grant-replacement host tests pass.
 
 **Gate G2.** Measures the early form of E-S2: a switch between two kernel
 threads of one space and of two spaces, an IPC round trip through a gate,
-and park and wake, under HVF; and E-S4's FIFO wake latency. The stopgap's
+and park and wake, under HVF; and E-S4's FIFO wake latency. Fiasco's
 measured costs (an IPC of 51 to 89 ns, inferred from an emulated counter)
 set the floor that a runtime's own switching must beat by an order of
 magnitude; the full comparison with ERTS's processes is G5's. It also
@@ -926,7 +926,7 @@ row is settled before 1b-D ([track P](#track-p-the-posix-lite-personality)).
 Passing at a
 rendezvous, pauses, IPC gates above `liberx` and every budget and grant
 enforcement stay refused, each a recorded residual. The funnel's verdicts
-run unchanged in user mode; what the stopgap cannot promise is that a
+run unchanged in user mode; what Fiasco cannot promise is that a
 domain which bypasses `liberx` is stopped by anything
 ([design-domains.md](design-domains.md#on-fiasco)).
 BeamAsm lands beside 1b-A, off its critical path, since it needs nothing
@@ -975,7 +975,7 @@ where 4 is the system domain's id, returns every status the inspector can
 report.
 
 **Exit criteria, on erXos's kernel (M5's kernel part).** Every criterion
-of the stopgap's list passes again, by M7's parity; the kernel interface
+of Fiasco's list passes again, by M7's parity; the kernel interface
 of the scope passes its conformance tests; the hostile runtimes run ten
 minutes without affecting their neighbours' memory, messages and
 liveness, each flooder blocking on its own lane and the system domain on
@@ -1176,7 +1176,7 @@ program as a sub-space, what the session's own services use, and a
 facet's heap; E-D1's round trips and E-D2's draining under many
 connections; and `tools/erx bench fs` from a program and from an Erlang
 process and `tools/erx bench blk`, against M6's baseline. It decides
-nothing: the stopgap enforces no budget, so a budget settled on its
+nothing: Fiasco enforces no budget, so a budget settled on its
 numbers would be settled on what it does not enforce.
 
 **Gate G6, after M5's and M9's kernel parts.** Measures the system on
@@ -1225,7 +1225,7 @@ synthesised `/etc/passwd`, `mmap`, `alarm`; `liberx`'s pipes over the
 rings and doorbells the session's pipe server makes and maps, with their
 exhaustive model and fuzz targets on the host
 ([design-pipes.md](design-pipes.md#making-a-pipe)); `liberx`'s signals
-over the vCPU upcalls of the stopgap's vCPU row or of M7, triggered by the
+over the vCPU upcalls of Fiasco's vCPU row or of M7, triggered by the
 session's port driver
 ([design-programs.md](design-programs.md#signals-in-liberx)), with
 `erx_sig_step` explored on the host; the generated `errno`, signal and fault
@@ -1235,7 +1235,7 @@ it; the Open POSIX Test Suite as an external test tool in a test domain.
 Its first part, descriptors with `dup` and `fcntl`, `pipe`, `posix_spawn`
 with inherited descriptors and file actions, `wait` and `kill`, and
 `erx_exec` with `rx` grants, is 1b-D: it follows track S's programs, on
-the stopgap, and ends with the G6 baseline. The rest follows. `kill` and
+Fiasco, and ends with the G6 baseline. The rest follows. `kill` and
 catchable signals run on Fiasco, through the backend's vCPU row over
 Fiasco's vCPU upcall
 ([design-fiasco.md](design-fiasco.md#vcpu-upcalls-on-fiasco)).
@@ -1243,7 +1243,7 @@ Fiasco's vCPU upcall
 **Exit criteria, the first part (1b-D).** Descriptors, `dup`, `fcntl`,
 `pipe`, `posix_spawn` with inherited descriptors and file actions, `wait`
 and `kill` pass their cases of `libc-test` and the Open POSIX Test Suite,
-every other failure among them classified; without the stopgap's vCPU
+every other failure among them classified; without Fiasco's vCPU
 row, a case that needs a signal handler shows as "cannot run" with that
 reason and runs at M7, and `sigaction` with a handler fails with
 `EINVAL`; with the row, the vCPU conformance tests of M5's kernel part
@@ -1599,7 +1599,7 @@ of the session and a window of another domain stay hidden and take no
 input (G1); each seeded violation of property 18 fails the manifest
 check; a release manifest that gives the display domain an unconfined
 DMA device fails the manifest check (design-display's confinement test),
-while a development build's manifest with the stopgap's virtio-mmio
+while a development build's manifest with Fiasco's virtio-mmio
 devices passes the Phase 1 manifest check; each chokepoint check catches
 its seeded violation. With a kiosk running, the display domain killed
 and restarted gives the kiosk's session its screen back, where a
@@ -1829,7 +1829,7 @@ What part 8 builds on, outside its packages:
    `:410`. Depends on: 8.4, 8.7, 8.8. Tests: every month from 1600 to
    2400, every argument form and refusal, D3 for today, D6's midnight
    tick, each with its seed. QEMU: `month 11 2026`'s screenshot equals a
-   new reference, with no today marked since the stopgap's clock is
+   new reference, with no today marked since Fiasco's clock is
    unset, where a seeded grid that starts a day late fails.
 10. **8.10 The theme.** `abi/theme.txt`, its reader beside
     `tools/lib/erx/abi_ui.rb` (loaded as `abi_model.rb`'s `validate_ui`
@@ -2129,7 +2129,7 @@ the guest's power cut and the next boot.
   ([design-runtime.md](design-runtime.md#the-device-nif),
   [design-system.md](design-system.md#drivers)); the driver parses the
   device's descriptors in Erlang; ordinary interrupts and unconfined DMA,
-  the stopgap's driver profile, which M9's kernel part replaces with
+  Fiasco's driver profile, which M9's kernel part replaces with
   virtio-pci behind
   the IOMMU and M11 refuses unless configured; partition windows in the
   block service, with the partition table, its four extended boot records
@@ -2408,11 +2408,11 @@ stopgap implements and then the rest of the interface, from
   [design-fiasco.md](design-fiasco.md#downsides-against-erxoss-kernel).
 * **The switch**, at gate GK3: the conformance suite, Phase 1 and 1b's
   transcript tests, the oracle and the benchmarks run on both kernels,
-  differentially ([M7](#m7-fiasco-leaves)). The stopgap carries only
+  differentially ([M7](#m7-fiasco-leaves)). Fiasco carries only
   Phase 1 and 1b's part of the interface, so the switch waits for nothing
   beyond Phase 1 and 1b's system. Each row the backend grows for Phase 1b
   names what the kernel's first part must implement by the switch, and a
-  vCPU row, if the stopgap gains one, brings vCPU upcalls into the first
+  vCPU row, if Fiasco gains one, brings vCPU upcalls into the first
   part.
 * **After the switch** the interface grows on erXos's kernel alone, each
   increment with its conformance and hostile tests: pauses, in their named
@@ -2444,7 +2444,7 @@ Fiasco.
 between the two kernels, the transcripts compared from erXos's banner on,
 is a bug fixed, a documented improvement with a test, or a bug in the
 stopgap recorded as such, K26's "at once" among the improvements; the
-scheduler and messaging benchmarks meet or beat the stopgap's; a page-table
+scheduler and messaging benchmarks meet or beat Fiasco's; a page-table
 walk after every test finds no writable and executable mapping.
 
 **Gate GK3.** Decides the replacement, from the conformance suite and
@@ -2539,7 +2539,7 @@ acknowledgement, and
 the build check that register accessors are referenced only from the
 device NIF ([design-runtime.md](design-runtime.md#the-device-nif)); the
 block and network drivers in Erlang over virtio-mmio, each a
-row of the stopgap's device records, in the storage and network
+row of Fiasco's device records, in the storage and network
 domains that hold their devices, unconfined, written after sDDF's model
 of the driver-versus-policy split, with sDDF's published throughput as
 the oracle and nothing imported, and M6's block driver among them; the
@@ -2609,7 +2609,7 @@ accepts `ctl` writes; the chokepoint check over the register accessors
 passes with its seeded violation.
 
 **Exit criteria, on erXos's kernel (M9's kernel part).** Every criterion
-of the stopgap's list passes again over virtio-pci; a confined driver
+of Fiasco's list passes again over virtio-pci; a confined driver
 cannot DMA outside its window; a device given to a second domain while
 the first holds it is refused; the PCIe enumerator's fuzz target runs its
 budget clean; MSIs reach every virtio-pci device under HVF.
@@ -2619,7 +2619,7 @@ through the runtime's scheduler with `tools/erx bench irq`, the ring
 throughput of each driver against sDDF's published figures for the same
 device, `tools/erx bench blk` and the network driver's packet rate, and
 the MSI path under HVF against wired interrupts. On Fiasco, in 1b-E,
-its measurements are recorded with the stopgap named and decide nothing:
+its measurements are recorded with Fiasco named and decide nothing:
 an interrupt there reaches a dispatcher through the backend's single
 service thread, and a native shim admitted on that latency would plug a
 gap of Fiasco that erXos's kernel closes. GK3 repeats them on erXos's
@@ -2630,7 +2630,7 @@ fraction of its throughput, a row in the driver table of
 [design-system.md](design-system.md#the-driver-table) with its
 measurement, which alone admits a native shim as a sub-space port;
 without a row there is no exception. No row of the driver table is
-decided from the stopgap's numbers.
+decided from Fiasco's numbers.
 
 ## 1b-G: Networking on QEMU
 
@@ -2697,9 +2697,9 @@ and memory budget before a client can be identified; reserve control
 progress while dropping excess traffic. Report p50, p99 and p99.9 and
 peer progress under load on matched setups. On Fiasco every
 interrupt, acknowledgement and doorbell passes the backend's one service
-thread, so these numbers are a baseline, recorded with the stopgap named,
+thread, so these numbers are a baseline, recorded with Fiasco named,
 and decide nothing: a native fast path admitted on them would work around
-the stopgap rather than the stack. M14 is written in Erlang throughout
+Fiasco rather than the stack. M14 is written in Erlang throughout
 meanwhile. GK3 repeats the measurements on erXos's kernel and decides
 there whether TCP's fast path in erXos's stack needs native code
 ([design.md](design.md#networking)); GN-board at M12 confirms or reopens
@@ -2710,7 +2710,7 @@ that decision on the Pi 4.
 **Goal.** The Raspberry Pi 4 Model B runs Phase 1 and 1b's system on the
 Fiasco, so the first board is usable before erXos's kernel
 exists, along [design-platforms.md](design-platforms.md#raspberry-pi-4-model-b)
-and the stopgap's shape on the board in
+and Fiasco's shape on the board in
 [design-fiasco.md](design-fiasco.md#the-raspberry-pi-4). A board is
 data: the Pi adds a platform record, a manifest, a `bootstrap` build, its
 boot files and Erlang drivers, and no interface changes. M12
@@ -3145,7 +3145,7 @@ the VL805's internal hub types into the kiosk.
   turn-off, the board probes B1 to B8, the VL805's firmware check, its
   INTx line on the Pi 4's closed bus ([design-usb.md](design-usb.md#interrupts)),
   and, once probe B1's readings are recorded, the VL805's firmware
-  notification in the stopgap's root
+  notification in Fiasco's root
   ([design-usb.md](design-usb.md#the-vl805s-firmware)), beside
   [1b-I](#1b-i-the-raspberry-pi-4-on-fiasco)'s board work. The
   bridge driver and the probes proceed beside (b); the controller is
@@ -3736,7 +3736,7 @@ cleaner's overhead, on QEMU in 1b-H. It decides the replacement of
 littlefs there on the corpus, the oracle guest and the power cuts alone.
 Its throughput, commit latency and cleaner numbers on Fiasco, whose
 block path pays a service round trip per interrupt and acknowledgement,
-are a baseline recorded with the stopgap named; the Pi 4's SD card
+are a baseline recorded with Fiasco named; the Pi 4's SD card
 numbers on erXos's kernel at M12 are the first that can reopen the
 decision.
 
@@ -3823,24 +3823,24 @@ their numbers.
 
 | Gate | Milestone | Measures or asks | Decides |
 | --- | --- | --- | --- |
-| G0 | M0 | the Fiasco set's license scan and link closure; `lld` installed | what enters the tree, and the GPL-headed files the stopgap keeps |
+| G0 | M0 | the Fiasco set's license scan and link closure; `lld` installed | what enters the tree, and the GPL-headed files Fiasco keeps |
 | G3 | M3 | W1 against stock OTP; footprint; boot time to the shell | the baseline |
 | GK1 | before Phase 1 is complete, beside Phase 1b | the pilot's time and defect rate | the pace of the rest of track K and of the plan |
 | GK2 | after the pilot and 1b-A | Phase 1's and 1b-A's tests and benchmarks baselined on Fiasco, the conformance roster written from the design | the start of erXos's kernel in full |
-| GK3 | M7 | the conformance suite, Phase 1 and 1b's transcript tests, the oracle and the benchmarks on both kernels; G5's E-D3, E-D4 and full E-S2; G9's latency and throughput and GN-QEMU's packet-path measurements repeated on erXos's kernel | the replacement of the stopgap; G5's provisional decisions confirmed or revised, the death path's batching and `system_queue`, and no kernel object per lightweight process; whether a program's start needs a cheaper path; whether TCP's fast path in erXos's stack needs native code |
+| GK3 | M7 | the conformance suite, Phase 1 and 1b's transcript tests, the oracle and the benchmarks on both kernels; G5's E-D3, E-D4 and full E-S2; G9's latency and throughput and GN-QEMU's packet-path measurements repeated on erXos's kernel | the replacement of Fiasco; G5's provisional decisions confirmed or revised, the death path's batching and `system_queue`, and no kernel object per lightweight process; whether a program's start needs a cheaper path; whether TCP's fast path in erXos's stack needs native code |
 | G2 | M2 | early E-S2 (kernel thread switch, IPC round trip through a gate, park and wake); E-S4 FIFO wake latency; E-S10 | whether the two-level model stands on erXos's kernel; NIFs that move to dirty schedulers |
 | G5 | 1b-A, provisionally; confirmed at GK3 | on Fiasco: E-D1 and E-D2 (`tools/erx bench xdomain-pingpong`, `xdomain-throughput`); BeamAsm's speedup and footprint in an ordinary domain; translation time at a domain's start. At GK3: E-D3 and E-D4 (`xdomain-stall`, `domain-lifecycle`) and full E-S2 | provisionally: the runtimes' and the domain service's default table sizes, `cap_limit` among them; `lane` and the manifest's `system_lane`, the producer's wait rule, encoding straight into the lane; the funnel's allowance per step; the busy limit and the facets' limits; the ahead-of-time roster's triggers. At GK3: the manifest's `system_queue` and the death path's batching; no kernel object per lightweight process; the rest confirmed or revised |
-| GP | track P | a program's start (`tools/erx bench spawn`) against its budget and `posix_spawn` on Linux; the `make`-shaped workload and `tools/erx bench pipe`, hosted and under HVF, the stopgap's numbers provisional | the channel's and data area's defaults; the handler's batching; one ring per write end (whether a program's start needs a cheaper path is GK3's) |
+| GP | track P | a program's start (`tools/erx bench spawn`) against its budget and `posix_spawn` on Linux; the `make`-shaped workload and `tools/erx bench pipe`, hosted and under HVF, Fiasco's numbers provisional | the channel's and data area's defaults; the handler's batching; one ring per write end (whether a program's start needs a cheaper path is GK3's) |
 | G6 baseline | the end of 1b-D, on Fiasco | an idle domain's memory by kind, a session's and a program's, the session services' floor and a facet's heap; E-D1 and E-D2; `tools/erx bench fs` and `blk` against M6's baseline | nothing; it records the baseline G6 compares against |
 | G6 | after M5's and M9's kernel parts | the system on erXos's kernel: an idle domain's memory by kind, a session's and a program's, the session services' floor and a facet's heap; E-D1 and E-D2; a program's start; isolation beside hostile domains; the EROFS reader's, littlefs's and the block driver's throughput and commit latency on QEMU (`tools/erx bench fs`, `blk`) against M6's baseline and the G6 baseline | whether the system meets the design's budgets before M8 and M10 build on it; G5's lane defaults and the facets' limits confirmed or revised |
 | GW | track D's part 1, in 1b-C | a record view's round trip over the host tool's front end for the machine's record and a 1,000-child listing, under HVF and over a host link paced to a 115,200-baud UART's rate, a stand-in that a board's UART replaces at M12 | whether whole records stay on the wire or the web protocol gains a record difference: whole records stay, since an update of the listing crosses the paced link in about 1.1 s, so a view of a changing listing still refreshes about once a second |
 | GD | track D's part 5, on its panel, once part 7 has run the Erlang renderer | the Erlang renderer's frame time on a 240 by 240 panel against LVGL's on the same panel; the parity test through both; part 7's Erlang renderer may record a QEMU frame time as a preview before the panel exists, deciding nothing | whether LVGL leaves the panels |
 | G8 | M8 | E-S1 (the ladder C0 to C2), E-S3 to E-S9 | default cooperation features; time slice, grace and period; capacity rules; the shared services' sizing rule and whether a service needs a child group per client class |
-| G9 | M9: recorded in 1b-E, decided at its kernel part | interrupt-to-handler latency per device class (`tools/erx bench irq`), ring throughput against sDDF's figures, `tools/erx bench blk`, the network driver's packet rate, MSIs under HVF; the stopgap's numbers recorded with the stopgap named | at the kernel part only: completion batching per device class; virtio-pci over virtio-mmio; each row of the driver table, which alone admits a native shim; no row from the stopgap's numbers |
+| G9 | M9: recorded in 1b-E, decided at its kernel part | interrupt-to-handler latency per device class (`tools/erx bench irq`), ring throughput against sDDF's figures, `tools/erx bench blk`, the network driver's packet rate, MSIs under HVF; Fiasco's numbers recorded with Fiasco named | at the kernel part only: completion batching per device class; virtio-pci over virtio-mmio; each row of the driver table, which alone admits a native shim; no row from Fiasco's numbers |
 | GQ | track Q | `fork` of 10, 100 and 1,000 MiB against Linux in a guest; a dynamically linked program's start against a static one's; the fill and the write-back cost of the session's shared mappings, files of 64 KiB to 1 GiB, with `tools/erx bench mmap`, against descriptor reads and writes; on CPUs with hardware dirty-bit management, the fold of dirty bits into the object's stored marks at `munmap` and `exec` over large shared mappings, with `tools/erx bench mmap` | whether `fork` grows a copy-on-write path; whether the shared mappings' fill and write-back points meet the corpus |
 | G12 | M12 | throughput and commit latency on the Pi 4's SD card, against G6's on QEMU; boot time to the shell and to the first pet on both boards; the trial path's timings; slot images' sizes | the default trial deadline; the watchdog's boot deadline per board; whether images need compression |
-| GN-QEMU | 1b-G, on Fiasco | the packet-path prototype's UDP echo and TCP bulk transfer on QEMU under HVF, against a Linux peer and line rate, recorded with the stopgap named | nothing; it records the baseline GK3 repeats on erXos's kernel |
-| GR | 1b-I, before the first board boot | the boot probe on the Pi 4 under the stopgap; the board is a 4 GB Pi 4 and the board pass is manual | the RAM the Pi 4's platform record names |
+| GN-QEMU | 1b-G, on Fiasco | the packet-path prototype's UDP echo and TCP bulk transfer on QEMU under HVF, against a Linux peer and line rate, recorded with Fiasco named | nothing; it records the baseline GK3 repeats on erXos's kernel |
+| GR | 1b-I, before the first board boot | the boot probe on the Pi 4 under Fiasco; the board is a 4 GB Pi 4 and the board pass is manual | the RAM the Pi 4's platform record names |
 | GN-board | M12 | the same on the Pi 4, against Linux's stack on the board and line rate | GK3's decision on TCP's fast path confirmed or reopened |
 | G13 | M13: 1b-H on QEMU, the Pi 4 at M12 | erXos's F2FS against littlefs over the file-semantics corpus and against Linux's F2FS and `fsck.f2fs`; the power-cut harness; throughput, commit latency and the cleaner's overhead, on Fiasco a baseline; the Pi 4's SD card at M12 | the replacement of littlefs, on QEMU, from the corpus, the oracle guest and the power cuts; the Pi 4's numbers may reopen it |
 | G14 | M14: 1b-G on QEMU, the boards at M12 | erXos's stack against FreeBSD's over the network test corpus and the packet scripts; throughput, latency and memory on QEMU, a baseline on Fiasco, and on both boards | the acceptance of erXos's stack, on QEMU; the boards confirm it |
@@ -3871,7 +3871,7 @@ interpreter, within a frame's cost across a connection).
 | littlefs, the read-write file system of the data partition and the vault's partition, a NIF in the system domain at M6, in the storage domain from 1b-E, and a sub-space port of the storage domain once track S's port driver exists | `erx_fs`, the storage service's file interface, and the port's channel | M13, by erXos's F2FS, in Erlang, at G13, decided on QEMU in 1b-H, through an installation that creates both partitions afresh, which comes to the boards with M12 |
 | LVGL, the widget renderer on panels, a native program of the application's session | the renderer behaviour `erx_ui_renderer` and the generated reader of `ui.txt`'s operations | by the Erlang renderer, when GD admits it; GD is first measured on track D's part 5 panel |
 
-The stopgap carries the rows of the backend's table in
+Fiasco carries the rows of the backend's table in
 [design-fiasco.md](design-fiasco.md#the-call-table), each in full, with
 a documented weaker result, or as a refusal. No network stack is a
 stopgap: erXos's own stack is the network service from 1b-G. A native
@@ -3932,7 +3932,7 @@ Phase 2:   M7 --> M2 --> M5's and M9's kernel parts --> G6 --> M8 --> M10 --> M1
   the kernel in full starts after 1b-A, so its conformance roster covers
   the rows 1b-A's consumers use and each refusal of the backend names
   what M7 must add. Nothing in Phase 1b changes the kernel interface,
-  only which rows the stopgap carries.
+  only which rows Fiasco carries.
 * Phase 2's critical path runs through M7, M2, the kernel parts of M5 and
   M9, G6, M8, M10, M11 and M12; the rest of track P follows its first
   part, and track Q follows track P and M7; M13 and M14, already on QEMU,
@@ -3978,7 +3978,7 @@ Each is small, adds its tests, and leaves `make check` green.
 5. **QEMU harness.** Guests under deadlines with serial logs and awaited
    lines, both accelerators, QEMU `virt` configured as
    [design-platforms.md](design-platforms.md#qemu-virt) pins it; its first
-   subject is the stopgap's own banner.
+   subject is Fiasco's own banner.
 6. **ABI generator.** `abi/erx_abi.txt`, the Ruby generator, and the
    generated header for status codes, rights and limits, with golden tests.
 7. **Hardware sources.** The SVD generator and the system-register

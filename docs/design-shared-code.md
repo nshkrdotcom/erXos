@@ -410,7 +410,7 @@ naming the offset, the part of the image it lies in and, in a code chunk
 or literal area, the module, which it reads from the written image's
 lists.
 
-**Assumption: semihosting from user mode under the stopgap.** It is not
+**Assumption: semihosting from user mode under Fiasco.** It is not
 verified that the build root, a user-mode task on Fiasco, can make a
 semihosting call. The design assumes that, with `userspace=on`, QEMU's
 TCG translator turns the semihosting instruction into a host call at any
@@ -887,7 +887,7 @@ domain's trusted base.
 
 **The build run's semihosting.** Semihosting gives the guest's code the
 host's files with QEMU's own rights. Only the build run enables it, and
-its guest runs only code the same build made from the tree: the stopgap
+its guest runs only code the same build made from the tree: Fiasco
 kernel, the build root, `runtimes/emu` and the installed files of
 `DOMAIN_BASE`. QEMU runs it in a working directory of its own under the
 build tree, and the build root opens one relative name there. No boot
@@ -1002,12 +1002,12 @@ runs.
 
 ## Phase 1, on Fiasco
 
-The stopgap backend has what the image needs. `erx_vm_map` of a slice
+The Fiasco backend has what the image needs. `erx_vm_map` of a slice
 maps the archive's own pages read-only with `l4_task_map` from the root
 (`docs/design-fiasco.md:519`), so every domain that maps the image shares
 its frames, and the physical saving is real on Fiasco.
 
-**One mapping per module is the stopgap's shape.** The stopgap cannot map
+**One mapping per module is Fiasco's shape.** Fiasco cannot map
 over a mapping or cut one (`docs/design-fiasco.md:517`), so the domain
 library maps the header and lists with one mapping, each module's code
 chunk with one mapping of its own, and the literal part with one: about
@@ -1026,7 +1026,7 @@ budget, created and filled through a scratch mapping before the swap, so
 it is funded before anything is released; the swap then releases the
 module's mapping, reserves its range again and maps the object there.
 Between the release and the new mapping the module's code is unmapped,
-and that window is a residual of the stopgap, recorded and not worked
+and that window is a residual of Fiasco, recorded and not worked
 around, with two ways to end the domain: a refusal at either of the last
 two steps, which cannot be undone in user mode, so the runtime ends the
 domain with a diagnostic naming the module; and a read of the module's

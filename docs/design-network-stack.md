@@ -6094,7 +6094,7 @@ where its runtime sets `-erx queue_quota`, and which domains do is an
 open decision ([Open decisions](#open-decisions), 1). Until RT8, the funnel
 delivers every authorised frame whatever its target already holds, so a
 flood that outruns a socket process grows its queue with nothing to stop
-it but the client domain's budget, the gap of the stopgap funnel that
+it but the client domain's budget, the gap of Fiasco's funnel that
 `TODO.md` records.
 
 **Answers from the grant.** The grant's reply to a call reaches its
@@ -6457,7 +6457,7 @@ in-node and 13 to 21 ms across the lane (medians 14 and 18 ms, 17.9 and
 13.9 MiB/s each way), and 256 sends of 64 KiB ran at 37.2 to 41.6 MiB/s
 in-node and 41.3 to 44.6 MiB/s across the lane (medians 39.6 and 42.8
 MiB/s). The sends show no cost of the lane at this rate, which slirp and
-the stopgap's device path bound; the echo is too short, timed to the
+Fiasco's device path bound; the echo is too short, timed to the
 millisecond, to separate a few milliseconds from noise. These are
 stopgap numbers and decide nothing: the Fiasco kernel (modified Fiasco),
 an Apple M3 Max host at load averages of 7 to 10, HVF, QEMU 11.1.3,

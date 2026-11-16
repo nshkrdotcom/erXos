@@ -982,7 +982,7 @@ for which the kernel waits at most 100 ms; the bytes seed the kernel's
 generator at boot
 ([design-kernel.md](design-kernel.md#interrupts-time-and-entropy),
 [research](research-boards-storage.md#raspberry-pi-5-bcm2712-and-rp1)).
-On the Raspberry Pi 4 under the stopgap, the root reads it on the same
+On the Raspberry Pi 4 under Fiasco, the root reads it on the same
 condition and seeds its generator from it
 ([design-fiasco.md](design-fiasco.md#the-raspberry-pi-4)). The
 generator's registers and its read sequence are not stated here: they

@@ -4467,7 +4467,7 @@ executable's code into JIT objects of the program's own space. It loses:
 no two programs would share a page of code, every start would read the
 whole file, and the program would run in a JIT space where it could write
 code of its own. File objects share code and keep it unwritable (P10), on
-the stopgap as on erXos's kernel.
+Fiasco as on erXos's kernel.
 
 **Programs that fill their own file objects.** A program could create
 sealed objects and supply them itself from its grants, with no command

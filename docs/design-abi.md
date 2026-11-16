@@ -612,7 +612,7 @@ adding one never exposes it by default:
   `service` and `runtime` and the stopgap reporters that may report it.
   A stopgap reporter is listed by its name, only on the attributes it
   answers, so a validator refuses it anywhere else, and always beside
-  the category it stands in for, so removing the stopgap leaves the
+  the category it stands in for, so removing Fiasco leaves the
   attribute declared for that category; a stopgap that no attribute
   and no `trace` row lists fails;
 * `visible`, the inspect facets that see it: `any`, every inspect facet;

@@ -78,7 +78,7 @@ pixels. The [overview](docs/overview.md) tells the longer story.
   else runs in user mode, the runtimes included. erXos's own kernel
   follows *L4* and *Fiasco*, with lessons from *seL4* and *Zircon*. Until it is
   written, a near-stock Fiasco stands in behind the same interface.
-  ([kernel](docs/design-kernel.md), [stopgap](docs/design-fiasco.md))
+  ([kernel](docs/design-kernel.md), [Fiasco](docs/design-fiasco.md))
 * **Two-level scheduling, one CPU authority.** The kernel grants CPU time
   to groups of threads. Each runtime schedules its processes on the
   threads its group pays for, without a kernel call. The kernel enforces
@@ -215,7 +215,7 @@ Eshell V17.1.1 (type help(). for help)
 **Erlang runtime and tools**
 
 * The Erlang shell, `erx:i()`, `source(Pid)`, `erx:trace/1` and `/proc`
-  show processes and kernel objects; a value the stopgap cannot measure
+  show processes and kernel objects; a value Fiasco cannot measure
   reads as unsupported or partial.
 * `erx:inspect(Path, Options)` reads an inspection path with a wait of the
   caller's own. Every session sees the machine's load (each CPU's idle

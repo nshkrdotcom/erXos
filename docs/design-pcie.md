@@ -175,7 +175,7 @@ domain library's boot view gives such a row no range, no line and no
 kind, so it is held and not driven (`liberx/system/dom_boot_view.c`,
 `boot_devices`, `:363-442`; a `TODO.md` item). `erx_irq_create` of
 `ERX_IRQ_MSI` is `ERX_ENOTSUP` on Fiasco
-(`liberx/backend/fiasco/irq.c:188`). The stopgap's give makes a
+(`liberx/backend/fiasco/irq.c:188`). Fiasco's give makes a
 device's memory with `erx_mem_create_contiguous_in` inside the DMA range
 of the device's catalogue facts, CPU addresses `cpu` through `last`
 seen by the device from `bus` (`liberx/system/dom_apply.c:420-425`,
@@ -1325,7 +1325,7 @@ been made, which the readback catches. That is a stopgap residual
 | `erx_pcie_cfg:parse/1`, `size/2` | `{error, Field}` | the parser's refusals ([The walk](#the-walk), [Sizing](#sizing)); the function is reported `malformed` or `unplaced` |
 | `erx_dom_pci_report` | `ERX_EINVAL`, the placing walk's layouts refused whole | a BAR outside its window, not aligned to its span, or overlapping another device; an MSI-X table past its BAR's hardware size |
 | `erx_irq_create` of `ERX_IRQ_MSI` | `ERX_ELIMIT` | no free line of the frame, or the function past `ERX_MSI_MAX` |
-| | `ERX_ENOMEM` | the stopgap root's IRQ slots are full |
+| | `ERX_ENOMEM` | the Fiasco root's IRQ slots are full |
 | the give | refused, the creation with it | a doorbell the function's DMA range does not map one to one |
 | | nothing given, as a device the machine lacks | a function with no layout, unconfirmed or not `ready`; at a closed bridge's place, a reported pin that is not the place's |
 | the boot view | the bridge's unit and the place's refused | a closed bridge's `interrupt-map` routing a listed place's pin to a line other than its row's, or to one of the bridge's own lines |
@@ -1335,7 +1335,7 @@ been made, which the readback catches. That is a stopgap residual
 
 The PCIe domain, the enumerator, both bridge drivers, the device
 service's PCIe process and the three facets are the same code on the
-stopgap and on erXos's kernel. The stopgap adds `ERX_IRQ_MSI` over the
+stopgap and on erXos's kernel. Fiasco adds `ERX_IRQ_MSI` over the
 frame's lines ([The MSI frame on Fiasco](#the-msi-frame-on-fiasco))
 and the give of a `pci` device in the root, as for any device another
 domain holds ([design-fiasco.md](design-fiasco.md#device-records)): its
@@ -1381,7 +1381,7 @@ that touches it.
 | `erx_devices_pci_core` | exhaustive over its states and events: requests in `between` are answered only after a report's answer, or at `down`; a holder's end in `between` lowers the setting and sends nothing; a lowering is written before it is sent and a raise after its `ok`; the report's answer is withheld until `await_grant` answers the incarnation's facet, and `answered` is written before the answer is sent; a restarted process begins in `synced` only when `answered` names the incarnation holding its bridges, and in `between` when it names an ended one or none; the sequence `targets` with a mastering setting, the holder's end, `report` leaves the model's function off | the answer's settings dropped: that sequence leaves the function mastering after its holder's end; a raise written before its `ok`: after a failed `set` the library says `mastering`; the restart's state taken from the facet's presence: a restart after the grant was installed and before the report was answered begins in `synced` |
 | `erx_dom_pci_report` (C, host) | a valid placing report is taken whole; a BAR outside the window, unaligned, overlapping another entry, an MSI-X table past its BAR's size, each refuses the placing report whole with `ERX_EINVAL`; at a later report, a changed record, a missing one and a `not_ready` one each leave the function ungiven although an earlier report confirmed it; on a bridge marked `firmware_lost`, a report listing the VL805 `ready` leaves it ungiven; `erx_dom_pci_firmware` over a backend whose call answers `ERX_ETIMEDOUT` marks the entry before it returns, and over one answering `ERX_OK` or `ERX_ENOTSUP` does not | the overlap check removed: the overlapping fixture is admitted; the earlier confirmation kept when a record is missing: the missing function stays given; the mark not read at intake: the VL805 reported ready after the timeout is given |
 | `erx_domain:await_grant/2`, the domain service over its mint core | a wait for incarnation `D` is answered `{ok, Facet}` with `D`'s facet once installed, `{error, failed}` when its grant fails, `{error, ended}` when `D` ends or the grant moves to another server, and `{error, unprovided}` when `D` is ready without `pcie`; the service answers other calls while it waits; `system_namespace/0` still waits for every `files` grant | the wait matched by service alone: a wait for `D` is answered with its predecessor's installed facet; the idle case dropped: the wait for an incarnation that provides no `pcie` is never answered within the test's deadline |
-| the stopgap's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
+| Fiasco's MSI line allocator (C, host) | lines from the range's first to its last, then `ERX_ELIMIT`; a freed line is taken again | the range's end off by one: the test's last allocation lies outside the range |
 
 ### Fuzz targets
 

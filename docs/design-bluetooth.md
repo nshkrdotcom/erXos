@@ -2050,7 +2050,7 @@ list ([todo-performance.md](todo-performance.md)):
 
 ## Board probes
 
-Each runs on the Pi 4 under the stopgap before the code that depends on
+Each runs on the Pi 4 under Fiasco before the code that depends on
 it, and its readings go into a research record.
 
 * **B-P1** Read GPIO 30 to 33's function at erXos's start. If not ALT3,
