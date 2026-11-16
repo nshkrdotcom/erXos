@@ -635,14 +635,13 @@ clock's state is `/proc/time/status`'s `state`: `unset`, `boot` or `set`
 | Machine | Wall clock at boot |
 | --- | --- |
 | QEMU `virt` on erXos's kernel | the PL031's reading, which the kernel takes once at boot ([design-kernel.md](design-kernel.md), "Time"), so `state` is `boot`. QEMU starts its real-time clock at the host's time unless `-rtc base=` says otherwise (unverified: QEMU's documentation was not read); deterministic mode starts it at 2026-01-01 ([design-fiasco.md](design-fiasco.md#deterministic-mode)) |
-| Fiasco, on QEMU `virt` | the PL031's reading, which Fiasco's root takes once at boot into the time page, as erXos's kernel does, so `state` is `boot`, and QEMU's clock starts as in the row above |
-| Fiasco, on the Raspberry Pi 4 without a module | 1970-01-01, `unset`: the board has no real-time clock, and only root's `date` or `ntpd` sets the clock ([design-time.md](design-time.md#phase-1)) |
+| Fiasco, on QEMU `virt` or on the Raspberry Pi 4 without a module | 1970-01-01, `unset`: the Fiasco backend puts no real-time clock's reading in the time page at boot and the Pi 4 has no clock, so only root's `date` or `ntpd` sets the clock ([design-time.md](design-time.md#phase-1)) |
 | the Raspberry Pi 4 with a DS3231 module | the module's time, read at `/dev/rtc/time` by the system domain's wall-clock keeper ([design-header-io.md](design-header-io.md#devrtc)), so `state` is `set` |
 | any machine running `ntpd` | set by the first sample ([design-time.md](design-time.md)); off unless enabled |
 | any machine, by hand | set by root's `date` ([design-time.md](design-time.md#setting-the-clock-by-hand)) until the next boot |
 | hosted mode | the host's clock, `boot` |
 
-Fiasco's root reads the PL031 because that gives the time page the value the kernel interface promises and touches nothing above it. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
+On Fiasco nothing reads a real-time clock at boot, so QEMU `virt` starts `unset` as a Raspberry Pi 4 without a module does, and stays so until root's `date`, `ntpd` or a DS3231 module sets it; reading the PL031 at boot is the kernel's, as design-kernel.md's "Time" gives it, and the Fiasco backend does not rebuild it in user mode. The Raspberry Pi 4 gets its time from a DS3231 module and the wall-clock keeper, since the board has no clock of its own. `ntpd` is designed and off unless an operator enables it with a server of their own.
 
 **What an unset clock does.** Validation compares each certificate's
 validity period with the wall clock as it reads; it never reads the

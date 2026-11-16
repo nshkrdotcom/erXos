@@ -4521,9 +4521,6 @@ handing call's socket process exit and its connection's, is not yet looked for. 
 * [Low] docs, `docs/design-domains.md` ("connections" quota): it counts the system
   connection in a domain's `connections` quota; the library (`life_connections`) and
   design-system.md do not, and property 12 enforces the library's reading.
-* [Low] docs, `docs/design-fiasco.md` (boot step 4, "take device entries, wall offset, seed ..."): the root
-  takes no wall offset from the system manifest; `abi/manifest.txt` has no such field and the time page starts
-  zeroed (`liberx/backend/fiasco/time_page.c`). Drop "wall offset" from the step, or name the field it reads.
 * [Medium] packer, `tools/lib/erx/production_image.rb` (`build_test_image`): a test
   image's `domains:` is checked against no manifest row, since the test manifest is the
   development one grown. Build test images' domain boot scripts from their manifest's
@@ -4537,8 +4534,8 @@ handing call's socket process exit and its connection's, is not yet looked for. 
   interface.
 * [Low] time, the clock setter's chokepoint (`tools/lib/erx/chokepoint_rules/clock.rb`): it is a text check of five
   spellings, not the call-graph check [design-time.md](docs/design-time.md) names; a variable function name gets past
-  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, close to the host time the PL031 seeds, where the design
-  sets 2030.
+  it. The QEMU "Set by hand" case sets 2026-11-16 12:30 UTC, where the design sets 2030, a time no boot reading near the
+  host's date gives on erXos's kernel, whose PL031 starts at the host's time.
 * [Medium] facets, `erlang/apps/erx/src/erx_facet.erl` (`operation/1`): only the clock facet's callback
   exports `operation/1`, so a row naming operations of another system-served service compiles and boots, and only
   its mint refuses it (`unchecked_operations`, logged, no facet), until the generated admission path checks every
@@ -7077,10 +7074,6 @@ to the corpus and follow rc
   kernel's device table takes as its real-time clock, and the Raspberry Pi 4 takes a DS3231 module. Name the
   Raspberry Pi 5's clock, or read wall time from the firmware
   ([design-platforms.md](docs/design-platforms.md)).
-* [Medium] Fiasco backend, the PL031 on QEMU `virt` (`liberx/backend/fiasco/time_page.c`): Fiasco's root reads the
-  PL031 once at boot into the time page and sets the offset, so `state` is `boot` and HTTPS clients can validate
-  certificates ([design-time.md](docs/design-time.md#phase-1), [design-crypto.md](docs/design-crypto.md#time)).
-  Today the page starts zeroed and the wall clock reads 1970-01-01.
 * [Medium] time, setting the clock by hand (`erlang/apps/erx/src/erx_clock.erl`,
   [design-time.md](docs/design-time.md#setting-the-clock-by-hand)): root's session sets the clock with `date`
   through its `root_clock` grant (`operations set`), `erx_clock_facet` and the clock service; what is left:
