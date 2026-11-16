@@ -2117,9 +2117,10 @@ other client's request can come between its parts:
   module hears of an open fid's end through `clunk`.
 * **Waiting requests.** Nothing in a grant waits for an event. A
   callback does bounded work: a step of its tree's process, a call that
-  process answers without waiting for an event, or a read or write of
-  its medium, which the grant waits for as a call on a local file system
-  waits for its disk. A read or a write that must wait for an event,
+  process answers without waiting for an event, a call to another
+  service whose design names its deadline as the bound, or a read or
+  write of its medium, which the grant waits for as a call on a local
+  file system waits for its disk. A read or a write that must wait for an event,
   bytes a device has not sent yet, a key not yet pressed, a driver that
   has not yet taken what was written, is handed to the process that owns
   that event, the request's **keeper**, a process of the tree, which

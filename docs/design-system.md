@@ -3511,7 +3511,8 @@ installed, a write fails with `enxio`. A start of a running driver fails
 with `ebusy`, and a driver that did not stop or start, or a call that
 did not complete, such as one to the facet of a holder that has ended
 and not yet restarted, with `eio`. The facet call is the control tree's
-bounded work, as a disk's read is a local file system's
+bounded work, a call to another service whose design names its
+deadline as the bound
 ([design-files.md](design-files.md#serving-the-erx_fs-behaviour),
 "Waiting requests"), so the tree has no keeper: the call waits at most
 `erx_driver_ctl`'s 30 s deadline, the bound for which the tree's grant
