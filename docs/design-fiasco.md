@@ -2803,7 +2803,7 @@ fails the check. Development builds keep the debugger.
   ([design-arch-aarch64.md](design-arch-aarch64.md#speculation-mitigations)), and closes FD32. Whether the fork carries
   it is settled by one measurement: the null request of [Measurements](#measurements), timed on the Raspberry Pi 4,
   whose Cortex-A72 is the affected CPU ([Read in source, never run](#read-in-source-never-run)), on a release build
-  with the patch and one without, each run several times. The patch is carried when the patched build's median round
+  with the patch and one without, each run at least ten times. The patch is carried when the patched build's median round
   trip lies within the spread of the unpatched build's medians across its runs; otherwise it is not, and FD32 stays a
   published downside. QEMU numbers do not settle it, since the cost is the firmware's call on the affected CPU. If the
   firmware reports neither workaround, the patch has nothing to call and FD32 stays published as well; whether R1's BL31
