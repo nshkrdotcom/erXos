@@ -110,7 +110,9 @@ start_link(Prim) ->
     gen_server:start_link({local, ?MODULE}, ?MODULE, Prim, []).
 
 %% Mounts the grant Pid at To, a local process. Options name the tree the grant roots in,
-%% {tree, Name}, once, and at most one of ro, rw and rx, ro when none is given.
+%% {tree, Name}, once, and at most one of ro, rw and rx, ro when none is given. The
+%% caller started the grant and names the rights it started it with, or fewer; nothing
+%% here compares them with the grant's (docs/design-files.md, "Rights beneath an entry").
 %%
 %% Or mounts at To, with the same options, the facet Name, {facet, Name}: whatever grant
 %% the domain's facet registry holds for Name when a path under To is resolved, a grant
@@ -164,7 +166,8 @@ mount_own(Name, Grant) when is_pid(Grant) ->
 %% (docs/design-apps.md, "Interfaces"; docs/design-system.md, "A session's request").
 %% /data is also an empty directory of every release, so a domain not granted data
 %% lists it as empty (ReleaseFiles::MOUNT_POINTS, tools/lib/erx/release_files.rb); a
-%% domain that holds no packages, start or machine facet has no such path, enoent.
+%% domain that holds no packages, start or machine facet has no such path, enoent, nor
+%% has a session, which never mounts packages (erx_session_app:mounts/2).
 -spec place(atom()) -> {binary(), [option()]} | none.
 place(data) -> {<<"/data">>, [{tree, <<"data">>}, rw]};
 place(packages) -> {<<"/packages">>, [{tree, <<"packages">>}, rw]};

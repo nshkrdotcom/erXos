@@ -2235,9 +2235,12 @@ it; git history is the record of completed work.
   in `default:`, so a new kind is not a build failure where it is unhandled; derive `allowed` from the enum and
   drop the `default:` cases. `Contracts.member_bound`'s enum may hold negative values, which fail safe at the
   view but should be refused at the declaration.
-* [Low] `erlang/apps/erx/src/erx_ns.erl` `place/1`: a facet's mount is `rw` whatever its grant's rights, so an
-  `ro` grant shows as writable until the server refuses with `erofs`, and an `rx` facet cannot run code (F6
-  needs an `rx` mount); the mount should take the facet's rights.
+* [Low] `tools/lib/erx/abi_emit_erlang.rb` `enum_members`: an atom enum is emitted only as the list
+  `?ERX_<ENUM>_MEMBERS`, with no guard macro and no `-type`, so code that needs a guard or a type copies the
+  members by hand: `files_rights`'s `ro | rw | rx` in `erx_fs_grant.erl`, `erx_prog_handler_core.erl`, `erx_ns.erl`
+  (`mount_options/3`, `rights()`), `erx.erl` (`facet()`), `erx_file_remote.erl` and `erx_verity.erl`, about a
+  dozen copies that refuse a member the ABI gains while the generated list accepts it. Emit
+  `?ERX_IS_<ENUM>(X)` and a type per atom enum and convert the copies.
 * [High] files, waiting requests (`erlang/apps/erx_files/src/erx_fs_grant.erl`, and the trees named below): the
   grant calls every callback itself and hands a read or a write that answers `{wait, Keeper, Request}` to its keeper,
   which keeps it in `erx_fs_waits`, and a clunk settles its fid's held requests first behind one table of live
@@ -7207,19 +7210,21 @@ to the corpus and follow rc
   by copying a trusted key into its header. Such a package shows signer `unchecked`. Development builds run
   trusted code only; a release build must refuse every installed package until the verifier runs, and this
   blocks release.
-* [High] files, the app mount's rights, `erlang/apps/erx/src/erx_ns.erl` (`facet_grant/1`;
-  [design-files.md](docs/design-files.md#building-binding-and-mounting)): `erx_ns` cannot check the
-  rights of the grant an EROFS mount's fid came through, since a 9P client cannot learn a grant's rights,
-  so `{erofs, app}` mounts `rx` without refusing an `ro` or `rw` grant with `eacces` and keeps no grant
-  rights for the image check; that the mount is `rx` only through an `rx` grant (F6 of design-files.md)
-  rests on the manifest alone. Property 19 derives the app template's `system` row `rx`
-  (`app_facets` in `tools/lib/erx/manifest.rb`), so an image package's `/app` goes through an `rx`
-  grant; its `packages` row is still `ro`, so an installed package's `/app` is mounted `rx` through an
-  `ro` grant until that row turns `rx` with `tree installed` in the uploads item of
+* [Medium] files, a grant pid's mount rights, `erlang/apps/erx/src/erx_ns.erl` (`checked/2`;
+  [design-files.md](docs/design-files.md#building-binding-and-mounting), "Rights beneath an entry"): a
+  mount of a local grant pid takes its rights from its options and compares them with nothing, so that the
+  entry's rights stay within the grant's rests on each caller (`erx_lfs_sup`, `erx_ramfs_sup`, `erx_procfs`,
+  `erx_devfs`, `erx_ns:mount_own/2`), all correct; one that mounts an `rw` grant `rx` would let the image
+  check run a file written through it. Only the domain's own code mounts by pid. Make the mount take the
+  grant as `{Pid, Rights}` from what started it (`erx_fs_grants:facet/2`'s value) and lower the entry with
+  `erx_path`'s `lesser/2`, as a facet's entry is.
+* [High] files, the app mount's rights, `tools/lib/erx/manifest.rb` (`app_facets`;
+  [design-files.md](docs/design-files.md#building-binding-and-mounting)): the app template's `packages`
+  row is `ro`, so `erx_ns` refuses an installed package's `rx` `/app` mount with `eacces` and no
+  installed package runs; an image package's `/app` mounts `rx` through the template's `rx` `system`
+  row. The `packages` row turns `rx` with `tree installed` in the uploads item of
   [todo-system-partition.md](docs/todo-system-partition.md), since an `rx` grant rooted at `packages/`
-  would reach an upload in progress. What either mount holds is bound by the record's root hash, which
-  the domain service sets. How a client learns a grant's rights is an open question for
-  design-files.md. Development builds run trusted code only; this blocks release.
+  would reach an upload in progress.
 * [Low] manifest check, `signer` rows: a signer key of small order, or one that does not
   decode, would accept a seal anyone can make, as design-ssh.md's acceptance rules note for
   login keys. Have property 19's signer clause refuse such a key, with the eight small-order

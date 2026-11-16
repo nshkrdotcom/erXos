@@ -30,23 +30,20 @@ that proves the code under test ran.
   `erx_verity:open_file/3` and clunks the fid once no entry holds it; its
   rights are `ro` or `rx`, `rw` refused with `einval`. What remains: the
   `{header, Path}` source (only for a file reached through the `apps`
-  grant, its header read by `erx_verity:header/1`); `rx` only through an
-  `rx` grant, `eacces` otherwise, which waits on the security residual
-  "files, the app mount's rights" in TODO.md; a deadline on the file
+  grant, its header read by `erx_verity:header/1`); a deadline on the file
   source's exchanges and a clunk that does not wait, since `erx_ns`'s
   process, and every change and read queued behind it, waits without
   bound on a file server that stops answering; each mount's files
   keyed by a tree of its own; the image check needing `rx` on the entry
-  and on the grant beneath it (design-files.md, "Rights beneath an
-  entry"); and a record that names an image package's file on the
+  (design-files.md, "Rights beneath an entry"); and a record that names an image package's file on the
   `system` grant, which waits on the `system` tree item above. Test: the
   package mounts' host test of design-packaging.md and F6's `/x` test;
   seeded: a mount that takes its rights from its options, which mounts a
   file of `/apps` `rx`; a mount bounded only by its grant's rights, which
   mounts it `rw`; a `header` mount judged by the path rather than the
   fid's grant, which mounts a session-written `/tmp` file once `/tmp` is
-  bound at `/apps`; an image check that reads the entry's rights alone,
-  which runs a file written under an `rx` mount of `data`.
+  bound at `/apps`; a resolution that keeps the rights a facet's mount
+  asked, which runs a file written under an `rx` mount of `data`.
 * [High] packaging, uploads apart from installed packages (`erx_pkg_io`,
   `erx_lfs`, property 19): the `packages` tree's `new/` and `installed/`,
   an upload's `tmp.K` in `new/` renamed into `installed/`, the recovery

@@ -2445,7 +2445,7 @@ pair, so each operation is bound to both incarnations by construction:
 | `idle` | the grant has no pair: its server or its grantee is not ready, or the server provided no mint for the name |
 | `introducing` | the domain service is introducing the grantee to the server ([Creating a domain](#creating-a-domain)); skipped when the grantee is the system domain, which every domain is connected to |
 | `minting` | the mint has been asked for a facet bound to the grantee, and its reply is awaited |
-| `installing` | the facet's pid has been sent to the grantee's registry, and its acknowledgement is awaited |
+| `installing` | the facet has been sent to the grantee's registry, its pid and, for a files service, the rights of the grant's facet row, and its acknowledgement is awaited |
 | `installed` | the grantee acknowledged; the grant holds the facet's pid |
 | `failed` | the operation for this pair failed, and was logged; nothing is retried for the pair |
 
@@ -2498,7 +2498,11 @@ The record moves on these events, and on nothing else:
   that tag. `{ok, Facet}` with `Facet` a pid the server's incarnation
   owns, node and creation both, moves the operation to `installing` and
   sends the grantee
-  `{erx_facets_install, Tag, Name, Facet}`; any other reply fails it. A
+  `{erx_facets_install, Tag, Name, Facet}`, where `Facet` is the pid, or
+  for a files service `{Pid, Rights}` with the rights of the grant's
+  facet row, which the manifest states and no reply sets
+  ([design-files.md](design-files.md#building-binding-and-mounting),
+  "Rights beneath an entry"); any other reply fails it. A
   reply with an unknown or finished tag, a second reply, or one from
   any other domain is dropped and counted;
 * **the acknowledgement**, `{erx_facets_installed, Tag}` from the
@@ -2507,8 +2511,8 @@ The record moves on these events, and on nothing else:
   it answers `connection_mapped`. It counts only from the pair's grantee,
   for an operation in `installing` with that tag, and makes the grant
   `installed`. Anything else is dropped and counted. The system domain's
-  own registry is local: the domain service installs there itself and
-  acknowledges at once;
+  own registry is local: the domain service installs there itself, the
+  same value it would send, and acknowledges at once;
 * **the deadline**, which fails an operation still pending.
 
 Since an operation exists only while both incarnations of its pair are
@@ -3546,10 +3550,10 @@ a session that hands it on shares the facet's control with the receiver
 ([design-files.md](design-files.md#narrowing-for-a-program)); the facet
 serves the tree from a process linked to it, so revoking the facet ends
 the tree and every fid on it, and no grant of the tree outlives the facet.
-Like every facet that serves a file tree, each of the two carries its
-tree's name with its pid and rights, as `erx_ns:mount`'s options do, so a
-namespace entry names the facet's pid, its rights and the tree, and the
-grant answers `enoent` to an attach that names any other tree
+Like every facet that serves a file tree, each of the two installs as its
+pid with the rights of its facet row; a namespace entry names the facet
+and the tree its mount's options give, and resolves with the lesser of
+its own rights and the facet's, and the grant answers `enoent` to an attach that names any other tree
 ([design-files.md](design-files.md#namespaces)).
 
 #### The holder's driver-control facet
