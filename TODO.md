@@ -154,20 +154,28 @@ it; git history is the record of completed work.
   design-stopgap.md, "An exec's entry"): not built are the exec record (`program_arg`'s `exec`, register
   7, and the `erx_exec_record` layout in `abi/erx_abi.txt`; the port driver's create, write and map of it,
   and the command server's keeping of the file's length), the loader's own C entry ahead of the helpers,
-  the exec entry, `erx_exec_release` with its span check in `program_task.c`'s `erx_task_main` before
-  `erx_fiasco_libc_start`, `ERX_FIASCO_TASK_STATUS_RELEASE`, the loader's failure path that releases its
-  record mapping and enters its start-up with the eighth argument 0, the port driver's release of its
-  own view of the record, the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
+  the exec entry, `erx_exec_release` with its span check, called from the backend-neutral `erx_prog_enter`
+  (`liberx/program/program.c:78`) when register 7 is not 0, `ERX_PROG_STATUS_RELEASE` beside
+  `ERX_PROG_STATUS_REFUSED`, the loader's failure path that copies its reason into a static and calls its
+  start-up with the eighth argument 0, the loader's writing of its span only after a load that succeeded,
+  the port driver's release of its own view of the record and its close of the record's capability once
+  the first thread has started, the SDK's `liberx_program.a` (`liberx`'s program layer, its backend and
+  the members of `erx_boot.a`, `libsigma0.a` and `libl4sys.p.a`), the `{ok, Cap, Bytes}` reply to `{map, Path, code}` and the exec switch's
   record, the task script's base symbol and dynamic sections, and the removal of `image` from the
   startup message (`abi/protocols/prog.txt`, the `image` union). `load.c` plans the page-rounded view
-  size, not the file's exact length (`load.c:92`, `:119`); its rollback discards both releases'
-  statuses (`load.c:125`, `:130`), where a refused release is the terminal refused-cleanup outcome;
+  size, not the file's exact length (`load.c:92`, `:119`); its rollback discards the statuses of three
+  releases (`load.c:125`, `:131`, `:132`), where a refused release is the terminal refused-cleanup outcome;
   and `load.h`'s comment says the executable releases the view, which the loader releases itself before
-  the transfer. The planner passes every dynamic tag it does not name (`elf_plan.c:179`) where the
+  the transfer. The planner passes every dynamic tag it does not name (`elf_plan.c:180`) where the
   design's list is closed, `abi/formats/elf64.txt` holds no such list (it names only the tags the
-  planner tests, none of the six constructor and destructor tags the static link writes), and a fixed file's empty `PT_DYNAMIC` fails `erx_elf_dynamic` with
-  `dynamic_terminator` (`elf_plan.c:644`, `:217`), so the shared task script's fixed link would be
-  refused by the stopgap's `erx_image_map` (`service_task.c:515`). The static link needs `-fPIE`
+  planner tests, none of the six constructor and destructor tags the static link writes); a
+  position-independent file's `PT_DYNAMIC` is optional (`elf_plan.c:634-638`) and need only lie in some
+  load, where the design requires exactly one, not empty, in the writable load; and a fixed file's empty
+  `PT_DYNAMIC` fails `erx_elf_dynamic` with `dynamic_terminator` (`elf_plan.c:645`, `:220`) and would fail
+  `erx_elf_metadata_mapped` with `dynamic_mapping` after it (`elf_plan.c:464-465`, called at `:659`), so
+  the shared task script's fixed link would be refused first by the boot packer's planner
+  (`release.rb:146`, `production_image.rb:1766`) and on the stopgap by `erx_image_map` for a file entry
+  (`service_task.c:515`). The static link needs `-fPIE`
   objects: musl's `libc.a` is built without it (`musl.rb`'s `CFLAGS`), so `vmlock.o` and `ofl.o` fail
   the link, and `liberx`'s program objects without it fail with 344 absolute relocations in read-only
   tables, mostly the generated `prog_profile.c`; `task.ld` names none of `.rela.dyn`, `.hash`,
