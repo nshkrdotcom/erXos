@@ -5,13 +5,13 @@
 %% (docs/design-display.md, "The window process"): erx_memdraw, the NIF of
 %% the images and the copies between them, which the runtime links in and
 %% binds to the module of its name, erx_mask, the coverage masks of corners,
-%% shadows and graphs, and erx_theme, the desktop theme's constants,
-%% generated from abi/theme.txt. A library application: it starts
-%% no process.
+%% shadows and graphs, erx_pen, the pen rule of kerned text, and erx_theme,
+%% the desktop theme's constants, generated from abi/theme.txt. A library
+%% application: it starts no process.
 {application, erx_memdraw,
  [{description, "erXos pixel primitives"},
   {vsn, "1"},
-  {modules, [erx_chan, erx_mask, erx_memdraw, erx_theme]},
+  {modules, [erx_chan, erx_mask, erx_memdraw, erx_pen, erx_theme]},
   {registered, []},
   {applications, [kernel, stdlib, erx]},
   {env, []}]}.

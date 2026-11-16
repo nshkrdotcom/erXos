@@ -9,6 +9,7 @@ require 'tmpdir'
 require_relative '../fixtures/erlang_build'
 require_relative '../fixtures/square_font'
 require_relative '../../tools/lib/erx/glyphs'
+require_relative '../../tools/lib/erx/memdraw_build'
 
 # The glyph step (docs/design-desktop-programs.md, "Type"): erx-raster, built
 # once from the fetched FreeType pin (tools/erx fetch --source freetype) into
@@ -18,13 +19,17 @@ require_relative '../../tools/lib/erx/glyphs'
 # runs, each parses with erx_font and loads into erx_draw_core on stock's
 # emulator (ERX_ERL and ERX_ERLC, which make check supplies); and a role whose
 # font lacks a tabular figure, or one with a glyph whose ink leaves its line,
-# is refused.
+# is refused. The body role's menu module places each square as its subfont
+# does, and the theme's loads with erx_memdraw:load/3 on the host NIF and holds
+# the body subfont's image, glyphs and pairs, the last by character, where a
+# module whose kern/2 is keyed by glyph index fails.
 class GlyphsTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   THEME = File.read(File.join(ROOT, 'abi/theme.txt')).freeze
   # The one-pixel shift: every glyph's top one row higher than FreeType put it.
   SHIFT = ['put_u32((uint32_t)(int32_t)slot->bitmap_top);', 'put_u32((uint32_t)(int32_t)slot->bitmap_top + 1);'].freeze
   DEADLINE_SECONDS = '300'
+  OTP = File.join(ROOT, 'build/oracle/jit/install/lib/erlang')
 
   # erx-raster, built once for every case: the tree's, and the one seeded
   # with SHIFT.
@@ -53,21 +58,23 @@ class GlyphsTest < Minitest::Test
   def teardown = FileUtils.remove_entry(@work)
 
   def test_square_glyph_coverage_is_exact
-    assert_equal expected_squares.encode, square_subfont(:tree)
+    assert_equal expected_squares.encode, File.binread(square_subfont(:tree).subfonts.fetch('body'))
   end
 
   def test_one_pixel_shift_fails_the_square_test
-    refute_equal expected_squares.encode, square_subfont(:seeded)
+    refute_equal expected_squares.encode, File.binread(square_subfont(:seeded).subfonts.fetch('body'))
   end
 
   def test_theme_subfonts_are_byte_identical_over_two_runs
     first, second = %w[first second].map { |name| write_theme(File.join(@work, name).tap { |path| Dir.mkdir(path) }) }
-    assert_equal first.keys, second.keys
-    first.each { |role, path| assert_equal File.binread(path), File.binread(second.fetch(role)), "role #{role}" }
+    assert_equal first.subfonts.keys, second.subfonts.keys
+    first.subfonts.each { |role, path| assert_equal File.binread(path), File.binread(second.subfonts.fetch(role)), "role #{role}" }
+    first.lvgl.each { |role, path| assert_equal File.read(path), File.read(second.lvgl.fetch(role)), "role #{role}'s LVGL font" }
+    assert_equal File.read(first.menu), File.read(second.menu)
   end
 
   def test_theme_subfonts_parse_and_load_in_a_draw_connection
-    subfonts = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) })
+    subfonts = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) }).subfonts
     assert_equal theme_of(THEME).roles.keys, subfonts.keys
     ErlangBuild.compile(@work, applications: %w[erx_win], tests: %w[test/erlang/erx_glyph_subfonts_tests.erl])
     FileUtils.cp(subfonts.values, @work)
@@ -102,7 +109,73 @@ class GlyphsTest < Minitest::Test
     assert_match(/\Arole display: U\+[0-9A-F]{4} leaves the line, rows -?\d+ to \d+ of 56\z/, error.message)
   end
 
+  # The menu module of the theme's body role loads into a k8 image with
+  # erx_memdraw:load/3, on the host NIF, and holds the body subfont's image,
+  # glyphs and pairs; the same module with kern/2 keyed by glyph index fails
+  # the pairs' case.
+  def test_menu_module_loads_with_erx_memdraw
+    written = write_theme(File.join(@work, 'roles').tap { |path| Dir.mkdir(path) })
+    menu = File.read(written.menu)
+    output, status = menu_cases(menu, written.subfonts.fetch('body'), 'tree')
+    assert status.success?, output
+    assert_match(/\b3 tests passed/, output)
+    points = body_points
+    by_index = menu.gsub(/^kern\(16#(\h+), 16#(\h+)\)/) { "kern(#{points.index(Regexp.last_match(1).hex)}, #{points.index(Regexp.last_match(2).hex)})" }
+    refute_equal menu, by_index, 'the module has no kern clause'
+    output, status = menu_cases(by_index, written.subfonts.fetch('body'), 'by-index')
+    refute status.success?, "a menu module keyed by glyph index passed:\n#{output}"
+    assert_match(/kern_is_the_subfonts_test\.\.\.\*failed\*/, output)
+  end
+
+  # The squares' menu module gives each square the rectangle, offset and
+  # advance of its subfont entry (expected_squares), and none for a
+  # character outside the range.
+  def test_menu_module_places_each_glyph
+    menu = square_subfont(:tree).menu
+    ErlangBuild.compile(@work, applications: [], tests: [menu])
+    output = erlang('io:format("~w~n", [[case erx_menu_glyphs:glyph(C) of none -> none; G -> lists:sort(maps:to_list(G)) end ' \
+                    '|| C <- lists:seq(16#40, 16#44)]]), halt(0)')
+    glyphs = [[0, 11, 4, 15, 1, 6], [4, 10, 9, 15, 1, 6], [9, 13, 13, 17, -1, 7]].map do |x0, y0, x1, y1, left, advance|
+      "[{advance,#{advance}},{left,#{left}},{r,{#{x0},#{y0},#{x1},#{y1}}}]"
+    end
+    assert_equal "[none,#{glyphs.join(',')},none]", output.lines.last.chomp
+  end
+
   private
+
+  # The body role's character of each subfont glyph index.
+  def body_points
+    theme = theme_of(THEME)
+    Erx::Glyphs.code_points(theme.fonts.fetch(theme.roles.fetch('body').font))
+  end
+
+  # The menu glyph module's cases over MENU, the source of erx_menu_glyphs, and
+  # the body subfont at SUBFONT, with body.points beside them, in a directory
+  # NAME of the case's: the output and status.
+  def menu_cases(menu, subfont, name)
+    directory = File.join(@work, name).tap { |path| Dir.mkdir(path) }
+    File.write(File.join(directory, Erx::Glyphs::Menu::FILE), menu)
+    File.write(File.join(directory, 'body.points'), "[#{body_points.join(',')}].\n")
+    FileUtils.cp(subfont, directory)
+    ErlangBuild.compile(directory, applications: %w[erx_win erx_memdraw],
+                                   tests: [File.join(directory, Erx::Glyphs::Menu::FILE), 'test/erlang/erx_menu_glyphs_tests.erl'])
+    Erx::MemdrawBuild.nif(root: ROOT, otp: OTP, directory: directory, compiler: ENV.fetch('ERX_CLANG', 'clang'))
+    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(directory))
+    Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'), '-noshell', '-pa', directory,
+                    '-eval', 'halt(case eunit:test(erx_menu_glyphs_tests, [verbose]) of ok -> 0; _ -> 1 end)',
+                    chdir: directory, stdin_data: '')
+  end
+
+  # What the emulator printed for EXPRESSION, run in the case's directory,
+  # which must succeed.
+  def erlang(expression)
+    environment = Erx::MemdrawBuild::CLEAN_ENVIRONMENT.merge(Erx::HostOs.nif_search_environment(@work))
+    output, status = Open3.capture2e(environment, 'gtimeout', '-k', '10', DEADLINE_SECONDS, ENV.fetch('ERX_ERL'),
+                                     '-noshell', '-pa', @work, '-eval', expression, chdir: @work, stdin_data: '')
+    assert status.success?, output
+    output
+  end
+
 
   # Glyphs over the square font: a role of U+0041 to U+0043 at 16 pixels in
   # a 20-pixel line, through the tree's or the seeded erx-raster.
@@ -112,10 +185,10 @@ class GlyphsTest < Minitest::Test
     theme = theme_of(THEME.gsub(/^  (?:font|range|role) .*\n/, '').sub("  # The spacing scale", <<~ROWS.gsub(/^/, '  ').chomp))
       font square fonts regular Square.ttf
       range square 0041-0043
-      role box font square size 16 line 20 weight regular
+      role body font square size 16 line 20 weight regular
       # The spacing scale
     ROWS
-    File.binread(write(root: @work, theme: theme, program: program).fetch('box'))
+    write(root: @work, theme: theme, program: program)
   end
 
   # The squares' subfont as their geometry gives it. The ascender and

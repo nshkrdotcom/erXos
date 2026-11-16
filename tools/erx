@@ -562,7 +562,8 @@ module Erx
     def self.fuzz_ruby(runner:, environment:, seconds:, seed:)
       %w[test/fuzz/abi.rb test/fuzz/qemu_transcript.rb test/fuzz/cli_status.rb tools/fuzz/oracle_results.rb tools/fuzz/crash_frame.rb
          tools/fuzz/boot_record.rb tools/fuzz/fat_volume.rb tools/fuzz/etf.rb tools/fuzz/hostlink_frame.rb
-         tools/fuzz/line_escape.rb tools/fuzz/web_front.rb tools/fuzz/harness_screen.rb tools/fuzz/platform_record.rb].each do |path|
+         tools/fuzz/line_escape.rb tools/fuzz/web_front.rb tools/fuzz/harness_screen.rb tools/fuzz/platform_record.rb
+         tools/fuzz/gpos_fuzz.rb].each do |path|
         runner.run([RbConfig.ruby, File.join(ROOT, path), '--seconds', seconds.to_s, '--seed', seed.to_s],
                    name: "fuzz-#{File.basename(path, '.rb').tr('_', '-')}", deadline: seconds + 30,
                    chdir: ROOT, env: environment)
@@ -848,9 +849,10 @@ module Erx
       RcOracle::Build.new(root: ROOT, runner: runner).call.rc
     end
 
-    # The theme's role subfonts in build/glyphs (Glyphs), through erx-raster,
-    # which is built first from the fetched FreeType pin when it is missing or
-    # stale (Raster::Build); prints only the output directory.
+    # The theme's role subfonts and the menu's glyph module in build/glyphs
+    # (Glyphs), through erx-raster, which is built first from the fetched
+    # FreeType pin when it is missing or stale (Raster::Build); prints only
+    # the output directory.
     def self.build_glyphs
       require_relative 'lib/erx/glyphs'
       runner = Runner.new(owner_root: ROOT, log_dir: File.join(ROOT, 'build/logs'))

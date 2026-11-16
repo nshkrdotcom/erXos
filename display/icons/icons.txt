@@ -1,0 +1,107 @@
+# Copyright (c) 2026, Stanislav Sedov <stas@deglitch.com>
+# SPDX-License-Identifier: BSD-2-Clause
+# The desktop's icon set (docs/design-desktop-programs.md, "Icons"), drawn
+# for erXos. Each icon is a set of paths on a GRID-unit square, y downward,
+# stroked STROKE units wide with round joins and caps. An icon has a base
+# layer, drawn in the theme's `secondary` colour, and may have an accent
+# layer, drawn in `accent`; each `base` or `accent` row adds subpaths to its
+# layer. A path is SVG path data in absolute commands: M x y, L x y,
+# C x1 y1 x2 y2 x y, and Z, which closes the subpath. The icons are exactly
+# those of abi/formats/ui.txt's `ui_icon` enumeration, in any order.
+#
+# Lines lie on the lattice 0.75 + 1.5k where they can, so a horizontal or
+# vertical stroke covers whole pixels at 16 pixels (one pixel wide) and at
+# 32 (two pixels wide).
+
+icons 1
+  grid 24
+  stroke 1.5
+  icon folder
+    base M 2.25 18.75 L 2.25 5.25 L 8.25 5.25 L 9.75 6.75 L 21.75 6.75 L 21.75 18.75 Z
+    accent M 2.25 9.75 L 21.75 9.75
+  icon document
+    base M 5.25 2.25 L 14.25 2.25 L 18.75 6.75 L 18.75 21.75 L 5.25 21.75 Z
+    base M 14.25 2.25 L 14.25 6.75 L 18.75 6.75
+  icon text
+    base M 5.25 2.25 L 14.25 2.25 L 18.75 6.75 L 18.75 21.75 L 5.25 21.75 Z
+    base M 14.25 2.25 L 14.25 6.75 L 18.75 6.75
+    accent M 8.25 11.25 L 15.75 11.25
+    accent M 8.25 14.25 L 15.75 14.25
+    accent M 8.25 17.25 L 12.75 17.25
+  icon picture
+    base M 2.25 3.75 L 21.75 3.75 L 21.75 20.25 L 2.25 20.25 Z
+    base M 2.25 17.25 L 8.25 11.25 L 12.75 15.75 L 15.75 12.75 L 21.75 18.75
+    accent M 18 8.25 C 18 9.078 17.328 9.75 16.5 9.75 C 15.672 9.75 15 9.078 15 8.25 C 15 7.422 15.672 6.75 16.5 6.75 C 17.328 6.75 18 7.422 18 8.25 Z
+  icon program
+    base M 2.25 3.75 L 21.75 3.75 L 21.75 20.25 L 2.25 20.25 Z
+    accent M 6.75 9.75 L 9.75 12.75 L 6.75 15.75
+    accent M 11.25 15.75 L 15.75 15.75
+  icon package
+    base M 12 2.25 L 20.25 6.75 L 20.25 17.25 L 12 21.75 L 3.75 17.25 L 3.75 6.75 Z
+    base M 3.75 6.75 L 12 11.25 L 20.25 6.75
+    base M 12 11.25 L 12 21.75
+    accent M 7.875 4.5 L 16.125 9
+  icon link
+    base M 10.5 7.5 L 12.75 5.25 C 14.82 3.18 18.18 3.18 20.25 5.25 C 22.32 7.32 22.32 10.68 20.25 12.75 L 18 15
+    base M 13.5 16.5 L 11.25 18.75 C 9.18 20.82 5.82 20.82 3.75 18.75 C 1.68 16.68 1.68 13.32 3.75 11.25 L 6 9
+    accent M 9 15 L 15 9
+  icon system
+    base M 3.75 6.75 L 20.25 6.75
+    base M 3.75 12.75 L 20.25 12.75
+    base M 3.75 18.75 L 20.25 18.75
+    accent M 9.75 6.75 C 9.75 7.578 9.078 8.25 8.25 8.25 C 7.422 8.25 6.75 7.578 6.75 6.75 C 6.75 5.922 7.422 5.25 8.25 5.25 C 9.078 5.25 9.75 5.922 9.75 6.75 Z
+    accent M 17.25 12.75 C 17.25 13.578 16.578 14.25 15.75 14.25 C 14.922 14.25 14.25 13.578 14.25 12.75 C 14.25 11.922 14.922 11.25 15.75 11.25 C 16.578 11.25 17.25 11.922 17.25 12.75 Z
+    accent M 12.75 18.75 C 12.75 19.578 12.078 20.25 11.25 20.25 C 10.422 20.25 9.75 19.578 9.75 18.75 C 9.75 17.922 10.422 17.25 11.25 17.25 C 12.078 17.25 12.75 17.922 12.75 18.75 Z
+  icon unknown
+    base M 21.75 12 C 21.75 17.385 17.385 21.75 12 21.75 C 6.615 21.75 2.25 17.385 2.25 12 C 2.25 6.615 6.615 2.25 12 2.25 C 17.385 2.25 21.75 6.615 21.75 12 Z
+    accent M 9 9.75 C 9 7.5 10.5 6.75 12 6.75 C 13.5 6.75 15 7.5 15 9.375 C 15 11.25 12 11.625 12 13.5 L 12 14.25
+    accent M 12 17.25 L 12 17.5
+  icon back
+    base M 20.25 12.75 L 3.75 12.75
+    base M 9.75 6.75 L 3.75 12.75 L 9.75 18.75
+  icon forward
+    base M 3.75 12.75 L 20.25 12.75
+    base M 14.25 6.75 L 20.25 12.75 L 14.25 18.75
+  icon refresh
+    base M 12 5.25 C 16.142 5.25 19.5 8.608 19.5 12.75 C 19.5 16.892 16.142 20.25 12 20.25 C 7.858 20.25 4.5 16.892 4.5 12.75
+    base M 1.5 15.75 L 4.5 12.75 L 7.5 15.75
+  icon copy
+    base M 8.25 8.25 L 20.25 8.25 L 20.25 20.25 L 8.25 20.25 Z
+    base M 5.25 15.75 L 3.75 15.75 L 3.75 3.75 L 15.75 3.75 L 15.75 5.25
+  icon chevron
+    base M 9.75 6.75 L 15.75 12.75 L 9.75 18.75
+  icon cpu
+    base M 6.75 6.75 L 17.25 6.75 L 17.25 17.25 L 6.75 17.25 Z
+    base M 9.75 2.25 L 9.75 6.75
+    base M 14.25 2.25 L 14.25 6.75
+    base M 9.75 17.25 L 9.75 21.75
+    base M 14.25 17.25 L 14.25 21.75
+    base M 2.25 9.75 L 6.75 9.75
+    base M 2.25 14.25 L 6.75 14.25
+    base M 17.25 9.75 L 21.75 9.75
+    base M 17.25 14.25 L 21.75 14.25
+    accent M 9.75 9.75 L 14.25 9.75 L 14.25 14.25 L 9.75 14.25 Z
+  icon memory
+    base M 2.25 6.75 L 21.75 6.75 L 21.75 15.75 L 2.25 15.75 Z
+    base M 6.75 15.75 L 6.75 18.75
+    base M 9.75 15.75 L 9.75 18.75
+    base M 14.25 15.75 L 14.25 18.75
+    base M 17.25 15.75 L 17.25 18.75
+    accent M 6.75 9.75 L 9.75 9.75 L 9.75 12.75 L 6.75 12.75 Z
+    accent M 14.25 9.75 L 17.25 9.75 L 17.25 12.75 L 14.25 12.75 Z
+  icon messages
+    base M 3.75 5.25 L 20.25 5.25 L 20.25 15.75 L 11.25 15.75 L 6.75 20.25 L 6.75 15.75 L 3.75 15.75 Z
+    accent M 6.75 8.25 L 17.25 8.25
+    accent M 6.75 11.25 L 14.25 11.25
+  icon load
+    base M 3.75 3.75 L 3.75 20.25 L 20.25 20.25
+    accent M 3.75 15.75 L 8.25 15.75 L 11.25 8.25 L 14.25 17.25 L 17.25 11.25 L 20.25 11.25
+  icon clock
+    base M 21.75 12 C 21.75 17.385 17.385 21.75 12 21.75 C 6.615 21.75 2.25 17.385 2.25 12 C 2.25 6.615 6.615 2.25 12 2.25 C 17.385 2.25 21.75 6.615 21.75 12 Z
+    accent M 12 6.75 L 12 12 L 15.75 14.25
+  icon calendar
+    base M 3.75 5.25 L 20.25 5.25 L 20.25 20.25 L 3.75 20.25 Z
+    base M 3.75 9.75 L 20.25 9.75
+    base M 8.25 2.25 L 8.25 6.75
+    base M 15.75 2.25 L 15.75 6.75
+    accent M 12.75 12.75 L 15.75 12.75 L 15.75 15.75 L 12.75 15.75 Z

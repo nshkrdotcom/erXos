@@ -1822,19 +1822,27 @@ What part 8 builds on, outside its packages:
     figures the font lacks is refused; every subfont parses with
     `erx_font` and loads into `erx_draw_core`; a seeded one-pixel shift
     fails the square test. QEMU: none.
-12. **8.12 Icons, LVGL fonts and the menu's glyphs.**
+12. **8.12 Icons, kerning, LVGL fonts and the menu's glyphs.**
     `display/icons/icons.txt`, the twenty icons drawn for erXos and
     stroked through `erx-raster` at 16 and 32 pixels; the icons' SVG
-    path data in `theme.ts`; the LVGL font forms of the roles and the
-    icons; the `body` role's generated menu module. Depends on: 8.11.
+    path data in `theme.ts`; kerning: `erx-raster` reporting glyph
+    indices and the `GPOS` and `GDEF` tables, `Erx::Gpos` with its fuzz
+    target, each role's pairs in its
+    subfont's pair section, `erx_font`'s reading of it with `width/2`
+    and `runs/2`, and `erx_pen` in `erx_memdraw`; the LVGL font forms
+    of the roles, their pairs included, and of the icons; the `body`
+    role's generated menu module with `kern/2`. Start:
+    design-desktop-programs' kerning section. Depends on: 8.11.
     Tests: every icon `ui.txt` names has paths, where a seeded missing
     icon fails the generator; a straight stroke covers each column by
     its width; the menu module loads with `erx_memdraw:load/3` on the
-    host. QEMU: none.
-13. **8.13 The Erlang renderer takes the theme.** Role subfonts, the
-    theme's spacing where the tree gives none, sections with `erx_mask`
-    corners and shadow, icons, the `current` ring and graph masks; clock
-    takes the `display` role; reference frames of clock and month under
+    host; the kerning tests of design-desktop-programs' verification,
+    each with its seed. QEMU: none.
+13. **8.13 The Erlang renderer takes the theme.** Role subfonts, measured
+    and drawn in kerned runs, the theme's spacing where the tree gives
+    none, sections with `erx_mask` corners and shadow, icons, the
+    `current` ring and graph masks; clock takes the `display` role;
+    reference frames of clock and month under
     `test/display/reference/desk/`. Depends on: 8.5, 8.8, 8.10, 8.11,
     8.12, `erx_ui_host`. Tests: each frame equals its reference, where a
     section radius one pixel off fails; the attributed-text corpus
