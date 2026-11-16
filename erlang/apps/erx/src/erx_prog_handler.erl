@@ -123,7 +123,12 @@ at `/dev` itself that cannot write, `enodev` for a window in a domain without th
 client or with no grant of the display, the display's or the connection's
 errno for a window they refuse, `eio` for a `/dev` tree that does not start,
 `enomem` (for a pipe server that is gone too), `eio` when the handler
-crashed, `e2big` for strings past the startup message's bound, the
+crashed, `e2big` for strings past the startup message's bound, for an
+image that is an absolute path (an executable file) `enoent` for no file
+there, `eacces` for anything but a file on an `rx` entry or for a path
+through a symbolic link, the resolution's own error for a path it cannot
+read, and `enotsup` for a file it names, which no start yet runs
+(erx_prog_handler_core:resolve_image/3), the
 start's own refusal (erx_program:start/1), or `timeout` when the handler
 has not answered within 30 seconds.
 Nothing the start reserved survives an error.
@@ -204,7 +209,7 @@ serve(#{starter := Starter, key := Key} = Init) ->
 %% serve/1's monitor of the starter stays, and the loop reads its 'DOWN'
 %% as a stop.
 init(Starter, #{pid := Pid} = Spec) ->
-    Files = (maps:with([window], Spec))#{table => erx_file_description:table(),
+    Files = (maps:with([window, image], Spec))#{table => erx_file_description:table(),
                                          within => maps:get(within, Spec, all),
                                          cwd => maps:get(cwd, Spec, undefined),
                                          slots => erx_program:slots(Spec)},
@@ -269,6 +274,10 @@ perform([Action | Rest], H) ->
         H1 -> perform(Rest, H1)
     end.
 
+act({resolve, Image, Table}, H) ->
+    %% Each facet's mount is read as the grant the registry holds now, as an open reads it.
+    Granted = erx_path:with_facets(Table, persistent_term:get({erx, facets}, #{})),
+    {event, {resolved, erx_prog_handler_core:resolve_image(Image, Granted, fun prim_file:erx_walk/2)}, H};
 act(holder, #h{spec = #{pid := Pid}} = H) ->
     {event, {holder, erx_pipe_nif:program_holder(Pid)}, H};
 act({inherit, End}, #h{starter = Starter, spec = #{pid := Pid}} = H) ->

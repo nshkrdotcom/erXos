@@ -7,14 +7,22 @@ The decisions of a program's handler (docs/design-programs.md, "The
 handler"): one pure state machine, step/2, from an event to the next
 state and the actions erx_prog_handler performs, in order.
 
-A handler lives through three phases:
+A handler lives through four phases:
 
-* **reserving**, steps 5 and 6 of "Starting a program": the program's
-  holder entry, then each descriptor the starter named, one at a time in
-  the order given (a pipe end as an `inherit` with the starter as the
-  end's holder, a window's buffer as an allocation and a lease the
-  handler holds), then, for a spec that names a window, the window, its
-  draw connection and the program's own `/dev` tree as one `window`
+* **resolving**, step 4 of "Starting a program", for a start whose image
+  is an absolute path, an executable file: the image is resolved through
+  the starter's namespace (resolve_image/3) before the holder entry or
+  any descriptor is reserved, so a refusal has nothing to undo, though
+  the command server has already given the program its id and job row
+  (TODO.md). A file it resolves is refused
+  `enotsup`, since the filler that opens it, the code object and the loader
+  `erx_exec` are not built (TODO.md). A release image, `bin/NAME`, starts
+  reserving at once.
+* **reserving**, steps 5 and 6: the program's holder entry, then each
+  descriptor the starter named, one at a time in the order given (a
+  pipe end as an `inherit` with the starter as the end's holder, a
+  window's buffer as an allocation and a lease the handler holds), then,
+  for a spec that names a window, the window, its draw connection and the program's own `/dev` tree as one `window`
   action, whose grant the core puts at `/dev` in the program's table
   (docs/design-files.md, "A program's window"), then the start itself.
   What the `window` action made needs no undo: it ends with the
@@ -117,7 +125,7 @@ session code and the program's own driver.
 -include("generated/erx_abi.hrl").
 -include_lib("kernel/include/file.hrl").
 
--export([new/3, step/2, phase/1, exported/0, exported/1]).
+-export([new/3, step/2, phase/1, exported/0, exported/1, resolve_image/3]).
 -export_type([core/0, event/0, action/0, starter_fd/0, files/0]).
 
 %% A descriptor as the starter names it: a pipe end the starter holds, or a
@@ -128,7 +136,8 @@ session code and the program's own driver.
 %% A descriptor as erx_program:start/1 takes it.
 -type program_fd() :: {0..1023, {pipe_hand, pos_integer(), term()} | {mem, pos_integer(), pos_integer()}}.
 
--type event() :: {holder, ok | {error, atom()}}
+-type event() :: {resolved, {ok, erx_path:entry(), [erx_path:name()]} | {error, atom()}}
+               | {holder, ok | {error, atom()}}
                | {reserved, {pipe_hand, pos_integer(), term()}}
                | {reserved, {mem, Lease :: pos_integer(), Pages :: pos_integer(), Offset :: non_neg_integer()}}
                | {windowed, DevGrant :: pid()}
@@ -156,10 +165,13 @@ session code and the program's own driver.
 %% What the starter hands for the program's files: its namespace table
 %% (prim_file:erx_mounts/0), the narrowing, `all` for the whole table or each
 %% absolute path the program reaches with its rights there, the program's
-%% working directory, its data area's slots, and, for a program with a window,
-%% the display it is opened on, the name of the session's grant of it.
+%% working directory, its data area's slots, for a program with a window,
+%% the display it is opened on, the name of the session's grant of it, and the
+%% program's image as the spec names it, which is resolved through the table when
+%% it is an absolute path.
 -type files() :: #{table := erx_path:table(), within := all | [{binary(), ro | rw | rx}],
-                   cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX, window => atom()}.
+                   cwd := binary(), slots := 1..?ERX_PROG_DATA_SLOTS_MAX, window => atom(),
+                   image => term()}.
 -type slot() :: non_neg_integer().
 %% An open-file description, a session process the effect side made.
 -type description() :: pid().
@@ -172,7 +184,8 @@ session code and the program's own driver.
                  | {copied, file_read | file_pread, non_neg_integer()}
                  | {count, file_write | file_pwrite, pos_integer()}.
 
--type action() :: holder
+-type action() :: {resolve, binary(), erx_path:table()}
+                | holder
                 | {inherit, term()}
                 | {lend, pos_integer(), pos_integer()}
                 | {window, atom()}
@@ -208,7 +221,7 @@ session code and the program's own driver.
 -type hand() :: {pipe_hand, pos_integer(), term()}.
 
 -record(core, {pid :: pos_integer(),
-               phase = reserving :: reserving | running | {ended, reason()},
+               phase = reserving :: resolving | reserving | running | {ended, reason()},
                %% reserving: the starter's descriptors not yet reserved, in order.
                todo = [] :: [starter_fd()],
                %% reserving: the reserved descriptors, newest first, for the start
@@ -257,7 +270,8 @@ session code and the program's own driver.
 -doc """
 A handler for program `Pid` that starts it with the starter's
 descriptors `Fds` and serves its files as `Files` says, and its first
-action; or `{error, einval}` for a `Pid` outside `ERX_PROG_PID_MIN` to `ERX_PROG_PID_MAX`, a descriptor
+action, the resolve of an image that is an absolute path or else the
+holder; or `{error, einval}` for a `Pid` outside `ERX_PROG_PID_MIN` to `ERX_PROG_PID_MAX`, a descriptor
 of another form, a number named twice, more than one buffer, which the
 program may have only one of, a working directory that is not an
 absolute path of plain names, slots outside 1..`ERX_PROG_DATA_SLOTS_MAX`,
@@ -284,11 +298,79 @@ new(Pid, Fds, #{table := Table, within := Within, cwd := Cwd, slots := Slots} = 
         {_, error, _} -> {error, einval};
         {_, _, {error, _} = Refused} -> Refused;
         {true, {ok, Place}, {ok, Narrowed}} ->
-            {ok, #core{pid = Pid, todo = Fds, window = Window, table = Narrowed, cwd = Place,
-                       slots = Slots}, [holder]}
+            C = #core{pid = Pid, todo = Fds, window = Window, table = Narrowed, cwd = Place,
+                      slots = Slots},
+            case Files of
+                #{image := <<"/", _/binary>> = Image} ->
+                    {ok, C#core{phase = resolving}, [{resolve, Image, Table}]};
+                #{} ->
+                    {ok, C, [holder]}
+            end
     end;
 new(_Pid, _Fds, _Files) ->
     {error, einval}.
+
+-doc """
+Resolve, step 4 of "Starting a program", for an executable file: the
+absolute `Path` through `Table`, the starter's namespace with each
+facet's grant in place (erx_path:with_facets/2), each provider walked by
+`Walk`, erx_path's `walk` callback. It answers `{ok, Entry, Names}`: the
+entry the file lies on, whose provider is the grant it is read through,
+and the file's names from the provider's root, which the filler opens.
+A file is what the walk answers `other`, so the filler's open checks
+that it is a regular file. It answers `{error, enoent}` for no such file;
+`{error, eacces}` for a directory (an entry's top and the empty root
+included), for a file whose entry is not `rx`, the image check
+(docs/design-programs.md, "File objects"), and for any symbolic link on
+the way, which unfollowed/2 refuses; or the resolution's own error for a
+path it cannot read (`enotdir`, `enametoolong`, `einval`, `eio`).
+""".
+-spec resolve_image(binary(), erx_path:table(),
+                    fun((erx_path:entry(), [erx_path:name()]) -> erx_path:reply())) ->
+          {ok, erx_path:entry(), [erx_path:name()]} | {error, atom()}.
+resolve_image(<<"/", _/binary>> = Path, Table, Walk) ->
+    Callbacks = #{walk => Walk, read_link => fun unfollowed/2},
+    Lookup = erx_path:resolve(Path, lookup, #{follow => true, willbedir => false}, Table, [],
+                              Callbacks),
+    image_at(Lookup, Walk).
+
+%% No symbolic link is followed beneath a mount, the last name's included, so a
+%% package's link such as bin/x -> /bin/sh never starts a program outside the
+%% package (TODO.md). The resolution follows every link it meets, so each one
+%% reaches this callback and is refused here alone.
+unfollowed(_Entry, _Names) -> {error, eacces}.
+
+%% A lookup's target is walked, as an open walks it: a file there passes the
+%% image check; a walk that did not pass every name goes back to the
+%% resolution, which answers it, a link through unfollowed/2. An entry's top,
+%% no names from the provider's root, is a directory without a walk.
+image_at({target, _Entry, [], _Resume}, _Walk) ->
+    {error, eacces};
+image_at({target, Entry, Names, Resume}, Walk) ->
+    case Walk(Entry, Names) of
+        {Kinds, ok} = Reply when length(Kinds) =:= length(Names) ->
+            %% The one reading of a walk's kinds that every open makes.
+            case erx_file_remote:passed(Kinds, follow) andalso lists:last(Kinds) of
+                other -> image_check(Entry, Names);
+                directory -> {error, eacces};
+                false -> image_at(Resume(Reply), Walk)
+            end;
+        Reply ->
+            image_at(Resume(Reply), Walk)
+    end;
+image_at({error, _} = Refused, _Walk) ->
+    Refused;
+image_at({empty_root, _Place}, _Walk) ->
+    {error, eacces};
+image_at({top, _Entry}, _Walk) ->
+    {error, eacces}.
+
+%% The image check reads the entry alone, so it holds only where an entry's
+%% rights never exceed its grant's; an rx mount of erx_ns does not yet make
+%% that so, and design-files.md (F6) asks for the grant's rx as well (TODO.md,
+%% "files, the app mount's rights").
+image_check(#{rights := rx} = Entry, Names) -> {ok, Entry, Names};
+image_check(_Entry, _Names) -> {error, eacces}.
 
 -doc """
 The names the session's export serves every program at `/dev` and `/etc`
@@ -444,13 +526,20 @@ narrowed_at(_Entry, _Place, _Rights, _Table) ->
 below_rights(ro, _Mount) -> ro;
 below_rights(_Own, #{rights := Rights}) -> Rights.
 
--doc "The handler's phase: `reserving`, `running` or `{ended, Reason}`.".
--spec phase(core()) -> reserving | running | {ended, reason()}.
+-doc "The handler's phase: `resolving`, `reserving`, `running` or `{ended, Reason}`.".
+-spec phase(core()) -> resolving | reserving | running | {ended, reason()}.
 phase(#core{phase = Phase}) -> Phase.
 
 -doc "The next state and the actions that carry out one event.".
 -spec step(core(), event()) -> {core(), [action()]}.
-%% Reserving: one descriptor at a time, then the start.
+%% Resolving: the image, before anything is reserved, so a refusal has nothing to
+%% undo. A resolved file goes to the filler, which is not built.
+step(#core{phase = resolving} = C, {resolved, Resolved}) ->
+    Errno = case Resolved of
+                {ok, _Entry, _Names} -> enotsup;
+                {error, Refused} when is_atom(Refused) -> Refused
+            end,
+    {C#core{phase = {ended, normal}}, [{answer, {error, Errno}}]};
 step(#core{phase = reserving} = C, {holder, ok}) ->
     reserve_next(C);
 step(#core{phase = reserving} = C, {holder, {error, Errno}}) when is_atom(Errno) ->

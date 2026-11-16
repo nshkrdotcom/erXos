@@ -143,16 +143,25 @@ it; git history is the record of completed work.
   session's default display, the program's end ending the session); see the next item for what it waits on.
 * [High] programs, an executable file as a program's image
   ([design-programs.md](docs/design-programs.md#what-a-program-can-start), "File objects"; plan 1b-D,
-  "`erx_exec` with `rx` grants"): not built. `erx_program:start/1` takes only a program of the session's
-  release (`image => <<"bin/NAME">>`), the handler has no resolve step (step 4 of "Starting a program": the
-  image check of the `rx` grant, the filler's read, the command server's code object), the domain library's
-  `code_object/2` answers `enotsup`, and the loader `erx_exec` does not exist (only `erx_elf_plan` does). So a
-  native app's start of `/app/bin/NAME` is refused `{program, einval}` and the session ends; no installable
-  native package (the Doom demo) runs until this lands. Also needs the stopgap backend's rows for paged
-  objects, sealing, supply and `ERX_MEM_CODE` (plan.md, 1b-B's backend rows). The resolve step must open a
-  native app's program beneath `/app` without following links, or the `{erofs, app}` mount refuse link
-  inodes: the reader checks only the header's text (`relative_path`) and only the host packer refuses links,
-  so an image `bin/x -> /bin/sh` would start a program outside the package.
+  "`erx_exec` with `rx` grants"): not built past the resolve. `erx_program:start/1` takes only a program of
+  the session's release (`image => <<"bin/NAME">>`). The handler resolves an absolute image through the
+  starter's namespace and makes the image check of the entry's `rx` (`erx_prog_handler_core:resolve_image/3`),
+  but has no filler to open the file and no code object from the command server (the rest of step 4 of
+  "Starting a program"), the domain library's `code_object/2` answers `enotsup`, and the loader `erx_exec`
+  does not exist (only `erx_elf_plan` does). So a native app's start of `/app/bin/NAME` is refused
+  `{program, enotsup}` and the session ends; no installable native package (the Doom demo) runs until this
+  lands. Also needs the stopgap backend's rows for paged objects, sealing, supply and `ERX_MEM_CODE`
+  (plan.md, 1b-B's backend rows). The resolve refuses every symbolic link on the way (`eacces`), so a
+  package's link `bin/x -> /bin/sh` cannot start a program outside it, since the reader checks only the
+  header's text (`relative_path`) and only the host packer refuses links; whether that refusal stays at the
+  resolve or moves to the `{erofs, app}` mount, refusing link inodes, is open, and a refusal at the resolve
+  also refuses links on every other mount, which design-programs.md does not yet say. The image check reads
+  the entry's rights alone, which design-files.md (F6) names as the wrong check until every entry's rights
+  are capped by its grant's ("files, the app mount's rights", below). The resolve runs in the program's own
+  handler, after the command server gave the program its id and job row, and waits on the walks of a grant
+  server, where step 4 puts it in the starter's handler before step 5. The filler, when built, must check
+  that the file is regular (a grant's walk answers `other` for devices too) and open it without following
+  a link, since its open walks the path again.
 * [Medium] apps, `erx_app`, a native app's standard streams: design-packaging.md ("Starting an app") starts a
   program without a window with standard input null and its output to the session's log, but
   `erx_prog_handler:start/1` offers only pipe ends and a window's buffer as descriptors, so `erx_app` starts

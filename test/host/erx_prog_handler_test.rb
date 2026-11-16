@@ -12,8 +12,9 @@ require_relative '../fixtures/erlang_build'
 # effect process, erx_prog_handler, with the real pipe server over a fake pipe NIF
 # and stand-ins (test/erlang/stand_in) for the program driver, the pixel allocator
 # and the NIF calls the handler makes, by
-# test/erlang/erx_prog_handler_tests.erl. Each seeded fault must fail the EUnit
-# case named beside it.
+# test/erlang/erx_prog_handler_tests.erl. The core's resolve of an executable file
+# walks the EROFS reader's fixture images (erx_erofs_tests). Each seeded fault must
+# fail the EUnit case named beside it.
 class ErxProgHandlerTest < Minitest::Test
   ROOT = File.expand_path('../..', __dir__)
   APPLICATIONS = %w[erx erx_files].freeze
@@ -23,8 +24,14 @@ class ErxProgHandlerTest < Minitest::Test
              test/erlang/stand_in/erx_program.erl test/erlang/stand_in/erx_pixels.erl
              test/erlang/stand_in/erx_pipe_nif.erl test/erlang/stand_in/erx_file_description.erl build/gen/otp/erts/preloaded/src/erx_prog.erl otp/erts/preloaded/src/erx_path.erl
              build/gen/otp/erts/preloaded/src/erx_prog_grammar.erl
+             otp/erts/preloaded/src/erx_erofs.erl otp/erts/preloaded/src/erx_verity.erl
+             otp/erts/preloaded/src/erx_verity_tree.erl test/erlang/host_bytes/erx_bytes.erl
+             otp/erts/preloaded/src/erx_file_remote.erl test/erlang/erx_erofs_tests.erl
              test/erlang/erx_prog_handler_core_tests.erl test/erlang/erx_prog_handler_tests.erl].freeze
   SUITES = %w[erx_prog_handler_core_tests erx_prog_handler_tests].freeze
+  # The reader's fixture images, which the core's resolve cases mount at /app.
+  FIXTURES = File.join(ROOT, 'test/fixtures/erofs')
+  INCLUDES = %w[otp/lib/kernel/include].freeze
   CORE = 'erlang/apps/erx/src/erx_prog_handler_core.erl'
   HANDLER = 'erlang/apps/erx/src/erx_prog_handler.erl'
   EXPORT = 'erlang/apps/erx_session/src/erx_session_export.erl'
@@ -39,6 +46,13 @@ class ErxProgHandlerTest < Minitest::Test
   # and the EUnit case that must catch it.
   Mutant = Data.define(:file, :original, :replacement, :caught_by)
   MUTANTS = {
+    'an image check that admits an entry without rx' =>
+      Mutant.new(file: CORE, original: 'image_check(#{rights := rx} = Entry, Names) ->',
+                 replacement: 'image_check(#{rights := _} = Entry, Names) ->', caught_by: 'an ro entry is eacces'),
+    'a resolve that follows a link beneath the mount' =>
+      Mutant.new(file: CORE, original: 'unfollowed(_Entry, _Names) -> {error, eacces}.',
+                 replacement: 'unfollowed(#{provider := {erofs, Fs}}, Names) -> erx_erofs:read_link(Fs, Names).',
+                 caught_by: 'a last link is never followed'),
     'a /dev tree grant that does not end with the handler' =>
       Mutant.new(file: EXPORT, original: '#{client => own, ends_with => self()}', replacement: '#{client => own}',
                  caught_by: 'a_refused_windowed_start_ends_what_it_made'),
@@ -173,9 +187,10 @@ class ErxProgHandlerTest < Minitest::Test
   # The suites' text and whether they passed, with replaced's sources in place of the tree's.
   def run_eunit(replaced)
     Dir.mktmpdir('erx-prog-handler-test') do |work|
-      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced)
+      ErlangBuild.compile(work, applications: APPLICATIONS, tests: TESTS, replaced: replaced, includes: INCLUDES)
       eval_text = "halt(case eunit:test([#{SUITES.join(', ')}], [verbose]) of ok -> 0; _ -> 1 end)."
-      text, status = Open3.capture2e('gtimeout', '-k', '10', '180', ENV.fetch('ERX_ERL'), '-noshell',
+      text, status = Open3.capture2e({ 'ERX_EROFS_FIXTURES' => FIXTURES }, 'gtimeout', '-k', '10', '180',
+                                     ENV.fetch('ERX_ERL'), '-noshell',
                                      '-pa', work, '-eval', eval_text, chdir: work, stdin_data: '')
       [text, status.success?]
     end
