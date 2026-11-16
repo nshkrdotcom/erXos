@@ -1816,7 +1816,8 @@ What part 8 builds on, outside its packages:
     `display/icons/icons.txt`, the twenty icons drawn for erXos and
     stroked through `erx-raster` at 16 and 32 pixels; the icons' SVG
     path data in `theme.ts`; kerning: `erx-raster` reporting glyph
-    indices and the `GPOS` table, `Erx::Gpos`, each role's pairs in its
+    indices and the `GPOS` and `GDEF` tables, `Erx::Gpos` with its fuzz
+    target, each role's pairs in its
     subfont's pair section, `erx_font`'s reading of it with `width/2`
     and `runs/2`, and `erx_pen` in `erx_memdraw`; the LVGL font forms
     of the roles, their pairs included, and of the icons; the `body`
