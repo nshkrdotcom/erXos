@@ -1673,12 +1673,15 @@ Put the card in the Pi, start logging on the adapter, then power the Pi.
    outside BASE SIZE` instead names where the firmware put the
    framebuffer, outside the window of
    [the framebuffer's unit](#raspberry-pi-4-model-b); `erx_fb: the
-   framebuffer is not driven:` names why the driver refused it. Leave
-   HDMI1 empty: the firmware may make a framebuffer for each port with a
-   display ([design-device-tree.md](design-device-tree.md#context)),
-   and two nodes give `framebuffer absent ambiguous`. Record the root's
-   line, since the format it names at the firmware's default depth of
-   16 bits is unverified.
+   framebuffer is not driven:` names why the driver refused it. The
+   card's `config.txt` asks the firmware for one 32-bit framebuffer
+   (`framebuffer_depth=32`, `framebuffer_ignore_alpha=1`,
+   `max_framebuffers=1`; [design-device-tree.md](design-device-tree.md#context)),
+   so the root should name `x8r8g8b8` and see one node. Use HDMI0; HDMI1
+   may be connected as well. Any other 32-bit format name is a pass:
+   record which one appears, and a `framebuffer absent` line, `ambiguous`
+   included, is a failure of the firmware option to record, since whether
+   the pinned firmware honors those options is unverified.
 
 **What the pass settles.** Typing works, so the mini UART raises its
 receive interrupt with bits 3:2 of its interrupt-enable register set, as

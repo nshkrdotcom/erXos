@@ -98,6 +98,9 @@ module Erx
     # * core_freq, core_freq_fixed: the header map's core clock, which the I2C and SPI
     #   controllers divide, fixed so the rate their drivers divide holds (core_lines).
     # * total_mem, gpu_mem: the record's RAM.
+    # * framebuffer_depth, framebuffer_ignore_alpha, max_framebuffers: one 32-bit
+    #   framebuffer with its alpha channel ignored, so the root finds at most one
+    #   simple-framebuffer node, not one per HDMI port (design-device-tree.md).
     # * development_lines: the firmware's own boot log on the console and, for a map with
     #   jtag rows, the ARM's JTAG, on a development card only.
     # * a dtoverlay line for each overlay the board's tree carries.
@@ -117,6 +120,9 @@ module Erx
         init_uart_clock=#{pl011_clock(platform)}
         total_mem=#{total_mem_mib(platform)}
         gpu_mem=#{GPU_MEM_MIB}
+        framebuffer_depth=32
+        framebuffer_ignore_alpha=1
+        max_framebuffers=1
       CONFIG
     end
 
