@@ -47,8 +47,8 @@ Decisions every reader of this document needs:
   `$home/lib/act`, comes before the defaults the release ships. Since
   its lines run with the session's authority, only the person's own
   sessions and the programs they give their whole namespace write it.
-  Their meaning is fixed here; their surface syntax is [open decision
-  1](#open-decisions).
+  Their meaning is fixed here; they are written as lines in rc's word
+  syntax ([decision 1](#decisions)).
 * **One window shows every way in.** The palette is a window of the
   person's session. Opened by a key it searches commands; opened on a
   value, at the pointer, it lists that value's offers, which is the
@@ -406,7 +406,7 @@ whose input is one of two forms:
 `Where` names the display the gesture came from, the window it came
 from when there is one, and, for a pointer gesture, the point on its
 screen: `#{display := Name, window => Id, at => {X, Y}}`. The window is
-the one a keyboard pass starts from ([open decision 2](#open-decisions)).
+the one a keyboard pass starts from ([decision 2](#decisions)).
 
 `file` and `folder` are not presentations: design-display's decision 16
 keeps presentations to inspector paths, and no window shows a file as
@@ -424,8 +424,8 @@ refuses two such presentations over one type").
 ### Rules
 
 The rules are one ordered list of statements of three kinds. Their
-meaning, below, is this design's; how they are written is [open decision
-1](#open-decisions), and the examples use its recommended form.
+meaning, below, is this design's; how they are written is [decision
+1](#decisions).
 
 | Statement | Fields | Meaning |
 | --- | --- | --- |
@@ -463,7 +463,7 @@ to rules or to the first error with its line. It fails the whole file at
 its first error, so a file is used whole or not at all. The person's
 file is input to the session from whichever of its writers below last
 replaced it, read again at every start of `erx_act` and every `act -r`,
-so whatever the outer syntax, the reader holds to four rules, which its
+so the reader holds to four rules, which its
 fuzz target checks:
 
 * **No atom from input.** Every name is matched as a binary against a
@@ -483,7 +483,7 @@ fuzz target checks:
   reader's work is linear in it, but for each line's parse, which rc's
   own bounds hold.
 
-In the recommended form, (e) of open decision 1, a statement is one
+A statement is one
 source line in rc's word syntax: its kind, its fields and, for `route`
 and `bind`, the line, which is the rest of the source line. The reader
 cuts the file at its newlines and reads each source line's tokens with
@@ -554,7 +554,7 @@ The defaults are a file of the `erx_act` application,
 `erlang/apps/erx_act/priv/rules`, checked in. The build reads it with
 the same reader and fails on any error, and on a route or bind whose
 line's first command is not in the catalog of the desktop session's
-release. In the recommended form of open decision 1:
+release. For example:
 
 ```text
 # A process: the inspector first.
@@ -620,7 +620,7 @@ flight ([design-desktop-programs.md](design-desktop-programs.md#the-construction
 Its effects are a listing of a type's members through the session's
 inspect facet, `{run, Tag, Act}`, `{end_act, Tag}`, the window's
 placement, passing the keyboard from the window it was opened from
-([open decision 2](#open-decisions)) and `close`.
+([decision 2](#decisions)) and `close`.
 
 It opens in one of two ways, and is the same window either way:
 
@@ -862,8 +862,8 @@ diagnostic from `act -r` or the palette.
   session without it is offered no app at all. The members come from
   the `[apps]` listing, which only an inspect facet of scope `all`
   reads ([design-apps.md](design-apps.md#interfaces), "Inspection");
-  [open decision 3](#open-decisions) is what a release build's
-  administrator sees.
+  [decision 3](#decisions) is what a release build's administrator
+  sees.
 * **Handing an app a value waits for the powerbox.** Opening a person's
   file in an app of another principal needs a grant from one session to
   another, a new cross-domain facet
@@ -979,8 +979,8 @@ not engineered against.
   the keyboard with the palette, so a person who types into what looks
   like the raised window types into the palette, and a Return runs its
   selected offer. Both are residuals, recorded in `TODO.md`.
-* **The keyboard pass is the source window's to give.** Under open
-  decision 2's option (b), the keyboard moves only through the `wctl` of
+* **The keyboard pass is the source window's to give.** Under
+  decision 2, the keyboard moves only through the `wctl` of
   the window that has it, so a program confined to its own window's
   files can give away the keyboard it already has and can never take it
   from a sibling window of the same grant.
@@ -1047,7 +1047,7 @@ QEMU test runs the whole path.
 | the rules fuzz target | random bytes, mutations of the defaults, files at and over each bound, and repeated reloads read or fail with a diagnostic naming a line in the file, never raise, keep the worker within its heap and leave the atom count unchanged | a reader that makes an atom of each unknown word |
 | the source checks | the FA2 xref check fails on a seeded call from `erx_term` to `erx_act_run` | none further |
 | desktop, QEMU | on the desktop image, the palette key in the first terminal opens the palette; typing `files` and Return opens a files window | the default binding removed |
-| keyboard pass, hosted, if open decision 2 takes (b) | the palette opened by a key in a terminal is current at once. With two programs started from one session, a native program P with its own window and only that window's files, and a terminal T where the person types: P's `give` written to its own `wctl` while T is current fails with `EINVAL`; P, made current by a click and given a key, cannot give the keyboard to T, made before that click; a `give` more than 500 ms after the last key or button down fails | the rule judged on the grant, "the grant holds the current window", under which P's write takes the keyboard from T; the rule without its age check, under which P hands the person's typing to T's shell |
+| keyboard pass, hosted | the palette opened by a key in a terminal is current at once. With two programs started from one session, a native program P with its own window and only that window's files, and a terminal T where the person types: P's `give` written to its own `wctl` while T is current fails with `EINVAL`; P, made current by a click and given a key, cannot give the keyboard to T, made before that click; a `give` more than 500 ms after the last key or button down fails | the rule judged on the grant, "the grant holds the current window", under which P's write takes the keyboard from T; the rule without its age check, under which P hands the person's typing to T's shell |
 
 The palette's core is not a protocol state machine, so it is tested on
 its cases, not exhaustively.
@@ -1087,8 +1087,12 @@ accepted:
   `current` field reports the policy's current window, and a change of
   the current window gives each window it touches a new `wctl` record,
   so a client learns it; `erx_window` today fills the field from the
-  window's shown state (`erx_window.erl:101`). Open decision 2's `give`
-  command, if taken.
+  window's shown state (`erx_window.erl:101`). Decision 2's `give`
+  command for `wctl`, with its rule that the source window must be
+  current and have been given a key or button down within 500 ms: the
+  accepted rule that a new window is current only once the person
+  clicks it gains this one exception, which is the display's to judge
+  and to implement.
 * **The inspection schema.** A segment type `app_name` for `apps
   *app_name`, marked `present app`.
 * **design-shell.** `service` declares `-erx_args([app])`; commands that
@@ -1105,6 +1109,11 @@ accepted:
   contains it, judged on the root's path on its grant; the same holds
   for a command domain that `within` narrows.
 * **design-desktop-programs.** files' toolbar gains "Open with".
+* **design-apps.** Which sessions may read the start table's row names
+  (`[apps]`, `[apps, Name]`) in a release build, where no session holds
+  scope `all`: the palette's `app` list and `service -e` both need it,
+  and the palette lists whatever that design makes readable
+  ([decision 3](#decisions)).
 * **design.md** lists this document in its map.
 
 ## Dependencies
@@ -1118,7 +1127,7 @@ the file protocol.
 | Alternative | Why not |
 | --- | --- |
 | A plumber served as a file tree, `send` and ports, as Plan 9's | every caller is a process of the same session, which calls `erx_act` directly, and design.md's homes are for entry points between domains; rc reaches routes through `plumb`; no native program has asked to plumb. Ports deliver a message to a running program, and no erXos program reads one: every route starts a command |
-| Classifying untyped text by patterns, Plan 9's `data matches` with the click offset | erXos's values arrive typed as presentations, and `ls` and `grep` output stays text by design ([design-shell.md](design-shell.md)); no first-desktop consumer needs it. When one does, it is a `text` object type and a pattern statement, which bears on open decision 1, where Plan 9's grammar fits it best |
+| Classifying untyped text by patterns, Plan 9's `data matches` with the click offset | erXos's values arrive typed as presentations, and `ls` and `grep` output stays text by design ([design-shell.md](design-shell.md)); no first-desktop consumer needs it. When one does, it is a `text` object type and a pattern statement, which bears on [decision 1](#decisions), whose rejected Plan 9 grammar fits it best |
 | A registry of palette contributions with titles and icons, as editors keep | a second table beside the catalogs, which every command would have to join; the catalog's names and help are the labels |
 | A context menu drawn inside each window | every client would draw it, the terminal and three renderers, each in its own way; one palette window drawn by one program serves all of them |
 | A global palette chord kept by the display, or the palette opened from the reserved chord's overlay | a second reserved chord is what the synthesis asks not to have (section 2.6, "Chords and overlays"); the overlay is the display's trusted surface, and opening the session's palette from it would need a channel from the display to the session that nothing else needs |
@@ -1131,99 +1140,106 @@ the file protocol.
 | Ranking by use, hiding entries | no consumer yet: few commands declare `-erx_args`, so the Services lists are short; the rule order is the ranking |
 | A click on a presentation in any window filling the palette's argument, CLIM's full loop | the act service would track every terminal's and widget server's context, a coordination of many participants; the palette's completion from the type's listing, and object-first offers, cover the cases |
 
-## Open decisions
+## Decisions
 
-Each decision gives this design's recommendation and the external
-review's.
+Three decisions shape this design. Each gives its rationale and the
+alternatives it rejects, with their reasons.
 
-**1. How the rules are written.** The rules' meaning is fixed above: a
-type, name patterns for files, a label and an rc line for a route; a
-type for a list; a chord and an rc line for a binding. In every option
-the line is rc, the shell's own grammar, and no option needs a rule
-engine: there is no join, recursion or negation. Every option's reader
-holds to the four rules of [Rules](#rules): no atom from input, refusal
-before construction, bounded depth, bounded memory and time. The choice
-is the outer syntax, which needs approval under the language rule
-([design.md](design.md#decisions), "Languages").
+**1. The rules are written as lines in rc's word syntax.** The rules'
+meaning is fixed above: a type, name patterns for files, a label and an
+rc line for a route; a type for a list; a chord and an rc line for a
+binding. Whatever the outer syntax, the line is rc, the shell's own
+grammar, and no rule engine is needed: there is no join, recursion or
+negation. The syntax is the one [Rules](#rules) gives, such as
+`route file (*.txt) Edit window vi $1`. `erx_act_rules:read/1` reads it
+with `erx_shell_lex`, whose tokens already make no atom, carry their
+offsets, never raise and have a fuzz target, and parses each line, a byte
+range of the source, with `erx_shell_parse:next_bounded/3` under rc's own
+depth, size and heap bounds. The new code is the split of a source line
+into a kind, its fields and the rest, and it has its own fuzz target.
 
-| Option | What it costs | What it gives |
+The reasons: the reader must make no atom and refuse before it builds,
+and this form reuses the tokenizer and parser the shell already has,
+bounds and fuzz target included, and adds only the split of a line into
+fields. The statement has one quoting rule, the line in the file is byte
+for byte the line that runs, and the file reads like the shell, as
+`rc.conf` reads like sh. Because the rules are rc, the choice adds no
+language to the system. The alternatives, each of which would hold to
+the same four rules of [Rules](#rules):
+
+| Rejected alternative | What it costs | What it would give |
 | --- | --- | --- |
-| (a) Plan 9's plumbing language, the part that applies: `type is`, `plumb start`, with `name matches` for files | a reader of a grammar half of whose verbs (`plumb to`, `plumb client`, `src`, `wdir`, `attr`, the click attribute) mean nothing here, so it would look like Plan 9's without being it | familiarity to Plan 9 users; the best fit if untyped text is ever plumbed, since its regular expressions and winnowing are built for that |
-| (b) awklog | a Datalog engine in AWK for rules with no join; on the target it would run under toybox's `wak` as a program, or the person's file would need a host step | nothing these rules use; awklog's place is a host-side check |
-| (c) Datalog, Soufflé or an engine in Erlang | Soufflé is a host C++ tool; an Erlang engine is a new module for the same nothing | as (b) |
-| (d) Erlang terms, one tuple a statement | stock OTP's reader cannot be used: `erl_scan` makes an atom of every atom and variable name before any check, and atoms are never collected, so reloads of bad files grow the table without bound; `erl_parse:parse_term/1` builds a binary's value from its size fields, so a few bytes ask for any allocation ([What exists today](#what-exists-today)). (d) therefore needs a scanner and a parser of its own for a subset of Erlang's term syntax, with their own fuzz target, and the person writes Erlang's quoting around rc's | the system's own language for configuration; the term shapes as the format |
-| (e) a line format in rc's word syntax, `route file (*.txt) Edit window vi $1`, as [Rules](#rules) gives it | a field reader over `erx_shell_lex`'s tokens, which already make no atom, carry their offsets, never raise and have a fuzz target; the line is a byte range of the source, parsed by `erx_shell_parse:next_bounded/3` with rc's own depth, size and heap bounds; the new code is the split of a source line into a kind, its fields and the rest | one quoting rule for the whole statement; the line in the file is byte for byte the line that runs; it reads like the shell, as `rc.conf` reads like sh |
+| Plan 9's plumbing language, the part that applies: `type is`, `plumb start`, with `name matches` for files | a reader of a grammar half of whose verbs (`plumb to`, `plumb client`, `src`, `wdir`, `attr`, the click attribute) mean nothing here, so it would look like Plan 9's without being it | familiarity to Plan 9 users; the best fit if untyped text is ever plumbed, since its regular expressions and winnowing are built for that. When untyped text plumbing becomes a goal, it is the better outer syntax for that day |
+| awklog | a Datalog engine in AWK for rules with no join; on the target it would run under toybox's `wak` as a program, or the person's file would need a host step | nothing these rules use; awklog's place is a host-side check |
+| Datalog, Soufflé or an engine in Erlang | Soufflé is a host C++ tool; an Erlang engine is a new module for the same nothing | nothing these rules use, as for awklog |
+| Erlang terms, one tuple a statement | stock OTP's reader cannot be used: `erl_scan` makes an atom of every atom and variable name before any check, and atoms are never collected, so reloads of bad files grow the table without bound; `erl_parse:parse_term/1` builds a binary's value from its size fields, so a few bytes ask for any allocation ([What exists today](#what-exists-today)). It therefore needs a scanner and a parser of its own for a subset of Erlang's term syntax, with their own fuzz target, and the person writes Erlang's quoting around rc's | the system's own language for configuration; the term shapes as the format. Once the reader must make no atom and refuse before it builds, it is no longer "a shape check over terms" but a new scanner and parser with nothing to reuse |
 
-Recommendation: **(e)**. Once the reader must make no atom and refuse
-before it builds, (d) is no longer "a shape check over terms": it is a
-new scanner and parser with nothing to reuse, while (e) reuses the
-tokenizer and parser the shell already has, bounds and fuzz target
-included, and adds only the split of a line into fields. If untyped text
-plumbing becomes a goal, (a) is the better outer syntax for that day.
-The external review recommends **(e)** too, keeping the binary tokenizer
-and its offsets and the line unchanged; it finds that Plan 9's broader
-grammar and either rule engine give nothing these rules need.
-
-**2. Passing the keyboard to the palette.** A new window is current
+**2. A bound key or a gesture hands the keyboard to the palette through
+the source window's `wctl`, in a narrow form.** A new window is current
 only once the person clicks it, and `wctl` `top` gives no keyboard
 ([design-display.md](design-display.md#windows-and-the-window-system)).
-So a palette opened by a key cannot be typed into, and one opened at
-the pointer takes its first click as a pick, which the policy keeps for
-itself; under the pointer re-entry rule synthesis D3 accepted, that
+So a palette opened by a key could not be typed into, and one opened at
+the pointer would take its first click as a pick, which the policy keeps
+for itself; under the pointer re-entry rule synthesis D3 accepted, that
 click picks the palette only after the pointer has left it and come
-back. Options:
+back. The decision is a `wctl` command `give N`, written to the `wctl`
+of the window that has the keyboard, the **source**, naming a window `N`
+of the same grant, the **target**. The policy admits it only when:
 
-* (a) No change: the person clicks the palette before using it.
-* (b) A `wctl` command `give N`, written to the `wctl` of the window
-  that has the keyboard, the **source**, naming a window `N` of the same
-  grant, the **target**. The policy admits it only when the source is
-  the current window, the display delivered a key or button down to the
-  source within the last 500 ms, the user-traced act of the accepted
-  clipboard rule (synthesis D3), and the target is shown and was made
-  after the source last became current; it then picks the target, and
-  refuses anything else with `EINVAL`. The authority is the source
-  window's own control file: a program confined to its own window's
-  files ([design-programs.md](design-programs.md#the-handler), "The
-  spec's `window => Display`") can give away only a keyboard it already has, never take
-  it from a sibling window of the same grant, since the display tells
-  clients apart by grantee domain and not by program
-  (`erlang/apps/erx_display/src/erx_winfs.erl:269`). The age condition
-  on the target keeps the keyboard from being handed to an older
-  window, such as the session's shell, so the person's typing cannot be
-  steered into it; it is one window id kept with the pick, since window
-  ids only grow. The palette, opened from window S by a bound key or a
-  gesture, writes `give P` for its own window P to S's `wctl`, which the
-  session's processes reach through the grant.
-* (c) The palette drawn inside the window the gesture came from,
-  rejected under [Alternatives considered](#alternatives-considered).
+* the source is the current window;
+* the display delivered a key or button down to the source within the
+  last 500 ms, the user-traced act of the accepted clipboard rule
+  (synthesis D3);
+* the target is shown and was made after the source last became
+  current.
 
-Recommendation: **(b)**. The keyboard still moves only on the person's
-act and only out of the window that has it, so no writer gains a key it
-did not already have; without it the palette and the context menu each
-cost an extra click on every use, two under the re-entry rule. It
-changes an accepted rule of design-display, which is why it is not taken
-here. The external review recommends **(a)** until a narrowed transfer
-is accepted, and agrees that a transfer, when there is one, is
-authorized by the current source window; it finds that a 500 ms
-interval alone proves recency, not authority or intent, which the
-source window's control file supplies in (b) as given here.
+It then picks the target, and refuses anything else with `EINVAL`. The
+palette, opened from window S by a bound key or a gesture, writes
+`give P` for its own window P to S's `wctl`, which the session's
+processes reach through the grant.
 
-**3. App names in a release build's palette.** The palette lists apps
-from the `[apps]` listing, which only an inspect facet of scope `all`
-reads; in a release build no session holds one, so an administrator's
-palette, which may start apps, cannot list them. Options: (a) leave it:
-development builds, where `root` holds scope `all`, list apps, and a
-release build's administrator types `service NAME onestart`; (b) a
-visibility class for the start table's row names, readable by a facet
-whose principal holds the `start` grant, in the inspection schema and
-design-apps. Recommendation: **(a)** until a release build exists, since
-nothing ships before the security closure milestone and (b) changes who
-sees what in the inspector. The external review recommends **(a)** for
-this milestone as well, and notes that the gap is wider than the
-palette: `service -e` reads a row's `declared_enable` from `[apps,
-Name]`, which the same scope guards
-([design-apps.md](design-apps.md#interfaces), "Inspection"), so the
-visibility belongs to design-apps, which the palette then follows.
+The reasons: the keyboard still moves only on the person's act and only
+out of the window that has it, so no writer gains a key it did not
+already have. The authority is the source window's own control file. A
+program confined to its own window's files
+([design-programs.md](design-programs.md#the-handler), "The spec's
+`window => Display`") can give away only a keyboard it already has, never
+take it from a sibling window of the same grant, since the display tells
+clients apart by grantee domain and not by program
+(`erlang/apps/erx_display/src/erx_winfs.erl:269`). The 500 ms interval
+alone proves recency, not authority or intent; with the source window's
+control file as the authority it proves the person just acted in the
+source. The condition on the target keeps the keyboard from being handed
+to an older window, such as the session's shell, so the person's typing
+cannot be steered into it; it is one window id kept with the pick, since
+window ids only grow. This changes the display's accepted focus rule, so
+it is listed under [Changes to other designs](#changes-to-other-designs)
+for design-display. The alternatives:
+
+* **No change: the person clicks the palette before using it.** Rejected:
+  the palette and the context menu each cost an extra click on every use,
+  two under the re-entry rule.
+* **The palette drawn inside the window the gesture came from.**
+  Rejected under [Alternatives considered](#alternatives-considered).
+
+**3. App names in a release build's palette follow design-apps'
+visibility.** The palette lists apps from the `[apps]` listing, which
+only an inspect facet of scope `all` reads; in a release build no session
+holds one, so an administrator's palette, which may start apps, cannot
+list them. Which sessions may read the start table's row names is a
+question of who sees what in the inspector, and it belongs to
+design-apps and the inspection schema, not to the palette. The palette
+lists whatever the session's inspect facet shows and widens nothing. The
+gap is wider than the palette: `service -e` reads a row's
+`declared_enable` from `[apps, Name]`, which the same scope guards
+([design-apps.md](design-apps.md#interfaces), "Inspection"), so one
+visibility rule serves both. Until design-apps gives one, development
+builds, where `root` holds scope `all`, list apps, and a release build's
+administrator types `service NAME onestart`. The alternative, a
+visibility class for the start table's row names declared here, readable
+by a facet whose principal holds the `start` grant, is rejected: it
+changes who sees what in the inspector, which design-apps owns, and the
+palette follows whatever that design decides.
 
 ## References
 
